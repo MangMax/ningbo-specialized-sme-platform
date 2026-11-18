@@ -8,14 +8,15 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../../../db/schema'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import { readCurrentCandidate } from '../../../lib/roster/current-qualification'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { readCurrentCandidate } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { reviewCurrentExportDecision } from '../fixtures/qualification-decisions'
-import { saveDecision102 } from '../../../server/utils/decision-lifecycle-102'
-import { preflightRecordCorrespondences, commitRecordCorrespondences, type CorrespondenceRequest } from '../../../server/utils/record-correspondence'
-import * as correspondenceReads from '../../../server/utils/record-correspondence'
-import * as publishedReads from '../../../lib/roster/official-published-presentation'
-import { readEvidenceToken113 } from '../../../server/utils/evidence-impact-113'
+import { saveDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
+import { preflightRecordCorrespondences, commitRecordCorrespondences, type CorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence'
+import * as correspondenceReads from '../../../layers/sme-roster/server/utils/record-correspondence'
+import * as publishedReads from '../../../layers/sme-roster/lib/roster/official-published-presentation'
+import { readEvidenceToken113 } from '../../../layers/sme-roster/server/utils/evidence-impact-113'
+import { readEffectiveQualifications } from '../../../layers/sme-roster/public'
 
 const AS_OF = Date.parse('2026-06-01T00:00:00Z')
 let fixtureDir: string
@@ -27,6 +28,12 @@ beforeEach(() => {
   sqlite = db.$client
 })
 afterEach(() => { vi.restoreAllMocks(); sqlite.close(); rmSync(fixtureDir,{recursive:true,force:true}) })
+
+it('distinguishes a missing enterprise from an existing enterprise with no effective qualifications', () => {
+  expect(readEffectiveQualifications(sqlite, 1, AS_OF)).toBeNull()
+  const enterprise = db.insert(schema.enterprise).values({ name: '合成企业', nameNorm: '合成企业' }).returning().get()
+  expect(readEffectiveQualifications(sqlite, enterprise.id, AS_OF)).toEqual([])
+})
 
 function formalEnterprise() {
   const enterprise = db.insert(schema.enterprise).values({ name: '合成正式企业', nameNorm: '合成正式企业', usccNorm: '913302000000000001' }).returning().get()
@@ -347,7 +354,7 @@ it('does not claim changed sources when correspondence revalidation is incomplet
 
 // #406/#407 historical literal behavior uses explicit v1; default detail controls below use the current version.
 import { createHash } from 'node:crypto'
-import { diagnoseOfficialEventFields, readCurrentQualificationAssessment, createCurrentCandidateReader } from '../../../lib/roster/current-qualification'
+import { diagnoseOfficialEventFields, readCurrentQualificationAssessment, createCurrentCandidateReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
 
 it('field_gaps_review_raw_states_407', () => {
   // Pure field helper assertion; the shared file fixture is not qualification evidence here.
@@ -439,7 +446,7 @@ function seedPublishedLegacyReceipt() {
 }
 
 it('explicit_407_receipts_preserve_frozen_literal_bytes', async () => {
-  const { createCurrentQualificationAssessmentReader } = await import('../../../lib/roster/current-qualification')
+  const { createCurrentQualificationAssessmentReader } = await import('../../../layers/sme-roster/lib/roster/current-qualification')
   seedPublishedLegacyReceipt()
   const reader = createCurrentQualificationAssessmentReader(sqlite)
   expect(reader.read(1, AS_OF, { assessmentVersion: 'enterprise-qualification-407-v1' }).snapshot).toEqual(DEFAULT_427_LEGACY)
@@ -449,8 +456,8 @@ it('explicit_407_receipts_preserve_frozen_literal_bytes', async () => {
 })
 
 it('explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_share_default_without_core', async () => {
-  const core = await import('../../../lib/roster/platform-comparison')
-  const { createCurrentQualificationAssessmentReader } = await import('../../../lib/roster/current-qualification')
+  const core = await import('../../../layers/sme-roster/lib/roster/platform-comparison')
+  const { createCurrentQualificationAssessmentReader } = await import('../../../layers/sme-roster/lib/roster/current-qualification')
   const spy = vi.spyOn(core, 'comparePlatformComparison')
   seedPublishedLegacyReceipt()
   const changes = sqlite.prepare('select total_changes() as n').get()

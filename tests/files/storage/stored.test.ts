@@ -1,5 +1,5 @@
 import { resolveInsideRoot, scanFileStore } from '../../../layers/core/server/utils/file-store'
-import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { initializeDb } from '../../../db/client'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { categoryStateOf, deriveClassification, deriveParts, parseBatch } from '../../../lib/stored-file'
+import { categoryStateOf, deriveClassification, deriveParts, parseBatch } from '../../../layers/sme-roster/lib/stored-file'
 import {
   backfillFromDisk,
   backfillStoredFiles,
@@ -16,13 +16,13 @@ import {
   parseMetadataPatch,
   removeStoredFile,
   updateStoredFile,
-} from '../../../server/utils/stored-files'
+} from '../../../layers/core/server/utils/stored-files'
 
 /**
  * 票 09 —— 文件表与文件管理页的**规则层**测试。
  *
  * 分三块:
- *  1. 分类规则(`lib/stored-file.ts`)——从目录反推 source/kind/year/batch;
+ *  1. 分类规则(`layers/sme-roster/lib/stored-file.ts`)——从目录反推 source/kind/year/batch;
  *  2. 回填幂等 —— 重跑两次行数不变;
  *  3. 元数据 PATCH 只改元数据 —— 不动 `rel_path`、不动磁盘。
  *  4. **入库范围**(RL-16)——「哪些文件该进文件库」在回填里真的生效。

@@ -1,4 +1,4 @@
-import {differencePublicColumns} from '../../../lib/platform/difference-reference-target'
+import {differencePublicColumns} from '../../../layers/sme-roster/lib/platform/difference-reference-target'
 import { nativeQueryRows, nativeRelationRows } from '../fixtures/native-evidence'
 import { initializeDb } from '../../../db/client'
 /**
@@ -22,17 +22,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { createRosterImportClient } from '../../../lib/roster-import-client'
-import { classifyRawQuery } from '../../../lib/platform'
+import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
+import { classifyRawQuery } from '../../../layers/sme-roster/lib/platform'
 import {
   buildPlatformWritePayload,
   type KnownEnterprise,
   type PlatformQueryInput,
   type QueryRef,
   type RelationRef,
-} from '../../../lib/platform/payload'
-import type { PlatformQueriesResult } from '../../../lib/platform/read'
-import { readMergeLineage, searchEnterpriseIdsByName } from '../../../server/utils/roster-import'
+} from '../../../layers/sme-roster/lib/platform/payload'
+import type { PlatformQueriesResult } from '../../../layers/sme-roster/lib/platform/read'
+import { readMergeLineage, searchEnterpriseIdsByName } from '../../../layers/sme-roster/server/utils/roster-import'
 import { startEvidenceServer, type EvidenceServer } from '../fixtures/evidence-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-platform-e2e-'))
@@ -126,8 +126,8 @@ beforeAll(async () => {
   }))
   vi.doMock('@db', () => ({ useDb: () => db }))
 
-  const queriesRoute = (await import('../../../server/api/platform/queries.get')).default as unknown as (event: unknown) => unknown
-  const comparisonRoute = (await import('../../../server/api/comparison.get')).default as unknown as (event: unknown) => unknown
+  const queriesRoute = (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default as unknown as (event: unknown) => unknown
+  const comparisonRoute = (await import('../../../layers/sme-roster/server/api/comparison.get')).default as unknown as (event: unknown) => unknown
 
   server = await startEvidenceServer({
     db,

@@ -2,8 +2,8 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { createRuntimeSchema } from '../../../../db/create-runtime'
 import * as schema from '../../../../db/schema'
-import { commitRosterImport } from '../../../../server/utils/roster-import'
-import type { RosterImportPlatformQuery } from '../../../../lib/roster-import-client'
+import { commitRosterImport } from '../../../../layers/sme-roster/server/utils/roster-import'
+import type { RosterImportPlatformQuery } from '../../../../layers/sme-roster/lib/roster-import-client'
 export function nativeImportDb() {
   const sqlite = new Database(':memory:'); sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
   return drizzle(sqlite, { schema })

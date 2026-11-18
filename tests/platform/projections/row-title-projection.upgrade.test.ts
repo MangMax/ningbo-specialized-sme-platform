@@ -6,8 +6,8 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { afterAll, describe, expect, it } from 'vitest'
 import * as schema from '../../../upgrade/legacy-schema'
-import { parseApplyRecord } from '../../../lib/platform/apply-record'
-import { parseBusinessProcess } from '../../../lib/platform/business-projection'
+import { parseApplyRecord } from '../../../layers/sme-roster/lib/platform/apply-record'
+import { parseBusinessProcess } from '../../../layers/sme-roster/lib/platform/business-projection'
 import { ensurePlatformObservation } from '../../../upgrade/frozen/server/platform-business-record'
 
 const dirs: string[] = []

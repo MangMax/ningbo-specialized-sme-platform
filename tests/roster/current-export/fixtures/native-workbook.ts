@@ -1,8 +1,8 @@
 import ExcelJS from 'exceljs'
 import { join } from 'node:path'
-import { writeCurrentWorkbook } from '../../../../lib/roster/current-workbook'
+import { writeCurrentWorkbook } from '../../../../layers/sme-roster/lib/roster/current-workbook'
 import { specializedExportFixture } from './specialized-export'
-import type { CurrentTitle } from '../../../../lib/roster/current-qualification'
+import type { CurrentTitle } from '../../../../layers/sme-roster/lib/roster/current-qualification'
 
 // Real SQLite reader and streaming writer; no job/HTTP contract is simulated here.
 export function nativeWorkbookFixture() {

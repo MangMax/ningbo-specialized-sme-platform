@@ -6,12 +6,12 @@ import { initializeDb } from '../../../db/client'
  * 于是解析不到文件,名录行的预览/跳转全断(用户 2026-10-16 反馈)。
  *
  * 修法(两条一起才成立):
- *  1. 导入侧把来源标识换成**库内相对路径**(见 `lib/roster/little-giant-import.ts`);
+ *  1. 导入侧把来源标识换成**库内相对路径**(见 `layers/sme-roster/lib/roster/little-giant-import.ts`);
  *  2. 统一写入 API 重放同一份来源时,**只把出处的 `source_file` 收敛到新路径** ——
  *     事件坐标不变 ⇒ 历史一行不改、一行不加、一行不删。
  *
  * 这个文件盯着第 2 条。走的是**真实 HTTP**(`tests/helpers/roster-http-server.ts` 起真端口,
- * `lib/roster-import-client.ts` 发真请求),库只用 drizzle **读**计数。
+ * `layers/sme-roster/lib/roster-import-client.ts` 发真请求),库只用 drizzle **读**计数。
  */
 
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -20,14 +20,14 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { schema, useDb } from '../../../db'
-import { createRosterImportClient, type RosterImportRequest } from '../../../lib/roster-import-client'
+import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import {
   buildLittleGiantImportReport,
   buildLittleGiantImportRequest,
   LITTLE_GIANT_SOURCE_FILE,
-} from '../../../lib/roster/little-giant-import'
-import { parseLittleGiantWorkbook } from '../../../lib/roster/little-giant-workbook'
-import { rosterRowCounts } from '../../../server/utils/roster-import'
+} from '../../../layers/sme-roster/lib/roster/little-giant-import'
+import { parseLittleGiantWorkbook } from '../../../layers/sme-roster/lib/roster/little-giant-workbook'
+import { rosterRowCounts } from '../../../layers/sme-roster/server/utils/roster-import'
 import { executeNativeImport, startRosterApi } from '../imports/fixtures/import-server'
 import { loadLittleGiantSource } from '../little-giant/fixtures/official-source'
 
@@ -269,7 +269,7 @@ describe('RL-19:预检报的行数 = 提交真改的行数(计划项口径与行
       const workbook = await parseLittleGiantWorkbook(source.buffer)
       const report = buildLittleGiantImportReport(workbook)
       const request = buildLittleGiantImportRequest(workbook, { sourceFile: LIBRARY_SOURCE_FILE })
-      // 报告的数字是**独立于写入侧**手算出来的(见 `lib/roster/little-giant-import.ts`
+      // 报告的数字是**独立于写入侧**手算出来的(见 `layers/sme-roster/lib/roster/little-giant-import.ts`
       // 的 `totals`):记录数 = 去重后的企业数,事件数 = 出处行数(一条认定事件一条出处)。
       const recordCount = report.totals.records
       const evidenceCount = report.totals.evidences

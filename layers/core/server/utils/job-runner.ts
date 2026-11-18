@@ -1,7 +1,6 @@
 import { appLog, type LogContext } from '../../lib/logging'
 import { jobLogModule } from '../../lib/logging/module'
-import { hasImportWriter, whenImportWriterIdle } from '../../../../server/utils/import-write-barrier'
-import { cleanupCurrentExports } from '../../../../server/utils/current-export-artifact'
+import { jobRuntime } from '../../../../server/job-runtime'
 import { and, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
@@ -342,7 +341,7 @@ async function runOne(entry: QueueEntry): Promise<void> {
   const { db, jobId, filesDir, logContext } = entry
   try {
     // Claim synchronously when idle so immediate cancellation still sees running.
-    if (hasImportWriter()) await whenImportWriterIdle()
+    if (jobRuntime.hasForegroundWriter()) await jobRuntime.whenForegroundWriterIdle()
     // 入队后被取消:队列里已经没它了(取消时就地摘掉了),这里是兜底。
     if (cancelRequested.has(jobId)) {
       finishJob(db, jobId, { state: 'cancelled', error: '任务在开始前被取消' }, logContext)
@@ -376,7 +375,7 @@ async function runOne(entry: QueueEntry): Promise<void> {
     }
 
     const completion = await entry.run(ctx, running.params)
-    await whenImportWriterIdle()
+    await jobRuntime.whenForegroundWriterIdle()
     // 默认收尾把进度顶到分母;部分结果任务可显式提供真实完成数。
     // 被取消时不顶:停在 1/4 才是**它真实的进度**,顶成 4/4 就是在说谎。
     if (!completion.cancelled) {
@@ -390,7 +389,7 @@ async function runOne(entry: QueueEntry): Promise<void> {
         : (completion.error ?? null),
     }, logContext)
   } catch (error) {
-    await whenImportWriterIdle()
+    await jobRuntime.whenForegroundWriterIdle()
     // 抛出的执行没有新产出:保留已检查点的 result,只记失败原因(见 `finishJob`)。
     finishJob(db, jobId, { state: 'failed', error: messageOf(error) }, logContext)
   } finally {
@@ -482,7 +481,7 @@ export function ensureJobRunnerReady(db: Db): number {
   // 只有对账完整返回后才缓存 ready。SQLITE_BUSY / 只读写失败等异常必须原样
   // 抛给调用方,同时保留同一 db 在故障解除后再次对账的机会。
   reconciledDbs.add(db)
-  void cleanupCurrentExports(db).catch(() => {})
+  void jobRuntime.cleanupArtifacts(db).catch(() => {})
   return interrupted
 }
 

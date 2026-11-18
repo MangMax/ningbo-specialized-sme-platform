@@ -6,7 +6,7 @@ import { expect, it } from 'vitest'
 const require = createRequire(import.meta.resolve('nuxt/package.json'))
 const { transformSync } = require('esbuild') as { transformSync: (source: string, options: { loader: 'ts' }) => { code: string } }
 function metadata(path: string) {
-  const source = readFileSync(new URL(`../../../${path.startsWith('files/') ? 'layers/core/' : ''}server/api/${path}`, import.meta.url), 'utf8')
+  const source = readFileSync(new URL(`../../../${path.startsWith('files/') ? 'layers/core/' : 'layers/sme-roster/'}server/api/${path}`, import.meta.url), 'utf8')
   // Nitro erases TypeScript before extracting the literal defineRouteMeta argument.
   const { code } = transformSync(source, { loader: 'ts' })
   let result: unknown

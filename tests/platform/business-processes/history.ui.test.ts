@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import PlatformRecords from '../../../components/PlatformRecords.vue'
-import type { RosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
+import PlatformRecords from '../../../layers/sme-roster/app/components/PlatformRecords.vue'
+import type { RosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 
 const nativeAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
 beforeAll(() => { Reflect.deleteProperty(Element.prototype, 'animate') })

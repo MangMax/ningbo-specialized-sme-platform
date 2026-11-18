@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { ref, watch } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useQuery } from '@pinia/colada'
-import RosterPage from '../../../pages/roster.vue'
+import RosterPage from '../../../layers/sme-roster/app/pages/roster.vue'
 import FilesPage from '../../../layers/core/app/pages/files.vue'
 
 vi.mock('@pinia/colada', () => ({ useQuery: vi.fn(), useQueryCache: () => ({ invalidateQueries: vi.fn() }) }))
@@ -46,7 +46,7 @@ describe.each([
     const view = mount(component as any, { global: { stubs: {
       TablePagination: pagination, TableFailureState: failure, TableLoadingStatus: true,
       PageHeader: { template: '<header><slot/><slot name="actions"/></header>' },
-      EnterpriseDrawer: true, EnterpriseDifferenceRefresh: true, MultiSelectFilter: true,
+      RosterEnterpriseDrawer: true, RosterEnterpriseDifferenceRefresh: true, MultiSelectFilter: true,
       EditFileDialog: true, DeleteFileDialog: true, UploadDialog: true, PdfViewDialog: true,
       FileSegmentsEditor: true, NuxtLink: { template: '<a><slot/></a>' },
     } } })

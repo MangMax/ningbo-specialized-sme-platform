@@ -1,5 +1,5 @@
 import '../../support/compiled-enterprise-reader'
-import { enterpriseReads } from '../../../server/utils/enterprise-read'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { initializeDb } from '../../../db/client'
 import { assertEnterpriseDetailSnapshotEqual } from '../assertions/enterprise-detail-snapshot'
 import { decodeJsonRead } from '../../support/json-read'
@@ -8,9 +8,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { listRecords } from '../../../lib/query'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import { parseRecordQuery } from '../../../server/utils/roster-read-query'
+import { listRecords } from '../../../layers/sme-roster/lib/query'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { parseRecordQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-record-query-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'records.db') })
@@ -217,16 +217,16 @@ beforeAll(async () => {
   )
   vi.doMock('@db', () => ({ useDb: () => db }))
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-  recordsHandler = (await import('../../../server/api/records.get')).default as unknown as typeof recordsHandler
-  enterpriseDetailHandler = (await import('../../../server/api/enterprises/[id].get')).default as unknown as typeof enterpriseDetailHandler
-  queryRecordsTool = (await import('../../../server/mcp/tools/query_records')).default as unknown as typeof queryRecordsTool
+  recordsHandler = (await import('../../../layers/sme-roster/server/api/records.get')).default as unknown as typeof recordsHandler
+  enterpriseDetailHandler = (await import('../../../layers/sme-roster/server/api/enterprises/[id].get')).default as unknown as typeof enterpriseDetailHandler
+  queryRecordsTool = (await import('../../../layers/sme-roster/server/mcp/tools/query_records')).default as unknown as typeof queryRecordsTool
   rosterEnterprisesHandler =
-    decodeJsonRead((await import('../../../server/api/roster/enterprises.get')).default) as unknown as typeof rosterEnterprisesHandler
-  await import('../../../server/api/roster/recognitions.get')
-  await import('../../../server/api/roster/export.get')
-  const listTool = (await import('../../../server/mcp/tools/list_enterprises')).default
+    decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default) as unknown as typeof rosterEnterprisesHandler
+  await import('../../../layers/sme-roster/server/api/roster/recognitions.get')
+  await import('../../../layers/sme-roster/server/api/roster/export.get')
+  const listTool = (await import('../../../layers/sme-roster/server/mcp/tools/list_enterprises')).default
   listEnterprisesTool = { ...listTool,handler: decodeJsonRead(listTool.handler as never) } as unknown as typeof listEnterprisesTool
-  const detailTool = (await import('../../../server/mcp/tools/get_enterprise_detail')).default
+  const detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_enterprise_detail')).default
   enterpriseDetailTool = { ...detailTool,handler: decodeJsonRead(detailTool.handler as never) } as unknown as typeof enterpriseDetailTool
 })
 

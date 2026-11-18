@@ -27,13 +27,13 @@ it('current page conflict keeps historical OCR text and binding while disabling 
   vi.unstubAllGlobals()
 })
 
-import UploadDialog from '../../../components/sme-roster/RosterFileUploadDialog.vue'
+import UploadDialog from '../../../layers/sme-roster/app/components/sme-roster/RosterFileUploadDialog.vue'
 it('registration retry keeps the uploaded metadata snapshot after conflict', async () => {
   const api = vi.fn().mockRejectedValueOnce({ data: { data: { code: 'file_content_conflict' } } }).mockResolvedValueOnce({})
   vi.stubGlobal('$fetch', api)
-  const wrapper = mount(UploadDialog, { props: { open: true }, global: { stubs: { DialogTitle: { template: '<h2><slot /></h2>' }, DialogDescription: { template: '<p><slot /></p>' }, UploadPanel: { name: 'UploadPanel', template: '<div />' }, Dialog: { template: '<div><slot /></div>' }, DialogContent: { template: '<div><slot /></div>' } } } })
+  const wrapper = mount(UploadDialog, { props: { open: true }, global: { stubs: { DialogTitle: { template: '<h2><slot /></h2>' }, DialogDescription: { template: '<p><slot /></p>' }, RosterUploadPanel: { name: 'RosterUploadPanel', template: '<div />' }, Dialog: { template: '<div><slot /></div>' }, DialogContent: { template: '<div><slot /></div>' } } } })
   const payload = { name: '原附件.pdf', relPath: 'jxj/announcement/2024/1/a.pdf', size: 3, meta: { source: 'jxj', kind: 'announcement', year: '2024', batch: '1' } }
-  wrapper.findComponent({ name: 'UploadPanel' }).vm.$emit('uploaded', payload)
+  wrapper.findComponent({ name: 'RosterUploadPanel' }).vm.$emit('uploaded', payload)
   await flushPromises()
   expect(wrapper.text()).toContain('内容已变化')
   expect(wrapper.text()).toContain('重试登记 原附件.pdf')

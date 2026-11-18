@@ -3,10 +3,10 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createRouter, createMemoryHistory, RouterLink } from 'vue-router'
-import Entry from '../../../components/CurrentRosterExportEntry.vue'
+import Entry from '../../../layers/sme-roster/app/components/CurrentRosterExportEntry.vue'
 import { Button } from '../../../layers/core/app/components/ui/button'
-import { useCurrentRosterExport } from '../../../composables/useCurrentRosterExport'
-import { TASK_EXPORTS } from '../../../lib/sme-roster/task-exports'
+import { useRosterCurrentExport } from '../../../layers/sme-roster/app/composables/useRosterCurrentExport'
+import { TASK_EXPORTS } from '../../../layers/sme-roster/lib/sme-roster/task-exports'
 
 const KEY = 'task-center-export-requests-v1'
 const LG_JOB = '01M5BEPVCXD5619ZW4C6CATRET'
@@ -44,7 +44,7 @@ async function queryEntry() {
 }
 async function regeneration() {
   const wrapper = mount(defineComponent({ setup() {
-    const { submitExport } = useCurrentRosterExport()
+    const { submitExport } = useRosterCurrentExport()
     const result = ref('')
     return () => h('div', [h(Button, { onClick: async () => {
       const receipt = await submitExport('specialized_sme', OLD_SME)
@@ -67,7 +67,7 @@ it('an optional lifecycle reason blocks submission until the current read comple
   const raw = mockFetch(async () => ({ status: 202, _data: { jobId: SME_JOB } }))
   const reason = ref('正在读取当前筛选，读完即可操作。')
   const wrapper = mount(defineComponent({ setup() {
-    const { submitExport, disabledReason } = useCurrentRosterExport(reason)
+    const { submitExport, disabledReason } = useRosterCurrentExport(reason)
     return () => h('div', [h(Button, { onClick: () => submitExport('specialized_sme', OLD_SME) }, () => '重新生成'), h('p', disabledReason('specialized_sme'))])
   } }))
   mounted.push(wrapper); await flushPromises()

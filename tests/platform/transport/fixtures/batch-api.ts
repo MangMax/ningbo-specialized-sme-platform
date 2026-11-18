@@ -1,9 +1,9 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import type { initializeDb } from '../../../../db/client'
-import { handlePlatformBatchRequest } from '../../../../server/utils/platform-batch-http'
-import { runPlatformLiveQuery } from '../../../../server/utils/platform-live-query'
-import { platformQueryCapabilities } from '../../../../lib/platform/live-query'
+import { handlePlatformBatchRequest } from '../../../../layers/sme-roster/server/utils/platform-batch-http'
+import { runPlatformLiveQuery } from '../../../../layers/sme-roster/server/utils/platform-live-query'
+import { platformQueryCapabilities } from '../../../../layers/sme-roster/lib/platform/live-query'
 /** Public HTTP fixture forwards the same core as Nitro. Unknown paths (including
  * credential endpoints) fail closed and are audited by workflow acceptance. */
 export async function startPlatformBatchApi(ctx: { db: ReturnType<typeof initializeDb>; apiToken: string; filesDir: string }) {

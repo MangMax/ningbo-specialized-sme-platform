@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { useDb, schema } from '../../../db'
 import type { TitleCode } from '../../../db/titles'
-import { getComparison, type ComparisonDirection } from '../../../lib/comparison'
-import type { EventType } from '../../../lib/query'
+import { getComparison, type ComparisonDirection } from '../../../layers/sme-roster/lib/comparison'
+import type { EventType } from '../../../layers/sme-roster/lib/query'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-comparison-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.db') })

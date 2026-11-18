@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto'
-import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
+import { readCurrentQualificationAssessment } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { readFileSync } from 'node:fs'
 import { join,dirname } from 'node:path'
 import { expect,it,vi } from 'vitest'
 import { qualificationFileFixture } from '../fixtures/qualification-matrix'
-import type { CurrentCandidateReader } from '../../../lib/roster/current-candidate-reader'
-import { listCurrentQualified,listCurrentQualifiedWithCandidates } from '../../../lib/roster/current-qualified-query'
-import { writeCurrentWorkbook,writeCurrentWorkbookWithCandidates } from '../../../lib/roster/current-workbook'
+import type { CurrentCandidateReader } from '../../../layers/sme-roster/lib/roster/current-candidate-reader'
+import { listCurrentQualified,listCurrentQualifiedWithCandidates } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import { writeCurrentWorkbook,writeCurrentWorkbookWithCandidates } from '../../../layers/sme-roster/lib/roster/current-workbook'
 import { readExportWorkbook } from '../../support/read-workbook'
 
 it('lists and exports qualified enterprises across multiple native candidate blocks',async()=>{

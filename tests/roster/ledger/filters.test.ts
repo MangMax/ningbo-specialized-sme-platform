@@ -4,17 +4,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { EVENT_ORDER, SOURCE_ORDER } from '../../../lib/labels'
-import { listRecords } from '../../../lib/query'
+import { EVENT_ORDER, SOURCE_ORDER } from '../../../layers/sme-roster/lib/labels'
+import { listRecords } from '../../../layers/sme-roster/lib/query'
 import {
   allRosterEnterprises,
   listRosterDifferences,
   listRosterEnterprises,
-} from '../../../lib/roster/enterprise-roster'
+} from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import {
   parseRosterDifferenceQuery,
   parseRosterEnterpriseQuery,
-} from '../../../server/utils/roster-read-query'
+} from '../../../layers/sme-roster/server/utils/roster-read-query'
 
 /**
  * RL-17 —— 合并台账所需的**来源 / 事件 / 年份**判据(对 RL-04 读模型的增量)。

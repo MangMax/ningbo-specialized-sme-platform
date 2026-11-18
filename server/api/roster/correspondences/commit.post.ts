@@ -1,3 +1,0 @@
-import { correspondenceRoute } from '~~/server/utils/record-correspondence-route'
-defineRouteMeta({ openAPI: { tags: ['名录对应'], summary: '原子提交已预检的对应决定', description: '只经 #65 事务服务提交。候选确认经核心目标状态与来源校验。需 NUXT_API_TOKEN。', security: [{ bearerAuth: [] }], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['request', 'planHash'], properties: { request: { type: 'object' }, planHash: { type: 'string' } } } } } }, responses: { 200: { description: 'batchId,planHash,impact,correspondenceIds' }, 401: { description: 'Token absent or unconfigured' }, 409: { description: 'Stale plan or idempotency conflict' }, 422: { description: 'Semantic rejection' } } } })
-export default correspondenceRoute('commit')

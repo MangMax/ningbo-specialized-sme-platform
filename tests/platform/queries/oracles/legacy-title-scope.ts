@@ -3,7 +3,7 @@
 import { and, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../upgrade/legacy-schema'
-import type { PlatformQueryFilter } from '../../../../lib/platform/read'
+import type { PlatformQueryFilter } from '../../../../layers/sme-roster/lib/platform/read'
 export function readMigratedTitleScope(db: BetterSQLite3Database<typeof schema>, filter: PlatformQueryFilter) {
   const q=schema.platformQuery, conditions=[]
   if(filter.queryId!=null)conditions.push(eq(q.id,filter.queryId))

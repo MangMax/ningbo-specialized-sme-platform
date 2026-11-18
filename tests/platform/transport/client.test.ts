@@ -9,7 +9,7 @@ import {
   queryAllRdjb,
   queryPlatformSlots,
   hasPlatformCredential,
-} from '../../../lib/platform'
+} from '../../../layers/sme-roster/lib/platform'
 
 const fixture = (name: string) =>
   readFileSync(join(import.meta.dirname, '../../fixtures/platform', name), 'utf8')

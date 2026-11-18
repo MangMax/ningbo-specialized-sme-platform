@@ -2,7 +2,7 @@ import { deserialize } from 'node:v8'
 function decode(value:unknown):unknown {if(!Buffer.isBuffer(value))throw new Error('Expected opaque witness BLOB');return deserialize(value)}
 import Database from 'better-sqlite3'
 import { expect, it } from 'vitest'
-import { captureWitnessInputs, captureWitnessPosition } from '../../../lib/platform/recognized-witness-capture'
+import { captureWitnessInputs, captureWitnessPosition } from '../../../layers/sme-roster/lib/platform/recognized-witness-capture'
 it('captures SQLite first gates separately from boolean facts and JS last page values', () => {
   const t = new Database(':memory:')
   try {
@@ -15,7 +15,7 @@ it('captures SQLite first gates separately from boolean facts and JS last page v
     expect(decode(position.page.value!)).toBe('p')
   } finally { t.close() }
 })
-import { sourcePositionForSequence } from '../../../lib/platform/recognized-evidence'
+import { sourcePositionForSequence } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 function oldPosition(pages:unknown,sequence:number) {
  if(!Array.isArray(pages))throw new Error('Historical pages fixture must be an array')
  return sourcePositionForSequence({pages},sequence)

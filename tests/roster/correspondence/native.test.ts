@@ -1,4 +1,4 @@
-import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { eq } from 'drizzle-orm'
 import { mkdtempSync,rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -6,10 +6,10 @@ import { join } from 'node:path'
 import { afterEach,expect,it } from 'vitest'
 import { initializeDb } from '../../../db/client'
 import * as schema from '../../../db/schema'
-import type { RosterImportPlatformQuery } from '../../../lib/roster-import-client'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import { commitComparisonScopeProofs,preflightComparisonScopeProofs,readComparisonScopeProof,type ProofRequest } from '../../../server/utils/comparison-scope-proof'
-import { commitRecordCorrespondences,getRecordCorrespondenceAudit,listRecordCorrespondences,preflightRecordCorrespondences,type CorrespondenceRequest } from '../../../server/utils/record-correspondence'
+import type { RosterImportPlatformQuery } from '../../../layers/sme-roster/lib/roster-import-client'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { commitComparisonScopeProofs,preflightComparisonScopeProofs,readComparisonScopeProof,type ProofRequest } from '../../../layers/sme-roster/server/utils/comparison-scope-proof'
+import { commitRecordCorrespondences,getRecordCorrespondenceAudit,listRecordCorrespondences,preflightRecordCorrespondences,type CorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 
 const cleanups: Array<() => void> = []
@@ -114,8 +114,8 @@ it('preflights and commits native correspondence from the same-origin browser wi
   const { createServer } = await import('node:http')
   const { createApp, defineEventHandler, toNodeListener } = await import('h3')
   const { vi } = await import('vitest')
-  const { browserCorrespondenceRoute } = await import('../../../server/utils/browser-correspondence')
-  const { handleRecordCorrespondenceRequest } = await import('../../../server/utils/record-correspondence-api')
+  const { browserCorrespondenceRoute } = await import('../../../layers/sme-roster/server/utils/browser-correspondence')
+  const { handleRecordCorrespondenceRequest } = await import('../../../layers/sme-roster/server/utils/record-correspondence-api')
   const f = fixture(), source = submitNativePlatformQuery(f.db, f.query('2026-10-01T00:00:00Z'))
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   const app = createApp()

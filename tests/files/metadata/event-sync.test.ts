@@ -1,4 +1,4 @@
-import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { mkdtempSync, writeFileSync, rmSync, statSync } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -111,7 +111,7 @@ async function service() {
     filesDir: dir,
     }))
   process.env.NUXT_DB_PATH = `${dir}/test.db`
-  const { fileEventSyncRoute } = await import('../../../server/utils/file-event-sync-route')
+  const { fileEventSyncRoute } = await import('../../../layers/sme-roster/server/utils/file-event-sync-route')
   const app = createApp(),
     router = createRouter()
   for (const action of ['preflight', 'commit'] as const) {

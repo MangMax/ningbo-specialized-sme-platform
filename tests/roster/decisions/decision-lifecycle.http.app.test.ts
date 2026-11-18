@@ -1,6 +1,6 @@
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
-import { readOwnerArchive } from '../../../lib/platform/target-archive'
+import { readOwnerArchive } from '../../../layers/sme-roster/lib/platform/target-archive'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

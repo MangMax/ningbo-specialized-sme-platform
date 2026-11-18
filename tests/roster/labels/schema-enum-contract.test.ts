@@ -27,14 +27,14 @@ import {
   SOURCES,
   VERIFICATION_STATUSES,
   VERIFICATION_STATUS_ORDER,
-} from '../../../lib/labels'
+} from '../../../layers/sme-roster/lib/labels'
 import {
   FIRST_RECOGNITION_PENDING_REASON_VALUES,
   FIRST_RECOGNITION_STATUS_VALUES,
-} from '../../../lib/roster/first-recognition'
+} from '../../../layers/sme-roster/lib/roster/first-recognition'
 
 /**
- * 枚举取值只有**一份**:`db/schema.ts` 的列枚举(库层面的冻结)与 `lib/labels.ts` 的
+ * 枚举取值只有**一份**:`db/schema.ts` 的列枚举(库层面的冻结)与 `layers/sme-roster/lib/labels.ts` 的
  * 中文标签表(契约 §2 声明的「全表」)必须逐字对齐。
  *
  * 为什么值得单钉一条:写入侧的校验集现在**从既有常量派生**(不再逐个抄一遍),

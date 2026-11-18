@@ -1,10 +1,10 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
-import EnterpriseListTable from '../../../components/EnterpriseListTable.vue'
-import EnterpriseAliasSummary from '../../../components/EnterpriseAliasSummary.vue'
-import EnterpriseTitleSummary from '../../../components/EnterpriseTitleSummary.vue'
-import RosterEnterpriseTable from '../../../components/RosterEnterpriseTable.vue'
+import EnterpriseListTable from '../../../layers/sme-roster/app/components/EnterpriseListTable.vue'
+import EnterpriseAliasSummary from '../../../layers/sme-roster/app/components/EnterpriseAliasSummary.vue'
+import EnterpriseTitleSummary from '../../../layers/sme-roster/app/components/EnterpriseTitleSummary.vue'
+import RosterEnterpriseTable from '../../../layers/sme-roster/app/components/RosterEnterpriseTable.vue'
 import PreviewToolbar from '../../../layers/core/app/components/preview/PreviewToolbar.vue'
 
 const mounted: ReturnType<typeof mount>[] = []

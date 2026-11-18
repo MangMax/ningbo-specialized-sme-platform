@@ -29,7 +29,7 @@ import { TUS_ENDPOINT, baseName, formatEta, isFilenameSafe, toUploadFailure } fr
  * 队列**顺序上传一次一个**:文件库是单机磁盘,并发抢同一块盘没有收益,反而更难看清进度。
  * 传完一个自动开下一个。
  *
- * **只管传字节**:传完之后怎么登记进库由外面的容器决定(见 `lib/upload-register.ts`),
+ * **只管传字节**:传完之后怎么登记进库由外面的容器决定(见 `layers/sme-roster/lib/upload-register.ts`),
  * 面板通过 `uploaded` 事件把结果交出去 —— 所以这里既不写库,也不假设自己摆在哪种容器里,
  * 不带卡片外壳(容器负责排版;卡片套进弹窗会变成「卡片里套卡片」,DESIGN.md 明确不要)。
  */
@@ -58,7 +58,7 @@ const { emptyBatchMeta, validateBatch, isBatchComplete, buildMetadata, landingPa
 
 const emit = defineEmits<{
   /**
-   * 一份文件**已传完并落位**。交给外面的容器去登记(见 `lib/upload-register.ts`)——
+   * 一份文件**已传完并落位**。交给外面的容器去登记(见 `layers/sme-roster/lib/upload-register.ts`)——
    * 面板只管传字节,不管「登记进库」这件事怎么做。
    */
   (e: 'uploaded', file: { name: string; relPath: string; size: number; meta: Metadata }): void

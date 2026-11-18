@@ -1,4 +1,4 @@
-import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

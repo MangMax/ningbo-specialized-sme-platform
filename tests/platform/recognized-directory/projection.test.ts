@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseRecognizedRecord, RECOGNIZED_PROJECTION_RULE } from '../../../lib/platform/recognized-projection'
+import { parseRecognizedRecord, RECOGNIZED_PROJECTION_RULE } from '../../../layers/sme-roster/lib/platform/recognized-projection'
 
 describe('recognized_list typed projection parser', () => {
   it('projects only explicit source row facts and trims text', () => {

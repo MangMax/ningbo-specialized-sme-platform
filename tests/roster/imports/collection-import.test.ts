@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
-import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import { snapshotInput } from '../../../server/utils/difference-snapshot'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
+import { preflightRosterImport, commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import { snapshotInput } from '../../../layers/sme-roster/server/utils/difference-snapshot'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 const stores: ReturnType<typeof initializeDb>[]=[]
 const directories: string[]=[]
 afterEach(()=>{for(const db of stores.splice(0))db.$client.close();for(const directory of directories.splice(0))rmSync(directory,{recursive:true,force:true})})
@@ -54,7 +54,7 @@ it('rejects typed row count and projection mismatches without relaxing raw respo
 })
 
 it('reuses complete identical collections without adding queries relations observations or versions and advances last collection time', async()=>{
- const {reuseCollectedPlatformResult}=await import('../../../server/utils/platform-collection-reuse')
+ const {reuseCollectedPlatformResult}=await import('../../../layers/sme-roster/server/utils/platform-collection-reuse')
  const directory=mkdtempSync(join(tmpdir(),'collection-reuse-'));directories.push(directory)
  const db=initializeDb({create:true,dbPath:join(directory,'fixture.sqlite')});stores.push(db)
  const enterprise=db.$client.prepare('insert into enterprise(name,name_norm,uscc_norm) values(?,?,?) returning id').get('fixture','fixture','91330200123456789X') as {id:number}

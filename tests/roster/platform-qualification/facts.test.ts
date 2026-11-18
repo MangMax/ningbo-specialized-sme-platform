@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { platformBusinessFact, sourceDate, periodContains } from '../../../lib/roster/platform-qualification'
+import { platformBusinessFact, sourceDate, periodContains } from '../../../layers/sme-roster/lib/roster/platform-qualification'
 
 it('retains day boundaries and exact business timestamps without fabricating precision', () => {
   expect(sourceDate('2026-12-28')).toEqual({ raw: '2026-12-28', value: '2026-12-28', precision: 'day' })
@@ -24,20 +24,20 @@ it('retains unknown source status and never renews from an update or submission 
   expect(platformBusinessFact('apply_list', { declareKind: '新事项', status: '新状态 ', year: null, appliedAt: '2026-01-01' })).toMatchObject({ matter: 'unknown', conclusion: 'unknown', statusRaw: '新状态 ', matterRaw: '新事项', businessYear: null })
 })
 
-import { normalizeUscc } from '../../../lib/domain'
+import { normalizeUscc } from '../../../layers/sme-roster/lib/domain'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { createRuntimeSchema } from '../../../db/create-runtime'
-import { targetSchema } from '../../../lib/platform/target-schema'
-import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../lib/platform/collection-target-command'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformRawRow } from '../../../lib/platform/types'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
-import { processFactsFromRow } from '../../../lib/platform/identity'
-import { readPlatformQualificationFacts } from '../../../lib/roster/platform-qualification'
-import * as platformQualification from '../../../lib/roster/platform-qualification'
-import { createCurrentTargetContext } from '../../../lib/roster/current-target-context'
-import { createCurrentQualificationAssessmentReader } from '../../../lib/roster/current-qualification'
+import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
+import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../layers/sme-roster/lib/platform/collection-target-command'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformRawRow } from '../../../layers/sme-roster/lib/platform/types'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
+import { processFactsFromRow } from '../../../layers/sme-roster/lib/platform/identity'
+import { readPlatformQualificationFacts } from '../../../layers/sme-roster/lib/roster/platform-qualification'
+import * as platformQualification from '../../../layers/sme-roster/lib/roster/platform-qualification'
+import { createCurrentTargetContext } from '../../../layers/sme-roster/lib/roster/current-target-context'
+import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
 function collectionCommand(row: PlatformRawRow, queriedAt: string, source: PlatformLiveQueryResult['source'] = 'queryBusList'): NewCollectionTargetCommand {
   const evidence: PlatformLiveQueryResult = {
     source, status: 'success', effectiveConditions: source === 'businessList' ? { uscc: normalizeUscc(String(row.tyshxydm)), combination: 'and' } : { name: 'Example', combination: 'and' },

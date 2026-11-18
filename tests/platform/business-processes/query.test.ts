@@ -26,8 +26,8 @@ beforeAll(async () => {
   vi.stubGlobal('setHeader', vi.fn())
   vi.stubGlobal('setResponseStatus', vi.fn())
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-  rest = (await import('../../../server/api/platform/query.post')).default as any
-  const definition = (await import('../../../server/mcp/tools/query_platform')).default as any
+  rest = (await import('../../../layers/sme-roster/server/api/platform/query.post')).default as any
+  const definition = (await import('../../../layers/sme-roster/server/mcp/tools/query_platform')).default as any
   tool = async args => {
     const wire = await definition.handler(args)
     expect(JSON.parse(wire.content[0].text)).toEqual(wire.structuredContent)
@@ -115,16 +115,16 @@ it.each([
 ])('REST MCP and raw RPC reject unsupported conditions before upstream access (case %#)', async args => {
   expect(await query(args)).toMatchObject({ error: { code: 'invalid_input' } })
   await expect(tool(args)).rejects.toMatchObject({ statusCode: 400 })
-  const { platformQueryRpcError } = await import('../../../server/utils/mcp-platform-query')
+  const { platformQueryRpcError } = await import('../../../layers/sme-roster/server/utils/mcp-platform-query')
   const r = platformQueryRpcError({ method: 'tools/call', id: 2, params: { name: 'query_platform', arguments: args } })!
   expect(r.status).toBe(400)
   expect(await r.text()).not.toContain('synthetic-business-secret')
   expect(fetcher).not.toHaveBeenCalled()
 })
 it('raw RPC accepts supported title selection and capabilities declare its exact meaning', async () => {
-  const { platformQueryRpcError } = await import('../../../server/utils/mcp-platform-query')
+  const { platformQueryRpcError } = await import('../../../layers/sme-roster/server/utils/mcp-platform-query')
   for (const rdjb of ['1', '2', '3', 'all']) expect(platformQueryRpcError({ method: 'tools/call', params: { name: 'query_platform', arguments: { ...input, rdjb } } })).toBeNull()
-  const cap = (await import('../../../server/mcp/tools/get_platform_capabilities')).default as any
+  const cap = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_capabilities')).default as any
   expect((await cap.handler()).sources.businessList).toMatchObject({ available: true, conditions: ['uscc'], rdjb: ['1', '2', '3', 'all'], titleMeaning: { '1': '创新型中小企业', '2': '专精特新中小企业', '3': '小巨人' } })
 })
 it.each([{ maxRequests: 1 }, { maxRows: 1 }])('one operation safety budget includes all remaining titles for %j', async limits => {

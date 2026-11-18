@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb, schema } from '../../../../db/client'
 import { submitNativePlatformQuery } from '../../../platform/fixtures/native-query'
-import { commitRecordCorrespondences, preflightRecordCorrespondences, type CorrespondenceRequest } from '../../../../server/utils/record-correspondence'
+import { commitRecordCorrespondences, preflightRecordCorrespondences, type CorrespondenceRequest } from '../../../../layers/sme-roster/server/utils/record-correspondence'
 
 export function nativeCorrespondenceFixture() {
   const dir = mkdtempSync(join(tmpdir(), 'native-correspondence-'))

@@ -1,19 +1,19 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { listPlatformQueries } from '../../../lib/platform/read'
-import type { RosterImportRelation } from '../../../lib/roster-import-client'
+import { listPlatformQueries } from '../../../layers/sme-roster/lib/platform/read'
+import type { RosterImportRelation } from '../../../layers/sme-roster/lib/roster-import-client'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { createRosterImportClient } from '../../../lib/roster-import-client'
+import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
 import {
   getRosterEnterpriseDetail,
   listRosterDifferences,
   listRosterEnterprises,
-} from '../../../lib/roster/enterprise-roster'
-import type { PlatformInterface } from '../../../lib/labels'
+} from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import type { PlatformInterface } from '../../../layers/sme-roster/lib/labels'
 import { executeNativeImport, startRosterApi, type RosterApiServer } from '../imports/fixtures/import-server'
 
 /**

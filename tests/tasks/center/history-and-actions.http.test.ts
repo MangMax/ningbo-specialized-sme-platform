@@ -1,4 +1,4 @@
-import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -7,7 +7,7 @@ import { initializeDb, schema } from '../../../db/client'
 import { eq } from 'drizzle-orm'
 import { __resetJobRunner, clearJobSpecs, ensureJobRunnerReady, registerJob, submitJob, whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { newJobId } from '../../../layers/core/lib/job'
-import { handleTaskCenterRequest } from '../../../server/utils/task-center-http'
+import { handleTaskCenterRequest } from '../../../layers/sme-roster/server/utils/task-center-http'
 import { startHttpFixture, type HttpFixture, type FixtureRequest } from '../../support/http'
 
 let dir: string

@@ -1,4 +1,4 @@
-import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
+import { readCurrentQualificationAssessment } from '../../../layers/sme-roster/lib/roster/current-qualification'
 
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'

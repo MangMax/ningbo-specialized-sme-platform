@@ -2,8 +2,8 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Toaster, toast } from 'vue-sonner'
-import UploadDialog from '../../../components/sme-roster/RosterFileUploadDialog.vue'
-import type { UploadedFile } from '../../../lib/upload-register'
+import UploadDialog from '../../../layers/sme-roster/app/components/sme-roster/RosterFileUploadDialog.vue'
+import type { UploadedFile } from '../../../layers/sme-roster/lib/upload-register'
 import type { UploadFailure } from '../../../layers/core/lib/upload-transport'
 
 // Happy DOM lacks WAAPI; exercise vue-sonner's JS fallback (same setup as
@@ -63,7 +63,7 @@ describe('上传登记写路径操作反馈', () => {
     view = mount(UploadDialog, {
       attachTo: document.body,
       props: { open: true },
-      global: { stubs: { UploadPanel: UploadPanelStub } },
+      global: { stubs: { RosterUploadPanel: UploadPanelStub } },
     })
   }
   afterEach(() => { view?.unmount(); toast.dismiss(); toaster?.unmount(); document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.restoreAllMocks() })

@@ -7,9 +7,9 @@ import { isDeepStrictEqual } from 'node:util'
 import { createHash } from 'node:crypto'
 import { targetSchema as s } from '../target-schema'
 import { storedProcessProjection as p, processWriteObservation as o, storedProcessProjection } from './process-stored-schema'
-import { processMaterialization } from '../../lib/platform/process-materialization'
-import { captureSqlFactTitle } from '../../lib/platform/apply-stored-cells'
-import { rowSnapshot } from '../../lib/platform/sqlite-row-cells'
+import { processMaterialization } from '../../layers/sme-roster/lib/platform/process-materialization'
+import { captureSqlFactTitle } from '../../layers/sme-roster/lib/platform/apply-stored-cells'
+import { rowSnapshot } from '../../layers/sme-roster/lib/platform/sqlite-row-cells'
 import type { ProcessTargetInput } from './process-target-writer'
 export const PROCESS_STORED_KEYS=['exactStatus','exactDeclareKind','exactAppliedAt','exactYear','exactTitleRaw','exactBatch','exactAwardBatchLabel','exactProvince','exactStoredState','exactStoredRule','exactStoredOrigin','exactStoredReason','sqlFactTitle','sqlFactTitleState','sqlFactTitleRule','sqlFactTitleReason'] as const
 const fields=['status','declare_kind','applied_at','year','title_raw','batch','award_batch_label','province']

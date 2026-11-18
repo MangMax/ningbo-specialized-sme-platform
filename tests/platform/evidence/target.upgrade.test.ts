@@ -1,7 +1,7 @@
 import { finalEvidenceFixture } from '../fixtures/completed-upgrade'
 import { createHash } from 'node:crypto'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
@@ -9,10 +9,10 @@ import * as legacySchema from '../../../upgrade/legacy-schema'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { processReaderFixture } from '../fixtures/migrated-business-processes'
 import { readPlatformQueryEvidence } from '../oracles/legacy-evidence'
-import { writeNewCollectionTarget } from '../../../lib/platform/collection-target-command'
-import { targetSchema as s } from '../../../lib/platform/target-schema'
+import { writeNewCollectionTarget } from '../../../layers/sme-roster/lib/platform/collection-target-command'
+import { targetSchema as s } from '../../../layers/sme-roster/lib/platform/target-schema'
 import { eq } from 'drizzle-orm'
-import { readTargetPlatformEvidence } from '../../../lib/platform/target-evidence-read'
+import { readTargetPlatformEvidence } from '../../../layers/sme-roster/lib/platform/target-evidence-read'
 let f: ReturnType<typeof finalEvidenceFixture<Awaited<ReturnType<typeof processReaderFixture>>>>
 beforeAll(async()=>{ f=finalEvidenceFixture(await processReaderFixture(true,old=>{
   old.exec(`INSERT INTO platform_query(id,interface,query_key,rdjb,queried_at,status,raw_response,created_at) VALUES

@@ -19,7 +19,7 @@ import {
   listPlatformSnapshots,
   snapshotRowKey,
   type SnapshotRow,
-} from '../../../lib/platform-snapshots'
+} from '../../../layers/sme-roster/lib/platform-snapshots'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-snapshots-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))

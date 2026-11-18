@@ -2,7 +2,7 @@
 import { sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../legacy-schema'
-import { normalizeName, normalizeUscc } from '../../../lib/domain'
+import { normalizeName, normalizeUscc } from '../../../layers/sme-roster/lib/domain'
 
 /** Shared read seams for source-specific platform business projections. */
 export type Db = BetterSQLite3Database<typeof schema>

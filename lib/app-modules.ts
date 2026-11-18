@@ -1,5 +1,5 @@
 import core from '../layers/core/lib/core/manifest'
-import smeRoster from './sme-roster/manifest'
+import smeRoster from '../layers/sme-roster/manifest'
 import type { AppModuleManifest } from '../layers/core/lib/core/module-registry'
 
 const appModules = [core, smeRoster] as const

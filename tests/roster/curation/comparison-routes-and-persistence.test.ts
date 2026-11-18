@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { getCuratedComparison } from '../../../lib/curation'
+import { getCuratedComparison } from '../../../layers/sme-roster/lib/curation'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-curation-'))
 const path = join(dir, 'nested', 'annotations.json')
@@ -24,8 +24,8 @@ beforeAll(async () => {
   vi.stubGlobal('readBody', async () => body)
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: path }))
   vi.stubGlobal('createError', (opts: object) => Object.assign(new Error('Bad request'), opts))
-  get = (await import('../../../server/api/comparison.get')).default as unknown as typeof get
-  patch = (await import('../../../server/api/comparison/curated.patch')).default as unknown as typeof patch
+  get = (await import('../../../layers/sme-roster/server/api/comparison.get')).default as unknown as typeof get
+  patch = (await import('../../../layers/sme-roster/server/api/comparison/curated.patch')).default as unknown as typeof patch
   for (const [name, nameNorm, usccNorm, source, titleCode] of [
     ['甲公司', '甲公司', 'CODE', 'jxj', 'specialized_sme'],
     ['乙 公司(旧)', '乙公司旧', null, 'jxj', 'specialized_sme'],

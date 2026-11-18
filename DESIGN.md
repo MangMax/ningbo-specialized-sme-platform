@@ -1,6 +1,6 @@
 # 设计规范
 
-本文件把项目的 UI 约定固化成可检查的条目。规则的出处是代码本身：`layers/core/app/assets/css/tailwind.css`、`assets/css/statistics.css`、`components/`、`pages/`。改设计先改这里，再改代码。
+本文件把项目的 UI 约定固化成可检查的条目。规则的出处是代码本身：`layers/core/app/assets/css/tailwind.css`、`layers/sme-roster/app/assets/css/statistics.css`及两个 layer 下的 `app/components/`、`app/pages/`。改设计先改这里，再改代码。
 
 ## 1. 色板来源与语义角色
 
@@ -53,8 +53,8 @@
 
 | | 工作台 | 汇报看板 |
 | --- | --- | --- |
-| 样板页 | `pages/roster.vue`（企业列表） | `pages/stats.vue`（称号统计） |
-| 技术路线 | shadcn-vue 组件 + Tailwind 工具类 + `.data-table` 表格外壳 | `assets/css/statistics.css` 的 `stats-*` 专用类 |
+| 样板页 | `layers/sme-roster/app/pages/roster.vue`（企业列表） | `layers/sme-roster/app/pages/stats.vue`（称号统计） |
+| 技术路线 | shadcn-vue 组件 + Tailwind 工具类 + `.data-table` 表格外壳 | `layers/sme-roster/app/assets/css/statistics.css` 的 `stats-*` 专用类 |
 | 结构 | `PageHeader` + 筛选行 + `Card` 包 `.data-table` + `TablePagination` + 抽屉 | `stats-dashboard` > `stats-page-header` + `stats-metric-grid` + `stats-analysis-grid` + `stats-page-footer` |
 | 标签 | `Badge` 变体（tier/quiet/dashed/solid） | `stats-metric--{0,1,2}` 卡片直接消费 `--tier-*` token |
 
@@ -73,7 +73,7 @@
 
 ### 2.2 看板规则
 
-- `stats-*` 类由 `assets/css/statistics.css` 集中定义，页面 `import` 该文件即用；不在组件里散落同名样式。
+- `stats-*` 类由 `layers/sme-roster/app/assets/css/statistics.css` 集中定义，页面 `import` 该文件即用；不在组件里散落同名样式。
 - 数字：`stats-number-button` 大数字 + `tabular-nums`；`stats-tier-mark` 是 7px 方标，第三档用 `--chart-3` 金色呼应「国家级」语义（同样只做标记不做文字）。
 - 响应式断点与降级已在 statistics.css 内（1100/767px、1500px 加宽），新增 `stats-*` 样式沿用同一套媒体查询与 `prefers-reduced-motion` 全局关闭规则。
 
@@ -83,8 +83,8 @@
 | --- | --- | --- |
 | `layers/core/app/components/PageHeader.vue` | 页头：标题 + 一行说明 + 右侧 `actions` 插槽 | `description` 只写「这一页回答什么问题」，不写凑数介绍 |
 | `layers/core/app/components/StatTile.vue` | 概览数字砖：标签/大数字/说明 | 工作台与质量页通用；看板大数字走 `stats-number-button`，不用 StatTile |
-| `components/EnterpriseDrawer.vue` + `[data-floating-drawer]` | 企业详情侧抽屉，非模态 | 开抽屉不变暗、不锁表格；`back-query` 保筛选上下文 |
-| `components/StatsDetailSheet.vue` | 看板下钻明细 sheet | 配 `stats-sheet`/`stats-sheet-body` 类 |
+| `layers/sme-roster/app/components/EnterpriseDrawer.vue` + `[data-floating-drawer]` | 企业详情侧抽屉，非模态 | 开抽屉不变暗、不锁表格；`back-query` 保筛选上下文 |
+| `layers/sme-roster/app/components/StatsDetailSheet.vue` | 看板下钻明细 sheet | 配 `stats-sheet`/`stats-sheet-body` 类 |
 | `layers/core/app/components/FilterChip.vue` | 已生效筛选的可撤 chip | 一个 chip 一个条件，`remove` 即清 |
 | `layers/core/app/components/MultiSelectFilter.vue` | 多值筛选 | 与 `Select`（单值）分工，无原生 select |
 | 领域徽标：`TitleBadge` / `SourceChip` / `EventChip` / `DrillChip` | 称号梯度、来源级别、事件类型、下钻入口 | 全经 `Badge` 变体渲染；金标只给国家级 |

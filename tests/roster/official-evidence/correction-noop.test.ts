@@ -9,15 +9,15 @@ import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import * as schema from '../../../db/schema'
-import type { OfficialPublishedRow, RosterImportPayload, RosterImportRequest, RosterImportRecord } from '../../../lib/roster-import-client'
-import type { EvidenceCorrectionRequest } from '../../../server/utils/roster-evidence-correction'
-import { commitRosterImport, preflightRosterImport } from '../../../server/utils/roster-import'
+import type { OfficialPublishedRow, RosterImportPayload, RosterImportRequest, RosterImportRecord } from '../../../layers/sme-roster/lib/roster-import-client'
+import type { EvidenceCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-evidence-correction'
+import { commitRosterImport, preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 
-type Execute = typeof import('../../../server/utils/import-execution')['importExecutor']['execute']
+type Execute = typeof import('../../../layers/sme-roster/server/utils/import-execution')['importExecutor']['execute']
 const current = vi.hoisted((): { db?: BetterSQLite3Database<typeof schema>; filesDir: string } => ({ filesDir: '' }))
 vi.mock('@db', () => ({ useDb: () => { if (!current.db) throw new Error('Synthetic database not initialized'); return current.db } }))
 // Replace only process admission; real production routes/planners/writers run in H3/SQLite.
-vi.mock('../../../server/utils/import-execution', () => ({ importExecutor: { execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
+vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: { execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
 const closes: (() => void | Promise<void>)[] = []
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close() })
 afterAll(() => { vi.unstubAllGlobals() })
@@ -25,11 +25,11 @@ const router = createRouter()
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-r3', filesDir: current.filesDir }))
-  router.post('/api/roster/import/preflight', (await import('../../../server/api/roster/import/preflight.post')).default)
-  router.post('/api/roster/import/commit', (await import('../../../server/api/roster/import/commit.post')).default)
-  router.post('/api/roster/evidence/corrections/preflight', (await import('../../../server/api/roster/evidence/corrections/preflight.post')).default)
-  router.post('/api/roster/evidence/corrections/commit', (await import('../../../server/api/roster/evidence/corrections/commit.post')).default)
-  router.get('/api/roster/evidence/:id', (await import('../../../server/api/roster/evidence/[id].get')).default)
+  router.post('/api/roster/import/preflight', (await import('../../../layers/sme-roster/server/api/roster/import/preflight.post')).default)
+  router.post('/api/roster/import/commit', (await import('../../../layers/sme-roster/server/api/roster/import/commit.post')).default)
+  router.post('/api/roster/evidence/corrections/preflight', (await import('../../../layers/sme-roster/server/api/roster/evidence/corrections/preflight.post')).default)
+  router.post('/api/roster/evidence/corrections/commit', (await import('../../../layers/sme-roster/server/api/roster/evidence/corrections/commit.post')).default)
+  router.get('/api/roster/evidence/:id', (await import('../../../layers/sme-roster/server/api/roster/evidence/[id].get')).default)
 })
 const importResult = z.object({ status: z.string().optional(), batchId: z.number().optional(), items: z.array(z.unknown()).optional(), preflight: z.object({ conflicts: z.array(z.object({ error: z.object({ code: z.string() }) })), officialEvidencePlanHash: z.string().optional() }).optional() }).passthrough()
 const exactResult = z.object({ evidenceId: z.number(), eventId: z.number(), recordId: z.number(), enterpriseId: z.number(), version: z.string(), event: z.object({ revision: z.number() }), coordinate: z.object({ sourceFile: z.string(), attachment: z.string().nullable(), listNo: z.number().nullable(), page: z.number().nullable() }) })

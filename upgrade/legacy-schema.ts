@@ -1,8 +1,9 @@
 /** Frozen expand schema from HEAD ab503081dae3e24680afc9b07395a7e3ff21fc9f.
  * Original db/schema.ts SHA256: 9287138f2170847771f08f5529fd7c77e2363d53a5885f0770bdce304269e13c.
  * Declarations preserved for offline migration and historical oracles only. */
-import { businessStatusCell, businessStatusChecks } from '../lib/platform/business-status'
-import type { FormalValidity } from '../lib/roster/formal-validity'
+import { businessStatusCell, businessStatusChecks } from '../db/business-status'
+import type { FormalValidity } from '../db/record-event-formal-validity'
+import type { FilePart } from '../db/file-part'
 import { sql } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import {
@@ -221,7 +222,7 @@ export const storedFile = sqliteTable(
       .$defaultFn(() => new Date().toISOString()),
     /**
      * 移出文件库的时间。**软删除标志**:DELETE 默认只打这个标、不删磁盘。
-     * 有它回填才不会把刚移出的文件又插回来(回填是幂等的,见 `server/utils/stored-files.ts`)。
+     * 有它回填才不会把刚移出的文件又插回来(回填是幂等的,见 `layers/core/server/utils/stored-files.ts`)。
      */
     removedAt: text('removed_at'),
   },
@@ -287,7 +288,7 @@ export const storedFilePart = sqliteTable(
      */
     year: integer('year'),
     batch: integer('batch'),
-    /** 归一后的附件名(`附件` / `附件N`),见 `lib/attachment.ts`。可空(导出表无附件)。 */
+    /** 归一后的附件名(`附件` / `附件N`),见 `layers/sme-roster/lib/attachment.ts`。可空(导出表无附件)。 */
     attachment: text('attachment'),
     /** 该段的行数(这一段名单有多少条被台账引用)。 */
     rowCount: integer('row_count').notNull().default(0),
@@ -461,7 +462,7 @@ export const job = sqliteTable(
 // ===========================================================================
 // 名录生命周期契约(RL-01)—— 冻结的领域对象。
 //
-// 写入载荷类型见 `lib/roster-import-client.ts`,领域决策见
+// 写入载荷类型见 `layers/sme-roster/lib/roster-import-client.ts`,领域决策见
 // `docs/adr/2026-10-16-roster-lifecycle-model.md`。本段是**全仓共享基线**:
 // 只由 RL-01 落一次,后续票(RL-02..RL-11)**增量消费,不再改这里的列语义**。
 //
@@ -568,7 +569,7 @@ export const enterpriseAlias = sqliteTable(
     originalSourceRefId: integer('original_source_ref_id'),
     /** 当前别名解释；初始原值和来源单独冻结，历次变动追加审计。 */
     name: text('name').notNull(),
-    /** 归一化别名(与 `lib/domain.ts` 的 `normalizeName` 同规则),供按曾用名搜索。 */
+    /** 归一化别名(与 `layers/sme-roster/lib/domain.ts` 的 `normalizeName` 同规则),供按曾用名搜索。 */
     nameNorm: text('name_norm').notNull(),
     /** 来源类别:平台业务接口 / 平台申报接口 / 公布文件 / 人工登记。 */
     sourceKind: text('source_kind', {
@@ -643,7 +644,7 @@ export const platformQuery = sqliteTable(
     id: integer('id').primaryKey({ autoIncrement: true }),
     /** 独立来源：business_list / apply_list / recognized_list(queryBusList)。 */
     interface: text('interface', { enum: ['business_list', 'apply_list', 'recognized_list'] }).notNull(),
-    /** 查询键:统一社会信用代码,或 `name:<nameNorm>`(与 `lib/reconcile.ts` 同构)。 */
+    /** 查询键:统一社会信用代码,或 `name:<nameNorm>`(与 `layers/sme-roster/lib/reconcile.ts` 同构)。 */
     queryKey: text('query_key').notNull(),
     /**
      * `businessList` 的 `rdjb` 参数(认定级别):`1` 创新型 / `2` 专精特新中小企业 /
@@ -670,7 +671,7 @@ export const platformQuery = sqliteTable(
     /** 原始响应 / HTML 原文,供回溯。 */
     rawResponse: text('raw_response'),
     /** 原始逐来源采集结果，旧查询留 null；含原时间、页、条件及原行。 */
-    collectionEvidence: text('collection_evidence', { mode: 'json' }).$type<import('../lib/platform/live-query').PlatformLiveQueryResult>(),
+    collectionEvidence: text('collection_evidence', { mode: 'json' }).$type<import('../layers/sme-roster/lib/platform/live-query').PlatformLiveQueryResult>(),
     createdAt: text('created_at')
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -794,7 +795,7 @@ export const platformQueryLegacyProvenance = sqliteTable('platform_query_legacy_
   sourceIdentity: text('source_identity').notNull(),
   sourceSha256: text('source_sha256').notNull(),
   segmentIndex: integer('segment_index').notNull(),
-  collection: text('collection', { mode: 'json' }).notNull().$type<import('../lib/platform/legacy-provenance').LegacyPlatformCollection>(),
+  collection: text('collection', { mode: 'json' }).notNull().$type<import('../layers/sme-roster/lib/platform/legacy-provenance').LegacyPlatformCollection>(),
   inputFingerprint: text('input_fingerprint').notNull(),
   importBatchId: integer('import_batch_id').notNull().references(() => importBatch.id),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
@@ -1497,7 +1498,7 @@ export function differenceReasonFields() { return {
     titleCode: text('title_code')
       .notNull()
       .references(() => title.code),
-    /** 差异方向,与 `lib/comparison.ts` 的 `COMPARISON_DIRECTIONS` 同值。 */
+    /** 差异方向,与 `layers/sme-roster/lib/comparison.ts` 的 `COMPARISON_DIRECTIONS` 同值。 */
     direction: text('direction', {
       enum: ['missing_in_miit', 'extra_in_miit'],
     }).notNull(),
@@ -2043,7 +2044,7 @@ export const fileDeclaration669 = sqliteTable('file_declaration_669', {
   active: integer('active', { mode: 'boolean' }).notNull(),
   sha256: text('sha256').notNull(),
   contentVersion: text('content_version'),
-  part: text('part', { mode: 'json' }).$type<import('../lib/file-parts').FilePart>().notNull(),
+  part: text('part', { mode: 'json' }).$type<FilePart>().notNull(),
   pageRanges: text('page_ranges', { mode: 'json' }).$type<{ start: number; end: number }[] | null>(),
 }, t => [index('file_declaration_669_file_idx').on(t.fileId)])
 

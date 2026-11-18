@@ -1,4 +1,4 @@
-import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
@@ -60,10 +60,10 @@ export function currentQualificationFixture() {
 
 // Native synthetic policy fixtures.
 import { eq } from 'drizzle-orm'
-import type { CurrentTitle } from '../../../lib/roster/current-titles'
-import type { PlatformRow } from '../../../lib/platform/types'
+import type { CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-titles'
+import type { PlatformRow } from '../../../layers/sme-roster/lib/platform/types'
 import { reviewCurrentExportDecision } from './qualification-decisions'
-import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../server/utils/record-correspondence'
+import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

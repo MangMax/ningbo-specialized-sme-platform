@@ -4,9 +4,9 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterEach, expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
-import { refreshEnterpriseDifferences, readEnterpriseDifferenceComparisons } from '../../../server/utils/enterprise-difference-refresh'
-import { createCurrentQualificationAssessmentReader } from '../../../lib/roster/current-qualification'
-import { selectEnterpriseCoordinates } from '../../../lib/roster/enterprise-list-selection'
+import { refreshEnterpriseDifferences, readEnterpriseDifferenceComparisons } from '../../../layers/sme-roster/server/utils/enterprise-difference-refresh'
+import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { selectEnterpriseCoordinates } from '../../../layers/sme-roster/lib/roster/enterprise-list-selection'
 const close: Database.Database[]=[]
 afterEach(()=>{for(const d of close.splice(0))d.close()})
 function fixture(){

@@ -25,7 +25,7 @@ import { completeReconcileSlotCapture } from './reconcile-slot-capture'
 import { retirePlatformModel } from './retire-platform-model'
 import { upgradeRosterFileClassification } from './roster-file-classification'
 import { RECONCILE_SLOT_T04 } from './frozen/reconcile-slot-capture'
-import { BUSINESS_STATUS_V2 } from '../lib/platform/business-status'
+import { BUSINESS_STATUS_V2 } from '../db/business-status'
 import { withFinalUpgradeIntegrity } from './integrity-policy'
 
 function cloneDatabase(from: string, into: string) {

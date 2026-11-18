@@ -6,8 +6,8 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../server/utils/record-correspondence'
-import { readEventAnnualProcess } from '../../../server/utils/event-annual-process-read'
+import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
+import { readEventAnnualProcess } from '../../../layers/sme-roster/server/utils/event-annual-process-read'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'annual258-wire-')), dbPath = join(dir, 'isolated.db')

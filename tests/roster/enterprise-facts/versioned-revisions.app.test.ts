@@ -1,5 +1,5 @@
 import '../../support/compiled-enterprise-reader'
-import { enterpriseReads } from '../../../server/utils/enterprise-read'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { initializeDb } from '../../../db/client'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'
@@ -19,11 +19,11 @@ beforeAll(async () => {
   vi.doMock('@db', () => ({ useDb: () => db }))
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
   mcp = {}
-  for (const name of ['get_enterprise_facts', 'preflight_enterprise_fact', 'commit_enterprise_fact']) mcp[name] = (await import(`../../../server/mcp/tools/${name}.ts`)).default
-  const get = (await import('../../../server/api/roster/enterprises/[id]/facts.get')).default
-  const preflight = (await import('../../../server/api/roster/enterprises/[id]/facts/preflight.post')).default
-  const commit = (await import('../../../server/api/roster/enterprises/[id]/facts/commit.post')).default
-  const detail = (await import('../../../server/api/roster/enterprises/[id].get')).default
+  for (const name of ['get_enterprise_facts', 'preflight_enterprise_fact', 'commit_enterprise_fact']) mcp[name] = (await import(`../../../layers/sme-roster/server/mcp/tools/${name}.ts`)).default
+  const get = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id]/facts.get')).default
+  const preflight = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id]/facts/preflight.post')).default
+  const commit = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id]/facts/commit.post')).default
+  const detail = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default
   server = createServer(toNodeListener(createApp().use(createRouter().get('/:id/detail', detail).get('/:id', get).post('/:id/preflight', preflight).post('/:id/commit', commit))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
@@ -115,7 +115,7 @@ it('same-input shadow retains legacy IDs heads aliases and moved-in columns; fai
 })
 
 it('confirmed past independent facts exclude through the existing qualification reader without changing legacy storage', async () => {
-  const { readCurrentQualificationAssessment } = await import('../../../lib/roster/current-qualification')
+  const { readCurrentQualificationAssessment } = await import('../../../layers/sme-roster/lib/roster/current-qualification')
   const id = seed()
   const read = () => readCurrentQualificationAssessment(db.$client, id).titles.find(t => t.titleCode === 'specialized_sme')!
   const input = await command(id, { action: 'assert', fact })
@@ -128,7 +128,7 @@ it('confirmed past independent facts exclude through the existing qualification 
   expect(detail.body.qualificationAssessment.titles.find((t: any) => t.titleCode === 'specialized_sme').region.status).toBe('outside_ningbo')
 })
 it('conservative intervals preserve precision and unknown registration never implies termination', async () => {
-  const { readCurrentQualificationAssessment } = await import('../../../lib/roster/current-qualification')
+  const { readCurrentQualificationAssessment } = await import('../../../layers/sme-roster/lib/roster/current-qualification')
   for (const [kind, effective, region, subject] of [
     ['moved_out', { precision: 'year', value: '2026' }, 'unresolved', 'unresolved'],
     ['moved_out', { precision: 'month', value: '2026-11' }, 'unresolved', 'unresolved'],
@@ -146,7 +146,7 @@ it('conservative intervals preserve precision and unknown registration never imp
   }
 })
 it('native qualification consumes confirmed facts and withdrawal preserves immutable lifecycle revisions', async () => {
-  const { readCurrentQualificationAssessment } = await import('../../../lib/roster/current-qualification')
+  const { readCurrentQualificationAssessment } = await import('../../../layers/sme-roster/lib/roster/current-qualification')
   const id=seed(),read=()=>readCurrentQualificationAssessment(db.$client,id,Date.parse('2026-11-04T00:00:00Z')).titles.find(t=>t.titleCode==='specialized_sme')!
   expect(read().region.status).toBe('not_established')
   const first=await commit(id,await command(id,{action:'assert',fact}))
@@ -164,7 +164,7 @@ it('native qualification consumes confirmed facts and withdrawal preserves immut
   expect(read().versions.facts).not.toBe(version)
 })
 it('difference commands pin multiple owned confirmed revisions and reject cross-enterprise stale or pending references', async () => {
-  const { saveDecision102 } = await import('../../../server/utils/decision-lifecycle-102')
+  const { saveDecision102 } = await import('../../../layers/sme-roster/server/utils/decision-lifecycle-102')
   const id = seed(), other = seed(), refs: any[] = []
   for (const kind of ['moved_out', 'cancelled']) {
     const first = await commit(id, await command(id, { action: 'assert', fact: { ...fact, kind } }))
@@ -180,7 +180,7 @@ it('difference commands pin multiple owned confirmed revisions and reject cross-
   expect(JSON.parse(row.fact_references)).toEqual(refs)
 })
 it('overlapping opposite migrations stay pending and confirmed cancellation survives a later migration', async () => {
-  const { readCurrentQualificationAssessment } = await import('../../../lib/roster/current-qualification')
+  const { readCurrentQualificationAssessment } = await import('../../../layers/sme-roster/lib/roster/current-qualification')
   const id = seed(), read = () => readCurrentQualificationAssessment(db.$client, id, Date.parse('2026-11-04T00:00:00Z')).titles[0]!
   for (const kind of ['moved_in', 'moved_out', 'cancelled', 'moved_in']) {
     const first = await commit(id, await command(id, { action: 'assert', fact: { ...fact, kind, effective: { precision: 'year', value: kind === 'moved_in' ? '2024' : '2024' } } }))

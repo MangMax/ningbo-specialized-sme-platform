@@ -2,16 +2,16 @@ import { createRuntimeSchema } from '../../../db/create-runtime'
 import { tmpdir } from 'node:os'
 import { mkdirSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { resolveLegacyReference } from '../../../lib/platform/target-archive'
+import { resolveLegacyReference } from '../../../layers/sme-roster/lib/platform/target-archive'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { copyFileSync, mkdtempSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { targetSchema } from '../../../lib/platform/target-schema'
-import { writeNewCollectionTarget, writeCollectionTarget, type NewCollectionTargetCommand } from '../../../lib/platform/collection-target-command'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformLiveQueryResult, PlatformQuerySource } from '../../../lib/platform/live-query'
+import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
+import { writeNewCollectionTarget, writeCollectionTarget, type NewCollectionTargetCommand } from '../../../layers/sme-roster/lib/platform/collection-target-command'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformLiveQueryResult, PlatformQuerySource } from '../../../layers/sme-roster/lib/platform/live-query'
 
 
 // Current replay owns no historical schema or migrated oracle.
@@ -45,7 +45,7 @@ function bytes(sqlite: Database.Database) {
   for (const offset of [24, 92]) result.fill(0, offset, offset + 4)
   return result
 }
-function replay(input: NewCollectionTargetCommand, mutate: (q: import('../../../lib/roster-import-client').RosterImportPlatformQuery) => void) {
+function replay(input: NewCollectionTargetCommand, mutate: (q: import('../../../layers/sme-roster/lib/roster-import-client').RosterImportPlatformQuery) => void) {
   const q = JSON.parse(input.queryText)
   mutate(q)
   return { ...input,queryText:JSON.stringify(q),evidenceText:q.collectionEvidence == null ? null : JSON.stringify(q.collectionEvidence) }

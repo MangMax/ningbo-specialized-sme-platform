@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url'
 import { defineNuxtConfig } from 'nuxt/config'
 import { addTypeTemplate } from 'nuxt/kit'
 import { actualSessionEntryProfile, configureSessionVirtuals, installSessionOverlay, registerSessionFrontend } from './layers/core/mcp-session-nuxt'
+import { installRosterWorkers } from './layers/sme-roster/nuxt-workers'
 import tailwindcss from '@tailwindcss/vite'
-import { TASK_EXPORTS } from './lib/sme-roster/task-exports'
 import { LOG_ICON_IDS } from './layers/core/app/components/logs/logIcons'
 import { getAppModules } from './lib/app-modules'
 import { validateAppModules } from './layers/core/lib/core/module-registry'
@@ -25,7 +25,7 @@ const runtimeWatchIgnores = runtimeDirectories.map(dir => `${fileURLToPath(new U
 
 // SPA only — no SSR. Everything runs in the browser against Nitro server routes.
 export default defineNuxtConfig({
-  extends: ['./layers/core'],
+  extends: ['./layers/core', './layers/sme-roster'],
   // Concurrent owned dev fixtures must not share generated files or Nuxt's lock.
   buildDir: process.env.NUXT_BUILD_DIR || '.nuxt',
   compatibilityDate: '2026-10-13',
@@ -44,9 +44,8 @@ export default defineNuxtConfig({
     '@pinia/colada-nuxt',
     '@vueuse/nuxt',
     'nuxt-charts',
-    // MCP server(票 18):声明式 —— `server/mcp/tools/*.ts` 里每个能力一个文件,
-    // 模块扫出来注册到 `POST /mcp`。默认 handler(身份/说明书/写入鉴权)在
-    // `server/mcp/index.ts`。
+    // MCP tool definitions are discovered in the installed layers. The
+    // application handler and transport contract live in server/mcp/index.ts.
     '@nuxtjs/mcp-toolkit',
     'evlog/nuxt',
     '@nuxt/icon',
@@ -87,16 +86,6 @@ export default defineNuxtConfig({
     include: ['LineChart', 'DonutChart'],
   },
 
-  // shadcn-vue components live under components/ui/*; use bare names (<Card>, <Button>)
-  // and skip the index.ts barrels so they don't collide with the .vue files.
-  components: [
-    {
-      path: '~/components',
-      pathPrefix: false,
-      ignore: ['**/index.ts'],
-    },
-  ],
-
   css: ['#core/app/assets/css/tailwind.css'],
 
   // tus 上传端点(server/utils/tus.ts)用到的路径与来源白名单。
@@ -104,12 +93,6 @@ export default defineNuxtConfig({
   // 推路径(打包后它指向 .nuxt 入口)。生产/测试用 NUXT_FILES_DIR /
   // NUXT_INCOMING_DIR / NUXT_TUS_ALLOWED_ORIGINS 覆盖。
   runtimeConfig: {
-    // 本地人工标注;生产/测试可用 NUXT_CURATED_PATH 覆盖。
-    curatedPath: fileURLToPath(new URL('./data/reconciliation-curated.json', import.meta.url)),
-    // 平台解释缓存(票 16):由 `../pipeline` 的 `pnpm reconcile` 写进本仓库的 `data/`
-    // —— 与 roster.db 同一流向(pipeline ──写──▶ app/data,app 只读),app **不**反向依赖 pipeline。
-    // 读不到就只是没有解释,比对本身不受影响。生产/测试可用 NUXT_RECONCILE_PATH 覆盖。
-    reconcilePath: fileURLToPath(new URL('./data/platform-reconcile.json', import.meta.url)),
     filesDir: fileURLToPath(new URL('./files', import.meta.url)),
     incomingDir: fileURLToPath(new URL('./.incoming', import.meta.url)),
     // 跨源白名单(逗号分隔);默认只放行本机开发来源,避免 tus 默认的 `*`。
@@ -186,14 +169,6 @@ export default defineNuxtConfig({
         fileURLToPath(new URL('./layers/core/server/logging-error-handler.ts', import.meta.url)),
         ...errorHandlers.filter((handler): handler is string => !!handler && !(handler.includes('/evlog/') && handler.includes('/nitro/errorHandler'))),
       ]
-      // Register the lazy virtual source before Rollup constructs its plugins;
-      // evaluate after handler scanning, when this build's route set is known.
-      nitro.options.virtual['#current-export-routes'] = () => {
-        const handlers = [...nitro.scannedHandlers, ...nitro.options.handlers]
-        const routes = TASK_EXPORTS.filter(entry => handlers.some(h => h.route === entry.path && h.method === 'post'))
-          .map(({ titleCode, path }) => ({ titleCode, path }))
-        return `export default ${JSON.stringify(routes)}`
-      }
     },
   },
   nitro: {
@@ -213,63 +188,8 @@ export default defineNuxtConfig({
             return { code, map: null }
           } },
         }]
-        // Emit an actual worker entry through the same dependency/external
-        // packaging pipeline as the server. Rollup computes a relocatable URL
-        // from the launcher's final chunk, including in Nitro dev builds.
-        for (const worker of [
-          { location: './server/utils/enterprise-read-worker-location.ts', entry: './lib/roster/enterprise-read-worker.ts', fileName: 'enterprise-read-worker.mjs', factory: 'createEnterpriseWorker', chunk: 'enterprise-read-model' },
-          { location: './server/utils/import-execution-worker-location.ts', entry: './lib/roster/import-execution-worker.ts', fileName: 'import-execution-worker.mjs', factory: 'createImportExecutionWorker', chunk: 'import-execution-model' },
-          { location: './server/utils/current-export-worker-location.ts', entry: './lib/roster/current-export-worker.ts', fileName: 'current-export-worker.mjs', factory: 'createCurrentExportWorker', chunk: 'current-export-model' },
-        ]) {
-          const location = fileURLToPath(new URL(worker.location, import.meta.url))
-          const entry = fileURLToPath(new URL(worker.entry, import.meta.url))
-          let reference: string
-          const plugin = {
-            name: worker.fileName,
-            buildStart(this: { emitFile(file: { type: 'chunk'; id: string; fileName: string }): string }) {
-              reference = this.emitFile({ type: 'chunk', id: entry, fileName: worker.fileName })
-            },
-            resolveFileUrl({ referenceId, relativePath }: { referenceId: string; relativePath: string }) {
-              if (referenceId === reference) return `new URL(${JSON.stringify(relativePath)}, _import_meta_url_).href`
-            },
-            transform: {
-              order: 'post' as const,
-              handler(_code: string, id: string) {
-                if (id !== location) return
-                return { code: `import { createEnterpriseReadProcess } from ${JSON.stringify(fileURLToPath(new URL('./server/utils/enterprise-read-process.ts', import.meta.url)))};
-                  export function ${worker.factory}() {
-                    return createEnterpriseReadProcess(new URL(import.meta.ROLLUP_FILE_URL_${reference}));
-                  }`, map: null }
-              },
-            },
-          }
-          config.plugins = [config.plugins, plugin]
-          for (const output of Array.isArray(config.output) ? config.output : [config.output]) {
-            if (!output) continue
-            // Nitro dev normally inlines one entry. A native worker is a second
-            // entry and must keep its own module graph in dev as in production.
-            output.inlineDynamicImports = false
-            const original = output.manualChunks
-            const dependencies = new Set<string>()
-            output.manualChunks = (id: string, api: { getModuleInfo(id: string): { isExternal: boolean; importedIds: string[] } | null }) => {
-              if (!dependencies.size) {
-                const visit = (moduleId: string) => {
-                  if (dependencies.has(moduleId)) return
-                  const info = api.getModuleInfo(moduleId)
-                  if (!info || info.isExternal) return
-                  dependencies.add(moduleId)
-                  for (const imported of info.importedIds) visit(imported)
-                }
-                visit(entry)
-              }
-              // Keep the worker's complete business graph independent of Nitro's
-              // app initialization chunk, preserving Nitro's normal grouping.
-              if (id !== entry && dependencies.has(id)) return worker.chunk
-              if (typeof original === 'function') return original(id, api)
-              if (id.includes('/nitropack/dist/runtime/') || id.includes('/nitropack/dist/presets/')) return 'nitro'
-            }
-          }
-        }
+        // Nitro merges same-named hooks as config values. Compose both here.
+        installRosterWorkers(config)
       },
     },
     experimental: { openAPI: true },
@@ -288,6 +208,7 @@ export default defineNuxtConfig({
 
   alias: {
     '#core': fileURLToPath(new URL('./layers/core', import.meta.url)),
+    '#sme-roster': fileURLToPath(new URL('./layers/sme-roster', import.meta.url)),
     '@db': fileURLToPath(new URL('./db', import.meta.url)),
   },
 

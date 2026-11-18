@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { getComparison } from '../../../lib/comparison'
-import { attachPlatformEvidence } from '../../../lib/comparison-platform'
+import { getComparison } from '../../../layers/sme-roster/lib/comparison'
+import { attachPlatformEvidence } from '../../../layers/sme-roster/lib/comparison-platform'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-comparison-platform-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'comparison-platform.db') })

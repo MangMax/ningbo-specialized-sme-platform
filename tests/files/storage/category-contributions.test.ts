@@ -8,7 +8,7 @@ import { initializeDb } from '../../../db/client'
 import { rosterFileClassification, storedFile } from '../../../db/schema'
 import { createFileStore, sha256Of, type FileCategoryServer, type FileStoreDb, type FileQueryFilters, type RegistrationWriter } from '../../../layers/core/server/utils/file-store'
 import { extendFileOpenApi } from '../../../layers/core/server/utils/file-openapi'
-import { rosterFileServerCategory } from '../../../server/modules/sme-roster/files'
+import { rosterFileServerCategory } from '../../../layers/sme-roster/server/modules/sme-roster/files'
 import { createTus, TUS_PATH } from '../../../layers/core/server/utils/tus'
 
 let dir: string

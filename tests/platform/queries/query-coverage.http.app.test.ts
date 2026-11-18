@@ -1,6 +1,6 @@
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { submitNativePlatformQuery } from '../fixtures/native-query'
-import type { RosterImportPlatformQuery } from '../../../lib/roster-import-client'
+import type { RosterImportPlatformQuery } from '../../../layers/sme-roster/lib/roster-import-client'
 import { assertEnterpriseDetailSnapshotEqual } from '../../roster/assertions/enterprise-detail-snapshot'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'

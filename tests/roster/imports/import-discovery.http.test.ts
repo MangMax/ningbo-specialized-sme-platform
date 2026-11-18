@@ -6,12 +6,12 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
-import { rosterImportMcpPayloadSchema } from '../../../server/utils/roster-import-schema'
-import { commitRosterImport, preflightRosterImport, readImportBatchOutcome } from '../../../server/utils/roster-import'
+import { rosterImportMcpPayloadSchema } from '../../../layers/sme-roster/server/utils/roster-import-schema'
+import { commitRosterImport, preflightRosterImport, readImportBatchOutcome } from '../../../layers/sme-roster/server/utils/roster-import'
 import { startRosterApi } from './fixtures/import-server'
-import { listEnterprises } from '../../../server/utils/mcp-roster'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import { getPlatformExportRows, listPlatformSnapshots } from '../../../lib/platform-snapshots'
+import { listEnterprises } from '../../../layers/sme-roster/server/utils/mcp-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { getPlatformExportRows, listPlatformSnapshots } from '../../../layers/sme-roster/lib/platform-snapshots'
 
 it('preserves legacy HTTP item errors, numeric normalization and idempotent receipts after MCP discovery parsing', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'issue315-'))

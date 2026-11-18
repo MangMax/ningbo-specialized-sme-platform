@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { getRecordComparison, listRecordComparisonSources, previewRecordCorrespondenceImpact } from '../../../server/utils/record-comparison'
+import { getRecordComparison, listRecordComparisonSources, previewRecordCorrespondenceImpact } from '../../../layers/sme-roster/server/utils/record-comparison'
 
 const cleanup: Array<() => void> = []
 afterEach(() => cleanup.splice(0).forEach(fn => fn()))

@@ -4,11 +4,11 @@ import {join} from 'node:path'
 import {afterAll,describe,expect,it} from 'vitest'
 import {initializeDb} from '../../../db/client'
 import * as schema from '../../../db/schema'
-import {preflightRosterImport,commitRosterImport,planRosterImport} from '../../../server/utils/roster-import'
-import type {RosterImportRequest} from '../../../lib/roster-import-client'
+import {preflightRosterImport,commitRosterImport,planRosterImport} from '../../../layers/sme-roster/server/utils/roster-import'
+import type {RosterImportRequest} from '../../../layers/sme-roster/lib/roster-import-client'
 import {createSemanticRecorder} from './assertions/import-semantics'
 import {businessSource} from './fixtures/native-import'
-import {listPlatformQueries} from '../../../lib/platform/read'
+import {listPlatformQueries} from '../../../layers/sme-roster/lib/platform/read'
 const dirs:string[]=[]
 function makeDb(){const dir=mkdtempSync(join(tmpdir(),'native-import-semantics-'));dirs.push(dir);return initializeDb({create:true,dbPath:join(dir,'native.sqlite')})}
 afterAll(()=>{for(const dir of dirs)rmSync(dir,{recursive:true,force:true})})

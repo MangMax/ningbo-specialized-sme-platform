@@ -11,9 +11,9 @@ import { candidateFixture } from '../fixtures/candidate-scope-upgrade'
 import { finalizeCandidateScopes } from '../../../upgrade/candidate-scope'
 import { finalizeRecognizedStored } from '../../../upgrade/recognized-stored'
 import { ensurePlatformObservation } from '../../../upgrade/frozen/server/platform-business-record'
-import { recognizedFilterFacts } from '../../../lib/roster/recognized-filter-facts'
+import { recognizedFilterFacts } from '../../../layers/sme-roster/lib/roster/recognized-filter-facts'
 import { createRecognizedFilterSourceReader } from '../../../upgrade/frozen/recognized-filter-source'
-import { sourcePositionForSequence, RDJB_TITLE_CODES } from '../../../lib/platform/recognized-evidence'
+import { sourcePositionForSequence, RDJB_TITLE_CODES } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 
 type Case = { conditionValue?: string | number | null; name: string; text: string | Buffer | null; gate: boolean | 'sql_error'; position?: string | null | 'reject' | 'TypeError'; sequence?: number; supplement?: boolean }
 const page = (count: string, rdjb = '1') => `{"status":"success","rdjb":"${rdjb}","fetchedCount":${count},"page":1}`

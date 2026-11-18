@@ -8,7 +8,7 @@ const scopeOf = getAppModules().find(module => module.id === 'sme-roster')!.file
  * RL-16(票 #17)—— 文件库**入库范围规则**的规则层测试。
  *
  * 这些是**纯函数**用例:给一个库内相对路径 + 同目录兄弟名,回答「入不入库、为什么」。
- * 规则被 `server/utils/stored-files.ts` 的回填真的用上(见 `stored-file.test.ts` 的
+ * 规则被 `layers/core/server/utils/stored-files.ts` 的回填真的用上(见 `stored-file.test.ts` 的
  * 「入库范围」一节)—— 所以这里钉住的是**行为**,不是一份散文。
  *
  * 判据的出处:`lib/file-store-scope.ts` 的「入库范围」一节 +

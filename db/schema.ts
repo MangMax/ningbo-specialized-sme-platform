@@ -1,6 +1,7 @@
-import { businessStatusCell, businessStatusChecks } from '../lib/platform/business-status'
-import type { CredentialKey } from '../lib/app-modules'
-import type { FormalValidity } from '../lib/roster/formal-validity'
+import { businessStatusCell, businessStatusChecks } from './business-status'
+import type { FilePart } from './file-part'
+import type { FormalValidity } from './record-event-formal-validity'
+import type { DispositionFact } from './title-cycle-disposition'
 import { sql } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import {
@@ -23,7 +24,7 @@ const exactCell = customType<{ data: unknown; driverData: unknown }>({ dataType:
 
 /** 后台外部服务凭据。仅配置服务读取，不加入台账导出或任务历史。 */
 export const serviceCredential = sqliteTable('service_credential', {
-  key: text('key').$type<CredentialKey>().primaryKey(),
+  key: text('key').primaryKey(),
   value: text('value').notNull(),
   updatedAt: text('updated_at').notNull(),
 })
@@ -199,7 +200,7 @@ export const storedFile = sqliteTable(
       .$defaultFn(() => new Date().toISOString()),
     /**
      * 移出文件库的时间。**软删除标志**:DELETE 默认只打这个标、不删磁盘。
-     * 有它回填才不会把刚移出的文件又插回来(回填是幂等的,见 `server/utils/stored-files.ts`)。
+     * 有它回填才不会把刚移出的文件又插回来(回填是幂等的,见 `layers/core/server/utils/stored-files.ts`)。
      */
     removedAt: text('removed_at'),
   },
@@ -298,7 +299,7 @@ export const storedFilePart = sqliteTable(
      */
     year: integer('year'),
     batch: integer('batch'),
-    /** 归一后的附件名(`附件` / `附件N`),见 `lib/attachment.ts`。可空(导出表无附件)。 */
+    /** 归一后的附件名(`附件` / `附件N`),见 `layers/sme-roster/lib/attachment.ts`。可空(导出表无附件)。 */
     attachment: text('attachment'),
     /** 该段的行数(这一段名单有多少条被台账引用)。 */
     rowCount: integer('row_count').notNull().default(0),
@@ -473,7 +474,7 @@ export const job = sqliteTable(
 // ===========================================================================
 // 名录生命周期契约(RL-01)—— 冻结的领域对象。
 //
-// 写入载荷类型见 `lib/roster-import-client.ts`,领域决策见
+// 写入载荷类型见 `layers/sme-roster/lib/roster-import-client.ts`,领域决策见
 // `docs/adr/2026-10-16-roster-lifecycle-model.md`。本段是**全仓共享基线**:
 // 只由 RL-01 落一次,后续票(RL-02..RL-11)**增量消费,不再改这里的列语义**。
 //
@@ -582,7 +583,7 @@ export const enterpriseAlias = sqliteTable(
     originalSourceRefId: integer('original_source_ref_id'),
     /** 当前别名解释；初始原值和来源单独冻结，历次变动追加审计。 */
     name: text('name').notNull(),
-    /** 归一化别名(与 `lib/domain.ts` 的 `normalizeName` 同规则),供按曾用名搜索。 */
+    /** 归一化别名(与 `layers/sme-roster/lib/domain.ts` 的 `normalizeName` 同规则),供按曾用名搜索。 */
     nameNorm: text('name_norm').notNull(),
     /** 来源类别:平台业务接口 / 平台申报接口 / 公布文件 / 人工登记。 */
     sourceKind: text('source_kind', {
@@ -1394,7 +1395,7 @@ export function differenceReasonFields() { return {
     titleCode: text('title_code')
       .notNull()
       .references(() => title.code),
-    /** 差异方向,与 `lib/comparison.ts` 的 `COMPARISON_DIRECTIONS` 同值。 */
+    /** 差异方向,与 `layers/sme-roster/lib/comparison.ts` 的 `COMPARISON_DIRECTIONS` 同值。 */
     direction: text('direction', {
       enum: ['missing_in_miit', 'extra_in_miit'],
     }).notNull(),
@@ -1893,7 +1894,7 @@ export const fileDeclaration669 = sqliteTable('file_declaration_669', {
   active: integer('active', { mode: 'boolean' }).notNull(),
   sha256: text('sha256').notNull(),
   contentVersion: text('content_version'),
-  part: text('part', { mode: 'json' }).$type<import('../lib/file-parts').FilePart>().notNull(),
+  part: text('part', { mode: 'json' }).$type<FilePart>().notNull(),
   pageRanges: text('page_ranges', { mode: 'json' }).$type<{ start: number; end: number }[] | null>(),
 }, t => [index('file_declaration_669_file_idx').on(t.fileId)])
 
@@ -2034,7 +2035,7 @@ export const titleCycleDispositionRevision = sqliteTable('title_cycle_dispositio
   cycleRevision: integer('cycle_revision'),
   effectivePrecision: text('effective_precision', { enum: ['unknown', 'year', 'month', 'day'] }).notNull(),
   effectiveValue: text('effective_value'),
-  fact: text('fact', { mode: 'json' }).$type<import('../server/utils/title-cycle-disposition').DispositionFact>().notNull(),
+  fact: text('fact', { mode: 'json' }).$type<DispositionFact>().notNull(),
   audit: text('audit', { mode: 'json' }).$type<unknown>().notNull(),
 }, t => [
   unique().on(t.id, t.revision),

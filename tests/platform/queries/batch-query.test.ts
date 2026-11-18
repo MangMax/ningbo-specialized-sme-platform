@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
 import { updateCredential } from '../../../layers/core/server/utils/credential-state'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
-import { handlePlatformBatchRequest } from '../../../server/utils/platform-batch-http'
-import { MAX_BATCH_ATTEMPTS } from '../../../lib/platform/batch-query'
+import { handlePlatformBatchRequest } from '../../../layers/sme-roster/server/utils/platform-batch-http'
+import { MAX_BATCH_ATTEMPTS } from '../../../layers/sme-roster/lib/platform/batch-query'
 
 const dir = mkdtempSync(join(tmpdir(), 'platform-batch-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'test.sqlite') })
@@ -121,7 +121,7 @@ it.each([
   ['result maximum', { items: [{ query: { source: 'queryList', name: '合成' } }], limits: { maxResultBytes: 8388609 } }],
   ['unknown root', { items: [{ query: { source: 'queryList', name: '合成' } }], cookie }],
 ] as const)('REST and raw MCP reject invalid batch %s before any platform request', async (_label, input) => {
-  const { platformQueryRpcError } = await import('../../../server/utils/mcp-platform-query')
+  const { platformQueryRpcError } = await import('../../../layers/sme-roster/server/utils/mcp-platform-query')
   expect((await invoke('submit', input)).status).toBe(400)
   const error = platformQueryRpcError({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'submit_platform_batch', arguments: input } })
   expect(error?.status).toBe(400)
@@ -249,8 +249,8 @@ it('batch preserves divergent source failure policies and retries every unfinish
   expect(batch.items[0].segments.flatMap((s: any) => s.rows).map((r: any) => r.relation)).toEqual(['business:2', 'business:3', 'business:1'])
 })
 it('all batches singles and legacy retry backoff share the process-wide maximum of two platform requests', async () => {
-  const { queryPlatformSlots } = await import('../../../lib/platform/client')
-  const { runPlatformLiveQuery } = await import('../../../server/utils/platform-live-query')
+  const { queryPlatformSlots } = await import('../../../layers/sme-roster/lib/platform/client')
+  const { runPlatformLiveQuery } = await import('../../../layers/sme-roster/server/utils/platform-live-query')
   let releaseBackoff!: () => void
   let inBackoff!: () => void
   const entered = new Promise<void>(r => { inBackoff = r })
@@ -278,10 +278,10 @@ it('all batches singles and legacy retry backoff share the process-wide maximum 
 })
 it('MCP batch submit status item and retry return schema-valid equivalent REST business results', async () => {
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-  const submit = (await import('../../../server/mcp/tools/submit_platform_batch')).default as any
-  const status = (await import('../../../server/mcp/tools/get_platform_batch')).default as any
-  const item = (await import('../../../server/mcp/tools/get_platform_batch_item')).default as any
-  const retry = (await import('../../../server/mcp/tools/retry_platform_batch')).default as any
+  const submit = (await import('../../../layers/sme-roster/server/mcp/tools/submit_platform_batch')).default as any
+  const status = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_batch')).default as any
+  const item = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_batch_item')).default as any
+  const retry = (await import('../../../layers/sme-roster/server/mcp/tools/retry_platform_batch')).default as any
   const { z } = await import('zod')
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: dir }))
   let failing = true
@@ -362,11 +362,11 @@ it('OpenAPI and MCP discovery expose bounded batch contracts and resolve shared 
   const captured: any[] = []
   vi.stubGlobal('defineRouteMeta', (meta: any) => captured.push(meta.openAPI))
   vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
-  await import('../../../server/api/platform/query.post')
-  await import('../../../server/api/platform/batches/index.post')
-  await import('../../../server/api/platform/batches/[batchId].get')
-  await import('../../../server/api/platform/batches/[batchId]/retry.post')
-  await import('../../../server/api/platform/batches/[batchId]/items/[itemId].get')
+  await import('../../../layers/sme-roster/server/api/platform/query.post')
+  await import('../../../layers/sme-roster/server/api/platform/batches/index.post')
+  await import('../../../layers/sme-roster/server/api/platform/batches/[batchId].get')
+  await import('../../../layers/sme-roster/server/api/platform/batches/[batchId]/retry.post')
+  await import('../../../layers/sme-roster/server/api/platform/batches/[batchId]/items/[itemId].get')
   const single = captured.find(m => m.requestBody?.content?.['application/json']?.schema?.properties?.source)
   const submit = captured.find(m => m.requestBody?.content?.['application/json']?.schema?.properties?.items)
   const queryRef = submit.requestBody.content['application/json'].schema.properties.items.items.properties.query.$ref
@@ -376,9 +376,9 @@ it('OpenAPI and MCP discovery expose bounded batch contracts and resolve shared 
   expect(submit.requestBody.content['application/json'].schema.properties.items.maxItems).toBe(50)
   expect(submit.requestBody.content['application/json'].schema.properties.limits.properties.maxResultBytes.maximum).toBe(8388608)
   expect(captured).toHaveLength(5)
-  const { platformQueryCapabilities } = await import('../../../lib/platform/live-query')
+  const { platformQueryCapabilities } = await import('../../../layers/sme-roster/lib/platform/live-query')
   expect(platformQueryCapabilities.batch).toMatchObject({ available: true, maxItems: 50, maxAttempts: 10 })
-  const { platformQueryRpcError } = await import('../../../server/utils/mcp-platform-query')
+  const { platformQueryRpcError } = await import('../../../layers/sme-roster/server/utils/mcp-platform-query')
   for (const [name, args] of [
     ['get_platform_batch', { batchId: '01M56FKFXYBPSBEN8FYTDH2JV4', cookie }],
     ['get_platform_batch_item', { batchId: '01M56FKFXYBPSBEN8FYTDH2JV4', itemId: '01M56FKFXYBPSBEN8FYTDH2JV4', cookie }],

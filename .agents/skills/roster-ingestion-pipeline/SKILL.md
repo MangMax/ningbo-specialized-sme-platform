@@ -26,7 +26,7 @@ description: '用于本应用的宁波专精特新名录清洗与入库：分类
 
 写入前查看当前 OpenAPI 或 MCP `tools/list`。差异结论使用既有差异原因公开协议，读回核对；入库按统一应用 API/MCP 预检、提交和读回，禁止直接写 SQLite；重试保持其幂等键。`queryBusList` 明确按 `recognized_list` 入库，按[平台查询说明](references/platform-query.md)保留分段、时间和页码并核对 ID。不支持的写入留待处理，不伪造来源类型绕过校验。
 
-[业务规则](references/decisions.md)定义事件和来源语义；载荷以仓库 `lib/roster-import-client.ts` 为准。正式公布确立称号历史，导出表代表平台快照。未匹配平台的正式行仍须保留，未知字段留空。issue #35 中的企业名称只是查证线索，不是已确认的身份依据。
+[业务规则](references/decisions.md)定义事件和来源语义；载荷以仓库 `layers/sme-roster/lib/roster-import-client.ts` 为准。正式公布确立称号历史，导出表代表平台快照。未匹配平台的正式行仍须保留，未知字段留空。issue #35 中的企业名称只是查证线索，不是已确认的身份依据。
 
 业务数据库、源文件、上传文件、凭据和个案证据保存在 Git 外。文件/页图/OCR、正式事件、身份、查询覆盖、入库回执和业务判断分开报告。
 

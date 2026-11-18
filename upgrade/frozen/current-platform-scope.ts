@@ -1,6 +1,6 @@
 /** Fixed legacy scope oracle from ab503081; offline fixture use only. */
 /** SQL-only page metadata projection. Original rows and response bodies never cross the driver. */
-import { TITLE_RDJB_CODES, RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
+import { TITLE_RDJB_CODES, RDJB_TITLE_CODES } from '../../layers/sme-roster/lib/platform/recognized-evidence'
 export { TITLE_RDJB_CODES }
 const titleCase = (value: string) => `case ${value} ${Object.entries(RDJB_TITLE_CODES).map(([rdjb,title]) => `when '${rdjb}' then '${title}'`).join(' ')} end`
 // q and r are fixed aliases in the bounded candidate/reference queries below.

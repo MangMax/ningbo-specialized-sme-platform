@@ -2,7 +2,7 @@
 import { inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../legacy-schema'
-import { PLATFORM_PROCESS_RAW_KEYS, platformProcessRawFromJson } from '../../../lib/platform/normalization'
+import { PLATFORM_PROCESS_RAW_KEYS, platformProcessRawFromJson } from '../../../layers/sme-roster/lib/platform/normalization'
 
 type Db = BetterSQLite3Database<typeof schema>
 const r = schema.platformRelation

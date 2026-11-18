@@ -4,7 +4,7 @@ import Database from 'better-sqlite3'
 import {closeSync,openSync,realpathSync,statSync,statfsSync} from 'node:fs'
 import {dirname,resolve} from 'node:path'
 import {fileHash} from './frozen-source'
-import {schemaHash} from '../lib/platform/sqlite-row-cells'
+import {schemaHash} from '../layers/sme-roster/lib/platform/sqlite-row-cells'
 export async function createOfflineSnapshot(sourcePath:string,snapshotPath:string) {
  const source=realpathSync(sourcePath),snapshot=resolve(snapshotPath),identity=statSync(source)
  if(snapshot.trim()!==snapshot)throw new Error('Snapshot path must not have outer whitespace')

@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { allRosterEnterprises, listRosterEnterprises } from '../../../lib/roster/enterprise-roster'
-import { parseRosterEnterpriseQuery } from '../../../server/utils/roster-read-query'
+import { allRosterEnterprises, listRosterEnterprises } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { parseRosterEnterpriseQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
 
 const directory=mkdtempSync(join(tmpdir(),'rl20-reason-filter-'))
 const db=initializeDb({ create: true,dbPath:join(directory,'test.db')})

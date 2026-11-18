@@ -65,13 +65,13 @@ describe('列表页 min-w 收敛为推导值', () => {
   // 百分比列的页面:min-w 是各列内容下限之和的落地值,规范登记为固定档位。
   it('logs.vue / current-enterprises.vue 的 min-w 落在规范推导档位上', () => {
     const logs = readPage('layers/core/app/pages/logs.vue')
-    const current = readPage('pages/current-enterprises.vue')
+    const current = readPage('layers/sme-roster/app/pages/current-enterprises.vue')
     expect(logs).toContain('min-w-[940px]')
     expect(current).toContain('min-w-[850px]')
   })
 
   it('index（EnterpriseListTable）的最小宽度挂在响应式断点上，窄屏 min-w-0', () => {
-    const table = readPage('components/EnterpriseListTable.vue')
+    const table = readPage('layers/sme-roster/app/components/EnterpriseListTable.vue')
     // 窄屏按内容铺开(min-w-0),lg 起才有列宽下限 980px。
     expect(table).toContain('min-w-0')
     expect(table).toMatch(/lg:min-w-\[980px\]/)

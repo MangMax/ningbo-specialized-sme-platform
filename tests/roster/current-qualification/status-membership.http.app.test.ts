@@ -1,6 +1,6 @@
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
-import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
 import { writeFileSync, renameSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -9,8 +9,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js'
 import { qualificationFileFixture } from '../fixtures/qualification-matrix'
-import type { CurrentQualifiedResult } from '../../../lib/roster/current-qualified-query'
-import type { CurrentQualificationSnapshot } from '../../../lib/roster/current-qualification'
+import type { CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import type { CurrentQualificationSnapshot } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 let fixture: ReturnType<typeof qualificationFileFixture> | undefined

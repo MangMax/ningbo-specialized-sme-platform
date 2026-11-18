@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { schema } from '../../../db/client'
 import { nativeCorrespondenceFixture } from './fixtures/native-correspondence'
-import { commitRecordCorrespondences, preflightRecordCorrespondences, getRecordCorrespondence, getRecordCorrespondenceAudit, listRecordCorrespondences } from '../../../server/utils/record-correspondence'
+import { commitRecordCorrespondences, preflightRecordCorrespondences, getRecordCorrespondence, getRecordCorrespondenceAudit, listRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
 const fixtures: ReturnType<typeof nativeCorrespondenceFixture>[] = []
 const fixture = () => { const f = nativeCorrespondenceFixture(); fixtures.push(f); return f }
 afterEach(() => { for (const f of fixtures.splice(0)) f.close() })

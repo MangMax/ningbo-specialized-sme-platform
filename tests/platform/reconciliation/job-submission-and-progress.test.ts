@@ -1,7 +1,7 @@
 import {afterEach,afterAll,beforeAll,beforeEach,describe,expect,it,vi} from 'vitest'
 import {clearJobSpecs,getJobSpec,jobSpecs,type JobSpec,type JobContext} from '../../../layers/core/server/utils/job-runner'
 import {registerJobSpecs} from '../../../server/utils/job-specs'
-import {reconcileSpec} from '../../../server/utils/jobs/reconcile'
+import {reconcileSpec} from '../../../layers/sme-roster/server/utils/jobs/reconcile'
 import {nativeImportDb} from '../../roster/imports/fixtures/native-import'
 import * as schema from '../../../db/schema'
 import * as database from '../../../db'

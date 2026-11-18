@@ -8,10 +8,10 @@ import { createHash, randomBytes } from 'node:crypto'
 import { afterEach, expect, expectTypeOf, it, vi } from 'vitest'
 import ExcelJS from 'exceljs'
 import { initializeDb, schema as s } from '../../../db/client'
-import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
-import { createCurrentQualificationAssessmentReader, readCurrentQualificationAssessment, readCurrentCandidate } from '../../../lib/roster/current-qualification'
-import { currentWorkbookValues } from '../../../lib/roster/current-workbook-presentation'
-import { readOfficialPublishedPresentation } from '../../../lib/roster/official-published-presentation'
+import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
+import { createCurrentQualificationAssessmentReader, readCurrentQualificationAssessment, readCurrentCandidate } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { currentWorkbookValues } from '../../../layers/sme-roster/lib/roster/current-workbook-presentation'
+import { readOfficialPublishedPresentation } from '../../../layers/sme-roster/lib/roster/official-published-presentation'
 
 vi.mock('node:fs', async importOriginal => {
   const filesystem = await importOriginal<typeof import('node:fs')>()
@@ -390,7 +390,7 @@ it('native workbook digest hashes mixed groups in sheet order then stable identi
 
 
 it('default native export keeps its title digest and never invokes comparison', async () => {
-  const core = await import('../../../lib/roster/platform-comparison')
+  const core = await import('../../../layers/sme-roster/lib/roster/platform-comparison')
   const spy = vi.spyOn(core, 'comparePlatformComparison')
   const { db, file } = fixture()
   try {

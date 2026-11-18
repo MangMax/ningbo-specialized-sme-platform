@@ -4,7 +4,7 @@ const fixtures:ReturnType<typeof nativeCatalogFixture>[]=[]
 const fixture=()=>{const f=nativeCatalogFixture();fixtures.push(f);return f}
 afterEach(()=>{for(const f of fixtures.splice(0))f.close()})
 
-import { readPlatformBusinessMetadata } from '../../../server/utils/platform-business-record-read'
+import { readPlatformBusinessMetadata } from '../../../layers/sme-roster/server/utils/platform-business-record-read'
 it('native canonical metadata preserves original observation IDs and excludes raw archives',async()=>{
  const f=fixture(),a=f.seed('business_list',f.raw('META',{private:'PRIVATE-METADATA'})),b=f.seed('apply_list',f.raw('META'))
  const metadata=readPlatformBusinessMetadata(f.db,[a.relationIds[0]!,b.relationIds[0]!])

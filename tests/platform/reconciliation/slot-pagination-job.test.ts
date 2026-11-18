@@ -17,8 +17,8 @@ import type { TaskList, TaskSummary } from '../../../layers/core/lib/task-center
 // Keep real retries/page capture/credentials; advance only the injected backoff.
 // The client/reconcile I/O suites own real scheduling and cancellation during sleep.
 const backoffs = vi.hoisted(() => [] as number[])
-vi.mock('../../../lib/platform/client', async importOriginal => {
-  const actual = await importOriginal<typeof import('../../../lib/platform/client')>()
+vi.mock('../../../layers/sme-roster/lib/platform/client', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../../layers/sme-roster/lib/platform/client')>()
   return { ...actual, queryPlatformSlots: (options: Parameters<typeof actual.queryPlatformSlots>[0], slots: Parameters<typeof actual.queryPlatformSlots>[1]) =>
     actual.queryPlatformSlots({ ...options, sleep: async ms => { backoffs.push(ms) } }, slots) }
 })
@@ -61,7 +61,7 @@ beforeAll(async () => {
   for (const key of ['defineEventHandler', 'readBody', 'createError', 'setResponseStatus', 'setHeader', 'getRouterParam', 'getQuery', 'getRequestURL', 'getHeader'] as const) vi.stubGlobal(key, h3[key])
   vi.doMock('@db', () => ({ useDb: () => db }))
   const routes = await Promise.all([
-    import('../../../layers/core/server/api/jobs/index.post'), import('../../../layers/core/server/api/jobs/[id].get'), import('../../../layers/core/server/api/jobs/[id].delete'), import('../../../server/api/platform/queries.get'), import('../../../layers/core/server/api/task-center/[id].get'), import('../../../layers/core/server/api/task-center/index.get'),
+    import('../../../layers/core/server/api/jobs/index.post'), import('../../../layers/core/server/api/jobs/[id].get'), import('../../../layers/core/server/api/jobs/[id].delete'), import('../../../layers/sme-roster/server/api/platform/queries.get'), import('../../../layers/core/server/api/task-center/[id].get'), import('../../../layers/core/server/api/task-center/index.get'),
   ])
   const router = h3.createRouter()
   router.post('/api/jobs', routes[0].default).get('/api/jobs/:id', routes[1].default).delete('/api/jobs/:id', routes[2].default).get('/api/platform/queries', routes[3].default)

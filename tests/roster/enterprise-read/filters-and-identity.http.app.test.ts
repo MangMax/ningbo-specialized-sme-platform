@@ -1,5 +1,5 @@
 import '../../support/compiled-enterprise-reader'
-import { enterpriseReads } from '../../../server/utils/enterprise-read'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
@@ -9,8 +9,8 @@ import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, getQuery, getRouterParam, defineEventHandler, createError, setHeader } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../../../db'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import { listEnterprises } from '../../../server/utils/mcp-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { listEnterprises } from '../../../layers/sme-roster/server/utils/mcp-roster'
 
 const dir = mkdtempSync(join(tmpdir(), 'enterprise-read-http-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
@@ -37,8 +37,8 @@ beforeAll(async () => {
   await enterpriseReads.start()
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
   for (const [name, value] of Object.entries({ defineEventHandler, getQuery, getRouterParam, createError, setHeader })) vi.stubGlobal(name, value)
-  const list = (await import('../../../server/api/roster/enterprises.get')).default
-  const detail = (await import('../../../server/api/roster/enterprises/[id].get')).default
+  const list = (await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default
+  const detail = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default
   server = createServer(toNodeListener(createApp({ debug: false }).use(createRouter().get('/api/roster/enterprises', list).get('/api/roster/enterprises/:id', detail))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`

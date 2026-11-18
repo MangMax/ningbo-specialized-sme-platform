@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { LITTLE_GIANT_SOURCE_FILE } from '../../../../lib/roster/little-giant-import'
+import { LITTLE_GIANT_SOURCE_FILE } from '../../../../layers/sme-roster/lib/roster/little-giant-import'
 import { buildLittleGiantWorkbookBuffer, type FixtureRow } from './workbook'
 
 // Deterministic synthetic input by default; real-source acceptance is explicit.

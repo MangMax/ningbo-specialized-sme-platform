@@ -1,13 +1,13 @@
 /** Offline historical oracle from ab503081dae3e24680afc9b07395a7e3ff21fc9f. */
-import { checkedBusinessStatus } from '../../../lib/platform/business-status'
-import { withArchiveProcessFacts } from '../../../lib/platform/observation-facts'
+import { checkedBusinessStatus } from '../../../db/business-status'
+import { withArchiveProcessFacts } from '../../../layers/sme-roster/lib/platform/observation-facts'
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../legacy-schema'
-import { normalizeName, normalizeUscc } from '../../../lib/domain'
-import { normalizeDeclareKind } from '../../../lib/platform/identity'
-import { normalizePlatformRelation } from '../../../lib/platform/normalization'
-import { legacyRowTitle, type PlatformObservationFact } from '../../../lib/platform/observation-facts'
+import { normalizeName, normalizeUscc } from '../../../layers/sme-roster/lib/domain'
+import { normalizeDeclareKind } from '../../../layers/sme-roster/lib/platform/identity'
+import { normalizePlatformRelation } from '../../../layers/sme-roster/lib/platform/normalization'
+import { legacyRowTitle, type PlatformObservationFact } from '../../../layers/sme-roster/lib/platform/observation-facts'
 import { factBatches, legacyRelationColumns, readLegacyRelationRows } from './platform-legacy-relation-read'
 import { businessEnterpriseExists, enterpriseAssignments, fail, orderedScopes, pageOf, titleScopesByQuery } from './platform-business-read'
 import {
@@ -22,7 +22,7 @@ import {
   type BusinessProcessRecordRow,
   type BusinessProcessVersion,
   type BusinessProcessVersionFields,
-} from '../../../lib/platform/business-processes'
+} from '../../../layers/sme-roster/lib/platform/business-processes'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -337,7 +337,7 @@ export function getPlatformBusinessProcess(db: Db, recordId: number): BusinessPr
 
 const BUSINESS_MODELED_FIELDS = ['declareKind', 'year', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province', 'nameRaw', 'usccRaw'] as const
 
-function businessFactBase(relationId: number, normalized: Pick<import('../../../lib/platform/observation-facts').PlatformObservationFact, 'normalizationConflicts'>, row: { nameRaw: string | null; usccRaw: string | null; titleRaw: string | null }) {
+function businessFactBase(relationId: number, normalized: Pick<import('../../../layers/sme-roster/lib/platform/observation-facts').PlatformObservationFact, 'normalizationConflicts'>, row: { nameRaw: string | null; usccRaw: string | null; titleRaw: string | null }) {
   return {
     relationId, interface: 'business_list' as const,
     nameRaw: row.nameRaw, usccRaw: row.usccRaw, titleRaw: row.titleRaw,

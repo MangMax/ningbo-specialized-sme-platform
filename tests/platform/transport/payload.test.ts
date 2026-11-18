@@ -6,7 +6,7 @@ import {
   buildPlatformWritePayload,
   type KnownEnterprise,
   type PlatformQueryInput,
-} from '../../../lib/platform/payload'
+} from '../../../layers/sme-roster/lib/platform/payload'
 import {
   aliasCandidatesOf,
   classifyRawQuery,
@@ -15,7 +15,7 @@ import {
   type PlatformQueryMeta,
   type PlatformQueryOutcome,
   type PlatformRow,
-} from '../../../lib/platform'
+} from '../../../layers/sme-roster/lib/platform'
 
 const fixture = (name: string) =>
   readFileSync(join(import.meta.dirname, '../../fixtures/platform', name), 'utf8')

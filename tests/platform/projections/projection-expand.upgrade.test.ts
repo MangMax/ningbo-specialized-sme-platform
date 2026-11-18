@@ -1,6 +1,6 @@
-import { withArchiveProcessFacts, type PlatformObservationFact } from "../../../lib/platform/observation-facts"
+import { withArchiveProcessFacts, type PlatformObservationFact } from "../../../layers/sme-roster/lib/platform/observation-facts"
 
-import { platformRowTitle } from "../../../lib/platform/row-title"
+import { platformRowTitle } from "../../../layers/sme-roster/lib/platform/row-title"
 
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import * as schema from '../../../upgrade/legacy-schema'
 import { writeOwnerArchive, sealArchiveOwner } from '../../../upgrade/frozen/immutable-archive'
 import { ensurePlatformObservation } from '../../../upgrade/frozen/server/platform-business-record'
-import { normalizePlatformRelation } from '../../../lib/platform/normalization'
+import { normalizePlatformRelation } from '../../../layers/sme-roster/lib/platform/normalization'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'

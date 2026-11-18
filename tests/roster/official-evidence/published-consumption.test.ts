@@ -1,6 +1,6 @@
-import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { createRuntimeSchema } from '../../../db/create-runtime'
-import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -8,27 +8,27 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../../../db/schema'
-import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } from '../../../lib/roster-import-client'
-import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
-import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
-import { handleEvidenceCorrectionRequest } from '../../../server/utils/roster-evidence-correction-api'
-import { readCurrentCandidate, readCurrentQualificationAssessment, type CurrentQualificationSnapshot, type CurrentTitle } from '../../../lib/roster/current-qualification'
+import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } from '../../../layers/sme-roster/lib/roster-import-client'
+import { preflightRosterImport, commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
+import { handleEvidenceCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-evidence-correction-api'
+import { readCurrentCandidate, readCurrentQualificationAssessment, type CurrentQualificationSnapshot, type CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-qualification'
 
 import { startHttpFixture } from '../../support/http'
 import { minimalPdf } from '../../support/minimal-pdf'
-import * as official from '../../../server/utils/official-evidence'
+import * as official from '../../../layers/sme-roster/server/utils/official-evidence'
 
 
 
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import { listCurrentQualified, type CurrentQualifiedResult } from '../../../lib/roster/current-qualified-query'
-import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { listCurrentQualified, type CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import { handleRecordCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-api'
 
 const routeContext = vi.hoisted(() => ({ db: undefined as any }))
 // The package's defineMcpTool is an identity function; loading its Nitro registration cache needs virtual storage.
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
 vi.mock('@db', () => ({ useDb: () => routeContext.db }))
-vi.mock('../../../server/utils/enterprise-read', () => ({ enterpriseReads: {
+vi.mock('../../../layers/sme-roster/server/utils/enterprise-read', () => ({ enterpriseReads: {
   json: async (_path: string, request: {enterpriseId: number}) => {
     const value = getRosterEnterpriseDetail(routeContext.db, request.enterpriseId)
     return { found: value != null, body: Buffer.from(JSON.stringify(value)) }
@@ -177,7 +177,7 @@ it("separates unavailable safe errors from unknown legacy while preserving origi
 
 it("reuses one selected event Map across source detail and repeated references with no per-evidence latest", async () => {
   const f = await paired()
-  const { sourceReader } = await import('../../../server/utils/record-correspondence-read')
+  const { sourceReader } = await import('../../../layers/sme-roster/server/utils/record-correspondence-read')
   // Caller-selected reference inputs to the pure reader, not forged persisted decisions.
   const row = { id: 17, type:'later_process',role:'followup_apply',status:'candidate',eventId:1,predecessorEventId:2,relationId:null,exportRowId:null } as any
   const read = vi.spyOn(official,'listEventsOfficialEvidencePages'), latest = vi.spyOn(official,'readLatestOfficialEvidence')
@@ -308,10 +308,10 @@ it("reads actual H3 routes and MCP handlers through the same serialized DTO whil
   for (const key of ['defineEventHandler','getRouterParam','setHeader','createError'] as const) vi.stubGlobal(key,h3[key])
   vi.stubGlobal('useRuntimeConfig',() => ({apiToken:'synthetic-356-api',mcpToken:'synthetic-mcp-356',filesDir:f.dir+'/files'}))
   const router = h3.createRouter()
-  router.get('/api/roster/enterprises/:id',(await import('../../../server/api/roster/enterprises/[id].get')).default)
-  router.get('/api/roster/current-enterprises',(await import('../../../server/api/roster/current-enterprises.get')).default)
-  router.get('/api/roster/correspondences/events/:id',(await import('../../../server/api/roster/correspondences/events/[id].get')).default)
-  router.get('/api/roster/evidence/:id',(await import('../../../server/api/roster/evidence/[id].get')).default)
+  router.get('/api/roster/enterprises/:id',(await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default)
+  router.get('/api/roster/current-enterprises',(await import('../../../layers/sme-roster/server/api/roster/current-enterprises.get')).default)
+  router.get('/api/roster/correspondences/events/:id',(await import('../../../layers/sme-roster/server/api/roster/correspondences/events/[id].get')).default)
+  router.get('/api/roster/evidence/:id',(await import('../../../layers/sme-roster/server/api/roster/evidence/[id].get')).default)
   const server = createServer(h3.toNodeListener(h3.createApp().use(router)))
   await new Promise<void>((resolve,reject) => { server.once('error',reject);server.listen(0,'127.0.0.1',resolve) })
   closes.push(() => new Promise<void>((resolve,reject) => server.close(error => error ? reject(error) : resolve())))
@@ -322,10 +322,10 @@ it("reads actual H3 routes and MCP handlers through the same serialized DTO whil
   const detail=await get('/api/roster/enterprises/1'),query=await get('/api/roster/current-enterprises?titleCode=specialized_sme'),source=await get('/api/roster/correspondences/events/2')
   expect([detail.status,query.status,source.status]).toEqual([200,200,200])
   expect(factsOf(detail.body)).toEqual(expected);expect(factsOf(query.body.rows[0])).toEqual(expected);expect(factsOf(source.body.source)).toEqual([expected[1]])
-  const { dispatchRecordCorrespondenceMcp }=await import('../../../server/utils/mcp-record-correspondence')
+  const { dispatchRecordCorrespondenceMcp }=await import('../../../layers/sme-roster/server/utils/mcp-record-correspondence')
   expect(dispatchRecordCorrespondenceMcp('source',{kind:'event',id:2},{db:f.db})).toEqual(source.body)
-  const detailTool=(await import('../../../server/mcp/tools/get_enterprise_detail')).default
-  const currentTool=(await import('../../../server/mcp/tools/list_current_qualified_enterprises')).default
+  const detailTool=(await import('../../../layers/sme-roster/server/mcp/tools/get_enterprise_detail')).default
+  const currentTool=(await import('../../../layers/sme-roster/server/mcp/tools/list_current_qualified_enterprises')).default
   // Direct tool handlers, not the real MCP transport or native admission.
   expect(JSON.parse(await (detailTool as any).handler({enterpriseId:1}))).toEqual(detail.body)
   expect(JSON.parse(await (currentTool as any).handler({titleCode:'specialized_sme'}))).toEqual(query.body)
@@ -355,7 +355,7 @@ async function currentH3(f: Awaited<ReturnType<typeof fixture>>) {
   const h3 = await import('h3'), { createServer } = await import('node:http')
   routeContext.db = f.db
   vi.stubGlobal('defineEventHandler', h3.defineEventHandler)
-  const handler = (await import('../../../server/api/roster/current-enterprises.get')).default
+  const handler = (await import('../../../layers/sme-roster/server/api/roster/current-enterprises.get')).default
   const server = createServer(h3.toNodeListener(h3.createApp().use('/api/roster/current-enterprises', handler)))
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
   closes.push(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())))
@@ -431,7 +431,7 @@ it.each([{ case: 'escaped-below', repeats: 48, available: true }, { case: 'escap
 )
 
 it('detail and ledger preserve each published name and original coordinates after filtering', async () => {
-  const { getEnterpriseDetail, allRecords } = await import('../../../lib/query')
+  const { getEnterpriseDetail, allRecords } = await import('../../../layers/sme-roster/lib/query')
   const f = await paired()
   const detail = getEnterpriseDetail(f.db, 1)!
   expect(detail.name).toBe('现用名')
@@ -448,7 +448,7 @@ it('detail and ledger preserve each published name and original coordinates afte
 })
 
 it('uncaptured and captured unknown names stay distinct from unavailable', async () => {
-  const { getEnterpriseDetail, allRecords } = await import('../../../lib/query')
+  const { getEnterpriseDetail, allRecords } = await import('../../../layers/sme-roster/lib/query')
   const f = await fixture()
   await f.commit(f.announcement([f.record('specialized_sme', [{ eventType: 'award', year: 2024, batchSeq: 1, evidence: [
     f.evidence(f.published(null)), { sourceFile: '2024公布.pdf', page: 1, listNo: 9 },
@@ -471,8 +471,8 @@ it('actual legacy HTTP detail and sync XLSX retain a literal matrix with per-sou
   const h3 = await import('h3')
   for (const [name, value] of Object.entries({ defineEventHandler: h3.defineEventHandler, getQuery: h3.getQuery, setHeader: h3.setHeader, createError: h3.createError, getRouterParam: h3.getRouterParam })) vi.stubGlobal(name, value)
   const app = h3.createApp(), router = h3.createRouter()
-  router.get('/api/enterprises/:id', (await import('../../../server/api/enterprises/[id].get')).default)
-  router.get('/api/export', (await import('../../../server/api/export.get')).default)
+  router.get('/api/enterprises/:id', (await import('../../../layers/sme-roster/server/api/enterprises/[id].get')).default)
+  router.get('/api/export', (await import('../../../layers/sme-roster/server/api/export.get')).default)
   app.use(router)
   const server = createServer(h3.toNodeListener(app))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -496,7 +496,7 @@ it('actual legacy HTTP detail and sync XLSX retain a literal matrix with per-sou
 })
 
 it('ledger batches selected groups and isolates an unavailable group without changing rows', async () => {
-  const { allRecords } = await import('../../../lib/query')
+  const { allRecords } = await import('../../../layers/sme-roster/lib/query')
   const f = await paired()
   await f.commit(f.announcement([f.record('specialized_sme', [{ eventType: 'award', year: 2024, batchSeq: 1, evidence: [
     f.evidence(f.published('第二公布名', 3, 2, { usccRaw: null })),
@@ -515,7 +515,7 @@ it('ledger batches selected groups and isolates an unavailable group without cha
 })
 
 it('large display batches retain names in independently bounded groups', async () => {
-  const { allRecords } = await import('../../../lib/query')
+  const { allRecords } = await import('../../../layers/sme-roster/lib/query')
   const f = await fixture(), names = ['A'.repeat(1500), 'B'.repeat(1500)]
   await f.commit(f.announcement(names.map((name, index) => f.record('specialized_sme', [{
     eventType: 'award', year: 2024, batchSeq: 1,

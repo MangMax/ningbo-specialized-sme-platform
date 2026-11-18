@@ -1,6 +1,6 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
-import { CURRENT_RULE_VERSION } from '../../../lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './fixtures/specialized-export'
 import { execFileSync } from 'node:child_process'
 

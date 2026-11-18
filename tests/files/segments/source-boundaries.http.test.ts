@@ -1,4 +1,4 @@
-import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
@@ -14,7 +14,7 @@ beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-server-only', filesDir: root }))
   vi.doMock('@db', () => ({ useDb: () => db }))
-  const { browserFileSegmentsRoute } = await import('../../../server/utils/browser-file-segments')
+  const { browserFileSegmentsRoute } = await import('../../../layers/sme-roster/server/utils/browser-file-segments')
   const router = createRouter()
   for (const action of ['read', 'preflight', 'commit'] as const) {
     const path = '/:id' + (action === 'read' ? '' : '/' + action)

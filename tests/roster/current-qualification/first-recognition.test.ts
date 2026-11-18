@@ -10,8 +10,8 @@ import {
   type FirstRecognitionEvidence,
   type RecognitionEntry,
   type RecognitionEvent,
-} from '../../../lib/roster/first-recognition'
-import { computeFirstAward, computeTitleLifecycle } from '../../../lib/roster/lifecycle'
+} from '../../../layers/sme-roster/lib/roster/first-recognition'
+import { computeFirstAward, computeTitleLifecycle } from '../../../layers/sme-roster/lib/roster/lifecycle'
 
 /**
  * RL-08 —— **首次认定的口径**(契约 §6.1–§6.3、§7.5,issue #8)。

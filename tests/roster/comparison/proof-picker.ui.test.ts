@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
-import ComparisonProofPicker from '../../../components/record-correspondence/ComparisonProofPicker.vue'
-import type { ComparisonProof } from '../../../lib/roster/record-comparison-view'
+import ComparisonProofPicker from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonProofPicker.vue'
+import type { ComparisonProof } from '../../../layers/sme-roster/lib/roster/record-comparison-view'
 
 const official = { id: 12, kind: 'official_coverage', status: 'confirmed', valid: true, createdAt: '2026-10-18T00:00:00Z', revision: 2, decidedAt: '2026-10-18T01:00:00Z', invalidReason: null, evidence: { titleCode: 'specialized_sme', fromYear: 2023, throughYear: 2025, fullRange: true, sourceDocuments: [{ id: 3, fileId: 90, sha256: 'a'.repeat(64), reference: { field: 'source_document.path' as const } }], enterpriseIds: null }, sourceSummary: { documents: [{ path: 'jxj/notice.pdf' }] } } satisfies ComparisonProof
 const stale = { ...official, id: 13, valid: false, invalidReason: 'source_drift_or_missing' as const } satisfies ComparisonProof

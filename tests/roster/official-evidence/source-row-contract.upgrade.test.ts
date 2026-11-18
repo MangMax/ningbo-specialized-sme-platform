@@ -10,7 +10,7 @@ import {
   appendOfficialEvidenceRevision, readLatestOfficialEvidence, readOfficialEvidenceCandidates,
   readOfficialEvidenceHistory, listEventOfficialEvidence, OfficialEvidenceError,
   type OfficialEvidenceCapture, type OfficialEvidenceSourceKey,
-} from '../../../server/utils/official-evidence'
+} from '../../../layers/sme-roster/server/utils/official-evidence'
 
 // Retain each isolated synthetic database on failure, alongside RED/GREEN logs in /tmp.
 const handles: Database.Database[] = []

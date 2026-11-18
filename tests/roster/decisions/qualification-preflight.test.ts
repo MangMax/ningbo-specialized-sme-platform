@@ -1,9 +1,9 @@
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
-import { createCurrentQualificationAssessmentReader } from '../../../lib/roster/current-qualification'
-import { readDistrictStatistics } from '../../../lib/roster/district-statistics'
-import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
+import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { readDistrictStatistics } from '../../../layers/sme-roster/lib/roster/district-statistics'
+import { listCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
 import ExcelJS from 'exceljs'
-import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
+import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
 import historicalReceipts from '../../fixtures/decision-102-pre-browser-receipts.json'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -25,9 +25,9 @@ async function post(path: string, body: unknown, token = 'synthetic') {
 }
 beforeAll(async () => {
  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic', filesDir: dir }))
- const { decisionRoute102 } = await import('../../../server/utils/decision-lifecycle-102-route')
- const preflight = (await import('../../../server/api/roster/decision-lifecycle/qualification-preflight.post')).default
- const commit = (await import('../../../server/api/roster/decision-lifecycle/qualification-commit.post')).default
+ const { decisionRoute102 } = await import('../../../layers/sme-roster/server/utils/decision-lifecycle-102-route')
+ const preflight = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/qualification-preflight.post')).default
+ const commit = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/qualification-commit.post')).default
  server = createServer(h3.toNodeListener(h3.createApp().use(h3.createRouter().post('/preflight', preflight).post('/commit', commit).post('/commands', decisionRoute102('commands')).get('/current', decisionRoute102('current')))))
  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
 })
@@ -156,8 +156,8 @@ it('recomputes referenced qualification facts in single and batched reads withou
 })
 it('uses the same strict MCP handlers and guarded discovery classification', async () => {
  vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
- const preflight = (await import('../../../server/mcp/tools/preflight_qualification_decision')).default
- const commit = (await import('../../../server/mcp/tools/commit_qualification_decision')).default
+ const preflight = (await import('../../../layers/sme-roster/server/mcp/tools/preflight_qualification_decision')).default
+ const commit = (await import('../../../layers/sme-roster/server/mcp/tools/commit_qualification_decision')).default
  expect(preflight.enabled!({ context: { mcpAuth: { writeAuthorized: false } } } as never)).toBe(false)
  expect(commit.enabled!({ context: { mcpAuth: { writeAuthorized: true } } } as never)).toBe(true)
  const latest = db.select().from(s.differenceReason).all().at(-1)!

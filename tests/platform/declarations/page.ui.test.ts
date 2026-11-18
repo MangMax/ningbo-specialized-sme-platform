@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import Page from '../../../pages/platform-declarations.vue'
-import PlatformFilterSelect from '../../../components/PlatformFilterSelect.vue'
+import Page from '../../../layers/sme-roster/app/pages/platform-declarations.vue'
+import PlatformFilterSelect from '../../../layers/sme-roster/app/components/PlatformFilterSelect.vue'
 import TablePagination from '../../../layers/core/app/components/TablePagination.vue'
 import { Select } from '../../../layers/core/app/components/ui/select'
 

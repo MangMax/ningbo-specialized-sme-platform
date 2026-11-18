@@ -10,9 +10,9 @@ import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { ensurePlatformObservation } from '../../../../upgrade/frozen/server/platform-business-record'
 import * as s from '../../../../upgrade/legacy-schema'
 import * as targetSchema from '../../../../db/schema'
-import { normalizeUscc } from '../../../../lib/domain'
+import { normalizeUscc } from '../../../../layers/sme-roster/lib/domain'
 import { currentCandidateBindings, currentCandidateSql } from '../../../../upgrade/frozen/current-candidates'
-import type { CurrentTitle } from '../../../../lib/roster/current-titles'
+import type { CurrentTitle } from '../../../../layers/sme-roster/lib/roster/current-titles'
 export const titles = ['innovative_sme','specialized_sme','little_giant'] as const
 export const literalCandidates = {
   innovative_sme:[1,2,3,6,7,9,16,17,19,20,22,23,24],

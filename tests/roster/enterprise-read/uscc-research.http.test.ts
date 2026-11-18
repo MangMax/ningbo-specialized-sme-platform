@@ -1,5 +1,5 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { listPlatformQueries } from '../../../lib/platform/read'
+import { listPlatformQueries } from '../../../layers/sme-roster/lib/platform/read'
 import { initializeDb } from '../../../db/client'
 /**
  * RL-06：**缺统一社会信用代码企业的补录**。
@@ -38,15 +38,15 @@ import {
   nameMatchLevel,
   usccFormatVerdict,
   type UsccResearchClaim,
-} from '../../../lib/roster/uscc-research'
-import { normalizeName } from '../../../lib/domain'
-import { createRosterImportClient, type RosterImportRequest } from '../../../lib/roster-import-client'
-import { classifyRawQuery } from '../../../lib/platform'
-import { buildPlatformWritePayload, type KnownEnterprise, type PlatformQueryInput } from '../../../lib/platform/payload'
-import { listUsccChecklist, planUsccResearch, usccResearchIdempotencyKey } from '../../../server/utils/uscc-research'
-import { normalizeUsccVerdicts, type UsccVerdictFile } from '../../../server/utils/uscc-verdicts'
-import { parseUsccChecklistQuery, parseUsccResearchBody } from '../../../server/utils/uscc-research-query'
-import { readImportBatchOutcome } from '../../../server/utils/roster-import'
+} from '../../../layers/sme-roster/lib/roster/uscc-research'
+import { normalizeName } from '../../../layers/sme-roster/lib/domain'
+import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
+import { classifyRawQuery } from '../../../layers/sme-roster/lib/platform'
+import { buildPlatformWritePayload, type KnownEnterprise, type PlatformQueryInput } from '../../../layers/sme-roster/lib/platform/payload'
+import { listUsccChecklist, planUsccResearch, usccResearchIdempotencyKey } from '../../../layers/sme-roster/server/utils/uscc-research'
+import { normalizeUsccVerdicts, type UsccVerdictFile } from '../../../layers/sme-roster/server/utils/uscc-verdicts'
+import { parseUsccChecklistQuery, parseUsccResearchBody } from '../../../layers/sme-roster/server/utils/uscc-research-query'
+import { readImportBatchOutcome } from '../../../layers/sme-roster/server/utils/roster-import'
 import { startEvidenceServer, type EvidenceServer } from '../../platform/fixtures/evidence-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-uscc-research-'))
@@ -180,8 +180,8 @@ beforeAll(async () => {
   vi.doMock('@db', () => ({ useDb: () => db }))
 
   const routes = {
-    get: (await import('../../../server/api/roster/uscc-research.get')).default as unknown as (event: unknown) => unknown,
-    post: (await import('../../../server/api/roster/uscc-research.post')).default as unknown as (event: unknown) => unknown,
+    get: (await import('../../../layers/sme-roster/server/api/roster/uscc-research.get')).default as unknown as (event: unknown) => unknown,
+    post: (await import('../../../layers/sme-roster/server/api/roster/uscc-research.post')).default as unknown as (event: unknown) => unknown,
   }
 
   server = await startEvidenceServer({
@@ -1702,7 +1702,7 @@ describe('F · 回归 91330211255994457P：计划 → 执行 → 两行合一、
     )
     // 规范行已有统代 ⇒ 本清单（缺统代）里没有它；用总表读模型验证两个名字都命中同一企业。
     expect(byNew.checklist.counts.total).toBe(0)
-    const { allRosterEnterprises } = await import('../../../lib/roster/enterprise-roster')
+    const { allRosterEnterprises } = await import('../../../layers/sme-roster/lib/roster/enterprise-roster')
     const byAlias = allRosterEnterprises(db, { q: OLD_NAME }).rows
     const byName = allRosterEnterprises(db, { q: NEW_NAME }).rows
     expect(byAlias.map((r) => r.enterpriseId)).toEqual([canonical])

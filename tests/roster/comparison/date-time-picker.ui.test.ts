@@ -5,7 +5,7 @@ import { CalendarDate } from '@internationalized/date'
 import { TimeFieldRoot } from 'reka-ui'
 import { calendarSelectValue, calendarYearOptions, chooseCalendarSelect } from '../../support/calendar-select'
 import { Calendar } from '../../../layers/core/app/components/ui/calendar'
-import ComparisonDateTimePicker from '../../../components/record-correspondence/ComparisonDateTimePicker.vue'
+import ComparisonDateTimePicker from '../../../layers/core/app/components/DateTimePicker.vue'
 
 let wrapper: ReturnType<typeof mount> | undefined
 afterEach(() => { wrapper?.unmount(); document.body.innerHTML = '' })

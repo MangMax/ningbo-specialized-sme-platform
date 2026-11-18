@@ -9,14 +9,14 @@ import { targetSchema, platformBusinessObservation as o, platformObservationAssi
 import { platformCollection as c, platformLegacyQueryAlias as qa, platformBusinessRecord as b, platformBusinessRecordVersion as v, enterprise as e, recordCorrespondence as correspondence } from '../../legacy-schema';
 import { storedProcessProjection as p } from '../process-stored-schema';
 import { processStoredInstalled } from '../../process-stored-catalog';
-import { sqliteConnection } from '../../../lib/platform/target-connection';
-import { normalizeName, normalizeUscc } from '../../../lib/domain';
-import { normalizeDeclareKind } from '../../../lib/platform/identity';
+import { sqliteConnection } from '../../../layers/sme-roster/lib/platform/target-connection';
+import { normalizeName, normalizeUscc } from '../../../layers/sme-roster/lib/domain';
+import { normalizeDeclareKind } from '../../../layers/sme-roster/lib/platform/identity';
 import { fail, orderedScopes, pageOf } from './platform-business-read';
-import { businessProcessFilterSchema, BUSINESS_PROCESS_VERSION_LIMIT, BUSINESS_PROCESS_OBSERVATION_LIMIT, type BusinessProcessFilter, type BusinessProcessListResult, type BusinessProcessIsolatedRow, type BusinessProcessDetail, type BusinessProcessView } from '../../../lib/platform/business-processes';
-import { withArchiveProcessFacts, type PlatformObservationFact } from '../../../lib/platform/observation-facts';
-import { platformNormalizationConflict, type PlatformNormalizationConflict } from '../../../lib/platform/normalization';
-import type { PlatformFilterOptions } from '../../../lib/platform/filter-options';
+import { businessProcessFilterSchema, BUSINESS_PROCESS_VERSION_LIMIT, BUSINESS_PROCESS_OBSERVATION_LIMIT, type BusinessProcessFilter, type BusinessProcessListResult, type BusinessProcessIsolatedRow, type BusinessProcessDetail, type BusinessProcessView } from '../../../layers/sme-roster/lib/platform/business-processes';
+import { withArchiveProcessFacts, type PlatformObservationFact } from '../../../layers/sme-roster/lib/platform/observation-facts';
+import { platformNormalizationConflict, type PlatformNormalizationConflict } from '../../../layers/sme-roster/lib/platform/normalization';
+import type { PlatformFilterOptions } from '../../../layers/sme-roster/lib/platform/filter-options';
 // Explicit table queries use the injected session/logger, never db.query.
 // Match R1b's connection seam; gate() still requires the actual 71610 catalog.
 type Db = BetterSQLite3Database<typeof targetSchema> | BetterSQLite3Database<typeof import('../../legacy-schema')>;

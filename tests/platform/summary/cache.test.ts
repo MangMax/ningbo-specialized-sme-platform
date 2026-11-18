@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { schema, initializeDb } from '../../../db/client'
-import { listPlatformQueries, type PlatformQueryFilter } from '../../../lib/platform/read'
-import { createPlatformSummaryCache } from '../../../server/utils/platform-summary-cache'
+import { listPlatformQueries, type PlatformQueryFilter } from '../../../layers/sme-roster/lib/platform/read'
+import { createPlatformSummaryCache } from '../../../layers/sme-roster/server/utils/platform-summary-cache'
 
 const cleanup: (() => void)[] = []
 afterEach(() => { for (const close of cleanup.splice(0).reverse()) close() })

@@ -3,10 +3,10 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'
 import { createMemoryHistory, createRouter, RouterLink, RouterView, useRoute } from 'vue-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import EnterprisePage from '../../../pages/enterprises/[id].vue'
-import TitleBadge from '../../../components/TitleBadge.vue'
-import EventChip from '../../../components/EventChip.vue'
-import SourceChip from '../../../components/SourceChip.vue'
+import EnterprisePage from '../../../layers/sme-roster/app/pages/enterprises/[id].vue'
+import TitleBadge from '../../../layers/sme-roster/app/components/TitleBadge.vue'
+import EventChip from '../../../layers/sme-roster/app/components/EventChip.vue'
+import SourceChip from '../../../layers/sme-roster/app/components/SourceChip.vue'
 
 const state = vi.hoisted(() => ({ detail: null as any, query: null as any, queryOptions: null as any }))
 vi.mock('@pinia/colada', () => ({ useQuery: (options: { key: () => string[]; query: () => Promise<unknown> }) => {
@@ -48,7 +48,7 @@ async function openDetail(path = '/enterprises/91') {
   ] })
   await router.push(path)
   view = mount(defineComponent({ render: () => h(RouterView) }), { attachTo: document.body, global: {
-    plugins: [router], components: { TitleBadge, EventChip, SourceChip },
+    plugins: [router], components: { RosterTitleBadge: TitleBadge, RosterEventChip: EventChip, RosterSourceChip: SourceChip },
     stubs: { NuxtLink: RouterLink, PageHeader: { template: '<header><slot name="breadcrumb" /></header>' }, FilePreviewDialog: true },
   } })
   await flushPromises()

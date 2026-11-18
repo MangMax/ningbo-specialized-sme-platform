@@ -2,11 +2,11 @@
 
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
-import { handleRosterImportRequest, type RosterImportAction } from '../../../../server/utils/roster-import-http'
-import { handleEvidencePagesRequest } from '../../../../server/utils/roster-evidence-pages'
+import { handleRosterImportRequest, type RosterImportAction } from '../../../../layers/sme-roster/server/utils/roster-import-http'
+import { handleEvidencePagesRequest } from '../../../../layers/sme-roster/server/utils/roster-evidence-pages'
 import { startHttpFixture, type FixtureHandler } from '../../../support/http'
-import type { importExecutor } from '../../../../server/utils/import-execution'
-import { commitRosterImport, preflightRosterImport } from '../../../../server/utils/roster-import'
+import type { importExecutor } from '../../../../layers/sme-roster/server/utils/import-execution'
+import { commitRosterImport, preflightRosterImport } from '../../../../layers/sme-roster/server/utils/roster-import'
 
 // HTTP contract tests exercise the actual import core; worker ownership has its own suite.
 export const executeNativeImport: typeof importExecutor.execute = async (db, action, request, errors, context, source) =>
@@ -42,7 +42,7 @@ export async function startRosterApi(options: {
     return { status: out.status, headers: out.headers, body: out.body }
   }
 
-  // RL-10 的出处页码补录:Nitro 路由(`server/api/roster/evidence/pages.post.ts`)调的
+  // RL-10 的出处页码补录:Nitro 路由(`layers/sme-roster/server/api/roster/evidence/pages.post.ts`)调的
   // 是同一个 `handleEvidencePagesRequest`,所以这里回放的不是替身实现。
   const evidencePagesRoute: FixtureHandler = (request) => {
     const out = handleEvidencePagesRequest(

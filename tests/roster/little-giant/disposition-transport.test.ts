@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { dispositionSchemas, dispositionFailure } from '../../../server/utils/title-cycle-disposition-protocol'
+import { dispositionSchemas, dispositionFailure } from '../../../layers/sme-roster/server/utils/title-cycle-disposition-protocol'
 it('rejects root and nested extras and maps invalid input separately from storage faults', () => {
  expect(dispositionSchemas.current.safeParse({enterpriseIds:[1], extra:true}).success).toBe(false)
  expect(dispositionFailure(dispositionSchemas.current.safeParse({enterpriseIds:['1']}).error).status).toBe(400)
@@ -17,7 +17,7 @@ import * as s from '../../../db/schema'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { dispositionOperation } from '../../../server/utils/title-cycle-disposition-protocol'
+import { dispositionOperation } from '../../../layers/sme-roster/server/utils/title-cycle-disposition-protocol'
 vi.mock('@db',()=>({useDb:()=>db}))
 const dir=mkdtempSync(join(tmpdir(),'disposition-wire-'))
 const db=initializeDb({create:true,dbPath:join(dir,'db')})
@@ -25,7 +25,7 @@ let server: ReturnType<typeof createServer>, base:string
 const sdk=new McpServer({name:'disposition',version:'1'}), client=new Client({name:'test',version:'1'})
 beforeAll(async()=>{
  vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'test-api-secret',mcpToken:'test-mcp-secret'}))
- const {dispositionRoute}=await import('../../../server/utils/title-cycle-disposition-route')
+ const {dispositionRoute}=await import('../../../layers/sme-roster/server/utils/title-cycle-disposition-route')
  const router=createRouter()
  for(const action of ['preflight','commit','current','history'] as const){
   if(action==='preflight'||action==='commit')router.post('/'+action,dispositionRoute(action));else router.get('/'+action,dispositionRoute(action))

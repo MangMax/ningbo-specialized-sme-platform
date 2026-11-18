@@ -12,7 +12,7 @@ import { eq } from 'drizzle-orm'
 import { afterAll, beforeEach, expect, it } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
 
-import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
+import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
 const dir=mkdtempSync(join(tmpdir(),'innovative-sme-native-'))
 let generation=0
 let db=initializeDb({create:true,dbPath:join(dir,'initial.db')})

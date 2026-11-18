@@ -1,7 +1,7 @@
 import type { initializeDb } from '../../../db/client'
 import * as schema from '../../../db/schema'
-import { listPlatformQueries } from '../../../lib/platform/read'
-import { readPlatformQueryEvidence } from '../../../lib/platform/evidence-read'
+import { listPlatformQueries } from '../../../layers/sme-roster/lib/platform/read'
+import { readPlatformQueryEvidence } from '../../../layers/sme-roster/lib/platform/evidence-read'
 
 type Db = ReturnType<typeof initializeDb>
 

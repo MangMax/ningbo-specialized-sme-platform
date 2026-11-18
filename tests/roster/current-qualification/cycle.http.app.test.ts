@@ -7,9 +7,9 @@ import * as h3 from 'h3'
 import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
-import { enterpriseReads } from '../../../server/utils/enterprise-read'
-import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
-import { createCurrentCandidateReader } from '../../../lib/roster/current-qualification'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
+import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
+import { createCurrentCandidateReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { qualificationCycleCases } from "./fixtures/cycle-cases"
 import { qualificationReferenceCases } from "./fixtures/reference-cases"
 
@@ -54,11 +54,11 @@ beforeAll(async () => {
       db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'issue305/synthetic.pdf', attachment: c.id, listNo: event.id, page: 1 }).run()
     }
   }
-  const records = (await import('../../../server/api/records.get')).default
-  const current = (await import('../../../server/api/roster/current-enterprises.get')).default
-  const detail = (await import('../../../server/api/roster/enterprises/[id].get')).default
-  recordsTool = (await import('../../../server/mcp/tools/query_records')).default
-  currentTool = (await import('../../../server/mcp/tools/list_current_qualified_enterprises')).default
+  const records = (await import('../../../layers/sme-roster/server/api/records.get')).default
+  const current = (await import('../../../layers/sme-roster/server/api/roster/current-enterprises.get')).default
+  const detail = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default
+  recordsTool = (await import('../../../layers/sme-roster/server/mcp/tools/query_records')).default
+  currentTool = (await import('../../../layers/sme-roster/server/mcp/tools/list_current_qualified_enterprises')).default
   server = createServer(h3.toNodeListener(h3.createApp().use(h3.createRouter()
     .get('/api/records', records).get('/api/roster/current-enterprises', current).get('/api/roster/enterprises/:id', detail))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))

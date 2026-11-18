@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import { it, expect, vi } from 'vitest'
-import Declaration from '../../../components/PlatformDeclarationDetailDialog.vue'
-import Business from '../../../components/PlatformBusinessProcessDetailDialog.vue'
-import Directory from '../../../components/PlatformRecognizedDirectoryDetailDialog.vue'
+import Declaration from '../../../layers/sme-roster/app/components/PlatformDeclarationDetailDialog.vue'
+import Business from '../../../layers/sme-roster/app/components/PlatformBusinessProcessDetailDialog.vue'
+import Directory from '../../../layers/sme-roster/app/components/PlatformRecognizedDirectoryDetailDialog.vue'
 
 it.each([Declaration, Business, Directory])('keeps projection state and literal source values local to each displayed version ($__name)', async (component) => {
  const empty = { versionId: 2, ruleVersion: 'test-rule', titleRaw: null, nameRaw: null, usccRaw: null, declareKind: null, declarationYear: null, businessYear: null, status: null, appliedAt: null, validityDateRaw: null, maintenanceBatch: null, district: null, awardNote: null, batch: null, province: null, awardBatchLabel: null, firstObservedAt: null, lastObservedAt: null }

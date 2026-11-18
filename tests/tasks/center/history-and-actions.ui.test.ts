@@ -215,13 +215,13 @@ async function autoRegisteredComponents() {
     import('../../../layers/core/app/components/TableLoadingStatus.vue'),
     import('../../../layers/core/app/components/TableFailureState.vue'),
     import('../../../layers/core/app/components/tasks/TaskProgress.vue'),
-    import('../../../components/tasks/TaskDetail.vue'),
+    import('../../../layers/sme-roster/app/components/tasks/TaskDetail.vue'),
   ])
   const component = (mod: { default: unknown }) => mod.default as ReturnType<typeof defineComponent>
   return {
     PageHeader: component(PageHeader), NuxtLink, TablePagination: component(TablePagination),
     TableLoadingStatus: component(TableLoadingStatus), TableFailureState: component(TableFailureState),
-    TaskProgress: component(TaskProgress), TaskDetail: component(TaskDetail),
+    TaskProgress: component(TaskProgress), RosterTaskDetail: component(TaskDetail),
   }
 }
 
@@ -291,7 +291,7 @@ async function mountPage(options: { attach?: boolean, viewport?: 'desktop' | 'mo
   restoreLayout.push(layout(options.viewport ?? 'desktop'))
   // The page's polling/watchers belong to the page instance; a module loaded once
   // is fine, but a test that remounts after "leaving" gets a fresh module too.
-  if (!pageModule || options.freshPage) pageModule = await import('../../../pages/tasks.vue')
+  if (!pageModule || options.freshPage) pageModule = await import('../../../layers/sme-roster/app/pages/tasks.vue')
   const { default: PagesTasks } = pageModule
   const components = await autoRegisteredComponents()
   const Host = defineComponent({ components: { RouterView }, template: '<RouterView />' })

@@ -1,5 +1,5 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 import { it, expect, afterAll, beforeEach } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import Database from 'better-sqlite3'
 import { initializeDb } from '../../../db/client'
-import { snapshotOperation } from '../../../server/utils/difference-snapshot'
+import { snapshotOperation } from '../../../layers/sme-roster/server/utils/difference-snapshot'
 const dir = mkdtempSync(join(tmpdir(), 'snapshot480-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'own.db') })
 afterAll(() => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
@@ -25,7 +25,7 @@ import { setImmediate } from 'node:timers/promises'
 import { getJob, createJob, finishJob } from '../../../layers/core/server/utils/job-store'
 import { newJobId } from '../../../layers/core/lib/job'
 import * as s from '../../../db/schema'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 async function settled(id: string, store = db) {
   for (let i=0;i<100;i++) { const row=getJob(store,id)!; if (!['queued','running'].includes(row.state)) return row; await setImmediate() }
   throw new Error('job did not settle')
@@ -92,7 +92,7 @@ it('creates and reads the same snapshot through authenticated HTTP and MCP publi
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('readBody', readBody)
   vi.stubGlobal('setResponseStatus', setResponseStatus)
-  const handler = (await import('../../../server/api/roster/difference-snapshots/index.post')).default
+  const handler = (await import('../../../layers/sme-roster/server/api/roster/difference-snapshots/index.post')).default
   const server=createServer(toNodeListener(createApp().use('/api/roster/difference-snapshots',handler)))
   await new Promise<void>(r=>server.listen(0,'127.0.0.1',r))
   try {
@@ -102,7 +102,7 @@ it('creates and reads the same snapshot through authenticated HTTP and MCP publi
     expect(res.status).toBe(202)
     const row=await res.json()
     await settled(row.id)
-    const tool=(await import('../../../server/mcp/tools/difference_snapshot')).default as unknown as {handler:(input:unknown)=>Promise<{content:{text:string}[]}>}
+    const tool=(await import('../../../layers/sme-roster/server/mcp/tools/difference_snapshot')).default as unknown as {handler:(input:unknown)=>Promise<{content:{text:string}[]}>}
     const mcp=JSON.parse((await tool.handler({action:'read',jobId:row.id})).content[0]!.text)
     expect(mcp.id).toBe(row.id)
     expect(mcp.result).toMatchObject({counts:{enterprises:1,unfinished:7},collectionPolicy:'per_enterprise_fresh_same_job_resume'})
@@ -117,9 +117,9 @@ it('rejects retry after backup checksum changes without changing the checkpoint'
   await expect(snapshotOperation(db,dir,{action:'retry',jobId:row.id})).rejects.toThrow('Backup checksum mismatch')
   expect(getJob(db,row.id)!.result).toEqual(prior.result)
 })
-vi.mock('../../../server/utils/platform-live-query', () => ({ runPlatformLiveQuery: vi.fn(async (input: {source: PlatformLiveQueryResult['source']}) => ({...archive((input as {source:PlatformLiveQueryResult['source']}).source,true),pages:[],effectiveConditions:{combination:'and'},unfinished:[],completeness:'partial'})) }))
+vi.mock('../../../layers/sme-roster/server/utils/platform-live-query', () => ({ runPlatformLiveQuery: vi.fn(async (input: {source: PlatformLiveQueryResult['source']}) => ({...archive((input as {source:PlatformLiveQueryResult['source']}).source,true),pages:[],effectiveConditions:{combination:'and'},unfinished:[],completeness:'partial'})) }))
 
-import { runPlatformLiveQuery } from '../../../server/utils/platform-live-query'
+import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
 // Restore the deterministic provider fixture between scenarios. Real-provider
 // cases install transports with retry backoff that must not leak into scope-only
 // checks (or other scenarios when execution order changes).
@@ -174,7 +174,7 @@ it('collects missing per-enterprise title pages and resumes only failed position
   expect(calls).toHaveLength(8)
   expect((db.$client.prepare('select count(*) n from platform_business_observation').get() as {n:number}).n).toBe(beforeRetry.n+1)
   expect(done.state).toBe('done')
-  const tool=(await import('../../../server/mcp/tools/difference_snapshot')).default as unknown as {handler:(v:unknown)=>Promise<{content:{text:string}[]}>}
+  const tool=(await import('../../../layers/sme-roster/server/mcp/tools/difference_snapshot')).default as unknown as {handler:(v:unknown)=>Promise<{content:{text:string}[]}>}
   const read=JSON.parse((await tool.handler({action:'read',jobId:row.id})).content[0]!.text)
   expect(read.result.counts).toMatchObject({enterprises:1,unfinished:0,rows:14})
   db.$client.close(); activeDb=globalDb
@@ -185,7 +185,7 @@ async function publicHttp(body: unknown) {
   vi.stubGlobal('defineEventHandler',defineEventHandler)
   vi.stubGlobal('readBody',readBody)
   vi.stubGlobal('setResponseStatus',setResponseStatus)
-  const handler=(await import('../../../server/api/roster/difference-snapshots/index.post')).default
+  const handler=(await import('../../../layers/sme-roster/server/api/roster/difference-snapshots/index.post')).default
   const server=createServer(toNodeListener(createApp().use('/snapshot',handler)))
   await new Promise<void>(r=>server.listen(0,'127.0.0.1',r))
   try {
@@ -201,7 +201,7 @@ it('runs real provider pagination with metadata-only checkpoints and complete bu
   const db=initializeDb({create:true,dbPath:join(dir,'provider.db')}); activeDb=db
   const e=db.insert(s.enterprise).values({name:'fixture provider',nameNorm:'fixtureprovider',usccNorm:'91330200222222222X'}).returning().get()
   db.insert(s.record).values({enterpriseId:e.id,titleCode:'innovative_sme',source:'jxj'}).run()
-  const actual=await vi.importActual<typeof import('../../../server/utils/platform-live-query')>('../../../server/utils/platform-live-query')
+  const actual=await vi.importActual<typeof import('../../../layers/sme-roster/server/utils/platform-live-query')>('../../../layers/sme-roster/server/utils/platform-live-query')
   const calls:{source:string;page:number}[]=[]
   vi.mocked(runPlatformLiveQuery).mockImplementation((input,ctx)=>actual.runPlatformLiveQuery(input,{...ctx,cookie:'fixture-cookie',transport:{fetchImpl:async (url,init)=>{
     const source=String(url).includes('queryBusList')?'queryBusList':String(url).includes('businessList')?'businessList':'queryList'
@@ -229,7 +229,7 @@ it.each(['short-tail','retained-total'] as const)('real provider public snapshot
   const db=initializeDb({create:true,dbPath:join(dir,mode+'.db')}); activeDb=db
   const e=db.insert(s.enterprise).values({name:'fixture provider',nameNorm:'fixtureprovider',usccNorm:'91330200222222222X'}).returning().get()
   db.insert(s.record).values({enterpriseId:e.id,titleCode:'innovative_sme',source:'jxj'}).run()
-  const actual=await vi.importActual<typeof import('../../../server/utils/platform-live-query')>('../../../server/utils/platform-live-query')
+  const actual=await vi.importActual<typeof import('../../../layers/sme-roster/server/utils/platform-live-query')>('../../../layers/sme-roster/server/utils/platform-live-query')
   const calls:number[]=[]
   let retry=false
   vi.mocked(runPlatformLiveQuery).mockImplementation((input,ctx)=>actual.runPlatformLiveQuery(input,{...ctx,cookie:'fixture-cookie',transport:{fetchImpl:async (url,init)=>{
@@ -248,7 +248,7 @@ it.each(['short-tail','retained-total'] as const)('real provider public snapshot
     retry=true
     await publicHttp({action:'retry',jobId:row.id})
     const done=await settled(row.id,db)
-    const tool=(await import('../../../server/mcp/tools/difference_snapshot')).default as unknown as {handler:(v:unknown)=>Promise<{content:{text:string}[]}>}
+    const tool=(await import('../../../layers/sme-roster/server/mcp/tools/difference_snapshot')).default as unknown as {handler:(v:unknown)=>Promise<{content:{text:string}[]}>}
     const read=JSON.parse((await tool.handler({action:'read',jobId:row.id})).content[0]!.text)
     expect(read.result).toEqual(done.result)
     const item=read.result.items.find((i:{source:string})=>i.source==='queryList')

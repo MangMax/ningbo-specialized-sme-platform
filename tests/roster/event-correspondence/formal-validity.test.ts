@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
-import { handleEventCorrectionRequest } from '../../../server/utils/roster-event-correction-api'
-import { versionedOfficialEvent } from '../../../server/utils/roster-event-version'
+import { handleEventCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-event-correction-api'
+import { versionedOfficialEvent } from '../../../layers/sme-roster/server/utils/roster-event-version'
 
 const opened: Array<ReturnType<typeof initializeDb>> = []
 afterEach(() => {

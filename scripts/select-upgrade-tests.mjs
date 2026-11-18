@@ -11,7 +11,7 @@ export function selectUpgrade(paths) {
     if (/^tests\//.test(path)) {
       return !path.endsWith('.test.ts') || path.endsWith('.upgrade.test.ts')
     }
-    if (/^(app|components|pages|layouts|composables|assets|public)\//.test(path)) return false
+    if (/^(?:layers\/(?:core|sme-roster)\/)?(?:app|components|pages|layouts|composables|assets|public)\//.test(path)) return false
     if (/^docs\//.test(path)) return path.startsWith('docs/adr/')
     if (/^README[^/]*$/.test(path)) return false
     return true

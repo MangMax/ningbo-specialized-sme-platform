@@ -5,14 +5,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { reconcileKey } from '../../../lib/reconcile'
+import { reconcileKey } from '../../../layers/sme-roster/lib/reconcile'
 
 /**
  * `GET /api/comparison` 的接缝测试(RL-03 交付物 3)。
  *
  * 两件事必须同时成立:
  *  1. **旧的 JSON 解释缓存路径保持兼容** —— 缓存读得到就照旧挂 `explanation`,读不到就全 null
- *     且**不影响**比对结果(`lib/reconcile.ts` 一字未改);
+ *     且**不影响**比对结果(`layers/sme-roster/lib/reconcile.ts` 一字未改);
  *  2. **新的库内平台证据** `platform` 段随行返回(曾用名 / 已核验处置 / 关系条数)。
  */
 const dir = mkdtempSync(join(tmpdir(), 'spztx-comparison-api-'))
@@ -91,7 +91,7 @@ beforeAll(async () => {
   )
   vi.stubGlobal('useRuntimeConfig', () => ({ reconcilePath, curatedPath }))
   vi.doMock('@db', () => ({ useDb: () => db }))
-  handler = (await import('../../../server/api/comparison.get')).default as unknown as typeof handler
+  handler = (await import('../../../layers/sme-roster/server/api/comparison.get')).default as unknown as typeof handler
 })
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -156,7 +156,7 @@ describe('GET /api/comparison:库内平台证据 + 旧解释缓存兼容', () =>
       reconcilePath,
       JSON.stringify({
         generatedAt: '2026-10-15T11:53:46.532Z',
-        source: { command: 'tsx scripts/reconcile.ts', db: '<snapshot>', criterion: 'lib/comparison.ts' },
+        source: { command: 'tsx scripts/reconcile.ts', db: '<snapshot>', criterion: 'layers/sme-roster/lib/comparison.ts' },
         counts: { on_platform: 1 },
         entries: [
           {

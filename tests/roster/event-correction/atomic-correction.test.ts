@@ -9,7 +9,7 @@ import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
 import { afterAll, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { initializeDb, schema } from '../../../db/client'
-import { readCurrentCandidate } from '../../../lib/roster/current-qualification'
+import { readCurrentCandidate } from '../../../layers/sme-roster/lib/roster/current-qualification'
 
 const dirs: string[] = []
 afterAll(() => { vi.unstubAllGlobals(); for (const dir of dirs) rmSync(dir, { recursive: true, force: true }) })
@@ -24,13 +24,13 @@ async function fixture(awardYear = 2021, titleCode = 'specialized_sme') {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'test-api' }))
   const oldPath = process.env.NUXT_DB_PATH; process.env.NUXT_DB_PATH = dbPath
-  const { eventCorrectionRoute } = await import('../../../server/utils/roster-event-correction-route')
+  const { eventCorrectionRoute } = await import('../../../layers/sme-roster/server/utils/roster-event-correction-route')
   const app = createApp(), router = createRouter()
   router.use('/api/roster/events/corrections/preflight', eventCorrectionRoute('preflight'))
   router.use('/api/roster/events/corrections/commit', eventCorrectionRoute('commit'))
   router.use('/api/roster/events/:id/audit', eventCorrectionRoute('audit'))
   router.use('/api/roster/events/:id', eventCorrectionRoute('get'))
-  const { correspondenceRoute } = await import('../../../server/utils/record-correspondence-route')
+  const { correspondenceRoute } = await import('../../../layers/sme-roster/server/utils/record-correspondence-route')
   router.use('/api/roster/correspondences/preflight', correspondenceRoute('preflight'))
   router.use('/api/roster/correspondences/commit', correspondenceRoute('commit'))
   router.use('/api/roster/correspondences/:id', correspondenceRoute('get', { id: true }))

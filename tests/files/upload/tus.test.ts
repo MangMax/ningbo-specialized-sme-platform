@@ -1,4 +1,4 @@
-import { resolveUploadPlacement } from '../../../server/utils/stored-files'
+import { resolveUploadPlacement } from '../../../layers/core/server/utils/stored-files'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { reviewEventSuffix, reviewOutcomeLabel, timelineEventIdentity } from '../../../lib/roster/enterprise-timeline'
+import { reviewEventSuffix, reviewOutcomeLabel, timelineEventIdentity } from '../../../layers/sme-roster/lib/roster/enterprise-timeline'
 
 describe('企业时间轴事件事实', () => {
   const review = {

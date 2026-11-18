@@ -3,7 +3,7 @@ import { parseCsvQuery } from '#core/lib/csv'
 import { JOB_STATES, type JobState } from '#core/lib/job'
 import { ensureJobRunnerReady } from '../../utils/job-runner'
 import { DEFAULT_JOB_LIMIT, listJobs, listJobSummaries, MAX_JOB_LIMIT } from '../../utils/job-store'
-import { jobReadProjector } from '../../../../../server/utils/job-read'
+import { jobRuntime } from '../../../../../server/job-runtime'
 import { registerJobSpecs } from '../../../../../server/utils/job-specs'
 
 /**
@@ -132,5 +132,5 @@ export default defineEventHandler(async (event) => {
   if (q.view === 'summary') return listJobSummaries(db, query)
   const { rows, total } = listJobs(db, query)
 
-  return { rows: await Promise.all(rows.map(jobReadProjector(db))), total }
+  return { rows: await Promise.all(rows.map(jobRuntime.readProjector(db))), total }
 })

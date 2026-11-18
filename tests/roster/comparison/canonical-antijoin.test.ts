@@ -2,9 +2,9 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
-import { getComparison } from '../../../lib/comparison'
+import { getComparison } from '../../../layers/sme-roster/lib/comparison'
 import { readBaselineComparison } from './oracles/enterprise-title-antijoin'
-import type { ComparisonRow } from '../../../lib/comparison'
+import type { ComparisonRow } from '../../../layers/sme-roster/lib/comparison'
 
 it('canonical same-enterprise matches avoid USCC equality probes while unmatched rows preserve exact DTOs', () => {
   const sqlite = new Database(':memory:')

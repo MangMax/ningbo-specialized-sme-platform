@@ -2,7 +2,7 @@
 import type Database from 'better-sqlite3'
 import { hasColumns, migrationFinished, requireH1cReady } from '../h1c-catalog'
 import { witnessDefinitions } from './recognized-witness-schema'
-import { WITNESS_RULE } from '../../lib/platform/recognized-witness-capture'
+import { WITNESS_RULE } from '../../layers/sme-roster/lib/platform/recognized-witness-capture'
 export const WITNESS_TRANSFORM='recognized-witness-offline-v1'
 const changed=(table:keyof typeof witnessDefinitions)=>Object.keys(witnessDefinitions[table]).map(n=>`NEW.${n} IS NOT OLD.${n} OR typeof(NEW.${n})<>typeof(OLD.${n})`).join(' OR ')
 const valueShape=(p:string)=>`((NEW.${p}_kind IN ('absent','null') AND NEW.${p}_value IS NULL) OR (NEW.${p}_kind IN ('text','number','boolean','array','object') AND typeof(NEW.${p}_value)='blob'))`

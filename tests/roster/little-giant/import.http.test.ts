@@ -10,11 +10,11 @@ import {
   createRosterImportClient,
   type RosterImportCommitResponse,
   type RosterImportRequest,
-} from '../../../lib/roster-import-client'
-import { buildLittleGiantImportRequest, LITTLE_GIANT_SOURCE_FILE } from '../../../lib/roster/little-giant-import'
-import { parseLittleGiantWorkbook, type LittleGiantWorkbook } from '../../../lib/roster/little-giant-workbook'
-import { rosterRowCounts } from '../../../server/utils/roster-import'
-import { landingSegments } from '../../../lib/sme-roster/file-landing'
+} from '../../../layers/sme-roster/lib/roster-import-client'
+import { buildLittleGiantImportRequest, LITTLE_GIANT_SOURCE_FILE } from '../../../layers/sme-roster/lib/roster/little-giant-import'
+import { parseLittleGiantWorkbook, type LittleGiantWorkbook } from '../../../layers/sme-roster/lib/roster/little-giant-workbook'
+import { rosterRowCounts } from '../../../layers/sme-roster/server/utils/roster-import'
+import { landingSegments } from '../../../layers/sme-roster/lib/sme-roster/file-landing'
 import { executeNativeImport, startRosterApi, type RosterApiServer } from '../imports/fixtures/import-server'
 import { SYNTHETIC_DUPLICATE_USCC, hasRealSource, loadLittleGiantSource, type LittleGiantSource } from './fixtures/official-source'
 
@@ -25,7 +25,7 @@ import { SYNTHETIC_DUPLICATE_USCC, hasRealSource, loadLittleGiantSource, type Li
  * ── 走的是哪条链路 ──────────────────────────────────────────────────────
  * `tests/helpers/roster-http-server.ts` 在**真端口**上起一个 node:http 服务,挂的是
  * **Nitro 路由同款**的 `handleRosterImportRequest`(RL-11 的验收夹具,不是另写的替身);
- * 客户端用 `lib/roster-import-client.ts`(**契约类型 + HTTP 客户端**)。全程 `pnpm test` 默认跑,
+ * 客户端用 `layers/sme-roster/lib/roster-import-client.ts`(**契约类型 + HTTP 客户端**)。全程 `pnpm test` 默认跑,
  * 不需要环境变量:真件在就用真件,不在就用合成夹具跑**同一条链路**(见 `helpers/little-giant-source.ts`)。
  *
  * ── 为什么可以读库 ──────────────────────────────────────────────────────

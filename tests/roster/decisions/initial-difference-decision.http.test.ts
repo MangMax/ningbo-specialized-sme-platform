@@ -1,4 +1,4 @@
-import { readOwnerArchive } from '../../../lib/platform/target-archive'
+import { readOwnerArchive } from '../../../layers/sme-roster/lib/platform/target-archive'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createApp, defineEventHandler, toNodeListener } from 'h3'
@@ -21,9 +21,9 @@ beforeAll(async () => {
   submitNativePlatformQuery(db, { queryKey: 'name:274合成', interface: 'apply_list', rdjb: '2', status: 'success', queriedAt: '2026-10-24T00:00:00Z', rawResponse: '{"synthetic":"unaltered"}' })
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-only', }))
-  const command = (await import('../../../server/api/roster/evidence-review/browser-commands.post')).default
-  const current = (await import('../../../server/api/roster/decision-lifecycle/current.get')).default
-  const history = (await import('../../../server/api/roster/decision-lifecycle/history.get')).default
+  const command = (await import('../../../layers/sme-roster/server/api/roster/evidence-review/browser-commands.post')).default
+  const current = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/current.get')).default
+  const history = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/history.get')).default
   const app = createApp().use('/command', command).use('/current', current).use('/history', history)
   server = createServer(toNodeListener(app)); await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`

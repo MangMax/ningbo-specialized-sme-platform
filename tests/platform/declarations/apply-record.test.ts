@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { APPLY_PROJECTION_RULE, parseApplyRecord } from '../../../lib/platform/apply-record'
+import { APPLY_PROJECTION_RULE, parseApplyRecord } from '../../../layers/sme-roster/lib/platform/apply-record'
 
 describe('apply_list typed projection parser', () => {
   it('derives only explicit source fields without inferring a title or year', () => {

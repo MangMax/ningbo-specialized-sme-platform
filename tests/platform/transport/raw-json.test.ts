@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
-import { parsePlatformPage } from '../../../lib/platform/adapter'
-import { runPlatformLiveQuery } from '../../../server/utils/platform-live-query'
+import { parsePlatformPage } from '../../../layers/sme-roster/lib/platform/adapter'
+import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
 
 const row = JSON.parse('{"id":"same","x":null,"n":1,"b":true,"o":{"a":1},"a":[null,2,{"x":false}],"__proto__":{"kept":true},"constructor":"own","unknown":"🙂"}')
 function body(rows: unknown[], extra = '') {
@@ -45,7 +45,7 @@ it.each([
 })
 
 it('recognized archive validates typed source and legacy projection while accepting unchanged string-only history', async () => {
-  const { recognizedEvidenceError, recognizedResultToImport } = await import('../../../lib/platform/recognized-evidence')
+  const { recognizedEvidenceError, recognizedResultToImport } = await import('../../../layers/sme-roster/lib/platform/recognized-evidence')
   const result = await runPlatformLiveQuery(query, context(body([row])))
   expect(recognizedEvidenceError(result)).toBeNull()
   expect(recognizedResultToImport(result).collectionEvidence!.rawData).toEqual(result.rawData)
@@ -86,7 +86,7 @@ it('embedded HTML retains typed JSON while rendered table observations remain st
 
 it('public result schema validates JSON without dropping prototype-named keys from typed observations', async () => {
   const { z } = await import('zod')
-  const { platformQueryResultShape } = await import('../../../lib/platform/live-query')
+  const { platformQueryResultShape } = await import('../../../layers/sme-roster/lib/platform/live-query')
   const original = await runPlatformLiveQuery(query, context(body([row])))
   const parsed = z.object(platformQueryResultShape).parse(original)
   expect(parsed.rawData!.rows).toEqual([row])
@@ -95,7 +95,7 @@ it('public result schema validates JSON without dropping prototype-named keys fr
 
 it('typed result schema rejects non JSON values even under prototype-named unknown fields', async () => {
   const { z } = await import('zod')
-  const { platformQueryResultShape } = await import('../../../lib/platform/live-query')
+  const { platformQueryResultShape } = await import('../../../layers/sme-roster/lib/platform/live-query')
   const original = await runPlatformLiveQuery(query, context(body([row])))
   for (const invalid of [undefined, NaN, Infinity, 1n, new Date()]) {
     const value = structuredClone(original)

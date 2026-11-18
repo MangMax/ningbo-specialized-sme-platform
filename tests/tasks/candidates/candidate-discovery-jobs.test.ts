@@ -10,8 +10,8 @@ import {
   ensureJobRunnerReady,
   whenIdle,
 } from '../../../layers/core/server/utils/job-runner'
-import { submitCandidateDiscovery } from '../../../server/utils/jobs/candidate-discovery'
-import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
+import { submitCandidateDiscovery } from '../../../layers/sme-roster/server/utils/jobs/candidate-discovery'
+import { handleRecordCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-api'
 import { getJob } from '../../../layers/core/server/utils/job-store'
 const dirs: string[] = []
 function fixture() {
@@ -149,7 +149,7 @@ it('keeps partial failures and resumes only unfinished events without repeating 
   const edges = f.read('list', { query: { eventId: f.event.id } })
   const audit = f.read('audit', { id: edges.rows[0].id })
   const { retryCandidateDiscovery } =
-    await import('../../../server/utils/jobs/candidate-discovery')
+    await import('../../../layers/sme-roster/server/utils/jobs/candidate-discovery')
   retryCandidateDiscovery(f.db, task.jobId, f.dir)
   await whenIdle()
   expect(getJob(f.db, task.jobId)).toMatchObject({
@@ -162,7 +162,7 @@ it('keeps partial failures and resumes only unfinished events without repeating 
 it('shares authenticated HTTP and MCP task semantics and task center event results', async () => {
   const f = fixture()
   const { handleCandidateJobRequest, dispatchCandidateJobMcp } =
-    await import('../../../server/utils/candidate-job-api')
+    await import('../../../layers/sme-roster/server/utils/candidate-job-api')
   const { startHttpFixture } = await import('../../support/http')
   const context = { db: f.db, filesDir: f.dir, apiToken: 'synthetic-task-key' }
   const api = await startHttpFixture({
@@ -268,7 +268,7 @@ it('rejects invalid scopes and conflicting request reuse while keeping empty sco
 it('cancels before discovery writes and retries the same frozen scope without duplicate audit', async () => {
   const f = fixture()
   const { requestJobCancel } = await import('../../../layers/core/server/utils/job-runner')
-  const { retryCandidateDiscovery } = await import('../../../server/utils/jobs/candidate-discovery')
+  const { retryCandidateDiscovery } = await import('../../../layers/sme-roster/server/utils/jobs/candidate-discovery')
   const task = submitCandidateDiscovery(f.db, { eventIds: [f.event.id], clientRequestId: 'native-cancel' }, f.dir)
   expect(requestJobCancel(f.db, task.jobId)).toMatchObject({ ok: true })
   await whenIdle()

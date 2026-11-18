@@ -2,8 +2,8 @@
 import { asc, eq, inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../legacy-schema'
-import { normalizeUscc } from '../../../lib/domain'
-import type { PlatformBusinessGroup, PlatformBusinessMetadata, PlatformBusinessObservationRef, PlatformCorrespondenceRef, ScopedPlatformObservation } from '../../../lib/platform/business-record'
+import { normalizeUscc } from '../../../layers/sme-roster/lib/domain'
+import type { PlatformBusinessGroup, PlatformBusinessMetadata, PlatformBusinessObservationRef, PlatformCorrespondenceRef, ScopedPlatformObservation } from '../../../layers/sme-roster/lib/platform/business-record'
 import { targetSchema } from '../../target-schema'
 import { correspondenceColumns, correspondenceTable, correspondenceTarget, externalRelationColumn } from './record-correspondence-store'
 

@@ -9,17 +9,17 @@ import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import * as schema from '../../../db/schema'
-import type { OfficialPublishedRow, RosterImportRecord, RosterImportPayload, RosterImportRequest } from '../../../lib/roster-import-client'
-import { commitRosterImport, preflightRosterImport } from '../../../server/utils/roster-import'
-import { readExactEvidence } from '../../../server/utils/roster-evidence-correction'
-import { appendOfficialEvidenceRevision } from '../../../server/utils/official-evidence'
+import type { OfficialPublishedRow, RosterImportRecord, RosterImportPayload, RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
+import { commitRosterImport, preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { readExactEvidence } from '../../../layers/sme-roster/server/utils/roster-evidence-correction'
+import { appendOfficialEvidenceRevision } from '../../../layers/sme-roster/server/utils/official-evidence'
 
-type Execute = typeof import('../../../server/utils/import-execution')['importExecutor']['execute']
+type Execute = typeof import('../../../layers/sme-roster/server/utils/import-execution')['importExecutor']['execute']
 const current = vi.hoisted((): { db?: BetterSQLite3Database<typeof schema>; filesDir: string } => ({ filesDir: '' }))
 vi.mock('@db', () => ({ useDb: () => { if (!current.db) throw new Error('Synthetic database not initialized'); return current.db } }))
 // Only off-process admission is replaced. Actual H3 routes, validation, preflight,
 // final-set planner and IMMEDIATE commit execute unchanged against real SQLite.
-vi.mock('../../../server/utils/import-execution', () => ({ importExecutor: { execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
+vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: { execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
 const closes: (() => void | Promise<void>)[] = []
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close() })
 afterAll(() => { vi.unstubAllGlobals() })
@@ -27,8 +27,8 @@ const router = createRouter()
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-r1', filesDir: current.filesDir }))
-  router.post('/api/roster/import/preflight', (await import('../../../server/api/roster/import/preflight.post')).default)
-  router.post('/api/roster/import/commit', (await import('../../../server/api/roster/import/commit.post')).default)
+  router.post('/api/roster/import/preflight', (await import('../../../layers/sme-roster/server/api/roster/import/preflight.post')).default)
+  router.post('/api/roster/import/commit', (await import('../../../layers/sme-roster/server/api/roster/import/commit.post')).default)
 })
 const responseSchema = z.object({ status: z.string().optional(), batchId: z.number().optional(), preflight: z.object({ conflicts: z.array(z.object({ error: z.object({ code: z.string() }) })), officialEvidencePlanHash: z.string().optional() }).optional() }).passthrough()
 const text = 'synthetic official source\n', padded = 'different padded file bytes'

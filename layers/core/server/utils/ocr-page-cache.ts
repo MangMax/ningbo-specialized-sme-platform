@@ -79,7 +79,7 @@ export function ocrPageCacheDirAbs(filesDir: string, pdfRelPath: string): string
  * 流式算文件的 sha256(不把页图整个读进内存)。
  *
  * 与 `server/utils/pdf-pages.ts` 的同名函数**逐行相同** —— 照抄而不抽取,是因为抽取要改
- * 那份文件(票 13 的地盘)。同仓已有先例(`lib/stored-file.ts` 也照抄了 pipeline 的
+ * 那份文件(票 13 的地盘)。同仓已有先例(`layers/sme-roster/lib/stored-file.ts` 也照抄了 pipeline 的
  * `parseBatch` 并注明来源),合流留给后续清理。
  */
 export function sha256OfFile(absPath: string): Promise<string> {

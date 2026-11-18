@@ -3,9 +3,9 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useQuery } from '@pinia/colada'
-import EnterpriseListTable from '../../../components/EnterpriseListTable.vue'
-import EnterpriseDrawer from '../../../components/EnterpriseDrawer.vue'
-import type { RosterEventRow } from '../../../lib/roster/enterprise-roster'
+import EnterpriseListTable from '../../../layers/sme-roster/app/components/EnterpriseListTable.vue'
+import EnterpriseDrawer from '../../../layers/sme-roster/app/components/EnterpriseDrawer.vue'
+import type { RosterEventRow } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 
 vi.mock('@pinia/colada', () => ({ useQuery: vi.fn() }))
 

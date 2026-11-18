@@ -1,6 +1,6 @@
 /** Offline historical oracle from ab503081dae3e24680afc9b07395a7e3ff21fc9f. */
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { sqliteConnection } from '../../lib/platform/target-connection'
+import { sqliteConnection } from '../../layers/sme-roster/lib/platform/target-connection'
 import { requireLegacyProvenanceReady } from '../legacy-provenance-catalog'
 import { requireH1cReady } from '../h1c-catalog'
 

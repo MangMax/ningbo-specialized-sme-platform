@@ -6,7 +6,7 @@ import { createDrizzleLogger } from '../layers/core/lib/logging/drizzle'
 import * as schema from './schema'
 import { assertApplicationSchema } from './schema-phase'
 import { createRuntimeSchema } from './create-runtime'
-import { readOwnerIdentity, sameReadOwner, type ReadOwnerIdentity } from '../lib/roster/offmain-read-protocol'
+import { readOwnerIdentity, sameReadOwner, type ReadOwnerIdentity } from './read-owner-identity'
 
 export interface DbOptions {
   /** SQLite 文件路径。默认 `NUXT_DB_PATH` → `<cwd>/data/roster.db`。 */

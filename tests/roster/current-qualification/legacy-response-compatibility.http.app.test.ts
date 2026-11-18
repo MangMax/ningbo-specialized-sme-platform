@@ -7,8 +7,8 @@ import * as h3 from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
 import { executeNativeImport, startRosterApi } from '../imports/fixtures/import-server'
-import { enterpriseReads } from '../../../server/utils/enterprise-read'
-import { readEvidenceToken113 } from '../../../server/utils/evidence-impact-113'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
+import { readEvidenceToken113 } from '../../../layers/sme-roster/server/utils/evidence-impact-113'
 
 const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
 vi.mock('@db', () => ({ useDb: () => active.db }))
@@ -43,12 +43,12 @@ beforeAll(async () => {
   // Read IDs from this owned synthetic DB; no SQL writes or copied fixtures.
   enterpriseId = db.select({ id: schema.enterprise.id }).from(schema.enterprise).get()!.id
   relationId = db.select({ id: schema.platformLegacyRelationAlias.oldId }).from(schema.platformLegacyRelationAlias).get()!.id
-  const processImpacts = (await import('../../../server/api/roster/evidence-impacts/commands.post')).default
-  const commands = (await import('../../../server/api/roster/decision-lifecycle/commands.post')).default
-  const detail = (await import('../../../server/api/roster/enterprises/[id].get')).default
-  const differences = (await import('../../../server/api/roster/differences.get')).default
-  const current = (await import('../../../server/api/roster/decision-lifecycle/current.get')).default
-  mcp = (await import('../../../server/mcp/tools/list_differences')).default as unknown as typeof mcp
+  const processImpacts = (await import('../../../layers/sme-roster/server/api/roster/evidence-impacts/commands.post')).default
+  const commands = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/commands.post')).default
+  const detail = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default
+  const differences = (await import('../../../layers/sme-roster/server/api/roster/differences.get')).default
+  const current = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/current.get')).default
+  mcp = (await import('../../../layers/sme-roster/server/mcp/tools/list_differences')).default as unknown as typeof mcp
   const router = h3.createRouter().post('/api/roster/decision-lifecycle/commands', commands)
     .post('/api/roster/evidence-impacts/commands', processImpacts)
     .get('/api/roster/decision-lifecycle/current', current).get('/api/roster/enterprises/:id', detail).get('/api/roster/differences', differences)

@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
-import ComparisonEventRow from '../../../components/record-correspondence/ComparisonEventRow.vue'
-import type { RecordComparisonResult } from '../../../lib/roster/record-comparison-view'
+import ComparisonEventRow from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonEventRow.vue'
+import type { RecordComparisonResult } from '../../../layers/sme-roster/lib/roster/record-comparison-view'
 const wrappers: ReturnType<typeof mount>[] = []
 afterEach(() => { wrappers.forEach(wrapper => wrapper.unmount()); vi.unstubAllGlobals() })
 const row = (sourceFile: string, page: number | null) => ({

@@ -6,8 +6,8 @@ import { and, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { targetSchema as s } from '../target-schema'
 import { candidateScopeObservation as o } from './candidate-scope-schema'
-import { captureCandidateScope, CANDIDATE_SCOPE_RULE } from '../../lib/platform/candidate-scope-capture'
-import { sqliteConnection } from '../../lib/platform/target-connection'
+import { captureCandidateScope, CANDIDATE_SCOPE_RULE } from '../../layers/sme-roster/lib/platform/candidate-scope-capture'
+import { sqliteConnection } from '../../layers/sme-roster/lib/platform/target-connection'
 import { ensureProcessStoredReady } from '../process-stored-catalog'
 export function candidateObservationValues<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, collection: typeof s.platformCollection.$inferSelect, sequenceNo: number) {
   if (db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !== 71609 && db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version !==71610 && db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version!==71611 && db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version!==71612 && db.get<{user_version:number}>(sql`PRAGMA user_version`)?.user_version!==71613) return {}

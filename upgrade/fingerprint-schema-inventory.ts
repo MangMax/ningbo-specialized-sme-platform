@@ -1,7 +1,7 @@
 import { witnessInstalled } from './frozen/recognized-witness-catalog'
 import { recognizedStoredInstalled } from './recognized-stored-catalog'
 import type Database from 'better-sqlite3'
-import { hasColumns } from '../lib/platform/migration-readiness'
+import { hasColumns } from '../layers/sme-roster/lib/platform/migration-readiness'
 const refs=['platform_collection_archive_ref','platform_observation_archive_ref','platform_version_archive_ref'] as const
 const expected=[...refs.map(table=>`${table}.archive_id`),'platform_apply_projection.source_archive_id','platform_business_projection.source_archive_id','platform_recognized_projection.source_archive_id','platform_business_record_version.canonical_archive_id'].sort()
 /** Offline completion check; never called by ordinary fingerprint requests. */

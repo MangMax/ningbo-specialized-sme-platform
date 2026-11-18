@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import { setImmediate } from 'node:timers/promises'
 import { expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
-import { getRecordComparison } from '../../../server/utils/record-comparison'
-import { readRecordComparison, readRecordComparisonSources } from '../../../server/utils/record-comparison-read'
+import { getRecordComparison } from '../../../layers/sme-roster/server/utils/record-comparison'
+import { readRecordComparison, readRecordComparisonSources } from '../../../layers/sme-roster/server/utils/record-comparison-read'
 
 it('yields during cold source counting and keeps the catalog page in its original readonly snapshot', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'comparison-catalog-snapshot-'))

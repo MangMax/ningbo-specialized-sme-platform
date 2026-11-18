@@ -1,11 +1,11 @@
 import ExcelJS from 'exceljs'
 import { eq } from 'drizzle-orm'
 import { join } from 'node:path'
-import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
+import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
 import { afterAll, expect, it, vi } from 'vitest'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
-import { createCurrentQualificationAssessmentReader } from '../../../lib/roster/current-qualification'
-import { currentDispositions, preflightDisposition, commitDisposition } from '../../../server/utils/title-cycle-disposition'
+import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { currentDispositions, preflightDisposition, commitDisposition } from '../../../layers/sme-roster/server/utils/title-cycle-disposition'
 import * as s from '../../../db/schema'
 const f = qualificationExportFixture()
 function append(recordId: number, event: {eventType:'review'|'award';year:number;decidedYear?:number;batchSeq:number;reviewOutcome?:'passed'}) {

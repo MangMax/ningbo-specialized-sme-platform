@@ -8,8 +8,8 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { z } from 'zod'
 import * as schema from '../../../db/schema'
-import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } from '../../../lib/roster-import-client'
-import { usccFormatVerdict } from '../../../lib/roster/uscc-research'
+import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } from '../../../layers/sme-roster/lib/roster-import-client'
+import { usccFormatVerdict } from '../../../layers/sme-roster/lib/roster/uscc-research'
 import { spawnOwnedChild, spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 // Actual Nuxt routes/toolkit/middleware/JSON-RPC and real import process. Execute only

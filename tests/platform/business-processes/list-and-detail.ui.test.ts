@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
-import PlatformBusinessProcessTable from '../../../components/PlatformBusinessProcessTable.vue'
-import PlatformBusinessProcessDetailDialog from '../../../components/PlatformBusinessProcessDetailDialog.vue'
-import type { BusinessProcessRow } from '../../../lib/platform/business-processes'
+import PlatformBusinessProcessTable from '../../../layers/sme-roster/app/components/PlatformBusinessProcessTable.vue'
+import PlatformBusinessProcessDetailDialog from '../../../layers/sme-roster/app/components/PlatformBusinessProcessDetailDialog.vue'
+import type { BusinessProcessRow } from '../../../layers/sme-roster/lib/platform/business-processes'
 
 const stubs = { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' } }
 const version = {

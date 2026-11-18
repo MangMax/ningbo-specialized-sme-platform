@@ -1,6 +1,6 @@
 import { appLog, type LogContext } from '../../lib/logging'
 import { maintainStoredFileSync, splitFileMaintenanceBody } from './file-maintenance'
-import type { updateStoredFile } from '../../../../server/utils/stored-files'
+import type { updateStoredFile } from './stored-files'
 type Db = Parameters<typeof updateStoredFile>[0]
 export interface StoredFilePatchResponse { status: number; body: unknown }
 /** Shared PATCH contract; the Nitro route handles transport authorization. */

@@ -1,5 +1,5 @@
 import { submitNativePlatformQuery } from '../fixtures/native-query'
-import { sourceReader } from '../../../server/utils/record-correspondence-read'
+import { sourceReader } from '../../../layers/sme-roster/server/utils/record-correspondence-read'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -9,16 +9,16 @@ import { z } from 'zod'
 import { eq } from 'drizzle-orm'
 import { initializeDb } from '../../../db/client'
 import * as schema from '../../../db/schema'
-import { commitRosterImport, planRosterImport, preflightRosterImport, validateImportRequest } from '../../../server/utils/roster-import'
-import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
-import { inspectLegacyPlatformProvenance } from '../../../server/utils/platform-legacy-provenance'
-import { legacyPlatformProvenanceItemsSchema, type LegacyPlatformCollection, type LegacyPlatformProvenanceInput } from '../../../lib/platform/legacy-provenance'
-import { platformEvidenceError } from '../../../lib/platform/recognized-evidence'
-import { listPlatformQueries } from '../../../lib/platform/read'
-import { readPlatformQueryEvidence } from '../../../lib/platform/evidence-read'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import { rosterImportMcpPayloadSchema } from '../../../server/utils/roster-import-schema'
-import type { RosterImportRequest } from '../../../lib/roster-import-client'
+import { commitRosterImport, planRosterImport, preflightRosterImport, validateImportRequest } from '../../../layers/sme-roster/server/utils/roster-import'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
+import { inspectLegacyPlatformProvenance } from '../../../layers/sme-roster/server/utils/platform-legacy-provenance'
+import { legacyPlatformProvenanceItemsSchema, type LegacyPlatformCollection, type LegacyPlatformProvenanceInput } from '../../../layers/sme-roster/lib/platform/legacy-provenance'
+import { platformEvidenceError } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import { listPlatformQueries } from '../../../layers/sme-roster/lib/platform/read'
+import { readPlatformQueryEvidence } from '../../../layers/sme-roster/lib/platform/evidence-read'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { rosterImportMcpPayloadSchema } from '../../../layers/sme-roster/server/utils/roster-import-schema'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const dir = mkdtempSync(join(tmpdir(), 'legacy-provenance-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
@@ -175,7 +175,7 @@ describe('independent legacy provenance', () => {
 
   it('discovers explicit source locks on REST and MCP without claiming typed evidence', () => {
     const mcp = z.toJSONSchema(rosterImportMcpPayloadSchema, { io: 'input' }) as any
-    const rest = ['preflight', 'commit'].map(action => JSON.parse(readFileSync(new URL(`../../../server/api/roster/import/${action}.post.ts`, import.meta.url), 'utf8').match(/payload: (\{\n[\s\S]*?\n\}),/)![1]!))
+    const rest = ['preflight', 'commit'].map(action => JSON.parse(readFileSync(new URL(`../../../layers/sme-roster/server/api/roster/import/${action}.post.ts`, import.meta.url), 'utf8').match(/payload: (\{\n[\s\S]*?\n\}),/)![1]!))
     for (const payload of [mcp, ...rest]) {
       expect(payload.properties.platformLegacyProvenance).toMatchObject({ type: 'array', minItems: 1, maxItems: 100, items: { additionalProperties: false, required: expect.arrayContaining(['queryId', 'interface', 'queryKey', 'rdjb', 'queriedAt', 'sourceSha256', 'segmentIndex', 'collection', 'relations']) } })
     }

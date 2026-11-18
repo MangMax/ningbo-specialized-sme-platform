@@ -2,7 +2,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import SourceReader from '../../../components/record-correspondence/SourceReader.vue'
+import SourceReader from '../../../layers/sme-roster/app/components/record-correspondence/SourceReader.vue'
 
 const event = { id: 9, recordId: 2, eventType: 'award', year: 2022, batchSeq: 1, decidedYear: 2022, reviewOutcome: null,
   record: { id: 2, enterpriseId: 42, titleCode: 'specialized_sme', source: 'jxj', usccRaw: '913300000000000004' }, evidence: [], correspondences: [] }
@@ -11,7 +11,7 @@ const relation = { id: 30, queryId: 20, sequenceNo: 4, relationKey: 'SQ-2024-1',
 const edge = (id: number, type: string, status: string) => ({ id, type, role: type === 'later_process' ? 'followup_update' : 'supports_award', status, revision: 1, requiresRevalidation: false, eventId: type === 'later_process' ? null : 9, predecessorEventId: type === 'later_process' ? 9 : null, relationId: 30, exportRowId: null, enterpriseId: 42, titleCode: 'specialized_sme', ruleId: 'fixture', ruleVersion: '1', createdAt: '2024-01-02', decidedAt: status === 'confirmed' ? '2024-01-02' : null, endedAt: null, event: type === 'later_process' ? null : event, predecessorEvent: type === 'later_process' ? event : null, relation, exportRow: null })
 
 const mounted: ReturnType<typeof mount>[] = []
-const stubs = { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' }, PlatformQueryProvenance: true }
+const stubs = { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' }, RosterPlatformQueryProvenance: true }
 function render(kind: 'event' | 'relation', id: number) {
   const wrapper = mount(SourceReader, { props: { kind, id, returnTo: '/comparison?mode=record' }, global: { stubs } })
   mounted.push(wrapper)

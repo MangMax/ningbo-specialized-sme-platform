@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import CandidateTaskCreate from '../../../components/tasks/CandidateTaskCreate.vue'
+import CandidateTaskCreate from '../../../layers/sme-roster/app/components/tasks/CandidateTaskCreate.vue'
 const mounted: ReturnType<typeof mount>[] = []
 beforeEach(() => {
   // Bare Vue mounting has no Nuxt injection; the diagnostic plugin is optional.
@@ -32,7 +32,7 @@ it('retains the selected scope and request identity after failure and opens the 
   expect(view.emitted('created')).toEqual([['01M5BEPVCXD5619ZW4C6CATMWX']])
 })
 it('shows a checkpointed running event as unfinished when its task has been cancelled',async()=>{
-  const {default:TaskDetail}=await import('../../../components/tasks/TaskDetail.vue')
+  const {default:TaskDetail}=await import('../../../layers/sme-roster/app/components/tasks/TaskDetail.vue')
   vi.stubGlobal('$fetch',vi.fn(async()=>({id:'01M5BEPVCXD5619ZW4C6CATMWX',kind:'event-archive-candidates',label:'公布事件候选发现',group:'platform',state:'cancelled',createdAt:'2026-10-23T00:00:00Z',startedAt:null,finishedAt:'2026-10-23T00:01:00Z',progress:{done:0,total:1,unit:'项',stage:'执行结束'},error:null,outcome:null,links:[],capabilities:{cancel:false,retry:true,retryItemIds:[],reason:'从检查点重试'},discovery:{ruleVersion:'event-archive-212-v1',scope:'指定1条事件',attempt:1,titleCode:null,throughEventId:1,nextAfterEventId:null,continuationJobId:null,counts:{succeeded:0,needsReview:0,failed:0,created:1,existing:0},items:[{eventId:1,enterpriseId:1,status:'running',created:1,existing:0,errorCode:null}]}})))
   const view=mount(TaskDetail,{props:{id:'01M5BEPVCXD5619ZW4C6CATMWX'},global:{components:{NuxtLink:{template:'<a><slot /></a>'}}}});mounted.push(view);await flushPromises()
   const results=view.get('[aria-label="逐事件处理结果"]')
@@ -41,7 +41,7 @@ it('shows a checkpointed running event as unfinished when its task has been canc
 })
 
 it('reports retained candidates when a later source row fails within the same event', async () => {
-  const { default: TaskDetail } = await import('../../../components/tasks/TaskDetail.vue')
+  const { default: TaskDetail } = await import('../../../layers/sme-roster/app/components/tasks/TaskDetail.vue')
   vi.stubGlobal('$fetch', vi.fn(async () => ({
     id: '01M5BEPVCXD5619ZW4C6CATMWX', kind: 'event-archive-candidates',
     label: '公布事件候选发现', module: 'sme-roster', group: 'platform', state: 'failed',

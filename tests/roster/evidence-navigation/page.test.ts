@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { isSafeBackPath, parseEvidencePreviewQuery } from '../../../layers/core/lib/preview-query'
-import { EVIDENCE_PAGE_WORDS, evidencePageState, evidencePreviewHref, isPageCapable, planEvidencePages as planEvidencePagesWithCount, type EvidencePageCandidate, type EvidencePageEntry } from '../../../lib/roster/evidence-page'
+import { EVIDENCE_PAGE_WORDS, evidencePageState, evidencePreviewHref, isPageCapable, planEvidencePages as planEvidencePagesWithCount, type EvidencePageCandidate, type EvidencePageEntry } from '../../../layers/sme-roster/lib/roster/evidence-page'
 
 /**
  * RL-10 —— 出处页码的纯判据(写入侧定位 + 读侧三态 + 跳转链接)。
@@ -119,7 +119,7 @@ describe('planEvidencePages —— 分节定位(裸序号一律拒收)', () => {
 
   it('★ 属地按「有效属地」认:记录上的对不上、**企业自身**的对得上,也算命中', () => {
     // 界面上给人看的属地是「有效属地」,它**优先取企业自身的**(见
-    // `lib/roster/enterprise-roster.ts` 的 `effectiveDistrict`)。调用方多半照着界面抄,
+    // `layers/sme-roster/lib/roster/enterprise-roster.ts` 的 `effectiveDistrict`)。调用方多半照着界面抄,
     // 只认记录上的那一个,就会让一条看起来完全正确的条目莫名其妙 `no_match`。
     const rows: EvidencePageCandidate[] = [
       {

@@ -1,7 +1,7 @@
 import '../../support/compiled-enterprise-reader'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
-import type { RosterImportRelation } from '../../../lib/roster-import-client'
+import type { RosterImportRelation } from '../../../layers/sme-roster/lib/roster-import-client'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -10,7 +10,7 @@ import { createServer } from 'node:http'
 import { createApp, createError, createRouter, defineEventHandler, getRouterParam, setHeader, toNodeListener } from 'h3'
 import { afterEach, expect, it, vi } from 'vitest'
 import { schema } from '../../../db'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 
 const cleanup: Array<() => void | Promise<void>> = []
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.unstubAllEnvs(); vi.unstubAllGlobals() })
@@ -106,7 +106,7 @@ it('HTTP enterprise detail returns typed observations and preserves source origi
   const direct = f.detail()
   vi.stubEnv('NUXT_DB_PATH', join(f.dir, 'roster.db'))
   for (const [key, value] of Object.entries({ defineEventHandler, getRouterParam, createError, setHeader })) vi.stubGlobal(key, value)
-  const handler = (await import('../../../server/api/roster/enterprises/[id].get')).default
+  const handler = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default
   const server = createServer(toNodeListener(createApp().use(createRouter().get('/api/roster/enterprises/:id', handler))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   cleanup.push(() => new Promise<void>(resolve => server.close(() => resolve())))

@@ -1,5 +1,5 @@
 import { useDb } from '@db'
-import { listStoredFiles } from '../../../../../server/utils/stored-files'
+import { listStoredFiles } from '../../utils/stored-files'
 
 defineRouteMeta({
   openAPI: {

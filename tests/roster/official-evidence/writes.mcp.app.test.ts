@@ -13,18 +13,18 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import * as schema from '../../../db/schema'
-import type { OfficialPublishedRow, RosterImportPayload } from '../../../lib/roster-import-client'
-import { createEnterpriseReadProcess } from '../../../server/utils/enterprise-read-process'
-import { importExecutor } from '../../../server/utils/import-execution'
-import { readExactEvidence } from '../../../server/utils/roster-evidence-correction'
-import { readLatestOfficialEvidence } from '../../../server/utils/official-evidence'
+import type { OfficialPublishedRow, RosterImportPayload } from '../../../layers/sme-roster/lib/roster-import-client'
+import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
+import { importExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
+import { readExactEvidence } from '../../../layers/sme-roster/server/utils/roster-evidence-correction'
+import { readLatestOfficialEvidence } from '../../../layers/sme-roster/server/utils/official-evidence'
 import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
 
 // Dedicated transport suite: run only in the parent's heavy slot. Production tools,
 // SDK HTTP transport and the real serial import process execute against one synthetic DB.
 const current = vi.hoisted(() => ({ db: null as unknown }))
 // Match the deployed worker entry; avoid compiling the source graph on first admission.
-vi.mock('../../../server/utils/import-execution-worker-location', () => ({
+vi.mock('../../../layers/sme-roster/server/utils/import-execution-worker-location', () => ({
   createImportExecutionWorker: () => createEnterpriseReadProcess(new URL('../../../.output/server/import-execution-worker.mjs', import.meta.url)),
 }))
 vi.mock('@db', () => ({ useDb: () => current.db }))
@@ -54,7 +54,7 @@ let serial = 0
 beforeAll(async () => {
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir, apiToken: token, mcpToken: token }))
   vi.stubGlobal('createError', (input: { statusCode: number; message: string }) => Object.assign(new Error(input.message), input))
-  const definitions = await Promise.all(['preflight_roster_batch', 'save_roster_batch', 'preflight_roster_evidence_corrections', 'commit_roster_evidence_corrections'].map(async name => (await import(`../../../server/mcp/tools/${name}.ts`)).default))
+  const definitions = await Promise.all(['preflight_roster_batch', 'save_roster_batch', 'preflight_roster_evidence_corrections', 'commit_roster_evidence_corrections'].map(async name => (await import(`../../../layers/sme-roster/server/mcp/tools/${name}.ts`)).default))
   server = createServer((request, response) => {
     const mcp = new McpServer({ name: 'issue350', version: '1' })
     const mcpAuth = resolveMcpAuth({ given: readMcpToken({ authorization: request.headers.authorization }), configured: token })

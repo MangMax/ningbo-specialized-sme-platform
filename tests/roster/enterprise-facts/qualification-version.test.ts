@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterAll, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
 import { createHash } from 'node:crypto'
-import { createCurrentQualificationAssessmentReader, PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
+import { createCurrentQualificationAssessmentReader, PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 
 const dir = mkdtempSync(join(tmpdir(), 'facts-qualification-version-307-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'test.sqlite') })

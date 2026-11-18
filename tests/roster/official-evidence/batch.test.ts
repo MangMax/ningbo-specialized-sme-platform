@@ -6,7 +6,7 @@ import * as schema from '../../../db/schema'
 import {
   listEventsOfficialEvidencePages as batch, listEventOfficialEvidence, OfficialEvidenceError,
   type OfficialEvidenceExecutor, type OfficialEvidenceRow,
-} from '../../../server/utils/official-evidence'
+} from '../../../layers/sme-roster/server/utils/official-evidence'
 
 // Independent fixtures and expected full rows: neither the old reader nor the writer
 // supplies these oracles. All databases are small, synthetic and process-local.

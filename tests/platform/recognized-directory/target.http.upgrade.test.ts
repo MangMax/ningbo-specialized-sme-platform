@@ -12,12 +12,12 @@ import { seedRecognizedDirectory } from './fixtures/migrated-directory'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { targetSchema } from '../../../lib/platform/target-schema'
+import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
 import { listPlatformRecognizedDirectory, getPlatformRecognizedRecord } from '../../../upgrade/frozen/server/platform-recognized-directory'
 import { readPlatformFilterOptions } from '../../../upgrade/frozen/server/platform-filter-options'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
-import { writeCollectionTarget } from '../../../lib/platform/collection-target-command'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
+import { writeCollectionTarget } from '../../../layers/sme-roster/lib/platform/collection-target-command'
 
 // Seed the legacy source once, then run the complete chain once (no discarded prefix).
 async function historicalFixture(extra?: (source: Database.Database) => void) {
@@ -35,8 +35,8 @@ const responses: unknown[] = []
 const statements: { sql: string; params: unknown[] }[] = []
 let fixture: ReturnType<typeof finalEvidenceFixture<Awaited<ReturnType<typeof historicalFixture>>>>
 let request: ReturnType<typeof toWebHandler>
-let listTool: typeof import('../../../server/mcp/tools/list_platform_recognized_directory')['default']
-let detailTool: typeof import('../../../server/mcp/tools/get_platform_recognized_record')['default']
+let listTool: typeof import('../../../layers/sme-roster/server/mcp/tools/list_platform_recognized_directory')['default']
+let detailTool: typeof import('../../../layers/sme-roster/server/mcp/tools/get_platform_recognized_record')['default']
 const json = (value: unknown) => JSON.parse(JSON.stringify(value))
 async function get(path = '') {
   const response = await request(new Request(`http://localhost/api/platform/${path}`))
@@ -73,12 +73,12 @@ beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('createError', createError)
   const router = createRouter()
-    .get('/api/platform/recognized-directory', (await import('../../../server/api/platform/recognized-directory.get')).default)
-    .get('/api/platform/recognized-directory/:recordId', (await import('../../../server/api/platform/recognized-directory/[recordId].get')).default)
-    .get('/api/platform/filter-options', (await import('../../../server/api/platform/filter-options.get')).default)
+    .get('/api/platform/recognized-directory', (await import('../../../layers/sme-roster/server/api/platform/recognized-directory.get')).default)
+    .get('/api/platform/recognized-directory/:recordId', (await import('../../../layers/sme-roster/server/api/platform/recognized-directory/[recordId].get')).default)
+    .get('/api/platform/filter-options', (await import('../../../layers/sme-roster/server/api/platform/filter-options.get')).default)
   request = toWebHandler(createApp().use(router))
-  listTool = (await import('../../../server/mcp/tools/list_platform_recognized_directory')).default
-  detailTool = (await import('../../../server/mcp/tools/get_platform_recognized_record')).default
+  listTool = (await import('../../../layers/sme-roster/server/mcp/tools/list_platform_recognized_directory')).default
+  detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_recognized_record')).default
 }, 120000)
 afterAll(() => {
   if (process.env.RECOGNIZED_HANDLER_EVIDENCE_DIR) writeFileSync(join(process.env.RECOGNIZED_HANDLER_EVIDENCE_DIR, 'HTTP-MCP-SQL.json'), JSON.stringify(statements, null, 2))

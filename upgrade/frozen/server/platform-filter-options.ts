@@ -2,7 +2,7 @@
 import { sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../legacy-schema'
-import { platformFilterOptionsQueryFromQuery, type PlatformFilterOptions } from '../../../lib/platform/filter-options'
+import { platformFilterOptionsQueryFromQuery, type PlatformFilterOptions } from '../../../layers/sme-roster/lib/platform/filter-options'
 
 type Db = BetterSQLite3Database<typeof schema>
 type OptionKey = keyof PlatformFilterOptions

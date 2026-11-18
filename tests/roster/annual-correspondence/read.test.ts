@@ -4,13 +4,13 @@ import {join} from 'node:path'
 import {eq} from 'drizzle-orm'
 import {afterEach,expect,it,vi} from 'vitest'
 import {initializeDb,schema as s} from '../../../db/client'
-import {readEventAnnualProcess} from '../../../server/utils/event-annual-process-read'
-import {enrichAnnualProcessFinalQualification,readAnnualWriteScope} from '../../../server/utils/annual-correspondence-read'
-import {qualifyAnnualFinal,readAnnualDecisionRefs,reconcileAnnualStep} from '../../../server/utils/annual-correspondence'
+import {readEventAnnualProcess} from '../../../layers/sme-roster/server/utils/event-annual-process-read'
+import {enrichAnnualProcessFinalQualification,readAnnualWriteScope} from '../../../layers/sme-roster/server/utils/annual-correspondence-read'
+import {qualifyAnnualFinal,readAnnualDecisionRefs,reconcileAnnualStep} from '../../../layers/sme-roster/server/utils/annual-correspondence'
 import {submitNativePlatformQuery} from '../../platform/fixtures/native-query'
-import {commitRecordCorrespondences,preflightRecordCorrespondences,type CorrespondenceRequest,listRecordCorrespondences} from '../../../server/utils/record-correspondence'
+import {commitRecordCorrespondences,preflightRecordCorrespondences,type CorrespondenceRequest,listRecordCorrespondences} from '../../../layers/sme-roster/server/utils/record-correspondence'
 import {clearJobSpecs,__resetJobRunner,whenIdle} from '../../../layers/core/server/utils/job-runner'
-import {handleAnnualTaskRequest} from '../../../server/utils/annual-correspondence-api'
+import {handleAnnualTaskRequest} from '../../../layers/sme-roster/server/utils/annual-correspondence-api'
 import {getJob} from '../../../layers/core/server/utils/job-store'
 let active:ReturnType<typeof initializeDb>
 vi.mock('@nuxtjs/mcp-toolkit/server',()=>({defineMcpTool:(definition:unknown)=>definition}))
@@ -91,8 +91,8 @@ it('blocks enrichment of stale generation instead of attaching a new-scope final
  expect({jobs:f.db.select().from(s.job).all(),ledger:f.db.select().from(s.importBatch).all(),audit:f.db.select().from(s.recordCorrespondenceAudit).all()}).toEqual(before)
 })
 it('runs the registered MCP handlers with independent credentials and the actual annual read and queue',async()=>{
- const f=fixture();f.add();const submit=(await import('../../../server/mcp/tools/submit_event_annual_correspondence_task')).default
- const get=(await import('../../../server/mcp/tools/get_event_annual_correspondence_task')).default
+ const f=fixture();f.add();const submit=(await import('../../../layers/sme-roster/server/mcp/tools/submit_event_annual_correspondence_task')).default
+ const get=(await import('../../../layers/sme-roster/server/mcp/tools/get_event_annual_correspondence_task')).default
  expect(await submit.handler({clientRequestId:'handler-deny',eventIds:[f.event.id]},{} as never)).toMatchObject({isError:true});expect(f.db.select().from(s.job).all()).toEqual([])
  const result=await submit.handler({clientRequestId:'handler-allow',eventIds:[f.event.id]},{requestInfo:{headers:{authorization:'Bearer mcp-251'}}} as never) as any
  await whenIdle();expect(getJob(f.db,result.jobId)?.state).toBe('done');expect(await get.handler({id:result.jobId},{} as never)).toMatchObject({status:'done',result:{events:[{finalQualification:{status:'confirmed'}}]}})

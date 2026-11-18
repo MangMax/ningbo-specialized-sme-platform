@@ -27,8 +27,8 @@ beforeAll(async () => {
   vi.stubGlobal('setHeader', vi.fn())
   vi.stubGlobal('setResponseStatus', vi.fn())
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-  rest = (await import('../../../server/api/platform/query.post')).default as any
-  const definition = (await import('../../../server/mcp/tools/query_platform')).default as any
+  rest = (await import('../../../layers/sme-roster/server/api/platform/query.post')).default as any
+  const definition = (await import('../../../layers/sme-roster/server/mcp/tools/query_platform')).default as any
   tool = { handler: async input => {
     const wire = await definition.handler(input)
     expect(wire.structuredContent).toBeDefined()
@@ -127,7 +127,7 @@ it('missing credentials are not queried and do not fall back to a real environme
   } finally { if (previous === undefined) delete process.env.MIIT_COOKIE; else process.env.MIIT_COOKIE = previous }
 })
 it('enforces the time budget while waiting for the shared global request slots', async () => {
-  const { queryPlatformSlots } = await import('../../../lib/platform/client')
+  const { queryPlatformSlots } = await import('../../../layers/sme-roster/lib/platform/client')
   let release!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })
   let entered = 0
@@ -142,7 +142,7 @@ it('enforces the time budget while waiting for the shared global request slots',
   } finally { release(); await Promise.all([...legacy, pending]) }
 })
 it('all single queries and legacy retry backoff share at most two platform slots', async () => {
-  const { queryPlatformSlots } = await import('../../../lib/platform/client')
+  const { queryPlatformSlots } = await import('../../../layers/sme-roster/lib/platform/client')
   let releaseBackoff!: () => void
   let backoffStarted!: () => void
   const backoff = new Promise<void>(resolve => { releaseBackoff = resolve })
@@ -186,14 +186,14 @@ it('rejects contradictory pagination rather than claiming complete', async () =>
   expect(await query({ source: 'queryList', name: '合成' })).toMatchObject({ status: 'partial', error: { code: 'invalid_response' }, unfinished: [{ page: 2 }] })
 })
 it('public capabilities describe source differences and strict RPC validation rejects unknown filters', async () => {
-  const capabilities = (await import('../../../server/mcp/tools/get_platform_capabilities')).default as any
+  const capabilities = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_capabilities')).default as any
   const cap = await capabilities.handler()
   expect(cap.sources.queryList).toMatchObject({ available: true, conditions: ['name', 'uscc'], titleSelection: false })
   expect(cap.sources.businessList).toMatchObject({ available: true, conditions: ['uscc'] })
   expect(cap.limits.maxConcurrentRequests).toBe(2)
-  const route = (await import('../../../server/api/platform/capabilities.get')).default as any
+  const route = (await import('../../../layers/sme-roster/server/api/platform/capabilities.get')).default as any
   expect(route({})).toEqual(cap)
-  const { platformQueryRpcError } = await import('../../../server/utils/mcp-platform-query')
+  const { platformQueryRpcError } = await import('../../../layers/sme-roster/server/utils/mcp-platform-query')
   for (const args of [{ source: 'queryList', name: '合成', cookie }, { source: 'queryList', name: '合成', sqsj: '2025' }]) {
     const rejected = platformQueryRpcError({ jsonrpc: '2.0', method: 'tools/call', id: 1, params: { name: 'query_platform', arguments: args } })!
     expect(rejected.status).toBe(400)

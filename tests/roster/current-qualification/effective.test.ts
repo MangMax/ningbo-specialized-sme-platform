@@ -1,7 +1,7 @@
 import { afterAll, expect, it, vi } from 'vitest'
-import * as platformQualification from '../../../lib/roster/platform-qualification'
+import * as platformQualification from '../../../layers/sme-roster/lib/roster/platform-qualification'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
-import { createCurrentQualificationAssessmentReader, PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
+import { createCurrentQualificationAssessmentReader, PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { schema } from '../../../db/client'
 const f = qualificationExportFixture()
 afterAll(() => f.close())
@@ -47,11 +47,11 @@ it.each(['cancelled','moved_out'])('still excludes an old giant with a confirmed
 })
 
 import { eq } from 'drizzle-orm'
-import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../lib/platform/collection-target-command'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformRawRow } from '../../../lib/platform/types'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
-import { processFactsFromRow } from '../../../lib/platform/identity'
+import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../layers/sme-roster/lib/platform/collection-target-command'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformRawRow } from '../../../layers/sme-roster/lib/platform/types'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
+import { processFactsFromRow } from '../../../layers/sme-roster/lib/platform/identity'
 function collectionCommand(row: PlatformRawRow, queriedAt: string, source: PlatformLiveQueryResult['source'] = 'queryBusList'): NewCollectionTargetCommand {
   const evidence: PlatformLiveQueryResult = {
     source, status: 'success', effectiveConditions: source === 'businessList' ? { uscc: String(row.tyshxydm), combination: 'and' } : { name: 'Example', combination: 'and' },
@@ -284,9 +284,9 @@ it.each(['queryBusList','businessList','queryList'] as const)('does not apply a 
  } finally {await local.close()}
 })
 
-import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
-import { readImportReceipt } from '../../../server/utils/import-receipts'
-import type { RosterImportRequest } from '../../../lib/roster-import-client'
+import { preflightRosterImport, commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { readImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipts'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 
 it('keeps an imported publication authoritative when event evidence is omitted',async()=>{
  const local=qualificationExportFixture()
