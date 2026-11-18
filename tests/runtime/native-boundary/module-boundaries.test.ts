@@ -51,6 +51,28 @@ test('cross-layer re-exports and dynamic imports must resolve to the public entr
   expect(result.stderr).toContain('import("#layers/billing/card.vue")')
 })
 
+test('rejects a core dependency through a Vue external script', () => {
+  const result = verify({
+    'layers/core/Card.vue': '<template><div /></template>\n<script lang="ts" src="../billing/internal.ts"></script>',
+    'layers/billing/internal.ts': 'export default { name: "BillingCard" }',
+  })
+
+  expect(result.status).toBe(1)
+  expect(result.stderr).toMatch(/layers\/core\/Card\.vue:2:\d+: core cannot depend on billing:/)
+  expect(result.stderr).toContain('src="../billing/internal.ts"')
+})
+
+test('follows a Vue external script through an application-root bridge', () => {
+  const result = verify({
+    'layers/advice/Card.vue': '<script lang="ts" src="~/lib/card.ts"></script>',
+    'lib/card.ts': 'export { default } from "../layers/billing/card"',
+    'layers/billing/card.ts': 'export default { name: "BillingCard" }',
+  })
+
+  expect(result.status).toBe(1)
+  expect(result.stderr).toContain('lib/card.ts:1:1: advice must use billing/public.ts:')
+})
+
 test('rejects a core or business dependency through application-root bridges', () => {
   const result = verify({
     'layers/core/service.ts': 'export { read } from "~/server/bridge"',
@@ -68,6 +90,8 @@ test('rejects a core or business dependency through application-root bridges', (
 test('permits standalone application composition, same-layer code, core facilities and public entrances', () => {
   const result = verify({
     'layers/core/service.ts': 'export function install() {}',
+    'layers/core/Card.vue': '<!-- <script src="../billing/internal.ts"></script> -->\n<script lang="ts" src="./card.ts"></script>',
+    'layers/core/card.ts': 'export default { name: "CoreCard" }',
     'server/composition.ts': 'import { install } from "#core/service"; import { read } from "#layers/billing/internal"; install(); read()',
     'layers/advice/use.ts': 'export { read } from "../billing/public.js"',
     'layers/advice/use-bridge.ts': 'export { read } from "~/server/public-bridge"',
@@ -100,6 +124,8 @@ test.each([
   'db.prepare(\x60SELECT * FROM mine JOIN main.[Invoice] ON 1 = 1\x60)',
   'db.prepare("INSERT OR IGNORE INTO \\"invoice\\" DEFAULT VALUES")',
   'db.exec(\x60CREATE TABLE child (id REFERENCES invoice(id))\x60)',
+  'db.exec(\x60CREATE TABLE IF NOT EXISTS invoice (id INTEGER)\x60)',
+  'db.exec(\x60DROP TABLE IF EXISTS invoice\x60)',
   'db.prepare(\x60UPDATE OR REPLACE /* comment */ invoice SET id = ?\x60)',
   'db.prepare(\x60SELECT * FROM mine, invoice\x60)',
   'db.prepare("SELECT * FROM " + "invoice")',
@@ -111,6 +137,16 @@ test.each([
 
   expect(result.status).toBe(1)
   expect(result.stderr).toMatch(/layers\/advice\/query\.ts:2:\d+: advice cannot reference table invoice owned by billing in SQL:/)
+})
+
+test('checks the unquoted table name ignore in a FROM target', () => {
+  const result = verify({
+    'layers/billing/schema.ts': 'export const ignored = sqliteTable("ignore", {})',
+    'layers/advice/query.ts': 'db.prepare("SELECT * FROM /* table target */ ignore")',
+  })
+
+  expect(result.status).toBe(1)
+  expect(result.stderr.trim()).toBe('layers/advice/query.ts:1:12: advice cannot reference table ignore owned by billing in SQL:\n  "SELECT * FROM /* table target */ ignore"')
 })
 
 test.each([
@@ -147,6 +183,25 @@ test('resolves a local const interpolation at its lexical use site', () => {
   expect(result.stderr.trim()).toBe(`layers/advice/query.ts:6:14: advice cannot reference table invoice owned by billing in SQL:\n  ${statement.slice('db.prepare('.length, -1)}`)
 })
 
+test('resolves a local const table name in static SQL concatenation', () => {
+  const sql = '"SELECT * FROM " + table'
+  const result = verify({
+    'layers/billing/schema.ts': 'export const invoice = sqliteTable("invoice", {})',
+    'layers/advice/query.ts': [
+      'const table = "own_table"',
+      `db.prepare(${sql})`,
+      'function read() {',
+      '  const suffix = "voice" as const',
+      '  const table = ("in" + suffix)',
+      `  db.prepare(${sql})`,
+      '}',
+    ].join('\n'),
+  })
+
+  expect(result.status).toBe(1)
+  expect(result.stderr.trim()).toBe(`layers/advice/query.ts:6:14: advice cannot reference table invoice owned by billing in SQL:\n  ${sql}`)
+})
+
 test('permits references to local CTEs named like a foreign table', () => {
   const result = verify({
     'layers/billing/schema.ts': 'export const invoice = sqliteTable("invoice", {})',
@@ -178,7 +233,7 @@ test.each([
 
 test('SQL can reference own and core tables and can mention foreign names in values or comments', () => {
   const result = verify({
-    'layers/billing/schema.ts': 'export const invoice = sqliteTable("invoice", {})',
+    'layers/billing/schema.ts': 'export const invoice = sqliteTable("invoice", {}); export const ignored = sqliteTable("ignore", {})',
     'layers/core/schema.ts': 'export const sharedFile = sqliteTable("shared_file", {})',
     'layers/advice/schema.ts': 'export const note = sqliteTable("note", {})',
     'layers/advice/query.ts': [
@@ -186,6 +241,8 @@ test('SQL can reference own and core tables and can mention foreign names in val
       'import { note } from "./schema"',
       'db.prepare(\x60SELECT "from invoice" FROM note JOIN shared_file ON 1 = 1 -- JOIN invoice',
       '  WHERE content = \'FROM invoice\' /* FROM invoice */\x60)',
+      'db.prepare("UPDATE OR /* conflict action */ IGNORE note SET id = ?")',
+      'db.prepare("WITH ignore AS (SELECT 1) SELECT * FROM ignore")',
     ].join('\n'),
   })
 

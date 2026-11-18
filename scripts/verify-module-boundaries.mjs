@@ -51,6 +51,8 @@ function resolveImport(specifier, from) {
   if ((alias || specifier.startsWith('.')) && vuePath.endsWith('.vue') && existsSync(vuePath)) return vuePath
 }
 
+const externalScripts = new WeakMap()
+
 function readSource(path) {
   const source = readFileSync(path, 'utf8')
   if (!path.endsWith('.vue')) return ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true)
@@ -63,7 +65,9 @@ function readSource(path) {
     const offset = block.loc.start.offset
     for (let i = 0; i < block.content.length; i++) scripts[offset + i] = block.content[i]
   }
-  return ts.createSourceFile(path, scripts.join(''), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const parsed = ts.createSourceFile(path, scripts.join(''), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  if (descriptor.script?.src) externalScripts.set(parsed, descriptor.script)
+  return parsed
 }
 
 function walk(node, visit) {
@@ -85,8 +89,12 @@ function importSpecifier(node) {
 
 const violations = []
 function report(source, node, reason) {
-  const { line, character } = source.getLineAndCharacterOfPosition(node.getStart(source))
-  violations.push(`${relative(root, source.fileName)}:${line + 1}:${character + 1}: ${reason}:\n  ${node.getText(source)}`)
+  reportAt(source, node.getStart(source), node.getText(source), reason)
+}
+
+function reportAt(source, offset, statement, reason) {
+  const { line, character } = source.getLineAndCharacterOfPosition(offset)
+  violations.push(`${relative(root, source.fileName)}:${line + 1}:${character + 1}: ${reason}:\n  ${statement}`)
 }
 
 const files = layerDirs.flatMap(layerFiles)
@@ -110,11 +118,11 @@ const { tableOwners, importedTables } = indexTableOwnership({
   root, program, files, layerOf, layers: new Set(layerDirs.map(dir => basename(dir))), walk, report, violations,
 })
 
-function checkTableReferences(source, node, layer, tables, action) {
+function checkTableReferences(reportViolation, layer, tables, action) {
   for (const table of tables) {
     const owner = tableOwners.get(table)
     if (owner && owner !== 'core' && owner !== layer) {
-      report(source, node, `${layer} cannot ${action(table, owner)}`)
+      reportViolation(`${layer} cannot ${action(table, owner)}`)
     }
   }
 }
@@ -126,31 +134,41 @@ for (const dir of layerDirs) {
   // its own internal graph, so crossing a legal public entry ends this traversal.
   for (const path of reachable) {
     const source = program.getSourceFile(path) ?? readSource(path)
-    const inLayer = layerOf(path) === layer
-    walk(source, node => {
-      const specifier = importSpecifier(node)
-      if (!specifier || !ts.isStringLiteralLike(specifier)) {
-        if (inLayer && layer !== 'core' && tableOwners.size) {
-          checkTableReferences(source, node, layer, tablesInSql(node, checker), (table, owner) => `reference table ${table} owned by ${owner} in SQL`)
-        }
-        return
-      }
-      const target = resolveImport(specifier.text, path)
+    const checkTables = layerOf(path) === layer && layer !== 'core' && tableOwners.size > 0
+
+    function checkImport(specifier, node, reportViolation) {
+      const target = resolveImport(specifier, path)
       if (!target) return
       const owner = layerOf(target)
       if (!owner && sourceExtension.test(target)) reachable.add(target)
       if (owner && owner !== layer && owner !== 'core') {
         if (layer === 'core') {
-          report(source, node, `core cannot depend on ${owner}`)
+          reportViolation(`core cannot depend on ${owner}`)
           return
         }
         if (target !== resolve(layersDir, owner, 'public.ts')) {
-          report(source, node, `${layer} must use ${owner}/public.ts`)
+          reportViolation(`${layer} must use ${owner}/public.ts`)
           return
         }
       }
-      if (inLayer && layer !== 'core' && tableOwners.size) {
-        checkTableReferences(source, node, layer, importedTables(node, target), (table, owner) => `import table ${table} owned by ${owner}`)
+      if (checkTables) {
+        checkTableReferences(reportViolation, layer, importedTables(node, target), (table, owner) => `import table ${table} owned by ${owner}`)
+      }
+    }
+
+    const externalScript = externalScripts.get(source)
+    if (externalScript) {
+      const { src, loc } = externalScript
+      // Vue loads the default export and re-exports the script's named exports.
+      checkImport(src, source, reason => reportAt(source, loc.start.offset - 1, `<script src=${JSON.stringify(src)}>`, reason))
+    }
+    walk(source, node => {
+      const specifier = importSpecifier(node)
+      const reportViolation = reason => report(source, node, reason)
+      if (specifier && ts.isStringLiteralLike(specifier)) {
+        checkImport(specifier.text, node, reportViolation)
+      } else if (checkTables) {
+        checkTableReferences(reportViolation, layer, tablesInSql(node, checker), (table, owner) => `reference table ${table} owned by ${owner} in SQL`)
       }
     })
   }

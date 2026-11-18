@@ -6,7 +6,7 @@ const sqlTokens = /--[^\r\n]*|\/\*[\s\S]*?\*\/|'(?:''|[^'])*'|"(?:""|[^"])*"|`(?
 const identifier = /^(?:[a-z_][\w$]*|(["'\x60]).*\1|\[.*\])$/is
 const tableKeywords = new Set(['from', 'join', 'into', 'update', 'references', 'table'])
 const fromEnd = new Set(['where', 'group', 'having', 'order', 'limit', 'window', 'returning', 'union', 'intersect', 'except', ';'])
-const tableModifiers = new Set(['or', 'rollback', 'abort', 'replace', 'fail', 'ignore', 'if', 'not', 'exists'])
+const conflictActions = new Set(['rollback', 'abort', 'replace', 'fail', 'ignore'])
 const queryStart = new Set(['select', 'with', 'values'])
 
 function closingParentheses(tokens) {
@@ -70,7 +70,13 @@ function sqlTableReferences(sql) {
         fromClauses.add(depth)
       }
       let j = i + 1
-      while (tableModifiers.has(tokens[j])) j++
+      // These words also occur as identifiers. Consume only modifier phrases
+      // in the positions where SQLite permits them.
+      if (token === 'update' && tokens[j] === 'or' && conflictActions.has(tokens[j + 1])) j += 2
+      if (token === 'table' && tokens[j] === 'if') {
+        if (tokens[j + 1] === 'not' && tokens[j + 2] === 'exists') j += 3
+        else if (tokens[j + 1] === 'exists') j += 2
+      }
       const read = token === 'from' || token === 'join' || token === ','
       if (read) {
         // A table group starts a new FROM list. A derived query discovers
@@ -101,8 +107,9 @@ function staticSql(node, checker, resolving) {
     )).join('')
   }
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = staticSql(node.left, checker, resolving)
-    const right = staticSql(node.right, checker, resolving)
+    const seen = resolving ?? new Set()
+    const left = staticSql(node.left, checker, seen)
+    const right = staticSql(node.right, checker, seen)
     if (left !== undefined && right !== undefined) return left + right
   }
   if (!resolving) return
