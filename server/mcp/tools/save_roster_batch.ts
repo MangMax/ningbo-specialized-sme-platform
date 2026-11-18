@@ -1,6 +1,6 @@
-import { submitRosterImportMcp } from '../../utils/roster-import-mcp-submission'
+import { submitRosterImportMcp } from '../../../layers/sme-roster/server/utils/roster-import-mcp-submission'
 import { z } from 'zod'
-import { rosterImportMcpPayloadSchema } from '../../utils/roster-import-schema'
+import { rosterImportMcpPayloadSchema } from '../../../layers/sme-roster/server/utils/roster-import-schema'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 
@@ -16,7 +16,7 @@ import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
  * 的活（本 tool 不碰文件库）。本 tool 只管**名录实体**与平台证据。
  *
  * 幂等：同一 `idempotencyKey` 重复调用返回既有批次摘要，不重复写企业/事件。
- * `payload` 的形状见 `lib/roster-import-client.ts`。
+ * `payload` 的形状见 `layers/sme-roster/lib/roster-import-client.ts`。
  *
  * **是写入 tool**，需要鉴权（`Authorization: Bearer <NUXT_MCP_TOKEN>`），未鉴权时
  * 不出现在 `tools/list`，强行调用得到 HTTP 401。

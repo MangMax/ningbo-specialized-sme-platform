@@ -10,7 +10,7 @@ import { listPlatformQueries } from '../../../layers/sme-roster/lib/platform/rea
 import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import { relationSource } from '../../../layers/sme-roster/server/utils/record-correspondence-read'
 import { generateCandidates } from '../../../layers/sme-roster/server/utils/record-correspondence-candidates'
-import { createRosterImportClient, type RosterImportRequest } from '../../../lib/roster-import-client'
+import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { readPlatformQueryEvidence } from '../../../layers/sme-roster/lib/platform/evidence-read'
 import { executeNativeImport, startRosterApi } from '../../roster/imports/fixtures/import-server'
 import { startHttpFixture, type HttpFixture } from '../../support/http'

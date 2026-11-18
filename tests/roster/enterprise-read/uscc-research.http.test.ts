@@ -40,13 +40,13 @@ import {
   type UsccResearchClaim,
 } from '../../../layers/sme-roster/lib/roster/uscc-research'
 import { normalizeName } from '../../../layers/sme-roster/lib/domain'
-import { createRosterImportClient, type RosterImportRequest } from '../../../lib/roster-import-client'
+import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { classifyRawQuery } from '../../../layers/sme-roster/lib/platform'
 import { buildPlatformWritePayload, type KnownEnterprise, type PlatformQueryInput } from '../../../layers/sme-roster/lib/platform/payload'
 import { listUsccChecklist, planUsccResearch, usccResearchIdempotencyKey } from '../../../layers/sme-roster/server/utils/uscc-research'
 import { normalizeUsccVerdicts, type UsccVerdictFile } from '../../../layers/sme-roster/server/utils/uscc-verdicts'
 import { parseUsccChecklistQuery, parseUsccResearchBody } from '../../../layers/sme-roster/server/utils/uscc-research-query'
-import { readImportBatchOutcome } from '../../../server/utils/roster-import'
+import { readImportBatchOutcome } from '../../../layers/sme-roster/server/utils/roster-import'
 import { startEvidenceServer, type EvidenceServer } from '../../platform/fixtures/evidence-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-uscc-research-'))

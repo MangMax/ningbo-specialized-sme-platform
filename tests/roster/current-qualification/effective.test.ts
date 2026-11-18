@@ -284,9 +284,9 @@ it.each(['queryBusList','businessList','queryList'] as const)('does not apply a 
  } finally {await local.close()}
 })
 
-import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
-import { readImportReceipt } from '../../../server/utils/import-receipts'
-import type { RosterImportRequest } from '../../../lib/roster-import-client'
+import { preflightRosterImport, commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { readImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipts'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 
 it('keeps an imported publication authoritative when event evidence is omitted',async()=>{
  const local=qualificationExportFixture()

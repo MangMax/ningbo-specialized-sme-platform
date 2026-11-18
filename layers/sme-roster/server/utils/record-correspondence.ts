@@ -11,7 +11,7 @@ import { correspondenceIdentityProblem } from './record-correspondence-identity'
 import { correspondenceRefValidity,createCorrespondenceRefValidityReader } from './record-correspondence-ref-validity'
 import { correspondenceColumns,correspondenceTable,externalRelationColumn } from './record-correspondence-store'
 import { readCorrespondenceTargetSources } from './record-correspondence-target-sources'
-import { ensureBatchRow,findBatchByKey } from '../../../../server/utils/roster-batch-ledger'
+import { ensureBatchRow,findBatchByKey } from './roster-batch-ledger'
 import { versionedOfficialEvent } from './roster-event-version'
 
 type Db = BetterSQLite3Database<typeof schema>

@@ -1,6 +1,6 @@
-import { submitRosterImportMcp } from '../../utils/roster-import-mcp-submission'
+import { submitRosterImportMcp } from '../../../layers/sme-roster/server/utils/roster-import-mcp-submission'
 import { z } from 'zod'
-import { rosterImportMcpPayloadSchema } from '../../utils/roster-import-schema'
+import { rosterImportMcpPayloadSchema } from '../../../layers/sme-roster/server/utils/roster-import-schema'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 
 /**
@@ -32,7 +32,7 @@ export default defineMcpTool({
     '只算「这次提交会发生什么」，**不写业务数据**：返回 `{ add, update, remove, review, conflicts }`。',
     '等价 `POST /api/roster/import/preflight`。参数与 `save_roster_batch` 相同；',
     '`conflicts` 列出每一项不合法的原因（不静默丢行）。确认无误后再用 `save_roster_batch` 提交。',
-    '载荷形状见 `lib/roster-import-client.ts`。',
+    '载荷形状见 `layers/sme-roster/lib/roster-import-client.ts`。',
   ].join('\n'),
   inputSchema: {
     idempotencyKey: z.string().min(1).describe('幂等键；与随后的 save_roster_batch 用同一个值'),

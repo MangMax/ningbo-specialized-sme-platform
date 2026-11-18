@@ -5,9 +5,9 @@ import { createServer } from 'node:http'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createApp, defineEventHandler, getQuery, setHeader, toNodeListener } from 'h3'
 import { initializeDb } from '../../../db/client'
-import { commitRosterImport } from '../../../server/utils/roster-import'
+import { commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
-import type { RosterImportPayload } from '../../../lib/roster-import-client'
+import type { RosterImportPayload } from '../../../layers/sme-roster/lib/roster-import-client'
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 
 const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))

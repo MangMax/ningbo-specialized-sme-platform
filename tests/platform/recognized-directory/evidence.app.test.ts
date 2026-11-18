@@ -1,5 +1,5 @@
 import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
-import { importExecutor } from '../../../server/utils/import-execution'
+import { importExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
 import * as readerLocation from '../../../layers/sme-roster/server/utils/enterprise-read-worker-location'
 import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
 import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { schema } from '../../../db'
-import { createRosterImportClient } from '../../../lib/roster-import-client'
+import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
 import { startEvidenceServer } from '../fixtures/evidence-server'
@@ -37,7 +37,7 @@ beforeAll(async () => {
   const queriesRoute = (await import('../../../server/api/platform/queries.get')).default
   const comparisonRoute = (await import('../../../server/api/comparison.get')).default
   const { handleComparisonScopeProofRequest } = await import('../../../layers/sme-roster/server/utils/comparison-scope-proof-api')
-  const { parseUploadDeclaration, registerStoredFile } = await import('../../../server/modules/sme-roster/file-upload')
+  const { parseUploadDeclaration, registerStoredFile } = await import('../../../layers/sme-roster/server/modules/sme-roster/file-upload')
   const { parseRecordComparisonQuery } = await import('../../../layers/sme-roster/lib/roster/record-comparison')
   const { getRecordComparison } = await import('../../../layers/sme-roster/server/utils/record-comparison')
   const { resolveVerifiedComparisonEvidence } = await import('../../../layers/sme-roster/server/utils/comparison-scope-proof')

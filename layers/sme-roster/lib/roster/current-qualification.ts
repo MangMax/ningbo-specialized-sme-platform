@@ -7,7 +7,7 @@ import { readEnterpriseFactEffects, evaluateEnterpriseFactEffects } from './ente
 import { canonicalEnterpriseId, hasEnterpriseMergeIdentity } from './enterprise-identity'
 import { formalValiditySchema, type FormalValidity } from './formal-validity'
 import { readPlatformComparisonProcesses } from '../../server/utils/platform-comparison-input'
-import type { ReceiptRuntimeContext } from '../../../../server/utils/receipt-runtime-context'
+import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { createHash } from 'node:crypto'
 import { createDrizzleLogger } from '../../../core/lib/logging/drizzle'

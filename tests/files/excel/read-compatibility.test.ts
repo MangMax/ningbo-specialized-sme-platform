@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import ExcelJS from 'exceljs'
 import { Workbook, Cell } from 'documonster/excel'
 import { readPlatformExport } from '../../../layers/sme-roster/lib/platform-export'
-import { parseLittleGiantWorkbook } from '../../../lib/roster/little-giant-workbook'
+import { parseLittleGiantWorkbook } from '../../../layers/sme-roster/lib/roster/little-giant-workbook'
 
 // ExcelJS writes independent fixtures; all assertions exercise the public parsers.
 const directory = mkdtempSync(join(tmpdir(), 'roster-excel-read-'))

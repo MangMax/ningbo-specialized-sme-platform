@@ -1,7 +1,7 @@
-import type { ReceiptRuntimeContext } from '../../../../server/utils/receipt-runtime-context'
+import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
 import { publishedNameText, type PublishedPresentation } from './correspondence-view'
 import { listEventsOfficialEvidencePages, OfficialEvidenceError } from '../../server/utils/official-evidence'
-import { importReceiptRedactor, type OfficialPublishedNameInput, type ReceiptRedactor } from '../../../../server/utils/import-receipt-redaction'
+import { importReceiptRedactor, type OfficialPublishedNameInput, type ReceiptRedactor } from '../../server/utils/import-receipt-redaction'
 
 /** Minimal display facts only. Locators stay on the caller's existing evidence. */
 export type OfficialPublishedFact = {

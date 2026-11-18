@@ -1,6 +1,6 @@
 /** Selected-original encoding. The writer authenticates the complete source. */
 import type { PlatformStoredQuery } from './read'
-import type { RosterImportPlatformQuery } from '../../../../lib/roster-import-client'
+import type { RosterImportPlatformQuery } from '../roster-import-client'
 import { normalizePlatformRelation } from './normalization'
 import { platformQuerySourceConflict, type PlatformQueryReplaySource } from './query-replay'
 

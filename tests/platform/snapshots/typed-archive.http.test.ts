@@ -1,5 +1,5 @@
 import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
-import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
+import { preflightRosterImport, commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
 
@@ -16,13 +16,13 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { schema } from '../../../db'
 import { eq, sql } from 'drizzle-orm'
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
-import type { RosterImportPlatformQuery } from '../../../lib/roster-import-client'
+import type { RosterImportPlatformQuery } from '../../../layers/sme-roster/lib/roster-import-client'
 import { updateCredential } from '../../../layers/core/server/utils/credential-state'
 import { handlePlatformBatchRequest } from '../../../layers/sme-roster/server/utils/platform-batch-http'
 import { recognizedResultToImport, platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { platformSummaryCache } from '../../../layers/sme-roster/server/utils/platform-summary-cache'
-import { importExecutor } from '../../../server/utils/import-execution'
+import { importExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
 import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
 
 const dir = mkdtempSync(join(tmpdir(), 'issue327-typed-archive-'))

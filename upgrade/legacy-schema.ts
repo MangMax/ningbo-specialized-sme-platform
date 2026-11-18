@@ -221,7 +221,7 @@ export const storedFile = sqliteTable(
       .$defaultFn(() => new Date().toISOString()),
     /**
      * 移出文件库的时间。**软删除标志**:DELETE 默认只打这个标、不删磁盘。
-     * 有它回填才不会把刚移出的文件又插回来(回填是幂等的,见 `server/utils/stored-files.ts`)。
+     * 有它回填才不会把刚移出的文件又插回来(回填是幂等的,见 `layers/core/server/utils/stored-files.ts`)。
      */
     removedAt: text('removed_at'),
   },
@@ -287,7 +287,7 @@ export const storedFilePart = sqliteTable(
      */
     year: integer('year'),
     batch: integer('batch'),
-    /** 归一后的附件名(`附件` / `附件N`),见 `lib/attachment.ts`。可空(导出表无附件)。 */
+    /** 归一后的附件名(`附件` / `附件N`),见 `layers/sme-roster/lib/attachment.ts`。可空(导出表无附件)。 */
     attachment: text('attachment'),
     /** 该段的行数(这一段名单有多少条被台账引用)。 */
     rowCount: integer('row_count').notNull().default(0),
@@ -461,7 +461,7 @@ export const job = sqliteTable(
 // ===========================================================================
 // 名录生命周期契约(RL-01)—— 冻结的领域对象。
 //
-// 写入载荷类型见 `lib/roster-import-client.ts`,领域决策见
+// 写入载荷类型见 `layers/sme-roster/lib/roster-import-client.ts`,领域决策见
 // `docs/adr/2026-10-16-roster-lifecycle-model.md`。本段是**全仓共享基线**:
 // 只由 RL-01 落一次,后续票(RL-02..RL-11)**增量消费,不再改这里的列语义**。
 //
@@ -2043,7 +2043,7 @@ export const fileDeclaration669 = sqliteTable('file_declaration_669', {
   active: integer('active', { mode: 'boolean' }).notNull(),
   sha256: text('sha256').notNull(),
   contentVersion: text('content_version'),
-  part: text('part', { mode: 'json' }).$type<import('../lib/file-parts').FilePart>().notNull(),
+  part: text('part', { mode: 'json' }).$type<import('../layers/sme-roster/lib/file-parts').FilePart>().notNull(),
   pageRanges: text('page_ranges', { mode: 'json' }).$type<{ start: number; end: number }[] | null>(),
 }, t => [index('file_declaration_669_file_idx').on(t.fileId)])
 

@@ -2,7 +2,7 @@ import { ChartColumn, Gauge, LayoutList, Search } from '@lucide/vue'
 import { defineAppModule } from '../core/lib/core/module-registry'
 import { ENTERPRISE_LIST_TITLE } from './lib/labels'
 import { ROSTER_LEDGER_PATH } from './lib/sme-roster/routes'
-import { rosterFileCategory } from '../../lib/sme-roster/file-category'
+import { rosterFileCategory } from './lib/sme-roster/file-category'
 
 const platform = { id: 'platform', label: '工信部平台' }
 const rosterExport = { id: 'export', label: '导出' }

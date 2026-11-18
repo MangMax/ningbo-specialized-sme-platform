@@ -7,7 +7,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
-import { backfillFileParts } from '../../../server/utils/file-parts'
+import { backfillFileParts } from '../../../layers/sme-roster/server/utils/file-parts'
 
 const appRoot = fileURLToPath(new URL('../../../', import.meta.url))
 const migrationsFolder = join(appRoot, 'db/migrations')

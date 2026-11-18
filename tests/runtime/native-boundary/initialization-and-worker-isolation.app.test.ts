@@ -8,13 +8,13 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { initializeDb, useApplicationDb } from '../../../db/client'
 import { RETIRED_PLATFORM_TABLES } from '../../../db/schema-phase'
 import * as s from '../../../db/schema'
-import { commitRosterImport } from '../../../server/utils/roster-import'
+import { commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 import { createEnterpriseReadExecutor } from '../../../layers/sme-roster/server/utils/enterprise-read'
-import { createImportExecutionWorker } from '../../../server/utils/import-execution-worker-location'
+import { createImportExecutionWorker } from '../../../layers/sme-roster/server/utils/import-execution-worker-location'
 import { listTargetBusinessProcesses } from '../../../layers/sme-roster/server/utils/platform-business-processes-target'
 import { runPlatformReconcile } from '../../../layers/sme-roster/server/utils/platform-reconcile'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
-import type { RosterImportRequest } from '../../../lib/roster-import-client'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const cleanup:Array<()=>void|Promise<unknown>>=[]
 afterEach(async()=>{await whenIdle();for(const close of cleanup.splice(0).reverse())await close()})

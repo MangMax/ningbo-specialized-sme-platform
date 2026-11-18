@@ -1,10 +1,10 @@
-import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { normalizeAttachment } from '../../../lib/attachment'
+import { normalizeAttachment } from '../../../layers/sme-roster/lib/attachment'
 import {
   aggregateParts,
   compareParts,
@@ -14,18 +14,18 @@ import {
   partYears,
   seriesLabel,
   type FilePart,
-} from '../../../lib/file-parts'
-import { backfillFileParts, listFileParts } from '../../../server/utils/file-parts'
-import { applyParseResult } from '../../../server/utils/parse-result'
-import { listStoredFiles } from '../../../server/utils/stored-files'
+} from '../../../layers/sme-roster/lib/file-parts'
+import { backfillFileParts, listFileParts } from '../../../layers/sme-roster/server/utils/file-parts'
+import { applyParseResult } from '../../../layers/sme-roster/server/utils/parse-result'
+import { listStoredFiles } from '../../../layers/core/server/utils/stored-files'
 
 /**
  * 票 17 —— **文件含多段**:年份/批次/事件按「段」建模。
  *
  * 分三块:
- *  1. 附件名归一(`lib/attachment.ts`)——「附件」「附 件 1」「附件1」「附件2」同形状;
- *  2. 段聚合与排序(`lib/file-parts.ts`)—— 纯函数,口径可单测;
- *  3. 回填(`server/utils/file-parts.ts`)—— 对**真实形状**的种子核对 192号 = 2 段、
+ *  1. 附件名归一(`layers/sme-roster/lib/attachment.ts`)——「附件」「附 件 1」「附件1」「附件2」同形状;
+ *  2. 段聚合与排序(`layers/sme-roster/lib/file-parts.ts`)—— 纯函数,口径可单测;
+ *  3. 回填(`layers/sme-roster/server/utils/file-parts.ts`)—— 对**真实形状**的种子核对 192号 = 2 段、
  *     145号 = 2 段,以及幂等。
  *
  * 种子用的是 `files/` 里那两份文件的**真实路径、真实段与真实行数**(389/67 与 301/413),

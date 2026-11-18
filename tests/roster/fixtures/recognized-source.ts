@@ -1,7 +1,7 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../db/schema'
 import { platformQueryResultShape } from '../../../layers/sme-roster/lib/platform/live-query'
-import type { RosterImportPlatformQuery } from '../../../lib/roster-import-client'
+import type { RosterImportPlatformQuery } from '../../../layers/sme-roster/lib/roster-import-client'
 import { archiveQueryKey } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 

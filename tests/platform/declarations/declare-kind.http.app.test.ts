@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto'
 import Database from 'better-sqlite3'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { initializeDb } from '../../../db/client'
-import { createRosterImportClient, type RosterImportRequest } from '../../../lib/roster-import-client'
+import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { spawnOwnedChild as spawn, spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 // Every business write uses the app API on a new isolated SQLite database.

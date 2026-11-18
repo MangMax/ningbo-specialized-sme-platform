@@ -25,8 +25,8 @@ import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { Readable } from 'node:stream'
 import { Workbook, Worksheet } from 'documonster/excel'
-import { assertExcelSheets, inspectExcelSource } from '../../../lib/excel-source'
-import { createExcelValueReader } from '../../../lib/excel-read-value'
+import { assertExcelSheets, inspectExcelSource } from './excel-source'
+import { createExcelValueReader } from './excel-read-value'
 
 /** 三张导出表对应的称号(与 `db/titles.ts` 的 `TitleCode` 同值)。 */
 export type PlatformExportTitleCode = 'specialized_sme' | 'little_giant' | 'innovative_sme'

@@ -21,7 +21,7 @@ import type {
   DuplicateNameCandidate,
   RosterImportMerge,
   RosterImportRequest,
-} from '../../../../lib/roster-import-client'
+} from '../roster-import-client'
 import type { NameMatchLevel } from './uscc-research'
 
 /** 支撑一次重名归并的**平台关系证据**。 */

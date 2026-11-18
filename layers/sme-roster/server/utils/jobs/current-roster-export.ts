@@ -1,4 +1,4 @@
-import { captureReceiptRuntimeContext } from '../../../../../server/utils/receipt-runtime-context'
+import { captureReceiptRuntimeContext } from '../receipt-runtime-context'
 import { mkdir, rm, rename, stat, open } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { join } from 'node:path'

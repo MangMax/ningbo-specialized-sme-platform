@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
 import { listRosterEnterprises } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import { listRosterRecognitions } from '../../../layers/sme-roster/lib/roster/recognitions'
-import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
 
 
 /**

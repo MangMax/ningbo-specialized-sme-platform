@@ -85,7 +85,7 @@ it('keeps ordinary runtime and three source worker guards closed on the migrated
   const path=target.name, before=readFileSync(path)
   for(const readOnly of [false,true])expect(()=>useRuntimeDb({dbPath:path,readOnly})).toThrow(/final platform runtime schema/i)
   expect(()=>initializeDb({dbPath:path})).toThrow(/final platform runtime schema/i)
-  const {createImportExecutionWorker}=await import('../../../server/utils/import-execution-worker-location')
+  const {createImportExecutionWorker}=await import('../../../layers/sme-roster/server/utils/import-execution-worker-location')
   const {createCurrentExportWorker}=await import('../../../layers/sme-roster/server/utils/current-export-worker-location')
   const {createEnterpriseWorker}=await import('../../../layers/sme-roster/server/utils/enterprise-read-worker-location')
   const stat=statSync(path),identity={dev:stat.dev,ino:stat.ino,schemaVersion:target.pragma('schema_version',{simple:true}),migration:target.prepare('SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get()}

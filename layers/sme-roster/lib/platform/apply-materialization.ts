@@ -2,7 +2,7 @@
 import { sqliteConnection } from './target-connection'
 import { captureSqlFactTitle } from './apply-stored-cells'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import type { RosterImportRelation } from '../../../../lib/roster-import-client'
+import type { RosterImportRelation } from '../roster-import-client'
 import { normalizePlatformRelation } from './normalization'
 export const APPLY_MATERIALIZATION_RULE='legacy-apply-insert-v1'
 export const materializedText=(v:unknown)=>typeof v==='string'?v.trim()||null:null

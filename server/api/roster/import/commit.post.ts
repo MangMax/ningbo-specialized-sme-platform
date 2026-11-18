@@ -1,5 +1,5 @@
 import type { DiscoveryJsonSchema, NitroDiscoverySchema } from '../../../../layers/core/server/utils/nitro-discovery-schema'
-import { createRosterImportHandler } from '../../../utils/roster-import-route'
+import { createRosterImportHandler } from '../../../../layers/sme-roster/server/utils/roster-import-route'
 
 /**
  * **事务提交**：`POST /api/roster/import/commit`（契约 §8.2）。
@@ -21,7 +21,7 @@ defineRouteMeta({
       'pending_review（待审核）须显式提交 confirmed_reason + confirmed + follow_review；保留正式历史并跟进审核，区别于 needs_review。' +
       '按 body 的 `idempotencyKey` 幂等提交：同键重复调用返回既有批次摘要，不重复写企业/事件。' +
       '单批事务：要么整批 committed，要么 failed（`error` 说明原因）—— 绝不部分提交。' +
-      '载荷见 `lib/roster-import-client.ts`；归并血缘落 `item_results`。' +
+      '载荷见 `layers/sme-roster/lib/roster-import-client.ts`；归并血缘落 `item_results`。' +
       '需要 token：`Authorization: Bearer <NUXT_API_TOKEN>`（或 `X-API-Token`）；未配 token 时本接口整体关闭。',
     security: [{ bearerAuth: [] }],
     requestBody: {

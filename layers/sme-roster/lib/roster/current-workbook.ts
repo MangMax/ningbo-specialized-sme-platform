@@ -1,4 +1,4 @@
-import type { ReceiptRuntimeContext } from '../../../../server/utils/receipt-runtime-context'
+import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
 import { Stream } from 'documonster/excel'
 import type Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'

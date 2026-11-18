@@ -1,4 +1,4 @@
-import { resolveUploadPlacement } from '../../../server/utils/stored-files'
+import { resolveUploadPlacement } from '../../../layers/core/server/utils/stored-files'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -10,9 +10,9 @@ import { createTus, TUS_PATH } from '../../../layers/core/server/utils/tus'
 import {
   parseUploadDeclaration,
   registerStoredFile,
-} from '../../../server/modules/sme-roster/file-upload'
+} from '../../../layers/sme-roster/server/modules/sme-roster/file-upload'
 import { UploadRegistrationError } from '../../../layers/core/server/utils/file-store'
-import { listStoredFiles } from '../../../server/utils/stored-files'
+import { listStoredFiles } from '../../../layers/core/server/utils/stored-files'
 
 /**
  * 票 10 —— 上传完成后的**登记**。

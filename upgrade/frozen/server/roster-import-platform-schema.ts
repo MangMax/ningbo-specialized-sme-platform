@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { platformQuery, platformRelation } from '../../legacy-schema'
 import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER } from '../../../layers/sme-roster/lib/labels'
 import { platformQueryResultShape } from '../../../layers/sme-roster/lib/platform/live-query'
-import type { RosterImportPlatformQuery, RosterImportRelation } from '../../../lib/roster-import-client'
+import type { RosterImportPlatformQuery, RosterImportRelation } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const relation = z.looseObject({
   sequenceNo: z.number().describe('沿用核心 optionalInt；原查询内序号'),

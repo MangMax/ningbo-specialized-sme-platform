@@ -12,7 +12,7 @@ import { capturePhase, nextObservationId, captureFingerprintBasis, assertCapture
 import { createHash } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import type { RosterImportRelation } from '../../lib/roster-import-client'
+import type { RosterImportRelation } from '../../layers/sme-roster/lib/roster-import-client'
 import { targetSchema as s } from '../target-schema'
 import { parseRecognizedRecord, parseRecognizedSourceFidelity, RECOGNIZED_PROJECTION_RULE } from '../../layers/sme-roster/lib/platform/recognized-projection'
 import { canonicalPlatformJson, planPlatformObservation, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE } from '../../layers/sme-roster/lib/platform/observation-plan'

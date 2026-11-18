@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { rosterImportMcpPayloadSchema } from '../../../server/utils/roster-import-schema'
+import { rosterImportMcpPayloadSchema } from '../../../layers/sme-roster/server/utils/roster-import-schema'
 
 const httpPayloadCache = new Map<string, any>()
 function httpPayload(action: string) {

@@ -2,7 +2,7 @@
  * **重名候选 → 可执行的归并**（RL-14，契约 §5.3 / §8.8）。
  *
  * ── 分工 ────────────────────────────────────────────────────────────────
- *  - 导入侧（`server/utils/roster-import.ts`）负责**报出**候选：新建企业时库里已有同名行。
+ *  - 导入侧（`layers/sme-roster/server/utils/roster-import.ts`）负责**报出**候选：新建企业时库里已有同名行。
  *  - 本模块负责把候选**判成**「可并 / 待核」，并编出一份可提交的 `payload.merges`。
  *  - 真正落库仍然只有一条路径：`POST /api/roster/import/commit`（契约 §8.2/§8.4）。
  *    本模块**只读**库（候选 + 已落库的平台关系），不写一行 —— 于是「读计划」与
@@ -29,8 +29,8 @@ type DuplicateMergeEvidence,
 type DuplicateMergePendingReason,
 type DuplicateMergeReport,
 } from '../../lib/roster/duplicate-merge'
-import type { DuplicateNameCandidate,RosterImportMerge } from '../../../../lib/roster-import-client'
-import { findEnterpriseById,findEnterpriseByUscc,readImportBatchOutcome } from '../../../../server/utils/roster-import'
+import type { DuplicateNameCandidate,RosterImportMerge } from '../../lib/roster-import-client'
+import { findEnterpriseById,findEnterpriseByUscc,readImportBatchOutcome } from './roster-import'
 import { targetCandidateTables } from './candidate-target-sources'
 
 type Db = BetterSQLite3Database<typeof schema>

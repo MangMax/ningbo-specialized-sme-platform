@@ -7,12 +7,12 @@ import { initializeDb } from '../../../db/client'
 import * as schema from '../../../db/schema'
 import { queryPlatformSlots } from '../../../layers/sme-roster/lib/platform/client'
 import { buildPlatformWritePayload } from '../../../layers/sme-roster/lib/platform/payload'
-import { commitRosterImport, preflightRosterImport } from '../../../server/utils/roster-import'
-import { readImportReceipt } from '../../../server/utils/import-receipts'
+import { commitRosterImport, preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { readImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipts'
 import { runPlatformReconcile } from '../../../layers/sme-roster/server/utils/platform-reconcile'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { emptyReply, platformReplay } from '../fixtures/source-replay'
-import type { RosterImportRequest } from '../../../lib/roster-import-client'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const dir = mkdtempSync(join(tmpdir(), 'reconcile-query-metadata-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })

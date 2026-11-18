@@ -6,8 +6,8 @@ import { createApp, defineEventHandler, toNodeListener } from 'h3'
 import { initializeDb, schema } from '../../../upgrade/legacy-client'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as currentSchema from '../../../db/schema'
-import { getParse105 } from '../../../server/utils/parse-maintenance-105'
-import { listStoredFiles } from '../../../server/utils/stored-files'
+import { getParse105 } from '../../../layers/sme-roster/server/utils/parse-maintenance-105'
+import { listStoredFiles } from '../../../layers/core/server/utils/stored-files'
 import { upgradeRosterFileClassification } from '../../../upgrade/roster-file-classification'
 
 it("migrates legacy descriptors additively and serves durable identities without GET writes", async () => {

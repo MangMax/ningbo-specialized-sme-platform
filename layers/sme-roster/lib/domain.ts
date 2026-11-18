@@ -83,8 +83,8 @@ export function normalizeName(
  * 统一社会信用代码归一:**去全部空白 + 转大写**。
  *
  * 公布文件与平台响应解析写入、写入 API 的身份比较、以及读侧的统代比对都必须同规则,
- * 所以只有这一处实现 —— 原先 `lib/roster/little-giant-workbook.ts` 与
- * `server/utils/roster-import.ts` 各写了一遍,两处注释都自称「与既有口径一致」,
+ * 所以只有这一处实现 —— 原先 `layers/sme-roster/lib/roster/little-giant-workbook.ts` 与
+ * `layers/sme-roster/server/utils/roster-import.ts` 各写了一遍,两处注释都自称「与既有口径一致」,
  * 那正是漂移的开始。
  *
  * 入参是 `unknown`:调用方手上的值常常是「不知道是什么」的(JSON 载荷、工作表单元格)。

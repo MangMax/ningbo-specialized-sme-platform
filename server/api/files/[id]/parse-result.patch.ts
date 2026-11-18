@@ -1,4 +1,4 @@
-import { parseRoute105 } from '../../../utils/parse-maintenance-105-route'
+import { parseRoute105 } from '../../../../layers/sme-roster/server/utils/parse-maintenance-105-route'
 defineRouteMeta({ openAPI: {
   tags: ['Files'], summary: '#105 仅更正解析状态,保留全部段', description: 'NUXT_API_TOKEN。必须 parseState/expectedVersion/idempotencyKey/actor/reason。不得提供 parts。字段省略不清段;null 非法。parsed 仅表示解析完成,不表示名录校验通过。并发/幂等语义同 PUT。',
   parameters: [{ in: 'path', name: 'id', required: true, schema: { type: 'integer', minimum: 1 } }],

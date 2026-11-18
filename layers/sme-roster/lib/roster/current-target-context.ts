@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import type { ReceiptRuntimeContext } from '../../../../server/utils/receipt-runtime-context'
+import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
 import { targetSchema } from '../platform/target-schema'
 import { createTargetCurrentCandidateReader } from './current-candidates-target'
 import { createCurrentQualificationAssessmentReaderWithWitnesses } from './current-qualification'

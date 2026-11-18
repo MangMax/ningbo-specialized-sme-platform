@@ -34,7 +34,7 @@ import {
   type EvidencePageEntry,
   type EvidencePagePlan,
 } from '../../lib/roster/evidence-page'
-import { authorizeRosterWrite } from '../../../../server/utils/roster-import-http'
+import { authorizeRosterWrite } from './roster-import-http'
 import { readPdfPageCount } from '../../../core/server/utils/pdf-pages'
 import { createLegacyEvidencePageAdapter, EvidenceCorrectionError } from './roster-evidence-correction'
 

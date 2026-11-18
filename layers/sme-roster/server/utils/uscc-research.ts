@@ -28,7 +28,7 @@ import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
-import { planRosterImport } from '../../../../server/utils/roster-import'
+import { planRosterImport } from './roster-import'
 import {
   coreWordOf,
   isByteEqualName,
@@ -59,7 +59,7 @@ import type {
   RosterImportRequest,
   RosterImportUsccBackfill,
   RosterPlatformRef,
-} from '../../../../lib/roster-import-client'
+} from '../../lib/roster-import-client'
 import type { DuplicateMergeEvidence } from '../../lib/roster/duplicate-merge'
 import { TITLE_ORDER } from '../../lib/labels'
 import { MAX_PAGE_SIZE } from '../../lib/query'

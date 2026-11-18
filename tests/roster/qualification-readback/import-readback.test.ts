@@ -11,12 +11,12 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../../../db/schema'
-import type { RosterImportEvent, RosterImportRequest } from '../../../lib/roster-import-client'
+import type { RosterImportEvent, RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import * as qualification from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
-import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
-import { commitRosterImport, preflightRosterImport } from '../../../server/utils/roster-import'
-import { readImportReceipt } from '../../../server/utils/import-receipts'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
+import { commitRosterImport, preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { readImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipts'
 import { startHttpFixture, type HttpFixture } from '../../support/http'
 
 const NOW = Date.parse('2026-01-15T00:00:00.000Z')
@@ -287,7 +287,7 @@ it('qualification_projection_rejects_wrong_item_and_budget_without_changing_old_
 
 // #407 historical candidate diagnostics controls. Original19 above remain byte-frozen.
 import { eq as historicalEq } from 'drizzle-orm'
-import { ImportReceiptError as HistoricalReceiptError } from '../../../server/utils/import-receipts'
+import { ImportReceiptError as HistoricalReceiptError } from '../../../layers/sme-roster/server/utils/import-receipts'
 
 function historicalObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Synthetic historical fixture requires an object')

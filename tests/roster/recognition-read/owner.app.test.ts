@@ -18,7 +18,7 @@ import { createEnterpriseReadExecutor } from '../../../layers/sme-roster/server/
 import { createEnterpriseWorker } from '../../../layers/sme-roster/server/utils/enterprise-read-worker-location'
 import { captureReaderError } from '../../../layers/sme-roster/lib/roster/offmain-read-protocol'
 import { executeNativeImport, startRosterApi } from '../imports/fixtures/import-server'
-import { createRosterImportClient } from '../../../lib/roster-import-client'
+import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const cleanup: Array<() => unknown|Promise<unknown>>=[]
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close()})

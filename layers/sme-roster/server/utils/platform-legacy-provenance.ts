@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { legacyPlatformProvenanceSchema, type LegacyPlatformProvenanceInput } from '../../lib/platform/legacy-provenance'
 import { recognizedStoredStatus } from '../../lib/platform/recognized-evidence'
 import { legacySourcePositionForSequence } from '../../lib/platform/legacy-provenance'
-import type { Executor } from '../../../../server/utils/roster-import'
+import type { Executor } from './roster-import'
 import { LegacyProvenanceError, rejectLegacyProvenance as reject, originalLegacyProvenanceInput,
   existingTargetLegacyProvenance, targetLegacySourceOwner, insertTargetLegacyProvenance } from '../../lib/platform/legacy-provenance-command'
 export { legacySourcePositionForSequence }

@@ -1,5 +1,5 @@
 import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
-import { importExecutor } from '../../../server/utils/import-execution'
+import { importExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'

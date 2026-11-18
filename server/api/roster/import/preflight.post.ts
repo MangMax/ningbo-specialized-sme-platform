@@ -1,5 +1,5 @@
 import type { DiscoveryJsonSchema, NitroDiscoverySchema } from '../../../../layers/core/server/utils/nitro-discovery-schema'
-import { createRosterImportHandler } from '../../../utils/roster-import-route'
+import { createRosterImportHandler } from '../../../../layers/sme-roster/server/utils/roster-import-route'
 
 /**
  * **只读预检**：`POST /api/roster/import/preflight`（契约 §8.1）。
@@ -10,7 +10,7 @@ import { createRosterImportHandler } from '../../../utils/roster-import-route'
  * 需要 token（`Authorization: Bearer <NUXT_API_TOKEN>` 或 `X-API-Token`）；
  * **未配置 token ⇒ 写入整体关闭**（与 `POST /api/jobs` 同一分法）。
  *
- * 逻辑在 `server/utils/roster-import-http.ts`（不 import h3，可被真实 HTTP 回放测试直接驱动），
+ * 逻辑在 `layers/sme-roster/server/utils/roster-import-http.ts`（不 import h3，可被真实 HTTP 回放测试直接驱动），
  * 路由只做 event → 请求描述 → 响应回填这一件事。
  */
 defineRouteMeta({
@@ -22,7 +22,7 @@ defineRouteMeta({
       '算「这次提交会发生什么」并落一条 `status=preflight` 的批次，**不改任何业务数据**。' +
       '幂等键是 body 的 `idempotencyKey`：同键重复调用返回/刷新同一批次。' +
       '需要 token：`Authorization: Bearer <NUXT_API_TOKEN>`（或 `X-API-Token`）；未配 token 时本接口整体关闭。' +
-      '载荷见 `lib/roster-import-client.ts`（含 §8.4 的 `merges` 归并项）。',
+      '载荷见 `layers/sme-roster/lib/roster-import-client.ts`（含 §8.4 的 `merges` 归并项）。',
     security: [{ bearerAuth: [] }],
     requestBody: {
       required: true,

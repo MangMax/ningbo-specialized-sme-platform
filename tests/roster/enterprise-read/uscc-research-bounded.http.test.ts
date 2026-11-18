@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb } from '../../../db'
-import { createRosterImportClient } from '../../../lib/roster-import-client'
+import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
 import { startEvidenceServer, type EvidenceServer } from '../../platform/fixtures/evidence-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'uscc-131-'))

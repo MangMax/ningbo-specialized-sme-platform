@@ -2,7 +2,7 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { readTargetRelationDisplay, type RelationEvidenceDisplaySelection } from '../../lib/platform/target-relation-display'
 import { safeCollectionEvidence, sanitizeEvidence } from './record-correspondence-read'
-import type { ReceiptRedactor } from '../../../../server/utils/import-receipt-redaction'
+import type { ReceiptRedactor } from './import-receipt-redaction'
 export type { RelationEvidenceDisplaySelection } from '../../lib/platform/target-relation-display'
 export type RelationEvidenceDisplay = ReturnType<typeof sanitizeEvidence>
 export function readTargetRelationEvidenceDisplay<S extends Record<string, unknown>>(

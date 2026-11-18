@@ -1,4 +1,4 @@
-import { createRosterImportHandler } from '../../../utils/roster-import-route'
+import { createRosterImportHandler } from '../../../../layers/sme-roster/server/utils/roster-import-route'
 
 /**
  * **出处指针收敛重放**：`POST /api/roster/import/replay`（契约 §8.9.3）。

@@ -7,8 +7,8 @@ import { createServer } from 'node:http'
 import { createApp, createRouter, toNodeListener, defineEventHandler, setHeader, getQuery, getRouterParam, createError, readBody, getHeader, setResponseStatus } from 'h3'
 import { sql } from 'drizzle-orm'
 import { initializeDb } from '../../../db/client'
-import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
-import type { RosterImportRequest, RosterImportPlatformQuery } from '../../../lib/roster-import-client'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
+import type { RosterImportRequest, RosterImportPlatformQuery } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const platformSources = ['declarations', 'business-processes', 'recognized-directory'] as const
 let platformRoutes: { source: typeof platformSources[number]; list: import('h3').EventHandler; detail: import('h3').EventHandler }[]

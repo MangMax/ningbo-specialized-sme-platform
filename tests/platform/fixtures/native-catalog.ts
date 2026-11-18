@@ -1,6 +1,6 @@
 import { nativeCorrespondenceFixture } from '../../roster/correspondence/fixtures/native-correspondence'
 import { submitNativePlatformQuery } from './native-query'
-import type { RosterImportPlatformQuery } from '../../../lib/roster-import-client'
+import type { RosterImportPlatformQuery } from '../../../layers/sme-roster/lib/roster-import-client'
 import { listTargetDeclarations, getTargetDeclaration } from '../../../layers/sme-roster/server/utils/platform-declarations-target'
 import { listTargetBusinessProcesses, getTargetBusinessProcess } from '../../../layers/sme-roster/server/utils/platform-business-processes-target'
 import { listTargetRecognizedDirectory, getTargetRecognizedRecord } from '../../../layers/sme-roster/server/utils/platform-recognized-target'

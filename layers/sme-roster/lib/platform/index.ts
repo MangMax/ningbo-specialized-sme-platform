@@ -5,7 +5,7 @@
  * - {@link ./client}:可注入 fetch 的薄客户端,`rdjb=1/2/3` 全查;
  * - {@link ./identity}:关系分组与曾用名候选(**只呈现证据,不推测**);
  * - {@link ./payload}:契约 §8.3 的写入载荷构造(类型直接用 RL-11 的
- *   `lib/roster-import-client.ts`,不另定义一套);
+ *   `layers/sme-roster/lib/roster-import-client.ts`,不另定义一套);
  * - {@link ./reconcile}:查询覆盖与处理状态（不自动确认原因或别名）;
  * - {@link ./read}:`GET /api/platform/queries` 的读模型。
  *

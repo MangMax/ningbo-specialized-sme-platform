@@ -2,7 +2,7 @@
 /** Immutable replay comparison shared by public planning and explicit target commands. */
 import { isDeepStrictEqual } from 'node:util'
 import type { PlatformInterface } from '../../layers/sme-roster/lib/labels'
-import type { RosterImportPlatformQuery, RosterImportRelation, RosterImportItemResult } from '../../lib/roster-import-client'
+import type { RosterImportPlatformQuery, RosterImportRelation, RosterImportItemResult } from '../../layers/sme-roster/lib/roster-import-client'
 import { normalizePlatformRelation } from '../../layers/sme-roster/lib/platform/normalization'
 import { platformObservationPayload } from '../../layers/sme-roster/lib/platform/observation-plan'
 import { PlatformProjectionError } from '../../layers/sme-roster/lib/platform/projection-error'

@@ -1,4 +1,4 @@
-import { parseRoute105 } from '../../../utils/parse-maintenance-105-route'
+import { parseRoute105 } from '../../../../layers/sme-roster/server/utils/parse-maintenance-105-route'
 defineRouteMeta({ openAPI: {
   tags: ['Files'], summary: '#105 替换全部代理解析段',
   description: '需要 NUXT_API_TOKEN。历史unknown结果兼容输出CAS写入;一旦结果bound,段替换缺inputRef即409要求重读预检,不能降回unknown。当前解析推荐POST parse-result/preflight→commit,新commit缺inputRef不降级。parts必填且全量替换;[]恢复evidence派生段。parseState省略置parsed。只写段/解析状态/审计,不写正式出处/OCR。版本/幂等冲突409,同键同载荷先恢复原回执。',

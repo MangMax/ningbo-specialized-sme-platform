@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, getQuery, defineEventHandler, createError } from 'h3'
 import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useDb } from '../../../db'
-import { createRosterImportClient, type RosterImportPayload } from '../../../lib/roster-import-client'
+import { createRosterImportClient, type RosterImportPayload } from '../../../layers/sme-roster/lib/roster-import-client'
 import type { RosterRecognitionsResult } from '../../../layers/sme-roster/lib/roster/recognitions'
 import { startRosterApi, executeNativeImport } from '../imports/fixtures/import-server'
 

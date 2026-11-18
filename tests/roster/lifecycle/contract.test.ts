@@ -4,7 +4,7 @@ import { initializeDb } from '../../../db/client'
 /**
  * 名录生命周期**冻结契约**的验收样例(RL-01)。
  *
- * 本文件是交付物 D:用 SQLite 场景数据证明 `lib/roster-import-client.ts`
+ * 本文件是交付物 D:用 SQLite 场景数据证明 `layers/sme-roster/lib/roster-import-client.ts`
  * 与 `db/schema.ts` 里那批新表**真的**按契约行事 —— 尤其是唯一键/幂等键在
  * **库层面**生效(违反时确实抛错),而不是只在文档里写着。
  *

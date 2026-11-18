@@ -6,7 +6,7 @@
  * 「一切写入走应用公开 API」的要求:适配层产出 §8.3 形状,由统一批次 API 事务提交。
  *
  * ── 形状的**唯一来源**是 RL-11 的契约类型 ────────────────────────────────
- * 本模块**不再自定义** payload 类型,而是直接产出 `lib/roster-import-client.ts` 里的
+ * 本模块**不再自定义** payload 类型,而是直接产出 `layers/sme-roster/lib/roster-import-client.ts` 里的
  * `RosterImportPayload` / `RosterImportRequest`(`platformQueries` / `aliases` /
  * `differences` / `merges` 四段)。RL-11 的 `validateImportRequest` 就是按那组类型收的,
  * 两边共用一个定义 ⇒ 不存在「我按临时约定发的、写入侧不认」的漂移。
@@ -49,7 +49,7 @@ import type {
   RosterImportRelation,
   RosterImportRequest,
   RosterPlatformRef,
-} from '../../../../lib/roster-import-client'
+} from '../roster-import-client'
 import type { PlatformQueryOutcome } from './client'
 import { type PlatformRelationRecord, relationFromRow } from './identity'
 import type { PlatformInterface } from '../labels'

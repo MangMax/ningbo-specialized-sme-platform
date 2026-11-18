@@ -5,7 +5,7 @@ import {nativeImportDb} from '../../roster/imports/fixtures/native-import'
 import {writeNewCollectionTarget} from '../../../layers/sme-roster/lib/platform/collection-target-command'
 import {readTargetPlatformEvidence} from '../../../layers/sme-roster/lib/platform/target-evidence-read'
 import {readPlatformQueryEvidence} from '../../../layers/sme-roster/lib/platform/evidence-read'
-import {preflightRosterImport,commitRosterImport} from '../../../server/utils/roster-import'
+import {preflightRosterImport,commitRosterImport} from '../../../layers/sme-roster/server/utils/roster-import'
 import {platformResultToImport} from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 let f: {db:ReturnType<typeof nativeImportDb>; t:Database.Database}
 beforeAll(()=>{const db=nativeImportDb();f={db,t:db.$client}})

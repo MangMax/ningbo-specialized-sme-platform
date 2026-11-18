@@ -1,4 +1,4 @@
-import { createImportExecutor } from '../../../server/utils/import-execution'
+import { createImportExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
 import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
 import { serialize } from 'node:v8'
 import { mkdtempSync, rmSync, renameSync } from 'node:fs'
@@ -8,7 +8,7 @@ import Database from 'better-sqlite3'
 import { afterEach, expect, it } from 'vitest'
 import { initializeDb } from '../../../db/client'
 import { startRosterApi } from './fixtures/import-server'
-import type { RosterImportRequest } from '../../../lib/roster-import-client'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 
 // Exercise CI's compiled worker through real child-process IPC, without JIT startup.
 const createImportExecutionWorker = () => createEnterpriseReadProcess(new URL('../../../.output/server/import-execution-worker.mjs', import.meta.url))
@@ -52,7 +52,7 @@ it('HTTP import keeps the event loop responsive during native write contention a
 }, 20_000)
 
 it('a worker that dies before readiness fails its admitted request without spawning a retry', async () => {
-  const { createImportExecutor } = await import('../../../server/utils/import-execution')
+  const { createImportExecutor } = await import('../../../layers/sme-roster/server/utils/import-execution')
   const { createEnterpriseReadProcess } = await import('../../../layers/sme-roster/server/utils/enterprise-read-process')
   const dir = mkdtempSync(join(tmpdir(), 'import-startup-'))
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
@@ -72,10 +72,10 @@ it('a worker that dies before readiness fails its admitted request without spawn
   expect(starts).toBe(2)
 })
 
-async function isolatedApi(options: Parameters<typeof import('../../../server/utils/import-execution').createImportExecutor>[0] = {}) {
-  const { createImportExecutor } = await import('../../../server/utils/import-execution')
-  const { handleRosterImportRequest } = await import('../../../server/utils/roster-import-http')
-  const { readImportReceipt } = await import('../../../server/utils/import-receipts')
+async function isolatedApi(options: Parameters<typeof import('../../../layers/sme-roster/server/utils/import-execution').createImportExecutor>[0] = {}) {
+  const { createImportExecutor } = await import('../../../layers/sme-roster/server/utils/import-execution')
+  const { handleRosterImportRequest } = await import('../../../layers/sme-roster/server/utils/roster-import-http')
+  const { readImportReceipt } = await import('../../../layers/sme-roster/server/utils/import-receipts')
   const { handleRecordCorrespondenceRequest } = await import('../../../layers/sme-roster/server/utils/record-correspondence-api')
   const { startHttpFixture } = await import('../../support/http')
   const dir = mkdtempSync(join(tmpdir(), 'isolated-import-http-'))
@@ -208,7 +208,7 @@ it('binary admission preserves a valid HTTP payload whose JSON representation ex
 }, 20_000)
 
 it('an idle executor preflights a valid batch larger than 32MiB without changing the core result', async () => {
-  const { preflightRosterImport } = await import('../../../server/utils/roster-import')
+  const { preflightRosterImport } = await import('../../../layers/sme-roster/server/utils/roster-import')
   const service = await isolatedApi()
   const legacy = await isolatedApi()
   const request = input()

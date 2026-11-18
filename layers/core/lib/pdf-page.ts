@@ -5,8 +5,8 @@
  * 那里依赖原生模块与 wasm,不能进客户端包;本文件**零依赖**,可被路由、测试复用。
  *
  * ── 为什么叫「单数」的 `pdf-page` ────────────────────────────────────────
- * 沿用本仓已有的分法:`lib/stored-file.ts` 放**纯规则**(单个文件的元数据怎么推),
- * `server/utils/stored-files.ts` 放**服务**(整个库的扫描/查询/写入)。
+ * 沿用本仓已有的分法:`layers/sme-roster/lib/stored-file.ts` 放**纯规则**(单个文件的元数据怎么推),
+ * `layers/core/server/utils/stored-files.ts` 放**服务**(整个库的扫描/查询/写入)。
  * 这里同样:`lib/pdf-page.ts` 是一页页图的规则,`server/utils/pdf-pages.ts` 是页图服务。
  * 两个文件同叫 `pdf-pages` 会让人在 import 时看不出拿的是规则还是服务。
  *
@@ -17,7 +17,7 @@
  *
  * 即**页图目录 = 源 PDF 同级的隐藏目录**,名字是 `.` + 源文件名 + `.pages`。
  *
- * 为什么要那个**前导点**:文件库的扫描器(`server/utils/stored-files.ts` 的
+ * 为什么要那个**前导点**:文件库的扫描器(`layers/core/server/utils/stored-files.ts` 的
  * `scanFileStore`)按「名字以 `.` 开头即跳过」的规则滤掉系统/临时文件。页图是
  * **派生数据**,不是文件库里的「文件」—— 不隐藏的话,回填会把 900+ 张 `pNNN.png`
  * 当成独立的源文件塞进 `stored_file`,文件管理页立刻被页图淹掉。

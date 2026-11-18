@@ -1,4 +1,4 @@
-import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { createHash } from 'node:crypto'
@@ -10,12 +10,12 @@ import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
 import * as schema from '../../../db/schema'
 import { appendOfficialEvidenceRevision, readLatestOfficialEvidence } from '../../../layers/sme-roster/server/utils/official-evidence'
-import { preflightRosterImport, commitRosterImport, readImportBatchOutcome } from '../../../server/utils/roster-import'
-import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
+import { preflightRosterImport, commitRosterImport, readImportBatchOutcome } from '../../../layers/sme-roster/server/utils/roster-import'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
 import { readExactEvidence } from '../../../layers/sme-roster/server/utils/roster-evidence-correction'
 import { handleEvidenceCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-evidence-correction-api'
 import { startHttpFixture } from '../../support/http'
-import type { OfficialPublishedRow, RosterImportRequest } from '../../../lib/roster-import-client'
+import type { OfficialPublishedRow, RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const closes: (() => Promise<void> | void)[] = []
 const importAuditReference = z.object({ importBatchId: z.number().int().positive() }).passthrough()

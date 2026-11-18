@@ -1,4 +1,4 @@
-import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import {differencePublicColumns} from '../../../layers/sme-roster/lib/platform/difference-reference-target'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { nativeQueryRows, nativeRelationRows } from '../../platform/fixtures/native-evidence'
@@ -17,7 +17,7 @@ import {
   RosterImportApiError,
   createRosterImportClient,
   type RosterImportRequest,
-} from '../../../lib/roster-import-client'
+} from '../../../layers/sme-roster/lib/roster-import-client'
 import {
   commitRosterImport,
   enterpriseExists,
@@ -27,7 +27,7 @@ import {
   rosterRowCounts,
   searchEnterpriseIdsByName,
   validateImportRequest,
-} from '../../../server/utils/roster-import'
+} from '../../../layers/sme-roster/server/utils/roster-import'
 import { MCP_WRITE_TOOLS } from '../../../server/mcp-access-policy'
 import { listDifferences, listEnterprises } from '../../../server/utils/mcp-roster'
 import { startRosterApi as startWorkerRosterApi, executeNativeImport } from './fixtures/import-server'

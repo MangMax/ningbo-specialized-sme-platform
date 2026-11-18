@@ -9,9 +9,9 @@ import { join } from 'node:path'
 import { afterAll,beforeAll,expect,it,vi } from 'vitest'
 import { schema } from '../../../db'
 import { initializeDb } from '../../../db/client'
-import type { RosterImportPlatformQuery,RosterImportRequest } from '../../../lib/roster-import-client'
+import type { RosterImportPlatformQuery,RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
-import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
 
 const dir = mkdtempSync(join(tmpdir(), 'business-processes-http-'))
 const dbPath = join(dir, 'business.sqlite')

@@ -10,7 +10,7 @@ import { initializeDb } from '../../../db/client'
 import { assertFinalPlatformRuntime } from '../../../db/schema-phase'
 import { TITLE_SEED } from '../../../db/titles'
 import { executeNativeImport, startRosterApi } from '../imports/fixtures/import-server'
-import { createRosterImportClient } from '../../../lib/roster-import-client'
+import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
 import { listEvidenceImpacts113, processEvidenceImpacts113 } from '../../../layers/sme-roster/server/utils/evidence-impact-113'
 
 it.each(['fresh', 'upgrade'])('adds empty durable impact storage and preserves existing facts on %s SQLite', async mode => {

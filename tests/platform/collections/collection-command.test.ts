@@ -51,7 +51,7 @@ it.each(['queryList', 'businessList', 'queryBusList'] as const)('executes a comp
   expect(sqlite.pragma('foreign_key_check')).toEqual([]); sqlite.close()
 })
 
-function changed(input: ReturnType<typeof command>, mutate: (q: import('../../../lib/roster-import-client').RosterImportPlatformQuery) => void) {
+function changed(input: ReturnType<typeof command>, mutate: (q: import('../../../layers/sme-roster/lib/roster-import-client').RosterImportPlatformQuery) => void) {
   const q = JSON.parse(input.queryText)
   mutate(q)
   return { ...input, queryText: JSON.stringify(q), evidenceText: q.collectionEvidence == null ? null : JSON.stringify(q.collectionEvidence) }

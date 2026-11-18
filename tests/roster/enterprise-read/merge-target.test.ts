@@ -8,14 +8,14 @@ import { afterEach, beforeEach, expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
 import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
 import { initializeDb } from '../../../db/client'
-import { commitRosterImport, findEnterpriseById, preflightRosterImport } from '../../../server/utils/roster-import'
+import { commitRosterImport, findEnterpriseById, preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 import { buildPlatformEvidenceIndex, findUsccKeyedRelationEvidence } from '../../../layers/sme-roster/server/utils/roster-duplicate-merge'
 import { listRosterEnterprises, getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import { readDifferenceObservation } from '../../../layers/sme-roster/lib/platform/difference-sources'
 import { readEnterpriseFactEffects } from '../../../layers/sme-roster/lib/roster/enterprise-fact-effects'
 import { getEnterpriseProfile, patchEnterpriseProfile } from '../../../layers/sme-roster/server/utils/enterprise-profile'
 import { readUsccTargets } from '../../../layers/sme-roster/server/utils/uscc-research-read'
-import type { RosterImportRequest } from '../../../lib/roster-import-client'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const root = mkdtempSync(join(tmpdir(), 'enterprise-merge-target-'))
 const from = 91001, into = 91002, third = 91003

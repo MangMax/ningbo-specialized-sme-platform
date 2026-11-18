@@ -3,7 +3,7 @@ import { evidenceReadSchema, officialReadQuery, readPublicOfficialEvidence } fro
 import { OfficialEvidenceError } from './official-evidence'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
-import { authorizeRosterWrite } from '../../../../server/utils/roster-import-http'
+import { authorizeRosterWrite } from './roster-import-http'
 import { EvidenceCorrectionError, evidenceCorrectionRequestSchema, preflightEvidenceCorrection, readExactEvidence, commitEvidenceCorrection, readEvidenceCorrectionBatch, readEvidenceCorrectionAudit } from './roster-evidence-correction'
 export type EvidenceCorrectionAction = 'get' | 'preflight' | 'commit' | 'audit' | 'batch'
 const headers = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }

@@ -40,8 +40,8 @@ import type {
 RosterImportCommitResponse,
 RosterImportPreflightResponse,
 RosterImportRequest,
-} from '../../../../lib/roster-import-client'
-import { commitRosterImport,preflightRosterImport } from '../../../../server/utils/roster-import'
+} from '../../lib/roster-import-client'
+import { commitRosterImport,preflightRosterImport } from './roster-import'
 import { createReconcileTargetSlotReader,type ReconcileTargetSlotReader } from './platform-reconcile-target-slots'
 import { sqliteConnection } from '../../lib/platform/target-connection'
 

@@ -1,7 +1,7 @@
 import { useDb } from '@db'
 import { requestLogContext } from '../../../lib/logging'
 import { UploadRegistrationError } from '../../utils/file-store'
-import { registerUploadedFile } from '../../../../../server/utils/stored-files'
+import { registerUploadedFile } from '../../utils/stored-files'
 
 defineRouteMeta({
   openAPI: {

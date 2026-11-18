@@ -1,4 +1,4 @@
-import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,9 +6,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { MCP_WRITE_TOOLS, writeToolCallIn } from '../../../server/mcp-access-policy'
 import { readMcpToken, resolveMcpAuth, tokenMatches, unauthorizedMessage } from '../../../layers/core/server/utils/mcp-auth'
 import { findFileIdByRelPath, pageImagesForAgent, resolveFileRef } from '../../../layers/core/server/utils/file-agent-reference'
-import { __resetFileStoreReady, ensureFileStoreReady, setFileCategoryForAgent } from '../../../server/utils/mcp-files'
-import { applyParseResult, normalizeParseParts } from '../../../server/utils/parse-result'
-import { getStoredFile, listStoredFiles } from '../../../server/utils/stored-files'
+import { __resetFileStoreReady, ensureFileStoreReady, setFileCategoryForAgent } from '../../../layers/sme-roster/server/utils/mcp-files'
+import { applyParseResult, normalizeParseParts } from '../../../layers/sme-roster/server/utils/parse-result'
+import { getStoredFile, listStoredFiles } from '../../../layers/core/server/utils/stored-files'
 
 /**
  * 票 18 —— 把 app 的能力暴露成 **MCP**。
@@ -645,7 +645,7 @@ describe('pageImagesForAgent 页图取值', () => {
     const { minimalPdf } = await import('../../support/minimal-pdf')
     mkdirSync(join(root, 'jxj/announcement/2024/2'), { recursive: true })
     // Use a separately registered real PDF; the shared metadata-only fixture has a synthetic digest.
-    const { registerStoredFile, parseUploadDeclaration } = await import('../../../server/modules/sme-roster/file-upload')
+    const { registerStoredFile, parseUploadDeclaration } = await import('../../../layers/sme-roster/server/modules/sme-roster/file-upload')
     const realPath = 'jxj/announcement/2024/2/unrendered-identity.pdf'
     writeFileSync(join(root, realPath), minimalPdf({ pages: 3 }))
     await registerStoredFile(db, root, parseUploadDeclaration({ relPath: realPath }))

@@ -1,7 +1,7 @@
 /** Collection import composition; the caller owns its transaction and receipt. */
 import { and, eq } from 'drizzle-orm'
 import { createHash } from 'node:crypto'
-import type { Executor } from '../../../../server/utils/roster-import'
+import type { Executor } from './roster-import'
 import { targetSchema as s } from '../../lib/platform/target-schema'
 import { sqliteConnection } from '../../lib/platform/target-connection'
 import { targetReplaySource, writeCollectionTarget, CollectionReplayError } from '../../lib/platform/collection-target-replay'
@@ -13,7 +13,7 @@ import { normalizeUscc } from '../../lib/domain'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
 import { planPlatformObservation, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE, PlatformProjectionError } from './platform-business-record'
 import { captureQueryRevision113 } from './evidence-impact-113'
-import type { RosterImportPlatformQuery, RosterImportItemResult } from '../../../../lib/roster-import-client'
+import type { RosterImportPlatformQuery, RosterImportItemResult } from '../../lib/roster-import-client'
 import type { PlatformProjectionResult } from '../../lib/platform/business-record'
 import { canonicalEnterpriseId } from '../../lib/roster/enterprise-identity'
 

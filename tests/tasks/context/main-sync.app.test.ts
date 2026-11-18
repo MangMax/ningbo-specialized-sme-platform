@@ -10,7 +10,7 @@ import { dispatchAnnualTaskMcp, handleAnnualTaskRequest } from '../../../layers/
 import { dispatchCandidateJobMcp, handleCandidateJobRequest } from '../../../layers/sme-roster/server/utils/candidate-job-api'
 import { operationLogContext } from '../../../layers/core/server/utils/operation-log-context'
 import type { AnnualScopeReader } from '../../../layers/sme-roster/server/utils/annual-correspondence'
-import { createImportExecutor } from '../../../server/utils/import-execution'
+import { createImportExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
 import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
 
 let root: string, db: ReturnType<typeof initializeDb>

@@ -1,4 +1,4 @@
-import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { assertEnterpriseDetailSnapshotEqual } from '../assertions/enterprise-detail-snapshot'
 import { createHash } from 'node:crypto'
@@ -12,7 +12,7 @@ import { sql } from 'drizzle-orm'
 import { initializeDb, schema } from '../../../db/client'
 import { recognizedResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
-import { createRosterImportClient } from '../../../lib/roster-import-client'
+import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 const dir = mkdtempSync(join(tmpdir(), 'review-114-')), dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
 let base: string, stop: () => Promise<void>, client: ReturnType<typeof createRosterImportClient>

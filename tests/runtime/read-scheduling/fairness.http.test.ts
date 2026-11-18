@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { createApp, createError, defineEventHandler, getQuery, readBody, setHeader, toNodeListener } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { initializeDb } from '../../../db/client'
-import { createRosterImportClient } from '../../../lib/roster-import-client'
+import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
 import { executeNativeImport, startRosterApi } from '../../roster/imports/fixtures/import-server'
 const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
 vi.mock('@db', () => ({ useDb: () => active.db }))

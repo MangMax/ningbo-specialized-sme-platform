@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { createRosterImportClient } from '../../../lib/roster-import-client'
+import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
 import { classifyRawQuery } from '../../../layers/sme-roster/lib/platform'
 import {
   buildPlatformWritePayload,
@@ -32,7 +32,7 @@ import {
   type RelationRef,
 } from '../../../layers/sme-roster/lib/platform/payload'
 import type { PlatformQueriesResult } from '../../../layers/sme-roster/lib/platform/read'
-import { readMergeLineage, searchEnterpriseIdsByName } from '../../../server/utils/roster-import'
+import { readMergeLineage, searchEnterpriseIdsByName } from '../../../layers/sme-roster/server/utils/roster-import'
 import { startEvidenceServer, type EvidenceServer } from '../fixtures/evidence-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-platform-e2e-'))

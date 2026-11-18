@@ -4,7 +4,7 @@ import { asc, desc, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { FileMaintenanceError, parseDisplayNamePatch } from './file-store'
-import { getStoredFile, extensionSnapshot, parseMetadataPatch, renameStoredFileDisplayName, restoreVerifiedStoredFile, softRemoveStoredFile, updateStoredFile, verifyStoredFileRestoration, type StoredFileRow } from '../../../../server/utils/stored-files'
+import { getStoredFile, extensionSnapshot, parseMetadataPatch, renameStoredFileDisplayName, restoreVerifiedStoredFile, softRemoveStoredFile, updateStoredFile, verifyStoredFileRestoration, type StoredFileRow } from './stored-files'
 
 type Db = BetterSQLite3Database<typeof schema>
 export type FileMaintenanceAction = 'update' | 'remove' | 'restore'

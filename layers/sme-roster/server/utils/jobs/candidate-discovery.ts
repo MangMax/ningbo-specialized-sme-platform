@@ -1,4 +1,4 @@
-import { whenImportWriterIdle } from '../../../../../server/utils/import-write-barrier'
+import { whenImportWriterIdle } from '../import-write-barrier'
 import { setImmediate as yieldTurn } from 'node:timers/promises'
 import type { LogContext } from '../../../../core/lib/logging'
 import { createHash } from 'node:crypto'

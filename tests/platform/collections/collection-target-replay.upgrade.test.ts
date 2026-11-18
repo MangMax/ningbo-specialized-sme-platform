@@ -75,7 +75,7 @@ function bytes(sqlite: Database.Database) {
   for (const offset of [24, 92]) result.fill(0, offset, offset + 4)
   return result
 }
-function replay(input: NewCollectionTargetCommand, mutate: (q: import('../../../lib/roster-import-client').RosterImportPlatformQuery) => void) {
+function replay(input: NewCollectionTargetCommand, mutate: (q: import('../../../layers/sme-roster/lib/roster-import-client').RosterImportPlatformQuery) => void) {
   const q = JSON.parse(input.queryText)
   mutate(q)
   return { ...input,queryText:JSON.stringify(q),evidenceText:q.collectionEvidence == null ? null : JSON.stringify(q.collectionEvidence) }

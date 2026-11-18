@@ -15,7 +15,7 @@ import { enqueuePersistedJob, ensureJobRunnerReady, getJobSpec, registerJob, req
 
 import { reuseCollectedPlatformResult } from './platform-collection-reuse'
 import { platformResultToImport } from '../../lib/platform/recognized-evidence'
-import { preflightRosterImport, commitRosterImport } from '../../../../server/utils/roster-import'
+import { preflightRosterImport, commitRosterImport } from './roster-import'
 
 type Db = ReturnType<typeof useApplicationDb>
 export const SNAPSHOT_KIND = 'difference-snapshot'

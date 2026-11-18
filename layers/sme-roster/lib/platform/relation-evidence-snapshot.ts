@@ -1,7 +1,7 @@
 /** Evidence-only capture of new writer original cells, in the existing sealed observation owner. */
 import { eq, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import type { RosterImportRelation } from '../../../../lib/roster-import-client'
+import type { RosterImportRelation } from '../roster-import-client'
 import { targetSchema as s } from './target-schema'
 import { insertArchiveValue, bindArchive } from './target-archive'
 import { normalizePlatformRelation } from './normalization'

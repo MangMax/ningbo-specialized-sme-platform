@@ -104,7 +104,7 @@ export const PARSE_STATE_ORDER: string[] = ['unparsed', 'parsed', 'failed']
 // 名录生命周期契约(RL-01)—— 新枚举的 code → 中文 映射
 //
 // 与 `db/schema.ts` 里各列的 `enum` 取值**逐字对应**,契约原文见
-// `lib/roster-import-client.ts`。页面/查询/导出一律从此处取文案。
+// `layers/sme-roster/lib/roster-import-client.ts`。页面/查询/导出一律从此处取文案。
 // ---------------------------------------------------------------------------
 
 /** 复核结论(`record_event.review_outcome`)→ 中文名。`null` 不在此列(不适用/未知)。 */

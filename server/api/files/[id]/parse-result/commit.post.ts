@@ -1,4 +1,4 @@
-import { parseRoute105 } from '../../../../utils/parse-maintenance-105-route'
+import { parseRoute105 } from '../../../../../layers/sme-roster/server/utils/parse-maintenance-105-route'
 defineRouteMeta({ openAPI: {
   tags: ['Files'], summary: '#310 提交冻结输入的解析段',
   description: '需NUXT_API_TOKEN。当前推荐写口:必须提供原preflight inputRef和独立expectedVersion。只接受带parts的解析替换,不得降级为旧盲写。先恢复同键原回执;新提交输入变更返回409要求重读,不切到最新OCR。段/状态/血缘/审计同事务;不改正式出处页码或人工分节。',

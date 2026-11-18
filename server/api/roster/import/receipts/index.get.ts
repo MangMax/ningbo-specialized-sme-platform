@@ -1,4 +1,4 @@
-import { importReceiptRoute } from '../../../../utils/import-receipts-route'
+import { importReceiptRoute } from '../../../../../layers/sme-roster/server/utils/import-receipts-route'
 
 defineRouteMeta({
   "openAPI": {

@@ -1,4 +1,4 @@
-import { fileEventSyncRoute } from '../../../../utils/file-event-sync-route'
+import { fileEventSyncRoute } from '../../../../../layers/sme-roster/server/utils/file-event-sync-route'
 defineRouteMeta({
   openAPI: {
     tags: ['正式事件同步'],

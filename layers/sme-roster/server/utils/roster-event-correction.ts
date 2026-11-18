@@ -7,10 +7,10 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { computeTitleLifecycle } from '../../lib/roster/lifecycle'
 import { advanceOfficialEventRevision } from './roster-event-version'
-import { ensureBatchRow } from '../../../../server/utils/roster-batch-ledger'
-import { refreshDerivedFileParts } from '../../../../server/utils/file-parts'
+import { ensureBatchRow } from './roster-batch-ledger'
+import { refreshDerivedFileParts } from './file-parts'
 import { CURRENT_TITLES, diagnoseOfficialEventFields, readCurrentQualificationAssessment } from '../../lib/roster/current-qualification'
-import type { RosterImportBeforeQualificationReadback, RosterImportAfterQualificationReadback } from '../../../../lib/roster-import-client'
+import type { RosterImportBeforeQualificationReadback, RosterImportAfterQualificationReadback } from '../../lib/roster-import-client'
 
 type Db = BetterSQLite3Database<typeof schema>
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]

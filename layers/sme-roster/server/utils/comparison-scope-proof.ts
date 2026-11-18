@@ -4,7 +4,7 @@ import { z } from 'zod'
 import * as schema from '../../../../db/schema'
 import { currentSource,fingerprint,officialSource,ProofSourceError,type CurrentEvidence,type OfficialEvidence,type ProofExecutor } from './comparison-scope-proof-source'
 import { correspondenceRelationQueryId } from './record-correspondence-target-sources'
-import { ensureBatchRow,findBatchByKey } from '../../../../server/utils/roster-batch-ledger'
+import { ensureBatchRow,findBatchByKey } from './roster-batch-ledger'
 
 type Db = BetterSQLite3Database<typeof schema>
 const positive = z.number().int().positive()

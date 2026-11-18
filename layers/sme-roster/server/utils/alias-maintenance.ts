@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { normalizeName } from '../../lib/domain'
 import * as schema from '../../../../db/schema'
 import { captureIdentityRevision113, identityMaterial113 } from './evidence-impact-113'
-import { findPlatformAliasRelationEvidence, platformAliasEvidenceMismatch } from '../../../../server/utils/roster-import'
+import { findPlatformAliasRelationEvidence, platformAliasEvidenceMismatch } from './roster-import'
 import { canonicalEnterpriseId, currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
 
 type Db = BetterSQLite3Database<typeof schema>

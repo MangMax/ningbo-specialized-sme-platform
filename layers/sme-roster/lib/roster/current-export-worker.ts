@@ -1,5 +1,5 @@
 import { assertCurrentWorkerRuntime } from './current-worker-admission'
-import { validateReceiptRuntimeContext, type ReceiptRuntimeContext } from '../../../../server/utils/receipt-runtime-context'
+import { validateReceiptRuntimeContext, type ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
 import { getHeapStatistics } from 'node:v8'
 import Database from 'better-sqlite3'
 import { CurrentWorkbookLimitError, writeCurrentWorkbook } from './current-workbook'

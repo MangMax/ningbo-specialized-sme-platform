@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { OfficialEvidenceExecutor } from './official-evidence'
 import { listEventOfficialEvidence, readLatestOfficialEvidence, readOfficialEvidenceHistory, OfficialEvidenceError } from './official-evidence'
-import { importReceiptRedactor } from '../../../../server/utils/import-receipt-redaction'
+import { importReceiptRedactor } from './import-receipt-redaction'
 
 type Db = Parameters<typeof importReceiptRedactor>[0]
 const id = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)

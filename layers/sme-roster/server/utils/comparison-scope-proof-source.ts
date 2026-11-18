@@ -1,4 +1,4 @@
-import { fileClassificationJoin } from '../../../../server/utils/roster-file-classification'
+import { fileClassificationJoin } from './roster-file-classification'
 import { and,between,eq,inArray,or } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { createHash } from 'node:crypto'

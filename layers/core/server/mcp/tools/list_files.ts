@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { openFileStore } from '../../../../../server/utils/mcp-files'
-import { listStoredFiles } from '../../../../../server/utils/stored-files'
+import { openFileStore } from '../../../../../server/mcp-file-store'
+import { listStoredFiles } from '../../utils/stored-files'
 
 /**
  * `list_files` —— 文件库列表(票 18,只读)。

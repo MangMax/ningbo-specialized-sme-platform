@@ -6,7 +6,7 @@ import { officialEvidenceRpcError } from '../../layers/sme-roster/server/utils/o
 import { runtimeLogPolicyRpcError } from '../../layers/core/server/utils/logging-mcp'
 import { decisionRpcError102 } from '../../layers/sme-roster/server/utils/decision-lifecycle-102-mcp'
 import { qualificationPreflight102, qualificationCommit102 } from '../../layers/sme-roster/server/utils/decision-lifecycle-102'
-import { parseRpcError105 } from '../utils/parse-maintenance-105-rpc'
+import { parseRpcError105 } from '../../layers/sme-roster/server/utils/parse-maintenance-105-rpc'
 import { admitEnterpriseResponse } from '../../layers/sme-roster/server/utils/enterprise-read-response'
 import { eventCorrectionRpcError } from '../../layers/sme-roster/server/utils/mcp-event-correction'
 import { platformQueryRpcError } from '../../layers/sme-roster/server/utils/mcp-platform-query'
@@ -135,7 +135,7 @@ export default defineMcpHandler({
     '  `preflight_roster_batch`)不需要；导入回执四工具含提交证据，仍需 MCP token，且保持 readOnlyHint=true。',
     '- 名录来源导入经 `save_roster_batch`；既有资源经明确领域维护命令：普通企业资料用 `patch_enterprise_profile`，已接管的差异决定用 `save_difference_decision`，旧导入不能覆盖。',
     '  不要绕过应用服务直写库。导入载荷见',
-    '  `lib/roster-import-client.ts`;证据不足一律**留空并标待核**,',
+    '  `layers/sme-roster/lib/roster-import-client.ts`;证据不足一律**留空并标待核**,',
     '  不要猜填、不要为填满字段而复制来源里没有的值。',
     '- `year` / `batch` 在文件级是**公布**年份/批次(目录给的、单值);文件**内容**里的年份/批次',
     '  一律看 `parts`(段)。别把两者混用。',

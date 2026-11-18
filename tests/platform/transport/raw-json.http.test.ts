@@ -18,7 +18,7 @@ import { handlePlatformBatchRequest } from '../../../layers/sme-roster/server/ut
 import { recognizedResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { platformSummaryCache } from '../../../layers/sme-roster/server/utils/platform-summary-cache'
-import { importExecutor } from '../../../server/utils/import-execution'
+import { importExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
 import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
 
 const dir = mkdtempSync(join(tmpdir(), 'issue298-raw-json-http-'))
@@ -54,7 +54,7 @@ beforeAll(async () => {
   const readRoute = (await import('../../../server/api/platform/queries.get')).default
   const evidenceRoute = (await import('../../../server/api/platform/queries/[queryId]/evidence.get')).default
   const router = createRouter().post('/api/platform/query', queryRoute).get('/api/platform/queries', readRoute).get('/api/platform/queries/:queryId/evidence', evidenceRoute)
-  const { createRosterImportHandler } = await import('../../../server/utils/roster-import-route')
+  const { createRosterImportHandler } = await import('../../../layers/sme-roster/server/utils/roster-import-route')
   for (const action of ['preflight', 'commit'] as const) router.post(`/api/roster/import/${action}`, createRosterImportHandler(action))
   router.post('/api/platform/batches', defineEventHandler(async event => {
     const out = await handlePlatformBatchRequest('submit', { body: await readBody(event), headers: { authorization: event.node.req.headers.authorization } }, { db, apiToken: token, filesDir: dir })

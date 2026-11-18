@@ -1,7 +1,7 @@
 /** Explicit archival conversion only: never fetches, invents timestamps or infers identity. */
 import { z } from 'zod'
 import { platformQueryInputSchema, platformQueryInputShape, platformQueryResultShape, recognizedConditionShape, validRecognizedConditionPairing, type PlatformLiveQueryResult } from './live-query'
-import type { RosterImportPlatformQuery } from '../../../../lib/roster-import-client'
+import type { RosterImportPlatformQuery } from '../roster-import-client'
 import { APPLY_GRID, BUSINESS_GRID, RECOGNIZED_GRID, parsePlatformPage, type PlatformRawRow, type PlatformRow } from './adapter'
 
 export const RDJB_TITLE_CODES: Record<string, string> = { '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' }

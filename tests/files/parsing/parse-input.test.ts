@@ -1,11 +1,11 @@
-import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, renameSync, unlinkSync, symlinkSync, realpathSync, statSync, fstatSync, openSync, writeSync, closeSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { afterAll, expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { initializeDb, schema } from '../../../db/client'
-import { getParse105, historyParse105, saveParse105, saveParseMcp105, preflightParse310, commitRanges669 } from '../../../server/utils/parse-maintenance-105'
+import { getParse105, historyParse105, saveParse105, saveParseMcp105, preflightParse310, commitRanges669 } from '../../../layers/sme-roster/server/utils/parse-maintenance-105'
 
 // Schedule physical mutations after real filesystem calls, without replacing
 // their results, the production input checker, digest or database.

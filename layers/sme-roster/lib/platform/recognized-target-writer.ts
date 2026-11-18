@@ -9,7 +9,7 @@ import { requireFingerprintCapture, nextObservationId, captureFingerprintBasis, 
 import { createHash } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import type { RosterImportRelation } from '../../../../lib/roster-import-client'
+import type { RosterImportRelation } from '../roster-import-client'
 import { targetSchema as s } from './target-schema'
 import { parseRecognizedRecord, parseRecognizedSourceFidelity, parseRecognizedQualificationFields, RECOGNIZED_PROJECTION_RULE } from './recognized-projection'
 import { canonicalPlatformJson, planPlatformObservation, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE } from './observation-plan'
