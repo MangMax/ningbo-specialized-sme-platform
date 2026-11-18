@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { initializeDb } from '../../../db/client'
 import { createHash } from 'node:crypto'
@@ -27,7 +28,7 @@ it('公开任务 HTTP 受文件级背压约束,完成结果经 OCR REST/MCP 原�
     for (const file of files) {
       const bytes = minimalPdf({ pages: 1 })
       writeFileSync(join(filesDir, file), bytes)
-      ids.push(db.insert(schema.storedFile).values({ relPath: file, filename: file, ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }).returning({ id: schema.storedFile.id }).get().id)
+      ids.push(createClassifiedFile(db, { relPath: file, filename: file, ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }, {}).id)
       await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
     }
     const gate = new Promise<void>(resolve => { releasePoll = resolve })

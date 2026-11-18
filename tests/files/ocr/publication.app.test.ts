@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { initializeDb } from '../../../db/client'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -85,7 +86,7 @@ async function seed(pages = 1) {
   // Publication checks need real distinct page images, not a large raster.
   // Two 20pt marks fit this canvas; keep the actual default-DPI renderer.
   writeFileSync(join(filesDir, file), minimalPdf({ pages, widthPt: 100, heightPt: 60 }))
-  const row = db.insert(schema.storedFile).values({ relPath: file, filename: file, ext: 'pdf', bytes: readFileSync(join(filesDir, file)).length, sha256: createHash('sha256').update(readFileSync(join(filesDir, file))).digest('hex') }).returning().get()
+  const row = createClassifiedFile(db, { relPath: file, filename: file, ext: 'pdf', bytes: readFileSync(join(filesDir, file)).length, sha256: createHash('sha256').update(readFileSync(join(filesDir, file))).digest('hex') }, {})
   await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
   return { file, row, pagePath: `/api/files/${row.id}/ocr-pages/1` }
 }
@@ -1015,7 +1016,7 @@ it('B2 queued render cannot rebind its locator to a different registered ID', as
   const queued = await submitRender([file])
   expect((await status(queued)).state).toBe('queued')
   db.update(schema.storedFile).set({ relPath: file + '.old' }).where(eq(schema.storedFile.id, row.id)).run()
-  db.insert(schema.storedFile).values({ relPath: file, filename: file, ext: 'pdf', bytes: row.bytes, sha256: row.sha256 }).run()
+  createClassifiedFile(db, { relPath: file, filename: file, ext: 'pdf', bytes: row.bytes, sha256: row.sha256 }, {})
   gate!(); await whenIdle()
   expect((await status(blocking)).state).toBe('failed')
   expect((await status(queued)).state).toBe('failed')

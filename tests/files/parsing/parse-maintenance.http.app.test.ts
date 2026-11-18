@@ -412,7 +412,12 @@ it('accepts exact baseline MCP payloads and returns the exact legacy envelope fo
   const f = file()
   const initial = await state(f.id)
   const normalized = { ...part, attachment: '附件1' }
-  const expectedFile = { ...f, displayName: f.filename, referenceCount: 0, parseState: 'parsed', parts: [{ ...normalized, origin: 'agent', hasConflict: false }] }
+  const expectedFile = {
+    ...f, displayName: f.filename, referenceCount: 0,
+    source: null, kind: null, year: null, batch: null, titleCode: null,
+    categoryState: 'unset', parseState: 'parsed',
+    parts: [{ ...normalized, origin: 'agent', hasConflict: false }],
+  }
   // Exact baseline payload: no new envelope fields, and no modern response keys.
   const first = await call('save_parse_result', { fileId: f.id, parts: [part] })
   expect(first).toEqual({ file: expectedFile, parts: [normalized], parseState: 'parsed' })
