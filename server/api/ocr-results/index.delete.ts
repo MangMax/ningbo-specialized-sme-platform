@@ -1,4 +1,4 @@
-import { requestLogContext } from '../../../lib/logging'
+import { requestLogContext } from '../../../layers/core/lib/logging'
 import { MAX_PAGE_NO } from '../../../lib/ocr-markdown'
 import { fileRefFromQuery, resolveOcrFileTarget } from '../../utils/ocr-files'
 import { deleteOcrPage } from '../../utils/ocr-result'

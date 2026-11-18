@@ -3,7 +3,7 @@ import toolkitConfig from '#nuxt-mcp-toolkit/config.mjs'
 import { useEvent } from 'nitropack/runtime'
 import { isSessionEvent } from '../utils/mcp-session-runtime'
 import { officialEvidenceRpcError } from '../utils/official-evidence-read'
-import { runtimeLogPolicyRpcError } from '../utils/logging-mcp'
+import { runtimeLogPolicyRpcError } from '../../layers/core/server/utils/logging-mcp'
 import { decisionRpcError102 } from '../utils/decision-lifecycle-102-mcp'
 import { qualificationPreflight102, qualificationCommit102 } from '../utils/decision-lifecycle-102'
 import { parseRpcError105 } from '../utils/parse-maintenance-105-rpc'
@@ -13,10 +13,10 @@ import { platformQueryRpcError } from '../utils/mcp-platform-query'
 import { currentQualifiedRpcError } from '../utils/current-qualified-filter'
 import { getHeader, getMethod, readBody, setHeader } from 'h3'
 import { defineMcpHandler, getMcpTools, getMcpResources, getMcpPrompts } from '@nuxtjs/mcp-toolkit/server'
-import { requestLogContext } from '../../lib/logging'
-import { mcpToolLogModule } from '../../lib/logging/module'
-import { applyMcpLogMetadata } from '../utils/mcp-log-context'
-import { logSemanticOperation, semanticErrorCode } from '../utils/semantic-operation-log'
+import { requestLogContext } from '../../layers/core/lib/logging'
+import { mcpToolLogModule } from '../../layers/core/lib/logging/module'
+import { applyMcpLogMetadata } from '../../layers/core/server/utils/mcp-log-context'
+import { logSemanticOperation, semanticErrorCode } from '../../layers/core/server/utils/semantic-operation-log'
 import {
   MCP_WRITE_TOOLS,
   readMcpToken,
@@ -55,7 +55,10 @@ import {
 export default defineMcpHandler({
   resources: event => isSessionEvent(event) ? [] : getMcpResources({ event, orphansOnly: toolkitConfig.defaultHandlerStrategy === 'orphans' }),
   prompts: event => isSessionEvent(event) ? [] : getMcpPrompts({ event, orphansOnly: toolkitConfig.defaultHandlerStrategy === 'orphans' }),
-  tools: async configuredEvent => (await getMcpTools()).filter(tool => !isSessionEvent(configuredEvent) || ['list_enterprises', 'get_enterprise_detail'].includes(tool.name ?? '')).map(tool => ({
+  tools: async configuredEvent => (await getMcpTools())
+    // Keep the original discovery order when the toolkit collects multiple layers.
+    .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', 'en'))
+    .filter(tool => !isSessionEvent(configuredEvent) || ['list_enterprises', 'get_enterprise_detail'].includes(tool.name ?? '')).map(tool => ({
     ...tool,
     ...(tool.name && tool.name in dispositionToolActions ? { inputSchema: dispositionSchemas[dispositionToolActions[tool.name as keyof typeof dispositionToolActions]] as unknown as NonNullable<typeof tool.inputSchema> } : {}),
     // Toolkit 0.24 types expose only raw shapes, but its registration forwards

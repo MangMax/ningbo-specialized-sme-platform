@@ -1,4 +1,4 @@
-import type { LogContext } from '../../../lib/logging'
+import type { LogContext } from '../../../layers/core/lib/logging'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { fileRefShape, openFileStore } from '../../utils/mcp-files'
 import { writeGuard } from '../../utils/mcp-guard'

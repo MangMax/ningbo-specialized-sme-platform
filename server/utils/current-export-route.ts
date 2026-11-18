@@ -5,7 +5,7 @@ import type { CurrentTitle } from '../../lib/roster/current-qualification'
 import { requireTaskCenterAccess } from './task-center-access'
 import { ensureJobRunnerReady, getJobSpec, submitJob } from './job-runner'
 import { registerJobSpecs } from './job-specs'
-import { appLog, requestLogContext } from '../../lib/logging'
+import { appLog, requestLogContext } from '../../layers/core/lib/logging'
 /** Dedicated routes fix the title; only their OpenAPI descriptions differ. */
 export function currentExportRoute(titleCode: CurrentTitle) {
   return defineEventHandler(async event => {

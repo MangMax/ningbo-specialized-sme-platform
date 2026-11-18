@@ -1,4 +1,4 @@
-import type { LogContext } from '../../lib/logging'
+import type { LogContext } from '../../layers/core/lib/logging'
 import { useDb } from '@db'
 import { requireFileRef, type FileRefInput } from './mcp-files'
 import { maintainStoredFile, requireVersionedFileMaintenanceOptions, type FileMaintenanceAction, type FileMaintenanceOptions } from './file-maintenance'

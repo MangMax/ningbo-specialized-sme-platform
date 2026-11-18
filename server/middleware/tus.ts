@@ -1,5 +1,5 @@
-import { appLog, requestLogContext, setRequestLogMetadata, type TusLogContext } from '../../lib/logging'
-import { httpLogModule } from '../../lib/logging/module'
+import { appLog, requestLogContext, setRequestLogMetadata, type TusLogContext } from '../../layers/core/lib/logging'
+import { httpLogModule } from '../../layers/core/lib/logging/module'
 import { resolveUploadPlacement } from '../utils/stored-files'
 import { TUS_PATH, getTus, withTusObservation, type TusObservation } from '../utils/tus'
 

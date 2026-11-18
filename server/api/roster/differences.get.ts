@@ -1,4 +1,4 @@
-import { requestLogContext } from '../../../lib/logging'
+import { requestLogContext } from '../../../layers/core/lib/logging'
 import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS } from '~~/lib/comparison'
 import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES } from '~~/lib/labels'

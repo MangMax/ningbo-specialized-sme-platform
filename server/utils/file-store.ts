@@ -8,7 +8,7 @@ import * as schema from '../../db/schema'
 import { baseName, directoryOf, extensionOf, siblingIndex } from '../../lib/core/file-path'
 import { evaluateFileAdmission, type FileAdmissionPolicy, type FileFilter, type FileLanding, type ResolveUploadPlacement } from '../../lib/core/file-categories'
 import { compareFileContentIdentity, type FileContentConflict } from './file-content-identity'
-import { appLog, type LogContext } from '../../lib/logging'
+import { appLog, type LogContext } from '../../layers/core/lib/logging'
 
 export type FileStoreDb = BetterSQLite3Database<typeof schema>
 

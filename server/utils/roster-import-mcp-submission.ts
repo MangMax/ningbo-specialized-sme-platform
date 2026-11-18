@@ -1,5 +1,5 @@
 import { useDb } from '@db'
-import { appLog } from '../../lib/logging'
+import { appLog } from '../../layers/core/lib/logging'
 import { rosterImportMcpContext } from './roster-import-mcp-context'
 import { logImportFailure } from './roster-import-logging'
 import { importExecutor } from './import-execution'

@@ -4588,10 +4588,10 @@ function replayRosterImportCore(db: Db, request: RosterImportRequest): RosterImp
   return { batchId: batch.id, status: 'replayed', update, evidenceRepointed, items: publicRosterImportItems(items, batch.id), error: null }
 }
 
-export function preflightRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: import('../../lib/logging').LogContext & { filesDir?: string } = {}) {
+export function preflightRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: import('../../layers/core/lib/logging').LogContext & { filesDir?: string } = {}) {
   return recordImportReceipt(db, 'preflight', request, () => withFingerprintVerificationSnapshot(sqliteConnection(db), () => preflightRosterImportCore(db, request, pageCountErrors, context.filesDir)), context)
 }
-export function commitRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], options: import('../../lib/logging').LogContext & { deferCandidateTasks?: boolean; filesDir?: string } = {}) {
+export function commitRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], options: import('../../layers/core/lib/logging').LogContext & { deferCandidateTasks?: boolean; filesDir?: string } = {}) {
   const result = recordImportReceipt(db, 'commit', request, () => withFingerprintVerificationSnapshot(sqliteConnection(db), () => db.transaction(() => {
     const result = commitRosterImportCore(db, request, pageCountErrors, options.filesDir)
     const candidateTaskIds = result.status === 'committed'
@@ -4603,7 +4603,7 @@ export function commitRosterImport(db: Db, request: RosterImportRequest, pageCou
   const { qualificationReadback: _storedCapture, qualificationDiagnosticsByItem: _storedDiagnostics, ...summary } = result.summary
   return { ...result, summary }
 }
-export function replayRosterImport(db: Db, request: RosterImportRequest, context: import('../../lib/logging').LogContext = {}) {
+export function replayRosterImport(db: Db, request: RosterImportRequest, context: import('../../layers/core/lib/logging').LogContext = {}) {
   return recordImportReceipt(db, 'replay', request, () => replayRosterImportCore(db, request), context)
 }
 

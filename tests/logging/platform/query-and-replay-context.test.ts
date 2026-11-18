@@ -4,7 +4,7 @@ import { once } from 'node:events'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initializeWorkerLogging, applicationLogs, closeApplicationLogging } from '../../../lib/logging'
+import { initializeWorkerLogging, applicationLogs, closeApplicationLogging } from '../../../layers/core/lib/logging'
 import { runPlatformLiveQuery } from '../../../server/utils/platform-live-query'
 
 // Application seam + actual upstream HTTP + real evlog drain. This is not actual Nuxt.

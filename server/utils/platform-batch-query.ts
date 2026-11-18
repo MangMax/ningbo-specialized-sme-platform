@@ -8,7 +8,7 @@ import { resolvePlatformCookie } from './platform-credential'
 import { ensureJobRunnerReady, getJobSpec, registerJob, submitJob, requeueFinishedJob, type JobContext, type JobSpec } from './job-runner'
 import { getJob, setJobResult } from './job-store'
 import { runPlatformLiveQuery } from './platform-live-query'
-import { appLog, newLogContext, type LogContext } from '../../lib/logging'
+import { appLog, newLogContext, type LogContext } from '../../layers/core/lib/logging'
 import { logPlatformResult, platformOperation } from '../../lib/platform/logging'
 
 type Db = BetterSQLite3Database<typeof schema>

@@ -8,11 +8,11 @@ import { PiniaColada, useQueryCache, useMutationCache, useMutation } from '@pini
 import { createMemoryHistory, createRouter, isNavigationFailure, NavigationFailureType } from 'vue-router'
 import { PluginRegistry } from '@embedpdf/core'
 import { serializeLogger, type PdfEngine } from '@embedpdf/models'
-import { withTusLogging } from '../../../lib/client-logging/tus'
-import { installColadaLogging } from '../../../lib/client-logging/colada'
-import { installRouterLogging } from '../../../lib/client-logging/router'
-import { createEmbedPdfLogger } from '../../../lib/client-logging/embedpdf'
-import type { ClientLibrarySignal } from '../../../lib/client-logging/library-contract'
+import { withTusLogging } from '../../../layers/core/lib/client-logging/tus'
+import { installColadaLogging } from '../../../layers/core/lib/client-logging/colada'
+import { installRouterLogging } from '../../../layers/core/lib/client-logging/router'
+import { createEmbedPdfLogger } from '../../../layers/core/lib/client-logging/embedpdf'
+import type { ClientLibrarySignal } from '../../../layers/core/lib/client-logging/library-contract'
 
 const cleanups: (() => void | Promise<void>)[] = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })

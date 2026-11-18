@@ -1,7 +1,7 @@
 import { readTasks,summarize } from './jobs/task-summary'
 import { exportTitleFilter } from './jobs/export-summary'
 import { CANDIDATE_JOB_KIND,retryCandidateDiscovery } from './jobs/candidate-discovery'
-import type { LogContext } from '../../lib/logging'
+import type { LogContext } from '../../layers/core/lib/logging'
 import { ANNUAL_CORRESPONDENCE_KIND } from '../../lib/roster/annual-correspondence'
 import { and,eq,inArray,sql } from 'drizzle-orm'
 import { schema,type useApplicationDb } from '../../db/client'

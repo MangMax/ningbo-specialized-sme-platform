@@ -1,5 +1,5 @@
 import { taskCenterBrowserAccess } from './task-center-access'
-import { requestLogContext } from '../../lib/logging'
+import { requestLogContext } from '../../layers/core/lib/logging'
 import { useDb } from '@db'
 import { handleTaskCenterRequest } from './task-center-http'
 import { ensureJobRunnerReady } from './job-runner'

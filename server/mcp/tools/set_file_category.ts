@@ -1,4 +1,4 @@
-import type { LogContext } from '../../../lib/logging'
+import type { LogContext } from '../../../layers/core/lib/logging'
 import { legacyFileMaintenanceControlShape } from '../../utils/file-maintenance-contract'
 import { parseFileMaintenanceOptions } from '../../utils/file-maintenance'
 import { z } from 'zod'

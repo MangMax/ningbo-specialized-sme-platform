@@ -1,4 +1,4 @@
-import { appLog, type LogContext } from '../../lib/logging'
+import { appLog, type LogContext } from '../../layers/core/lib/logging'
 import { createHash } from 'node:crypto'
 import { asc, desc, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'

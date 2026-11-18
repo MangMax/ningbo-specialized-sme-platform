@@ -1,4 +1,4 @@
-import { requestLogContext } from '../../../lib/logging'
+import { requestLogContext } from '../../../layers/core/lib/logging'
 import { resolveOcrFileTarget } from '../../utils/ocr-files'
 import { DEFAULT_OCR_ENGINE } from '../../utils/ocr-result'
 import { saveOcrImport } from '../../utils/ocr-page-lifecycle'

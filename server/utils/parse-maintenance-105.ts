@@ -1,4 +1,4 @@
-import { appLog, type LogContext } from '../../lib/logging'
+import { appLog, type LogContext } from '../../layers/core/lib/logging'
 import { createHash, randomUUID } from 'node:crypto'
 import { closeSync, fstatSync, openSync, readSync, realpathSync, statSync, type BigIntStats } from 'node:fs'
 import { resolve, sep } from 'node:path'

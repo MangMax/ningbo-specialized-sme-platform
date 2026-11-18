@@ -14,7 +14,7 @@
 -->
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, type LogFilter } from '~~/lib/logging/contract'
+import { LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, type LogFilter } from '#core/lib/logging/contract'
 import { sourceLabel, outcomeLabel, logModuleLabel, logModuleOptions } from './logPresentation'
 import { Button } from '#core/app/components/ui/button'
 import { Separator } from '#core/app/components/ui/separator'

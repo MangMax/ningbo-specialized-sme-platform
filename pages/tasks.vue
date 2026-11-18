@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { clientRequestReference } from '~~/lib/client-logging/request-reference'
+import { clientRequestReference } from '#core/lib/client-logging/request-reference'
 import { computed, ref, watch } from 'vue'
 import CandidateTaskCreate from '@/components/tasks/CandidateTaskCreate.vue'
 import { TASK_EXPORTS, TASK_STATES, type TaskExportTitle, type TaskList, type TaskSummary } from '~~/lib/task-center'

@@ -1,5 +1,5 @@
-import { appLog, type LogContext } from '../../lib/logging'
-import { jobLogModule } from '../../lib/logging/module'
+import { appLog, type LogContext } from '../../layers/core/lib/logging'
+import { jobLogModule } from '../../layers/core/lib/logging/module'
 import { hasImportWriter, whenImportWriterIdle } from './import-write-barrier'
 import { cleanupCurrentExports } from './current-export-artifact'
 import { and, eq, sql } from 'drizzle-orm'

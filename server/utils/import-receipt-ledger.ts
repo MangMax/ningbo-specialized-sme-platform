@@ -6,7 +6,7 @@ import type { RosterImportRequest } from '../../lib/roster-import-client'
 import { ensureBatchRow } from './roster-batch-ledger'
 import { ImportReceiptError } from './import-receipts'
 import { importReceiptRedactor } from './import-receipt-redaction'
-import { appLog, type LogContext } from '../../lib/logging'
+import { appLog, type LogContext } from '../../layers/core/lib/logging'
 
 type Db = BetterSQLite3Database<typeof schema>
 function canonical(value: unknown): string {

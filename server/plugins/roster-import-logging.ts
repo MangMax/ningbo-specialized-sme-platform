@@ -1,5 +1,5 @@
-import { requestLogContext } from '../../lib/logging'
-import { operationLogContext } from '../utils/operation-log-context'
+import { requestLogContext } from '../../layers/core/lib/logging'
+import { operationLogContext } from '../../layers/core/server/utils/operation-log-context'
 
 const contextTools = new Set([
   'preflight_roster_batch', 'save_roster_batch',

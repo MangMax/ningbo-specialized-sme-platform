@@ -1,4 +1,4 @@
-import type { LogContext } from '../../../lib/logging'
+import type { LogContext } from '../../../layers/core/lib/logging'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { currentQualifiedFilterSchema } from '../../utils/current-qualified-filter'

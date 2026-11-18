@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { clientRequestReference } from '~~/lib/client-logging/request-reference'
+import { clientRequestReference } from '#core/lib/client-logging/request-reference'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { TaskSummary } from '~~/lib/task-center'

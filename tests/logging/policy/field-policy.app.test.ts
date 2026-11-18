@@ -7,12 +7,12 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import Database from 'better-sqlite3'
 import { Worker } from 'node:worker_threads'
 import { createHash } from 'node:crypto'
-import { SQLITE_WORKER } from '../../../lib/logging/sqlite-worker'
-import { createLogService, validatePolicy, type LogService } from '../../../lib/logging/service'
-import { LOG_DEFAULTS, LOG_LEVELS, type LogInput, type LogPolicyPatch } from '../../../lib/logging/contract'
-import { LOG_FIELD_PROFILES, defaultFieldControls } from '../../../lib/logging/field-controls'
-import { defaultLogCollection } from '../../../lib/logging/policy'
-import { safeLogEvent } from '../../../lib/logging/privacy'
+import { SQLITE_WORKER } from '../../../layers/core/lib/logging/sqlite-worker'
+import { createLogService, validatePolicy, type LogService } from '../../../layers/core/lib/logging/service'
+import { LOG_DEFAULTS, LOG_LEVELS, type LogInput, type LogPolicyPatch } from '../../../layers/core/lib/logging/contract'
+import { LOG_FIELD_PROFILES, defaultFieldControls } from '../../../layers/core/lib/logging/field-controls'
+import { defaultLogCollection } from '../../../layers/core/lib/logging/policy'
+import { safeLogEvent } from '../../../layers/core/lib/logging/privacy'
 
 const workers: Worker[] = []
 const dirs: string[] = [], services: LogService[] = [], children: ChildProcess[] = []
@@ -41,7 +41,7 @@ async function childWriter(directory: string, maxEventBytes: number = LOG_DEFAUL
   writeFileSync(script, `
 import {createRequire} from 'node:module'
 const {createJiti}=createRequire(import.meta.url)(${JSON.stringify(jiti)})
-const {createLogService}=await createJiti(import.meta.url).import(${JSON.stringify(resolve('lib/logging/service.ts'))})
+const {createLogService}=await createJiti(import.meta.url).import(${JSON.stringify(resolve('layers/core/lib/logging/service.ts'))})
 const service=createLogService({directory:${JSON.stringify(directory)},stdout:true,flushIntervalMs:100,maxEventBytes:${maxEventBytes}})
 process.on('message',async m=>{
  try {

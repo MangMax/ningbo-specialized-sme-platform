@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SUPPORTED_PROTOCOL_VERSIONS } from '@modelcontextprotocol/sdk/types.js'
-import { MCP_PROTOCOL_VERSIONS } from '../../../lib/logging/contract'
-import { mcpLogMetadata } from '../../../server/utils/mcp-log-context'
+import { MCP_PROTOCOL_VERSIONS } from '../../../layers/core/lib/logging/contract'
+import { mcpLogMetadata } from '../../../layers/core/server/utils/mcp-log-context'
 
 const known = new Set(['get_platform_capabilities', 'list_files'])
 

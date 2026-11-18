@@ -1,4 +1,4 @@
-import { requestLogContext } from '../../../lib/logging'
+import { requestLogContext } from '../../../layers/core/lib/logging'
 import { useDb } from '@db'
 import { normalizeJobParams } from '~~/lib/job'
 import { requireApiToken } from '../../utils/api-guard'

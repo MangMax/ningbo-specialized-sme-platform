@@ -1,7 +1,7 @@
-import { clientPage, type ClientInteraction } from '~~/lib/client-logging/contract'
-import { createClientErrorTransport } from '~~/lib/client-logging/transport'
-import { clientLibraryReporterKey, type ClientLibraryReporter } from '~~/lib/client-logging/library-reporter'
-import { installRouterLogging } from '~~/lib/client-logging/router'
+import { clientPage, type ClientInteraction } from '#core/lib/client-logging/contract'
+import { createClientErrorTransport } from '#core/lib/client-logging/transport'
+import { clientLibraryReporterKey, type ClientLibraryReporter } from '#core/lib/client-logging/library-reporter'
+import { installRouterLogging } from '#core/lib/client-logging/router'
 
 export default defineNuxtPlugin({ name: 'client-errors', setup(nuxtApp) {
   const transport = createClientErrorTransport()

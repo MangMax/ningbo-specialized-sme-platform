@@ -30,9 +30,9 @@ ${body}
 ])
 `
 if (process.argv.includes('--check')) {
-  if (readFileSync('lib/logging/route-templates.ts', 'utf8') !== generated) throw new Error('Route templates differ; regenerate after building')
+  if (readFileSync('layers/core/lib/logging/route-templates.ts', 'utf8') !== generated) throw new Error('Route templates differ; regenerate after building')
   console.log(`verified ${routes.length} route templates`)
 } else {
-  writeFileSync('lib/logging/route-templates.ts', generated)
+  writeFileSync('layers/core/lib/logging/route-templates.ts', generated)
   console.log(`wrote ${routes.length} route templates`)
 }

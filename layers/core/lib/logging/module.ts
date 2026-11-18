@@ -1,4 +1,4 @@
-import { getAppModules } from '../app-modules'
+import { getAppModules } from '../../../../lib/app-modules'
 import type { McpLogContext } from './contract'
 
 const manifests = getAppModules()

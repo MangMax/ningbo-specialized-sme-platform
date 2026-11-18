@@ -5,15 +5,15 @@ import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { createHash } from 'node:crypto'
 import Database from 'better-sqlite3'
-import { SQLITE_WORKER } from '../../../lib/logging/sqlite-worker'
-import type { LogService, LogServiceOptions } from '../../../lib/logging/service'
+import { SQLITE_WORKER } from '../../../layers/core/lib/logging/sqlite-worker'
+import type { LogService, LogServiceOptions } from '../../../layers/core/lib/logging/service'
 
 const roots: string[] = [], services: LogService[] = []
 const realSetTimeout = setTimeout
 afterEach(async () => {
   vi.useRealTimers(); vi.restoreAllMocks()
   for (const service of services.splice(0)) await service.close()
-  vi.doUnmock('../../../lib/logging/sqlite-worker'); vi.resetModules()
+  vi.doUnmock('../../../layers/core/lib/logging/sqlite-worker'); vi.resetModules()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 const anchor = 'try { parentPort.postMessage({ id, ok:true, result:execute(action,data) }) }'
@@ -25,10 +25,10 @@ async function fixture(treatment?: string, options: Partial<LogServiceOptions> =
     // Only test worker source is transformed: all transactions and real SQLite
     // I/O are unchanged. No product flags or injectable storage replacement.
     expect(createHash('sha256').update(modified).digest('hex')).not.toBe(createHash('sha256').update(SQLITE_WORKER).digest('hex'))
-    vi.doMock('../../../lib/logging/sqlite-worker', () => ({ SQLITE_WORKER: modified }))
+    vi.doMock('../../../layers/core/lib/logging/sqlite-worker', () => ({ SQLITE_WORKER: modified }))
   }
   vi.resetModules()
-  const { createLogService } = await import('../../../lib/logging/service')
+  const { createLogService } = await import('../../../layers/core/lib/logging/service')
   const root = mkdtempSync(join(tmpdir(), 'logging-write-outcome-180-')); roots.push(root)
   const service = createLogService({ directory: root, ...options }); services.push(service)
   return { service, root }

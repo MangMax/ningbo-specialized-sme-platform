@@ -1,4 +1,4 @@
-import type { LogContext } from '../../../lib/logging'
+import type { LogContext } from '../../../layers/core/lib/logging'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { parseSave105, saveParseMcp105 } from '../../utils/parse-maintenance-105'

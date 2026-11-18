@@ -1,4 +1,4 @@
-import { requestLogContext } from '../../../../lib/logging'
+import { requestLogContext } from '../../../../layers/core/lib/logging'
 import { useDb } from '@db'
 import { maintainStoredFile, splitFileMaintenanceBody, requireVersionedFileMaintenanceOptions } from '../../../utils/file-maintenance'
 import { requireApiToken } from '../../../utils/api-guard'

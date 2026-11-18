@@ -8,9 +8,9 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { initializeDb } from '../../../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
-import { LOG_LEVELS } from '../../../lib/logging/contract'
-import { LOG_FIELD_PROFILES, defaultFieldControls } from '../../../lib/logging/field-controls'
-import { APPLICATION_LOG_ROUTES } from '../../../lib/logging/route-templates'
+import { LOG_LEVELS } from '../../../layers/core/lib/logging/contract'
+import { LOG_FIELD_PROFILES, defaultFieldControls } from '../../../layers/core/lib/logging/field-controls'
+import { APPLICATION_LOG_ROUTES } from '../../../layers/core/lib/logging/route-templates'
 
 const root = mkdtempSync(join(tmpdir(), 'field-policy-http-'))
 const logDir = join(root, 'logs'), boundaryLogs = join(root, 'boundary-logs'), dbPath = join(root, 'synthetic.db')
@@ -233,13 +233,13 @@ it('publishes matching closed MCP and static OpenAPI profile level and field sch
   let metadata: any
   vi.stubGlobal('defineRouteMeta', (m: any) => { metadata = m })
   try {
-    await import('../../../server/api/logs/policy.patch'); const patchMeta = metadata.openAPI
+    await import('../../../layers/core/server/api/logs/policy.patch'); const patchMeta = metadata.openAPI
     const wire = patchMeta.requestBody.content['application/json'].schema
     expect(wire.required).toEqual(['retentionDays', 'maxBytes']); expect(wire.additionalProperties).toBe(false)
     const controls = wire.properties.fieldControls; expect(controls.additionalProperties).toBe(false); expect(Object.keys(controls.properties)).toEqual(LOG_FIELD_PROFILES.map(p => p.key))
     expect(Object.keys(controls.properties.http.properties)).toEqual([...LOG_LEVELS]); expect(controls.properties.http.additionalProperties).toBe(false)
     expect(Object.keys(controls.properties.http.properties.debug.properties)).toEqual(LOG_FIELD_PROFILES[0].fields.map(f => f.key)); expect(controls.properties.http.properties.debug.additionalProperties).toBe(false)
-    await import('../../../server/api/logs/policy.get'); const getMeta = metadata.openAPI
+    await import('../../../layers/core/server/api/logs/policy.get'); const getMeta = metadata.openAPI
     const response = getMeta.responses[200].content['application/json'].schema
     const document: any = { paths: { '/api/logs/policy': { get: getMeta, patch: patchMeta } } }
     const dereference = (schema: any): any => schema.$ref

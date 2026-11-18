@@ -1,4 +1,4 @@
-import { requestLogContext } from '../../lib/logging'
+import { requestLogContext } from '../../layers/core/lib/logging'
 import { createError, getHeader, getQuery, getRouterParam, readBody, setHeader, type H3Event } from 'h3'
 import { z } from 'zod'
 import { useDb } from '@db'

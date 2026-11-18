@@ -9,7 +9,7 @@ import { defineEventHandler } from 'h3'
 import { installSessionFrontend, type SessionFrontendBinding, type SessionEntryProfile, type SessionMount } from './server/utils/mcp-session-runtime'
 import tailwindcss from '@tailwindcss/vite'
 import { TASK_EXPORTS } from './lib/task-center'
-import { LOG_ICON_IDS } from './components/logs/logIcons'
+import { LOG_ICON_IDS } from './layers/core/app/components/logs/logIcons'
 import { getAppModules } from './lib/app-modules'
 import { validateAppModules } from './layers/core/lib/core/module-registry'
 
@@ -18,7 +18,7 @@ validateAppModules(getAppModules())
 
 // 只有本地图标集合；`@nuxt/icon` 在构建期把 `LOG_ICON_IDS` 与自定义集合打进客户端，
 // 运行时不访问 api.iconify.design。详见 components/logs/logIcons.ts 的清单。
-const projectIcons = createRequire(import.meta.url)('./assets/icons/project-icons.json') as {
+const projectIcons = createRequire(import.meta.url)('./layers/core/assets/icons/project-icons.json') as {
   prefix: string
   icons: Record<string, { body: string; width?: number; height?: number }>
 }
@@ -343,7 +343,7 @@ export default defineNuxtConfig({
       // Keep its real request/error hooks, but preserve the existing error contract.
       const errorHandlers = Array.isArray(nitro.options.errorHandler) ? nitro.options.errorHandler : [nitro.options.errorHandler]
       nitro.options.errorHandler = [
-        fileURLToPath(new URL('./server/logging-error-handler.ts', import.meta.url)),
+        fileURLToPath(new URL('./layers/core/server/logging-error-handler.ts', import.meta.url)),
         ...errorHandlers.filter((handler): handler is string => !!handler && !(handler.includes('/evlog/') && handler.includes('/nitro/errorHandler'))),
       ]
       // Register the lazy virtual source before Rollup constructs its plugins;
@@ -360,7 +360,7 @@ export default defineNuxtConfig({
     hooks: {
       'rollup:before'(nitro, config) {
         installSessionOverlay(nitro, config, undefined, actualSessionEntryProfile(nitro))
-        const loggingLocation = fileURLToPath(new URL('./lib/logging/sqlite-module-location.ts', import.meta.url))
+        const loggingLocation = fileURLToPath(new URL('./layers/core/lib/logging/sqlite-module-location.ts', import.meta.url))
         config.plugins = [config.plugins, {
           name: 'logging-native-module-location',
           transform: { order: 'post' as const, handler(_code: string, id: string) {

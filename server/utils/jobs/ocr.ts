@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 import { isJobId } from '../../../lib/job'
-import { appLog } from '../../../lib/logging'
+import { appLog } from '../../../layers/core/lib/logging'
 import { DEFAULT_DPI, isPdfPath } from '../../../lib/pdf-page'
 import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../job-runner'
 import { setJobResult } from '../job-store'

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { logModuleLabel } from './logPresentation'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { LOG_LEVELS } from '~~/lib/logging/contract'
+import { LOG_LEVELS } from '#core/lib/logging/contract'
 import type {
   LOG_INTEGRATIONS,
   LogCollection,
@@ -11,8 +11,8 @@ import type {
   LogFilter,
   LogPolicy,
   LogPolicyPatch
-} from '~~/lib/logging/contract'
-import type { LOG_FIELD_PROFILES } from '~~/lib/logging/field-controls'
+} from '#core/lib/logging/contract'
+import type { LOG_FIELD_PROFILES } from '#core/lib/logging/field-controls'
 import { isClientLogSource, sourceLabel } from './logPresentation'
 import { iconForGroup, iconForIntegration, iconForSection, iconForSource } from './logIcons'
 import LogModuleRow from './LogModuleRow.vue'
@@ -21,7 +21,7 @@ import {
   logErrorCode,
   logErrorMessage,
   useLogRead
-} from '~/composables/useLogRead'
+} from '#core/app/composables/useLogRead'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import { Button } from '#core/app/components/ui/button'

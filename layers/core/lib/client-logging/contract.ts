@@ -1,4 +1,4 @@
-import { getAppModules } from '../app-modules'
+import { getAppModules } from '../../../../lib/app-modules'
 import { clientRequestReference } from './request-reference'
 /** Fixed application vocabulary. Never accept page paths, messages or trusted execution IDs. */
 export const CLIENT_ERROR_KINDS = ['script_error', 'vue_error', 'unhandled_rejection', 'interaction_failure'] as const

@@ -1,13 +1,13 @@
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { inventory, matrices } from './business-test-groups.mjs'
+import { inventory, matrices, loggingBusiness } from './business-test-groups.mjs'
 import { selectUpgrade } from './select-upgrade-tests.mjs'
 
 // These are terminal HTTP surfaces. Shared implementation changes deliberately
 // select all consumers; directory ownership is not a dependency graph.
 const routes = [
   [/^server\/api\/(statistics\/|stats\.get\.ts$)/, ['统计 ·', '名录 · 导入与证据', '名录 · 资格与认定读取', '文件 ·']],
-  [/^server\/api\/logs\//, ['日志 · 审计']],
+  [/^(?:layers\/core\/)?server\/api\/logs\//, [loggingBusiness]],
 ]
 
 export function selectBusinessTests(paths, event = 'pull_request') {
@@ -30,8 +30,11 @@ export function selectBusinessTests(paths, event = 'pull_request') {
         }
         // HTTP contracts and cross-cutting instrumentation remain covered.
         businesses.add('运行环境 · 界面与基础设施')
-        businesses.add('日志 · 审计')
+        businesses.add(loggingBusiness)
         reasons.push(`${path}: HTTP 业务及接口、日志覆盖`)
+      } else if (path.startsWith('layers/core/')) {
+        full = true
+        reasons.push(`${path}: 平台底座共享实现，全量`)
       } else {
         full = true
         reasons.push(`${path}: 共享实现、资源或未知范围，全量`)

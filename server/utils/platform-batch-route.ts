@@ -1,6 +1,6 @@
 import { useDb } from '@db'
 import { handlePlatformBatchRequest } from './platform-batch-http'
-import { requestLogContext } from '../../lib/logging'
+import { requestLogContext } from '../../layers/core/lib/logging'
 export function createPlatformBatchRoute(action: 'submit' | 'status' | 'item' | 'retry') {
   return defineEventHandler(async event => {
     setHeader(event, 'cache-control', 'no-store')

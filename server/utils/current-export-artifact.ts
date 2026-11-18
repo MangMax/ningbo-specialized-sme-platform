@@ -6,7 +6,7 @@ import { createReadStream } from 'node:fs'
 import { stat, unlink, realpath, readdir } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import type { JobRow } from './job-store'
-import { appLog, type LogContext } from '../../lib/logging'
+import { appLog, type LogContext } from '../../layers/core/lib/logging'
 export const EXPORT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 export const EXPORT_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 export const exportDirectory = (dbPath: string) => dbPath + '.exports'

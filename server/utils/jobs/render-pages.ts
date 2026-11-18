@@ -1,4 +1,4 @@
-import { appLog } from '../../../lib/logging'
+import { appLog } from '../../../layers/core/lib/logging'
 import { registeredFileAtLocator, verifyFileRead, verifyPageRead } from '../file-read-identity'
 import type { StoredFileContentIdentity } from '../file-content-identity'
 import { isPdfPath, normalizeDpi } from '../../../lib/pdf-page'

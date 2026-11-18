@@ -1,6 +1,6 @@
 import type { useApplicationDb } from '../../db/client'
-import type { LogContext } from '../../lib/logging'
-import { operationLogContext } from './operation-log-context'
+import type { LogContext } from '../../layers/core/lib/logging'
+import { operationLogContext } from '../../layers/core/server/utils/operation-log-context'
 import { isJobId } from '../../lib/job'
 import { readApiToken, resolveApiAuth } from './api-auth'
 import {

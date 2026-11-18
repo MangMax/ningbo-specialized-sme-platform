@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { clientRequestReference } from '~~/lib/client-logging/request-reference'
-import type { FieldCapturedLogEvent, LogEvent, LogOrigin, LogSummary } from '~~/lib/logging/contract'
-import { LOG_FIELD_PROFILES } from '~~/lib/logging/field-controls'
-import { detailFieldValue, detailProfile, fieldOmission } from '~~/lib/logging/detail-profile'
-import { logBrowserHeaders, logErrorMessage, useLogRead } from '~/composables/useLogRead'
+import { clientRequestReference } from '#core/lib/client-logging/request-reference'
+import type { FieldCapturedLogEvent, LogEvent, LogOrigin, LogSummary } from '#core/lib/logging/contract'
+import { LOG_FIELD_PROFILES } from '#core/lib/logging/field-controls'
+import { detailFieldValue, detailProfile, fieldOmission } from '#core/lib/logging/detail-profile'
+import { logBrowserHeaders, logErrorMessage, useLogRead } from '#core/app/composables/useLogRead'
 import {
   describeLogRow,
   FIELD_DISABLED_LABEL,

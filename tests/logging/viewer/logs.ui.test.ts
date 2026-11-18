@@ -4,8 +4,8 @@ import { chooseCalendarSelect } from '../../support/calendar-select'
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
-import { useLogRead } from '../../../composables/useLogRead'
-import type { FieldCapturedLogEvent, LogSummary } from '../../../lib/logging/contract'
+import { useLogRead } from '../../../layers/core/app/composables/useLogRead'
+import type { FieldCapturedLogEvent, LogSummary } from '../../../layers/core/lib/logging/contract'
 // Model reduced-motion preference in happy-dom; real browser checks retain the
 // production transitions and exercise the actual Tabs/Sheet interaction.
 vi.mock('motion-v', async (original) => {
@@ -82,7 +82,7 @@ it('keeps the previous source on failed navigation and ignores a late superseded
 })
 
 it('requires review before policy writes, keeps the requested shrink after 409, and never claims it active', async () => {
-  const { default: Management } = await import('../../../components/logs/LogManagement.vue')
+  const { default: Management } = await import('../../../layers/core/app/components/logs/LogManagement.vue')
   let writes = 0
   vi.stubGlobal('$fetch', async (_url: string, options?: { method?: string }) => {
     if (options?.method === 'PATCH') {
@@ -124,7 +124,7 @@ it('requires review before policy writes, keeps the requested shrink after 409, 
 })
 
 it('filters by known IDs, pages with server cursors, fetches details on demand and copies only the safe event', async () => {
-  const { default: Page } = await import('../../../pages/logs.vue')
+  const { default: Page } = await import('../../../layers/core/app/pages/logs.vue')
   const { createRouter, createMemoryHistory } = await import('vue-router')
   const calls: { url: string; options: any }[] = []
   const event = {
@@ -205,7 +205,7 @@ it('filters by known IDs, pages with server cursors, fetches details on demand a
 })
 
 it('requires an explicit chronological range and freezes all applied filters before one bounded clear', async () => {
-  const { default: Management } = await import('../../../components/logs/LogManagement.vue')
+  const { default: Management } = await import('../../../layers/core/app/components/logs/LogManagement.vue')
   const posts: any[] = []
   const clear = deferred<{ deleted: number; hasMore: boolean }>()
   vi.stubGlobal('$fetch', async (_url: string, options?: any) => {
@@ -272,7 +272,7 @@ it('requires an explicit chronological range and freezes all applied filters bef
 })
 
 it('retains source rows on a failed filter, explains both targets, retries explicitly and recovers to empty', async () => {
-  const { default: Page } = await import('../../../pages/logs.vue')
+  const { default: Page } = await import('../../../layers/core/app/pages/logs.vue')
   const { createRouter, createMemoryHistory } = await import('vue-router')
   const response = deferred<any>()
   let attempts = 0
@@ -334,7 +334,7 @@ it('retains source rows on a failed filter, explains both targets, retries expli
 })
 
 it('composes filter and policy controls in shared fields while preserving every linked label', async () => {
-  const { default: Filters } = await import('../../../components/logs/LogFilters.vue')
+  const { default: Filters } = await import('../../../layers/core/app/components/logs/LogFilters.vue')
   const wrapper = mount(Filters, { props: { filter: { requestId: 'req-180' } }, attachTo: document.body })
   wrappers.push(wrapper)
   expect(wrapper.findAll('[data-slot="field-group"]')).toHaveLength(2)
@@ -346,7 +346,7 @@ it('composes filter and policy controls in shared fields while preserving every 
 })
 
 it('shows and copies only a validated UNTRUSTED client request reference, distinct from intake IDs', async () => {
-  const { default: Detail } = await import('../../../components/logs/LogDetail.vue')
+  const { default: Detail } = await import('../../../layers/core/app/components/logs/LogDetail.vue')
   const writeText = vi.fn().mockResolvedValue(undefined)
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
   const event = { id: '00000000-0000-4000-8000-000000000180', source: 'client', operation: 'client.tasks.interaction_failure', requestId: 'intake-180', traceId: 'intake-trace', untrustedRelatedRequestId: 'original-180' }
@@ -445,7 +445,7 @@ const listRow = (id: string) => ({
 })
 
 it('holds the result area with skeleton rows and a reading footer during the first read', async () => {
-  const { default: Page } = await import('../../../pages/logs.vue')
+  const { default: Page } = await import('../../../layers/core/app/pages/logs.vue')
   const { createRouter, createMemoryHistory } = await import('vue-router')
   const pending = deferred<any>()
   vi.stubGlobal('$fetch', async (url: string) => (url === '/api/logs/policy' ? policyView : pending.promise))
@@ -475,7 +475,7 @@ it('holds the result area with skeleton rows and a reading footer during the fir
 })
 
 it('returns the result list to its first row after a page change and keeps filter and page size', async () => {
-  const { default: Page } = await import('../../../pages/logs.vue')
+  const { default: Page } = await import('../../../layers/core/app/pages/logs.vue')
   const { createRouter, createMemoryHistory } = await import('vue-router')
   const calls: { url: string; options: any }[] = []
   vi.stubGlobal('$fetch', async (url: string, options: any) => {
@@ -515,7 +515,7 @@ it('returns the result list to its first row after a page change and keeps filte
 })
 
 it('does not offer a policy review until a value actually differs from the active policy', async () => {
-  const { default: Management } = await import('../../../components/logs/LogManagement.vue')
+  const { default: Management } = await import('../../../layers/core/app/components/logs/LogManagement.vue')
   vi.stubGlobal('$fetch', async () => policyView)
   const wrapper = mount(Management, {
     props: { filter: {} },
@@ -537,7 +537,7 @@ it('does not offer a policy review until a value actually differs from the activ
 })
 
 it('reviews only changed collection rules, sends changed maps, and refreshes effective controls', async () => {
-  const { default: Management } = await import('../../../components/logs/LogManagement.vue')
+  const { default: Management } = await import('../../../layers/core/app/components/logs/LogManagement.vue')
   const { default: Select } = await import('../../../layers/core/app/components/ui/select/Select.vue')
   let policy = policyResponse()
   const writes: any[] = []
@@ -631,7 +631,7 @@ it('reviews only changed collection rules, sends changed maps, and refreshes eff
 })
 
 it('never claims history is untouched when the save can shrink retention', async () => {
-  const { default: Management } = await import('../../../components/logs/LogManagement.vue')
+  const { default: Management } = await import('../../../layers/core/app/components/logs/LogManagement.vue')
   let policy = policyResponse()
   const writes: any[] = []
   vi.stubGlobal('$fetch', async (_url: string, options: any = {}) => {
@@ -671,7 +671,7 @@ it('never claims history is untouched when the save can shrink retention', async
 })
 
 it('reviews and PATCHes only the shared application rule when it is the only change', async () => {
-  const { default: Management } = await import('../../../components/logs/LogManagement.vue')
+  const { default: Management } = await import('../../../layers/core/app/components/logs/LogManagement.vue')
   let policy = policyResponse()
   const writes: any[] = []
   vi.stubGlobal('$fetch', async (_url: string, options: any = {}) => {
@@ -727,7 +727,7 @@ it('reviews and PATCHes only the shared application rule when it is the only cha
 })
 
 it('keeps the edited rule draft when saving the configuration fails', async () => {
-  const { default: Management } = await import('../../../components/logs/LogManagement.vue')
+  const { default: Management } = await import('../../../layers/core/app/components/logs/LogManagement.vue')
   vi.stubGlobal('$fetch', async (_url: string, options: any = {}) => {
     if (options.method === 'PATCH')
       throw { data: { error: { code: 'policy_capacity_pending' } } }
@@ -757,7 +757,7 @@ it('keeps the edited rule draft when saving the configuration fails', async () =
 })
 
 it('groups the real catalog into technical 4+6 and business 10+1 with one shared application rule', async () => {
-  const { default: Management } = await import('../../../components/logs/LogManagement.vue')
+  const { default: Management } = await import('../../../layers/core/app/components/logs/LogManagement.vue')
   vi.stubGlobal('$fetch', async () => policyView)
   const wrapper = mount(Management, {
     props: { filter: {} },
@@ -804,7 +804,7 @@ it('groups the real catalog into technical 4+6 and business 10+1 with one shared
 })
 
 it('lists legacy unwired catalog entries as explicitly not configurable instead of disabled switches', async () => {
-  const { default: Management } = await import('../../../components/logs/LogManagement.vue')
+  const { default: Management } = await import('../../../layers/core/app/components/logs/LogManagement.vue')
   vi.stubGlobal('$fetch', async () => legacyPolicyView)
   const wrapper = mount(Management, {
     props: { filter: {} },
@@ -832,7 +832,7 @@ it('lists legacy unwired catalog entries as explicitly not configurable instead 
 })
 
 it('keeps legacy retention usable and never posts empty collection overrides', async () => {
-  const { default: Management } = await import('../../../components/logs/LogManagement.vue')
+  const { default: Management } = await import('../../../layers/core/app/components/logs/LogManagement.vue')
   let current: any = {
     retentionDays: 7,
     maxBytes: 536870912,
@@ -873,7 +873,7 @@ it('keeps legacy retention usable and never posts empty collection overrides', a
 })
 
 it('shows origin only when present and copies only the fixed origin fields', async () => {
-  const { default: Detail } = await import('../../../components/logs/LogDetail.vue')
+  const { default: Detail } = await import('../../../layers/core/app/components/logs/LogDetail.vue')
   const event = {
     id: '00000000-0000-4000-8000-000000000501',
     timestamp: '2026-10-22T00:00:00Z',
@@ -913,7 +913,7 @@ it('shows origin only when present and copies only the fixed origin fields', asy
 })
 
 it('marks a browser origin as self-reported and omits the section for historical events', async () => {
-  const { default: Detail } = await import('../../../components/logs/LogDetail.vue')
+  const { default: Detail } = await import('../../../layers/core/app/components/logs/LogDetail.vue')
   let event: any = {
     id: '00000000-0000-4000-8000-000000000502',
     timestamp: '2026-10-22T00:00:00Z',
@@ -938,7 +938,7 @@ it('marks a browser origin as self-reported and omits the section for historical
 })
 
 it('shows the event time in the browser zone and keeps the original ISO in the copied event', async () => {
-  const { default: Detail } = await import('../../../components/logs/LogDetail.vue')
+  const { default: Detail } = await import('../../../layers/core/app/components/logs/LogDetail.vue')
   const event = {
     id: '00000000-0000-4000-8000-000000000003',
     timestamp: '2026-10-22T00:00:00Z',
@@ -963,7 +963,7 @@ it('shows the event time in the browser zone and keeps the original ISO in the c
 })
 
 it('labels retained rows as still-reading while a new filter is in flight', async () => {
-  const { default: Page } = await import('../../../pages/logs.vue')
+  const { default: Page } = await import('../../../layers/core/app/pages/logs.vue')
   const { createRouter, createMemoryHistory } = await import('vue-router')
   const pending = deferred<any>()
   let first = true
@@ -1007,7 +1007,7 @@ const makeLogRow = (over: Partial<LogSummary> = {}): LogSummary =>
   }) as LogSummary
 
 it('describes each source with its real business object, accurate outcome and raw unknown operation', async () => {
-  const { describeLogRow, outcomeLabel, formatCounts, errorCodeView } = await import('../../../components/logs/logPresentation')
+  const { describeLogRow, outcomeLabel, formatCounts, errorCodeView } = await import('../../../layers/core/app/components/logs/logPresentation')
   // 冻结契约的 method + 安全 route 模板；缺失时只说接口未记录，绝不从 resourceId 猜 URL。
   expect(
     describeLogRow(makeLogRow({ httpMethod: 'GET', httpRoute: '/api/enterprises/:id' })).target.text
@@ -1144,7 +1144,7 @@ it('labels all 21 client library operations, five Drizzle verbs and fixed connec
     resourceIdLabel,
     CONNECTION_PURPOSE_LABELS,
     describeLogRow
-  } = await import('../../../components/logs/logPresentation')
+  } = await import('../../../layers/core/app/components/logs/logPresentation')
   const clientOperations = [
     ['client.tus.upload_started', 'tus 上传开始'],
     ['client.tus.upload_ready', 'tus 上传地址可用'],
@@ -1197,7 +1197,7 @@ it('labels all 21 client library operations, five Drizzle verbs and fixed connec
 })
 
 it('renders independent desktop columns and keeps long operation, route, outcome, duration and status in their own bounded cells', async () => {
-  const { default: Page } = await import('../../../pages/logs.vue')
+  const { default: Page } = await import('../../../layers/core/app/pages/logs.vue')
   const { createRouter, createMemoryHistory } = await import('vue-router')
   const longOperation = 'operation.' + 'x'.repeat(86)
   const longRoute =
@@ -1320,7 +1320,7 @@ it('renders independent desktop columns and keeps long operation, route, outcome
 })
 
 it('labels the 390px summary with a 44px detail target and lets long IDs wrap without escaping', async () => {
-  const { default: Page } = await import('../../../pages/logs.vue')
+  const { default: Page } = await import('../../../layers/core/app/pages/logs.vue')
   const { createRouter, createMemoryHistory } = await import('vue-router')
   const longestId = 'r' + 'q'.repeat(127)
   const longRoute = '/api/enterprises/:enterpriseId/records/:recordId/parts/:partId'
@@ -1389,7 +1389,7 @@ it('labels the 390px summary with a 44px detail target and lets long IDs wrap wi
 })
 
 it('shows and copies the safe HTTP method and route template in the classified detail', async () => {
-  const { default: Detail } = await import('../../../components/logs/LogDetail.vue')
+  const { default: Detail } = await import('../../../layers/core/app/components/logs/LogDetail.vue')
   const event = {
     id: '00000000-0000-4000-8000-000000000206',
     timestamp: '2026-10-22T00:00:00Z',
@@ -1424,7 +1424,7 @@ it('shows and copies the safe HTTP method and route template in the classified d
 })
 
 it('keeps the current cursor page and drafts across log and configuration tabs without writing', async () => {
-  const { default: Page } = await import('../../../pages/logs.vue')
+  const { default: Page } = await import('../../../layers/core/app/pages/logs.vue')
   const { createRouter, createMemoryHistory } = await import('vue-router')
   const calls: { url: string; options: any }[] = []
   vi.stubGlobal('$fetch', async (url: string, options: any = {}) => {
@@ -1470,7 +1470,7 @@ it('keeps the current cursor page and drafts across log and configuration tabs w
 })
 
 it('shows MCP self-report only in the MCP section and keeps unrelated source fields out', async () => {
-  const { default: Detail } = await import('../../../components/logs/LogDetail.vue')
+  const { default: Detail } = await import('../../../layers/core/app/components/logs/LogDetail.vue')
   const uploadId = '0123456789abcdef0123456789abcdef'
   const event = {
     id: '00000000-0000-4000-8000-000000000401',
@@ -1515,7 +1515,7 @@ it('shows MCP self-report only in the MCP section and keeps unrelated source fie
 })
 
 it('marks a writer-disabled field as 当时未启用采集 and keeps historical gaps unknown', async () => {
-  const { default: Detail } = await import('../../../components/logs/LogDetail.vue')
+  const { default: Detail } = await import('../../../layers/core/app/components/logs/LogDetail.vue')
   // The writer recorded httpRoute/statusCode as disabled at capture time, revision 4.
   const captured = {
     id: '00000000-0000-4000-8000-000000000601',
@@ -1564,7 +1564,7 @@ it('marks a writer-disabled field as 当时未启用采集 and keeps historical 
 })
 
 it('keeps a historical row without capture as 未记录 and never infers from current policy', async () => {
-  const { default: Detail } = await import('../../../components/logs/LogDetail.vue')
+  const { default: Detail } = await import('../../../layers/core/app/components/logs/LogDetail.vue')
   const historical = {
     id: '00000000-0000-4000-8000-000000000602',
     timestamp: '2026-10-22T00:00:00Z',
@@ -1589,7 +1589,7 @@ it('keeps a historical row without capture as 未记录 and never infers from cu
 })
 
 it('rebuilds the copied capture from a fixed whitelist instead of trusting the response', async () => {
-  const { default: Detail } = await import('../../../components/logs/LogDetail.vue')
+  const { default: Detail } = await import('../../../layers/core/app/components/logs/LogDetail.vue')
   const writeText = vi.fn().mockResolvedValue(undefined)
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
   const base = {
@@ -1651,7 +1651,7 @@ it('rebuilds the copied capture from a fixed whitelist instead of trusting the r
 })
 
 it('accepts an output-shaped TUS context with an omitted uploadId and keeps phase', async () => {
-  const { default: Detail } = await import('../../../components/logs/LogDetail.vue')
+  const { default: Detail } = await import('../../../layers/core/app/components/logs/LogDetail.vue')
   // Output side (future FieldCapturedLogEvent) allows uploadId to be omitted while
   // phase stays required. The UI must not assume the stricter input shape.
   const event: any = {
@@ -1682,7 +1682,7 @@ it('accepts an output-shaped TUS context with an omitted uploadId and keeps phas
 })
 
 it('drops a capture whose profile this build has not implemented', async () => {
-  const { default: Detail } = await import('../../../components/logs/LogDetail.vue')
+  const { default: Detail } = await import('../../../layers/core/app/components/logs/LogDetail.vue')
   const event = {
     id: '00000000-0000-4000-8000-000000000605',
     timestamp: '2026-10-22T00:00:00Z',
@@ -1708,7 +1708,7 @@ it('drops a capture whose profile this build has not implemented', async () => {
 })
 
 it('keeps phase and the tus capture when uploadId was disabled at capture time', async () => {
-  const { default: Detail } = await import('../../../components/logs/LogDetail.vue')
+  const { default: Detail } = await import('../../../layers/core/app/components/logs/LogDetail.vue')
   // Real writer output: tus.uploadId disabled in configuration, so the projected
   // context keeps phase/method but has no uploadId, and capture records why.
   const event: FieldCapturedLogEvent = {
@@ -1746,7 +1746,7 @@ it('keeps phase and the tus capture when uploadId was disabled at capture time',
 })
 
 it('shows a dedicated TUS upload detail without pretending fileId/page are registered', async () => {
-  const { default: Detail } = await import('../../../components/logs/LogDetail.vue')
+  const { default: Detail } = await import('../../../layers/core/app/components/logs/LogDetail.vue')
   const uploadId = '0123456789abcdef0123456789abcdef'
   const event = {
     id: '00000000-0000-4000-8000-000000000402',
@@ -1791,7 +1791,7 @@ const drizzleAttempt = (counts?: LogSummary['counts']): LogSummary =>
 
 it('keeps ordinary counts unchanged and reads only confirmed Drizzle attempts as query attempts', async () => {
   const { formatCounts, describeLogRow, queryAttemptTotal } = await import(
-    '../../../components/logs/logPresentation'
+    '../../../layers/core/app/components/logs/logPresentation'
   )
   // 普通来源的处理数量保持不变：默认不传标记时绝不出现“查询尝试”。
   expect(formatCounts({ done: 2, total: 3, failed: 1 })).toBe('已处理 2/3 · 失败 1')
@@ -1834,7 +1834,7 @@ it('keeps ordinary counts unchanged and reads only confirmed Drizzle attempts as
 })
 
 it('labels a Drizzle summary as query attempt count with a one-line explanation in the detail', async () => {
-  const { default: Detail } = await import('../../../components/logs/LogDetail.vue')
+  const { default: Detail } = await import('../../../layers/core/app/components/logs/LogDetail.vue')
   const event = {
     id: '00000000-0000-4000-8000-000000000801',
     timestamp: '2026-10-24T09:00:00Z',
@@ -1872,7 +1872,7 @@ it('labels a Drizzle summary as query attempt count with a one-line explanation 
 })
 
 it('shows writeUnknown separately from dropped and reports coalesced without calling it lost or stored', async () => {
-  const { default: Management } = await import('../../../components/logs/LogManagement.vue')
+  const { default: Management } = await import('../../../layers/core/app/components/logs/LogManagement.vue')
   let view: any = {
     ...policyResponse(),
     status: {
@@ -1922,7 +1922,7 @@ it('shows writeUnknown separately from dropped and reports coalesced without cal
 })
 
 it('keeps the list status strip showing unknown writes and the missing-log caveat after storage recovers', async () => {
-  const { default: Page } = await import('../../../pages/logs.vue')
+  const { default: Page } = await import('../../../layers/core/app/pages/logs.vue')
   const { createRouter, createMemoryHistory } = await import('vue-router')
   let status: any = { dropped: 0, writeUnknown: 2, unavailable: false }
   vi.stubGlobal('$fetch', async (url: string) => {
@@ -1959,7 +1959,7 @@ it('keeps the list status strip showing unknown writes and the missing-log cavea
 
 it('navigates both log time calendars without applying and submits chosen month ends', async () => {
   vi.stubEnv('TZ', 'Asia/Shanghai')
-  const { default: Filters } = await import('../../../components/logs/LogFilters.vue')
+  const { default: Filters } = await import('../../../layers/core/app/components/logs/LogFilters.vue')
   const wrapper = mount(Filters, { props: { filter: { from: '2026-10-18T10:04:05Z', to: '2026-10-19T11:06:07Z' } }, attachTo: document.body })
   wrappers.push(wrapper)
   await flushPromises()

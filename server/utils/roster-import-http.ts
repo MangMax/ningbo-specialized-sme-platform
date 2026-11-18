@@ -25,7 +25,7 @@ import * as schema from '../../db/schema'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
 import { ImportReceiptError } from './import-receipts'
 import { importExecutor } from './import-execution'
-import { appLog, type LogContext } from '../../lib/logging'
+import { appLog, type LogContext } from '../../layers/core/lib/logging'
 import { logImportFailure } from './roster-import-logging'
 
 type Db = BetterSQLite3Database<typeof schema>

@@ -1,5 +1,5 @@
 import { verifyFileRead } from '../utils/file-read-identity'
-import { requestLogContext } from '../../lib/logging'
+import { requestLogContext } from '../../layers/core/lib/logging'
 import { useDb } from '@db'
 import { findFileIdByRelPath } from '../utils/mcp-files'
 import { stat } from 'node:fs/promises'

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { inject, onMounted, onBeforeUnmount, shallowRef, useTemplateRef } from 'vue'
 import { describeLoadError } from '~~/lib/preview'
-import { createEmbedPdfLogger } from '~~/lib/client-logging/embedpdf'
-import { clientLibraryReporterKey, ignoreClientLibrarySignal, safeLibraryReporter } from '~~/lib/client-logging/library-reporter'
+import { createEmbedPdfLogger } from '#core/lib/client-logging/embedpdf'
+import { clientLibraryReporterKey, ignoreClientLibrarySignal, safeLibraryReporter } from '#core/lib/client-logging/library-reporter'
 import { EmbedPDF } from '@embedpdf/core/vue'
 import { createPluginRegistration } from '@embedpdf/core'
 import type { PdfEngine } from '@embedpdf/models'

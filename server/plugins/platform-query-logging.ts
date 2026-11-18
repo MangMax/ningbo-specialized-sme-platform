@@ -1,4 +1,4 @@
-import { requestLogContext } from '../../lib/logging'
+import { requestLogContext } from '../../layers/core/lib/logging'
 import { platformMcpContextKey } from '../utils/mcp-platform-query'
 
 const tools = new Set(['query_platform', 'submit_platform_batch', 'retry_platform_batch'])

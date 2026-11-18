@@ -1,4 +1,4 @@
-import type { LogContext } from '../../lib/logging'
+import type { LogContext } from '../../layers/core/lib/logging'
 import type { useApplicationDb } from '../../db/client'
 import { getDbOwnerIdentity } from '../../db/client'
 import { readWholeComparisonSummary, type ComparisonSummaryOptions } from '../../lib/comparison-summary-read'

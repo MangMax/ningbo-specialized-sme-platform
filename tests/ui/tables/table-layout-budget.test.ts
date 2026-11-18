@@ -90,7 +90,7 @@ describe('列表页 min-w 收敛为推导值', () => {
 
   // 百分比列的页面:min-w 是各列内容下限之和的落地值,规范登记为固定档位。
   it('logs.vue / current-enterprises.vue 的 min-w 落在规范推导档位上', () => {
-    const logs = readPage('pages/logs.vue')
+    const logs = readPage('layers/core/app/pages/logs.vue')
     const current = readPage('pages/current-enterprises.vue')
     expect(logs).toContain('min-w-[940px]')
     expect(current).toContain('min-w-[850px]')

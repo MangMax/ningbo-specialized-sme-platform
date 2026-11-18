@@ -1,4 +1,4 @@
-import { appLog, requestLogContext } from '../../../lib/logging'
+import { appLog, requestLogContext } from '../../../layers/core/lib/logging'
 import { requireApiToken } from '../../utils/api-guard'
 import { quarantineStoredFile } from '../../utils/file-physical'
 import { useDb } from '@db'

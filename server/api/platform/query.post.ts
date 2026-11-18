@@ -1,5 +1,5 @@
 import { runPlatformLiveQuery } from '../../utils/platform-live-query'
-import { requestLogContext } from '../../../lib/logging'
+import { requestLogContext } from '../../../layers/core/lib/logging'
 
 defineRouteMeta({
   openAPI: {

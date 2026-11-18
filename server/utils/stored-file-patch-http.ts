@@ -1,4 +1,4 @@
-import { appLog, type LogContext } from '../../lib/logging'
+import { appLog, type LogContext } from '../../layers/core/lib/logging'
 import { maintainStoredFileSync, splitFileMaintenanceBody } from './file-maintenance'
 import type { updateStoredFile } from './stored-files'
 type Db = Parameters<typeof updateStoredFile>[0]

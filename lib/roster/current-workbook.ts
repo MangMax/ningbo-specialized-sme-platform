@@ -12,7 +12,7 @@ import { CURRENT_RULE_VERSION, qualificationDay, prepareCurrentReader, QUALIFICA
 import { TITLES } from '../labels'
 import { CURRENT_STATUS_LABELS, type CurrentStatus } from './current-status'
 import { CURRENT_COLUMNS, currentWorkbookValues } from './current-workbook-presentation'
-import { appLog, type LogContext } from '../logging'
+import { appLog, type LogContext } from '../../layers/core/lib/logging'
 import { currentCandidateIdBlocks, type CurrentCandidateReader } from './current-candidate-reader'
 import { createCurrentTargetContext } from './current-target-context'
 

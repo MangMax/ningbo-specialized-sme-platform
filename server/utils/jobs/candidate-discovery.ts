@@ -1,6 +1,6 @@
 import { whenImportWriterIdle } from '../import-write-barrier'
 import { setImmediate as yieldTurn } from 'node:timers/promises'
-import type { LogContext } from '../../../lib/logging'
+import type { LogContext } from '../../../layers/core/lib/logging'
 import { createHash } from 'node:crypto'
 import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'

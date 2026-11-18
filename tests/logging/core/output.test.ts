@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { Writable } from 'node:stream'
-import { boundedLogOutput } from '../../../lib/logging/output'
+import { boundedLogOutput } from '../../../layers/core/lib/logging/output'
 
 afterEach(() => vi.useRealTimers())
 it('stops after backpressure across rate windows and resumes only after drain', () => {

@@ -9,7 +9,7 @@ import type { RosterImportRequest, RosterImportItemResult } from '../../lib/rost
 import { commitRosterImport, preflightRosterImport } from './roster-import'
 import { ImportReceiptError } from './import-receipts'
 import { createImportExecutionWorker } from './import-execution-worker-location'
-import { appLog, type LogContext } from '../../lib/logging'
+import { appLog, type LogContext } from '../../layers/core/lib/logging'
 import { logImportFailure } from './roster-import-logging'
 import { beginImportWrite } from './import-write-barrier'
 

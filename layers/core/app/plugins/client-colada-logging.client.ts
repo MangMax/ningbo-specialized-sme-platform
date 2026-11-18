@@ -1,6 +1,6 @@
 import { useQueryCache, useMutationCache } from '@pinia/colada'
-import { clientPage } from '~~/lib/client-logging/contract'
-import { installColadaLogging } from '~~/lib/client-logging/colada'
+import { clientPage } from '#core/lib/client-logging/contract'
+import { installColadaLogging } from '#core/lib/client-logging/colada'
 
 export default defineNuxtPlugin({
   name: 'client-colada-logging',

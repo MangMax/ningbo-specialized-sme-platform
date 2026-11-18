@@ -2,9 +2,9 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLogService, type LogServiceOptions } from '../../../lib/logging/service'
-import { LOG_DEFAULTS, type LogInput } from '../../../lib/logging/contract'
-import { safeLogEvent } from '../../../lib/logging/privacy'
+import { createLogService, type LogServiceOptions } from '../../../layers/core/lib/logging/service'
+import { LOG_DEFAULTS, type LogInput } from '../../../layers/core/lib/logging/contract'
+import { safeLogEvent } from '../../../layers/core/lib/logging/privacy'
 
 const owned: { root: string; service: ReturnType<typeof createLogService> }[] = []
 function fixture(options: Omit<Partial<LogServiceOptions>, 'directory'> = {}) {

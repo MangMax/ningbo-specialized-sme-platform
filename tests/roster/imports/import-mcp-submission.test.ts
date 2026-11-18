@@ -5,7 +5,7 @@ vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) =>
 vi.mock('@db', () => ({ useDb: f.db }))
 vi.mock('../../../server/utils/import-execution', () => ({ importExecutor: { execute: f.execute } }))
 vi.mock('../../../server/utils/roster-import-page-validation', () => ({ validateRosterImportPageCounts: f.page }))
-vi.mock('../../../lib/logging', () => ({ appLog: f.log }))
+vi.mock('../../../layers/core/lib/logging', () => ({ appLog: f.log }))
 vi.mock('../../../server/utils/roster-import-logging', () => ({ logImportFailure: f.failure }))
 vi.mock('../../../server/utils/mcp-guard', () => ({ writeGuard: f.guard }))
 import preflight from '../../../server/mcp/tools/preflight_roster_batch'

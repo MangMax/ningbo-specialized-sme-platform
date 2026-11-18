@@ -10,7 +10,7 @@ import type { JobSpec } from '../job-runner'
 import { setJobResult } from '../job-store'
 import { createCurrentExportWorker } from '../current-export-worker-location'
 import { cleanupCurrentExports, currentExportDbPath, exportDirectory, EXPORT_RETENTION_MS } from '../current-export-artifact'
-import { appLog } from '../../../lib/logging'
+import { appLog } from '../../../layers/core/lib/logging'
 const paramsSchema = z.strictObject({ titleCode: z.enum(CURRENT_TITLES), clientRequestId: z.string().trim().min(1).max(128), regenerateOf: z.string().refine(isJobId).optional() })
 export const currentRosterExportSpec: JobSpec = {
   kind: 'current-roster-export', maxPending: 9, deduplicateRequest: true, status: 'ready', summary: '当前有效名录 Excel（后台独立进程）',

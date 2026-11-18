@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../lib/logging'
+import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
 import { __resetJobRunner, clearJobSpecs, registerJob, submitJob, whenIdle } from '../../../server/utils/job-runner'
 import { getJob } from '../../../server/utils/job-store'
 const dir = mkdtempSync(join(tmpdir(), 'jobs184-'))

@@ -23,8 +23,8 @@
  */
 
 import { defineEventHandler, getMethod, getHeader, readBody, setHeader, setResponseStatus, getResponseStatus, type H3Event } from 'h3'
-import { requestLogContext } from '../../lib/logging'
-import { logSemanticOperation } from './semantic-operation-log'
+import { requestLogContext } from '../../layers/core/lib/logging'
+import { logSemanticOperation } from '../../layers/core/server/utils/semantic-operation-log'
 
 /** Shared semantic boundary. Callers supply only a static operation name, never a URL or input. */
 export function semanticRouteHandler<T>(operation: string, handler: (event: H3Event) => T | Promise<T>) {

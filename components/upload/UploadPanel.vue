@@ -3,8 +3,8 @@ import { formatBytes } from '@/lib/core/file-size'
 import { computed, inject, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { Upload } from 'tus-js-client'
 import type { HttpResponse } from 'tus-js-client'
-import { withTusLogging } from '~~/lib/client-logging/tus'
-import { clientLibraryReporterKey, ignoreClientLibrarySignal } from '~~/lib/client-logging/library-reporter'
+import { withTusLogging } from '#core/lib/client-logging/tus'
+import { clientLibraryReporterKey, ignoreClientLibrarySignal } from '#core/lib/client-logging/library-reporter'
 import { Button } from '#core/app/components/ui/button'
 import {
   Dialog,

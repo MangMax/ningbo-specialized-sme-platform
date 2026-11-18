@@ -1,5 +1,5 @@
 import { useDb } from '@db'
-import { requestLogContext } from '../../../lib/logging'
+import { requestLogContext } from '../../../layers/core/lib/logging'
 import { UploadRegistrationError } from '../../utils/file-store'
 import { registerUploadedFile } from '../../utils/stored-files'
 

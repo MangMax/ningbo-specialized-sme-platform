@@ -10,7 +10,7 @@ import { readPlatformComparisonProcesses } from '../../server/utils/platform-com
 import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { createHash } from 'node:crypto'
-import { createDrizzleLogger } from '../logging/drizzle'
+import { createDrizzleLogger } from '../../layers/core/lib/logging/drizzle'
 import { eq, sql } from 'drizzle-orm'
 import * as schema from '../../db/schema'
 import { currentQualification102 } from '../../server/utils/decision-lifecycle-102'

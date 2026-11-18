@@ -1,11 +1,11 @@
 import { assertApplicationSchema } from '../../db/schema-phase'
-import { appLog, initializeWorkerLogging, closeApplicationLogging, type LogContext, type LogInput } from '../logging/index'
+import { appLog, initializeWorkerLogging, closeApplicationLogging, type LogContext, type LogInput } from '../../layers/core/lib/logging/index'
 /** Dedicated native SQLite executor. This entry has no Nitro runtime dependency. */
 import { getHeapStatistics } from 'node:v8'
 import { realpathSync, statSync } from 'node:fs'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { createDrizzleLogger } from '../logging/drizzle'
+import { createDrizzleLogger } from '../../layers/core/lib/logging/drizzle'
 import * as schema from '../../db/schema'
 import { listRosterEnterprises, getRosterEnterpriseDetail, type RosterEnterpriseFilter } from './enterprise-roster'
 import { enterpriseJsonChunks } from './enterprise-read-json'

@@ -3,7 +3,7 @@ import { cookieRedactor, PlatformHttpError, postPlatformRequest, type PlatformQu
 import { platformQueryInputSchema, platformQueryTitles, recognizedConditionShape, type PlatformLiveQueryResult, type PlatformQueryPage, type PlatformQueryError } from '../../lib/platform/live-query'
 import type { CredentialContext } from './credential-state'
 import { resolvePlatformCookie } from './platform-credential'
-import { newLogContext, type LogContext } from '../../lib/logging'
+import { newLogContext, type LogContext } from '../../layers/core/lib/logging'
 import { logPlatformResult, platformOperation, platformQueryOperation } from '../../lib/platform/logging'
 
 export interface PlatformLiveQueryContext {

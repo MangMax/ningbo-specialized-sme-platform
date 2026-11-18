@@ -4,7 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import PdfPreview from '../../../components/preview/PdfPreview.vue'
 import PdfEngine from '../../../components/preview/PdfEngine.vue'
-import { clientLibraryReporterKey } from '../../../lib/client-logging/library-reporter'
+import { clientLibraryReporterKey } from '../../../layers/core/lib/client-logging/library-reporter'
 const resource = vi.hoisted(() => ({ create: vi.fn(), destroy: vi.fn() }))
 vi.mock('@embedpdf/engines/pdfium-worker-engine', () => ({ createPdfiumEngine: resource.create }))
 const Core = defineComponent({ name: 'EmbedPDF', setup: () => () => h('div', { 'data-core': '' }) })
