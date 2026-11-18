@@ -5,6 +5,11 @@ const SOURCES = new Set(['jxj', 'miit'])
 /** `kind` 白名单:公布文件 / 导出表。 */
 const KINDS = new Set(['announcement', 'export'])
 
+export function matchesLandingPath(relPath: string): boolean {
+  const [source = '', kind = '', filenameOrDirectory] = relPath.split('/')
+  return filenameOrDirectory !== undefined && SOURCES.has(source) && KINDS.has(kind)
+}
+
 /**
  * 校验失败一律以 tus 约定的形状抛出:`status_code` + `body`。
  * `@tus/server` 的 `handler()` 会读 `error.status_code` 作为响应码

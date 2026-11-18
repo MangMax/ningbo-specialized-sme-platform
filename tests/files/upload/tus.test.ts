@@ -117,19 +117,19 @@ describe('tus 上传端点 + 落位规则', () => {
           year: '2024',
           batch: '1',
           filename: '甬经信中小〔2024〕72号.pdf',
-        }),
+        }).segments,
       ).toEqual(['jxj', 'announcement', '2024', '1', '甬经信中小〔2024〕72号.pdf'])
     })
 
     it('year/batch 缺省时省略对应段(导出表)', () => {
       expect(
-        resolveUploadPlacement({ source: 'miit', kind: 'export', filename: '导出Excel.xlsx' }),
+        resolveUploadPlacement({ source: 'miit', kind: 'export', filename: '导出Excel.xlsx' }).segments,
       ).toEqual(['miit', 'export', '导出Excel.xlsx'])
     })
 
     it('只有 year、无 batch 时省略 batch 段', () => {
       expect(
-        resolveUploadPlacement({ source: 'jxj', kind: 'announcement', year: '2021', filename: 'a.pdf' }),
+        resolveUploadPlacement({ source: 'jxj', kind: 'announcement', year: '2021', filename: 'a.pdf' }).segments,
       ).toEqual(['jxj', 'announcement', '2021', 'a.pdf'])
     })
 

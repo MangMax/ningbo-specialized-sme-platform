@@ -1,6 +1,4 @@
-import { appLog, type LogContext } from '../../../lib/logging'
-import { readdir, stat } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import type { LogContext } from '../../../lib/logging'
 import { extensionOf } from '../../../lib/core/file-path'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { eq } from 'drizzle-orm'
@@ -11,7 +9,7 @@ import {
   type FileSource,
 } from '../../../lib/stored-file'
 import { checkAdmission, getStoredFile, type StoredFileRow } from '../../utils/stored-files'
-import { resolveInsideRoot, sha256Of, UploadRegistrationError } from '../../utils/file-store'
+import { runFileRegistration, sha256Of, splitRegistrationPath, UploadRegistrationError, type RegistrationWriter } from '../../utils/file-store'
 import { createClassifiedFile } from '../../utils/roster-file-classification'
 import { recordLegacyFileMaintenanceWrite } from '../../utils/file-maintenance'
 import { landingSegments } from '../../../lib/sme-roster/file-landing'
@@ -73,19 +71,6 @@ export function parseUploadDeclaration(body: unknown): UploadDeclaration {
 }
 
 /**
- * 相对路径 → 段序列。逐段拒掉空段、`.`、`..`、反斜杠与 NUL —— 单靠后面的
- * 「resolve 后仍在根内」也能挡住穿越,但在这里就挡掉,错误信息才对得上问题。
- */
-function splitRelPath(relPath: string): string[] {
-  const segments = relPath.split('/')
-  const bad = segments.some(
-    (s) => !s || s === '.' || s === '..' || s.includes('\\') || s.includes('\0'),
-  )
-  if (bad) throw new UploadRegistrationError(`落位路径非法:${relPath}`)
-  return segments
-}
-
-/**
  * 把一次已完成的上传登记进 `stored_file`。**幂等**:以 `rel_path` 为键,
  * 相同内容重复登记只刷新元数据与分类;同路径换字节返回 409,保留登记身份。
  *
@@ -99,12 +84,8 @@ function splitRelPath(relPath: string): string[] {
  * 都不给分类时不硬填:写 `null` + `category_state='unset'`,交票 12 回写
  * (与 `lib/stored-file.ts` 的 `categoryStateOf` 同一条规则 —— 公布文件没年份就是未定)。
  */
-async function registerStoredFileUnlogged(
-  db: BetterSQLite3Database<typeof schema>,
-  filesRoot: string,
-  input: UploadDeclaration,
-): Promise<{ row: StoredFileRow; created: boolean }> {
-  const segments = splitRelPath(input.relPath)
+function prepareRosterWriter(input: UploadDeclaration): RegistrationWriter {
+  const segments = splitRegistrationPath(input.relPath)
   const filename = segments[segments.length - 1]!
   const actualDirs = segments.slice(0, -1)
 
@@ -148,31 +129,6 @@ async function registerStoredFileUnlogged(
     }
   }
 
-  // 2. 锁根 + 存在性(与预览路由、删除共用 `resolveInsideRoot` 一处判据)。
-  const abs = resolveInsideRoot(filesRoot, segments.join('/'))
-  if (!abs) {
-    throw new UploadRegistrationError(`落位路径越界:${input.relPath}`)
-  }
-  let info
-  try {
-    info = await stat(abs)
-  } catch {
-    throw new UploadRegistrationError(`落位文件不存在:${input.relPath}`)
-  }
-  if (!info.isFile()) throw new UploadRegistrationError(`落位路径不是一个文件:${input.relPath}`)
-
-  const siblings = await readdir(dirname(abs), { withFileTypes: true })
-  const exclusion = checkAdmission(input.relPath, new Set(siblings.filter(entry => entry.isFile()).map(entry => entry.name)))
-  if (exclusion) throw new UploadRegistrationError(exclusion.detail, 400, undefined, exclusion.reason)
-
-  const facts = {
-    relPath: segments.join('/'),
-    filename,
-    ext: extensionOf(filename),
-    bytes: info.size,
-    sha256: await sha256Of(abs),
-  }
-
   const source = hasSource ? (input.source as FileSource) : null
   const kind = hasKind ? (input.kind as FileKind) : null
   const year = input.year !== null ? Number(input.year) : null
@@ -181,48 +137,52 @@ async function registerStoredFileUnlogged(
   const categoryState =
     source && kind ? categoryStateOf({ source, kind, year, batch }) : 'unset'
 
-  return db.transaction((tx) => {
-    const existing = tx
-      .select()
-      .from(schema.storedFile)
-      .where(eq(schema.storedFile.relPath, facts.relPath))
-      .get()
+  return async (db, { relPath, filename, abs, bytes }) => {
+    const facts = { relPath, filename, ext: extensionOf(filename), bytes, sha256: await sha256Of(abs) }
+    return db.transaction((tx) => {
+      const existing = tx
+        .select()
+        .from(schema.storedFile)
+        .where(eq(schema.storedFile.relPath, facts.relPath))
+        .get()
 
-    const classification = { source, kind, year, batch, categoryState }
-    if (existing) {
-      const conflict = compareFileContentIdentity({ ...existing, fileId: existing.id }, facts)
-      if (conflict) {
-        throw new UploadRegistrationError('文件内容与登记身份不符,请恢复原文件或使用新路径登记', 409, conflict)
+      const classification = { source, kind, year, batch, categoryState }
+      if (existing) {
+        const conflict = compareFileContentIdentity({ ...existing, fileId: existing.id }, facts)
+        if (conflict) {
+          throw new UploadRegistrationError('文件内容与登记身份不符,请恢复原文件或使用新路径登记', 409, conflict)
+        }
+        const before = getStoredFile(tx, existing.id)!
+        tx.update(schema.storedFile)
+          .set({ filename, ext: facts.ext, removedAt: null })
+          .where(eq(schema.storedFile.id, existing.id))
+          .run()
+        tx.update(schema.rosterFileClassification).set(classification)
+          .where(eq(schema.rosterFileClassification.fileId, existing.id)).run()
+        const row = getStoredFile(tx, existing.id)!
+        recordLegacyFileMaintenanceWrite(tx, before, row)
+        return { row, created: false }
       }
-      const before = getStoredFile(tx, existing.id)!
-      tx.update(schema.storedFile)
-        .set({ filename, ext: facts.ext, removedAt: null })
-        .where(eq(schema.storedFile.id, existing.id))
-        .run()
-      tx.update(schema.rosterFileClassification).set(classification)
-        .where(eq(schema.rosterFileClassification.fileId, existing.id)).run()
-      const row = getStoredFile(tx, existing.id)!
-      recordLegacyFileMaintenanceWrite(tx, before, row)
-      return { row, created: false }
-    }
 
-    const inserted = createClassifiedFile(tx, facts, classification)
-    return { row: getStoredFile(tx, inserted.id)!, created: true }
-  }, { behavior: 'immediate' })
+      const inserted = createClassifiedFile(tx, facts, classification)
+      return { row: getStoredFile(tx, inserted.id)!, created: true }
+    }, { behavior: 'immediate' })
+  }
 }
 
-/** Registration is a semantic write; file names and declarations never enter runtime logs. */
-export async function registerStoredFile(
+export function prepareRosterRegistration(input: Record<string, unknown>): RegistrationWriter {
+  let declaration
+  try {
+    declaration = parseUploadDeclaration(input)
+  } catch (error) {
+    throw new UploadRegistrationError((error as Error).message)
+  }
+  return prepareRosterWriter(declaration)
+}
+
+export function registerStoredFile(
   db: BetterSQLite3Database<typeof schema>, filesRoot: string, input: UploadDeclaration,
   context: LogContext = {},
 ): Promise<{ row: StoredFileRow; created: boolean }> {
-  const startedAt = Date.now()
-  try {
-    const result = await registerStoredFileUnlogged(db, filesRoot, input)
-    appLog({ module: 'core', source: 'file', operation: result.created ? 'file.register' : 'file.register.refresh', outcome: 'success', fileId: result.row.id, durationMs: Date.now() - startedAt }, context)
-    return result
-  } catch (error) {
-    appLog({ module: 'core', source: 'file', operation: 'file.register', outcome: error instanceof UploadRegistrationError ? 'denied' : 'failure', level: 'error', errorCode: error instanceof UploadRegistrationError ? 'file_registration_rejected' : 'file_registration_failed', durationMs: Date.now() - startedAt }, context)
-    throw error
-  }
+  return runFileRegistration(db, filesRoot, input.relPath, () => prepareRosterWriter(input), checkAdmission, context)
 }

@@ -35,3 +35,9 @@ export function evaluateFileAdmission(
 /** 客户端在 `Upload-Metadata` 里声明的键(全部为可选,由规则决定必需项)。 */
 export type UploadMetadata = Record<string, string | null | undefined>
 export type FileLanding = (metadata: UploadMetadata) => string[]
+
+export type ResolveUploadPlacement = (metadata: UploadMetadata) => {
+  segments: string[]
+  /** Recheck ownership when tus appends a collision suffix. */
+  assertOwnership: (relPath: string) => void
+}

@@ -4,7 +4,7 @@ import { basename, extname, join, resolve } from 'node:path'
 import { EVENTS, Server } from '@tus/server'
 import { FileStore } from '@tus/file-store'
 
-import type { FileLanding } from '../../lib/core/file-categories'
+import type { ResolveUploadPlacement } from '../../lib/core/file-categories'
 
 /** tus transport; the application supplies the rules for upload placement. */
 
@@ -51,7 +51,7 @@ export interface TusConfig {
   incomingDir: string
   /** 跨源白名单。 */
   allowedOrigins: string[]
-  landing: FileLanding
+  landing: ResolveUploadPlacement
 }
 
 /**
@@ -150,13 +150,14 @@ export function createTus(config: TusConfig): Server {
     },
     // 传完后按规则落位。此处重算一次段序列(与创建时同源、确定性),保证只落合法路径。
     onUploadFinish: async (_req, upload) => {
-      const segments = config.landing(upload.metadata ?? {})
+      const { segments, assertOwnership } = config.landing(upload.metadata ?? {})
+      const dirs = segments.slice(0, -1)
       const filename = segments[segments.length - 1]!
-      const dir = join(files, ...segments.slice(0, -1))
+      const dir = join(files, ...dirs)
       await mkdir(dir, { recursive: true })
       // PATCH 的 getUpload 会带 storage.path(工作目录里的临时文件);兜底用 id 拼。
       const src = upload.storage?.path ?? join(incoming, upload.id)
-      const landed = await linkUnique(src, dir, filename)
+      const landed = await linkUnique(src, dir, filename, name => assertOwnership([...dirs, name].join('/')))
       // 落位后清掉工作目录里的 sidecar 元数据,别让 `.incoming/` 攒垃圾。
       await rm(join(incoming, `${upload.id}.json`), { force: true })
       // The original mkdir/link/rm work has succeeded; only now is the upload
@@ -187,7 +188,7 @@ let server: Server | undefined
  * 取得 tus `Server` 单例(Nitro 从 `server/utils/**` 自动导入,中间件直接用)。
  * 首次调用发生在请求期内,此时 `useRuntimeConfig()` 可用。
  */
-export function getTus(landing: FileLanding): Server {
+export function getTus(landing: ResolveUploadPlacement): Server {
   if (server) return server
   server = createTus({
     filesDir: filesDir(),
@@ -203,11 +204,13 @@ export function getTus(landing: FileLanding): Server {
  * 优先用 `link`(目标已存在会 EEXIST,原子、O(1)、需同卷),成功后再 `unlink` 源。
  * 撞名依次尝试 `<name> (1)`、`<name> (2)`……
  */
-async function linkUnique(src: string, dir: string, filename: string): Promise<string> {
+async function linkUnique(src: string, dir: string, filename: string, assertOwnership: (name: string) => void): Promise<string> {
   const ext = extname(filename)
   const stem = ext ? filename.slice(0, filename.length - ext.length) : filename
   for (let n = 0; ; n += 1) {
-    const target = join(dir, n === 0 ? filename : `${stem} (${n})${ext}`)
+    const name = n === 0 ? filename : `${stem} (${n})${ext}`
+    if (n > 0) assertOwnership(name)
+    const target = join(dir, name)
     try {
       await link(src, target)
       await rm(src, { force: true })

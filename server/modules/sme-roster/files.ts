@@ -1,4 +1,4 @@
-import { landingSegments } from '../../../lib/sme-roster/file-landing'
+import { landingSegments, matchesLandingPath } from '../../../lib/sme-roster/file-landing'
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import * as schema from '../../../db/schema'
 import { KIND_ORDER, PARSE_STATE_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../../../lib/labels'
@@ -7,7 +7,7 @@ import type { StoredFilePart } from '../../../lib/file-parts'
 import { classificationColumns, fileClassificationJoin } from '../../utils/roster-file-classification'
 import { listFileParts } from '../../utils/file-parts'
 import { listRegisteredDeclarations681, registeredSummary681 } from '../../utils/registered-declarations'
-import { UploadRegistrationError, type FileStoreDb as Db, type FileCategoryServer, type FileRegistrationResult, type FileRow } from '../../utils/file-store'
+import { type FileStoreDb as Db, type FileCategoryServer, type FileRow } from '../../utils/file-store'
 import manifest from '../../../lib/sme-roster/manifest'
 import { rosterFileOpenApi } from './file-openapi'
 
@@ -111,16 +111,11 @@ export const rosterFileServerCategory = {
   landing: landingSegments,
   defaultLanding: true,
   registration: {
-    async register(db, root, input, context): Promise<FileRegistrationResult> {
+    matchesPath: matchesLandingPath,
+    async prepare(input) {
       // Defer the writer import because it reads the composed store for the response and audit.
-      const { parseUploadDeclaration, registerStoredFile } = await import('./file-upload')
-      let declaration
-      try {
-        declaration = parseUploadDeclaration(input)
-      } catch (error) {
-        throw new UploadRegistrationError((error as Error).message)
-      }
-      return registerStoredFile(db, root, declaration, context)
+      const { prepareRosterRegistration } = await import('./file-upload')
+      return prepareRosterRegistration(input)
     },
   },
   metadata: {
