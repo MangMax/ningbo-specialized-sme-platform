@@ -17,9 +17,9 @@ import * as schema from '../../../db/schema'
 import type { OfficialPublishedRow, RosterImportRequest } from '../../../lib/roster-import-client'
 import * as qualification from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
-import { handleEventCorrectionRequest } from '../../../server/utils/roster-event-correction-api'
-import type { EventCorrectionRequest } from '../../../server/utils/roster-event-correction'
-import { dispatchEventCorrectionMcp } from '../../../server/utils/mcp-event-correction'
+import { handleEventCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-event-correction-api'
+import type { EventCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-event-correction'
+import { dispatchEventCorrectionMcp } from '../../../layers/sme-roster/server/utils/mcp-event-correction'
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
 import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
 import { preflightRecordCorrespondences, commitRecordCorrespondences, type CorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence'
@@ -497,7 +497,7 @@ it('public_replay_rechecks_new_context_without_reader_or_storage_rewrite', async
 
 it('public_unmarked_same_name_slot_keeps_legacy_sanitizer', async () => {
   // Protocol/mock control only: arbitrary same-name JSON is not a core-sealed typed slot.
-  const core = await import('../../../server/utils/roster-event-correction')
+  const core = await import('../../../layers/sme-roster/server/utils/roster-event-correction')
   vi.spyOn(core, 'commitEventCorrections').mockReturnValue({
     qualificationReadbackProtocol: 'event-correction-407-v1',
     qualificationReadback: { stage: 'after', status: 'captured', token: 'synthetic-raw-secret', payload: 'token=synthetic-raw-value' },

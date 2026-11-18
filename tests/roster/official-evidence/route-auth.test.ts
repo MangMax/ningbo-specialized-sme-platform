@@ -6,8 +6,8 @@ import { afterEach, expect, it, vi } from 'vitest'
 const cold = vi.hoisted(() => ({ calls: 0 }))
 // A cold accessor must never be reached on denied opt-ins. No database is opened.
 vi.mock('@db', () => ({ useDb: () => { cold.calls++; throw new Error('synthetic cold accessor reached') } }))
-import { evidenceCorrectionRoute } from '../../../server/utils/roster-evidence-correction-route'
-import { eventCorrectionRoute } from '../../../server/utils/roster-event-correction-route'
+import { evidenceCorrectionRoute } from '../../../layers/sme-roster/server/utils/roster-evidence-correction-route'
+import { eventCorrectionRoute } from '../../../layers/sme-roster/server/utils/roster-event-correction-route'
 
 afterEach(() => { cold.calls = 0; vi.unstubAllGlobals() })
 function request(path: string, headers: IncomingHttpHeaders) {

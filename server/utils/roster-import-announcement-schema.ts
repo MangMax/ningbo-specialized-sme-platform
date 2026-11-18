@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { record, recordEvent, sourceDocument } from '../../db/schema'
 import { TITLE_ORDER } from '../../layers/sme-roster/lib/labels'
-import { officialPublishedRowSchema } from './official-evidence-plan'
+import { officialPublishedRowSchema } from '../../layers/sme-roster/server/utils/official-evidence-plan'
 
 // Discovery describes commands; legacy normalization and item errors remain in roster-import.
 export const announcementDiscoverySchema = z.looseObject({

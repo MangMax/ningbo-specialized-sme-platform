@@ -8,7 +8,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../db/schema'
 import { isNingboDistrict,normalizeName } from './domain'
 import { EVENTS,LIFECYCLE_FLAGS,LIFECYCLE_FLAG_ORDER,SOURCE_ORDER,TITLE_ORDER } from './labels'
-import { isPageCapable } from '../../../lib/roster/evidence-page'
+import { isPageCapable } from './roster/evidence-page'
 import {
 judgeFirstRecognition,
 matchesRecognitionQuery,

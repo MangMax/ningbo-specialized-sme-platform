@@ -1,4 +1,4 @@
-import { importItemsReadSchema, importItemsReadShape } from '../../utils/official-evidence-read'
+import { importItemsReadSchema, importItemsReadShape } from '../../../layers/sme-roster/server/utils/official-evidence-read'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'

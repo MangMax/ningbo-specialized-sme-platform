@@ -3,7 +3,7 @@ import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
 import * as s from '../../../../db/schema'
-import { captureIdentityRevision113, identityMaterial113 } from '../../../../server/utils/evidence-impact-113'
+import { captureIdentityRevision113, identityMaterial113 } from './evidence-impact-113'
 import { normalizeName } from '../../lib/domain'
 import { canonicalEnterpriseId, currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
-import { shouldNuxtScrollToTop, useEvidencePreviewScrollRestore } from '~~/lib/roster/evidence-preview-return'
+import { shouldNuxtScrollToTop, useEvidencePreviewScrollRestore } from '#sme-roster/lib/roster/evidence-preview-return'
 import { watchDebounced } from '@vueuse/core'
 import {
   ExternalLink,

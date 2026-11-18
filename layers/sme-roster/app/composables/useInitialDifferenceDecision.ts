@@ -1,5 +1,5 @@
 import { computed, reactive, ref, toRefs } from 'vue'
-import type { DecisionVersion, ReviewDecisionDraft, ReviewScope } from '~~/lib/roster/evidence-review-ui'
+import type { DecisionVersion, ReviewDecisionDraft, ReviewScope } from '#sme-roster/lib/roster/evidence-review-ui'
 import { DIFFERENCE_MEASURES, DIFFERENCE_REASONS } from '#sme-roster/lib/labels'
 
 export interface InitialDecisionHead extends ReviewScope { versionId: number | null; current: DecisionVersion | null }

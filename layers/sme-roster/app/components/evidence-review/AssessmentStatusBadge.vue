@@ -23,7 +23,7 @@ import {
   impactClassificationLabels,
   lineageLabels,
   validityLabels,
-} from '~~/lib/roster/evidence-review-ui'
+} from '#sme-roster/lib/roster/evidence-review-ui'
 import { PLATFORM_QUERY_STATUSES } from '#sme-roster/lib/labels'
 
 type Kind = 'coverage' | 'validity' | 'assessment' | 'impact' | 'lineage' | 'query' | 'review'

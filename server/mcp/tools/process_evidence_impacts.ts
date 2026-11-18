@@ -1,6 +1,6 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { processCommand114, work114 } from '../../utils/evidence-review-114'
+import { processCommand114, work114 } from '../../../layers/sme-roster/server/utils/evidence-review-114'
 import { parse102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
 import { decisionMcp102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102-output'
 import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'

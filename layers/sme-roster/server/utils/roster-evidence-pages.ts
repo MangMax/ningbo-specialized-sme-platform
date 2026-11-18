@@ -10,7 +10,7 @@
  *
  * ── 判据在哪一层 ──────────────────────────────────────────────────────
  *
- * **定位与三态全在 `lib/roster/evidence-page.ts` 的纯函数里**(`planEvidencePages`),
+ * **定位与三态全在 `layers/sme-roster/lib/roster/evidence-page.ts` 的纯函数里**(`planEvidencePages`),
  * 本文件只做三件事:读候选行 → 调纯函数 → 把结论写回库(或 dry-run 时只报结论)。
  * 这样「裸序号拒收」「分节歧义留空待核」这些判据可以脱离 HTTP 与库被单测钉住,
  * 而 HTTP 面又可以被真实端口回放(见 `tests/helpers/roster-http-server.ts`)。
@@ -26,7 +26,7 @@
 
 import { eq, inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import * as schema from '../../db/schema'
+import * as schema from '../../../../db/schema'
 import {
   isPageCapable,
   planEvidencePages,
@@ -34,8 +34,8 @@ import {
   type EvidencePageEntry,
   type EvidencePagePlan,
 } from '../../lib/roster/evidence-page'
-import { authorizeRosterWrite } from './roster-import-http'
-import { readPdfPageCount } from '../../layers/core/server/utils/pdf-pages'
+import { authorizeRosterWrite } from '../../../../server/utils/roster-import-http'
+import { readPdfPageCount } from '../../../core/server/utils/pdf-pages'
 import { createLegacyEvidencePageAdapter, EvidenceCorrectionError } from './roster-evidence-correction'
 
 type Db = BetterSQLite3Database<typeof schema>

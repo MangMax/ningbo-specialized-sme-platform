@@ -2,7 +2,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter, RouterLink, useRoute, useRouter } from 'vue-router'
-import PreviewPage from '../../../pages/preview.vue'
+import PreviewPage from '../../../layers/sme-roster/app/pages/preview.vue'
 import PageHeader from '../../../layers/core/app/components/PageHeader.vue'
 
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = '' })

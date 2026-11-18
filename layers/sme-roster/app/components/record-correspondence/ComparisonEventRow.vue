@@ -5,7 +5,7 @@ import { COMPARISON_CLASSES, comparisonReasonText } from '#sme-roster/lib/roster
 import { correspondenceStatusText, eventDecisionText } from '#sme-roster/lib/roster/correspondence-view'
 import { humanRecordTime } from '#sme-roster/lib/roster/record-ledger'
 import { PLATFORM_INTERFACES, TITLES } from '#sme-roster/lib/labels'
-import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
+import { rememberEvidencePreviewReturn } from '#sme-roster/lib/roster/evidence-preview-return'
 import RosterSourceReader from './SourceReader.vue'
 import RosterOfficialEvidence from './OfficialEvidence.vue'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'

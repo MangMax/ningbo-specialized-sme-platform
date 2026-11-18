@@ -1,4 +1,4 @@
-import { fileClassificationJoin } from './roster-file-classification'
+import { fileClassificationJoin } from '../../../../server/utils/roster-file-classification'
 import { createHash } from 'node:crypto'
 import { openSync, closeSync, readSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
@@ -6,8 +6,8 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { z } from 'zod'
 import { isPageCapable } from '../../lib/roster/evidence-page'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import * as schema from '../../db/schema'
-import type { OfficialDeclaration, OfficialPublishedRow } from '../../lib/roster-import-client'
+import * as schema from '../../../../db/schema'
+import type { OfficialDeclaration, OfficialPublishedRow } from '../../../../lib/roster-import-client'
 import { appendOfficialEvidenceRevision, readLatestOfficialEvidence, readOfficialEvidenceCandidates, type OfficialEvidenceCommand, type OfficialEvidenceRow, type OfficialEvidenceSourceKey } from './official-evidence'
 
 type Db = BetterSQLite3Database<typeof schema>

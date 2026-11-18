@@ -15,7 +15,7 @@ import { saveDecision102 } from '../../../layers/sme-roster/server/utils/decisio
 import { preflightRecordCorrespondences, commitRecordCorrespondences, type CorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence'
 import * as correspondenceReads from '../../../layers/sme-roster/server/utils/record-correspondence'
 import * as publishedReads from '../../../layers/sme-roster/lib/roster/official-published-presentation'
-import { readEvidenceToken113 } from '../../../server/utils/evidence-impact-113'
+import { readEvidenceToken113 } from '../../../layers/sme-roster/server/utils/evidence-impact-113'
 
 const AS_OF = Date.parse('2026-06-01T00:00:00Z')
 let fixtureDir: string

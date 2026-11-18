@@ -9,7 +9,7 @@ import {
   rememberEvidencePreviewReturn,
   shouldNuxtScrollToTop,
   useEvidencePreviewScrollRestore,
-} from '../../../lib/roster/evidence-preview-return'
+} from '../../../layers/sme-roster/lib/roster/evidence-preview-return'
 import type { RosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import EnterprisePage from '../../../layers/sme-roster/app/pages/enterprises/[id].vue'
 

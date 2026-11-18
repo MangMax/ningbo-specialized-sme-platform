@@ -10,7 +10,7 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import * as schema from '../../../db/schema'
 import type { OfficialPublishedRow, RosterImportPayload, RosterImportRequest, RosterImportRecord } from '../../../lib/roster-import-client'
-import type { EvidenceCorrectionRequest } from '../../../server/utils/roster-evidence-correction'
+import type { EvidenceCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-evidence-correction'
 import { commitRosterImport, preflightRosterImport } from '../../../server/utils/roster-import'
 
 type Execute = typeof import('../../../server/utils/import-execution')['importExecutor']['execute']

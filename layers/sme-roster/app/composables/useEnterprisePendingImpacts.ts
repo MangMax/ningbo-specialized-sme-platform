@@ -1,6 +1,6 @@
 import { computed, toValue, type MaybeRefOrGetter } from 'vue'
 import { useQuery } from '@pinia/colada'
-import type { CursorPage, ImpactRow } from '~~/lib/roster/evidence-review-ui'
+import type { CursorPage, ImpactRow } from '#sme-roster/lib/roster/evidence-review-ui'
 
 export const enterprisePendingImpactParams = (enterpriseId: number) => ({
   enterpriseId,

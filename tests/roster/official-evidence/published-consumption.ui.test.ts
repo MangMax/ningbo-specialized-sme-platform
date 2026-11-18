@@ -16,7 +16,7 @@ import CurrentPage from '../../../layers/sme-roster/app/pages/current-enterprise
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SourceReader from '../../../layers/sme-roster/app/components/record-correspondence/SourceReader.vue'
 import OfficialEvidence from '../../../layers/sme-roster/app/components/record-correspondence/OfficialEvidence.vue'
-import { useRecordSource } from '../../../composables/useRecordSource'
+import { useRecordSource } from '../../../layers/sme-roster/app/composables/useRecordSource'
 import { refreshCorrespondenceViews } from '../../../layers/sme-roster/app/composables/useCorrespondenceReadback'
 
 const mounted: ReturnType<typeof mount>[] = []

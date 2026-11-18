@@ -1,7 +1,7 @@
-import { registeredFileAtLocator } from '../../layers/core/server/utils/file-read-identity'
+import { registeredFileAtLocator } from '../../../core/server/utils/file-read-identity'
 import { sql } from 'drizzle-orm'
-import type { useApplicationDb } from '../../db/client'
-import { fileNameOf } from '../../layers/core/lib/preview'
+import type { useApplicationDb } from '../../../../db/client'
+import { fileNameOf } from '../../../core/lib/preview'
 
 /** Exact persisted paths, supported by formal events; never classify by filename.
  * Negative references reuse the first persisted evidence ID when no document

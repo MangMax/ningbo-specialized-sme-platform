@@ -13,7 +13,7 @@ import {
   preflightEventCorrections,
   commitEventCorrections,
   type EventCorrectionRequest,
-} from './roster-event-correction'
+} from '../../layers/sme-roster/server/utils/roster-event-correction'
 
 type Db = BetterSQLite3Database<typeof schema>
 export const syncRequestSchema = z.strictObject({

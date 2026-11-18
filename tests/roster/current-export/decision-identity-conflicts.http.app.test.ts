@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { schema as s } from '../../../db/client'
 import { CURRENT_TITLES, readCurrentCandidate } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { specializedExportFixture, rows, year } from './fixtures/specialized-export'
-import { readEvidenceToken113 } from '../../../server/utils/evidence-impact-113'
+import { readEvidenceToken113 } from '../../../layers/sme-roster/server/utils/evidence-impact-113'
 const native=nativeWorkbookFixture()
 const codes=['91310115MA1H7KUG93','91310114MA1GYDE2XE','91440300MA5G2DGE3R','91330110MA2GMDFH58','91330211255994457P']
 let candidateIndex=0

@@ -2,7 +2,7 @@ import { getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
 import { z } from 'zod'
 import { useDb } from '@db'
 import { requireApiToken } from '../../layers/core/server/utils/api-guard'
-import { checkBrowserReviewRequest } from './browser-review-102'
+import { checkBrowserReviewRequest } from '../../layers/sme-roster/server/utils/browser-review-102'
 import { syncRequestSchema, preflightFileEventSync, commitFileEventSync } from './file-event-sync'
 const business = syncRequestSchema.omit({ actor: true })
 const hash = z.string().regex(/^[a-f0-9]{64}$/),

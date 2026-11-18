@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRecordSource } from '~/composables/useRecordSource'
+import { useRecordSource } from '#sme-roster/app/composables/useRecordSource'
 import { eventDecisionText, type EventSource, type ExportRowSource, type RelationSource, type SourceKind } from '#sme-roster/lib/roster/correspondence-view'
 import { isCurrentContextEdge } from '#sme-roster/lib/roster/record-ledger'
 import { TITLES } from '#sme-roster/lib/labels'

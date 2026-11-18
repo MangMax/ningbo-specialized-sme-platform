@@ -16,8 +16,8 @@ import * as schema from '../../../db/schema'
 import type { OfficialPublishedRow, RosterImportPayload } from '../../../lib/roster-import-client'
 import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
 import { importExecutor } from '../../../server/utils/import-execution'
-import { readExactEvidence } from '../../../server/utils/roster-evidence-correction'
-import { readLatestOfficialEvidence } from '../../../server/utils/official-evidence'
+import { readExactEvidence } from '../../../layers/sme-roster/server/utils/roster-evidence-correction'
+import { readLatestOfficialEvidence } from '../../../layers/sme-roster/server/utils/official-evidence'
 import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
 
 // Dedicated transport suite: run only in the parent's heavy slot. Production tools,

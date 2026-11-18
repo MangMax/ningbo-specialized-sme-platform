@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { initializeDb } from '../../../db/client'
-import { planOfficialEvidenceChanges, type OfficialClaimChange } from '../../../server/utils/official-evidence-plan'
+import { planOfficialEvidenceChanges, type OfficialClaimChange } from '../../../layers/sme-roster/server/utils/official-evidence-plan'
 
 const dir = mkdtempSync(join(tmpdir(), 'claim-priority-'))
 const db = initializeDb({ dbPath: join(dir, 'domain.db'), create: true })

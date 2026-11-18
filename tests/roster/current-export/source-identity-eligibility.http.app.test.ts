@@ -4,8 +4,8 @@ import { matchesBusinessIdentity } from './fixtures/specialized-export'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { schema as s } from '../../../db/client'
 import { rows, year } from './fixtures/specialized-export'
-import { readEvidenceToken113 } from '../../../server/utils/evidence-impact-113'
-import { readQueryAssessment } from '../../../lib/roster/query-assessment'
+import { readEvidenceToken113 } from '../../../layers/sme-roster/server/utils/evidence-impact-113'
+import { readQueryAssessment } from '../../../layers/sme-roster/lib/roster/query-assessment'
 const native = nativeWorkbookFixture()
 const f = { ...native, get db() { return native.db }, async workbook(key: string, title = 'specialized_sme') {
   if (title !== 'specialized_sme') return native.workbook(key, title as any)

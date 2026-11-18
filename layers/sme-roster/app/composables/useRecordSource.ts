@@ -1,4 +1,4 @@
-import { useCorrespondenceReadback } from '../layers/sme-roster/app/composables/useCorrespondenceReadback'
+import { useCorrespondenceReadback } from './useCorrespondenceReadback'
 import { ref, watch, type MaybeRefOrGetter, toValue } from 'vue'
 import { sourcePublishedNamesUnavailable, correspondenceSourceUrl, type SourceKind, type SourceResponse } from '#sme-roster/lib/roster/correspondence-view'
 

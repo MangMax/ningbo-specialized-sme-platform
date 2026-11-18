@@ -11,12 +11,12 @@ import * as schema from '../../../db/schema'
 import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } from '../../../lib/roster-import-client'
 import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
-import { handleEvidenceCorrectionRequest } from '../../../server/utils/roster-evidence-correction-api'
+import { handleEvidenceCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-evidence-correction-api'
 import { readCurrentCandidate, readCurrentQualificationAssessment, type CurrentQualificationSnapshot, type CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-qualification'
 
 import { startHttpFixture } from '../../support/http'
 import { minimalPdf } from '../../support/minimal-pdf'
-import * as official from '../../../server/utils/official-evidence'
+import * as official from '../../../layers/sme-roster/server/utils/official-evidence'
 
 
 

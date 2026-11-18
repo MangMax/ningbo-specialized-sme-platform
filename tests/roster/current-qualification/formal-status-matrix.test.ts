@@ -581,7 +581,7 @@ it('global filter revalidates only recognition witnesses while full reads retain
 
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
 import { schema as filterSchema } from '../../../db/client'
-import { preflightEventCorrections, commitEventCorrections } from '../../../server/utils/roster-event-correction'
+import { preflightEventCorrections, commitEventCorrections } from '../../../layers/sme-roster/server/utils/roster-event-correction'
 it.each(['source revision','assignment owner','withdraw','context role','candidate','cross title','canonical owner','no witness'] as const)('global witness filtering preserves %s boundary and complete refs', state => {
   const m=qualificationMatrix(fixture.sqlite)
   const a=m.formal('Witness owner',[{eventType:'award',year:2025,decidedYear:2025,batchSeq:1}])

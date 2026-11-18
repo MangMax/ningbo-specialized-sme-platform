@@ -7,7 +7,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../../../db/schema'
 import type { Database } from 'better-sqlite3'
 import { normalizeName, normalizeUscc } from '../domain'
-import { isPageCapable } from '../../../../lib/roster/evidence-page'
+import { isPageCapable } from './evidence-page'
 import { readEnterpriseTargetPlatformHistory } from './enterprise-platform-history'
 import { canonicalEnterpriseId, currentEnterpriseIdentity } from './enterprise-identity'
 

@@ -10,7 +10,7 @@ import type { TitleCode } from '../../../db/titles'
 import { filterComparisonRows, type ComparisonRowFilter } from './comparison-filter'
 import type { getCuratedComparison } from './curation'
 import { reconcileKey, type ReconcileIndex } from './reconcile'
-import { readQueryAssessmentSummaries, type QueryAssessmentSummary } from '../../../lib/roster/query-assessment'
+import { readQueryAssessmentSummaries, type QueryAssessmentSummary } from './roster/query-assessment'
 
 export type ComparisonSummaryDisposition = Pick<ComparisonDisposition,
   'explanationId' | 'status' | 'reasonCode' | 'measureCode' | 'verificationStatus' | 'recordedAt' | 'evidenceQueryId' | 'evidenceRelationId'>

@@ -2,13 +2,13 @@ import { readEvidenceImpact113, readEvidenceImpacts113 } from '../../server/util
 /** #108 additive read projection. Business decisions stay owned by #102. */
 import { inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { enterprise } from '../../db/schema'
-import { currentDecision102, currentDecisionState102, currentDecisions102, currentDecisionStates102, type DecisionDb } from '../../layers/sme-roster/server/utils/decision-lifecycle-102'
-import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
-import { identityFunctions } from '../../layers/sme-roster/lib/roster/enterprise-read-snapshot'
-import { identityKeys, type IdentityKeyVariants } from '../../layers/sme-roster/lib/roster/current-identity-keys'
-import { platformQueryResultShape, type PlatformQueryPage } from '../../layers/sme-roster/lib/platform/live-query'
-import { readDifferenceCollectionScopes, selectDifferenceCollections, selectDifferenceCollectionsBatch } from '../../layers/sme-roster/lib/platform/difference-sources'
+import { enterprise } from '../../../../db/schema'
+import { currentDecision102, currentDecisionState102, currentDecisions102, currentDecisionStates102, type DecisionDb } from '../../server/utils/decision-lifecycle-102'
+import { normalizeUscc } from '../domain'
+import { identityFunctions } from './enterprise-read-snapshot'
+import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
+import { platformQueryResultShape, type PlatformQueryPage } from '../platform/live-query'
+import { readDifferenceCollectionScopes, selectDifferenceCollections, selectDifferenceCollectionsBatch } from '../platform/difference-sources'
 
 export type AssessmentScope = Parameters<typeof currentDecision102>[1]
 type CoverageStatus = 'not_queried' | 'complete' | 'partial' | 'failed' | 'unknown'

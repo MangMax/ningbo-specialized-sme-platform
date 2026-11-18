@@ -1,4 +1,4 @@
-import { isPageCapable } from '../../lib/roster/evidence-page'
+import { isPageCapable } from '../../layers/sme-roster/lib/roster/evidence-page'
 import type { RosterImportItemResult, RosterImportRequest } from '../../lib/roster-import-client'
 import { readPdfPageCount } from '../../layers/core/server/utils/pdf-pages'
 

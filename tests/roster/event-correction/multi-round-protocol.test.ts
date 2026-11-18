@@ -11,8 +11,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { McpToolCallbackResult } from '@nuxtjs/mcp-toolkit/server'
 import { schema, initializeDb } from '../../../db/client'
-import type { EventCorrectionRequest } from '../../../server/utils/roster-event-correction'
-import { dispatchEventCorrectionMcp, isEventCorrectionMcpResult } from '../../../server/utils/mcp-event-correction'
+import type { EventCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-event-correction'
+import { dispatchEventCorrectionMcp, isEventCorrectionMcpResult } from '../../../layers/sme-roster/server/utils/mcp-event-correction'
 
 // Replace only Nuxt registration discovery. Exported tool schemas/handlers,
 // MCP SDK HTTP transport, the domain command and SQLite are real.
@@ -116,7 +116,7 @@ async function fixture() {
     idempotencyKey: `issue304-${key}`, sourceIdentity: 'synthetic:issue304', actor: { type: 'agent', id: 'issue304-test' }, basis: 'Synthetic verified announcement conclusions', operations,
   })
   const op = (id: number, patch: EventCorrectionRequest['operations'][number]['patch'], expectedRevision = 1) => ({ eventId: id, recordId: record.id, enterpriseId: enterprise.id, expectedRevision, patch })
-  const { eventCorrectionRoute } = await import('../../../server/utils/roster-event-correction-route')
+  const { eventCorrectionRoute } = await import('../../../layers/sme-roster/server/utils/roster-event-correction-route')
   const { correspondenceRoute } = await import('../../../layers/sme-roster/server/utils/record-correspondence-route')
   const { default: annualRoute } = await import('../../../server/api/roster/events/[id]/annual-process.get')
   const router = createRouter(), app = createApp()

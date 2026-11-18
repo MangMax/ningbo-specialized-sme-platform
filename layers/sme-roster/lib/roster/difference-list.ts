@@ -9,7 +9,7 @@ import { normalizeName } from '../domain'
 import { TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
 import type { RosterDifferenceFilter, RosterDifferencesResult } from './enterprise-roster'
-import { readQueryAssessments } from '../../../../lib/roster/query-assessment'
+import { readQueryAssessments } from './query-assessment'
 import { targetCandidateTables } from '../../server/utils/candidate-target-sources'
 
 type Db = BetterSQLite3Database<typeof s>

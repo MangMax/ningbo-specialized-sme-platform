@@ -12,8 +12,8 @@ import { Button } from '#core/app/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '#core/app/components/ui/empty'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '#core/app/components/ui/hover-card'
 import { Skeleton } from '#core/app/components/ui/skeleton'
-import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
-import { evidencePreviewHref } from '~~/lib/roster/evidence-page'
+import { rememberEvidencePreviewReturn } from '#sme-roster/lib/roster/evidence-preview-return'
+import { evidencePreviewHref } from '#sme-roster/lib/roster/evidence-page'
 import {
   Table,
   TableBody,

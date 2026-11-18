@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import QueryCoverageDetails from './QueryCoverageDetails.vue'
-import AssessmentStatusBadge from './AssessmentStatusBadge.vue'
+import RosterQueryCoverageDetails from './QueryCoverageDetails.vue'
+import RosterAssessmentStatusBadge from './AssessmentStatusBadge.vue'
 import { computed } from 'vue'
-import type { ReviewAssessment } from '~~/lib/roster/evidence-review-ui'
+import type { ReviewAssessment } from '#sme-roster/lib/roster/evidence-review-ui'
 import {
   decisionMeasureLabel,
   decisionReasonLabel,
   decisionStatusLabel,
-} from '~~/lib/roster/review-display'
+} from '#sme-roster/lib/roster/review-display'
 
 const props = withDefaults(defineProps<{ assessment: ReviewAssessment; compact?: boolean }>(), {
   compact: false,
@@ -24,9 +24,9 @@ const validity = computed(() => props.assessment.explanationValidity.status)
     data-testid="query-assessment"
   >
     <div class="flex flex-wrap items-center gap-1.5">
-      <AssessmentStatusBadge kind="coverage" :value="assessment.queryCoverage.status" />
-      <AssessmentStatusBadge kind="assessment" :value="assessment.assessment" />
-      <AssessmentStatusBadge
+      <RosterAssessmentStatusBadge kind="coverage" :value="assessment.queryCoverage.status" />
+      <RosterAssessmentStatusBadge kind="assessment" :value="assessment.assessment" />
+      <RosterAssessmentStatusBadge
         v-if="validity !== 'not_applicable'"
         kind="validity"
         :value="validity"
@@ -50,6 +50,6 @@ const validity = computed(() => props.assessment.explanationValidity.status)
         （撤回版本 #{{ assessment.currentDecision.versionId }}，历史保留）</template>
     </p>
 
-    <QueryCoverageDetails v-if="!compact" :coverage="assessment.queryCoverage" />
+    <RosterQueryCoverageDetails v-if="!compact" :coverage="assessment.queryCoverage" />
   </div>
 </template>

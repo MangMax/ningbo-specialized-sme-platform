@@ -12,7 +12,7 @@ import { correspondenceRefValidity,createCorrespondenceRefValidityReader } from 
 import { correspondenceColumns,correspondenceTable,externalRelationColumn } from './record-correspondence-store'
 import { readCorrespondenceTargetSources } from './record-correspondence-target-sources'
 import { ensureBatchRow,findBatchByKey } from '../../../../server/utils/roster-batch-ledger'
-import { versionedOfficialEvent } from '../../../../server/utils/roster-event-version'
+import { versionedOfficialEvent } from './roster-event-version'
 
 type Db = BetterSQLite3Database<typeof schema>
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]

@@ -3,7 +3,7 @@ import { ROSTER_LEDGER_PATH } from '#sme-roster/lib/sme-roster/routes'
 import { CURRENT_STATUS_LABELS } from '#sme-roster/lib/roster/current-status'
 import { useQuery } from '@pinia/colada'
 import { computed, nextTick, ref, shallowRef, watch } from 'vue'
-import type { ReviewAssessment } from '~~/lib/roster/evidence-review-ui'
+import type { ReviewAssessment } from '#sme-roster/lib/roster/evidence-review-ui'
 import RosterEventChip from '#sme-roster/app/components/EventChip.vue'
 import type { RosterEnterpriseDetail } from '#sme-roster/lib/roster/enterprise-roster'
 import {
@@ -11,7 +11,7 @@ import {
   latestQueryTime,
   officialTitlesLabel,
   titleLabel,
-} from '~~/lib/roster/review-display'
+} from '#sme-roster/lib/roster/review-display'
 import { sourceReturnTarget, type OfficialPublishedFact } from '#sme-roster/lib/roster/correspondence-view'
 import OfficialEvidenceView from '#sme-roster/app/components/record-correspondence/OfficialEvidence.vue'
 import { eventDecisionText } from '#sme-roster/lib/roster/correspondence-view'
@@ -25,7 +25,7 @@ import {
   rememberEvidencePreviewReturn,
   shouldNuxtScrollToTop,
   useEvidencePreviewScrollRestore,
-} from '~~/lib/roster/evidence-preview-return'
+} from '#sme-roster/lib/roster/evidence-preview-return'
 import FilePreviewDialog from '#core/app/components/preview/FilePreviewDialog.vue'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import { Alert, AlertDescription, AlertTitle } from '#core/app/components/ui/alert'

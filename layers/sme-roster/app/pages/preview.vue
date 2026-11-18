@@ -8,7 +8,7 @@ import {
   EVIDENCE_PAGE_WORDS,
   evidencePageState,
   isPageCapable,
-} from '~~/lib/roster/evidence-page'
+} from '#sme-roster/lib/roster/evidence-page'
 import FilePreview from '#core/app/components/preview/FilePreview.vue'
 import { useSourcePdfRoute } from '#core/app/composables/useSourcePdfRoute'
 import SourcePdfPreview from '#core/app/components/preview/SourcePdfPreview.vue'

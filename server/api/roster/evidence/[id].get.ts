@@ -1,4 +1,4 @@
-import { evidenceCorrectionRoute } from '~~/server/utils/roster-evidence-correction-route'
+import { evidenceCorrectionRoute } from '#sme-roster/server/utils/roster-evidence-correction-route'
 defineRouteMeta({
   "openAPI": {
     "tags": ["正式事实精确读回"],

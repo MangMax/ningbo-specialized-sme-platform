@@ -5,7 +5,7 @@ import type { AnnualProcessInput, AnnualProcessSourceRefs, EventAnnualProcessRea
 import type { PlatformBusinessGroup, PlatformBusinessObservationRef } from '../platform/business-record'
 import type { RelationSource } from './correspondence-view'
 import type { PlatformNormalizationConflict } from '../platform/normalization'
-import type { QueryCoverageSource } from '../../../../lib/roster/query-assessment'
+import type { QueryCoverageSource } from './query-assessment'
 import type { PlatformLiveQueryResult } from '../platform/live-query'
 import type { readAnnualDecisionRefs } from '../../server/utils/annual-correspondence'
 

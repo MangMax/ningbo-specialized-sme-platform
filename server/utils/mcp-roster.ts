@@ -1,5 +1,5 @@
 import { and,asc,eq,sql } from 'drizzle-orm'
-import { readQueryAssessments,type QueryAssessment } from '../../lib/roster/query-assessment'
+import { readQueryAssessments,type QueryAssessment } from '../../layers/sme-roster/lib/roster/query-assessment'
 /**
  * RL-11 名录只读工具的投影（契约 §9）。
  *

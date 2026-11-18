@@ -13,7 +13,7 @@ import { targetSchema } from '../../lib/platform/target-schema'
 import { fileNameOf } from '../../../core/lib/preview'
 import { comparisonSourceCatalogInput,groupComparisonBusinessObservations,recordComparisonInput,type ComparisonSourceCatalogInput,type HistoricalClassification,type RecordComparisonInput } from '../../lib/roster/record-comparison'
 import { registeredFileAtLocator } from '../../../core/server/utils/file-read-identity'
-import { officialSourceDirectory,readOfficialSourceDocuments } from '../../../../server/utils/official-source-directory'
+import { officialSourceDirectory,readOfficialSourceDocuments } from './official-source-directory'
 import { readPlatformBusinessMetadata } from './platform-business-record-read'
 import { comparisonFormalCounts,iterateComparisonFormalEvents } from './record-comparison-formal'
 import { readComparisonTargetIdentities,readComparisonTargetQueryFacts,readComparisonTargetRelations,type ComparisonTargetQueryFacts } from './record-comparison-target-sources'
@@ -465,7 +465,7 @@ export function* iterateRecordComparisonSources(db: Db, input: ComparisonSourceC
     return { offset: skip, limit }
   }
   const dw = window('official_document'), qw = window('query'), bw = window('export_batch')
-  const documents = dw.limit ? db.all<import('../../../../server/utils/official-source-directory').OfficialSourceDocument>(sql`select * from ${officialSourceDirectory} where ${dids} order by id limit ${dw.limit} offset ${dw.offset}`).map(row => ({ kind: 'official_document' as const, id: row.id, label: row.title ?? fileNameOf(row.path), subtitle: row.docNumber, titleCode: null, titleName: null, observedAt: row.issueDate, status: 'available', selectable: true, path: row.path, contentIdentity: { registered: registeredFileAtLocator(db, row.path), status: 'unknown' as const, historical: 'unknown' as const } })) : []
+  const documents = dw.limit ? db.all<import('./official-source-directory').OfficialSourceDocument>(sql`select * from ${officialSourceDirectory} where ${dids} order by id limit ${dw.limit} offset ${dw.offset}`).map(row => ({ kind: 'official_document' as const, id: row.id, label: row.title ?? fileNameOf(row.path), subtitle: row.docNumber, titleCode: null, titleName: null, observedAt: row.issueDate, status: 'available', selectable: true, path: row.path, contentIdentity: { registered: registeredFileAtLocator(db, row.path), status: 'unknown' as const, historical: 'unknown' as const } })) : []
   const pageQueryIds = (qw.limit ? db.select({ id: qa.oldId }).from(qa).where(qids).orderBy(qa.oldId).limit(qw.limit).offset(qw.offset).all().map(r => r.id) : [])
   const enterpriseLinks = sourceEnterpriseLinks(db, pageQueryIds)
   const targetPage = readComparisonTargetQueryFacts(db, pageQueryIds).map(({ id, collection: c, conditions, evidencePresent }) => ({ ...c, id, completeness: evidencePresent ? c.completeness : 'unknown', fullRange: evidencePresent ? c.fullRange : null, conditions }))

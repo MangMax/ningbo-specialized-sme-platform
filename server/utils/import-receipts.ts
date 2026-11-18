@@ -1,6 +1,6 @@
 import { sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
-import { importItemsReadSchema, officialReadQuery, type ImportItemsRead } from './official-evidence-read'
+import { importItemsReadSchema, officialReadQuery, type ImportItemsRead } from '../../layers/sme-roster/server/utils/official-evidence-read'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../db/schema'
 import { importReceiptRedactor } from './import-receipt-redaction'

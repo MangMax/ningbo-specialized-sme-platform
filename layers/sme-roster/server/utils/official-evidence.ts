@@ -1,6 +1,6 @@
 import { sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import type * as schema from '../../db/schema'
+import type * as schema from '../../../../db/schema'
 
 /** Domain-only storage seam. Both a database and its caller-owned transaction satisfy this type. */
 export type OfficialEvidenceExecutor = Pick<BetterSQLite3Database<typeof schema>, 'get' | 'all' | 'run'>

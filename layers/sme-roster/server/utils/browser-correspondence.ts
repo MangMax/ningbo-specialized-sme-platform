@@ -1,7 +1,7 @@
 import { readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { z } from 'zod'
 import { useDb } from '@db'
-import { checkBrowserReviewRequest } from '../../../../server/utils/browser-review-102'
+import { checkBrowserReviewRequest } from './browser-review-102'
 import { handleRecordCorrespondenceRequest } from './record-correspondence-api'
 
 const requestSchema = z.strictObject({

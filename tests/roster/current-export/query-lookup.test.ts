@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from 'vitest'
 import { specializedExportFixture } from './fixtures/specialized-export'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { readQueryAssessment } from '../../../lib/roster/query-assessment'
+import { readQueryAssessment } from '../../../layers/sme-roster/lib/roster/query-assessment'
 import { readTargetIdentityKeyVariants } from '../../../layers/sme-roster/lib/roster/current-identity-keys'
 const f=specializedExportFixture()
 afterAll(()=>f.close())

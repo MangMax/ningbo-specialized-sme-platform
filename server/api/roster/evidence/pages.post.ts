@@ -1,6 +1,6 @@
 import { useDb } from '@db'
 import { createCoreRouteHandler } from '../../../../layers/core/server/utils/core-route'
-import { handleEvidencePagesRequest } from '../../../utils/roster-evidence-pages'
+import { handleEvidencePagesRequest } from '../../../../layers/sme-roster/server/utils/roster-evidence-pages'
 
 /**
  * **出处页码补录**:`POST /api/roster/evidence/pages`(RL-10)。

@@ -2,7 +2,7 @@
 import { ROSTER_LEDGER_PATH } from '#sme-roster/lib/sme-roster/routes'
 import RosterPlatformRecords from './PlatformRecords.vue'
 import type { RosterEnterpriseDetail } from '#sme-roster/lib/roster/enterprise-roster'
-import type { ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
+import type { ReviewAssessment, ReviewScope } from '#sme-roster/lib/roster/evidence-review-ui'
 import { computed, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { DialogClose, DialogContent, DialogRoot, DialogTitle } from 'reka-ui'
@@ -19,7 +19,7 @@ import {
   TITLES,
 } from '#sme-roster/lib/labels'
 import { reviewEventSuffix, timelineEventIdentity } from '#sme-roster/lib/roster/enterprise-timeline'
-import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
+import { rememberEvidencePreviewReturn } from '#sme-roster/lib/roster/evidence-preview-return'
 import { historicalAliasNamesForDisplay } from '#sme-roster/lib/roster/enterprise-name-display'
 import TableFailureState from '../../../core/app/components/TableFailureState.vue'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'

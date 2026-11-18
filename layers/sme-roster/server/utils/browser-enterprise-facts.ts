@@ -2,7 +2,7 @@ import { getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
 import { useDb } from '@db'
 import { enterpriseFactCommandSchema, preflightEnterpriseFact, commitEnterpriseFact } from './enterprise-facts'
 import { EnterpriseProfileError } from './enterprise-profile'
-import { checkBrowserReviewRequest } from '../../../../server/utils/browser-review-102'
+import { checkBrowserReviewRequest } from './browser-review-102'
 import { z } from 'zod'
 // Names the real server adapter, never a purported logged-in person.
 const actor = { type: 'agent' as const, id: 'same-origin-enterprise-facts-adapter' }

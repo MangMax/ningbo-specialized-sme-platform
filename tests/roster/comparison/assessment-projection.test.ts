@@ -1,5 +1,5 @@
 import { currentDecision102, currentDecisionState102, currentDecisions102, currentDecisionStates102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
-import { readEvidenceImpact113, readEvidenceImpacts113 } from '../../../server/utils/evidence-impact-113'
+import { readEvidenceImpact113, readEvidenceImpacts113 } from '../../../layers/sme-roster/server/utils/evidence-impact-113'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
 import { readWholeComparisonSummary } from '../../../layers/sme-roster/lib/comparison-summary-read'
-import { readQueryAssessment, readQueryAssessmentSummaries, readQueryAssessments } from '../../../lib/roster/query-assessment'
+import { readQueryAssessment, readQueryAssessmentSummaries, readQueryAssessments } from '../../../layers/sme-roster/lib/roster/query-assessment'
 
 const cleanup: Array<() => void> = []
 afterEach(() => { vi.restoreAllMocks(); for (const close of cleanup.splice(0)) close() })

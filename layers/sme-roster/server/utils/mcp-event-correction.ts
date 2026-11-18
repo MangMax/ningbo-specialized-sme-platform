@@ -4,7 +4,7 @@ import { isProxy } from 'node:util/types'
 import type { McpToolCallbackResult } from '@nuxtjs/mcp-toolkit/server'
 import { eventCorrectionRequestSchema } from './roster-event-correction'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import * as schema from '../../db/schema'
+import * as schema from '../../../../db/schema'
 import { handleEventCorrectionRequest, type EventCorrectionAction } from './roster-event-correction-api'
 
 /** Accept transport-safe SDK results without copying or executing object code. */

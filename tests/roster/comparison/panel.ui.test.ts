@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import RecordComparisonPanel from '../../../layers/sme-roster/app/components/record-correspondence/RecordComparisonPanel.vue'
 import ComparisonDateTimePicker from '../../../layers/core/app/components/DateTimePicker.vue'
 import { Select } from '../../../layers/core/app/components/ui/select'
-import { rememberEvidencePreviewReturn } from '../../../lib/roster/evidence-preview-return'
+import { rememberEvidencePreviewReturn } from '../../../layers/sme-roster/lib/roster/evidence-preview-return'
 
 const calls = vi.hoisted(() => ({ query: [] as Record<string, unknown>[] }))
 const result = (page = 1, pageSize = 25) => ({ rows: [], total: 75, page, pageSize, counts: { distinctEvents: 0 }, coverage: [], currentSourceConsistency: { recognizedObservations: [] } })

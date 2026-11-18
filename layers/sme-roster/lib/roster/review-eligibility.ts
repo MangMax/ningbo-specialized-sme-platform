@@ -1,4 +1,4 @@
-import type { ImpactDetail } from '../../../../lib/roster/evidence-review-ui'
+import type { ImpactDetail } from './evidence-review-ui'
 
 export type ReviewEligibility = {
   eligible: boolean

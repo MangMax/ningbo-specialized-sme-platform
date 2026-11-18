@@ -9,7 +9,7 @@ import { differenceEvidenceColumns,differencePublicColumns,targetDifferenceReaso
 import { readDifferenceCollection,readDifferenceCollectionScope,readDifferenceObservation } from '../../lib/platform/difference-sources'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import { readLatestDecisionHead102 as latestDecisionHead102,whereDecisionScope102 as whereScope } from './decision-lifecycle-102/head'
-import { readEvidenceToken113 } from '../../../../server/utils/evidence-impact-113'
+import { readEvidenceToken113 } from './evidence-impact-113'
 export { readLatestDecisionHead102 as latestDecisionHead102 } from './decision-lifecycle-102/head'
 
 export type DecisionDb = BetterSQLite3Database<typeof s>

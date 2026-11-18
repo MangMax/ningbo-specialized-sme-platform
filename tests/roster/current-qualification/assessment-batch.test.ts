@@ -11,7 +11,7 @@ import { listCurrentQualified, listCurrentQualifiedWithCandidatesAndWitnesses } 
 import { createTargetCurrentCandidateReader } from '../../../layers/sme-roster/lib/roster/current-candidates-target'
 import { createTargetRecognizedWitnessReader } from '../../../layers/sme-roster/lib/roster/recognized-witness-target'
 import { readTargetIdentityKeyVariants } from '../../../layers/sme-roster/lib/roster/current-identity-keys'
-import { readQueryCoverage, readQueryCoverageBatch } from '../../../lib/roster/query-assessment'
+import { readQueryCoverage, readQueryCoverageBatch } from '../../../layers/sme-roster/lib/roster/query-assessment'
 import { currentWorkbookValues } from '../../../layers/sme-roster/lib/roster/current-workbook-presentation'
 import { writeCurrentWorkbook, writeCurrentWorkbookWithCandidates } from '../../../layers/sme-roster/lib/roster/current-workbook'
 import { writeNewCollectionTarget } from '../../../layers/sme-roster/lib/platform/collection-target-command'

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import QueryAssessmentSummary from '@/components/evidence-review/QueryAssessmentSummary.vue'
-import type { ReviewAssessment } from '~~/lib/roster/evidence-review-ui'
+import RosterQueryAssessmentSummary from '#sme-roster/app/components/evidence-review/QueryAssessmentSummary.vue'
+import type { ReviewAssessment } from '#sme-roster/lib/roster/evidence-review-ui'
 import {
   comparisonDirectionLabel,
   DIFFERENCE_MEASURES,
@@ -126,7 +126,7 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs f
           <TableCell><RosterTitleBadge :code="row.titleCode" /></TableCell>
           <TableCell class="text-xs">{{ comparisonDirectionLabel(row.direction) }}</TableCell>
           <TableCell>
-            <QueryAssessmentSummary v-if="row.queryCoverage && row.currentDecision && row.explanationValidity && row.assessment" :assessment="row as ReviewAssessment" compact />
+            <RosterQueryAssessmentSummary v-if="row.queryCoverage && row.currentDecision && row.explanationValidity && row.assessment" :assessment="row as ReviewAssessment" compact />
             <Badge v-else :variant="statusVariant(row.status)">
               {{ DIFFERENCE_STATUSES[row.status] ?? row.status }}
             </Badge>

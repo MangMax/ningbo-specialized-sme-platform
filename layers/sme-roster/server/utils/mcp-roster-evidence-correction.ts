@@ -1,5 +1,5 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import * as schema from '../../db/schema'
+import * as schema from '../../../../db/schema'
 import { handleEvidenceCorrectionRequest, type EvidenceCorrectionAction } from './roster-evidence-correction-api'
 export async function dispatchEvidenceCorrectionMcp(action: EvidenceCorrectionAction, args: Record<string, unknown>, context: { db: BetterSQLite3Database<typeof schema>; filesDir?: string; authorized?: boolean }) {
   const write = ['preflight', 'commit', 'batch'].includes(action)

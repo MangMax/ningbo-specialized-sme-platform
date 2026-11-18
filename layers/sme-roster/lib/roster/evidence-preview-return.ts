@@ -1,6 +1,6 @@
 import { nextTick, onMounted, onScopeDispose, watch, type Ref } from 'vue'
-import { ROSTER_LEDGER_PATH } from '../../layers/sme-roster/lib/sme-roster/routes'
-import { isSafeBackPath } from '../../layers/core/lib/preview-query'
+import { ROSTER_LEDGER_PATH } from '../sme-roster/routes'
+import { isSafeBackPath } from '../../../core/lib/preview-query'
 
 const RETURN_STATE_KEY = 'roster:evidence-preview-return'
 const HISTORY_RETURN_PATH_KEY = '__rosterEvidencePreviewReturnPath'

@@ -1,4 +1,4 @@
-import { eventCorrectionRoute } from '../../../utils/roster-event-correction-route'
+import { eventCorrectionRoute } from '../../../../layers/sme-roster/server/utils/roster-event-correction-route'
 defineRouteMeta({
   "openAPI": {
     "tags": ["正式事实精确读回"],

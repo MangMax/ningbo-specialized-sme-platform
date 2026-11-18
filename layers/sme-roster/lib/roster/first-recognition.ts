@@ -26,7 +26,7 @@
  * 把两件事并成一个标,读的人就分不清「这个年份存疑」还是「下次到期存疑」。
  */
 import type { TitleLifecycle } from './lifecycle'
-import { isPageCapable } from '../../../../lib/roster/evidence-page'
+import { isPageCapable } from './evidence-page'
 
 /**
  * 首次认定的两态。

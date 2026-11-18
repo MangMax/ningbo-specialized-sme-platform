@@ -5,7 +5,7 @@
  * 这里只用已经返回的 `subtitle`（接口）、`titleName`（称号）和 `conditions`
  * （查询范围）拼出可读标题，不把 SYN 编号解码成企业，也不猜测主体。
  */
-import { conditionSummary, interfaceLabel } from '../../../../lib/roster/review-display'
+import { conditionSummary, interfaceLabel } from './review-display'
 
 export interface ComparisonSourceEnterpriseLink {
   relationId?: number

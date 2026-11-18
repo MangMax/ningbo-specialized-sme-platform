@@ -9,7 +9,7 @@ import {
   impactOldDecisionText,
   impactReviewFormTitle,
   officialTitlesLabel,
-} from '../../../lib/roster/review-display'
+} from '../../../layers/sme-roster/lib/roster/review-display'
 
 const assessment = (patch: Record<string, unknown> = {}) => ({
   queryCoverage: { status: 'complete', sources: [], truncated: false },

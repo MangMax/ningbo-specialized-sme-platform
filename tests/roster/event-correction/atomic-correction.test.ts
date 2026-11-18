@@ -24,7 +24,7 @@ async function fixture(awardYear = 2021, titleCode = 'specialized_sme') {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'test-api' }))
   const oldPath = process.env.NUXT_DB_PATH; process.env.NUXT_DB_PATH = dbPath
-  const { eventCorrectionRoute } = await import('../../../server/utils/roster-event-correction-route')
+  const { eventCorrectionRoute } = await import('../../../layers/sme-roster/server/utils/roster-event-correction-route')
   const app = createApp(), router = createRouter()
   router.use('/api/roster/events/corrections/preflight', eventCorrectionRoute('preflight'))
   router.use('/api/roster/events/corrections/commit', eventCorrectionRoute('commit'))

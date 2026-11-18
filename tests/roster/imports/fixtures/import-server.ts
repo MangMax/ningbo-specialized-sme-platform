@@ -3,7 +3,7 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { handleRosterImportRequest, type RosterImportAction } from '../../../../server/utils/roster-import-http'
-import { handleEvidencePagesRequest } from '../../../../server/utils/roster-evidence-pages'
+import { handleEvidencePagesRequest } from '../../../../layers/sme-roster/server/utils/roster-evidence-pages'
 import { startHttpFixture, type FixtureHandler } from '../../../support/http'
 import type { importExecutor } from '../../../../server/utils/import-execution'
 import { commitRosterImport, preflightRosterImport } from '../../../../server/utils/roster-import'

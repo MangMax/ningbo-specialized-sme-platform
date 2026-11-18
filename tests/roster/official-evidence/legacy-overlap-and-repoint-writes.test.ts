@@ -11,8 +11,8 @@ import { z } from 'zod'
 import * as schema from '../../../db/schema'
 import type { OfficialPublishedRow, RosterImportRecord, RosterImportPayload, RosterImportRequest } from '../../../lib/roster-import-client'
 import { commitRosterImport, preflightRosterImport } from '../../../server/utils/roster-import'
-import { readExactEvidence } from '../../../server/utils/roster-evidence-correction'
-import { appendOfficialEvidenceRevision } from '../../../server/utils/official-evidence'
+import { readExactEvidence } from '../../../layers/sme-roster/server/utils/roster-evidence-correction'
+import { appendOfficialEvidenceRevision } from '../../../layers/sme-roster/server/utils/official-evidence'
 
 type Execute = typeof import('../../../server/utils/import-execution')['importExecutor']['execute']
 const current = vi.hoisted((): { db?: BetterSQLite3Database<typeof schema>; filesDir: string } => ({ filesDir: '' }))

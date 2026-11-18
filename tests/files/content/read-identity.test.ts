@@ -104,7 +104,7 @@ it('official source reads expose registered identity while keeping historical bi
   writeFileSync(join(root, locator), 'abc')
   const { row } = await registerStoredFile(db, root, parseUploadDeclaration({ relPath: locator }))
   const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', path: locator, title: 'official fixture' }).returning().get()
-  const { readOfficialSourceDocuments } = await import('../../../server/utils/official-source-directory')
+  const { readOfficialSourceDocuments } = await import('../../../layers/sme-roster/server/utils/official-source-directory')
   const before = db.select().from(schema.sourceDocument).all()
   expect(readOfficialSourceDocuments(db, [doc.id])[0]).toMatchObject({ id: doc.id, path: locator, contentIdentity: { status: 'unknown', historical: 'unknown', registered: { fileId: row.id, sha256: ABC, bytes: 3 } } })
   writeFileSync(join(root, locator), 'xyz')

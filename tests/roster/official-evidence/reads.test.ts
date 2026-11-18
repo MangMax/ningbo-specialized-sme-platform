@@ -359,7 +359,7 @@ it('checks redaction expansion against the final full envelope budget',async()=>
 })
 
 it('validates raw MCP opt-in arguments before SDK stripping and retains old anonymous exact reads',async()=>{
-  const {officialEvidenceRpcError}=await import('../../../server/utils/official-evidence-read')
+  const {officialEvidenceRpcError}=await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   const body=(name:string,args:unknown)=>({jsonrpc:'2.0',id:351,method:'tools/call',params:{name,arguments:args}})
   const invalid=officialEvidenceRpcError(body('get_roster_evidence',{id:1,official:'latest',unknown:1}),true)
   expect(invalid?.status).toBe(400);expect(await invalid!.json()).toMatchObject({error:{code:-32602}})
@@ -480,7 +480,7 @@ it.each([
   { case: 'undefined-own-key', args: { batchId: undefined } },
   { case: 'empty-object', args: {} },
 ])('raw legacy dispatch delegates values to SDK: $case', async ({ args }) => {
-  const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
+  const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   // null proves raw dispatch only, never HTTP200 or an SDK tool-error envelope.
   expect(officialEvidenceRpcError(rpc399(args), true)).toBeNull()
 })
@@ -488,13 +488,13 @@ it.each([
   { case: 'missing', body: { jsonrpc: '2.0', id: 399, method: 'tools/call', params: { name: 'list_roster_import_items' } } },
   ...[undefined, null, [], 1, 'x', true].map((args, i) => ({ case: ['undefined', 'null', 'array', 'number', 'string', 'boolean'][i], body: rpc399(args) })),
 ])("raw malformed root $case", async ({ body }) => {
-  const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
+  const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   const result = officialEvidenceRpcError(body, true)
   expect(result?.status).toBe(400)
   expect(await result!.json()).toEqual({ jsonrpc: '2.0', id: 399, error: { code: -32602, message: 'Invalid exact official read arguments' } })
 })
 it.each(['projection', 'source', 'itemIndex', 'oldRecordId', 'cursor', 'maxBytes', 'extra'])("raw own key stays strict %s", async key => {
-  const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
+  const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   for (const value of [undefined, null, 'invalid']) {
     // Invalid old paging distinguishes strict routing even for optional undefined.
     const result = officialEvidenceRpcError(rpc399({ batchId: 1, pageSize: 51, [key]: value }), true)
@@ -542,7 +542,7 @@ const strictInvalid399: { case: string; args: Record<string, unknown> }[] = [
   { case: 'cursor-over', args: { ...events399, cursor: 'x'.repeat(513) } },
 ]
 it.each(strictInvalid399)("raw strict rejection $case", async ({ args }) => {
-  const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
+  const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   const result = officialEvidenceRpcError(rpc399(args), true)
   expect(result?.status).toBe(400)
   const body = await result!.json()
@@ -550,13 +550,13 @@ it.each(strictInvalid399)("raw strict rejection $case", async ({ args }) => {
   expect(body).not.toHaveProperty('result')
 })
 it('raw valid opt-in boundaries and domain cursor dispatch', async () => {
-  const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
+  const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   for (const args of [snapshot399, events399, { ...snapshot399, source: 'redacted_receipt', batchId: undefined, receiptId: 2 }, { ...events399, source: 'private_batch', receiptId: undefined, batchId: 1 }, { ...events399, pageSize: 1, maxBytes: 1 }, { ...events399, pageSize: 50, maxBytes: 65536, itemIndex: Number.MAX_SAFE_INTEGER - 1, oldRecordId: Number.MAX_SAFE_INTEGER, cursor: 'x'.repeat(512) }, { ...events399, cursor: 'not-base64' }, { ...events399, cursor: Buffer.from(JSON.stringify({ source: 'redacted_receipt', sourceId: 2, itemIndex: 0, oldRecordId: 1, afterIndex: 999999 })).toString('base64url') }]) {
     expect(officialEvidenceRpcError(rpc399(args), true)).toBeNull()
   }
 })
 it('raw auth precedes legacy strict malformed and batch dispatch', async () => {
-  const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
+  const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   const { resolveMcpAuth } = await import('../../../layers/core/server/utils/mcp-auth')
   for (const auth of [{ given: null, configured: 'synthetic-399-mcp' }, { given: 'wrong', configured: 'synthetic-399-mcp' }, { given: 'synthetic-399-mcp', configured: '' }, { given: 'synthetic-399-api', configured: 'synthetic-399-mcp' }]) {
     expect(resolveMcpAuth(auth).writeAuthorized).toBe(false)
@@ -573,7 +573,7 @@ it('raw auth precedes legacy strict malformed and batch dispatch', async () => {
   expect(await officialEvidenceRpcError([invalid, rpc399({})], true)!.json()).toMatchObject({ id: 2, error: { code: -32602 } })
 })
 it('raw other tools retain their original dispatch and strict opt-in', async () => {
-  const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
+  const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   for (const [name, args] of [['get_roster_evidence', { id: 1, legacyIgnored: 1 }], ['get_official_event', { eventId: 1 }], ['list_roster_import_receipts', { batchId: 1, pageSize: 51 }], ['get_roster_import_request', { batchId: 1, maxBytes: 65537 }]] as const) {
     expect(officialEvidenceRpcError({ ...rpc399(args), params: { name, arguments: args } }, false)).toBeNull()
   }
@@ -635,14 +635,14 @@ it('handler preserves accepted selectors undefined normalization and content byt
   } finally { f.restore() }
 })
 it.each(invalidFields399)("SDK field schema rejects legacy $case", async ({ args }) => {
-  const { importItemsReadShape } = await import('../../../server/utils/official-evidence-read')
+  const { importItemsReadShape } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   const { objectFromShape, safeParseAsync } = await import('@modelcontextprotocol/sdk/server/zod-compat.js')
   // Actual installed SDK schema adapter only. SDK server ordering is inspected
   // statically; HTTP/status/result.isError remains a separate UNRUN lane.
   expect((await safeParseAsync(objectFromShape(importItemsReadShape), args)).success).toBe(false)
 })
 it('SDK raw shape accepts selector combinations for handler validation', async () => {
-  const { importItemsReadShape } = await import('../../../server/utils/official-evidence-read')
+  const { importItemsReadShape } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   const { objectFromShape, safeParseAsync } = await import('@modelcontextprotocol/sdk/server/zod-compat.js')
   for (const args of [{}, { batchId: 1, receiptId: 2 }, { idempotencyKey: '   ' }]) expect((await safeParseAsync(objectFromShape(importItemsReadShape), args)).success).toBe(true)
 })

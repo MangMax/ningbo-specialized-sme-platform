@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import * as schema from '../../db/schema'
+import * as schema from '../../../../db/schema'
 import { captureOfficialEventRevision113 } from './evidence-impact-113'
 type Db = BetterSQLite3Database<typeof schema>
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]

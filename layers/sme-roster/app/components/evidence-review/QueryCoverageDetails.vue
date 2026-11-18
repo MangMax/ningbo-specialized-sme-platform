@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import type { ReviewAssessment } from '~~/lib/roster/evidence-review-ui'
-import { coverageLabels } from '~~/lib/roster/evidence-review-ui'
+import type { ReviewAssessment } from '#sme-roster/lib/roster/evidence-review-ui'
+import { coverageLabels } from '#sme-roster/lib/roster/evidence-review-ui'
 import { PLATFORM_QUERY_STATUSES } from '#sme-roster/lib/labels'
 import {
   conditionSummary,
   interfaceLabel,
   reviewTimeLabel,
-} from '~~/lib/roster/review-display'
-import AssessmentStatusBadge from './AssessmentStatusBadge.vue'
+} from '#sme-roster/lib/roster/review-display'
+import RosterAssessmentStatusBadge from './AssessmentStatusBadge.vue'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 
 defineProps<{ coverage: ReviewAssessment['queryCoverage'] }>()
@@ -45,7 +45,7 @@ const pageStatus = (value: string) => PLATFORM_QUERY_STATUSES[value] ?? '状态�
       >
         <div class="flex flex-wrap items-center gap-1.5">
           <span class="text-foreground font-medium">{{ interfaceLabel(source.interface) }}</span>
-          <AssessmentStatusBadge kind="coverage" :value="source.status" :label="coverageLabels[source.status]" />
+          <RosterAssessmentStatusBadge kind="coverage" :value="source.status" :label="coverageLabels[source.status]" />
           <span class="text-muted-foreground tabular-nums">{{ reviewTimeLabel(source.queriedAt) }}</span>
         </div>
         <p class="text-foreground">{{ outcomes[source.outcome] ?? '结果未知' }}</p>

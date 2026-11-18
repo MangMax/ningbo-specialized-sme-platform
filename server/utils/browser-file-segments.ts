@@ -1,7 +1,7 @@
 import { createError, getRouterParam, readBody, setHeader } from 'h3'
 import { z } from 'zod'
 import { useDb } from '@db'
-import { checkBrowserReviewRequest } from './browser-review-102'
+import { checkBrowserReviewRequest } from '../../layers/sme-roster/server/utils/browser-review-102'
 import { getParse105, preflightRanges669, commitRanges669, parseFrozenCommit310, ParseMaintenanceError } from './parse-maintenance-105'
 import { requestLogContext } from '../../layers/core/lib/logging'
 

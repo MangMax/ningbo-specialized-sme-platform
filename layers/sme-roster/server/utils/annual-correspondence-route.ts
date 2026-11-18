@@ -1,7 +1,7 @@
 import { createError, defineEventHandler, getHeader, getMethod, getRouterParam, readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { z } from 'zod'
 import { requestLogContext } from '../../../core/lib/logging'
-import { checkBrowserReviewRequest } from '../../../../server/utils/browser-review-102'
+import { checkBrowserReviewRequest } from './browser-review-102'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
 import { handleAnnualTaskRequest, type AnnualTaskAction, type AnnualTaskContext } from './annual-correspondence-api'
 

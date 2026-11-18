@@ -6,7 +6,7 @@ import * as schema from '../../../../db/schema'
 import type { PlatformStoredQuery } from '../../lib/platform/read'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import { correspondenceQueryRelationIds,readCorrespondenceTargetQueries,readCorrespondenceTargetSources } from './record-correspondence-target-sources'
-import { versionedOfficialEvent } from '../../../../server/utils/roster-event-version'
+import { versionedOfficialEvent } from './roster-event-version'
 
 type Db = BetterSQLite3Database<typeof schema>
 export type ProofExecutor = Db | Parameters<Parameters<Db['transaction']>[0]>[0]

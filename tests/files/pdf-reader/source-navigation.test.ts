@@ -3,7 +3,7 @@ import { defineComponent, h, ref } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory, useRoute, useRouter } from 'vue-router'
 import { beforeEach, expect, it, vi } from 'vitest'
-import PreviewPage from '../../../pages/preview.vue'
+import PreviewPage from '../../../layers/sme-roster/app/pages/preview.vue'
 
 vi.mock('@pinia/colada', () => ({ useQuery: () => ({ data: ref(null) }) }))
 

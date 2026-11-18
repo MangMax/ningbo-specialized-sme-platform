@@ -1,3 +1,3 @@
-import { eventCorrectionRoute } from '../../../../utils/roster-event-correction-route'
+import { eventCorrectionRoute } from '../../../../../layers/sme-roster/server/utils/roster-event-correction-route'
 defineRouteMeta({ openAPI: { tags: ['正式事件更正'], summary: '按事件 ID 分页读取追加更正审计', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer', minimum: 1 } }, { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } }, { name: 'pageSize', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 } }], responses: { 200: { description: 'rows,total,page,pageSize; before/after,actor,basis,sourceIdentity,original evidence' }, 400: { description: 'Invalid paging' }, 404: { description: 'Official event not found' } } } })
 export default eventCorrectionRoute('audit')

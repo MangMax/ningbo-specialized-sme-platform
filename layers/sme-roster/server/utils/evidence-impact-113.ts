@@ -2,11 +2,11 @@
 import { and,asc,desc,eq,gt,inArray,or,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { createHash } from 'node:crypto'
-import * as s from '../../db/schema'
-import { orderDifferenceEnvelopeConditions,readDifferenceRevisionMaterials } from '../../layers/sme-roster/lib/platform/difference-hash-inputs'
-import { differenceEvidenceColumns } from '../../layers/sme-roster/lib/platform/difference-reference-target'
-import { readDifferenceCollection,readDifferenceCollectionScope,readDifferenceObservations } from '../../layers/sme-roster/lib/platform/difference-sources'
-import { readLatestDecisionHead102 as latestDecisionHead102 } from '../../layers/sme-roster/server/utils/decision-lifecycle-102/head'
+import * as s from '../../../../db/schema'
+import { orderDifferenceEnvelopeConditions,readDifferenceRevisionMaterials } from '../../lib/platform/difference-hash-inputs'
+import { differenceEvidenceColumns } from '../../lib/platform/difference-reference-target'
+import { readDifferenceCollection,readDifferenceCollectionScope,readDifferenceObservations } from '../../lib/platform/difference-sources'
+import { readLatestDecisionHead102 as latestDecisionHead102 } from './decision-lifecycle-102/head'
 
 type Db = BetterSQLite3Database<typeof s>
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
