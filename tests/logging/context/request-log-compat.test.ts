@@ -47,7 +47,7 @@ describe('request log context compatibility', () => {
     await expect(handler(event)).resolves.toBe(body)
     expect(reads.json).toHaveBeenLastCalledWith(
       'context-compat.db', expect.objectContaining({ operation: 'list' }), expect.any(AbortSignal),
-      { requestId: 'req-compat', traceId: 'trace-compat', taskId: 'task-compat', httpMethod: 'GET', httpRoute: '/api/roster/enterprises' },
+      { requestId: 'req-compat', traceId: 'trace-compat', taskId: 'task-compat', module: 'sme-roster', httpMethod: 'GET', httpRoute: '/api/roster/enterprises' },
     )
     expect(event.context.applicationLogContext).toBe(metadata)
     expect(event.context.applicationLogContext).toEqual({ requestId: 'req-compat', traceId: 'trace-compat', taskId: 'task-compat' })
@@ -55,7 +55,7 @@ describe('request log context compatibility', () => {
       ...requestLogContext(event), source: 'task', operation: 'task.queued', outcome: 'started',
       origin: { runtime: 'node', integration: 'application', capture: 'manual', execution: 'background' },
     })
-    expect(task).toMatchObject({ source: 'task', taskId: 'task-compat', requestId: 'req-compat', origin: { execution: 'background' } })
+    expect(task).toMatchObject({ source: 'task', module: 'sme-roster', taskId: 'task-compat', requestId: 'req-compat', origin: { execution: 'background' } })
     expect(task).not.toHaveProperty('httpMethod')
     expect(task).not.toHaveProperty('httpRoute')
   })

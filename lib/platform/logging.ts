@@ -16,7 +16,7 @@ export function platformOutcome(status: PlatformQueryStatus): LogInput['outcome'
 }
 /** Runtime diagnostics only; failure codes are existing fixed domain discriminators. */
 export function logPlatformResult(operation: string, status: PlatformQueryStatus, context: LogContext, counts: LogInput['counts'], durationMs: number, errorCode?: string) {
-  appLog({ source: 'platform', operation, outcome: status === 'failed' && errorCode === 'timeout' ? 'timeout' : platformOutcome(status),
+  appLog({ module: 'sme-roster', source: 'platform', operation, outcome: status === 'failed' && errorCode === 'timeout' ? 'timeout' : platformOutcome(status),
     level: status === 'failed' || status === 'auth_failed' ? 'error' : status === 'partial' || status === 'not_queried' ? 'warn' : 'info',
     counts, durationMs, ...(errorCode ? { errorCode } : {}) }, context)
 }

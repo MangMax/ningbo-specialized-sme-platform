@@ -1,4 +1,5 @@
 import { appLog, type LogContext } from '../../lib/logging'
+import { jobLogModule } from '../../lib/logging/module'
 import { hasImportWriter, whenImportWriterIdle } from './import-write-barrier'
 import { cleanupCurrentExports } from './current-export-artifact'
 import { and, eq, sql } from 'drizzle-orm'
@@ -230,6 +231,13 @@ export interface SubmitInput {
   logContext?: LogContext
 }
 
+function jobContext(row: JobRow, input?: LogContext): Readonly<LogContext> {
+  // A request's routing owner cannot attribute a different or unregistered job kind.
+  const { module: _requestModule, ...context } = input ?? {}
+  const module = jobLogModule(row.kind)
+  return Object.freeze({ ...context, taskId: row.id, ...(module ? { module } : {}) })
+}
+
 /**
  * 建一条任务行并入队,**立刻返回**。
  *
@@ -266,7 +274,7 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
     logContext: input.logContext,
   })
 
-  queue.push({ run, jobId: row.id, kind: input.kind, db, filesDir: input.filesDir, logContext: Object.freeze({ ...input.logContext, taskId: row.id }) })
+  queue.push({ run, jobId: row.id, kind: input.kind, db, filesDir: input.filesDir, logContext: jobContext(row, input.logContext) })
   drainQueue()
   return row
 }
@@ -283,8 +291,8 @@ export function requeueFinishedJob(db: Db, input: { id: string; kind: string; pa
   const run = spec.prepare?.(input.params, db) ?? spec.run
   const row = reopenJob(db, input.id, input.kind, input.params)
   if (!row) return false
-  appLog({ source: 'task', operation: 'task.requeued', outcome: 'started', taskId: row.id }, input.logContext)
-  queue.push({ run, jobId: row.id, kind: row.kind, db, filesDir: input.filesDir, logContext: Object.freeze({ ...input.logContext, taskId: row.id }) })
+  appLog({ module: jobLogModule(row.kind), source: 'task', operation: 'task.requeued', outcome: 'started', taskId: row.id }, input.logContext)
+  queue.push({ run, jobId: row.id, kind: row.kind, db, filesDir: input.filesDir, logContext: jobContext(row, input.logContext) })
   drainQueue()
   return true
 }
@@ -439,7 +447,7 @@ export function requestJobCancel(db: Db, id: string, logContext?: LogContext): C
     return { ok: true, state: 'cancelled', cancelled: true, note: '任务尚在排队,已取消,未执行。' }
   }
 
-  if (!cancelRequested.has(id)) appLog({ source: 'task', operation: 'task.cancel_requested', outcome: 'started', taskId: id }, activeLogContexts.get(id) ?? logContext)
+  if (!cancelRequested.has(id)) appLog({ module: jobLogModule(row.kind), source: 'task', operation: 'task.cancel_requested', outcome: 'started', taskId: id }, activeLogContexts.get(id) ?? logContext)
   cancelRequested.add(id)
   return {
     ok: true,
@@ -485,7 +493,7 @@ export function enqueuePersistedJob(db: Db, id: string, filesDir: string, logCon
   const spec = getJobSpec(row.kind)
   if (!spec?.run) return false
   const run = spec.prepare?.(row.params, db) ?? spec.run
-  queue.push({ run, jobId: id, kind: row.kind, db, filesDir, logContext: Object.freeze({ ...logContext, taskId: id }) })
+  queue.push({ run, jobId: id, kind: row.kind, db, filesDir, logContext: jobContext(row, logContext) })
   drainQueue()
   return true
 }

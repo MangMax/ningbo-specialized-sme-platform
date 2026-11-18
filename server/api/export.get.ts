@@ -73,7 +73,7 @@ export default defineEventHandler(async (event) => {
   const kind = q.mode === 'comparison' ? 'comparison' : 'records'
   const operation = `export.legacy.${kind}.summary`
   let summarized = false
-  appLog({ source: 'export', operation, outcome: 'started' }, logContext)
+  appLog({ module: 'sme-roster', source: 'export', operation, outcome: 'started' }, logContext)
   try {
   const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined)
 
@@ -130,7 +130,7 @@ export default defineEventHandler(async (event) => {
       showCurated: str(q.showCurated) === 'true',
     })
     summarized = true
-    appLog({ source: 'export', operation, outcome: 'success', counts: { done: rows.length, total: rows.length } }, logContext)
+    appLog({ module: 'sme-roster', source: 'export', operation, outcome: 'success', counts: { done: rows.length, total: rows.length } }, logContext)
     writeWorkbook = async (wb, pace) => {
       const ws = legacyExportSheet(wb, pace, '比对', [
         { header: '企业名称', key: 'name', width: 34 },
@@ -169,7 +169,7 @@ export default defineEventHandler(async (event) => {
 
     const enterprises = new Set(rows.map((r) => r.enterpriseId)).size
     summarized = true
-    appLog({ source: 'export', operation, outcome: 'success', counts: { done: rows.length, total: rows.length } }, logContext)
+    appLog({ module: 'sme-roster', source: 'export', operation, outcome: 'success', counts: { done: rows.length, total: rows.length } }, logContext)
     // 企业数由本次筛选的企业×称号行去重,说明先于表头写入。
     writeWorkbook = async (wb, pace) => {
       const ws = legacyExportSheet(wb, pace, '台账', [
@@ -213,7 +213,7 @@ export default defineEventHandler(async (event) => {
   } catch (error) {
     if (!summarized) {
       const status = (error as { statusCode?: number })?.statusCode ?? 500
-      appLog({ source: 'export', operation, outcome: status < 500 ? 'denied' : 'failure', statusCode: status, level: 'warn', errorCode: status === 400 ? 'invalid_export_request' : 'legacy_summary_failed' }, logContext)
+      appLog({ module: 'sme-roster', source: 'export', operation, outcome: status < 500 ? 'denied' : 'failure', statusCode: status, level: 'warn', errorCode: status === 400 ? 'invalid_export_request' : 'legacy_summary_failed' }, logContext)
     }
     throw error
   }

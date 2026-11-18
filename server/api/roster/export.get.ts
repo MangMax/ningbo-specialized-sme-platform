@@ -114,11 +114,11 @@ function firstRecognitionEvidenceText(row: RosterEnterpriseRow): string {
 export default defineEventHandler(async (event) => {
   const logContext = requestLogContext(event)
   let summarized = false
-  appLog({ source: 'export', operation: 'export.legacy.enterprises.summary', outcome: 'started' }, logContext)
+  appLog({ module: 'sme-roster', source: 'export', operation: 'export.legacy.enterprises.summary', outcome: 'started' }, logContext)
   try {
   const { rows, counts } = allRosterEnterprises(useDb(), parseRosterEnterpriseQuery(getQuery(event)))
   summarized = true
-  appLog({ source: 'export', operation: 'export.legacy.enterprises.summary', outcome: 'success', counts: { done: rows.length, total: rows.length } }, logContext)
+  appLog({ module: 'sme-roster', source: 'export', operation: 'export.legacy.enterprises.summary', outcome: 'success', counts: { done: rows.length, total: rows.length } }, logContext)
 
   const download = await writeLegacyXlsx(event, async (wb, pace) => {
     const ws = legacyExportSheet(wb, pace, '企业总表', [
@@ -175,7 +175,7 @@ export default defineEventHandler(async (event) => {
   } catch (error) {
     if (!summarized) {
       const status = (error as { statusCode?: number })?.statusCode ?? 500
-      appLog({ source: 'export', operation: 'export.legacy.enterprises.summary', outcome: status < 500 ? 'denied' : 'failure', statusCode: status, level: 'warn', errorCode: status === 400 ? 'invalid_export_request' : 'legacy_summary_failed' }, logContext)
+      appLog({ module: 'sme-roster', source: 'export', operation: 'export.legacy.enterprises.summary', outcome: status < 500 ? 'denied' : 'failure', statusCode: status, level: 'warn', errorCode: status === 400 ? 'invalid_export_request' : 'legacy_summary_failed' }, logContext)
     }
     throw error
   }

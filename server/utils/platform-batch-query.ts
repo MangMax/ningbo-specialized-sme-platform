@@ -93,7 +93,7 @@ async function runBatch(ctx: JobContext, raw: Record<string, unknown>, cookie: s
   }
   persist()
   // This is a collection-attempt summary, not the generic job terminal event.
-  appLog({ source: 'platform', operation: 'platform.batch.collect', outcome: ctx.cancelled() ? 'cancelled' : result.completeness === 'complete' ? 'success' : 'partial',
+  appLog({ module: 'sme-roster', source: 'platform', operation: 'platform.batch.collect', outcome: ctx.cancelled() ? 'cancelled' : result.completeness === 'complete' ? 'success' : 'partial',
     durationMs: Date.now() - start, counts: { done: result.items.filter(item => item.completeness === 'complete').length, total: result.items.length,
       failed: result.items.filter(item => item.status === 'failed' || item.status === 'auth_failed').length } }, logContext)
   return { result, progress: { done: result.items.filter(item => item.completeness === 'complete').length, total: result.items.length }, ...(ctx.cancelled() ? { cancelled: true } : result.completeness !== 'complete' ? { error: '批次仍有未完成范围，请查看逐项结果并显式重试。' } : {}) }
@@ -163,7 +163,7 @@ export function retryPlatformBatch(db: Db, input: unknown, filesDir: string, log
   registerPlatformBatchJob()
   const retryContext = logContext ?? newLogContext()
   if (!requeueFinishedJob(db, { id: batch.batchId, kind: PLATFORM_BATCH_KIND, params: { ...row.params, retryItemIds: parsed.data.itemIds }, filesDir, logContext: retryContext })) return fail(409, 'Platform batch is still active')
-  appLog({ source: 'platform', operation: 'platform.batch.retry', outcome: 'started', counts: { total: parsed.data.itemIds.length } },
+  appLog({ module: 'sme-roster', source: 'platform', operation: 'platform.batch.retry', outcome: 'started', counts: { total: parsed.data.itemIds.length } },
     { ...retryContext, taskId: batch.batchId, batchId: batch.batchId })
   return { batchId: batch.batchId, itemIds: batch.itemIds, state: 'queued' }
 }

@@ -75,7 +75,7 @@ initializeWorkerLogging()
 process.on('disconnect', () => { closeConnection(); void closeApplicationLogging().finally(() => process.exit(0)) })
 process.on('message', async (request: EnterpriseReadRequest) => {
   let outcome: LogInput['outcome'] = 'failure'
-  appLog({ source: 'worker', operation: 'enterprise_read.execute', outcome: 'started' }, request.logContext)
+  appLog({ module: 'sme-roster', source: 'worker', operation: 'enterprise_read.execute', outcome: 'started' }, request.logContext)
   const beforeHeap = process.memoryUsage().heapUsed
   readPeakHeap = beforeHeap
   readPeakRss = readPeakExternal = 0
@@ -140,7 +140,7 @@ process.on('message', async (request: EnterpriseReadRequest) => {
     closeConnection()
     if (process.connected) await send({ type: 'failure', id: request.id, code: (error as { code?: string }).code ?? 'enterprise_read_failed' })
   } finally {
-    appLog({ source: 'worker', operation: 'enterprise_read.execute', outcome, durationMs: performance.now() - started, errorCode: outcome === 'failure' ? 'enterprise_read_execution_failed' : undefined }, request.logContext)
+    appLog({ module: 'sme-roster', source: 'worker', operation: 'enterprise_read.execute', outcome, durationMs: performance.now() - started, errorCode: outcome === 'failure' ? 'enterprise_read_execution_failed' : undefined }, request.logContext)
     if (connection?.inTransaction) connection.exec('ROLLBACK')
   }
 })

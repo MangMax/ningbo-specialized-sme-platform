@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { createLogService, type LogService } from './service'
 import { applicationLogRedaction, projectEvlog, safeLogEvent } from './privacy'
 import { LOG_DEFAULTS, type LogContext, type LogInput } from './contract'
+import { httpLogModule, mcpLogModule } from './module'
 export * from './contract'
 export { createLogService } from './service'
 let service: LogService | undefined
@@ -45,8 +46,13 @@ export function requestLogContext(event: { context?: Record<string, any>; method
   // Plain route adapters may omit H3 context; only carry metadata actually present.
   const context = event.context ?? {}
   const matched = context.matchedRoute
+  const request: LogContext | undefined = context.applicationLogContext
+  const module = request?.mcp ? mcpLogModule(request.mcp)
+    : typeof matched?.path === 'string' ? httpLogModule(matched.path) ?? request?.module
+    : request?.module
   return {
-    ...context.applicationLogContext,
+    ...request,
+    ...(module !== undefined ? { module } : {}),
     ...(typeof event.method === 'string' ? { httpMethod: event.method } : {}),
     ...(typeof matched?.path === 'string' ? { httpRoute: matched.path } : {}),
   }
@@ -59,12 +65,13 @@ export function requestLogContext(event: { context?: Record<string, any>; method
  */
 export function setRequestLogMetadata(
   event: { context: Record<string, any>; log?: { set?: (context: Record<string, unknown>) => void } | null },
-  patch: Pick<LogContext, 'mcp' | 'tus'>,
+  patch: Pick<LogContext, 'mcp' | 'tus' | 'module'>,
 ): void {
   try {
     const current: LogContext = event.context.applicationLogContext ?? {}
     const next: LogContext = {
       ...current,
+      ...(patch.module !== undefined ? { module: patch.module } : {}),
       ...(patch.mcp ? { mcp: { ...current.mcp, ...patch.mcp } } : {}),
       ...(patch.tus ? { tus: { ...current.tus, ...patch.tus } } : {}),
     }
@@ -72,6 +79,7 @@ export function setRequestLogMetadata(
     // evlog's native request logger keeps its own context. These namespaced
     // keys are the only raw metadata the custom drain will project.
     event.context.log?.set?.({
+      ...(next.module !== undefined ? { applicationLogModule: next.module } : {}),
       ...(next.mcp ? { applicationLogMcp: next.mcp } : {}),
       ...(next.tus ? { applicationLogTus: next.tus } : {}),
     })

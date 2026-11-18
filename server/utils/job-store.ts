@@ -1,4 +1,5 @@
 import { appLog, type LogContext } from '../../lib/logging'
+import { jobLogModule } from '../../lib/logging/module'
 import { and, desc, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { compact } from 'es-toolkit'
@@ -119,7 +120,7 @@ export function createJob(
       createdAt: new Date().toISOString(),
     })
     .run()
-  appLog({ source: 'task', operation: 'task.queued', outcome: 'started', taskId: input.id }, input.logContext)
+  appLog({ module: jobLogModule(input.kind), source: 'task', operation: 'task.queued', outcome: 'started', taskId: input.id }, input.logContext)
   return getJob(db, input.id)!
 }
 
@@ -221,7 +222,7 @@ export function markJobRunning(db: Db, id: string, logContext?: LogContext): Job
     .set({ state: 'running', startedAt: new Date().toISOString() })
     .where(and(eq(schema.job.id, id), eq(schema.job.state, 'queued')))
     .run()
-  if (updated.changes) appLog({ source: 'task', operation: 'task.started', outcome: 'started', taskId: id }, logContext)
+  if (updated.changes) appLog({ module: jobLogModule(row.kind), source: 'task', operation: 'task.started', outcome: 'started', taskId: id }, logContext)
   return getJob(db, id)
 }
 
@@ -262,7 +263,7 @@ export function finishJob(
     .run()
   const row = getJob(db, id)
   if (updated.changes && row) appLog({
-    source: 'task', operation: 'task.finished',
+    module: jobLogModule(row.kind), source: 'task', operation: 'task.finished',
     outcome: row.state === 'done' ? 'success' : row.state === 'cancelled' ? 'cancelled' : 'failure',
     taskId: id, counts: row.progress,
     durationMs: row.startedAt ? Math.max(0, Date.now() - Date.parse(row.startedAt)) : undefined,
@@ -307,11 +308,11 @@ export function reconcileInterruptedJobs(db: Db): number {
       finishedAt: new Date().toISOString(),
     })
     .where(inArray(schema.job.state, [...ACTIVE_JOB_STATES]))
-    .returning({ id: schema.job.id })
+    .returning({ id: schema.job.id, kind: schema.job.kind })
     .all()
   for (const row of recovered) {
-    appLog({ source: 'task', operation: 'task.recovered', outcome: 'unknown', taskId: row.id, errorCode: 'job_interrupted' })
-    appLog({ source: 'task', operation: 'task.finished', outcome: 'failure', taskId: row.id, errorCode: 'job_interrupted' })
+    appLog({ module: jobLogModule(row.kind), source: 'task', operation: 'task.recovered', outcome: 'unknown', taskId: row.id, errorCode: 'job_interrupted' })
+    appLog({ module: jobLogModule(row.kind), source: 'task', operation: 'task.finished', outcome: 'failure', taskId: row.id, errorCode: 'job_interrupted' })
   }
   return stuck
 }

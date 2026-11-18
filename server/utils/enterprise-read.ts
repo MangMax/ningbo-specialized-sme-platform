@@ -42,7 +42,7 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Nat
     const outcome: LogInput['outcome'] = job.signal?.aborted || valueType === 'cancelled' ? 'cancelled'
       : valueType === 'reader-error' ? 'failure'
       : error ? (code === 'worker_start_timeout' ? 'timeout' : ['worker_decode_failed', 'worker_exited', 'worker_failed', 'worker_send_failed', 'executor_closed'].includes(code ?? '') ? 'unknown' : 'failure') : 'success'
-    appLog({ source: 'worker', operation: 'enterprise_read.finished', outcome, durationMs: performance.now() - job.started,
+    appLog({ module: 'sme-roster', source: 'worker', operation: 'enterprise_read.finished', outcome, durationMs: performance.now() - job.started,
       errorCode: error ? 'enterprise_read_unavailable' : valueType === 'reader-error' ? 'enterprise_reader_failed' : undefined }, job.logContext)
     job.callerSettled = true
     job.chunks = []
@@ -71,15 +71,15 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Nat
     if (!worker) {
       let processContext = queue[0]?.logContext
       setWorkerContext = context => { processContext = context }
-      appLog({ source: 'worker', operation: 'enterprise_read.process.start', outcome: 'started' }, processContext)
+      appLog({ module: 'sme-roster', source: 'worker', operation: 'enterprise_read.process.start', outcome: 'started' }, processContext)
       let owned: NativeWorker
-      try { owned = (options.createWorker ?? createEnterpriseWorker)() } catch { appLog({ source: 'worker', operation: 'enterprise_read.process.start', outcome: 'failure', errorCode: 'worker_start_failed' }, processContext); retire(unavailable('worker_start_failed')); return }
+      try { owned = (options.createWorker ?? createEnterpriseWorker)() } catch { appLog({ module: 'sme-roster', source: 'worker', operation: 'enterprise_read.process.start', outcome: 'failure', errorCode: 'worker_start_failed' }, processContext); retire(unavailable('worker_start_failed')); return }
       worker = owned
       // All readiness/error ownership is established before any asynchronous gap.
       owned.on('message', message => {
         if (worker !== owned) return
         if (message.type === 'ready') {
-          appLog({ source: 'worker', operation: 'enterprise_read.process.ready', outcome: 'success' }, processContext)
+          appLog({ module: 'sme-roster', source: 'worker', operation: 'enterprise_read.process.ready', outcome: 'success' }, processContext)
           clearTimeout(startupTimer); ready = true; workerHeap = message.heap; workerRss = message.rss ?? 0
           starting?.resolve(); starting=undefined
           publish({ phase: 'ready', heapLimit: message.heapLimit, execArgv: message.execArgv, workerPid: message.pid }); pump(); return
@@ -114,11 +114,11 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Nat
         }
         pump()
       })
-      owned.on('error', () => { if (worker === owned) { appLog({ source: 'worker', operation: 'enterprise_read.process.error', outcome: 'failure', errorCode: 'worker_failed' }, active?.logContext ?? processContext); retire(unavailable('worker_failed')) } })
-      owned.on('exit', () => { appLog({ source: 'worker', operation: 'enterprise_read.process.exit', outcome: worker === owned && !closed ? 'unknown' : 'cancelled' }, processContext); if (worker === owned) retire(unavailable('worker_exited')) })
+      owned.on('error', () => { if (worker === owned) { appLog({ module: 'sme-roster', source: 'worker', operation: 'enterprise_read.process.error', outcome: 'failure', errorCode: 'worker_failed' }, active?.logContext ?? processContext); retire(unavailable('worker_failed')) } })
+      owned.on('exit', () => { appLog({ module: 'sme-roster', source: 'worker', operation: 'enterprise_read.process.exit', outcome: worker === owned && !closed ? 'unknown' : 'cancelled' }, processContext); if (worker === owned) retire(unavailable('worker_exited')) })
       startupTimer = setTimeout(() => {
         if (worker === owned && !ready) {
-          appLog({ source: 'worker', operation: 'enterprise_read.process.start', outcome: 'timeout', errorCode: 'worker_start_timeout' }, processContext)
+          appLog({ module: 'sme-roster', source: 'worker', operation: 'enterprise_read.process.start', outcome: 'timeout', errorCode: 'worker_start_timeout' }, processContext)
           retire(unavailable('worker_start_timeout'))
         }
       }, 5000)
@@ -128,7 +128,7 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Nat
     if (!ready || !queue.length) return
     active = queue.shift()!
     setWorkerContext?.(active.logContext)
-    appLog({ source: 'worker', operation: 'enterprise_read.started', outcome: 'started' }, active.logContext)
+    appLog({ module: 'sme-roster', source: 'worker', operation: 'enterprise_read.started', outcome: 'started' }, active.logContext)
     try { worker.postMessage({ id: active.id, ...active.input, logContext: active.logContext } satisfies EnterpriseReadRequest); publish({ phase: 'start' }) } catch { retire(unavailable('worker_send_failed')) }
   }
   function submit(input: Input, signal?: AbortSignal, encoding: 'object' | 'json' = 'object', logContext?: LogContext): Promise<unknown> {
@@ -150,7 +150,7 @@ export function createEnterpriseReadExecutor(options: { createWorker?: () => Nat
           if (index >= 0) { queue.splice(index, 1); settle(job, aborted()); pump() }
         }
       } }
-      appLog({ source: 'worker', operation: 'enterprise_read.queued', outcome: 'started' }, job.logContext)
+      appLog({ module: 'sme-roster', source: 'worker', operation: 'enterprise_read.queued', outcome: 'started' }, job.logContext)
       metadataBytes += bytes; queue.push(job)
       signal?.addEventListener('abort', job.abort, { once: true })
       if (signal?.aborted) { job.abort(); return }

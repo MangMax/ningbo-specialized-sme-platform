@@ -1,4 +1,4 @@
-import { CLIENT_PAGES, type ClientPage } from './contract'
+import { isClientPage, type ClientPage } from './contract'
 
 /** Fixed observations, never library messages, query keys, routes or callback arguments. */
 export const CLIENT_LIBRARY_SIGNALS = {
@@ -32,6 +32,6 @@ export function clientLibraryReport(value: unknown): ClientLibraryReport | null 
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const input = value as Record<string, unknown>
   if (input.kind !== 'library_signal' || typeof input.signal !== 'string'
-    || !Object.hasOwn(CLIENT_LIBRARY_SIGNALS, input.signal) || !CLIENT_PAGES.includes(input.page as ClientPage)) return null
-  return { kind: 'library_signal', signal: input.signal as ClientLibrarySignal, page: input.page as ClientPage }
+    || !Object.hasOwn(CLIENT_LIBRARY_SIGNALS, input.signal) || !isClientPage(input.page)) return null
+  return { kind: 'library_signal', signal: input.signal as ClientLibrarySignal, page: input.page }
 }

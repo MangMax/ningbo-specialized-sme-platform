@@ -300,7 +300,7 @@ function saveLegacyParseMcp105(db: Db, fileId: number, input: { parts?: z.infer<
     const { contentIdentity: _identity, partsBinding: _binding, registeredSummary: _summary, ...file } = getStoredFile(scoped, fileId)!
     return { file, parts: normalized?.ok ? normalized.parts : [], parseState: input.parseState ?? 'parsed' }
   }, { behavior: 'immediate' })
-  appLog({ source: 'file', operation: 'file.parse.revise', outcome: 'success', fileId, receiptId }, context)
+  appLog({ module: 'sme-roster', source: 'file', operation: 'file.parse.revise', outcome: 'success', fileId, receiptId }, context)
   return result
 }
 
@@ -309,10 +309,10 @@ export function saveParse105(db: Db, fileId: number, raw: unknown, mode?: 'repla
   const startedAt = Date.now()
   try {
     const result = saveParse105Unlogged(db, fileId, raw, mode, filesDir, verifiedPhysical)
-    appLog({ source: 'file', operation: result.replayed ? 'file.parse.replay' : 'file.parse.revise', outcome: 'success', fileId, receiptId: result.receiptId, durationMs: Date.now() - startedAt }, context)
+    appLog({ module: 'sme-roster', source: 'file', operation: result.replayed ? 'file.parse.replay' : 'file.parse.revise', outcome: 'success', fileId, receiptId: result.receiptId, durationMs: Date.now() - startedAt }, context)
     return result
   } catch (error) {
-    appLog({ source: 'file', operation: 'file.parse.revise', outcome: error instanceof ParseMaintenanceError ? 'denied' : 'failure', level: 'error', ...(error instanceof ParseMaintenanceError && error.statusCode === 409 ? { fileId } : {}), errorCode: error instanceof ParseMaintenanceError && error.statusCode === 409 ? 'file_parse_conflict' : 'file_parse_failed', durationMs: Date.now() - startedAt }, context)
+    appLog({ module: 'sme-roster', source: 'file', operation: 'file.parse.revise', outcome: error instanceof ParseMaintenanceError ? 'denied' : 'failure', level: 'error', ...(error instanceof ParseMaintenanceError && error.statusCode === 409 ? { fileId } : {}), errorCode: error instanceof ParseMaintenanceError && error.statusCode === 409 ? 'file_parse_conflict' : 'file_parse_failed', durationMs: Date.now() - startedAt }, context)
     throw error
   }
 }

@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { LogFilter, LogSummary } from '~~/lib/logging/contract'
 import { logBrowserHeaders, logErrorMessage, useLogRead } from '~/composables/useLogRead'
-import { describeLogRow, sourceLabel, outcomeLabel } from '@/components/logs/logPresentation'
+import { describeLogRow, sourceLabel, outcomeLabel, logModuleLabel } from '@/components/logs/logPresentation'
 import LogFilters from '@/components/logs/LogFilters.vue'
 import LogDetail from '@/components/logs/LogDetail.vue'
 import LogManagement from '@/components/logs/LogManagement.vue'
@@ -51,6 +51,7 @@ const filter = computed<LogFilter>((previous) => {
       'to',
       'level',
       'source',
+      'module',
       'operation',
       'outcome',
       'requestId',
@@ -127,6 +128,7 @@ const FILTER_LABELS: Record<string, string> = {
   to: '结束时间',
   level: '级别',
   source: '来源',
+  module: '模块',
   outcome: '结果',
   operation: '操作',
   requestId: '请求标识',
@@ -150,6 +152,7 @@ function filterSummary(value: LogFilter) {
     if (raw === undefined || raw === null || raw === '') continue
     const display = key === 'from' || key === 'to' ? localStamp(String(raw))
       : key === 'source' ? sourceLabel(String(raw))
+      : key === 'module' ? logModuleLabel(String(raw))
       : key === 'outcome' ? outcomeLabel(String(raw)) : String(raw)
     parts.push(`${label} ${display}`)
   }
@@ -371,7 +374,7 @@ function restoreFocus(event: Event) {
                 <TableHeader class="sticky top-0 z-10"><TableRow class="hover:bg-transparent">
                   <TableHead class="w-[12%]">时间</TableHead>
                   <TableHead class="w-[8%]">级别</TableHead>
-                  <TableHead class="w-[9%]">来源</TableHead>
+                  <TableHead class="w-[9%]">来源与模块</TableHead>
                   <TableHead class="w-[13%]">操作</TableHead>
                   <TableHead class="w-[15%]">目标</TableHead>
                   <TableHead class="w-[9.5%]">结果</TableHead>
@@ -433,6 +436,9 @@ function restoreFocus(event: Event) {
                           :title="item.view.sourceCode"
                           >{{ item.view.sourceCode }}</span
                         >
+                        <span data-log-field="module" class="text-muted-foreground text-xs">
+                          {{ logModuleLabel(item.row.module) }}
+                        </span>
                       </div>
                     </TableCell>
                     <TableCell class="overflow-hidden">
@@ -616,6 +622,10 @@ function restoreFocus(event: Event) {
                         item.view.sourceCode
                       }}</span></span
                     >
+                  </div>
+                  <div class="flex min-w-0 items-baseline gap-1.5">
+                    <span class="text-muted-foreground shrink-0 text-xs">模块</span>
+                    <span class="min-w-0 break-all">{{ logModuleLabel(item.row.module) }}</span>
                   </div>
                   <div class="flex min-w-0 items-baseline gap-1.5">
                     <span class="text-muted-foreground shrink-0 text-xs">结果</span>

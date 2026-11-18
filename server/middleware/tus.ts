@@ -1,4 +1,5 @@
-import { appLog, requestLogContext, type TusLogContext } from '../../lib/logging'
+import { appLog, requestLogContext, setRequestLogMetadata, type TusLogContext } from '../../lib/logging'
+import { httpLogModule } from '../../lib/logging/module'
 import { TUS_PATH, getTus, withTusObservation, type TusObservation } from '../utils/tus'
 
 /**
@@ -20,6 +21,7 @@ export default defineEventHandler(async (event) => {
   if (event.path !== TUS_PATH && !event.path.startsWith(`${TUS_PATH}/`)) return
   // 鉴权预留位:tus 协议本身不含鉴权(见 ADR)。真实登录体系未接入前,这里只做
   // 最小把关;上线前应在此校验会话/来源,再交给 tus(见 .research/tus-research.md §5.4)。
+  setRequestLogMetadata(event, { module: httpLogModule(TUS_PATH) })
   const startedAt = Date.now()
   const observation: TusObservation = {}
   let logged = false
@@ -36,7 +38,7 @@ export default defineEventHandler(async (event) => {
     if (failed) {
       const denied = !aborted && status >= 400 && status < 500
       appLog({
-        origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' }, source: 'file',
+        origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' }, module: 'core', source: 'file',
         operation: 'file.upload',
         outcome: denied ? 'denied' : 'failure',
         level: denied ? 'warn' : 'error',
@@ -49,7 +51,7 @@ export default defineEventHandler(async (event) => {
     } else if (observation.completed === true) {
       // `onUploadFinish` completed its original mkdir/link/rm work before this flag.
       appLog({
-        origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' }, source: 'file', operation: 'file.upload', outcome: 'success', statusCode: status,
+        origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' }, module: 'core', source: 'file', operation: 'file.upload', outcome: 'success', statusCode: status,
         durationMs: Date.now() - startedAt,
         ...(tus ? { tus: { ...tus, phase: 'completed' } } : {}),
       }, requestLogContext(event))
@@ -57,7 +59,7 @@ export default defineEventHandler(async (event) => {
     } else if (observation.created === true && event.method === 'POST') {
       // A create response is not a completed upload. Keep the id for later PATCH/retry correlation.
       appLog({
-        origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' }, source: 'file', operation: 'file.upload', outcome: 'started', statusCode: status,
+        origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' }, module: 'core', source: 'file', operation: 'file.upload', outcome: 'started', statusCode: status,
         durationMs: Date.now() - startedAt,
         ...(tus ? { tus: { ...tus, phase: 'created' } } : {}),
       }, requestLogContext(event))
@@ -69,7 +71,7 @@ export default defineEventHandler(async (event) => {
     if (!logged) {
       const tus = tusContext(observation)
       appLog({
-        origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' }, source: 'file', operation: 'file.upload', outcome: 'failure', level: 'error',
+        origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' }, module: 'core', source: 'file', operation: 'file.upload', outcome: 'failure', level: 'error',
         errorCode: 'file_upload_failed', durationMs: Date.now() - startedAt,
         ...(tus ? { tus: { ...tus, phase: 'request-failed' } } : {}),
       }, requestLogContext(event))

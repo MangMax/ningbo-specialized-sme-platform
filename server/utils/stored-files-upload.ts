@@ -226,10 +226,10 @@ export async function registerStoredFile(
   const startedAt = Date.now()
   try {
     const result = await registerStoredFileUnlogged(db, filesRoot, input)
-    appLog({ source: 'file', operation: result.created ? 'file.register' : 'file.register.refresh', outcome: 'success', fileId: result.row.id, durationMs: Date.now() - startedAt }, context)
+    appLog({ module: 'core', source: 'file', operation: result.created ? 'file.register' : 'file.register.refresh', outcome: 'success', fileId: result.row.id, durationMs: Date.now() - startedAt }, context)
     return result
   } catch (error) {
-    appLog({ source: 'file', operation: 'file.register', outcome: error instanceof UploadRegistrationError ? 'denied' : 'failure', level: 'error', errorCode: error instanceof UploadRegistrationError ? 'file_registration_rejected' : 'file_registration_failed', durationMs: Date.now() - startedAt }, context)
+    appLog({ module: 'core', source: 'file', operation: 'file.register', outcome: error instanceof UploadRegistrationError ? 'denied' : 'failure', level: 'error', errorCode: error instanceof UploadRegistrationError ? 'file_registration_rejected' : 'file_registration_failed', durationMs: Date.now() - startedAt }, context)
     throw error
   }
 }

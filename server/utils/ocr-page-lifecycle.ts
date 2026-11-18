@@ -145,12 +145,12 @@ export async function saveOcrImport(
   const startedAt = Date.now()
   try {
     const result = await saveOcrImportUnlogged(target, body, channel)
-    for (const page of result.pages) appLog({ source: 'ocr', operation: 'ocr.page.revise', outcome: 'success', fileId: target.row.id, page, durationMs: Date.now() - startedAt }, context)
+    for (const page of result.pages) appLog({ module: 'core', source: 'ocr', operation: 'ocr.page.revise', outcome: 'success', fileId: target.row.id, page, durationMs: Date.now() - startedAt }, context)
     return result
   } catch (error) {
     const status = (error as { statusCode?: number }).statusCode ?? 500
     const page = ocrPageSchema.safeParse(body.page)
-    appLog({ source: 'ocr', operation: 'ocr.page.revise', outcome: status < 500 ? 'denied' : 'failure', level: 'error', fileId: target.row.id, ...(page.success ? { page: page.data } : {}), errorCode: status === 409 ? 'ocr_page_conflict' : 'ocr_revision_failed', durationMs: Date.now() - startedAt }, context)
+    appLog({ module: 'core', source: 'ocr', operation: 'ocr.page.revise', outcome: status < 500 ? 'denied' : 'failure', level: 'error', fileId: target.row.id, ...(page.success ? { page: page.data } : {}), errorCode: status === 409 ? 'ocr_page_conflict' : 'ocr_revision_failed', durationMs: Date.now() - startedAt }, context)
     throw error
   }
 }
