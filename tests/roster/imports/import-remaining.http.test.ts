@@ -1,3 +1,5 @@
+import { finishFixtureAnnouncement } from './fixtures/reviewed-announcement'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -22,9 +24,13 @@ async function fixture(run: (f: any) => Promise<void>) {
   const api = await startRosterApi({ db, apiToken: 'synthetic', executeImport: async (database, action, request, errors, context) => action === 'preflight' ? preflightRosterImport(database, request, errors, context) : commitRosterImport(database, request, errors, context) })
   let serial = 0
   async function post(action: string, key: string, payload: unknown, sourceKind = 'alias_evidence') {
-    const response = await fetch(`${api.baseUrl}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer synthetic', 'content-type': 'application/json' }, body: JSON.stringify({ idempotencyKey: key, sourceKind, sourceIdentity: 'synthetic-315remaining', payload }) })
+    const body = { idempotencyKey: key, sourceKind, sourceIdentity: 'synthetic-315remaining', payload } as RosterImportRequest
+    const response = await fetch(`${api.baseUrl}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer synthetic', 'content-type': 'application/json' }, body: JSON.stringify(body) })
     expect(response.status).toBe(200)
-    return response.json()
+    const result = await response.json()
+    if (result.status !== 'staged') return result
+    const receipt = await finishFixtureAnnouncement(api.baseUrl, 'synthetic', db, body, result)
+    return { ...receipt, status: receipt.status === 'supplemented' ? 'committed' : receipt.status }
   }
   async function invalid(payload: unknown, code: string, field: string) {
     const key = `invalid-${serial++}`

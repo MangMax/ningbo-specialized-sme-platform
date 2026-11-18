@@ -77,6 +77,7 @@ export function coreWordOf(raw: string | null | undefined): string {
 // 统一社会信用代码格式（GB 32100-2015）
 // ---------------------------------------------------------------------------
 
+import { usccFormatVerdict } from '../../../core/lib/enterprise-uscc'
 export { USCC_ALPHABET, USCC_WEIGHTS, usccFormatVerdict, type UsccFormatVerdict } from '../../../core/lib/enterprise-uscc'
 
 /** 格式与校验位都对才算合法。 */

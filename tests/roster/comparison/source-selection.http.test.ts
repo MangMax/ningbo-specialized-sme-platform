@@ -1,3 +1,4 @@
+import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
 import { initializeDb } from '../../../db/client'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -6,7 +7,7 @@ import { join } from 'node:path'
 import { createApp, createRouter, createError, defineEventHandler, getQuery, toNodeListener } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { getComparison, type ComparisonRow } from '../../../layers/sme-roster/lib/comparison'
-import { createRosterImportClient, type RosterImportRecord } from '../../../layers/sme-roster/lib/roster-import-client'
+import { type RosterImportRecord } from '../../../layers/sme-roster/lib/roster-import-client'
 import { startRosterApi, executeNativeImport } from '../imports/fixtures/import-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'comparison-source-selection-'))
@@ -25,7 +26,7 @@ function syntheticUscc(n: number) {
 }
 
 async function seed(records: RosterImportRecord[]) {
-  const result = await createRosterImportClient({ baseUrl: imports.baseUrl, token: 'synthetic-source-selection' }).commit({
+  const result = await createReviewedFixtureImportClient({ baseUrl: imports.baseUrl, token: 'synthetic-source-selection' }, db).commit({
     idempotencyKey: `source-selection-${++batch}`, sourceKind: 'announcement', sourceIdentity: `synthetic/source-selection/${batch}`,
     payload: { announcement: { sourceDocument: { source: 'jxj', title: 'Synthetic source membership' }, records } },
   })

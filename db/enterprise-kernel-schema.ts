@@ -98,18 +98,19 @@ export function installEnterpriseKernelSchema(db: Database.Database) {
       request TEXT NOT NULL,
       removed_reason TEXT,
       supplement_digest TEXT,
+      reviewed_request TEXT,
       receipt TEXT
     );
   `)
 }
 
-export function assertEnterpriseKernelSchema(db: Database.Database) {
-  if (db.pragma('user_version', { simple: true }) !== ENTERPRISE_KERNEL_RUNTIME_VERSION
+export function assertEnterpriseKernelSchema(db: Database.Database, version: unknown) {
+  if (version !== ENTERPRISE_KERNEL_RUNTIME_VERSION
     || !db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='enterprise_kernel_completion'").get()
     || !db.prepare('SELECT 1 FROM enterprise_kernel_completion WHERE id = 1 AND version = ?').get(ENTERPRISE_KERNEL_VERSION)) {
     throw new Error('Enterprise kernel missing; run explicit offline enterprise kernel cutover')
   }
-  db.prepare(`SELECT e.revision, a.renamed_year, s.version_key, l.source_id, r.code, i.input_id, c.name, t.name, b.digest
+  db.prepare(`SELECT e.revision, a.renamed_year, s.version_key, l.source_id, r.code, i.input_id, c.name, t.name, b.digest, b.reviewed_request
     FROM enterprise_directory e, enterprise_former_name a, enterprise_source s, enterprise_source_link l,
     enterprise_region r, enterprise_industry i, enterprise_source_channel c, enterprise_source_list_type t,
     roster_announcement_intake b LIMIT 0`).all()

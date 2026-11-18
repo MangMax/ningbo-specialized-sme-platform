@@ -1,5 +1,6 @@
 import { useDb } from '@db'
-import { supplementAnnouncement, supplementSchema } from '../../../../../utils/announcement-intake'
+import { supplementSchema } from '../../../../../utils/announcement-intake'
+import { importExecutor } from '../../../../../utils/import-execution'
 import { intakeRoute } from '../../../../../utils/announcement-intake-route'
 
 defineRouteMeta({ openAPI: {
@@ -13,4 +14,4 @@ defineRouteMeta({ openAPI: {
   } } } },
   responses: { 200: { description: '一次性补充回执和企业及来源 ID' }, 409: { description: '身份、来源版本或回执冲突' } },
 } })
-export default intakeRoute((id, input, filesDir) => supplementAnnouncement(useDb(), id, input, filesDir), supplementSchema)
+export default intakeRoute((id, input, filesDir, context) => importExecutor.supplement(useDb(), id, input, filesDir, context), supplementSchema)

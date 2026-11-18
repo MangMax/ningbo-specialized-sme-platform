@@ -1,3 +1,4 @@
+import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { listPlatformQueries } from '../../../layers/sme-roster/lib/platform/read'
 import { initializeDb } from '../../../db/client'
@@ -40,7 +41,7 @@ import {
   type UsccResearchClaim,
 } from '../../../layers/sme-roster/lib/roster/uscc-research'
 import { normalizeName } from '../../../layers/sme-roster/lib/domain'
-import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
+import { type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { classifyRawQuery } from '../../../layers/sme-roster/lib/platform'
 import { buildPlatformWritePayload, type KnownEnterprise, type PlatformQueryInput } from '../../../layers/sme-roster/lib/platform/payload'
 import { listUsccChecklist, planUsccResearch, usccResearchIdempotencyKey } from '../../../layers/sme-roster/server/utils/uscc-research'
@@ -159,7 +160,7 @@ const unprovenTwin = seedEnterprise({ name: '宁波启明灯饰制造股份有�
 
 let server: EvidenceServer
 let currentQuery: Record<string, unknown> = {}
-const client = () => createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+const client = () => createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
 const getJson = async <T>(path: string): Promise<T> => {
   const response = await fetch(`${server.baseUrl}${path}`)
   expect(response.status, `${path} 应返回 200`).toBe(200)

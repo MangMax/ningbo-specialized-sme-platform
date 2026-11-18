@@ -58,6 +58,7 @@ export interface FixtureRoutes {
   routes?: Record<string, FixtureHandler>
   /** 路径 → 处理器,只接 `GET`(读面走这里)。 */
   getRoutes?: Record<string, FixtureHandler>
+  matchRoute?: (path: string) => FixtureHandler | undefined
 }
 
 export interface HttpFixture {
@@ -97,6 +98,7 @@ async function dispatch(
   const method = req.method ?? 'GET'
   // 先查「不看方法」的表(写面),再按 GET 查读面 —— 方法守卫留给核心,不在这里拦。
   const handler = routes.routes?.[url.pathname] ?? (method === 'GET' ? routes.getRoutes?.[url.pathname] : undefined)
+    ?? routes.matchRoute?.(url.pathname)
   if (!handler) {
     sendJson(res, 404, {}, { message: 'not found' })
     return

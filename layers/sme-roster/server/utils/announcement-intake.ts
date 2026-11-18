@@ -1,17 +1,20 @@
 import type Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
+import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
-import type * as schema from '../../../../db/schema'
+import * as schema from '../../../../db/schema'
 import {
   applyReviewedEnterprise, enterpriseFieldsSchema, EnterpriseKernelError, normalizeReviewedUscc, registerEnterpriseSource,
 } from '../../../core/public'
-import type { RosterImportItemResult, RosterImportRequest } from '../../lib/roster-import-client'
+import type { RosterAnnouncementIntakeFailure, RosterImportItemResult, RosterImportRequest, SupplementAnnouncementResponse, SupplementAnnouncementResult } from '../../lib/roster-import-client'
+import type { LogContext } from '../../../core/lib/logging'
 import { normalizeName } from '../../lib/domain'
 import { canonicalEnterpriseId } from '../../lib/roster/enterprise-identity'
-import { commitRosterImport, validateAnnouncementIdentityAndEvidence } from './roster-import'
+import { commitRosterImport, hasOfficialFactInput, planRosterImport, validateAnnouncementIdentityAndEvidence } from './roster-import'
 import { ImportReceiptError } from './import-receipts'
-import { canonicalImportJson } from './import-receipt-ledger'
+import { canonicalImportJson, recordImportReceipt } from './import-receipt-ledger'
+import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
 import { readOfficialFile } from './official-evidence-plan'
 
@@ -29,7 +32,7 @@ export const supplementSchema = z.strictObject({
 })
 
 const digestOf = (value: unknown) => createHash('sha256').update(canonicalImportJson(value)).digest('hex')
-type IntakeRow = { id: number; digest: string; request: string; removed_reason: string | null; supplement_digest: string | null; receipt: string | null }
+type IntakeRow = { id: number; digest: string; request: string; removed_reason: string | null; supplement_digest: string | null; reviewed_request: string | null; receipt: string | null }
 
 function loadIntake(db: Db, id: number) {
   const row = db.$client.prepare('SELECT * FROM roster_announcement_intake WHERE id=?').get(id) as IntakeRow | undefined
@@ -37,18 +40,11 @@ function loadIntake(db: Db, id: number) {
   return row
 }
 
-export function hasAnnouncementRows(request: RosterImportRequest) {
-  const announcement = request.payload.announcement
-  return announcement !== undefined && announcement !== null &&
-    (!Array.isArray(announcement.records) || announcement.records.length > 0)
-}
-
 export function stageAnnouncement(db: Db, request: RosterImportRequest, pageErrors: readonly RosterImportItemResult[]) {
   const announcement = request.payload.announcement!
-  if (request.sourceKind !== 'announcement' || !Array.isArray(announcement.records)
-    || !['jxj', 'miit'].includes(announcement.sourceDocument?.source) ||
-    request.payload.officialEvidenceAppends || request.payload.officialEvidenceCorrections || request.payload.platformQueries?.length) {
-    throw new ImportReceiptError(400, 'invalid_intake', 'Provide a standalone announcement version with its original rows')
+  if (!Array.isArray(announcement.records)
+    || !['jxj', 'miit'].includes(announcement.sourceDocument?.source)) {
+    throw new ImportReceiptError(400, 'invalid_intake', 'Provide an announcement version with its original rows')
   }
   if (announcement.records.some(row => !row?.enterprise || typeof row.enterprise.name !== 'string' || !normalizeName(row.enterprise.name))) {
     throw new ImportReceiptError(400, 'invalid_intake', 'Every announcement row needs its original enterprise name')
@@ -58,9 +54,13 @@ export function stageAnnouncement(db: Db, request: RosterImportRequest, pageErro
   const digest = digestOf(request)
   return db.$client.transaction(() => {
     const previous = db.$client.prepare('SELECT * FROM roster_announcement_intake WHERE idempotency_key=?').get(request.idempotencyKey) as IntakeRow | undefined
-    if (previous && previous.digest !== digest) throw new ImportReceiptError(409, 'intake_key_conflict', 'The key already identifies different source rows')
+    if (previous && previous.digest !== digest) throw new ImportReceiptError(409, 'idempotency_conflict', 'The key already identifies different source rows')
+    const batch = findBatchByKey(db, request.idempotencyKey)
+    if (batch && (batch.sourceKind !== request.sourceKind || batch.sourceIdentity !== request.sourceIdentity || batch.sourceSha256 !== (request.sourceSha256 ?? null))) {
+      throw new ImportReceiptError(409, 'idempotency_conflict', 'Idempotency key belongs to a different source')
+    }
     // Already committed historical commands can only replay their durable receipt.
-    if (!previous && db.$client.prepare("SELECT 1 FROM import_batch WHERE idempotency_key=? AND status='committed'").get(request.idempotencyKey)) return null
+    if (!previous && batch?.status === 'committed') return null
     const { id } = previous ?? db.$client.prepare(`INSERT INTO roster_announcement_intake(idempotency_key,digest,request)
       VALUES (?,?,?) RETURNING id`).get(request.idempotencyKey, digest, JSON.stringify(request)) as { id: number }
     return { status: 'staged' as const, intakeId: id, sourceDigest: digest, rowCount: announcement.records.length }
@@ -72,7 +72,8 @@ export function readAnnouncementIntake(db: Db, id: number) {
   const request = JSON.parse(row.request) as RosterImportRequest
   return { intakeId: id, sourceDigest: row.digest, status: row.removed_reason ? 'removed' : row.receipt ? 'supplemented' : 'staged',
     removedReason: row.removed_reason, sourceIdentity: request.sourceIdentity, sourceSha256: request.sourceSha256,
-    announcement: request.payload.announcement, receipt: row.receipt ? JSON.parse(row.receipt) : null }
+    announcement: request.payload.announcement, review: row.reviewed_request ? JSON.parse(row.reviewed_request) : null,
+    receipt: row.receipt ? JSON.parse(row.receipt) : null }
 }
 
 export function removeAnnouncementIntake(db: Db, id: number, sourceDigest: string, reason: string) {
@@ -130,22 +131,40 @@ function attachSources(db: Db, intakeId: number, batchId: number, request: Roste
   return [...sourceIds].sort((a, b) => a - b)
 }
 
-export async function supplementAnnouncement(db: Db, id: number, input: z.infer<typeof supplementSchema>, filesDir?: string) {
+class SupplementRejected extends Error {
+  constructor(readonly result: RosterAnnouncementIntakeFailure) { super(result.error ?? 'Announcement supplement rejected') }
+}
+
+export async function supplementAnnouncement(db: Db, id: number, input: z.infer<typeof supplementSchema>, filesDir?: string, context?: LogContext): Promise<SupplementAnnouncementResult> {
   const request = JSON.parse(loadIntake(db, id).request) as RosterImportRequest
   const pageErrors = filesDir ? await validateRosterImportPageCounts(request, filesDir) : []
-  return db.$client.transaction(() => {
+  const supplement = db.$client.transaction((): SupplementAnnouncementResponse => {
     const row = loadIntake(db, id)
     if (row.digest !== input.sourceDigest) throw new ImportReceiptError(409, 'source_changed', 'Announcement version changed')
     const decision = digestOf(input)
     if (row.supplement_digest !== null) {
       if (row.supplement_digest !== decision) throw new ImportReceiptError(409, 'supplement_conflict', 'Announcement already has a different reviewed supplement')
-      return JSON.parse(row.receipt!)
+      return JSON.parse(row.receipt!) as SupplementAnnouncementResponse
     }
     if (row.removed_reason) throw new ImportReceiptError(409, 'intake_removed', 'Announcement is removed from intake')
     const rows = request.payload.announcement!.records
     if (rows.length !== input.rows.length) throw new ImportReceiptError(422, 'unreviewed_rows', 'Supply a decision for each original row')
     if (pageErrors.length) throw new ImportReceiptError(409, 'source_changed', 'Source page cannot be revalidated')
+    if (hasOfficialFactInput(request)) {
+      const plan = planRosterImport(db, request, { filesDir })
+      const items = [...plan.conflicts]
+      if (plan.officialEvidencePlanHash && request.payload.officialEvidencePlanHash !== plan.officialEvidencePlanHash) {
+        items.push({ ok: false, kind: 'official_evidence', ref: 'payload',
+          error: { code: 'plan_mismatch', message: 'Matching opt-in preflight planHash required; sources or final plan changed' } })
+      }
+      if (items.length) {
+        throw new SupplementRejected({ status: 'failed', batchId: null, items,
+          summary: { written: 0, skipped: 0, failed: items.length, evidenceRepointed: 0 },
+          error: 'Original announcement plan failed validation' })
+      }
+    }
     const owners = new Map<number, number>()
+    const created = new Set<number>()
     for (const [index, subject] of input.rows.entries()) {
       const source = rows[index]!.enterprise
       const sourceUscc = typeof source.uscc === 'string' ? normalizeReviewedUscc(source.uscc) : ''
@@ -159,18 +178,36 @@ export async function supplementAnnouncement(db: Db, id: number, input: z.infer<
           WHERE enterprise_id=? AND name_norm=? AND verification_status='confirmed'`).get(owner, name)
       }
       const matchedBefore = subject.action === 'attach' && matchesSource(subject.enterpriseId)
-      const owner = subject.action === 'same_subject' ? owners.get(subject.row) : applyReviewedEnterprise(db, subject).id
+      const applied = subject.action === 'same_subject' ? undefined : applyReviewedEnterprise(db, subject)
+      const owner = subject.action === 'same_subject' ? owners.get(subject.row) : applied?.id
       if (!owner) throw new ImportReceiptError(422, 'invalid_subject_reference', 'Choose an earlier reviewed row')
       if (!matchedBefore && !matchesSource(owner)) throw new EnterpriseKernelError(409, 'reviewed_identity_mismatch', 'The reviewed enterprise no longer matches the source identity')
       owners.set(index, owner)
+      if (applied?.created) created.add(owner)
     }
-    const result = commitRosterImport(db, request, [], { filesDir, reviewedOwners: owners, deferCandidateTasks: true })
+    const result = commitRosterImport(db, request, [], { ...context, filesDir, reviewedOwners: owners, reviewedCreates: created, deferCandidateTasks: true })
     if (result.status !== 'committed') {
-      throw new ImportReceiptError(422, 'supplement_rejected', result.items.find(item => !item.ok)?.error?.message ?? 'The announcement supplement did not commit')
+      throw new SupplementRejected({ status: 'failed', batchId: null, items: result.items, summary: result.summary, error: result.error })
     }
     const sourceIds = attachSources(db, id, result.batchId, request, owners, filesDir)
-    const receipt = { ...result, status: 'supplemented', intakeId: id, sourceIds, owners: [...owners.values()] }
-    db.$client.prepare('UPDATE roster_announcement_intake SET supplement_digest=?, receipt=? WHERE id=?').run(decision, JSON.stringify(receipt), id)
+    const receipt: SupplementAnnouncementResponse = { ...result, status: 'supplemented', intakeId: id, sourceIds, owners: [...owners.values()] }
+    db.$client.prepare('UPDATE roster_announcement_intake SET supplement_digest=?, reviewed_request=?, receipt=? WHERE id=?')
+      .run(decision, JSON.stringify(input), JSON.stringify(receipt), id)
     return receipt
+  })
+  return db.$client.transaction(() => {
+    try {
+      return supplement()
+    } catch (error) {
+      if (!(error instanceof SupplementRejected)) throw error
+      // Keep the failure ledger after rolling back the enterprise and source writes.
+      return recordImportReceipt(db, 'commit', request, () => {
+        const batch = ensureBatchRow(db, request)
+        const { items, summary } = error.result
+        db.update(schema.importBatch).set({ status: 'failed', itemResults: items, summary, error: error.result.error })
+          .where(eq(schema.importBatch.id, batch.id)).run()
+        return { ...error.result, batchId: batch.id }
+      }, context)
+    }
   }).immediate()
 }

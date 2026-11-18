@@ -1,3 +1,4 @@
+import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
@@ -8,7 +9,7 @@ import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, getQuery, defineEventHandler, createError } from 'h3'
 import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useDb } from '../../../db'
-import { createRosterImportClient, type RosterImportPayload } from '../../../layers/sme-roster/lib/roster-import-client'
+import { type RosterImportPayload } from '../../../layers/sme-roster/lib/roster-import-client'
 import type { RosterRecognitionsResult } from '../../../layers/sme-roster/lib/roster/recognitions'
 import { startRosterApi, executeNativeImport } from '../imports/fixtures/import-server'
 
@@ -19,7 +20,7 @@ let server: ReturnType<typeof createServer>, base: string
 let imports: Awaited<ReturnType<typeof startRosterApi>>
 let batch = 0
 async function seed(payload: RosterImportPayload) {
-  const result = await createRosterImportClient({ baseUrl: imports.baseUrl, token: 'synthetic-130' }).commit({
+  const result = await createReviewedFixtureImportClient({ baseUrl: imports.baseUrl, token: 'synthetic-130' }, db).commit({
     idempotencyKey: `recognitions-130-${++batch}`, sourceKind: 'announcement',
     sourceIdentity: `synthetic/130/${batch}`, payload,
   })

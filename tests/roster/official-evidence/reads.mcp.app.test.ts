@@ -1,3 +1,4 @@
+import { reviewFixtureRows } from '../imports/fixtures/reviewed-announcement'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { createHash } from 'node:crypto'
@@ -65,11 +66,17 @@ function rpcValue(value:Awaited<ReturnType<typeof rpc>>) {
 }
 const committedSchema=z.object({status:z.literal('committed'),batchId:z.number(),items:z.array(z.object({kind:z.string(),detail:z.unknown()}).passthrough())}).passthrough()
 async function commit(payload:RosterImportPayload,key:string,transport:'http'|'mcp'='http') {
-  const request={idempotencyKey:key,sourceKind:'announcement',sourceIdentity:'synthetic-c',payload}
+  const request={idempotencyKey:key,sourceKind:'announcement' as const,sourceIdentity:'synthetic-c',payload}
   const plan=transport==='http'?(await http('/api/roster/import/preflight',request)).body:rpcValue(await rpc('preflight_roster_batch',request)).body
   const parsed=z.object({preflight:z.object({conflicts:z.array(z.unknown()),officialEvidencePlanHash:z.string().optional()})}).parse(plan);expect(parsed.preflight.conflicts).toEqual([])
   const bound=parsed.preflight.officialEvidencePlanHash?{...request,payload:{...payload,officialEvidencePlanHash:parsed.preflight.officialEvidencePlanHash}}:request
   const saved=transport==='http'?(await http('/api/roster/import/commit',bound)).body:rpcValue(await rpc('save_roster_batch',bound)).body
+  const staged = z.object({ status: z.literal('staged'), intakeId: z.number(), sourceDigest: z.string() }).safeParse(saved)
+  if (staged.success) {
+    const result = await http(`/api/roster/import/intake/${staged.data.intakeId}/supplement`, reviewFixtureRows({ $client: sqlite }, staged.data.sourceDigest, bound))
+    expect(result.status, JSON.stringify(result.body)).toBe(200)
+    return { saved: committedSchema.extend({ status: z.literal('supplemented') }).parse(result.body), bound }
+  }
   return {saved:committedSchema.parse(saved),bound}
 }
 const exact=z.object({evidenceId:z.number(),eventId:z.number(),recordId:z.number(),enterpriseId:z.number()})

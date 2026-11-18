@@ -541,7 +541,28 @@ export interface RosterAnnouncementStagedResponse {
   sourceDigest: string
   rowCount: number
 }
-export type RosterImportSubmissionResponse = RosterImportCommitResponse | RosterAnnouncementStagedResponse
+export type RosterAnnouncementIntakeFailure = Omit<RosterImportCommitResponse, 'status' | 'batchId'> & {
+  status: 'failed'
+  batchId: null
+}
+export type RosterImportSubmissionResponse = RosterImportCommitResponse | RosterAnnouncementStagedResponse | RosterAnnouncementIntakeFailure
+
+export function hasAnnouncementRows(request: RosterImportRequest): boolean {
+  const announcement = request.payload.announcement
+  return announcement != null && (!Array.isArray(announcement.records) || announcement.records.length > 0)
+}
+
+export interface RosterAnnouncementIntake {
+  intakeId: number
+  sourceDigest: string
+  status: 'staged' | 'supplemented' | 'removed'
+  removedReason: string | null
+  sourceIdentity: string
+  sourceSha256?: string | null
+  announcement: RosterImportAnnouncement
+  review: SupplementAnnouncementRequest | null
+  receipt: SupplementAnnouncementResponse | null
+}
 
 export interface ReviewedEnterpriseFields {
   name?: string
@@ -565,6 +586,7 @@ export type SupplementAnnouncementResponse = Omit<RosterImportCommitResponse, 's
   sourceIds: number[]
   owners: number[]
 }
+export type SupplementAnnouncementResult = SupplementAnnouncementResponse | (RosterImportCommitResponse & { status: 'failed' })
 
 /**
  * **出处指针收敛重放**的响应（RL-19，契约 §8.9.3）。
@@ -639,8 +661,26 @@ export class RosterImportClient {
     return (await this.post(ROSTER_IMPORT_COMMIT_PATH, request)) as RosterImportSubmissionResponse
   }
 
-  async supplement(intakeId: number, review: SupplementAnnouncementRequest): Promise<SupplementAnnouncementResponse> {
-    return (await this.post(`/api/roster/import/intake/${intakeId}/supplement`, review)) as SupplementAnnouncementResponse
+  /** Submit commands that do not carry original announcement rows. */
+  async commitCommand(request: RosterImportRequest): Promise<RosterImportCommitResponse> {
+    if (hasAnnouncementRows(request)) {
+      throw new TypeError('Submit original announcement rows for intake and review')
+    }
+    const result = await this.commit(request)
+    if (result.status === 'staged' || result.batchId === null) throw new TypeError('Expected an import command receipt')
+    return result
+  }
+
+  async supplement(intakeId: number, review: SupplementAnnouncementRequest): Promise<SupplementAnnouncementResult> {
+    return (await this.post(`/api/roster/import/intake/${intakeId}/supplement`, review)) as SupplementAnnouncementResult
+  }
+
+  async readIntake(intakeId: number): Promise<RosterAnnouncementIntake> {
+    return (await this.request(`/api/roster/import/intake/${intakeId}`)) as RosterAnnouncementIntake
+  }
+
+  async removeIntake(intakeId: number, input: { sourceDigest: string; reason: string }): Promise<{ intakeId: number; status: 'removed'; removedReason: string }> {
+    return (await this.post(`/api/roster/import/intake/${intakeId}/remove`, input)) as { intakeId: number; status: 'removed'; removedReason: string }
   }
 
   /**
@@ -651,15 +691,18 @@ export class RosterImportClient {
     return (await this.post(ROSTER_IMPORT_REPLAY_PATH, request)) as RosterImportReplayResponse
   }
 
-  private async post(path: string, body: unknown): Promise<unknown> {
+  private post(path: string, body: unknown): Promise<unknown> {
+    return this.request(path, { method: 'POST', body: JSON.stringify(body) })
+  }
+
+  private async request(path: string, init?: RequestInit): Promise<unknown> {
     const response = await this.doFetch(`${this.baseUrl}${path}`, {
-      method: 'POST',
+      ...init,
       headers: {
-        'content-type': 'application/json',
+        ...(init?.body === undefined ? {} : { 'content-type': 'application/json' }),
         // 只从运行时取；header 名固定，值不进仓库。
         authorization: `Bearer ${this.token}`,
       },
-      body: JSON.stringify(body),
     })
     const text = await response.text()
     let parsed: unknown = null

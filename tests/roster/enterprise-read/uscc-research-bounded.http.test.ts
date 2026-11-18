@@ -1,10 +1,10 @@
+import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb } from '../../../db'
-import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
 import { startEvidenceServer, type EvidenceServer } from '../../platform/fixtures/evidence-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'uscc-131-'))
@@ -53,7 +53,7 @@ beforeAll(async () => {
       return { status: 200, body: await (request.method === 'POST' ? post : get)({} as never) }
     },
   } })
-  const client = createRosterImportClient({ baseUrl: server.baseUrl, token })
+  const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token }, db)
   const result = await client.commit({ idempotencyKey: 'synthetic-131-targets', sourceKind: 'announcement', sourceIdentity: 'synthetic/131', payload: {
     announcement: { sourceDocument: { source: 'jxj', title: 'Synthetic announcement' }, records: [
       { enterprise: { name, district: '镇海区' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2024, evidence: [{ sourceFile: 'synthetic/131.pdf', page: 7, listNo: 3 }] }] },
@@ -99,7 +99,7 @@ it('GET preserves target evidence and multi-relation selection without materiali
   const expected = await research('GET')
   expect(expected).toMatchObject({ checklist: { counts: { total: 1 }, rows: [{ enterpriseId: targetId, evidence: [{ page: 7 }], queries: [{ status: 'failed', relationCount: 0 }, { status: 'partial', relationCount: 2 }, { status: 'not_queried', relationCount: 0 }] }] }, plan: { counts: { targets: 1, filled: 1 }, ready: [{ uscc, evidence: { sequenceNo: 2, relationKey: 'selected-second' } }] } })
   const expectedPost = await research('POST')
-  const client = createRosterImportClient({ baseUrl: server.baseUrl, token })
+  const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token }, db)
   let previousScale = 0
   for (const scale of [1, 2, 5]) {
     const imported = await client.commit({ idempotencyKey: `synthetic-131-growth-${scale}`, sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/131', payload: { platformQueries: Array.from({ length: (scale - previousScale) * 4 }, (_, i) => ({ interface: 'apply_list', queryKey: `unrelated:${scale}:${i}`, queriedAt: '2026-10-20T03:00:00Z', status: 'success', rawResponse: 'unrelated original'.repeat(32768), relations: [{ sequenceNo: 1, nameRaw: '无关企业', rawFields: { original: 'unrelated original'.repeat(32768) } }] })) } })
@@ -132,7 +132,7 @@ it('POST bounds evidence reads for explicit platform claims and preserves scope 
 it('GET batches evidence and holder lookup for many targets sharing a candidate without losing any target', async () => {
   const labels = [...'甲乙丙丁戊己庚辛壬癸子丑']
   const holderUscc = '91330201753252106U'
-  const client = createRosterImportClient({ baseUrl: server.baseUrl, token })
+  const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token }, db)
   const imported = await client.commit({ idempotencyKey: 'synthetic-131-batch-targets', sourceKind: 'announcement', sourceIdentity: 'synthetic/131/batch', payload: {
     announcement: { sourceDocument: { source: 'jxj', title: 'Synthetic batch' }, records: [
       ...labels.map(label => ({ enterprise: { name: `宁波批量${label}有限公司` }, titleCode: 'specialized_sme', events: [] })),
@@ -157,7 +157,7 @@ it('GET batches evidence and holder lookup for many targets sharing a candidate 
 })
 
 it('GET keeps confirmed-alias filters current membership multiple titles and same-name subject conflicts', async () => {
-  const client = createRosterImportClient({ baseUrl: server.baseUrl, token })
+  const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token }, db)
   const subject = '宁波合成同名有限公司'
   const filterName = '宁波合成筛选机械有限公司'
   const codes = ['91330213MA2CL6FP21', '91330206793007818K']

@@ -1,3 +1,4 @@
+import { completeInProcessIntake } from '../imports/fixtures/in-process-intake'
 import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
@@ -47,7 +48,11 @@ async function fixture() {
     ...Object.fromEntries(['preflight', 'commit'].map(action => ['/api/roster/evidence/corrections/' + action, (r: any) => handleEvidenceCorrectionRequest({ action: action as any, ...r }, { db, apiToken: 'synthetic-token', filesDir })])),
   } })
   closes.push(server.close)
-  const post = async (action: string, body: unknown) => { const response = await fetch(server.baseUrl + '/api/roster/import/' + action, { method: 'POST', headers: { authorization: 'Bearer synthetic-token', 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: response.status, body: await response.json() } }
+  const post = async (action: string, body: unknown) => {
+    const response = await fetch(server.baseUrl + '/api/roster/import/' + action, { method: 'POST', headers: { authorization: 'Bearer synthetic-token', 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    const result = await response.json()
+    return { status: response.status, body: action === 'commit' ? await completeInProcessIntake(db, result, body as RosterImportRequest, filesDir) as typeof result : result }
+  }
   const correction = (evidenceId: number, publishedRow: OfficialPublishedRow) => {
     const current = readExactEvidence(db, evidenceId)
     return { evidenceId, eventId: current.eventId, recordId: current.recordId, enterpriseId: current.enterpriseId, expectedVersion: current.version, expectedRowRevision: readLatestOfficialEvidence(db, evidenceId).row?.revision ?? 0, coordinate: { sourceFile: publishedRow.path!, attachment: publishedRow.attachment, listNo: publishedRow.listNo, page: publishedRow.page }, publishedRow }

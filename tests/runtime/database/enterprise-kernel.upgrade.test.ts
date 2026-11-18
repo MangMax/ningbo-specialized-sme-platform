@@ -34,16 +34,21 @@ test('cold upgrade keeps legacy aliases and rejects both a merge cycle and parti
     db.pragma('user_version = 71613')
     db.exec(`INSERT INTO enterprise(id,name,name_norm,district) VALUES (11,'企业甲','企业甲','前湾新区'),(31,'企业乙','企业乙','未知区');
       INSERT INTO enterprise_alias(id,enterprise_id,name,name_norm,source_kind,created_at) VALUES (41,11,'旧名','旧名','manual','2026-01-01');
-      INSERT INTO enterprise_merge VALUES(31,11,'已核','2026-01-01'),(11,31,'合并环','2026-01-01')`)
+      INSERT INTO enterprise_merge VALUES(31,11,'已核','2026-01-01')`)
     const dictionaries = {
       regionSha256: 'a'.repeat(64), industrySha256: 'b'.repeat(64),
       regions: [{ code: '330200', name: '宁波市', parent: null, level: 1 }, { code: '3302821', name: '前湾新区', parent: '330200', level: 2 }],
-      industries: [{ code: 'A', inputId: '1', name: '行业', parent: null, level: 0 }],
+      industries: [{ code: 'A', inputId: '1', name: '行业', parent: null, level: 0, description: null }],
     }
     expect(() => assertApplicationSchema(db)).toThrow('Enterprise kernel missing')
-    expect(() => upgradeEnterpriseKernel(db, dictionaries)).toThrow('merge cycle')
-    db.exec('DELETE FROM enterprise_merge WHERE from_enterprise_id=11')
-    const broken = { ...dictionaries, industries: [...dictionaries.industries, { code: 'B', inputId: '1', name: '重复', parent: null, level: 0 }] }
+    const cyclic = new Database(db.serialize())
+    try {
+      cyclic.pragma('foreign_keys = ON')
+      cyclic.exec("DROP TRIGGER enterprise_merge_insert; INSERT INTO enterprise_merge VALUES(11,31,'合并环','2026-01-01')")
+      expect(() => upgradeEnterpriseKernel(cyclic, dictionaries)).toThrow('merge cycle')
+      expect(() => assertApplicationSchema(cyclic)).toThrow('Enterprise kernel missing')
+    } finally { cyclic.close() }
+    const broken = { ...dictionaries, industries: [...dictionaries.industries, { code: 'B', inputId: '1', name: '重复', parent: null, level: 0, description: null }] }
     expect(() => upgradeEnterpriseKernel(db, broken)).toThrow('UNIQUE constraint failed')
     expect(() => assertApplicationSchema(db)).toThrow('Enterprise kernel missing')
     expect(db.prepare("SELECT name FROM sqlite_schema WHERE name='enterprise_region'").get()).toBeUndefined()

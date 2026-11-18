@@ -18,6 +18,8 @@ import { handleRosterImportRequest } from '../../../layers/sme-roster/server/uti
 import { commitRosterImport, preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 import { readImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipts'
 import { startHttpFixture, type HttpFixture } from '../../support/http'
+import { matchFixtureIntakeRoute } from '../imports/fixtures/import-server'
+import { finishFixtureAnnouncement } from '../imports/fixtures/reviewed-announcement'
 
 const NOW = Date.parse('2026-01-15T00:00:00.000Z')
 const TOKEN = 'synthetic-407-import-token'
@@ -36,6 +38,7 @@ beforeEach(async () => {
   createRuntimeSchema(sqlite)
   // No new HTTP framework: only the route map for the existing shared fixture.
   api = await startHttpFixture({
+    matchRoute: matchFixtureIntakeRoute(db, TOKEN),
     routes: Object.fromEntries((['preflight', 'commit'] as const).map(action => [
       `/api/roster/import/${action}`,
       (request: { method: string; headers: Record<string, string | undefined>; body: unknown }) => handleRosterImportRequest(action, request, {
@@ -76,7 +79,10 @@ const review: RosterImportEvent = { eventType: 'review', year: 2022, decidedYear
 async function post(action: 'preflight' | 'commit', body: RosterImportRequest, authorized = true) {
   const response = await fetch(`${api!.baseUrl}/api/roster/import/${action}`, { method: 'POST',
     headers: { 'content-type': 'application/json', ...(authorized ? { authorization: `Bearer ${TOKEN}` } : {}) }, body: JSON.stringify(body) })
-  return { status: response.status, body: await response.json() as any }
+  const result = await response.json()
+  if (result.status !== 'staged') return { status: response.status, body: result }
+  const receipt = await finishFixtureAnnouncement(api!.baseUrl, TOKEN, db, body, result)
+  return { status: 200, body: { ...receipt, status: receipt.status === 'supplemented' ? 'committed' : receipt.status } }
 }
 async function get(path: string) {
   const response = await fetch(api!.baseUrl + path)
@@ -295,10 +301,8 @@ function historicalObject(value: unknown): Record<string, unknown> {
 }
 async function historicalSubmit(body: unknown) {
   // Raw candidate primitives are intentional protocol data; no cast into a typed event.
-  const response = await fetch(api!.baseUrl + '/api/roster/import/commit', { method: 'POST', headers: {
-    'content-type': 'application/json', authorization: `Bearer ${TOKEN}`,
-  }, body: JSON.stringify(body) })
-  return { status: response.status, body: historicalObject(await response.json()) }
+  const result = await post('commit', body as RosterImportRequest)
+  return { status: result.status, body: historicalObject(result.body) }
 }
 function historicalItemIndex(body: unknown, recordId: number) {
   const items = historicalObject(body).items

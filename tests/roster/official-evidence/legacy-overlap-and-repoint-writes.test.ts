@@ -1,3 +1,4 @@
+import { completeInProcessIntake } from '../imports/fixtures/in-process-intake'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -19,7 +20,12 @@ const current = vi.hoisted((): { db?: BetterSQLite3Database<typeof schema>; file
 vi.mock('@db', () => ({ useDb: () => { if (!current.db) throw new Error('Synthetic database not initialized'); return current.db } }))
 // Only off-process admission is replaced. Actual H3 routes, validation, preflight,
 // final-set planner and IMMEDIATE commit execute unchanged against real SQLite.
-vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: { execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
+vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: {
+  stage: async (db: Parameters<Execute>[0], request: Parameters<Execute>[2], errors: NonNullable<Parameters<Execute>[3]>) => {
+    const { stageAnnouncement } = await import('../../../layers/sme-roster/server/utils/announcement-intake')
+    return stageAnnouncement(db as Parameters<typeof stageAnnouncement>[0], request, errors)
+  },
+  execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
 const closes: (() => void | Promise<void>)[] = []
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close() })
 afterAll(() => { vi.unstubAllGlobals() })
@@ -60,7 +66,7 @@ async function fixture() {
   const post = async (action: 'preflight' | 'commit', body: RosterImportRequest) => {
     const response = await fetch(`http://127.0.0.1:${address.port}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer synthetic-r1', 'content-type': 'application/json' }, body: JSON.stringify(body) })
     expect(response.status).toBe(200)
-    return responseSchema.parse(await response.json())
+    return responseSchema.parse(await completeInProcessIntake(db, await response.json(), body, filesDir))
   }
   const commit = async (input: RosterImportRequest) => {
     const plan = await post('preflight', input); expect(plan.preflight?.conflicts).toEqual([])

@@ -21,7 +21,8 @@ import {
   validateImportRequest,
 } from './roster-import'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { hasAnnouncementRows, stageAnnouncement } from "./announcement-intake"
+import { stageAnnouncement } from './announcement-intake'
+import { hasAnnouncementRows } from '../../lib/roster-import-client'
 import * as schema from '../../../../db/schema'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
 import { ImportReceiptError } from './import-receipts'
@@ -114,7 +115,9 @@ export async function handleRosterImportRequest(
       return json(200, result)
     }
     if (hasAnnouncementRows(validated.value)) {
-      const staged = stageAnnouncement(deps.db as Parameters<typeof stageAnnouncement>[0], validated.value, pageCountErrors)
+      const staged = deps.executeImport
+        ? stageAnnouncement(deps.db as Parameters<typeof stageAnnouncement>[0], validated.value, pageCountErrors)
+        : await importExecutor.stage(deps.db, validated.value, pageCountErrors, deps.logContext)
       if (staged) return json(200, staged)
     }
     const result = await (deps.executeImport ?? importExecutor.execute)(deps.db, 'commit', validated.value, pageCountErrors, deps.logContext, { filesDir: deps.filesDir })

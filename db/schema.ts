@@ -2115,5 +2115,6 @@ export const rosterAnnouncementIntake = sqliteTable('roster_announcement_intake'
   request: text('request').notNull(),
   removedReason: text('removed_reason'),
   supplementDigest: text('supplement_digest'),
+  reviewedRequest: text('reviewed_request'),
   receipt: text('receipt'),
 })

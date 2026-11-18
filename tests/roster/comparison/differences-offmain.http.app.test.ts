@@ -1,3 +1,5 @@
+import { submitNewFixtureAnnouncement } from '../imports/fixtures/reviewed-announcement'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
@@ -30,6 +32,7 @@ it('REST differences native lock leaves health responsive before independent rel
       Object.assign(globalThis,h,{defineRouteMeta:()=>{},defineNitroPlugin:f=>f,useRuntimeConfig:()=>({apiToken:'synthetic-m2'})});process.env.M2_APP_PID=String(process.pid);
       const {createJiti}=require(${JSON.stringify(jiti)});const load=createJiti(${JSON.stringify(resolve(root, 'package.json'))},{alias:{'@db':${JSON.stringify(resolve(root, 'db/index.ts'))},'~~':${JSON.stringify(root)},'#sme-roster':${JSON.stringify(resolve(root, 'layers/sme-roster'))}}});
       (await load.import(${JSON.stringify(resolve(root, 'tests/support/compiled-business-workers.ts'))})).installCompiledBusinessWorkers();
+(await load.import(${JSON.stringify(resolve(root, 'server/install-application.ts'))})).installApplicationServer();
       const {initializeDb}=await load.import(${JSON.stringify(resolve(root, 'db/client.ts'))});
       const writer=initializeDb({create:true,readOnly:false});writer.$client.pragma('journal_mode=DELETE');
       const {startRosterApi}=await load.import(${JSON.stringify(resolve(root, 'tests/roster/imports/fixtures/import-server.ts'))});
@@ -58,8 +61,8 @@ it('REST differences native lock leaves health responsive before independent rel
     } } }
     const post = (action: string) => fetch(`${info!.imports}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer synthetic-m2', 'content-type': 'application/json' }, body: JSON.stringify(request) })
     expect((await post('preflight')).status).toBe(200)
-    const receipt = await (await post('commit')).json()
-    expect(receipt.status).toBe('committed')
+    const receipt = await submitNewFixtureAnnouncement(info!.imports, 'synthetic-m2', request as RosterImportRequest)
+    expect(receipt.status).toBe('supplemented')
     expect((await fetch(base+'/api/health')).status).toBe(200)
     const warm = await fetch(base+'/api/roster/differences?pageSize=1'), expected = await warm.text()
     expect(JSON.parse(expected)).toMatchObject({ total: 1, counts: { little_giant: {missing_in_miit:0,extra_in_miit:0}, specialized_sme: {missing_in_miit:1,extra_in_miit:0}, innovative_sme: {missing_in_miit:0,extra_in_miit:0} }, page: 1, pageSize: 1, rows: [{ name: '合成M2企业', status: 'not_queried', explanationId: null, evidence: null, assessment:'not_queried', queryCoverage:{status:'not_queried',sources:[],truncated:false},currentDecision:{versionId:null,current:null} }] })
@@ -91,8 +94,8 @@ it('REST differences native lock leaves health responsive before independent rel
     expect(entries[0].pid).not.toBe(info!.pid)
     // Acknowledged API commits become visible on the retained child connection.
     const another={...request,idempotencyKey:'m2-next',sourceIdentity:'synthetic/m2-next',payload:{announcement:{...request.payload.announcement,records:[{...request.payload.announcement.records[0]!,enterprise:{name:'另一合成M2企业'}}]}}}
-    const commit=async(body:unknown)=> (await fetch(`${info!.imports}/api/roster/import/commit`,{method:'POST',headers:{authorization:'Bearer synthetic-m2','content-type':'application/json'},body:JSON.stringify(body)})).json()
-    expect((await commit(another)).status).toBe('committed')
+    const commit = (body: unknown) => submitNewFixtureAnnouncement(info!.imports, 'synthetic-m2', body as RosterImportRequest)
+    expect((await commit(another)).status).toBe('supplemented')
     for(let n=0;n<3;n++)expect(await (await fetch(base+'/api/roster/differences')).json()).toMatchObject({total:2,rows:[{name:'另一合成M2企业'},{name:'合成M2企业'}]})
     const failed={...another,idempotencyKey:'m2-rollback',sourceIdentity:'synthetic/m2-rollback',payload:{announcement:{...another.payload.announcement,records:[{...another.payload.announcement.records[0]!,enterprise:{name:'不得部分提交合成企业'}},{...another.payload.announcement.records[0]!,enterprise:{name:'非法称号合成企业'},titleCode:'invalid'}]}}}
     expect((await commit(failed)).status).toBe('failed')

@@ -10,6 +10,9 @@ import * as schema from '../../../../db/schema'
 import { preflightRosterImport, commitRosterImport } from '../../server/utils/roster-import'
 import { ImportReceiptError } from '../../server/utils/import-receipts'
 import type { ImportExecutionMessage } from '../../server/utils/import-execution'
+import { stageAnnouncement, supplementAnnouncement } from '../../server/utils/announcement-intake'
+import { OfficialFactError } from '../../server/utils/official-evidence-plan'
+import { EnterpriseKernelError } from '../../../core/public'
 import { initializeWorkerLogging, closeApplicationLogging } from '../../../core/lib/logging'
 
 installAppModules(appManifests)
@@ -38,11 +41,19 @@ process.on('message', async (message: ImportExecutionMessage | { type: 'shutdown
     if (connection!.pragma('schema_version', { simple: true }) !== message.identity.schemaVersion || JSON.stringify(migration) !== JSON.stringify(message.identity.migration)) throw new ImportReceiptError(503, 'import_source_changed', 'Import database schema or migration identity changed before execution')
     assertApplicationSchema(connection!)
     const db = drizzle(connection!, { schema, logger: createDrizzleLogger({ connection: 'import_execution', execution: 'worker', context: message.logContext }) })
-    const request = deserialize(message.payload)
-    const result = message.action === 'preflight' ? preflightRosterImport(db, request, message.pageCountErrors, { ...message.logContext, filesDir: message.filesDir }) : commitRosterImport(db, request, message.pageCountErrors, { ...message.logContext, deferCandidateTasks: true, filesDir: message.filesDir })
+    const input = deserialize(message.payload)
+    const options = { ...message.logContext, filesDir: message.filesDir }
+    const errors = message.pageCountErrors ?? []
+    const result = message.action === 'supplement'
+      ? await supplementAnnouncement(db, input.intakeId, input.review, options.filesDir, options)
+      : message.action === 'stage'
+        ? stageAnnouncement(db, input, errors)
+        : message.action === 'preflight'
+          ? preflightRosterImport(db, input, errors, options)
+          : commitRosterImport(db, input, errors, { ...options, deferCandidateTasks: true })
     await send({ type: 'result', id: message.id, result })
   } catch (error) {
-    const known = error instanceof ImportReceiptError
+    const known = error instanceof ImportReceiptError || error instanceof EnterpriseKernelError || error instanceof OfficialFactError
     await send({ type: 'failure', id: message.id, error: { known, message: error instanceof Error ? error.message : 'Import execution failed', ...(known ? { statusCode: error.statusCode, code: error.code } : {}) } })
   }
 })

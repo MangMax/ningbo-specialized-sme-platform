@@ -1,3 +1,5 @@
+import { submitNewFixtureAnnouncement } from '../../imports/fixtures/reviewed-announcement'
+import type { RosterImportRequest } from '../../../../layers/sme-roster/lib/roster-import-client'
 /** M2-specific public-write fixture, also used by the relocated built probe.
  * No database access: synthetic truth enters through the current HTTP API. */
 import assert from 'node:assert/strict'
@@ -13,7 +15,8 @@ export async function seedDifferenceReadFixture(base: string, token: string) {
       assert.equal(r.status, 200); return r.json()
     }
     await post('preflight')
-    const receipt = await post('commit'); assert.equal(receipt.status, 'committed', JSON.stringify(receipt))
+    const receipt = await submitNewFixtureAnnouncement(base, token, body as RosterImportRequest)
+    assert.ok(receipt.status === 'supplemented' || receipt.status === 'committed', JSON.stringify(receipt))
     return receipt
   }
   await commit({ announcement: { sourceDocument: { source: 'jxj', title: 'M2 synthetic complete DTO' }, records: [

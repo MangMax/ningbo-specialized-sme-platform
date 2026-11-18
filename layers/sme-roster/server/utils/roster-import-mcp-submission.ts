@@ -1,5 +1,5 @@
 import { useDb } from '@db'
-import { hasAnnouncementRows, stageAnnouncement } from "./announcement-intake"
+import { hasAnnouncementRows } from '../../lib/roster-import-client'
 import { appLog } from '../../../core/lib/logging'
 import { rosterImportMcpContext } from './roster-import-mcp-context'
 import { logImportFailure } from './roster-import-logging'
@@ -28,8 +28,8 @@ export function submitRosterImportMcp(action: 'preflight' | 'commit', input: {
     }
     try {
       const pageCountErrors = await validateRosterImportPageCounts(validated.value, useRuntimeConfig().filesDir)
-      if (action === "commit" && hasAnnouncementRows(validated.value)) {
-        const staged = stageAnnouncement(useDb(), validated.value, pageCountErrors)
+      if (action === 'commit' && hasAnnouncementRows(validated.value)) {
+        const staged = await importExecutor.stage(useDb(), validated.value, pageCountErrors, context)
         if (staged) return staged
       }
       return await importExecutor.execute(useDb(), action, validated.value, pageCountErrors, context, { filesDir: useRuntimeConfig().filesDir })
