@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { shallowRef, watch } from 'vue'
-import { ChevronRight, type LucideIcon } from '@lucide/vue'
+import { ChevronRight } from '@lucide/vue'
+import type { AppNavItem } from '~~/lib/core/module-registry'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
   SidebarGroup,
@@ -16,12 +17,7 @@ import {
 
 const props = defineProps<{
   label?: string
-  items: {
-    title: string
-    url?: string
-    icon?: LucideIcon
-    items?: { title: string; url: string }[]
-  }[]
+  items: readonly AppNavItem[]
 }>()
 
 const route = useRoute()
