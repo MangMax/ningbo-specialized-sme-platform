@@ -35,7 +35,7 @@ import {
   type EvidencePagePlan,
 } from '../../lib/roster/evidence-page'
 import { authorizeRosterWrite } from './roster-import-http'
-import { readPdfPageCount } from './pdf-pages'
+import { readPdfPageCount } from '../../layers/core/server/utils/pdf-pages'
 import { createLegacyEvidencePageAdapter, EvidenceCorrectionError } from './roster-evidence-correction'
 
 type Db = BetterSQLite3Database<typeof schema>

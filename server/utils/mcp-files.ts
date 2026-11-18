@@ -6,13 +6,13 @@ import { z } from 'zod'
 import type { BackfillExclusion } from '../../layers/core/server/utils/file-store'
 import { useDb } from '@db'
 import * as schema from '../../db/schema'
-import { DEFAULT_DPI, isPdfPath, normalizeDpi } from '../../lib/pdf-page'
+import { DEFAULT_DPI, isPdfPath, normalizeDpi } from '../../layers/core/lib/pdf-page'
 import {
   backfillFileParts,
   type PartsBackfillStats,
 } from './file-parts'
 import { maintainStoredFileSync, type FileMaintenanceOptions } from '../../layers/core/server/utils/file-maintenance'
-import { listPdfPages, resolveWithinRoot, type PdfPagesState } from './pdf-pages'
+import { listPdfPages, resolveWithinRoot, type PdfPagesState } from '../../layers/core/server/utils/pdf-pages'
 import {
   backfillFromDisk,
   getStoredFile,

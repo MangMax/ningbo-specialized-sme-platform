@@ -14,7 +14,7 @@ import {
 } from '#core/app/components/ui/select'
 import { Skeleton } from '#core/app/components/ui/skeleton'
 import ImagePreview from '#core/app/components/preview/ImagePreview.vue'
-import { DEFAULT_DPI } from '~~/lib/pdf-page'
+import { DEFAULT_DPI } from '#core/lib/pdf-page'
 import {
   DPI_PRESETS,
   PAGE_IMAGE_ZOOM_MIN,
@@ -29,7 +29,7 @@ import {
   type GalleryTone,
 } from '#core/lib/page-gallery'
 import { describeFetchError } from '../../../lib/file-content-status'
-import type { PageImageRef, PdfPagesState, RenderOutcome } from '~~/server/utils/pdf-pages'
+import type { PageImageRef, PdfPagesState, RenderOutcome } from '#core/server/utils/pdf-pages'
 /**
  * 页图库(票 13 的后端 + 本轮的页面)。一份 PDF 的逐页 PNG:看现状、点一下渲染、逐页看。
  *

@@ -47,7 +47,7 @@ export async function verifyFileRead(db: Db, root: string, locator: string): Pro
 export async function verifyPageRead(db: Db, root: string, source: string, pagePath?: string, verified?: FileReadIdentity) {
   const identity = verified ?? await verifyFileRead(db, root, source)
   const { readFile } = await import('node:fs/promises')
-  const { manifestRelPath } = await import('../../../../lib/pdf-page')
+  const { manifestRelPath } = await import('../../lib/pdf-page')
   const manifestAbs = resolveInsideRoot(root, manifestRelPath(source))
   let manifest: { version?: number; file?: string; sourceSha256?: string; sourceBytes?: number; pages?: { relPath: string; bytes: number }[] } | null = null
   try { manifest = JSON.parse(await readFile(manifestAbs!, 'utf8')) } catch { /* Unknown lineage remains unknown. */ }

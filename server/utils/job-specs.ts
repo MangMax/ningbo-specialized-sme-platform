@@ -1,5 +1,5 @@
 import { getAppModules } from '../../lib/app-modules'
-import * as core from '../modules/core/job-specs'
+import * as core from '../../layers/core/server/modules/core/job-specs'
 import * as roster from '../modules/sme-roster/job-specs'
 import { getJobSpec, registerJob, type JobSpec } from '../../layers/core/server/utils/job-runner'
 

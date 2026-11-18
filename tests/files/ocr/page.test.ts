@@ -11,9 +11,9 @@ import {
   vi,
 } from 'vitest'
 import { createRouter, createMemoryHistory, RouterView } from 'vue-router'
-import OcrPage from '../../../pages/ocr.vue'
-import OcrPageRow from '../../../components/ocr/OcrPageRow.vue'
-import type { WorkbenchRow } from '../../../lib/ocr-workbench'
+import OcrPage from '../../../layers/core/app/pages/ocr.vue'
+import OcrPageRow from '../../../layers/core/app/components/ocr/OcrPageRow.vue'
+import type { WorkbenchRow } from '../../../layers/core/lib/ocr-workbench'
 
 /**
  * 「识别校对」页的读回/写回竞态、草稿保护、筛选与单页工作区回归。

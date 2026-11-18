@@ -12,7 +12,7 @@ import {
   renderSummary,
   singlePageCountLabel,
 } from '../../../layers/core/lib/page-gallery'
-import type { PdfPagesState, RenderOutcome } from '../../../server/utils/pdf-pages'
+import type { PdfPagesState, RenderOutcome } from '../../../layers/core/server/utils/pdf-pages'
 
 /**
  * 页图库的展示规则(票 13 的页面半边)。

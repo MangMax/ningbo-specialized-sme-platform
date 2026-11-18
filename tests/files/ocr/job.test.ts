@@ -5,17 +5,17 @@ import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { parseOcrParams, runOcr } from '../../../server/utils/jobs/ocr'
-import { listOcrResults, writeOcrResult } from '../../../server/utils/ocr-result'
+import { parseOcrParams, runOcr } from '../../../layers/core/server/utils/jobs/ocr'
+import { listOcrResults, writeOcrResult } from '../../../layers/core/server/utils/ocr-result'
 import {
   DEFAULT_OCR_OPTIONAL_PAYLOAD,
   ocrRequestVariant,
   pagesFromJsonl,
   resolveOcrConfig,
-} from '../../../server/utils/ocr-api'
-import { ocrPageCacheDirAbs, ocrPageCacheKey } from '../../../server/utils/ocr-page-cache'
-import { DEFAULT_DPI } from '../../../lib/pdf-page'
-import { renderPdfPages } from '../../../server/utils/pdf-pages'
+} from '../../../layers/core/server/utils/ocr-api'
+import { ocrPageCacheDirAbs, ocrPageCacheKey } from '../../../layers/core/server/utils/ocr-page-cache'
+import { DEFAULT_DPI } from '../../../layers/core/lib/pdf-page'
+import { renderPdfPages } from '../../../layers/core/server/utils/pdf-pages'
 import { minimalPdf } from '../../support/minimal-pdf'
 import { startMiniOcrApi, type MiniOcrApi } from './fixtures/provider-api'
 import { createJob, markJobRunning } from '../../../layers/core/server/utils/job-store'
@@ -835,7 +835,7 @@ it('fails closed with a sanitized error when the credential database is unavaila
 
 it('queued OCR retains its submission credential for submit and poll without persisting it in job history', async () => {
   const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../../../layers/core/server/utils/job-runner')
-  const { ocrSpec } = await import('../../../server/utils/jobs/ocr')
+  const { ocrSpec } = await import('../../../layers/core/server/utils/jobs/ocr')
   const { getJob } = await import('../../../layers/core/server/utils/job-store')
   const { updateCredential } = await import('../../../server/utils/credential-state')
   let release: (() => void) | undefined
@@ -862,7 +862,7 @@ it('queued OCR retains its submission credential for submit and poll without per
 
 it.each([{ name: 'failed', failed: true }, { name: 'successful', failed: false }])('keeps encoded OCR credentials out of persisted job history and OCR rows ($name)', async ({ failed }) => {
   const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../../../layers/core/server/utils/job-runner')
-  const { ocrSpec } = await import('../../../server/utils/jobs/ocr')
+  const { ocrSpec } = await import('../../../layers/core/server/utils/jobs/ocr')
   const { getJob } = await import('../../../layers/core/server/utils/job-store')
   const { updateCredential } = await import('../../../server/utils/credential-state')
   const token = 'synthetic-"quoted"\\+/=task-secret'

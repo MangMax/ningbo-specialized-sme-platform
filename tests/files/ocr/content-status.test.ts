@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import { createRouter, createMemoryHistory, useRoute } from 'vue-router'
 import { expect, it, vi } from 'vitest'
-import { useOcrWorkbench } from '../../../composables/useOcrWorkbench'
+import { useOcrWorkbench } from '../../../layers/core/app/composables/useOcrWorkbench'
 it('current page conflict keeps historical OCR text and binding while disabling writes', async () => {
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] })
   await router.push('/')

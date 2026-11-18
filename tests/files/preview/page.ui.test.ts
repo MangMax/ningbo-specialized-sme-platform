@@ -2,7 +2,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import PageImageGallery from '../../../layers/core/app/components/preview/PageImageGallery.vue'
-import type { PdfPagesState, RenderOutcome } from '../../../server/utils/pdf-pages'
+import type { PdfPagesState, RenderOutcome } from '../../../layers/core/server/utils/pdf-pages'
 
 const file = 'synthetic/rl-10/notice.pdf'
 function pagesState(pages: number[], count: number | null = 3): PdfPagesState {

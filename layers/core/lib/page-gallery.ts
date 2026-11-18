@@ -1,5 +1,5 @@
-import type { PageImageRef, PdfPagesState, RenderOutcome } from '~~/server/utils/pdf-pages'
-import { DEFAULT_DPI } from '../../../lib/pdf-page'
+import type { PageImageRef, PdfPagesState, RenderOutcome } from '#core/server/utils/pdf-pages'
+import { DEFAULT_DPI } from './pdf-page'
 
 /**
  * 页图库的**展示规则**:把 `GET /api/pdf-pages` 返回的「现状」翻成界面要说的话、要做的事。

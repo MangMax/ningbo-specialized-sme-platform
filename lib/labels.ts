@@ -101,26 +101,6 @@ export const PARSE_STATES: Record<string, string> = {
 export const PARSE_STATE_ORDER: string[] = ['unparsed', 'parsed', 'failed']
 
 // ---------------------------------------------------------------------------
-// OCR 结果的通路(票 14 的三条通路)
-// ---------------------------------------------------------------------------
-
-/**
- * 通路代号 → 中文名。与 `server/utils/ocr-result.ts` 的 `OCR_CHANNELS` **同值** ——
- * 那一侧是写库时的枚举,这一侧只是把它念给人听。
- *
- * 说清通路是有用的:结果对不上时,「这条是机器识别的还是人贴进来的」是第一个要问的问题。
- */
-export const OCR_CHANNELS: Record<string, string> = {
-  api: '在线识别',
-  upload: '人工上传',
-  mcp: '代理写回',
-}
-
-/** 通路展示顺序(枚举顺序)。 */
-export const OCR_CHANNEL_ORDER: string[] = ['api', 'upload', 'mcp']
-
-
-// ---------------------------------------------------------------------------
 // 名录生命周期契约(RL-01)—— 新枚举的 code → 中文 映射
 //
 // 与 `db/schema.ts` 里各列的 `enum` 取值**逐字对应**,契约原文见

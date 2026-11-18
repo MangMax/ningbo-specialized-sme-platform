@@ -1,6 +1,6 @@
 import { isPageCapable } from '../../lib/roster/evidence-page'
 import type { RosterImportItemResult, RosterImportRequest } from '../../lib/roster-import-client'
-import { readPdfPageCount } from './pdf-pages'
+import { readPdfPageCount } from '../../layers/core/server/utils/pdf-pages'
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)

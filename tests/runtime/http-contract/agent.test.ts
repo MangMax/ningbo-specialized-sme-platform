@@ -45,7 +45,7 @@ import {
   toJobDto,
 } from '../../../layers/core/server/utils/job-store'
 import { parseCsvQuery } from '../../../layers/core/lib/csv'
-import { parseRenderPagesParams } from '../../../server/utils/jobs/render-pages'
+import { parseRenderPagesParams } from '../../../layers/core/server/utils/jobs/render-pages'
 import { shouldHideOpenApiPath } from '../../../server/utils/openapi-guard'
 import { registerJobSpecs } from '../../../server/utils/job-specs'
 import { minimalPdf } from '../../support/minimal-pdf'
@@ -909,7 +909,7 @@ describe('Nitro 内建 OpenAPI 的暴露面', () => {
       'jobs/kinds.get.ts',
     ]
     for (const rel of routes) {
-      const source = await readFile(join(/^(jobs|files)\//.test(rel) ? CORE_ROUTE_DIR : ROUTE_DIR, rel), 'utf8')
+      const source = await readFile(join(/^(?:(?:jobs|files)\/|pdf-pages\.)/.test(rel) ? CORE_ROUTE_DIR : ROUTE_DIR, rel), 'utf8')
       expect(source, rel).toContain('defineRouteMeta({')
       // 宏必须写在**顶层**(nitro 只认顶层 ExpressionStatement),所以别塞进函数里。
       expect(/^defineRouteMeta\(/m.test(source), rel).toBe(true)
@@ -936,7 +936,7 @@ describe('Nitro 内建 OpenAPI 的暴露面', () => {
 
 describe('render-pages 的 run(真 pdfium + sharp)', () => {
   it('批量渲染 2 份夹具:逐份报结果;中间夹一份坏的**不停下整批**', async () => {
-    const { renderPagesSpec } = await import('../../../server/utils/jobs/render-pages')
+    const { renderPagesSpec } = await import('../../../layers/core/server/utils/jobs/render-pages')
     const root = mkdtempSync(join(tmpdir(), 'spztx-render-batch-'))
     const rel = 'jxj/announcement/2024/1/fixture.pdf'
     const badRel = 'jxj/announcement/2024/1/broken.pdf'
@@ -994,7 +994,7 @@ describe('render-pages 的 run(真 pdfium + sharp)', () => {
   }, 60_000)
 
   it('取消时**带着部分产出**收尾,而不是丢掉明细', async () => {
-    const { renderPagesSpec } = await import('../../../server/utils/jobs/render-pages')
+    const { renderPagesSpec } = await import('../../../layers/core/server/utils/jobs/render-pages')
     const root = mkdtempSync(join(tmpdir(), 'spztx-render-cancel-'))
     const a = 'jxj/announcement/2024/1/a.pdf'
     const b = 'jxj/announcement/2024/1/b.pdf'
@@ -1034,7 +1034,7 @@ describe('render-pages 的 run(真 pdfium + sharp)', () => {
   }, 60_000)
 
   it('幂等:同一份渲染两次,第二次 written=0', async () => {
-    const { renderPagesSpec } = await import('../../../server/utils/jobs/render-pages')
+    const { renderPagesSpec } = await import('../../../layers/core/server/utils/jobs/render-pages')
     const root = mkdtempSync(join(tmpdir(), 'spztx-render-idem-'))
     const rel = 'jxj/announcement/2024/1/idem.pdf'
     await mkdir(join(root, 'jxj/announcement/2024/1'), { recursive: true })
