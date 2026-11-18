@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp, createRouter, createError, defineEventHandler, getQuery, toNodeListener } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { getComparison, type ComparisonRow } from '../../../lib/comparison'
+import { getComparison, type ComparisonRow } from '../../../layers/sme-roster/lib/comparison'
 import { createRosterImportClient, type RosterImportRecord } from '../../../lib/roster-import-client'
 import { startRosterApi, executeNativeImport } from '../imports/fixtures/import-server'
 

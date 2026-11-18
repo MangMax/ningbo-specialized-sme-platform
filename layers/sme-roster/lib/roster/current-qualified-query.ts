@@ -1,6 +1,6 @@
 import type { RecognizedWitnessReader } from './recognized-witness-reader'
 import { createCurrentQualificationAssessmentReaderWithWitnesses } from './current-qualification'
-import type { PublishedPresentation } from '../../../../lib/roster/correspondence-view'
+import type { PublishedPresentation } from './correspondence-view'
 import type Database from 'better-sqlite3'
 import { normalizeName, normalizeUscc } from '../domain'
 import { CURRENT_RULE_VERSION, prepareCurrentReader, type CurrentQualificationSnapshot, type CurrentQualificationWitness, type CurrentRow, type CurrentTitle } from './current-qualification'

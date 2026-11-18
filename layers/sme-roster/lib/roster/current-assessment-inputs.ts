@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../../../db/schema'
-import { readTitleCycleDispositionInputs } from '../../../../lib/roster/title-cycle-disposition-inputs'
+import { readTitleCycleDispositionInputs } from './title-cycle-disposition-inputs'
 import { readPlatformQualificationFacts, type PlatformQualificationFactsReader } from './platform-qualification'
 import { hasEnterpriseMergeIdentity } from './enterprise-identity'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'

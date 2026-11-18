@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
-import EnterpriseLaterProcesses from '../../../components/record-correspondence/EnterpriseLaterProcesses.vue'
+import EnterpriseLaterProcesses from '../../../layers/sme-roster/app/components/record-correspondence/EnterpriseLaterProcesses.vue'
 
 const rows = [
   { id: 10, type: 'later_process', role: 'followup_update', status: 'confirmed', revision: 2, requiresRevalidation: true, eventId: null, predecessorEventId: 7, relationId: 31, exportRowId: null, enterpriseId: 42, titleCode: 'specialized_sme' },
@@ -15,7 +15,7 @@ it('requests summary for later processes and retains both relationship states an
   vi.stubGlobal('$fetch', fetch)
   const wrapper = mount(EnterpriseLaterProcesses, { props: { enterpriseId: 42, returnTo: '/comparison?mode=record' }, global: { stubs: {
     NuxtLink: { props: ['to'], template: '<a :href="to.path"><slot /></a>' },
-    SourceReader: true,
+    RosterSourceReader: true,
     Dialog: { template: '<div><slot /></div>' }, DialogContent: { template: '<div><slot /></div>' }, DialogHeader: true, DialogTitle: true, DialogDescription: true,
   } } })
   mounted.push(wrapper)
@@ -33,7 +33,7 @@ it('opens the full source only when the evidence action is selected', async () =
   vi.stubGlobal('$fetch', fetch)
   const wrapper = mount(EnterpriseLaterProcesses, { props: { enterpriseId: 42 }, global: { stubs: {
     NuxtLink: true,
-    SourceReader: { name: 'SourceReader', props: ['kind', 'id'], template: '<div data-testid="full-source">{{ kind }}:{{ id }}</div>' },
+    RosterSourceReader: { name: 'RosterSourceReader', props: ['kind', 'id'], template: '<div data-testid="full-source">{{ kind }}:{{ id }}</div>' },
     Dialog: { template: '<div><slot /></div>' }, DialogContent: { template: '<div><slot /></div>' }, DialogHeader: true, DialogTitle: true, DialogDescription: true,
   } } })
   mounted.push(wrapper)

@@ -5,7 +5,7 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { initializeDb } from '../../../db/client'
-import { decisionCommand102 } from '../../../server/utils/decision-lifecycle-102'
+import { decisionCommand102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
 
 // Only the framework registration shell is replaced; the exported tool handler,
 // parser, error mapping, output redaction and SQLite remain real.

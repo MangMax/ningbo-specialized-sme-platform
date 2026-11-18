@@ -1,4 +1,4 @@
-import { dispositionRoute } from '../../../utils/title-cycle-disposition-route'
+import { dispositionRoute } from '../../../../layers/sme-roster/server/utils/title-cycle-disposition-route'
 
 defineRouteMeta({
   "openAPI": {

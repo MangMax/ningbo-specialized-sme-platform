@@ -7,10 +7,10 @@ import type { RosterEnterpriseDetail } from '../../../layers/sme-roster/lib/rost
 import EnterprisePage from '../../../layers/sme-roster/app/pages/enterprises/[id].vue'
 import SourceChip from '../../../layers/sme-roster/app/components/SourceChip.vue'
 import EventChip from '../../../layers/sme-roster/app/components/EventChip.vue'
-import SourceReader from '../../../components/record-correspondence/SourceReader.vue'
-import ComparisonEventRow from '../../../components/record-correspondence/ComparisonEventRow.vue'
-import ComparisonEvidence from '../../../components/record-correspondence/ComparisonEvidence.vue'
-import type { RecordComparisonResult } from '../../../lib/roster/record-comparison-view'
+import SourceReader from '../../../layers/sme-roster/app/components/record-correspondence/SourceReader.vue'
+import ComparisonEventRow from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonEventRow.vue'
+import ComparisonEvidence from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonEvidence.vue'
+import type { RecordComparisonResult } from '../../../layers/sme-roster/lib/roster/record-comparison-view'
 
 const query = { id: 20, interface: 'business_list', queryKey: 'synthetic', rdjb: '2', queriedAt: '2026-10-18', status: 'success', failureReason: null, relationCount: 1 }
 const relation = { id: 30, queryId: 20, enterpriseId: 91, sequenceNo: 1, nameRaw: '合成企业', status: '终审不通过', rawFields: {}, query }
@@ -30,7 +30,7 @@ const detail = { enterprise: { enterpriseId: 91, name: '合成企业', uscc: nul
 vi.mock('@pinia/colada', () => ({ useQuery: () => ({ data: ref(detail), isLoading: ref(false), error: ref(null), refetch: vi.fn() }) }))
 const returnTo = '/comparison?mode=record&queryIds=20&exportBatchIds=6&page=2&q=A%3FB&returnTo=%2Fcurrent-enterprises%3FtitleCode%3Dspecialized_sme%26page%3D4'
 const startTo = (eventId: number, withReturn = true) => ({ path: '/enterprises/91', query: { eventId: String(eventId), ...(withReturn ? { returnTo } : {}) } })
-const stubs = { NuxtLink: RouterLink, PageHeader: { template: '<header><slot name="breadcrumb" /></header>' }, FilePreviewDialog: true, EnterpriseLaterProcesses: true, RosterTitleBadge: true }
+const stubs = { NuxtLink: RouterLink, PageHeader: { template: '<header><slot name="breadcrumb" /></header>' }, FilePreviewDialog: true, RosterEnterpriseLaterProcesses: true, RosterTitleBadge: true }
 const preventNativeNavigation = (event: Event) => event.preventDefault()
 let wrapper: VueWrapper | undefined
 let sourceOwner: VueWrapper | undefined

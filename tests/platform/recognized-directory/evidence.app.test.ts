@@ -36,11 +36,11 @@ beforeAll(async () => {
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: dir, curatedPath: join(dir, 'absent-curated.json'), reconcilePath: join(dir, 'absent-reconcile.json') }))
   const queriesRoute = (await import('../../../server/api/platform/queries.get')).default
   const comparisonRoute = (await import('../../../server/api/comparison.get')).default
-  const { handleComparisonScopeProofRequest } = await import('../../../server/utils/comparison-scope-proof-api')
+  const { handleComparisonScopeProofRequest } = await import('../../../layers/sme-roster/server/utils/comparison-scope-proof-api')
   const { parseUploadDeclaration, registerStoredFile } = await import('../../../server/modules/sme-roster/file-upload')
-  const { parseRecordComparisonQuery } = await import('../../../lib/roster/record-comparison')
-  const { getRecordComparison } = await import('../../../server/utils/record-comparison')
-  const { resolveVerifiedComparisonEvidence } = await import('../../../server/utils/comparison-scope-proof')
+  const { parseRecordComparisonQuery } = await import('../../../layers/sme-roster/lib/roster/record-comparison')
+  const { getRecordComparison } = await import('../../../layers/sme-roster/server/utils/record-comparison')
+  const { resolveVerifiedComparisonEvidence } = await import('../../../layers/sme-roster/server/utils/comparison-scope-proof')
   api = await startEvidenceServer({ db, apiToken: token, routes: {
     '/api/files/register': async req => { const registered = await registerStoredFile(db, dir, parseUploadDeclaration(req.body)); return { status: registered.created ? 201 : 200, body: registered.row } },
     '/api/roster/comparison-scope-proofs/preflight': req => handleComparisonScopeProofRequest({ action: 'preflight', method: req.method, body: req.body, headers: req.headers }, { db, apiToken: token }),

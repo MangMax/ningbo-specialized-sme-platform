@@ -1394,7 +1394,7 @@ export function differenceReasonFields() { return {
     titleCode: text('title_code')
       .notNull()
       .references(() => title.code),
-    /** 差异方向,与 `lib/comparison.ts` 的 `COMPARISON_DIRECTIONS` 同值。 */
+    /** 差异方向,与 `layers/sme-roster/lib/comparison.ts` 的 `COMPARISON_DIRECTIONS` 同值。 */
     direction: text('direction', {
       enum: ['missing_in_miit', 'extra_in_miit'],
     }).notNull(),
@@ -2034,7 +2034,7 @@ export const titleCycleDispositionRevision = sqliteTable('title_cycle_dispositio
   cycleRevision: integer('cycle_revision'),
   effectivePrecision: text('effective_precision', { enum: ['unknown', 'year', 'month', 'day'] }).notNull(),
   effectiveValue: text('effective_value'),
-  fact: text('fact', { mode: 'json' }).$type<import('../server/utils/title-cycle-disposition').DispositionFact>().notNull(),
+  fact: text('fact', { mode: 'json' }).$type<import('../layers/sme-roster/server/utils/title-cycle-disposition').DispositionFact>().notNull(),
   audit: text('audit', { mode: 'json' }).$type<unknown>().notNull(),
 }, t => [
   unique().on(t.id, t.revision),

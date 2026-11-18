@@ -1,7 +1,7 @@
 import { ZodError } from 'zod'
 import { useDb } from '@db'
-import { parseRecordComparisonQuery } from '~~/lib/roster/record-comparison'
-import { readRecordComparison } from '~~/server/utils/record-comparison-read'
+import { parseRecordComparisonQuery } from '#sme-roster/lib/roster/record-comparison'
+import { readRecordComparison } from '#sme-roster/server/utils/record-comparison-read'
 
 defineRouteMeta({ openAPI: { tags: ['名录'], summary: '记录级对比（只读）', description: '明确来源 ID 集、时点和逐事件粒度。原观察级结果保留，增量返回所选范围的业务/版本分组及业务、版本、观察、未知计数；businessPage/businessPageSize独立分页，不受事件classification分页影响。历史判断与后续流程、同源现状观察分开；缺完整性或版本证明时保留 unknown/not_comparable。', parameters: [
   { name: 'queryIds', in: 'query', required: true, schema: { type: 'array', items: { type: 'integer' } } },

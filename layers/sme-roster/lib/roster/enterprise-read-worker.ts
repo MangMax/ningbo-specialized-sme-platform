@@ -11,8 +11,8 @@ import { listRosterEnterprises, getRosterEnterpriseDetail, type RosterEnterprise
 import { enterpriseJsonChunks } from './enterprise-read-json'
 import { listCurrentQualified, type CurrentQualifiedFilter } from './current-qualified-query'
 import { listRosterRecognitions } from './recognitions'
-import { listRosterDifferences } from '../../../../lib/roster/difference-list'
-import { readWholeComparisonSummary } from '../../../../lib/comparison-summary-read'
+import { listRosterDifferences } from './difference-list'
+import { readWholeComparisonSummary } from '../comparison-summary-read'
 import { captureReaderError, readOwnerIdentity, sameReadOwner, type RecognitionReadInput, type DifferenceReadInput, type SummaryReadInput } from './offmain-read-protocol'
 
 export type EnterpriseReadRequest = { id: number; dbPath: string; logContext?: LogContext } & (

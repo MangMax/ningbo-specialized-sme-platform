@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 import { mount, flushPromises } from '@vue/test-utils'
 import { afterEach, expect, it } from 'vitest'
-import ComparisonBusinessGroups from '../../../components/record-correspondence/ComparisonBusinessGroups.vue'
-import ComparisonBusinessObservation from '../../../components/record-correspondence/ComparisonBusinessObservation.vue'
-import type { RecordComparisonResult } from '../../../lib/roster/record-comparison-view'
+import ComparisonBusinessGroups from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonBusinessGroups.vue'
+import ComparisonBusinessObservation from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonBusinessObservation.vue'
+import type { RecordComparisonResult } from '../../../layers/sme-roster/lib/roster/record-comparison-view'
 
 const observations = [1076, 3161].map((id, index) => ({
   relation: { id, queryId: index ? 2788 : 557, interface: 'business_list', nameRaw: '合成企业', sequenceNo: 1, queriedAt: '2026-10-18T00:00:00Z', status: '终审通过', titleCode: 'specialized_sme' },
@@ -21,7 +21,7 @@ const mounted: ReturnType<typeof mount>[] = []
 afterEach(() => mounted.splice(0).forEach(wrapper => wrapper.unmount()))
 function render() {
   const wrapper = mount(ComparisonBusinessGroups, { props: { groups, counts, loading: false, returnTo: '/comparison?mode=record' }, global: { stubs: {
-    SourceReader: { props: ['id', 'kind'], template: '<div data-testid="source">{{ kind }}:{{ id }}</div>' },
+    RosterSourceReader: { props: ['id', 'kind'], template: '<div data-testid="source">{{ kind }}:{{ id }}</div>' },
     Dialog: { props: ['open'], template: '<div v-if="open"><slot /></div>' },
     DialogContent: { template: '<div><slot /></div>' },
     DialogTitle: { template: '<h3><slot /></h3>' },

@@ -2,7 +2,7 @@
  * 平台查询的处理状态。保留原始关系；业务原因与曾用名由代理/用户查证后显式提交。
  * 此模块只区分查询事实，不从名称、地区、申报状态或时间顺序推断业务结论。
  */
-import type { ComparisonDirection } from '../../../../lib/comparison'
+import type { ComparisonDirection } from '../comparison'
 import type { PlatformInterface } from '../labels'
 import type { PlatformRelationRecord } from './identity'
 import type { BusinessStatusValue } from './business-status'

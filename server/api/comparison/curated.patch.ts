@@ -1,7 +1,7 @@
 import { useDb } from '@db'
-import { parseCurationPatch } from '~~/lib/curation'
-import { DecisionError102 } from '../../utils/decision-lifecycle-102'
-import { patchLegacyCuration102 } from '../../utils/legacy-curation-102'
+import { parseCurationPatch } from '#sme-roster/lib/curation'
+import { DecisionError102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
+import { patchLegacyCuration102 } from '../../../layers/sme-roster/server/utils/legacy-curation-102'
 
 /** Legacy annotations remain separate from formal difference decisions. */
 defineRouteMeta({

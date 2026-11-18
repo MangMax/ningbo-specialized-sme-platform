@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
 import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
 import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
-import { snapshotInput } from '../../../server/utils/difference-snapshot'
+import { snapshotInput } from '../../../layers/sme-roster/server/utils/difference-snapshot'
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 const stores: ReturnType<typeof initializeDb>[]=[]
 const directories: string[]=[]

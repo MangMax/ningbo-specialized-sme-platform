@@ -1,3 +1,3 @@
-import { decisionRoute102 } from '../../../utils/decision-lifecycle-102-route'
+import { decisionRoute102 } from '../../../../layers/sme-roster/server/utils/decision-lifecycle-102-route'
 defineRouteMeta({ openAPI: { tags: ['差异决定'], summary: '按企业称号方向读取当前决定', parameters: [{ name: 'enterpriseId', in: 'query', required: true, schema: { type: 'integer' } }, { name: 'titleCode', in: 'query', required: true, schema: { type: 'string', enum: ['little_giant','specialized_sme','innovative_sme'] } }, { name: 'direction', in: 'query', required: true, schema: { type: 'string', enum: ['missing_in_miit','extra_in_miit'] } }], responses: { 200: { description: 'versionId 与 current；从未决定或已撤回时 current 为 null' } } } })
 export default decisionRoute102('current')

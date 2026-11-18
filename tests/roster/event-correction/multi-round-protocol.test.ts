@@ -117,7 +117,7 @@ async function fixture() {
   })
   const op = (id: number, patch: EventCorrectionRequest['operations'][number]['patch'], expectedRevision = 1) => ({ eventId: id, recordId: record.id, enterpriseId: enterprise.id, expectedRevision, patch })
   const { eventCorrectionRoute } = await import('../../../server/utils/roster-event-correction-route')
-  const { correspondenceRoute } = await import('../../../server/utils/record-correspondence-route')
+  const { correspondenceRoute } = await import('../../../layers/sme-roster/server/utils/record-correspondence-route')
   const { default: annualRoute } = await import('../../../server/api/roster/events/[id]/annual-process.get')
   const router = createRouter(), app = createApp()
   router.use('/api/roster/events/corrections/preflight', eventCorrectionRoute('preflight'))

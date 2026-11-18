@@ -160,7 +160,7 @@ const globalStubs = {
   },
   FilePreviewDialog: true,
   RecordSourceReader: true,
-  EnterpriseLaterProcesses: true,
+  RosterEnterpriseLaterProcesses: true,
   RosterEventChip: true,
   RosterSourceChip: true,
   RosterTitleBadge: true,

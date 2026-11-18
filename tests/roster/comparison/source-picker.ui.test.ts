@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
-import ComparisonSourcePicker from '../../../components/record-correspondence/ComparisonSourcePicker.vue'
+import ComparisonSourcePicker from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonSourcePicker.vue'
 import { Tabs } from '../../../layers/core/app/components/ui/tabs'
 
 const rows = {

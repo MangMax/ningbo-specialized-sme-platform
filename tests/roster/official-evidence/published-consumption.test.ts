@@ -22,7 +22,7 @@ import * as official from '../../../server/utils/official-evidence'
 
 import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import { listCurrentQualified, type CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
-import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
+import { handleRecordCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-api'
 
 const routeContext = vi.hoisted(() => ({ db: undefined as any }))
 // The package's defineMcpTool is an identity function; loading its Nitro registration cache needs virtual storage.
@@ -177,7 +177,7 @@ it("separates unavailable safe errors from unknown legacy while preserving origi
 
 it("reuses one selected event Map across source detail and repeated references with no per-evidence latest", async () => {
   const f = await paired()
-  const { sourceReader } = await import('../../../server/utils/record-correspondence-read')
+  const { sourceReader } = await import('../../../layers/sme-roster/server/utils/record-correspondence-read')
   // Caller-selected reference inputs to the pure reader, not forged persisted decisions.
   const row = { id: 17, type:'later_process',role:'followup_apply',status:'candidate',eventId:1,predecessorEventId:2,relationId:null,exportRowId:null } as any
   const read = vi.spyOn(official,'listEventsOfficialEvidencePages'), latest = vi.spyOn(official,'readLatestOfficialEvidence')
@@ -322,7 +322,7 @@ it("reads actual H3 routes and MCP handlers through the same serialized DTO whil
   const detail=await get('/api/roster/enterprises/1'),query=await get('/api/roster/current-enterprises?titleCode=specialized_sme'),source=await get('/api/roster/correspondences/events/2')
   expect([detail.status,query.status,source.status]).toEqual([200,200,200])
   expect(factsOf(detail.body)).toEqual(expected);expect(factsOf(query.body.rows[0])).toEqual(expected);expect(factsOf(source.body.source)).toEqual([expected[1]])
-  const { dispatchRecordCorrespondenceMcp }=await import('../../../server/utils/mcp-record-correspondence')
+  const { dispatchRecordCorrespondenceMcp }=await import('../../../layers/sme-roster/server/utils/mcp-record-correspondence')
   expect(dispatchRecordCorrespondenceMcp('source',{kind:'event',id:2},{db:f.db})).toEqual(source.body)
   const detailTool=(await import('../../../server/mcp/tools/get_enterprise_detail')).default
   const currentTool=(await import('../../../server/mcp/tools/list_current_qualified_enterprises')).default

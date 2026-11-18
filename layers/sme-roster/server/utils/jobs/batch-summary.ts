@@ -1,7 +1,7 @@
 import { isJobId } from '../../../../core/lib/job'
 import { MAX_BATCH_ATTEMPTS, type PlatformBatchItem } from '../../../lib/platform/batch-query'
 import type { TaskSummary } from '../../../../core/lib/task-center'
-import type { ProjectedTask } from '../../../../../server/utils/jobs/task-summary'
+import type { ProjectedTask } from './task-summary'
 import { sql } from 'drizzle-orm'
 import { schema } from '../../../../../db/client'
 interface BatchItemRead extends Pick<PlatformBatchItem, 'status' | 'completeness'> {

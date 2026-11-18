@@ -17,6 +17,6 @@ export interface PlatformQueryMeta {
   interface: PlatformInterface
   /** `business_list` 的 rdjb;`apply_list` 留空。 */
   rdjb?: string
-  /** 查询键:统一社会信用代码,或 `name:<nameNorm>`(与 `lib/reconcile.ts` 同构)。 */
+  /** 查询键:统一社会信用代码,或 `name:<nameNorm>`(与 `layers/sme-roster/lib/reconcile.ts` 同构)。 */
   queryKey: string
 }

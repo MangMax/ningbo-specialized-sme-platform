@@ -8,7 +8,7 @@ import { useDb, schema } from '../../../db'
 import type { RosterImportRequest } from '../../../lib/roster-import-client'
 import { handleRosterImportRequest, type RosterHttpRequest } from '../../../server/utils/roster-import-http'
 import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
-import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
+import { handleRecordCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-api'
 import { startHttpFixture } from '../../support/http'
 
 const MiB = 1024 * 1024

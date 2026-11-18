@@ -395,7 +395,7 @@ it("empty_dataset_is_a_successful_empty_scope_not_an_unrequested_census", () => 
 
 // Independent nonempty reference controls appended after the frozen 41-case prefix.
 import { qualificationReferenceLiterals } from '../fixtures/qualification-matrix'
-import { createEnterpriseTitleCorrespondenceRefsReader, listRecordCorrespondenceRefs } from '../../../server/utils/record-correspondence'
+import { createEnterpriseTitleCorrespondenceRefsReader, listRecordCorrespondenceRefs } from '../../../layers/sme-roster/server/utils/record-correspondence'
 
 type RefLiteral = { id: number; queryId: number; status: string | null; year: number | null; batch: string | null }
 function assertRefSnapshot(enterpriseId: number, refs: Record<'little_giant' | 'specialized_sme' | 'innovative_sme', RefLiteral[]>, ownQueryIds?: number[]) {
@@ -535,7 +535,7 @@ it('native recognized submission rejects ownership that conflicts with source id
 })
 
 import { createCurrentTargetContext } from '../../../layers/sme-roster/lib/roster/current-target-context'
-import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../server/utils/record-correspondence'
+import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
 
 it('global filter revalidates only recognition witnesses while full reads retain process refs', () => {
   const m = qualificationMatrix(fixture.sqlite)

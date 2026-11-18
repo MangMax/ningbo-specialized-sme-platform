@@ -1,4 +1,4 @@
-import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../../../server/utils/record-correspondence'
+import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import Database from 'better-sqlite3'

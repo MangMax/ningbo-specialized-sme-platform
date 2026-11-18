@@ -1,6 +1,6 @@
 import { MAX_PAGE_SIZE } from './query-limits'
 import { readPublicPublishedNames,type OfficialPublishedFact } from './roster/official-published-presentation'
-import { publishedNameText,type PublishedPresentation } from '../../../lib/roster/correspondence-view'
+import { publishedNameText,type PublishedPresentation } from './roster/correspondence-view'
 import { and,desc,eq,exists,inArray,isNull,like,or,sql,type SQL } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import { compact,groupBy,minBy,orderBy } from 'es-toolkit'

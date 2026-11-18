@@ -1,4 +1,4 @@
-import type { CorrespondenceDetail } from '../../../../lib/roster/correspondence-view'
+import type { CorrespondenceDetail } from './correspondence-view'
 
 /**
  * 企业详情「记录台账」的纯展示口径。

@@ -4,7 +4,7 @@ import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { afterAll, beforeEach, expect, it } from 'vitest'
 import { assertQualificationRowsSnapshotEqual } from '../fixtures/qualification-matrix'
 import { schema as s } from '../../../db/client'
-import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../../../server/utils/record-correspondence'
+import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
 import { readEvidenceToken113 } from '../../../server/utils/evidence-impact-113'
 import { specializedExportFixture, year } from '../current-export/fixtures/specialized-export'
 

@@ -2,13 +2,13 @@ import { afterEach, expect, it } from 'vitest'
 
 
 import { nativeCorrespondenceFixture } from '../correspondence/fixtures/native-correspondence'
-import { getRecordCorrespondenceAudit, listRecordCorrespondences } from '../../../server/utils/record-correspondence'
+import { getRecordCorrespondenceAudit, listRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
 const fixtures: ReturnType<typeof nativeCorrespondenceFixture>[] = []
 const fixture = () => { const f = nativeCorrespondenceFixture(); fixtures.push(f); return f }
 afterEach(() => { for (const f of fixtures.splice(0)) f.close() })
 
-import { readAnnualWriteScope } from '../../../server/utils/annual-correspondence-read'
-import { qualifyAnnualFinal, reconcileAnnualStep } from '../../../server/utils/annual-correspondence'
+import { readAnnualWriteScope } from '../../../layers/sme-roster/server/utils/annual-correspondence-read'
+import { qualifyAnnualFinal, reconcileAnnualStep } from '../../../layers/sme-roster/server/utils/annual-correspondence'
 it('native annual decision scope keeps same-version old observation confirmation', () => {
  const f=fixture(),old=f.add();f.save(f.request('old-confirmation',[{action:'create',status:'confirmed',edge:f.edge(old.id)}]));const current=f.add()
  const scope=readAnnualWriteScope(f.db,f.event.id)!

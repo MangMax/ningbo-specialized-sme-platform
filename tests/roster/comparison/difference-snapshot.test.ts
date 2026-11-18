@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import Database from 'better-sqlite3'
 import { initializeDb } from '../../../db/client'
-import { snapshotOperation } from '../../../server/utils/difference-snapshot'
+import { snapshotOperation } from '../../../layers/sme-roster/server/utils/difference-snapshot'
 const dir = mkdtempSync(join(tmpdir(), 'snapshot480-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'own.db') })
 afterAll(() => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) })

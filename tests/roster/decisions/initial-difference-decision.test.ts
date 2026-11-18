@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { effectScope } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
-import { useInitialDifferenceDecision } from '../../../composables/useInitialDifferenceDecision'
+import { useInitialDifferenceDecision } from '../../../layers/sme-roster/app/composables/useInitialDifferenceDecision'
 
 const coordinate = { enterpriseId: 7, titleCode: 'specialized_sme', direction: 'missing_in_miit' }
 const current = (id: number | null) => ({ ...coordinate, versionId: id, current: id ? { ...coordinate, id, status: 'confirmed_reason', reasonCode: 'other', measureCode: 'keep_history' } : null })

@@ -12,7 +12,7 @@ import {
   TITLES,
   comparisonDirectionLabel,
 } from '../../layers/sme-roster/lib/labels'
-import { formatFetchTime } from '../reconcile-time'
+import { formatFetchTime } from '../../layers/sme-roster/lib/reconcile-time'
 import type { ImpactRow, ReviewAssessment } from './evidence-review-ui'
 
 export type CaseTone = 'action' | 'failed' | 'waiting' | 'done' | 'muted'

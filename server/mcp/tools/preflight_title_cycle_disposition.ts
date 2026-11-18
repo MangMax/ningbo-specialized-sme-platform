@@ -1,7 +1,7 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
-import { dispositionSchemas, dispositionOperation, dispositionFailure } from '../../utils/title-cycle-disposition-protocol'
+import { dispositionSchemas, dispositionOperation, dispositionFailure } from '../../../layers/sme-roster/server/utils/title-cycle-disposition-protocol'
 export default defineMcpTool({
  name: 'preflight_title_cycle_disposition', description: 'preflight Little Giant disposition revisions. Assert/replace pending; confirm explicit; immutable history. No current qualification list effect in this protocol slice.',
  enabled: writeGuard,

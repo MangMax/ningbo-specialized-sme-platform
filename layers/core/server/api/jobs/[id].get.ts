@@ -2,7 +2,7 @@ import { useDb } from '@db'
 import { isJobId } from '#core/lib/job'
 import { ensureJobRunnerReady } from '../../utils/job-runner'
 import { getJob, getJobSummary } from '../../utils/job-store'
-import { jobReadProjector } from '../../../../../server/utils/job-read'
+import { jobRuntime } from '../../../../../server/job-runtime'
 import { registerJobSpecs } from '../../../../../server/utils/job-specs'
 
 /**
@@ -97,5 +97,5 @@ export default defineEventHandler(async (event) => {
 
   const row = getJob(db, id)
   if (!row) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
-  return jobReadProjector(db)(row)
+  return jobRuntime.readProjector(db)(row)
 })

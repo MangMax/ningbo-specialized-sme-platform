@@ -6,7 +6,7 @@ afterEach(()=>{for(const f of fixtures.splice(0))f.close()})
 
 import { z } from 'zod'
 const observationRefs = (row: Record<string, unknown>) => z.array(z.object({relationId:z.number()})).parse(row.observationRefs)
-import { generateCandidates } from '../../../server/utils/record-correspondence-candidates'
+import { generateCandidates } from '../../../layers/sme-roster/server/utils/record-correspondence-candidates'
 it('native candidates group identical versions and retain opposite observation-local decisions',()=>{
  const f=fixture(),raw=f.raw('CANDIDATE',{sblx:'申请',year:2024}),a=f.seed('business_list',raw),b=f.seed('business_list',raw)
  for(const [seed,status] of [[a,'confirmed'],[b,'rejected']] as const)f.save(f.request(status,[{action:'create',status,edge:f.edge(seed.relationIds[0]!)}]))

@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import type { PlatformBusinessGroup, PlatformBusinessObservationRef, PlatformCorrespondenceRef } from '../../../layers/sme-roster/lib/platform/business-record'
-import { presentAnnualSources } from '../../../lib/roster/annual-process-presentation'
+import { presentAnnualSources } from '../../../layers/sme-roster/lib/roster/annual-process-presentation'
 
 it('keeps every interface version and observation decision local instead of copying a group confirmation', () => {
   const decision = { id: 41, relationId: 22, status: 'confirmed', revision: 3, endedAt: null } as PlatformCorrespondenceRef

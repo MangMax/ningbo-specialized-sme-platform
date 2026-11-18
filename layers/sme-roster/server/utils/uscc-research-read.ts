@@ -9,7 +9,7 @@ import { currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
 import { removedEnterpriseIds } from '../../lib/roster/enterprise-list-selection'
 import { identityFunctions,identityUsccSql } from '../../lib/roster/enterprise-read-snapshot'
 import type { UsccChecklistFilter } from '../../lib/roster/uscc-research'
-import { targetCandidateTables } from '../../../../server/utils/candidate-target-sources'
+import { targetCandidateTables } from './candidate-target-sources'
 import type { PlatformEvidenceIndex } from './roster-duplicate-merge'
 
 type Db = BetterSQLite3Database<typeof s>

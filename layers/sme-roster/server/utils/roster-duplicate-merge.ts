@@ -31,7 +31,7 @@ type DuplicateMergeReport,
 } from '../../lib/roster/duplicate-merge'
 import type { DuplicateNameCandidate,RosterImportMerge } from '../../../../lib/roster-import-client'
 import { findEnterpriseById,findEnterpriseByUscc,readImportBatchOutcome } from '../../../../server/utils/roster-import'
-import { targetCandidateTables } from '../../../../server/utils/candidate-target-sources'
+import { targetCandidateTables } from './candidate-target-sources'
 
 type Db = BetterSQLite3Database<typeof schema>
 

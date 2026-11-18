@@ -1,6 +1,6 @@
 import { getAppModules } from '../../lib/app-modules'
 import * as core from '../../layers/core/server/modules/core/job-specs'
-import * as roster from '../modules/sme-roster/job-specs'
+import * as roster from '../../layers/sme-roster/server/modules/sme-roster/job-specs'
 import { getJobSpec, registerJob, type JobSpec } from '../../layers/core/server/utils/job-runner'
 
 // Bind the shared manifest references to server-only implementations.

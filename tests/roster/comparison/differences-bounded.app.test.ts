@@ -139,7 +139,7 @@ it('preserves REST filters counts deep pages evidence and the intentionally narr
 it('keeps title coverage history truncation and withdrawal fresh after application commits', async () => {
   const f = fixture(), api = await publicReads()
   const { listRosterDifferences: reference } = await import('../../../layers/sme-roster/lib/roster/enterprise-roster')
-  const { saveDecision102 } = await import('../../../server/utils/decision-lifecycle-102')
+  const { saveDecision102 } = await import('../../../layers/sme-roster/server/utils/decision-lifecycle-102')
   const first = (await api.rest('?q=合成差异00&direction=missing_in_miit')).rows[0]
   const scope = { enterpriseId: first.enterpriseId, titleCode: 'specialized_sme' as const, direction: 'missing_in_miit' as const }
   const latest = saveDecision102(f.db, { ...scope, action: 'replace', expectedCurrentId: first.explanationId, idempotencyKey: 'synthetic132-replace', actor: { type: 'agent', id: 'synthetic132' }, basis: 'synthetic independent decision', ruleVersion: '1', effectiveAt: '2026-10-20T00:00:00.000Z', decision: { status: 'confirmed_no_diff', measureCode: 'none', verificationStatus: 'confirmed' } })

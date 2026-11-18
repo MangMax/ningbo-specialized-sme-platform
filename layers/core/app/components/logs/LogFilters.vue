@@ -29,7 +29,7 @@ import {
   SelectValue
 } from '#core/app/components/ui/select'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
-import ComparisonDateTimePicker from '@/components/record-correspondence/ComparisonDateTimePicker.vue'
+import DateTimePicker from '../DateTimePicker.vue'
 const props = defineProps<{ filter: LogFilter }>()
 const emit = defineEmits<{ apply: [value: Record<string, string>] }>()
 const draft = reactive<Record<string, string>>({})
@@ -166,7 +166,7 @@ function reset() {
       <FieldGroup class="grid min-w-0 grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
         <Field v-for="key in ['from', 'to']" :key="key">
           <FieldLabel :for="`log-${key}`">{{ key === 'from' ? '开始时间' : '结束时间' }}（本地时间）</FieldLabel>
-          <ComparisonDateTimePicker
+          <DateTimePicker
             :id="`log-${key}`"
             :model-value="draft[key] ?? ''"
             :label="key === 'from' ? '开始时间' : '结束时间'"

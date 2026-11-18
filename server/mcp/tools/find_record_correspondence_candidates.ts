@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { dispatchRecordCorrespondenceMcp } from '../../utils/mcp-record-correspondence'
+import { dispatchRecordCorrespondenceMcp } from '../../../layers/sme-roster/server/utils/mcp-record-correspondence'
 
 const correspondenceRef = z.object({
   id: z.number().int(), relationId: z.number().int().nullable(), exportRowId: z.number().int().nullable(), eventId: z.number().int().nullable(), predecessorEventId: z.number().int().nullable(), enterpriseId: z.number().int().nullable(), titleCode: z.string(), type: z.string(), role: z.string(), status: z.enum(['candidate', 'confirmed', 'rejected', 'unlinked']), revision: z.number().int(), ruleId: z.string(), ruleVersion: z.string(), createdAt: z.string(), decidedAt: z.string().nullable(), endedAt: z.string().nullable(),

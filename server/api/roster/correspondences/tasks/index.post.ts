@@ -1,4 +1,4 @@
-import { candidateJobRoute } from '../../../../utils/candidate-job-route'
+import { candidateJobRoute } from '../../../../../layers/sme-roster/server/utils/candidate-job-route'
 defineRouteMeta({
   openAPI: {
     tags: ['记录对应'],

@@ -8,7 +8,7 @@ import { initializeDb } from '../../../db/client'
 import { createImportExecutor } from '../../../server/utils/import-execution'
 import { registerJob, submitJob, whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { getJob } from '../../../layers/core/server/utils/job-store'
-import { submitCandidateDiscovery } from '../../../server/utils/jobs/candidate-discovery'
+import { submitCandidateDiscovery } from '../../../layers/sme-roster/server/utils/jobs/candidate-discovery'
 import type { RosterImportRequest } from '../../../lib/roster-import-client'
 
 it.each(['completion', 'candidate checkpoint'] as const)('persists %s after an active import without blocking lock release or losing its result', async mode => {

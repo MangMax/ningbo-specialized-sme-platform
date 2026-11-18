@@ -5,9 +5,9 @@ import { eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { getRecordComparison } from '../../../server/utils/record-comparison'
-import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../../../server/utils/record-correspondence'
-import { groupComparisonBusinessObservations } from '../../../lib/roster/record-comparison'
+import { getRecordComparison } from '../../../layers/sme-roster/server/utils/record-comparison'
+import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
+import { groupComparisonBusinessObservations } from '../../../layers/sme-roster/lib/roster/record-comparison'
 
 const cleanups: Array<() => void> = []
 afterEach(() => cleanups.splice(0).forEach(cleanup => cleanup()))

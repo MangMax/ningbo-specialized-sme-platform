@@ -1,4 +1,4 @@
-import { createInitialDecisionState, initialDecisionNeedsGuard, type InitialDecisionState } from './useInitialDifferenceDecision'
+import { createInitialDecisionState, initialDecisionNeedsGuard, type InitialDecisionState } from '../layers/sme-roster/app/composables/useInitialDifferenceDecision'
 import type { ReviewDecisionDraft, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import { computed, onBeforeUnmount, reactive, type ComputedRef, type InjectionKey } from 'vue'
 

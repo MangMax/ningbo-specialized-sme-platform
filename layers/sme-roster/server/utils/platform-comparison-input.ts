@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import type { CandidateComparisonInput } from '../../lib/roster/platform-comparison'
-import { readAnnualComparisonInputs } from '../../../../server/utils/annual-correspondence-read'
+import { readAnnualComparisonInputs } from './annual-correspondence-read'
 
 /** Only actual identifiers cross this internal boundary. The caller owns one
  * SQLite read snapshot. No callbacks, supplied facts or confirmation switches. */

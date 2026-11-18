@@ -10,7 +10,7 @@
  * 而不知道为什么。
  */
 import { parseCsvQuery } from '../../../core/lib/csv'
-import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '../../../../lib/comparison'
+import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '../../lib/comparison'
 import {
   DIFFERENCE_REASONS,
   DIFFERENCE_STATUSES,

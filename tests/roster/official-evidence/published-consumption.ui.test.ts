@@ -10,14 +10,14 @@ import { createMemoryHistory, createRouter, RouterLink, RouterView, useRoute as 
 import type { RosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import PageHeader from '../../../layers/core/app/components/PageHeader.vue'
 import EnterprisePage from '../../../layers/sme-roster/app/pages/enterprises/[id].vue'
-import CorrespondenceItem from '../../../components/record-correspondence/CorrespondenceItem.vue'
-import type { CorrespondenceDetail, EventSource, OfficialPublishedFact, SourceResponse } from '../../../lib/roster/correspondence-view'
+import CorrespondenceItem from '../../../layers/sme-roster/app/components/record-correspondence/CorrespondenceItem.vue'
+import type { CorrespondenceDetail, EventSource, OfficialPublishedFact, SourceResponse } from '../../../layers/sme-roster/lib/roster/correspondence-view'
 import CurrentPage from '../../../layers/sme-roster/app/pages/current-enterprises.vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import SourceReader from '../../../components/record-correspondence/SourceReader.vue'
-import OfficialEvidence from '../../../components/record-correspondence/OfficialEvidence.vue'
+import SourceReader from '../../../layers/sme-roster/app/components/record-correspondence/SourceReader.vue'
+import OfficialEvidence from '../../../layers/sme-roster/app/components/record-correspondence/OfficialEvidence.vue'
 import { useRecordSource } from '../../../composables/useRecordSource'
-import { refreshCorrespondenceViews } from '../../../composables/useCorrespondenceReadback'
+import { refreshCorrespondenceViews } from '../../../layers/sme-roster/app/composables/useCorrespondenceReadback'
 
 const mounted: ReturnType<typeof mount>[] = []
 const stubs = { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' } }
@@ -276,7 +276,7 @@ describe("formal source consumer boundaries", () => {
     const wrapper = mount(defineComponent({ render: () => h(RouterView) }), { attachTo: document.body,
       global: { plugins: [createPinia(), PiniaColada, router], components: { NuxtLink: RouterLink, PageHeader }, stubs: {
         FilePreviewDialog: true,
-        EnterpriseLaterProcesses: true,
+        RosterEnterpriseLaterProcesses: true,
         RosterTitleBadge: true, RosterSourceChip: true, RosterEventChip: true,
       } } }); mounted.push(wrapper)
     await flushPromises()

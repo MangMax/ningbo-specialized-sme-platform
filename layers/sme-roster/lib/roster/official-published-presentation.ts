@@ -1,5 +1,5 @@
 import type { ReceiptRuntimeContext } from '../../../../server/utils/receipt-runtime-context'
-import { publishedNameText, type PublishedPresentation } from '../../../../lib/roster/correspondence-view'
+import { publishedNameText, type PublishedPresentation } from './correspondence-view'
 import { listEventsOfficialEvidencePages, OfficialEvidenceError } from '../../../../server/utils/official-evidence'
 import { importReceiptRedactor, type OfficialPublishedNameInput, type ReceiptRedactor } from '../../../../server/utils/import-receipt-redaction'
 

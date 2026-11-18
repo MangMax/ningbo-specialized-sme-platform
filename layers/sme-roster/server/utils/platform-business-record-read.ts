@@ -4,7 +4,7 @@ import * as schema from '../../../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import type { PlatformBusinessGroup,PlatformBusinessMetadata,PlatformBusinessObservationRef,PlatformCorrespondenceRef,ScopedPlatformObservation } from '../../lib/platform/business-record'
 import { targetSchema } from '../../lib/platform/target-schema'
-import { correspondenceColumns,correspondenceTable,externalRelationColumn } from '../../../../server/utils/record-correspondence-store'
+import { correspondenceColumns,correspondenceTable,externalRelationColumn } from './record-correspondence-store'
 
 type Db = BetterSQLite3Database<typeof schema>
 

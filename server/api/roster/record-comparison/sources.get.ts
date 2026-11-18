@@ -1,7 +1,7 @@
 import { ZodError } from 'zod'
 import { useDb } from '@db'
-import { comparisonSourceCatalogInput } from '~~/lib/roster/record-comparison'
-import { readRecordComparisonSources } from '~~/server/utils/record-comparison-read'
+import { comparisonSourceCatalogInput } from '#sme-roster/lib/roster/record-comparison'
+import { readRecordComparisonSources } from '#sme-roster/server/utils/record-comparison-read'
 
 defineRouteMeta({ openAPI: { tags: ['名录'], summary: '记录级对比来源选择目录', description: '逐项列已归档查询、导出批次、正式文件的 ID、中文名称、时间与范围状态。只供显式选择；目录不证明全覆盖，也不默认选择最新。', parameters: [
   { name: 'kind', in: 'query', schema: { type: 'string', enum: ['query', 'export_batch', 'official_document'] } },

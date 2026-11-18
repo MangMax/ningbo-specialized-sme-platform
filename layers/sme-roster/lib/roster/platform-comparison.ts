@@ -1,13 +1,13 @@
 /** #426 pure comparison interface. Formal qualification and annual selection retain their existing authorities. */
 import type { CurrentQualificationAssessment as Assessment, CurrentQualificationSnapshot as Snapshot } from './current-qualification'
 import { adjudicateQualificationCycles, originTime, type CycleJudgment, type QualificationEvent } from './qualification-cycles'
-import type { AnnualProcessInput, AnnualProcessSourceRefs, EventAnnualProcessRead, AnnualFinalQualification } from '../../../../lib/roster/annual-process'
+import type { AnnualProcessInput, AnnualProcessSourceRefs, EventAnnualProcessRead, AnnualFinalQualification } from './annual-process'
 import type { PlatformBusinessGroup, PlatformBusinessObservationRef } from '../platform/business-record'
-import type { RelationSource } from '../../../../lib/roster/correspondence-view'
+import type { RelationSource } from './correspondence-view'
 import type { PlatformNormalizationConflict } from '../platform/normalization'
 import type { QueryCoverageSource } from '../../../../lib/roster/query-assessment'
 import type { PlatformLiveQueryResult } from '../platform/live-query'
-import type { readAnnualDecisionRefs } from '../../../../server/utils/annual-correspondence'
+import type { readAnnualDecisionRefs } from '../../server/utils/annual-correspondence'
 
 type Immutable<T> = T extends readonly (infer E)[] ? readonly Immutable<E>[]
   : T extends object ? { readonly [K in keyof T]: Immutable<T[K]> } : T
@@ -76,7 +76,7 @@ export type CandidateComparisonInput = Immutable<{
 // Inputs are already normalized by authority; a TS type is not authentication.
 
 import { createHash } from 'node:crypto'
-import { buildAnnualProcess } from '../../../../lib/roster/annual-process'
+import { buildAnnualProcess } from './annual-process'
 
 export const COMPARISON_VERSION = 'platform-comparison-410-v1' as const
 export const COMPARISON_REASONS = [

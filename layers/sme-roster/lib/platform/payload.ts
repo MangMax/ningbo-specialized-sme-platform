@@ -39,7 +39,7 @@
  */
 import { createHash } from 'node:crypto'
 import { normalizeName } from '../domain'
-import type { ComparisonDirection } from '../../../../lib/comparison'
+import type { ComparisonDirection } from '../comparison'
 import type {
   RosterImportAlias,
   RosterImportDifference,

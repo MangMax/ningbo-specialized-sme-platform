@@ -2,12 +2,12 @@ import { afterEach, expect, it } from 'vitest'
 
 import { schema } from '../../../db/client'
 import { nativeCorrespondenceFixture } from '../correspondence/fixtures/native-correspondence'
-import { listRecordCorrespondences } from '../../../server/utils/record-correspondence'
+import { listRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
 const fixtures: ReturnType<typeof nativeCorrespondenceFixture>[] = []
 const fixture = () => { const f = nativeCorrespondenceFixture(); fixtures.push(f); return f }
 afterEach(() => { for (const f of fixtures.splice(0)) f.close() })
 
-import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
+import { handleRecordCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-api'
 it('discovers native history without mutating observations or creating decisions', () => {
  const f=fixture(),old=f.add({status:'终审不通过'}),current=f.add(),before=f.db.select().from(schema.platformBusinessObservation).all()
  const result=handleRecordCorrespondenceRequest({action:'discover',method:'POST',body:{eventId:f.event.id}},{db:f.db})

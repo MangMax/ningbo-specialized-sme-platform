@@ -1,4 +1,4 @@
-import { decisionRoute102 } from '../../../utils/decision-lifecycle-102-route'
+import { decisionRoute102 } from '../../../../layers/sme-roster/server/utils/decision-lifecycle-102-route'
 
 defineRouteMeta({
   openAPI: {

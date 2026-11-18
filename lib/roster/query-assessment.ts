@@ -3,7 +3,7 @@ import { readEvidenceImpact113, readEvidenceImpacts113 } from '../../server/util
 import { inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { enterprise } from '../../db/schema'
-import { currentDecision102, currentDecisionState102, currentDecisions102, currentDecisionStates102, type DecisionDb } from '../../server/utils/decision-lifecycle-102'
+import { currentDecision102, currentDecisionState102, currentDecisions102, currentDecisionStates102, type DecisionDb } from '../../layers/sme-roster/server/utils/decision-lifecycle-102'
 import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import { identityFunctions } from '../../layers/sme-roster/lib/roster/enterprise-read-snapshot'
 import { identityKeys, type IdentityKeyVariants } from '../../layers/sme-roster/lib/roster/current-identity-keys'

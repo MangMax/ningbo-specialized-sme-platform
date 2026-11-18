@@ -5,7 +5,7 @@ import * as s from '../../../db/schema';
 import { getEnterpriseProfile } from '../../../layers/sme-roster/server/utils/enterprise-profile'
 import { runtimeSchemaStatements } from '../../../db/runtime-schema.generated';
 import { upgradeTitleCycleDisposition } from '../../../db/title-cycle-disposition';
-import { currentDispositions, historyDispositions } from '../../../server/utils/title-cycle-disposition';
+import { currentDispositions, historyDispositions } from '../../../layers/sme-roster/server/utils/title-cycle-disposition';
 it('adds disposition storage twice without changing retained enterprise data', () => {
     const sqlite = new Database(':memory:');
     try {

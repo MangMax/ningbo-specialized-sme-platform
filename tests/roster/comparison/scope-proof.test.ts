@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
-import { handleComparisonScopeProofRequest } from '../../../server/utils/comparison-scope-proof-api'
+import { handleComparisonScopeProofRequest } from '../../../layers/sme-roster/server/utils/comparison-scope-proof-api'
 
 const dirs: string[] = []
 function fixture() {

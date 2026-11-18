@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { dispatchEventAnnualProcessMcp } from '../../utils/event-annual-process-api'
+import { dispatchEventAnnualProcessMcp } from '../../../layers/sme-roster/server/utils/event-annual-process-api'
 export default defineMcpTool({
   name: 'get_event_annual_process', title: '读取正式事件年度过程与末态资格',
   description: '等价GET /api/roster/events/:id/annual-process。完整限定归档scope先计算年度末态，再分页展示steps。保留各接口业务版本、观察出处与原实际决定；finalCandidateStepId仅事实资格，不表示已确认。缺年/partial/unknown如实保留。无asOf/sourceSet，不写ledger或调用preflight。',

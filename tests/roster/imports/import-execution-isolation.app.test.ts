@@ -76,7 +76,7 @@ async function isolatedApi(options: Parameters<typeof import('../../../server/ut
   const { createImportExecutor } = await import('../../../server/utils/import-execution')
   const { handleRosterImportRequest } = await import('../../../server/utils/roster-import-http')
   const { readImportReceipt } = await import('../../../server/utils/import-receipts')
-  const { handleRecordCorrespondenceRequest } = await import('../../../server/utils/record-correspondence-api')
+  const { handleRecordCorrespondenceRequest } = await import('../../../layers/sme-roster/server/utils/record-correspondence-api')
   const { startHttpFixture } = await import('../../support/http')
   const dir = mkdtempSync(join(tmpdir(), 'isolated-import-http-'))
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }))

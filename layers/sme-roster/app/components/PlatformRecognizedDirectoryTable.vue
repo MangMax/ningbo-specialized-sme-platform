@@ -5,7 +5,7 @@ import { ExternalLink, History } from '@lucide/vue'
 import type { RecognizedDirectoryRow } from '#sme-roster/lib/platform/recognized-directory'
 import { RDJB_TITLE_CODES } from '#sme-roster/lib/platform/recognized-evidence'
 import { PLATFORM_RDJBS } from '#sme-roster/lib/labels'
-import { formatFetchTime } from '~~/lib/reconcile-time'
+import { formatFetchTime } from '#sme-roster/lib/reconcile-time'
 import { Button } from '#core/app/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '#core/app/components/ui/table'
 

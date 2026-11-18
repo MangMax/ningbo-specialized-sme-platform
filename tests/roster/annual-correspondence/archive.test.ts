@@ -1,10 +1,10 @@
 import { afterEach, expect, it } from 'vitest'
 import { nativeCorrespondenceFixture } from '../correspondence/fixtures/native-correspondence'
-import { readAnnualWriteScope } from '../../../server/utils/annual-correspondence-read'
-import { stageAnnualCorrespondence, activateAnnualCorrespondence, retryAnnualCorrespondence } from '../../../server/utils/jobs/annual-correspondence'
+import { readAnnualWriteScope } from '../../../layers/sme-roster/server/utils/annual-correspondence-read'
+import { stageAnnualCorrespondence, activateAnnualCorrespondence, retryAnnualCorrespondence } from '../../../layers/sme-roster/server/utils/jobs/annual-correspondence'
 import { getJob } from '../../../layers/core/server/utils/job-store'
 import { __resetJobRunner, clearJobSpecs, whenIdle, requestJobCancel } from '../../../layers/core/server/utils/job-runner'
-import { listRecordCorrespondences, getRecordCorrespondenceAudit } from '../../../server/utils/record-correspondence'
+import { listRecordCorrespondences, getRecordCorrespondenceAudit } from '../../../layers/sme-roster/server/utils/record-correspondence'
 import { schema } from '../../../db/client'
 const fixtures: ReturnType<typeof nativeCorrespondenceFixture>[]=[]
 const fixture=()=>{__resetJobRunner();clearJobSpecs();const f=nativeCorrespondenceFixture();fixtures.push(f);return f}

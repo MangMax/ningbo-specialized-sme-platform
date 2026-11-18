@@ -1,7 +1,7 @@
 import { ZodError } from 'zod'
 import { useDb } from '@db'
-import { parseRecordComparisonQuery } from '~~/lib/roster/record-comparison'
-import { previewRecordCorrespondenceImpact } from '~~/server/utils/record-comparison'
+import { parseRecordComparisonQuery } from '#sme-roster/lib/roster/record-comparison'
+import { previewRecordCorrespondenceImpact } from '#sme-roster/server/utils/record-comparison'
 
 defineRouteMeta({ openAPI: { tags: ['名录'], summary: '旧结论只读影响预览', description: '沿用记录级对比的显式来源集；列出旧结论原值与可能类别，数据问题和模型缺口分列。无写入。', parameters: [
   { name: 'queryIds', in: 'query', required: true, schema: { type: 'array', items: { type: 'integer' } } }, { name: 'exportBatchIds', in: 'query', required: true, schema: { type: 'array', items: { type: 'integer' } } }, { name: 'officialSourceDocumentIds', in: 'query', required: true, schema: { type: 'array', items: { type: 'integer' } } },

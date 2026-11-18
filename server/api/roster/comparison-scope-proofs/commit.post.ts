@@ -1,3 +1,3 @@
-import { comparisonScopeProofRoute } from '~~/server/utils/comparison-scope-proof-route'
+import { comparisonScopeProofRoute } from '#sme-roster/server/utils/comparison-scope-proof-route'
 defineRouteMeta({ openAPI: { tags: ['对比范围证明'], summary: '原子提交已预检的范围证明决定', security: [{ bearerAuth: [] }], requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', required: ['request', 'planHash'], properties: { request: { type: 'object' }, planHash: { type: 'string' } } } } } }, responses: { 200: { description: 'Committed receipt' }, 400: { description: 'Invalid input' }, 401: { description: 'Token absent or unconfigured' }, 409: { description: 'Stale plan or idempotency conflict' }, 422: { description: 'Insufficient evidence' } } } })
 export default comparisonScopeProofRoute('commit')

@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
-import { getComparison,type ComparisonDirection } from '../../../../lib/comparison'
+import { getComparison,type ComparisonDirection } from '../../lib/comparison'
 import { normalizeName } from '../../lib/domain'
 import type { PlatformInterface } from '../../lib/labels'
 import {
@@ -272,7 +272,7 @@ export interface CollectedTargets {
  * 取比对口径的差异行。
  *
  * `getComparison` 的 `direction` 是**单值**筛选,所以多方向要各调一次再合并 ——
- * 判据本身仍然只有 `lib/comparison.ts` 一份(不在这里另写一套差异口径)。
+ * 判据本身仍然只有 `layers/sme-roster/lib/comparison.ts` 一份(不在这里另写一套差异口径)。
  */
 function getComparisonAllDirections(
   db: Db,

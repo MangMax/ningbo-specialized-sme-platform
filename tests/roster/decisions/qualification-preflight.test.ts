@@ -25,7 +25,7 @@ async function post(path: string, body: unknown, token = 'synthetic') {
 }
 beforeAll(async () => {
  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic', filesDir: dir }))
- const { decisionRoute102 } = await import('../../../server/utils/decision-lifecycle-102-route')
+ const { decisionRoute102 } = await import('../../../layers/sme-roster/server/utils/decision-lifecycle-102-route')
  const preflight = (await import('../../../server/api/roster/decision-lifecycle/qualification-preflight.post')).default
  const commit = (await import('../../../server/api/roster/decision-lifecycle/qualification-commit.post')).default
  server = createServer(h3.toNodeListener(h3.createApp().use(h3.createRouter().post('/preflight', preflight).post('/commit', commit).post('/commands', decisionRoute102('commands')).get('/current', decisionRoute102('current')))))

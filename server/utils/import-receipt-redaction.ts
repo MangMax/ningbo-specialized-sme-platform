@@ -3,7 +3,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../db/schema'
 import { cookieRedactor } from '../../layers/sme-roster/lib/platform/client'
 import { credentialContext, resolveCredential } from '../../layers/core/server/utils/credential-state'
-import { sanitizeEvidence } from './record-correspondence-read'
+import { sanitizeEvidence } from '../../layers/sme-roster/server/utils/record-correspondence-read'
 
 type Db = BetterSQLite3Database<typeof schema>
 const sensitive = /cookie|password|passwd|token|secret|credential|authorization|authentication|api.?key|session/i

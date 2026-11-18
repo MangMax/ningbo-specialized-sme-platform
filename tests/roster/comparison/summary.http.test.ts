@@ -9,8 +9,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
 import { eq } from 'drizzle-orm'
 import { enterprise } from '../../../db/schema'
-import { reconcileKey } from '../../../lib/reconcile'
-import { saveDecision102 } from '../../../server/utils/decision-lifecycle-102'
+import { reconcileKey } from '../../../layers/sme-roster/lib/reconcile'
+import { saveDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
 
 const dir = mkdtempSync(join(tmpdir(), 'comparison-summary-http-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'fixture.db') })
@@ -42,7 +42,7 @@ beforeAll(async () => {
   const curate = (await import('../../../server/api/comparison/curated.patch')).default
   const router = createRouter()
   router.get('/api/comparison', handler)
-  const { comparisonScopeProofRoute } = await import('../../../server/utils/comparison-scope-proof-route')
+  const { comparisonScopeProofRoute } = await import('../../../layers/sme-roster/server/utils/comparison-scope-proof-route')
   router.post('/api/roster/comparison-scope-proofs/preflight', comparisonScopeProofRoute('preflight'))
   router.post('/api/roster/comparison-scope-proofs/commit', comparisonScopeProofRoute('commit'))
   router.get('/api/roster/comparison-scope-proofs/:id', comparisonScopeProofRoute('get', 'id'))

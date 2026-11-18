@@ -1,5 +1,5 @@
 import { submitNativePlatformQuery } from '../fixtures/native-query'
-import { sourceReader } from '../../../server/utils/record-correspondence-read'
+import { sourceReader } from '../../../layers/sme-roster/server/utils/record-correspondence-read'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'

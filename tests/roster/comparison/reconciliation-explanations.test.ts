@@ -2,9 +2,9 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { ComparisonDirection } from '../../../lib/comparison'
-import { attachReconcile, readReconcile, reconcileKey } from '../../../lib/reconcile'
-import { formatFetchTime } from '../../../lib/reconcile-time'
+import type { ComparisonDirection } from '../../../layers/sme-roster/lib/comparison'
+import { attachReconcile, readReconcile, reconcileKey } from '../../../layers/sme-roster/lib/reconcile'
+import { formatFetchTime } from '../../../layers/sme-roster/lib/reconcile-time'
 import {
   RECONCILE_LABELS,
 } from '../../../layers/sme-roster/lib/labels'

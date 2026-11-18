@@ -8,7 +8,7 @@ import {
   comparisonSourceSecondaryIds,
   comparisonSourceTitle,
   comparisonSourceUnconfirmedLine,
-} from '../../../lib/roster/record-comparison-display'
+} from '../../../layers/sme-roster/lib/roster/record-comparison-display'
 
 const querySource = {
   kind: 'query',

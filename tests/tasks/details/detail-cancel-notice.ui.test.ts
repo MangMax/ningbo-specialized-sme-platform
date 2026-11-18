@@ -11,7 +11,7 @@
 // server says*, never the component's internals — no private ref is written.
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import TaskDetail from '../../../components/tasks/TaskDetail.vue'
+import TaskDetail from '../../../layers/sme-roster/app/components/tasks/TaskDetail.vue'
 import TableFailureState from '../../../layers/core/app/components/TableFailureState.vue'
 import TaskProgress from '../../../layers/core/app/components/tasks/TaskProgress.vue'
 import type { TaskSummary } from '#core/lib/task-center'

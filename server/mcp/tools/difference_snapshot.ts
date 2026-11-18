@@ -1,7 +1,7 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { z } from 'zod'
-import { snapshotOperation } from '../../utils/difference-snapshot'
+import { snapshotOperation } from '../../../layers/sme-roster/server/utils/difference-snapshot'
 import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 export default defineMcpTool({
   name: 'difference_snapshot', title: '公布企业业务采集任务',

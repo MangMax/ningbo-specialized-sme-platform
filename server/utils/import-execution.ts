@@ -1,4 +1,4 @@
-import { activateCandidateDiscoveryTasks } from './jobs/candidate-discovery'
+import { activateCandidateDiscoveryTasks } from '../../layers/sme-roster/server/utils/jobs/candidate-discovery'
 import { ensureJobRunnerReady } from '../../layers/core/server/utils/job-runner'
 import { serialize } from 'node:v8'
 import type Database from 'better-sqlite3'

@@ -1,4 +1,4 @@
-import { createTaskCenterRoute } from '../../../../../server/utils/task-center-route'
+import { taskCenter } from '../../../../../server/task-center'
 
 defineRouteMeta({
   openAPI: {
@@ -18,4 +18,4 @@ defineRouteMeta({
     },
   },
 })
-export default createTaskCenterRoute('list')
+export default taskCenter.createRoute('list')

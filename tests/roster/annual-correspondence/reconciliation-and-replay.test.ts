@@ -2,13 +2,13 @@ import { afterEach, expect, it } from 'vitest'
 
 import { schema } from '../../../db/client'
 import { nativeCorrespondenceFixture } from '../correspondence/fixtures/native-correspondence'
-import { listRecordCorrespondences } from '../../../server/utils/record-correspondence'
+import { listRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
 const fixtures: ReturnType<typeof nativeCorrespondenceFixture>[] = []
 const fixture = () => { const f = nativeCorrespondenceFixture(); fixtures.push(f); return f }
 afterEach(() => { for (const f of fixtures.splice(0)) f.close() })
 
-import { readAnnualWriteScope } from '../../../server/utils/annual-correspondence-read'
-import { qualifyAnnualFinal, reconcileAnnualStep } from '../../../server/utils/annual-correspondence'
+import { readAnnualWriteScope } from '../../../layers/sme-roster/server/utils/annual-correspondence-read'
+import { qualifyAnnualFinal, reconcileAnnualStep } from '../../../layers/sme-roster/server/utils/annual-correspondence'
 it('native annual reconciliation confirms the actual endpoint and replays without duplicate audit', () => {
  const f=fixture(),row=f.add(),scope=readAnnualWriteScope(f.db,f.event.id)!
  const reconcile=()=>reconcileAnnualStep(f.db,readAnnualWriteScope,{eventId:f.event.id,generation:scope.generation,stepId:scope.finalCandidateStepId!})

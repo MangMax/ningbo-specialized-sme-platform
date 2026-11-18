@@ -164,7 +164,7 @@ it('native qualification consumes confirmed facts and withdrawal preserves immut
   expect(read().versions.facts).not.toBe(version)
 })
 it('difference commands pin multiple owned confirmed revisions and reject cross-enterprise stale or pending references', async () => {
-  const { saveDecision102 } = await import('../../../server/utils/decision-lifecycle-102')
+  const { saveDecision102 } = await import('../../../layers/sme-roster/server/utils/decision-lifecycle-102')
   const id = seed(), other = seed(), refs: any[] = []
   for (const kind of ['moved_out', 'cancelled']) {
     const first = await commit(id, await command(id, { action: 'assert', fact: { ...fact, kind } }))

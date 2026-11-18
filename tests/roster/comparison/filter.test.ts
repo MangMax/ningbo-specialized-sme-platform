@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterComparisonRows } from '../../../lib/comparison-filter'
+import { filterComparisonRows } from '../../../layers/sme-roster/lib/comparison-filter'
 
 const rows = [
   {

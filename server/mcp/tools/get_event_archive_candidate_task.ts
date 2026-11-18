@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { dispatchCandidateJobMcp } from '../../utils/candidate-job-api'
+import { dispatchCandidateJobMcp } from '../../../layers/sme-roster/server/utils/candidate-job-api'
 import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
 export default defineMcpTool({
   name: 'get_event_archive_candidate_task',

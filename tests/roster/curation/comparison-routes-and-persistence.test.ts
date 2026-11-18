@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { getCuratedComparison } from '../../../lib/curation'
+import { getCuratedComparison } from '../../../layers/sme-roster/lib/curation'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-curation-'))
 const path = join(dir, 'nested', 'annotations.json')

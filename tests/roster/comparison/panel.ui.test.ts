@@ -2,11 +2,11 @@
 import { chooseCalendarSelect } from '../../support/calendar-select'
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, reactive } from 'vue'
-import ComparisonSourcePicker from '../../../components/record-correspondence/ComparisonSourcePicker.vue'
-import ComparisonProofPicker from '../../../components/record-correspondence/ComparisonProofPicker.vue'
+import ComparisonSourcePicker from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonSourcePicker.vue'
+import ComparisonProofPicker from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonProofPicker.vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import RecordComparisonPanel from '../../../components/record-correspondence/RecordComparisonPanel.vue'
-import ComparisonDateTimePicker from '../../../components/record-correspondence/ComparisonDateTimePicker.vue'
+import RecordComparisonPanel from '../../../layers/sme-roster/app/components/record-correspondence/RecordComparisonPanel.vue'
+import ComparisonDateTimePicker from '../../../layers/core/app/components/DateTimePicker.vue'
 import { Select } from '../../../layers/core/app/components/ui/select'
 import { rememberEvidencePreviewReturn } from '../../../lib/roster/evidence-preview-return'
 
@@ -16,10 +16,10 @@ const stubs = {
   // These tests own request/readiness/return scheduling. Accordion uses its own RAF
   // to measure height; exercise that real component separately in disclosure/workflow tests.
   DisclosurePanel: { template: '<section><slot name="header" /><slot name="trigger" /><slot name="title" /><slot /></section>' },
-  ComparisonSourcePicker: defineComponent({ props: ['selection'], emits: ['change', 'settled'], watch: { selection: { immediate: true, deep: true, handler(value: unknown) { this.$emit('settled', JSON.stringify(value), true) } } }, template: '<button data-testid="select-sources" @click="$emit(\'change\', { queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [3], proofIds: [] })">选定来源</button>' }),
-  ComparisonProofPicker: defineComponent({ props: ['selection', 'asOf'], emits: ['change', 'settled'], watch: { selection: { immediate: true, deep: true, handler() { this.$emit('settled', JSON.stringify([this.selection, this.asOf]), true) } }, asOf() { this.$emit('settled', JSON.stringify([this.selection, this.asOf]), true) } }, template: '<div data-testid="proof-cutoff">{{ asOf }}<button data-testid="select-proof" @click="$emit(\'change\', [12])">选定依据</button></div>' }),
-  ComparisonEvidence: { template: '<div data-testid="shown-result">已读取结果</div>' },
-  ComparisonEventRow: true,
+  RosterComparisonSourcePicker: defineComponent({ props: ['selection'], emits: ['change', 'settled'], watch: { selection: { immediate: true, deep: true, handler(value: unknown) { this.$emit('settled', JSON.stringify(value), true) } } }, template: '<button data-testid="select-sources" @click="$emit(\'change\', { queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [3], proofIds: [] })">选定来源</button>' }),
+  RosterComparisonProofPicker: defineComponent({ props: ['selection', 'asOf'], emits: ['change', 'settled'], watch: { selection: { immediate: true, deep: true, handler() { this.$emit('settled', JSON.stringify([this.selection, this.asOf]), true) } }, asOf() { this.$emit('settled', JSON.stringify([this.selection, this.asOf]), true) } }, template: '<div data-testid="proof-cutoff">{{ asOf }}<button data-testid="select-proof" @click="$emit(\'change\', [12])">选定依据</button></div>' }),
+  RosterComparisonEvidence: { template: '<div data-testid="shown-result">已读取结果</div>' },
+  RosterComparisonEventRow: true,
   TableLoadingStatus: true,
   TableFailureState: { props: ['title'], emits: ['retry'], template: '<div data-testid="fetch-error">{{ title }}<button @click="$emit(\'retry\')">重试</button></div>' },
   TablePagination: { emits: ['update:page', 'update:pageSize'], template: '<div><button data-testid="next-page" @click="$emit(\'update:page\', 2)">下一页</button><button data-testid="size-50" @click="$emit(\'update:pageSize\', 50)">每页50</button></div>' },
@@ -206,7 +206,7 @@ it.each(['result-first', 'pickers-first'])('waits for catalog, selected labels, 
   const scrollTo = vi.fn()
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length })
   vi.stubGlobal('scrollTo', scrollTo)
-  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, ComparisonSourcePicker: false, ComparisonProofPicker: false } } })
+  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, RosterComparisonSourcePicker: false, RosterComparisonProofPicker: false } } })
   await flushPromises()
   const finishResult = async () => { pending.get('/api/roster/record-comparison')!(result()); await flushPromises() }
   if (order === 'result-first') await finishResult()
@@ -254,7 +254,7 @@ it('returns the owned event to its viewport offset after an expanded evidence se
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length })
   vi.stubGlobal('scrollTo', scrollTo)
   vi.stubGlobal('$fetch', vi.fn(async () => ({ ...result(), rows: [{ event: { id: 42 } }] })))
-  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, ComparisonEventRow: { template: '<article data-event-id="42" />' } } } })
+  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, RosterComparisonEventRow: { template: '<article data-event-id="42" />' } } } })
   await flushPromises()
   vi.spyOn(wrapper.get('[data-event-id="42"]').element, 'getBoundingClientRect').mockReturnValue({ top: 600 } as DOMRect)
   frames[0]!(0)
@@ -301,7 +301,7 @@ it('settles failed picker reads with their visible fallback layout before numeri
     if (url === '/api/roster/record-comparison') return result()
     throw new Error('offline')
   }))
-  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, ComparisonSourcePicker: false, ComparisonProofPicker: false } } })
+  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, RosterComparisonSourcePicker: false, RosterComparisonProofPicker: false } } })
   await flushPromises()
   expect(wrapper.text()).toContain('来源目录读取失败')
   expect(wrapper.text()).toContain('范围依据目录读取失败')
@@ -360,11 +360,11 @@ it('retains a successful empty result and its original source scope after target
 })
 
 it('refreshes correspondence badges without closing the open original row dialog', async () => {
-  const { refreshCorrespondenceViews } = await import('../../../composables/useCorrespondenceReadback')
+  const { refreshCorrespondenceViews } = await import('../../../layers/sme-roster/app/composables/useCorrespondenceReadback')
   let status = 'confirmed'
   const row = () => ({ event: { id: 298, eventType: 'award', year: 2021 }, record: { enterpriseId: 2516, titleCode: 'specialized_sme', nameRaw: '合成企业' }, evidence: [], classification: 'unresolved', reasons: [], correspondences: [{ id: 575, relationId: 3130, status, requiresRevalidation: false }], platformRows: [{ id: 3130, queryId: 2772, interface: 'business_list', status: '终审通过' }] })
   vi.stubGlobal('$fetch', vi.fn(async () => ({ ...result(), rows: [row()] })))
-  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, ComparisonEventRow: false, SourceReader: { template: '<div>原行已读取</div>' }, NuxtLink: { template: '<a><slot /></a>' } } } })
+  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, RosterComparisonEventRow: false, RosterSourceReader: { template: '<div>原行已读取</div>' }, NuxtLink: { template: '<a><slot /></a>' } } } })
   await chooseSources()
   await wrapper.findAll('button').find(button => button.text() === '查看原始记录')!.trigger('click'); await flushPromises()
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain('原行已读取')

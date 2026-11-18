@@ -643,7 +643,7 @@ export const platformQuery = sqliteTable(
     id: integer('id').primaryKey({ autoIncrement: true }),
     /** 独立来源：business_list / apply_list / recognized_list(queryBusList)。 */
     interface: text('interface', { enum: ['business_list', 'apply_list', 'recognized_list'] }).notNull(),
-    /** 查询键:统一社会信用代码,或 `name:<nameNorm>`(与 `lib/reconcile.ts` 同构)。 */
+    /** 查询键:统一社会信用代码,或 `name:<nameNorm>`(与 `layers/sme-roster/lib/reconcile.ts` 同构)。 */
     queryKey: text('query_key').notNull(),
     /**
      * `businessList` 的 `rdjb` 参数(认定级别):`1` 创新型 / `2` 专精特新中小企业 /
@@ -1497,7 +1497,7 @@ export function differenceReasonFields() { return {
     titleCode: text('title_code')
       .notNull()
       .references(() => title.code),
-    /** 差异方向,与 `lib/comparison.ts` 的 `COMPARISON_DIRECTIONS` 同值。 */
+    /** 差异方向,与 `layers/sme-roster/lib/comparison.ts` 的 `COMPARISON_DIRECTIONS` 同值。 */
     direction: text('direction', {
       enum: ['missing_in_miit', 'extra_in_miit'],
     }).notNull(),

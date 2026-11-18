@@ -2,7 +2,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import SourceReader from '../../../components/record-correspondence/SourceReader.vue'
+import SourceReader from '../../../layers/sme-roster/app/components/record-correspondence/SourceReader.vue'
 
 const event = { id: 9, recordId: 2, eventType: 'award', year: 2022, batchSeq: 1, decidedYear: 2022, reviewOutcome: null,
   record: { id: 2, enterpriseId: 42, titleCode: 'specialized_sme', source: 'jxj', usccRaw: '913300000000000004' }, evidence: [], correspondences: [] }

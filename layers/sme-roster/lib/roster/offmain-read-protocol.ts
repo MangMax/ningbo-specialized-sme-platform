@@ -1,7 +1,7 @@
 import { realpathSync, statSync } from 'node:fs'
 import type { RosterDifferenceFilter } from './enterprise-roster'
 import type { RosterRecognitionFilter } from './recognitions'
-import type { ComparisonSummaryOptions } from '../../../../lib/comparison-summary-read'
+import type { ComparisonSummaryOptions } from '../comparison-summary-read'
 
 /** Physical identity is conservative evidence, not an atomic ABA guarantee. */
 export interface ReadOwnerIdentity { dbPath: string; realpath: string; dev: number; ino: number }

@@ -1,8 +1,8 @@
 import { requestLogContext } from '../../../layers/core/lib/logging'
 import { useDb } from '@db'
-import { COMPARISON_DIRECTIONS } from '~~/lib/comparison'
+import { COMPARISON_DIRECTIONS } from '#sme-roster/lib/comparison'
 import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES } from '#sme-roster/lib/labels'
-import { readDifferences } from '../../utils/difference-read'
+import { readDifferences } from '../../../layers/sme-roster/server/utils/difference-read'
 import { withEnterpriseReadSignal } from '../../../layers/core/server/utils/enterprise-read-signal'
 import { parseRosterDifferenceQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
 

@@ -1,6 +1,6 @@
-import { useCorrespondenceReadback } from './useCorrespondenceReadback'
+import { useCorrespondenceReadback } from '../layers/sme-roster/app/composables/useCorrespondenceReadback'
 import { ref, watch, type MaybeRefOrGetter, toValue } from 'vue'
-import { sourcePublishedNamesUnavailable, correspondenceSourceUrl, type SourceKind, type SourceResponse } from '~~/lib/roster/correspondence-view'
+import { sourcePublishedNamesUnavailable, correspondenceSourceUrl, type SourceKind, type SourceResponse } from '#sme-roster/lib/roster/correspondence-view'
 
 /** Keeps the last successful source visible while a retry or target request fails. */
 export function useRecordSource(kind: MaybeRefOrGetter<SourceKind>, id: MaybeRefOrGetter<number>, active: MaybeRefOrGetter<boolean> = true) {

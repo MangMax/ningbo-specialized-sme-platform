@@ -1,10 +1,10 @@
-import { explainCurrentDifferences, type DifferenceQualification } from '../../../../lib/roster/current-difference'
+import { explainCurrentDifferences, type DifferenceQualification } from './current-difference'
 import { enterpriseBusinessTimeline } from './enterprise-business-timeline'
-import { readCorrespondenceTargetQueries,readCorrespondenceTargetSources,correspondenceQueryRelationIds } from '../../../../server/utils/record-correspondence-target-sources'
+import { readCorrespondenceTargetQueries,readCorrespondenceTargetSources,correspondenceQueryRelationIds } from '../../server/utils/record-correspondence-target-sources'
 import type { PlatformStoredQuery } from '../platform/read'
 import type { PlatformStoredRelation } from '../platform/read'
 import { differencePublicColumns } from '../platform/difference-reference-target'
-import type { PublishedPresentation } from '../../../../lib/roster/correspondence-view'
+import type { PublishedPresentation } from './correspondence-view'
 import { readQueryAssessment,readQueryCoverage,type QueryAssessment } from '../../../../lib/roster/query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
 import { legacySourcePositionForSequence,type LegacyProvenanceDisplay } from '../platform/legacy-provenance'
@@ -39,7 +39,7 @@ import * as schema from '../../../../db/schema'
 import { normalizeName,normalizeUscc } from '../domain'
 import { selectEnterpriseCoordinates,removedEnterpriseIds } from './enterprise-list-selection'
 import { and,inArray,sql } from 'drizzle-orm'
-import { getComparison,type ComparisonDirection } from '../../../../lib/comparison'
+import { getComparison,type ComparisonDirection } from '../comparison'
 import { DIFFERENCE_STATUS_ORDER,SOURCE_ORDER,TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
 import { canonicalEnterpriseId,currentEnterpriseIdentity } from './enterprise-identity'
@@ -845,7 +845,7 @@ function differenceKey(enterpriseId: number, titleCode: string, direction: strin
 }
 
 /**
- * 差异集合 = **比对口径**(`lib/comparison.ts`,`§0` 的「唯一差异口径」)∪ **已有解释**。
+ * 差异集合 = **比对口径**(`layers/sme-roster/lib/comparison.ts`,`§0` 的「唯一差异口径」)∪ **已有解释**。
  *
  * 为什么要并上「已有解释」:时态化之后,一条解释可能对应一个**当前已不是差异**的坐标
  * (例如两侧后来对齐了)。`confirmed_no_diff` 这类状态必须看得见(否则按 `status` 筛

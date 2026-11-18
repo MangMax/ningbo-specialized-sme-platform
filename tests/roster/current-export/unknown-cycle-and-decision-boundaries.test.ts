@@ -28,7 +28,7 @@ it('历史差异注销决定不作为跨称号正式主体终止事实', async (
   expect(actual.map(r => r.sheet)).toEqual(['有效企业'])
 }, 60000)
 it('对应边引用读取不应展开无关原始平台大字段', async () => {
-  const {preflightRecordCorrespondences,commitRecordCorrespondences} = await import('../../../server/utils/record-correspondence')
+  const {preflightRecordCorrespondences,commitRecordCorrespondences} = await import('../../../layers/sme-roster/server/utils/record-correspondence')
   const {readCurrentCandidate} = await import('../../../layers/sme-roster/lib/roster/current-qualification')
   const c = f.candidate('轻量对应引用')
   const event = f.db.$client.prepare('select id from record_event where record_id=?').get(c.record.id) as {id:number}

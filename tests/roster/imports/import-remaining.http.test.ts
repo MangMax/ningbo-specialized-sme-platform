@@ -11,7 +11,7 @@ import { commitRosterImport, preflightRosterImport, readImportBatchOutcome } fro
 import { startRosterApi } from './fixtures/import-server'
 import { listEnterprises } from '../../../server/utils/mcp-roster'
 import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
-import { saveDecision102 } from '../../../server/utils/decision-lifecycle-102'
+import { saveDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
 import { listPlatformQueries } from '../../../layers/sme-roster/lib/platform/read'
 
 async function fixture(run: (f: any) => Promise<void>) {

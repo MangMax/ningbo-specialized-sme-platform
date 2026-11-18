@@ -1,9 +1,9 @@
 import { requestLogContext } from '../../layers/core/lib/logging'
-import { readSummary } from '../utils/comparison-summary-read'
+import { readSummary } from '../../layers/sme-roster/server/utils/comparison-summary-read'
 import { withEnterpriseReadSignal } from '../../layers/core/server/utils/enterprise-read-signal'
 import { useDb } from '@db'
-import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '~~/lib/comparison'
-import { readWholeComparisonFull } from '~~/lib/comparison-full'
+import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '#sme-roster/lib/comparison'
+import { readWholeComparisonFull } from '#sme-roster/lib/comparison-full'
 import { TITLE_ORDER } from '#sme-roster/lib/labels'
 import { MAX_PAGE_SIZE } from '#sme-roster/lib/query'
 

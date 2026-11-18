@@ -9,8 +9,8 @@ import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { getRecordComparison, previewRecordCorrespondenceImpact, queryProofFingerprint } from '../../../server/utils/record-comparison'
-import { commitRecordCorrespondences, preflightRecordCorrespondences, type CorrespondenceOperation } from '../../../server/utils/record-correspondence'
+import { getRecordComparison, previewRecordCorrespondenceImpact, queryProofFingerprint } from '../../../layers/sme-roster/server/utils/record-comparison'
+import { commitRecordCorrespondences, preflightRecordCorrespondences, type CorrespondenceOperation } from '../../../layers/sme-roster/server/utils/record-correspondence'
 
 const dirs: string[] = []
 function fixture() {

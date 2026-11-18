@@ -30,7 +30,7 @@ async function fixture(awardYear = 2021, titleCode = 'specialized_sme') {
   router.use('/api/roster/events/corrections/commit', eventCorrectionRoute('commit'))
   router.use('/api/roster/events/:id/audit', eventCorrectionRoute('audit'))
   router.use('/api/roster/events/:id', eventCorrectionRoute('get'))
-  const { correspondenceRoute } = await import('../../../server/utils/record-correspondence-route')
+  const { correspondenceRoute } = await import('../../../layers/sme-roster/server/utils/record-correspondence-route')
   router.use('/api/roster/correspondences/preflight', correspondenceRoute('preflight'))
   router.use('/api/roster/correspondences/commit', correspondenceRoute('commit'))
   router.use('/api/roster/correspondences/:id', correspondenceRoute('get', { id: true }))

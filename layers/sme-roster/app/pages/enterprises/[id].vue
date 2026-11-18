@@ -12,9 +12,9 @@ import {
   officialTitlesLabel,
   titleLabel,
 } from '~~/lib/roster/review-display'
-import { sourceReturnTarget, type OfficialPublishedFact } from '~~/lib/roster/correspondence-view'
-import OfficialEvidenceView from '@/components/record-correspondence/OfficialEvidence.vue'
-import { eventDecisionText } from '~~/lib/roster/correspondence-view'
+import { sourceReturnTarget, type OfficialPublishedFact } from '#sme-roster/lib/roster/correspondence-view'
+import OfficialEvidenceView from '#sme-roster/app/components/record-correspondence/OfficialEvidence.vue'
+import { eventDecisionText } from '#sme-roster/lib/roster/correspondence-view'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import RosterPlatformRecords from '#sme-roster/app/components/PlatformRecords.vue'
 import RosterTitleBadge from '#sme-roster/app/components/TitleBadge.vue'

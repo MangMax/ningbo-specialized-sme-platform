@@ -1,4 +1,4 @@
-import { decisionRoute102 } from '../../../utils/decision-lifecycle-102-route'
+import { decisionRoute102 } from '../../../../layers/sme-roster/server/utils/decision-lifecycle-102-route'
 
 defineRouteMeta({ openAPI: { tags: ['差异决定'], summary: '提交来源版本绑定迁入资格', description: '仅 replace 且必须提供 currentQualification；需要 API token。预检绑定命令、规则、head、来源身份/内容/归属和事实修订；提交在 immediate 事务内重验。原 commands 保持历史语义。', requestBody: { required: true, content: { 'application/json': { schema: { type: 'object', additionalProperties: false, required: ['command','planHash'], properties: { command: {
             type: 'object', additionalProperties: false,

@@ -35,7 +35,7 @@ import { ROSTER_DIFFERENCE_FILTER_OPTIONS, rosterDifferenceFilterLabel } from '#
 import { captureQueryRequest, useRetainedQuerySnapshot } from '#core/app/composables/useRetainedQuerySnapshot'
 import type { QueryRequestSnapshot } from '#core/app/composables/useRetainedQuerySnapshot'
 import RosterEnterpriseDrawer from '#sme-roster/app/components/EnterpriseDrawer.vue'
-import EnterpriseDifferenceRefresh from '@/components/EnterpriseDifferenceRefresh.vue'
+import RosterEnterpriseDifferenceRefresh from '#sme-roster/app/components/EnterpriseDifferenceRefresh.vue'
 import RosterEnterpriseListTable, {
   type EnterpriseListRow,
 } from '#sme-roster/app/components/EnterpriseListTable.vue'
@@ -434,7 +434,7 @@ useHead({
   <div class="ledger-page flex min-w-0 flex-col gap-2 sm:gap-3">
     <PageHeader :title="ENTERPRISE_LIST_TITLE">
       <template #actions>
-        <EnterpriseDifferenceRefresh :enterprise-ids="displayedEnterpriseIds" :disabled="isLoading || !!error" @refreshed="refetch()" />
+        <RosterEnterpriseDifferenceRefresh :enterprise-ids="displayedEnterpriseIds" :disabled="isLoading || !!error" @refreshed="refetch()" />
         <Button as-child variant="outline" size="sm">
           <a :href="exportUrl"><ExternalLink class="size-3.5" />{{ LEDGER_EXPORT_LABEL }}</a>
         </Button>

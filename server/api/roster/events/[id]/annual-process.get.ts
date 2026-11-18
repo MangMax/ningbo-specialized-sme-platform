@@ -1,6 +1,6 @@
 import { defineEventHandler, getMethod, getQuery, getRouterParam, setHeader, setResponseStatus } from 'h3'
 import { useDb } from '@db'
-import { handleEventAnnualProcessRequest } from '../../../../utils/event-annual-process-api'
+import { handleEventAnnualProcessRequest } from '../../../../../layers/sme-roster/server/utils/event-annual-process-api'
 
 defineRouteMeta({ openAPI: { tags: ['名录对应'], summary: '读取单个正式事件的完整年度过程与末态资格', description: '只读GET，不调用preflight或写对应。年度资格先看全部已归档限定范围，再分页展示steps；finalCandidateStepId不等于已确认最终业务。缺年、真冲突、partial和unknown如实返回，不支持asOf/sourceSet。', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer', minimum: 1 } }, { name: 'page', in: 'query', schema: { type: 'integer', minimum: 1, default: 1 } }, { name: 'pageSize', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 200, default: 50 } }], responses: { 200: { description: '完整scope资格与来源代次，steps仅展示分页', content: { 'application/json': { schema: { type: 'object', required: ['process', 'sourceGeneration', 'sourceRefs', 'total', 'page', 'pageSize'], properties: {
   process: { type: 'object', required: ['event', 'steps', 'latestStepId', 'latestStepSummary', 'finalCandidateStepId', 'reasons', 'coverage'], properties: {

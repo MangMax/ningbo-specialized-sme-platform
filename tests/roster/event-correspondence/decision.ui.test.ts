@@ -2,13 +2,13 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
-import EventCorrespondenceDecision from '../../../components/record-correspondence/EventCorrespondenceDecision.vue'
+import EventCorrespondenceDecision from '../../../layers/sme-roster/app/components/record-correspondence/EventCorrespondenceDecision.vue'
 let wrapper: ReturnType<typeof mount>
 const readbackListeners: Array<() => void> = []
 afterEach(() => { wrapper?.unmount(); document.body.innerHTML = ''; readbackListeners.splice(0).forEach(listener => window.removeEventListener('roster-correspondence-readback', listener)); vi.unstubAllGlobals() })
 const edge = { type: 'event_process', eventId: 7, relationId: 10, role: 'context_only' }
 const capability = () => { vi.stubGlobal('useState', () => ref(true)) }
-const mountControl = (existing: any = null) => mount(EventCorrespondenceDecision, { props: { edge, existing }, attachTo: document.body, global: { stubs: { SourceReader: true } } })
+const mountControl = (existing: any = null) => mount(EventCorrespondenceDecision, { props: { edge, existing }, attachTo: document.body, global: { stubs: { RosterSourceReader: true } } })
 const button = (text: string) => Array.from(document.querySelectorAll('button')).find(b => b.textContent?.trim() === text)!
 
 async function submitPagedDecision(options: { total: number; missing?: boolean; missingId?: number; interrupt?: boolean; deferPage?: () => Promise<unknown>; ids?: number[]; invalidPage?: string; grow?: boolean }) {
@@ -382,7 +382,7 @@ it('keeps the only required basis field in the action area while preserving the 
   expect(footer.querySelectorAll('textarea')).toHaveLength(1)
   expect(footer.textContent).toContain('核对依据（必填）')
   expect(document.querySelector('[aria-label="待核平台原行"]')).not.toBeNull()
-  expect(wrapper.findComponent({ name: 'SourceReader' }).props('presentation')).toBe('business')
+  expect(wrapper.findComponent({ name: 'RosterSourceReader' }).props('presentation')).toBe('business')
   expect(button('提交决定').disabled).toBe(true)
 })
 

@@ -1,5 +1,5 @@
 import { resolvePlatformCookie } from '../platform-credential'
-import type { ComparisonDirection } from '../../../../../lib/comparison'
+import type { ComparisonDirection } from '../../../lib/comparison'
 import { TITLE_ORDER } from '../../../lib/labels'
 import { runPlatformReconcile, type ReconcileReport } from '../platform-reconcile'
 import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../../../../core/server/utils/job-runner'

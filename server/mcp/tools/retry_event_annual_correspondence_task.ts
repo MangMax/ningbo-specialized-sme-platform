@@ -1,8 +1,8 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { JOB_ID_RE } from '../../../layers/core/lib/job'
-import { annualTaskContext } from '../../utils/annual-correspondence-read'
-import { annualTaskMcpRequest } from '../../utils/annual-correspondence-mcp'
+import { annualTaskContext } from '../../../layers/sme-roster/server/utils/annual-correspondence-read'
+import { annualTaskMcpRequest } from '../../../layers/sme-roster/server/utils/annual-correspondence-mcp'
 import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 export default defineMcpTool({
   name: 'retry_event_annual_correspondence_task',

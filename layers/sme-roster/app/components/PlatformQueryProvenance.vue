@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS } from '#sme-roster/lib/labels'
-import { formatFetchTime } from '~~/lib/reconcile-time'
+import { formatFetchTime } from '#sme-roster/lib/reconcile-time'
 import { platformFailureForDisplay } from '#sme-roster/lib/roster/platform-records'
 import type { PlatformRecordQuery } from '#sme-roster/lib/roster/platform-records'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'

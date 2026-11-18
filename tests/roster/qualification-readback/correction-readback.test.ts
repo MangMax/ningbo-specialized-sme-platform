@@ -22,7 +22,7 @@ import type { EventCorrectionRequest } from '../../../server/utils/roster-event-
 import { dispatchEventCorrectionMcp } from '../../../server/utils/mcp-event-correction'
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
 import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
-import { preflightRecordCorrespondences, commitRecordCorrespondences, type CorrespondenceRequest } from '../../../server/utils/record-correspondence'
+import { preflightRecordCorrespondences, commitRecordCorrespondences, type CorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence'
 import { startHttpFixture, type HttpFixture } from '../../support/http'
 
 const NOW = Date.parse('2026-01-15T00:00:00.000Z')

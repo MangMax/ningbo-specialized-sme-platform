@@ -16,8 +16,8 @@ import type { RosterImportRequest } from '../../../lib/roster-import-client'
 import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
 import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
-import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
-import { handleEventAnnualProcessRequest } from '../../../server/utils/event-annual-process-api'
+import { handleRecordCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-api'
+import { handleEventAnnualProcessRequest } from '../../../layers/sme-roster/server/utils/event-annual-process-api'
 import { startHttpFixture, type HttpFixture, type FixtureRequest } from '../../support/http'
 
 it('P_closed_public_award', async () => {
