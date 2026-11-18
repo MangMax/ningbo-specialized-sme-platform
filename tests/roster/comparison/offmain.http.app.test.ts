@@ -31,6 +31,7 @@ const require=createRequire(${JSON.stringify(resolve(root, 'package.json'))}),h=
 Object.assign(globalThis,h,{defineRouteMeta:()=>{},defineNitroPlugin:f=>f,useRuntimeConfig:()=>({apiToken:'synthetic-m3',curatedPath:${JSON.stringify(curated)},reconcilePath:${JSON.stringify(reconcile)}})});
 const {createJiti}=require(${JSON.stringify(jiti)}),load=createJiti(${JSON.stringify(resolve(root, 'package.json'))},{alias:{'@db':${JSON.stringify(resolve(root, 'db/index.ts'))},'~~':${JSON.stringify(root)},'#sme-roster':${JSON.stringify(resolve(root, 'layers/sme-roster'))}}});
 (await load.import(${JSON.stringify(resolve(root, 'tests/support/compiled-business-workers.ts'))})).installCompiledBusinessWorkers();
+(await load.import(${JSON.stringify(resolve(root, 'server/install-application.ts'))})).installApplicationServer();
 const {initializeDb}=await load.import(${JSON.stringify(resolve(root, 'db/client.ts'))}),writer=initializeDb({create:true,readOnly:false});
 const {startRosterApi,executeNativeImport}=await load.import(${JSON.stringify(resolve(root, 'tests/roster/imports/fixtures/import-server.ts'))}),imports=await startRosterApi({db:writer,apiToken:'synthetic-m3',executeImport:executeNativeImport});
 const hooks={};(await load.import(${JSON.stringify(resolve(root, 'layers/sme-roster/server/plugins/enterprise-read.ts'))})).default({hooks:{hook:(n,f)=>hooks[n]=f}});

@@ -30,6 +30,7 @@ it('REST differences native lock leaves health responsive before independent rel
       Object.assign(globalThis,h,{defineRouteMeta:()=>{},defineNitroPlugin:f=>f,useRuntimeConfig:()=>({apiToken:'synthetic-m2'})});process.env.M2_APP_PID=String(process.pid);
       const {createJiti}=require(${JSON.stringify(jiti)});const load=createJiti(${JSON.stringify(resolve(root, 'package.json'))},{alias:{'@db':${JSON.stringify(resolve(root, 'db/index.ts'))},'~~':${JSON.stringify(root)},'#sme-roster':${JSON.stringify(resolve(root, 'layers/sme-roster'))}}});
       (await load.import(${JSON.stringify(resolve(root, 'tests/support/compiled-business-workers.ts'))})).installCompiledBusinessWorkers();
+(await load.import(${JSON.stringify(resolve(root, 'server/install-application.ts'))})).installApplicationServer();
       const {initializeDb}=await load.import(${JSON.stringify(resolve(root, 'db/client.ts'))});
       const writer=initializeDb({create:true,readOnly:false});writer.$client.pragma('journal_mode=DELETE');
       const {startRosterApi}=await load.import(${JSON.stringify(resolve(root, 'tests/roster/imports/fixtures/import-server.ts'))});
