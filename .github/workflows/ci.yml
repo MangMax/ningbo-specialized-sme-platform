@@ -60,6 +60,7 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=6144
       - run: pnpm verify:native-platform-boundary
+      - run: pnpm verify:module-boundaries
       - run: node scripts/generate-roster-import-discovery.mjs --check
 
   build:
