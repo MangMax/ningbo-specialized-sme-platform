@@ -180,8 +180,8 @@ beforeAll(async () => {
   vi.doMock('@db', () => ({ useDb: () => db }))
 
   const routes = {
-    get: (await import('../../../server/api/roster/uscc-research.get')).default as unknown as (event: unknown) => unknown,
-    post: (await import('../../../server/api/roster/uscc-research.post')).default as unknown as (event: unknown) => unknown,
+    get: (await import('../../../layers/sme-roster/server/api/roster/uscc-research.get')).default as unknown as (event: unknown) => unknown,
+    post: (await import('../../../layers/sme-roster/server/api/roster/uscc-research.post')).default as unknown as (event: unknown) => unknown,
   }
 
   server = await startEvidenceServer({

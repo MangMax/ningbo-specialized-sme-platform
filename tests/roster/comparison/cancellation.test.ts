@@ -16,8 +16,8 @@ let dir: string, db: ReturnType<typeof initializeDb>, documentId: number, record
 
 beforeAll(async () => {
   for (const [name, value] of Object.entries({ createError, defineEventHandler, getQuery, setHeader })) vi.stubGlobal(name, value)
-  comparison = (await import('../../../server/api/roster/record-comparison.get')).default
-  catalog = (await import('../../../server/api/roster/record-comparison/sources.get')).default
+  comparison = (await import('../../../layers/sme-roster/server/api/roster/record-comparison.get')).default
+  catalog = (await import('../../../layers/sme-roster/server/api/roster/record-comparison/sources.get')).default
   // Seed the real native command graph once; each case gets an independent file.
   seedDir = mkdtempSync(join(tmpdir(), 'comparison-route-cancel-'))
   vi.stubEnv('NUXT_DB_PATH', join(seedDir, 'test.sqlite'))

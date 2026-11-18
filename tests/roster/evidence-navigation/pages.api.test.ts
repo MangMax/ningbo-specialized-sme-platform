@@ -12,7 +12,7 @@ import { executeNativeImport, startRosterApi, type RosterApiServer } from '../im
 /**
  * RL-10 —— 出处页码补录接口的**真实 HTTP 契约**(`POST /api/roster/evidence/pages`)。
  *
- * 打的是 `server/api/roster/evidence/pages.post.ts` 也在调的**同一份**
+ * 打的是 `layers/sme-roster/server/api/roster/evidence/pages.post.ts` 也在调的**同一份**
  * `handleEvidencePagesRequest`(`tests/helpers/roster-http-server.ts` 起真端口),
  * 不是替身实现 —— 理由见 `tests/helpers/http-fixture.ts` 顶部。
  *

@@ -22,11 +22,11 @@ beforeAll(async () => {
   vi.stubGlobal('createError', createError)
   vi.stubGlobal('readBody', readBody)
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: join(dir, 'curated.json'), reconcilePath: join(dir, 'reconcile.json') }))
-  const handler = (await import('../../../server/api/roster/differences.get')).default
-  const recognitions = (await import('../../../server/api/roster/recognitions.get')).default
-  const comparison = (await import('../../../server/api/comparison.get')).default
-  const usccGet = (await import('../../../server/api/roster/uscc-research.get')).default
-  const usccPost = (await import('../../../server/api/roster/uscc-research.post')).default
+  const handler = (await import('../../../layers/sme-roster/server/api/roster/differences.get')).default
+  const recognitions = (await import('../../../layers/sme-roster/server/api/roster/recognitions.get')).default
+  const comparison = (await import('../../../layers/sme-roster/server/api/comparison.get')).default
+  const usccGet = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.get')).default
+  const usccPost = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.post')).default
   const app = createApp().use('/api/roster/differences', handler)
     .use('/api/roster/recognitions', recognitions).use('/api/comparison', comparison)
     .use('/api/roster/uscc-research', defineEventHandler(event => event.method === 'POST' ? usccPost(event) : usccGet(event)))
@@ -65,7 +65,7 @@ it('keeps literal nonempty results and separate universes during mixed public re
     expect(response.status).toBe(200)
     return response.json()
   }
-  const tool = (await import('../../../server/mcp/tools/list_differences')).default as unknown as { handler(input: object): Promise<unknown> }
+  const tool = (await import('../../../layers/sme-roster/server/mcp/tools/list_differences')).default as unknown as { handler(input: object): Promise<unknown> }
   const [recognitions, summary, full, get, post, mcp] = await Promise.all([
     read('/api/roster/recognitions?pageSize=20'), read('/api/comparison?view=summary&pageSize=20'),
     read('/api/comparison?pageSize=20'), read('/api/roster/uscc-research?pageSize=20'),
@@ -106,7 +106,7 @@ it('preserves each scheduled route validation and the import authentication boun
 })
 
 it('propagates the existing MCP cancellation reason instead of a domain response', async () => {
-  const tool = (await import('../../../server/mcp/tools/list_differences')).default as unknown as {
+  const tool = (await import('../../../layers/sme-roster/server/mcp/tools/list_differences')).default as unknown as {
     handler(input: object, extra: { signal: AbortSignal }): Promise<unknown>
   }
   const controller = new AbortController()

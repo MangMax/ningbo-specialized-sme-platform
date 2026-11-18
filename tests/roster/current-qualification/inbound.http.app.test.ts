@@ -57,17 +57,17 @@ beforeAll(async () => {
   await enterpriseReads.start()
   for (const [key, value] of Object.entries(h3)) vi.stubGlobal(key, value)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'issue305-synthetic', filesDir: dir }))
-  const commands = (await import('../../../server/api/roster/decision-lifecycle/commands.post')).default
-  const currentDecision = (await import('../../../server/api/roster/decision-lifecycle/current.get')).default
-  const current = (await import('../../../server/api/roster/current-enterprises.get')).default
-  const detail = (await import('../../../server/api/roster/enterprises/[id].get')).default
+  const commands = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/commands.post')).default
+  const currentDecision = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/current.get')).default
+  const current = (await import('../../../layers/sme-roster/server/api/roster/current-enterprises.get')).default
+  const detail = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default
   server = createServer(h3.toNodeListener(h3.createApp({ debug: false }).use(h3.createRouter()
     .post('/api/roster/decision-lifecycle/commands', commands)
     .get('/api/roster/decision-lifecycle/current', currentDecision)
     .get('/api/roster/current-enterprises', current).get('/api/roster/enterprises/:id', detail))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
-  const tool = (await import('../../../server/mcp/tools/list_current_qualified_enterprises')).default as unknown as CurrentTool
+  const tool = (await import('../../../layers/sme-roster/server/mcp/tools/list_current_qualified_enterprises')).default as unknown as CurrentTool
   sdk.registerTool('list_current_qualified_enterprises', { inputSchema: tool.inputSchema }, async input => ({ content: [{ type: 'text', text: await tool.handler(input) }] }))
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   await sdk.connect(serverTransport); await client.connect(clientTransport)

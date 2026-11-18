@@ -27,8 +27,8 @@ beforeAll(async () => {
   vi.stubGlobal('setHeader', vi.fn())
   vi.stubGlobal('setResponseStatus', vi.fn())
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-  rest = (await import('../../../server/api/platform/query.post')).default as any
-  const definition = (await import('../../../server/mcp/tools/query_platform')).default as any
+  rest = (await import('../../../layers/sme-roster/server/api/platform/query.post')).default as any
+  const definition = (await import('../../../layers/sme-roster/server/mcp/tools/query_platform')).default as any
   tool = { handler: async input => {
     const wire = await definition.handler(input)
     expect(wire.structuredContent).toBeDefined()
@@ -151,8 +151,8 @@ it('missing recognized credentials reports all unqueried titles without using en
   } finally { vi.unstubAllEnvs() }
 })
 it('REST capabilities MCP discovery and OpenAPI advertise only verified recognized conditions', async () => {
-  const capabilities = (await import('../../../server/api/platform/capabilities.get')).default as any
-  const toolCaps = (await import('../../../server/mcp/tools/get_platform_capabilities')).default as any
+  const capabilities = (await import('../../../layers/sme-roster/server/api/platform/capabilities.get')).default as any
+  const toolCaps = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_capabilities')).default as any
   const cap = capabilities({})
   expect(await toolCaps.handler()).toEqual(cap)
   expect(cap.sources.queryBusList).toMatchObject({ available: true, titleSelection: true, defaultTitles: ['1', '2', '3'], defaultRestrictions: [], sorts: { qymc: ['asc', 'desc'] }, visibility: 'server_session_scope' })

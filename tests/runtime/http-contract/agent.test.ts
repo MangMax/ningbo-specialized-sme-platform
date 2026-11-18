@@ -834,7 +834,7 @@ describe('api-auth 鉴权判据', () => {
 // ---------------------------------------------------------------------------
 
 /** 路由文件的目录(测试从 cwd 跑,与 vitest.config.ts 的 root 一致)。 */
-const ROUTE_DIR = join(process.cwd(), 'server/api')
+const ROUTE_DIR = join(process.cwd(), 'layers/sme-roster/server/api')
 const CORE_ROUTE_DIR = join(process.cwd(), 'layers/core/server/api')
 
 describe('Nitro 内建 OpenAPI 的暴露面', () => {
@@ -909,7 +909,7 @@ describe('Nitro 内建 OpenAPI 的暴露面', () => {
       'jobs/kinds.get.ts',
     ]
     for (const rel of routes) {
-      const source = await readFile(join(/^(?:(?:jobs|files)\/|pdf-pages\.)/.test(rel) ? CORE_ROUTE_DIR : ROUTE_DIR, rel), 'utf8')
+      const source = await readFile(join(/^(?:(?:jobs|files)\/|pdf-pages\.)/.test(rel) ? CORE_ROUTE_DIR : rel === 'health.get.ts' ? join(process.cwd(), 'server/api') : ROUTE_DIR, rel), 'utf8')
       expect(source, rel).toContain('defineRouteMeta({')
       // 宏必须写在**顶层**(nitro 只认顶层 ExpressionStatement),所以别塞进函数里。
       expect(/^defineRouteMeta\(/m.test(source), rel).toBe(true)

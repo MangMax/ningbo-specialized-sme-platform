@@ -28,7 +28,7 @@ it('REST differences native lock leaves health responsive before independent rel
     writeFileSync(boot, `import {createRequire} from 'node:module';import {createServer} from 'node:http';
       const require=createRequire(${JSON.stringify(resolve(root, 'package.json'))}); const h=require('h3');
       Object.assign(globalThis,h,{defineRouteMeta:()=>{},defineNitroPlugin:f=>f,useRuntimeConfig:()=>({apiToken:'synthetic-m2'})});process.env.M2_APP_PID=String(process.pid);
-      const {createJiti}=require(${JSON.stringify(jiti)});const load=createJiti(${JSON.stringify(resolve(root, 'package.json'))},{alias:{'@db':${JSON.stringify(resolve(root, 'db/index.ts'))},'~~':${JSON.stringify(root)}}});
+      const {createJiti}=require(${JSON.stringify(jiti)});const load=createJiti(${JSON.stringify(resolve(root, 'package.json'))},{alias:{'@db':${JSON.stringify(resolve(root, 'db/index.ts'))},'~~':${JSON.stringify(root)},'#sme-roster':${JSON.stringify(resolve(root, 'layers/sme-roster'))}}});
       (await load.import(${JSON.stringify(resolve(root, 'tests/support/compiled-business-workers.ts'))})).installCompiledBusinessWorkers();
       const {initializeDb}=await load.import(${JSON.stringify(resolve(root, 'db/client.ts'))});
       const writer=initializeDb({create:true,readOnly:false});writer.$client.pragma('journal_mode=DELETE');
@@ -36,10 +36,10 @@ it('REST differences native lock leaves health responsive before independent rel
       const imports=await startRosterApi({db:writer,apiToken:'synthetic-m2'});
       process.env.NUXT_DB_READONLY='1';
       const hooks={};(await load.import(${JSON.stringify(resolve(root, 'layers/sme-roster/server/plugins/enterprise-read.ts'))})).default({hooks:{hook:(n,f)=>hooks[n]=f}});
-      const route=(await load.import(${JSON.stringify(resolve(root, 'server/api/roster/differences.get.ts'))})).default;
-      const recognitions=(await load.import(${JSON.stringify(resolve(root, 'server/api/roster/recognitions.get.ts'))})).default;
-      const history=(await load.import(${JSON.stringify(resolve(root, 'server/api/roster/decision-lifecycle/history.get.ts'))})).default;
-      const enterprises=(await load.import(${JSON.stringify(resolve(root, 'server/api/roster/enterprises.get.ts'))})).default;
+      const route=(await load.import(${JSON.stringify(resolve(root, 'layers/sme-roster/server/api/roster/differences.get.ts'))})).default;
+      const recognitions=(await load.import(${JSON.stringify(resolve(root, 'layers/sme-roster/server/api/roster/recognitions.get.ts'))})).default;
+      const history=(await load.import(${JSON.stringify(resolve(root, 'layers/sme-roster/server/api/roster/decision-lifecycle/history.get.ts'))})).default;
+      const enterprises=(await load.import(${JSON.stringify(resolve(root, 'layers/sme-roster/server/api/roster/enterprises.get.ts'))})).default;
       const app=h.createApp({debug:false});app.use(h.defineEventHandler(e=>hooks.request(e)));
       app.use(h.createRouter().get('/api/roster/differences',route).get('/api/roster/recognitions',recognitions).get('/api/roster/decision-lifecycle/history',history).get('/api/roster/enterprises',enterprises).get('/api/health',h.defineEventHandler(()=>({ok:true}))));
       const server=createServer(h.toNodeListener(app));await new Promise(r=>server.listen(0,'127.0.0.1',r));

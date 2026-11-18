@@ -35,8 +35,8 @@ const responses: unknown[] = []
 const statements: { sql: string; params: unknown[] }[] = []
 let fixture: ReturnType<typeof finalEvidenceFixture<Awaited<ReturnType<typeof historicalFixture>>>>
 let request: ReturnType<typeof toWebHandler>
-let listTool: typeof import('../../../server/mcp/tools/list_platform_recognized_directory')['default']
-let detailTool: typeof import('../../../server/mcp/tools/get_platform_recognized_record')['default']
+let listTool: typeof import('../../../layers/sme-roster/server/mcp/tools/list_platform_recognized_directory')['default']
+let detailTool: typeof import('../../../layers/sme-roster/server/mcp/tools/get_platform_recognized_record')['default']
 const json = (value: unknown) => JSON.parse(JSON.stringify(value))
 async function get(path = '') {
   const response = await request(new Request(`http://localhost/api/platform/${path}`))
@@ -73,12 +73,12 @@ beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('createError', createError)
   const router = createRouter()
-    .get('/api/platform/recognized-directory', (await import('../../../server/api/platform/recognized-directory.get')).default)
-    .get('/api/platform/recognized-directory/:recordId', (await import('../../../server/api/platform/recognized-directory/[recordId].get')).default)
-    .get('/api/platform/filter-options', (await import('../../../server/api/platform/filter-options.get')).default)
+    .get('/api/platform/recognized-directory', (await import('../../../layers/sme-roster/server/api/platform/recognized-directory.get')).default)
+    .get('/api/platform/recognized-directory/:recordId', (await import('../../../layers/sme-roster/server/api/platform/recognized-directory/[recordId].get')).default)
+    .get('/api/platform/filter-options', (await import('../../../layers/sme-roster/server/api/platform/filter-options.get')).default)
   request = toWebHandler(createApp().use(router))
-  listTool = (await import('../../../server/mcp/tools/list_platform_recognized_directory')).default
-  detailTool = (await import('../../../server/mcp/tools/get_platform_recognized_record')).default
+  listTool = (await import('../../../layers/sme-roster/server/mcp/tools/list_platform_recognized_directory')).default
+  detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_recognized_record')).default
 }, 120000)
 afterAll(() => {
   if (process.env.RECOGNIZED_HANDLER_EVIDENCE_DIR) writeFileSync(join(process.env.RECOGNIZED_HANDLER_EVIDENCE_DIR, 'HTTP-MCP-SQL.json'), JSON.stringify(statements, null, 2))

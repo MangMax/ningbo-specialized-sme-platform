@@ -91,8 +91,8 @@ it('blocks enrichment of stale generation instead of attaching a new-scope final
  expect({jobs:f.db.select().from(s.job).all(),ledger:f.db.select().from(s.importBatch).all(),audit:f.db.select().from(s.recordCorrespondenceAudit).all()}).toEqual(before)
 })
 it('runs the registered MCP handlers with independent credentials and the actual annual read and queue',async()=>{
- const f=fixture();f.add();const submit=(await import('../../../server/mcp/tools/submit_event_annual_correspondence_task')).default
- const get=(await import('../../../server/mcp/tools/get_event_annual_correspondence_task')).default
+ const f=fixture();f.add();const submit=(await import('../../../layers/sme-roster/server/mcp/tools/submit_event_annual_correspondence_task')).default
+ const get=(await import('../../../layers/sme-roster/server/mcp/tools/get_event_annual_correspondence_task')).default
  expect(await submit.handler({clientRequestId:'handler-deny',eventIds:[f.event.id]},{} as never)).toMatchObject({isError:true});expect(f.db.select().from(s.job).all()).toEqual([])
  const result=await submit.handler({clientRequestId:'handler-allow',eventIds:[f.event.id]},{requestInfo:{headers:{authorization:'Bearer mcp-251'}}} as never) as any
  await whenIdle();expect(getJob(f.db,result.jobId)?.state).toBe('done');expect(await get.handler({id:result.jobId},{} as never)).toMatchObject({status:'done',result:{events:[{finalQualification:{status:'confirmed'}}]}})

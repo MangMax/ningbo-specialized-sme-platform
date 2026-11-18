@@ -67,7 +67,7 @@ export type RosterState = (typeof ROSTER_STATES)[number]
 // ---------------------------------------------------------------------------
 //
 // 台账规模是「几千企业 / 几万事件」级(实测 7352 / 19729 / 21189),一次读全表比
-// 为每种筛选拼一套 join 更简单也更快;仓库里既有的读模型(`server/utils/mcp-roster.ts`、
+// 为每种筛选拼一套 join 更简单也更快;仓库里既有的读模型(`layers/sme-roster/server/utils/mcp-roster.ts`、
 // `layers/sme-roster/lib/platform/read.ts`)同一取舍。
 
 interface Snapshot {

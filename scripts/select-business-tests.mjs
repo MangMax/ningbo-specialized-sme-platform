@@ -6,7 +6,7 @@ import { selectUpgrade } from './select-upgrade-tests.mjs'
 // These are terminal HTTP surfaces. Shared implementation changes deliberately
 // select all consumers; directory ownership is not a dependency graph.
 const routes = [
-  [/^server\/api\/(statistics\/|stats\.get\.ts$)/, ['统计 ·', '名录 · 导入与证据', '名录 · 资格与认定读取', '文件 ·']],
+  [/^(?:layers\/sme-roster\/)?server\/api\/(statistics\/|stats\.get\.ts$)/, ['统计 ·', '名录 · 导入与证据', '名录 · 资格与认定读取', '文件 ·']],
   [/^(?:layers\/core\/)?server\/api\/logs\//, [loggingBusiness]],
 ]
 
@@ -32,6 +32,9 @@ export function selectBusinessTests(paths, event = 'pull_request') {
         businesses.add('运行环境 · 界面与基础设施')
         businesses.add(loggingBusiness)
         reasons.push(`${path}: HTTP 业务及接口、日志覆盖`)
+      } else if (path.startsWith('layers/sme-roster/')) {
+        full = true
+        reasons.push(`${path}: 名录模块共享实现或非终端路由，全量`)
       } else if (path.startsWith('layers/core/')) {
         full = true
         reasons.push(`${path}: 平台底座共享实现，全量`)
@@ -48,7 +51,7 @@ export function selectBusinessTests(paths, event = 'pull_request') {
     app: all.app.filter(group => full || businesses.has(group.business)),
   }
   const watcher = full || paths.includes('tests/runtime/development/nuxt-runtime-watch.http.app.test.ts')
-  const ttl = full || paths.some(path => /^(server\/api\/roster\/|tests\/roster\/official-evidence\/)/.test(path))
+  const ttl = full || paths.some(path => /^(?:(?:layers\/sme-roster\/)?server\/api\/roster\/|tests\/roster\/official-evidence\/)/.test(path))
   if (ttl) selected.app.push({ group: '深度测试 · 名录 · 快照真实过期', project: 'expiry' })
   if (watcher) selected.app.push({ group: '深度测试 · 运行环境 · 开发服务热更新', project: 'watcher' })
   return { ...selected, full, upgrade, ttl, watcher, reasons,

@@ -91,7 +91,7 @@ beforeAll(async () => {
   )
   vi.stubGlobal('useRuntimeConfig', () => ({ reconcilePath, curatedPath }))
   vi.doMock('@db', () => ({ useDb: () => db }))
-  handler = (await import('../../../server/api/comparison.get')).default as unknown as typeof handler
+  handler = (await import('../../../layers/sme-roster/server/api/comparison.get')).default as unknown as typeof handler
 })
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }))

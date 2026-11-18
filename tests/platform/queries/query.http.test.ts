@@ -17,8 +17,8 @@ beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('getQuery', getQuery)
   vi.stubGlobal('createError', createError)
-  const list = (await import('../../../server/api/platform/queries.get')).default
-  const evidence = (await import('../../../server/api/platform/queries/[queryId]/evidence.get')).default
+  const list = (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default
+  const evidence = (await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default
   const router = createRouter().get('/api/platform/queries-no-store', defineEventHandler(event => { setHeader(event, 'cache-control', 'no-store'); return list(event) })).get('/api/platform/queries', list).get('/api/platform/queries/:queryId/evidence', evidence)
   server = createServer(toNodeListener(createApp({ debug: false }).use(router)))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))

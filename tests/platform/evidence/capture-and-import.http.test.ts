@@ -126,8 +126,8 @@ beforeAll(async () => {
   }))
   vi.doMock('@db', () => ({ useDb: () => db }))
 
-  const queriesRoute = (await import('../../../server/api/platform/queries.get')).default as unknown as (event: unknown) => unknown
-  const comparisonRoute = (await import('../../../server/api/comparison.get')).default as unknown as (event: unknown) => unknown
+  const queriesRoute = (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default as unknown as (event: unknown) => unknown
+  const comparisonRoute = (await import('../../../layers/sme-roster/server/api/comparison.get')).default as unknown as (event: unknown) => unknown
 
   server = await startEvidenceServer({
     db,

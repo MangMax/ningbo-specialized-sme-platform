@@ -24,7 +24,7 @@ beforeAll(async () => {
   for (const [name, value] of Object.entries({ createError, createEvent, defineEventHandler, getQuery, sendStream, setHeader })) {
     vi.stubGlobal(name, value)
   }
-  handler = (await import('../../../server/api/export.get')).default
+  handler = (await import('../../../layers/sme-roster/server/api/export.get')).default
 })
 afterAll(() => vi.unstubAllGlobals())
 

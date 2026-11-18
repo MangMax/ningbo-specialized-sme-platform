@@ -69,8 +69,8 @@ beforeAll(async () => {
     for (const [name, value] of Object.entries(out.headers)) setHeader(event, name, value)
     return out.body
   })
-  const listRoute = (await import('../../../server/api/platform/business-processes.get')).default
-  const detailRoute = (await import('../../../server/api/platform/business-processes/[recordId].get')).default
+  const listRoute = (await import('../../../layers/sme-roster/server/api/platform/business-processes.get')).default
+  const detailRoute = (await import('../../../layers/sme-roster/server/api/platform/business-processes/[recordId].get')).default
   const router = createRouter()
     .post('/api/roster/import/commit', importRoute)
     .get('/api/platform/business-processes', listRoute)

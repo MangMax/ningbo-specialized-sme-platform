@@ -19,11 +19,11 @@ beforeAll(async () => {
   vi.doMock('@db', () => ({ useDb: () => db }))
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
   mcp = {}
-  for (const name of ['get_enterprise_facts', 'preflight_enterprise_fact', 'commit_enterprise_fact']) mcp[name] = (await import(`../../../server/mcp/tools/${name}.ts`)).default
-  const get = (await import('../../../server/api/roster/enterprises/[id]/facts.get')).default
-  const preflight = (await import('../../../server/api/roster/enterprises/[id]/facts/preflight.post')).default
-  const commit = (await import('../../../server/api/roster/enterprises/[id]/facts/commit.post')).default
-  const detail = (await import('../../../server/api/roster/enterprises/[id].get')).default
+  for (const name of ['get_enterprise_facts', 'preflight_enterprise_fact', 'commit_enterprise_fact']) mcp[name] = (await import(`../../../layers/sme-roster/server/mcp/tools/${name}.ts`)).default
+  const get = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id]/facts.get')).default
+  const preflight = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id]/facts/preflight.post')).default
+  const commit = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id]/facts/commit.post')).default
+  const detail = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default
   server = createServer(toNodeListener(createApp().use(createRouter().get('/:id/detail', detail).get('/:id', get).post('/:id/preflight', preflight).post('/:id/commit', commit))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`

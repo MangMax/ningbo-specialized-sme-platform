@@ -13,8 +13,8 @@ const dir = mkdtempSync(join(tmpdir(), 'recognized-directory-mcp-'))
 const dbPath = join(dir, 'recognized.sqlite')
 vi.stubEnv('NUXT_DB_PATH', dbPath)
 const db = initializeDb({ create: true, dbPath })
-let listTool: typeof import('../../../server/mcp/tools/list_platform_recognized_directory').default
-let detailTool: typeof import('../../../server/mcp/tools/get_platform_recognized_record').default
+let listTool: typeof import('../../../layers/sme-roster/server/mcp/tools/list_platform_recognized_directory').default
+let detailTool: typeof import('../../../layers/sme-roster/server/mcp/tools/get_platform_recognized_record').default
 let recordId = 0
 let relationId = 0
 
@@ -36,8 +36,8 @@ beforeAll(async () => {
   })
   recordId = written.observations[0]!.recordId!
   relationId = written.relationIds[0]!
-  listTool = (await import('../../../server/mcp/tools/list_platform_recognized_directory')).default
-  detailTool = (await import('../../../server/mcp/tools/get_platform_recognized_record')).default
+  listTool = (await import('../../../layers/sme-roster/server/mcp/tools/list_platform_recognized_directory')).default
+  detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_recognized_record')).default
 })
 afterAll(() => {
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true })

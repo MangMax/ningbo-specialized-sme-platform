@@ -14,8 +14,8 @@ vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) =>
 const dirs: string[] = []
 const dir = mkdtempSync(join(tmpdir(), 'business457-mcp-')); dirs.push(dir)
 const dbPath = join(dir, 'roster.db')
-let preflight: typeof import('../../../server/mcp/tools/preflight_roster_batch').default
-let commit: typeof import('../../../server/mcp/tools/save_roster_batch').default
+let preflight: typeof import('../../../layers/sme-roster/server/mcp/tools/preflight_roster_batch').default
+let commit: typeof import('../../../layers/sme-roster/server/mcp/tools/save_roster_batch').default
 
 beforeAll(async () => {
   vi.spyOn(importExecutor, 'execute').mockImplementation(executeNativeImport)
@@ -23,8 +23,8 @@ beforeAll(async () => {
   vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubGlobal('createError', createError)
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: join(dir, 'files'), mcpToken: 'synthetic-mcp-token' }))
-  preflight = (await import('../../../server/mcp/tools/preflight_roster_batch')).default
-  commit = (await import('../../../server/mcp/tools/save_roster_batch')).default
+  preflight = (await import('../../../layers/sme-roster/server/mcp/tools/preflight_roster_batch')).default
+  commit = (await import('../../../layers/sme-roster/server/mcp/tools/save_roster_batch')).default
 })
 afterAll(() => {
   try { useDb({ dbPath }).$client.close() } catch { /* already closed */ }

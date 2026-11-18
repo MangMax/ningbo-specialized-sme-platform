@@ -27,8 +27,8 @@ beforeAll(async () => {
   vi.stubGlobal('setHeader', vi.fn())
   vi.stubGlobal('setResponseStatus', vi.fn())
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-  rest = (await import('../../../server/api/platform/query.post')).default as any
-  const definition = (await import('../../../server/mcp/tools/query_platform')).default as any
+  rest = (await import('../../../layers/sme-roster/server/api/platform/query.post')).default as any
+  const definition = (await import('../../../layers/sme-roster/server/mcp/tools/query_platform')).default as any
   tool = { handler: async input => {
     const wire = await definition.handler(input)
     expect(wire.structuredContent).toBeDefined()
@@ -186,12 +186,12 @@ it('rejects contradictory pagination rather than claiming complete', async () =>
   expect(await query({ source: 'queryList', name: '合成' })).toMatchObject({ status: 'partial', error: { code: 'invalid_response' }, unfinished: [{ page: 2 }] })
 })
 it('public capabilities describe source differences and strict RPC validation rejects unknown filters', async () => {
-  const capabilities = (await import('../../../server/mcp/tools/get_platform_capabilities')).default as any
+  const capabilities = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_capabilities')).default as any
   const cap = await capabilities.handler()
   expect(cap.sources.queryList).toMatchObject({ available: true, conditions: ['name', 'uscc'], titleSelection: false })
   expect(cap.sources.businessList).toMatchObject({ available: true, conditions: ['uscc'] })
   expect(cap.limits.maxConcurrentRequests).toBe(2)
-  const route = (await import('../../../server/api/platform/capabilities.get')).default as any
+  const route = (await import('../../../layers/sme-roster/server/api/platform/capabilities.get')).default as any
   expect(route({})).toEqual(cap)
   const { platformQueryRpcError } = await import('../../../layers/sme-roster/server/utils/mcp-platform-query')
   for (const args of [{ source: 'queryList', name: '合成', cookie }, { source: 'queryList', name: '合成', sqsj: '2025' }]) {

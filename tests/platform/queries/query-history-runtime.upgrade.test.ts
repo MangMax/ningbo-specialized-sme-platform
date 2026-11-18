@@ -281,10 +281,10 @@ it('runs real H3 import list evidence and MCP handlers on one target and observe
  platformSummaryCache.close()
  const router=createRouter()
  for(const action of ['preflight','commit','replay'] as const)router.post(`/api/roster/import/${action}`,createRosterImportHandler(action))
- router.get('/api/platform/queries',(await import('../../../server/api/platform/queries.get')).default)
- router.get('/api/platform/queries/:queryId/evidence',(await import('../../../server/api/platform/queries/[queryId]/evidence.get')).default)
- const listMcp=(await import('../../../server/mcp/tools/list_platform_queries')).default
- const evidenceMcp=(await import('../../../server/mcp/tools/get_platform_query_evidence')).default
+ router.get('/api/platform/queries',(await import('../../../layers/sme-roster/server/api/platform/queries.get')).default)
+ router.get('/api/platform/queries/:queryId/evidence',(await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default)
+ const listMcp=(await import('../../../layers/sme-roster/server/mcp/tools/list_platform_queries')).default
+ const evidenceMcp=(await import('../../../layers/sme-roster/server/mcp/tools/get_platform_query_evidence')).default
  const server=createServer(toNodeListener(createApp().use(router)))
  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve))
  const address=server.address();if(!address||typeof address==='string')throw new Error('Expected local HTTP port')

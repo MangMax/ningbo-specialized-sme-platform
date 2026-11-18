@@ -13,10 +13,10 @@ vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unkno
 vi.mock('@db', () => ({ useDb: () => db }))
 const dir = mkdtempSync(join(tmpdir(), 'decision-102-handler-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'synthetic.db') })
-let handler: (typeof import('../../../server/mcp/tools/save_difference_decision'))['default']['handler']
+let handler: (typeof import('../../../layers/sme-roster/server/mcp/tools/save_difference_decision'))['default']['handler']
 beforeAll(async () => {
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: '', mcpToken: '' }))
-  handler = (await import('../../../server/mcp/tools/save_difference_decision')).default.handler
+  handler = (await import('../../../layers/sme-roster/server/mcp/tools/save_difference_decision')).default.handler
 })
 afterAll(() => { vi.unstubAllGlobals(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 

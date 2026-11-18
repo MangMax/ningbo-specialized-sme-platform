@@ -27,14 +27,14 @@ let itemsMetadata: unknown
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-c-api', mcpToken: 'synthetic-c-mcp', filesDir: current.filesDir }))
-  router.post('/api/roster/import/preflight', (await import('../../../server/api/roster/import/preflight.post')).default)
-  router.post('/api/roster/import/commit', (await import('../../../server/api/roster/import/commit.post')).default)
-  router.post('/api/roster/evidence/corrections/preflight', (await import('../../../server/api/roster/evidence/corrections/preflight.post')).default)
-  router.post('/api/roster/evidence/corrections/commit', (await import('../../../server/api/roster/evidence/corrections/commit.post')).default)
-  router.get('/api/roster/evidence/:id', (await import('../../../server/api/roster/evidence/[id].get')).default)
-  router.get('/api/roster/events/:id', (await import('../../../server/api/roster/events/[id].get')).default)
+  router.post('/api/roster/import/preflight', (await import('../../../layers/sme-roster/server/api/roster/import/preflight.post')).default)
+  router.post('/api/roster/import/commit', (await import('../../../layers/sme-roster/server/api/roster/import/commit.post')).default)
+  router.post('/api/roster/evidence/corrections/preflight', (await import('../../../layers/sme-roster/server/api/roster/evidence/corrections/preflight.post')).default)
+  router.post('/api/roster/evidence/corrections/commit', (await import('../../../layers/sme-roster/server/api/roster/evidence/corrections/commit.post')).default)
+  router.get('/api/roster/evidence/:id', (await import('../../../layers/sme-roster/server/api/roster/evidence/[id].get')).default)
+  router.get('/api/roster/events/:id', (await import('../../../layers/sme-roster/server/api/roster/events/[id].get')).default)
   vi.stubGlobal('defineRouteMeta', (meta: unknown) => { itemsMetadata = meta; return meta })
-  router.get('/api/roster/import/receipts/items', (await import('../../../server/api/roster/import/receipts/items.get')).default)
+  router.get('/api/roster/import/receipts/items', (await import('../../../layers/sme-roster/server/api/roster/import/receipts/items.get')).default)
 })
 const resultSchema = z.object({ status: z.string().optional(), batchId: z.number().optional(), items: z.array(z.object({ kind: z.string(), detail: z.unknown() }).passthrough()).optional(), preflight: z.object({ conflicts: z.array(z.unknown()), officialEvidencePlanHash: z.string().optional() }).optional() }).passthrough()
 const exactSchema = z.object({ evidenceId: z.number(), eventId: z.number(), recordId: z.number(), enterpriseId: z.number(), version: z.string(), event: z.object({ revision: z.number() }) })
@@ -586,7 +586,7 @@ async function handler399() {
   // Identity definition adapter only; production handler, schema, error class and
   // importReceiptMcpResult are real. This is not toolkit/SDK transport evidence.
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-  const tool = (await import('../../../server/mcp/tools/list_roster_import_items')).default
+  const tool = (await import('../../../layers/sme-roster/server/mcp/tools/list_roster_import_items')).default
   const dbModule = await import('@db'), receipts = await import('../../../layers/sme-roster/server/utils/import-receipts')
   const db = {} as ReturnType<typeof dbModule.useDb>
   const acquire = vi.spyOn(dbModule, 'useDb').mockReturnValue(db)

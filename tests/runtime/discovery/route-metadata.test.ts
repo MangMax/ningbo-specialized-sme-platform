@@ -4,7 +4,7 @@ import ts from 'typescript'
 import { expect, it } from 'vitest'
 
 it('declares literal discovery metadata for every public method route', () => {
-  const roots = ['../../../server/api', '../../../layers/core/server/api'].map(path => join(import.meta.dirname, path))
+  const roots = ['../../../server/api', '../../../layers/sme-roster/server/api', '../../../layers/core/server/api'].map(path => join(import.meta.dirname, path))
   // Existing file UI handlers predate agent discovery; keep the debt explicit.
   const exempt = new Set(['files/[id]/segments/commit.post.ts', 'files/[id]/segments/preflight.post.ts', 'files/[id]/segments.get.ts', 'files/[id].get.ts'])
   function files(dir: string): string[] {

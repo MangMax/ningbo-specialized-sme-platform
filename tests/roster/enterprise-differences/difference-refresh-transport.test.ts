@@ -9,17 +9,17 @@ vi.mock('@nuxtjs/mcp-toolkit/server',()=>({defineMcpTool:(value:unknown)=>value}
 vi.mock('@db',()=>({useDb:()=>db}))
 const sqlite=new Database(':memory:'),db=drizzle(sqlite,{schema})
 let server:Server,base:string
-let refreshTool: (typeof import('../../../server/mcp/tools/refresh_enterprise_differences'))['default']
-let readTool: (typeof import('../../../server/mcp/tools/list_enterprise_difference_comparisons'))['default']
+let refreshTool: (typeof import('../../../layers/sme-roster/server/mcp/tools/refresh_enterprise_differences'))['default']
+let readTool: (typeof import('../../../layers/sme-roster/server/mcp/tools/list_enterprise_difference_comparisons'))['default']
 beforeAll(async()=>{
  sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
  const e=db.insert(schema.enterprise).values({name:'传输合成',nameNorm:'传输合成'}).returning().get()
  db.insert(schema.record).values({enterpriseId:e.id,titleCode:'specialized_sme',source:'jxj',nameRaw:e.name}).run()
  vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'refresh-test-token'}));vi.stubGlobal('defineEventHandler',defineEventHandler)
- const post=(await import('../../../server/api/roster/differences/refresh.post')).default
- const get=(await import('../../../server/api/roster/differences/refresh.get')).default
- refreshTool=(await import('../../../server/mcp/tools/refresh_enterprise_differences')).default
- readTool=(await import('../../../server/mcp/tools/list_enterprise_difference_comparisons')).default
+ const post=(await import('../../../layers/sme-roster/server/api/roster/differences/refresh.post')).default
+ const get=(await import('../../../layers/sme-roster/server/api/roster/differences/refresh.get')).default
+ refreshTool=(await import('../../../layers/sme-roster/server/mcp/tools/refresh_enterprise_differences')).default
+ readTool=(await import('../../../layers/sme-roster/server/mcp/tools/list_enterprise_difference_comparisons')).default
  const app=createApp();app.use('/api/roster/differences/refresh',defineEventHandler(event=>event.method==='POST'?post(event):get(event)))
  server=createServer(toNodeListener(app));await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));base=`http://127.0.0.1:${(server.address() as {port:number}).port}`
 })

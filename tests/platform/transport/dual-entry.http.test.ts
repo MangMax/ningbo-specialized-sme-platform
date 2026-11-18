@@ -18,8 +18,8 @@ beforeAll(async () => {
   // does. Cold module loading is setup, separate from the default 5s case budget.
   platformRoutes = await Promise.all(platformSources.map(async source => ({
     source,
-    list: (await import(`../../../server/api/platform/${source}.get.ts`)).default,
-    detail: (await import(`../../../server/api/platform/${source}/[recordId].get.ts`)).default,
+    list: (await import(`../../../layers/sme-roster/server/api/platform/${source}.get.ts`)).default,
+    detail: (await import(`../../../layers/sme-roster/server/api/platform/${source}/[recordId].get.ts`)).default,
   })))
 })
 

@@ -70,7 +70,7 @@ beforeAll(async () => {
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: join(dir, 'curated.json'), reconcilePath: join(dir, 'reconcile.json') }))
   vi.doMock('@db', () => ({ useDb: () => db }))
   imports = await startRosterApi({ db, apiToken: 'synthetic-source-selection', executeImport: executeNativeImport })
-  const handler = (await import('../../../server/api/comparison.get')).default
+  const handler = (await import('../../../layers/sme-roster/server/api/comparison.get')).default
   server = createServer(toNodeListener(createApp().use(createRouter().get('/api/comparison', handler))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}/api/comparison`

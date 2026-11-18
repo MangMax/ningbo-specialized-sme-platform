@@ -278,10 +278,10 @@ it('all batches singles and legacy retry backoff share the process-wide maximum 
 })
 it('MCP batch submit status item and retry return schema-valid equivalent REST business results', async () => {
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-  const submit = (await import('../../../server/mcp/tools/submit_platform_batch')).default as any
-  const status = (await import('../../../server/mcp/tools/get_platform_batch')).default as any
-  const item = (await import('../../../server/mcp/tools/get_platform_batch_item')).default as any
-  const retry = (await import('../../../server/mcp/tools/retry_platform_batch')).default as any
+  const submit = (await import('../../../layers/sme-roster/server/mcp/tools/submit_platform_batch')).default as any
+  const status = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_batch')).default as any
+  const item = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_batch_item')).default as any
+  const retry = (await import('../../../layers/sme-roster/server/mcp/tools/retry_platform_batch')).default as any
   const { z } = await import('zod')
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: dir }))
   let failing = true
@@ -362,11 +362,11 @@ it('OpenAPI and MCP discovery expose bounded batch contracts and resolve shared 
   const captured: any[] = []
   vi.stubGlobal('defineRouteMeta', (meta: any) => captured.push(meta.openAPI))
   vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
-  await import('../../../server/api/platform/query.post')
-  await import('../../../server/api/platform/batches/index.post')
-  await import('../../../server/api/platform/batches/[batchId].get')
-  await import('../../../server/api/platform/batches/[batchId]/retry.post')
-  await import('../../../server/api/platform/batches/[batchId]/items/[itemId].get')
+  await import('../../../layers/sme-roster/server/api/platform/query.post')
+  await import('../../../layers/sme-roster/server/api/platform/batches/index.post')
+  await import('../../../layers/sme-roster/server/api/platform/batches/[batchId].get')
+  await import('../../../layers/sme-roster/server/api/platform/batches/[batchId]/retry.post')
+  await import('../../../layers/sme-roster/server/api/platform/batches/[batchId]/items/[itemId].get')
   const single = captured.find(m => m.requestBody?.content?.['application/json']?.schema?.properties?.source)
   const submit = captured.find(m => m.requestBody?.content?.['application/json']?.schema?.properties?.items)
   const queryRef = submit.requestBody.content['application/json'].schema.properties.items.items.properties.query.$ref

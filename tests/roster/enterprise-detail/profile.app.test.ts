@@ -34,11 +34,11 @@ beforeAll(async () => {
   for (const [key, value] of Object.entries({ getQuery, getRouterParam, setHeader, createError })) vi.stubGlobal(key, value)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-api-96' }))
   vi.doMock('@db', () => ({ useDb: () => db }))
-  const get = (await import('../../../server/api/roster/enterprises/[id]/profile.get')).default
-  const update = (await import('../../../server/api/roster/enterprises/[id].patch')).default
-  const audit = (await import('../../../server/api/roster/enterprises/[id]/profile-history.get')).default
-  const list = (await import('../../../server/api/roster/enterprises.get')).default
-  const detail = (await import('../../../server/api/roster/enterprises/[id].get')).default
+  const get = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id]/profile.get')).default
+  const update = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].patch')).default
+  const audit = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id]/profile-history.get')).default
+  const list = (await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default
+  const detail = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default
   server = createServer(toNodeListener(createApp({ debug: false }).use(createRouter()
     .get('/api/roster/enterprises/:id/profile', get)
     .get('/api/roster/enterprises/:id/profile-history', audit)

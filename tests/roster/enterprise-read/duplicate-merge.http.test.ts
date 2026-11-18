@@ -130,7 +130,7 @@ beforeAll(async () => {
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: join(dir, 'none.json'), reconcilePath: join(dir, 'none.json') }))
   vi.doMock('@db', () => ({ useDb: () => db }))
 
-  const route = (await import('../../../server/api/roster/import/duplicate-candidates.get')).default as unknown as (
+  const route = (await import('../../../layers/sme-roster/server/api/roster/import/duplicate-candidates.get')).default as unknown as (
     event: unknown,
   ) => unknown
 

@@ -37,9 +37,9 @@ beforeAll(async () => {
   vi.stubGlobal('setResponseStatus', setResponseStatus)
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath, reconcilePath, apiToken: 'synthetic-token' }))
   vi.doMock('@db', () => ({ useDb: () => db }))
-  const handler = (await import('../../../server/api/comparison.get')).default
-  const evidence = (await import('../../../server/api/platform/queries/[queryId]/evidence.get')).default
-  const curate = (await import('../../../server/api/comparison/curated.patch')).default
+  const handler = (await import('../../../layers/sme-roster/server/api/comparison.get')).default
+  const evidence = (await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default
+  const curate = (await import('../../../layers/sme-roster/server/api/comparison/curated.patch')).default
   const router = createRouter()
   router.get('/api/comparison', handler)
   const { comparisonScopeProofRoute } = await import('../../../layers/sme-roster/server/utils/comparison-scope-proof-route')

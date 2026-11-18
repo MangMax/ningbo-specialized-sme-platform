@@ -12,7 +12,7 @@ describe('request log context compatibility', () => {
     vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
     vi.stubGlobal('getQuery', () => ({}))
     vi.stubGlobal('setHeader', vi.fn())
-    handler = (await import('../../../server/api/roster/enterprises.get')).default as unknown as typeof handler
+    handler = (await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default as unknown as typeof handler
   })
   beforeEach(() => reads.json.mockReset())
   afterAll(() => vi.unstubAllGlobals())

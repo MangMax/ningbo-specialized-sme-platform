@@ -80,8 +80,8 @@ beforeAll(async () => {
   vi.stubGlobal('getRouterParam', () => String(enterprise.id))
   vi.doMock('@db', () => ({ useDb: () => db }))
 
-  listHandler = decodeJsonRead((await import('../../../server/api/roster/enterprises.get')).default) as unknown as typeof listHandler
-  detailHandler = decodeJsonRead((await import('../../../server/api/roster/enterprises/[id].get')).default) as unknown as typeof detailHandler
+  listHandler = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default) as unknown as typeof listHandler
+  detailHandler = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default) as unknown as typeof detailHandler
 })
 
 afterAll(() => {

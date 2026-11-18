@@ -308,10 +308,10 @@ it("reads actual H3 routes and MCP handlers through the same serialized DTO whil
   for (const key of ['defineEventHandler','getRouterParam','setHeader','createError'] as const) vi.stubGlobal(key,h3[key])
   vi.stubGlobal('useRuntimeConfig',() => ({apiToken:'synthetic-356-api',mcpToken:'synthetic-mcp-356',filesDir:f.dir+'/files'}))
   const router = h3.createRouter()
-  router.get('/api/roster/enterprises/:id',(await import('../../../server/api/roster/enterprises/[id].get')).default)
-  router.get('/api/roster/current-enterprises',(await import('../../../server/api/roster/current-enterprises.get')).default)
-  router.get('/api/roster/correspondences/events/:id',(await import('../../../server/api/roster/correspondences/events/[id].get')).default)
-  router.get('/api/roster/evidence/:id',(await import('../../../server/api/roster/evidence/[id].get')).default)
+  router.get('/api/roster/enterprises/:id',(await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default)
+  router.get('/api/roster/current-enterprises',(await import('../../../layers/sme-roster/server/api/roster/current-enterprises.get')).default)
+  router.get('/api/roster/correspondences/events/:id',(await import('../../../layers/sme-roster/server/api/roster/correspondences/events/[id].get')).default)
+  router.get('/api/roster/evidence/:id',(await import('../../../layers/sme-roster/server/api/roster/evidence/[id].get')).default)
   const server = createServer(h3.toNodeListener(h3.createApp().use(router)))
   await new Promise<void>((resolve,reject) => { server.once('error',reject);server.listen(0,'127.0.0.1',resolve) })
   closes.push(() => new Promise<void>((resolve,reject) => server.close(error => error ? reject(error) : resolve())))
@@ -324,8 +324,8 @@ it("reads actual H3 routes and MCP handlers through the same serialized DTO whil
   expect(factsOf(detail.body)).toEqual(expected);expect(factsOf(query.body.rows[0])).toEqual(expected);expect(factsOf(source.body.source)).toEqual([expected[1]])
   const { dispatchRecordCorrespondenceMcp }=await import('../../../layers/sme-roster/server/utils/mcp-record-correspondence')
   expect(dispatchRecordCorrespondenceMcp('source',{kind:'event',id:2},{db:f.db})).toEqual(source.body)
-  const detailTool=(await import('../../../server/mcp/tools/get_enterprise_detail')).default
-  const currentTool=(await import('../../../server/mcp/tools/list_current_qualified_enterprises')).default
+  const detailTool=(await import('../../../layers/sme-roster/server/mcp/tools/get_enterprise_detail')).default
+  const currentTool=(await import('../../../layers/sme-roster/server/mcp/tools/list_current_qualified_enterprises')).default
   // Direct tool handlers, not the real MCP transport or native admission.
   expect(JSON.parse(await (detailTool as any).handler({enterpriseId:1}))).toEqual(detail.body)
   expect(JSON.parse(await (currentTool as any).handler({titleCode:'specialized_sme'}))).toEqual(query.body)
@@ -355,7 +355,7 @@ async function currentH3(f: Awaited<ReturnType<typeof fixture>>) {
   const h3 = await import('h3'), { createServer } = await import('node:http')
   routeContext.db = f.db
   vi.stubGlobal('defineEventHandler', h3.defineEventHandler)
-  const handler = (await import('../../../server/api/roster/current-enterprises.get')).default
+  const handler = (await import('../../../layers/sme-roster/server/api/roster/current-enterprises.get')).default
   const server = createServer(h3.toNodeListener(h3.createApp().use('/api/roster/current-enterprises', handler)))
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
   closes.push(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())))
@@ -471,8 +471,8 @@ it('actual legacy HTTP detail and sync XLSX retain a literal matrix with per-sou
   const h3 = await import('h3')
   for (const [name, value] of Object.entries({ defineEventHandler: h3.defineEventHandler, getQuery: h3.getQuery, setHeader: h3.setHeader, createError: h3.createError, getRouterParam: h3.getRouterParam })) vi.stubGlobal(name, value)
   const app = h3.createApp(), router = h3.createRouter()
-  router.get('/api/enterprises/:id', (await import('../../../server/api/enterprises/[id].get')).default)
-  router.get('/api/export', (await import('../../../server/api/export.get')).default)
+  router.get('/api/enterprises/:id', (await import('../../../layers/sme-roster/server/api/enterprises/[id].get')).default)
+  router.get('/api/export', (await import('../../../layers/sme-roster/server/api/export.get')).default)
   app.use(router)
   const server = createServer(h3.toNodeListener(app))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))

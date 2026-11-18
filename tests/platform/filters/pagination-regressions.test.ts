@@ -33,8 +33,8 @@ beforeAll(async () => {
   vi.stubGlobal('setHeader', vi.fn())
   vi.stubGlobal('setResponseStatus', vi.fn())
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-  rest = (await import('../../../server/api/platform/query.post')).default as any
-  const tool = (await import('../../../server/mcp/tools/query_platform')).default as any
+  rest = (await import('../../../layers/sme-roster/server/api/platform/query.post')).default as any
+  const tool = (await import('../../../layers/sme-roster/server/mcp/tools/query_platform')).default as any
   mcp = async input => {
     const wire = await tool.handler(input)
     expect(JSON.parse(wire.content[0].text)).toEqual(wire.structuredContent)

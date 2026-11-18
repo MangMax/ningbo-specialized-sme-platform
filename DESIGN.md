@@ -1,6 +1,6 @@
 # 设计规范
 
-本文件把项目的 UI 约定固化成可检查的条目。规则的出处是代码本身：`layers/core/app/assets/css/tailwind.css`、`layers/sme-roster/app/assets/css/statistics.css`、`components/`、`pages/`。改设计先改这里，再改代码。
+本文件把项目的 UI 约定固化成可检查的条目。规则的出处是代码本身：`layers/core/app/assets/css/tailwind.css`、`layers/sme-roster/app/assets/css/statistics.css`及两个 layer 下的 `app/components/`、`app/pages/`。改设计先改这里，再改代码。
 
 ## 1. 色板来源与语义角色
 

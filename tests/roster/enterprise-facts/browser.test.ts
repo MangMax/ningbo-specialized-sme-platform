@@ -14,7 +14,7 @@ beforeAll(async () => {
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic', }))
   vi.doMock('@db', () => ({ useDb: () => db }))
   const { browserEnterpriseFactsRoute } = await import('../../../layers/sme-roster/server/utils/browser-enterprise-facts')
-  const get = (await import('../../../server/api/roster/enterprises/[id]/facts.get')).default
+  const get = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id]/facts.get')).default
   server = createServer(toNodeListener(createApp().use(createRouter().get('/:id', get).post('/:id/preflight', browserEnterpriseFactsRoute('preflight')).post('/:id/commit', browserEnterpriseFactsRoute('commit')))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`

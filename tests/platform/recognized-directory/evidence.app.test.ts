@@ -34,8 +34,8 @@ beforeAll(async () => {
   vi.stubGlobal('getQuery', (event: any) => event.query)
   vi.stubGlobal('createError', (opts: any) => Object.assign(new Error(opts.statusMessage), opts))
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: dir, curatedPath: join(dir, 'absent-curated.json'), reconcilePath: join(dir, 'absent-reconcile.json') }))
-  const queriesRoute = (await import('../../../server/api/platform/queries.get')).default
-  const comparisonRoute = (await import('../../../server/api/comparison.get')).default
+  const queriesRoute = (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default
+  const comparisonRoute = (await import('../../../layers/sme-roster/server/api/comparison.get')).default
   const { handleComparisonScopeProofRequest } = await import('../../../layers/sme-roster/server/utils/comparison-scope-proof-api')
   const { parseUploadDeclaration, registerStoredFile } = await import('../../../layers/sme-roster/server/modules/sme-roster/file-upload')
   const { parseRecordComparisonQuery } = await import('../../../layers/sme-roster/lib/roster/record-comparison')
@@ -204,18 +204,18 @@ it('MCP history and enterprise detail match REST, preserve cross-source identica
   const evidence = archive(); evidence.queriedAt = '2025-07-01T00:00:00Z'; evidence.completedAt = '2025-07-01T00:01:00Z'
   const req = { ...request(evidence, 'mcp-archive'), payload: { platformQueries: [recognizedResultToImport(evidence)] } }
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-  const save = (await import('../../../server/mcp/tools/save_roster_batch')).default as any
-  const preflight = (await import('../../../server/mcp/tools/preflight_roster_batch')).default as any
+  const save = (await import('../../../layers/sme-roster/server/mcp/tools/save_roster_batch')).default as any
+  const preflight = (await import('../../../layers/sme-roster/server/mcp/tools/preflight_roster_batch')).default as any
   expect(save.enabled({ context: { mcpAuth: { writeAuthorized: false } } })).toBe(false)
   expect(save.enabled({ context: { mcpAuth: { writeAuthorized: true } } })).toBe(true)
   expect((await preflight.handler(req)).preflight.conflicts).toEqual([])
   const committed = await save.handler(req)
   expect(committed.status).toBe('committed')
-  const history = (await import('../../../server/mcp/tools/list_platform_queries')).default as any
+  const history = (await import('../../../layers/sme-roster/server/mcp/tools/list_platform_queries')).default as any
   const input = { interface: 'recognized_list', uscc: USCC, titleCode: 'little_giant', page: 1, pageSize: 10 }
   const rest = await (await fetch(`${api.baseUrl}/api/platform/queries?${new URLSearchParams(Object.entries(input).map(([k,v]) => [k,String(v)]))}`)).json()
   expect(await history.handler(input)).toEqual(rest)
-  const detailTool = (await import('../../../server/mcp/tools/get_enterprise_detail')).default as any
+  const detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_enterprise_detail')).default as any
   const after = JSON.parse(await detailTool.handler({ enterpriseId }))
   expect(after.platform.queries.find((q: any) => q.queriedAt === evidence.queriedAt).collectionEvidence).toEqual(evidence)
   const allHistory = await (await fetch(`${api.baseUrl}/api/platform/queries?queryKey=${USCC}&pageSize=100`)).json()
@@ -330,8 +330,8 @@ it.each(['query-ref', 'row-ref', 'query-id', 'row-id'] as const)('rejects contra
     enterpriseName: '合成主档', uscc: '91330200000000001H', titleCode: 'little_giant', direction: 'missing_in_miit' as const,
     status: 'needs_review' as const, recordedAt: evidence.completedAt, ...refs,
   }] } }
-  const preflight = (await import('../../../server/mcp/tools/preflight_roster_batch')).default as any
-  const save = (await import('../../../server/mcp/tools/save_roster_batch')).default as any
+  const preflight = (await import('../../../layers/sme-roster/server/mcp/tools/preflight_roster_batch')).default as any
+  const save = (await import('../../../layers/sme-roster/server/mcp/tools/save_roster_batch')).default as any
   const beforeFailure = await (await fetch(`${api.baseUrl}/api/platform/queries?queryKey=${USCC}&pageSize=100`)).json()
   const restPreflight = await client.preflight(req as never)
   expect(restPreflight.preflight.conflicts).toContainEqual(expect.objectContaining({ error: expect.objectContaining({ code: 'evidence_subject_mismatch' }) }))
@@ -366,11 +366,11 @@ it.each(['uscc', 'name'] as const)('archive-before-master %s query preserves eve
   expect(seed.status).toBe('committed')
   const enterpriseId = seed.items.find(i => i.kind === 'record_event')!.detail!.enterpriseId as number
   vi.stubGlobal('getRouterParam', (event: any) => event.id)
-  const detailRoute = (await import('../../../server/api/roster/enterprises/[id].get')).default
+  const detailRoute = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default
   const restApi = await startEvidenceServer({ db, apiToken: token, getRoutes: { [`/api/roster/enterprises/${enterpriseId}`]: async () => JSON.parse((await detailRoute({ id: enterpriseId } as never)).toString('utf8')) } })
   try {
     const detail = await (await fetch(`${restApi.baseUrl}/api/roster/enterprises/${enterpriseId}`)).json()
-    const detailTool = (await import('../../../server/mcp/tools/get_enterprise_detail')).default as any
+    const detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_enterprise_detail')).default as any
     assertEnterpriseDetailSnapshotEqual(JSON.parse(await detailTool.handler({ enterpriseId })), detail)
     expect(detail.platform.queries.map((q: any) => q.id)).toEqual([archived.query.id])
     expect(detail.platform.queries[0]).toMatchObject({ relationCount: 4, collectionEvidence: evidence })

@@ -86,8 +86,8 @@ async function publicReads() {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('getQuery', getQuery)
   vi.stubGlobal('setHeader', setHeader)
-  const handler = (await import('../../../server/api/roster/differences.get')).default
-  const tool = (await import('../../../server/mcp/tools/list_differences')).default as unknown as { handler: (input: Record<string, unknown>) => unknown }
+  const handler = (await import('../../../layers/sme-roster/server/api/roster/differences.get')).default
+  const tool = (await import('../../../layers/sme-roster/server/mcp/tools/list_differences')).default as unknown as { handler: (input: Record<string, unknown>) => unknown }
   const app = createApp().use('/api/roster/differences', handler)
   const server = createServer(toNodeListener(app))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))

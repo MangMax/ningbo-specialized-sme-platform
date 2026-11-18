@@ -200,8 +200,8 @@ describe('Nitro 路由只是薄薄地转调 HTTP 核心', () => {
     })
     vi.stubGlobal('setHeader', () => undefined)
     vi.doMock('@db', () => ({ useDb: () => db }))
-    snapshots = (await import('../../../server/api/platform/snapshots.get')).default as typeof snapshots
-    diff = (await import('../../../server/api/platform/snapshots/diff.get')).default as typeof diff
+    snapshots = (await import('../../../layers/sme-roster/server/api/platform/snapshots.get')).default as typeof snapshots
+    diff = (await import('../../../layers/sme-roster/server/api/platform/snapshots/diff.get')).default as typeof diff
   })
 
   beforeEach(() => {
@@ -224,7 +224,7 @@ describe('Nitro 路由只是薄薄地转调 HTTP 核心', () => {
 
   it('两条路由都带顶层 defineRouteMeta(spec 的唯一输入)', async () => {
     const { readFile } = await import('node:fs/promises')
-    const routes = ['../../../server/api/platform/snapshots.get.ts', '../../../server/api/platform/snapshots/diff.get.ts']
+    const routes = ['../../../layers/sme-roster/server/api/platform/snapshots.get.ts', '../../../layers/sme-roster/server/api/platform/snapshots/diff.get.ts']
     for (const rel of routes) {
       const source = await readFile(new URL(rel, import.meta.url), 'utf8')
       expect(source, rel).toContain('defineRouteMeta({')

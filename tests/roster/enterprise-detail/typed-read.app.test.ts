@@ -106,7 +106,7 @@ it('HTTP enterprise detail returns typed observations and preserves source origi
   const direct = f.detail()
   vi.stubEnv('NUXT_DB_PATH', join(f.dir, 'roster.db'))
   for (const [key, value] of Object.entries({ defineEventHandler, getRouterParam, createError, setHeader })) vi.stubGlobal(key, value)
-  const handler = (await import('../../../server/api/roster/enterprises/[id].get')).default
+  const handler = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default
   const server = createServer(toNodeListener(createApp().use(createRouter().get('/api/roster/enterprises/:id', handler))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   cleanup.push(() => new Promise<void>(resolve => server.close(() => resolve())))

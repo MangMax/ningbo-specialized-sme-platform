@@ -1,16 +1,8 @@
-import { dispositionSchemas, dispositionToolActions } from '../../layers/sme-roster/server/utils/title-cycle-disposition-protocol'
+import { rosterMcp } from '../../layers/sme-roster/server/modules/sme-roster/mcp'
 import toolkitConfig from '#nuxt-mcp-toolkit/config.mjs'
 import { useEvent } from 'nitropack/runtime'
 import { isSessionEvent } from '../../layers/core/server/utils/mcp-session-runtime'
-import { officialEvidenceRpcError } from '../../layers/sme-roster/server/utils/official-evidence-read'
 import { runtimeLogPolicyRpcError } from '../../layers/core/server/utils/logging-mcp'
-import { decisionRpcError102 } from '../../layers/sme-roster/server/utils/decision-lifecycle-102-mcp'
-import { qualificationPreflight102, qualificationCommit102 } from '../../layers/sme-roster/server/utils/decision-lifecycle-102'
-import { parseRpcError105 } from '../../layers/sme-roster/server/utils/parse-maintenance-105-rpc'
-import { admitEnterpriseResponse } from '../../layers/sme-roster/server/utils/enterprise-read-response'
-import { eventCorrectionRpcError } from '../../layers/sme-roster/server/utils/mcp-event-correction'
-import { platformQueryRpcError } from '../../layers/sme-roster/server/utils/mcp-platform-query'
-import { currentQualifiedRpcError } from '../../layers/sme-roster/server/utils/current-qualified-filter'
 import { getHeader, getMethod, readBody, setHeader } from 'h3'
 import { defineMcpHandler, getMcpTools, getMcpResources, getMcpPrompts } from '@nuxtjs/mcp-toolkit/server'
 import { requestLogContext } from '../../layers/core/lib/logging'
@@ -50,45 +42,39 @@ export default defineMcpHandler({
   tools: async configuredEvent => (await getMcpTools())
     // Keep the original discovery order when the toolkit collects multiple layers.
     .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', 'en'))
-    .filter(tool => !isSessionEvent(configuredEvent) || sessionReadTools.includes(tool.name ?? '')).map(tool => ({
-    ...tool,
-    ...(tool.name && tool.name in dispositionToolActions ? { inputSchema: dispositionSchemas[dispositionToolActions[tool.name as keyof typeof dispositionToolActions]] as unknown as NonNullable<typeof tool.inputSchema> } : {}),
-    // Toolkit 0.24 types expose only raw shapes, but its registration forwards
-    // schemas unchanged to SDK 1.32, which accepts full Zod objects. Preserve
-    // strict root keys/refinements for these two qualification protocols.
-    ...(tool.name === 'preflight_qualification_decision' ? { inputSchema: qualificationPreflight102 as unknown as NonNullable<typeof tool.inputSchema> }
-      : tool.name === 'commit_qualification_decision' ? { inputSchema: qualificationCommit102 as unknown as NonNullable<typeof tool.inputSchema> } : {}),
-    handler: async (...args: Parameters<typeof tool.handler>) => {
-      const event = isSessionEvent(configuredEvent) ? useEvent() : configuredEvent
-      if (isSessionEvent(configuredEvent) && !isSessionEvent(event)) throw new Error('session_context_missing')
-      const operation = `mcp.tool.${tool.name}`
-      const started = performance.now()
-      try {
-        // Conditional protected fields on these two otherwise public tools also need
-        // the request's established auth when invoked through another toolkit path.
-        if (['get_roster_evidence','get_official_event'].includes(tool.name??'') && args[0] && typeof args[0]==='object' && 'official' in args[0]
-          && (event.context.mcpAuth as {writeAuthorized?:boolean}|undefined)?.writeAuthorized!==true) {
-          throw Object.assign(new Error(JSON.stringify({error:{code:'unauthorized',message:'Configured MCP token required'}})),{code:'unauthorized',statusCode:401})
+    .filter(tool => !isSessionEvent(configuredEvent) || sessionReadTools.includes(tool.name ?? '')).map(tool => {
+    const inputSchema = rosterMcp.inputSchema(tool.name)
+    return {
+      ...tool,
+      // Toolkit forwards full schema objects to the SDK despite its narrower type.
+      ...(inputSchema ? { inputSchema: inputSchema as unknown as NonNullable<typeof tool.inputSchema> } : {}),
+      handler: async (...args: Parameters<typeof tool.handler>) => {
+        const event = isSessionEvent(configuredEvent) ? useEvent() : configuredEvent
+        if (isSessionEvent(configuredEvent) && !isSessionEvent(event)) throw new Error('session_context_missing')
+        const operation = `mcp.tool.${tool.name}`
+        const started = performance.now()
+        try {
+          rosterMcp.authorizeTool(tool.name, args[0], (event.context.mcpAuth as McpAuthState | undefined)?.writeAuthorized === true)
+          const result = await tool.handler(...args)
+          if (!LOG_TOOLS.has(tool.name!)) logSemanticOperation('mcp', operation, { ...requestLogContext(event), module: mcpToolLogModule(tool.name) }, started, result)
+          event.context.semanticMcpLogged = true
+          return result
+        } catch (error) {
+          if (!LOG_TOOLS.has(tool.name!)) logSemanticOperation('mcp', operation, { ...requestLogContext(event), module: mcpToolLogModule(tool.name) }, started, error, undefined, true)
+          event.context.semanticMcpLogged = true
+          // Keep existing domain errors; arbitrary initialization/third-party errors must
+          // not reach the toolkit's default Error.message-to-text converter.
+          const code = semanticErrorCode(error)
+          const status = error && typeof error === 'object'
+            ? ('statusCode' in error ? error.statusCode : 'status' in error ? error.status : undefined)
+            : undefined
+          const domainError = code || (typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599)
+          if (domainError && !['invalid_request', 'alias_input_invalid'].includes(code ?? '')) throw error
+          return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify({ error: { code: code ?? 'internal_error', message: code ? 'Invalid operation request' : 'Operation failed' } }) }] }
         }
-        const result = await tool.handler(...args)
-        if (!LOG_TOOLS.has(tool.name!)) logSemanticOperation('mcp', operation, { ...requestLogContext(event), module: mcpToolLogModule(tool.name) }, started, result)
-        event.context.semanticMcpLogged = true
-        return result
-      } catch (error) {
-        if (!LOG_TOOLS.has(tool.name!)) logSemanticOperation('mcp', operation, { ...requestLogContext(event), module: mcpToolLogModule(tool.name) }, started, error, undefined, true)
-        event.context.semanticMcpLogged = true
-        // Keep existing domain errors; arbitrary initialization/third-party errors must
-        // not reach the toolkit's default Error.message-to-text converter.
-        const code = semanticErrorCode(error)
-        const status = error && typeof error === 'object'
-          ? ('statusCode' in error ? error.statusCode : 'status' in error ? error.status : undefined)
-          : undefined
-        const domainError = code || (typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599)
-        if (domainError && !['invalid_request', 'alias_input_invalid'].includes(code ?? '')) throw error
-        return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify({ error: { code: code ?? 'internal_error', message: code ? 'Invalid operation request' : 'Operation failed' } }) }] }
-      }
-    },
-  })),
+      },
+    }
+  }),
   name: 'spztx-roster-board',
   version: '1.0.0',
   description:
@@ -174,19 +160,8 @@ export default defineMcpHandler({
       } else if (Array.isArray(body) && body.some(entry => entry?.method === 'tools/call' && !LOG_TOOLS.has(entry?.params?.name))) {
         operation = 'mcp.tool.batch'
       }
-      const invalidOfficialRead=officialEvidenceRpcError(body,auth.writeAuthorized)
-      if(invalidOfficialRead) return finish(invalidOfficialRead,invalidOfficialRead.status===401?'unauthorized':'invalid_request')
-      const invalidCurrentQualified = currentQualifiedRpcError(body)
-      if (invalidCurrentQualified) return finish(invalidCurrentQualified, 'invalid_request')
-      if (body?.method === 'tools/call' && ['list_enterprises','get_enterprise_detail','list_current_qualified_enterprises'].includes(body?.params?.name)) admitEnterpriseResponse(event)
-      const invalidDecision = decisionRpcError102(body)
-      if (invalidDecision) return finish(invalidDecision, 'invalid_request')
-      const invalidParse = parseRpcError105(body)
-      if (invalidParse) return finish(invalidParse, 'invalid_request')
-      const invalidEventCorrection = eventCorrectionRpcError(body)
-      if (invalidEventCorrection) return finish(invalidEventCorrection, 'invalid_request')
-      const invalidQuery = platformQueryRpcError(body)
-      if (invalidQuery) return finish(invalidQuery, 'invalid_request')
+      const invalidRoster = rosterMcp.validateRequest(body, auth.writeAuthorized, event)
+      if (invalidRoster) return finish(invalidRoster, invalidRoster.status === 401 ? 'unauthorized' : 'invalid_request')
     }
     if (!auth.writeAuthorized) {
       const called = await writeToolCalledIn(event)

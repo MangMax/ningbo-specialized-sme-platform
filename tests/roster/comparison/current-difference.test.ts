@@ -6,7 +6,7 @@ import { listRosterDifferences } from '../../../layers/sme-roster/lib/roster/dif
 import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import { selectEnterpriseCoordinates } from '../../../layers/sme-roster/lib/roster/enterprise-list-selection'
 import { listRosterDifferences as legacyDifferences } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
-import { listDifferences } from '../../../server/utils/mcp-roster'
+import { listDifferences } from '../../../layers/sme-roster/server/utils/mcp-roster'
 const f = qualificationExportFixture()
 afterAll(() => { vi.useRealTimers(); return f.close() })
 it('retains raw extras alongside effective inherited qualification and stored history through expiry', () => {

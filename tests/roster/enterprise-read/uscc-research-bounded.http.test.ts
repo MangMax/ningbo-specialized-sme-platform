@@ -45,8 +45,8 @@ beforeAll(async () => {
   vi.stubGlobal('readBody', async () => input)
   vi.stubGlobal('createError', (opts: object) => Object.assign(new Error('Invalid research input'), opts))
   vi.doMock('@db', () => ({ useDb: () => db }))
-  const get = (await import('../../../server/api/roster/uscc-research.get')).default
-  const post = (await import('../../../server/api/roster/uscc-research.post')).default
+  const get = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.get')).default
+  const post = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.post')).default
   server = await startEvidenceServer({ db, apiToken: token, getRoutes: {}, routes: {
     '/api/roster/uscc-research': async request => {
       input = request.method === 'POST' ? request.body as Record<string, unknown> : request.query

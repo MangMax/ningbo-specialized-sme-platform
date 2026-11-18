@@ -2,6 +2,7 @@
 import { mount } from '@vue/test-utils'
 import { expect, it } from 'vitest'
 import CurrentQualificationTimeline from '../../../layers/sme-roster/app/components/CurrentQualificationTimeline.vue'
+import RosterPlatformRecords from '../../../layers/sme-roster/app/components/PlatformRecords.vue'
 import type { PlatformQualificationFact } from '../../../layers/sme-roster/lib/roster/platform-qualification'
 import type { TimelineEventFacts } from '../../../layers/sme-roster/lib/roster/enterprise-timeline'
 
@@ -57,7 +58,7 @@ it('loads all sources only on opening and isolates a later enterprise from a pen
     await wrapper.setProps({ enterpriseId: 2 })
     resolve({ qualificationAssessment: { asOf: '2026-11-16', titles: [] }, businessTimeline: { sources: [] } })
     await flushPromises()
-    expect(wrapper.findComponent({ name: 'RosterPlatformRecords' }).exists()).toBe(false)
+    expect(wrapper.findComponent(RosterPlatformRecords).exists()).toBe(false)
   } finally { wrapper.unmount(); vi.unstubAllGlobals() }
 })
 
@@ -107,6 +108,6 @@ it('renders the backend qualification and business facts from the same detail sn
     expect(summary.text()).not.toMatch(/record:|version:|observation:/)
     expect(summary.text()).toContain('无当前公布依据')
     expect(summary.text()).toContain('宁波市')
-    expect(wrapper.findComponent({ name: 'RosterPlatformRecords' }).props('timeline')).toEqual({ asOf: '2026-11-16', sources: [] })
+    expect(wrapper.getComponent(RosterPlatformRecords).props('timeline')).toEqual({ asOf: '2026-11-16', sources: [] })
   } finally { wrapper.unmount(); vi.unstubAllGlobals() }
 })

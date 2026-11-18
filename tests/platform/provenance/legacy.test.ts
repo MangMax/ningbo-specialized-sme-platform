@@ -175,7 +175,7 @@ describe('independent legacy provenance', () => {
 
   it('discovers explicit source locks on REST and MCP without claiming typed evidence', () => {
     const mcp = z.toJSONSchema(rosterImportMcpPayloadSchema, { io: 'input' }) as any
-    const rest = ['preflight', 'commit'].map(action => JSON.parse(readFileSync(new URL(`../../../server/api/roster/import/${action}.post.ts`, import.meta.url), 'utf8').match(/payload: (\{\n[\s\S]*?\n\}),/)![1]!))
+    const rest = ['preflight', 'commit'].map(action => JSON.parse(readFileSync(new URL(`../../../layers/sme-roster/server/api/roster/import/${action}.post.ts`, import.meta.url), 'utf8').match(/payload: (\{\n[\s\S]*?\n\}),/)![1]!))
     for (const payload of [mcp, ...rest]) {
       expect(payload.properties.platformLegacyProvenance).toMatchObject({ type: 'array', minItems: 1, maxItems: 100, items: { additionalProperties: false, required: expect.arrayContaining(['queryId', 'interface', 'queryKey', 'rdjb', 'queriedAt', 'sourceSha256', 'segmentIndex', 'collection', 'relations']) } })
     }

@@ -7,7 +7,7 @@ const require = createRequire(import.meta.resolve('nuxt/package.json'))
 const { createJiti } = require('jiti')
 const { rosterImportOfficialDiscovery, rosterImportLegacyDiscovery } = await createJiti(import.meta.url).import('../layers/sme-roster/server/utils/roster-import-schema.ts')
 for (const action of ['preflight', 'commit']) {
-  const file = fileURLToPath(new URL(`../server/api/roster/import/${action}.post.ts`, import.meta.url))
+  const file = fileURLToPath(new URL(`../layers/sme-roster/server/api/roster/import/${action}.post.ts`, import.meta.url))
   const source = readFileSync(file, 'utf8')
   const updated = source.replace(/payload: (\{\n[\s\S]*?\n\}),/, (_match, json) => {
     const payload = JSON.parse(json)

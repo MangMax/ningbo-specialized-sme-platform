@@ -39,15 +39,15 @@ beforeAll(async () => {
   const router = createRouter()
   for (const action of ['preflight', 'commit'] as const) {
     vi.stubGlobal('defineRouteMeta', (value: any) => { metadata[action] = value.openAPI })
-    router.post(`/api/roster/import/${action}`, (await import(`../../../server/api/roster/import/${action}.post.ts`)).default)
+    router.post(`/api/roster/import/${action}`, (await import(`../../../layers/sme-roster/server/api/roster/import/${action}.post.ts`)).default)
   }
   vi.stubGlobal('defineRouteMeta', () => {})
-  router.get('/api/platform/queries', (await import('../../../server/api/platform/queries.get')).default)
+  router.get('/api/platform/queries', (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default)
   const listener = toNodeListener(createApp().use(router))
   const tools: any[] = []
   if (realTransport) {
     vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (value: unknown) => value }))
-    for (const name of ['preflight_roster_batch', 'save_roster_batch', 'list_platform_queries']) tools.push((await import(`../../../server/mcp/tools/${name}.ts`)).default)
+    for (const name of ['preflight_roster_batch', 'save_roster_batch', 'list_platform_queries']) tools.push((await import(`../../../layers/sme-roster/server/mcp/tools/${name}.ts`)).default)
   }
   server = createServer((req, res) => {
     if (req.url !== '/mcp') { listener(req, res); return }

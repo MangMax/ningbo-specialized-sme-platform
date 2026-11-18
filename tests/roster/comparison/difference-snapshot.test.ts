@@ -92,7 +92,7 @@ it('creates and reads the same snapshot through authenticated HTTP and MCP publi
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('readBody', readBody)
   vi.stubGlobal('setResponseStatus', setResponseStatus)
-  const handler = (await import('../../../server/api/roster/difference-snapshots/index.post')).default
+  const handler = (await import('../../../layers/sme-roster/server/api/roster/difference-snapshots/index.post')).default
   const server=createServer(toNodeListener(createApp().use('/api/roster/difference-snapshots',handler)))
   await new Promise<void>(r=>server.listen(0,'127.0.0.1',r))
   try {
@@ -102,7 +102,7 @@ it('creates and reads the same snapshot through authenticated HTTP and MCP publi
     expect(res.status).toBe(202)
     const row=await res.json()
     await settled(row.id)
-    const tool=(await import('../../../server/mcp/tools/difference_snapshot')).default as unknown as {handler:(input:unknown)=>Promise<{content:{text:string}[]}>}
+    const tool=(await import('../../../layers/sme-roster/server/mcp/tools/difference_snapshot')).default as unknown as {handler:(input:unknown)=>Promise<{content:{text:string}[]}>}
     const mcp=JSON.parse((await tool.handler({action:'read',jobId:row.id})).content[0]!.text)
     expect(mcp.id).toBe(row.id)
     expect(mcp.result).toMatchObject({counts:{enterprises:1,unfinished:7},collectionPolicy:'per_enterprise_fresh_same_job_resume'})
@@ -174,7 +174,7 @@ it('collects missing per-enterprise title pages and resumes only failed position
   expect(calls).toHaveLength(8)
   expect((db.$client.prepare('select count(*) n from platform_business_observation').get() as {n:number}).n).toBe(beforeRetry.n+1)
   expect(done.state).toBe('done')
-  const tool=(await import('../../../server/mcp/tools/difference_snapshot')).default as unknown as {handler:(v:unknown)=>Promise<{content:{text:string}[]}>}
+  const tool=(await import('../../../layers/sme-roster/server/mcp/tools/difference_snapshot')).default as unknown as {handler:(v:unknown)=>Promise<{content:{text:string}[]}>}
   const read=JSON.parse((await tool.handler({action:'read',jobId:row.id})).content[0]!.text)
   expect(read.result.counts).toMatchObject({enterprises:1,unfinished:0,rows:14})
   db.$client.close(); activeDb=globalDb
@@ -185,7 +185,7 @@ async function publicHttp(body: unknown) {
   vi.stubGlobal('defineEventHandler',defineEventHandler)
   vi.stubGlobal('readBody',readBody)
   vi.stubGlobal('setResponseStatus',setResponseStatus)
-  const handler=(await import('../../../server/api/roster/difference-snapshots/index.post')).default
+  const handler=(await import('../../../layers/sme-roster/server/api/roster/difference-snapshots/index.post')).default
   const server=createServer(toNodeListener(createApp().use('/snapshot',handler)))
   await new Promise<void>(r=>server.listen(0,'127.0.0.1',r))
   try {
@@ -248,7 +248,7 @@ it.each(['short-tail','retained-total'] as const)('real provider public snapshot
     retry=true
     await publicHttp({action:'retry',jobId:row.id})
     const done=await settled(row.id,db)
-    const tool=(await import('../../../server/mcp/tools/difference_snapshot')).default as unknown as {handler:(v:unknown)=>Promise<{content:{text:string}[]}>}
+    const tool=(await import('../../../layers/sme-roster/server/mcp/tools/difference_snapshot')).default as unknown as {handler:(v:unknown)=>Promise<{content:{text:string}[]}>}
     const read=JSON.parse((await tool.handler({action:'read',jobId:row.id})).content[0]!.text)
     expect(read.result).toEqual(done.result)
     const item=read.result.items.find((i:{source:string})=>i.source==='queryList')
