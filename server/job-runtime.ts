@@ -1,11 +1,22 @@
-// Bind the installed module's job projections and write coordination.
-import { jobReadProjector } from '../layers/sme-roster/server/utils/job-read'
-import { cleanupCurrentExports } from '../layers/sme-roster/server/utils/current-export-artifact'
-import { hasImportWriter, whenImportWriterIdle } from '../layers/sme-roster/server/utils/import-write-barrier'
+import type { JobDto, JobRow } from '../layers/core/server/utils/job-store'
+import type { JobContext } from '../layers/core/server/utils/job-runner'
 
-export const jobRuntime = {
-  readProjector: jobReadProjector,
-  cleanupArtifacts: cleanupCurrentExports,
-  hasForegroundWriter: hasImportWriter,
-  whenForegroundWriterIdle: whenImportWriterIdle,
+type Db = JobContext['db']
+
+interface JobRuntime {
+  readProjector(db: Db): (row: JobRow) => Promise<JobDto>
+  cleanupArtifacts(db: Db): Promise<unknown>
+  hasForegroundWriter(): boolean
+  whenForegroundWriterIdle(): Promise<void>
+}
+
+export let jobRuntime: JobRuntime = {
+  readProjector() { throw new Error('Job read projector has not been installed') },
+  cleanupArtifacts: async () => {},
+  hasForegroundWriter: () => false,
+  whenForegroundWriterIdle: async () => {},
+}
+
+export function installJobRuntime(runtime: JobRuntime): void {
+  jobRuntime = runtime
 }

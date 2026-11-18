@@ -4,10 +4,9 @@ import { errorCodeMissingIsInformative, fieldOmission } from '#core/lib/logging/
 import { isDrizzleQueryAttempt } from '#core/lib/logging/drizzle-query'
 import type { BadgeVariants } from '#core/app/components/ui/badge'
 
-const moduleLabels = new Map(getAppModules().map(({ id, name }) => [id, id === 'core' ? '平台' : name]))
-export const logModuleOptions = [...moduleLabels.keys(), UNLABELED_LOG_MODULE]
+export const getLogModuleOptions = () => [...getAppModules().map(({ id }) => id), UNLABELED_LOG_MODULE]
 export const logModuleLabel = (module?: string | null) =>
-  (module ? moduleLabels.get(module) : undefined) ?? '未标注'
+  module === 'core' ? '平台' : getAppModules().find(({ id }) => id === module)?.name ?? '未标注'
 
 export type LogBadgeVariant = NonNullable<BadgeVariants['variant']>
 

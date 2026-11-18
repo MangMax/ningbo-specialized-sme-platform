@@ -7,22 +7,20 @@ import { clientPage } from '../../../layers/core/lib/client-logging/contract'
 import { createClientErrorTransport } from '../../../layers/core/lib/client-logging/transport'
 import { createClientLogIntake } from '../../../layers/core/server/utils/client-log-intake'
 
-// Exercise a new registration while keeping the running application's declarations.
-vi.mock(import('../../../lib/app-modules'), async (importOriginal) => {
-  const registry = await importOriginal()
-  const { defineAppModule, validateAppModules } = await import('../../../layers/core/lib/core/module-registry')
-  const modules = [...registry.getAppModules(), defineAppModule({
-    id: 'enterprise-services',
-    name: '企业服务',
-    clientPages: [{ page: 'service-desk', paths: ['/enterprise-services'] }],
-  })] as const
-  validateAppModules(modules)
-  return { ...registry, getAppModules: () => modules }
-})
+import { defineAppModule } from '../../../layers/core/lib/core/module-registry'
+import { appManifests } from '../../../lib/installed-manifests'
+import { installAppModules } from '../../../lib/app-modules'
+
+const manifests = [...appManifests, defineAppModule({
+  id: 'enterprise-services',
+  name: '企业服务',
+  clientPages: [{ page: 'service-desk', paths: ['/enterprise-services'] }],
+})]
 
 const dirs: string[] = []
 const oldDir = process.env.NUXT_LOG_DIR
 beforeEach(() => {
+  installAppModules(manifests)
   const dir = mkdtempSync(join(tmpdir(), "client189-")); dirs.push(dir); process.env.NUXT_LOG_DIR = dir
   initializeWorkerLogging()
 })

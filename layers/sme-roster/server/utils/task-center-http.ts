@@ -8,7 +8,7 @@ import { schema,type useApplicationDb } from '../../../../db/client'
 import { isJobId,JOB_STATES,type JobState } from '../../../core/lib/job'
 import { TASK_EXPORTS } from '../../lib/sme-roster/task-exports'
 import { type TaskList } from '../../../core/lib/task-center'
-import { getTaskFilterKinds, getTaskKind, resolveTaskFilters, taskTabs } from '../../../core/lib/task-catalog'
+import { getTaskFilterKinds, getTaskKind, resolveTaskFilters, getTaskTabs } from '../../../core/lib/task-catalog'
 import { readApiToken,resolveApiAuth } from '../../../core/server/utils/api-auth'
 import { requestJobCancel,jobSpecs } from '../../../core/server/utils/job-runner'
 import { retryPlatformBatch } from './platform-batch-query'
@@ -35,7 +35,7 @@ export async function handleTaskCenterRequest(action: 'list' | 'detail' | 'cance
     const where = and(stateWhere, tab.id === 'all' ? undefined : inArray(j.kind, getTaskFilterKinds(tab.id, group?.id)))
     const total = ctx.db.select({ n: sql<number>`count(*)` }).from(j).where(where).get()!.n
     const rows = await Promise.all(readTasks(ctx.db, where, pageSize, (page - 1) * pageSize).map(row => summarize(row, row.kind === ANNUAL_CORRESPONDENCE_KIND ? apiAuthorized : authorized, ctx.db)))
-    const counts: TaskList['counts'] = { ...Object.fromEntries(taskTabs.map(({ id }) => [id, 0])), all: 0 }
+    const counts: TaskList['counts'] = { ...Object.fromEntries(getTaskTabs().map(({ id }) => [id, 0])), all: 0 }
     for (const row of ctx.db.select({ kind: j.kind, n: sql<number>`count(*)` }).from(j).where(stateWhere).groupBy(j.kind).all()) {
       counts.all += row.n
       const module = getTaskKind(row.kind)?.module

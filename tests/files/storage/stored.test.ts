@@ -466,7 +466,7 @@ describe('列表与筛选', () => {
     const rows = listStoredFiles(db, { pageSize: 200 }).rows
     const sources = rows.map((r) => r.source)
     expect(sources.indexOf('jxj')).toBeLessThan(sources.indexOf('miit'))
-    const jxjYears = rows.filter((r) => r.source === 'jxj' && r.year !== null).map((r) => r.year!)
+    const jxjYears = rows.flatMap(row => row.source === 'jxj' && typeof row.year === 'number' ? [row.year] : [])
     const sorted = [...jxjYears].sort((a, b) => b - a)
     expect(jxjYears).toEqual(sorted)
   })

@@ -15,7 +15,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, type LogFilter } from '#core/lib/logging/contract'
-import { sourceLabel, outcomeLabel, logModuleLabel, logModuleOptions } from './logPresentation'
+import { sourceLabel, outcomeLabel, logModuleLabel, getLogModuleOptions } from './logPresentation'
 import { Button } from '#core/app/components/ui/button'
 import { Separator } from '#core/app/components/ui/separator'
 import { Input } from '#core/app/components/ui/input'
@@ -45,7 +45,7 @@ const ids = [
 const choices = [
   { key: 'level', label: '级别', values: LOG_LEVELS },
   { key: 'source', label: '来源', values: LOG_SOURCES },
-  { key: 'module', label: '模块', values: logModuleOptions },
+  { key: 'module', label: '模块', values: getLogModuleOptions() },
   { key: 'outcome', label: '结果', values: LOG_OUTCOMES }
 ]
 // 操作在工具栏里，不在折叠区内：折叠条只报它真正装着的条件。

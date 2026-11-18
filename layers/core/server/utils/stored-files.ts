@@ -1,13 +1,13 @@
 import { eq } from 'drizzle-orm'
 import { storedFile } from '../../../../db/schema'
-import { fileStore } from '../../../../server/file-store'
+import { getStoredFile, softRemoveStoredFile } from '../../../../server/file-store'
 import { FileMaintenanceError, type FileStoreDb as Db } from './file-store'
 
-export const {
+export {
   checkAdmission, getStoredFile, listStoredFiles, extensionSnapshot, renameStoredFileDisplayName,
   verifyStoredFileRestoration, restoreVerifiedStoredFile, softRemoveStoredFile,
   backfillFromDisk, backfillStoredFiles, resolveUploadPlacement, registerUploadedFile, parseMetadataPatch, updateStoredFile,
-} = fileStore
+} from '../../../../server/file-store'
 
 export type StoredFileRow = NonNullable<ReturnType<typeof getStoredFile>>
 

@@ -74,7 +74,7 @@ export function useCredentialSettings() {
     })
   }
   async function save(key: CredentialKey) {
-    if (!replacement.value[key].trim()) { failed.value = true; message.value = `请输入非空${label(key)}。`; return }
+    if (!replacement.value[key]?.trim()) { failed.value = true; message.value = `请输入非空${label(key)}。`; return }
     const current = generation
     await perform({ type: 'save', key }, async () => {
       const result = await request<CredentialState>('/api/settings/credentials', 'PATCH', { [key]: replacement.value[key] })

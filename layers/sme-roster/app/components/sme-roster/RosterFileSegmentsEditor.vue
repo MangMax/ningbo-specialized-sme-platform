@@ -37,6 +37,7 @@ import type {
   parsePart105,
 } from '#sme-roster/server/utils/parse-maintenance-105'
 import type { StoredFileRow } from '#core/server/utils/stored-files'
+import type { RosterFileFields } from '#sme-roster/server/modules/sme-roster/files'
 type State = ReturnType<typeof getParse105>
 type Declaration = State['declarations'][number]
 type Draft = {
@@ -51,7 +52,7 @@ type Draft = {
   rangesEdited: boolean
 }
 const props = defineProps<{
-  file: StoredFileRow | null
+  file: (StoredFileRow & Partial<RosterFileFields>) | null
   refreshList: () => Promise<unknown>
 }>()
 const open = defineModel<boolean>('open', { default: false })

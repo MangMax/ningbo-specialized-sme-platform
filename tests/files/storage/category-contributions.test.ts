@@ -121,7 +121,8 @@ async function uploadAndRegisterFixture(name: string, installed: readonly FileCa
   // Install the second module at the application composition boundary. HTTP handlers,
   // tus protocol, file-store dispatch and SQLite run unchanged.
   vi.resetModules()
-  vi.doMock('../../../server/file-category-modules', () => ({ serverFileCategories: installed }))
+  const { configureFileStore } = await import('../../../server/file-store')
+  configureFileStore(installed)
   vi.doMock('@db', () => ({ useDb: () => db }))
   for (const key of ['defineEventHandler', 'createError', 'readBody', 'setResponseStatus', 'getQuery', 'setHeader', 'getRouterParam'] as const) {
     vi.stubGlobal(key, h3[key])
@@ -177,7 +178,6 @@ async function uploadAndRegisterFixture(name: string, installed: readonly FileCa
 
 afterEach(() => {
   vi.unstubAllGlobals()
-  vi.doUnmock('../../../server/file-category-modules')
   vi.doUnmock('@db')
 })
 
