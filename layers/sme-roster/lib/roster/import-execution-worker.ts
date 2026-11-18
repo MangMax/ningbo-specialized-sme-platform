@@ -1,3 +1,5 @@
+import { appManifests } from '../../../../lib/installed-manifests'
+import { installAppModules } from '../../../../lib/app-modules'
 import { assertApplicationSchema } from '../../../../db/schema-phase'
 import { deserialize } from 'node:v8'
 import { realpathSync, statSync } from 'node:fs'
@@ -10,6 +12,7 @@ import { ImportReceiptError } from '../../server/utils/import-receipts'
 import type { ImportExecutionMessage } from '../../server/utils/import-execution'
 import { initializeWorkerLogging, closeApplicationLogging } from '../../../core/lib/logging'
 
+installAppModules(appManifests)
 initializeWorkerLogging()
 
 // The parent has already migrated the DB. Keep exactly one native connection;

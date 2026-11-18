@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { normalizeAttachment } from '../../../layers/sme-roster/lib/attachment'
 import type { FilePart } from '../../../db/file-part'
+import type { RosterFileFields } from '../../../layers/sme-roster/server/modules/sme-roster/files'
 import {
   aggregateParts,
   compareParts,
@@ -396,7 +397,7 @@ describe('从 record_evidence 回填段', () => {
 
   it('列表行带上段,且年份/批次汇总是内容年份(页面「年份」列就靠它)', () => {
     const rows = listStoredFiles(db, { pageSize: 200 }).rows
-    const byPath = new Map(rows.map((r) => [r.relPath, r]))
+    const byPath = new Map(rows.map((r) => [r.relPath, r as typeof r & Partial<RosterFileFields>]))
 
     // 192号 年份列显示两个年 —— 验收里的那一条。
     expect(byPath.get(FILE_192)!.parts).toHaveLength(2)
@@ -413,12 +414,13 @@ describe('从 record_evidence 回填段', () => {
 
   it('工信部导出也按维护批次分段(attachment 为空)', () => {
     const miit = listStoredFiles(db, { q: '导出Excel' }).rows.find((r) => r.relPath === FILE_MIIT)!
-    expect(miit.parts!.map((p) => `${p.eventKind}/${p.year}`)).toEqual([
+    const parts = miit.parts as RosterFileFields['parts']
+    expect(parts.map((p) => `${p.eventKind}/${p.year}`)).toEqual([
       'maintain/2024',
       'maintain/2025',
     ])
-    expect(miit.parts!.every((p) => p.attachment === null)).toBe(true)
-    expect(partYears(miit.parts!)).toEqual([2024, 2025])
+    expect(parts.every((p) => p.attachment === null)).toBe(true)
+    expect(partYears(parts)).toEqual([2024, 2025])
   })
 
   it('没有引用的文件不留段(留给票 11 解析时写),但公布年份还在', () => {

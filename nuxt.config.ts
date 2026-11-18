@@ -7,11 +7,11 @@ import { actualSessionEntryProfile, configureSessionVirtuals, installSessionOver
 import { installRosterWorkers } from './layers/sme-roster/nuxt-workers'
 import tailwindcss from '@tailwindcss/vite'
 import { LOG_ICON_IDS } from './layers/core/app/components/logs/logIcons'
-import { getAppModules } from './lib/app-modules'
+import { appManifests } from './lib/installed-manifests'
 import { validateAppModules } from './layers/core/lib/core/module-registry'
 
 // Fail before serving in dev or producing a deployment with an invalid registry.
-validateAppModules(getAppModules())
+validateAppModules(appManifests)
 
 // 只有本地图标集合；`@nuxt/icon` 在构建期把 `LOG_ICON_IDS` 与自定义集合打进客户端，
 // 运行时不访问 api.iconify.design。详见 components/logs/logIcons.ts 的清单。
@@ -26,6 +26,8 @@ const runtimeWatchIgnores = runtimeDirectories.map(dir => `${fileURLToPath(new U
 // SPA only — no SSR. Everything runs in the browser against Nitro server routes.
 export default defineNuxtConfig({
   extends: ['./layers/core', './layers/sme-roster'],
+  // Keep the root pages and aliases while the composition plugin lives under app/.
+  srcDir: '.',
   // Concurrent owned dev fixtures must not share generated files or Nuxt's lock.
   buildDir: process.env.NUXT_BUILD_DIR || '.nuxt',
   compatibilityDate: '2026-10-13',
@@ -37,6 +39,8 @@ export default defineNuxtConfig({
     },
     pageTransition: { name: 'page', mode: 'out-in', appear: true },
   },
+
+  plugins: [fileURLToPath(new URL('./app/plugins/app-modules.ts', import.meta.url))],
 
   modules: [
     'vite-doctor/nuxt',

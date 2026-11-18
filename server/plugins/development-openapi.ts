@@ -3,7 +3,7 @@ import { registeredCredentials } from '../../lib/app-modules'
 import { extendCredentialOpenApi, type CredentialOpenApiDocument } from '../../layers/core/server/utils/credential-openapi'
 import { extendFileOpenApi, type FileOpenApiDocument } from '../../layers/core/server/utils/file-openapi'
 import { jobSpecs } from '../../layers/core/server/utils/job-runner'
-import { serverFileCategories } from '../file-category-modules'
+import { serverFileCategories } from '../file-store'
 
 type JobParamsContent = {
   content?: { 'application/json'?: { schema?: { properties?: { params?: { description?: string } } } } }

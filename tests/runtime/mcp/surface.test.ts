@@ -8,6 +8,7 @@ import { readMcpToken, resolveMcpAuth, tokenMatches, unauthorizedMessage } from 
 import { findFileIdByRelPath, pageImagesForAgent, resolveFileRef } from '../../../layers/core/server/utils/file-agent-reference'
 import { __resetFileStoreReady, ensureFileStoreReady, setFileCategoryForAgent } from '../../../layers/sme-roster/server/utils/mcp-files'
 import { applyParseResult, normalizeParseParts } from '../../../layers/sme-roster/server/utils/parse-result'
+import type { RosterFileFields } from '../../../layers/sme-roster/server/modules/sme-roster/files'
 import { getStoredFile, listStoredFiles } from '../../../layers/core/server/utils/stored-files'
 
 /**
@@ -578,7 +579,7 @@ describe('ensureFileStoreReady 懒回填', () => {
     const id = findFileIdByRelPath(fresh, REL_PDF)!
     const row = getStoredFile(fresh, id)!
     expect(row.parts).toHaveLength(2)
-    expect(row.parts!.map((p) => [p.eventKind, p.year, p.batch, p.attachment, p.rowCount])).toEqual([
+    expect((row.parts as RosterFileFields['parts']).map((p) => [p.eventKind, p.year, p.batch, p.attachment, p.rowCount])).toEqual([
       ['award', 2024, 2, '附件1', 389],
       ['review', 2021, 2, '附件2', 67],
     ])

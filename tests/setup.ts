@@ -16,6 +16,16 @@
  */
 
 import { initLogger } from 'evlog'
+import { beforeAll } from 'vitest'
+import { installApplicationUi } from '../lib/install-application-ui'
+
+// Direct runtime fixtures use the same registrations as the two app entries.
+installApplicationUi()
+beforeAll(async () => {
+  // Load after suite-level mocks have been registered.
+  const { installApplicationServer } = await import('../server/install-application')
+  installApplicationServer()
+})
 
 // Bare unit tests do not boot evlog/nuxt. Keep event construction enabled, but
 // give diagnostics an explicit quiet unit sink instead of flooding Vitest's

@@ -7,18 +7,33 @@ export type ClientInteraction = typeof CLIENT_INTERACTIONS[number]
 export type ClientErrorKind = typeof CLIENT_ERROR_KINDS[number]
 export type ClientPage = string
 
-const pages = getAppModules().flatMap(({ id, clientPages }) =>
-  (clientPages ?? []).map(({ page, paths, operationPage = page }) => ({ module: id, page, paths, operationPage })))
-const attributionByPage = new Map(pages.map(({ module, page, operationPage }) => [page, { module, operationPage }]))
-const pagePaths = pages.flatMap(({ page, paths }) => paths.map(path => ({ page, path })))
-  .sort((a, b) => b.path.length - a.path.length)
+let indexedManifests: ReturnType<typeof getAppModules> | undefined
+let index: ReturnType<typeof indexPages>
+
+function indexPages(manifests: ReturnType<typeof getAppModules>) {
+  const pages = manifests.flatMap(({ id, clientPages }) =>
+    (clientPages ?? []).map(({ page, paths, operationPage = page }) => ({ module: id, page, paths, operationPage })))
+  const attributionByPage = new Map(pages.map(({ module, page, operationPage }) => [page, { module, operationPage }]))
+  const pagePaths = pages.flatMap(({ page, paths }) => paths.map(path => ({ page, path })))
+    .sort((a, b) => b.path.length - a.path.length)
+  return { attributionByPage, pagePaths }
+}
+
+function pageIndex() {
+  const manifests = getAppModules()
+  if (indexedManifests !== manifests) {
+    index = indexPages(manifests)
+    indexedManifests = manifests
+  }
+  return index
+}
 
 export function isClientPage(value: unknown): value is ClientPage {
-  return typeof value === 'string' && (value === 'other' || attributionByPage.has(value))
+  return typeof value === 'string' && (value === 'other' || pageIndex().attributionByPage.has(value))
 }
 
 export function clientPageAttribution(page: ClientPage): { module: string | null; operationPage: string } {
-  return attributionByPage.get(page) ?? { module: null, operationPage: 'other' }
+  return pageIndex().attributionByPage.get(page) ?? { module: null, operationPage: 'other' }
 }
 
 export interface ClientErrorReport { kind: ClientErrorKind; page: ClientPage; level: 'error' | 'warn'; relatedRequestId?: string; interaction?: ClientInteraction }
@@ -32,5 +47,5 @@ export function clientErrorReport(value: unknown): ClientErrorReport | null {
   return { kind: input.kind as ClientErrorKind, page: input.page, level: input.level, ...(interaction ? { interaction } : {}), ...(relatedRequestId ? { relatedRequestId } : {}) }
 }
 export function clientPage(path: string): ClientPage {
-  return pagePaths.find(entry => path === entry.path || (entry.path !== '/' && path.startsWith(entry.path + '/')))?.page ?? 'other'
+  return pageIndex().pagePaths.find(entry => path === entry.path || (entry.path !== '/' && path.startsWith(entry.path + '/')))?.page ?? 'other'
 }

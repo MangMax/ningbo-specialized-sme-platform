@@ -20,7 +20,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }))
 const context = () => ({ db, env: {} })
 it('resolves database Cookie before environment, preserves controlled overrides and clears to fallback', () => {
   const ctx = { ...context(), env: { MIIT_COOKIE: ' session=synthetic-env ' } }
-  expect(credentialStatus(ctx)['sme-roster.miitCookie'].source).toBe('MIIT_COOKIE')
+  expect(credentialStatus(ctx)['sme-roster.miitCookie']?.source).toBe('MIIT_COOKIE')
   updateCredential('sme-roster.miitCookie', 'session=synthetic-saved', ctx)
   expect(resolvePlatformCookie(undefined, { ...ctx })).toBe('session=synthetic-saved')
   expect(resolvePlatformCookie('session=synthetic-override', ctx)).toBe('session=synthetic-override')
@@ -40,7 +40,7 @@ it('rejects invalid Cookie and mixed invalid requests without changing either sa
     const response = handleCredentialsRequest('state', { method: 'PATCH', headers: {}, body: { 'core.ocrToken': 'synthetic-not-written', 'sme-roster.miitCookie': miitCookie } }, ctx)
     expect(response.status).toBe(400)
     expect(resolvePlatformCookie(undefined, ctx)).toBe('session=synthetic-kept')
-    expect(credentialStatus(ctx)['core.ocrToken'].masked).toBe('syn********ept')
+    expect(credentialStatus(ctx)['core.ocrToken']?.masked).toBe('syn********ept')
   }
 })
 it('sends database Cookie to a controlled HTTP service, fixes an in-flight operation and hot updates the next query', async () => {

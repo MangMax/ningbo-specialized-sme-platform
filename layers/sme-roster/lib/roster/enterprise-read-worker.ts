@@ -1,3 +1,5 @@
+import { appManifests } from '../../../../lib/installed-manifests'
+import { installAppModules } from '../../../../lib/app-modules'
 import { assertApplicationSchema } from '../../../../db/schema-phase'
 import { appLog, initializeWorkerLogging, closeApplicationLogging, type LogContext, type LogInput } from '../../../core/lib/logging/index'
 /** Dedicated native SQLite executor. This entry has no Nitro runtime dependency. */
@@ -72,6 +74,7 @@ function observeConnection(client: Database.Database) {
   }) as typeof prepare
 }
 function closeConnection() { connection?.close(); connection=undefined; identity=undefined }
+installAppModules(appManifests)
 initializeWorkerLogging()
 process.on('disconnect', () => { closeConnection(); void closeApplicationLogging().finally(() => process.exit(0)) })
 process.on('message', async (request: EnterpriseReadRequest) => {

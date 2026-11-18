@@ -6,7 +6,7 @@ import { Input } from '#core/app/components/ui/input'
 import { Label } from '#core/app/components/ui/label'
 import LoadingIndicator from './LoadingIndicator.vue'
 import type { CredentialOperation, CredentialStatus } from '#core/app/composables/useCredentialSettings'
-defineProps<{ id: string; label: string; status: CredentialStatus; raw: string; replacement: string; busy: boolean; operation?: CredentialOperation; description: string; sensitive: boolean }>()
+defineProps<{ id: string; label: string; status: CredentialStatus; raw: string; replacement?: string; busy: boolean; operation?: CredentialOperation; description: string; sensitive: boolean }>()
 defineEmits<{ 'update:replacement': [value: string | number]; save: []; clear: []; reveal: [copy: boolean] }>()
 const reducedMotion = useReducedMotion()
 </script>
@@ -39,7 +39,7 @@ const reducedMotion = useReducedMotion()
       <Input :id="`${id}-replacement`" :model-value="replacement" :type="sensitive ? 'password' : 'text'" autocomplete="off" spellcheck="false" autocapitalize="off" :placeholder="`粘贴完整${label}`" :readonly="busy" @update:model-value="$emit('update:replacement', $event)" />
       <p class="text-muted-foreground wrap-anywhere text-sm">{{ description }}清除仅移除页面保存值，部署配置仍可生效。</p>
       <div class="flex flex-wrap gap-3">
-        <Button type="submit" :data-testid="`save-${id}`" :aria-busy="operation === 'save'" :disabled="busy || !replacement.trim()"><LoadingIndicator :active="operation === 'save'" />保存 {{ label }}</Button>
+        <Button type="submit" :data-testid="`save-${id}`" :aria-busy="operation === 'save'" :disabled="busy || !replacement?.trim()"><LoadingIndicator :active="operation === 'save'" />保存 {{ label }}</Button>
         <Button type="button" variant="outline" :data-testid="`clear-${id}`" :aria-busy="operation === 'clear'" :disabled="busy || !status.hasSaved" @click="$emit('clear')"><LoadingIndicator :active="operation === 'clear'" />清除页面保存值</Button>
       </div>
     </form>
