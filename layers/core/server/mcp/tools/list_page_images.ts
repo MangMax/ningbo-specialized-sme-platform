@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { DEFAULT_DPI } from '#core/lib/pdf-page'
 import { fileRefShape, pageImagesForAgent } from '../../utils/file-agent-reference'
-import { openFileStore } from '../../../../../server/utils/mcp-files'
+import { openOcrFileStore } from '../../utils/ocr-files'
 
 /**
  * `list_page_images` —— 一份 PDF 的页图(票 18,只读;产物来自票 13)。
@@ -39,7 +39,7 @@ export default defineMcpTool({
       .describe(`核对清单用的分辨率;默认 ${DEFAULT_DPI}(与渲染时一致才算 upToDate)`),
   },
   handler: async (input) => {
-    const { db, root } = await openFileStore()
+    const { db, root } = await openOcrFileStore()
     const result = await pageImagesForAgent(db, root, input)
     if (!result.ok) throw createError({ statusCode: result.statusCode, message: result.message })
     return { ...result.value, defaultDpi: DEFAULT_DPI }
