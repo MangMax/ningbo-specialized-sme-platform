@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ROSTER_LEDGER_PATH } from '~~/lib/sme-roster/routes'
 import { computed, ref, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { ExternalLink, Eye, FileText } from '@lucide/vue'
@@ -312,7 +313,7 @@ function openPreview(e: Evidence) {
  * `backQuery` 本来就是这个面板已经握着的台账筛选串(含 `view` / 页码 / `expand`),
  * 拼成台账地址即可 —— 回来时筛选与展开位置原样落回。
  */
-const previewBack = computed(() => (props.backQuery ? `/?${props.backQuery}` : '/'))
+const previewBack = computed(() => (props.backQuery ? `${ROSTER_LEDGER_PATH}?${props.backQuery}` : ROSTER_LEDGER_PATH))
 
 function rememberFullDetailReturn(event: MouseEvent): void {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return

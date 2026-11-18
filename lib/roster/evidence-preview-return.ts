@@ -1,4 +1,5 @@
 import { nextTick, onMounted, onScopeDispose, watch, type Ref } from 'vue'
+import { ROSTER_LEDGER_PATH } from '../sme-roster/routes'
 import { isSafeBackPath } from './evidence-page'
 
 const RETURN_STATE_KEY = 'roster:evidence-preview-return'
@@ -68,7 +69,7 @@ function returnPathKey(value: string): string | null {
     const url = new URL(value, window.location.origin)
     if (url.origin !== window.location.origin) return null
     const entries = [...url.searchParams.entries()].filter(
-      ([key, entryValue]) => !(url.pathname === '/' && key === 'view' && entryValue === 'enterprise'),
+      ([key, entryValue]) => !(url.pathname === ROSTER_LEDGER_PATH && key === 'view' && entryValue === 'enterprise'),
     )
     entries.sort(([aKey, aValue], [bKey, bValue]) => aKey.localeCompare(bKey) || aValue.localeCompare(bValue))
     const query = new URLSearchParams(entries).toString()
