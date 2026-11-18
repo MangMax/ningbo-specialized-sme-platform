@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import type { SidebarProps } from '@/components/ui/sidebar'
-import { ChartColumn, FolderOpen, Gauge, LayoutList, ScanText, KeyRound, ListTodo, Search, Logs } from '@lucide/vue'
-import { ENTERPRISE_LIST_TITLE } from '~~/lib/labels'
+import { getAppModules } from '~~/lib/app-modules'
 import NavMain from '@/components/NavMain.vue'
 import {
   Sidebar,
   SidebarContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -19,32 +19,11 @@ const props = withDefaults(defineProps<SidebarProps>(), {
 
 const colorMode = useAppColorMode()
 
-// 「企业列表」(RL-20 起用名;旧名「名录台账」):一行一家企业,称号历史与差异原因在右侧抽屉。
-// 侧边栏入口、页面标题、`document.title` 三处都取 `ENTERPRISE_LIST_TITLE` 一个常量。
-// 原先并排的「台账」与「企业总表」早已是同一件事,`/roster` 只做 302 重定向。
-const nav = [
-  { title: ENTERPRISE_LIST_TITLE, url: '/', icon: LayoutList },
-  { title: '优质中小企业查询', url: '/current-enterprises', icon: Search },
-  {
-    title: '工信部查询', icon: Search,
-    items: [
-      { title: '申报记录', url: '/platform-declarations' },
-      { title: '关联办理', url: '/platform-business-processes' },
-      { title: '平台认定目录', url: '/platform-recognized-directory' },
-    ],
-  },
-  { title: '文件管理', url: '/files', icon: FolderOpen },
-  // 识别校对:扫描件的逐页 OCR 结果在这里对着页图核对、改、删、导入(票 14 的页面半边)。
-  { title: '识别校对', url: '/ocr', icon: ScanText },
-  { title: '统计', url: '/stats', icon: ChartColumn },
-  { title: '数据质量', url: '/quality', icon: Gauge },
-]
-
-const adminNav = [
-  { title: '后台任务', url: '/tasks', icon: ListTodo },
-  { title: '运行日志', url: '/logs', icon: Logs },
-  { title: '密钥配置', url: '/settings', icon: KeyRound },
-]
+const modules = getAppModules()
+const businessModules = modules.flatMap(({ id, name, nav }) =>
+  id !== 'core' && nav?.length ? [{ id, name, nav }] : [],
+)
+const platformNav = modules.find(module => module.id === 'core')?.nav
 </script>
 
 <template>
@@ -76,8 +55,20 @@ const adminNav = [
     </SidebarHeader>
 
     <SidebarContent>
-      <NavMain :items="nav" />
-      <NavMain label="后台管理" :items="adminNav" class="mt-auto" />
+      <section v-if="businessModules.length" aria-label="业务模块">
+        <SidebarGroupLabel v-if="businessModules.length > 1" class="mx-2">
+          业务模块
+        </SidebarGroupLabel>
+        <NavMain
+          v-for="module in businessModules"
+          :key="module.id"
+          :label="businessModules.length === 1 ? '业务模块' : module.name"
+          :items="module.nav"
+        />
+      </section>
+      <section v-if="platformNav?.length" aria-label="平台管理" class="mt-auto">
+        <NavMain label="平台管理" :items="platformNav" />
+      </section>
     </SidebarContent>
 
     <SidebarRail />

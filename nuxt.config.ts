@@ -10,6 +10,11 @@ import { installSessionFrontend, type SessionFrontendBinding, type SessionEntryP
 import tailwindcss from '@tailwindcss/vite'
 import { TASK_EXPORTS } from './lib/task-center'
 import { LOG_ICON_IDS } from './components/logs/logIcons'
+import { getAppModules } from './lib/app-modules'
+import { validateAppModules } from './lib/core/module-registry'
+
+// Fail before serving in dev or producing a deployment with an invalid registry.
+validateAppModules(getAppModules())
 
 // 只有本地图标集合；`@nuxt/icon` 在构建期把 `LOG_ICON_IDS` 与自定义集合打进客户端，
 // 运行时不访问 api.iconify.design。详见 components/logs/logIcons.ts 的清单。
