@@ -95,6 +95,23 @@ describe('文件页写路径操作反馈', () => {
   })
   afterEach(() => { view.unmount(); toast.dismiss(); toaster.unmount(); document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.clearAllMocks() })
 
+  it('sets the file table minimum width to the sum of its rendered columns', () => {
+    const table = view.get('table')
+    const widths = table.findAll('thead th').map(header => {
+      const inline = (header.element as HTMLElement).style.width.match(/^(\d+)px$/)
+      if (inline) return Number(inline[1])
+      for (const name of header.classes()) {
+        const pixels = name.match(/^w-\[(\d+)px\]$/)
+        if (pixels) return Number(pixels[1])
+        const spacing = name.match(/^w-(\d+(?:\.\d+)?)$/)
+        if (spacing) return Number(spacing[1]) * 4
+      }
+      throw new Error(`missing width for file table header: ${header.element.textContent}`)
+    })
+    expect(widths.length).toBeGreaterThan(3)
+    expect((view.get('[data-slot=table-container]').element as HTMLElement).style.minWidth).toBe(`${widths.reduce((sum, width) => sum + width, 0)}px`)
+  })
+
   it('renders added filters and detail panels alongside the existing module', async () => {
     view.unmount()
     const modules = registry.getFileCategoryUi()
