@@ -491,7 +491,7 @@ export function createFileStore<const Categories extends readonly FileCategorySe
     function assertOwnership(relPath: string) {
       try {
         splitRegistrationPath(relPath)
-        if (registrationCategory(relPath.trim()) !== category) {
+        if (registrationCategory(relPath) !== category) {
           throw new UploadRegistrationError('上传分类与实际落位不符')
         }
       } catch (error) {
@@ -515,8 +515,8 @@ export function createFileStore<const Categories extends readonly FileCategorySe
 
     let relPath: string
     try {
-      // Match using the same coercion and trimming accepted by legacy registration.
-      relPath = String(input.relPath ?? '').trim()
+      // Tus returns the actual disk path, including any surrounding whitespace.
+      relPath = String(input.relPath ?? '')
     } catch (error) {
       throw new UploadRegistrationError((error as Error).message)
     }

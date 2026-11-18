@@ -59,8 +59,8 @@ export function parseUploadDeclaration(body: unknown): UploadDeclaration {
   for (const key of Object.keys(b)) {
     if (!ALLOWED.has(key)) throw new UploadRegistrationError(`不可提交的字段:${key}`)
   }
-  const relPath = text(b.relPath)
-  if (!relPath) throw new UploadRegistrationError('缺少 relPath')
+  const relPath = String(b.relPath ?? '')
+  if (!relPath.trim()) throw new UploadRegistrationError('缺少 relPath')
   return {
     relPath,
     source: text(b.source),

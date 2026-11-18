@@ -48,7 +48,7 @@ const catalog = {
       // The fixture owns the catalog layout and classification, just as it does for backfill.
       const relPath = String(input.relPath)
       const write = catalog.prepareBackfill(relPath)
-      if (!/^catalog\/[^/]+\.pdf$/.test(relPath) || !write || Object.keys(input).length !== 1) {
+      if (!/^catalog\/[^/]+\.pdf ?$/.test(relPath) || !write || Object.keys(input).length !== 1) {
         throw h3.createError({ statusCode: 400 })
       }
       return async (db, { filename, abs, bytes }) => {
@@ -138,7 +138,7 @@ async function uploadAndRegisterFixture(name: string, installed: readonly FileCa
   const errors: string[] = []
   const app = h3.createApp({ onError: error => { errors.push(error.message) } })
   const http = h3.toWebHandler(app.use(router))
-  async function uploadResponse(metadata: Record<string, string>) {
+  async function uploadResponse(metadata: Record<string, string>, body = 'abc') {
     const headers = { 'Tus-Resumable': '1.0.0' }
     const create = await tus.handleWeb(new Request(base + TUS_PATH, {
       method: 'POST',
@@ -152,15 +152,15 @@ async function uploadAndRegisterFixture(name: string, installed: readonly FileCa
     return tus.handleWeb(new Request(new URL(create.headers.get('location')!, base), {
       method: 'PATCH',
       headers: { ...headers, 'Upload-Offset': '0', 'Content-Type': 'application/offset+octet-stream' },
-      body: 'abc',
+      body,
     }))
   }
   return {
     db,
     errors,
     uploadResponse,
-    async upload(metadata: Record<string, string>) {
-      const finish = await uploadResponse(metadata)
+    async upload(metadata: Record<string, string>, body?: string) {
+      const finish = await uploadResponse(metadata, body)
       expect(finish.status).toBe(204)
       return decodeURIComponent(finish.headers.get('X-Upload-Path')!)
     },
@@ -263,6 +263,24 @@ it.each([true, false])('registers only the catalog classification after tus uplo
     expect(await request('/api/files?collection=local')).toMatchObject({ status: 200, body: { total: 1, rows: [file] } })
     expect(await request('/api/files?categoryState=unset')).toMatchObject({ status: 200, body: { total: 0, rows: [] } })
     expect(await request(`/api/files/${file.id}/maintenance`)).toMatchObject({ status: 200, body: { file } })
+  } finally {
+    db.$client.close()
+  }
+})
+
+it.each([true, false])('registers the exact landed path and bytes (explicit selector: %s)', async explicit => {
+  const { db, upload, request } = await uploadAndRegisterFixture(`exact-path-${explicit}`)
+  try {
+    const sibling = await upload({ fileCategory: 'catalog', filename: 'guide.pdf' })
+    const relPath = await upload({ fileCategory: 'catalog', filename: 'guide.pdf ' }, 'xyz')
+    expect(sibling).toBe('catalog/guide.pdf')
+    expect(relPath).toBe('catalog/guide.pdf ')
+    const input = explicit ? { relPath, fileCategory: 'catalog' } : { relPath }
+    expect(await request('/api/files/register', input)).toMatchObject({
+      status: 201,
+      body: { relPath, filename: 'guide.pdf ', sha256: '3608bca1e44ea6c4d268eb6db02260269892c0b42b86bbf1e77a6fa16c3c9282' },
+    })
+    expect(db.select({ relPath: storedFile.relPath }).from(storedFile).all()).toEqual([{ relPath }])
   } finally {
     db.$client.close()
   }
