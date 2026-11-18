@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { expect, it } from 'vitest'
-import { createRuntimeSchema } from '../../../db/create-runtime'
+import { createPreEnterpriseKernelFixture } from '../../support/pre-enterprise-kernel'
 import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
 import { ensureRecognizedTargetContent } from '../../../layers/sme-roster/lib/platform/recognized-target-writer'
 import { planPlatformObservation } from '../../../layers/sme-roster/lib/platform/observation-plan'
@@ -10,7 +10,7 @@ import { captureFingerprintBasis } from '../../../layers/sme-roster/lib/platform
 
 function fixture() {
   const s = new Database(':memory:')
-  s.pragma('foreign_keys=ON'); createRuntimeSchema(s)
+  createPreEnterpriseKernelFixture(s)
   const db = drizzle(s, { schema: targetSchema })
   for (const [id, raw] of [
     ['one', { rdtime: '2023-12-28 08:50:25', sfyx: '1', szsmc: '宁波市', sxsj: '' }],
@@ -68,7 +68,7 @@ function collectionCommand(row: PlatformRawRow, queriedAt: string): NewCollectio
 it('fills observation and version owners from their own archives', () => {
   const s = new Database(':memory:')
   try {
-    s.pragma('foreign_keys=ON'); createRuntimeSchema(s)
+    createPreEnterpriseKernelFixture(s)
     const db = drizzle(s, { schema: targetSchema })
     writeNewCollectionTarget(db, collectionCommand({ id: 'observed', qymc: 'Example', rdjb: '2', rdtime: '2024-02-19', sfyx: '1', szsmc: '宁波市' }, '2026-11-16T00:00:00Z'))
     writeNewCollectionTarget(db, collectionCommand({ id: 'observed', qymc: 'Example', rdjb: '2', rdtime: '2024-02-19', sfyx: '1', szsmc: '宁波市' }, '2026-11-16T01:00:00Z'))
@@ -86,7 +86,7 @@ it('fills observation and version owners from their own archives', () => {
 it('reports an observation without archived raw and leaves its fields uncaptured on replay', () => {
   const s = new Database(':memory:')
   try {
-    s.pragma('foreign_keys=ON'); createRuntimeSchema(s)
+    createPreEnterpriseKernelFixture(s)
     // Explicit historical SQL fixture: normal collection commands require raw/evidence
     // agreement and cannot manufacture a missing original archive.
     s.transaction(() => {
