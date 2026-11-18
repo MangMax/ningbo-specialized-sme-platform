@@ -3,6 +3,8 @@ import { appLog, type LogContext } from '../../lib/logging'
 import { eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
+import { parseMetadataPatch, type FileMetadataPatch } from '../modules/sme-roster/files'
+import type { BackfillExclusion } from './file-store'
 import { useDb } from '@db'
 import * as schema from '../../db/schema'
 import { DEFAULT_DPI, isPdfPath, normalizeDpi } from '../../lib/pdf-page'
@@ -15,10 +17,7 @@ import { listPdfPages, resolveWithinRoot, type PdfPagesState } from './pdf-pages
 import {
   backfillFromDisk,
   getStoredFile,
-  parseMetadataPatch,
-  type BackfillExclusion,
   type BackfillReport,
-  type FileMetadataPatch,
   type StoredFileRow,
 } from './stored-files'
 

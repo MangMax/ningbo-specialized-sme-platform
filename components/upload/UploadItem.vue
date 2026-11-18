@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import type { UploadFailure, UploadPhase } from '@/lib/upload'
-import { formatBytes } from '@/lib/upload'
+import { formatBytes } from '@/lib/core/file-size'
 
 /**
  * 队列里的一行。整行的重心只有一个 —— **这件事现在到了哪一步**:

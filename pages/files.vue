@@ -1,27 +1,20 @@
 <script setup lang="ts">
 import { useQuery, useQueryCache } from '@pinia/colada'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, type Ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { watchDebounced } from '@vueuse/core'
 import { ChevronRight, FolderUp, Search } from '@lucide/vue'
-import {
-  CATEGORY_STATE_ORDER,
-  CATEGORY_STATES,
-  KINDS,
-  PARSE_STATE_ORDER,
-  PARSE_STATES,
-  SOURCES,
-  SOURCE_ORDER,
-} from '~~/lib/labels'
-import { formatBytes } from '~~/lib/upload'
+import { formatBytes } from '~~/lib/core/file-size'
+import { getAppModules } from '~~/lib/app-modules'
+import { getFileCategoryComponent } from '~~/lib/file-category-components'
 import { describeFetchError } from '~~/lib/upload-register'
 import { fileUrl } from '~~/lib/preview'
 import { isPdfPath } from '~~/lib/pdf-page'
-import { joinSeries, partBatches, partYears } from '~~/lib/file-parts'
 import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
 import type { QueryRequestSnapshot } from '~/composables/useRetainedQuerySnapshot'
 import { useToastFeedback } from '~/composables/useToastFeedback'
-import type { StoredFileRow } from '~~/server/utils/stored-files'
-import { Badge } from '@/components/ui/badge'
+import type { FileRow } from '~~/server/utils/file-store'
+import MultiSelectFilter from '@/components/MultiSelectFilter.vue'
+import FilterChip from '@/components/FilterChip.vue'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -45,34 +38,40 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { onBeforeRouteLeave } from 'vue-router'
-import FileSegmentsEditor from '@/components/files/FileSegmentsEditor.vue'
-import EditFileDialog, { type MetadataForm } from '@/components/files/EditFileDialog.vue'
+import EditFileDialog from '@/components/files/EditFileDialog.vue'
 import DeleteFileDialog from '@/components/files/DeleteFileDialog.vue'
-import UploadDialog from '@/components/files/UploadDialog.vue'
 import PdfViewDialog from '@/components/files/PdfViewDialog.vue'
 
-/**
- * 文件管理页(票 09;段的展示是票 17):统一管理文件库(`files/`)里的**全部**文件。
- *
- * 这一页管的是**文件**,不是记录 —— 台账页管记录。所以每行是「一个文件在磁盘上是什么、
- * 被归成哪一类、里面含哪些段、被哪些记录引用」,行操作是编元数据 / 预览 / 移出库。
- *
- * **年份 / 批次两列显示的是文件内容里的段**(票 17:一份文件常含多年份、多事件,
- * 如 192号 同时含「认定 2024/2」与「复核 2021/2」),所以列头写「内容年份」「内容批次」,
- * 与旁边文件级的**「文件发布年份/批次」**(目录给的、单值)一眼分得开。值多时列里只平铺前两个、
- * 其余折成 `+N 年`,完整清单在展开的段明细里。行可展开看段(称号 / 事件 / 年份 / 批次 / 附件 / 行数)。
- *
- * 筛选全部走**多选**(与台账页同一套 `MultiSelectFilter`),因为「同时看经信局的
- * 已分类和待分类」是常见的;单选下拉会把这种组合挡掉。生效条件同台账一样摊成一行 chip。
- */
+const extensions = getAppModules().flatMap(({ id, fileCategories }) =>
+  fileCategories ? [{ id, category: fileCategories }] : [],
+)
+const criteria = extensions.flatMap(({ category }) => category.filters ?? [])
+const columns = extensions.flatMap(({ id, category }) =>
+  (category.columns ?? []).map(column => ({ ...column, key: `${id}:${column.label}` })),
+)
+function registeredComponents(key: 'cells' | 'expandedPanel' | 'detailPanel' | 'uploadDialog') {
+  return extensions.flatMap(({ id, category }) => {
+    const componentId = category[key]
+    return componentId ? [{ id, component: getFileCategoryComponent(componentId) }] : []
+  })
+}
+const cellGroups = registeredComponents('cells')
+const expandedPanels = registeredComponents('expandedPanel')
+const detailPanels = registeredComponents('detailPanel')
+const uploadDialogs = registeredComponents('uploadDialog')
+const columnCount = 3 + Number(expandedPanels.length > 0) + columns.length
+const tableWidth = 209 + 70 + 166 + (expandedPanels.length ? 32 : 0)
+  + columns.reduce((total, column) => total + column.width, 0)
 
 const apiGet = $fetch as unknown as <T>(
   url: string,
   opts?: { query?: Record<string, unknown> },
 ) => Promise<T>
 
+type ListedFile = FileRow & { referenceCount?: number }
+
 interface FilesResponse {
-  rows: StoredFileRow[]
+  rows: ListedFile[]
   total: number
 }
 
@@ -80,9 +79,7 @@ const queryCache = useQueryCache()
 const feedback = useToastFeedback()
 
 // —— 筛选(多选)——
-const sources = ref<string[]>([])
-const categoryStates = ref<string[]>([])
-const parseStates = ref<string[]>([])
+const selections = ref<Record<string, string[]>>({})
 const search = ref('')
 const q = ref('')
 watchDebounced(
@@ -100,9 +97,7 @@ const page = ref(1)
 const pageSize = ref(50)
 
 const params = computed(() => ({
-  source: sources.value.join(',') || undefined,
-  categoryState: categoryStates.value.join(',') || undefined,
-  parseState: parseStates.value.join(',') || undefined,
+  ...Object.fromEntries(criteria.map(filter => [filter.key, selections.value[filter.key]?.join(',') || undefined])),
   q: q.value || undefined,
   page: page.value,
   pageSize: pageSize.value,
@@ -127,7 +122,7 @@ const {
   paginationDisabled,
   failureDescription,
 } = useRetainedQuerySnapshot<FilesQueryParams, FilesQueryResult>(data, isLoading, error, activeRequest)
-const rows = computed<StoredFileRow[]>(() => displayedResult.value?.rows ?? [])
+const rows = computed<ListedFile[]>(() => displayedResult.value?.rows ?? [])
 const total = computed(() => displayedResult.value?.total ?? 0)
 const displayedPage = computed(() => displayedResult.value?.request.page ?? page.value)
 const displayedPageSize = computed(() => displayedResult.value?.request.pageSize ?? pageSize.value)
@@ -159,93 +154,40 @@ onBeforeUnmount(() => {
 // 行数变化会改变滚动条的有无(竖向滚动条占宽)。
 watch([rows, pageSize], () => nextTick(measureOverflow))
 
-const sourceOptions = computed(() =>
-  SOURCE_ORDER.map((k) => ({ value: k, label: SOURCES[k] ?? k })),
-)
-const categoryOptions = computed(() =>
-  CATEGORY_STATE_ORDER.map((k) => ({ value: k, label: CATEGORY_STATES[k] ?? k })),
-)
-const parseOptions = computed(() =>
-  PARSE_STATE_ORDER.map((k) => ({ value: k, label: PARSE_STATES[k] ?? k })),
-)
-
 function refresh() {
   return queryCache.invalidateQueries({ key: ['files'] })
 }
 
-/**
- * 上传通道(票 10):点「上传」开弹窗;传完由 `UploadDialog` 登记进库并 emit `registered`,
- * 这里失效 `['files']` 那一批查询(所有筛选组合),让新行**立即出现**,不必手动刷新。
- */
-const uploadOpen = ref(false)
+const uploading = ref<string | null>(null)
 
-/** 任一筛选变化 → 回第一页。 */
-function onFilterChange() {
+function setFilter(key: string, values: string[]) {
+  selections.value = { ...selections.value, [key]: values }
   page.value = 1
 }
 
 function clearFilters() {
-  sources.value = []
-  categoryStates.value = []
-  parseStates.value = []
+  selections.value = {}
   search.value = ''
   q.value = ''
   page.value = 1
 }
 
-const hasFilters = computed(
-  () =>
-    sources.value.length > 0 ||
-    categoryStates.value.length > 0 ||
-    parseStates.value.length > 0 ||
-    Boolean(q.value),
-)
-
-interface ActiveFilter {
-  key: string
-  label: string
-  clear: () => void
-}
-
-/** 一组多选筛选 → 生效条件 chip:每项可单独从对应 ref 里撤掉。与台账页同一套。 */
-function multiChips(
-  values: string[],
-  keyPrefix: string,
-  labelPrefix: string,
-  target: Ref<string[]>,
-  format: (v: string) => string = (v) => v,
-): ActiveFilter[] {
-  return values.map((v) => ({
-    key: `${keyPrefix}:${v}`,
-    label: `${labelPrefix} · ${format(v)}`,
-    clear: () => (target.value = target.value.filter((x) => x !== v)),
-  }))
-}
-
-/**
- * 生效中的条件摊平成一行。按钮上只写得出「分类 ·2」,看不出勾的到底是哪两项 ——
- * 与台账页同一条规矩:筛选生效了就把它摊开写出来,每项单独可撤。
- */
-const activeFilters = computed<ActiveFilter[]>(() => [
-  ...multiChips(sources.value, 'source', '来源', sources, (v) => SOURCES[v] ?? v),
-  ...multiChips(categoryStates.value, 'category', '分类', categoryStates, (v) => CATEGORY_STATES[v] ?? v),
-  ...multiChips(parseStates.value, 'parse', '解析', parseStates, (v) => PARSE_STATES[v] ?? v),
-  ...(q.value
-    ? [
-        {
-          key: 'q',
-          label: `搜索 · ${q.value}`,
-          clear: () => {
-            search.value = ''
-            q.value = ''
-          },
-        },
-      ]
-    : []),
+const activeFilters = computed(() => [
+  ...criteria.flatMap(filter => (selections.value[filter.key] ?? []).map(value => ({
+    key: `${filter.key}:${value}`,
+    label: `${filter.label} · ${filter.options.find(option => option.value === value)?.label ?? value}`,
+    clear: () => setFilter(filter.key, (selections.value[filter.key] ?? []).filter(selected => selected !== value)),
+  }))),
+  ...(q.value ? [{
+    key: 'q',
+    label: `搜索 · ${q.value}`,
+    clear: () => { search.value = ''; q.value = '' },
+  }] : []),
 ])
+const hasFilters = computed(() => activeFilters.value.length > 0)
 
 // —— 行操作 ——
-const editing = ref<StoredFileRow | null>(null)
+const editing = ref<ListedFile | null>(null)
 const editOpen = ref(false)
 const editPending = ref(false)
 const editFailure = ref('')
@@ -253,57 +195,48 @@ const editFailure = ref('')
 const renamePending = ref(false)
 const renameFailure = ref('')
 
-const deleting = ref<StoredFileRow | null>(null)
+const deleting = ref<ListedFile | null>(null)
 const deleteOpen = ref(false)
 const deletePending = ref(false)
 const deleteFailure = ref('')
 
 const previewOpen = ref(false)
-const previewFile = ref<StoredFileRow | null>(null)
+const previewFile = ref<ListedFile | null>(null)
 
-function openEdit(row: StoredFileRow) {
+function openEdit(row: ListedFile) {
   editing.value = row
   editFailure.value = ''
   renameFailure.value = ''
   editOpen.value = true
 }
 
-function openDelete(row: StoredFileRow) {
+function openDelete(row: ListedFile) {
   deleting.value = row
   deleteFailure.value = ''
   deleteOpen.value = true
 }
 
-function openPreview(row: StoredFileRow) {
+function openPreview(row: ListedFile) {
   previewFile.value = row
   previewOpen.value = true
 }
 
 /** 保存元数据:只提交分类字段;空串转为 null 表示「清空」。 */
-async function saveMetadata(form: MetadataForm) {
+async function saveMetadata(patch: Record<string, unknown>) {
   if (!editing.value) return
   editPending.value = true
   editFailure.value = ''
-  const nullable = (v: string) => (v.trim() ? v.trim() : null)
-  const yearText = form.year.trim()
-  const batchText = form.batch.trim()
   try {
     await $fetch(`/api/files/${editing.value.id}`, {
       method: 'PATCH',
-      body: {
-        source: nullable(form.source),
-        kind: nullable(form.kind),
-        year: yearText ? Number(yearText) : null,
-        batch: batchText ? Number(batchText) : null,
-        titleCode: nullable(form.titleCode),
-      },
+      body: patch,
     })
     editOpen.value = false
     feedback.succeed('保存', '文件信息')
     await refresh()
   } catch (error) {
     editFailure.value = describeFetchError(error)
-    feedback.fail('保存', '文件信息', editFailure.value, () => saveMetadata(form))
+    feedback.fail('保存', '文件信息', editFailure.value, () => saveMetadata(patch))
   } finally {
     editPending.value = false
   }
@@ -349,7 +282,7 @@ async function confirmDelete(_deleteDisk: boolean) {
   }
 }
 
-const sizeOf = (row: StoredFileRow) => formatBytes(row.bytes)
+const sizeOf = (row: ListedFile) => formatBytes(row.bytes)
 const previewSrc = computed(() =>
   previewFile.value ? fileUrl(previewFile.value.relPath) : '',
 )
@@ -384,101 +317,83 @@ function setPageSize(n: number) {
   page.value = 1
 }
 
-/** 元数据是否三项都齐 —— 决定「待分类」要不要显眼。 */
-const isComplete = (row: StoredFileRow) => row.source !== null && row.kind !== null
-
-// —— 段(票 17)——
-/**
- * 展开的行。**可多行同时展开** —— 验收时要并排比两份文件的段(如 192号 与 145号),
- * 单开(手风琴)会把前一份收起来。
- */
 const expandedIds = ref<number[]>([])
 const isExpanded = (id: number) => expandedIds.value.includes(id)
-const editors = new Map<number, InstanceType<typeof FileSegmentsEditor>>()
+type ExpandedPanel = { requestLeave?: () => Promise<boolean> }
+const editors = new Map<string, ExpandedPanel>()
+const panelKey = (fileId: number, moduleId: string) => `${fileId}:${moduleId}`
+function setExpandedPanel(fileId: number, moduleId: string, instance: unknown) {
+  const key = panelKey(fileId, moduleId)
+  if (instance) editors.set(key, instance as ExpandedPanel)
+  else editors.delete(key)
+}
 async function guardEditors() {
-  for (const editor of editors.values()) if(!await editor.requestLeave()) return false
+  for (const editor of editors.values()) {
+    if (editor.requestLeave && !await editor.requestLeave()) return false
+  }
   return true
 }
 onBeforeRouteLeave(guardEditors)
-async function toggleParts(id: number) {
-  if(isExpanded(id) && !await editors.get(id)?.requestLeave()) return
-  expandedIds.value = isExpanded(id)
-    ? expandedIds.value.filter((x) => x !== id)
-    : [...expandedIds.value, id]
+async function toggleDetails(id: number) {
+  if (isExpanded(id)) {
+    for (const panel of expandedPanels) {
+      const editor = editors.get(panelKey(id, panel.id))
+      if (editor?.requestLeave && !await editor.requestLeave()) return
+    }
+    expandedIds.value = expandedIds.value.filter(value => value !== id)
+  } else {
+    expandedIds.value = [...expandedIds.value, id]
+  }
 }
 
-// Keep the displayed query fixed until the current declaration operation is resolved.
+// Keep the displayed query fixed until the current detail operation is resolved.
 let changingQuery = false
 let queryGuardPending = false
-let queuedQuery: [string[], string[], string[], string, number, number] | null = null
-watch([sources, categoryStates, parseStates, q, page, pageSize], async (values, previous) => {
-  if(changingQuery || !editors.size) return
-  queuedQuery=queryGuardPending && queuedQuery ? [
-    values[0] === previous[0] ? queuedQuery[0] : values[0],
-    values[1] === previous[1] ? queuedQuery[1] : values[1],
-    values[2] === previous[2] ? queuedQuery[2] : values[2],
-    values[3] === previous[3] ? queuedQuery[3] : values[3],
-    values[4] === previous[4] ? queuedQuery[4] : values[4],
-    values[5] === previous[5] ? queuedQuery[5] : values[5],
-  ] : values
-  changingQuery=true
-  const [ss,cs,ps,query,pg,size]=previous
-  sources.value=ss; categoryStates.value=cs; parseStates.value=ps; q.value=query; page.value=pg; pageSize.value=size
-  changingQuery=false
-  if(queryGuardPending) return
-  queryGuardPending=true
-  const allowed=await guardEditors()
-  queryGuardPending=false
-  if(!allowed) search.value=q.value
-  if(allowed && queuedQuery) {
-    changingQuery=true
-    const [ss,cs,ps,query,pg,size]=queuedQuery
-    sources.value=ss; categoryStates.value=cs; parseStates.value=ps; q.value=query; page.value=pg; pageSize.value=size
-    changingQuery=false
-  }
-}, {flush:'sync'})
-
-/**
- * 「内容年份 / 内容批次」列的展示值:**文件内容**里各段去重后的年份(如 `2021、2024`)。
- *
- * 列窄,值可以很多(工信部导出表跨 2021–2026 六个年份、四个批次)。所以只平铺前 2 个,
- * 其余折成 `+4年` / `+4批` —— 带上单位才读得懂「还剩几个」;只写 `+4` 看不出那是什么,
- * 直接截断又让人以为年份就这么多。完整清单在展开的段明细里,悬停 `title` 也能看全。
- *
- * `+4年` 里不留空格:这一列的量过的上限就是 `2021、2022 +4年`(98.6px),加空格会把
- * 「+4年」挤出列宽、只剩省略号 —— 那就等于没写。
- */
-const SERIES_HEAD = 2
-function seriesCell(values: readonly number[], unit: string) {
-  if (!values.length) return null
-  const rest = values.length - SERIES_HEAD
-  return {
-    head: joinSeries(values.slice(0, SERIES_HEAD))!,
-    more: rest > 0 ? `+${rest}${unit}` : '',
-  }
+type QueryState = [typeof selections.value, string, number, number]
+let queuedQuery: QueryState | null = null
+function applyQuery([filters, query, pg, size]: QueryState) {
+  changingQuery = true
+  selections.value = filters
+  q.value = query
+  page.value = pg
+  pageSize.value = size
+  changingQuery = false
 }
-const contentYears = (row: StoredFileRow) => seriesCell(partYears((row.registeredSummary?.declarations.map(d => d.part) ?? [])), '年')
-const contentBatches = (row: StoredFileRow) => seriesCell(partBatches((row.registeredSummary?.declarations.map(d => d.part) ?? [])), '批')
-/** 完整清单进 `title` —— 列里只平铺前两个,悬停能看到全部。 */
-const contentYearsTitle = (row: StoredFileRow) => joinSeries(partYears((row.registeredSummary?.declarations.map(d => d.part) ?? []))) ?? undefined
-const contentBatchesTitle = (row: StoredFileRow) => joinSeries(partBatches((row.registeredSummary?.declarations.map(d => d.part) ?? []))) ?? undefined
-/** 「文件发布年份/批次」列:文件级**单值**(目录给的),形如 `2024 / 2`、`2024`、`—`。 */
-function publishedYearBatch(row: StoredFileRow): string {
-  if (row.year == null) return '—'
-  return row.batch == null ? String(row.year) : `${row.year} / ${row.batch}`
-}
+watch([selections, q, page, pageSize], async (values, previous) => {
+  if (changingQuery || !editors.size) return
+  const queued = queuedQuery
+  if (queryGuardPending && queued) {
+    const [filters, query, pg, size] = values
+    const [oldFilters, oldQuery, oldPg, oldSize] = previous
+    const merged = Object.fromEntries(criteria.map(({ key }) => [
+      key, filters[key] === oldFilters[key] ? queued[0][key] ?? [] : filters[key] ?? [],
+    ]))
+    queuedQuery = [merged, query === oldQuery ? queued[1] : query,
+      pg === oldPg ? queued[2] : pg, size === oldSize ? queued[3] : size]
+  } else {
+    queuedQuery = values
+  }
+  applyQuery(previous)
+  if (queryGuardPending) return
+  queryGuardPending = true
+  const allowed = await guardEditors()
+  queryGuardPending = false
+  if (allowed && queuedQuery) applyQuery(queuedQuery)
+  if (!allowed) search.value = q.value
+  queuedQuery = null
+}, { flush: 'sync' })
 </script>
 
 <template>
   <div class="files-page flex min-w-0 flex-col gap-2 sm:gap-3">
     <PageHeader
       title="文件管理"
-      description="文件库里的全部来源文件;展开任意一行看它含哪些段。"
+      description="查看、预览和维护文件库里的文件。"
     >
       <template #actions>
         <!-- 上传接 tus(票 10):点开是上传弹窗,传完登记进库并失效列表查询,
              列表会立即出现新行 —— 不必手动刷新。 -->
-        <Button variant="outline" size="sm" title="上传文件到文件库" @click="uploadOpen = true">
+        <Button v-for="upload in uploadDialogs" :key="upload.id" variant="outline" size="sm" title="上传文件到文件库" @click="uploading = upload.id">
           <FolderUp />
           上传
         </Button>
@@ -494,34 +409,17 @@ function publishedYearBatch(row: StoredFileRow): string {
         <Input v-model="search" class="bg-card h-8 pl-8" placeholder="搜索文件名" />
       </div>
 
-      <Separator orientation="vertical" class="hidden h-5 sm:block" />
-
+      <Separator v-if="criteria.length" orientation="vertical" class="hidden h-5 sm:block" />
       <MultiSelectFilter
-        v-model="sources"
-        :options="sourceOptions"
-        placeholder="全部来源"
-        summary-prefix="来源"
-        class="w-28"
-        @update:model-value="onFilterChange"
+        v-for="filter in criteria"
+        :key="filter.key"
+        :model-value="selections[filter.key] ?? []"
+        :options="[...filter.options]"
+        :placeholder="filter.placeholder"
+        :summary-prefix="filter.label"
+        :class="filter.width"
+        @update:model-value="setFilter(filter.key, $event)"
       />
-      <MultiSelectFilter
-        v-model="categoryStates"
-        :options="categoryOptions"
-        placeholder="全部分类状态"
-        summary-prefix="分类"
-        class="w-32"
-        @update:model-value="onFilterChange"
-      />
-      <MultiSelectFilter
-        v-model="parseStates"
-        :options="parseOptions"
-        placeholder="全部解析状态"
-        summary-prefix="解析"
-        class="w-32"
-        @update:model-value="onFilterChange"
-      />
-
-
     </div>
 
     <!-- 生效中的条件摊开写出来:光看下拉按钮看不出到底勾了哪几项。与台账页同一行样式。 -->
@@ -558,50 +456,29 @@ function publishedYearBatch(row: StoredFileRow): string {
           class="data-table-scroll [container-type:inline-size] [&_[data-slot=table-container]]:overflow-visible"
           :aria-busy="isLoading"
         >
-          <!-- 12 列。恢复改名操作后,表格总宽为 1154px。
-               1440(侧栏展开)容器 1124px → 不横滚;1280 / 1366 装不下(实测 1280 差 144px,
-               1366 差 58px),这时**操作列钉在右边**(见下面的 `sticky right-0`)——
-               编辑/预览/移出是这一页最常做的事,不能因为横向滚动就够不到。
-               剩下的中间列照旧横向滚动去读,与同门台账页一致。
-               文件名留 209px:放下「甬经信中小〔2026〕101号关于…」,截断点落在文号之后,
-               邻近的两份文件才不会截成同一个样子。
-               `table-fixed`:列宽按表头的 w-* 逐列算,宽屏下也不会某一列吃满剩余空间。 -->
-          <Table class="data-table min-w-[1154px] table-fixed">
+          <Table class="data-table table-fixed" :style="{ minWidth: tableWidth + 'px' }">
             <TableHeader>
               <TableRow class="hover:bg-transparent">
-                <TableHead :class="[TH_CLASS, 'w-8']">
-                  <span class="sr-only">展开段</span>
+                <TableHead v-if="expandedPanels.length" :class="[TH_CLASS, 'w-8']">
+                  <span class="sr-only">展开明细</span>
                 </TableHead>
                 <TableHead :class="[TH_CLASS, 'w-[209px]']">文件名</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[81px]']">来源</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[80px]']">类别</TableHead>
                 <TableHead
-                  :class="[TH_CLASS, 'w-[92px]']"
-                  title="文件发布年份 / 批次；内容年份和批次在分段中维护"
+                  v-for="column in columns"
+                  :key="column.key"
+                  :class="[TH_CLASS, column.align === 'right' && 'pr-3 text-right']"
+                  :style="{ width: column.width + 'px' }"
+                  :title="column.tooltip"
                 >
-                  文件发布
+                  {{ column.label }}
                 </TableHead>
-                <TableHead
-                  :class="[TH_CLASS, 'w-[132px]']"
-                  title="文件内容里各段的年份(可多个);复核段记的是被复核的原认定年份"
-                >
-                  内容年份
-                </TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[84px]']" title="文件内容里各段的批次(可多个)">
-                  内容批次
-                </TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[76px]']">分类状态</TableHead>
-                <TableHead :class="[TH_CLASS, 'w-[76px]']">解析状态</TableHead>
-                <!-- 右对齐的两列:表头要比正文多 4px 内边距(`table-head` 默认 px-2、
-                     `table-cell` 默认 px-3),否则数字右缘和表头差 4px,一眼看得出没对齐。 -->
-                <TableHead :class="[TH_CLASS, 'w-[56px] pr-3 text-right']">被引用</TableHead>
                 <TableHead :class="[TH_CLASS, 'w-[70px] pr-3 text-right']">大小</TableHead>
                 <TableHead :class="[ACTION_TH]">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody :data-loading="isLoading ? 'true' : 'false'">
               <TableRow v-if="isLoading && rows.length === 0" class="hover:bg-transparent">
-                <TableCell :colspan="12" class="p-0">
+                <TableCell :colspan="columnCount" class="p-0">
                   <div class="flex flex-col">
                     <div
                       v-for="i in 8"
@@ -620,29 +497,24 @@ function publishedYearBatch(row: StoredFileRow): string {
               <template v-else-if="rows.length">
                 <template v-for="row in rows" :key="row.id">
                   <TableRow class="group hover:bg-accent/70">
-                    <TableCell class="pr-0">
+                    <TableCell class="pr-0" v-if="expandedPanels.length">
                       <Button
                         variant="ghost"
                         size="icon"
                         class="size-8"
                         :aria-expanded="isExpanded(row.id)"
-                        :title="`展开 ${row.registeredSummary?.count} 段明细`"
-                        @click="toggleParts(row.id)"
+                        title="展开明细"
+                        @click="toggleDetails(row.id)"
                       >
                         <ChevronRight
                           class="size-4 transition-transform duration-150"
                           :class="isExpanded(row.id) && 'rotate-90'"
                         />
-                        <span class="sr-only">展开段明细</span>
+                        <span class="sr-only">展开明细</span>
                       </Button>
-
                     </TableCell>
                     <TableCell class="w-[209px]">
-                      <!-- 只写文件名。先前下面还压了一行 `rel_path`,但它对每行都截在同一个
-                           位置(`jxj/announcement/2026/1/甬经信中小〔20…`),既分不出文件、
-                           又占掉一行高。路径没丢:悬停这里能看到完整的文件名 + 库内路径,
-                           编辑弹窗里也有单独一块只读路径。
-                           `block` 不能省:行内元素的 overflow 不生效,不加就会顶出去压住右边列。 -->
+                      <!-- Hover exposes the full name and path when the cell truncates. -->
                       <span
                         class="block truncate font-medium"
                         :title="`${row.displayName}\n磁盘文件名:${row.filename}\n${row.relPath}`"
@@ -650,90 +522,7 @@ function publishedYearBatch(row: StoredFileRow): string {
                         {{ row.displayName }}
                       </span>
                     </TableCell>
-                    <TableCell>
-                      <!-- 方标 = 来源语言:经信局藏青、工信部金色(与台账页同一个 SourceChip)。
-                           写成一个灰底 Badge 就看不出哪份是国家级名单了。 -->
-                      <SourceChip v-if="row.source" :code="row.source" />
-                      <span v-else class="text-muted-foreground text-xs">—</span>
-                    </TableCell>
-                    <TableCell class="text-muted-foreground text-xs">
-                      <!-- 类别是低信息量的属性(公布文件/导出表),写成正文色小字即可。
-                           一行里已经有来源方标 + 两个状态徽章,再挂一个同形的徽章只是噪音。 -->
-                      <span class="block truncate">{{ row.kind ? KINDS[row.kind] : '—' }}</span>
-                    </TableCell>
-                    <!-- 文件发布年份/批次:文件级单值(目录给的),退到次级色 —— 内容年份才是要读的信息。 -->
-                    <TableCell class="text-muted-foreground text-xs tabular-nums">
-                      {{ publishedYearBatch(row) }}
-                    </TableCell>
-                    <!-- 内容年份:文件**内容**含哪几年(如 2021、2024)。超过两个折成 `+N 年`。 -->
-                    <TableCell
-                      class="truncate text-xs font-medium tabular-nums"
-                      :title="contentYearsTitle(row)"
-                    >
-                      <template v-if="contentYears(row)">
-                        {{ contentYears(row)!.head
-                        }}<span
-                          v-if="contentYears(row)!.more"
-                          class="text-muted-foreground ml-1 font-normal"
-                        >
-                          {{ contentYears(row)!.more }}</span
-                        >
-                      </template>
-                      <span v-else class="text-muted-foreground font-normal">{{ row.registeredSummary?.count ? '未知' : (row.registeredSummary ? '未登记' : '读取未确认') }}</span>
-                    </TableCell>
-                    <TableCell class="truncate text-xs tabular-nums" :title="contentBatchesTitle(row)">
-                      <template v-if="contentBatches(row)">
-                        {{ contentBatches(row)!.head
-                        }}<span
-                          v-if="contentBatches(row)!.more"
-                          class="text-muted-foreground ml-1"
-                        >
-                          {{ contentBatches(row)!.more }}</span
-                        >
-                      </template>
-                      <span v-else class="text-muted-foreground">—</span>
-                    </TableCell>
-                    <TableCell>
-                      <!-- 分类状态:已定 / 程序推的 / 未定。三档靠**线型**分开(与事件同一套
-                           语言 —— `dashed` = 还没坐实),不靠颜色 —— 颜色已被称号梯度占用。 -->
-                      <Badge
-                        :variant="row.categoryState === 'set' ? 'quiet' : 'dashed'"
-                        :title="
-                          row.categoryState === 'unset' && !isComplete(row)
-                            ? '来源或类别未填全'
-                            : undefined
-                        "
-                      >
-                        {{ CATEGORY_STATES[row.categoryState] }}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <!-- 解析状态:未解析 / 已解析 / 解析失败。
-                           与左边那列刻意用**不同**的线型:两列挨着、列宽也差不多,若默认态
-                           都画成同一条实线灰边(改前就是这样),扫视时这两列读成一个东西,
-                           「这份文件还没解析」这个信号就没了。`unparsed` 是**待办**,走虚线
-                           (与入库培育同一档语义);`parsed` 已坐实走实线;`failed` 才是红。 -->
-                      <Badge
-                        :variant="
-                          row.parseState === 'failed'
-                            ? 'destructive'
-                            : row.parseState === 'parsed'
-                              ? 'solid'
-                              : 'dashed'
-                        "
-                      >
-                        {{ PARSE_STATES[row.parseState] }}
-                      </Badge>
-                    </TableCell>
-                    <TableCell class="text-right text-xs tabular-nums">
-                      <span
-                        :class="
-                          row.referenceCount > 0 ? 'text-foreground font-medium' : 'text-muted-foreground'
-                        "
-                      >
-                        {{ row.referenceCount }}
-                      </span>
-                    </TableCell>
+                    <component :is="column.component" v-for="column in cellGroups" :key="column.id" :file="row" />
                     <TableCell class="text-muted-foreground text-right text-xs tabular-nums">
                       {{ sizeOf(row) }}
                     </TableCell>
@@ -768,21 +557,26 @@ function publishedYearBatch(row: StoredFileRow): string {
                     </TableCell>
                   </TableRow>
 
-                  <!-- 段明细(票 17):称号 / 事件 / 年份 / 批次 / 附件 / 行数。 -->
-                  <TableRow
-                    v-if="isExpanded(row.id)"
-                    class="hover:bg-transparent"
-                    data-testid="file-parts-row"
-                  >
-                    <TableCell :colspan="12" class="bg-muted/40 p-0">
-                      <div class="sticky left-0 w-[100cqw] p-3 sm:p-4"><FileSegmentsEditor :ref="el => { if(el) editors.set(row.id, el as InstanceType<typeof FileSegmentsEditor>); else editors.delete(row.id) }" :open="true" :file="row" :refresh-list="refresh" /></div>
+                  <TableRow v-if="isExpanded(row.id)" class="hover:bg-transparent" data-testid="file-parts-row">
+                    <TableCell :colspan="columnCount" class="bg-muted/40 p-0">
+                      <div class="sticky left-0 w-[100cqw] p-3 sm:p-4">
+                        <component
+                          :is="panel.component"
+                          v-for="panel in expandedPanels"
+                          :key="panel.id"
+                          :ref="(instance: unknown) => setExpandedPanel(row.id, panel.id, instance)"
+                          :open="true"
+                          :file="row"
+                          :refresh-list="refresh"
+                        />
+                      </div>
                     </TableCell>
                   </TableRow>
                 </template>
               </template>
 
               <TableRow v-else class="hover:bg-transparent">
-                <TableCell :colspan="12" class="p-0">
+                <TableCell :colspan="columnCount" class="p-0">
                   <Empty class="border-0">
                     <EmptyHeader>
                       <EmptyMedia variant="icon"><Search /></EmptyMedia>
@@ -805,12 +599,20 @@ function publishedYearBatch(row: StoredFileRow): string {
 
     <TablePagination v-if="!error || rows.length > 0" :page="displayedPage" :page-size="displayedPageSize" :total="total" :loading="paginationDisabled" unit="个文件" @update:page="setPage" @update:page-size="setPageSize" />
 
-    <UploadDialog v-model:open="uploadOpen" @registered="refresh()" />
+    <component
+      :is="upload.component"
+      v-for="upload in uploadDialogs"
+      :key="upload.id"
+      :open="uploading === upload.id"
+      @update:open="uploading = $event ? upload.id : null"
+      @registered="refresh()"
+    />
 
 
     <EditFileDialog
       v-model:open="editOpen"
       :file="editing"
+      :panels="detailPanels"
       :pending="editPending"
       :failure="editFailure"
       :name-pending="renamePending"

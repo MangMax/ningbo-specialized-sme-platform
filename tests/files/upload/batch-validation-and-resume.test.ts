@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { formatBytes } from '../../../lib/core/file-size'
 import type { PreviousUpload, UploadMetadata } from '../../../lib/upload'
 import {
   MAX_SIZE,
   TUS_ENDPOINT,
   baseName,
   buildMetadata,
-  formatBytes,
   formatEta,
   isBatchComplete,
   isFilenameSafe,

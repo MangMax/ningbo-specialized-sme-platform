@@ -6,7 +6,8 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { compareFileContentIdentity, readStoredFileContentIdentity } from './file-content-identity'
 import { fileMaintenanceRevision, maintainStoredFileSync, requireVersionedFileMaintenanceOptions, type FileMaintenanceOptions } from './file-maintenance'
-import { FileMaintenanceError, getStoredFile, resolveInsideRoot } from './stored-files'
+import { getStoredFile } from './stored-files'
+import { FileMaintenanceError, resolveInsideRoot } from './file-store'
 
 type Db = BetterSQLite3Database<typeof schema>
 type Intent = typeof schema.filePhysicalIntent.$inferSelect

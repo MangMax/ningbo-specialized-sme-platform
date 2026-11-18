@@ -1,10 +1,11 @@
+import { resolveUploadPlacement } from '../../../server/utils/stored-files'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createTus, landingSegments, MAX_SIZE, TUS_PATH, withTusObservation, type TusObservation } from '../../../server/utils/tus'
+import { createTus, MAX_SIZE, TUS_PATH, withTusObservation, type TusObservation } from '../../../server/utils/tus'
 
 /**
  * tus 端点的**协议端到端**测试。
@@ -99,7 +100,7 @@ describe('tus 上传端点 + 落位规则', () => {
     filesDir = join(work, 'files')
     incomingDir = join(work, '.incoming')
     await mkdir(filesDir, { recursive: true })
-    tus = createTus({ filesDir, incomingDir, allowedOrigins: ['http://localhost'] })
+    tus = createTus({ filesDir, incomingDir, landing: resolveUploadPlacement, allowedOrigins: ['http://localhost'] })
   })
 
   afterAll(async () => {
@@ -107,10 +108,10 @@ describe('tus 上传端点 + 落位规则', () => {
   })
 
   // ── 落位规则(纯函数)────────────────────────────────────────────
-  describe('landingSegments(纯函数)', () => {
+  describe('resolveUploadPlacement(纯函数)', () => {
     it('拼出完整段序列 source/kind/year/batch/filename', () => {
       expect(
-        landingSegments({
+        resolveUploadPlacement({
           source: 'jxj',
           kind: 'announcement',
           year: '2024',
@@ -122,36 +123,36 @@ describe('tus 上传端点 + 落位规则', () => {
 
     it('year/batch 缺省时省略对应段(导出表)', () => {
       expect(
-        landingSegments({ source: 'miit', kind: 'export', filename: '导出Excel.xlsx' }),
+        resolveUploadPlacement({ source: 'miit', kind: 'export', filename: '导出Excel.xlsx' }),
       ).toEqual(['miit', 'export', '导出Excel.xlsx'])
     })
 
     it('只有 year、无 batch 时省略 batch 段', () => {
       expect(
-        landingSegments({ source: 'jxj', kind: 'announcement', year: '2021', filename: 'a.pdf' }),
+        resolveUploadPlacement({ source: 'jxj', kind: 'announcement', year: '2021', filename: 'a.pdf' }),
       ).toEqual(['jxj', 'announcement', '2021', 'a.pdf'])
     })
 
     it('拒绝白名单外的 source/kind', () => {
       expect(() =>
-        landingSegments({ source: 'evil', kind: 'announcement', filename: 'a.pdf' }),
+        resolveUploadPlacement({ source: 'evil', kind: 'announcement', filename: 'a.pdf' }),
       ).toThrow()
-      expect(() => landingSegments({ source: 'jxj', kind: 'evil', filename: 'a.pdf' })).toThrow()
+      expect(() => resolveUploadPlacement({ source: 'jxj', kind: 'evil', filename: 'a.pdf' })).toThrow()
     })
 
     it('拒绝非四位 year 与 batch 无 year', () => {
       expect(() =>
-        landingSegments({ source: 'jxj', kind: 'announcement', year: '24', filename: 'a.pdf' }),
+        resolveUploadPlacement({ source: 'jxj', kind: 'announcement', year: '24', filename: 'a.pdf' }),
       ).toThrow()
       expect(() =>
-        landingSegments({ source: 'jxj', kind: 'announcement', batch: '1', filename: 'a.pdf' }),
+        resolveUploadPlacement({ source: 'jxj', kind: 'announcement', batch: '1', filename: 'a.pdf' }),
       ).toThrow()
     })
 
     it('拒绝含路径分隔符 / `..` / 空 的 filename', () => {
       for (const bad of ['../../etc/passwd', 'a/b.pdf', 'a\\b.pdf', '..', '', '   ']) {
         expect(() =>
-          landingSegments({ source: 'jxj', kind: 'announcement', filename: bad }),
+          resolveUploadPlacement({ source: 'jxj', kind: 'announcement', filename: bad }),
         ).toThrow()
       }
     })
@@ -319,7 +320,7 @@ describe('tus request-local observation (real @tus/server callbacks)', () => {
     filesDir = join(work, 'files')
     incomingDir = join(work, '.incoming')
     await mkdir(filesDir, { recursive: true })
-    tus = createTus({ filesDir, incomingDir, allowedOrigins: ['http://localhost'] })
+    tus = createTus({ filesDir, incomingDir, landing: resolveUploadPlacement, allowedOrigins: ['http://localhost'] })
   })
   afterAll(async () => { await rm(work, { recursive: true, force: true }) })
 

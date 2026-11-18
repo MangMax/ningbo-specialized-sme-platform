@@ -6,7 +6,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../../../db/schema'
-import { registerStoredFile, parseUploadDeclaration } from '../../../server/utils/stored-files-upload'
+import { registerStoredFile, parseUploadDeclaration } from '../../../server/modules/sme-roster/file-upload'
 
 let root: string
 let sqlite: Database.Database

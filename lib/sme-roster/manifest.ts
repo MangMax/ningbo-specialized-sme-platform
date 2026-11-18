@@ -2,11 +2,13 @@ import { ChartColumn, Gauge, LayoutList, Search } from '@lucide/vue'
 import { defineAppModule } from '../core/module-registry'
 import { ENTERPRISE_LIST_TITLE } from '../labels'
 import { ROSTER_LEDGER_PATH } from './routes'
+import { rosterFileCategory } from './file-category'
 
 const platform = { id: 'platform', label: '工信部平台' }
 const rosterExport = { id: 'export', label: '导出' }
 
 export default defineAppModule({
+  fileCategories: rosterFileCategory,
   id: 'sme-roster',
   name: '优质中小企业',
   description: '查询企业称号、历年认定记录与有效资格。',

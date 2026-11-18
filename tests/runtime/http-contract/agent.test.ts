@@ -49,7 +49,7 @@ import { parseRenderPagesParams } from '../../../server/utils/jobs/render-pages'
 import { shouldHideOpenApiPath } from '../../../server/utils/openapi-guard'
 import { registerJobSpecs } from '../../../server/utils/job-specs'
 import { minimalPdf } from '../../support/minimal-pdf'
-import { parseUploadDeclaration, registerStoredFile } from '../../../server/utils/stored-files-upload'
+import { parseUploadDeclaration, registerStoredFile } from '../../../server/modules/sme-roster/file-upload'
 
 /**
  * 票 19 —— 面向代理的 HTTP 能力面(异步任务)+ Nitro 内建 OpenAPI。

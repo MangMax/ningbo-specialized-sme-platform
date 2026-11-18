@@ -5,12 +5,12 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import type { StoredFileRow } from '~~/server/utils/stored-files'
+import type { FileRow } from '~~/server/utils/file-store'
 
 const open = defineModel<boolean>('open', { default: false })
 const props = withDefaults(
   defineProps<{
-    file: StoredFileRow | null
+    file: FileRow | null
     pending?: boolean
     failure?: string
   }>(),

@@ -1,3 +1,4 @@
+import { formatBytes } from './core/file-size'
 /**
  * 上传的**纯模型层**:落位元数据的形状、可取的值、从文件名推导,以及把
  * 服务器/网络的失败翻译成一句人看得懂的话。
@@ -382,19 +383,6 @@ export function isFilenameSafe(name: string): boolean {
 }
 
 /** 字节数按人读的单位显示(1.2 MB)。 */
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return '—'
-  if (bytes < 1024) return `${bytes} B`
-  const units = ['KB', 'MB', 'GB']
-  let value = bytes / 1024
-  let unit = 0
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024
-    unit += 1
-  }
-  return `${value >= 100 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`
-}
-
 /** 剩余秒数 → 「约 1 分 20 秒」这类估计。速度为 0 时返回 `undefined`。 */
 export function formatEta(seconds: number): string | undefined {
   if (!Number.isFinite(seconds) || seconds <= 0) return undefined

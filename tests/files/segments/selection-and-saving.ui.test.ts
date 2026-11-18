@@ -2,7 +2,7 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import FileSegmentsEditor from '../../../components/files/FileSegmentsEditor.vue'
+import FileSegmentsEditor from '../../../components/sme-roster/RosterFileSegmentsEditor.vue'
 import type { StoredFileRow } from '../../../server/utils/stored-files'
 const passthrough = defineComponent({ template: '<div><slot /></div>' })
 const button = defineComponent({ template: '<button><slot /></button>' })

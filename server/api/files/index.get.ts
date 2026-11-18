@@ -1,11 +1,5 @@
 import { useDb } from '@db'
-import {
-  CATEGORY_STATES,
-  listStoredFiles,
-  PARSE_STATES,
-} from '../../utils/stored-files'
-import type { CategoryState, FileSource, ParseState } from '~~/lib/stored-file'
-import { SOURCE_ORDER } from '~~/lib/labels'
+import { listStoredFiles } from '../../utils/stored-files'
 
 defineRouteMeta({
   openAPI: {
@@ -92,25 +86,14 @@ export default defineEventHandler(async (event) => {
   const db = useDb()
   const q = getQuery(event)
 
-  const csv = (v: unknown): string[] | undefined => {
-    if (v == null) return undefined
-    const raw = Array.isArray(v) ? v.flatMap((x) => String(x).split(',')) : String(v).split(',')
-    const list = raw.map((s) => s.trim()).filter(Boolean)
-    return list.length ? list : undefined
-  }
   const num = (v: unknown, d: number) => {
     const n = Number(v)
     return Number.isFinite(n) && n > 0 ? n : d
   }
 
   const result = listStoredFiles(db, {
-    source: csv(q.source)?.filter((s) => SOURCE_ORDER.includes(s)) as FileSource[] | undefined,
-    categoryState: csv(q.categoryState)?.filter((s) =>
-      CATEGORY_STATES.includes(s as CategoryState),
-    ) as CategoryState[] | undefined,
-    parseState: csv(q.parseState)?.filter((s) =>
-      PARSE_STATES.includes(s as ParseState),
-    ) as ParseState[] | undefined,
+    ...q,
+    includeRemoved: false,
     q: typeof q.q === 'string' && q.q ? q.q : undefined,
     page: num(q.page, 1),
     pageSize: num(q.pageSize, 50),

@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto'
 import { asc, desc, eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
-import { FileMaintenanceError, getStoredFile, parseDisplayNamePatch, parseMetadataPatch, renameStoredFileDisplayName, restoreVerifiedStoredFile, softRemoveStoredFile, updateStoredFile, verifyStoredFileRestoration, type StoredFileRow } from './stored-files'
+import { FileMaintenanceError, parseDisplayNamePatch } from './file-store'
+import { getStoredFile, extensionSnapshot, parseMetadataPatch, renameStoredFileDisplayName, restoreVerifiedStoredFile, softRemoveStoredFile, updateStoredFile, verifyStoredFileRestoration, type StoredFileRow } from './stored-files'
 
 type Db = BetterSQLite3Database<typeof schema>
 export type FileMaintenanceAction = 'update' | 'remove' | 'restore'
@@ -38,8 +39,8 @@ export function fileMaintenanceRevision(db: Db, id: number) {
   return db.select({ revision: schema.fileMaintenanceAudit.revision }).from(schema.fileMaintenanceAudit).where(eq(schema.fileMaintenanceAudit.fileId, id)).orderBy(desc(schema.fileMaintenanceAudit.revision)).limit(1).get()?.revision ?? 0
 }
 function snapshot(file: StoredFileRow): Record<string, unknown> {
-  const { source, kind, year, batch, titleCode, displayName, removedAt, categoryState, filename, relPath, bytes, sha256 } = file
-  return { source, kind, year, batch, titleCode, displayName, removedAt, categoryState, filename, relPath, bytes, sha256 }
+  const { displayName, removedAt, filename, relPath, bytes, sha256 } = file
+  return { ...extensionSnapshot(file), displayName, removedAt, filename, relPath, bytes, sha256 }
 }
 function hashRequest(id: number, action: FileMaintenanceAction, patch: unknown, options: FileMaintenanceOptions) {
   return createHash('sha256').update(JSON.stringify({ id, action, patch, expectedRevision: options.expectedRevision ?? null, actor: options.actor ?? null, basis: options.basis ?? null })).digest('hex')

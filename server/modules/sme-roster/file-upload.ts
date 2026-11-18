@@ -1,19 +1,21 @@
-import { appLog, type LogContext } from '../../lib/logging'
-import { stat } from 'node:fs/promises'
+import { appLog, type LogContext } from '../../../lib/logging'
+import { readdir, stat } from 'node:fs/promises'
+import { dirname } from 'node:path'
+import { extensionOf } from '../../../lib/core/file-path'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { eq } from 'drizzle-orm'
-import * as schema from '../../db/schema'
+import * as schema from '../../../db/schema'
 import {
   categoryStateOf,
-  extensionOf,
   type FileKind,
   type FileSource,
-} from '../../lib/stored-file'
-import { getStoredFile, resolveInsideRoot, sha256Of, type StoredFileRow } from './stored-files'
-import { createClassifiedFile } from './roster-file-classification'
-import { recordLegacyFileMaintenanceWrite } from './file-maintenance'
-import { landingSegments } from './tus'
-import { compareFileContentIdentity, type FileContentConflict } from './file-content-identity'
+} from '../../../lib/stored-file'
+import { checkAdmission, getStoredFile, type StoredFileRow } from '../../utils/stored-files'
+import { resolveInsideRoot, sha256Of } from '../../utils/file-store'
+import { createClassifiedFile } from '../../utils/roster-file-classification'
+import { recordLegacyFileMaintenanceWrite } from '../../utils/file-maintenance'
+import { landingSegments } from '../../../lib/sme-roster/file-landing'
+import { compareFileContentIdentity, type FileContentConflict } from '../../utils/file-content-identity'
 
 /**
  * 上传完成后的**登记**(票 10):把 tus 已经落位的文件写进 `stored_file`(票 09 的表)。
@@ -25,7 +27,7 @@ import { compareFileContentIdentity, type FileContentConflict } from './file-con
  *    `X-Upload-Path` 后再显式登记一次 —— 失败可见、可重试,且登记是**幂等**的。
  *
  * 客户端**只传落位路径与用户填的声明**,磁盘事实(大小 / SHA-256)一律由服务端从盘上读:
- * 客户端说的不算数。声明本身借 `tus.ts` 的 `landingSegments` 裁决(白名单与格式的**唯一来源**),
+ * 客户端说的不算数。声明本身借 `file-landing.ts` 的 `landingSegments` 裁决(白名单与格式的**唯一来源**),
  * 非法一律 400 且**不落库**。
  */
 
@@ -33,12 +35,14 @@ import { compareFileContentIdentity, type FileContentConflict } from './file-con
 export class UploadRegistrationError extends Error {
   readonly statusCode: number
   readonly conflict?: FileContentConflict
+  readonly reason?: string
 
-  constructor(message: string, statusCode = 400, conflict?: FileContentConflict) {
+  constructor(message: string, statusCode = 400, conflict?: FileContentConflict, reason?: string) {
     super(message)
     this.name = 'UploadRegistrationError'
     this.statusCode = statusCode
     this.conflict = conflict
+    this.reason = reason
   }
 }
 
@@ -102,7 +106,7 @@ function splitRelPath(relPath: string): string[] {
  *
  * 校验链(任何一步不过都**不落库**):
  *  1. `source` / `kind` **要么都给、要么都不给** —— 只给一个是不表达语义的状态;
- *  2. 给了分类就过 `tus.ts` 的 `landingSegments` 裁决 —— 来源/类别必须在白名单,
+ *  2. 给了分类就过 `file-landing.ts` 的 `landingSegments` 裁决 —— 来源/类别必须在白名单,
  *     年份四位,批次正整数;且**声明算出的目录段必须与实际落位路径逐段相同**
  *     (路径是服务端算的、声明是客户端发的,不一致说明有人改了声明);
  *  3. 路径解析后必须仍在文件库根内,且磁盘上真的有这个文件(磁盘事实一律从盘上读)。
@@ -171,6 +175,10 @@ async function registerStoredFileUnlogged(
     throw new UploadRegistrationError(`落位文件不存在:${input.relPath}`)
   }
   if (!info.isFile()) throw new UploadRegistrationError(`落位路径不是一个文件:${input.relPath}`)
+
+  const siblings = await readdir(dirname(abs), { withFileTypes: true })
+  const exclusion = checkAdmission(input.relPath, new Set(siblings.filter(entry => entry.isFile()).map(entry => entry.name)))
+  if (exclusion) throw new UploadRegistrationError(exclusion.detail, 400, undefined, exclusion.reason)
 
   const facts = {
     relPath: segments.join('/'),

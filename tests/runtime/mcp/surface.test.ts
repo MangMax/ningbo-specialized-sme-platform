@@ -657,7 +657,7 @@ describe('pageImagesForAgent 页图取值', () => {
     const { minimalPdf } = await import('../../support/minimal-pdf')
     mkdirSync(join(root, 'jxj/announcement/2024/2'), { recursive: true })
     // Use a separately registered real PDF; the shared metadata-only fixture has a synthetic digest.
-    const { registerStoredFile, parseUploadDeclaration } = await import('../../../server/utils/stored-files-upload')
+    const { registerStoredFile, parseUploadDeclaration } = await import('../../../server/modules/sme-roster/file-upload')
     const realPath = 'jxj/announcement/2024/2/unrendered-identity.pdf'
     writeFileSync(join(root, realPath), minimalPdf({ pages: 3 }))
     await registerStoredFile(db, root, parseUploadDeclaration({ relPath: realPath }))

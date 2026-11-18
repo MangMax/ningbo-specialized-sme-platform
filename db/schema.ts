@@ -276,6 +276,7 @@ export const storedFileAudit = sqliteTable(
  * legacy 行与 evidence 完全一致时可归为 derived,不一致时保留并标记冲突。
  *
  */
+// Owned by sme-roster. Physical relocation is tracked by #884.
 export const storedFilePart = sqliteTable(
   'stored_file_part',
   {
@@ -1671,6 +1672,7 @@ export const fileMaintenanceAudit = sqliteTable('file_maintenance_audit', {
 }, t => [uniqueIndex('file_maintenance_revision_uq').on(t.fileId, t.revision), uniqueIndex('file_maintenance_key_uq').on(t.idempotencyKey)])
 
 /** #105: parse-only immutable receipts. List projections omit before/after snapshots. */
+// Owned by sme-roster. Physical relocation is tracked by #884.
 export const fileParseAudit105 = sqliteTable('file_parse_audit_105', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   fileId: integer('file_id').notNull().references(() => storedFile.id),

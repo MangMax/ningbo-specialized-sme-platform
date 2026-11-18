@@ -1,3 +1,5 @@
+import { baseName } from './core/file-path'
+
 /**
  * 文件库(`app/files/`)元数据的**纯规则**:从相对路径反推分类(来源 / 类别 / 年份 / 批次),
  * 以及由文件名取扩展名。
@@ -134,29 +136,6 @@ export function resolveJxjParts(relPath: string, filename: string): FileParts {
     year: dirYear ?? fileBatch.year,
     batch: dirBatch ?? fileBatch.seq,
   }
-}
-
-/** 取小写扩展名(不含点);无扩展名返回空串。与 `pipeline/src/files.ts` 的 `extname` 同口径。 */
-export function extensionOf(name: string): string {
-  const i = name.lastIndexOf('.')
-  return i <= 0 ? '' : name.slice(i + 1).toLowerCase()
-}
-
-/** 路径末段(文件名)。 */
-export function baseName(relPath: string): string {
-  return relPath.split('/').pop() ?? relPath
-}
-
-/**
- * 路径的**目录段**(去掉文件名);根下的文件返回空串。
- *
- * 与 `baseName` 成对放在这里:`baseName` 是「取末段」,它是「取其余」—— 两处各写一份
- * `lastIndexOf('/')` 的话,改了一处另一处就漂(库内路径一律 `/` 分隔,与
- * `stored_file.rel_path` 同口径)。
- */
-export function directoryOf(relPath: string): string {
-  const i = relPath.lastIndexOf('/')
-  return i < 0 ? '' : relPath.slice(0, i)
 }
 
 /**

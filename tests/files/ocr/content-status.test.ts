@@ -27,7 +27,7 @@ it('current page conflict keeps historical OCR text and binding while disabling 
   vi.unstubAllGlobals()
 })
 
-import UploadDialog from '../../../components/files/UploadDialog.vue'
+import UploadDialog from '../../../components/sme-roster/RosterFileUploadDialog.vue'
 it('registration retry keeps the uploaded metadata snapshot after conflict', async () => {
   const api = vi.fn().mockRejectedValueOnce({ data: { data: { code: 'file_content_conflict' } } }).mockResolvedValueOnce({})
   vi.stubGlobal('$fetch', api)

@@ -14,7 +14,7 @@ import {
 import { buildLittleGiantImportRequest, LITTLE_GIANT_SOURCE_FILE } from '../../../lib/roster/little-giant-import'
 import { parseLittleGiantWorkbook, type LittleGiantWorkbook } from '../../../lib/roster/little-giant-workbook'
 import { rosterRowCounts } from '../../../server/utils/roster-import'
-import { landingSegments } from '../../../server/utils/tus'
+import { landingSegments } from '../../../lib/sme-roster/file-landing'
 import { executeNativeImport, startRosterApi, type RosterApiServer } from '../imports/fixtures/import-server'
 import { SYNTHETIC_DUPLICATE_USCC, hasRealSource, loadLittleGiantSource, type LittleGiantSource } from './fixtures/official-source'
 

@@ -4,7 +4,7 @@ import {
   parseUploadDeclaration,
   registerStoredFile,
   UploadRegistrationError,
-} from '../../utils/stored-files-upload'
+} from '../../modules/sme-roster/file-upload'
 
 /**
  * 登记一次 **已落位**的上传。`POST /api/files/register`
@@ -14,7 +14,7 @@ import {
  * 来源/年份/批次一起送过来;磁盘事实(大小 / SHA-256)由服务端从盘上读。
  *
  * 为什么不让 tus 的 `onUploadFinish` 直接写库:见
- * `server/utils/stored-files-upload.ts` 的文件头 —— 落位规则保持成纯函数、
+ * `server/modules/sme-roster/file-upload.ts` 的文件头 —— 落位规则保持成纯函数、
  * 写库失败时不会因为「文件已落盘」而无法回滚,且登记本身**幂等**、可重试。
  *
  * 请求体(全部必填 `relPath`,其余可空 —— 没填就是 `null` + `category_state='unset'`,票 12 回写):
@@ -40,7 +40,7 @@ export default defineEventHandler(async (event) => {
     if (error instanceof UploadRegistrationError) {
       // 用 `message` 而不是 `statusMessage`:h3 会对较长的 statusMessage 告警
       // (它将被按 HTTP 语义净化)。前端从 `data.message` 取这句话。
-      throw createError({ statusCode: error.statusCode, message: error.message })
+      throw createError({ statusCode: error.statusCode, message: error.message, ...(error.reason ? { data: { reason: error.reason } } : {}) })
     }
     throw error
   }
