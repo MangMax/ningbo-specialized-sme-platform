@@ -44,7 +44,7 @@ it('reports retained candidates when a later source row fails within the same ev
   const { default: TaskDetail } = await import('../../../components/tasks/TaskDetail.vue')
   vi.stubGlobal('$fetch', vi.fn(async () => ({
     id: '01M5BEPVCXD5619ZW4C6CATMWX', kind: 'event-archive-candidates',
-    label: '公布事件候选发现', group: 'platform', state: 'failed',
+    label: '公布事件候选发现', module: 'sme-roster', group: 'platform', state: 'failed',
     createdAt: '2026-10-23T00:00:00Z', startedAt: null, finishedAt: '2026-10-23T00:01:00Z',
     progress: { done: 1, total: 1, unit: '项', stage: '执行结束' },
     error: '部分事件失败；已完成候选保留，可重试未完成项。', outcome: null, links: [],

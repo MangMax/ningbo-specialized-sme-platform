@@ -16,6 +16,13 @@ const roster = defineAppModule({
   nav: [{ title: '企业列表', url: '/' }],
 })
 
+it('rejects a job kind claimed by two modules at startup', () => {
+  const declaration = { kind: 'scan', label: '扫描', group: { id: 'files', label: '文件' }, spec: 'scanSpec' }
+  const owner = defineAppModule({ ...core, jobKinds: [declaration] })
+  const duplicate = defineAppModule({ ...roster, jobKinds: [declaration] })
+  expect(() => validateAppModules([owner, duplicate])).toThrow('模块「sme-roster」的任务种类「scan」重复，已由模块「core」登记')
+})
+
 it.each([
   {
     reason: 'invalid module identifiers',

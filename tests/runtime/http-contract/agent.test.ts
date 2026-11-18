@@ -199,10 +199,10 @@ describe('任务种类注册表', () => {
     expect(() => registerJob(spec)).toThrow(/重复登记/)
   })
 
-  it('生产登记表:三个 kind 都已接入(reconcile 由 RL-03 收尾切片接上)', () => {
+  it('启动登记完整任务目录，可重复调用且保留已登记的 spec', () => {
     registerJobSpecs()
     const kinds = jobSpecs()
-    expect(kinds.map((s) => s.kind)).toEqual(['current-roster-export', 'event-annual-correspondence', 'event-archive-candidates', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages'])
+    expect(kinds.map((s) => s.kind)).toEqual(['current-roster-export', 'difference-snapshot', 'event-annual-correspondence', 'event-archive-candidates', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages'])
     // 票 14 把 ocr 从 todo 接上了;RL-03 收尾把 reconcile 也接上了(核心逻辑搬进 app)。
     // 三个已接入的 kind 都要有 run。
     for (const k of ['render-pages', 'ocr', 'reconcile']) {
@@ -211,8 +211,13 @@ describe('任务种类注册表', () => {
     }
     // 「怎么拼 params」是给代理看的,不能只报名字。
     expect(getJobSpec('reconcile')!.paramsHint).toMatch(/titles/)
-    // 幂等:重复调用不会撞「重复登记」。
+    expect(getJobSpec('difference-snapshot')!.parse({})).toMatchObject({ ok: false, message: expect.stringContaining('dedicated') })
     expect(() => registerJobSpecs()).not.toThrow()
+    clearJobSpecs()
+    registerJob({ kind: 'render-pages', status: 'todo', summary: 'synthetic', parse: params => ({ ok: true, params }) })
+    registerJobSpecs()
+    expect(getJobSpec('render-pages')?.summary).toBe('synthetic')
+    expect(jobSpecs()).toHaveLength(8)
   })
 })
 

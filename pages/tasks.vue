@@ -2,7 +2,8 @@
 import { clientRequestReference } from '~~/lib/client-logging/request-reference'
 import { computed, ref, watch } from 'vue'
 import CandidateTaskCreate from '@/components/tasks/CandidateTaskCreate.vue'
-import { TASK_EXPORTS, TASK_TABS, TASK_STATES, type TaskExportTitle, type TaskList, type TaskSummary, type TaskTab } from '~~/lib/task-center'
+import { TASK_EXPORTS, TASK_STATES, type TaskExportTitle, type TaskList, type TaskSummary } from '~~/lib/task-center'
+import { getTaskGroups, resolveTaskFilters, taskTabs } from '~~/lib/task-catalog'
 import { JOB_STATES, type JobState } from '~~/lib/job'
 import { useTaskPolling } from '~/composables/useTaskPolling'
 import { useCurrentRosterExport, taskBrowserHeaders } from '~/composables/useCurrentRosterExport'
@@ -19,16 +20,20 @@ import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from '@/components/u
 useHead({ title: '后台任务' })
 const route = useRoute(), router = useRouter()
 const scalar = (raw: unknown) => typeof raw === 'string' ? raw : ''
-const tab = computed<TaskTab>(() => TASK_TABS.includes(scalar(route.query.tab) as TaskTab) ? scalar(route.query.tab) as TaskTab : 'all')
+const filters = computed(() => resolveTaskFilters(route.query.tab, route.query.group))
+const tab = computed(() => filters.value.tab.id)
+const group = computed(() => filters.value.group?.id)
+const groups = computed(() => getTaskGroups(tab.value))
+const showsRosterTools = computed(() => tab.value === 'sme-roster' && (!group.value || group.value === 'platform'))
+const showsExportFilter = computed(() => tab.value === 'all' || tab.value === 'sme-roster' && (!group.value || group.value === 'export'))
 const state = computed(() => JOB_STATES.includes(scalar(route.query.state) as JobState) ? scalar(route.query.state) : 'all')
 const positive = (raw: unknown, fallback: number, max: number) => /^\d+$/.test(scalar(raw)) && Number(raw) > 0 ? Math.min(Number(raw), max) : fallback
 const page = computed(() => positive(route.query.page, 1, 1000000)), pageSize = computed(() => positive(route.query.pageSize, 25, 200))
 const job = computed(() => scalar(route.query.job))
-const titleCode = computed(() => TASK_EXPORTS.some(t => t.titleCode === route.query.titleCode) ? scalar(route.query.titleCode) : 'all')
-const tabLabels: Record<TaskTab, string> = { all: '全部任务', ocr: 'OCR', platform: '工信部平台', export: '导出' }
+const titleCode = computed(() => showsExportFilter.value && TASK_EXPORTS.some(t => t.titleCode === route.query.titleCode) ? scalar(route.query.titleCode) : 'all')
 
 const browserHeaders = taskBrowserHeaders
-const params = computed(() => ({ tab: tab.value, state: state.value === 'all' ? undefined : state.value, titleCode: titleCode.value === 'all' ? undefined : titleCode.value, page: page.value, pageSize: pageSize.value }))
+const params = computed(() => ({ tab: tab.value, group: group.value, state: state.value === 'all' ? undefined : state.value, titleCode: titleCode.value === 'all' ? undefined : titleCode.value, page: page.value, pageSize: pageSize.value }))
 const key = computed(() => JSON.stringify([params.value]))
 const { data, sourceKey, loading, failed, retryIn, refresh } = useTaskPolling<TaskList>(key, signal =>
   $fetch<TaskList>('/api/task-center', { query: params.value, headers: browserHeaders, signal }))
@@ -45,14 +50,17 @@ const readOnlyReason = computed(() => {
 })
 const failureDescription = computed(() => {
   if (!data.value || !sourceKey.value) return '筛选已保留，将自动退避重试，也可立即重新加载。'
-  const [source] = JSON.parse(sourceKey.value) as [{ tab: TaskTab; state?: JobState; titleCode?: string }]
+  const [source] = JSON.parse(sourceKey.value) as [{ tab: string; group?: string; state?: JobState; titleCode?: string }]
   const sourceState = source.state ? TASK_STATES[source.state] : '全部状态'
   const targetState = state.value === 'all' ? '全部状态' : TASK_STATES[state.value as JobState]
   const titleLabel = (code?: string) => TASK_EXPORTS.find(t => t.titleCode === code)?.label ?? '全部称号'
-  return `保留上次结果（${tabLabels[source.tab]} / ${sourceState} / ${titleLabel(source.titleCode)}，第 ${data.value.page} 页）；请求目标为${tabLabels[tab.value]} / ${targetState} / ${titleLabel(titleCode.value)}，第 ${page.value} 页。将在 ${retryIn.value / 1000} 秒后重试。`
+  const filterLabel = ({ tab, group }: ReturnType<typeof resolveTaskFilters>) => group ? `${tab.label} / ${group.label}` : tab.label
+  return `保留上次结果（${filterLabel(resolveTaskFilters(source.tab, source.group))} / ${sourceState} / ${titleLabel(source.titleCode)}，第 ${data.value.page} 页）；请求目标为${filterLabel(filters.value)} / ${targetState} / ${titleLabel(titleCode.value)}，第 ${page.value} 页。将在 ${retryIn.value / 1000} 秒后重试。`
 })
 function navigate(patch: Record<string, string | number | undefined>) { return router.push({ path: '/tasks', query: { ...route.query, ...patch } }) }
-function setTab(value: string | number) { if (TASK_TABS.includes(value as TaskTab)) void navigate({ tab: String(value), titleCode: undefined, page: 1, job: undefined }) }
+function setTab(value: string | number) {
+  if (taskTabs.some(tab => tab.id === value)) void navigate({ tab: String(value), group: undefined, titleCode: undefined, page: 1, job: undefined })
+}
 
 function regenerate(task: TaskSummary) {
   const code = task.export?.titleCode
@@ -79,7 +87,7 @@ async function submitExport(code: TaskExportTitle, regenerateOf: string) {
   if (!result) return
   if ('error' in result) { announce(result.error, '', 'alert'); return }
   announce('导出已受理；可以离开，稍后从后台任务取回。', result.jobId)
-  void navigate({ tab: 'export', state: undefined, titleCode: code, page: 1, job: result.jobId })
+  void navigate({ tab: 'sme-roster', group: 'export', state: undefined, titleCode: code, page: 1, job: result.jobId })
   void refresh()
 }
 const availabilityLabels = { available: '可下载', expired: '已过期，请重新生成', missing: '文件缺失，请重新生成' }
@@ -158,7 +166,7 @@ watch(job, (next, previous) => { if (previous && !next) closingRow.value = previ
 </script>
 <template>
   <div class="flex min-w-0 flex-col gap-4">
-    <PageHeader title="后台任务" description="查看 OCR、工信部平台和导出任务。离开页面后，后台任务继续运行。">
+    <PageHeader title="后台任务" description="按模块查看后台任务。离开页面后，任务继续运行。">
       <template #actions>
         <Button size="sm" variant="outline" :disabled="loading" @click="reload">刷新列表</Button>
       </template>
@@ -167,13 +175,23 @@ watch(job, (next, previous) => { if (previous && !next) closingRow.value = previ
     <section aria-labelledby="task-list-heading" class="flex min-w-0 flex-col gap-4">
       <h2 id="task-list-heading" class="sr-only">任务列表</h2>
       <Tabs :model-value="tab" @update:model-value="setTab">
-        <TabsList class="h-auto w-full flex-wrap justify-start">
-          <TabsTrigger v-for="name in TASK_TABS" :key="name" :value="name" :data-task-tab="name" class="min-h-11 sm:min-h-0">{{ tabLabels[name] }}<span v-if="data && !stale" class="ml-1 tabular-nums">{{ data.counts[name] }}</span></TabsTrigger>
+        <TabsList aria-label="任务模块" class="h-auto w-full flex-wrap justify-start">
+          <TabsTrigger v-for="entry in taskTabs" :key="entry.id" :value="entry.id" :data-task-tab="entry.id" class="min-h-11 sm:min-h-0">{{ entry.label }}<span v-if="data && !stale" class="ml-1 tabular-nums">{{ data.counts[entry.id] }}</span></TabsTrigger>
         </TabsList>
       </Tabs>
-      <CandidateTaskCreate v-if="tab === 'platform' && data?.authorized && !stale" @created="id => { void navigate({job:id,tab:'platform',page:1}); void refresh() }" />
+      <CandidateTaskCreate v-if="showsRosterTools && data?.authorized && !stale" @created="id => { void navigate({job:id,tab:'sme-roster',group:'platform',page:1}); void refresh() }" />
       <!-- 每个 Label+Select 自成一组：窄屏折行时标签不会留在上一行、控件掉到下一行 -->
       <div data-testid="task-filters" class="flex flex-wrap items-center gap-2">
+        <div v-if="groups.length" class="flex items-center gap-2">
+          <Label for="task-group" class="sr-only">分组</Label>
+          <Select :model-value="group ?? 'all'" @update:model-value="navigate({ group: $event === 'all' ? undefined : String($event), titleCode: undefined, page: 1, job: undefined })">
+            <SelectTrigger id="task-group" size="sm" class="bg-card w-36 shadow-none" aria-label="任务分组"><SelectValue /></SelectTrigger>
+            <SelectContent class="shadow-none">
+              <SelectItem value="all">全部分组</SelectItem>
+              <SelectItem v-for="entry in groups" :key="entry.id" :value="entry.id">{{ entry.label }}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <div class="flex items-center gap-2">
           <Label for="task-state" class="sr-only">状态</Label>
           <Select :model-value="state" @update:model-value="navigate({ state: String($event), page: 1, job: undefined })">
@@ -181,9 +199,9 @@ watch(job, (next, previous) => { if (previous && !next) closingRow.value = previ
             <SelectContent class="shadow-none"><SelectGroup><SelectItem value="all">全部状态</SelectItem><SelectItem v-for="s in JOB_STATES" :key="s" :value="s">{{ TASK_STATES[s] }}</SelectItem></SelectGroup></SelectContent>
           </Select>
         </div>
-        <Button v-if="tab === 'ocr'" as-child variant="outline" size="sm" class="bg-card shadow-none"><NuxtLink to="/ocr">识别校对入口</NuxtLink></Button>
-        <Button v-if="tab === 'platform'" as-child variant="outline" size="sm" class="bg-card shadow-none"><NuxtLink to="/comparison">比对与核查入口</NuxtLink></Button>
-        <div v-if="tab === 'all' || tab === 'export'" class="flex min-w-0 items-center gap-2">
+        <Button v-if="tab === 'core'" as-child variant="outline" size="sm" class="bg-card shadow-none"><NuxtLink to="/ocr">识别校对入口</NuxtLink></Button>
+        <Button v-if="showsRosterTools" as-child variant="outline" size="sm" class="bg-card shadow-none"><NuxtLink to="/comparison">比对与核查入口</NuxtLink></Button>
+        <div v-if="showsExportFilter" class="flex min-w-0 items-center gap-2">
           <Label for="export-title-filter" class="sr-only">导出称号</Label>
           <Select :model-value="titleCode" @update:model-value="navigate({ titleCode: $event === 'all' ? undefined : String($event), page: 1, job: undefined })">
             <SelectTrigger id="export-title-filter" size="sm" class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-48 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100" :data-active="titleCode !== 'all'" aria-label="导出称号"><SelectValue /></SelectTrigger>
@@ -286,11 +304,5 @@ watch(job, (next, previous) => { if (previous && !next) closingRow.value = previ
       </SheetContent>
     </Sheet>
 
-    <!-- 保留任务类型说明；新导出由业务查询页发起。 -->
-    <div class="flex flex-col gap-2">
-      <p class="text-muted-foreground text-xs">OCR 包含识别与 PDF 转图；工信部平台包含批量查询与核查。每个类型仅归一组；其他类型保留在全部任务中。</p>
-
-
-    </div>
   </div>
 </template>

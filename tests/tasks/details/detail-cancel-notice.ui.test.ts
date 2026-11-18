@@ -23,7 +23,7 @@ function platformTask(state: TaskSummary['state']): TaskSummary {
     id: TASK_ID,
     kind: 'platform-query-batch',
     label: '平台批量查询',
-    group: 'platform',
+    module: 'sme-roster', group: 'platform',
     state,
     createdAt: '2026-10-20T01:27:12.029Z',
     startedAt: '2026-10-20T01:27:12.030Z',

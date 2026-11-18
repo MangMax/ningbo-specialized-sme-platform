@@ -3,7 +3,8 @@ import { clientRequestReference } from '~~/lib/client-logging/request-reference'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { TaskSummary } from '~~/lib/task-center'
-import { TASK_LABELS, TASK_STATES } from '~~/lib/task-center'
+import { TASK_STATES } from '~~/lib/task-center'
+import { getTaskKind } from '~~/lib/task-catalog'
 import { useTaskPolling } from '~/composables/useTaskPolling'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
 import { Button } from '@/components/ui/button'
@@ -69,7 +70,7 @@ const displayKind = computed(() => {
   const kind = data.value?.kind
   if (!kind) return ''
   // Unknown kinds stay readable but must not pretend to be a known business type.
-  return TASK_LABELS[kind] ?? `其他类型（${kind}）`
+  return getTaskKind(kind)?.label ?? kind
 })
 const inFlight = computed(() => !!data.value && (data.value.state === 'queued' || data.value.state === 'running'))
 // `capabilities` is required by TaskSummary, but a partial/older payload must
@@ -98,7 +99,7 @@ async function continueDiscovery() {
   pending.value=true;notice.value=''
   try {
     const receipt=await $fetch<{jobId:string}>('/api/roster/correspondences/tasks',{method:'POST',headers,body:{titleCode:scope.titleCode,afterEventId:scope.nextAfterEventId,throughEventId:scope.throughEventId,clientRequestId:`continue:${props.id}:${scope.nextAfterEventId}`}})
-    await router.push({path:'/tasks',query:{tab:'platform',job:receipt.jobId}});emit('changed')
+    await router.push({path:'/tasks',query:{tab:'sme-roster',group:'platform',job:receipt.jobId}});emit('changed')
   }catch{notice.value='下一片未确认受理，请刷新后显式重试。'}finally{pending.value=false}
 }
 async function act(action: 'cancel' | 'retry') {
@@ -270,7 +271,7 @@ async function act(action: 'cancel' | 'retry') {
                 <dt class="text-muted-foreground">规则版本</dt><dd class="break-all">{{ data.export.ruleVersion ?? '尚未记录' }}</dd>
                 <template v-if="data.export.dataVersion"><dt class="text-muted-foreground">数据版本</dt><dd class="break-all font-mono text-xs">{{ data.export.dataVersion }}</dd></template>
                 <template v-if="data.export.artifact"><dt class="text-muted-foreground">SHA-256</dt><dd class="break-all font-mono text-xs">{{ data.export.artifact.sha256 }}</dd></template>
-                <template v-if="data.export.regenerateOf"><dt class="text-muted-foreground">重新生成自</dt><dd class="break-all"><NuxtLink :to="{ path: '/tasks', query: { tab: 'export', job: data.export.regenerateOf } }" class="text-primary underline">{{ data.export.regenerateOf }}</NuxtLink></dd></template>
+                <template v-if="data.export.regenerateOf"><dt class="text-muted-foreground">重新生成自</dt><dd class="break-all"><NuxtLink :to="{ path: '/tasks', query: { tab: 'sme-roster', group: 'export', job: data.export.regenerateOf } }" class="text-primary underline">{{ data.export.regenerateOf }}</NuxtLink></dd></template>
               </template>
             </dl>
           </DisclosurePanel>

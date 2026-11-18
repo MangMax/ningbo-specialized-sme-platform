@@ -133,7 +133,7 @@ it('public job retains both sources’ unique row 51 and exact page evidence; co
   const task = await api(`/api/task-center/${job.jobId}`)
   expect(task).toMatchObject({ kind: 'reconcile', state: 'done', outcome: null, reconcile: { targets: 1, needsReview: 1, queryFailed: 0 }, capabilities: { retry: false } })
   expect(task.reconcileCollection).toMatchObject({ complete: 4, partial: 0, failed: 0, unknown: 0, unfinished: 0, positions: [], positionsTruncated: false })
-  expect((await api('/api/task-center?tab=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(task.reconcileCollection)
+  expect((await api('/api/task-center?tab=sme-roster&group=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(task.reconcileCollection)
   expect((await api(`/api/task-center/${second.id}`)).reconcileCollection).toEqual(task.reconcileCollection)
 }, 10000)
 
@@ -305,7 +305,7 @@ it('four failed slots remain four failed collection slots through public task li
     { source: 'businessList', rdjb: '1', page: 1 }, { source: 'businessList', rdjb: '2', page: 1 },
     { source: 'businessList', rdjb: '3', page: 1 }, { source: 'queryList', rdjb: null, page: 1 },
   ], positionsTruncated: false })
-  const list = await api('/api/task-center?tab=platform')
+  const list = await api('/api/task-center?tab=sme-roster&group=platform')
   expect(list.rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
   expect(calls).toHaveLength(4)
 })
@@ -325,7 +325,7 @@ it('historical task reports without collection stay explicitly unknown through p
   expect(detail.outcome).toBeNull()
   expect(detail.reconcile).toMatchObject({ targets: 1, needsReview: 1 })
   expect(detail.reconcileCollection).toEqual({ complete: null, partial: null, failed: null, unknown: null, unfinished: null, positions: [], positionsTruncated: false })
-  expect((await api('/api/task-center?tab=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
+  expect((await api('/api/task-center?tab=sme-roster&group=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
 })
 
 it('task summary bounds locations to 50 while retaining the actual unfinished total and excludes page raw', async () => {
@@ -344,7 +344,7 @@ it('task summary bounds locations to 50 while retaining the actual unfinished to
   expect(detail.reconcileCollection.positions[49]).toEqual({ source: 'businessList', rdjb: '3', page: 50 })
   expect(JSON.stringify(detail)).not.toContain('PRIVATE_')
   expect(JSON.stringify(detail).length).toBeLessThan(12000)
-  expect((await api('/api/task-center?tab=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
+  expect((await api('/api/task-center?tab=sme-roster&group=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
 })
 
 it('malformed historical collection scalars stay unknown without transporting nested raw objects', async () => {
@@ -369,7 +369,7 @@ const unknownCollection = { complete: null, partial: null, failed: null, unknown
 
 async function publicSummaryPair(id: string) {
   const [detailResponse, listResponse] = await Promise.all([
-    nativeFetch(`${baseUrl}/api/task-center/${id}`), nativeFetch(`${baseUrl}/api/task-center?tab=platform`),
+    nativeFetch(`${baseUrl}/api/task-center/${id}`), nativeFetch(`${baseUrl}/api/task-center?tab=sme-roster&group=platform`),
   ])
   expect([detailResponse.status, listResponse.status]).toEqual([200, 200])
   const detail = await detailResponse.json() as TaskSummary

@@ -170,7 +170,7 @@ it.each(['q', 'district'] as const)('pending export acceptance navigates to its 
   await query.router.push({ path: '/current-enterprises', query: { titleCode: 'little_giant', [filter]: filter === 'q' ? '宁波' : '鄞州区' } })
   receipt.resolve({ status: 202, _data: { jobId: LG_JOB } }); await flushPromises()
   expect(query.router.currentRoute.value.path).toBe('/tasks')
-  expect(query.router.currentRoute.value.query).toEqual({ tab: 'export', titleCode: 'little_giant', page: '1', job: LG_JOB })
+  expect(query.router.currentRoute.value.query).toEqual({ tab: 'sme-roster', group: 'export', titleCode: 'little_giant', page: '1', job: LG_JOB })
   expect(raw).toHaveBeenCalledTimes(1)
   expect(raw.mock.calls[0]![0]).toBe('/api/roster/exports/current/little-giant')
   expect(raw.mock.calls[0]![1].body).toEqual({ clientRequestId: expect.any(String) })
