@@ -9,8 +9,9 @@ export interface EffectiveQualification {
   supportingTitle?: CurrentTitle
 }
 
-/** Evaluate the stored qualification facts for one enterprise at the given time (epoch milliseconds). */
-export function readEffectiveQualifications(db: Database.Database, enterpriseId: number, asOf: number): EffectiveQualification[] {
+/** Returns null for a missing enterprise, or its effective qualifications at the given time (epoch milliseconds). */
+export function readEffectiveQualifications(db: Database.Database, enterpriseId: number, asOf: number): EffectiveQualification[] | null {
+  if (!db.prepare('select 1 from enterprise where id = ?').get(enterpriseId)) return null
   return readCurrentQualificationAssessment(db, enterpriseId, asOf).titles.flatMap(({ titleCode, effectiveQualification }) => {
     if (effectiveQualification?.status !== 'effective') return []
     const { basis, supportingTitle } = effectiveQualification

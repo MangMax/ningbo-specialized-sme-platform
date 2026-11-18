@@ -16,6 +16,7 @@ import { preflightRecordCorrespondences, commitRecordCorrespondences, type Corre
 import * as correspondenceReads from '../../../layers/sme-roster/server/utils/record-correspondence'
 import * as publishedReads from '../../../layers/sme-roster/lib/roster/official-published-presentation'
 import { readEvidenceToken113 } from '../../../layers/sme-roster/server/utils/evidence-impact-113'
+import { readEffectiveQualifications } from '../../../layers/sme-roster/public'
 
 const AS_OF = Date.parse('2026-06-01T00:00:00Z')
 let fixtureDir: string
@@ -27,6 +28,12 @@ beforeEach(() => {
   sqlite = db.$client
 })
 afterEach(() => { vi.restoreAllMocks(); sqlite.close(); rmSync(fixtureDir,{recursive:true,force:true}) })
+
+it('distinguishes a missing enterprise from an existing enterprise with no effective qualifications', () => {
+  expect(readEffectiveQualifications(sqlite, 1, AS_OF)).toBeNull()
+  const enterprise = db.insert(schema.enterprise).values({ name: '合成企业', nameNorm: '合成企业' }).returning().get()
+  expect(readEffectiveQualifications(sqlite, enterprise.id, AS_OF)).toEqual([])
+})
 
 function formalEnterprise() {
   const enterprise = db.insert(schema.enterprise).values({ name: '合成正式企业', nameNorm: '合成正式企业', usccNorm: '913302000000000001' }).returning().get()
