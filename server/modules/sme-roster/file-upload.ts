@@ -11,11 +11,11 @@ import {
   type FileSource,
 } from '../../../lib/stored-file'
 import { checkAdmission, getStoredFile, type StoredFileRow } from '../../utils/stored-files'
-import { resolveInsideRoot, sha256Of } from '../../utils/file-store'
+import { resolveInsideRoot, sha256Of, UploadRegistrationError } from '../../utils/file-store'
 import { createClassifiedFile } from '../../utils/roster-file-classification'
 import { recordLegacyFileMaintenanceWrite } from '../../utils/file-maintenance'
 import { landingSegments } from '../../../lib/sme-roster/file-landing'
-import { compareFileContentIdentity, type FileContentConflict } from '../../utils/file-content-identity'
+import { compareFileContentIdentity } from '../../utils/file-content-identity'
 
 /**
  * 上传完成后的**登记**(票 10):把 tus 已经落位的文件写进 `stored_file`(票 09 的表)。
@@ -30,21 +30,6 @@ import { compareFileContentIdentity, type FileContentConflict } from '../../util
  * 客户端说的不算数。声明本身借 `file-landing.ts` 的 `landingSegments` 裁决(白名单与格式的**唯一来源**),
  * 非法一律 400 且**不落库**。
  */
-
-/** 登记被拒时抛的错。`statusCode` 由路由翻成 HTTP 码(默认 400)。 */
-export class UploadRegistrationError extends Error {
-  readonly statusCode: number
-  readonly conflict?: FileContentConflict
-  readonly reason?: string
-
-  constructor(message: string, statusCode = 400, conflict?: FileContentConflict, reason?: string) {
-    super(message)
-    this.name = 'UploadRegistrationError'
-    this.statusCode = statusCode
-    this.conflict = conflict
-    this.reason = reason
-  }
-}
 
 /** 客户端提交的登记声明:落位路径 + 用户填的分类(可空)。 */
 export interface UploadDeclaration {

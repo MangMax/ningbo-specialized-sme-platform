@@ -8,7 +8,7 @@ const store = createFileStore(serverFileCategories)
 export const {
   checkAdmission, getStoredFile, listStoredFiles, extensionSnapshot, renameStoredFileDisplayName,
   verifyStoredFileRestoration, restoreVerifiedStoredFile, softRemoveStoredFile,
-  backfillFromDisk, backfillStoredFiles, resolveUploadPlacement, parseMetadataPatch, updateStoredFile,
+  backfillFromDisk, backfillStoredFiles, resolveUploadPlacement, registerUploadedFile, parseMetadataPatch, updateStoredFile,
 } = store
 
 export type StoredFileRow = NonNullable<ReturnType<typeof getStoredFile>>

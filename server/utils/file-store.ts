@@ -8,6 +8,7 @@ import * as schema from '../../db/schema'
 import { baseName, directoryOf, extensionOf, siblingIndex } from '../../lib/core/file-path'
 import { evaluateFileAdmission, type FileAdmissionPolicy, type FileFilter, type FileLanding } from '../../lib/core/file-categories'
 import { compareFileContentIdentity, type FileContentConflict } from './file-content-identity'
+import type { LogContext } from '../../lib/logging'
 
 export type FileStoreDb = BetterSQLite3Database<typeof schema>
 
@@ -19,6 +20,24 @@ export interface FileQuery {
 }
 
 export type FileQueryFilters = Readonly<Record<string, readonly string[] | undefined>>
+
+export interface FileRegistrationResult {
+  row: FileRow
+  created: boolean
+}
+
+export class UploadRegistrationError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode = 400,
+    readonly conflict?: FileContentConflict,
+    readonly reason?: string,
+  ) {
+    super(message)
+    this.name = 'UploadRegistrationError'
+  }
+}
+
 export interface FileCategoryServer {
   readonly id: string
   readonly admission?: FileAdmissionPolicy
@@ -34,8 +53,15 @@ export interface FileCategoryServer {
     write(db: FileStoreDb, id: number, patch: Record<string, unknown>): boolean
   }
   readonly landing?: FileLanding
-  /** Handles clients that omit the category in upload metadata. */
+  /** Handles unqualified uploads and registration paths unclaimed by other contributions. */
   readonly defaultLanding?: boolean
+  readonly registration?: {
+    /** Claims a path for registration even when the request omits fileCategory. */
+    matchesPath?(relPath: string): boolean
+    register(
+      db: FileStoreDb, root: string, input: Record<string, unknown>, context: LogContext,
+    ): Promise<FileRegistrationResult>
+  }
   readonly snapshot?: (fields: FileRow) => Record<string, unknown>
   readonly openAPI?: {
     readonly listDescription?: string
@@ -195,6 +221,7 @@ export function createFileStore<const Categories extends readonly FileCategorySe
   const metadataByKey = new Map(categories.flatMap(category => category.metadata
     ? Object.keys(category.metadata.properties).map(key => [key, category.metadata!] as const)
     : []))
+  const registrationDefaults = categories.filter(category => category.defaultLanding && category.registration)
   const rollbackMetadata = Symbol('metadata write declined')
 
   function extendRows(db: FileStoreDb, rows: FileColumnsRow[]): Row[] {
@@ -390,6 +417,35 @@ export function createFileStore<const Categories extends readonly FileCategorySe
     return category.landing(metadata)
   }
 
+  function registerUploadedFile(db: FileStoreDb, root: string, body: unknown, context: LogContext) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw new UploadRegistrationError('请求体必须是对象')
+    }
+    const { fileCategory, ...input } = body as Record<string, unknown>
+    const requested = fileCategory === undefined ? undefined : categories.find(category => category.id === fileCategory)
+    if (fileCategory !== undefined && !requested?.registration) {
+      throw new UploadRegistrationError('未登记上传分类')
+    }
+
+    let relPath: string
+    try {
+      // Match using the same coercion and trimming accepted by legacy registration.
+      relPath = String(input.relPath ?? '').trim()
+    } catch (error) {
+      throw new UploadRegistrationError((error as Error).message)
+    }
+    const owners = categories.filter(category => category.registration?.matchesPath?.(relPath))
+    if (owners.length > 1) throw new UploadRegistrationError('落位路径匹配多个上传分类')
+    const [owner] = owners
+    if (requested && owner !== requested && (owner || requested.registration?.matchesPath)) {
+      throw new UploadRegistrationError('上传分类与实际落位不符')
+    }
+    const fallback = registrationDefaults.length === 1 ? registrationDefaults[0] : undefined
+    const registration = (requested ?? owner ?? fallback)?.registration
+    if (!registration) throw new UploadRegistrationError('无法确定登记上传分类')
+    return registration.register(db, root, input, context)
+  }
+
   function divideMetadata(input: object) {
     const groups = new Map<NonNullable<FileCategoryServer['metadata']>, Record<string, unknown>>()
     for (const [key, value] of Object.entries(input)) {
@@ -423,7 +479,7 @@ export function createFileStore<const Categories extends readonly FileCategorySe
   }
 
   return {
-    parseMetadataPatch, updateStoredFile, resolveUploadPlacement,
+    parseMetadataPatch, updateStoredFile, resolveUploadPlacement, registerUploadedFile,
     checkAdmission, listStoredFiles, getStoredFile, extensionSnapshot,
     renameStoredFileDisplayName, verifyStoredFileRestoration, restoreVerifiedStoredFile,
     softRemoveStoredFile, backfillStoredFiles, backfillFromDisk,

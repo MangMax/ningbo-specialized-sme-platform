@@ -10,8 +10,8 @@ import { createTus, TUS_PATH } from '../../../server/utils/tus'
 import {
   parseUploadDeclaration,
   registerStoredFile,
-  UploadRegistrationError,
 } from '../../../server/modules/sme-roster/file-upload'
+import { UploadRegistrationError } from '../../../server/utils/file-store'
 import { listStoredFiles } from '../../../server/utils/stored-files'
 
 /**

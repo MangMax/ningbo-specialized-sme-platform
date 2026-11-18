@@ -1,57 +1,85 @@
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { stat } from 'node:fs/promises'
+import * as h3 from 'h3'
 import { inArray, sql } from 'drizzle-orm'
 import { initializeDb } from '../../../db/client'
-import { storedFile } from '../../../db/schema'
-import { createFileStore, type FileStoreDb, type FileQueryFilters } from '../../../server/utils/file-store'
+import { rosterFileClassification, storedFile } from '../../../db/schema'
+import { createFileStore, sha256Of, type FileCategoryServer, type FileStoreDb, type FileQueryFilters } from '../../../server/utils/file-store'
 import { extendFileOpenApi } from '../../../server/utils/file-openapi'
 import { rosterFileServerCategory } from '../../../server/modules/sme-roster/files'
+import { createTus, TUS_PATH } from '../../../server/utils/tus'
 
 let dir: string
 beforeAll(() => { dir = mkdtempSync(join(tmpdir(), 'file-categories-')) })
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
-it('composes a second registered category for backfill, fields, filters, placement and metadata', () => {
-  const db = initializeDb({ create: true, dbPath: join(dir, 'files.sqlite') })
-  // A fixture-owned metadata table, populated and read only through the contribution.
+const isCatalogPath = (path: string) => path.startsWith('catalog/')
+const catalog = {
+  id: 'catalog',
+  filters: [{
+    key: 'collection', label: '馆藏', placeholder: '全部馆藏', width: 'w-28',
+    options: [{ value: 'local', label: '本地' }, { value: 'remote', label: '外部' }],
+    description: '馆藏,多值:`local` / `remote`。',
+  }],
+  readFields(db: FileStoreDb, ids: readonly number[]) {
+    return new Map(db.all<{ file_id: number; collection: string }>(sql`
+      select file_id, collection from collection_file where file_id in ${ids}
+    `).map(({ file_id, collection }) => [file_id, { collection }]))
+  },
+  constraint(db: FileStoreDb, filters: FileQueryFilters) {
+    if (!filters.collection?.length) return
+    const matching = db.all<{ file_id: number }>(sql`
+      select file_id from collection_file where collection in ${filters.collection}
+    `)
+    return inArray(storedFile.id, matching.map(row => row.file_id))
+  },
+  prepareBackfill(path: string) {
+    if (!isCatalogPath(path)) return null
+    return (db: FileStoreDb, id: number) => {
+      db.run(sql`insert into collection_file values (${id}, 'local')`)
+    }
+  },
+  landing: (metadata: Record<string, string | null | undefined>) => ['catalog', metadata.filename!],
+  registration: {
+    matchesPath: isCatalogPath,
+    async register(db: FileStoreDb, root: string, input: Record<string, unknown>) {
+      // The fixture owns the catalog layout and classification, just as it does for backfill.
+      const relPath = String(input.relPath)
+      const match = /^catalog\/([^/]+\.pdf)$/.exec(relPath)
+      const write = catalog.prepareBackfill(relPath)
+      if (!match || !write || Object.keys(input).length !== 1) throw h3.createError({ statusCode: 400 })
+      const filename = match[1]!
+      const abs = join(root, relPath)
+      const bytes = (await stat(abs)).size
+      const sha256 = await sha256Of(abs)
+      return db.transaction(tx => {
+        const row = tx.insert(storedFile).values({ relPath, filename, ext: 'pdf', bytes, sha256 }).returning().get()
+        write(tx, row.id)
+        return { row: { ...row, displayName: filename, collection: 'local' }, created: true }
+      })
+    },
+  },
+  metadata: {
+    properties: { collection: { type: 'string' } },
+    parse: (input: Record<string, unknown>) => ({ collection: String(input.collection) }),
+    write(db: FileStoreDb, id: number, patch: Record<string, unknown>) {
+      return db.run(sql`update collection_file set collection = ${patch.collection} where file_id = ${id}`).changes === 1
+    },
+  },
+}
+const categories = [rosterFileServerCategory, catalog] as const
+
+function createDb(name: string) {
+  const db = initializeDb({ create: true, dbPath: join(dir, name + '.sqlite') })
   db.run(sql`create table collection_file (file_id integer primary key, collection text)`)
-  const catalog = {
-    id: 'catalog',
-    filters: [{
-      key: 'collection', label: '馆藏', placeholder: '全部馆藏', width: 'w-28',
-      options: [{ value: 'local', label: '本地' }, { value: 'remote', label: '外部' }],
-      description: '馆藏,多值:`local` / `remote`。',
-    }],
-    readFields(db: FileStoreDb, ids: readonly number[]) {
-      return new Map(db.all<{ file_id: number; collection: string }>(sql`
-        select file_id, collection from collection_file where file_id in ${ids}
-      `).map(({ file_id, collection }) => [file_id, { collection }]))
-    },
-    constraint(db: FileStoreDb, filters: FileQueryFilters) {
-      if (!filters.collection?.length) return
-      const matching = db.all<{ file_id: number }>(sql`
-        select file_id from collection_file where collection in ${filters.collection}
-      `)
-      return inArray(storedFile.id, matching.map(row => row.file_id))
-    },
-    prepareBackfill(path: string) {
-      if (!path.startsWith('catalog/')) return null
-      return (db: FileStoreDb, id: number) => {
-        db.run(sql`insert into collection_file values (${id}, 'local')`)
-      }
-    },
-    landing: (metadata: Record<string, string | null | undefined>) => ['catalog', metadata.filename!],
-    metadata: {
-      properties: { collection: { type: 'string' } },
-      parse: (input: Record<string, unknown>) => ({ collection: String(input.collection) }),
-      write(db: FileStoreDb, id: number, patch: Record<string, unknown>) {
-        return db.run(sql`update collection_file set collection = ${patch.collection} where file_id = ${id}`).changes === 1
-      },
-    },
-  }
-  const categories = [rosterFileServerCategory, catalog] as const
+  return db
+}
+
+it('composes a second registered category for backfill, fields, filters, placement and metadata', () => {
+  const db = createDb('backfill')
   const files = createFileStore(categories)
   const list = { parameters: [{ name: 'q', in: 'query', schema: { type: 'string' } }] }
   extendFileOpenApi({ paths: { '/api/files': { get: list } } }, categories)
@@ -83,4 +111,128 @@ it('composes a second registered category for backfill, fields, filters, placeme
   expect(files.updateStoredFile(db, guide!.id, files.parseMetadataPatch({ collection: 'remote' })))
     .toMatchObject({ collection: 'remote' })
   expect(files.listStoredFiles(db, { collection: ['remote', 'local'] }).total).toBe(1)
+})
+
+async function uploadAndRegisterFixture(name: string, installed: readonly FileCategoryServer[] = categories) {
+  const db = createDb(name)
+  const filesDir = join(dir, name)
+  const tus = createTus({
+    filesDir, incomingDir: join(dir, name + '-incoming'), allowedOrigins: [],
+    landing: createFileStore(installed).resolveUploadPlacement,
+  })
+  // Install the second module at the application composition boundary. HTTP handlers,
+  // tus protocol, file-store dispatch and SQLite run unchanged.
+  vi.resetModules()
+  vi.doMock('../../../server/file-category-modules', () => ({ serverFileCategories: installed }))
+  vi.doMock('@db', () => ({ useDb: () => db }))
+  for (const key of ['defineEventHandler', 'createError', 'readBody', 'setResponseStatus', 'getQuery', 'setHeader', 'getRouterParam'] as const) {
+    vi.stubGlobal(key, h3[key])
+  }
+  vi.stubGlobal('useRuntimeConfig', () => ({ filesDir }))
+  const base = 'http://localhost'
+  const registerRoute = (await import('../../../server/api/files/register.post')).default
+  const listRoute = (await import('../../../server/api/files/index.get')).default
+  const detailRoute = (await import('../../../server/api/files/[id]/maintenance.get')).default
+  const router = h3.createRouter()
+    .post('/api/files/register', registerRoute)
+    .get('/api/files', listRoute)
+    .get('/api/files/:id/maintenance', detailRoute)
+  const http = h3.toWebHandler(h3.createApp().use(router))
+  return {
+    db,
+    async upload(metadata: Record<string, string>) {
+      const headers = { 'Tus-Resumable': '1.0.0' }
+      const create = await tus.handleWeb(new Request(base + TUS_PATH, {
+        method: 'POST',
+        headers: {
+          ...headers,
+          'Upload-Length': '3',
+          'Upload-Metadata': Object.entries(metadata).map(([key, value]) => `${key} ${Buffer.from(value).toString('base64')}`).join(','),
+        },
+      }))
+      expect(create.status).toBe(201)
+      const finish = await tus.handleWeb(new Request(new URL(create.headers.get('location')!, base), {
+        method: 'PATCH',
+        headers: { ...headers, 'Upload-Offset': '0', 'Content-Type': 'application/offset+octet-stream' },
+        body: 'abc',
+      }))
+      expect(finish.status).toBe(204)
+      return decodeURIComponent(finish.headers.get('X-Upload-Path')!)
+    },
+    async request(path: string, input?: Record<string, unknown>) {
+      const response = await http(new Request(base + path, input && {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(input),
+      }))
+      return { status: response.status, body: await response.json() }
+    },
+  }
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.doUnmock('../../../server/file-category-modules')
+  vi.doUnmock('@db')
+})
+
+it('rejects overlapping registration path claims without choosing a writer', async () => {
+  const { db, upload, request } = await uploadAndRegisterFixture('ambiguous', [
+    ...categories, { ...catalog, id: 'other-catalog' },
+  ])
+  try {
+    const relPath = await upload({ fileCategory: 'catalog', filename: 'guide.pdf' })
+    expect((await request('/api/files/register', { relPath })).status).toBe(400)
+    expect((await request('/api/files/register', { relPath, fileCategory: 'catalog' })).status).toBe(400)
+    expect(await request('/api/files')).toMatchObject({ status: 200, body: { total: 0, rows: [] } })
+  } finally {
+    db.$client.close()
+  }
+})
+
+it.each([true, false])('registers only the catalog classification after tus upload (explicit selector: %s)', async explicit => {
+  const { db, upload, request } = await uploadAndRegisterFixture(explicit ? 'explicit' : 'implicit')
+  try {
+    const relPath = await upload({ fileCategory: 'catalog', filename: 'guide.pdf' })
+    expect(relPath).toBe('catalog/guide.pdf')
+    const input = explicit ? { relPath, fileCategory: 'catalog' } : { relPath }
+    const registered = await request('/api/files/register', input)
+    expect(registered.status, JSON.stringify(registered.body)).toBe(201)
+    const file = {
+      id: registered.body.id, relPath, filename: 'guide.pdf', bytes: 3,
+      sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+      collection: 'local',
+    }
+    expect(registered.body).toMatchObject(file)
+    expect(db.select().from(rosterFileClassification).all()).toEqual([])
+    expect(await request('/api/files?collection=local')).toMatchObject({ status: 200, body: { total: 1, rows: [file] } })
+    expect(await request('/api/files?categoryState=unset')).toMatchObject({ status: 200, body: { total: 0, rows: [] } })
+    expect(await request(`/api/files/${file.id}/maintenance`)).toMatchObject({ status: 200, body: { file } })
+  } finally {
+    db.$client.close()
+  }
+})
+
+it('rejects unknown and mismatched selectors and preserves legacy no-selector registration', async () => {
+  const { db, upload, request } = await uploadAndRegisterFixture('legacy')
+  try {
+    const relPath = await upload({ fileCategory: 'catalog', filename: 'guide.pdf' })
+    for (const fileCategory of ['unknown', 'sme-roster']) {
+      expect((await request('/api/files/register', { relPath, fileCategory })).status).toBe(400)
+    }
+    expect(await request('/api/files')).toMatchObject({ status: 200, body: { total: 0, rows: [] } })
+
+    const legacy = await upload({ source: 'jxj', kind: 'announcement', year: '2024', batch: '1', filename: 'notice.pdf' })
+    expect(legacy).toBe('jxj/announcement/2024/1/notice.pdf')
+    const declared = await request('/api/files/register', { relPath: legacy, source: 'jxj', kind: 'announcement', year: 2024, batch: 1 })
+    expect(declared).toMatchObject({ status: 201, body: { source: 'jxj', kind: 'announcement', year: 2024, batch: 1, categoryState: 'set' } })
+    const unclassified = await upload({ source: 'miit', kind: 'export', filename: 'export.pdf' })
+    const input = { relPath: unclassified }
+    const result = await request('/api/files/register', input)
+    expect(result).toMatchObject({ status: 201, body: { source: null, kind: null, year: null, batch: null, categoryState: 'unset' } })
+    expect(await request('/api/files/register', input)).toMatchObject({ status: 200, body: { id: result.body.id } })
+    expect(await request('/api/files?collection=local')).toMatchObject({ status: 200, body: { total: 0, rows: [] } })
+  } finally {
+    db.$client.close()
+  }
 })

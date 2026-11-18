@@ -118,6 +118,14 @@ describe("file maintenance public transports", () => {
     expect(properties.parts.items.properties.origin.enum).toEqual(['derived', 'agent', 'legacy'])
   })
 
+  it('publishes the upload registration selector and legacy optionality in development OpenAPI', () => {
+    const register = discovery.paths['/api/files/register'].post
+    const schema = register.requestBody.content['application/json'].schema
+    expect(schema.required).toEqual(['relPath'])
+    expect(schema.properties).toMatchObject({ relPath: { type: 'string' }, fileCategory: { type: 'string' } })
+    expect(Object.keys(register.responses)).toEqual(['200', '201', '400', '409'])
+  })
+
   it('keeps registration, classification, parsing, preview and soft removal on one uploaded file ID', async () => {
     const filename = 'classification-lifecycle.pdf'
     const pdf = minimalPdf({ pages: 2 })
