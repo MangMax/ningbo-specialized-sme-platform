@@ -13,6 +13,7 @@ import ExcelJS from 'exceljs'
 import { newJobId } from '../../../layers/core/lib/job'
 import { createHash } from 'node:crypto'
 import { channel } from 'node:diagnostics_channel'
+import { get } from 'node:http'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
@@ -69,6 +70,42 @@ function candidate(name: string, events: Array<{ eventType: 'award'|'review'|'nu
   }
   return { enterprise, record }
 }
+function seedLoadCandidates(count: number) {
+  const sqlite = db.$client
+  const insertEnterprise = sqlite.prepare(`insert into enterprise (name,name_norm,uscc_norm,district,city)
+    values (?,?,?,'鄞州区','宁波市')`)
+  const enroll = sqlite.prepare('insert into roster_legacy_member (enterprise_id) values (?)')
+  const insertRecord = sqlite.prepare(`insert into record (enterprise_id,title_code,source,name_raw)
+    values (?,'little_giant','jxj',?)`)
+  const insertAward = sqlite.prepare(`insert into record_event (record_id,event_type,year,batch_seq)
+    values (?,'award',?,1)`)
+  const insertEvidence = sqlite.prepare(`insert into record_evidence (record_event_id,source_file,attachment,list_no)
+    values (?,'jxj/announcement/synthetic.xlsx','名单',?)`)
+  const year = new Date().getFullYear()
+  db.transaction(() => {
+    for (let i = 0; i < count; i++) {
+      const name = `资源合成${i}`
+      const enterpriseId = insertEnterprise.run(name, name, 'TEST-' + name).lastInsertRowid
+      enroll.run(enterpriseId)
+      const recordId = insertRecord.run(enterpriseId, name).lastInsertRowid
+      const eventId = insertAward.run(recordId, year).lastInsertRowid
+      insertEvidence.run(eventId, enterpriseId)
+    }
+  })
+}
+
+function warmRead(path: string) {
+  // Synchronous fixture writes can outlive the server's idle connection timeout.
+  // The warm-up opens a new connection before the timed fetch requests.
+  return new Promise<number | undefined>((resolve, reject) => {
+    const request = get(url(path), { agent: false }, response => {
+      response.once('error', reject)
+      response.once('end', () => resolve(response.statusCode))
+      response.resume()
+    })
+    request.once('error', reject)
+  })
+}
 async function startService() {
   await readDevelopmentDiscovery()
   const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
@@ -116,7 +153,7 @@ async function executor() {
   throw new Error('owned executor not found')
 }
 it('阻塞执行、背压、取消与失败', async () => {
-  db.transaction(() => { for(let i=0;i<3000;i++) candidate('资源合成'+i) })
+  seedLoadCandidates(3000)
   const first = await json(await submit('blocked-running'))
   const pid = await executor(); process.kill(pid,'SIGSTOP')
   const queued: string[]=[]
@@ -149,10 +186,10 @@ it('阻塞执行、背压、取消与失败', async () => {
   } finally { try {process.kill(pid,'SIGCONT')} catch {} }
 },30000)
 it('万行快照与普通请求响应', async () => {
-  db.transaction(() => {for(let i=0;i<10000;i++) candidate('资源合成'+i)})
+  seedLoadCandidates(10000)
   const last = candidate('快照末项')
   const listPath='/api/roster/enterprises?pageSize=20', detailPath='/api/roster/enterprises/'+last.enterprise.id
-  for(const path of [listPath,detailPath]) expect((await fetch(url(path))).status).toBe(200)
+  for(const path of [listPath,detailPath]) expect(await warmRead(path)).toBe(200)
   const start=performance.now(), accepted=await submit('large-snapshot'), submitMs=performance.now()-start
   expect(accepted.status).toBe(202);expect(submitMs).toBeLessThan(1000)
   const id=(await json(accepted)).jobId
