@@ -1,3 +1,4 @@
+import { insertEnterpriseMerge } from '../../../core/public'
 import { eq } from 'drizzle-orm'
 import type { Executor } from './roster-import'
 import { targetSchema as s } from '../../lib/platform/target-schema'
@@ -18,6 +19,6 @@ export function mergeTargetEnterpriseIdentity(db: Executor, input: { fromEnterpr
     db.insert(a).values({ ...assignment, revision: assignment.revision + 1, enterpriseId: into,
       origin: 'command', actor: null, basis: input.basis, commandReceiptId: null, recordedAt }).run()
   }
-  db.insert(s.enterpriseMerge).values({ ...input, intoEnterpriseId: into, recordedAt }).run()
+  insertEnterpriseMerge(db, { ...input, intoEnterpriseId: into, recordedAt })
   return assignments.length
 }

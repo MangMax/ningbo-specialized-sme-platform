@@ -535,6 +535,37 @@ export interface RosterImportCommitResponse {
   error?: string | null
 }
 
+export interface RosterAnnouncementStagedResponse {
+  status: 'staged'
+  intakeId: number
+  sourceDigest: string
+  rowCount: number
+}
+export type RosterImportSubmissionResponse = RosterImportCommitResponse | RosterAnnouncementStagedResponse
+
+export interface ReviewedEnterpriseFields {
+  name?: string
+  uscc?: string | null
+  districtCode?: string | null
+  townshipCode?: string | null
+  industryCode?: string | null
+}
+export interface SupplementAnnouncementRequest {
+  sourceDigest: string
+  basis: string
+  rows: (
+    | { action: 'create'; fields: ReviewedEnterpriseFields & { name: string } }
+    | { action: 'attach'; enterpriseId: number; expectedRevision: number; fields?: ReviewedEnterpriseFields }
+    | { action: 'same_subject'; row: number }
+  )[]
+}
+export type SupplementAnnouncementResponse = Omit<RosterImportCommitResponse, 'status'> & {
+  status: 'supplemented'
+  intakeId: number
+  sourceIds: number[]
+  owners: number[]
+}
+
 /**
  * **出处指针收敛重放**的响应（RL-19，契约 §8.9.3）。
  *
@@ -603,9 +634,13 @@ export class RosterImportClient {
     return (await this.post(ROSTER_IMPORT_PREFLIGHT_PATH, request)) as RosterImportPreflightResponse
   }
 
-  /** 事务提交。同一幂等键重复调用返回既有批次的摘要，不重复写企业/事件。 */
-  async commit(request: RosterImportRequest): Promise<RosterImportCommitResponse> {
-    return (await this.post(ROSTER_IMPORT_COMMIT_PATH, request)) as RosterImportCommitResponse
+  /** 公布原行先留存，其他来源继续按原业务命令提交。 */
+  async commit(request: RosterImportRequest): Promise<RosterImportSubmissionResponse> {
+    return (await this.post(ROSTER_IMPORT_COMMIT_PATH, request)) as RosterImportSubmissionResponse
+  }
+
+  async supplement(intakeId: number, review: SupplementAnnouncementRequest): Promise<SupplementAnnouncementResponse> {
+    return (await this.post(`/api/roster/import/intake/${intakeId}/supplement`, review)) as SupplementAnnouncementResponse
   }
 
   /**

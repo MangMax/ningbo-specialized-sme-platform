@@ -4,7 +4,7 @@ import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { enterprise, record, differenceReason, recordCorrespondence } from '../../../../db/schema'
 import { platformObservationAssignment as a, platformBusinessObservation as o, targetSchema } from '../platform/target-schema'
-import { PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION } from '../../../../db/schema-phase'
+import { isFinalPlatformRuntimeVersion, PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION } from '../../../../db/schema-phase'
 import { sqliteConnection } from '../platform/target-connection'
 import { normalizeUscc } from '../domain'
 import { TITLE_RDJB_CODES } from '../platform/recognized-evidence'
@@ -37,7 +37,7 @@ export function createTargetCurrentCandidateReader(db:BetterSQLite3Database<type
   const ownerId=sql<number>`"candidate_normalized_owners"."id"`
   const ownerJoin=()=>and(isNull(a.enterpriseId),eq(sql`"candidate_normalized_owners"."normalized_key"`,sql`roster84_uscc(${a.usccRaw})`))
   function gate() {
-    if (sqlite.pragma('user_version',{simple:true})!==PLATFORM_RUNTIME_VERSION || !sqlite.prepare('SELECT 1 FROM platform_runtime_completion WHERE id=1 AND rule=? AND schema_version=?').get(PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION)) {
+    if (!isFinalPlatformRuntimeVersion(sqlite.pragma('user_version',{simple:true})) || !sqlite.prepare('SELECT 1 FROM platform_runtime_completion WHERE id=1 AND rule=? AND schema_version=?').get(PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION)) {
       throw new TargetCurrentCandidateGap(null,'completion','Completed runtime model required')
     }
   }

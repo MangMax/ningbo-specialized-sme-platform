@@ -15,8 +15,9 @@ import { createRosterImportHandler } from '../../../utils/roster-import-route'
 defineRouteMeta({
   openAPI: {
     tags: ['名录'],
-    summary: '名录导入提交（单批事务、幂等重放）',
+    summary: '留存公布原行或提交其他名录业务批次',
     description:
+      '公布原行提交返回 staged、intakeId、sourceDigest、rowCount，人工核对后通过 intake/{id}/supplement 显式补充基础库。' +
       '平台完整原行提交在同一事务收尾核对来源投影；summary.platformFields 按版本去重报告 eligibleVersions/projectionsCreated/projectionsReused/projectionsChecked、observationsChecked/quarantinedObservations 及 ready/partial/not_performed。旧幂等键返回原回执，历史缺字段表示未记录；reuseExisting 纯引用不执行同步。' +
       'pending_review（待审核）须显式提交 confirmed_reason + confirmed + follow_review；保留正式历史并跟进审核，区别于 needs_review。' +
       '按 body 的 `idempotencyKey` 幂等提交：同键重复调用返回既有批次摘要，不重复写企业/事件。' +
@@ -3143,14 +3144,15 @@ defineRouteMeta({
     },
     responses: {
       200: {
-        description: '提交结果（`committed` 或 `failed`；`failed` 时业务数据一行未写）。',
+        description: '公布原行留存为 staged。其他业务批次返回 committed 或 failed。',
         content: {
           'application/json': {
             schema: {
               type: 'object',
               properties: {
                 batchId: { type: 'integer' },
-                status: { type: 'string', enum: ['committed', 'failed'] },
+                status: { type: 'string', enum: ['staged', 'committed', 'failed'] },
+                intakeId: { type: 'integer' }, sourceDigest: { type: 'string' }, rowCount: { type: 'integer' },
                 summary: {
                   type: 'object',
                   properties: {

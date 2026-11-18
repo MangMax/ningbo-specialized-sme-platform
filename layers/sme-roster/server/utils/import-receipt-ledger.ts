@@ -9,9 +9,9 @@ import { importReceiptRedactor } from './import-receipt-redaction'
 import { appLog, type LogContext } from '../../../core/lib/logging'
 
 type Db = BetterSQLite3Database<typeof schema>
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(item => canonical(item ?? null)).join(',')}]`
-  if (value && typeof value === 'object') return `{${Object.entries(value).filter(([, item]) => item !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`
+export function canonicalImportJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(item => canonicalImportJson(item ?? null)).join(',')}]`
+  if (value && typeof value === 'object') return `{${Object.entries(value).filter(([, item]) => item !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => `${JSON.stringify(key)}:${canonicalImportJson(item)}`).join(',')}}`
   return JSON.stringify(value) ?? 'null'
 }
 
@@ -20,7 +20,7 @@ export function recordImportReceipt<T extends { status: string }>(db: Db, operat
   const enclosingTransaction = (db as Db & { $client?: { inTransaction: boolean } }).$client?.inTransaction ?? false
   const batchRequest = operation === 'replay' ? { ...request, idempotencyKey: `${request.idempotencyKey}#repoint` } : request
   const normalized = { ...request, sourceSha256: request.sourceSha256 ?? null }
-  const hash = createHash('sha256').update(canonical(normalized)).digest('hex')
+  const hash = createHash('sha256').update(canonicalImportJson(normalized)).digest('hex')
   const redact = importReceiptRedactor(db)
   // Both phases write. Reserve the writer before reading so concurrent candidate
   // commits cannot invalidate a deferred read snapshot during its write upgrade.

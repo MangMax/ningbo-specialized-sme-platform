@@ -1,3 +1,4 @@
+import { isFinalPlatformRuntimeVersion } from '../../../../db/schema-phase'
 /** Selected-original authentication and new-write capture; never a business selector. */
 import type Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
@@ -19,7 +20,7 @@ export function reconcileSlotWriteInstalled(t: Database.Database) {
   const present = columns.filter(name => names.some(c => c.name === name))
   const completed = migrationFinished(t, RECONCILE_SLOT_COMPLETION)
   const fk = t.pragma('foreign_key_list(platform_collection)') as { from: string; table: string; to: string; on_delete: string }[]
-  if (t.pragma('user_version', { simple: true }) !== 71613 || present.length !== columns.length || !completed
+  if (!isFinalPlatformRuntimeVersion(t.pragma('user_version', { simple: true })) || present.length !== columns.length || !completed
     || !fk.some(f => f.from === 'reconcile_slot_raw_archive_id' && f.table === 'platform_archive_value' && f.to === 'id' && f.on_delete === 'RESTRICT')
     || barriers.some(name => !t.prepare("SELECT 1 FROM sqlite_schema WHERE type='trigger' AND name=?").get(name))) {
     throw new Error('Reconcile capture target NOTREADY')

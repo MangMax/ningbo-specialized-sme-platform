@@ -1,3 +1,4 @@
+import { insertEnterpriseAlias, insertEnterpriseProfileAudit, updateEnterprise } from '../../../core/public'
 import { createHash } from 'node:crypto'
 import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -73,13 +74,13 @@ export function patchEnterpriseProfile(db: Db, enterpriseId: number, body: unkno
       else {
         const sameKey = tx.select({ id: s.enterpriseAlias.id }).from(s.enterpriseAlias).where(and(eq(s.enterpriseAlias.enterpriseId, enterpriseId), eq(s.enterpriseAlias.nameNorm, oldNorm), eq(s.enterpriseAlias.sourceKind, 'manual'), eq(s.enterpriseAlias.sourceRefId, 0))).limit(1).get()
         if (sameKey) throw new EnterpriseProfileError(409, 'alias_lifecycle_required', 'Previous-name record is not confirmed; confirm or restore it through alias lifecycle first')
-        retainedAliasId = tx.insert(s.enterpriseAlias).values({ enterpriseId, name: current.profile.name, nameNorm: oldNorm, sourceKind: 'manual', sourceRefId: 0, verificationStatus: 'confirmed', note: `Enterprise profile rename: ${input.idempotencyKey}` }).returning({ id: s.enterpriseAlias.id }).get().id
+        retainedAliasId = insertEnterpriseAlias(tx, { enterpriseId, name: current.profile.name, nameNorm: oldNorm, sourceKind: 'manual', sourceRefId: 0, verificationStatus: 'confirmed', note: `Enterprise profile rename: ${input.idempotencyKey}` }).id
         aliasCreated = true
       }
     } else if (input.previousName) throw new EnterpriseProfileError(422, 'unexpected_previous_name', 'Previous-name confirmation is only valid for a name change')
-    tx.update(s.enterprise).set({ ...input.changes, ...(renamed ? { nameNorm: normalizeName(after.name) } : {}) }).where(eq(s.enterprise.id, enterpriseId)).run()
+    updateEnterprise(tx, enterpriseId, { ...input.changes, ...(renamed ? { nameNorm: normalizeName(after.name) } : {}) })
     const afterVersion = version({ ...current, profile: after, row: { ...current.row, nameNorm: renamed ? normalizeName(after.name) : current.row.nameNorm }, key: input.idempotencyKey })
-    const audit = tx.insert(s.enterpriseProfileAudit).values({ enterpriseId, idempotencyKey: input.idempotencyKey, requestHash, beforeVersion, afterVersion, before: current.profile, after, actor: input.actor, basis: input.basis, retainedAliasId, aliasCreated }).returning().get()
+    const audit = insertEnterpriseProfileAudit(tx, { enterpriseId, idempotencyKey: input.idempotencyKey, requestHash, beforeVersion, afterVersion, before: current.profile, after, actor: input.actor, basis: input.basis, retainedAliasId, aliasCreated })
     if (renamed) captureIdentityRevision113(tx, { enterpriseId, sourceKey: `enterprise:${enterpriseId}`, sourceVersion: `profile:${audit.id}`, before: identityBefore, after: identityMaterial113(tx, enterpriseId) })
     return receipt(audit)
   }, { behavior: 'immediate' })

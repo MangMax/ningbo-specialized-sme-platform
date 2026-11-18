@@ -47,7 +47,7 @@ it.each(['queryList', 'businessList', 'queryBusList'] as const)('executes a comp
   expect(sqlite.prepare('select source,evidence_status,completeness,full_range,provenance_state,parse_state from platform_collection').get()).toEqual({ source, evidence_status: 'success', completeness: 'complete', full_range: 1, provenance_state: 'captured', parse_state: 'valid' })
   expect(sqlite.prepare('select sequence_no,page_row_no,position_state from platform_business_observation').all()).toEqual([{ sequence_no: 1, page_row_no: 1, position_state: 'verified' }])
   expect(statements.filter(text => /\b(platform_query|platform_relation)\b/i.test(text))).toEqual([])
-  expect(sqlite.pragma('user_version', { simple: true })).toBe(71613)
+  expect(sqlite.pragma('user_version', { simple: true })).toBe(71614)
   expect(sqlite.pragma('foreign_key_check')).toEqual([]); sqlite.close()
 })
 

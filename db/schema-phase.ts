@@ -1,6 +1,10 @@
 import type Database from 'better-sqlite3'
+import { assertEnterpriseKernelSchema, ENTERPRISE_KERNEL_RUNTIME_VERSION } from './enterprise-kernel-schema'
 export const PLATFORM_RUNTIME_VERSION = 71613
 export const PLATFORM_RETIREMENT_RULE = 'platform-mixed-model-retirement-v1'
+export function isFinalPlatformRuntimeVersion(value: unknown) {
+  return value === PLATFORM_RUNTIME_VERSION || value === ENTERPRISE_KERNEL_RUNTIME_VERSION
+}
 export const RETIRED_PLATFORM_TABLES = [
   'platform_query_legacy_provenance',
   'platform_relation_body_ref', 'platform_query_body_ref', 'platform_version_body_ref',
@@ -19,7 +23,7 @@ export function assertNoRetiredPlatformSchema(sqlite: Database.Database) {
 /** Completion is a one-time offline decision, separate from the 71613 reader phase.
  * Opening a target never installs DDL or replays expand migrations. */
 export function assertFinalPlatformRuntime(sqlite: Database.Database) {
-  if (sqlite.pragma('user_version', { simple: true }) !== PLATFORM_RUNTIME_VERSION) throw new Error('Unsupported final platform runtime schema')
+  if (!isFinalPlatformRuntimeVersion(sqlite.pragma('user_version', { simple: true }))) throw new Error('Unsupported final platform runtime schema')
   const marker = sqlite.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='platform_runtime_completion'").get()
   if (!marker || !sqlite.prepare('SELECT 1 FROM platform_runtime_completion WHERE id=1 AND rule=? AND schema_version=?').get(PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION)) {
     throw new Error('Platform runtime retirement incomplete; finish explicit offline retirement')
@@ -51,4 +55,5 @@ export function assertRosterFileClassificationSchema(sqlite: Database.Database) 
 export function assertApplicationSchema(sqlite: Database.Database) {
   assertFinalPlatformRuntime(sqlite)
   assertRosterFileClassificationSchema(sqlite)
+  assertEnterpriseKernelSchema(sqlite)
 }

@@ -1,3 +1,5 @@
+import { normalizeEnterpriseName } from '../../core/lib/enterprise-name'
+
 /**
  * 领域常量与身份归一化规则 —— app 与项目外 pipeline 的**共享契约**。
  *
@@ -39,8 +41,6 @@ export function isNingboDistrict(district: string): boolean {
   )
 }
 
-const INVISIBLE = /\u{200B}|\u{200C}|\u{200D}|\u{FEFF}|\u{3000}/gu
-
 /**
  * 企业名称归一化:去所有空白与零宽、去全/半角括号、去尾随符号。
  * 既用于 pipeline 写入 `enterprise.name_norm`,也用于 app 的按名搜索 —— 两者必须同规则,
@@ -56,13 +56,7 @@ export function normalizeName(
   raw: string | number | boolean | null | undefined,
   evidence: readonly NameEvidence[] = [],
 ): string {
-  if (raw === null || raw === undefined) return ''
-  const name = String(raw)
-    .replace(INVISIBLE, '')
-    .replace(/[\s\u{00A0}]+/gu, '')
-    .replace(/[（）()]/g, '')
-    .replace(/[√✓、,，.。;；]+$/g, '')
-    .trim()
+  const name = normalizeEnterpriseName(raw)
   const long = name.startsWith('宁波') ? name : `宁波${name}`
   const short = long.slice(2)
   const codes = (key: string) => new Set(evidence

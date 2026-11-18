@@ -2050,3 +2050,70 @@ export const titleCycleDispositionReceipt = sqliteTable('title_cycle_disposition
   requestHash: text('request_hash').notNull(),
   receipt: text('receipt', { mode: 'json' }).$type<{ ids: string[]; version: string; committedAt: string }>().notNull(),
 });
+
+export const enterpriseKernelCompletion = sqliteTable('enterprise_kernel_completion', {
+  id: integer('id').primaryKey(),
+  version: integer('version').notNull(),
+  regionSha256: text('region_sha256'),
+  industrySha256: text('industry_sha256'),
+})
+export const enterpriseRegion = sqliteTable('enterprise_region', {
+  code: text('code').primaryKey().notNull(),
+  name: text('name').notNull(),
+  parentCode: text('parent_code').references((): AnySQLiteColumn => enterpriseRegion.code),
+  level: integer('level').notNull(),
+})
+export const enterpriseIndustry = sqliteTable('enterprise_industry', {
+  code: text('code').primaryKey().notNull(),
+  inputId: text('input_id').notNull().unique(),
+  name: text('name').notNull(),
+  parentCode: text('parent_code').references((): AnySQLiteColumn => enterpriseIndustry.code),
+  level: integer('level').notNull(),
+  description: text('description'),
+})
+export const enterpriseDirectory = sqliteTable('enterprise_directory', {
+  enterpriseId: integer('enterprise_id').primaryKey().references(() => enterprise.id),
+  districtCode: text('district_code').references(() => enterpriseRegion.code),
+  townshipCode: text('township_code').references(() => enterpriseRegion.code),
+  industryCode: text('industry_code').references(() => enterpriseIndustry.code),
+  removedReason: text('removed_reason'),
+  revision: integer('revision').notNull().default(1),
+})
+export const enterpriseFormerName = sqliteTable('enterprise_former_name', {
+  aliasId: integer('alias_id').primaryKey().references(() => enterpriseAlias.id, { onDelete: 'cascade' }),
+  uscc: text('uscc'),
+  renamedYear: integer('renamed_year'),
+})
+export const enterpriseSourceChannel = sqliteTable('enterprise_source_channel', {
+  code: text('code').primaryKey().notNull(),
+  name: text('name').notNull(),
+})
+export const enterpriseSourceListType = sqliteTable('enterprise_source_list_type', {
+  code: text('code').primaryKey().notNull(),
+  name: text('name').notNull(),
+})
+export const enterpriseSource = sqliteTable('enterprise_source', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  module: text('module').notNull(),
+  businessTable: text('business_table').notNull(),
+  versionKey: text('version_key').notNull(),
+  channelCode: text('channel_code').notNull().references(() => enterpriseSourceChannel.code),
+  listTypeCode: text('list_type_code').notNull().references(() => enterpriseSourceListType.code),
+  acquiredOn: text('acquired_on'),
+  series: text('series').notNull(),
+  fileId: integer('file_id').references(() => storedFile.id),
+  sha256: text('sha256'),
+}, t => [uniqueIndex('enterprise_source_version_uq').on(t.module, t.businessTable, t.versionKey)])
+export const enterpriseSourceLink = sqliteTable('enterprise_source_link', {
+  enterpriseId: integer('enterprise_id').notNull().references(() => enterprise.id),
+  sourceId: integer('source_id').notNull().references(() => enterpriseSource.id),
+}, t => [primaryKey({ columns: [t.enterpriseId, t.sourceId] }), index('enterprise_source_link_source_idx').on(t.sourceId, t.enterpriseId)])
+export const rosterAnnouncementIntake = sqliteTable('roster_announcement_intake', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  idempotencyKey: text('idempotency_key').notNull().unique(),
+  digest: text('digest').notNull(),
+  request: text('request').notNull(),
+  removedReason: text('removed_reason'),
+  supplementDigest: text('supplement_digest'),
+  receipt: text('receipt'),
+})
