@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { nativeQueryRows, nativeRelationRows } from '../fixtures/native-evidence'
 /** #428 real public handler HTTP chain; does not claim compiled Nitro evidence. */
 import { CURRENT_RULE_VERSION, LEGACY_CURRENT_RULE_VERSION, LEGACY_QUALIFICATION_ASSESSMENT_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
@@ -38,7 +39,7 @@ it('P_closed_public_award', async () => {
     const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024, decidedYear: 2024, batchSeq: 1 }).returning().get()
     const source = `2024年正式认定合成名单\n1 ${name} ${uscc}\n`
     writeFileSync(join(dir, 'notice.txt'), source)
-    const file = db.insert(schema.storedFile).values({ relPath: 'notice.txt', filename: 'notice.txt', ext: 'txt', source: 'jxj', kind: 'announcement', titleCode: title, bytes: Buffer.byteLength(source), sha256: hash(source) }).returning().get()
+    const file = createClassifiedFile(db, { relPath: 'notice.txt', filename: 'notice.txt', ext: 'txt', bytes: Buffer.byteLength(source), sha256: hash(source) }, { source: 'jxj', kind: 'announcement', titleCode: title })
     const document = db.insert(schema.sourceDocument).values({ source: 'jxj', title: '2024年正式认定合成名单', path: 'notice.txt' }).returning().get()
     const token = 'synthetic428-only'
     api = await startHttpFixture({ routes: {
@@ -157,7 +158,7 @@ async function publicPartition428(spec:PublicPartition428) {
     const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: spec.eventType, year: 2024, decidedYear: businessYear, reviewOutcome: spec.eventType==='review'?'passed':null, batchSeq: 1 }).returning().get()
     const source = `2024年正式认定合成名单\n1 ${name} ${uscc}\n`
     writeFileSync(join(dir, 'notice.txt'), source)
-    const file = db.insert(schema.storedFile).values({ relPath: 'notice.txt', filename: 'notice.txt', ext: 'txt', source: 'jxj', kind: 'announcement', titleCode: title, bytes: Buffer.byteLength(source), sha256: hash(source) }).returning().get()
+    const file = createClassifiedFile(db, { relPath: 'notice.txt', filename: 'notice.txt', ext: 'txt', bytes: Buffer.byteLength(source), sha256: hash(source) }, { source: 'jxj', kind: 'announcement', titleCode: title })
     const document = db.insert(schema.sourceDocument).values({ source: 'jxj', title: '2024年正式认定合成名单', path: 'notice.txt' }).returning().get()
     const token = 'synthetic428-only'
     api = await startHttpFixture({ routes: {

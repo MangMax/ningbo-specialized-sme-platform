@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -159,7 +160,7 @@ function legalWorkerSeed409() {
   const source = minimalPdf({ pages: 1 }), path = 'B409合成公布.pdf'
   writeFileSync(join(filesDir,path),source)
   const sha256 = createHash('sha256').update(source).digest('hex'), bytes = Buffer.byteLength(source)
-  const file = db.insert(schema.storedFile).values({ relPath: path, filename: path, ext: 'pdf', source: 'jxj', kind: 'announcement', sha256, bytes, createdAt: '2026-01-01T00:00:00Z' }).returning().get()
+  const file = createClassifiedFile(db, { relPath: path, filename: path, ext: 'pdf', sha256, bytes, createdAt: '2026-01-01T00:00:00Z' }, { source: 'jxj', kind: 'announcement' })
   const document = { source: 'jxj' as const, title: 'B409合成公布' }
   const request: RosterImportRequest = {
     idempotencyKey: 'actual-worker-409-legal-capture', sourceKind: 'announcement', sourceIdentity: 'B409合成公布',

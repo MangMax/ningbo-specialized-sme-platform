@@ -8,8 +8,8 @@ const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('
 const { assertFinalPlatformRuntime } = await createJiti(import.meta.url, { fsCache: false }).import('../db/schema-phase.ts')
 const [source] = process.argv.slice(2)
 // Explicit additive owner workflow: regenerate only schema from the checked-in native baseline.
-const additive = ['--add-title-cycle-disposition', '--add-import-receipt-bodies'].includes(source)
-if (!source) throw new Error('Usage: node upgrade/generate-runtime-schema.mjs RETIRED_SCHEMA | --add-title-cycle-disposition')
+const additive = ['--add-title-cycle-disposition', '--add-import-receipt-bodies', '--move-roster-file-classification'].includes(source)
+if (!source) throw new Error('Usage: node upgrade/generate-runtime-schema.mjs RETIRED_SCHEMA | --add-title-cycle-disposition | --add-import-receipt-bodies | --move-roster-file-classification')
 const db = additive ? new Database(':memory:') : new Database(source, { readonly: true, fileMustExist: true })
 let baseline
 try {
@@ -19,6 +19,7 @@ if (additive) {
   for (const statement of baseline.runtimeSchemaStatements) db.exec(statement)
   const { upgradeTitleCycleDisposition } = await jiti.import('../db/title-cycle-disposition.ts')
   if (source === '--add-title-cycle-disposition') upgradeTitleCycleDisposition(db)
+  else if (source === '--move-roster-file-classification') { const { upgradeRosterFileClassification } = await jiti.import('./roster-file-classification.ts'); upgradeRosterFileClassification(db) }
   else { const { expandImportReceiptBodies } = await jiti.import('../db/import-receipt-bodies.ts'); expandImportReceiptBodies(db) }
 }
   if (!additive) assertFinalPlatformRuntime(db)

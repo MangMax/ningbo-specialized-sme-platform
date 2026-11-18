@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { eq } from 'drizzle-orm'
 import { mkdtempSync,rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -90,7 +91,7 @@ it('revalidates native recognized-export proof and correspondence when the selec
   expect(directoryDetail.platform.businessRecords[0]?.observationRefs[0]?.typedFields).toMatchObject({ interface: 'recognized_list', validityDateRaw: '2028-01-01', maintenanceYear: 2026, maintenanceBatch: '2026-1', nameRaw: '原生合同企业' })
   const batch = f.db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'native-export.xlsx', sha256: 'b'.repeat(64), importStatus: 'imported' }).returning().get()
   const exported = f.db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo: 1, usccRaw: raw.tyshxydm, nameRaw: raw.qymc }).returning().get()
-  const freeze = f.db.insert(schema.storedFile).values({ relPath: 'synthetic/native-freeze', filename: 'native-freeze.txt', ext: 'txt', bytes: 24, sha256: 'c'.repeat(64), source: 'miit', kind: 'export' }).returning().get()
+  const freeze = createClassifiedFile(f.db, { relPath: 'synthetic/native-freeze', filename: 'native-freeze.txt', ext: 'txt', bytes: 24, sha256: 'c'.repeat(64) }, { source: 'miit', kind: 'export' })
   const proof: ProofRequest = { idempotencyKey: 'native-proof', sourceIdentity: 'native-freeze', actor: { type: 'agent', id: 'test' }, basis: 'Explicit synthetic same-account full-title snapshot', ruleId: 'native-contract', ruleVersion: '1', operations: [{
     action: 'create', kind: 'current_source_equivalence', status: 'confirmed', evidence: {
       queryId: source.queryId, exportBatchId: batch.id, titleCode: 'specialized_sme', queryReference: 'platform_query.collectionEvidence', exportReference: 'platform_export_batch.sha256',

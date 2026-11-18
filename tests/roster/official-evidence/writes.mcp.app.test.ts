@@ -40,7 +40,8 @@ sqlite.exec(`INSERT INTO enterprise(id,name,name_norm) VALUES(1,'Alpha','Alpha')
   INSERT INTO record(id,enterprise_id,title_code,source) VALUES(1,1,'specialized_sme','jxj'),(2,2,'specialized_sme','jxj');
   INSERT INTO record_event(id,record_id,event_type,year) VALUES(1,1,'award',2021),(2,1,'review',2024),(3,2,'award',2021);
   INSERT INTO source_document(id,source,title,path) VALUES(1,'jxj','Explicit publication','notice.txt');
-  INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(1,'notice.txt','notice.txt','txt','jxj','announcement','specialized_sme',${Buffer.byteLength(bytes)},'${sha256}','synthetic');`)
+  INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(1,'notice.txt','notice.txt','txt',${Buffer.byteLength(bytes)},'${sha256}','synthetic');
+  INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (1, 'jxj', 'announcement', 'specialized_sme');`)
   return { db, sqlite, filesDir }
 }
 let db: ReturnType<typeof makeFixture>['db'], sqlite: Database.Database, filesDir: string

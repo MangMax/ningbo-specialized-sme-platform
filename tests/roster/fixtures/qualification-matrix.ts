@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
@@ -141,7 +142,7 @@ export function qualificationReferenceLiterals(sqlite: Database.Database) {
   const db = drizzle(sqlite, { schema })
   function officialFile() {
     const bytes = Buffer.from('synthetic_408_formal_source_bytes')
-    return db.insert(schema.storedFile).values({ relPath: 'synthetic/408/matrix.pdf', filename: 'matrix.pdf', ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), source: 'jxj', kind: 'announcement' }).returning().get()
+    return createClassifiedFile(db, { relPath: 'synthetic/408/matrix.pdf', filename: 'matrix.pdf', ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }, { source: 'jxj', kind: 'announcement' })
   }
   // Only legacy non-confirmed states are constructed directly. Confirmed edges
   // in the new controls always use the existing preflight/commit capability.

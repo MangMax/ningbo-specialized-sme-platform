@@ -37,3 +37,18 @@ export function assertFinalPlatformRuntime(sqlite: Database.Database) {
     platform_business_record_version v,platform_collection_page cp,platform_collection_unfinished cu,
     platform_collection_condition cc LIMIT 0`).all()
 }
+
+export function assertRosterFileClassificationSchema(sqlite: Database.Database) {
+  const columns = sqlite.prepare("SELECT name FROM pragma_table_info('stored_file')").pluck().all()
+  const expected = ['id', 'rel_path', 'display_name', 'filename', 'ext', 'bytes', 'sha256', 'created_at', 'removed_at']
+  if (!expected.every(column => columns.includes(column)) || columns.length !== expected.length
+    || !sqlite.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='roster_file_classification'").get()) {
+    throw new Error('File classification schema missing; run explicit offline file classification upgrade')
+  }
+  sqlite.prepare('SELECT file_id, source, kind, year, batch, title_code, category_state, parse_state FROM roster_file_classification LIMIT 0').all()
+}
+
+export function assertApplicationSchema(sqlite: Database.Database) {
+  assertFinalPlatformRuntime(sqlite)
+  assertRosterFileClassificationSchema(sqlite)
+}

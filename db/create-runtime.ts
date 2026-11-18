@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import { runtimeSchemaStatements, runtimeCapabilities, runtimeSchemaHash } from './runtime-schema.generated'
-import { assertFinalPlatformRuntime, PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION } from './schema-phase'
+import { assertApplicationSchema, PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION } from './schema-phase'
 import { TITLE_SEED } from './titles'
 
 /** Native empty database creation. Historical migration records remain empty. */
@@ -16,7 +16,7 @@ export function createRuntimeSchema(sqlite: Database.Database) {
     sqlite.prepare('INSERT INTO __drizzle_migrations(hash,created_at) VALUES(?,?)').run(runtimeSchemaHash, 71613)
     sqlite.prepare('INSERT INTO platform_runtime_completion(id,rule,schema_version,completed_at) VALUES(1,?,?,?)').run(PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION, new Date().toISOString())
     sqlite.pragma(`user_version=${PLATFORM_RUNTIME_VERSION}`)
-    assertFinalPlatformRuntime(sqlite)
+    assertApplicationSchema(sqlite)
     if (sqlite.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Native initialization foreign key conflict')
   }).immediate()
 }

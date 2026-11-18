@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -14,7 +15,7 @@ it('bounds fixed evidence preflight and history materialization across unrelated
   mkdirSync(filesDir)
   const bytes = minimalPdf({ pages: 3 }); writeFileSync(join(filesDir, 'notice.pdf'), bytes)
   const db = initializeDb({ create: true,  dbPath: join(dir, 'isolated.db') })
-  db.insert(schema.storedFile).values({ relPath: 'notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: Buffer.byteLength(bytes), sha256: createHash('sha256').update(bytes).digest('hex'), source: 'jxj', kind: 'announcement' }).run()
+  createClassifiedFile(db, { relPath: 'notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: Buffer.byteLength(bytes), sha256: createHash('sha256').update(bytes).digest('hex') }, { source: 'jxj', kind: 'announcement' })
   const owner = db.insert(schema.enterprise).values({ name: '固定目标', nameNorm: '固定目标' }).returning().get()
   const record = db.insert(schema.record).values({ enterpriseId: owner.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
   const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2022 }).returning().get()

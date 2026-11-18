@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
@@ -51,7 +52,7 @@ async function fixture() {
   // Infrastructure catalog only. Normal domain facts below go through B public commands.
   for (const [index, path] of ['2021公布.pdf', '2024公布.pdf', '独立佐证.pdf'].entries()) {
     writeFileSync(join(filesDir, path), sourceBytes)
-    db.insert(schema.storedFile).values({ id: index + 1, relPath: path, filename: path, ext: 'pdf', source: 'jxj', kind: 'announcement', bytes: Buffer.byteLength(sourceBytes), sha256: digest, createdAt: 'synthetic' }).run()
+    createClassifiedFile(db, { id: index + 1, relPath: path, filename: path, ext: 'pdf', bytes: Buffer.byteLength(sourceBytes), sha256: digest, createdAt: 'synthetic' }, { source: 'jxj', kind: 'announcement' })
   }
   const server = await startHttpFixture({ routes: {
     ...Object.fromEntries((['preflight', 'commit'] as const).map(action => ['/import/' + action, (input: Parameters<typeof handleRosterImportRequest>[1]) => handleRosterImportRequest(action, input, { db, apiToken: 'synthetic-355', filesDir, executeImport: async (database, a, request, errors, context) => a === 'preflight' ? preflightRosterImport(database, request, errors, { ...context, filesDir }) : commitRosterImport(database, request, errors, { ...context, filesDir }) })])),

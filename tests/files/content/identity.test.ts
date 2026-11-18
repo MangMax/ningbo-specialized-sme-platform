@@ -52,7 +52,8 @@ describe("A registered content identity", () => {
   it('scan reports same-size replacement without changing registered identity or parse state', async () => {
     await backfillFromDisk(db, root)
     const first = listStoredFiles(db).rows[0]!
-    db.update(schema.storedFile).set({ parseState: 'parsed', displayName: 'Reviewed notice' }).where(eq(schema.storedFile.id, first.id)).run()
+    db.update(schema.storedFile).set({ displayName: 'Reviewed notice' }).where(eq(schema.storedFile.id, first.id)).run()
+    db.update(schema.rosterFileClassification).set({ parseState: 'parsed' }).where(eq(schema.rosterFileClassification.fileId, first.id)).run()
     const before = getStoredFile(db, first.id)
     const maintenance = readFileMaintenance(db, first.id)
     put(relPath, 'xyz')
@@ -68,7 +69,8 @@ describe("A registered content identity", () => {
 
   it('upload rejects changed bytes with 409 and preserves removed state and maintenance history', async () => {
     const { row } = await register()
-    db.update(schema.storedFile).set({ removedAt: '2026-11-05T00:00:00.000Z', parseState: 'parsed' }).where(eq(schema.storedFile.id, row.id)).run()
+    db.update(schema.storedFile).set({ removedAt: '2026-11-05T00:00:00.000Z' }).where(eq(schema.storedFile.id, row.id)).run()
+    db.update(schema.rosterFileClassification).set({ parseState: 'parsed' }).where(eq(schema.rosterFileClassification.fileId, row.id)).run()
     const before = readFileMaintenance(db, row.id)
     put(relPath, 'xyz')
     await expect(register()).rejects.toMatchObject({ statusCode: 409, conflict: {

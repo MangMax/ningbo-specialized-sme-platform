@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { initializeDb } from '../../../db/client'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 /** #407 parent-frozen correction/readback cases.
@@ -50,7 +51,7 @@ beforeEach(async () => {
   record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'innovative_sme', source: 'jxj', nameRaw: '合成公布原名', usccRaw: enterprise.usccNorm }).returning().get()
   event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'review', year: 2025, batchSeq: null, decidedYear: null, reviewOutcome: null }).returning().get()
   evidence = db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'notice.txt', attachment: '附件2', listNo: 1 }).returning().get()
-  file = db.insert(schema.storedFile).values({ relPath: 'notice.txt', filename: 'notice.txt', ext: 'txt', bytes: Buffer.byteLength(SOURCE), sha256: SOURCE_HASH, source: 'jxj', kind: 'announcement' }).returning().get()
+  file = createClassifiedFile(db, { relPath: 'notice.txt', filename: 'notice.txt', ext: 'txt', bytes: Buffer.byteLength(SOURCE), sha256: SOURCE_HASH }, { source: 'jxj', kind: 'announcement' })
   document = db.insert(schema.sourceDocument).values({ source: 'jxj', title: '2025年新认定第二批及2022年企业复核通过名单', path: 'notice.txt' }).returning().get()
   const correctionRoute = (action: 'preflight' | 'commit' | 'get' | 'audit') =>
     (request: { method: string; headers: Record<string, string | undefined>; body: unknown; query: Record<string, unknown> }) =>

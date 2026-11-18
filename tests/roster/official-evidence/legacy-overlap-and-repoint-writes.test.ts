@@ -45,7 +45,8 @@ async function fixture() {
     INSERT INTO record_event(id,record_id,event_type,year) VALUES(1,1,'award',2021),(2,2,'award',2024);
     INSERT INTO record_evidence(id,record_event_id,source_file,list_no) VALUES(1,1,'other.txt',1);
     INSERT INTO source_document(id,source,title,path) VALUES(1,'jxj','Declared publication','notice.txt');
-    INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(1,'notice.txt','notice.txt','txt','jxj','announcement','specialized_sme',${Buffer.byteLength(text)},'${digest(text)}','synthetic');`)
+    INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(1,'notice.txt','notice.txt','txt',${Buffer.byteLength(text)},'${digest(text)}','synthetic');
+    INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (1, 'jxj', 'announcement', 'specialized_sme');`)
   current.db = db; current.filesDir = filesDir
   const server = createServer(toNodeListener(createApp().use(router)))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -188,7 +189,8 @@ for (const reverse of [false, true]) it(`R1 F2 typed and legacy duplicate normal
 
 type OfficialFixture = Awaited<ReturnType<typeof fixture>>
 function seedRepoint(f: OfficialFixture, from = 'other.txt', known?: 'section' | 'declaration') {
-  f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(2,'other.txt','other.txt','txt','jxj','announcement','specialized_sme',?,?,'synthetic')").run(Buffer.byteLength(text), digest(text))
+  f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(2,'other.txt','other.txt','txt',?,?,'synthetic')").run(Buffer.byteLength(text), digest(text))
+  f.sqlite.exec("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (2, 'jxj', 'announcement', 'specialized_sme')")
   f.sqlite.prepare('INSERT INTO record_evidence(id,record_event_id,source_file,list_no) VALUES(2,2,?,10)').run(from)
   if (known) {
     f.sqlite.exec("INSERT INTO import_batch(id,idempotency_key,source_kind,source_identity,created_at) VALUES(1,'seed','announcement','synthetic','synthetic')")
@@ -306,7 +308,8 @@ it("S1 repoint locator drift after preflight invalidates the common locked plan 
   const input = f.request({ ...legacyRepoint(f, 'notice.txt'), officialEvidenceAppends: [f.append(f.row({ listNo: 30 }))] })
   const plan = await f.post('preflight', input); expect(plan.preflight?.conflicts).toEqual([])
   writeFileSync(join(f.filesDir, 'third.txt'), text)
-  f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(3,'third.txt','third.txt','txt','jxj','announcement','specialized_sme',?,?,'synthetic')").run(Buffer.byteLength(text), digest(text))
+  f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(3,'third.txt','third.txt','txt',?,?,'synthetic')").run(Buffer.byteLength(text), digest(text))
+  f.sqlite.exec("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (3, 'jxj', 'announcement', 'specialized_sme')")
   f.sqlite.exec("UPDATE record_evidence SET source_file='third.txt' WHERE id=2")
   const saved = await f.post('commit', { ...input, payload: { ...input.payload, officialEvidencePlanHash: plan.preflight?.officialEvidencePlanHash } })
   expect(saved.status).toBe('failed')

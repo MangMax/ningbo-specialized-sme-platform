@@ -179,10 +179,6 @@ export const recordEvidence = sqliteTable(
  *
  * `rel_path` 是文件库内**相对路径**(`jxj/announcement/2024/1/….pdf`),与
  * `record_evidence.source_file` 同一口径 —— 「被记录引用数」即按此列精确匹配计数。
- *
- * `source` / `kind` / `year` / `batch` **可空**:允许「上传时未定、后续回写」(票 12)。
- * 分类状态与解析状态分开记:`category_state` 说的是**分类**是否确定,
- * `parse_state` 说的是**解析**(从文件产出记录)是否完成;两者互不蕴含。
  */
 export const storedFile = sqliteTable(
   'stored_file',
@@ -197,6 +193,25 @@ export const storedFile = sqliteTable(
     ext: text('ext').notNull(),
     bytes: integer('bytes').notNull(),
     sha256: text('sha256').notNull(),
+    createdAt: text('created_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    /**
+     * 移出文件库的时间。**软删除标志**:DELETE 默认只打这个标、不删磁盘。
+     * 有它回填才不会把刚移出的文件又插回来(回填是幂等的,见 `server/utils/stored-files.ts`)。
+     */
+    removedAt: text('removed_at'),
+  },
+  (t) => [
+    uniqueIndex('stored_file_rel_path_uq').on(t.relPath),
+  ],
+)
+
+/** 文件的名录分类允许未定；分类和解析状态分别记录。 */
+export const rosterFileClassification = sqliteTable(
+  'roster_file_classification',
+  {
+    fileId: integer('file_id').primaryKey().references(() => storedFile.id, { onDelete: 'cascade' }),
     /** 分类(可空,见上)。 */
     source: text('source', { enum: ['jxj', 'miit'] }),
     kind: text('kind', { enum: ['announcement', 'export'] }),
@@ -219,20 +234,11 @@ export const storedFile = sqliteTable(
     parseState: text('parse_state', { enum: ['unparsed', 'parsed', 'failed'] })
       .notNull()
       .default('unparsed'),
-    createdAt: text('created_at')
-      .notNull()
-      .$defaultFn(() => new Date().toISOString()),
-    /**
-     * 移出文件库的时间。**软删除标志**:DELETE 默认只打这个标、不删磁盘。
-     * 有它回填才不会把刚移出的文件又插回来(回填是幂等的,见 `server/utils/stored-files.ts`)。
-     */
-    removedAt: text('removed_at'),
   },
   (t) => [
-    uniqueIndex('stored_file_rel_path_uq').on(t.relPath),
-    index('stored_file_source_idx').on(t.source),
-    index('stored_file_category_state_idx').on(t.categoryState),
-    index('stored_file_parse_state_idx').on(t.parseState),
+    index('roster_file_classification_source_idx').on(t.source),
+    index('roster_file_classification_category_state_idx').on(t.categoryState),
+    index('roster_file_classification_parse_state_idx').on(t.parseState),
   ],
 )
 
@@ -261,7 +267,7 @@ export const storedFileAudit = sqliteTable(
  * 在同一个附件里并置 2021 与 2022 两段名单。所以文件级的单个 `year`/`batch` 表达不了它,
  * 真实粒度在这里:`(称号, 事件类型, 年份, 批次, 附件)`。
  *
- * 与 `stored_file.year` / `batch`(**公布**年份/批次,单值)分工明确:那里答「这份文件是
+ * 与 `roster_file_classification.year` / `batch`(**公布**年份/批次,单值)分工明确:那里答「这份文件是
  * 哪一批公布的」,这里答「文件里都有什么」。**别把两者混用**。
  *
  * `derived` 是从 `record_evidence` 聚合的派生结果,`agent` 是代理解析声明;升级前已存在的
@@ -276,7 +282,7 @@ export const storedFilePart = sqliteTable(
     fileId: integer('file_id')
       .notNull()
       .references(() => storedFile.id, { onDelete: 'cascade' }),
-    /** 该段的称号。与 `stored_file.title_code` 同源表(称号字典)。 */
+    /** 该段的称号。与 `roster_file_classification.title_code` 同源表(称号字典)。 */
     titleCode: text('title_code')
       .notNull()
       .references(() => title.code),

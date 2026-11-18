@@ -10,6 +10,7 @@ import {
   type FileSource,
 } from '../../lib/stored-file'
 import { getStoredFile, resolveInsideRoot, sha256Of, type StoredFileRow } from './stored-files'
+import { createClassifiedFile } from './roster-file-classification'
 import { recordLegacyFileMaintenanceWrite } from './file-maintenance'
 import { landingSegments } from './tus'
 import { compareFileContentIdentity, type FileContentConflict } from './file-content-identity'
@@ -194,6 +195,7 @@ async function registerStoredFileUnlogged(
       .where(eq(schema.storedFile.relPath, facts.relPath))
       .get()
 
+    const classification = { source, kind, year, batch, categoryState }
     if (existing) {
       const conflict = compareFileContentIdentity({ ...existing, fileId: existing.id }, facts)
       if (conflict) {
@@ -201,20 +203,17 @@ async function registerStoredFileUnlogged(
       }
       const before = getStoredFile(tx, existing.id)!
       tx.update(schema.storedFile)
-        .set({ filename, ext: facts.ext, source, kind, year, batch, categoryState, removedAt: null })
+        .set({ filename, ext: facts.ext, removedAt: null })
         .where(eq(schema.storedFile.id, existing.id))
         .run()
+      tx.update(schema.rosterFileClassification).set(classification)
+        .where(eq(schema.rosterFileClassification.fileId, existing.id)).run()
       const row = getStoredFile(tx, existing.id)!
       recordLegacyFileMaintenanceWrite(tx, before, row)
       return { row, created: false }
     }
 
-    const inserted = tx
-      .insert(schema.storedFile)
-      .values({ ...facts, source, kind, year, batch, categoryState })
-      .returning({ id: schema.storedFile.id })
-      .get()
-
+    const inserted = createClassifiedFile(tx, facts, classification)
     return { row: getStoredFile(tx, inserted.id)!, created: true }
   }, { behavior: 'immediate' })
 }

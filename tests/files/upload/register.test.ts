@@ -64,6 +64,24 @@ function rows() {
   return useDb().select().from(schema.storedFile).all()
 }
 
+it('rolls back the file row when classification cannot be created', async () => {
+  const relPath = await putFile('jxj/announcement/2025/atomic.pdf', 'synthetic source')
+  const db = useDb()
+  const input = parseUploadDeclaration({ relPath, source: 'jxj', kind: 'announcement', year: 2025 })
+  db.$client.exec(`CREATE TEMP TRIGGER reject_classification
+    BEFORE INSERT ON roster_file_classification
+    BEGIN SELECT RAISE(ABORT, 'synthetic classification failure'); END`)
+  try {
+    await expect(registerStoredFile(db, filesDir, input)).rejects.toThrow('synthetic classification failure')
+    expect(rows().some(file => file.relPath === relPath)).toBe(false)
+  } finally {
+    db.$client.exec('DROP TRIGGER reject_classification')
+  }
+  await expect(registerStoredFile(db, filesDir, input)).resolves.toMatchObject({
+    created: true, row: { relPath, source: 'jxj', year: 2025, categoryState: 'set', parseState: 'unparsed' },
+  })
+})
+
 // ---------------------------------------------------------------------------
 // 1. 请求体解析
 // ---------------------------------------------------------------------------

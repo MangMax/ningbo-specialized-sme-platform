@@ -1,3 +1,4 @@
+import { fileClassificationJoin, classificationColumns } from './roster-file-classification'
 import { createHash } from 'node:crypto'
 import { statSync, realpathSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
@@ -51,7 +52,19 @@ type Row = {
   after: { year: number | null; batchSeq: number | null }
 }
 function snapshot(db: Db, id: number, dir: string, request: SyncRequest) {
-  const file = db.select().from(schema.storedFile).where(eq(schema.storedFile.id, id)).get()
+  // Preserve the field order used by persisted in-flight plan fingerprints.
+  const file = db.select({
+    id: schema.storedFile.id,
+    relPath: schema.storedFile.relPath,
+    displayName: schema.storedFile.displayName,
+    filename: schema.storedFile.filename,
+    ext: schema.storedFile.ext,
+    bytes: schema.storedFile.bytes,
+    sha256: schema.storedFile.sha256,
+    ...classificationColumns,
+    createdAt: schema.storedFile.createdAt,
+    removedAt: schema.storedFile.removedAt,
+  }).from(schema.storedFile).innerJoin(schema.rosterFileClassification, fileClassificationJoin).where(eq(schema.storedFile.id, id)).get()
   if (!file || file.removedAt) fail('file_unavailable', '文件不存在或已移出', 404)
   const source = physical(db, id, dir)
   const declarations = db

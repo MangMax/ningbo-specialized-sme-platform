@@ -43,7 +43,10 @@ async function fixture() {
   closes.push(() => { expect(sqlite.pragma('foreign_keys', { simple: true })).toBe(1); sqlite.close() })
   const db = drizzle(sqlite, { schema }); createRuntimeSchema(sqlite)
   // Infrastructure catalog only. All enterprise/record/event/evidence/declaration state below is public-command produced.
-  for (const [id, path] of [[1, 'notice.txt'], [2, 'other.txt']] as const) sqlite.prepare('INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(?,?,?,\'txt\',\'jxj\',\'announcement\',\'specialized_sme\',?,?,\'synthetic\')').run(id, path, path, Buffer.byteLength(text), sha256)
+  for (const [id, path] of [[1, 'notice.txt'], [2, 'other.txt']] as const) {
+    sqlite.prepare('INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(?,?,?,\'txt\',?,?,\'synthetic\')').run(id, path, path, Buffer.byteLength(text), sha256)
+    sqlite.prepare("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (?, 'jxj', 'announcement', 'specialized_sme')").run(id)
+  }
   current.db = db; current.filesDir = filesDir
   const server = createServer(toNodeListener(createApp().use(router)))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))

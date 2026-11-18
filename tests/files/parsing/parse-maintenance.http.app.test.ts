@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { assertEnterpriseDetailSnapshotEqual } from '../../roster/assertions/enterprise-detail-snapshot'
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
@@ -17,7 +18,7 @@ let service: { baseUrl: string; stop: () => Promise<void> }
 let serial = 0
 function file() {
   serial++
-  return db.insert(schema.storedFile).values({ relPath: `synthetic-${serial}.pdf`, filename: `synthetic-${serial}.pdf`, ext: 'pdf', bytes: 9, sha256: 'synthetic', categoryState: 'unset' }).returning().get()
+  return createClassifiedFile(db, { relPath: `synthetic-${serial}.pdf`, filename: `synthetic-${serial}.pdf`, ext: 'pdf', bytes: 9, sha256: 'synthetic' }, { categoryState: 'unset' })
 }
 const part = { titleCode: 'specialized_sme', eventKind: 'award', year: 2024, batch: 2, attachment: '附 件 1', rowCount: 3 }
 const actor = { type: 'agent', id: 'test-105' }
@@ -411,7 +412,12 @@ it('accepts exact baseline MCP payloads and returns the exact legacy envelope fo
   const f = file()
   const initial = await state(f.id)
   const normalized = { ...part, attachment: '附件1' }
-  const expectedFile = { ...f, displayName: f.filename, referenceCount: 0, parseState: 'parsed', parts: [{ ...normalized, origin: 'agent', hasConflict: false }] }
+  const expectedFile = {
+    ...f, displayName: f.filename, referenceCount: 0,
+    source: null, kind: null, year: null, batch: null, titleCode: null,
+    categoryState: 'unset', parseState: 'parsed',
+    parts: [{ ...normalized, origin: 'agent', hasConflict: false }],
+  }
   // Exact baseline payload: no new envelope fields, and no modern response keys.
   const first = await call('save_parse_result', { fileId: f.id, parts: [part] })
   expect(first).toEqual({ file: expectedFile, parts: [normalized], parseState: 'parsed' })
@@ -480,7 +486,7 @@ function inputFile310() {
   const relPath = `input-310-${serial}.pdf`
   const bytes = Buffer.from('synthetic parse source 310')
   writeFileSync(join(dir, 'files', relPath), bytes)
-  return db.insert(schema.storedFile).values({ relPath, filename: relPath, ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }).returning().get()
+  return createClassifiedFile(db, { relPath, filename: relPath, ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }, {})
 }
 async function ocr310(id: number, text: string) {
   const result = await call('save_ocr_result', { fileId: id, markdown: `<!-- page: 1 -->\n${text}` })
@@ -626,7 +632,7 @@ function rangeFile669(ext = 'pdf') {
   pdf += `xref\n0 7\n0000000000 65535 f \n${offsets.slice(1).map(n => `${String(n).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
   const relPath = `range-669-${serial}.${ext}`
   writeFileSync(join(dir, 'files', relPath), pdf)
-  return db.insert(schema.storedFile).values({ relPath, filename: relPath, ext, bytes: Buffer.byteLength(pdf), sha256: createHash('sha256').update(pdf).digest('hex') }).returning().get()
+  return createClassifiedFile(db, { relPath, filename: relPath, ext, bytes: Buffer.byteLength(pdf), sha256: createHash('sha256').update(pdf).digest('hex') }, {})
 }
 async function rangePlan669(id: number) {
   const response = await http(id, 'POST', { kind: 'file', verifyPhysicalPages: true }, '/preflight')

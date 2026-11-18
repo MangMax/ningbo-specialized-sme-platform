@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { mkdtempSync, writeFileSync, rmSync, statSync } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -15,17 +16,7 @@ writeFileSync(`${dir}/notice.pdf`, pdf)
 const sha256 = createHash('sha256').update(pdf).digest('hex')
 const s = statSync(`${dir}/notice.pdf`, { bigint: true }),
   epoch = [s.dev, s.ino, s.mode, s.size, s.mtimeNs, s.ctimeNs].join(':')
-const file = db
-  .insert(schema.storedFile)
-  .values({
-    relPath: 'notice.pdf',
-    filename: 'notice.pdf',
-    ext: 'pdf',
-    bytes: pdf.length,
-    sha256,
-  })
-  .returning()
-  .get()
+const file = createClassifiedFile(db, { relPath: 'notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: pdf.length, sha256 }, {})
 const enterprise = db
   .insert(schema.enterprise)
   .values({ name: '同步合成企业', nameNorm: '同步合成企业' })
@@ -278,17 +269,7 @@ function sample(year: number | null = null, batchSeq: number | null = null) {
   writeFileSync(`${dir}/${path}`, pdf)
   const s = statSync(`${dir}/${path}`, { bigint: true }),
     epoch = [s.dev, s.ino, s.mode, s.size, s.mtimeNs, s.ctimeNs].join(':')
-  const f = db
-    .insert(schema.storedFile)
-    .values({
-      relPath: path,
-      filename: path,
-      ext: 'pdf',
-      bytes: pdf.length,
-      sha256,
-    })
-    .returning()
-    .get()
+  const f = createClassifiedFile(db, { relPath: path, filename: path, ext: 'pdf', bytes: pdf.length, sha256 }, {})
   const enterprise = db
     .insert(schema.enterprise)
     .values({ name: `反例${tag}`, nameNorm: `反例${tag}` })

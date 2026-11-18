@@ -173,8 +173,9 @@ function lineage310(snapshot: Record<string, unknown> | undefined): InputLineage
 
 /** Exact-ID projection. Source-derived coordinates participate in the edit version too. */
 export function readParse105(db: Db, fileId: number) {
-  const file = db.select({ id: schema.storedFile.id, parseState: schema.storedFile.parseState, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt })
-    .from(schema.storedFile).where(eq(schema.storedFile.id, fileId)).get()
+  const file = db.select({ id: schema.storedFile.id, parseState: schema.rosterFileClassification.parseState, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt })
+    .from(schema.storedFile)
+    .innerJoin(schema.rosterFileClassification, eq(schema.storedFile.id, schema.rosterFileClassification.fileId)).where(eq(schema.storedFile.id, fileId)).get()
   if (!file) return fail(404, '文件不存在')
   const parts = listFileParts(db, [fileId]).get(fileId) ?? []
   const last = db.select({ id: schema.fileParseAudit105.id, after: schema.fileParseAudit105.after }).from(schema.fileParseAudit105)

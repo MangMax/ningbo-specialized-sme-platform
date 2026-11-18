@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { createHash } from 'node:crypto'
@@ -37,7 +38,7 @@ const eventCorrections = '/api/roster/events/corrections/'
 function fixture(name: string) {
   const sourceFile = name + '.pdf'
   writeFileSync(join(filesDir, sourceFile), bytes)
-  const file = db.insert(schema.storedFile).values({ relPath: sourceFile, filename: sourceFile, ext: 'pdf', bytes: bytes.length, sha256, source: 'jxj', kind: 'announcement' }).returning().get()
+  const file = createClassifiedFile(db, { relPath: sourceFile, filename: sourceFile, ext: 'pdf', bytes: bytes.length, sha256 }, { source: 'jxj', kind: 'announcement' })
   const enterprise = db.insert(schema.enterprise).values({ name, nameNorm: name }).returning().get()
   const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
   const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2021, decidedYear: 2021, batchSeq: 1, sortKey: 2021 }).returning().get()
