@@ -49,14 +49,6 @@ defineRouteMeta({
               },
               params: {
                 type: 'object',
-                description:
-                  'current-roster-export 使用 { titleCode: little_giant|specialized_sme|innovative_sme, clientRequestId: string, regenerateOf?: jobId }；运行/排队最多9个，独立进程生成，产物保留7天。' +
-                  'platform-query-batch 使用 /api/platform/batches 的 items/limits，推荐专用接口（支持稳定 itemId 和局部重试）。kind 自己的参数。`render-pages`:`{ files: string[](相对文件库根的 PDF 路径), dpi?: 72–600(默认 300), force?: boolean }`。' +
-                  '`ocr`:`{ files: string[](同上), model?: string }` —— 须先生成完整页图，不支持 pageRanges；需要配置页保存 OCR token 或服务端配好 `NUXT_OCR_TOKEN`。' +
-                  '`reconcile`:`{ titles?: string[](称号代号), directions?: ("missing_in_miit"|"extra_in_miit")[], ' +
-                  'usccs?: string[](只查这几个统一社会信用代码), limit?: number(最多处理多少个差异目标), ' +
-                  'concurrency?: 1–12(默认 4), freshnessHours?: number(复用新鲜查询与判定的窗口,默认 24), write?: boolean(默认 true;false = 只采集预览不回写) }` ' +
-                  '—— 需要配置页保存 Cookie 或服务端配好 `MIIT_COOKIE`,未配时任务**明确失败且一行不写**(不产出一片「未查询」的假证据)。',
               },
             },
           },

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { fileRefShape } from '../../utils/file-agent-reference'
-import { openFileStore } from '../../../../../server/utils/mcp-files'
+import { openOcrFileStore } from '../../utils/ocr-files'
 import { getOcrResultForFile, requireOcrFileRef, ocrPageSchema } from '../../utils/ocr-page-lifecycle'
 
 /**
@@ -37,7 +37,7 @@ export default defineMcpTool({
     page: ocrPageSchema.optional().describe('页号;省略则要整份文件的 OCR 结果'),
   },
   handler: async (input) => {
-    const { db, root } = await openFileStore()
+    const { db, root } = await openOcrFileStore()
     const row = requireOcrFileRef(db, input, true)
     return getOcrResultForFile(db, row, input.page, input.includeVersion ?? false, root)
   },

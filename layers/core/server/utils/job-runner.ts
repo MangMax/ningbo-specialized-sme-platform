@@ -134,6 +134,8 @@ export interface JobSpec {
   note?: string
   /** 参数形状的**一句话**说明。给 `GET /api/jobs/kinds` 用 —— 代理据此知道怎么拼 `params`。 */
   paramsHint?: string
+  /** Development OpenAPI contribution; order preserves the published parameter guide. */
+  openAPIParams?: { description: string; order?: number }
   parse: (raw: Record<string, unknown>) => JobParseResult
   /** 提交时就能算出的**分母**(进度条的 total)。默认 1。 */
   total?: (params: Record<string, unknown>) => number

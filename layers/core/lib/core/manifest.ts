@@ -48,6 +48,7 @@ export default defineAppModule({
   ],
   credentials: [{
     key: 'ocrToken',
+    openAPI: { actionLabel: 'OCR' },
     name: 'OCR token',
     description: '保存后供新任务使用，不会自动发起 OCR。优先级为显式覆盖、页面保存值、NUXT_OCR_TOKEN、PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN。',
     purpose: '在线 OCR',

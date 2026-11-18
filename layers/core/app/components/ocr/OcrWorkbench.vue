@@ -85,6 +85,7 @@ const {
   pdfFiles,
   fileMatches,
   fileYears,
+  fileSources,
   keyword,
   source,
   year,
@@ -1088,6 +1089,7 @@ const fileSheetBlockedReason = computed(() =>
       :file-matches="fileMatches"
       :total="pdfFiles.length"
       :file-years="fileYears"
+      :file-sources="fileSources"
       :keyword="keyword"
       :source="source"
       :year="year"

@@ -1,6 +1,8 @@
 export type FileAdmissionPolicy = (path: string, siblings?: ReadonlySet<string>) =>
   { inScope: boolean; reason: string; detail: string }
 
+export type FileSourceOption = { readonly value: string; readonly label: string }
+
 export interface FileFilter {
   readonly key: string
   readonly label: string
@@ -18,6 +20,7 @@ export interface FileDetailDraft {
 export interface FileCategory {
   readonly admission: FileAdmissionPolicy
   readonly filters?: readonly FileFilter[]
+  readonly ocrSources?: readonly FileSourceOption[]
   readonly columns?: readonly { label: string; width: number; tooltip?: string; align?: 'right' }[]
 }
 

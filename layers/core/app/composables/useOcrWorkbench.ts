@@ -6,6 +6,7 @@ import {
   confirmWrittenPage,
   pageReviewState,
   workbenchCounts,
+  type OcrWorkbenchFile,
   type WorkbenchRow,
 } from '#core/lib/ocr-workbench'
 import { OCR_CHANNELS } from '#core/lib/ocr-labels'
@@ -13,10 +14,11 @@ import { pageLabel } from '#core/lib/page-gallery'
 import { describeFetchError } from '../../lib/file-content-status'
 import type { OcrResultRow } from '#core/server/utils/ocr-result'
 import type { PdfPagesState, RenderOutcome } from '#core/server/utils/pdf-pages'
-import type { StoredFileRow } from '~~/server/utils/stored-files'
+import type { FileSourceOption } from '#core/lib/core/file-categories'
+import { ocrFileSources } from '~~/lib/app-modules'
 
 /** Existing OCR API workflow plus guarded single-page navigation. */
-export function useOcrWorkbench() {
+export function useOcrWorkbench(sources: readonly FileSourceOption[] = ocrFileSources) {
   const api = $fetch as unknown as <T>(
     url: string,
     opts?: {
@@ -27,7 +29,7 @@ export function useOcrWorkbench() {
   ) => Promise<T>
 
   interface FilesResponse {
-    rows: StoredFileRow[]
+    rows: OcrWorkbenchFile[]
     total: number
   }
 
@@ -92,7 +94,7 @@ export function useOcrWorkbench() {
   // 左栏:选一份 PDF
   // ---------------------------------------------------------------------------
 
-  const files = ref<StoredFileRow[]>([])
+  const files = ref<OcrWorkbenchFile[]>([])
   const filesLoading = ref(true)
   const filesError = ref('')
 
@@ -103,7 +105,7 @@ export function useOcrWorkbench() {
     filesLoading.value = true
     filesError.value = ''
     try {
-      const all: StoredFileRow[] = []
+      const all: OcrWorkbenchFile[] = []
       let page = 1
       while (true) {
         const out = await api<FilesResponse>('/api/files', {
@@ -187,7 +189,7 @@ export function useOcrWorkbench() {
     setView,
     setFileFilter,
     blocked,
-  } = useOcrNavigation({ files: pdfFiles, rows, ready, busy: writeBusy })
+  } = useOcrNavigation({ files: pdfFiles, sources, rows, ready, busy: writeBusy })
   const selected = computed(
     () => pdfFiles.value.find((f) => f.relPath === selectedPath.value) ?? null,
   )
@@ -771,6 +773,7 @@ export function useOcrWorkbench() {
     pdfFiles,
     fileMatches,
     fileYears,
+    fileSources: sources,
     keyword,
     source,
     year,

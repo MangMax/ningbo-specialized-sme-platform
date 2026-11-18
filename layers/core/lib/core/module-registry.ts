@@ -19,7 +19,7 @@ export type AppJobKind = {
   readonly spec: string
 }
 
-type AppCredential = {
+export type AppCredential = {
   readonly key: string
   readonly name: string
   readonly description: string
@@ -27,6 +27,7 @@ type AppCredential = {
   readonly sensitive?: boolean
   readonly environment?: readonly string[]
   readonly singleLine?: boolean
+  readonly openAPI?: { readonly patchDescription?: string; readonly actionLabel?: string }
 }
 
 export type AppModuleManifest = {

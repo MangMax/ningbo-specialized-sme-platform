@@ -8,6 +8,8 @@ export function getAppModules(): readonly AppModuleManifest[] {
   return appModules
 }
 
+export const ocrFileSources = getAppModules().flatMap(module => module.fileCategories?.ocrSources ?? [])
+
 type NamespacedKey<M> = M extends { id: infer Id extends string; credentials: readonly { key: infer Key extends string }[] }
   ? `${Id}.${Key}` : never
 export type CredentialKey = NamespacedKey<(typeof appModules)[number]>

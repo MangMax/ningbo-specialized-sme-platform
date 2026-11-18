@@ -22,8 +22,8 @@ import {
   SheetTitle,
 } from '#core/app/components/ui/sheet'
 import { Skeleton } from '#core/app/components/ui/skeleton'
-import type { WorkbenchCounts } from '#core/lib/ocr-workbench'
-import type { StoredFileRow } from '~~/server/utils/stored-files'
+import type { OcrWorkbenchFile, WorkbenchCounts } from '#core/lib/ocr-workbench'
+import type { FileSourceOption } from '#core/lib/core/file-categories'
 
 /**
  * 文件选择不再常驻成一张卡：工作台顶栏显示当前文件，点开才是这个 Sheet。
@@ -33,14 +33,15 @@ import type { StoredFileRow } from '~~/server/utils/stored-files'
 const open = defineModel<boolean>('open', { default: false })
 
 const props = defineProps<{
-  fileMatches: StoredFileRow[]
+  fileMatches: OcrWorkbenchFile[]
   total: number
   fileYears: number[]
+  fileSources: readonly FileSourceOption[]
   keyword: string
   source: string
   year: string
   selectedPath: string
-  selected: StoredFileRow | null
+  selected: OcrWorkbenchFile | null
   currentPageCount: number
   currentCounts: WorkbenchCounts
   currentLoading: boolean
@@ -82,17 +83,12 @@ function choose(path: string) {
   emit('select', path)
 }
 
-function display(file: StoredFileRow) {
+function display(file: OcrWorkbenchFile) {
   return file.displayName || file.filename
 }
 
-function fileMeta(file: StoredFileRow) {
-  const sourceWord =
-    file.source === 'miit'
-      ? '工信部'
-      : file.source === 'jxj'
-        ? '市经信局'
-        : '来源未标注'
+function fileMeta(file: OcrWorkbenchFile) {
+  const sourceWord = props.fileSources.find(({ value }) => value === file.source)?.label ?? '来源未标注'
   return [sourceWord, file.year == null ? '年份未标注' : `${file.year} 年公布`].join(
     ' · ',
   )
@@ -137,8 +133,9 @@ function fileMeta(file: StoredFileRow) {
             <SelectContent>
               <SelectGroup>
                 <SelectItem value="all">全部来源</SelectItem>
-                <SelectItem value="jxj">市经信局</SelectItem>
-                <SelectItem value="miit">工信部</SelectItem>
+                <SelectItem v-for="option in fileSources" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </SelectItem>
                 <SelectItem value="unknown">来源未标注</SelectItem>
               </SelectGroup>
             </SelectContent>

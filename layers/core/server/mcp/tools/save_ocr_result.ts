@@ -2,7 +2,7 @@ import type { LogContext } from '../../../lib/logging'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { fileRefShape } from '../../utils/file-agent-reference'
-import { openFileStore } from '../../../../../server/utils/mcp-files'
+import { openOcrFileStore } from '../../utils/ocr-files'
 import { writeGuard } from '../../utils/mcp-guard'
 import { saveOcrImport, requireOcrFileRef, ocrExpectedVersionSchema, ocrPageSchema } from '../../utils/ocr-page-lifecycle'
 
@@ -52,7 +52,7 @@ export default defineMcpTool({
     model: z.string().nullable().optional().describe('模型名(可空)'),
   },
   handler: async (input, extra) => {
-    const { db, root } = await openFileStore()
+    const { db, root } = await openOcrFileStore()
     const row = requireOcrFileRef(db, input)
     const out = await saveOcrImport({ ok: true, db, root, row }, input, 'mcp', (extra as { logContext?: LogContext } | undefined)?.logContext)
     // 旧 MCP 载荷/响应适配:保留最初的四个键,不暴露上传通路的额外探测字段。

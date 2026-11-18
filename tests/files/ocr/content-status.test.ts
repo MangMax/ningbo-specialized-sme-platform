@@ -44,3 +44,34 @@ it('registration retry keeps the uploaded metadata snapshot after conflict', asy
   wrapper.unmount()
   vi.unstubAllGlobals()
 })
+
+it('restores a registered OCR source from a deep link before the file list loads', async () => {
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] })
+  await router.push('/?source=archive')
+  vi.stubGlobal('useRoute', useRoute)
+  vi.stubGlobal('$fetch', vi.fn(async () => ({
+    rows: [
+      { id: 1, relPath: 'archive.pdf', ext: 'pdf', filename: 'archive.pdf', source: 'archive' },
+      { id: 2, relPath: 'other.pdf', ext: 'pdf', filename: 'other.pdf' },
+    ],
+    total: 2,
+  })))
+  let work!: ReturnType<typeof useOcrWorkbench>
+  const wrapper = mount(defineComponent({
+    setup() {
+      work = useOcrWorkbench([{ value: 'archive', label: '档案馆' }])
+      return () => 'workbench'
+    },
+  }), { global: { plugins: [router] } })
+  try {
+    expect(work.source.value).toBe('archive')
+    await work.loadFiles()
+    expect(work.fileMatches.value.map(file => file.relPath)).toEqual(['archive.pdf'])
+    await router.push('/?source=unregistered')
+    await flushPromises()
+    expect(work.source.value).toBe('')
+  } finally {
+    wrapper.unmount()
+    vi.unstubAllGlobals()
+  }
+})

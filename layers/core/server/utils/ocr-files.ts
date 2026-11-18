@@ -1,29 +1,20 @@
 import { useDb } from '@db'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
-import { resolveFileRef, type FileRefInput } from './file-agent-reference'
-import { ensureFileStoreReady } from '../../../../server/utils/mcp-files'
-import type { StoredFileRow } from '../../../../server/utils/stored-files'
+import { resolveFileRef, type FileRefInput, type FileRefResult } from './file-agent-reference'
+import { ensureFileRowsReady } from '../../../../server/file-store'
 
 type Db = BetterSQLite3Database<typeof schema>
 
-/**
- * OCR 结果的三条 HTTP 路由共用的**开场白**:把 `{fileId?|relPath?}` 翻成库里的那一行。
- *
- * ── 为什么需要它 ────────────────────────────────────────────────────────
- * 三条路由(`GET /api/ocr-results`、`POST /api/ocr-results`、`GET …/markdown`)都要
- * 「先回填、再按 id/relPath 找到文件」这两步。写在三处的话,冷启动那一趟(`ensureFileStoreReady`)
- * 迟早有一处忘掉 —— 那一处的表现是「刚起的服务查不到任何文件」,而另外两处正常,
- * 极难查。收在这里,顺序就只有一种。
- *
- * 顺序是**有讲究**的:`ensureFileStoreReady` 必须**先**跑,`resolveFileRef` 才有东西可查
- * (冷启动时库里一行都没有,先查就是一片 404)。与 MCP 的 `openFileStore` 同一条理由。
- *
- * 指向文件的两种写法取其一(`fileId` / `relPath`)直接复用 MCP 那一层的判据
- * (`resolveFileRef` 的「只能给一个」),不在这里再判一遍 —— 两处各判一份,文案必然漂。
- */
+/** Cold OCR access registers admitted file rows before resolving an ID or path. */
+export async function openOcrFileStore(root = useRuntimeConfig().filesDir) {
+  const db = useDb()
+  await ensureFileRowsReady(db, root)
+  return { db, root }
+}
+
 export type OcrFileTargetResult =
-  | { ok: true; db: Db; root: string; row: StoredFileRow }
+  | { ok: true; db: Db; root: string; row: Extract<FileRefResult, { ok: true }>['row'] }
   | { ok: false; statusCode: number; message: string }
 
 /**
@@ -42,9 +33,7 @@ export async function resolveOcrFileTarget(
   if (hasId === hasPath || (hasId && (!Number.isSafeInteger(input.fileId) || input.fileId! <= 0))) {
     return { ok: false, statusCode: 400, message: '文件引用非法:fileId 与路径恰给其一,ID 必须是正整数' }
   }
-  const db = useDb()
-  const root = useRuntimeConfig().filesDir
-  await ensureFileStoreReady(db, root)
+  const { db, root } = await openOcrFileStore()
 
   const found = resolveFileRef(db, input, { allowRemoved: options.allowRemoved ?? false })
   if (!found.ok) {

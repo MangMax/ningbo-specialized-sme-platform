@@ -6,7 +6,7 @@ import * as schema from '../../../../db/schema'
 import { assembleMarkdown, MAX_PAGE_NO } from '../../lib/ocr-markdown'
 import { fileRefShape, resolveFileRef, type FileRefInput } from './file-agent-reference'
 import { listOcrResults } from './ocr-result'
-import type { StoredFileRow } from '../../../../server/utils/stored-files'
+import type { FileRow } from './file-store'
 import { createError } from 'h3'
 import { isPdfPath } from '../../lib/pdf-page'
 import { guardImportedPageCount, guardTargetPage } from '../../lib/ocr-workbench'
@@ -124,7 +124,7 @@ export function requireOcrFileRef(db: Db, input: FileRefInput, allowRemoved = fa
 }
 
 /** 一次按文件/页定位的显式投影;从不读取 raw,不重复加载正文。 */
-export async function getOcrResultForFile(db: Db, row: StoredFileRow, page?: number, includeVersion = true, root?: string) {
+export async function getOcrResultForFile(db: Db, row: FileRow, page?: number, includeVersion = true, root?: string) {
   const results = listOcrResults(db, row.id, page)
   if (!results.length) throw createError({ statusCode: 404, message: page === undefined ? '这个文件还没有 OCR 结果' : `第 ${page} 页还没有 OCR 结果` })
   return {

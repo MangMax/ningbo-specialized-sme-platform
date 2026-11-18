@@ -2,6 +2,7 @@ import { resolveFileRef, type AgentFailure, type FileRefInput, type FileRefOptio
 import { appLog, type LogContext } from '../../layers/core/lib/logging'
 import { eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { ensureFileRowsReady, resetFileRowsReadyForTests } from '../file-store'
 import type { BackfillExclusion } from '../../layers/core/server/utils/file-store'
 import { useDb } from '@db'
 import * as schema from '../../db/schema'
@@ -22,19 +23,13 @@ type Db = BetterSQLite3Database<typeof schema>
 // 库要不要先回填
 // ---------------------------------------------------------------------------
 
-/**
- * 库是否「已就绪」的**进程内记忆**。
- *
- * ⚠️ 与 `server/api/files/index.get.ts` 里那个标记是**两份**,道理与 `pdf-pages.ts`
- * 照抄 `sha256Of` 一样:那张票的文件(票 09/17 的地盘)同时可能有别的会话在动,
- * 为抽一个 5 行的记忆去改它,会把两票的改动绞在一起。两处各自幂等,重复跑只是
- * 多一遍扫描。合流留给后续清理。
- */
-let filesReady = false
+// The roster maintenance entry point tracks its own first derived-parts pass.
+let partsChecked = false
 
 /** 只有测试需要(每个用例一个临时库)。 */
 export function __resetFileStoreReady(): void {
-  filesReady = false
+  partsChecked = false
+  resetFileRowsReadyForTests()
 }
 
 function countOf(db: Db, table: typeof schema.storedFilePart | typeof schema.recordEvidence): number {
@@ -84,14 +79,13 @@ export async function ensureFileStoreReady(
   root: string,
   force = false,
 ): Promise<BackfillReport | null> {
-  const runFiles = !filesReady || force
-  const runParts = needParts(db, !filesReady)
-  if (!runFiles && !runParts) return null
-
-  const fileStats = runFiles ? await backfillFromDisk(db, root) : NO_FILE_STATS
-  filesReady = true
+  const runParts = needParts(db, !partsChecked)
+  const backfill = ensureFileRowsReady(db, root, force)
+  const fileStats = backfill && await backfill
+  partsChecked = true
+  if (!fileStats && !runParts) return null
   return {
-    ...fileStats,
+    ...(fileStats ?? NO_FILE_STATS),
     parts: runParts ? backfillFileParts(db, { preserveExisting: true }) : NO_PART_STATS,
   }
 }

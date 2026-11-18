@@ -7,9 +7,10 @@ import {
 import {
   filterWorkbenchRows,
   type PageFilters,
+  type OcrWorkbenchFile,
   type WorkbenchRow,
 } from '#core/lib/ocr-workbench'
-import type { StoredFileRow } from '~~/server/utils/stored-files'
+import type { FileSourceOption } from '#core/lib/core/file-categories'
 
 /** Narrow-screen content view. Desktop always shows the image/text pair. */
 export type OcrView = 'text' | 'image' | 'compare'
@@ -17,7 +18,8 @@ const OCR_VIEWS: readonly OcrView[] = ['text', 'image', 'compare']
 
 /** Public workbench navigation state. Drafts and API results never enter the URL. */
 export function useOcrNavigation(options: {
-  files: Ref<StoredFileRow[]>
+  files: Ref<OcrWorkbenchFile[]>
+  sources: readonly FileSourceOption[]
   rows: Ref<WorkbenchRow[]>
   ready: Ref<boolean>
   busy: Ref<boolean>
@@ -84,8 +86,9 @@ export function useOcrNavigation(options: {
         ? Number(page)
         : null
     keyword.value = scalar(query.q).slice(0, 300)
-    source.value = ['jxj', 'miit', 'unknown'].includes(scalar(query.source))
-      ? scalar(query.source)
+    const requestedSource = scalar(query.source)
+    source.value = requestedSource === 'unknown' || options.sources.some(({ value }) => value === requestedSource)
+      ? requestedSource
       : ''
     const y = scalar(query.year)
     year.value = /^(?:\d{4}|unknown)$/.test(y) ? y : ''

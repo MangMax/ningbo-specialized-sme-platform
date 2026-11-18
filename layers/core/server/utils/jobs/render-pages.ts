@@ -192,6 +192,10 @@ export async function runRenderPages(
 }
 
 export const renderPagesSpec: JobSpec = {
+  openAPIParams: {
+    order: 30,
+    description: 'kind 自己的参数。`render-pages`:`{ files: string[](相对文件库根的 PDF 路径), dpi?: 72–600(默认 300), force?: boolean }`。',
+  },
   kind: 'render-pages',
   status: 'ready',
   summary: '批量把 PDF 逐页渲染成 PNG(票 13 的渲染,批量入口)',

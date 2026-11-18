@@ -1,9 +1,8 @@
 import { requestLogContext } from '../../lib/logging'
 import { createError, getHeader, getQuery, getRouterParam, readBody, setHeader, type H3Event } from 'h3'
 import { z } from 'zod'
-import { useDb } from '@db'
 import { readApiToken, resolveApiAuth, unauthorizedApiMessage } from './api-auth'
-import { ensureFileStoreReady } from '../../../../server/utils/mcp-files'
+import { openOcrFileStore } from './ocr-files'
 import { deleteOcrPage } from './ocr-result'
 import { getOcrResultForFile, ocrExpectedVersionSchema, ocrPageSchema, requireOcrFileRef, saveOcrImport } from './ocr-page-lifecycle'
 
@@ -31,11 +30,10 @@ export async function ocrPageHttp106(event: H3Event, action: 'get' | 'save' | 'd
     if (!parsed.success) throw createError({ statusCode: 400, message: '请求字段非法;只接受 markdown/engine/model/expectedVersion,删除仅接受 expectedVersion' })
     body = parsed.data
   }
-  const db = useDb()
-  await ensureFileStoreReady(db, config.filesDir)
+  const { db, root } = await openOcrFileStore(config.filesDir)
   const row = requireOcrFileRef(db, { fileId: Number(id) }, action === 'get')
-  if (action === 'get') return getOcrResultForFile(db, row, page.data, true, config.filesDir)
-  if (action === 'save') return saveOcrImport({ ok: true, db, row, root: config.filesDir }, { ...body, page: page.data }, 'upload', requestLogContext(event))
+  if (action === 'get') return getOcrResultForFile(db, row, page.data, true, root)
+  if (action === 'save') return saveOcrImport({ ok: true, db, row, root }, { ...body, page: page.data }, 'upload', requestLogContext(event))
   const out = deleteOcrPage(db, row.id, page.data, body.expectedVersion as string | null | undefined, requestLogContext(event))
   if (!out.ok) throw createError({ statusCode: out.statusCode, message: out.message })
   return { file: { id: row.id, relPath: row.relPath, filename: row.filename }, page: out.page, deleted: out.deleted, remaining: out.remaining }

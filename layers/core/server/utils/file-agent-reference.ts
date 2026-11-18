@@ -2,12 +2,14 @@ import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
 import * as schema from '../../../../db/schema'
-import { getStoredFile, type StoredFileRow } from '../../../../server/utils/stored-files'
+import { fileStore } from '../../../../server/file-store'
 import { DEFAULT_DPI, isPdfPath, normalizeDpi } from '../../lib/pdf-page'
 import { verifyFileRead, verifyPageRead, type FileReadIdentity } from './file-read-identity'
 import { listPdfPages, resolveWithinRoot, type PdfPagesState } from './pdf-pages'
 
 type Db = BetterSQLite3Database<typeof schema>
+const { getStoredFile } = fileStore
+type StoredFileRow = NonNullable<ReturnType<typeof getStoredFile>>
 
 /**
  * 指向文件库某个文件的两种写法,**恰给其一**。

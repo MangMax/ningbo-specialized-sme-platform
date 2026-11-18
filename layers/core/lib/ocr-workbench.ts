@@ -1,3 +1,13 @@
+export interface OcrWorkbenchFile {
+  id: number
+  relPath: string
+  filename: string
+  displayName?: string | null
+  ext: string
+  source?: string | null
+  year?: number | null
+}
+
 import type { OcrResultRow } from '#core/server/utils/ocr-result'
 import type { PageImageRef } from '#core/server/utils/pdf-pages'
 import { normalizeMarkdownBody } from './ocr-markdown'

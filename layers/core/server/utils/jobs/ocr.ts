@@ -479,6 +479,10 @@ export async function runOcr(
 }
 
 export const ocrSpec: JobSpec = {
+  openAPIParams: {
+    order: 40,
+    description: '`ocr`:`{ files: string[](同上), model?: string }` —— 须先生成完整页图，不支持 pageRanges；需要配置页保存 OCR token 或服务端配好 `NUXT_OCR_TOKEN`。',
+  },
   kind: 'ocr',
   status: 'ready',
   summary:
