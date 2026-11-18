@@ -1,8 +1,10 @@
-// Vue composition. Nitro consumes the server contributions separately.
 import type { FileCategoryUi } from '../layers/core/lib/core/file-category-ui'
-import { rosterFileCategoryUi } from '../layers/sme-roster/lib/sme-roster/file-category-ui'
 
-const categories: readonly FileCategoryUi[] = [rosterFileCategoryUi]
+let categories: readonly FileCategoryUi[] = []
+
+export function installFileCategoryUi(contributions: readonly FileCategoryUi[]): void {
+  categories = contributions
+}
 
 export function getFileCategoryUi(): readonly FileCategoryUi[] {
   return categories

@@ -99,6 +99,7 @@ function readBaseRows(db: FileStoreDb, where: SQL | undefined) {
 }
 
 export type FileRow = FileColumnsRow & {
+  referenceCount?: number
   contentIdentity?: { registered: { fileId: number; relPath: string; sha256: string; bytes: number }; status: 'unknown'; historical: 'unknown' }
 }
 
@@ -265,7 +266,7 @@ export class FileMaintenanceError extends Error {
 }
 
 export function createFileStore<const Categories extends readonly FileCategoryServer[]>(registered: Categories) {
-  type Row = FileRow & Partial<UnionToIntersection<CategoryFields<Categories[number]>>>
+  type Row = FileRow & Record<string, unknown> & Partial<UnionToIntersection<CategoryFields<Categories[number]>>>
   const categories: readonly FileCategoryServer[] = registered
   const filtersByCategory = categories.flatMap(category => category.filters?.length ? [{ category, filters: category.filters }] : [])
   const backfillCategories = categories.flatMap(category => category.prepareBackfill ? [category.prepareBackfill] : [])

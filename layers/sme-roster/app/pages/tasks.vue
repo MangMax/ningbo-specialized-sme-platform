@@ -5,7 +5,7 @@ import TaskListPanel from '#core/app/components/tasks/TaskListPanel.vue'
 import RosterCandidateTaskCreate from '#sme-roster/app/components/tasks/CandidateTaskCreate.vue'
 import { TASK_EXPORTS, type TaskExportTitle } from '../../lib/sme-roster/task-exports'
 import { TASK_STATES, type TaskList, type TaskSummary } from '#core/lib/task-center'
-import { getTaskGroups, resolveTaskFilters, taskTabs } from '#core/lib/task-catalog'
+import { getTaskGroups, resolveTaskFilters, getTaskTabs } from '#core/lib/task-catalog'
 import { JOB_STATES, type JobState } from '#core/lib/job'
 import { useTaskPolling } from '#core/app/composables/useTaskPolling'
 import { useRosterCurrentExport, rosterTaskBrowserHeaders } from '#sme-roster/app/composables/useRosterCurrentExport'
@@ -17,6 +17,7 @@ import { Badge } from '#core/app/components/ui/badge'
 import { Alert } from '#core/app/components/ui/alert'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '#core/app/components/ui/sheet'
 useHead({ title: '后台任务' })
+const taskTabs = getTaskTabs()
 const route = useRoute(), router = useRouter()
 const scalar = (raw: unknown) => typeof raw === 'string' ? raw : ''
 const filters = computed(() => resolveTaskFilters(route.query.tab, route.query.group))

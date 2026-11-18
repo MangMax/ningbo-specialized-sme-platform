@@ -1,31 +1,40 @@
-import core from '../layers/core/lib/core/manifest'
-import smeRoster from '../layers/sme-roster/manifest'
-import type { AppModuleManifest } from '../layers/core/lib/core/module-registry'
+import { validateAppModules, type AppModuleManifest } from '../layers/core/lib/core/module-registry'
 
-const appModules = [core, smeRoster] as const
+export type CredentialKey = `${string}.${string}`
 
-export function getAppModules(): readonly AppModuleManifest[] {
-  return appModules
+let modules: readonly AppModuleManifest[] = []
+export let ocrFileSources = modules.flatMap(module => module.fileCategories?.ocrSources ?? [])
+export let credentialGroups = collectCredentials(modules)
+export let registeredCredentials = indexCredentials(credentialGroups)
+
+export function installAppModules(manifests: readonly AppModuleManifest[]): void {
+  validateAppModules(manifests)
+  modules = manifests
+  ocrFileSources = modules.flatMap(module => module.fileCategories?.ocrSources ?? [])
+  credentialGroups = collectCredentials(modules)
+  registeredCredentials = indexCredentials(credentialGroups)
 }
 
-export const ocrFileSources = getAppModules().flatMap(module => module.fileCategories?.ocrSources ?? [])
+export function getAppModules(): readonly AppModuleManifest[] {
+  return modules
+}
 
-type NamespacedKey<M> = M extends { id: infer Id extends string; credentials: readonly { key: infer Key extends string }[] }
-  ? `${Id}.${Key}` : never
-export type CredentialKey = NamespacedKey<(typeof appModules)[number]>
+function collectCredentials(manifests: readonly AppModuleManifest[]) {
+  return manifests.flatMap(({ id, name, credentials }) => credentials?.length ? [{
+    id,
+    name,
+    credentials: credentials.map(credential => ({
+      ...credential,
+      key: `${id}.${credential.key}` as CredentialKey,
+      sensitive: credential.sensitive ?? true,
+    })),
+  }] : [])
+}
 
-export const credentialGroups = getAppModules().flatMap(({ id, name, credentials }) => credentials?.length ? [{
-  id,
-  name,
-  credentials: credentials.map(credential => ({
-    ...credential,
-    key: `${id}.${credential.key}` as CredentialKey,
-    sensitive: credential.sensitive ?? true,
-  })),
-}] : [])
-
-export const registeredCredentials = new Map(credentialGroups.flatMap(group =>
-  group.credentials.map(credential => [credential.key, credential] as const)))
+function indexCredentials(groups: ReturnType<typeof collectCredentials>) {
+  return new Map(groups.flatMap(group =>
+    group.credentials.map(credential => [credential.key, credential] as const)))
+}
 
 export function isCredentialKey(key: unknown): key is CredentialKey {
   return typeof key === 'string' && registeredCredentials.has(key as CredentialKey)

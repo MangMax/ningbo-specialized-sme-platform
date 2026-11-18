@@ -60,11 +60,13 @@ core 提供 `defineAppModule()`，每个模块（包括 core 自己）调用它�
 
 **跨模块原子写**由发起方编排：发起方开启一个 SQLite 事务，依次调用各模块 public 出口上的公开命令；各模块仍只写自己的表。这是单库单机才有的便利，不引入分布式事务或补偿机制。
 
-**禁止**（由 CI 边界校验拦截，校验脚本由实现子票提供）：
+**禁止**（`pnpm verify:module-boundaries` 是 CI 静态检查和最终 `check` 的硬门禁）：
 
 - 直接 join 或查询别的业务模块的表；
 - import 别的模块 public 出口之外的内部实现；
 - 在业务模块之间建外键。别的业务模块的实体只存 ID 引用。
+
+公开入口为各业务 layer 根目录的 `public.ts`。表归属取自 layer 内的 schema 声明，集中在 `db/schema.ts` 的表由 [归属清单](../../scripts/shared-schema-table-owners.json) 声明。
 
 ## 变更规则：一次切换，不留兼容层
 
