@@ -6,10 +6,10 @@ defineRouteMeta({ openAPI: { tags: ['Settings'], summary: '读取配置状态，
       "schema": {
         "type": "object",
         "required": [
-          "ocrToken", "miitCookie"
+          "core.ocrToken", "sme-roster.miitCookie"
         ],
         "properties": {
-          "ocrToken": {
+          "core.ocrToken": {
             "type": "object",
             "required": [
               "configured",
@@ -43,7 +43,7 @@ defineRouteMeta({ openAPI: { tags: ['Settings'], summary: '读取配置状态，
               }
             }
           },
-          "miitCookie": {
+          "sme-roster.miitCookie": {
             "type": "object",
             "required": [
               "configured",
@@ -81,4 +81,4 @@ defineRouteMeta({ openAPI: { tags: ['Settings'], summary: '读取配置状态，
     }
   }
 }, 400: { description: '输入无效' }, 503: { description: '外置配置存储不可用' } } } })
-export default createCredentialsHandler('state')
+export default createCredentialsHandler()

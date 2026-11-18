@@ -22,7 +22,7 @@ export function handleEventCorrectionRequest(input: { action: EventCorrectionAct
     // Resolve before mutations; never let credential lookup fail after commit.
     const credentials = { ...credentialContext(), db: context.db }
     const runtime = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : null
-    const secrets = [context.apiToken, runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN, resolveCredential('miitCookie', credentials).value, resolveCredential('ocrToken', credentials).value].filter((s): s is string => !!s)
+    const secrets = [context.apiToken, runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN, resolveCredential('sme-roster.miitCookie', credentials).value, resolveCredential('core.ocrToken', credentials).value].filter((s): s is string => !!s)
     const redactors = [...new Set(secrets)].map(cookieRedactor)
     const qualificationSafety = (value: unknown) => isDeepStrictEqual(value, sanitizeEvidence(value, redactors))
     let result: unknown

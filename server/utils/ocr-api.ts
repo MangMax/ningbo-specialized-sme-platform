@@ -658,7 +658,7 @@ export function resolveOcrConfig(override: { token?: string } = {}): {
     ocrPollTimeoutMs?: number
   }
   const env = process.env
-  const token = resolveCredential('ocrToken', { ...credentialContext(), ocrToken: config.ocrToken }, override.token).value
+  const token = resolveCredential('core.ocrToken', { ...credentialContext(), ocrToken: config.ocrToken }, override.token).value
   const pollTimeoutMs = firstNumber(
     [config.ocrPollTimeoutMs, Number(env.NUXT_OCR_POLL_TIMEOUT_MS)],
     DEFAULT_POLL_TIMEOUT_MS,

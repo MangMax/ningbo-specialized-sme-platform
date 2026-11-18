@@ -35,7 +35,7 @@ beforeAll(async () => {
   }
 })
 beforeEach(() => {
-  updateCredential('miitCookie', cookie, { db })
+  updateCredential('sme-roster.miitCookie', cookie, { db })
   fetcher.mockReset()
   vi.stubGlobal('fetch', fetcher)
 })
@@ -143,7 +143,7 @@ it('an unknown title total stays unknown while every title is completed', async 
   expect(fetcher).toHaveBeenCalledTimes(4)
 })
 it('missing credentials mark all three titles unqueried', async () => {
-  updateCredential('miitCookie', null, { db })
+  updateCredential('sme-roster.miitCookie', null, { db })
   const previous = process.env.MIIT_COOKIE
   process.env.MIIT_COOKIE = ''
   try {
@@ -207,7 +207,7 @@ it('an active deadline leaves the failed page and all unrequested titles incompl
 it('all titles keep the initial credential snapshot and omit envelope account data', async () => {
   fetcher.mockImplementation(async (_url: string, init: any) => {
     expect(init.headers.Cookie).toBe(cookie)
-    updateCredential('miitCookie', 'session=synthetic-other-business-account', { db })
+    updateCredential('sme-roster.miitCookie', 'session=synthetic-other-business-account', { db })
     return response(JSON.stringify({ account: { token: 'synthetic-envelope-secret' }, zrarData: { grid: { businessListGrid: { pageSet: [{ qymc: '合成' }], maxCount: 1, page: 1 } } } }))
   })
   const r = await query(input)

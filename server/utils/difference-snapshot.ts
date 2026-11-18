@@ -9,7 +9,7 @@ import * as s from '../../db/schema'
 import { newJobId } from '../../lib/job'
 import type { PlatformLiveQueryResult } from '../../lib/platform/live-query'
 import { runPlatformLiveQuery } from './platform-live-query'
-import { resolvePlatformCookie } from './credential-state'
+import { resolvePlatformCookie } from './platform-credential'
 import { createJob, getJob, setJobResult } from './job-store'
 import { enqueuePersistedJob, ensureJobRunnerReady, getJobSpec, registerJob, requeueFinishedJob, type JobSpec } from './job-runner'
 

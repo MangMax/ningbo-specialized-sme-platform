@@ -30,12 +30,12 @@ beforeEach(() => {
   for (const key of ['NUXT_API_TOKEN','NUXT_MCP_TOKEN','MIIT_COOKIE','NUXT_OCR_TOKEN','PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN']) vi.stubEnv(key,'')
 })
 afterEach(() => { vi.unstubAllEnvs(); db.$client.close(); rmSync(root,{recursive:true,force:true}) })
-const saved = (key: 'miitCookie'|'ocrToken', value: string) => db.insert(schema.serviceCredential).values({key,value,updatedAt:'synthetic'}).run()
+const saved = (key: 'sme-roster.miitCookie'|'core.ocrToken', value: string) => db.insert(schema.serviceCredential).values({key,value,updatedAt:'synthetic'}).run()
 const apply = (r: ReturnType<typeof importReceiptRedactor>, nameRaw: string | null) => r({evidenceId:1,eventId:2,revision:1,availability:'captured',nameRaw,sourceBindingKnown:true},'official_published_name')
 
 it('B02 preserves literal union order and omits unused runtime OCR with saved credentials', () => {
   vi.stubEnv('NUXT_API_TOKEN','E_API'); vi.stubEnv('NUXT_MCP_TOKEN','E_MCP')
-  saved('miitCookie','S_COOKIE'); saved('ocrToken','S_OCR')
+  saved('sme-roster.miitCookie','S_COOKIE'); saved('core.ocrToken','S_OCR')
   const r = importReceiptRedactor(db,{additionalSecrets:['ADD']},{apiToken:'R_API',mcpToken:'R_MCP',ocrToken:'UNUSED_R_OCR'})
   expect(r.knownRedactors).toHaveLength(7)
   const literals = ['ADD','R_API','R_MCP','E_API','E_MCP','S_COOKIE','S_OCR']
@@ -239,8 +239,8 @@ async function actualWorker409(mode: typeof workerModes409[number], context: unk
 it.each([{ mode: 'source' as const, ...ocrPartitions409[0] }, { mode: 'compiled' as const, ...ocrPartitions409[3] }])('B3 actual worker $mode OCR $id literal cells', async partition => {
   legalWorkerSeed409()
   for (const a of Object.values(W409)) for (const b of Object.values(W409)) if (a !== b) expect(a.includes(b)).toBe(false)
-  if (partition.savedCookie) saved('miitCookie',W409.savedCookie)
-  if (partition.savedOcr) saved('ocrToken',W409.savedOcr)
+  if (partition.savedCookie) saved('sme-roster.miitCookie',W409.savedCookie)
+  if (partition.savedOcr) saved('core.ocrToken',W409.savedOcr)
   vi.stubEnv('NUXT_API_TOKEN',W409.envApi); vi.stubEnv('NUXT_MCP_TOKEN',W409.envMcp)
   vi.stubEnv('MIIT_COOKIE',' ' + W409.envCookie + ' '); vi.stubEnv('NUXT_OCR_TOKEN',partition.envOcr)
   vi.stubEnv('PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN',' ' + W409.paddle + ' ')

@@ -789,12 +789,12 @@ describe('中转命中判据(纯函数)', () => {
 it('uses saved credentials for new OCR runs while a running submit and poll retain their startup snapshot', async () => {
   const { updateCredential } = await import('../../../server/utils/credential-state')
   try {
-    updateCredential('ocrToken', 'synthetic-start-value', { db, env: {} })
+    updateCredential('core.ocrToken', 'synthetic-start-value', { db, env: {} })
     const file = 'credential-snapshot.pdf'
     const credentialFileId = await seedPdf(file, 1)
     await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
     api = await startMiniOcrApi({ pages: ['# synthetic result'], onSubmit: () => {
-      updateCredential('ocrToken', 'synthetic-replacement', { db, env: {} })
+      updateCredential('core.ocrToken', 'synthetic-replacement', { db, env: {} })
     } })
     process.env.NUXT_OCR_BASE_URL = api.origin
     const params = { files: [file], model: null }
@@ -844,12 +844,12 @@ it('queued OCR retains its submission credential for submit and poll without per
     await seedPdf(file, 1); await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
     api = await startMiniOcrApi({ pages: ['# queued synthetic result'] })
     process.env.NUXT_OCR_BASE_URL = api.origin
-    updateCredential('ocrToken', 'synthetic-queued-ocr-A', { db, env: {} })
+    updateCredential('core.ocrToken', 'synthetic-queued-ocr-A', { db, env: {} })
     clearJobSpecs(); registerJob(ocrSpec)
     registerJob({ kind: 'hold', status: 'ready', summary: 'synthetic gate', parse: () => ({ ok: true, params: {} }), run: async () => { await new Promise<void>(r => { release = r }); return { result: {} } } })
     submitJob(db, { kind: 'hold', params: {}, filesDir })
     const row = submitJob(db, { kind: 'ocr', params: { files: [file], model: null }, filesDir })
-    updateCredential('ocrToken', 'synthetic-queued-ocr-B', { db, env: {} })
+    updateCredential('core.ocrToken', 'synthetic-queued-ocr-B', { db, env: {} })
     release!(); release = undefined; await whenIdle()
     expect(getJob(db, row.id)?.state).toBe('done')
     expect(api.stats.submits).toBe(1)
@@ -868,7 +868,7 @@ it.each([{ name: 'failed', failed: true }, { name: 'successful', failed: false }
   const token = 'synthetic-"quoted"\\+/=task-secret'
   const echoes = [token, encodeURIComponent(token), JSON.stringify(token).slice(1, -1)]
   try {
-    updateCredential('ocrToken', token, { db, env: {} })
+    updateCredential('core.ocrToken', token, { db, env: {} })
     const file = 'encoded-echo.pdf'
     const fileId = await seedPdf(file, 1)
     await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })

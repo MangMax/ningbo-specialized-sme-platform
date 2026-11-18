@@ -1,4 +1,5 @@
 import { businessStatusCell, businessStatusChecks } from '../lib/platform/business-status'
+import type { CredentialKey } from '../lib/app-modules'
 import type { FormalValidity } from '../lib/roster/formal-validity'
 import { sql } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
@@ -22,7 +23,7 @@ const exactCell = customType<{ data: unknown; driverData: unknown }>({ dataType:
 
 /** 后台外部服务凭据。仅配置服务读取，不加入台账导出或任务历史。 */
 export const serviceCredential = sqliteTable('service_credential', {
-  key: text('key', { enum: ['ocrToken', 'miitCookie'] }).primaryKey(),
+  key: text('key').$type<CredentialKey>().primaryKey(),
   value: text('value').notNull(),
   updatedAt: text('updated_at').notNull(),
 })

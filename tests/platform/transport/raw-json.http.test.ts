@@ -46,7 +46,7 @@ beforeAll(async () => {
   vi.spyOn(importExecutor, 'execute').mockImplementation(executeNativeImport)
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
   vi.stubEnv('MIIT_COOKIE', ''); vi.stubEnv('MIIT_COOKIE_FILE', '')
-  updateCredential('miitCookie', 'sid=synthetic-raw-wire-secret', { db })
+  updateCredential('sme-roster.miitCookie', 'sid=synthetic-raw-wire-secret', { db })
   for (const [key, value] of Object.entries({ defineEventHandler, readBody, setHeader, setResponseStatus, getQuery, createError, useRuntimeConfig: () => ({ filesDir: dir, apiToken: token }) })) vi.stubGlobal(key, value)
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (value: unknown) => value }))
   for (const path of ['query_platform', 'preflight_roster_batch', 'save_roster_batch', 'list_platform_queries', 'get_platform_batch_item', 'submit_platform_batch', 'retry_platform_batch']) tools.push((await import(`../../../server/mcp/tools/${path}.ts`)).default)

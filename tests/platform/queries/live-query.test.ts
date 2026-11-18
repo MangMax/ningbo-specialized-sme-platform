@@ -37,7 +37,7 @@ beforeAll(async () => {
   } }
 })
 beforeEach(() => {
-  updateCredential('miitCookie', cookie, { db })
+  updateCredential('sme-roster.miitCookie', cookie, { db })
   fetcher.mockReset()
   vi.stubGlobal('fetch', fetcher)
 })
@@ -118,7 +118,7 @@ it.each([
   expect(fetcher).not.toHaveBeenCalled()
 })
 it('missing credentials are not queried and do not fall back to a real environment', async () => {
-  updateCredential('miitCookie', null, { db })
+  updateCredential('sme-roster.miitCookie', null, { db })
   const previous = process.env.MIIT_COOKIE
   process.env.MIIT_COOKIE = ''
   try {
@@ -172,7 +172,7 @@ it('keeps the server credential snapshot for all pages and excludes unrelated en
   let n = 0
   fetcher.mockImplementation(async (_url: string, init: any) => {
     expect(init.headers.Cookie).toBe(cookie)
-    updateCredential('miitCookie', 'session=synthetic-next-account', { db })
+    updateCredential('sme-roster.miitCookie', 'session=synthetic-next-account', { db })
     const raw = JSON.parse(page([{ qymc: '合成' }], 2, ++n))
     raw.account = { token: 'private-envelope-token', username: 'private-account' }
     return response(JSON.stringify(raw))
@@ -226,7 +226,7 @@ it.each(['synthetic-query-secret', 'synthetic-query-%73ecret', 'session=syntheti
   expect(await query({ source: 'queryList', name: '合成' })).toMatchObject({ status: 'failed', error: { code: 'sensitive_response' }, rows: [] })
 })
 it('short credential components do not corrupt fixed public contract fields', async () => {
-  updateCredential('miitCookie', 'session=and', { db })
+  updateCredential('sme-roster.miitCookie', 'session=and', { db })
   fetcher.mockResolvedValue(response(page([{ qymc: '合成' }])))
   expect(await query({ source: 'queryList', name: '合成' })).toMatchObject({ source: 'queryList', status: 'success', effectiveConditions: { combination: 'and' }, completeness: 'complete' })
 })

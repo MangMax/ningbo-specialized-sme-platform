@@ -16,7 +16,7 @@ const fail = (status: number, code: string, message: string) => ({ status, heade
 function knownRedactors(context: { db: Db; apiToken?: string | null }) {
   const credentials = { ...credentialContext(), db: context.db }
   const runtime = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : null
-  const values = [context.apiToken, runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN, resolveCredential('miitCookie', credentials).value, resolveCredential('ocrToken', credentials).value]
+  const values = [context.apiToken, runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN, resolveCredential('sme-roster.miitCookie', credentials).value, resolveCredential('core.ocrToken', credentials).value]
   return [...new Set(values.filter((value): value is string => !!value))].map(cookieRedactor)
 }
 const integer = (value: unknown) => { const n = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value; return Number.isSafeInteger(n) && (n as number) > 0 ? n as number : null }

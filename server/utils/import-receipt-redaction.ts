@@ -20,7 +20,7 @@ export type RedactionOptions = { additionalSecrets?: readonly (string | null | u
 export function importReceiptRedactor(db: Db, options: RedactionOptions = {}, receiptRuntime?: ReceiptRuntimeContext): ReceiptRedactor {
   const runtime = receiptRuntime === undefined ? (typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : undefined) : validateReceiptRuntimeContext(receiptRuntime)
   const context = receiptRuntime === undefined ? { ...credentialContext(), db } : { db, ocrToken: runtime?.ocrToken }
-  const secrets = [...(options.additionalSecrets ?? []), runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN, resolveCredential('miitCookie', context).value, resolveCredential('ocrToken', context).value]
+  const secrets = [...(options.additionalSecrets ?? []), runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN, resolveCredential('sme-roster.miitCookie', context).value, resolveCredential('core.ocrToken', context).value]
   const redactors = Object.freeze([...new Set(secrets.filter((value): value is string => !!value))].map(cookieRedactor))
   function redact(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(redact)
