@@ -80,10 +80,10 @@ it('keeps counts, failure codes and HTTP transport facts in list and detail for 
 })
 
 it('rejects concrete or hostile path values as routes and never derives a template from the path', () => {
-  for (const route of ['/api/files/123', '/api/files/PRIVATE180', '/api/files/alice', '/api/files/bob-smith', '/api/private-secret', '/api/files/a@b.example', '/api/files/20261013', '/api/files/:id?token=1', '/api/files/:id/../x', 'https://untrusted.invalid/api/files/:id']) {
+  for (const route of ['/api/files/123', '/api/files/PRIVATE180', '/api/files/alice', '/api/files/bob-smith', '/api/private-secret', '/api/files/a@b.example', '/api/files/20261013', '/api/files/:id?token=1', '/api/files/:id/../x', 'https://untrusted.invalid/api/files/:id', '/api/settings/credentials/synthetic-path-value/reveal']) {
     expect(safeHttpRoute(route), route).toBeUndefined()
   }
-  for (const route of ['/api/files/:id', '/api/files/**:path', '/api/roster/decision-lifecycle/commands', '/api/roster/exports/current/specialized-sme', '/api/settings/credentials/miitCookie/reveal', '/api/settings/credentials/ocrToken/reveal', '/mcp']) {
+  for (const route of ['/api/files/:id', '/api/files/**:path', '/api/roster/decision-lifecycle/commands', '/api/roster/exports/current/specialized-sme', '/api/settings/credentials/:key/reveal', '/mcp']) {
     expect(safeHttpRoute(route), route).toBe(route)
   }
   expect(safeHttpMethod('patch')).toBe('PATCH')

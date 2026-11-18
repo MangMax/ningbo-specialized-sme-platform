@@ -10,14 +10,25 @@ export type AppNavItem = { readonly icon?: LucideIcon } & (
   | { readonly title: string; readonly items: readonly AppNavLink[]; readonly url?: never }
 )
 
-type AppModuleManifest = {
+type AppCredential = {
+  readonly key: string
+  readonly name: string
+  readonly description: string
+  readonly purpose: string
+  readonly sensitive?: boolean
+  readonly environment?: readonly string[]
+  readonly singleLine?: boolean
+}
+
+export type AppModuleManifest = {
   readonly id: string
   readonly name: string
   readonly dependsOn?: readonly string[]
+  readonly credentials?: readonly AppCredential[]
   readonly nav?: readonly AppNavItem[]
 }
 
-export function defineAppModule(manifest: AppModuleManifest): AppModuleManifest {
+export function defineAppModule<const T extends AppModuleManifest>(manifest: T): T {
   return manifest
 }
 
@@ -26,12 +37,20 @@ export function validateAppModules(manifests: readonly AppModuleManifest[]): voi
   const navOwners = new Map<string, string>()
 
   for (const manifest of manifests) {
-    const { id, nav } = manifest
+    const { id, nav, credentials } = manifest
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)) {
       throw new Error(`模块「${id}」的 id 无效，只允许用连字符分隔的小写字母和数字`)
     }
     if (modulesById.has(id)) throw new Error(`模块「${id}」的 id 重复`)
     modulesById.set(id, manifest)
+
+    const credentialKeys = new Set<string>()
+    for (const { key } of credentials ?? []) {
+      if (!/^[a-zA-Z0-9_-]+$/.test(key) || credentialKeys.has(key)) {
+        throw new Error(`模块「${id}」的凭据键「${key}」无效或重复`)
+      }
+      credentialKeys.add(key)
+    }
 
     for (const item of nav ?? []) {
       for (const { url } of item.items ?? [item]) {

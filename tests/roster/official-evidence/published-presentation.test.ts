@@ -494,7 +494,7 @@ function redactor391(db: ReturnType<typeof fixture391>['db'], token = 'cx391-onl
 function secrets391(db: ReturnType<typeof fixture391>['db']) {
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'rt391-api-distinct', mcpToken: 'rt391-mcp-distinct' }))
   vi.stubEnv('NUXT_API_TOKEN', 'env391-api-distinct'); vi.stubEnv('NUXT_MCP_TOKEN', 'env391-mcp-distinct')
-  db.insert(schema.serviceCredential).values([{ key: 'miitCookie', value: 'saved391-cookie-distinct', updatedAt: 'synthetic' }, { key: 'ocrToken', value: 'saved391-ocr-distinct', updatedAt: 'synthetic' }]).run()
+  db.insert(schema.serviceCredential).values([{ key: 'sme-roster.miitCookie', value: 'saved391-cookie-distinct', updatedAt: 'synthetic' }, { key: 'core.ocrToken', value: 'saved391-ocr-distinct', updatedAt: 'synthetic' }]).run()
   closes.push(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 }
 
@@ -505,7 +505,7 @@ it('factory_union_order preserves the complete context runtime env and credentia
   const actual = redact({ name: 'cx391-only-A7mN5p9Q rt391-api-distinct rt391-mcp-distinct env391-api-distinct env391-mcp-distinct saved391-cookie-distinct saved391-ocr-distinct',
     'cx391-only-A7mN5p9Q': 'ok', nested: '{"name":"cx391-only-A7mN5p9Q","token":"arbitrary"}', bearer: 'Bearer arbitrary-value' })
   expect(actual).toEqual({ name: '[REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED]', '[REDACTED]': 'ok', nested: '{"name":"[REDACTED]","token":"[REDACTED]"}', bearer: 'Bearer [REDACTED]' })
-  expect(credentials.mock.calls.map(call => call[0])).toEqual(['miitCookie', 'ocrToken'])
+  expect(credentials.mock.calls.map(call => call[0])).toEqual(['sme-roster.miitCookie', 'core.ocrToken'])
   expect(redact).toHaveProperty('knownRedactors')
   expect(redact.knownRedactors).toHaveLength(7)
   expect(redact.knownRedactors.map(r => r('cx391-only-A7mN5p9Q rt391-api-distinct rt391-mcp-distinct env391-api-distinct env391-mcp-distinct saved391-cookie-distinct saved391-ocr-distinct'))).toEqual([
@@ -740,7 +740,7 @@ it.each([true, false])("typed_name_union shares one closure with context %s", in
   const input = { evidenceId: 17, eventId: 9, revision: 3, availability: 'captured', nameRaw, sourceBindingKnown: true }
   const typedFirst = redact(input, 'official_published_name'), genericFirst = redact({ name: nameRaw })
   const typedSecond = redact(input, 'official_published_name'), genericSecond = redact(nameRaw)
-  expect(credentials.mock.calls.map(call => call[0])).toEqual(['miitCookie', 'ocrToken'])
+  expect(credentials.mock.calls.map(call => call[0])).toEqual(['sme-roster.miitCookie', 'core.ocrToken'])
   expect(redact.knownRedactors).toBe(known)
   expect(known).toHaveLength(includeContext ? 7 : 6)
   expect(genericFirst).toEqual({ name: expected }); expect(genericSecond).toBe(expected)

@@ -1,5 +1,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { toast } from 'vue-sonner'
+import { registeredCredentials, type CredentialKey } from '@/lib/app-modules'
 export interface CredentialStatus {
   configured: boolean
   source: string
@@ -7,11 +8,10 @@ export interface CredentialStatus {
   updatedAt: string | null
   hasSaved: boolean
 }
-export type CredentialKey = 'ocrToken' | 'miitCookie'
 export type CredentialOperation = 'load' | 'save' | 'clear' | 'reveal' | 'copy'
-export interface CredentialState { ocrToken: CredentialStatus; miitCookie: CredentialStatus }
-const labels = { ocrToken: 'OCR token', miitCookie: '平台 Cookie' }
-const empty = () => ({ ocrToken: '', miitCookie: '' })
+type CredentialState = Record<CredentialKey, CredentialStatus>
+const empty = () => Object.fromEntries(Array.from(registeredCredentials.keys(), key => [key, ''])) as Record<CredentialKey, string>
+const label = (key: CredentialKey) => registeredCredentials.get(key)?.name ?? key
 export function useCredentialSettings() {
   const replacement = ref(empty())
   const state = ref<CredentialState | null>(null)
@@ -22,13 +22,17 @@ export function useCredentialSettings() {
   const failed = ref(false)
   let generation = 0
   let controller: AbortController | undefined
-  const canRead = computed(() => ({ ocrToken: !!state.value?.ocrToken.configured, miitCookie: !!state.value?.miitCookie?.configured }))
   const request = <T>(url: string, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', body?: object) => $fetch<T>(url, {
     method, body, cache: 'no-store', signal: controller?.signal,
   })
   function clearMemory() {
     generation++; controller?.abort(); pending.value = null
     state.value = null; raw.value = empty(); replacement.value = empty(); message.value = ''; failed.value = false
+  }
+  function resetPresentation() {
+    raw.value = empty()
+    message.value = ''
+    failed.value = false
   }
   function restorePage(event: PageTransitionEvent) { if (event.persisted) void load() }
   onMounted(() => {
@@ -69,33 +73,33 @@ export function useCredentialSettings() {
       if (current === generation) { state.value = result; raw.value = empty() }
     })
   }
-  async function save(key: CredentialKey = 'ocrToken') {
-    if (!replacement.value[key].trim()) { failed.value = true; message.value = `请输入非空${labels[key]}。`; return }
+  async function save(key: CredentialKey) {
+    if (!replacement.value[key].trim()) { failed.value = true; message.value = `请输入非空${label(key)}。`; return }
     const current = generation
     await perform({ type: 'save', key }, async () => {
       const result = await request<CredentialState>('/api/settings/credentials', 'PATCH', { [key]: replacement.value[key] })
       if (current === generation) { state.value = result; raw.value[key] = ''; replacement.value[key] = ''; message.value = '已保存，无需重启；新任务将使用当前配置。' }
     })
   }
-  async function clear(key: CredentialKey = 'ocrToken') {
+  async function clear(key: CredentialKey) {
     const current = generation
     await perform({ type: 'clear', key }, async () => {
       const result = await request<CredentialState>('/api/settings/credentials', 'DELETE', { key })
       if (current === generation) { state.value = result; raw.value[key] = ''; message.value = '已清除页面保存值。' }
     })
   }
-  async function reveal(key: CredentialKey = 'ocrToken', copy = false) {
-    if (!canRead.value[key]) return
+  async function reveal(key: CredentialKey, copy = false) {
+    if (!state.value?.[key]?.configured) return
     if (!copy && raw.value[key]) { raw.value[key] = ''; return }
     const current = generation
     await perform({ type: copy ? 'copy' : 'reveal', key }, async () => {
       const result = await request<{ value: string }>(`/api/settings/credentials/${key}/reveal`, 'POST', {})
       if (current !== generation) return
       if (copy) {
-        try { await navigator.clipboard.writeText(result.value); if (current === generation) toast.success(`已复制完整${labels[key]}。`) }
+        try { await navigator.clipboard.writeText(result.value); if (current === generation) toast.success(`已复制完整${label(key)}。`) }
         catch { if (current === generation) toast.error('复制失败，请允许剪贴板访问后重试。') }
       } else raw.value[key] = result.value
     })
   }
-  return { replacement, state, raw, busy, pending, failed, message, canRead, load, save, clear, reveal }
+  return { replacement, state, raw, busy, pending, failed, message, resetPresentation, load, save, clear, reveal }
 }

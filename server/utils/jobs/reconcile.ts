@@ -1,4 +1,4 @@
-import { resolvePlatformCookie } from '../credential-state'
+import { resolvePlatformCookie } from '../platform-credential'
 import type { ComparisonDirection } from '../../../lib/comparison'
 import { TITLE_ORDER } from '../../../lib/labels'
 import { runPlatformReconcile, type ReconcileReport } from '../platform-reconcile'

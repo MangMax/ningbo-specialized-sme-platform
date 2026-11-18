@@ -4,7 +4,7 @@ import { recognizedConditionShape, platformQueryTitles, type PlatformLiveQueryRe
 import { cookieRedactor } from '../../lib/platform/client'
 import { newJobId } from '../../lib/job'
 import { MAX_BATCH_ATTEMPTS, PLATFORM_BATCH_KIND, platformBatchInputSchema, platformBatchStatusSchema, platformBatchItemSchema, platformBatchRetrySchema, type PlatformBatchItem, type PlatformBatchParams, type PlatformBatchResult } from '../../lib/platform/batch-query'
-import { resolvePlatformCookie } from './credential-state'
+import { resolvePlatformCookie } from './platform-credential'
 import { ensureJobRunnerReady, getJobSpec, registerJob, submitJob, requeueFinishedJob, type JobContext, type JobSpec } from './job-runner'
 import { getJob, setJobResult } from './job-store'
 import { runPlatformLiveQuery } from './platform-live-query'

@@ -18,7 +18,7 @@ export function jobReadProjector(db: ReturnType<typeof useApplicationDb>): (row:
   const runtime = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : undefined
   const context = { ...credentialContext(), db }
   const secrets = [runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN,
-    resolveCredential('miitCookie', context).value, resolveCredential('ocrToken', context).value]
+    resolveCredential('sme-roster.miitCookie', context).value, resolveCredential('core.ocrToken', context).value]
   const redactors = [...new Set(secrets.filter((value): value is string => !!value))].map(cookieRedactor)
   const text = (value: string) => String(sanitizeEvidence(value, redactors))
     .replace(/\bBearer\s+[^\s";,]+/gi, 'Bearer [REDACTED]').replace(hostPath, reference => /^https?:\/\//i.test(reference) ? reference : '[REDACTED]')
