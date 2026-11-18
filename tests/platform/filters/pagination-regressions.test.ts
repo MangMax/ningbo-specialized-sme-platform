@@ -41,7 +41,7 @@ beforeAll(async () => {
     return wire.structuredContent
   }
 })
-beforeEach(() => { updateCredential('miitCookie', cookie, { db }); upstream.mockReset(); vi.stubGlobal('fetch', upstream) })
+beforeEach(() => { updateCredential('sme-roster.miitCookie', cookie, { db }); upstream.mockReset(); vi.stubGlobal('fetch', upstream) })
 afterAll(async () => { await whenIdle(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 
 it.each([true, false, [], [1], ' ', {}, -1, 1.5, 'NaN', '9007199254740992'])('REST and MCP keep malformed totals unknown and traverse every relation (case %#)', async total => {

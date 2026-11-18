@@ -18,7 +18,17 @@ export type AppJobKind = {
   readonly spec: string
 }
 
-type AppModuleManifest = {
+type AppCredential = {
+  readonly key: string
+  readonly name: string
+  readonly description: string
+  readonly purpose: string
+  readonly sensitive?: boolean
+  readonly environment?: readonly string[]
+  readonly singleLine?: boolean
+}
+
+export type AppModuleManifest = {
   readonly id: string
   readonly name: string
   readonly description?: string
@@ -34,6 +44,7 @@ type AppModuleManifest = {
     readonly operationPage?: string
   }[]
   readonly mcpTools?: readonly string[]
+  readonly credentials?: readonly AppCredential[]
   readonly nav?: readonly AppNavItem[]
   readonly jobKinds?: readonly AppJobKind[]
 }
@@ -43,7 +54,7 @@ type AppDashboardCard = {
   readonly title: string
 }
 
-export function defineAppModule(manifest: AppModuleManifest): AppModuleManifest {
+export function defineAppModule<const T extends AppModuleManifest>(manifest: T): T {
   return manifest
 }
 
@@ -59,7 +70,7 @@ export function validateAppModules(manifests: readonly AppModuleManifest[]): voi
   const tools = new Set<string>()
 
   for (const manifest of manifests) {
-    const { id, nav, jobKinds } = manifest
+    const { id, nav, jobKinds, credentials } = manifest
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)) {
       throw new Error(`模块「${id}」的 id 无效，只允许用连字符分隔的小写字母和数字`)
     }
@@ -96,6 +107,14 @@ export function validateAppModules(manifests: readonly AppModuleManifest[]): voi
         throw new Error(`模块「${id}」的任务种类「${kind}」重复，已由模块「${owner}」登记`)
       }
       jobOwners.set(kind, id)
+    }
+
+    const credentialKeys = new Set<string>()
+    for (const { key } of credentials ?? []) {
+      if (!/^[a-zA-Z0-9_-]+$/.test(key) || credentialKeys.has(key)) {
+        throw new Error(`模块「${id}」的凭据键「${key}」无效或重复`)
+      }
+      credentialKeys.add(key)
     }
 
     for (const item of nav ?? []) {

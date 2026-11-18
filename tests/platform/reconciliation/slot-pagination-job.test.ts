@@ -93,7 +93,7 @@ afterAll(async () => {
 function upstream() {
   reply = normalReply
   upstreamStatus = 200
-  updateCredential('miitCookie', 'session=issue299-original', { db, env: {} })
+  updateCredential('sme-roster.miitCookie', 'session=issue299-original', { db, env: {} })
   vi.stubGlobal('fetch', async (url: string, init: { body: string; headers: Record<string, string> }) => {
     const body = new URLSearchParams(init.body), source = url.includes('/businessList') ? 'businessList' : 'queryList'
     const rdjb = body.get('rdjb') ?? '', n = Number(body.get('pageNum'))
@@ -227,7 +227,7 @@ it('network retry and subsequent pages keep the submission credential snapshot a
   upstream()
   let failures = 0
   reply = (s, r, n) => {
-    updateCredential('miitCookie', 'session=issue299-replacement', { db, env: {} })
+    updateCredential('sme-roster.miitCookie', 'session=issue299-replacement', { db, env: {} })
     if (s === 'businessList' && r === '3' && n === 2 && failures++ === 0) throw new Error('issue299 transient network error')
     return normalReply(s, r, n)
   }

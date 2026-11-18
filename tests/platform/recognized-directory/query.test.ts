@@ -37,7 +37,7 @@ beforeAll(async () => {
   } }
 })
 beforeEach(() => {
-  updateCredential('miitCookie', cookie, { db })
+  updateCredential('sme-roster.miitCookie', cookie, { db })
   fetcher.mockReset()
   vi.stubGlobal('fetch', fetcher)
 })
@@ -142,7 +142,7 @@ it.each([{ maxRequests: 1 }, { maxRows: 2 }])('recognized bounds retain whole pa
   for (const invoke of [query, tool.handler]) expect(await invoke({ source: 'queryBusList', name: '合成', pageSize: 2, ...limits })).toMatchObject({ status: 'partial', fetchedCount: 2, error: { code: 'safety_limit' }, unfinished: [{ rdjb: '1', page: 2 }, { rdjb: '2', page: 1 }, { rdjb: '3', page: 1 }] })
 })
 it('missing recognized credentials reports all unqueried titles without using environment credentials', async () => {
-  updateCredential('miitCookie', null, { db })
+  updateCredential('sme-roster.miitCookie', null, { db })
   vi.stubEnv('MIIT_COOKIE', '')
   vi.stubEnv('MIIT_COOKIE_FILE', '')
   try {

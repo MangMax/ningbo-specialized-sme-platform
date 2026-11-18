@@ -7,7 +7,7 @@ import { DecisionError102, decisionScope102, type DecisionDb } from './decision-
 export function decisionOutput102(db: DecisionDb) {
   const runtime = useRuntimeConfig()
   const credentials = { ...credentialContext(), db }
-  const values = [runtime.apiToken, runtime.mcpToken, resolveCredential('miitCookie', credentials).value, resolveCredential('ocrToken', credentials).value]
+  const values = [runtime.apiToken, runtime.mcpToken, resolveCredential('sme-roster.miitCookie', credentials).value, resolveCredential('core.ocrToken', credentials).value]
   const redactors = [...new Set(values.filter((v): v is string => typeof v === 'string' && !!v))].map(cookieRedactor)
   return (value: Record<string, unknown>) => {
     const safe = sanitizeEvidence(value, redactors)

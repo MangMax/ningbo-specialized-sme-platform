@@ -17,7 +17,7 @@ let expired = true; let failedPage = true
 const platformRequests: { source: string; name: string; page: number }[] = []
 beforeAll(async () => {
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'agent.sqlite')); vi.stubEnv('MIIT_COOKIE', ''); vi.stubEnv('MIIT_COOKIE_FILE', '')
-  updateCredential('miitCookie', 'session=synthetic-agent-server-only', { db })
+  updateCredential('sme-roster.miitCookie', 'session=synthetic-agent-server-only', { db })
   api = await startPlatformBatchApi({ db, apiToken: 'synthetic-agent-task-token', filesDir: dir })
   workflow = await import(workflowUrl)
   vi.stubGlobal('fetch', async (url: string, init: any) => {

@@ -50,20 +50,20 @@ it('shows the roster entry and both statistics on the workbench', async () => {
 })
 
 it('keeps the workbench and a successful card visible when roster statistics fail and are retried', async () => {
-  const [core, roster] = registry.getAppModules()
+  const modules = registry.getAppModules()
   const getComponent = dashboard.getDashboardCardComponent
   vi.spyOn(dashboard, 'getDashboardCardComponent')
     .mockImplementation(id => id === 'ready-card' ? { template: '<p>服务可用</p>' } : getComponent(id))
-  vi.spyOn(registry, 'getAppModules').mockReturnValue([core, {
-    ...roster,
-    dashboard: [
-      ...roster.dashboard ?? [],
-      {
-        id: 'ready-card',
-        title: '服务状态',
-      },
-    ],
-  }])
+  vi.spyOn(registry, 'getAppModules').mockReturnValue(modules.map(module => {
+    if (module.id !== 'sme-roster') return module
+    return {
+      ...module,
+      dashboard: [
+        ...module.dashboard ?? [],
+        { id: 'ready-card', title: '服务状态' },
+      ],
+    }
+  }))
   const unavailable = new Error('statistics unavailable')
   const api = vi.fn()
     .mockRejectedValueOnce(unavailable)

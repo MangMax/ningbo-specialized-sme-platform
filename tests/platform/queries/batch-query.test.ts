@@ -20,7 +20,7 @@ function response(grid: string, rows: Record<string, string>[], page = 1, total 
   return { ok: true, status: 200, text: async () => JSON.stringify({ zrarData: { grid: { [grid]: { pageSet: rows, page, ...(grid === 'businessGrid' ? { pageSize: 1 } : {}), maxCount: total, maxPage: Math.max(1, total) } } } }) }
 }
 beforeAll(() => { vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite')); vi.stubEnv('MIIT_COOKIE', ''); vi.stubEnv('MIIT_COOKIE_FILE', '') })
-beforeEach(() => { updateCredential('miitCookie', cookie, { db }); upstream.mockReset(); vi.stubGlobal('fetch', upstream) })
+beforeEach(() => { updateCredential('sme-roster.miitCookie', cookie, { db }); upstream.mockReset(); vi.stubGlobal('fetch', upstream) })
 afterAll(async () => { await whenIdle(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 it('REST accepts a mixed-source batch asynchronously and retrieves stable individual results without business writes', async () => {
   upstream.mockImplementation(async (url: string, init: any) => {
@@ -209,7 +209,7 @@ it('queued mixed-source batches retain one submission credential snapshot across
     { query: { source: 'businessList', uscc, rdjb: 'all', pageSize: 1 } },
     { query: { source: 'queryBusList', name: '合成', rdjb: ['1', '2'], pageSize: 1 } },
   ] })).body as any
-  updateCredential('miitCookie', 'session=synthetic-replacement-secret', { db })
+  updateCredential('sme-roster.miitCookie', 'session=synthetic-replacement-secret', { db })
   release(); await whenIdle()
   expect(seen).toEqual(Array(5).fill(cookie))
   const before = (await invoke('status', undefined, receipt.batchId)).body as any
@@ -327,14 +327,14 @@ it('maximum item count is accepted while stable item ownership and unknown retry
   expect((await invoke('retry', { itemIds: [receipt.itemIds[0]], cookie }, receipt.batchId)).status).toBe(400)
 })
 it('missing submission credentials leave all title ranges not queried and an explicit retry succeeds after maintenance', async () => {
-  updateCredential('miitCookie', null, { db })
+  updateCredential('sme-roster.miitCookie', null, { db })
   const receipt = (await invoke('submit', { items: [{ query: { source: 'queryBusList', name: '合成', pageSize: 1 } }] })).body as any
   await whenIdle()
   const before = (await invoke('status', undefined, receipt.batchId)).body as any
   expect(before.items[0]).toMatchObject({ status: 'not_queried', completeness: 'partial' })
   expect(before.items[0].unfinished.map((p: any) => [p.rdjb, p.page])).toEqual([['1', 1], ['2', 1], ['3', 1]])
   expect(upstream).not.toHaveBeenCalled()
-  updateCredential('miitCookie', cookie, { db })
+  updateCredential('sme-roster.miitCookie', cookie, { db })
   upstream.mockImplementation(async () => response('businessGrid', []))
   await invoke('retry', { itemIds: receipt.itemIds }, receipt.batchId); await whenIdle()
   const after = (await invoke('status', undefined, receipt.batchId)).body as any
@@ -416,7 +416,7 @@ it('retry shares the original item request bound across unfinished titles and re
   expect(batch).toMatchObject({ state: 'failed', completeness: 'partial', attempt: 2 })
 })
 it('short credential components do not reject fixed numeric bounds or title selectors as secret echoes', async () => {
-  updateCredential('miitCookie', 'session=1', { db })
+  updateCredential('sme-roster.miitCookie', 'session=1', { db })
   upstream.mockImplementation(async () => response('businessListGrid', []))
   const submitted = await invoke('submit', { items: [{ query: { source: 'businessList', uscc, rdjb: '1', pageSize: 1 } }] })
   expect(submitted.status).toBe(202); await whenIdle()
