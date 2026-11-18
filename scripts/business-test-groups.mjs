@@ -100,6 +100,7 @@ const owners = {
     "roster/legacy-export",
     "roster/status-workbook"
   ],
+  "名录 · 导出任务执行": ["roster/export-execution"],
   "名录 · 企业台账与年度流程": [
     "roster/annual-process",
     "roster/aliases",
