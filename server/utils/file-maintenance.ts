@@ -82,7 +82,11 @@ export function maintainStoredFileSync(db: Db, id: number, action: FileMaintenan
     if (action === 'remove') after = softRemoveStoredFile(tx, id)!
     else if (action === 'restore') after = restoreVerifiedStoredFile(tx, verified!)
     else if ('displayName' in patch) after = renameStoredFileDisplayName(tx, id, patch.displayName as string)!
-    else after = updateStoredFile(tx, id, patch)!
+    else {
+      const updated = updateStoredFile(tx, id, patch)
+      if (!updated) throw new FileMaintenanceError(404, '未找到可更新的文件分类')
+      after = updated
+    }
     const beforeValues = snapshot(current), afterValues = snapshot(after)
     // An unkeyed no-op needs no duplicate audit. Keyed no-ops retain a replay receipt.
     if (options.idempotencyKey || JSON.stringify(beforeValues) !== JSON.stringify(afterValues)) {

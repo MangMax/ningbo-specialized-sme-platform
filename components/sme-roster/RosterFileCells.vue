@@ -6,8 +6,8 @@ import { CATEGORY_STATES, KINDS, PARSE_STATES } from '~~/lib/labels'
 import { joinSeries, partBatches, partYears } from '~~/lib/file-parts'
 import type { RosterFileFields } from '~~/server/modules/sme-roster/files'
 
-const { file: row } = defineProps<{ file: RosterFileFields }>()
-const isComplete = (file: RosterFileFields) => file.source !== null && file.kind !== null
+const { file: row } = defineProps<{ file: Partial<RosterFileFields> }>()
+const isComplete = (file: Partial<RosterFileFields>) => file.source != null && file.kind != null
 
 /**
  * 「内容年份 / 内容批次」列的展示值:**文件内容**里各段去重后的年份(如 `2021、2024`)。
@@ -28,13 +28,13 @@ function seriesCell(values: readonly number[], unit: string) {
     more: rest > 0 ? `+${rest}${unit}` : '',
   }
 }
-const contentYears = (row: RosterFileFields) => seriesCell(partYears((row.registeredSummary?.declarations.map(d => d.part) ?? [])), '年')
-const contentBatches = (row: RosterFileFields) => seriesCell(partBatches((row.registeredSummary?.declarations.map(d => d.part) ?? [])), '批')
+const contentYears = (row: Partial<RosterFileFields>) => seriesCell(partYears((row.registeredSummary?.declarations.map(d => d.part) ?? [])), '年')
+const contentBatches = (row: Partial<RosterFileFields>) => seriesCell(partBatches((row.registeredSummary?.declarations.map(d => d.part) ?? [])), '批')
 /** 完整清单进 `title` —— 列里只平铺前两个,悬停能看到全部。 */
-const contentYearsTitle = (row: RosterFileFields) => joinSeries(partYears((row.registeredSummary?.declarations.map(d => d.part) ?? []))) ?? undefined
-const contentBatchesTitle = (row: RosterFileFields) => joinSeries(partBatches((row.registeredSummary?.declarations.map(d => d.part) ?? []))) ?? undefined
+const contentYearsTitle = (row: Partial<RosterFileFields>) => joinSeries(partYears((row.registeredSummary?.declarations.map(d => d.part) ?? []))) ?? undefined
+const contentBatchesTitle = (row: Partial<RosterFileFields>) => joinSeries(partBatches((row.registeredSummary?.declarations.map(d => d.part) ?? []))) ?? undefined
 /** 「文件发布年份/批次」列:文件级**单值**(目录给的),形如 `2024 / 2`、`2024`、`—`。 */
-function publishedYearBatch(row: RosterFileFields): string {
+function publishedYearBatch(row: Partial<RosterFileFields>): string {
   if (row.year == null) return '—'
   return row.batch == null ? String(row.year) : `${row.year} / ${row.batch}`
 }
@@ -70,7 +70,7 @@ function publishedYearBatch(row: RosterFileFields): string {
         {{ contentYears(row)!.more }}</span
       >
     </template>
-    <span v-else class="text-muted-foreground font-normal">{{ row.registeredSummary?.count ? '未知' : (row.registeredSummary ? '未登记' : '读取未确认') }}</span>
+    <span v-else class="text-muted-foreground font-normal">{{ row.categoryState === undefined ? '—' : row.registeredSummary?.count ? '未知' : (row.registeredSummary ? '未登记' : '读取未确认') }}</span>
   </TableCell>
   <TableCell class="truncate text-xs tabular-nums" :title="contentBatchesTitle(row)">
     <template v-if="contentBatches(row)">
@@ -88,6 +88,7 @@ function publishedYearBatch(row: RosterFileFields): string {
     <!-- 分类状态:已定 / 程序推的 / 未定。三档靠**线型**分开(与事件同一套
          语言 —— `dashed` = 还没坐实),不靠颜色 —— 颜色已被称号梯度占用。 -->
     <Badge
+      v-if="row.categoryState"
       :variant="row.categoryState === 'set' ? 'quiet' : 'dashed'"
       :title="
         row.categoryState === 'unset' && !isComplete(row)
@@ -97,6 +98,7 @@ function publishedYearBatch(row: RosterFileFields): string {
     >
       {{ CATEGORY_STATES[row.categoryState] }}
     </Badge>
+    <span v-else class="text-muted-foreground text-xs">—</span>
   </TableCell>
   <TableCell>
     <!-- 解析状态:未解析 / 已解析 / 解析失败。
@@ -105,6 +107,7 @@ function publishedYearBatch(row: RosterFileFields): string {
          「这份文件还没解析」这个信号就没了。`unparsed` 是**待办**,走虚线
          (与入库培育同一档语义);`parsed` 已坐实走实线;`failed` 才是红。 -->
     <Badge
+      v-if="row.parseState"
       :variant="
         row.parseState === 'failed'
           ? 'destructive'
@@ -115,14 +118,15 @@ function publishedYearBatch(row: RosterFileFields): string {
     >
       {{ PARSE_STATES[row.parseState] }}
     </Badge>
+    <span v-else class="text-muted-foreground text-xs">—</span>
   </TableCell>
   <TableCell class="text-right text-xs tabular-nums">
     <span
       :class="
-        row.referenceCount > 0 ? 'text-foreground font-medium' : 'text-muted-foreground'
+        (row.referenceCount ?? 0) > 0 ? 'text-foreground font-medium' : 'text-muted-foreground'
       "
     >
-      {{ row.referenceCount }}
+      {{ row.referenceCount ?? '—' }}
     </span>
   </TableCell>
 </template>

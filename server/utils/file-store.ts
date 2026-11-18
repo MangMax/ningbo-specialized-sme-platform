@@ -19,18 +19,34 @@ export interface FileQuery {
 }
 
 export type FileQueryFilters = Readonly<Record<string, readonly string[] | undefined>>
-export interface FileCategoryServer<Fields extends object, Patch extends object> {
-  readonly admission: FileAdmissionPolicy
+export interface FileCategoryServer {
+  readonly id: string
+  readonly admission?: FileAdmissionPolicy
   readonly filters?: readonly FileFilter[]
-  readonly readFields: (db: FileStoreDb, ids: readonly number[]) => ReadonlyMap<number, Partial<Fields>>
-  readonly constraint: (db: FileStoreDb, filters: FileQueryFilters) => SQL | undefined
-  readonly orderBy: readonly SQL[]
-  readonly prepareBackfill: (path: string) => ((db: FileStoreDb, fileId: number) => void) | null
-  readonly parseMetadataPatch: (input: unknown) => Patch
-  readonly writeFileClassification: (db: FileStoreDb, id: number, patch: Patch) => boolean
-  readonly landing: FileLanding
-  readonly snapshot: (fields: Fields) => Record<string, unknown>
+  readonly readFields?: (db: FileStoreDb, ids: readonly number[]) => ReadonlyMap<number, object>
+  readonly constraint?: (db: FileStoreDb, filters: FileQueryFilters) => SQL | undefined
+  readonly orderBy?: readonly SQL[]
+  /** Return null to leave the path to another registered category. */
+  readonly prepareBackfill?: (path: string) => ((db: FileStoreDb, fileId: number) => void) | null
+  readonly metadata?: {
+    readonly properties: Record<string, object>
+    parse(input: Record<string, unknown>): object
+    write(db: FileStoreDb, id: number, patch: Record<string, unknown>): boolean
+  }
+  readonly landing?: FileLanding
+  /** Handles clients that omit the category in upload metadata. */
+  readonly defaultLanding?: boolean
+  readonly snapshot?: (fields: FileRow) => Record<string, unknown>
+  readonly openAPI?: {
+    readonly listDescription?: string
+    readonly rowProperties?: Record<string, object>
+  }
 }
+
+type CategoryFields<C> = C extends { readFields: (...args: never[]) => ReadonlyMap<number, infer Fields> }
+  ? Fields : never
+type UnionToIntersection<U> = (U extends unknown ? (fields: U) => void : never) extends (fields: infer I) => void
+  ? I : never
 
 const fileColumns = {
   id: schema.storedFile.id,
@@ -171,13 +187,20 @@ export class FileMaintenanceError extends Error {
   constructor(public statusCode: number, message: string) { super(message) }
 }
 
-export function createFileStore<Fields extends object, Patch extends object>(categories: readonly FileCategoryServer<Fields, Patch>[]) {
-  type Row = FileRow & Fields
+export function createFileStore<const Categories extends readonly FileCategoryServer[]>(registered: Categories) {
+  type Row = FileRow & Partial<UnionToIntersection<CategoryFields<Categories[number]>>>
+  const categories: readonly FileCategoryServer[] = registered
+  const filtersByCategory = categories.flatMap(category => category.filters?.length ? [{ category, filters: category.filters }] : [])
+  const backfillCategories = categories.flatMap(category => category.prepareBackfill ? [category.prepareBackfill] : [])
+  const metadataByKey = new Map(categories.flatMap(category => category.metadata
+    ? Object.keys(category.metadata.properties).map(key => [key, category.metadata!] as const)
+    : []))
+  const rollbackMetadata = Symbol('metadata write declined')
 
   function extendRows(db: FileStoreDb, rows: FileColumnsRow[]): Row[] {
     if (!rows.length) return []
     const ids = rows.map(row => row.id)
-    const fields = categories.map(category => category.readFields(db, ids))
+    const fields = categories.map(category => category.readFields?.(db, ids))
     return rows.map(row => Object.assign({
       ...row,
       contentIdentity: {
@@ -185,14 +208,14 @@ export function createFileStore<Fields extends object, Patch extends object>(cat
         status: 'unknown' as const,
         historical: 'unknown' as const,
       },
-    }, ...fields.map(byId => byId.get(row.id))) as Row)
+    }, ...fields.map(byId => byId?.get(row.id))) as Row)
   }
 
   function checkAdmission(relPath: string, siblings?: ReadonlySet<string>) {
     return evaluateFileAdmission(categories, relPath, siblings)
   }
 
-  function listStoredFiles(db: FileStoreDb, params: FileQuery = {}, filters: FileQueryFilters = {}) {
+  function listStoredFiles(db: FileStoreDb, params: FileQuery & Record<string, unknown> = {}) {
     return db.transaction(tx => {
       const where = and(
         params.includeRemoved ? undefined : isNull(schema.storedFile.removedAt),
@@ -200,13 +223,22 @@ export function createFileStore<Fields extends object, Patch extends object>(cat
           like(schema.storedFile.displayName, `%${params.q}%`),
           like(schema.storedFile.filename, `%${params.q}%`),
         ) : undefined,
-        ...categories.map(category => category.constraint(tx, filters)),
+        ...filtersByCategory.map(({ category, filters }) => {
+          const selected = Object.fromEntries(filters.flatMap(filter => {
+            const raw = params[filter.key]
+            const values = (Array.isArray(raw) ? raw : [raw])
+              .flatMap(value => typeof value === 'string' ? value.split(',').map(part => part.trim()) : [])
+              .filter(value => filter.options.some(option => option.value === value))
+            return values.length ? [[filter.key, values]] : []
+          }))
+          return Object.keys(selected).length ? category.constraint?.(tx, selected) : undefined
+        }),
       )
       const page = Math.max(1, params.page ?? 1)
       const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, params.pageSize ?? 50))
       const total = tx.select({ n: sql<number>`count(*)` }).from(schema.storedFile).where(where).get()!.n
       const rows = tx.select(fileColumns).from(schema.storedFile).where(where)
-        .orderBy(...categories.flatMap(category => category.orderBy), schema.storedFile.filename)
+        .orderBy(...categories.flatMap(category => category.orderBy ?? []), schema.storedFile.filename)
         .limit(pageSize).offset((page - 1) * pageSize).all()
       return { rows: extendRows(tx, rows), total }
     })
@@ -214,14 +246,13 @@ export function createFileStore<Fields extends object, Patch extends object>(cat
 
   function getStoredFile(db: FileStoreDb, id: number): Row | null {
     return db.transaction(tx => {
-      const rows = readBaseRows(tx, and(eq(schema.storedFile.id, id),
-        ...categories.map(category => category.constraint(tx, {}))))
+      const rows = readBaseRows(tx, eq(schema.storedFile.id, id))
       return extendRows(tx, rows)[0] ?? null
     })
   }
 
   function extensionSnapshot(row: Row) {
-    return Object.assign({}, ...categories.map(category => category.snapshot(row)))
+    return Object.assign({}, ...categories.map(category => category.snapshot?.(row)))
   }
 
   /** 只更新用户可见名称并追加历史;`filename` / `relPath` 与磁盘内容保持不变。 */
@@ -312,8 +343,8 @@ export function createFileStore<Fields extends object, Patch extends object>(cat
         stats.excluded.push({ relPath: f.relPath, reason: scope.reason, detail: scope.detail })
         continue
       }
-      const writes = categories.map(category => category.prepareBackfill(f.relPath))
-      if (writes.includes(null)) {
+      const writes = backfillCategories.map(prepare => prepare(f.relPath)).filter(write => write !== null)
+      if (backfillCategories.length && !writes.length) {
         stats.skipped.push(f.relPath)
         continue
       }
@@ -321,7 +352,7 @@ export function createFileStore<Fields extends object, Patch extends object>(cat
       if (!row) {
         db.transaction(tx => {
           const inserted = tx.insert(schema.storedFile).values(f).returning({ id: schema.storedFile.id }).get()
-          for (const write of writes) write?.(tx, inserted.id)
+          for (const write of writes) write(tx, inserted.id)
         })
         stats.inserted += 1
         continue
@@ -352,7 +383,47 @@ export function createFileStore<Fields extends object, Patch extends object>(cat
     return backfillStoredFiles(db, await scanFileStore(root))
   }
 
+  const resolveUploadPlacement: FileLanding = metadata => {
+    const requested = metadata.fileCategory
+    const category = categories.find(item => requested ? item.id === requested : item.defaultLanding)
+    if (!category?.landing) throw { status_code: 400, body: '未登记上传落位规则\n' }
+    return category.landing(metadata)
+  }
+
+  function divideMetadata(input: object) {
+    const groups = new Map<NonNullable<FileCategoryServer['metadata']>, Record<string, unknown>>()
+    for (const [key, value] of Object.entries(input)) {
+      const owner = metadataByKey.get(key)
+      if (!owner) throw new Error(`不可修改的字段:${key}`)
+      const group = groups.get(owner) ?? {}
+      group[key] = value
+      groups.set(owner, group)
+    }
+    return groups
+  }
+
+  function parseMetadataPatch(input: unknown): Record<string, unknown> {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('请求体必须是对象')
+    return Object.assign({}, ...Array.from(divideMetadata(input), ([owner, fields]) => owner.parse(fields)))
+  }
+
+  function updateStoredFile(db: FileStoreDb, id: number, patch: object): Row | null {
+    const groups = divideMetadata(patch)
+    try {
+      return db.transaction(tx => {
+        for (const [owner, fields] of groups) {
+          if (!owner.write(tx, id, fields)) throw rollbackMetadata
+        }
+        return getStoredFile(tx, id)
+      }, { behavior: 'immediate' })
+    } catch (error) {
+      if (error === rollbackMetadata) return null
+      throw error
+    }
+  }
+
   return {
+    parseMetadataPatch, updateStoredFile, resolveUploadPlacement,
     checkAdmission, listStoredFiles, getStoredFile, extensionSnapshot,
     renameStoredFileDisplayName, verifyStoredFileRestoration, restoreVerifiedStoredFile,
     softRemoveStoredFile, backfillStoredFiles, backfillFromDisk,

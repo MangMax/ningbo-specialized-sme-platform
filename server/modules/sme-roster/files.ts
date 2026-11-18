@@ -7,8 +7,9 @@ import type { StoredFilePart } from '../../../lib/file-parts'
 import { classificationColumns, fileClassificationJoin } from '../../utils/roster-file-classification'
 import { listFileParts } from '../../utils/file-parts'
 import { listRegisteredDeclarations681, registeredSummary681 } from '../../utils/registered-declarations'
-import type { FileStoreDb as Db, FileCategoryServer } from '../../utils/file-store'
-import { rosterFileCategory } from '../../../lib/sme-roster/file-category'
+import type { FileStoreDb as Db, FileCategoryServer, FileRow } from '../../utils/file-store'
+import manifest from '../../../lib/sme-roster/manifest'
+import { rosterFileOpenApi } from './file-openapi'
 
 const KINDS: readonly FileKind[] = KIND_ORDER as FileKind[]
 export const PARSE_STATES: readonly ParseState[] = PARSE_STATE_ORDER as ParseState[]
@@ -37,7 +38,7 @@ export interface RosterFileFields {
 const classification = schema.rosterFileClassification
 
 /** 给已取出的行补上**段**(票 17)。一次查询取回本页所有文件的段,按 `file_id` 分到各行。 */
-function readFields(db: Db, ids: readonly number[]): ReadonlyMap<number, RosterFileFields> {
+function readFields(db: Db, ids: readonly number[]): ReadonlyMap<number, Partial<RosterFileFields>> {
   if (!ids.length) return new Map()
   const byFile = listFileParts(
     db,
@@ -56,37 +57,42 @@ function readFields(db: Db, ids: readonly number[]): ReadonlyMap<number, RosterF
   const classifications = db.select({
     fileId: schema.storedFile.id,
     ...classificationColumns,
+    classificationId: classification.fileId,
     referenceCount: sql<number>`(
       select count(*) from ${schema.recordEvidence}
       where ${schema.recordEvidence.sourceFile} = ${schema.storedFile.relPath}
     )`,
-  }).from(schema.storedFile).innerJoin(classification, fileClassificationJoin)
+  }).from(schema.storedFile).leftJoin(classification, fileClassificationJoin)
     .where(inArray(schema.storedFile.id, [...ids])).all()
 
-  return new Map(classifications.map(({ fileId, ...fields }) => [fileId, {
+  return new Map(classifications.map(({ fileId, classificationId, ...fields }) => [fileId, classificationId === null ? { referenceCount: fields.referenceCount } : {
     ...fields,
+    categoryState: fields.categoryState!,
+    parseState: fields.parseState!,
     registeredSummary: registeredSummary681(declarations.get(fileId) ?? []),
     parts: byFile.get(fileId) ?? [],
     partsBinding: { historical: 'unknown', inputLineage: lineage.get(fileId) ?? { status: 'unknown' } },
   }]))
 }
 
-function rosterFileSnapshot({ source, kind, year, batch, titleCode, categoryState }: RosterFileFields) {
-  return { source, kind, year, batch, titleCode, categoryState }
+function rosterFileSnapshot(row: FileRow & Partial<RosterFileFields>): Record<string, unknown> {
+  const { source, kind, year, batch, titleCode, categoryState } = row
+  return categoryState === undefined ? {} : { source, kind, year, batch, titleCode, categoryState }
 }
 
 // Server-only half of the same manifest. The browser reads only its shared file contributions.
 export const rosterFileServerCategory = {
-  ...rosterFileCategory,
+  id: manifest.id,
+  ...manifest.fileCategories,
   readFields,
   constraint(db, filters) {
-    // Retain the cutover's inner-join visibility, including for detail reads.
-    return inArray(schema.storedFile.id, db.select({ id: classification.fileId }).from(classification)
-      .where(and(
-        filters.source?.length ? inArray(sql`${classification.source}`, filters.source) : undefined,
-        filters.categoryState?.length ? inArray(sql`${classification.categoryState}`, filters.categoryState) : undefined,
-        filters.parseState?.length ? inArray(sql`${classification.parseState}`, filters.parseState) : undefined,
-      )))
+    const selected = and(
+      filters.source?.length ? inArray(sql`${classification.source}`, filters.source) : undefined,
+      filters.categoryState?.length ? inArray(sql`${classification.categoryState}`, filters.categoryState) : undefined,
+      filters.parseState?.length ? inArray(sql`${classification.parseState}`, filters.parseState) : undefined,
+    )
+    if (!selected) return undefined
+    return inArray(schema.storedFile.id, db.select({ id: classification.fileId }).from(classification).where(selected))
   },
   orderBy: [
     sql`(select case ${classification.source} ${sql.join(
@@ -103,9 +109,17 @@ export const rosterFileServerCategory = {
   },
   snapshot: rosterFileSnapshot,
   landing: landingSegments,
-  parseMetadataPatch,
-  writeFileClassification,
-} satisfies FileCategoryServer<RosterFileFields, FileMetadataPatch>
+  defaultLanding: true,
+  metadata: {
+    properties: rosterFileOpenApi.patchProperties,
+    parse: parseMetadataPatch,
+    write: writeFileClassification,
+  },
+  openAPI: {
+    listDescription: rosterFileOpenApi.listDescription,
+    rowProperties: rosterFileOpenApi.rowProperties,
+  },
+} satisfies FileCategoryServer
 
 /**
  * 可改的元数据字段 —— **票 09 只允许这五项**:`source / kind / year / batch / titleCode`。
@@ -142,9 +156,9 @@ export function parseMetadataPatch(body: unknown): FileMetadataPatch {
   }
   const b = body as Record<string, unknown>
 
-  const ALLOWED = new Set(['source', 'kind', 'year', 'batch', 'titleCode'])
+  const allowed = rosterFileOpenApi.patchProperties
   for (const key of Object.keys(b)) {
-    if (!ALLOWED.has(key)) throw new Error(`不可修改的字段:${key}`)
+    if (!Object.hasOwn(allowed, key)) throw new Error(`不可修改的字段:${key}`)
   }
 
   const patch: FileMetadataPatch = {}

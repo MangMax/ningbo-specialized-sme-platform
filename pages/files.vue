@@ -4,8 +4,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { watchDebounced } from '@vueuse/core'
 import { ChevronRight, FolderUp, Search } from '@lucide/vue'
 import { formatBytes } from '~~/lib/core/file-size'
-import { getAppModules } from '~~/lib/app-modules'
-import { getFileCategoryComponent } from '~~/lib/file-category-components'
+import { getFileCategoryUi } from '~~/lib/app-file-category-ui'
 import { describeFetchError } from '~~/lib/upload-register'
 import { fileUrl } from '~~/lib/preview'
 import { isPdfPath } from '~~/lib/pdf-page'
@@ -42,18 +41,15 @@ import EditFileDialog from '@/components/files/EditFileDialog.vue'
 import DeleteFileDialog from '@/components/files/DeleteFileDialog.vue'
 import PdfViewDialog from '@/components/files/PdfViewDialog.vue'
 
-const extensions = getAppModules().flatMap(({ id, fileCategories }) =>
-  fileCategories ? [{ id, category: fileCategories }] : [],
-)
-const criteria = extensions.flatMap(({ category }) => category.filters ?? [])
-const columns = extensions.flatMap(({ id, category }) =>
-  (category.columns ?? []).map(column => ({ ...column, key: `${id}:${column.label}` })),
+const extensions = getFileCategoryUi()
+const criteria = extensions.flatMap(category => category.filters ?? [])
+const columns = extensions.flatMap(({ id, columns }) =>
+  (columns ?? []).map(column => ({ ...column, key: `${id}:${column.label}` })),
 )
 function registeredComponents(key: 'cells' | 'expandedPanel' | 'detailPanel' | 'uploadDialog') {
-  return extensions.flatMap(({ id, category }) => {
-    const componentId = category[key]
-    return componentId ? [{ id, component: getFileCategoryComponent(componentId) }] : []
-  })
+  return extensions.flatMap(({ id, name, appliesTo, [key]: component }) =>
+    component ? [{ id, name, component, appliesTo }] : [],
+  )
 }
 const cellGroups = registeredComponents('cells')
 const expandedPanels = registeredComponents('expandedPanel')
@@ -188,6 +184,10 @@ const hasFilters = computed(() => activeFilters.value.length > 0)
 
 // —— 行操作 ——
 const editing = ref<ListedFile | null>(null)
+const editablePanels = computed(() => {
+  const file = editing.value
+  return file ? detailPanels.filter(panel => panel.appliesTo?.(file) ?? true) : []
+})
 const editOpen = ref(false)
 const editPending = ref(false)
 const editFailure = ref('')
@@ -395,7 +395,7 @@ watch([selections, q, page, pageSize], async (values, previous) => {
              列表会立即出现新行 —— 不必手动刷新。 -->
         <Button v-for="upload in uploadDialogs" :key="upload.id" variant="outline" size="sm" title="上传文件到文件库" @click="uploading = upload.id">
           <FolderUp />
-          上传
+          {{ uploadDialogs.length === 1 ? '上传' : `上传 · ${upload.name}` }}
         </Button>
       </template>
     </PageHeader>
@@ -499,6 +499,7 @@ watch([selections, q, page, pageSize], async (values, previous) => {
                   <TableRow class="group hover:bg-accent/70">
                     <TableCell class="pr-0" v-if="expandedPanels.length">
                       <Button
+                        v-if="expandedPanels.some(panel => panel.appliesTo?.(row) ?? true)"
                         variant="ghost"
                         size="icon"
                         class="size-8"
@@ -562,7 +563,7 @@ watch([selections, q, page, pageSize], async (values, previous) => {
                       <div class="sticky left-0 w-[100cqw] p-3 sm:p-4">
                         <component
                           :is="panel.component"
-                          v-for="panel in expandedPanels"
+                          v-for="panel in expandedPanels.filter(panel => panel.appliesTo?.(row) ?? true)"
                           :key="panel.id"
                           :ref="(instance: unknown) => setExpandedPanel(row.id, panel.id, instance)"
                           :open="true"
@@ -612,7 +613,7 @@ watch([selections, q, page, pageSize], async (values, previous) => {
     <EditFileDialog
       v-model:open="editOpen"
       :file="editing"
-      :panels="detailPanels"
+      :panels="editablePanels"
       :pending="editPending"
       :failure="editFailure"
       :name-pending="renamePending"

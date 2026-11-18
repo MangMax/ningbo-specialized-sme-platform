@@ -1,0 +1,47 @@
+export const rosterFileOpenApi = {
+  listDescription: 'registeredSummary={count,declarations}仅来自已登记声明；declarations按displaySequence升序；part.year/batch各自可空。parts仍为旧兼容读模型，不是登记摘要。',
+  patchProperties: {
+    source: { type: 'string', enum: ['jxj', 'miit'], nullable: true },
+    kind: { type: 'string', enum: ['announcement', 'export'], nullable: true },
+    year: { type: 'integer', nullable: true, description: '**公布**年份(1900–2100)。' },
+    batch: { type: 'integer', nullable: true, description: '**公布**批次。' },
+    titleCode: { type: 'string', nullable: true },
+  },
+  rowProperties: {
+    source: { type: 'string', enum: ['jxj', 'miit'], nullable: true },
+    kind: { type: 'string', enum: ['announcement', 'export'], nullable: true },
+    year: { type: 'integer', nullable: true, description: '公布年份。' },
+    batch: { type: 'integer', nullable: true, description: '公布批次。' },
+    titleCode: { type: 'string', nullable: true },
+    categoryState: { type: 'string', enum: ['set', 'inferred', 'unset'] },
+    parseState: { type: 'string', enum: ['unparsed', 'parsed', 'failed'] },
+    referenceCount: { type: 'integer', description: '当前出处引用数。' },
+    parts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'titleCode',
+          'eventKind',
+          'year',
+          'batch',
+          'attachment',
+          'rowCount',
+          'origin',
+          'hasConflict',
+        ],
+        properties: {
+          titleCode: { type: 'string' },
+          eventKind: { type: 'string', enum: ['award', 'review', 'maintain', 'nurture'] },
+          year: { type: 'integer', nullable: true },
+          batch: { type: 'integer', nullable: true },
+          attachment: { type: 'string', nullable: true },
+          rowCount: { type: 'integer' },
+          origin: { type: 'string', enum: ['derived', 'agent', 'legacy'] },
+          hasConflict: { type: 'boolean' },
+        },
+      },
+    },
+  },
+}

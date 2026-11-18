@@ -1,60 +1,17 @@
-import type { FileLanding } from '../../lib/core/file-categories'
-// Application composition of the platform file store and the enabled server manifests.
 import { eq } from 'drizzle-orm'
-import { getAppModules } from '../../lib/app-modules'
 import { storedFile } from '../../db/schema'
-import { createFileStore, FileMaintenanceError, type FileStoreDb as Db, type FileRow, type FileQuery } from './file-store'
-import { rosterFileServerCategory, type RosterFileFields, type FileMetadataPatch } from '../modules/sme-roster/files'
-import type { PartsBackfillStats } from './file-parts'
-import type { BackfillStats } from './file-store'
+import { serverFileCategories } from '../file-category-modules'
+import { createFileStore, FileMaintenanceError, type FileStoreDb as Db } from './file-store'
 
-const serverCategories = new Map([['sme-roster', rosterFileServerCategory]])
-const categories = getAppModules().flatMap(module => {
-  const category = serverCategories.get(module.id)
-  return module.fileCategories && category ? [category] : []
-})
-const store = createFileStore<RosterFileFields, FileMetadataPatch>(categories)
+const store = createFileStore(serverFileCategories)
 
 export const {
-  checkAdmission, getStoredFile, extensionSnapshot, renameStoredFileDisplayName,
+  checkAdmission, getStoredFile, listStoredFiles, extensionSnapshot, renameStoredFileDisplayName,
   verifyStoredFileRestoration, restoreVerifiedStoredFile, softRemoveStoredFile,
-  backfillFromDisk, backfillStoredFiles,
+  backfillFromDisk, backfillStoredFiles, resolveUploadPlacement, parseMetadataPatch, updateStoredFile,
 } = store
 
-export const resolveUploadPlacement: FileLanding = metadata => {
-  const [category] = categories
-  if (!category) throw { status_code: 400, body: '未登记上传落位规则\n' }
-  return category.landing(metadata)
-}
-
-export type StoredFileRow = FileRow & RosterFileFields
-
-export interface BackfillReport extends BackfillStats {
-  parts: PartsBackfillStats
-}
-
-type FilterValues = Readonly<Record<string, readonly string[] | undefined>>
-
-export function listStoredFiles(db: Db, params: FileQuery & { [key: string]: unknown } = {}) {
-  const filters = Object.fromEntries(categories.flatMap(category => category.filters ?? []).map(filter => {
-    const raw = params[filter.key]
-    const values = (Array.isArray(raw) ? raw : [raw]).flatMap(value => typeof value === 'string' ? value.split(',') : [])
-    return [filter.key, values.map(value => value.trim()).filter(value => filter.options.some(option => option.value === value))]
-  })) satisfies FilterValues
-  return store.listStoredFiles(db, params, filters)
-}
-
-export function parseMetadataPatch(input: unknown): FileMetadataPatch {
-  const [category] = categories
-  return category ? category.parseMetadataPatch(input) : {}
-}
-
-export function updateStoredFile(db: Db, id: number, patch: FileMetadataPatch): StoredFileRow | null {
-  for (const category of categories) {
-    if (!category.writeFileClassification(db, id, patch)) return null
-  }
-  return getStoredFile(db, id)
-}
+export type StoredFileRow = NonNullable<ReturnType<typeof getStoredFile>>
 
 export interface RemoveResult {
   row: StoredFileRow

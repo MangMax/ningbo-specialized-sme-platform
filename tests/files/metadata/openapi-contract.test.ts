@@ -71,14 +71,11 @@ describe('PATCH /api/files/{id} OpenAPI response', () => {
     expect(response?.description).toContain('更新后的文件行')
     expect(schema?.type).toBe('object')
     expect(schema?.required).toEqual([
-      'id', 'relPath', 'displayName', 'filename', 'ext', 'bytes', 'sha256', 'source', 'kind',
-      'year', 'batch', 'titleCode', 'categoryState', 'parseState', 'createdAt', 'removedAt',
-      'referenceCount', 'parts',
+      'id', 'relPath', 'displayName', 'filename', 'ext', 'bytes', 'sha256', 'createdAt', 'removedAt',
     ])
     expect(schema?.properties?.id?.type).toBe('integer')
     expect(schema?.properties?.relPath?.type).toBe('string')
     expect(schema?.properties?.displayName?.type).toBe('string')
     expect(schema?.properties?.filename?.description).toContain('原始文件名')
-    expect(schema?.properties?.parts?.items?.properties?.origin?.enum).toEqual(['derived', 'agent', 'legacy'])
   })
 })

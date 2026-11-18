@@ -14,13 +14,9 @@ export const rosterFileCategory = {
     { label: '解析状态', width: 76 },
     { label: '被引用', width: 56, align: 'right' },
   ],
-  cells: 'roster-file-cells',
-  expandedPanel: 'roster-file-segments',
-  detailPanel: 'roster-file-details',
-  uploadDialog: 'roster-file-upload',
   filters: [
-    { key: 'source', label: '来源', placeholder: '全部来源', width: 'w-28', options: SOURCE_ORDER.map(value => ({ value, label: SOURCES[value] ?? value })) },
-    { key: 'categoryState', label: '分类', placeholder: '全部分类状态', width: 'w-32', options: CATEGORY_STATE_ORDER.map(value => ({ value, label: CATEGORY_STATES[value] ?? value })) },
-    { key: 'parseState', label: '解析', placeholder: '全部解析状态', width: 'w-32', options: PARSE_STATE_ORDER.map(value => ({ value, label: PARSE_STATES[value] ?? value })) },
+    { key: 'source', description: '来源,多值:`jxj` / `miit`。', label: '来源', placeholder: '全部来源', width: 'w-28', options: SOURCE_ORDER.map(value => ({ value, label: SOURCES[value] ?? value })) },
+    { key: 'categoryState', description: '分类状态,多值:`set`(已定)/ `inferred`(程序推的)/ `unset`(未定)。', label: '分类', placeholder: '全部分类状态', width: 'w-32', options: CATEGORY_STATE_ORDER.map(value => ({ value, label: CATEGORY_STATES[value] ?? value })) },
+    { key: 'parseState', description: '解析状态,多值:`unparsed` / `parsed` / `failed`。', label: '解析', placeholder: '全部解析状态', width: 'w-32', options: PARSE_STATE_ORDER.map(value => ({ value, label: PARSE_STATES[value] ?? value })) },
   ],
 } satisfies FileCategory

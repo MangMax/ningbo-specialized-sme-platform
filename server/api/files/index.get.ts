@@ -6,26 +6,8 @@ defineRouteMeta({
     tags: ['文件库'],
     summary: '列出文件库',
     description:
-      '只读列表，不扫盘或回填；rescan兼容参数不再执行维护。registeredSummary={count,declarations}仅来自已登记声明；declarations按displaySequence升序；part.year/batch各自可空。parts仍为旧兼容读模型，不是登记摘要。多值参数用逗号分隔。',
+      '只读列表，不扫盘或回填；rescan兼容参数不再执行维护。多值参数用逗号分隔。',
     parameters: [
-      {
-        name: 'source',
-        in: 'query',
-        schema: { type: 'string' },
-        description: '来源,多值:`jxj` / `miit`。',
-      },
-      {
-        name: 'categoryState',
-        in: 'query',
-        schema: { type: 'string' },
-        description: '分类状态,多值:`set`(已定)/ `inferred`(程序推的)/ `unset`(未定)。',
-      },
-      {
-        name: 'parseState',
-        in: 'query',
-        schema: { type: 'string' },
-        description: '解析状态,多值:`unparsed` / `parsed` / `failed`。',
-      },
       {
         name: 'q',
         in: 'query',
@@ -43,7 +25,7 @@ defineRouteMeta({
     ],
     responses: {
       200: {
-        description: '分页只读文件列表，含registeredSummary、兼容parts与引用数。',
+        description: '分页只读文件列表。',
         content: {
           'application/json': {
             schema: {

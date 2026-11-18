@@ -5,8 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { useQuery } from '@pinia/colada'
 import { Toaster, toast } from 'vue-sonner'
 import { defineComponent, h } from 'vue'
-import * as fileComponents from '../../../lib/file-category-components'
-import * as registry from '../../../lib/app-modules'
+import * as registry from '../../../lib/app-file-category-ui'
 import FilesPage from '../../../pages/files.vue'
 
 // Happy DOM lacks WAAPI; exercise vue-sonner's JS fallback (same setup as
@@ -96,42 +95,48 @@ describe('文件页写路径操作反馈', () => {
   })
   afterEach(() => { view.unmount(); toast.dismiss(); toaster.unmount(); document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.clearAllMocks() })
 
-  it('renders the registered filter and detail panel supplied by the enabled module', async () => {
+  it('renders added filters and detail panels alongside the existing module', async () => {
     view.unmount()
-    const modules = registry.getAppModules()
-    const registration = vi.spyOn(registry, 'getAppModules').mockReturnValue(modules.map(module => module.id === 'sme-roster' ? {
-      ...module,
-      fileCategories: {
-        admission: () => ({ inScope: true, reason: 'allowed', detail: '' }),
+    const modules = registry.getFileCategoryUi()
+    const registration = vi.spyOn(registry, 'getFileCategoryUi').mockReturnValue([
+      ...modules,
+      {
+        id: 'catalog',
+        name: '馆藏',
         filters: [{
           key: 'collection', label: '馆藏', placeholder: '全部馆藏', width: 'w-28',
           options: [{ value: 'local', label: '本地馆藏' }],
         }],
-        detailPanel: 'collection-details',
+        detailPanel: defineComponent({
+          setup: () => () => h('p', '由模块登记的文件详情'),
+        }),
+        uploadDialog: defineComponent({
+          props: ['open'],
+          setup: props => () => props.open ? h('p', '馆藏上传窗口') : null,
+        }),
       },
-    } : module))
-    const realComponent = fileComponents.getFileCategoryComponent
-    const component = vi.spyOn(fileComponents, 'getFileCategoryComponent').mockImplementation(id =>
-      id === 'collection-details' ? defineComponent({
-        setup: () => () => h('p', '由模块登记的文件详情'),
-      }) : realComponent(id),
-    )
+    ])
     try {
       view = mount(FilesPage as never, {
         attachTo: document.body,
         global: { stubs: { ...stubs, EditFileDialog: false } },
       })
-      const filter = view.findComponent({ name: 'MultiSelectFilter' })
-      expect(filter.props('placeholder')).toBe('全部馆藏')
+      const filters = view.findAllComponents({ name: 'MultiSelectFilter' })
+      expect(filters.map(filter => filter.props('placeholder'))).toContain('全部来源')
+      const filter = filters.find(filter => filter.props('placeholder') === '全部馆藏')!
       filter.vm.$emit('update:modelValue', ['local'])
       await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/files', expect.objectContaining({
         query: expect.objectContaining({ collection: 'local' }),
       })))
       expect(view.text()).toContain('馆藏 · 本地馆藏')
+      await button(view, '上传 · 馆藏').trigger('click')
+      expect(view.text()).toContain('馆藏上传窗口')
       await button(view, '文件信息').trigger('click')
-      await vi.waitFor(() => expect(document.body.textContent).toContain('由模块登记的文件详情'))
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain('由模块登记的文件详情')
+        expect(document.body.textContent).toContain('文件发布年份')
+      })
     } finally {
-      component.mockRestore()
       registration.mockRestore()
     }
   })

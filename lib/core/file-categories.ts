@@ -6,6 +6,7 @@ export interface FileFilter {
   readonly label: string
   readonly placeholder: string
   readonly width: string
+  readonly description?: string
   readonly options: readonly { value: string; label: string }[]
 }
 
@@ -18,20 +19,16 @@ export interface FileCategory {
   readonly admission: FileAdmissionPolicy
   readonly filters?: readonly FileFilter[]
   readonly columns?: readonly { label: string; width: number; tooltip?: string; align?: 'right' }[]
-  readonly cells?: string
-  readonly expandedPanel?: string
-  readonly detailPanel?: string
-  readonly uploadDialog?: string
 }
 
 export function evaluateFileAdmission(
-  categories: readonly { admission: FileAdmissionPolicy }[],
+  categories: readonly { admission?: FileAdmissionPolicy }[],
   path: string,
   siblings?: ReadonlySet<string>,
 ) {
   for (const category of categories) {
-    const result = category.admission(path, siblings)
-    if (!result.inScope) return result
+    const result = category.admission?.(path, siblings)
+    if (result && !result.inScope) return result
   }
   return undefined
 }

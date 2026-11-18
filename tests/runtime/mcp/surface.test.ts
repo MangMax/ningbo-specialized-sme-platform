@@ -590,7 +590,7 @@ describe('ensureFileStoreReady 懒回填', () => {
     const id = findFileIdByRelPath(fresh, REL_PDF)!
     const row = getStoredFile(fresh, id)!
     expect(row.parts).toHaveLength(2)
-    expect(row.parts.map((p) => [p.eventKind, p.year, p.batch, p.attachment, p.rowCount])).toEqual([
+    expect(row.parts!.map((p) => [p.eventKind, p.year, p.batch, p.attachment, p.rowCount])).toEqual([
       ['award', 2024, 2, '附件1', 389],
       ['review', 2021, 2, '附件2', 67],
     ])

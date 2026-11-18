@@ -3,7 +3,6 @@ import { appLog, type LogContext } from '../../lib/logging'
 import { eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
-import { parseMetadataPatch, type FileMetadataPatch } from '../modules/sme-roster/files'
 import type { BackfillExclusion } from './file-store'
 import { useDb } from '@db'
 import * as schema from '../../db/schema'
@@ -17,7 +16,7 @@ import { listPdfPages, resolveWithinRoot, type PdfPagesState } from './pdf-pages
 import {
   backfillFromDisk,
   getStoredFile,
-  type BackfillReport,
+  parseMetadataPatch,
   type StoredFileRow,
 } from './stored-files'
 
@@ -172,6 +171,10 @@ const NO_FILE_STATS = {
   skipped: [] as string[],
   excluded: [] as BackfillExclusion[],
 }
+interface BackfillReport extends Awaited<ReturnType<typeof backfillFromDisk>> {
+  parts: PartsBackfillStats
+}
+
 const NO_PART_STATS: PartsBackfillStats = { files: 0, parts: 0, orphanPaths: [] }
 
 /**
@@ -328,7 +331,7 @@ export function setFileCategoryForAgent(
     }
   }
 
-  let patch: FileMetadataPatch
+  let patch: ReturnType<typeof parseMetadataPatch>
   try {
     patch = parseMetadataPatch(meta)
   } catch (error) {
