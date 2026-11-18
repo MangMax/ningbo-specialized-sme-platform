@@ -101,6 +101,22 @@ export function installEnterpriseKernelSchema(db: Database.Database) {
       reviewed_request TEXT,
       receipt TEXT
     );
+    CREATE TABLE roster_legacy_member (
+      enterprise_id INTEGER PRIMARY KEY REFERENCES enterprise(id) ON DELETE CASCADE
+    );
+    CREATE TABLE roster_announcement_member (
+      enterprise_id INTEGER NOT NULL REFERENCES enterprise(id) ON DELETE CASCADE,
+      intake_id INTEGER NOT NULL REFERENCES roster_announcement_intake(id),
+      PRIMARY KEY (enterprise_id, intake_id)
+    );
+    CREATE INDEX roster_announcement_member_intake_idx ON roster_announcement_member(intake_id);
+    CREATE TRIGGER roster_membership_follow_merge AFTER INSERT ON enterprise_merge
+    BEGIN
+      INSERT OR IGNORE INTO roster_legacy_member(enterprise_id)
+      SELECT NEW.into_enterprise_id FROM roster_legacy_member WHERE enterprise_id=NEW.from_enterprise_id;
+      INSERT OR IGNORE INTO roster_announcement_member(enterprise_id,intake_id)
+      SELECT NEW.into_enterprise_id,intake_id FROM roster_announcement_member WHERE enterprise_id=NEW.from_enterprise_id;
+    END;
   `)
 }
 
@@ -110,8 +126,9 @@ export function assertEnterpriseKernelSchema(db: Database.Database, version: unk
     || !db.prepare('SELECT 1 FROM enterprise_kernel_completion WHERE id = 1 AND version = ?').get(ENTERPRISE_KERNEL_VERSION)) {
     throw new Error('Enterprise kernel missing; run explicit offline enterprise kernel cutover')
   }
-  db.prepare(`SELECT e.revision, a.renamed_year, s.version_key, l.source_id, r.code, i.input_id, c.name, t.name, b.digest, b.reviewed_request
+  db.prepare(`SELECT e.revision, a.renamed_year, s.version_key, l.source_id, r.code, i.input_id, c.name, t.name, b.digest, b.reviewed_request,
+    legacy.enterprise_id, m.enterprise_id, m.intake_id
     FROM enterprise_directory e, enterprise_former_name a, enterprise_source s, enterprise_source_link l,
     enterprise_region r, enterprise_industry i, enterprise_source_channel c, enterprise_source_list_type t,
-    roster_announcement_intake b LIMIT 0`).all()
+    roster_announcement_intake b, roster_legacy_member legacy, roster_announcement_member m LIMIT 0`).all()
 }

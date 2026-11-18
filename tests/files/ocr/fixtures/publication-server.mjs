@@ -67,7 +67,9 @@ Object.assign(globalThis, h3, {
 })
 const jitiPath = createRequire(require.resolve('nuxt/package.json')).resolve('jiti')
 const { createJiti } = require(jitiPath)
-const load = createJiti(resolve(root, 'package.json'), { alias: { '@db': resolve(root, 'db/index.ts'), '~~': root, '#core': resolve(root, 'layers/core') } })
+const load = createJiti(resolve(root, 'package.json'), { alias: { '@db': resolve(root, 'db/index.ts'), '~~': root, '#core': resolve(root, 'layers/core'), '#sme-roster': resolve(root, 'layers/sme-roster') } })
+const { installApplicationServer } = await load.import(resolve(root, 'server/install-application.ts'))
+installApplicationServer()
 const router = h3.createRouter()
 for (const [method, path, file] of [
   ['post', '/api/jobs', 'jobs/index.post.ts'],

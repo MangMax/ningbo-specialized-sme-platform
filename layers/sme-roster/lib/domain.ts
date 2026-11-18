@@ -1,4 +1,4 @@
-import { normalizeEnterpriseName } from '../../core/lib/enterprise-name'
+import { normalizeEnterpriseName } from '../../core/public'
 
 /**
  * 领域常量与身份归一化规则 —— app 与项目外 pipeline 的**共享契约**。

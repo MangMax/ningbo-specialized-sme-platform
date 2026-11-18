@@ -69,6 +69,11 @@ function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: numbe
   const entityId = sql`e.id`
   const entityName = sql`e.name`
   const entityUscc = sql`e.uscc_norm`
+  const nominalMember = sql`(
+    exists(select 1 from roster_legacy_member l where l.enterprise_id=${entityId}) or
+    exists(select 1 from roster_announcement_member m join roster_announcement_intake i on i.id=m.intake_id
+      where m.enterprise_id=${entityId} and i.removed_reason is null)
+  )`
   const titleMask = sql`case r.title_code ${sql.join(TITLE_ORDER.map((title,index) => sql`when ${title} then ${1<<index}`),sql` `)} else 0 end`
   const selectedMask = TITLE_ORDER.reduce((mask,title,index) => mask | (!filter.title?.length || filter.title.includes(title) ? 1<<index : 0),0)
   const defaultDifference = sql`case when ${entityUscc} is null then coalesce(h.unkeyed_difference_count,0) else coalesce(h.difference_count,0) end`
@@ -81,7 +86,7 @@ function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: numbe
       ${filter.diffStatus.every(x => x === 'none') ? sql`and 0` : sql``}) or ${inArray(sql`d.reason`, filter.diffStatus.filter(x => x !== 'none'))})` : sql`1`
   const generalQuery = sql`
     with scope as materialized (
-      select e.id from enterprise e where ${currentEnterpriseIdentity(db, sql`e.id`)} and ${validText ? search : sql`0`} ${explainedOnly ? sql`and e.id in (select enterprise_id from difference_reason union select enterprise_id from enterprise_difference_comparison)` : sql``}
+      select e.id from enterprise e where ${currentEnterpriseIdentity(db, entityId)} and ${nominalMember} and ${validText ? search : sql`0`} ${explainedOnly ? sql`and e.id in (select enterprise_id from difference_reason union select enterprise_id from enterprise_difference_comparison)` : sql``}
         and ${filter.district ? sql`coalesce(nullif(e.district,''),(select district from record r where r.enterprise_id=e.id and r.district is not null and r.district!='' order by r.id limit 1))=${filter.district}` : sql`1`}
     ), fact_base as materialized (
       select r.enterprise_id,r.title_code,
@@ -160,7 +165,7 @@ function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: numbe
       sum(distinct case when r.source='jxj' then ${titleMask} else (${titleMask} << ${TITLE_ORDER.length}) end) as source_mask,
       sum(distinct case when v.event_type='award' then ${titleMask} else 0 end) as recognition_mask
       from enterprise e left join record r on r.enterprise_id=e.id left join record_event v on v.record_id=r.id
-      where ${currentEnterpriseIdentity(db, sql`e.id`)} and ${validText ? search : sql`0`}
+      where ${currentEnterpriseIdentity(db, entityId)} and ${nominalMember} and ${validText ? search : sql`0`}
         and ${filter.district ? sql`coalesce(nullif(e.district,''),(select district from record r where r.enterprise_id=e.id and r.district is not null and r.district!='' order by r.id limit 1))=${filter.district}` : sql`1`}
       group by e.id)` : generalQuery
   // Drizzle builds/binds SQL; a raw cursor avoids per-column ORM mapping and

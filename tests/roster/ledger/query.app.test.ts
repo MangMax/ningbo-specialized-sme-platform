@@ -16,11 +16,13 @@ const dir = mkdtempSync(join(tmpdir(), 'spztx-record-query-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'records.db') })
 
 function enterprise(name: string, uscc: string | null): number {
-  return db
+  const id = db
     .insert(schema.enterprise)
     .values({ name, nameNorm: name, usccNorm: uscc, district: '海曙区' })
     .returning({ id: schema.enterprise.id })
     .get().id
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: id }).run()
+  return id
 }
 
 function record(

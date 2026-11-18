@@ -36,6 +36,7 @@ beforeEach(() => {
     { id: into, name: currentName, nameNorm: currentName, usccNorm: uscc },
     { id: third, name: '第三现名', nameNorm: '第三现名', usccNorm: thirdUscc },
   ]).run()
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: from }).run()
   trace.length = 0
 })
 afterEach(() => sqlite?.close())

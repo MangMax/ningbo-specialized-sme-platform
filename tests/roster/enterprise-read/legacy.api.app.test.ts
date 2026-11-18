@@ -69,6 +69,7 @@ const tempDir = mkdtempSync(join(tmpdir(), 'roster-enterprise-legacy-api-'))
 beforeAll(async () => {
   db = initializeDb({ create: true, dbPath: join(tempDir, 'roster.db') })
   db.insert(schema.enterprise).values(enterprise).run()
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: enterprise.id }).run()
   db.insert(schema.record).values(record).run()
   db.insert(schema.recordEvent).values(event).run()
   db.insert(schema.recordEvidence).values(legacyEvidence).run()

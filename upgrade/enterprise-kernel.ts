@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { normalizeReviewedUscc, usccFormatVerdict } from '../layers/core/lib/enterprise-uscc'
+import { normalizeReviewedUscc, usccFormatVerdict } from '../layers/core/public'
 import { assertFinalPlatformRuntime, assertRosterFileClassificationSchema, assertApplicationSchema } from '../db/schema-phase'
 import { ENTERPRISE_KERNEL_RUNTIME_VERSION, ENTERPRISE_KERNEL_VERSION, installEnterpriseKernelSchema } from '../db/enterprise-kernel-schema'
 import { installEnterpriseDictionaries, type EnterpriseDictionaries } from './enterprise-dictionaries'
@@ -57,7 +57,8 @@ export function upgradeEnterpriseKernel(db: Database.Database, dictionaries: Ent
     } else {
       installEnterpriseKernelSchema(db)
       db.exec(`INSERT INTO enterprise_former_name(alias_id,uscc)
-        SELECT a.id,e.uscc_norm FROM enterprise_alias a JOIN enterprise e ON e.id=a.enterprise_id`)
+        SELECT a.id,e.uscc_norm FROM enterprise_alias a JOIN enterprise e ON e.id=a.enterprise_id;
+        INSERT INTO roster_legacy_member(enterprise_id) SELECT id FROM enterprise;`)
     }
     installEnterpriseDictionaries(db, dictionaries)
     db.exec(`INSERT INTO enterprise_directory(enterprise_id,district_code)

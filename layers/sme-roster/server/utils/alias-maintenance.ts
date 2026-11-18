@@ -1,4 +1,4 @@
-import { insertEnterpriseAliasAudit, updateEnterpriseAlias } from '../../../core/public'
+import { insertEnterpriseAliasAudit, updateEnterpriseAlias } from '../../../core/server/public'
 import { createHash } from 'node:crypto'
 import { and, asc, count, eq, ne } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'

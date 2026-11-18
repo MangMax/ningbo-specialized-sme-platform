@@ -630,8 +630,8 @@ export const enterpriseProfileAudit = sqliteTable('enterprise_profile_audit', {
   requestHash: text('request_hash').notNull(),
   beforeVersion: text('before_version').notNull(),
   afterVersion: text('after_version').notNull(),
-  before: text('before', { mode: 'json' }).$type<{ enterpriseId: number; name: string; city: string | null; district: string | null }>().notNull(),
-  after: text('after', { mode: 'json' }).$type<{ enterpriseId: number; name: string; city: string | null; district: string | null }>().notNull(),
+  before: text('before', { mode: 'json' }).$type<{ enterpriseId: number; name: string; city: string | null; district: string | null; uscc?: string | null }>().notNull(),
+  after: text('after', { mode: 'json' }).$type<{ enterpriseId: number; name: string; city: string | null; district: string | null; uscc?: string | null }>().notNull(),
   actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string }>().notNull(),
   basis: text('basis').notNull(),
   retainedAliasId: integer('retained_alias_id'),
@@ -2118,3 +2118,10 @@ export const rosterAnnouncementIntake = sqliteTable('roster_announcement_intake'
   reviewedRequest: text('reviewed_request'),
   receipt: text('receipt'),
 })
+export const rosterLegacyMember = sqliteTable('roster_legacy_member', {
+  enterpriseId: integer('enterprise_id').primaryKey().references(() => enterprise.id, { onDelete: 'cascade' }),
+})
+export const rosterAnnouncementMember = sqliteTable('roster_announcement_member', {
+  enterpriseId: integer('enterprise_id').notNull().references(() => enterprise.id, { onDelete: 'cascade' }),
+  intakeId: integer('intake_id').notNull().references(() => rosterAnnouncementIntake.id),
+}, t => [primaryKey({ columns: [t.enterpriseId, t.intakeId] }), index('roster_announcement_member_intake_idx').on(t.intakeId)])

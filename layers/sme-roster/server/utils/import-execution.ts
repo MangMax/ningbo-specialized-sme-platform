@@ -5,7 +5,7 @@ import type Database from 'better-sqlite3'
 import { realpathSync, statSync } from 'node:fs'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../../../db/schema'
-import type { RosterImportRequest, RosterImportItemResult, SupplementAnnouncementRequest, SupplementAnnouncementResult } from '../../lib/roster-import-client'
+import type { RosterImportRequest, RosterImportItemResult, SupplementAnnouncementRequest, SupplementAnnouncementResult, SupplementAnnouncementPreflightResult } from '../../lib/roster-import-client'
 import { commitRosterImport, preflightRosterImport } from './roster-import'
 import { stageAnnouncement, supplementAnnouncement } from './announcement-intake'
 import { ImportReceiptError } from './import-receipts'
@@ -18,10 +18,11 @@ type Db = BetterSQLite3Database<typeof schema>
 type Action = 'preflight' | 'commit'
 type ImportResult = ReturnType<typeof preflightRosterImport> | ReturnType<typeof commitRosterImport>
 type IntakeResult = ReturnType<typeof stageAnnouncement>
-type Result = ImportResult | SupplementAnnouncementResult | IntakeResult
+type SupplementCommand = SupplementAnnouncementRequest & { preflight?: true }
+type Result = ImportResult | SupplementAnnouncementResult | SupplementAnnouncementPreflightResult | IntakeResult
 type Command =
   | { action: Action | 'stage'; request: RosterImportRequest; pageCountErrors: readonly RosterImportItemResult[] }
-  | { action: 'supplement'; intakeId: number; review: SupplementAnnouncementRequest }
+  | { action: 'supplement'; intakeId: number; review: SupplementCommand }
 export interface ImportExecutionMessage { identity: { dev: number; ino: number; schemaVersion: number; migration: { hash: string; created_at: number } | undefined }; id: number; dbPath: string; readonly: boolean; action: Command['action']; payload: Buffer; pageCountErrors?: readonly RosterImportItemResult[]; logContext?: LogContext; filesDir?: string }
 type Worker = ReturnType<typeof createImportExecutionWorker>
 type Job = { onResult?: (result: Result) => void; message: ImportExecutionMessage; resolve(value: Result): void; reject(error: Error): void }
@@ -133,8 +134,8 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
     stage(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[], context: LogContext = {}) {
       return executeCommand(db, { action: 'stage', request, pageCountErrors }, context) as Promise<IntakeResult>
     },
-    supplement(db: Db, intakeId: number, review: SupplementAnnouncementRequest, filesDir: string, context: LogContext = {}) {
-      return executeCommand(db, { action: 'supplement', intakeId, review }, context, filesDir) as Promise<SupplementAnnouncementResult>
+    supplement(db: Db, intakeId: number, review: SupplementCommand, filesDir: string, context: LogContext = {}) {
+      return executeCommand(db, { action: 'supplement', intakeId, review }, context, filesDir) as Promise<SupplementAnnouncementResult | SupplementAnnouncementPreflightResult>
     },
     close() {
       if (closing) return closing

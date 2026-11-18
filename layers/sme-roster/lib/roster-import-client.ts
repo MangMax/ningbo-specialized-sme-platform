@@ -540,6 +540,7 @@ export interface RosterAnnouncementStagedResponse {
   intakeId: number
   sourceDigest: string
   rowCount: number
+  officialEvidencePreflightRequired?: true
 }
 export type RosterAnnouncementIntakeFailure = Omit<RosterImportCommitResponse, 'status' | 'batchId'> & {
   status: 'failed'
@@ -560,6 +561,7 @@ export interface RosterAnnouncementIntake {
   sourceIdentity: string
   sourceSha256?: string | null
   announcement: RosterImportAnnouncement
+  officialEvidencePreflightRequired?: true
   review: SupplementAnnouncementRequest | null
   receipt: SupplementAnnouncementResponse | null
 }
@@ -574,11 +576,18 @@ export interface ReviewedEnterpriseFields {
 export interface SupplementAnnouncementRequest {
   sourceDigest: string
   basis: string
+  officialEvidencePlanHash?: string
   rows: (
     | { action: 'create'; fields: ReviewedEnterpriseFields & { name: string } }
     | { action: 'attach'; enterpriseId: number; expectedRevision: number; fields?: ReviewedEnterpriseFields }
     | { action: 'same_subject'; row: number }
   )[]
+}
+export type SupplementAnnouncementPreflightRequest = Omit<SupplementAnnouncementRequest, 'officialEvidencePlanHash'> & { preflight: true }
+export interface SupplementAnnouncementPreflightResult {
+  status: 'preflighted'
+  officialEvidencePlanHash?: string
+  conflicts: RosterImportItemResult[]
 }
 export type SupplementAnnouncementResponse = Omit<RosterImportCommitResponse, 'status'> & {
   status: 'supplemented'
@@ -669,6 +678,10 @@ export class RosterImportClient {
     const result = await this.commit(request)
     if (result.status === 'staged' || result.batchId === null) throw new TypeError('Expected an import command receipt')
     return result
+  }
+
+  async preflightSupplement(intakeId: number, review: Omit<SupplementAnnouncementRequest, 'officialEvidencePlanHash'>): Promise<SupplementAnnouncementPreflightResult> {
+    return (await this.post(`/api/roster/import/intake/${intakeId}/supplement`, { ...review, preflight: true })) as SupplementAnnouncementPreflightResult
   }
 
   async supplement(intakeId: number, review: SupplementAnnouncementRequest): Promise<SupplementAnnouncementResult> {

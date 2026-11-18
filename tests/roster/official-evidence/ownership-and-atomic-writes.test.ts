@@ -1,3 +1,4 @@
+import { supplementAnnouncement } from '../../../layers/sme-roster/server/utils/announcement-intake'
 import { completeInProcessIntake } from '../imports/fixtures/in-process-intake'
 import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { createRuntimeSchema } from '../../../db/create-runtime'
@@ -48,10 +49,10 @@ async function fixture() {
     ...Object.fromEntries(['preflight', 'commit'].map(action => ['/api/roster/evidence/corrections/' + action, (r: any) => handleEvidenceCorrectionRequest({ action: action as any, ...r }, { db, apiToken: 'synthetic-token', filesDir })])),
   } })
   closes.push(server.close)
-  const post = async (action: string, body: unknown) => {
+  const post = async (action: string, body: unknown, completeIntake = true) => {
     const response = await fetch(server.baseUrl + '/api/roster/import/' + action, { method: 'POST', headers: { authorization: 'Bearer synthetic-token', 'content-type': 'application/json' }, body: JSON.stringify(body) })
     const result = await response.json()
-    return { status: response.status, body: action === 'commit' ? await completeInProcessIntake(db, result, body as RosterImportRequest, filesDir) as typeof result : result }
+    return { status: response.status, body: action === 'commit' && completeIntake ? await completeInProcessIntake(db, result, body as RosterImportRequest, filesDir) as typeof result : result }
   }
   const correction = (evidenceId: number, publishedRow: OfficialPublishedRow) => {
     const current = readExactEvidence(db, evidenceId)
@@ -221,6 +222,60 @@ it('captures 2021 and 2024 published values separately and leaves historical evi
   expect(evidence.map((id: number) => readLatestOfficialEvidence(f.db, id).row?.nameRaw)).toEqual(['2021 old published name', '2024 new published name'])
   expect(readLatestOfficialEvidence(f.db, 1).row).toBeNull()
   expect(f.sqlite.prepare('SELECT name FROM enterprise WHERE id=2').get()).toEqual({ name: 'Beta' })
+})
+
+it('captures a raw announcement row for the explicitly reviewed same-name enterprise', async () => {
+  const f = await fixture()
+  f.sqlite.exec("INSERT INTO enterprise(id,name,name_norm) VALUES(3,'Alpha','Alpha')")
+  const publishedRow = f.row({ listNo: 11, nameRaw: '  Alpha  ' })
+  const request = f.request({ announcement: { sourceDocument: { source: 'jxj', title: 'Declared publication' }, records: [
+    { enterprise: { name: 'Alpha' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2022, evidence: [{ sourceFile: 'notice.txt', attachment: null, listNo: 11, page: null, publishedRow }] }] },
+  ] } })
+  const auto = await f.post('preflight', request)
+  expect(auto.body.preflight.conflicts).toEqual([expect.objectContaining({ error: expect.objectContaining({ code: 'enterprise_ambiguous' }) })])
+  const { body: staged } = await f.post('commit', request, false)
+  expect(staged.status).toBe('staged')
+  const review = { sourceDigest: staged.sourceDigest, basis: 'Checked the printed row against the second enterprise', rows: [{ action: 'attach' as const, enterpriseId: 3, expectedRevision: 1 }] }
+  const supplement = (input: typeof review & { officialEvidencePlanHash?: string }) => supplementAnnouncement(f.db, staged.intakeId, input, f.filesDir)
+  const preview = await supplementAnnouncement(f.db, staged.intakeId, { ...review, preflight: true }, f.filesDir)
+  expect(preview).toEqual({ status: 'preflighted', conflicts: [], officialEvidencePlanHash: expect.stringMatching(/^[a-f0-9]{64}$/) })
+  expect(f.sqlite.prepare('SELECT count(*) n FROM official_evidence_row_revision').get()).toEqual({ n: 0 })
+  expect(f.sqlite.prepare('SELECT supplement_digest,receipt FROM roster_announcement_intake WHERE id=?').get(staged.intakeId))
+    .toEqual({ supplement_digest: null, receipt: null })
+  const reviewed = { ...review, officialEvidencePlanHash: preview.officialEvidencePlanHash }
+  const missing = await supplement(review)
+  expect(missing).toMatchObject({ status: 'failed', items: expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'plan_mismatch' }) })]) })
+  const otherOwner = await supplement({ ...reviewed, rows: [{ ...review.rows[0]!, enterpriseId: 1 }] })
+  expect(otherOwner).toMatchObject({ status: 'failed', items: expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'plan_mismatch' }) })]) })
+  writeFileSync(join(f.filesDir, 'notice.txt'), 'changed source bytes')
+  const changed = await supplement(reviewed)
+  expect(changed).toMatchObject({ status: 'failed', items: expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'file_changed' }) })]) })
+  expect(f.sqlite.prepare('SELECT count(*) n FROM record_event').get()).toEqual({ n: 2 })
+  writeFileSync(join(f.filesDir, 'notice.txt'), 'synthetic official source\n')
+  const receipt = await supplement(reviewed)
+  expect(receipt).toMatchObject({ status: 'supplemented', owners: [3] })
+  expect(f.sqlite.prepare('SELECT captured_enterprise_id,name_raw,uscc_raw FROM official_evidence_row_revision').all())
+    .toEqual([{ captured_enterprise_id: 3, name_raw: '  Alpha  ', uscc_raw: null }])
+  writeFileSync(join(f.filesDir, 'notice.txt'), 'changed again after commit')
+  expect(await supplement(reviewed)).toEqual(receipt)
+})
+
+it('rejects a reviewed owner that conflicts with the existing claim for the same official source row', async () => {
+  const f = await fixture()
+  f.capture()
+  const publishedRow = f.row()
+  const request = f.request({ announcement: { sourceDocument: { source: 'jxj', title: 'Declared publication' }, records: [
+    { enterprise: { name: 'Alpha' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2022, evidence: [{ sourceFile: 'notice.txt', attachment: null, listNo: 1, page: null, publishedRow }] }] },
+  ] } })
+  const { body: staged } = await f.post('commit', request, false)
+  expect(staged.status).toBe('staged')
+  f.sqlite.exec("INSERT INTO enterprise(id,name,name_norm) VALUES(3,'Alpha','Alpha')")
+  const review = { sourceDigest: staged.sourceDigest, basis: 'Reviewed alternate owner', rows: [{ action: 'attach' as const, enterpriseId: 3, expectedRevision: 1 }] }
+  expect(await supplementAnnouncement(f.db, staged.intakeId, { ...review, preflight: true }, f.filesDir)).toEqual({
+    status: 'preflighted', conflicts: [expect.objectContaining({ error: expect.objectContaining({ code: 'source_row_conflict' }) })],
+  })
+  expect(f.sqlite.prepare('SELECT captured_enterprise_id FROM official_evidence_row_revision').all()).toEqual([{ captured_enterprise_id: 1 }])
+  expect(f.sqlite.prepare('SELECT count(*) n FROM import_batch').get()).toEqual({ n: 1 })
 })
 
 it('rechecks bytes and the opt-in plan under commit and never appends facts through replay', async () => {

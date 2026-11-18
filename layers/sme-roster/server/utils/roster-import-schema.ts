@@ -29,7 +29,7 @@ export const rosterImportMcpPayloadSchema = z.object({
   usccBackfills: usccBackfillsMcpSchema,
   merges: mergesMcpSchema,
   exportSnapshot: exportSnapshotMcpSchema,
-  officialEvidenceAppends: z.array(officialAppendSchema).min(1).max(100).optional().describe('精确正式佐证追加；expectedVersion=当前event.revision，显式声明与publishedRow；须先preflight并在payload带回officialEvidencePlanHash'),
+  officialEvidenceAppends: z.array(officialAppendSchema).min(1).max(100).optional().describe('精确正式佐证追加；expectedVersion=当前event.revision，显式声明与publishedRow；无公布原行时先调用导入预检并在payload带回officialEvidencePlanHash；含公布原行时使用补充预检'),
   officialEvidenceCorrections: importCorrectionSchema.meta(importCorrectionDiscovery).describe('复用精确更正DTO；导入采用外层幂等键，每项明确publishedRow和expectedRowRevision，与追加/capture共用最终计划'),
   officialEvidencePlanHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   platformRecordObservations: z.array(z.strictObject({ relationId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) })).min(1).max(100).refine(rows => new Set(rows.map(row => row.relationId)).size === rows.length, 'relationId must be unique per request').optional(),

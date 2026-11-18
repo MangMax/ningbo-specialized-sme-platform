@@ -1,4 +1,4 @@
-import { insertEnterprise, insertEnterpriseAlias, moveEnterpriseAlias, updateEnterprise } from '../../../core/public'
+import { insertEnterprise, insertEnterpriseAlias, moveEnterpriseAlias, updateEnterprise } from '../../../core/server/public'
 import { collectionImportSource,collectionImportPreview,writeImportedCollection,verifyImportedCollectionFields,historicalObservationPlan,ensureHistoricalObservation } from './collection-import-target'
 import { withFingerprintVerificationSnapshot } from '../../lib/platform/fingerprint-verifier'
 import { sqliteConnection } from '../../lib/platform/target-connection'
@@ -1252,9 +1252,15 @@ function prepareOfficialImport(db: Executor, request: RosterImportRequest, items
   const correction = correctionInput === undefined ? undefined : evidenceCorrectionRequestSchema.omit({ idempotencyKey: true }).parse(correctionInput)
   const changes: OfficialClaimChange[] = []
   const newUnknownClaims: { ref: string; coordinate: OfficialCoordinate }[] = []
-  const ownerForIdentity = (name: string, uscc: string | null) => {
-    const existing = findEnterpriseByIdentity(db, { name, uscc })
-    return existing ? `enterprise:${existing.id}` : `pending:${identityKeyOf({ name, uscc })}`
+  // A new reviewed subject has no durable ID during preflight. Use its first
+  // reviewed row to bind claims without depending on the SQLite ID allocator.
+  const createdSubjects = new Map<number, number>()
+  for (const [index, owner] of identities.reviewedOwners ?? []) {
+    if (identities.reviewedCreates?.has(owner) && !createdSubjects.has(owner)) createdSubjects.set(owner, index)
+  }
+  const existingOwner = (id: number) => {
+    const created = createdSubjects.get(id)
+    return created === undefined ? `enterprise:${id}` : `pending:reviewed:${created}`
   }
   const captures = request.payload.announcement?.records ?? []
   for (const events of plannedEvents.values()) for (const event of events) if (event.evidence?.some(evidence => evidence.publishedRow !== undefined) && event.evidence.length > 300) throw new OfficialFactError('source_limit', 'Final new event evidence exceeds 300', 413)
@@ -1265,7 +1271,7 @@ function prepareOfficialImport(db: Executor, request: RosterImportRequest, items
     const enterprise = announcementOwner(db, identities, ri, name, uscc)
     const storedRecord = enterprise ? db.select({ id: schema.record.id }).from(schema.record).where(and(eq(schema.record.enterpriseId, enterprise.id), eq(schema.record.titleCode, record.titleCode), eq(schema.record.source, record.source ?? request.payload.announcement!.sourceDocument.source))).get() : undefined
     record.events?.forEach((event, ei) => {
-      const identity = enterprise ? `enterprise:${enterprise.id}` : ownerForIdentity(name, uscc)
+      const identity = enterprise ? existingOwner(enterprise.id) : `pending:${identityKeyOf({ name, uscc })}`
       const eventKey = `${identity}:${record.titleCode}:${officialPlanDigest(eventCoordinates(0, event))}`
       for (const evidence of event.evidence ?? []) {
         const key = officialPlanDigest({ eventKey, ...announcementEvidenceCoordinate(evidence, groupedOccurrences.has(`${ri}:${ei}`)) })
@@ -1288,7 +1294,7 @@ function prepareOfficialImport(db: Executor, request: RosterImportRequest, items
         const coordinateKey = officialPlanDigest(coordinate)
         if (coordinates.has(coordinateKey)) fail('ambiguous_target', 'Repeated new capture coordinate must be stated once')
         coordinates.add(coordinateKey)
-        changes.push({ ref: `capture:${ri}:${ei}:${index}`, evidenceId: `capture:${ri}:${ei}:${index}`, eventId: `event:${ownerForIdentity(name, uscc)}:${record.titleCode}:${officialPlanDigest(eventCoordinates(0, event))}`, owner: ownerForIdentity(name, uscc), titleCode: record.titleCode, coordinate, publishedRow: evidence.publishedRow, expectedRowRevision: 0 })
+        changes.push({ ref: `capture:${ri}:${ei}:${index}`, evidenceId: `capture:${ri}:${ei}:${index}`, eventId: `event:${identity}:${record.titleCode}:${officialPlanDigest(eventCoordinates(0, event))}`, owner: identity, titleCode: record.titleCode, coordinate, publishedRow: evidence.publishedRow, expectedRowRevision: 0 })
       })
     })
     // Consume the actual grouped write plan. Existing events skip insertion;
@@ -1326,10 +1332,11 @@ function prepareOfficialImport(db: Executor, request: RosterImportRequest, items
     if (!plan || !item.item.ok) continue
     const targetUscc = usccOrNull(plan.merge.intoUscc)!
     const target = findEnterpriseByUscc(db, targetUscc)
-    const into = target ? `enterprise:${target.id}` : `pending:uscc:${targetUscc}`
+    const into = target ? existingOwner(target.id) : `pending:uscc:${targetUscc}`
     const pendingSourceIndex = captures.findIndex((record, index) => normalizeName(record.enterprise.name) === normalizeName(plan.merge.fromEnterpriseName ?? '') && !findEnterpriseByIdentity(db, { name: record.enterprise.name, uscc: identities.identityUsccByRecord.get(index) ?? usccOrNull(record.enterprise.uscc) }))
     const pendingSource = captures[pendingSourceIndex]
-    const from = plan.sourceEnterpriseId !== null ? `enterprise:${plan.sourceEnterpriseId}` : pendingSource ? ownerForIdentity(pendingSource.enterprise.name, identities.identityUsccByRecord.get(pendingSourceIndex) ?? usccOrNull(pendingSource.enterprise.uscc)) : null
+    const from = plan.sourceEnterpriseId !== null ? existingOwner(plan.sourceEnterpriseId)
+      : pendingSource ? `pending:${identityKeyOf({ name: pendingSource.enterprise.name, uscc: identities.identityUsccByRecord.get(pendingSourceIndex) ?? usccOrNull(pendingSource.enterprise.uscc) })}` : null
     if (!from || ownerMap.has(from)) fail('ambiguity', 'Legal merge owner mapping must be uniquely provable')
     ownerMap.set(from, into)
   }
@@ -1370,14 +1377,20 @@ function prepareOfficialImport(db: Executor, request: RosterImportRequest, items
   return { planHash, item }
 }
 
+interface ReviewedAnnouncementPlan {
+  owners: ReadonlyMap<number, number>
+  created: ReadonlySet<number>
+  decision: string
+  planHash?: string
+}
+
 export function planRosterImport(
   db: Executor,
   request: RosterImportRequest,
   context: {
     batchId?: number
     filesDir?: string
-    reviewedOwners?: ReadonlyMap<number, number>
-    reviewedCreates?: ReadonlySet<number>
+    reviewedAnnouncement?: ReviewedAnnouncementPlan
     convergeOnly?: boolean
     /** Source-PDF page-count failures collected by the REST/MCP boundary before planning. */
     pageCountErrors?: readonly RosterImportItemResult[]
@@ -1433,8 +1446,8 @@ export function planRosterImport(
         identityUsccByRecord: new Map<number, string | null>(),
         ambiguousNameOnlyRecords: new Set<number>(),
       }
-  announcementIdentityPlan.reviewedOwners = context.reviewedOwners
-  announcementIdentityPlan.reviewedCreates = context.reviewedCreates
+  announcementIdentityPlan.reviewedOwners = context.reviewedAnnouncement?.owners
+  announcementIdentityPlan.reviewedCreates = context.reviewedAnnouncement?.created
   const ambiguousEvidence = payload.announcement
     ? ambiguousEvidenceRepointIds(db, payload.announcement, announcementRecords, evidenceContentHashes, announcementIdentityPlan)
     : new Set<number>()
@@ -1486,7 +1499,7 @@ export function planRosterImport(
       const creates = planEnterpriseCreates(db, records, announcementIdentityPlan)
       for (const create of creates) {
         if (create) {
-          if (!context.reviewedOwners) pendingEnterpriseCreates.push(create)
+          if (!context.reviewedAnnouncement?.owners) pendingEnterpriseCreates.push(create)
           for (const key of pendingKeys(create)) pending.add(key)
         }
       }
@@ -1502,7 +1515,7 @@ export function planRosterImport(
         const requestedUscc = usccOrNull(record?.enterprise?.uscc)
         const uscc = announcementIdentityPlan.identityUsccByRecord.get(index) ?? requestedUscc
         const coordinate = `${optionalString(record?.titleCode) ?? ''}/${optionalString(record?.source) ?? optionalString(announcement.sourceDocument?.source) ?? ''}`
-        const reviewedOwner = context.reviewedOwners?.get(index)
+        const reviewedOwner = context.reviewedAnnouncement?.owners?.get(index)
         const identityKey = reviewedOwner !== undefined ? `enterprise:${reviewedOwner}` : name ? identityKeyOf({ name, uscc }) : null
         const reusedInBatch = identityKey != null && (plannedCoordinates.get(identityKey)?.has(coordinate) ?? false)
         planAnnouncementRecord(db, request, announcement, record, index, push, {
@@ -1512,7 +1525,7 @@ export function planRosterImport(
           identityUscc: uscc,
           ambiguousNameOnly: reviewedOwner === undefined && announcementIdentityPlan.ambiguousNameOnlyRecords.has(index),
           reviewedOwner,
-          reviewedCreates: context.reviewedCreates,
+          reviewedCreates: context.reviewedAnnouncement?.created,
         }, mode, claimedEvidence, ambiguousEvidence, plannedWriteEvents.get(index), context.evidenceRepointTargets, evidencePlanFingerprint, evidenceContentHashes, officialState)
         if ((create || reviewedOwner !== undefined) && identityKey != null) {
           const coordinates = plannedCoordinates.get(identityKey) ?? new Set<string>()
@@ -1616,7 +1629,9 @@ export function planRosterImport(
   if (officialInput && !conflicts.length) {
     try {
       const official = prepareOfficialImport(db, request, items, announcementIdentityPlan, context.filesDir, officialState, plannedWriteEvents, newEventEvidencePlan.groupedOccurrences)
-      officialEvidencePlanHash = official.planHash
+      officialEvidencePlanHash = context.reviewedAnnouncement
+        ? officialPlanDigest({ review: context.reviewedAnnouncement.decision, plan: official.planHash })
+        : official.planHash
       const beforeMerges = items.findIndex(item => item.item.kind === 'merge')
       items.splice(beforeMerges < 0 ? items.length : beforeMerges, 0, official.item)
     } catch (error) {
@@ -1979,6 +1994,9 @@ function writeAnnouncementRecord(
   const enterprise = resolved.reviewedOwner === undefined
     ? upsertEnterprise(tx, { name, uscc, district })
     : { id: resolved.reviewedOwner, created: resolved.reviewedCreate === true }
+  if (resolved.reviewedOwner === undefined) {
+    tx.insert(schema.rosterLegacyMember).values({ enterpriseId: enterprise.id }).onConflictDoNothing().run()
+  }
 
   // 记录：(企业, 称号, 来源) 唯一。
   const recordRow = upsertRecord(tx, {
@@ -4341,8 +4359,7 @@ function commitRosterImportCore(
   request: RosterImportRequest,
   pageCountErrors: readonly RosterImportItemResult[] = [],
   filesDir?: string,
-  reviewedOwners?: ReadonlyMap<number, number>,
-  reviewedCreates?: ReadonlySet<number>,
+  reviewedAnnouncement?: ReviewedAnnouncementPlan,
 ): { batchId: number; status: 'committed' | 'failed'; summary: StoredImportSummary; items: RosterImportItemResult[]; error: string | null; qualificationReadback?: RosterImportAfterQualificationReadback } {
   const batch = ensureBatchRow(db, request)
 
@@ -4360,8 +4377,9 @@ function commitRosterImportCore(
     return { batchId: batch.id, status: 'committed', summary, items, error: null, ...(qualificationReadback ? { qualificationReadback } : {}) }
   }
 
-  const plan = planRosterImport(db, request, { batchId: batch.id, pageCountErrors, filesDir, reviewedOwners, reviewedCreates })
-  if (!reviewedOwners && plan.officialEvidencePlanHash && request.payload.officialEvidencePlanHash !== plan.officialEvidencePlanHash) {
+  const plan = planRosterImport(db, request, { batchId: batch.id, pageCountErrors, filesDir, reviewedAnnouncement })
+  const submittedPlanHash = reviewedAnnouncement ? reviewedAnnouncement.planHash : request.payload.officialEvidencePlanHash
+  if (plan.officialEvidencePlanHash && submittedPlanHash !== plan.officialEvidencePlanHash) {
     const item = failure('official_evidence', 'payload', 'plan_mismatch', 'Matching opt-in preflight planHash required; sources or final plan changed')
     plan.conflicts.push(item); plan.items.push({ item, action: 'skip', review: false })
   }
@@ -4605,9 +4623,9 @@ function replayRosterImportCore(db: Db, request: RosterImportRequest): RosterImp
 export function preflightRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: import('../../../core/lib/logging').LogContext & { filesDir?: string } = {}) {
   return recordImportReceipt(db, 'preflight', request, () => withFingerprintVerificationSnapshot(sqliteConnection(db), () => preflightRosterImportCore(db, request, pageCountErrors, context.filesDir)), context)
 }
-export function commitRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], options: import('../../../core/lib/logging').LogContext & { deferCandidateTasks?: boolean; filesDir?: string; reviewedOwners?: ReadonlyMap<number, number>; reviewedCreates?: ReadonlySet<number> } = {}) {
+export function commitRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], options: import('../../../core/lib/logging').LogContext & { deferCandidateTasks?: boolean; filesDir?: string; reviewedAnnouncement?: ReviewedAnnouncementPlan } = {}) {
   const result = recordImportReceipt(db, 'commit', request, () => withFingerprintVerificationSnapshot(sqliteConnection(db), () => db.transaction(() => {
-    const result = commitRosterImportCore(db, request, pageCountErrors, options.filesDir, options.reviewedOwners, options.reviewedCreates)
+    const result = commitRosterImportCore(db, request, pageCountErrors, options.filesDir, options.reviewedAnnouncement)
     const candidateTaskIds = result.status === 'committed'
       ? enqueueArchivedCandidates(db, request.payload.platformQueries ?? [], '', options.deferCandidateTasks, options) : []
     return { ...result, candidateTaskIds }

@@ -79,8 +79,15 @@ async function fixture() {
     const parsed=resultSchema.parse(plan.body); expect(parsed.preflight?.conflicts).toEqual([])
     const bound=parsed.preflight?.officialEvidencePlanHash ? {...input,payload:{...payload,officialEvidencePlanHash:parsed.preflight.officialEvidencePlanHash}} : input
     const result=await http('/api/roster/import/commit',bound); expect(result.status).toBe(200)
-    const stage = z.object({ status: z.literal('staged'), intakeId: z.number(), sourceDigest: z.string() }).safeParse(result.body)
-    const receipt = stage.success ? await supplementAnnouncement(db, stage.data.intakeId, reviewFixtureRows(db, stage.data.sourceDigest, bound), filesDir) : result.body
+    const stage = z.object({ status: z.literal('staged'), intakeId: z.number(), sourceDigest: z.string(), officialEvidencePreflightRequired: z.literal(true).optional() }).safeParse(result.body)
+    let receipt = result.body
+    if (stage.success) {
+      const review = reviewFixtureRows(db, stage.data.sourceDigest, bound)
+      const preview = stage.data.officialEvidencePreflightRequired
+        ? await supplementAnnouncement(db, stage.data.intakeId, { ...review, preflight: true }, filesDir)
+        : undefined
+      receipt = await supplementAnnouncement(db, stage.data.intakeId, { ...review, officialEvidencePlanHash: preview?.officialEvidencePlanHash }, filesDir)
+    }
     const committed = resultSchema.parse(receipt)
     expect(committed.status, JSON.stringify(committed)).toBe(stage.success ? 'supplemented' : 'committed')
     return {result:committed,bound}

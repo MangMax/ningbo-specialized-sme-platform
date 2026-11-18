@@ -12,7 +12,7 @@ import { ImportReceiptError } from '../../server/utils/import-receipts'
 import type { ImportExecutionMessage } from '../../server/utils/import-execution'
 import { stageAnnouncement, supplementAnnouncement } from '../../server/utils/announcement-intake'
 import { OfficialFactError } from '../../server/utils/official-evidence-plan'
-import { EnterpriseKernelError } from '../../../core/public'
+import { EnterpriseKernelError } from '../../../core/server/public'
 import { initializeWorkerLogging, closeApplicationLogging } from '../../../core/lib/logging'
 
 installAppModules(appManifests)

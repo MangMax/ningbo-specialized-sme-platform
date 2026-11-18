@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { requireApiToken } from '../../../core/server/utils/api-guard'
-import { EnterpriseKernelError } from '../../../core/public'
+import { EnterpriseKernelError } from '../../../core/server/public'
 import { ImportReceiptError } from './import-receipts'
 import { OfficialFactError } from './official-evidence-plan'
 import { requestLogContext, type LogContext } from '../../../core/lib/logging'

@@ -111,6 +111,7 @@ function seedEvidence(recordEventId: number, input: { sourceFile: string; listNo
 
 /** 回归案例的两行：375（公布侧，**无统代**）与 7289（带统代）。 */
 const target = seedEnterprise({ name: OLD_NAME })
+db.insert(schema.rosterLegacyMember).values({ enterpriseId: target }).run()
 const targetRecord = seedRecord(target, 'jxj', 'specialized_sme')
 const targetEvent = seedEvent(targetRecord, 'award', 2022)
 const targetEvidence = seedEvidence(targetEvent, {

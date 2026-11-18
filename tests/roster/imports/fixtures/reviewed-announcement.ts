@@ -62,6 +62,10 @@ export async function finishFixtureAnnouncement(baseUrl: string, token: string, 
   const state = await client.readIntake(intake.intakeId)
   const review = rows ? { sourceDigest: intake.sourceDigest, rows, basis: 'Reviewed synthetic fixture identities' }
     : state.review ?? reviewFixtureRows(db, intake.sourceDigest, request)
+  if (state.status === 'staged' && state.officialEvidencePreflightRequired) {
+    const preview = await client.preflightSupplement(intake.intakeId, review)
+    if (preview.officialEvidencePlanHash) return client.supplement(intake.intakeId, { ...review, officialEvidencePlanHash: preview.officialEvidencePlanHash })
+  }
   return client.supplement(intake.intakeId, review)
 }
 
@@ -70,12 +74,15 @@ export async function submitNewFixtureAnnouncement(baseUrl: string, token: strin
   const client = createRosterImportClient({ baseUrl, token })
   const staged = await client.commit(request)
   if (staged.status !== 'staged') return staged
-  return client.supplement(staged.intakeId, {
+  const review: SupplementAnnouncementRequest = {
     sourceDigest: staged.sourceDigest,
     basis: 'Synthetic fixture uses new identities',
     rows: request.payload.announcement!.records.map(({ enterprise }) => ({
       action: 'create',
       fields: { name: enterprise.name, ...(enterprise.uscc === undefined ? {} : { uscc: enterprise.uscc }) },
     })),
-  })
+  }
+  if (!staged.officialEvidencePreflightRequired) return client.supplement(staged.intakeId, review)
+  const preview = await client.preflightSupplement(staged.intakeId, review)
+  return client.supplement(staged.intakeId, { ...review, officialEvidencePlanHash: preview.officialEvidencePlanHash })
 }

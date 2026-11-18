@@ -13,7 +13,12 @@ export async function completeInProcessIntake(
   if (!('intakeId' in response) || typeof response.intakeId !== 'number') throw new Error('Fixture intake ID missing')
   const state = readAnnouncementIntake(db, response.intakeId)
   const review = state.review ?? reviewFixtureRows(db, state.sourceDigest, request)
-  const receipt = await supplementAnnouncement(db, response.intakeId, review, filesDir)
+  const preview = state.status === 'staged' && state.officialEvidencePreflightRequired
+    ? await supplementAnnouncement(db, response.intakeId, { ...review, preflight: true }, filesDir)
+    : undefined
+  const receipt = await supplementAnnouncement(db, response.intakeId, {
+    ...review, ...(preview?.officialEvidencePlanHash ? { officialEvidencePlanHash: preview.officialEvidencePlanHash } : {}),
+  }, filesDir)
   if (receipt.status === 'failed') return receipt
   const { intakeId, owners, sourceIds, ...batch } = receipt
   return { ...batch, status: 'committed' }

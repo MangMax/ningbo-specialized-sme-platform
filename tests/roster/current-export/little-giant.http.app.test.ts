@@ -61,6 +61,7 @@ async function workbook(key: string) {
 }
 function candidate(name: string, events: Array<{ eventType: 'award'|'review'|'nurture'|'maintain'; year: number|null; decidedYear?: number|null; reviewOutcome?: 'passed'|'failed'|null; batchSeq?: number|null }> = [{ eventType: 'award', year: new Date().getFullYear(), batchSeq: 1 }], titleCode = 'little_giant') {
   const enterprise = db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: 'TEST-' + name, district: '鄞州区', city: '宁波市' }).returning().get()
+  db.insert(s.rosterLegacyMember).values({ enterpriseId: enterprise.id }).run()
   const record = db.insert(s.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode, nameRaw: name }).returning().get()
   for (const e of events) {
     const event = db.insert(s.recordEvent).values({ recordId: record.id, ...e }).returning().get()

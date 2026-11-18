@@ -144,6 +144,7 @@ it.each([{ label: 'pending', status: 'pending' }, { label: 'withdrawn', status: 
 
 it('PATCH preserves formal rows, source evidence, platform originals and readback by both names', async () => {
   const owner = seed(), before = await profile(owner.id)
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: owner.id }).run()
   const record = db.insert(schema.record).values({ enterpriseId: owner.id, titleCode: 'specialized_sme', source: 'jxj', nameRaw: owner.name, district: '历史属地' }).returning().get()
   const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
   db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic96.pdf', attachment: '原附件', listNo: 11, page: 3 }).run()

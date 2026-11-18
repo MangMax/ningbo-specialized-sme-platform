@@ -71,9 +71,19 @@ async function commit(payload:RosterImportPayload,key:string,transport:'http'|'m
   const parsed=z.object({preflight:z.object({conflicts:z.array(z.unknown()),officialEvidencePlanHash:z.string().optional()})}).parse(plan);expect(parsed.preflight.conflicts).toEqual([])
   const bound=parsed.preflight.officialEvidencePlanHash?{...request,payload:{...payload,officialEvidencePlanHash:parsed.preflight.officialEvidencePlanHash}}:request
   const saved=transport==='http'?(await http('/api/roster/import/commit',bound)).body:rpcValue(await rpc('save_roster_batch',bound)).body
-  const staged = z.object({ status: z.literal('staged'), intakeId: z.number(), sourceDigest: z.string() }).safeParse(saved)
+  const staged = z.object({ status: z.literal('staged'), intakeId: z.number(), sourceDigest: z.string(), officialEvidencePreflightRequired: z.literal(true).optional() }).safeParse(saved)
   if (staged.success) {
-    const result = await http(`/api/roster/import/intake/${staged.data.intakeId}/supplement`, reviewFixtureRows({ $client: sqlite }, staged.data.sourceDigest, bound))
+    const path = `/api/roster/import/intake/${staged.data.intakeId}/supplement`
+    const review = reviewFixtureRows({ $client: sqlite }, staged.data.sourceDigest, bound)
+    const preview = staged.data.officialEvidencePreflightRequired ? await http(path, { ...review, preflight: true }) : undefined
+    let officialEvidencePlanHash: string | undefined
+    if (preview) {
+      expect(preview.status, JSON.stringify(preview.body)).toBe(200)
+      const parsed = z.object({ status: z.literal('preflighted'), conflicts: z.array(z.unknown()), officialEvidencePlanHash: z.string() }).parse(preview.body)
+      expect(parsed.conflicts).toEqual([])
+      officialEvidencePlanHash = parsed.officialEvidencePlanHash
+    }
+    const result = await http(path, { ...review, officialEvidencePlanHash })
     expect(result.status, JSON.stringify(result.body)).toBe(200)
     return { saved: committedSchema.extend({ status: z.literal('supplemented') }).parse(result.body), bound }
   }
@@ -106,7 +116,7 @@ it('discovers bounded opt-in fields on actual OpenAPI and MCP schemas while keep
   const evidence=tools.find(t=>t.name==='get_roster_evidence')!;expect(evidence.inputSchema).toMatchObject({properties:{official:{enum:['latest','history']},pageSize:{maximum:50},maxBytes:{maximum:65536}}})
   const auth=z.object({result:z.object({tools:z.array(z.object({name:z.string(),inputSchema:z.record(z.string(),z.unknown())}))})}).parse((await rpc('',{},mcpToken,'tools/list')).body).result.tools
   expect(auth.find(t=>t.name==='list_roster_import_items')?.inputSchema).toMatchObject({properties:{projection:{enum:['snapshot','eventIds','qualification']},source:{enum:['private_batch','redacted_receipt']},itemIndex:{minimum:0}}})
-  const serialized=JSON.stringify(discovery);for(const field of ['beforeRevision','afterEvidenceId','oldRecordId','storedRedacted','requiredBytes']) expect(serialized).toContain(field)
+  const serialized=JSON.stringify(discovery);for(const field of ['beforeRevision','afterEvidenceId','oldRecordId','storedRedacted','requiredBytes','officialEvidencePlanHash','/api/roster/import/intake/{id}/supplement']) expect(serialized).toContain(field)
 })
 it('reads exact fact evidence and event with HTTP and actual MCP JSON-RPC parity after public worker writes',async()=>{
   const s=await seed(false,'mcp')
@@ -116,6 +126,45 @@ it('reads exact fact evidence and event with HTTP and actual MCP JSON-RPC parity
   expect((await http(`/api/roster/evidence/${s.old.evidenceId}`,undefined,null)).status).toBe(200)
   expect(rpcValue(await rpc('get_roster_evidence',{id:s.old.evidenceId},null)).body).toEqual((await http(`/api/roster/evidence/${s.old.evidenceId}`,undefined,null)).body)
 })
+it('preflights and captures a no-USCC official row for the manually selected same-name enterprise', async () => {
+  const name = '同名公布证据企业'
+  const first = await http('/api/core/enterprises', { name })
+  const second = await http('/api/core/enterprises', { name, uscc: '91330226MA2CL6FP2U' })
+  expect([first.status, second.status]).toEqual([200, 200])
+  const owner = z.object({ id: z.number(), revision: z.number() }).parse(second.body)
+  const row = {
+    nameRaw: '  同名公布证据企业  ', usccRaw: null, districtRaw: '原属地',
+    declaration: { kind: 'independent', sourceDocument: { source: 'jxj', title: '人工核对公布', docNumber: null, issueDate: null, path: 'notice.txt' }, basis: '已核对公布文档' },
+    storedFileId: 1, path: 'notice.txt', sha256, bytes: Buffer.byteLength(text), attachment: null,
+    sectionKey: '人工核对名单', listNo: 11, page: null, sourceBindingKnown: true, actor: { type: 'agent', id: 'synthetic' }, basis: '已核对原行',
+  } satisfies OfficialPublishedRow
+  const request = { idempotencyKey: 'reviewed-source-row', sourceKind: 'announcement', sourceIdentity: 'notice.txt',
+    payload: { announcement: { sourceDocument: { source: 'jxj', title: '人工核对公布' }, records: [
+      { enterprise: { name }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2022, evidence: [{ sourceFile: 'notice.txt', attachment: null, listNo: 11, page: null, publishedRow: row }] }] },
+    ] } } }
+  const original = await http('/api/roster/import/preflight', request)
+  expect(original.body).toMatchObject({ preflight: { conflicts: [{ error: { code: 'enterprise_ambiguous' } }] } })
+  const staged = z.object({ status: z.literal('staged'), intakeId: z.number(), sourceDigest: z.string(), officialEvidencePreflightRequired: z.literal(true) })
+    .parse(rpcValue(await rpc('save_roster_batch', request)).body)
+  const path = `/api/roster/import/intake/${staged.intakeId}`
+  const review = { sourceDigest: staged.sourceDigest, basis: '核对两家同名企业后选定第二家', rows: [{ action: 'attach', enterpriseId: owner.id, expectedRevision: owner.revision }] }
+  expect((await http(path + '/supplement', { ...review, preflight: true }, null)).status).toBe(401)
+  const preflight = await http(path + '/supplement', { ...review, preflight: true })
+  expect(preflight.status).toBe(200)
+  expect(preflight.body).toEqual({ status: 'preflighted', conflicts: [], officialEvidencePlanHash: expect.stringMatching(/^[0-9a-f]{64}$/) })
+  const officialEvidencePlanHash = z.object({ officialEvidencePlanHash: z.string() }).parse(preflight.body).officialEvidencePlanHash
+  expect((await http(path)).body).toMatchObject({ status: 'staged', receipt: null, review: null, officialEvidencePreflightRequired: true })
+  const receipt = await http(path + '/supplement', { ...review, officialEvidencePlanHash })
+  expect(receipt.status).toBe(200)
+  expect(receipt.body).toMatchObject({ status: 'supplemented', owners: [owner.id] })
+  const captured = z.object({ evidence_id: z.number(), captured_enterprise_id: z.number(), name_raw: z.string(), uscc_raw: z.null() })
+    .parse(sqlite.prepare('SELECT evidence_id,captured_enterprise_id,name_raw,uscc_raw FROM official_evidence_row_revision WHERE section_key=?').get(row.sectionKey))
+  expect(captured).toMatchObject({ captured_enterprise_id: owner.id, name_raw: row.nameRaw, uscc_raw: null })
+  const published = await http(`/api/roster/evidence/${captured.evidence_id}?official=latest`)
+  expect(published.body).toMatchObject({ enterpriseId: owner.id, official: { row: { nameRaw: row.nameRaw, usccRaw: null } } })
+  expect(await http(path + '/supplement', { ...review, officialEvidencePlanHash })).toEqual(receipt)
+})
+
 it('authenticates sensitive opt-in independently on actual HTTP and MCP before malformed or missing selectors',async()=>{
   for(const token of [null,mcpToken]) expect((await http('/api/roster/evidence/999999?official=latest',undefined,token)).status).toBe(401)
   for(const token of [null,apiToken]) expect((await rpc('get_roster_evidence',{id:999999,official:'latest'},token)).status).toBe(401)

@@ -7,6 +7,7 @@ import { initializeDb, schema as s } from '../../../../db/client'
 
 export function exportCandidate(db: ReturnType<typeof initializeDb>, name: string, titleCode = 'specialized_sme') {
   const enterprise = db.insert(s.enterprise).values({ name, nameNorm: name, district: '鄞州区' }).returning().get()
+  db.insert(s.rosterLegacyMember).values({ enterpriseId: enterprise.id }).run()
   const record = db.insert(s.record).values({ enterpriseId: enterprise.id, nameRaw: name, titleCode, source: 'jxj' }).returning().get()
   const event = db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year: new Date().getFullYear(), batchSeq: 1 }).returning().get()
   db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'jxj/announcement/synthetic-188.xlsx', attachment: '合成名单', listNo: enterprise.id }).run()

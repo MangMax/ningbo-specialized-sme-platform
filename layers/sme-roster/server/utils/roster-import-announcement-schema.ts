@@ -34,7 +34,7 @@ export const announcementDiscoverySchema = z.looseObject({
       })).optional(),
     })).optional(),
   })),
-}).describe('公布文件历史命令；未知附加字段保留，遗漏/null/归一化及逐项错误由现有领域校验处理；publishedRow 使用正式事实严格 DTO，须先预检并带回 officialEvidencePlanHash')
+}).describe('公布文件历史命令；未知附加字段保留，遗漏/null/归一化及逐项错误由现有领域校验处理；publishedRow 使用正式事实严格 DTO，原行留存后须对已核企业身份和事实调用补充预检，并在补充请求带回 officialEvidencePlanHash')
 
 const { $schema: _, ...announcementJsonSchema } = z.toJSONSchema(announcementDiscoverySchema, { io: 'input' })
 // Metadata enriches tools/list without turning legacy payloads into Zod validation failures.
