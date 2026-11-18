@@ -85,13 +85,13 @@ export async function handleRosterImportRequest(
 
   const auth = authorizeRosterWrite(request, deps.apiToken)
   if (!auth.ok) {
-    appLog({ source: 'import', operation: `import.submission.${action}`, outcome: 'denied', errorCode: 'unauthorized' }, deps.logContext)
+    appLog({ module: 'sme-roster', source: 'import', operation: `import.submission.${action}`, outcome: 'denied', errorCode: 'unauthorized' }, deps.logContext)
     return { status: auth.status, headers: auth.headers, body: auth.body }
   }
 
   const validated = validateImportRequest(request.body)
   if (!validated.ok) {
-    appLog({ source: 'import', operation: `import.submission.${action}`, outcome: 'denied', errorCode: 'invalid_import_request' }, deps.logContext)
+    appLog({ module: 'sme-roster', source: 'import', operation: `import.submission.${action}`, outcome: 'denied', errorCode: 'invalid_import_request' }, deps.logContext)
     return json(validated.status, { message: validated.message })
   }
   if (action === 'replay' && hasOfficialFactInput(validated.value)) return json(400, { message: 'Replay cannot capture, append or correct official facts' })

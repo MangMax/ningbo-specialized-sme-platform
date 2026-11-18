@@ -14,6 +14,9 @@ type AppModuleManifest = {
   readonly id: string
   readonly name: string
   readonly dependsOn?: readonly string[]
+  readonly routes?: readonly string[]
+  readonly mcpTools?: readonly string[]
+  readonly jobKinds?: readonly { readonly kind: string }[]
   readonly nav?: readonly AppNavItem[]
 }
 
@@ -25,6 +28,10 @@ export function validateAppModules(manifests: readonly AppModuleManifest[]): voi
   const modulesById = new Map<string, AppModuleManifest>()
   const navOwners = new Map<string, string>()
 
+  const routes = new Set<string>()
+  const tools = new Set<string>()
+  const jobKinds = new Set<string>()
+
   for (const manifest of manifests) {
     const { id, nav } = manifest
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)) {
@@ -32,6 +39,22 @@ export function validateAppModules(manifests: readonly AppModuleManifest[]): voi
     }
     if (modulesById.has(id)) throw new Error(`模块「${id}」的 id 重复`)
     modulesById.set(id, manifest)
+
+    for (const prefix of manifest.routes ?? []) {
+      if (!/^\/api(?:\/(?:[a-z0-9-]+|:[a-zA-Z][a-zA-Z0-9]*))+$/.test(prefix)) {
+        throw new Error(`模块「${id}」的 API 前缀「${prefix}」无效`)
+      }
+      if (routes.has(prefix)) throw new Error(`API 前缀「${prefix}」重复登记`)
+      routes.add(prefix)
+    }
+    for (const tool of manifest.mcpTools ?? []) {
+      if (tools.has(tool)) throw new Error(`MCP 工具「${tool}」重复登记`)
+      tools.add(tool)
+    }
+    for (const { kind } of manifest.jobKinds ?? []) {
+      if (jobKinds.has(kind)) throw new Error(`任务种类「${kind}」重复登记`)
+      jobKinds.add(kind)
+    }
 
     for (const item of nav ?? []) {
       for (const { url } of item.items ?? [item]) {

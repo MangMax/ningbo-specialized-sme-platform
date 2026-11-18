@@ -17,9 +17,9 @@ export async function currentArtifact(row: JobRow, dbPath: string, logContext?: 
   const path = join(exportDirectory(dbPath), row.id + '.xlsx')
   if (Date.now() >= Date.parse(artifact.expiresAt)) {
     await unlink(path).then(() => {
-      appLog({ source: 'export', operation: 'export.artifact.expire', outcome: 'success', taskId: row.id, resourceType: 'export_artifact', resourceId: artifact.id }, logContext)
+      appLog({ module: 'sme-roster', source: 'export', operation: 'export.artifact.expire', outcome: 'success', taskId: row.id, resourceType: 'export_artifact', resourceId: artifact.id }, logContext)
     }).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== 'ENOENT') appLog({ source: 'export', operation: 'export.artifact.expire', outcome: 'failure', level: 'error', errorCode: 'artifact_cleanup_failed', taskId: row.id, resourceType: 'export_artifact', resourceId: artifact.id }, logContext)
+      if (error.code !== 'ENOENT') appLog({ module: 'sme-roster', source: 'export', operation: 'export.artifact.expire', outcome: 'failure', level: 'error', errorCode: 'artifact_cleanup_failed', taskId: row.id, resourceType: 'export_artifact', resourceId: artifact.id }, logContext)
     })
     return { ...artifact, availability: 'expired' }
   }
@@ -52,9 +52,9 @@ export async function cleanupCurrentExports(db: BetterSQLite3Database<typeof sch
     if (name.endsWith('.part') || !artifact || artifact.availability !== 'available') {
       const resourceId = name.slice(0,26)
       await unlink(join(dir,name)).then(() => {
-        appLog({ source: 'export', operation: 'export.artifact.cleanup', outcome: 'success', resourceType: 'export_artifact', resourceId, ...(row ? { taskId: row.id } : {}) }, logContext)
+        appLog({ module: 'sme-roster', source: 'export', operation: 'export.artifact.cleanup', outcome: 'success', resourceType: 'export_artifact', resourceId, ...(row ? { taskId: row.id } : {}) }, logContext)
       }).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== 'ENOENT') appLog({ source: 'export', operation: 'export.artifact.cleanup', outcome: 'failure', level: 'error', errorCode: 'artifact_cleanup_failed', resourceType: 'export_artifact', resourceId, ...(row ? { taskId: row.id } : {}) }, logContext)
+        if (error.code !== 'ENOENT') appLog({ module: 'sme-roster', source: 'export', operation: 'export.artifact.cleanup', outcome: 'failure', level: 'error', errorCode: 'artifact_cleanup_failed', resourceType: 'export_artifact', resourceId, ...(row ? { taskId: row.id } : {}) }, logContext)
       })
     }
   }

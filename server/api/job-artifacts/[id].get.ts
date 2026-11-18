@@ -12,7 +12,7 @@ export default defineEventHandler(async event => {
   const record = (outcome: 'success' | 'failure' | 'cancelled' | 'denied', statusCode: number, errorCode?: string) => {
     if (completed) return
     completed = true
-    appLog({ source: 'export', operation: 'export.artifact.download', outcome, statusCode, level: outcome === 'failure' ? 'error' : outcome === 'success' ? 'info' : 'warn', errorCode, ...(taskId ? { taskId, resourceType: 'export_artifact', resourceId: taskId } : {}) }, logContext)
+    appLog({ module: 'sme-roster', source: 'export', operation: 'export.artifact.download', outcome, statusCode, level: outcome === 'failure' ? 'error' : outcome === 'success' ? 'info' : 'warn', errorCode, ...(taskId ? { taskId, resourceType: 'export_artifact', resourceId: taskId } : {}) }, logContext)
   }
   try {
   requireTaskCenterAccess(event)

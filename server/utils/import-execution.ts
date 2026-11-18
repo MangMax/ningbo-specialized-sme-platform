@@ -86,7 +86,7 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
     if (!ready) return
     active = queue.shift()!
     endWrite = beginImportWrite()
-    appLog({ source: 'import', operation: 'import.execution', outcome: 'started' }, active.message.logContext)
+    appLog({ module: 'sme-roster', source: 'import', operation: 'import.execution', outcome: 'started' }, active.message.logContext)
     try { worker.postMessage(active.message) } catch { const owned = worker; worker = undefined; ready = false; const job = active; active = undefined; settle(job, unavailable('import_outcome_unknown', 'Import outcome unknown; read its receipt and retry with the same idempotency key')); stopping = owned.terminate().finally(() => { stopping = undefined; releaseWriter(); queueMicrotask(pump) }) }
   }
   return {
@@ -108,7 +108,7 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
       const identity = { dev: stat.dev, ino: stat.ino, schemaVersion: client.pragma('schema_version', { simple: true }) as number, migration: client.prepare('SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get() as { hash: string; created_at: number } | undefined }
       retainedBytes += payload.byteLength
       return new Promise((resolve, reject) => {
-        appLog({ source: 'import', operation: 'import.admission', outcome: 'started' }, context)
+        appLog({ module: 'sme-roster', source: 'import', operation: 'import.admission', outcome: 'started' }, context)
         queue.push({ onResult: result => { if ('candidateTaskIds' in result) activateCandidateDiscoveryTasks(db,result.candidateTaskIds,'',context) }, message: { identity, id: ++nextId, dbPath: path, readonly: client.readonly, action, payload, pageCountErrors, logContext: context, filesDir: source.filesDir }, resolve, reject }); pump()
       })
     },

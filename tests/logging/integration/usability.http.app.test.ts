@@ -93,12 +93,16 @@ it('records a real matched HTTP template and method in the protected list and de
   expect(rows).toHaveLength(1)
   const summary = rows[0]
   expect(summary).toMatchObject({
-    source: 'http', operation: 'http.request', outcome: 'success', statusCode: 200,
+    source: 'http', module: 'core', operation: 'http.request', outcome: 'success', statusCode: 200,
     origin: {runtime:'node',integration:'nuxt-nitro',capture:'framework',execution:'request'},
     httpMethod: 'GET', httpRoute: '/api/health',
   })
   const event = await detail(summary.id)
-  expect(event).toMatchObject({ id: summary.id, httpMethod: 'GET', httpRoute: '/api/health', statusCode: 200 })
+  expect(event).toMatchObject({ id: summary.id, module: 'core', httpMethod: 'GET', httpRoute: '/api/health', statusCode: 200 })
+  expect(await logs(`requestId=${health.requestId}&module=core&source=http&level=info&outcome=success`))
+    .toMatchObject([{ id: summary.id, module: 'core' }])
+  expect(await logs(`requestId=${health.requestId}&module=sme-roster`)).toEqual([])
+  expect((await call('/api/logs?module=unknown-module', { headers: apiHeaders })).status).toBe(400)
   expect(JSON.stringify({ summary, event })).not.toContain(PRIVATE)
   expect(output).not.toContain(PRIVATE)
 
@@ -114,7 +118,7 @@ it('uses a dynamic route template without persisting the concrete id or query va
   const rows = await waitLog(response.requestId)
   expect(rows).toHaveLength(1)
   const summary = rows[0]
-  expect(summary).toMatchObject({ source: 'http', httpMethod: 'GET', httpRoute: '/api/files/:id' })
+  expect(summary).toMatchObject({ source: 'http', module: 'core', httpMethod: 'GET', httpRoute: '/api/files/:id' })
   const serialized = JSON.stringify({ summary, detail: await detail(summary.id) })
   expect(serialized).not.toContain('987654321')
   expect(serialized).not.toContain(PRIVATE)
@@ -152,12 +156,15 @@ it('records the MCP transport template and exposes the same facts through MCP', 
   const listed = await mcp('tools/list', {})
   expect(listed.status).toBe(200)
   const rows = await waitLog(listed.requestId)
-  expect(rows[0]).toMatchObject({ source: 'mcp', operation: 'mcp.request', httpMethod: 'POST', httpRoute: '/mcp', origin: {runtime:'node',integration:'mcp-toolkit',capture:'framework',execution:'request'} })
+  expect(rows[0]).toMatchObject({ source: 'mcp', module: 'core', operation: 'mcp.request', httpMethod: 'POST', httpRoute: '/mcp', origin: {runtime:'node',integration:'mcp-toolkit',capture:'framework',execution:'request'} })
 
-  const rpc = await mcp('tools/call', { name: 'list_runtime_logs', arguments: { requestId: rows[0].requestId } }, mcpToken)
+  const rpc = await mcp('tools/call', { name: 'list_runtime_logs', arguments: { requestId: rows[0].requestId, module: 'core', source: 'mcp' } }, mcpToken)
   expect(rpc.status).toBe(200)
   const payload = rpc.body.result.structuredContent ?? JSON.parse(rpc.body.result.content[0].text)
-  expect(payload.rows[0]).toMatchObject({ httpMethod: 'POST', httpRoute: '/mcp' })
+  expect(payload.rows).toMatchObject([{ module: 'core', httpMethod: 'POST', httpRoute: '/mcp' }])
+  const excluded = await mcp('tools/call', { name: 'list_runtime_logs', arguments: { requestId: rows[0].requestId, module: 'sme-roster' } }, mcpToken)
+  expect(excluded.status).toBe(200)
+  expect((excluded.body.result.structuredContent ?? JSON.parse(excluded.body.result.content[0].text)).rows).toEqual([])
 })
 
 it('captures real MCP SDK initialize clientInfo once and keeps stateless tool calls unattributed', async () => {
@@ -190,7 +197,7 @@ it('captures real MCP SDK initialize clientInfo once and keeps stateless tool ca
     expect(JSON.stringify(rows)).not.toContain('mcp-session-id')
     const toolEvent = rows.find(row => row.operation === 'mcp.tool.get_platform_capabilities')!
     expect(toolEvent).toMatchObject({
-      source: 'mcp', mcp: { transport: 'streamable-http', sessionMode: 'stateless', rpcMethod: 'tools/call', tool: 'get_platform_capabilities' },
+      source: 'mcp', module: 'sme-roster', mcp: { transport: 'streamable-http', sessionMode: 'stateless', rpcMethod: 'tools/call', tool: 'get_platform_capabilities' },
     })
     expect(toolEvent.mcp?.client).toBeUndefined()
     const detailEvent = await detail(toolEvent.id)
@@ -221,7 +228,7 @@ it('records a real tus create and final PATCH with the server upload id and per-
   expect(id).toMatch(/^[a-f0-9]{32}$/)
   const createdRows = await waitLog(created.requestId)
   expect(createdRows.find(row => row.operation === 'file.upload')).toMatchObject({
-    source: 'file', outcome: 'started', statusCode: 201,
+    source: 'file', module: 'core', outcome: 'started', statusCode: 201,
     tus: { uploadId: id, phase: 'created', method: 'POST', size: data.length, offset: 0 },
   })
 
@@ -234,7 +241,7 @@ it('records a real tus create and final PATCH with the server upload id and per-
   expect(decodeURIComponent(finished.headers.get('x-upload-path') ?? '')).toBe('jxj/announcement/2026/1/tus-log-180.txt')
   const finishedRows = await waitLog(finished.requestId)
   expect(finishedRows.find(row => row.operation === 'file.upload')).toMatchObject({
-    source: 'file', outcome: 'success', statusCode: 204,
+    source: 'file', module: 'core', outcome: 'success', statusCode: 204,
     origin: {runtime:'node',integration:'tus',capture:'hook',execution:'request'},
     durationMs: expect.any(Number),
     tus: { uploadId: id, phase: 'completed', method: 'PATCH', size: data.length, offset: data.length },
@@ -247,7 +254,7 @@ it('keeps method but reports no template for an unmatched route', async () => {
   const response = await call(`/api/does-not-exist/${PRIVATE}`)
   expect([200, 404]).toContain(response.status)
   const rows = await waitLog(response.requestId)
-  expect(rows[0]).toMatchObject({ source: 'http', httpMethod: 'GET', statusCode: response.status })
+  expect(rows[0]).toMatchObject({ source: 'http', module: null, httpMethod: 'GET', statusCode: response.status })
   expect(rows[0]).not.toHaveProperty('httpRoute')
   expect(JSON.stringify(rows[0])).not.toContain(PRIVATE)
 })
@@ -267,7 +274,8 @@ it('carries the MCP template into request-scoped semantic tool events', async ()
     const rows = await logs('requestId=' + response.requestId)
     const semantic = rows.find(row => row.operation === 'mcp.tool.get_platform_capabilities')
     if (semantic) {
-      expect(semantic).toMatchObject({ source: 'mcp', httpMethod: 'POST', httpRoute: '/mcp' })
+      expect(semantic).toMatchObject({ source: 'mcp', module: 'sme-roster', httpMethod: 'POST', httpRoute: '/mcp' })
+      expect(rows.find(row => row.operation === 'mcp.request')).toMatchObject({ module: 'sme-roster' })
       return
     }
     await new Promise(resolve => setTimeout(resolve, 100))
@@ -282,7 +290,7 @@ it('records the matched HTTP template on a semantic operation', async () => {
     const rows = await logs('requestId=' + response.requestId)
     const semantic = rows.find(row => row.operation === 'maintenance.alias.list')
     if (semantic) {
-      expect(semantic).toMatchObject({ source: 'http', httpMethod: 'GET', httpRoute: '/api/roster/enterprises/:id/aliases' })
+      expect(semantic).toMatchObject({ source: 'http', module: 'sme-roster', httpMethod: 'GET', httpRoute: '/api/roster/enterprises/:id/aliases' })
       return
     }
     await new Promise(resolve => setTimeout(resolve, 100))
@@ -323,7 +331,7 @@ it('records the requested file id on a real delete failure', async () => {
   expect([400, 404, 409]).toContain(response.status)
   const rows = await waitLog(response.requestId)
   expect(rows.find(row => row.operation === 'file.maintenance.remove')).toMatchObject({
-    source: 'file', outcome: 'denied', errorCode: 'file_remove_failed', fileId: 987654321,
+    source: 'file', module: 'core', outcome: 'denied', errorCode: 'file_remove_failed', fileId: 987654321,
   })
 })
 
@@ -424,7 +432,7 @@ it('persists the four real client integration mappings and applies their protect
     expect(accepted.body.accepted).toBe(4)
     for (const [, integration, operation] of samples) {
       const [row] = await waitOperation(accepted.requestId, operation!)
-      expect(row).toMatchObject({ source: 'client', outcome: 'success', level: 'info',
+      expect(row).toMatchObject({ source: 'client', module: 'core', outcome: 'success', level: 'info',
         origin: { runtime: 'browser', integration, capture: 'hook', execution: 'page' } })
       expect(JSON.stringify(await detail(row.id))).not.toContain(PRIVATE)
     }
@@ -444,7 +452,7 @@ it('persists the four real client integration mappings and applies their protect
     const threshold = await send('other', ['pdf_document_ready', 'pdf_log_warn'])
     expect(threshold.status).toBe(202)
     const warning = await waitOperation(threshold.requestId, 'client.embedpdf.log_warn')
-    expect(warning[0]).toMatchObject({ level: 'warn', outcome: 'unknown', origin: { integration: 'embedpdf' } })
+    expect(warning[0]).toMatchObject({ module: null, level: 'warn', outcome: 'unknown', origin: { integration: 'embedpdf' } })
     expect((await logs('requestId=' + threshold.requestId)).filter(row => row.source === 'client')).toHaveLength(1)
     await policyPatch({ sources: { client: { enabled: true, minLevel: 'debug' } }, integrations: rules(true) })
     const restored = await send('settings')
@@ -461,7 +469,8 @@ it('keeps real worker queries successful while Drizzle and system rules independ
     const response = await call('/api/roster/enterprises?q=' + PRIVATE)
     expect(response.status).toBe(200)
     // The terminal witness is emitted by the same child after its query hooks.
-    await waitOperation(response.requestId, 'enterprise_read.execute')
+    const events = await waitOperation(response.requestId, 'enterprise_read.execute')
+    expect(events.every(row => row.module === 'sme-roster')).toBe(true)
     return response
   }
   try {

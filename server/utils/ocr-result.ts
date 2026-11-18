@@ -379,10 +379,10 @@ function deleteOcrPageUnlogged(db: Db, fileId: number, page: number, expectedVer
 export function deleteOcrPage(db: Db, fileId: number, page: number, expectedVersion?: string | null, context: LogContext = {}) {
   try {
     const result = deleteOcrPageUnlogged(db, fileId, page, expectedVersion)
-    appLog({ source: 'ocr', operation: 'ocr.page.delete', fileId, page, outcome: result.ok ? (result.deleted ? 'success' : 'skipped') : 'denied', ...(!result.ok ? { level: 'error' as const, errorCode: result.statusCode === 409 ? 'ocr_page_conflict' : 'ocr_page_delete_rejected' } : {}) }, context)
+    appLog({ module: 'core', source: 'ocr', operation: 'ocr.page.delete', fileId, page, outcome: result.ok ? (result.deleted ? 'success' : 'skipped') : 'denied', ...(!result.ok ? { level: 'error' as const, errorCode: result.statusCode === 409 ? 'ocr_page_conflict' : 'ocr_page_delete_rejected' } : {}) }, context)
     return result
   } catch (error) {
-    appLog({ source: 'ocr', operation: 'ocr.page.delete', fileId, page, outcome: 'failure', level: 'error', errorCode: 'ocr_page_delete_failed' }, context)
+    appLog({ module: 'core', source: 'ocr', operation: 'ocr.page.delete', fileId, page, outcome: 'failure', level: 'error', errorCode: 'ocr_page_delete_failed' }, context)
     throw error
   }
 }

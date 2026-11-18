@@ -1,6 +1,7 @@
+import { registeredLogModule } from './module'
 import { boundedLogOutput } from './output'
 import { Worker } from 'node:worker_threads'
-import { LOG_DEFAULTS, LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, type LogEvent, type FieldCapturedLogEvent, type LogFilter, type LogInput, type LogPolicy, type LogPolicyPatch, type EffectiveLogPolicy, type LogSummary } from './contract'
+import { LOG_DEFAULTS, LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, UNLABELED_LOG_MODULE, type LogEvent, type FieldCapturedLogEvent, type LogFilter, type LogInput, type LogPolicy, type LogPolicyPatch, type EffectiveLogPolicy, type LogSummary } from './contract'
 import { LOG_FIELD_PROFILES, validateFieldControlsPatch } from './field-controls'
 import { validateCollection } from './policy'
 import { LOG_INTEGRATIONS } from './contract'
@@ -46,6 +47,10 @@ export function validateLogFilter(input: unknown = {}): LogFilter & { limit: num
   if (!input || typeof input !== 'object' || Array.isArray(input)) return invalid()
   const raw = input as Record<string, unknown>
   const filter: Record<string, unknown> = {}
+  if (raw.module !== undefined) {
+    if (raw.module !== UNLABELED_LOG_MODULE && registeredLogModule(raw.module) === null) return invalid()
+    filter.module = raw.module
+  }
   for (const key of ['source','operation','outcome','level','requestId','traceId','taskId','fileId','batchId','resourceId']) {
     const value = raw[key]
     if (value === undefined) continue
@@ -94,7 +99,7 @@ export function createLogService(options: LogServiceOptions) {
   const status = () => ({ ...counters, queuedEntries: queue.length, queuedBytes: queueBytes, inFlightEntries, inFlightBytes, pending: pending.size, closed })
   function fault(code: string) {
     counters.unavailable = true; counters.lastError = code; counters.drainFailures++
-    stderr.write(JSON.stringify({ source: 'system', operation: 'logging.drain', outcome: 'failure', code, dropped: counters.dropped, writeUnknown: counters.writeUnknown }) + '\n')
+    stderr.write(JSON.stringify({ module: 'core', source: 'system', operation: 'logging.drain', outcome: 'failure', code, dropped: counters.dropped, writeUnknown: counters.writeUnknown }) + '\n')
   }
   function stopWorker(code: string) {
     const old = worker; worker = undefined
@@ -256,14 +261,14 @@ export function createLogService(options: LogServiceOptions) {
     async setPolicy(input: LogPolicyPatch) {
       const result = await guarded<PolicyView | { transitionPending: true }>('policy', validatePolicy(input))
       if ('transitionPending' in result) throw new LogServiceError('policy_capacity_pending', 409)
-      emit({ origin: { runtime: 'node', integration: 'application', capture: 'manual' }, source: 'system', operation: 'logging.policy', outcome: 'success' })
+      emit({ origin: { runtime: 'node', integration: 'application', capture: 'manual' }, module: 'core', source: 'system', operation: 'logging.policy', outcome: 'success' })
       return { ...result, catalog: { integrations: LOG_INTEGRATIONS, profiles: LOG_FIELD_PROFILES } }
     },
     async clear(input: LogFilter & { confirm: boolean }) {
       const f = validateLogFilter(input)
       if (input.confirm !== true || !f.from || !f.to) return invalid()
       const result = await guarded<{ deleted: number; hasMore: boolean }>('clear', f)
-      emit({ origin: { runtime: 'node', integration: 'application', capture: 'manual' }, source: 'system', operation: 'logging.clear', outcome: 'success', counts: { done: result.deleted } })
+      emit({ origin: { runtime: 'node', integration: 'application', capture: 'manual' }, module: 'core', source: 'system', operation: 'logging.clear', outcome: 'success', counts: { done: result.deleted } })
       return result
     },
     async close() {

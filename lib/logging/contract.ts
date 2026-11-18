@@ -59,6 +59,7 @@ export interface TusLogContext {
 export type TusLogOutput = Omit<TusLogContext, 'uploadId'> & { uploadId?: string }
 
 export interface LogContext {
+  module?: string | null
   requestId?: string; traceId?: string; taskId?: string; fileId?: number; page?: number
   batchId?: string | number; resourceType?: string; resourceId?: string | number
   auditId?: string | number; receiptId?: string | number; parentEventId?: string
@@ -126,7 +127,11 @@ export type FieldCapture = {
   [P in keyof LogProfileFields]: { profile: P; revision: number; disabled: LogProfileFields[P][] }
 }[keyof LogProfileFields]
 export type FieldCapturedLogEvent = Omit<LogEvent, 'tus'> & { tus?: TusLogOutput; fieldCapture?: FieldCapture }
+/** Transport filter token for rows without a module. It cannot be a module id. */
+export const UNLABELED_LOG_MODULE = ':unlabeled'
+
 export interface LogFilter {
+  module?: string
   from?: string; to?: string; level?: string; source?: string; operation?: string; outcome?: string
   requestId?: string; traceId?: string; taskId?: string; fileId?: number; batchId?: string | number
   resourceId?: string | number; limit?: number; cursor?: string

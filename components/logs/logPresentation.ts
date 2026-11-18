@@ -1,7 +1,13 @@
-import type { LogEvent, LogSummary } from '~~/lib/logging/contract'
+import { UNLABELED_LOG_MODULE, type LogEvent, type LogSummary } from '~~/lib/logging/contract'
+import { getAppModules } from '~~/lib/app-modules'
 import { errorCodeMissingIsInformative, fieldOmission } from '~~/lib/logging/detail-profile'
 import { isDrizzleQueryAttempt } from '~~/lib/logging/drizzle-query'
 import type { BadgeVariants } from '@/components/ui/badge'
+
+const moduleLabels = new Map(getAppModules().map(({ id, name }) => [id, id === 'core' ? '平台' : name]))
+export const logModuleOptions = [...moduleLabels.keys(), UNLABELED_LOG_MODULE]
+export const logModuleLabel = (module?: string | null) =>
+  (module ? moduleLabels.get(module) : undefined) ?? '未标注'
 
 export type LogBadgeVariant = NonNullable<BadgeVariants['variant']>
 

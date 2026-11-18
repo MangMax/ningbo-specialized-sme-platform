@@ -14,6 +14,7 @@ import { currentQualifiedRpcError } from '../utils/current-qualified-filter'
 import { getHeader, getMethod, readBody, setHeader } from 'h3'
 import { defineMcpHandler, getMcpTools, getMcpResources, getMcpPrompts } from '@nuxtjs/mcp-toolkit/server'
 import { requestLogContext } from '../../lib/logging'
+import { mcpToolLogModule } from '../../lib/logging/module'
 import { applyMcpLogMetadata } from '../utils/mcp-log-context'
 import { logSemanticOperation, semanticErrorCode } from '../utils/semantic-operation-log'
 import {
@@ -75,11 +76,11 @@ export default defineMcpHandler({
           throw Object.assign(new Error(JSON.stringify({error:{code:'unauthorized',message:'Configured MCP token required'}})),{code:'unauthorized',statusCode:401})
         }
         const result = await tool.handler(...args)
-        if (!LOG_TOOLS.has(tool.name!)) logSemanticOperation('mcp', operation, requestLogContext(event), started, result)
+        if (!LOG_TOOLS.has(tool.name!)) logSemanticOperation('mcp', operation, { ...requestLogContext(event), module: mcpToolLogModule(tool.name) }, started, result)
         event.context.semanticMcpLogged = true
         return result
       } catch (error) {
-        if (!LOG_TOOLS.has(tool.name!)) logSemanticOperation('mcp', operation, requestLogContext(event), started, error, undefined, true)
+        if (!LOG_TOOLS.has(tool.name!)) logSemanticOperation('mcp', operation, { ...requestLogContext(event), module: mcpToolLogModule(tool.name) }, started, error, undefined, true)
         event.context.semanticMcpLogged = true
         // Keep existing domain errors; arbitrary initialization/third-party errors must
         // not reach the toolkit's default Error.message-to-text converter.

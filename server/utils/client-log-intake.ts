@@ -1,6 +1,12 @@
 import { appLog, type LogContext } from '../../lib/logging'
 import { clientLogReport, clientReportKey } from '../../lib/client-logging/report'
+import type { ClientPage } from '../../lib/client-logging/contract'
 import { CLIENT_LIBRARY_SIGNALS } from '../../lib/client-logging/library-contract'
+
+// The page classification remains a browser self-report. Ignore arbitrary module claims.
+const moduleByPage: Record<ClientPage, string | null> = {
+  roster: 'sme-roster', tasks: 'core', files: 'core', logs: 'core', settings: 'core', ocr: 'core', other: null,
+}
 
 /** Process-local ceilings; not distributed quotas or authenticated client identities. */
 export function createClientLogIntake(now = Date.now) {
@@ -28,14 +34,15 @@ export function createClientLogIntake(now = Date.now) {
         if (previous !== undefined && time - previous < 10000) { duplicates++; continue }
         // Keys are from a finite vocabulary, never raw error text or library arguments.
         state.seen.set(key, time)
+        const logContext = { requestId: context.requestId, traceId: context.traceId, module: moduleByPage[report!.page] }
         if (report!.kind === 'library_signal') {
           const signal = CLIENT_LIBRARY_SIGNALS[report!.signal]
           appLog({ origin: { runtime: 'browser', integration: signal.integration, capture: 'hook', execution: 'page' },
             source: 'client', operation: signal.operation, outcome: signal.outcome, level: signal.level,
-          }, { requestId: context.requestId, traceId: context.traceId })
+          }, logContext)
         } else appLog({ origin: { runtime: 'browser', integration: report!.kind === 'vue_error' ? 'vue' : report!.kind === 'interaction_failure' ? 'application' : 'browser', capture: report!.kind === 'interaction_failure' ? 'manual' : 'hook', execution: 'page' }, source: 'client', operation: `client.${report!.page}.${report!.kind}`,
           errorCode: report!.interaction, outcome: 'failure', level: report!.level, untrustedRelatedRequestId: report!.relatedRequestId,
-        }, { requestId: context.requestId, traceId: context.traceId })
+        }, logContext)
         accepted++
       }
       return { status: 202, accepted, duplicates }

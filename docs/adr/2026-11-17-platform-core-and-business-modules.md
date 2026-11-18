@@ -79,7 +79,7 @@ core 提供 `defineAppModule()`，每个模块（包括 core 自己）调用它�
 ## 拆分清单
 
 - **文件分类**：`stored_file` 上的 source、kind、year、batch、title_code、category_state、parse_state 迁到名录模块的分类表（暂定 `roster_file_classification`，以 file_id 为主键），`stored_file_part`、解析审计和入库范围规则归名录；同一次迁移删除 `stored_file` 上的这些列。
-- **日志**：日志库增加 `module` 维度（取值为模块 id 或 `core`），与技术来源 `source` 正交；历史日志的 module 为空，不猜测回填。
+- **日志**：日志库增加 `module` 维度（取值为模块 id 或 `core`），与技术来源 `source` 正交；历史日志的 module 为空，不猜测回填。按模块配置保留期与容量留待后续。
 - **任务**：`job` 表外壳不变，kind 的登记、显示名和分组改由清单提供，按 kind 建的唯一索引归所属模块。
 
 ## Nuxt Layers 的两个坑

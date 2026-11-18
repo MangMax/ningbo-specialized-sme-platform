@@ -1,7 +1,7 @@
 import { clientRequestReference } from './request-reference'
 /** Fixed application vocabulary. Never accept page paths, messages or trusted execution IDs. */
 export const CLIENT_ERROR_KINDS = ['script_error', 'vue_error', 'unhandled_rejection', 'interaction_failure'] as const
-export const CLIENT_PAGES = ['roster', 'tasks', 'files', 'logs', 'settings', 'other'] as const
+export const CLIENT_PAGES = ['roster', 'tasks', 'files', 'logs', 'settings', 'ocr', 'other'] as const
 export const CLIENT_INTERACTIONS = ['task_artifact_download', 'task_cancel', 'task_retry'] as const
 export type ClientInteraction = typeof CLIENT_INTERACTIONS[number]
 export type ClientErrorKind = typeof CLIENT_ERROR_KINDS[number]
@@ -18,6 +18,10 @@ export function clientErrorReport(value: unknown): ClientErrorReport | null {
 }
 export function clientPage(path: string): ClientPage {
   const first = path.split('/')[1]
-  if (!first || first === 'current-enterprises' || first === 'enterprises') return 'roster'
-  return ['tasks', 'files', 'logs', 'settings'].includes(first) ? first as ClientPage : 'other'
+  if (path === '/' || [
+    'roster', 'current-enterprises', 'enterprises', 'comparison', 'quality', 'stats',
+    'platform-business-processes', 'platform-declarations', 'platform-queries', 'platform-recognized-directory',
+  ].includes(first ?? '')) return 'roster'
+  if (first === 'preview') return 'files'
+  return CLIENT_PAGES.includes(first as ClientPage) ? first as ClientPage : 'other'
 }

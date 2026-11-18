@@ -1,9 +1,10 @@
 import { z } from 'zod'
 import { validatePolicy } from '../../lib/logging/service'
-import { applicationLogs } from '../../lib/logging'
+import { applicationLogs, UNLABELED_LOG_MODULE } from '../../lib/logging'
 import { dispatchLogAction, type LogAction } from '../../lib/logging/application'
 /** SDK schemas stay thin; the same application validates both transports. */
 export const logFilterSchema = {
+  module: z.string().max(128).describe(`模块 id，或 ${UNLABELED_LOG_MODULE}（未标注）`).optional(),
   from: z.string().max(32).optional(), to: z.string().max(32).optional(),
   level: z.string().max(16).optional(), source: z.string().max(16).optional(),
   operation: z.string().max(96).optional(), outcome: z.string().max(32).optional(),

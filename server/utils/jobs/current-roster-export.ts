@@ -35,7 +35,7 @@ export const currentRosterExportSpec: JobSpec = {
       const receiptRuntime = captureReceiptRuntimeContext(typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : undefined)
       worker = createCurrentExportWorker()
       workerExited = new Promise(resolve => worker!.once('exit', () => resolve()))
-      appLog({ source: 'export', operation: 'export.current.process', outcome: 'started' }, logContext)
+      appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.process', outcome: 'started' }, logContext)
       const result = await new Promise<any>((resolve,reject) => {
         worker!.on('message', message => {
           if (message.type === 'progress') { ctx.progress(message.done,message.total); checkpoint={phase:'workbook',snapshotStartedAt:message.snapshotStartedAt,snapshotId:ctx.jobId,ruleVersion:CURRENT_RULE_VERSION}; setJobResult(ctx.db,ctx.jobId,checkpoint) }
@@ -48,22 +48,22 @@ export const currentRosterExportSpec: JobSpec = {
         timer = setInterval(() => { if (ctx.cancelled()) { cancelled=true; void worker!.terminate() } },50)
         worker!.postMessage({dbPath, title:params.titleCode, temporaryPath,jobId:ctx.jobId,logContext,receiptRuntime})
       })
-      if (cancelled || ctx.cancelled()) { appLog({ source: 'export', operation: 'export.current.process', outcome: 'cancelled', errorCode: 'export_cancelled' }, logContext); return {cancelled:true,result:checkpoint} }
-      appLog({ source: 'export', operation: 'export.current.process', outcome: 'success' }, logContext)
+      if (cancelled || ctx.cancelled()) { appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.process', outcome: 'cancelled', errorCode: 'export_cancelled' }, logContext); return {cancelled:true,result:checkpoint} }
+      appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.process', outcome: 'success' }, logContext)
       publishStarted = true
-      appLog({ source: 'export', operation: 'export.current.publish', outcome: 'started', resourceType: 'export_artifact', resourceId: ctx.jobId }, logContext)
+      appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.publish', outcome: 'started', resourceType: 'export_artifact', resourceId: ctx.jobId }, logContext)
       const sha = createHash('sha256')
       for await (const chunk of createReadStream(temporaryPath)) sha.update(chunk)
-      if (ctx.cancelled()) { appLog({ source: 'export', operation: 'export.current.publish', outcome: 'cancelled', errorCode: 'export_cancelled' }, logContext); return {cancelled:true,result:null} }
+      if (ctx.cancelled()) { appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.publish', outcome: 'cancelled', errorCode: 'export_cancelled' }, logContext); return {cancelled:true,result:null} }
       const handle=await open(temporaryPath,'r');try {await handle.sync()} finally {await handle.close()}
       await rename(temporaryPath,finalPath)
       const directory=await open(dir,'r');try {await directory.sync()} finally {await directory.close()}
       const artifact = { id:ctx.jobId,filename:`current-${String(params.titleCode)}.xlsx`,size:(await stat(finalPath)).size,sha256:sha.digest('hex'),generatedAt:result.generatedAt,expiresAt:new Date(Date.now()+EXPORT_RETENTION_MS).toISOString(),downloadUrl:`/api/job-artifacts/${ctx.jobId}`,availability:'available' }
       published=true
-      appLog({ source: 'export', operation: 'export.current.publish', outcome: 'success', resourceType: 'export_artifact', resourceId: ctx.jobId }, logContext)
+      appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.publish', outcome: 'success', resourceType: 'export_artifact', resourceId: ctx.jobId }, logContext)
       return {result:{...result,phase:'complete',snapshotId:ctx.jobId,artifact},progress:{done:result.total,total:result.total}}
     } catch (error) {
-      appLog({ source: 'export', operation: publishStarted ? 'export.current.publish' : 'export.current.process', outcome: timedOut ? 'timeout' : processUnknown ? 'unknown' : 'failure', level: 'error', errorCode: timedOut ? 'export_timeout' : processUnknown ? 'export_process_interrupted' : publishStarted ? 'artifact_publish_failed' : 'export_execution_failed' }, logContext)
+      appLog({ module: 'sme-roster', source: 'export', operation: publishStarted ? 'export.current.publish' : 'export.current.process', outcome: timedOut ? 'timeout' : processUnknown ? 'unknown' : 'failure', level: 'error', errorCode: timedOut ? 'export_timeout' : processUnknown ? 'export_process_interrupted' : publishStarted ? 'artifact_publish_failed' : 'export_execution_failed' }, logContext)
       const message=error instanceof Error ? error.message : ''
       return {result:checkpoint,error:/^(导出|当前名录|Excel)/.test(message) ? message : '导出失败；请检查数据和可写产物存储后重新提交'}
     } finally {
@@ -79,7 +79,7 @@ export const currentRosterExportSpec: JobSpec = {
       let failed = 0
       await rm(temporaryPath,{force:true}).catch(() => { failed++ })
       if(!published) await rm(finalPath,{force:true}).catch(() => { failed++ })
-      appLog({ source: 'export', operation: 'export.current.cleanup', outcome: failed ? 'failure' : 'success', level: failed ? 'error' : 'info', ...(failed ? { errorCode: 'artifact_cleanup_failed' } : {}), counts: { failed }, resourceType: 'export_artifact', resourceId: ctx.jobId }, logContext)
+      appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.cleanup', outcome: failed ? 'failure' : 'success', level: failed ? 'error' : 'info', ...(failed ? { errorCode: 'artifact_cleanup_failed' } : {}), counts: { failed }, resourceType: 'export_artifact', resourceId: ctx.jobId }, logContext)
     }
   },
 }

@@ -196,7 +196,7 @@ async function postWithoutBudget(
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
       await sleep(Math.min(1000 * 3 ** (attempt - 1), options.deadlineMs == null ? Infinity : Math.max(0, options.deadlineMs - Date.now())))
-      if (source) appLog({ source: 'platform', operation: platformOperation(source, 'retry', body.rdjb ?? null), outcome: 'started', counts: { done: attempt },
+      if (source) appLog({ module: 'sme-roster', source: 'platform', operation: platformOperation(source, 'retry', body.rdjb ?? null), outcome: 'started', counts: { done: attempt },
         ...(Number.isSafeInteger(Number(body.pageNum)) && Number(body.pageNum) > 0 ? { page: Number(body.pageNum) } : {}) }, logContext)
     }
     if (options.shouldCancel?.()) throw new Error('平台查询已取消。')

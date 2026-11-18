@@ -131,6 +131,7 @@ it('filters by known IDs, pages with server cursors, fetches details on demand a
     id: '00000000-0000-4000-8000-000000000001',
     timestamp: '2026-10-22T00:00:00Z',
     source: 'task',
+    module: 'sme-roster',
     operation: 'task.finished',
     outcome: 'success',
     level: 'info',
@@ -161,7 +162,7 @@ it('filters by known IDs, pages with server cursors, fetches details on demand a
       { path: '/tasks', component: { render: () => null } }
     ]
   })
-  await router.push('/logs?taskId=task-182')
+  await router.push('/logs?taskId=task-182&module=sme-roster&source=task')
   await router.isReady()
   const wrapper = mount(Page, {
     global: { plugins: [router], stubs: { Icon: IconStub } },
@@ -169,7 +170,11 @@ it('filters by known IDs, pages with server cursors, fetches details on demand a
   })
   wrappers.push(wrapper)
   await flushPromises()
-  expect(calls.find((c) => c.url === '/api/logs')!.options.query.taskId).toBe('task-182')
+  expect(calls.find((c) => c.url === '/api/logs')!.options.query).toMatchObject({
+    taskId: 'task-182', module: 'sme-roster', source: 'task'
+  })
+  expect(wrapper.get('#log-module').text()).toContain('优质中小企业')
+  expect(wrapper.get('[data-log-field="module"]').text()).toBe('优质中小企业')
   expect(calls.some((c) => c.url.endsWith(event.id))).toBe(false)
   await wrapper.get('[data-table-next]').trigger('click')
   await flushPromises()
@@ -181,6 +186,7 @@ it('filters by known IDs, pages with server cursors, fetches details on demand a
   expect(calls.filter((c) => c.url === '/api/logs').length - beforeRefresh).toBe(1)
   await wrapper.get('[data-log-detail]').trigger('click')
   await flushPromises()
+  expect(document.querySelector('[role="dialog"]')!.textContent).toContain('优质中小企业')
   expect(document.querySelector('[role="dialog"]')!.textContent).toContain('safe_code')
   const button = Array.from(document.querySelectorAll('button')).find((b) =>
     b.textContent?.includes('复制脱敏事件')
@@ -188,7 +194,7 @@ it('filters by known IDs, pages with server cursors, fetches details on demand a
   button.click()
   await flushPromises()
   expect(copy).toHaveBeenCalledOnce()
-  expect(copy.mock.calls[0]![0]).toContain('task-182')
+  expect(JSON.parse(copy.mock.calls[0]![0])).toMatchObject({ taskId: 'task-182', module: 'sme-roster' })
   expect(copy.mock.calls[0]![0]).not.toContain('private-nonce')
   expect(
     calls.every(
@@ -313,6 +319,7 @@ it('retains source rows on a failed filter, explains both targets, retries expli
   expect(failure).toContain('请求标识 req-new')
   expect(failure).not.toContain('{"')
   expect(failure).not.toContain('筛选 {}')
+  expect(wrapper.text()).toContain('未标注')
   expect(wrapper.text()).toContain('req-original')
   expect(wrapper.text()).not.toContain('PRIVATE182_RAW_ERROR')
   await wrapper.get('[data-testid=table-retry]').trigger('click')
@@ -331,7 +338,7 @@ it('composes filter and policy controls in shared fields while preserving every 
   const wrapper = mount(Filters, { props: { filter: { requestId: 'req-180' } }, attachTo: document.body })
   wrappers.push(wrapper)
   expect(wrapper.findAll('[data-slot="field-group"]')).toHaveLength(2)
-  expect(wrapper.findAll('[data-slot="field"]')).toHaveLength(12)
+  expect(wrapper.findAll('[data-slot="field"]')).toHaveLength(13)
   for (const label of wrapper.findAll('label[for]')) {
     expect(document.getElementById(label.attributes('for')!)).not.toBeNull()
     expect(label.element.closest('[data-slot="field"]')).not.toBeNull()

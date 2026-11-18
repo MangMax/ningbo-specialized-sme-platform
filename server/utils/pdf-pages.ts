@@ -367,11 +367,11 @@ export function renderPdfPages(
       const metrics: { done: number; total?: number } = { done: 0 }
       try {
         const out = await renderUncached(root, pdfRelPath, { dpi, force, logContext: options.logContext }, metrics)
-        appLog({ source: 'file', operation: 'file.render', outcome: out.written ? 'success' : 'skipped', counts: { done: out.rendered, total: out.pageCount ?? undefined }, durationMs: Date.now() - startedAt }, options.logContext)
-        if (out.removed) appLog({ source: 'file', operation: 'file.render.cleanup', outcome: 'success', counts: { done: out.removed } }, options.logContext)
+        appLog({ module: 'core', source: 'file', operation: 'file.render', outcome: out.written ? 'success' : 'skipped', counts: { done: out.rendered, total: out.pageCount ?? undefined }, durationMs: Date.now() - startedAt }, options.logContext)
+        if (out.removed) appLog({ module: 'core', source: 'file', operation: 'file.render.cleanup', outcome: 'success', counts: { done: out.removed } }, options.logContext)
         return out
       } catch (error) {
-        appLog({ source: 'file', operation: 'file.render', outcome: metrics.done ? 'partial' : 'failure', counts: metrics, level: 'error', errorCode: 'pdf_render_failed', durationMs: Date.now() - startedAt }, options.logContext)
+        appLog({ module: 'core', source: 'file', operation: 'file.render', outcome: metrics.done ? 'partial' : 'failure', counts: metrics, level: 'error', errorCode: 'pdf_render_failed', durationMs: Date.now() - startedAt }, options.logContext)
         throw error
       }
     })
@@ -461,7 +461,7 @@ async function renderUncached(
         await writeFileAtomic(abs, image.data)
         written += 1
         metrics.done = written
-        appLog({ source: 'file', operation: 'file.render.page', outcome: 'success', page: pageNo }, options.logContext)
+        appLog({ module: 'core', source: 'file', operation: 'file.render.page', outcome: 'success', page: pageNo }, options.logContext)
         pages.push({
           page: pageNo,
           relPath,
@@ -470,7 +470,7 @@ async function renderUncached(
           bytes: image.data.byteLength,
         })
       } catch (error) {
-        appLog({ source: 'file', operation: 'file.render.page', outcome: 'failure', level: 'error', page: pageNo, errorCode: 'pdf_page_render_failed' }, options.logContext)
+        appLog({ module: 'core', source: 'file', operation: 'file.render.page', outcome: 'failure', level: 'error', page: pageNo, errorCode: 'pdf_page_render_failed' }, options.logContext)
         throw error
       } finally {
         // 页不关就会一直占着 PDFium 的位图缓存 —— 97 页全攒着就是几百 MB。
