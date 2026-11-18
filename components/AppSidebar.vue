@@ -34,10 +34,10 @@ const platformNav = modules.find(module => module.id === 'core')?.nav
           <SidebarMenuButton
             size="lg"
             as-child
-            tooltip="专精特新企业称号台账"
+            tooltip="平台工作台"
             class="group-data-[collapsible=icon]:justify-center"
           >
-            <NuxtLink to="/" aria-label="专精特新企业称号台账，返回企业列表">
+            <NuxtLink to="/" aria-label="返回平台工作台">
               <img
                 :src="colorMode === 'dark' ? '/brand/symbol-small-white.svg' : '/brand/symbol-small.svg'"
                 alt=""

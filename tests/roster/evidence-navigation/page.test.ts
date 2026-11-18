@@ -272,7 +272,7 @@ describe('evidencePageState —— 「本来就没有页」与「还没定」是
 
 describe('跳转链接 —— 出处 → 预览页', () => {
   it('带页码的链接把 file / page / back 都编进去(中文、书名号、空格都能往返)', () => {
-    const back = '/?view=enterprise&q=宁波&page=2&expand=204'
+    const back = '/roster?view=enterprise&q=宁波&page=2&expand=204'
     const href = evidencePreviewHref({ sourceFile: F145, page: 8, back })
 
     expect(href.startsWith('/preview?')).toBe(true)
@@ -281,14 +281,14 @@ describe('跳转链接 —— 出处 → 预览页', () => {
   })
 
   it('没有页码时**不写** page 参数 —— 不假装知道第几页', () => {
-    const href = evidencePreviewHref({ sourceFile: F145, page: null, back: '/' })
+    const href = evidencePreviewHref({ sourceFile: F145, page: null, back: '/roster' })
     expect(href).not.toContain('page=')
     expect(parseEvidencePreviewQuery(Object.fromEntries(new URL(href, 'http://x').searchParams)).page).toBeNull()
   })
 
   it('★ 非 PDF 的链接里永远没有 page —— Word / Excel 不给猜测页', () => {
     const docx = 'jxj/announcement/2023/1/关于公布2023年宁波市“专精特新”中小企业名单的通知.docx'
-    const href = evidencePreviewHref({ sourceFile: docx, page: 5, back: '/' })
+    const href = evidencePreviewHref({ sourceFile: docx, page: 5, back: '/roster' })
     expect(href).not.toContain('page=')
     expect(parseEvidencePreviewQuery(Object.fromEntries(new URL(href, 'http://x').searchParams)).page).toBeNull()
   })
@@ -300,7 +300,7 @@ describe('跳转链接 —— 出处 → 预览页', () => {
       expect(isSafeBackPath(bad)).toBe(false)
     }
     expect(isSafeBackPath('/')).toBe(true)
-    expect(isSafeBackPath('/?view=title')).toBe(true)
+    expect(isSafeBackPath('/roster?view=title')).toBe(true)
   })
 
   it('返回目标拒绝控制字符和解析后跨源的 URL,并保留合法站内路径', () => {
@@ -321,7 +321,7 @@ describe('跳转链接 —— 出处 → 预览页', () => {
       expect(evidencePreviewHref({ sourceFile: F145, page: 8, back })).not.toContain('back=')
     }
 
-    const valid = '/?view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91'
+    const valid = '/roster?view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91'
     expect(isSafeBackPath(valid, appOrigin)).toBe(true)
     expect(parseEvidencePreviewQuery({ back: valid }).back).toBe(valid)
   })

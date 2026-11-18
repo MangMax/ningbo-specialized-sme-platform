@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ROSTER_LEDGER_PATH } from '~~/lib/sme-roster/routes'
 import { computed, nextTick, ref, watch, type Ref } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import { Search } from '@lucide/vue'
@@ -27,7 +28,7 @@ import {
  *
  * 一行 = 一个企业 × 一个称号,合并该组合下**全部来源**的记录,事件直接列在行内。
  * 与「按企业」是同一份数据的另一种分组 —— 页面的筛选条与 URL 两者共用,
- * 所以下钻(`/?source=…&year=…`)在两种分组下落到的是同一批企业。
+ * 所以下钻(`/roster?source=…&year=…`)在两种分组下落到的是同一批企业。
  *
  * 表体虚拟化:一页最多 200 行 × 每行 44px,不虚拟化在窄屏上会明显掉帧。
  */
@@ -102,12 +103,12 @@ function enterpriseDetailHref(id: number): string {
 
 function rememberEnterpriseReturn(event: MouseEvent): void {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-  const back = props.backQuery ? `/?${props.backQuery}` : '/'
+  const back = props.backQuery ? `${ROSTER_LEDGER_PATH}?${props.backQuery}` : ROSTER_LEDGER_PATH
   rememberEvidencePreviewReturn(back, event.currentTarget)
 }
 
 function evidenceHref(evidence: NonNullable<TitleRow['events'][number]['evidence']>[number]): string {
-  const back = props.backQuery ? `/?${props.backQuery}` : '/'
+  const back = props.backQuery ? `${ROSTER_LEDGER_PATH}?${props.backQuery}` : ROSTER_LEDGER_PATH
   return evidencePreviewHref({ sourceFile: evidence.sourceFile, page: evidence.page, back })
 }
 
@@ -118,7 +119,7 @@ function evidenceLabel(evidence: NonNullable<TitleRow['events'][number]['evidenc
 
 function rememberEvidenceReturn(event: MouseEvent): void {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-  const back = props.backQuery ? `/?${props.backQuery}` : '/'
+  const back = props.backQuery ? `${ROSTER_LEDGER_PATH}?${props.backQuery}` : ROSTER_LEDGER_PATH
   rememberEvidencePreviewReturn(back, scrollRef.value)
 }
 

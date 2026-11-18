@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { ref, watch } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useQuery } from '@pinia/colada'
-import IndexPage from '../../../pages/index.vue'
+import RosterPage from '../../../pages/roster.vue'
 import FilesPage from '../../../pages/files.vue'
 
 vi.mock('@pinia/colada', () => ({ useQuery: vi.fn(), useQueryCache: () => ({ invalidateQueries: vi.fn() }) }))
@@ -13,11 +13,11 @@ const failure = { props: ['description'], emits: ['retry'], template: '<button d
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks() })
 
 describe.each([
-  { name: '企业列表', component: IndexPage, namespace: 'ledger-enterprises', size: 25 },
-  { name: '文件列表', component: FilesPage, namespace: 'files', size: 50 },
-])('$name retained page behavior', ({ component, namespace, size }) => {
+  { name: '企业列表', path: '/roster', component: RosterPage, namespace: 'ledger-enterprises', size: 25 },
+  { name: '文件列表', path: '/files', component: FilesPage, namespace: 'files', size: 50 },
+])('$name retained page behavior', ({ path, component, namespace, size }) => {
   it('retains successful rows and pagination after failure, then switches both on explicit retry', async () => {
-    vi.stubGlobal('useRoute', () => ({ path: '/', fullPath: '/', query: {} }))
+    vi.stubGlobal('useRoute', () => ({ path, fullPath: path, query: {} }))
     vi.stubGlobal('useRouter', () => ({ replace: vi.fn(async () => {}) }))
     vi.stubGlobal('useHead', vi.fn())
     vi.stubGlobal('definePageMeta', vi.fn())

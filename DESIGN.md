@@ -53,7 +53,7 @@
 
 | | 工作台 | 汇报看板 |
 | --- | --- | --- |
-| 样板页 | `pages/index.vue`（企业列表） | `pages/stats.vue`（称号统计） |
+| 样板页 | `pages/roster.vue`（企业列表） | `pages/stats.vue`（称号统计） |
 | 技术路线 | shadcn-vue 组件 + Tailwind 工具类 + `.data-table` 表格外壳 | `assets/css/statistics.css` 的 `stats-*` 专用类 |
 | 结构 | `PageHeader` + 筛选行 + `Card` 包 `.data-table` + `TablePagination` + 抽屉 | `stats-dashboard` > `stats-page-header` + `stats-metric-grid` + `stats-analysis-grid` + `stats-page-footer` |
 | 标签 | `Badge` 变体（tier/quiet/dashed/solid） | `stats-metric--{0,1,2}` 卡片直接消费 `--tier-*` token |

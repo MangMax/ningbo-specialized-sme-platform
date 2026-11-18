@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ROSTER_LEDGER_PATH } from '~~/lib/sme-roster/routes'
 import { CURRENT_STATUS_LABELS } from '~~/lib/roster/current-status'
 import { useQuery } from '@pinia/colada'
 import { computed, nextTick, ref, shallowRef, watch } from 'vue'
@@ -100,10 +101,10 @@ const backTo = computed(() => {
   const comparison = sourceReturnTarget(route.query.returnTo)
   if (comparison) return comparison
   const raw = typeof route.query.back === 'string' ? route.query.back : ''
-  if (!raw) return '/'
+  if (!raw) return ROSTER_LEDGER_PATH
   const query: Record<string, string> = {}
   for (const [k, v] of new URLSearchParams(raw)) query[k] = v
-  return { path: '/', query }
+  return { path: ROSTER_LEDGER_PATH, query }
 })
 
 const apiGet = $fetch as unknown as <T>(url: string) => Promise<T>

@@ -335,7 +335,7 @@ describe("formal source consumer boundaries", () => {
     await vi.waitFor(() => expect(wrapper.get('#record-event-9').attributes('data-highlighted')).toBe('true'))
     expect(document.querySelector('[role="dialog"]')).toBeNull() // no retired detail dialog
     const breadcrumb = wrapper.get('header a')
-    const expectedBack = context === 'current' ? { path: '/current-enterprises', query: { titleCode: 'specialized_sme', q: 'Acme', district: '鄞州区', page: '2' } } : context === 'back' ? { path: '/', query: { titleCode: 'specialized_sme', page: '4' } } : comparison
+    const expectedBack = context === 'current' ? { path: '/current-enterprises', query: { titleCode: 'specialized_sme', q: 'Acme', district: '鄞州区', page: '2' } } : context === 'back' ? { path: '/roster', query: { titleCode: 'specialized_sme', page: '4' } } : comparison
     expect(breadcrumb.attributes('href')).toBe(router.resolve(expectedBack).href)
     await breadcrumb.trigger('click', { button: 0 }); await flushPromises()
     expect(router.currentRoute.value.fullPath).toBe(router.resolve(expectedBack).fullPath)

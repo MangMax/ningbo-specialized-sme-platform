@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ROSTER_LEDGER_PATH } from '~~/lib/sme-roster/routes'
 import PlatformRecords from './PlatformRecords.vue'
 import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
 import type { ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
@@ -275,7 +276,7 @@ const fullPageTo = computed(() => {
 
 function rememberLedger(event: MouseEvent) {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-  rememberEvidencePreviewReturn(props.backQuery ? `/?${props.backQuery}` : '/', document.querySelector('[data-testid="enterprise-table-scroll"]') ?? document.querySelector('[data-evidence-return-scroll-container]'))
+  rememberEvidencePreviewReturn(props.backQuery ? `${ROSTER_LEDGER_PATH}?${props.backQuery}` : ROSTER_LEDGER_PATH, document.querySelector('[data-testid="enterprise-table-scroll"]') ?? document.querySelector('[data-evidence-return-scroll-container]'))
 }
 
 const statusTextClass = (code: string) => {

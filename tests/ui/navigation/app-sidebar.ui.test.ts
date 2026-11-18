@@ -34,9 +34,10 @@ it('shows ordered business and platform menus and follows the current route', as
     const platform = sidebar.get('[aria-label="平台管理"]')
     expect(business.text()).toContain('业务模块')
     expect(platform.text()).toContain('平台管理')
+    expect(sidebar.get('a[aria-label="返回平台工作台"]').attributes('href')).toBe('/')
     expect(business.get('button').text()).toBe('工信部查询')
     expect(business.findAll('a').map(link => [link.text(), link.attributes('href')])).toEqual([
-      ['企业列表', '/'],
+      ['企业列表', '/roster'],
       ['优质中小企业查询', '/current-enterprises'],
       ['申报记录', '/platform-declarations'],
       ['关联办理', '/platform-business-processes'],

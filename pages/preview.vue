@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { ROSTER_LEDGER_PATH } from '~~/lib/sme-roster/routes'
+import { ENTERPRISE_LIST_TITLE } from '~~/lib/labels'
 import { ChevronLeft, FileDown } from '@lucide/vue'
 import { describeUnsupported, fileNameOf, fileUrl, isPreviewable, resolvePreviewKind } from '~~/lib/preview'
 import {
@@ -17,11 +19,11 @@ const route = useRoute()
 const { parsed, sourcePage, target, invalid, visible, changeView } = useSourcePdfRoute()
 const file = computed(() => parsed.value.file)
 const page = sourcePage
-const backTo = computed(() => parsed.value.back || '/')
+const backTo = computed(() => parsed.value.back || ROSTER_LEDGER_PATH)
 const backLabel = computed(() => {
   const path = new URL(backTo.value, 'http://app.invalid').pathname
   if (/^\/enterprises\/\d+\/?$/.test(path)) return '返回企业详情'
-  const names: Record<string, string> = { '/': '企业列表', '/files': '文件库', '/roster': '名录记录', '/quality': '质量检查', '/stats': '统计分析', '/comparison': '企业对比', '/ocr': 'OCR 工作台', '/platform-queries': '平台查询' }
+  const names: Record<string, string> = { '/': '平台工作台', '/files': '文件库', [ROSTER_LEDGER_PATH]: ENTERPRISE_LIST_TITLE, '/quality': '质量检查', '/stats': '统计分析', '/comparison': '企业对比', '/ocr': 'OCR 工作台', '/platform-queries': '平台查询' }
   return `返回${names[path] ?? ` ${path}`}`
 })
 const name = computed(() => file.value ? fileNameOf(file.value) : '')
