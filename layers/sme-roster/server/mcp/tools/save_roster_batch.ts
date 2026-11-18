@@ -32,6 +32,7 @@ export default defineMcpTool({
   },
   enabled: writeGuard,
   description: [
+    '公布原行返回 staged、intakeId 和 sourceDigest。人工核对后调用 HTTP POST /api/roster/import/intake/{id}/supplement。含类型化公布证据时，先调用该补充接口并提供 preflight: true，再提交返回的 officialEvidencePlanHash。',
     '平台完整原行提交在同一事务收尾核对来源投影；summary.platformFields 按版本去重报告 eligibleVersions/projectionsCreated/projectionsReused/projectionsChecked、observationsChecked/quarantinedObservations 及 ready/partial/not_performed。旧幂等键返回原回执，历史缺字段表示未记录；reuseExisting 纯引用不执行同步。',
     'platformQueries[].reuseExisting:true 仅引用已存在采集坐标；缺来源结构化失败，显式不可变字段仍核对，省略正文不清空。旧无collectionEvidence且rawResponse省略/null只作原引用哨兵，正文字符串null/typed JSON null仍按原类型处理。同query/导出SHA源行异载荷或补序号整批冲突。',
     '三来源 typed 归档：collectionEvidence.rawData.version=1 显式选择 rawData.rows 为 relations.rawFields 和业务内容版本输入；原页/旧投影/行位/数量/来源/身份必须一致，冲突整批拒绝。无 rawData 的旧格式保持原字符串，不反推类型或重算旧hash。',

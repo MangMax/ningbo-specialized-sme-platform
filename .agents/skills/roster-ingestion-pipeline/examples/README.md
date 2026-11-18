@@ -49,3 +49,5 @@ pnpm exec vitest run tests/enterprise-fact-protocol-307-mcp.test.ts --no-file-pa
 ```
 
 未提供 URL/DB 时这三个传输测试明确 SKIP，不能报告 PASS。JSON 读回存到合成库旁的 `mcp-fact-protocol-readbacks.json`，不得提交；此验证不代表生产数据、真实平台、UI、导出或独立代理盲测验收。
+
+公布名单用 [announcement-intake.mjs](announcement-intake.mjs) 预检并留存原行。取得 `intakeId` 和 `sourceDigest` 后，另行提供逐行已核对的身份与依据再调用补充。用当前 OpenAPI 核对鉴权和请求字段。

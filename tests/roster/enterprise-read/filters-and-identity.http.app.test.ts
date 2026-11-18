@@ -16,6 +16,7 @@ const dir = mkdtempSync(join(tmpdir(), 'enterprise-read-http-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 const owner = db.insert(schema.enterprise).values({ name: '合成双称号企业', nameNorm: '合成双称号企业', usccNorm: '91330211255994457P', district: '海曙区' }).returning().get().id
 const unrelated = db.insert(schema.enterprise).values({ name: '无关企业', nameNorm: '无关企业' }).returning().get().id
+db.insert(schema.rosterLegacyMember).values([{ enterpriseId: owner }, { enterpriseId: unrelated }]).run()
 for (const [titleCode, year] of [['specialized_sme', 2022], ['little_giant', 2024]] as const) {
   const recordId = db.insert(schema.record).values({ enterpriseId: owner, titleCode, source: 'jxj' }).returning().get().id
   const eventId = db.insert(schema.recordEvent).values({ recordId, eventType: 'award', year, decidedYear: year, batchSeq: 1 }).returning().get().id
@@ -60,6 +61,7 @@ it.each([
 ])('HTTP list retains both titles and their histories with no definite due for $id', async ({ id, legacy, patch }) => {
   const name = `issue337-${id}`
   const enterprise = db.insert(schema.enterprise).values({ name, nameNorm: name }).returning().get()
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: enterprise.id }).run()
   const events = []
   const evidence = []
   try {
@@ -110,6 +112,7 @@ it('HTTP detail keeps embedded-null Unicode identity normalization', async () =>
 })
 it('MCP search keeps malformed UTF-16 distinct from stored replacement characters', () => {
   const identity = db.insert(schema.enterprise).values({ name: '替换\uFFFD企业', nameNorm: '替换\uFFFD企业', district: '替换\uFFFD属地' }).returning().get()
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: identity.id }).run()
   try {
     // SQLite UTF-8 binding substitutes U+FFFD for an isolated surrogate. The
     // original JS predicates did not equate these distinct inputs.
@@ -126,6 +129,7 @@ it('MCP search matches either UTF-16 half in supplementary names, confirmed alia
     { name: '待核别名企业', nameNorm: '待核别名企业' },
     { name: '替换\uFFFD对照', nameNorm: '替换\uFFFD对照' },
   ].map(value => db.insert(schema.enterprise).values(value).returning().get().id)
+  db.insert(schema.rosterLegacyMember).values(identities.map(enterpriseId => ({ enterpriseId }))).run()
   for (const [index, verificationStatus] of [[1, 'confirmed'], [3, 'pending']] as const) db.insert(schema.enterpriseAlias).values({ enterpriseId: identities[index]!, name: '旧名𠀀', nameNorm: '旧名𠀀', sourceKind: 'manual', sourceRefId: 0, verificationStatus }).run()
   try {
     for (const q of ['𠀀', '\uD840', '\uDC00']) {
@@ -145,6 +149,7 @@ it('MCP search matches either UTF-16 half in supplementary names, confirmed alia
 })
 it('HTTP SQL selection preserves first-award ties, pending years, same-event filters and terminated lifecycle', async () => {
   const identities = ['A', 'B', 'C'].map(label => db.insert(schema.enterprise).values({ name: `汇总边界${label}`, nameNorm: `汇总边界${label}`, usccNorm: `BOUND84${label}` }).returning().get().id)
+  db.insert(schema.rosterLegacyMember).values(identities.map(enterpriseId => ({ enterpriseId }))).run()
   const [a, b, c] = identities as [number, number, number]
   const record = (enterpriseId: number, titleCode: string, source: 'jxj' | 'miit' = 'jxj') => db.insert(schema.record).values({ enterpriseId, titleCode, source }).returning().get().id
   const award = (recordId: number, year: number | null, evidence: boolean, decidedYear = year) => {
@@ -197,6 +202,7 @@ it('HTTP detail scopes identity and record evidence but preserves recognized unm
 it('keeps unknown reference titles through the generic aggregate instead of dropping them from compact counts', async () => {
   db.insert(schema.title).values({ code: 'synthetic_extra', nameZh: '合成额外称号', level: 'municipal', rank: 99 }).run()
   const enterprise = db.insert(schema.enterprise).values({ name: '额外称号企业', nameNorm: '额外称号企业' }).returning().get()
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: enterprise.id }).run()
   const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'synthetic_extra', source: 'jxj' }).returning().get()
   db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).run()
   try {

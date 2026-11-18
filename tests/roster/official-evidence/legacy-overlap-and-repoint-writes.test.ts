@@ -1,3 +1,6 @@
+import { supplementAnnouncement } from '../../../layers/sme-roster/server/utils/announcement-intake'
+import { reviewFixtureRows } from '../imports/fixtures/reviewed-announcement'
+import { completeInProcessIntake } from '../imports/fixtures/in-process-intake'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -19,7 +22,12 @@ const current = vi.hoisted((): { db?: BetterSQLite3Database<typeof schema>; file
 vi.mock('@db', () => ({ useDb: () => { if (!current.db) throw new Error('Synthetic database not initialized'); return current.db } }))
 // Only off-process admission is replaced. Actual H3 routes, validation, preflight,
 // final-set planner and IMMEDIATE commit execute unchanged against real SQLite.
-vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: { execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
+vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: {
+  stage: async (db: Parameters<Execute>[0], request: Parameters<Execute>[2], errors: NonNullable<Parameters<Execute>[3]>) => {
+    const { stageAnnouncement } = await import('../../../layers/sme-roster/server/utils/announcement-intake')
+    return stageAnnouncement(db as Parameters<typeof stageAnnouncement>[0], request, errors)
+  },
+  execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
 const closes: (() => void | Promise<void>)[] = []
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close() })
 afterAll(() => { vi.unstubAllGlobals() })
@@ -57,10 +65,11 @@ async function fixture() {
   const record = (name: 'Alpha' | 'Beta', ev = evidence(), year = name === 'Alpha' ? 2022 : 2023): RosterImportRecord => ({ enterprise: { name, ...(name === 'Beta' ? { uscc: '91330211255994457P' } : {}) }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year, evidence: [ev] }] })
   const announcement = (records: RosterImportRecord[]): RosterImportPayload => ({ announcement: { sourceDocument: { source: 'jxj', title: 'Declared publication' }, records } })
   const request = (payload: RosterImportPayload, key = 'synthetic-r1'): RosterImportRequest => ({ idempotencyKey: key, sourceKind: 'announcement', sourceIdentity: 'synthetic-r1', payload })
-  const post = async (action: 'preflight' | 'commit', body: RosterImportRequest) => {
+  const post = async (action: 'preflight' | 'commit', body: RosterImportRequest, completeIntake = true) => {
     const response = await fetch(`http://127.0.0.1:${address.port}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer synthetic-r1', 'content-type': 'application/json' }, body: JSON.stringify(body) })
     expect(response.status).toBe(200)
-    return responseSchema.parse(await response.json())
+    const result = await response.json()
+    return responseSchema.parse(completeIntake ? await completeInProcessIntake(db, result, body, filesDir) : result)
   }
   const commit = async (input: RosterImportRequest) => {
     const plan = await post('preflight', input); expect(plan.preflight?.conflicts).toEqual([])
@@ -306,12 +315,16 @@ it("S1 current same owner cannot excuse an incoming unknown repoint", async () =
 it("S1 repoint locator drift after preflight invalidates the common locked plan hash", async () => {
   const f = await fixture(); seedRepoint(f)
   const input = f.request({ ...legacyRepoint(f, 'notice.txt'), officialEvidenceAppends: [f.append(f.row({ listNo: 30 }))] })
-  const plan = await f.post('preflight', input); expect(plan.preflight?.conflicts).toEqual([])
+  const stage = z.object({ status: z.literal('staged'), intakeId: z.number(), sourceDigest: z.string() }).parse(await f.post('commit', input, false))
+  const review = reviewFixtureRows(f.db, stage.sourceDigest, input)
+  const plan = await supplementAnnouncement(f.db, stage.intakeId, { ...review, preflight: true }, f.filesDir)
+  expect(plan.conflicts).toEqual([])
+  expect(plan.officialEvidencePlanHash).toMatch(/^[a-f0-9]{64}$/)
   writeFileSync(join(f.filesDir, 'third.txt'), text)
   f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(3,'third.txt','third.txt','txt',?,?,'synthetic')").run(Buffer.byteLength(text), digest(text))
   f.sqlite.exec("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (3, 'jxj', 'announcement', 'specialized_sme')")
   f.sqlite.exec("UPDATE record_evidence SET source_file='third.txt' WHERE id=2")
-  const saved = await f.post('commit', { ...input, payload: { ...input.payload, officialEvidencePlanHash: plan.preflight?.officialEvidencePlanHash } })
+  const saved = await supplementAnnouncement(f.db, stage.intakeId, { ...review, officialEvidencePlanHash: plan.officialEvidencePlanHash }, f.filesDir)
   expect(saved.status).toBe('failed')
   expect(saved).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'plan_mismatch' }) })]) })
   expect(f.sqlite.prepare('SELECT source_file FROM record_evidence WHERE id=2').get()).toEqual({ source_file: 'third.txt' })
@@ -320,9 +333,13 @@ it("S1 repoint locator drift after preflight invalidates the common locked plan 
 it("S1 later SQLite failure rolls back an already executed legacy repoint", async () => {
   const f = await fixture(); seedRepoint(f); const before = businessSnapshot(f)
   const input = f.request({ ...legacyRepoint(f, 'notice.txt'), officialEvidenceAppends: [f.append(f.row({ listNo: 30 }))] })
-  const plan = await f.post('preflight', input); expect(plan.preflight?.conflicts).toEqual([])
+  const stage = z.object({ status: z.literal('staged'), intakeId: z.number(), sourceDigest: z.string() }).parse(await f.post('commit', input, false))
+  const review = reviewFixtureRows(f.db, stage.sourceDigest, input)
+  const plan = await supplementAnnouncement(f.db, stage.intakeId, { ...review, preflight: true }, f.filesDir)
+  expect(plan.conflicts).toEqual([])
+  expect(plan.officialEvidencePlanHash).toMatch(/^[a-f0-9]{64}$/)
   f.sqlite.exec("CREATE TRIGGER synthetic_failure BEFORE INSERT ON official_evidence_row_revision BEGIN SELECT RAISE(ABORT,'synthetic repoint rollback'); END")
-  const saved = await f.post('commit', { ...input, payload: { ...input.payload, officialEvidencePlanHash: plan.preflight?.officialEvidencePlanHash } })
+  const saved = await supplementAnnouncement(f.db, stage.intakeId, { ...review, officialEvidencePlanHash: plan.officialEvidencePlanHash }, f.filesDir)
   expect(saved.status).toBe('failed'); expect(businessSnapshot(f)).toEqual(before)
 })
 it("S1 historical known capture hash stays intact during a live equal-content locator move", async () => {

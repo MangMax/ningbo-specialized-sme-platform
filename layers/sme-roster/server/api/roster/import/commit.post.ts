@@ -15,8 +15,9 @@ import { createRosterImportHandler } from '../../../utils/roster-import-route'
 defineRouteMeta({
   openAPI: {
     tags: ['名录'],
-    summary: '名录导入提交（单批事务、幂等重放）',
+    summary: '留存公布原行或提交其他名录业务批次',
     description:
+      '公布原行提交返回 staged、intakeId、sourceDigest、rowCount，人工核对后通过 intake/{id}/supplement 显式补充基础库。含类型化公布证据时另返回 officialEvidencePreflightRequired: true，请使用补充接口按已核对的主体和原行预检。' +
       '平台完整原行提交在同一事务收尾核对来源投影；summary.platformFields 按版本去重报告 eligibleVersions/projectionsCreated/projectionsReused/projectionsChecked、observationsChecked/quarantinedObservations 及 ready/partial/not_performed。旧幂等键返回原回执，历史缺字段表示未记录；reuseExisting 纯引用不执行同步。' +
       'pending_review（待审核）须显式提交 confirmed_reason + confirmed + follow_review；保留正式历史并跟进审核，区别于 needs_review。' +
       '按 body 的 `idempotencyKey` 幂等提交：同键重复调用返回既有批次摘要，不重复写企业/事件。' +
@@ -1881,10 +1882,10 @@ defineRouteMeta({
         "records"
       ],
       "additionalProperties": {},
-      "description": "公布文件历史命令；未知附加字段保留，遗漏/null/归一化及逐项错误由现有领域校验处理；publishedRow 使用正式事实严格 DTO，须先预检并带回 officialEvidencePlanHash"
+      "description": "公布文件历史命令；未知附加字段保留，遗漏/null/归一化及逐项错误由现有领域校验处理；publishedRow 使用正式事实严格 DTO，原行留存后须对已核企业身份和事实调用补充预检，并在补充请求带回 officialEvidencePlanHash"
     },
     "officialEvidenceAppends": {
-      "description": "精确正式佐证追加；expectedVersion=当前event.revision，显式声明与publishedRow；须先preflight并在payload带回officialEvidencePlanHash",
+      "description": "精确正式佐证追加；expectedVersion=当前event.revision，显式声明与publishedRow；无公布原行时先调用导入预检并在payload带回officialEvidencePlanHash；含公布原行时使用补充预检",
       "minItems": 1,
       "maxItems": 100,
       "type": "array",
@@ -3143,14 +3144,15 @@ defineRouteMeta({
     },
     responses: {
       200: {
-        description: '提交结果（`committed` 或 `failed`；`failed` 时业务数据一行未写）。',
+        description: '公布原行留存为 staged。其他业务批次返回 committed 或 failed。',
         content: {
           'application/json': {
             schema: {
               type: 'object',
               properties: {
                 batchId: { type: 'integer' },
-                status: { type: 'string', enum: ['committed', 'failed'] },
+                status: { type: 'string', enum: ['staged', 'committed', 'failed'] },
+                intakeId: { type: 'integer' }, sourceDigest: { type: 'string' }, rowCount: { type: 'integer' },
                 summary: {
                   type: 'object',
                   properties: {

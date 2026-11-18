@@ -1,3 +1,4 @@
+import { createReviewedFixtureImportClient } from '../../roster/imports/fixtures/reviewed-announcement'
 import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
 import { importExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
 import * as readerLocation from '../../../layers/sme-roster/server/utils/enterprise-read-worker-location'
@@ -10,7 +11,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { schema } from '../../../db'
-import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
 import { startEvidenceServer } from '../fixtures/evidence-server'
@@ -22,7 +22,7 @@ const USCC = '913300000000000004'
 const time = '2025-02-03T01:02:03.000Z'
 const token = 'synthetic-recognized-import-token'
 let api: Awaited<ReturnType<typeof startEvidenceServer>>
-let client: ReturnType<typeof createRosterImportClient>
+let client: ReturnType<typeof createReviewedFixtureImportClient>
 beforeAll(async () => {
   vi.spyOn(importExecutor, 'execute').mockImplementation(executeNativeImport)
   // Exercise the packaged real reader; source transpilation is not part of this business contract.
@@ -58,7 +58,7 @@ beforeAll(async () => {
     '/api/platform/queries': url => queriesRoute({ query: Object.fromEntries(url.searchParams) } as never),
     '/api/roster/record-comparison': url => { const input = parseRecordComparisonQuery(Object.fromEntries(url.searchParams)); return getRecordComparison(db, input, resolveVerifiedComparisonEvidence(db, input.proofIds ?? [], input)) },
   } })
-  client = createRosterImportClient({ baseUrl: api.baseUrl, token })
+  client = createReviewedFixtureImportClient({ baseUrl: api.baseUrl, token }, db)
 })
 afterAll(async () => { await api?.close(); await enterpriseReads.close(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 function archive(): PlatformLiveQueryResult {

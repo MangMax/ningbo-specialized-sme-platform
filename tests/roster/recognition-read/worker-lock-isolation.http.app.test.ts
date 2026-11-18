@@ -1,3 +1,5 @@
+import { submitNewFixtureAnnouncement } from '../imports/fixtures/reviewed-announcement'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
@@ -27,6 +29,7 @@ it('recognition native lock leaves health responsive before independent release 
     Object.assign(globalThis,h,{defineRouteMeta:()=>{},defineNitroPlugin:f=>f});process.env.M1_APP_PID=String(process.pid);
     const {createJiti}=require(${JSON.stringify(jiti)});const load=createJiti(${JSON.stringify(resolve('package.json'))},{alias:{'@db':${JSON.stringify(resolve('db/index.ts'))},'~~':${JSON.stringify(root)},'#sme-roster':${JSON.stringify(resolve(root, 'layers/sme-roster'))}}});
     (await load.import(${JSON.stringify(resolve('tests/support/compiled-business-workers.ts'))})).installCompiledBusinessWorkers();
+(await load.import(${JSON.stringify(resolve(root, 'server/install-application.ts'))})).installApplicationServer();
       const {initializeDb}=await load.import(${JSON.stringify(resolve('db/client.ts'))});
     const writer=initializeDb({create:true,readOnly:false});writer.$client.pragma('journal_mode=DELETE');
     const {startRosterApi}=await load.import(${JSON.stringify(resolve('tests/roster/imports/fixtures/import-server.ts'))});
@@ -54,8 +57,8 @@ it('recognition native lock leaves health responsive before independent release 
     } } }
     const post = (action: string) => fetch(`${info!.imports}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer synthetic-m1', 'content-type': 'application/json' }, body: JSON.stringify(request) })
     expect((await post('preflight')).status).toBe(200)
-    const receipt = await (await post('commit')).json()
-    expect(receipt.status).toBe('committed')
+    const receipt = await submitNewFixtureAnnouncement(info!.imports, 'synthetic-m1', request as RosterImportRequest)
+    expect(receipt.status).toBe('supplemented')
     expect((await fetch(base+'/api/health')).status).toBe(200)
     const warm = await fetch(base+'/api/roster/recognitions?pageSize=1'), expected = await warm.text()
     expect(JSON.parse(expected)).toMatchObject({ counts: { titlePairs: 1, enterprises: 1, titles: { little_giant: 0, specialized_sme: 1, innovative_sme: 0 } }, page: 1, pageSize: 1, rows: [{ name: '合成M1企业', firstYear: 2021, status: 'confirmed', evidence: [{ sourceFile: 'synthetic/m1.pdf', attachment: '附件一', listNo: 7, page: 3 }] }] })
@@ -87,8 +90,8 @@ it('recognition native lock leaves health responsive before independent release 
     expect(entries[0].pid).not.toBe(info!.pid)
     // Acknowledged API commits become visible on the retained child connection.
     const another={...request,idempotencyKey:'m1-next',sourceIdentity:'synthetic/m1-next',payload:{announcement:{...request.payload.announcement,records:[{...request.payload.announcement.records[0]!,enterprise:{name:'另一合成M1企业'}}]}}}
-    const commit=async(body:unknown)=> (await fetch(`${info!.imports}/api/roster/import/commit`,{method:'POST',headers:{authorization:'Bearer synthetic-m1','content-type':'application/json'},body:JSON.stringify(body)})).json()
-    expect((await commit(another)).status).toBe('committed')
+    const commit = (body: unknown) => submitNewFixtureAnnouncement(info!.imports, 'synthetic-m1', body as RosterImportRequest)
+    expect((await commit(another)).status).toBe('supplemented')
     for(let n=0;n<3;n++)expect(await (await fetch(base+'/api/roster/recognitions')).json()).toMatchObject({counts:{titlePairs:2,enterprises:2},rows:[{name:'另一合成M1企业'},{name:'合成M1企业'}]})
     const failed={...another,idempotencyKey:'m1-rollback',sourceIdentity:'synthetic/m1-rollback',payload:{announcement:{...another.payload.announcement,records:[{...another.payload.announcement.records[0]!,enterprise:{name:'不得部分提交合成企业'}},{...another.payload.announcement.records[0]!,enterprise:{name:'非法称号合成企业'},titleCode:'invalid'}]}}}
     expect((await commit(failed)).status).toBe('failed')

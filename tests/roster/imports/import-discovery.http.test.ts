@@ -1,3 +1,5 @@
+import { finishFixtureAnnouncement } from './fixtures/reviewed-announcement'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -24,7 +26,10 @@ it('preserves legacy HTTP item errors, numeric normalization and idempotent rece
   async function post(action: string, body: unknown) {
     const response = await fetch(`${api.baseUrl}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer synthetic-315', 'content-type': 'application/json' }, body: JSON.stringify(body) })
     expect(response.status).toBe(200)
-    return response.json()
+    const result = await response.json()
+    if (result.status !== 'staged') return result
+    const receipt = await finishFixtureAnnouncement(api.baseUrl, 'synthetic-315', db, body as RosterImportRequest, result)
+    return { ...receipt, status: receipt.status === 'supplemented' ? 'committed' : receipt.status }
   }
   try {
     const original = await post('preflight', { ...envelope, payload })
@@ -58,9 +63,13 @@ it('preserves alias core required-field errors and commits normalized aliases wi
   sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
   const api = await startRosterApi({ db, apiToken: 'synthetic-315b', executeImport: async (database, action, request, errors, context) => action === 'preflight' ? preflightRosterImport(database, request, errors, context) : commitRosterImport(database, request, errors, context) })
   async function post(action: string, key: string, payload: unknown) {
-    const response = await fetch(`${api.baseUrl}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer synthetic-315b', 'content-type': 'application/json' }, body: JSON.stringify({ idempotencyKey: key, sourceKind: 'alias_evidence', sourceIdentity: 'synthetic-alias-notice', payload }) })
+    const body = { idempotencyKey: key, sourceKind: 'alias_evidence', sourceIdentity: 'synthetic-alias-notice', payload } as RosterImportRequest
+    const response = await fetch(`${api.baseUrl}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer synthetic-315b', 'content-type': 'application/json' }, body: JSON.stringify(body) })
     expect(response.status).toBe(200)
-    return response.json()
+    const result = await response.json()
+    if (result.status !== 'staged') return result
+    const receipt = await finishFixtureAnnouncement(api.baseUrl, 'synthetic-315b', db, body, result)
+    return { ...receipt, status: receipt.status === 'supplemented' ? 'committed' : receipt.status }
   }
   try {
     // Create the owner through the public import seam, not a fixture-only database insert.

@@ -1,3 +1,5 @@
+import { submitNewFixtureAnnouncement } from '../imports/fixtures/reviewed-announcement'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
@@ -195,14 +197,14 @@ process.on('SIGTERM',async()=>{server.closeAllConnections();await new Promise(r=
     writeFileSync(join(dir, 'pause-after-source'), '')
     const snapshot = read(); await waitEntry('snapshot-established')
     const walImports = bundled ? base : JSON.parse(logs.split('\n').find(x => x.startsWith('{"imports"'))!).imports
-    const commit = await fetch(walImports + '/api/roster/import/commit', { method: 'POST', headers: { authorization: 'Bearer synthetic-m3', 'content-type': 'application/json' }, body: JSON.stringify({ idempotencyKey: 'm3-snapshot-next', sourceKind: 'announcement', sourceIdentity: 'synthetic/snapshot', payload: { aliases: [{ enterpriseName: 'M3Alpha企业', name: 'M3并发已确认别名', sourceKind: 'manual', verificationStatus: 'confirmed' }], differences: [{ enterpriseName: 'M3Alpha企业', titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', verificationStatus: 'pending', recordedAt: '2026-10-21T00:00:00Z' }], announcement: { sourceDocument: { source: 'jxj', title: 'M3并发公布' }, records: [{ enterprise: { name: 'M3新提交企业' }, titleCode: 'innovative_sme', events: [] }] } } }) })
-    expect(commit.status).toBe(200); expect(await commit.json()).toMatchObject({ status: 'committed' })
+    const commit = await submitNewFixtureAnnouncement(walImports, 'synthetic-m3', { idempotencyKey: 'm3-snapshot-next', sourceKind: 'announcement', sourceIdentity: 'synthetic/snapshot', payload: { aliases: [{ enterpriseName: 'M3Alpha企业', name: 'M3并发已确认别名', sourceKind: 'manual', verificationStatus: 'confirmed' }], differences: [{ enterpriseName: 'M3Alpha企业', titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', verificationStatus: 'pending', recordedAt: '2026-10-21T00:00:00Z' }], announcement: { sourceDocument: { source: 'jxj', title: 'M3并发公布' }, records: [{ enterprise: { name: 'M3新提交企业' }, titleCode: 'innovative_sme', events: [] }] } } } as RosterImportRequest)
+    expect(commit).toMatchObject({ status: 'supplemented' })
     expect(entries().find(e => e.kind === 'snapshot-established').pid).not.toBe(walApp.pid)
     writeFileSync(join(dir, 'release-snapshot'), '')
     expect(await snapshot).toEqual(expected)
     const next = await json(); expect(next.total).toBe(4); expect(next.counts.innovative_sme.missing_in_miit).toBe(2); expect(next.rows[0].platform).toMatchObject({ aliasCount: 3, confirmedAliasCount: 2, disposition: { status: 'needs_review', verificationStatus: 'pending' } })
-    const failed = await fetch(walImports + '/api/roster/import/commit', { method: 'POST', headers: { authorization: 'Bearer synthetic-m3', 'content-type': 'application/json' }, body: JSON.stringify({ idempotencyKey: 'm3-rollback', sourceKind: 'announcement', sourceIdentity: 'synthetic/rollback', payload: { announcement: { sourceDocument: { source: 'jxj', title: 'M3整批回滚' }, records: [{ enterprise: { name: 'M3不得部分泄漏' }, titleCode: 'innovative_sme', events: [] }, { enterprise: { name: 'M3非法称号' }, titleCode: 'invalid', events: [] }] } } }) })
-    expect(await failed.json()).toMatchObject({ status: 'failed' }); expect(await json()).toEqual(next)
+    const failed = await submitNewFixtureAnnouncement(walImports, 'synthetic-m3', { idempotencyKey: 'm3-rollback', sourceKind: 'announcement', sourceIdentity: 'synthetic/rollback', payload: { announcement: { sourceDocument: { source: 'jxj', title: 'M3整批回滚' }, records: [{ enterprise: { name: 'M3不得部分泄漏' }, titleCode: 'innovative_sme', events: [] }, { enterprise: { name: 'M3非法称号' }, titleCode: 'invalid', events: [] }] } } } as RosterImportRequest)
+    expect(failed).toMatchObject({ status: 'failed' }); expect(await json()).toEqual(next)
     // Unchanged recognition, REST differences and enterprise consumers still run.
     for (const path of ['/api/roster/recognitions', '/api/roster/differences', '/api/roster/enterprises']) expect((await fetch(base + path)).status).toBe(200)
     try { process.stdout.write('M3 summary parity and snapshot ' + JSON.stringify({ bundled: !!bundled, entry, cwd, total: next.total, originalPid: first.pid, childPid: native.pid, errorInventory: ['SyntaxError', 'SQLITE_BUSY'], fullBytes: Buffer.byteLength(full.text) }) + '\n') } catch {}

@@ -1,4 +1,6 @@
 import { executeNativeImport } from '../imports/fixtures/import-server'
+import { reviewFixtureRows } from '../imports/fixtures/reviewed-announcement'
+import { supplementAnnouncement } from '../../../layers/sme-roster/server/utils/announcement-intake'
 import { initializeDb } from '../../../db/client'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -50,9 +52,15 @@ beforeAll(async () => {
   router.patch('/api/comparison/curated', curate)
   router.get('/api/platform/queries/:queryId/evidence', evidence)
   router.post('/api/roster/import/commit', defineEventHandler(async event => {
+    const request = await readBody(event)
     const response = await handleRosterImportRequest('commit', {
-      method: 'POST', headers: { authorization: 'Bearer synthetic-test-token' }, body: await readBody(event),
+      method: 'POST', headers: { authorization: 'Bearer synthetic-test-token' }, body: request,
     }, { db, apiToken: 'synthetic-test-token', executeImport: executeNativeImport })
+    const staged = response.body as { status?: string; intakeId: number; sourceDigest: string }
+    if (staged.status === 'staged') {
+      const result = await supplementAnnouncement(db, staged.intakeId, reviewFixtureRows(db, staged.sourceDigest, request))
+      return { ...result, status: result.status === 'supplemented' ? 'committed' : result.status }
+    }
     return response.body
   }))
   const app = createApp().use(router)

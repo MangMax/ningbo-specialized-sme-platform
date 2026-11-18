@@ -5,8 +5,9 @@ import type Database from 'better-sqlite3'
 import { realpathSync, statSync } from 'node:fs'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../../../db/schema'
-import type { RosterImportRequest, RosterImportItemResult } from '../../lib/roster-import-client'
+import type { RosterImportRequest, RosterImportItemResult, SupplementAnnouncementRequest, SupplementAnnouncementResult, SupplementAnnouncementPreflightResult } from '../../lib/roster-import-client'
 import { commitRosterImport, preflightRosterImport } from './roster-import'
+import { stageAnnouncement, supplementAnnouncement } from './announcement-intake'
 import { ImportReceiptError } from './import-receipts'
 import { createImportExecutionWorker } from './import-execution-worker-location'
 import { appLog, type LogContext } from '../../../core/lib/logging'
@@ -15,8 +16,14 @@ import { beginImportWrite } from './import-write-barrier'
 
 type Db = BetterSQLite3Database<typeof schema>
 type Action = 'preflight' | 'commit'
-type Result = ReturnType<typeof preflightRosterImport> | ReturnType<typeof commitRosterImport>
-export interface ImportExecutionMessage { identity: { dev: number; ino: number; schemaVersion: number; migration: { hash: string; created_at: number } | undefined }; id: number; dbPath: string; readonly: boolean; action: Action; payload: Buffer; pageCountErrors: readonly RosterImportItemResult[]; logContext?: LogContext; filesDir?: string }
+type ImportResult = ReturnType<typeof preflightRosterImport> | ReturnType<typeof commitRosterImport>
+type IntakeResult = ReturnType<typeof stageAnnouncement>
+type SupplementCommand = SupplementAnnouncementRequest & { preflight?: true }
+type Result = ImportResult | SupplementAnnouncementResult | SupplementAnnouncementPreflightResult | IntakeResult
+type Command =
+  | { action: Action | 'stage'; request: RosterImportRequest; pageCountErrors: readonly RosterImportItemResult[] }
+  | { action: 'supplement'; intakeId: number; review: SupplementCommand }
+export interface ImportExecutionMessage { identity: { dev: number; ino: number; schemaVersion: number; migration: { hash: string; created_at: number } | undefined }; id: number; dbPath: string; readonly: boolean; action: Command['action']; payload: Buffer; pageCountErrors?: readonly RosterImportItemResult[]; logContext?: LogContext; filesDir?: string }
 type Worker = ReturnType<typeof createImportExecutionWorker>
 type Job = { onResult?: (result: Result) => void; message: ImportExecutionMessage; resolve(value: Result): void; reject(error: Error): void }
 const unavailable = (code: string, message: string) => new ImportReceiptError(503, code, message)
@@ -36,7 +43,7 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
   const settle = (job: Job, error?: Error, result?: Result) => {
     retainedBytes -= job.message.payload.byteLength
     if (error) { logImportFailure('import.execution', error, job.message.logContext); job.reject(error) }
-    else { job.onResult?.(result!); job.resolve(result!) }
+    else { job.onResult?.(result ?? null); job.resolve(result ?? null) }
   }
   function idle() {
     if (active || queue.length || stopping) return
@@ -89,28 +96,46 @@ export function createImportExecutor(options: { createWorker?: () => Worker; max
     appLog({ module: 'sme-roster', source: 'import', operation: 'import.execution', outcome: 'started' }, active.message.logContext)
     try { worker.postMessage(active.message) } catch { const owned = worker; worker = undefined; ready = false; const job = active; active = undefined; settle(job, unavailable('import_outcome_unknown', 'Import outcome unknown; read its receipt and retry with the same idempotency key')); stopping = owned.terminate().finally(() => { stopping = undefined; releaseWriter(); queueMicrotask(pump) }) }
   }
+  function executeCommand(db: Db, command: Command, context: LogContext, filesDir?: string): Promise<Result> {
+    const rejectAdmission = (error: ImportReceiptError) => { logImportFailure('import.admission', error, context); return Promise.reject(error) }
+    if (closed) return rejectAdmission(unavailable('import_executor_closed', 'Import execution unavailable'))
+    const client = (db as Db & { $client: Database.Database }).$client
+    // Private/in-memory callers cannot share a native connection across processes.
+    if (!client.name || client.name === ':memory:' || client.inTransaction) {
+      if (command.action === 'supplement') return supplementAnnouncement(db as Parameters<typeof supplementAnnouncement>[0], command.intakeId, command.review, filesDir, context)
+      if (command.action === 'stage') return Promise.resolve(stageAnnouncement(db as Parameters<typeof stageAnnouncement>[0], command.request, command.pageCountErrors))
+      return Promise.resolve(command.action === 'preflight'
+        ? preflightRosterImport(db, command.request, command.pageCountErrors, { ...context, filesDir })
+        : commitRosterImport(db, command.request, command.pageCountErrors, { ...context, filesDir }))
+    }
+    const pending = queue.length + Number(!!active)
+    if (pending >= maxPending || (pending > 0 && retainedBytes >= maxBytes)) return rejectAdmission(unavailable('import_busy', 'Import execution busy'))
+    const payload = serialize(command.action === 'supplement'
+      ? { intakeId: command.intakeId, review: command.review }
+      : command.request)
+    const pageCountErrors = command.action === 'supplement' ? undefined : command.pageCountErrors
+    // This is a backlog budget, not a new single-batch size contract. A batch
+    // larger than it may run alone; every later admission waits until it settles.
+    // Keep the original whole-batch transaction in the isolated process.
+    if (pending > 0 && payload.byteLength + retainedBytes > maxBytes) return rejectAdmission(unavailable('import_busy', 'Import execution busy'))
+    const path = realpathSync(client.name), stat = statSync(path)
+    const identity = { dev: stat.dev, ino: stat.ino, schemaVersion: client.pragma('schema_version', { simple: true }) as number, migration: client.prepare('SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get() as { hash: string; created_at: number } | undefined }
+    retainedBytes += payload.byteLength
+    return new Promise((resolve, reject) => {
+      appLog({ module: 'sme-roster', source: 'import', operation: 'import.admission', outcome: 'started' }, context)
+      queue.push({ onResult: result => { if (result && 'candidateTaskIds' in result && result.candidateTaskIds?.length) activateCandidateDiscoveryTasks(db,result.candidateTaskIds,'',context) }, message: { identity, id: ++nextId, dbPath: path, readonly: client.readonly, action: command.action, payload, pageCountErrors, logContext: context, filesDir }, resolve, reject }); pump()
+    })
+  }
   return {
-    execute(db: Db, action: Action, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: LogContext = {}, source: { filesDir?: string } = {}): Promise<Result> {
+    execute(db: Db, action: Action, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: LogContext = {}, source: { filesDir?: string } = {}) {
       if (action === 'commit' && request.payload.platformQueries?.length) ensureJobRunnerReady(db)
-      const rejectAdmission = (error: ImportReceiptError) => { logImportFailure('import.admission', error, context); return Promise.reject(error) }
-      if (closed) return rejectAdmission(unavailable('import_executor_closed', 'Import execution unavailable'))
-      const client = (db as Db & { $client: Database.Database }).$client
-      // Private/in-memory callers cannot share a native connection across processes.
-      if (!client.name || client.name === ':memory:' || client.inTransaction) return Promise.resolve(action === 'preflight' ? preflightRosterImport(db, request, pageCountErrors, { ...context, filesDir: source.filesDir }) : commitRosterImport(db, request, pageCountErrors, { ...context, filesDir: source.filesDir }))
-      const pending = queue.length + Number(!!active)
-      if (pending >= maxPending || (pending > 0 && retainedBytes >= maxBytes)) return rejectAdmission(unavailable('import_busy', 'Import execution busy'))
-      const payload = serialize(request)
-      // This is a backlog budget, not a new single-batch size contract. A batch
-      // larger than it may run alone; every later admission waits until it settles.
-      // Keep the original whole-batch transaction in the isolated process.
-      if (pending > 0 && payload.byteLength + retainedBytes > maxBytes) return rejectAdmission(unavailable('import_busy', 'Import execution busy'))
-      const path = realpathSync(client.name), stat = statSync(path)
-      const identity = { dev: stat.dev, ino: stat.ino, schemaVersion: client.pragma('schema_version', { simple: true }) as number, migration: client.prepare('SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get() as { hash: string; created_at: number } | undefined }
-      retainedBytes += payload.byteLength
-      return new Promise((resolve, reject) => {
-        appLog({ module: 'sme-roster', source: 'import', operation: 'import.admission', outcome: 'started' }, context)
-        queue.push({ onResult: result => { if ('candidateTaskIds' in result) activateCandidateDiscoveryTasks(db,result.candidateTaskIds,'',context) }, message: { identity, id: ++nextId, dbPath: path, readonly: client.readonly, action, payload, pageCountErrors, logContext: context, filesDir: source.filesDir }, resolve, reject }); pump()
-      })
+      return executeCommand(db, { action, request, pageCountErrors }, context, source.filesDir) as Promise<ImportResult>
+    },
+    stage(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[], context: LogContext = {}) {
+      return executeCommand(db, { action: 'stage', request, pageCountErrors }, context) as Promise<IntakeResult>
+    },
+    supplement(db: Db, intakeId: number, review: SupplementCommand, filesDir: string, context: LogContext = {}) {
+      return executeCommand(db, { action: 'supplement', intakeId, review }, context, filesDir) as Promise<SupplementAnnouncementResult | SupplementAnnouncementPreflightResult>
     },
     close() {
       if (closing) return closing

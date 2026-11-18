@@ -1,3 +1,4 @@
+import { commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 import '../../support/compiled-enterprise-reader'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { initializeDb } from '../../../db/client'
@@ -143,6 +144,7 @@ it.each([{ label: 'pending', status: 'pending' }, { label: 'withdrawn', status: 
 
 it('PATCH preserves formal rows, source evidence, platform originals and readback by both names', async () => {
   const owner = seed(), before = await profile(owner.id)
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: owner.id }).run()
   const record = db.insert(schema.record).values({ enterpriseId: owner.id, titleCode: 'specialized_sme', source: 'jxj', nameRaw: owner.name, district: '历史属地' }).returning().get()
   const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
   db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic96.pdf', attachment: '原附件', listNo: 11, page: 3 }).run()
@@ -253,15 +255,22 @@ it('PATCH requires exact same-enterprise confirmation for names and rejects norm
   expect(await history(owner.id)).toMatchObject({ total: 0 })
 })
 
-it('profile audit preserves its historical enterprise ID after dedicated identity removal', async () => {
+it('profile audit preserves its historical enterprise ID after the canonical identity changes', async () => {
   const owner = seed(), before = await profile(owner.id)
   const input = command(before.version, { city: null }), first = await patch(owner.id, input)
   expect(first.status).toBe(200)
-  // Model the dedicated merge's final source removal, outside ordinary PATCH.
-  db.$client.prepare('DELETE FROM enterprise WHERE id=?').run(owner.id)
-  expect((await request(`/api/roster/enterprises/${owner.id}/profile`)).status).toBe(404)
+  const into = db.insert(schema.enterprise).values({
+    name: '审计归并规范企业', nameNorm: '审计归并规范企业', usccNorm: '91330211255994457P',
+  }).returning().get()
+  const merged = commitRosterImport(db, {
+    idempotencyKey: 'profile-history-canonical-merge', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/profile-history',
+    payload: { merges: [{ fromEnterpriseId: owner.id, intoUscc: into.usccNorm! }] },
+  })
+  expect(merged.status, JSON.stringify(merged.items)).toBe('committed')
+  expect(await profile(owner.id)).toEqual(await profile(into.id))
   expect(await history(owner.id)).toMatchObject({ total: 1, rows: [{ enterpriseId: owner.id, before: before.profile, after: first.body.profile }] })
-  expect(await patch(owner.id, input)).toEqual(first)
+  expect(await history(into.id)).toMatchObject({ total: 0, rows: [] })
+  expect(await patch(owner.id, input)).toMatchObject({ status: 409, body: { error: { code: 'idempotency_conflict' } } })
 })
 
 it('profile history rejects an oversized encoded page and lets callers request a smaller complete page', async () => {

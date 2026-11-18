@@ -2,7 +2,7 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../db/schema'
 import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
-import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
+import { executeNativeImport, matchFixtureIntakeRoute } from '../../roster/imports/fixtures/import-server'
 import { startHttpFixture, type FixtureHandler } from '../../support/http'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -47,6 +47,7 @@ export async function startEvidenceServer(options: EvidenceServerOptions): Promi
   }
 
   return startHttpFixture({
+    matchRoute: matchFixtureIntakeRoute(options.db, options.apiToken),
     routes: {
       '/api/roster/import/preflight': importRoute,
       '/api/roster/import/commit': importRoute,

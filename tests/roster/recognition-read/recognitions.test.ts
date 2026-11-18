@@ -1,3 +1,5 @@
+import { supplementAnnouncement } from '../../../layers/sme-roster/server/utils/announcement-intake'
+import type { RosterAnnouncementStagedResponse } from '../../../layers/sme-roster/lib/roster-import-client'
 import { executeNativeImport } from '../imports/fixtures/import-server'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -32,6 +34,7 @@ function enterprise(key: string, name: string, uscc: string | null, district: st
     .returning({ id: schema.enterprise.id })
     .get().id
   ids[key] = id
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: id }).run()
   return id
 }
 
@@ -329,7 +332,17 @@ it('first recognition uses the earliest populated record district even on a diff
       },
     } }, { db: isolated, apiToken: 'synthetic-130', executeImport: executeNativeImport })
     expect(out.status).toBe(200)
-    expect(out.body).toMatchObject({ status: 'committed' })
+    expect(out.body).toMatchObject({ status: 'staged', rowCount: 3 })
+    const staged = out.body as RosterAnnouncementStagedResponse
+    expect(await supplementAnnouncement(isolated, staged.intakeId, {
+      sourceDigest: staged.sourceDigest,
+      basis: '同一合成企业的三个公布条目',
+      rows: [
+        { action: 'create', fields: { name: '合成属地企业' } },
+        { action: 'same_subject', row: 0 },
+        { action: 'same_subject', row: 0 },
+      ],
+    })).toMatchObject({ status: 'supplemented' })
     const result = listRosterRecognitions(isolated, { title: ['little_giant'] })
     expect(result.rows).toMatchObject([{ name: '合成属地企业', district: '余姚市', firstYear: 2021, pendingReason: 'no_evidence' }])
     expect(result.counts).toMatchObject({ titlePairs: 1, enterprises: 1 })

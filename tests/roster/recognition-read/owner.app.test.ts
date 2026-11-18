@@ -1,3 +1,4 @@
+import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
 import '../../support/compiled-enterprise-reader'
 import { getEventListeners, once } from 'node:events'
 import { Worker } from 'node:worker_threads'
@@ -18,7 +19,6 @@ import { createEnterpriseReadExecutor } from '../../../layers/sme-roster/server/
 import { createEnterpriseWorker } from '../../../layers/sme-roster/server/utils/enterprise-read-worker-location'
 import { captureReaderError } from '../../../layers/sme-roster/lib/roster/offmain-read-protocol'
 import { executeNativeImport, startRosterApi } from '../imports/fixtures/import-server'
-import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const cleanup: Array<() => unknown|Promise<unknown>>=[]
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close()})
@@ -30,7 +30,7 @@ async function fixture(filename='fixture.db') {
   // Seed through real HTTP and native import core. Reader workers remain real;
   // setup must not retain an unrelated import worker when journal mode changes.
   const api=await startRosterApi({db:writer,apiToken:'synthetic-m1',executeImport:executeNativeImport});cleanup.push(()=>api.close())
-  const client=createRosterImportClient({baseUrl:api.baseUrl,token:'synthetic-m1'})
+  const client=createReviewedFixtureImportClient({baseUrl:api.baseUrl,token:'synthetic-m1'}, writer)
   const payload={announcement:{sourceDocument:{source:'jxj' as const,title:'合成 M1'},records:[{enterprise:{name:'合成M1企业'},titleCode:'specialized_sme',events:[{eventType:'award' as const,year:2021,evidence:[{sourceFile:'synthetic/m1.pdf',page:3}]}]}]}}
   expect((await client.commit({idempotencyKey:'seed',sourceIdentity:'synthetic/m1',sourceKind:'announcement',payload})).status).toBe('committed')
   const owner=initializeDb({ create: true, dbPath:path,readOnly:true});cleanup.push(()=>{if(owner.$client.open)owner.$client.close()})

@@ -27,7 +27,7 @@ function fixture() {
 }
 function expectNative(db:Database.Database) {
   expect(db.pragma('foreign_key_check')).toEqual([])
-  expect(db.pragma('user_version',{simple:true})).toBe(71613)
+  expect(db.pragma('user_version',{simple:true})).toBe(71614)
   for(const name of RETIRED_PLATFORM_TABLES)expect(db.prepare('select name from sqlite_schema where type=? and name=?').get('table',name)).toBeUndefined()
 }
 function sourceRequest(key:string):RosterImportRequest {

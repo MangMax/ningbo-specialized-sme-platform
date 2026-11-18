@@ -1,3 +1,5 @@
+import { submitNewFixtureAnnouncement } from '../imports/fixtures/reviewed-announcement'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import '../../support/compiled-enterprise-reader'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -37,9 +39,8 @@ beforeAll(async () => {
   } }
   const preflight = await fetch(imports.baseUrl + '/api/roster/import/preflight', { method: 'POST', headers, body: JSON.stringify(body) })
   expect(preflight.status).toBe(200)
-  const committed = await fetch(imports.baseUrl + '/api/roster/import/commit', { method: 'POST', headers, body: JSON.stringify(body) })
-  expect(committed.status).toBe(200)
-  expect(await committed.json()).toMatchObject({ status: 'committed', summary: { failed: 0 } })
+  const committed = await submitNewFixtureAnnouncement(imports.baseUrl, headers.authorization.slice('Bearer '.length), body as RosterImportRequest)
+  expect(committed).toMatchObject({ status: 'supplemented', summary: { failed: 0 } })
   // Read IDs from this owned synthetic DB; no SQL writes or copied fixtures.
   enterpriseId = db.select({ id: schema.enterprise.id }).from(schema.enterprise).get()!.id
   relationId = db.select({ id: schema.platformLegacyRelationAlias.oldId }).from(schema.platformLegacyRelationAlias).get()!.id

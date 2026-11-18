@@ -12,6 +12,7 @@ const dir = mkdtempSync(join(tmpdir(), 'alias-maintenance-99-'))
 const path = join(dir, 'roster.db')
 const db = initializeDb({ create: true,  dbPath: path })
 const ent = db.insert(schema.enterprise).values({ name: '宁波别名维护企业', nameNorm: '宁波别名维护企业', usccNorm: '91330211255994457P' }).returning().get()
+db.insert(schema.rosterLegacyMember).values({ enterpriseId: ent.id }).run()
 const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: ent.usccNorm!, rdjb: '2', queriedAt: '2026-10-19T00:00:00Z', status: 'success', rawResponse: 'SECRET_RAW_QUERY', relations: [{ sequenceNo: 1, enterpriseId: ent.id, usccRaw: ent.usccNorm, nameRaw: '宁波别名维护旧名', rawFields: { secret: 'SECRET_RAW_RELATION' } }] })
 const query = { id: native.queryId }
 const rel = { id: native.relationIds[0]! }

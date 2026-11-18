@@ -1,3 +1,4 @@
+import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
 import { nativeQueryRows, nativeRelationRows } from '../../platform/fixtures/native-evidence'
 import { initializeDb } from '../../../db/client'
 /** Real HTTP duplicate-candidate, evidence-backed merge and idempotent replay contracts. */
@@ -7,7 +8,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
 import type { DuplicateMergeReport } from '../../../layers/sme-roster/lib/roster/duplicate-merge'
-import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
+import { type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { classifyRawQuery } from '../../../layers/sme-roster/lib/platform'
 import { buildPlatformWritePayload, type KnownEnterprise, type PlatformQueryInput } from '../../../layers/sme-roster/lib/platform/payload'
 import {
@@ -112,7 +113,7 @@ const importRequest: RosterImportRequest = {
 
 let server: EvidenceServer
 let currentQuery: Record<string, unknown> = {}
-const client = () => createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+const client = () => createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
 const json = async <T>(path: string): Promise<T> => {
   const response = await fetch(`${server.baseUrl}${path}`)
   expect(response.status, `${path} 应返回 200`).toBe(200)

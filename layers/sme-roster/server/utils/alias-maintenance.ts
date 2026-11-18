@@ -1,3 +1,4 @@
+import { insertEnterpriseAliasAudit, updateEnterpriseAlias } from '../../../core/server/public'
 import { createHash } from 'node:crypto'
 import { and, asc, count, eq, ne } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -118,15 +119,15 @@ export function maintainEnterpriseAlias(db: Db, enterpriseId: unknown, aliasId: 
       if (clash) fail(409, 'alias_identity_conflict', '更正后的自然键已有别名，请维护其稳定ID')
     }
     const identityBefore = identityMaterial113(tx, before.enterpriseId)
-    const after = tx.update(schema.enterpriseAlias).set({ ...changes, nameNorm: next.nameNorm, verificationStatus: next.verificationStatus, version: before.version + 1,
+    const after = updateEnterpriseAlias(tx, and(eq(schema.enterpriseAlias.id, before.id), eq(schema.enterpriseAlias.version, request.expectedVersion))!, { ...changes, nameNorm: next.nameNorm, verificationStatus: next.verificationStatus, version: before.version + 1,
       originalName: before.originalName, originalSourceKind: before.originalSourceKind, originalSourceRefId: before.originalSourceRefId,
-    }).where(and(eq(schema.enterpriseAlias.id, before.id), eq(schema.enterpriseAlias.version, request.expectedVersion))).returning().get()
+    })
     if (!after) fail(409, 'alias_version_conflict', '别名版本已改变')
     const result = view(after)
-    tx.insert(schema.enterpriseAliasAudit).values({ aliasId: before.id, enterpriseId: before.enterpriseId, action: request.action,
+    insertEnterpriseAliasAudit(tx, { aliasId: before.id, enterpriseId: before.enterpriseId, action: request.action,
       actor: request.actor, basis: request.basis, idempotencyKey: request.idempotencyKey, requestHash,
       before, after: result, createdAt: new Date().toISOString(),
-    }).run()
+    })
     captureIdentityRevision113(tx, { enterpriseId: before.enterpriseId, sourceKey: `enterprise:${before.enterpriseId}`, sourceVersion: `alias:${before.id}:${after.version}`, before: identityBefore, after: identityMaterial113(tx, before.enterpriseId) })
     return { alias: result, replayed: false }
   }, { behavior: 'immediate' })

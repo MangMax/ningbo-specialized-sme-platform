@@ -115,6 +115,7 @@ it('upgrades an existing database without changing business rows', () => {
 it('keeps credential values out of ordinary roster export rows', () => {
   const db = initializeDb({ create: true, dbPath: join(dir, 'export.sqlite') }); connections.push(db.$client)
   const enterprise = db.insert(schema.enterprise).values({ name: 'Synthetic export enterprise', nameNorm: 'synthetic export enterprise' }).returning().get()
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: enterprise.id }).run()
   db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).run()
   updateCredentials({ 'core.ocrToken': 'synthetic-not-exported-ocr', 'sme-roster.miitCookie': 'session=synthetic-not-exported-cookie' }, { db, env: {} })
   const records = allRecords(db, {})

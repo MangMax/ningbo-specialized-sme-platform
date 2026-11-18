@@ -1,3 +1,5 @@
+import { upgradeEnterpriseKernel } from '../../../upgrade/enterprise-kernel'
+import { syntheticEnterpriseDictionaries } from '../../support/pre-enterprise-kernel'
 /** Offline retirement boundary tests; native application tests live in final-native-runtime.test.ts. */
 import Database from 'better-sqlite3'
 import { copyFileSync, mkdtempSync } from 'node:fs'
@@ -53,6 +55,7 @@ it('serves migrated enterprise details with the reconcile capture collection mar
   retirePlatformModel(f.db)
   upgradeTitleCycleDisposition(f.db)
   upgradeRosterFileClassification(f.db)
+  upgradeEnterpriseKernel(f.db, syntheticEnterpriseDictionaries)
   const owner = useApplicationDb({ dbPath:f.path })
   cleanup.push(() => { owner.$client.close() })
   const detail = getRosterEnterpriseDetail(owner, 1, Date.UTC(2026, 10, 14))!
@@ -90,6 +93,8 @@ it('retires historical tables atomically and opens the completed runtime without
   expect(() => useRuntimeDb({ dbPath: f.path, readOnly: true })).toThrow('explicit offline file classification upgrade')
   expect(() => initializeDb({ dbPath: f.path })).toThrow('explicit offline file classification upgrade')
   upgradeRosterFileClassification(f.db)
+  expect(() => useRuntimeDb({ dbPath: f.path, readOnly: true })).toThrow('Enterprise kernel missing')
+  upgradeEnterpriseKernel(f.db, syntheticEnterpriseDictionaries)
   const runtime = useRuntimeDb({ dbPath: f.path, readOnly: true })
   cleanup.push(() => { runtime.$client.close() })
   expect(runtime.$client.prepare('SELECT count(*) n FROM platform_collection').get()).toEqual(f.db.prepare('SELECT count(*) n FROM platform_collection').get())
@@ -137,6 +142,7 @@ it('retired populated catalog matches native creation except the native capabili
  expect(retained()).toEqual(before)
  expect(f.db.prepare('SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name').all()).toEqual(upgraded)
  upgradeRosterFileClassification(f.db)
+ upgradeEnterpriseKernel(f.db, syntheticEnterpriseDictionaries)
  const native=new Database(':memory:')
  try {
   native.pragma('foreign_keys=ON');createRuntimeSchema(native)

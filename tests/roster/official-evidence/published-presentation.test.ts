@@ -1,3 +1,4 @@
+import { completeInProcessIntake } from '../imports/fixtures/in-process-intake'
 import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
@@ -64,7 +65,7 @@ async function fixture() {
     const response = await fetch(server.baseUrl + path, { method: body === undefined ? 'GET' : 'POST', headers: { authorization: 'Bearer synthetic-355', 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
     const result = await response.json(); trace.push({ path, body, status: response.status, result })
     expect(response.status, JSON.stringify(result)).toBe(200)
-    return result
+    return path === '/import/commit' ? await completeInProcessIntake(db, result, body as import('../../../layers/sme-roster/lib/roster-import-client').RosterImportRequest, filesDir) as typeof result : result
   }
   const commit = async (payload: RosterImportPayload, key: string) => {
     const request = { idempotencyKey: key, sourceKind: 'announcement', sourceIdentity: 'synthetic-355', payload }

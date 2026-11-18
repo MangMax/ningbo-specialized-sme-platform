@@ -47,6 +47,7 @@ function enterprise(key: string, name: string, uscc: string | null, district: st
     .returning({ id: schema.enterprise.id })
     .get().id
   ids[key] = id
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: id }).run()
   return id
 }
 

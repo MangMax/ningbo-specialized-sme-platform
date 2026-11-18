@@ -2,16 +2,16 @@ import { createHash } from 'node:crypto'
 import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
-import type { RosterImportRequest } from '../../lib/roster-import-client'
+import { hasAnnouncementRows, type RosterImportRequest } from '../../lib/roster-import-client'
 import { ensureBatchRow } from './roster-batch-ledger'
 import { ImportReceiptError } from './import-receipts'
 import { importReceiptRedactor } from './import-receipt-redaction'
 import { appLog, type LogContext } from '../../../core/lib/logging'
 
 type Db = BetterSQLite3Database<typeof schema>
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(item => canonical(item ?? null)).join(',')}]`
-  if (value && typeof value === 'object') return `{${Object.entries(value).filter(([, item]) => item !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`
+export function canonicalImportJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(item => canonicalImportJson(item ?? null)).join(',')}]`
+  if (value && typeof value === 'object') return `{${Object.entries(value).filter(([, item]) => item !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => `${JSON.stringify(key)}:${canonicalImportJson(item)}`).join(',')}}`
   return JSON.stringify(value) ?? 'null'
 }
 
@@ -20,12 +20,17 @@ export function recordImportReceipt<T extends { status: string }>(db: Db, operat
   const enclosingTransaction = (db as Db & { $client?: { inTransaction: boolean } }).$client?.inTransaction ?? false
   const batchRequest = operation === 'replay' ? { ...request, idempotencyKey: `${request.idempotencyKey}#repoint` } : request
   const normalized = { ...request, sourceSha256: request.sourceSha256 ?? null }
-  const hash = createHash('sha256').update(canonical(normalized)).digest('hex')
+  const hash = createHash('sha256').update(canonicalImportJson(normalized)).digest('hex')
   const redact = importReceiptRedactor(db)
   // Both phases write. Reserve the writer before reading so concurrent candidate
   // commits cannot invalidate a deferred read snapshot during its write upgrade.
   // Reserve before execution so a process lost during submission remains visibly processing.
   const attempt = db.transaction(() => {
+    if (operation === 'commit' && !hasAnnouncementRows(request)
+      && db.select({ id: schema.rosterAnnouncementIntake.id }).from(schema.rosterAnnouncementIntake)
+        .where(eq(schema.rosterAnnouncementIntake.idempotencyKey, request.idempotencyKey)).get()) {
+      throw new ImportReceiptError(409, 'idempotency_conflict', 'Idempotency key belongs to an announcement intake')
+    }
     const existing = db.get<{ id: number; status: string; sourceKind: string; sourceIdentity: string; sourceSha256: string | null }>(sql`SELECT id, status, source_kind AS sourceKind, source_identity AS sourceIdentity, source_sha256 AS sourceSha256 FROM import_batch WHERE idempotency_key = ${batchRequest.idempotencyKey}`)
     if (existing && (existing.sourceKind !== request.sourceKind || existing.sourceIdentity !== request.sourceIdentity || existing.sourceSha256 !== (request.sourceSha256 ?? null))) throw new ImportReceiptError(409, 'idempotency_conflict', 'Idempotency key belongs to a different source')
     const previous = existing ? db.get<{ id: number; status: string; requestHash: string; historical: number }>(sql`SELECT id, status, request_hash AS requestHash, CASE WHEN ${request.sourceKind} = 'platform_archive' THEN json_type(COALESCE((SELECT owner.request_body FROM import_receipt owner WHERE owner.id=import_receipt.body_receipt_id), request_body), '$.payload.platformRecordObservations') IS NOT NULL ELSE 0 END AS historical FROM import_receipt WHERE batch_id = ${existing.id} ORDER BY id DESC LIMIT 1`) : undefined

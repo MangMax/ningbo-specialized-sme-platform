@@ -48,8 +48,8 @@
 首次变更前确认目标应用/数据库及其基线或可恢复备份，备份放在 Git 外。目标或恢复点无法确认时，停在写入之前。
 
 - TUS 负责传输，再调用应用文件注册、页图、OCR 和解析接口。`record_evidence.source_file` 必须是已入文件库文件的相对路径。
-- 企业名录和支持的平台证据通过统一导入写入：HTTP `POST /api/roster/import/preflight` 后 `/commit`，或 MCP `preflight_roster_batch` 后 `save_roster_batch`。同批保留一个来源身份、哈希和幂等键。
-- 正式公布原行按[正式事实写入契约](../../../../layers/sme-roster/server/utils/official-evidence.ts)提供 `evidence.publishedRow`，逐字保存本次已核原名、代码、属地及声明、文件和行坐标；未知字段显式为 `null`。普通公告载荷兼容旧协议，其成功不表示已捕获公布原行。既有事件缺少该表示时，按同契约的精确更正流程固定 evidence ID、版本和 `planHash` 补核，再用 `official=latest` 独立读回；保留原事件和出处 ID。
+- 企业名录和支持的平台证据通过统一导入写入。同批保留一个来源身份、哈希和幂等键。含公布名单原行通过 HTTP `POST /api/roster/import/commit` 或 MCP `save_roster_batch` 留存，返回 `staged`。按 `GET /api/roster/import/intake/{id}` 核对原行和摘要，再以 `POST /api/roster/import/intake/{id}/supplement` 提交逐行的已核身份、依据及明确指定的资料字段。已有企业附 `enterpriseId` 和 `expectedRevision`，新建提供现用名称；重复原行可引用同批较早核对的行。若 `officialEvidencePreflightRequired: true`，先在同一补充接口提交已核对的决定和 `preflight: true`。预检无冲突后，省略 `preflight` 并携带该接口返回的 `officialEvidencePlanHash` 提交相同决定。提交相同核对决定可读回原回执。平台比较快照和不含公布原行的类型化补证仍通过 HTTP `/preflight` 后 `/commit` 或对应 MCP 工具。
+- 正式公布原行按[正式事实写入契约](../../../../layers/sme-roster/server/utils/official-evidence.ts)提供 `evidence.publishedRow`，逐字保存本次已核原名、代码、属地及声明、文件和行坐标；未知字段显式为 `null`。没有显式 `publishedRow` 的记录继续保留原文件坐标。既有事件缺少该表示时，按同契约的精确更正流程固定 evidence ID、版本和 `planHash` 补核，再用 `official=latest` 独立读回；保留原事件和出处 ID。
 - 按[平台查询说明](./platform-query.md)通过应用 REST/MCP 查证三类平台来源。查询结果是只读证据候选，不自动写入。完整范围查询才可证明零记录；全部关系和原查询时间均保留。存储支持 `business_list`（businessList）、`apply_list`（queryList）及独立的 `recognized_list`（queryBusList）。原结果/每个批量分段只通过统一预检、提交转存，随后读回全部查询/行 ID，遵循[归档转存契约](../../../../layers/sme-roster/lib/platform/recognized-evidence.ts)。缺原始时间或分页证明时留待处理，不改标来源。
 - 公开来源和平台证据只使用当前契约支持的载荷。公开来源补码、合并结构见当前 API；遵循[身份查证说明](./uscc-recovery.md)中更严格的 `cross_source` 准入条件。
 - 同批提交具有原子性：失败不写业务行。不得改用直接 SQLite 写入或临时导入器。结果不确定时按[同键恢复流程](./orchestration.md)处理。

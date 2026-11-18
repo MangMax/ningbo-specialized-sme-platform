@@ -1,3 +1,4 @@
+import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
 import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -7,7 +8,7 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
 import { initializeDb, schema } from '../../../db/client'
-import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
+import { type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { processEvidenceImpacts113, listEvidenceImpacts113, listImpactEvidence113, readEvidenceToken113, listRevisionEvents113 } from '../../../layers/sme-roster/server/utils/evidence-impact-113'
 import { recognizedResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
@@ -16,7 +17,7 @@ import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/
 
 const dir = mkdtempSync(join(tmpdir(), 'impact-113-'))
 const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
-let baseUrl: string, stop: () => Promise<void>, client: ReturnType<typeof createRosterImportClient>
+let baseUrl: string, stop: () => Promise<void>, client: ReturnType<typeof createReviewedFixtureImportClient>
 const actor = { type: 'agent', id: 'synthetic-113' }
 async function rpc(name: string, args: Record<string, unknown>) {
   const response = await fetch(baseUrl + '/mcp', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18', authorization: 'Bearer synthetic-mcp' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) })
@@ -39,7 +40,7 @@ beforeAll(async () => {
   let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-8000) })
   baseUrl = `http://127.0.0.1:${port}`; stop = () => stopOwnedChild(child)
   try { await waitForHttp(baseUrl + '/api/roster/differences', { timeoutMs: 60000, child }) } catch (e) { await stop(); throw new Error(String(e) + output) }
-  client = createRosterImportClient({ baseUrl, token: 'synthetic-api' })
+  client = createReviewedFixtureImportClient({ baseUrl, token: 'synthetic-api' }, db)
 }, 90000)
 afterAll(async () => { if (stop) await stop(); rmSync(dir, { recursive: true, force: true }) })
 

@@ -1,3 +1,4 @@
+import { completeInProcessIntake } from '../imports/fixtures/in-process-intake'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -17,7 +18,12 @@ type Execute = typeof import('../../../layers/sme-roster/server/utils/import-exe
 const current = vi.hoisted((): { db?: BetterSQLite3Database<typeof schema>; filesDir: string } => ({ filesDir: '' }))
 vi.mock('@db', () => ({ useDb: () => { if (!current.db) throw new Error('Synthetic database not initialized'); return current.db } }))
 // Replace only process admission; real production routes/planners/writers run in H3/SQLite.
-vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: { execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
+vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: {
+  stage: async (db: Parameters<Execute>[0], request: Parameters<Execute>[2], errors: NonNullable<Parameters<Execute>[3]>) => {
+    const { stageAnnouncement } = await import('../../../layers/sme-roster/server/utils/announcement-intake')
+    return stageAnnouncement(db as Parameters<typeof stageAnnouncement>[0], request, errors)
+  },
+  execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
 const closes: (() => void | Promise<void>)[] = []
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close() })
 afterAll(() => { vi.unstubAllGlobals() })
@@ -61,7 +67,7 @@ async function fixture() {
   }
   const post = async (action: 'preflight' | 'commit', body: RosterImportRequest) => {
     const response = await http(`/api/roster/import/${action}`, body); expect(response.status).toBe(200)
-    return importResult.parse(response.body)
+    return importResult.parse(await completeInProcessIntake(db, response.body, body, filesDir))
   }
   const request = (payload: RosterImportPayload, key: string): RosterImportRequest => ({ idempotencyKey: key, sourceKind: 'announcement', sourceIdentity: 'synthetic-r3', payload })
   const commit = async (input: RosterImportRequest) => {

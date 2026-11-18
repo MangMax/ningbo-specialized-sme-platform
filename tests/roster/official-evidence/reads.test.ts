@@ -1,3 +1,5 @@
+import { reviewFixtureRows } from '../imports/fixtures/reviewed-announcement'
+import { supplementAnnouncement } from '../../../layers/sme-roster/server/utils/announcement-intake'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -18,7 +20,12 @@ const current = vi.hoisted((): { db?: BetterSQLite3Database<typeof schema>; file
 vi.mock('@db', () => ({ useDb: () => { if (!current.db) throw new Error('Synthetic database unavailable'); return current.db } }))
 type Execute = typeof import('../../../layers/sme-roster/server/utils/import-execution')['importExecutor']['execute']
 // Only off-process admission is replaced; production H3 routes, commands and SQLite run unchanged.
-vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: { execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
+vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: {
+  stage: async (db: Parameters<Execute>[0], request: Parameters<Execute>[2], errors: NonNullable<Parameters<Execute>[3]>) => {
+    const { stageAnnouncement } = await import('../../../layers/sme-roster/server/utils/announcement-intake')
+    return stageAnnouncement(db as Parameters<typeof stageAnnouncement>[0], request, errors)
+  },
+  execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
 const closes: (() => void | Promise<void>)[] = []
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close() })
 afterAll(() => vi.unstubAllGlobals())
@@ -72,7 +79,17 @@ async function fixture() {
     const parsed=resultSchema.parse(plan.body); expect(parsed.preflight?.conflicts).toEqual([])
     const bound=parsed.preflight?.officialEvidencePlanHash ? {...input,payload:{...payload,officialEvidencePlanHash:parsed.preflight.officialEvidencePlanHash}} : input
     const result=await http('/api/roster/import/commit',bound); expect(result.status).toBe(200)
-    const committed=resultSchema.parse(result.body); expect(committed.status,JSON.stringify(committed)).toBe('committed')
+    const stage = z.object({ status: z.literal('staged'), intakeId: z.number(), sourceDigest: z.string(), officialEvidencePreflightRequired: z.literal(true).optional() }).safeParse(result.body)
+    let receipt = result.body
+    if (stage.success) {
+      const review = reviewFixtureRows(db, stage.data.sourceDigest, bound)
+      const preview = stage.data.officialEvidencePreflightRequired
+        ? await supplementAnnouncement(db, stage.data.intakeId, { ...review, preflight: true }, filesDir)
+        : undefined
+      receipt = await supplementAnnouncement(db, stage.data.intakeId, { ...review, officialEvidencePlanHash: preview?.officialEvidencePlanHash }, filesDir)
+    }
+    const committed = resultSchema.parse(receipt)
+    expect(committed.status, JSON.stringify(committed)).toBe(stage.success ? 'supplemented' : 'committed')
     return {result:committed,bound}
   }
   const row = (nameRaw: string | null,listNo=1): OfficialPublishedRow => ({nameRaw,usccRaw:'原统代',districtRaw:'原属地',declaration:{kind:'independent',sourceDocument:{source:'jxj',title:'Declared publication',docNumber:null,issueDate:null,path:'notice.txt'},basis:'Independent publication verified'},storedFileId:1,path:'notice.txt',sha256:digest,bytes:Buffer.byteLength(bytes),attachment:null,sectionKey:'名单',listNo,page:null,sourceBindingKnown:true,actor:{type:'agent',id:'synthetic-c'},basis:'Exact published row'})

@@ -1,3 +1,5 @@
+import { upgradeEnterpriseKernel } from '../../../upgrade/enterprise-kernel'
+import { syntheticEnterpriseDictionaries } from '../../support/pre-enterprise-kernel'
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { expect, it } from 'vitest';
@@ -41,6 +43,11 @@ it('opens an existing pre-disposition native database without installing tables'
             if (!statement.includes('title_cycle_disposition_')) sqlite.exec(statement);
         sqlite.pragma('user_version=71613');
         sqlite.prepare('INSERT INTO platform_runtime_completion VALUES(1,?,?,?)').run('platform-mixed-model-retirement-v1', 71613, '2026-01-01');
+        const predecessor = sqlite.prepare('SELECT type,name,sql FROM sqlite_schema ORDER BY name').all();
+        expect(() => useRuntimeDb({ dbPath: path })).toThrow('Enterprise kernel missing');
+        expect(sqlite.prepare('SELECT type,name,sql FROM sqlite_schema ORDER BY name').all()).toEqual(predecessor);
+        sqlite.pragma('foreign_keys=ON');
+        upgradeEnterpriseKernel(sqlite, syntheticEnterpriseDictionaries);
         const before = sqlite.prepare('SELECT type,name,sql FROM sqlite_schema ORDER BY name').all();
         runtime = useRuntimeDb({ dbPath: path });
         expect(sqlite.prepare('SELECT type,name,sql FROM sqlite_schema ORDER BY name').all()).toEqual(before);
