@@ -1,4 +1,5 @@
 import type { LucideIcon } from '@lucide/vue'
+import type { FileCategory } from './file-categories'
 
 type AppNavLink = {
   readonly title: string
@@ -45,6 +46,7 @@ export type AppModuleManifest = {
   }[]
   readonly mcpTools?: readonly string[]
   readonly credentials?: readonly AppCredential[]
+  readonly fileCategories?: FileCategory
   readonly nav?: readonly AppNavItem[]
   readonly jobKinds?: readonly AppJobKind[]
 }

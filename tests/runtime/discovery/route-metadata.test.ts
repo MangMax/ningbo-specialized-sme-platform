@@ -6,7 +6,7 @@ import { expect, it } from 'vitest'
 it('declares literal discovery metadata for every public method route', () => {
   const root = join(import.meta.dirname, '../../../server/api')
   // Existing file UI handlers predate agent discovery; keep the debt explicit.
-  const exempt = new Set(['files/[id]/segments/commit.post.ts', 'files/[id]/segments/preflight.post.ts', 'files/[id]/segments.get.ts', 'files/[id].get.ts', 'files/register.post.ts'])
+  const exempt = new Set(['files/[id]/segments/commit.post.ts', 'files/[id]/segments/preflight.post.ts', 'files/[id]/segments.get.ts', 'files/[id].get.ts'])
   function files(dir: string): string[] {
     return readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? files(join(dir, entry.name)) : [join(dir, entry.name)])
   }

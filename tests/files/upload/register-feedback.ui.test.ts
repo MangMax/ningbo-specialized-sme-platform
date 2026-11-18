@@ -2,7 +2,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Toaster, toast } from 'vue-sonner'
-import UploadDialog from '../../../components/files/UploadDialog.vue'
+import UploadDialog from '../../../components/sme-roster/RosterFileUploadDialog.vue'
 import type { UploadedFile } from '../../../lib/upload-register'
 import type { UploadFailure } from '../../../lib/upload'
 

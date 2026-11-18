@@ -4,6 +4,8 @@ import { ref, watch } from 'vue'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useQuery } from '@pinia/colada'
 import { Toaster, toast } from 'vue-sonner'
+import { defineComponent, h } from 'vue'
+import * as registry from '../../../lib/app-file-category-ui'
 import FilesPage from '../../../pages/files.vue'
 
 // Happy DOM lacks WAAPI; exercise vue-sonner's JS fallback (same setup as
@@ -46,12 +48,12 @@ function button(view: ReturnType<typeof mount>, label: string) {
  */
 const stubs = {
   PageHeader: { template: '<header><slot/><slot name="actions"/></header>' },
-  MultiSelectFilter: true, TablePagination: true, TableFailureState: true,
+  MultiSelectFilter: { name: 'MultiSelectFilter', props: ['modelValue', 'placeholder'], emits: ['update:modelValue'], template: '<button>{{ placeholder }}</button>' }, TablePagination: true, TableFailureState: true,
   TableLoadingStatus: true, FileSegmentsEditor: true, PdfViewDialog: true,
   FilePreviewDialog: true, NuxtLink: { template: '<a><slot/></a>' },
   EditFileDialog: {
     props: ['open'], emits: ['save', 'rename'],
-    template: '<button data-testid="emit-save" @click="$emit(\'save\', { source: \'jxj\', kind: \'announcement\', year: \'2024\', batch: \'1\', titleCode: \'\' })">save</button><button data-testid="emit-rename" @click="$emit(\'rename\', \'新名称.pdf\')">rename</button>',
+    template: '<button data-testid="emit-save" @click="$emit(\'save\', { source: \'jxj\', kind: \'announcement\', year: 2024, batch: 1, titleCode: null })">save</button><button data-testid="emit-rename" @click="$emit(\'rename\', \'新名称.pdf\')">rename</button>',
   },
   DeleteFileDialog: {
     props: ['open'], emits: ['confirm'],
@@ -92,6 +94,52 @@ describe('文件页写路径操作反馈', () => {
     await flushPromises()
   })
   afterEach(() => { view.unmount(); toast.dismiss(); toaster.unmount(); document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.clearAllMocks() })
+
+  it('renders added filters and detail panels alongside the existing module', async () => {
+    view.unmount()
+    const modules = registry.getFileCategoryUi()
+    const registration = vi.spyOn(registry, 'getFileCategoryUi').mockReturnValue([
+      ...modules,
+      {
+        id: 'catalog',
+        name: '馆藏',
+        filters: [{
+          key: 'collection', label: '馆藏', placeholder: '全部馆藏', width: 'w-28',
+          options: [{ value: 'local', label: '本地馆藏' }],
+        }],
+        detailPanel: defineComponent({
+          setup: () => () => h('p', '由模块登记的文件详情'),
+        }),
+        uploadDialog: defineComponent({
+          props: ['open'],
+          setup: props => () => props.open ? h('p', '馆藏上传窗口') : null,
+        }),
+      },
+    ])
+    try {
+      view = mount(FilesPage as never, {
+        attachTo: document.body,
+        global: { stubs: { ...stubs, EditFileDialog: false } },
+      })
+      const filters = view.findAllComponents({ name: 'MultiSelectFilter' })
+      expect(filters.map(filter => filter.props('placeholder'))).toContain('全部来源')
+      const filter = filters.find(filter => filter.props('placeholder') === '全部馆藏')!
+      filter.vm.$emit('update:modelValue', ['local'])
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/files', expect.objectContaining({
+        query: expect.objectContaining({ collection: 'local' }),
+      })))
+      expect(view.text()).toContain('馆藏 · 本地馆藏')
+      await button(view, '上传 · 馆藏').trigger('click')
+      expect(view.text()).toContain('馆藏上传窗口')
+      await button(view, '文件信息').trigger('click')
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain('由模块登记的文件详情')
+        expect(document.body.textContent).toContain('文件发布年份')
+      })
+    } finally {
+      registration.mockRestore()
+    }
+  })
 
   it('保存文件信息成功给出成功 toast;失败给带「重试」的失败 toast,重试重发同一 PATCH', async () => {
     // 打开编辑弹窗 → 由替身 emit 一次 save

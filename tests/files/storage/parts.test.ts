@@ -400,11 +400,11 @@ describe('从 record_evidence 回填段', () => {
 
     // 192号 年份列显示两个年 —— 验收里的那一条。
     expect(byPath.get(FILE_192)!.parts).toHaveLength(2)
-    expect(partYears(byPath.get(FILE_192)!.parts).map(String).join('、')).toBe('2021、2024')
-    expect(partBatches(byPath.get(FILE_192)!.parts)).toEqual([2])
+    expect(partYears(byPath.get(FILE_192)!.parts!).map(String).join('、')).toBe('2021、2024')
+    expect(partBatches(byPath.get(FILE_192)!.parts!)).toEqual([2])
 
     // 145号 年份列也是两个年(同一附件、两年名单)。
-    expect(partYears(byPath.get(FILE_145)!.parts).map(String).join('、')).toBe('2021、2022')
+    expect(partYears(byPath.get(FILE_145)!.parts!).map(String).join('、')).toBe('2021、2022')
 
     // 公布年份/批次仍是文件级的单值,与内容年份互不影响。
     const f192 = byPath.get(FILE_192)!
@@ -413,12 +413,12 @@ describe('从 record_evidence 回填段', () => {
 
   it('工信部导出也按维护批次分段(attachment 为空)', () => {
     const miit = listStoredFiles(db, { q: '导出Excel' }).rows.find((r) => r.relPath === FILE_MIIT)!
-    expect(miit.parts.map((p) => `${p.eventKind}/${p.year}`)).toEqual([
+    expect(miit.parts!.map((p) => `${p.eventKind}/${p.year}`)).toEqual([
       'maintain/2024',
       'maintain/2025',
     ])
-    expect(miit.parts.every((p) => p.attachment === null)).toBe(true)
-    expect(partYears(miit.parts)).toEqual([2024, 2025])
+    expect(miit.parts!.every((p) => p.attachment === null)).toBe(true)
+    expect(partYears(miit.parts!)).toEqual([2024, 2025])
   })
 
   it('没有引用的文件不留段(留给票 11 解析时写),但公布年份还在', () => {

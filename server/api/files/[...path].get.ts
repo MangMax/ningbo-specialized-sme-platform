@@ -4,12 +4,12 @@ import { verifyFileRead, verifyPageRead } from '../../utils/file-read-identity'
 import { createReadStream, statSync } from 'node:fs'
 import { extname, normalize, resolve, sep } from 'node:path'
 import { resolvePreviewKind } from '../../../lib/preview'
-import { resolveInsideRoot } from '../../utils/stored-files'
+import { resolveInsideRoot } from '../../utils/file-store'
 
 /**
  * 按台账「出处」路径读取来源文件,供预览组件使用。
  *
- * 文件库是 app 内的 `files/`(约定见 lib/file-store-scope.ts):记录里的
+ * 文件库是 app 内的 `files/`:记录里的
  * `record_evidence.source_file` 存**相对该目录**的路径,如
  * `jxj/announcement/2024/1/甬经信中小〔2024〕72号….pdf`。
  * 这里把它交给浏览器里的预览器。

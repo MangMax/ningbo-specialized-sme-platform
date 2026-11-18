@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { compareFileContentIdentity, readStoredFileContentIdentity, type StoredFileContentIdentity } from './file-content-identity'
-import { resolveInsideRoot, sha256Of } from './stored-files'
+import { resolveInsideRoot, sha256Of } from './file-store'
 
 type Db = BetterSQLite3Database<typeof schema>
 export interface FileReadIdentity {

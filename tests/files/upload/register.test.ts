@@ -1,3 +1,4 @@
+import { resolveUploadPlacement } from '../../../server/utils/stored-files'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -9,8 +10,8 @@ import { createTus, TUS_PATH } from '../../../server/utils/tus'
 import {
   parseUploadDeclaration,
   registerStoredFile,
-  UploadRegistrationError,
-} from '../../../server/utils/stored-files-upload'
+} from '../../../server/modules/sme-roster/file-upload'
+import { UploadRegistrationError } from '../../../server/utils/file-store'
 import { listStoredFiles } from '../../../server/utils/stored-files'
 
 /**
@@ -63,6 +64,20 @@ async function putFile(relPath: string, content: string): Promise<string> {
 function rows() {
   return useDb().select().from(schema.storedFile).all()
 }
+
+it.each([
+  ['入库培育.pdf', null, 'nurture', '文件名含「入库培育」—— 培育对象不构成称号,按 lib/file-store-scope.ts 排除'],
+  ['名单.doc', '名单.docx', 'duplicate-doc', '同目录已有同名 .docx(可预览的转出件)—— 重复的旧版 .doc 不入库'],
+  ['识别.docx', '识别.pdf', 'human-ocr-docx', '同目录已有同名 .pdf —— 该 .docx 是人工 OCR 产物,PDF 才是权威原件'],
+])('rejects %s at upload registration using the file admission policy', async (name, sibling, reason, detail) => {
+  const directory = 'jxj/announcement/2026/1'
+  const relPath = await putFile(`${directory}/${name}`, 'synthetic file')
+  if (sibling) await putFile(`${directory}/${sibling}`, 'synthetic sibling')
+  const input = parseUploadDeclaration({ relPath, source: 'jxj', kind: 'announcement', year: 2026, batch: 1 })
+
+  await expect(registerStoredFile(useDb(), filesDir, input)).rejects.toMatchObject({ statusCode: 400, reason, message: detail })
+  expect(rows().some(file => file.relPath === relPath)).toBe(false)
+})
 
 it('rolls back the file row when classification cannot be created', async () => {
   const relPath = await putFile('jxj/announcement/2025/atomic.pdf', 'synthetic source')
@@ -351,7 +366,7 @@ describe('tus 上传 → 登记(端到端)', () => {
   let tus: ReturnType<typeof createTus>
 
   beforeAll(() => {
-    tus = createTus({ filesDir, incomingDir, allowedOrigins: [BASE] })
+    tus = createTus({ filesDir, incomingDir, landing: resolveUploadPlacement, allowedOrigins: [BASE] })
   })
 
   /** 把声明的 metadata 编成 tus 的 `Upload-Metadata` 头值(base64 值)。 */

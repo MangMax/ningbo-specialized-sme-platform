@@ -28,7 +28,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import FileEventSync from './FileEventSync.vue'
+import FileEventSync from '@/components/files/FileEventSync.vue'
 import { TITLES, TITLE_ORDER, EVENTS, EVENT_ORDER } from '~~/lib/labels'
 import { describeFetchError } from '~~/lib/upload-register'
 import type {

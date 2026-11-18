@@ -1,3 +1,4 @@
+import { resolveInsideRoot, scanFileStore } from '../../../server/utils/file-store'
 import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { initializeDb } from '../../../db/client'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -14,8 +15,6 @@ import {
   getStoredFile,
   parseMetadataPatch,
   removeStoredFile,
-  resolveInsideRoot,
-  scanFileStore,
   updateStoredFile,
 } from '../../../server/utils/stored-files'
 
@@ -522,5 +521,26 @@ describe('DELETE 默认不删磁盘', () => {
     // 回填不会把移出的文件又插回来。
     const again = await backfillFromDisk(db, filesRoot)
     expect(again.inserted).toBe(0)
+  })
+})
+
+describe('platform files alongside roster files', () => {
+  it('includes a file without roster classification in list totals and detail until a roster filter is selected', () => {
+    const mixedDb = initializeDb({ create: true, dbPath: join(dir, 'mixed.db') })
+    createClassifiedFile(mixedDb, {
+      relPath: 'jxj/announcement/2024/notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: 5, sha256: 'b'.repeat(64),
+    }, { source: 'jxj', categoryState: 'set', parseState: 'unparsed' })
+    const common = { relPath: 'shared/reference.pdf', filename: 'reference.pdf', ext: 'pdf', bytes: 8, sha256: 'c'.repeat(64) }
+    const { id } = mixedDb.insert(schema.storedFile).values(common).returning({ id: schema.storedFile.id }).get()
+    const { rows, total } = listStoredFiles(mixedDb, { pageSize: 1 })
+    expect.soft(total).toBe(2)
+    expect(rows).toHaveLength(1)
+    expect.soft(listStoredFiles(mixedDb, { q: 'reference.pdf' })).toMatchObject({ rows: [common], total: 1 })
+    expect.soft(getStoredFile(mixedDb, id)).toMatchObject(common)
+    expect.soft(listStoredFiles(mixedDb, { q: 'reference.pdf', source: 'invalid' }).total).toBe(1)
+    for (const filters of [{ source: 'jxj' }, { categoryState: 'set' }, { parseState: 'unparsed' }]) {
+      expect(listStoredFiles(mixedDb, { q: 'reference.pdf', ...filters })).toEqual({ rows: [], total: 0 })
+      expect(listStoredFiles(mixedDb, filters).total).toBe(1)
+    }
   })
 })

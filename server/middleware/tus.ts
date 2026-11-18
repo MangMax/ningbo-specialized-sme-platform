@@ -1,5 +1,6 @@
 import { appLog, requestLogContext, setRequestLogMetadata, type TusLogContext } from '../../lib/logging'
 import { httpLogModule } from '../../lib/logging/module'
+import { resolveUploadPlacement } from '../utils/stored-files'
 import { TUS_PATH, getTus, withTusObservation, type TusObservation } from '../utils/tus'
 
 /**
@@ -27,7 +28,7 @@ export default defineEventHandler(async (event) => {
   let logged = false
   try {
     const { result: response } = await withTusObservation(() =>
-      getTus().handleWeb(toWebRequest(event)), observation,
+      getTus(resolveUploadPlacement).handleWeb(toWebRequest(event)), observation,
     )
     const status = response.status
     // A client disconnect may surface as `Connection: close`; it is an observed

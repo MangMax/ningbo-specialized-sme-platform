@@ -3,7 +3,7 @@
 > 2026-11-17：[平台底座与业务模块边界 ADR](2026-11-17-platform-core-and-business-modules.md)（#874）补充本文：入库范围规则从文件库的通用规则改归名录模块（`sme-roster`），作为它在模块清单里登记的入库策略；下文判据、原因码与处置不变。原文保留。
 
 
-2026-10-16 · 状态:接受(RL-16,票 #17) · 规则实现 [`lib/file-store-scope.ts`](../../lib/file-store-scope.ts)
+2026-10-16 · 状态:接受(RL-16,票 #17) · 规则实现 [`lib/file-store-scope.ts`](../../lib/sme-roster/file-store-scope.ts)
 
 **修正** [ADR-来源文件内化为仓库内的文件库](./2026-10-13-source-files-in-repo.md) 的「内化范围」一段(那一版说:经信局的 PDF 与 `.doc` 内化、与 PDF 同名的 `.docx` 不内化)。
 **目录规则(`files/<source>/<kind>/<year>/<batch>/<filename>`)与 `source_file` 口径不变** —— 变的只有「哪些文件该进文件库」这条判定。
@@ -18,7 +18,7 @@
 
 ## 决定
 
-1. **入库范围只有一个出处**:[`lib/file-store-scope.ts`](../../lib/file-store-scope.ts) 的 `scopeOf()`
+1. **入库范围只有一个出处**:[`lib/file-store-scope.ts`](../../lib/sme-roster/file-store-scope.ts) 的 `scopeOf()`
    —— 纯函数(相对路径 + 同目录兄弟名 → 入不入库、为什么),可单测。
    回填(`server/utils/stored-files.ts` 的 `backfillStoredFiles`)每次都调用它:
    不在范围内的文件**不进 `stored_file`**,并在回填报告的 `excluded` 里**带原因逐条报出**。

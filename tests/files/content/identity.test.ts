@@ -8,7 +8,7 @@ import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
 import { backfillFromDisk, getStoredFile, listStoredFiles } from '../../../server/utils/stored-files'
-import { parseUploadDeclaration, registerStoredFile } from '../../../server/utils/stored-files-upload'
+import { parseUploadDeclaration, registerStoredFile } from '../../../server/modules/sme-roster/file-upload'
 import { compareFileContentIdentity, readStoredFileContentIdentity } from '../../../server/utils/file-content-identity'
 import { readFileMaintenance } from '../../../server/utils/file-maintenance'
 

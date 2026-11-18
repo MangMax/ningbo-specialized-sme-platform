@@ -6,7 +6,7 @@ import { compareParts, partKey, type EventKind, type FilePart } from '../../lib/
 import { EVENT_ORDER, TITLE_ORDER } from '../../lib/labels'
 import type { ParseState } from '../../lib/stored-file'
 import { derivedPartsForFile } from './file-parts'
-import { PARSE_STATES } from './stored-files'
+import { PARSE_STATES } from '../modules/sme-roster/files'
 
 type Db = BetterSQLite3Database<typeof schema>
 

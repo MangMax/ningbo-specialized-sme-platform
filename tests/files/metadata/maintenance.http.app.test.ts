@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -61,6 +62,70 @@ beforeAll(async () => {
 afterAll(async () => { if (service) await service.stop(); rmSync(dir, { recursive: true, force: true }) })
 
 describe("file maintenance public transports", () => {
+  it('exposes common files through list and detail, and only scopes the list when a category filter is selected', async () => {
+    const notice = await file()
+    const relPath = 'shared/common-reference.txt'
+    const text = 'fixture-owned reference'
+    mkdirSync(join(root, 'shared'), { recursive: true })
+    writeFileSync(join(root, relPath), text)
+    const { id } = db.insert(schema.storedFile).values({
+      relPath, filename: 'common-reference.txt', ext: 'txt', bytes: Buffer.byteLength(text),
+      sha256: createHash('sha256').update(text).digest('hex'),
+    }).returning({ id: schema.storedFile.id }).get()
+    const getList = async (query = '') => {
+      const res = await fetch(service.baseUrl + '/api/files' + query)
+      expect(res.status).toBe(200)
+      return await res.json()
+    }
+
+    expect(await getList('?pageSize=1')).toMatchObject({ total: 2 })
+    expect(await getList('?q=common-reference')).toMatchObject({ total: 1, rows: [{ id, relPath }] })
+    expect(await getList('?q=common-reference&source=unknown')).toMatchObject({ total: 1 })
+    expect(await getList('?source=jxj&categoryState=set&parseState=unparsed')).toMatchObject({
+      total: 1, rows: [{ id: notice.id, source: 'jxj' }],
+    })
+    expect(await rest(String(id))).toEqual({ status: 200, body: text })
+    const detail = await rest(`${id}/maintenance`)
+    expect(detail).toMatchObject({ status: 200, body: { revision: 0, file: { id, relPath } } })
+    expect(detail.body.file).not.toHaveProperty('categoryState')
+    expect((await rpc('get_file', { fileId: id })).value).toMatchObject({ id, relPath })
+    expect(await rest(String(id), 'PATCH', { displayName: '通用参考' })).toMatchObject({
+      status: 200, body: { id, relPath, displayName: '通用参考' },
+    })
+    expect(await rest(`${id}/maintenance`)).toMatchObject({
+      status: 200, body: { revision: 1, rows: [{ after: { displayName: '通用参考' } }] },
+    })
+
+    expect(await rest(String(id), 'DELETE')).toMatchObject({ status: 200 })
+    expect(await rest(String(notice.id), 'DELETE')).toMatchObject({ status: 200 })
+  })
+
+  it('publishes the same list query parameters from the enabled categories in development OpenAPI', () => {
+    const list = discovery.paths['/api/files'].get
+    expect(list.parameters.map((param: { name: string }) => param.name))
+      .toEqual(['source', 'categoryState', 'parseState', 'q', 'page', 'pageSize', 'rescan'])
+    expect(list.parameters.slice(0, 3)).toEqual([
+      { name: 'source', in: 'query', schema: { type: 'string' }, description: '来源,多值:`jxj` / `miit`。' },
+      { name: 'categoryState', in: 'query', schema: { type: 'string' }, description: '分类状态,多值:`set`(已定)/ `inferred`(程序推的)/ `unset`(未定)。' },
+      { name: 'parseState', in: 'query', schema: { type: 'string' }, description: '解析状态,多值:`unparsed` / `parsed` / `failed`。' },
+    ])
+    const patch = discovery.paths['/api/files/{id}'].patch
+    expect(patch.requestBody.content['application/json'].schema.oneOf[0].properties).toMatchObject({
+      source: { type: 'string', enum: ['jxj', 'miit'], nullable: true },
+      year: { type: 'integer', nullable: true },
+    })
+    const properties = patch.responses[200].content['application/json'].schema.properties
+    expect(properties.parts.items.properties.origin.enum).toEqual(['derived', 'agent', 'legacy'])
+  })
+
+  it('publishes the upload registration selector and legacy optionality in development OpenAPI', () => {
+    const register = discovery.paths['/api/files/register'].post
+    const schema = register.requestBody.content['application/json'].schema
+    expect(schema.required).toEqual(['relPath'])
+    expect(schema.properties).toMatchObject({ relPath: { type: 'string' }, fileCategory: { type: 'string' } })
+    expect(Object.keys(register.responses)).toEqual(['200', '201', '400', '409'])
+  })
+
   it('keeps registration, classification, parsing, preview and soft removal on one uploaded file ID', async () => {
     const filename = 'classification-lifecycle.pdf'
     const pdf = minimalPdf({ pages: 2 })

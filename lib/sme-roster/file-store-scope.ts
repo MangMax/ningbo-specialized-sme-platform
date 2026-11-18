@@ -1,6 +1,6 @@
 /** 入库范围的唯一可执行规则。按库内相对路径及同目录兄弟名排除通知、入库培育和重复转换件。 */
 
-import { baseName, directoryOf, extensionOf } from './stored-file'
+import { baseName, extensionOf } from '../core/file-path'
 
 /** 入库范围判定的**原因码**。`in-scope` 是唯一「入库」的取值。 */
 export type StoreScopeReason =
@@ -26,7 +26,7 @@ export type StoreScopeVerdict =
   | { inScope: true; reason: 'in-scope'; detail: string }
   | { inScope: false; reason: Exclude<StoreScopeReason, 'in-scope'>; detail: string }
 
-/** 排除 **入库培育** 文件的关键词。与 `pipeline/src/files.ts` 的判据、`lib/file-store-scope.ts` 同字面量。 */
+/** 排除 **入库培育** 文件的关键词。与 `pipeline/src/files.ts` 的判据、`本模块同字面量。 */
 export const NURTURE_KEYWORD = '入库培育'
 
 /** 一份排除判定。 */
@@ -38,23 +38,6 @@ function exclude(reason: Exclude<StoreScopeReason, 'in-scope'>): StoreScopeVerdi
 function stemOf(filename: string): string {
   const ext = extensionOf(filename)
   return ext === '' ? filename : filename.slice(0, filename.length - ext.length - 1)
-}
-
-/**
- * 一份文件的**同目录兄弟名**集合。回填把扫到的全部文件喂进来一次即可。
- *
- * 键是目录(库内相对路径的目录段),值是该目录下**全部**文件名。
- */
-export function siblingIndex(relPaths: Iterable<string>): Map<string, Set<string>> {
-  const index = new Map<string, Set<string>>()
-  for (const relPath of relPaths) {
-    const dir = directoryOf(relPath)
-    const name = baseName(relPath)
-    const set = index.get(dir)
-    if (set) set.add(name)
-    else index.set(dir, new Set([name]))
-  }
-  return index
 }
 
 /**

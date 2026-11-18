@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { formatBytes } from '@/lib/core/file-size'
 import { computed, inject, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { Upload } from 'tus-js-client'
 import type { HttpResponse } from 'tus-js-client'
@@ -23,7 +24,6 @@ import {
   baseName,
   buildMetadata,
   emptyBatchMeta,
-  formatBytes,
   formatEta,
   isBatchComplete,
   isFilenameSafe,
