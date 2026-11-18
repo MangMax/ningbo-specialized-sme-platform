@@ -57,7 +57,7 @@ import {
 } from '#core/app/components/ui/sheet'
 import { Skeleton } from '#core/app/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
-import ImagePreview from '@/components/preview/ImagePreview.vue'
+import ImagePreview from '#core/app/components/preview/ImagePreview.vue'
 import OcrBottomBar from './OcrBottomBar.vue'
 import OcrFilePicker from './OcrFilePicker.vue'
 import OcrFilterPanel from './OcrFilterPanel.vue'
@@ -72,7 +72,7 @@ import {
   type PageFilters,
   type PageReviewState,
 } from '~~/lib/ocr-workbench'
-import { PAGE_IMAGE_ZOOM_MIN, pageLabel } from '~~/lib/page-gallery'
+import { PAGE_IMAGE_ZOOM_MIN, pageLabel } from '#core/lib/page-gallery'
 import type { OcrView } from '@/composables/useOcrNavigation'
 
 const {

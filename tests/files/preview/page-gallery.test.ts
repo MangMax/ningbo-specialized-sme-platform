@@ -11,7 +11,7 @@ import {
   pageLabel,
   renderSummary,
   singlePageCountLabel,
-} from '../../../lib/page-gallery'
+} from '../../../layers/core/lib/page-gallery'
 import type { PdfPagesState, RenderOutcome } from '../../../server/utils/pdf-pages'
 
 /**

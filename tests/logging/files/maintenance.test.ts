@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
 import { initializeDb } from '../../../db/client'
-import { maintainStoredFile } from '../../../server/utils/file-maintenance'
-import { handleStoredFilePatchRequest } from '../../../server/utils/stored-file-patch-http'
+import { maintainStoredFile } from '../../../layers/core/server/utils/file-maintenance'
+import { handleStoredFilePatchRequest } from '../../../layers/core/server/utils/stored-file-patch-http'
 
 /**
  * #180 follow-up: the three known file-maintenance failure sites carry the

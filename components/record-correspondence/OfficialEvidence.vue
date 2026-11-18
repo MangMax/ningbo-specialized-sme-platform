@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
+import { fileNameOf, fileUrl, isPreviewable } from '#core/lib/preview'
 import { evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
 import { publishedNameText, type OfficialPublishedFact } from '~~/lib/roster/correspondence-view'
 import { Button } from '#core/app/components/ui/button'

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import ContentPreview from '@/components/preview/ContentPreview.vue'
+import ContentPreview from '#core/app/components/preview/ContentPreview.vue'
 import { useAppColorMode } from '#core/app/composables/useAppColorMode'
 
 /**

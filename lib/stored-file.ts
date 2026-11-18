@@ -1,4 +1,4 @@
-import { baseName } from './core/file-path'
+import { baseName } from '../layers/core/lib/core/file-path'
 
 /**
  * 文件库(`app/files/`)元数据的**纯规则**:从相对路径反推分类(来源 / 类别 / 年份 / 批次),

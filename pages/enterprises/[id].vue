@@ -19,14 +19,14 @@ import TableFailureState from '#core/app/components/TableFailureState.vue'
 import PlatformRecords from '@/components/PlatformRecords.vue'
 import TitleBadge from '@/components/TitleBadge.vue'
 import { QUALITY_FLAGS, TITLE_ORDER } from '~~/lib/labels'
-import { fileUrl, fileNameOf } from '~~/lib/preview'
+import { fileUrl, fileNameOf } from '#core/lib/preview'
 import {
   hasEvidencePreviewReturn,
   rememberEvidencePreviewReturn,
   shouldNuxtScrollToTop,
   useEvidencePreviewScrollRestore,
 } from '~~/lib/roster/evidence-preview-return'
-import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
+import FilePreviewDialog from '#core/app/components/preview/FilePreviewDialog.vue'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import { Alert, AlertDescription, AlertTitle } from '#core/app/components/ui/alert'
 import { Badge } from '#core/app/components/ui/badge'

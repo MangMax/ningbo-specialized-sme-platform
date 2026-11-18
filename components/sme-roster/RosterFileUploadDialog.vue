@@ -10,8 +10,9 @@ import {
 } from '#core/app/components/ui/dialog'
 import { Button } from '#core/app/components/ui/button'
 import UploadPanel from '@/components/upload/UploadPanel.vue'
-import { describeFetchError, toRegisterBody, type UploadedFile } from '@/lib/upload-register'
-import type { UploadFailure } from '@/lib/upload'
+import { describeFetchError } from '../../layers/core/lib/file-content-status'
+import { toRegisterBody, type UploadedFile } from '@/lib/upload-register'
+import type { UploadFailure } from '../../layers/core/lib/upload-transport'
 import { useToastFeedback } from '#core/app/composables/useToastFeedback'
 
 /**

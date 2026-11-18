@@ -31,7 +31,7 @@
  * 「同内容不重复写」由清单里的源 sha256 判,见 `server/utils/pdf-pages.ts`。
  */
 
-import { baseName, extensionOf } from './core/file-path'
+import { baseName, extensionOf } from '../layers/core/lib/core/file-path'
 
 /** 页图目录后缀(与源文件名拼成 `<文件名>.pages`,再加前导点)。 */
 export const PAGES_DIR_SUFFIX = '.pages'

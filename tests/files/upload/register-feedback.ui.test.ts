@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { Toaster, toast } from 'vue-sonner'
 import UploadDialog from '../../../components/sme-roster/RosterFileUploadDialog.vue'
 import type { UploadedFile } from '../../../lib/upload-register'
-import type { UploadFailure } from '../../../lib/upload'
+import type { UploadFailure } from '../../../layers/core/lib/upload-transport'
 
 // Happy DOM lacks WAAPI; exercise vue-sonner's JS fallback (same setup as
 // tests/ui/settings/credential-controls.ui.test.ts).

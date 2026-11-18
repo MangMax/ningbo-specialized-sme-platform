@@ -6,7 +6,7 @@ import { useQuery } from '@pinia/colada'
 import { Toaster, toast } from 'vue-sonner'
 import { defineComponent, h } from 'vue'
 import * as registry from '../../../lib/app-file-category-ui'
-import FilesPage from '../../../pages/files.vue'
+import FilesPage from '../../../layers/core/app/pages/files.vue'
 
 // Happy DOM lacks WAAPI; exercise vue-sonner's JS fallback (same setup as
 // tests/ui/settings/credential-controls.ui.test.ts).

@@ -1,5 +1,5 @@
 import type { LucideIcon } from '@lucide/vue'
-import type { FileCategory } from '../../../../lib/core/file-categories'
+import type { FileCategory } from './file-categories'
 
 type AppNavLink = {
   readonly title: string

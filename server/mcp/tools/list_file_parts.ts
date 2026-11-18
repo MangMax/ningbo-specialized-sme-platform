@@ -1,4 +1,4 @@
-import { describeFileRead } from '../../utils/file-read-identity'
+import { describeFileRead } from '../../../layers/core/server/utils/file-read-identity'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { fileRefShape, openFileStore, requireFileRef } from '../../utils/mcp-files'
 

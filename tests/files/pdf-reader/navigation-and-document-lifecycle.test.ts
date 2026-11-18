@@ -2,7 +2,7 @@
 import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
 import { describe, it, expect } from 'vitest'
-import PdfPreview from '../../../components/preview/PdfPreview.vue'
+import PdfPreview from '../../../layers/core/app/components/preview/PdfPreview.vue'
 
 const attempts: unknown[] = []
 const Engine = defineComponent({

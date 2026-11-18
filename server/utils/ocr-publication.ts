@@ -7,7 +7,7 @@ import { isJobId } from '../../layers/core/lib/job'
 import { pageDirRelPath, PAGES_MANIFEST_NAME } from '../../lib/pdf-page'
 import * as schema from '../../db/schema'
 import { resolveWithinRoot } from './pdf-pages'
-import { compareFileContentIdentity, readStoredFileContentIdentity } from './file-content-identity'
+import { compareFileContentIdentity, readStoredFileContentIdentity } from '../../layers/core/server/utils/file-content-identity'
 
 type Db = JobContext['db']
 export interface OcrCapture {

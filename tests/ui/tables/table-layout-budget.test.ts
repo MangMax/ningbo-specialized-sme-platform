@@ -73,7 +73,7 @@ describe('表格滚动预算 token', () => {
 describe('列表页 min-w 收敛为推导值', () => {
   // files:逐列像素列的 table-fixed 表。规范:min-w = 表头各列 w-* 之和。
   it('files.vue 的 min-w 等于表头各列宽度之和', () => {
-    const page = readPage('pages/files.vue')
+    const page = readPage('layers/core/app/pages/files.vue')
     const table = page.match(/<Table class="data-table[^"]*min-w-\[(\d+)px\][^"]*table-fixed">/)
     expect(table).not.toBeNull()
 

@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { storedFile } from '../../db/schema'
 import { serverFileCategories } from '../file-category-modules'
-import { createFileStore, FileMaintenanceError, type FileStoreDb as Db } from './file-store'
+import { createFileStore, FileMaintenanceError, type FileStoreDb as Db } from '../../layers/core/server/utils/file-store'
 
 const store = createFileStore(serverFileCategories)
 

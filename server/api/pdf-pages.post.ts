@@ -1,4 +1,4 @@
-import { verifyFileRead } from '../utils/file-read-identity'
+import { verifyFileRead } from '../../layers/core/server/utils/file-read-identity'
 import { requestLogContext } from '../../layers/core/lib/logging'
 import { useDb } from '@db'
 import { findFileIdByRelPath } from '../utils/mcp-files'

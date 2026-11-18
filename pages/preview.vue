@@ -3,15 +3,15 @@ import { computed } from 'vue'
 import { ROSTER_LEDGER_PATH } from '~~/lib/sme-roster/routes'
 import { ENTERPRISE_LIST_TITLE } from '~~/lib/labels'
 import { ChevronLeft, FileDown } from '@lucide/vue'
-import { describeUnsupported, fileNameOf, fileUrl, isPreviewable, resolvePreviewKind } from '~~/lib/preview'
+import { describeUnsupported, fileNameOf, fileUrl, isPreviewable, resolvePreviewKind } from '#core/lib/preview'
 import {
   EVIDENCE_PAGE_WORDS,
   evidencePageState,
   isPageCapable,
 } from '~~/lib/roster/evidence-page'
-import FilePreview from '@/components/preview/FilePreview.vue'
-import { useSourcePdfRoute } from '@/composables/useSourcePdfRoute'
-import SourcePdfPreview from '@/components/preview/SourcePdfPreview.vue'
+import FilePreview from '#core/app/components/preview/FilePreview.vue'
+import { useSourcePdfRoute } from '#core/app/composables/useSourcePdfRoute'
+import SourcePdfPreview from '#core/app/components/preview/SourcePdfPreview.vue'
 import { Alert, AlertDescription, AlertTitle } from '#core/app/components/ui/alert'
 import { Badge } from '#core/app/components/ui/badge'
 

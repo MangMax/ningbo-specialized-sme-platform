@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { historicalContentMessage } from '~~/lib/file-content-status'
+import { historicalContentMessage } from '#core/lib/file-content-status'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import {
@@ -41,8 +41,8 @@ import { Textarea } from '#core/app/components/ui/textarea'
 import type { WorkbenchRow } from '~~/lib/ocr-workbench'
 import { pageReviewState, STATE_WORD } from '~~/lib/ocr-workbench'
 import { OCR_CHANNELS } from '~~/lib/labels'
-import { PAGE_IMAGE_ZOOM_MIN, pageLabel } from '~~/lib/page-gallery'
-import ImagePreview from '@/components/preview/ImagePreview.vue'
+import { PAGE_IMAGE_ZOOM_MIN, pageLabel } from '#core/lib/page-gallery'
+import ImagePreview from '#core/app/components/preview/ImagePreview.vue'
 import OcrPageBody from './OcrPageBody.vue'
 
 const props = defineProps<{

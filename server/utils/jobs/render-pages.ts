@@ -1,6 +1,6 @@
 import { appLog } from '../../../layers/core/lib/logging'
-import { registeredFileAtLocator, verifyFileRead, verifyPageRead } from '../file-read-identity'
-import type { StoredFileContentIdentity } from '../file-content-identity'
+import { registeredFileAtLocator, verifyFileRead, verifyPageRead } from '../../../layers/core/server/utils/file-read-identity'
+import type { StoredFileContentIdentity } from '../../../layers/core/server/utils/file-content-identity'
 import { isPdfPath, normalizeDpi } from '../../../lib/pdf-page'
 import type { RenderOutcome } from '../pdf-pages'
 import { renderPdfPages } from '../pdf-pages'

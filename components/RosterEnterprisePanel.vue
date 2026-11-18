@@ -23,11 +23,11 @@ import {
   TITLE_ORDER,
   VERIFICATION_STATUSES,
 } from '~~/lib/labels'
-import { fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
+import { fileNameOf, fileUrl, isPreviewable } from '#core/lib/preview'
 import { EVIDENCE_PAGE_WORDS, evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
 import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
 import { evidencePointerText } from '~~/lib/roster/first-recognition'
-import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
+import FilePreviewDialog from '#core/app/components/preview/FilePreviewDialog.vue'
 import EventChip from '@/components/EventChip.vue'
 import SourceChip from '@/components/SourceChip.vue'
 import TitleBadge from '@/components/TitleBadge.vue'

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from 'vue'
 import { FileText } from '@lucide/vue'
-import { pageLabel } from '~~/lib/page-gallery'
+import { pageLabel } from '#core/lib/page-gallery'
 import { STATE_WORD, type PageReviewState } from '~~/lib/ocr-workbench'
 
 /**

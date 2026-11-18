@@ -6,10 +6,10 @@ import * as h3 from 'h3'
 import { inArray, sql } from 'drizzle-orm'
 import { initializeDb } from '../../../db/client'
 import { rosterFileClassification, storedFile } from '../../../db/schema'
-import { createFileStore, sha256Of, type FileCategoryServer, type FileStoreDb, type FileQueryFilters, type RegistrationWriter } from '../../../server/utils/file-store'
-import { extendFileOpenApi } from '../../../server/utils/file-openapi'
+import { createFileStore, sha256Of, type FileCategoryServer, type FileStoreDb, type FileQueryFilters, type RegistrationWriter } from '../../../layers/core/server/utils/file-store'
+import { extendFileOpenApi } from '../../../layers/core/server/utils/file-openapi'
 import { rosterFileServerCategory } from '../../../server/modules/sme-roster/files'
-import { createTus, TUS_PATH } from '../../../server/utils/tus'
+import { createTus, TUS_PATH } from '../../../layers/core/server/utils/tus'
 
 let dir: string
 beforeAll(() => { dir = mkdtempSync(join(tmpdir(), 'file-categories-')) })
@@ -128,9 +128,9 @@ async function uploadAndRegisterFixture(name: string, installed: readonly FileCa
   }
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir }))
   const base = 'http://localhost'
-  const registerRoute = (await import('../../../server/api/files/register.post')).default
-  const listRoute = (await import('../../../server/api/files/index.get')).default
-  const detailRoute = (await import('../../../server/api/files/[id]/maintenance.get')).default
+  const registerRoute = (await import('../../../layers/core/server/api/files/register.post')).default
+  const listRoute = (await import('../../../layers/core/server/api/files/index.get')).default
+  const detailRoute = (await import('../../../layers/core/server/api/files/[id]/maintenance.get')).default
   const router = h3.createRouter()
     .post('/api/files/register', registerRoute)
     .get('/api/files', listRoute)

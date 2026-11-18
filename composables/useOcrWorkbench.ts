@@ -1,4 +1,4 @@
-import { currentContentMessage, type ContentIdentity } from '~~/lib/file-content-status'
+import { currentContentMessage, type ContentIdentity } from '#core/lib/file-content-status'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useOcrNavigation } from './useOcrNavigation'
 import {
@@ -9,8 +9,8 @@ import {
   type WorkbenchRow,
 } from '~~/lib/ocr-workbench'
 import { OCR_CHANNELS } from '~~/lib/labels'
-import { pageLabel } from '~~/lib/page-gallery'
-import { describeFetchError } from '~~/lib/upload-register'
+import { pageLabel } from '#core/lib/page-gallery'
+import { describeFetchError } from '../layers/core/lib/file-content-status'
 import type { OcrResultRow } from '~~/server/utils/ocr-result'
 import type { PdfPagesState, RenderOutcome } from '~~/server/utils/pdf-pages'
 import type { StoredFileRow } from '~~/server/utils/stored-files'

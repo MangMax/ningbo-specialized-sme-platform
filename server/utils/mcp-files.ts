@@ -1,9 +1,9 @@
-import { verifyFileRead, verifyPageRead } from './file-read-identity'
+import { verifyFileRead, verifyPageRead } from '../../layers/core/server/utils/file-read-identity'
 import { appLog, type LogContext } from '../../layers/core/lib/logging'
 import { eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
-import type { BackfillExclusion } from './file-store'
+import type { BackfillExclusion } from '../../layers/core/server/utils/file-store'
 import { useDb } from '@db'
 import * as schema from '../../db/schema'
 import { DEFAULT_DPI, isPdfPath, normalizeDpi } from '../../lib/pdf-page'
@@ -11,7 +11,7 @@ import {
   backfillFileParts,
   type PartsBackfillStats,
 } from './file-parts'
-import { maintainStoredFileSync, type FileMaintenanceOptions } from './file-maintenance'
+import { maintainStoredFileSync, type FileMaintenanceOptions } from '../../layers/core/server/utils/file-maintenance'
 import { listPdfPages, resolveWithinRoot, type PdfPagesState } from './pdf-pages'
 import {
   backfillFromDisk,
@@ -270,7 +270,7 @@ export interface FileRef {
   id: number
   relPath: string
   filename: string
-  contentIdentity?: import('./file-read-identity').FileReadIdentity
+  contentIdentity?: import('../../layers/core/server/utils/file-read-identity').FileReadIdentity
 }
 
 // ---------------------------------------------------------------------------

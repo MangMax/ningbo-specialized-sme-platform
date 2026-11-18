@@ -1,6 +1,6 @@
 import { useDb } from '@db'
-import { readStoredFileContentIdentity } from '../utils/file-content-identity'
-import { verifyFileRead, verifyPageRead } from '../utils/file-read-identity'
+import { readStoredFileContentIdentity } from '../../layers/core/server/utils/file-content-identity'
+import { verifyFileRead, verifyPageRead } from '../../layers/core/server/utils/file-read-identity'
 import { createReadStream } from 'node:fs'
 import { DEFAULT_DPI, isPdfPath, normalizeDpi } from '~~/lib/pdf-page'
 import { listPdfPages, pageImagePath, resolveWithinRoot } from '../utils/pdf-pages'

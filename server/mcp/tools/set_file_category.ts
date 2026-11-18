@@ -1,6 +1,6 @@
 import type { LogContext } from '../../../layers/core/lib/logging'
-import { legacyFileMaintenanceControlShape } from '../../utils/file-maintenance-contract'
-import { parseFileMaintenanceOptions } from '../../utils/file-maintenance'
+import { legacyFileMaintenanceControlShape } from '../../../layers/core/server/utils/file-maintenance-contract'
+import { parseFileMaintenanceOptions } from '../../../layers/core/server/utils/file-maintenance'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'

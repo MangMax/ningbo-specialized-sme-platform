@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import PageImageGallery from '../../../components/preview/PageImageGallery.vue'
+import PageImageGallery from '../../../layers/core/app/components/preview/PageImageGallery.vue'
 import type { PdfPagesState, RenderOutcome } from '../../../server/utils/pdf-pages'
 
 const file = 'synthetic/rl-10/notice.pdf'

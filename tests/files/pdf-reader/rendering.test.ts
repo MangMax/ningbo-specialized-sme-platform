@@ -3,7 +3,7 @@ import { defineComponent, h, shallowRef } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { PdfActionType, PdfZoomMode } from '@embedpdf/models'
-import PdfPreview from '../../../components/preview/PdfPreview.vue'
+import PdfPreview from '../../../layers/core/app/components/preview/PdfPreview.vue'
 
 // Control only the public headless engine/hooks. Exercise the real application tree.
 const control = vi.hoisted(() => ({ documentState: null as any, layout: null as any, scroll: null as any, move: vi.fn(), destroy: vi.fn(), viewport: { scrollLeft: 0, scrollTop: 240 }, bookmarks: [] as any[], manualRaster: false, raster: null as any, activity: null as any, pages: null as any, smooth: false, metrics: null as any }))

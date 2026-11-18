@@ -22,7 +22,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 import { Textarea } from '#core/app/components/ui/textarea'
 import { JSONL_IMPORT_HINT, MARKDOWN_IMPORT_HINT } from '~~/lib/ocr-workbench'
-import { pageLabel } from '~~/lib/page-gallery'
+import { pageLabel } from '#core/lib/page-gallery'
 
 /**
  * 导入人工在 PaddleOCR 官网跑好的结果(通路 b 在页面上的入口)。

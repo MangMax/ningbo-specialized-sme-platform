@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { mount, flushPromises } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
-import TextFilePreview from '../../../components/preview/TextFilePreview.vue'
+import TextFilePreview from '../../../layers/core/app/components/preview/TextFilePreview.vue'
 afterEach(() => vi.unstubAllGlobals())
 it('isolates late old responses, aborts the old request and retries the failed target', async () => {
   let resolveOld!: (value: Response) => void

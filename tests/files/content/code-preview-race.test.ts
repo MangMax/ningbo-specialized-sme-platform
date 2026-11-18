@@ -12,7 +12,7 @@ vi.mock('shiki/core', () => ({ createHighlighterCore: async () => ({
   loadTheme: async () => {},
   codeToHtml: (source: string, options: { theme: string }) => `<pre class="${options.theme}"><code>${source}</code></pre>`,
 }) }))
-import CodePreview from '../../../components/preview/CodePreview.vue'
+import CodePreview from '../../../layers/core/app/components/preview/CodePreview.vue'
 it('ignores a late old highlight after changing source language and theme', async () => {
   const wrapper = mount(CodePreview, { props: { source: '旧文件', language: 'js' } })
   await vi.waitFor(() => expect(state.waiting).toBe(true))

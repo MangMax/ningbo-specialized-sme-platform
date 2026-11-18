@@ -67,13 +67,13 @@ Object.assign(globalThis, h3, {
 })
 const jitiPath = createRequire(require.resolve('nuxt/package.json')).resolve('jiti')
 const { createJiti } = require(jitiPath)
-const load = createJiti(resolve(root, 'package.json'), { alias: { '@db': resolve(root, 'db/index.ts'), '~~': root } })
+const load = createJiti(resolve(root, 'package.json'), { alias: { '@db': resolve(root, 'db/index.ts'), '~~': root, '#core': resolve(root, 'layers/core') } })
 const router = h3.createRouter()
 for (const [method, path, file] of [
   ['post', '/api/jobs', 'jobs/index.post.ts'],
   ['get', '/api/jobs/:id', 'jobs/[id].get.ts'],
   ['get', '/api/files/:id/ocr-pages/:page', 'files/[id]/ocr-pages/[page].get.ts'],
-]) router[method](path, (await load.import(resolve(root, 'server/api', file))).default)
+]) router[method](path, (await load.import(resolve(root, file.startsWith('jobs/') ? 'layers/core/server/api' : 'server/api', file))).default)
 router.get('/health', h3.defineEventHandler(() => ({ isolated: true })))
 // Test-only observation of the actual runner finishing, including a still-live
 // original executor whose persisted row was marked failed by another process.

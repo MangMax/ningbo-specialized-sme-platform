@@ -1,4 +1,4 @@
-import type { UploadMetadata } from '../core/file-categories'
+import type { UploadMetadata } from '../../layers/core/lib/core/file-categories'
 
 /** `source` 白名单:经信局 / 工信部。 */
 const SOURCES = new Set(['jxj', 'miit'])

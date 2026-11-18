@@ -5,7 +5,7 @@ vi.mock('markstream-vue', async importOriginal => {
   const original = await importOriginal<typeof import('markstream-vue')>()
   return { ...original, parseMarkdownToStructure: () => { throw new Error('renderer unavailable') } }
 })
-import ContentPreview from '../../../components/preview/ContentPreview.vue'
+import ContentPreview from '../../../layers/core/app/components/preview/ContentPreview.vue'
 it('retains the exact source if the Markdown library fails', async () => {
   const source = '# 原文\n<table>甲</table>\n'
   const wrapper = mount(ContentPreview, { props: { source } })

@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch, watchEffect } from 'vue'
-import { currentContentMessage } from '~~/lib/file-content-status'
+import { currentContentMessage } from '#core/lib/file-content-status'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import { Input } from '#core/app/components/ui/input'
 import { Label } from '#core/app/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
 import { KIND_ORDER, KINDS, SOURCES, SOURCE_ORDER, TITLE_ORDER, TITLES } from '~~/lib/labels'
 import type { RosterFileFields } from '~~/server/modules/sme-roster/files'
-import type { FileRow } from '~~/server/utils/file-store'
-import type { FileDetailDraft } from '~~/lib/core/file-categories'
+import type { FileRow } from '#core/server/utils/file-store'
+import type { FileDetailDraft } from '#core/lib/core/file-categories'
 
 const props = defineProps<{ open: boolean; file: (FileRow & RosterFileFields) | null; pending: boolean }>()
 const emit = defineEmits<{ draft: [value: FileDetailDraft] }>()

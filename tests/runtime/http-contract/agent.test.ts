@@ -909,7 +909,7 @@ describe('Nitro 内建 OpenAPI 的暴露面', () => {
       'jobs/kinds.get.ts',
     ]
     for (const rel of routes) {
-      const source = await readFile(join(rel.startsWith('jobs/') ? CORE_ROUTE_DIR : ROUTE_DIR, rel), 'utf8')
+      const source = await readFile(join(/^(jobs|files)\//.test(rel) ? CORE_ROUTE_DIR : ROUTE_DIR, rel), 'utf8')
       expect(source, rel).toContain('defineRouteMeta({')
       // 宏必须写在**顶层**(nitro 只认顶层 ExpressionStatement),所以别塞进函数里。
       expect(/^defineRouteMeta\(/m.test(source), rel).toBe(true)
