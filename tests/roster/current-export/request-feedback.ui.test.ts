@@ -6,7 +6,7 @@ import { PiniaColada } from '@pinia/colada'
 import { createRouter, createMemoryHistory, RouterLink } from 'vue-router'
 import Page from '../../../pages/current-enterprises.vue'
 import { TASK_EXPORTS } from '../../../lib/task-center'
-import { Select } from '../../../components/ui/select'
+import { Select } from '../../../layers/core/app/components/ui/select'
 
 const JOB = '01M5BEPVCXD5619ZW4C6CATRET'
 const KEY = 'task-center-export-requests-v1'

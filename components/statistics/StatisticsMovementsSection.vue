@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef, watch } from 'vue'
 import { MOVEMENT_KINDS, type MovementStatistics, type MovementKind } from '~~/lib/roster/movement-statistics'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
 import { ArrowDownLeft, ArrowUpRight, Minus } from '@lucide/vue'
 const labels = { moved_in: '迁入', moved_out: '迁出', cancelled: '注销' }
 const year = ref('all')

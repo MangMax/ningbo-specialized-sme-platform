@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { Loader2, Upload } from '@lucide/vue'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '#core/app/components/ui/alert'
+import { Button } from '#core/app/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -10,17 +10,17 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
-import { Label } from '@/components/ui/label'
+} from '#core/app/components/ui/dialog'
+import { Label } from '#core/app/components/ui/label'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Textarea } from '@/components/ui/textarea'
+} from '#core/app/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
+import { Textarea } from '#core/app/components/ui/textarea'
 import { JSONL_IMPORT_HINT, MARKDOWN_IMPORT_HINT } from '~~/lib/ocr-workbench'
 import { pageLabel } from '~~/lib/page-gallery'
 

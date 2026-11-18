@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '#core/app/components/ui/sheet'
 const open = defineModel<boolean>('open', { default: false })
 defineProps<{ title: string; target: string; source?: string; loading: boolean; failed: boolean }>()
 defineEmits<{ retry: [] }>()

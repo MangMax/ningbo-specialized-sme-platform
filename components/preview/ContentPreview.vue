@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onErrorCaptured, onMounted, ref, watch } from 'vue'
-import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Button } from '#core/app/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from '#core/app/components/ui/dropdown-menu'
 import CodePreview from './CodePreview.vue'
 import MarkdownPreview from './MarkdownPreview.vue'
 

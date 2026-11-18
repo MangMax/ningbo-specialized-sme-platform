@@ -6,8 +6,8 @@ import type { CurrentTitle } from '~~/lib/roster/current-titles'
 import { CURRENT_STATUS_LABELS } from '~~/lib/roster/current-status'
 import TitleBadge from './TitleBadge.vue'
 import PlatformRecords from './PlatformRecords.vue'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { Button } from '#core/app/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '#core/app/components/ui/dialog'
 import { reviewOutcomeLabel, timelineEventIdentity, type TimelineEventFacts } from '~~/lib/roster/enterprise-timeline'
 
 const props = defineProps<{ events?: readonly TimelineEventFacts[]; enterpriseId?: number; source?: PlatformQualificationFact; inheritedFrom?: CurrentTitle }>()

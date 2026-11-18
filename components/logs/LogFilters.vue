@@ -16,10 +16,10 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, type LogFilter } from '~~/lib/logging/contract'
 import { sourceLabel, outcomeLabel, logModuleLabel, logModuleOptions } from './logPresentation'
-import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
-import { Input } from '@/components/ui/input'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Button } from '#core/app/components/ui/button'
+import { Separator } from '#core/app/components/ui/separator'
+import { Input } from '#core/app/components/ui/input'
+import { Field, FieldGroup, FieldLabel } from '#core/app/components/ui/field'
 import {
   Select,
   SelectContent,
@@ -27,8 +27,8 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue
-} from '@/components/ui/select'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
+} from '#core/app/components/ui/select'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import ComparisonDateTimePicker from '@/components/record-correspondence/ComparisonDateTimePicker.vue'
 const props = defineProps<{ filter: LogFilter }>()
 const emit = defineEmits<{ apply: [value: Record<string, string>] }>()

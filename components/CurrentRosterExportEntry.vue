@@ -2,8 +2,8 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { TaskExportTitle } from '~~/lib/task-center'
 import { useCurrentRosterExport } from '~/composables/useCurrentRosterExport'
-import { Button } from '@/components/ui/button'
-import { Alert } from '@/components/ui/alert'
+import { Button } from '#core/app/components/ui/button'
+import { Alert } from '#core/app/components/ui/alert'
 import { TITLES } from '~~/lib/labels'
 import { CURRENT_TITLES } from '~~/lib/roster/current-titles'
 

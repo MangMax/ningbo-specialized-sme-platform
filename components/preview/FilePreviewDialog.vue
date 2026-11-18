@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import FilePreview from '@/components/preview/FilePreview.vue'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '#core/app/components/ui/dialog'
 import { fileNameOf } from '~~/lib/preview'
 
 /**

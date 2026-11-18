@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { shallowRef, watch } from 'vue'
 import { AnimatePresence, motion, useReducedMotion } from 'motion-v'
-import { Button } from '@/components/ui/button'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Button } from '#core/app/components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 import CredentialField from './CredentialField.vue'
 import LoadingIndicator from './LoadingIndicator.vue'
 import { useCredentialSettings } from '@/composables/useCredentialSettings'

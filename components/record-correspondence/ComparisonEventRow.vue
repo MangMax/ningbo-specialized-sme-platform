@@ -8,10 +8,10 @@ import { PLATFORM_INTERFACES, TITLES } from '~~/lib/labels'
 import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
 import SourceReader from './SourceReader.vue'
 import OfficialEvidence from './OfficialEvidence.vue'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
+import { Badge } from '#core/app/components/ui/badge'
+import { Button } from '#core/app/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '#core/app/components/ui/dialog'
 
 const props = defineProps<{ row: RecordComparisonResult['rows'][number]; returnTo: string }>()
 const sourceId = ref<number | null>(null)

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Badge } from '#core/app/components/ui/badge'
+import { Button } from '#core/app/components/ui/button'
+import { Field, FieldGroup, FieldLabel } from '#core/app/components/ui/field'
 import {
   Select,
   SelectContent,
@@ -10,7 +10,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue
-} from '@/components/ui/select'
+} from '#core/app/components/ui/select'
 import {
   Sheet,
   SheetClose,
@@ -20,9 +20,9 @@ import {
   SheetHeader,
   SheetTitle,
   SheetTrigger
-} from '@/components/ui/sheet'
-import { Switch } from '@/components/ui/switch'
-import { cn } from '@/lib/utils'
+} from '#core/app/components/ui/sheet'
+import { Switch } from '#core/app/components/ui/switch'
+import { cn } from '#core/lib/utils'
 import LogFieldEditor from './LogFieldEditor.vue'
 
 /**

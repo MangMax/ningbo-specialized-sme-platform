@@ -15,7 +15,7 @@ import {
 import { sourceReturnTarget, type OfficialPublishedFact } from '~~/lib/roster/correspondence-view'
 import OfficialEvidenceView from '@/components/record-correspondence/OfficialEvidence.vue'
 import { eventDecisionText } from '~~/lib/roster/correspondence-view'
-import TableFailureState from '@/components/TableFailureState.vue'
+import TableFailureState from '#core/app/components/TableFailureState.vue'
 import PlatformRecords from '@/components/PlatformRecords.vue'
 import TitleBadge from '@/components/TitleBadge.vue'
 import { QUALITY_FLAGS, TITLE_ORDER } from '~~/lib/labels'
@@ -27,12 +27,12 @@ import {
   useEvidencePreviewScrollRestore,
 } from '~~/lib/roster/evidence-preview-return'
 import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
+import { Alert, AlertDescription, AlertTitle } from '#core/app/components/ui/alert'
+import { Badge } from '#core/app/components/ui/badge'
+import { Button } from '#core/app/components/ui/button'
+import { Skeleton } from '#core/app/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 
 definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
 

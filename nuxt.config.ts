@@ -11,7 +11,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { TASK_EXPORTS } from './lib/task-center'
 import { LOG_ICON_IDS } from './components/logs/logIcons'
 import { getAppModules } from './lib/app-modules'
-import { validateAppModules } from './lib/core/module-registry'
+import { validateAppModules } from './layers/core/lib/core/module-registry'
 
 // Fail before serving in dev or producing a deployment with an invalid registry.
 validateAppModules(getAppModules())
@@ -168,6 +168,7 @@ export function installSessionOverlay(nitro: any, config: any, audit: ((value: u
 
 // SPA only — no SSR. Everything runs in the browser against Nitro server routes.
 export default defineNuxtConfig({
+  extends: ['./layers/core'],
   // Concurrent owned dev fixtures must not share generated files or Nuxt's lock.
   buildDir: process.env.NUXT_BUILD_DIR || '.nuxt',
   compatibilityDate: '2026-10-13',
@@ -239,7 +240,7 @@ export default defineNuxtConfig({
     },
   ],
 
-  css: ['~/assets/css/tailwind.css'],
+  css: ['#core/app/assets/css/tailwind.css'],
 
   // tus 上传端点(server/utils/tus.ts)用到的路径与来源白名单。
   // 根目录在这里解析成绝对路径并冻进产物 —— server 端不能用 import.meta.url
@@ -446,6 +447,7 @@ export default defineNuxtConfig({
   },
 
   alias: {
+    '#core': fileURLToPath(new URL('./layers/core', import.meta.url)),
     '@db': fileURLToPath(new URL('./db', import.meta.url)),
   },
 

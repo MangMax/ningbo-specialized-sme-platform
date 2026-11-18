@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 /**
  * 列表页表格视口预算与最小宽度（票 #868）。
  *
- * 缝隙（seam）：`assets/css/tailwind.css` 的 token 层 + 各列表页的 `.vue` 源码。
+ * 缝隙（seam）：`layers/core/app/assets/css/tailwind.css` 的 token 层 + 各列表页的 `.vue` 源码。
  * 这条契约约束两件事：
  *  1. `.data-table-scroll` 的纵向滚动预算不再写死 `calc(100dvh - 17rem)`，
  *     而是引用 token 层的 `--table-budget` —— 新页面不必照抄那三个页面的预算。
@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest'
  */
 
 const root = path.resolve(__dirname, '../../..')
-const cssPath = path.join(root, 'assets/css/tailwind.css')
+const cssPath = path.join(root, 'layers/core/app/assets/css/tailwind.css')
 const cssDir = path.dirname(cssPath)
 const css = readFileSync(cssPath, 'utf8')
 

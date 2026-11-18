@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { computed, ref, useId, watch } from 'vue'
 import { FolderOpen } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { Button } from '#core/app/components/ui/button'
+import { Input } from '#core/app/components/ui/input'
+import { Label } from '#core/app/components/ui/label'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from '#core/app/components/ui/select'
 import type { BatchMeta, KindCode, SourceCode } from '@/lib/upload'
 import { KIND_OPTIONS, SOURCE_OPTIONS, landingPath, suggestBatch } from '@/lib/upload'
 

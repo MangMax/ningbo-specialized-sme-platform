@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, shallowRef, useTemplateRef, watch, onBeforeUnmount } from 'vue'
 import { ChevronFirst, ChevronLast, ChevronLeft, ChevronRight, Download, Maximize, Minimize, SlidersHorizontal } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Button } from '#core/app/components/ui/button'
+import { Input } from '#core/app/components/ui/input'
 import PdfEngine from './PdfEngine.vue'
 import type { PdfReadingPosition, PdfPositionEvent, PdfReadyEvent, PdfNavigationRequest } from '~~/lib/pdf-reader'
 

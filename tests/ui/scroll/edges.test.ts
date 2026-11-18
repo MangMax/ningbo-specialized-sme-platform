@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SCROLL_EPSILON, scrollBars, scrollEdges } from '../../../lib/scroll-edges'
+import { SCROLL_EPSILON, scrollBars, scrollEdges } from '../../../layers/core/lib/scroll-edges'
 
 /**
  * 窄屏宽表的边缘提示判定(票 16 UI 收口 B2)。

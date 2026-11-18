@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Badge } from '@/components/ui/badge'
+import { Badge } from '#core/app/components/ui/badge'
 
 /**
  * 统计页的下钻入口。点一项就在台账页按该条件筛选。

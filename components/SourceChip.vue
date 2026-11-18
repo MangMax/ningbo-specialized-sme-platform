@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Badge } from '@/components/ui/badge'
+import { Badge } from '#core/app/components/ui/badge'
 import { SOURCES } from '~~/lib/labels'
 
 /**

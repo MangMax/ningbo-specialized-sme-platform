@@ -22,15 +22,15 @@ import {
   logErrorMessage,
   useLogRead
 } from '~/composables/useLogRead'
-import TableFailureState from '@/components/TableFailureState.vue'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Separator } from '@/components/ui/separator'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableRow, TableCell } from '@/components/ui/table'
+import TableFailureState from '#core/app/components/TableFailureState.vue'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
+import { Button } from '#core/app/components/ui/button'
+import { Input } from '#core/app/components/ui/input'
+import { Field, FieldGroup, FieldLabel } from '#core/app/components/ui/field'
+import { Alert, AlertDescription } from '#core/app/components/ui/alert'
+import { Separator } from '#core/app/components/ui/separator'
+import { Skeleton } from '#core/app/components/ui/skeleton'
+import { Table, TableBody, TableRow, TableCell } from '#core/app/components/ui/table'
 import {
   Dialog,
   DialogContent,
@@ -38,7 +38,7 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter
-} from '@/components/ui/dialog'
+} from '#core/app/components/ui/dialog'
 
 /** 目录项由后端常量导出；这里只取它的元素类型，不另造只含 supported 的窄类型。 */
 type IntegrationEntry = (typeof LOG_INTEGRATIONS)[number]

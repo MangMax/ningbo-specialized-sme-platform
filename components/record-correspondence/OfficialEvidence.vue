@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
 import { evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
 import { publishedNameText, type OfficialPublishedFact } from '~~/lib/roster/correspondence-view'
-import { Button } from '@/components/ui/button'
+import { Button } from '#core/app/components/ui/button'
 import { FileText, ArrowUpRight, Download } from '@lucide/vue'
 
 const props = defineProps<{

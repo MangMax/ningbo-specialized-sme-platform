@@ -2,8 +2,8 @@
 import { computed, ref } from 'vue'
 import FilePreview from '@/components/preview/FilePreview.vue'
 import PageImageGallery from '@/components/preview/PageImageGallery.vue'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '#core/app/components/ui/dialog'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 import { fileNameOf } from '~~/lib/preview'
 
 /**

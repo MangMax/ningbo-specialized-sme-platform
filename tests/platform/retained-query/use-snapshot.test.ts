@@ -4,7 +4,7 @@ import {
   captureQueryRequest,
   useRetainedQuerySnapshot,
   type QueryRequestSnapshot,
-} from '../../../composables/useRetainedQuerySnapshot'
+} from '../../../layers/core/app/composables/useRetainedQuerySnapshot'
 
 interface PageParams {
   page: number

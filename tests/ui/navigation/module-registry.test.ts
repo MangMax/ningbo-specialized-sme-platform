@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { getAppModules } from '../../../lib/app-modules'
-import { defineAppModule, validateAppModules } from '../../../lib/core/module-registry'
+import { defineAppModule, validateAppModules } from '../../../layers/core/lib/core/module-registry'
 
 it('lists the platform and business modules in declaration order', () => {
   expect(getAppModules().map(({ id, name }) => ({ id, name }))).toEqual([

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
-import { Button } from '@/components/ui/button'
-import { highlightContent } from '~~/lib/content-highlight'
+import { Button } from '#core/app/components/ui/button'
+import { highlightContent } from '#core/lib/content-highlight'
 const props = withDefaults(defineProps<{ source: string; language?: string; theme?: 'light' | 'dark'; wrap?: boolean; copyable?: boolean; focusable?: boolean }>(), { language: 'text', theme: 'light', wrap: false, copyable: false, focusable: false })
 const emit = defineEmits<{ error: [message: string] }>()
 const html = ref<string | null>(null)

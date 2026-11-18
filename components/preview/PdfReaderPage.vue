@@ -4,7 +4,7 @@ import PdfPageImage from './PdfPageImage.vue'
 import { PagePointerProvider } from '@embedpdf/plugin-interaction-manager/vue'
 import { SelectionLayer, useSelectionCapability } from '@embedpdf/plugin-selection/vue'
 import { SearchLayer } from '@embedpdf/plugin-search/vue'
-import { Button } from '@/components/ui/button'
+import { Button } from '#core/app/components/ui/button'
 const props = defineProps<{ documentId: string; pageIndex: number; scale: number }>()
 const emit = defineEmits<{ ready: [page: number]; release: [page: number] }>()
 const failed = shallowRef(false)

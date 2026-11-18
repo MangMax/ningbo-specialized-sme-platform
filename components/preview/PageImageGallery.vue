@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { ArrowLeft, Images, Loader2, ZoomIn, ZoomOut } from '@lucide/vue'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge, type BadgeVariants } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import { Alert, AlertDescription } from '#core/app/components/ui/alert'
+import { Badge, type BadgeVariants } from '#core/app/components/ui/badge'
+import { Button } from '#core/app/components/ui/button'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '#core/app/components/ui/empty'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { Skeleton } from '@/components/ui/skeleton'
+} from '#core/app/components/ui/select'
+import { Skeleton } from '#core/app/components/ui/skeleton'
 import ImagePreview from '@/components/preview/ImagePreview.vue'
 import { DEFAULT_DPI } from '~~/lib/pdf-page'
 import {

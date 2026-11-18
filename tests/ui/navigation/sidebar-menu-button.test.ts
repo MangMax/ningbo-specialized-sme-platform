@@ -2,7 +2,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick } from 'vue'
-import { Sidebar, SidebarMenuButton, SidebarProvider, SidebarTrigger } from '../../../components/ui/sidebar'
+import { Sidebar, SidebarMenuButton, SidebarProvider, SidebarTrigger } from '../../../layers/core/app/components/ui/sidebar'
 
 let wrapper: ReturnType<typeof mount> | undefined
 

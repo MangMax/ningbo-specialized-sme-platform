@@ -5,9 +5,9 @@ import { PdfActionType, PdfErrorCode, PdfZoomMode } from '@embedpdf/models'
 import { useDocumentState } from '@embedpdf/core/vue'
 import { ThumbnailsPane, ThumbImg } from '@embedpdf/plugin-thumbnail/vue'
 import { useSearch } from '@embedpdf/plugin-search/vue'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Button } from '#core/app/components/ui/button'
+import { Input } from '#core/app/components/ui/input'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '#core/app/components/ui/tabs'
 import type { PdfReadingPosition } from '~~/lib/pdf-reader'
 const props = defineProps<{ documentId: string; engine: PdfEngine; currentPage: number }>()
 const emit = defineEmits<{ navigate: [position: PdfReadingPosition]; close: [] }>()

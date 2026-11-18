@@ -7,10 +7,10 @@ import { TITLES } from '~~/lib/labels'
 import OfficialEvidence from './OfficialEvidence.vue'
 import CorrespondenceItem from './CorrespondenceItem.vue'
 import SourceRowDetail from './SourceRowDetail.vue'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
+import { Alert, AlertDescription, AlertTitle } from '#core/app/components/ui/alert'
+import { Button } from '#core/app/components/ui/button'
+import { Skeleton } from '#core/app/components/ui/skeleton'
 
 const props = defineProps<{ kind: SourceKind; id: number; returnTo?: string | null; compact?: boolean; readOnly?: boolean; presentation?: 'source' | 'business'; eventReturnQuery?: { currentBack?: string; back?: string; returnTo?: string } }>()
 const emit = defineEmits<{ 'event-navigate': [eventId: number] }>()

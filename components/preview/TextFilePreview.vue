@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { Button } from '@/components/ui/button'
+import { Button } from '#core/app/components/ui/button'
 import ContentPreview from './ContentPreview.vue'
 import PreviewStates from './PreviewStates.vue'
 import { describeLoadError, retrySrc } from '~~/lib/preview'

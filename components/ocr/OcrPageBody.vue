@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import ContentPreview from '@/components/preview/ContentPreview.vue'
-import { useAppColorMode } from '@/composables/useAppColorMode'
+import { useAppColorMode } from '#core/app/composables/useAppColorMode'
 
 /**
  * OCR 正文 → 共享只读预览的薄适配。

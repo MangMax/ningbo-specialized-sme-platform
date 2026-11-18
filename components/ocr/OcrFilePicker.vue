@@ -2,9 +2,9 @@
 import { computed } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { Check, FileText, Search, X } from '@lucide/vue'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Alert, AlertDescription } from '#core/app/components/ui/alert'
+import { Button } from '#core/app/components/ui/button'
+import { Input } from '#core/app/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -12,7 +12,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from '#core/app/components/ui/select'
 import {
   Sheet,
   SheetContent,
@@ -20,8 +20,8 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
-} from '@/components/ui/sheet'
-import { Skeleton } from '@/components/ui/skeleton'
+} from '#core/app/components/ui/sheet'
+import { Skeleton } from '#core/app/components/ui/skeleton'
 import type { WorkbenchCounts } from '~~/lib/ocr-workbench'
 import type { StoredFileRow } from '~~/server/utils/stored-files'
 

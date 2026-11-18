@@ -7,11 +7,11 @@ import { EVENTS, SOURCES, TITLES } from '~~/lib/labels'
 import EventChip from '@/components/EventChip.vue'
 import SourceChip from '@/components/SourceChip.vue'
 import TitleBadge from '@/components/TitleBadge.vue'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
-import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Badge } from '#core/app/components/ui/badge'
+import { Button } from '#core/app/components/ui/button'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '#core/app/components/ui/empty'
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '#core/app/components/ui/hover-card'
+import { Skeleton } from '#core/app/components/ui/skeleton'
 import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
 import { evidencePreviewHref } from '~~/lib/roster/evidence-page'
 import {
@@ -21,7 +21,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table'
+} from '#core/app/components/ui/table'
 
 /**
  * **按企业×称号**的分组表(原 `/` 台账;RL-17 收进合并页的第二个分组)。

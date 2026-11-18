@@ -6,8 +6,8 @@ import type { RecognizedDirectoryRow } from '~~/lib/platform/recognized-director
 import { RDJB_TITLE_CODES } from '~~/lib/platform/recognized-evidence'
 import { PLATFORM_RDJBS } from '~~/lib/labels'
 import { formatFetchTime } from '~~/lib/reconcile-time'
-import { Button } from '@/components/ui/button'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Button } from '#core/app/components/ui/button'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '#core/app/components/ui/table'
 
 const props = defineProps<{ view: 'records' | 'isolated'; rows: RecognizedDirectoryRow[]; loading?: boolean }>()
 const emit = defineEmits<{ 'open-record': [recordId: number] }>()

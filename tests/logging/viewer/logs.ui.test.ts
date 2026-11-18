@@ -538,7 +538,7 @@ it('does not offer a policy review until a value actually differs from the activ
 
 it('reviews only changed collection rules, sends changed maps, and refreshes effective controls', async () => {
   const { default: Management } = await import('../../../components/logs/LogManagement.vue')
-  const { default: Select } = await import('../../../components/ui/select/Select.vue')
+  const { default: Select } = await import('../../../layers/core/app/components/ui/select/Select.vue')
   let policy = policyResponse()
   const writes: any[] = []
   vi.stubGlobal('$fetch', async (url: string, options: any = {}) => {

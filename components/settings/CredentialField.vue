@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { Copy, Eye, EyeOff } from '@lucide/vue'
 import { Motion, useReducedMotion } from 'motion-v'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { Button } from '#core/app/components/ui/button'
+import { Input } from '#core/app/components/ui/input'
+import { Label } from '#core/app/components/ui/label'
 import LoadingIndicator from './LoadingIndicator.vue'
 import type { CredentialOperation, CredentialStatus } from '@/composables/useCredentialSettings'
 defineProps<{ id: string; label: string; status: CredentialStatus; raw: string; replacement: string; busy: boolean; operation?: CredentialOperation; description: string; sensitive: boolean }>()

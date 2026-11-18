@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch, type Component } from 'vue'
 import FileDisplayNameEditor from './FileDisplayNameEditor.vue'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Alert, AlertDescription } from '#core/app/components/ui/alert'
+import { Button } from '#core/app/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '#core/app/components/ui/dialog'
 import type { FileRow } from '~~/server/utils/file-store'
 import type { FileDetailDraft } from '~~/lib/core/file-categories'
 

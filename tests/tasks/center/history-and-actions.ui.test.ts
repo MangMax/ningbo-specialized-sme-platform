@@ -209,11 +209,11 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 // of what these tests are about.
 async function autoRegisteredComponents() {
   const [PageHeader, NuxtLink, TablePagination, TableLoadingStatus, TableFailureState, TaskProgress, TaskDetail] = await Promise.all([
-    import('../../../components/PageHeader.vue'),
+    import('../../../layers/core/app/components/PageHeader.vue'),
     import('vue-router').then(m => m.RouterLink),
-    import('../../../components/TablePagination.vue'),
-    import('../../../components/TableLoadingStatus.vue'),
-    import('../../../components/TableFailureState.vue'),
+    import('../../../layers/core/app/components/TablePagination.vue'),
+    import('../../../layers/core/app/components/TableLoadingStatus.vue'),
+    import('../../../layers/core/app/components/TableFailureState.vue'),
     import('../../../components/tasks/TaskProgress.vue'),
     import('../../../components/tasks/TaskDetail.vue'),
   ])

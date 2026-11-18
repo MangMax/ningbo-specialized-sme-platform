@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import type { infer as Infer } from 'zod'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { Button } from '#core/app/components/ui/button'
+import { Input } from '#core/app/components/ui/input'
+import { Label } from '#core/app/components/ui/label'
 import {
   Select,
   SelectTrigger,
   SelectValue,
   SelectContent,
   SelectItem,
-} from '@/components/ui/select'
+} from '#core/app/components/ui/select'
 import {
   Dialog,
   DialogContent,
@@ -18,7 +18,7 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-} from '@/components/ui/dialog'
+} from '#core/app/components/ui/dialog'
 import {
   Table,
   TableBody,
@@ -26,8 +26,8 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
+} from '#core/app/components/ui/table'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import FileEventSync from '@/components/files/FileEventSync.vue'
 import { TITLES, TITLE_ORDER, EVENTS, EVENT_ORDER } from '~~/lib/labels'
 import { describeFetchError } from '~~/lib/upload-register'

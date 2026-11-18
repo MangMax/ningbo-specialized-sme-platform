@@ -19,15 +19,15 @@ import {
   X,
 } from '@lucide/vue'
 import { useOcrWorkbench } from '@/composables/useOcrWorkbench'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '#core/app/components/ui/alert'
+import { Badge } from '#core/app/components/ui/badge'
+import { Button } from '#core/app/components/ui/button'
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogTitle,
-} from '@/components/ui/dialog'
+} from '#core/app/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,28 +35,28 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+} from '#core/app/components/ui/dropdown-menu'
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from '@/components/ui/empty'
+} from '#core/app/components/ui/empty'
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from '@/components/ui/popover'
+} from '#core/app/components/ui/popover'
 import {
   Sheet,
   SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from '@/components/ui/sheet'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+} from '#core/app/components/ui/sheet'
+import { Skeleton } from '#core/app/components/ui/skeleton'
+import { Tabs, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 import ImagePreview from '@/components/preview/ImagePreview.vue'
 import OcrBottomBar from './OcrBottomBar.vue'
 import OcrFilePicker from './OcrFilePicker.vue'

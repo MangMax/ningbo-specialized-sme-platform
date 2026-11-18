@@ -6,12 +6,12 @@ import type { TaskSummary } from '~~/lib/task-center'
 import { TASK_STATES } from '~~/lib/task-center'
 import { getTaskKind } from '~~/lib/task-catalog'
 import { useTaskPolling } from '~/composables/useTaskPolling'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardHeader, CardDescription, CardContent } from '@/components/ui/card'
-import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
-import { Separator } from '@/components/ui/separator'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
+import { Button } from '#core/app/components/ui/button'
+import { Badge } from '#core/app/components/ui/badge'
+import { Card, CardHeader, CardDescription, CardContent } from '#core/app/components/ui/card'
+import { Alert, AlertTitle, AlertDescription } from '#core/app/components/ui/alert'
+import { Separator } from '#core/app/components/ui/separator'
 
 /**
  * 一条任务的详情。

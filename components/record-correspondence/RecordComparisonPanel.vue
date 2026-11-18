@@ -12,12 +12,12 @@ import ComparisonEventRow from './ComparisonEventRow.vue'
 import ComparisonEvidence from './ComparisonEvidence.vue'
 import ComparisonDateTimePicker from './ComparisonDateTimePicker.vue'
 import ComparisonResultScope from './ComparisonResultScope.vue'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Card, CardContent } from '@/components/ui/card'
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
+import { Button } from '#core/app/components/ui/button'
+import { Label } from '#core/app/components/ui/label'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
+import { Card, CardContent } from '#core/app/components/ui/card'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '#core/app/components/ui/empty'
 
 const route = useRoute()
 const router = useRouter()

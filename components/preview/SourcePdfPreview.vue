@@ -2,9 +2,9 @@
 import { computed, shallowRef, watch, useTemplateRef, nextTick } from 'vue'
 import PdfPreview from './PdfPreview.vue'
 import PageImageGallery from './PageImageGallery.vue'
-import { Button } from '@/components/ui/button'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '#core/app/components/ui/button'
+import { Tabs, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
+import { Alert, AlertDescription } from '#core/app/components/ui/alert'
 import { fileUrl } from '~~/lib/preview'
 import type { PdfReadingPosition, PdfPositionEvent, PdfNavigationRequest, PdfReadyEvent } from '~~/lib/pdf-reader'
 

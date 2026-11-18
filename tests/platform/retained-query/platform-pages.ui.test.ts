@@ -4,7 +4,7 @@ import { beforeEach, afterEach, describe, it, expect, vi, type Mock } from 'vite
 import Business from '../../../pages/platform-business-processes.vue'
 import Declarations from '../../../pages/platform-declarations.vue'
 import Directory from '../../../pages/platform-recognized-directory.vue'
-import TablePagination from '../../../components/TablePagination.vue'
+import TablePagination from '../../../layers/core/app/components/TablePagination.vue'
 import PlatformFilterSelect from '../../../components/PlatformFilterSelect.vue'
 
 describe.each([

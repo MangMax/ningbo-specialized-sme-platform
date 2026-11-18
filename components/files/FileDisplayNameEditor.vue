@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
+import { Alert, AlertDescription } from '#core/app/components/ui/alert'
+import { Button } from '#core/app/components/ui/button'
+import { Input } from '#core/app/components/ui/input'
+import { Label } from '#core/app/components/ui/label'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import type { FileRow } from '~~/server/utils/file-store'
 
 const open = defineModel<boolean>('open', { default: false })

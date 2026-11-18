@@ -2,8 +2,8 @@
 import { computed, ref } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
 import { UploadCloud } from '@lucide/vue'
-import { Input } from '@/components/ui/input'
-import { cn } from '@/lib/utils'
+import { Input } from '#core/app/components/ui/input'
+import { cn } from '#core/lib/utils'
 
 /**
  * 投放区:拖进来,或点一下选文件。只负责「拿到 File 列表」并交出去,

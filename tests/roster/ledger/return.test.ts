@@ -4,7 +4,7 @@ import { ref } from 'vue'
 import { expect, it, vi } from 'vitest'
 import { useQuery } from '@pinia/colada'
 import RosterPage from '../../../pages/roster.vue'
-import { captureQueryRequest } from '../../../composables/useRetainedQuerySnapshot'
+import { captureQueryRequest } from '../../../layers/core/app/composables/useRetainedQuerySnapshot'
 vi.mock('@pinia/colada', () => ({ useQuery: vi.fn() }))
 
 it('restores current ledger expansion and both scroll layers only after its rows are ready', async () => {

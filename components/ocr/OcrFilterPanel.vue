@@ -2,10 +2,10 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { Filter, X } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { Button } from '#core/app/components/ui/button'
+import { Checkbox } from '#core/app/components/ui/checkbox'
+import { Input } from '#core/app/components/ui/input'
+import { Label } from '#core/app/components/ui/label'
 import {
   Sheet,
   SheetContent,
@@ -13,7 +13,7 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
-} from '@/components/ui/sheet'
+} from '#core/app/components/ui/sheet'
 import {
   parsePageRange,
   STATE_WORD,

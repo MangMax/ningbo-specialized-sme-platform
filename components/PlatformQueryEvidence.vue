@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue'
-import DisclosurePanel from './DisclosurePanel.vue'
+import DisclosurePanel from '../layers/core/app/components/DisclosurePanel.vue'
 import PlatformEvidenceChunk from './PlatformEvidenceChunk.vue'
-import TableFailureState from './TableFailureState.vue'
-import { Button } from '@/components/ui/button'
+import TableFailureState from '../layers/core/app/components/TableFailureState.vue'
+import { Button } from '#core/app/components/ui/button'
 const props = defineProps<{ queryId: number }>()
 interface RelationPage {
   queryId: number; field: string; rows: { id: number; sequenceNo: number }[]; total: number; page: number; pageSize: number

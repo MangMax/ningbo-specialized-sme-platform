@@ -10,7 +10,7 @@ import { createClientLogIntake } from '../../../server/utils/client-log-intake'
 // Exercise a new registration while keeping the running application's declarations.
 vi.mock(import('../../../lib/app-modules'), async (importOriginal) => {
   const registry = await importOriginal()
-  const { defineAppModule, validateAppModules } = await import('../../../lib/core/module-registry')
+  const { defineAppModule, validateAppModules } = await import('../../../layers/core/lib/core/module-registry')
   const modules = [...registry.getAppModules(), defineAppModule({
     id: 'enterprise-services',
     name: '企业服务',

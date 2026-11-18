@@ -1,5 +1,5 @@
 import { ChartColumn, Gauge, LayoutList, Search } from '@lucide/vue'
-import { defineAppModule } from '../core/module-registry'
+import { defineAppModule } from '../../layers/core/lib/core/module-registry'
 import { ENTERPRISE_LIST_TITLE } from '../labels'
 import { ROSTER_LEDGER_PATH } from './routes'
 import { rosterFileCategory } from './file-category'

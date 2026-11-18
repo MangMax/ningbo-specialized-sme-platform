@@ -5,7 +5,7 @@ import { Upload } from 'tus-js-client'
 import type { HttpResponse } from 'tus-js-client'
 import { withTusLogging } from '~~/lib/client-logging/tus'
 import { clientLibraryReporterKey, ignoreClientLibrarySignal } from '~~/lib/client-logging/library-reporter'
-import { Button } from '@/components/ui/button'
+import { Button } from '#core/app/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -13,7 +13,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
+} from '#core/app/components/ui/dialog'
 import UploadDropzone from './UploadDropzone.vue'
 import UploadItem from './UploadItem.vue'
 import MetadataFields from './MetadataFields.vue'

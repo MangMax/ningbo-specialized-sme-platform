@@ -1472,7 +1472,7 @@ describe("复核回归", () => {
   })
 
   it('OCR 主区跟随应用主题，换文件重置源码视图与复制提示', async () => {
-    const ThemeToggle = (await import('../../../components/ThemeToggle.vue')).default
+    const ThemeToggle = (await import('../../../layers/core/app/components/ThemeToggle.vue')).default
     const toggle = mount(ThemeToggle)
     try {
       Object.defineProperty(navigator, 'clipboard', {

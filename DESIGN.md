@@ -1,10 +1,10 @@
 # 设计规范
 
-本文件把项目的 UI 约定固化成可检查的条目。规则的出处是代码本身：`assets/css/tailwind.css`、`assets/css/statistics.css`、`components/`、`pages/`。改设计先改这里，再改代码。
+本文件把项目的 UI 约定固化成可检查的条目。规则的出处是代码本身：`layers/core/app/assets/css/tailwind.css`、`assets/css/statistics.css`、`components/`、`pages/`。改设计先改这里，再改代码。
 
 ## 1. 色板来源与语义角色
 
-色板取自仓库自带的「政企汇报风格包」：政务藏青蓝 + 金色点睛 + 点睛红，与线下汇报材料同源。所有颜色都通过 `assets/css/tailwind.css` 里的 CSS 变量引用，页面与组件不写死色值。
+色板取自仓库自带的「政企汇报风格包」：政务藏青蓝 + 金色点睛 + 点睛红，与线下汇报材料同源。所有颜色都通过 `layers/core/app/assets/css/tailwind.css` 里的 CSS 变量引用，页面与组件不写死色值。
 
 ### 1.1 表面层级：`--page` 与 `--background` 是两个 token
 
@@ -33,7 +33,7 @@
 
 - `tier-1` 小巨人：实心藏青；`tier-2` 专精特新中小企业：藏青浅底描边；`tier-3` 创新型中小企业：中性描边。
 - `tier-3` 的 `--tier-3-line` 不能只剩近白底：边界要能在白卡片上读出来。
-- 梯度只经 `Badge` 的 `tier-1/2/3` 变体（`components/ui/badge/index.ts`）落到界面，页面不直接拼 `bg-tier-*`。
+- 梯度只经 `Badge` 的 `tier-1/2/3` 变体（`layers/core/app/components/ui/badge/index.ts`）落到界面，页面不直接拼 `bg-tier-*`。
 
 ### 1.4 图表系列：`--chart-1` … `--chart-6`
 
@@ -81,15 +81,15 @@
 
 | 组件 | 用途 | 要点 |
 | --- | --- | --- |
-| `components/PageHeader.vue` | 页头：标题 + 一行说明 + 右侧 `actions` 插槽 | `description` 只写「这一页回答什么问题」，不写凑数介绍 |
-| `components/StatTile.vue` | 概览数字砖：标签/大数字/说明 | 工作台与质量页通用；看板大数字走 `stats-number-button`，不用 StatTile |
+| `layers/core/app/components/PageHeader.vue` | 页头：标题 + 一行说明 + 右侧 `actions` 插槽 | `description` 只写「这一页回答什么问题」，不写凑数介绍 |
+| `layers/core/app/components/StatTile.vue` | 概览数字砖：标签/大数字/说明 | 工作台与质量页通用；看板大数字走 `stats-number-button`，不用 StatTile |
 | `components/EnterpriseDrawer.vue` + `[data-floating-drawer]` | 企业详情侧抽屉，非模态 | 开抽屉不变暗、不锁表格；`back-query` 保筛选上下文 |
 | `components/StatsDetailSheet.vue` | 看板下钻明细 sheet | 配 `stats-sheet`/`stats-sheet-body` 类 |
-| `components/FilterChip.vue` | 已生效筛选的可撤 chip | 一个 chip 一个条件，`remove` 即清 |
-| `components/MultiSelectFilter.vue` | 多值筛选 | 与 `Select`（单值）分工，无原生 select |
+| `layers/core/app/components/FilterChip.vue` | 已生效筛选的可撤 chip | 一个 chip 一个条件，`remove` 即清 |
+| `layers/core/app/components/MultiSelectFilter.vue` | 多值筛选 | 与 `Select`（单值）分工，无原生 select |
 | 领域徽标：`TitleBadge` / `SourceChip` / `EventChip` / `DrillChip` | 称号梯度、来源级别、事件类型、下钻入口 | 全经 `Badge` 变体渲染；金标只给国家级 |
 | 表格配套：`TablePagination` / `TableLoadingStatus` / `TableFailureState` / `TableHoverCardContent` / `EnterpriseListTable` | 分页、顶部进度、失败重试、悬停详情、台账表 | 失败保留上次成功数据 + 显式 retry |
-| `components/ui/*` | shadcn-vue 基础件（Button/Card/Select/Badge/Sheet/Tabs…） | `components.json` 管理；徽章只有 `Badge` 一种标签语法 |
+| `layers/core/app/components/ui/*` | shadcn-vue 基础件（Button/Card/Select/Badge/Sheet/Tabs…） | `components.json` 管理；徽章只有 `Badge` 一种标签语法 |
 | 图标：`@lucide/vue` | 全站唯一图标入口 | 具名导入（如 `import { X } from '@lucide/vue'`），尺寸用 `size-*` 类，装饰性图标加 `aria-hidden` |
 
 ## 4. 不要做（可逐条检查）

@@ -12,8 +12,8 @@ import {
 import FilePreview from '@/components/preview/FilePreview.vue'
 import { useSourcePdfRoute } from '@/composables/useSourcePdfRoute'
 import SourcePdfPreview from '@/components/preview/SourcePdfPreview.vue'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
+import { Alert, AlertDescription, AlertTitle } from '#core/app/components/ui/alert'
+import { Badge } from '#core/app/components/ui/badge'
 
 const route = useRoute()
 const { parsed, sourcePage, target, invalid, visible, changeView } = useSourcePdfRoute()

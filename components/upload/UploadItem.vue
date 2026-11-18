@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { Check, CircleAlert, Copy, FileText, Pause, Play, RotateCw, X } from '@lucide/vue'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
+import { Badge } from '#core/app/components/ui/badge'
+import { Button } from '#core/app/components/ui/button'
+import { Progress } from '#core/app/components/ui/progress'
 import type { UploadFailure, UploadPhase } from '@/lib/upload'
 import { formatBytes } from '@/lib/core/file-size'
 

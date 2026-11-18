@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Page from '../../../pages/platform-recognized-directory.vue'
 import PlatformQueriesPage from '../../../pages/platform-queries.vue'
 import PlatformFilterSelect from '../../../components/PlatformFilterSelect.vue'
-import TablePagination from '../../../components/TablePagination.vue'
-import { Select } from '../../../components/ui/select'
+import TablePagination from '../../../layers/core/app/components/TablePagination.vue'
+import { Select } from '../../../layers/core/app/components/ui/select'
 
 const version = {
   versionId: 12, validityDateRaw: '2027-12-31', maintenanceYear: 2024, maintenanceBatch: '2024-2',

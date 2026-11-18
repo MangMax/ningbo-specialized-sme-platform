@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Alert, AlertDescription } from '#core/app/components/ui/alert'
+import { Button } from '#core/app/components/ui/button'
+import { Checkbox } from '#core/app/components/ui/checkbox'
+import { Input } from '#core/app/components/ui/input'
+import { Label } from '#core/app/components/ui/label'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '#core/app/components/ui/dialog'
 import { describeFetchError } from '~~/lib/upload-register'
 
 const open = defineModel<boolean>('open', { default: false })

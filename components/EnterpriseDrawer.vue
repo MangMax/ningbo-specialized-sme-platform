@@ -21,10 +21,10 @@ import {
 import { reviewEventSuffix, timelineEventIdentity } from '~~/lib/roster/enterprise-timeline'
 import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
 import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
-import TableFailureState from './TableFailureState.vue'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
+import TableFailureState from '../layers/core/app/components/TableFailureState.vue'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
+import { Button } from '#core/app/components/ui/button'
+import { Skeleton } from '#core/app/components/ui/skeleton'
 
 interface Lifecycle {
   firstRecognitionYear: number | null

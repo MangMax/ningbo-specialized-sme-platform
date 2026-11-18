@@ -4,7 +4,7 @@ import { defineComponent, h, ref } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createRouter, createMemoryHistory, RouterLink } from 'vue-router'
 import Entry from '../../../components/CurrentRosterExportEntry.vue'
-import { Button } from '../../../components/ui/button'
+import { Button } from '../../../layers/core/app/components/ui/button'
 import { useCurrentRosterExport } from '../../../composables/useCurrentRosterExport'
 import { TASK_EXPORTS } from '../../../lib/task-center'
 

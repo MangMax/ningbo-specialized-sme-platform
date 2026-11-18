@@ -8,26 +8,26 @@ import { getFileCategoryUi } from '~~/lib/app-file-category-ui'
 import { describeFetchError } from '~~/lib/upload-register'
 import { fileUrl } from '~~/lib/preview'
 import { isPdfPath } from '~~/lib/pdf-page'
-import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
-import type { QueryRequestSnapshot } from '~/composables/useRetainedQuerySnapshot'
-import { useToastFeedback } from '~/composables/useToastFeedback'
+import { captureQueryRequest, useRetainedQuerySnapshot } from '#core/app/composables/useRetainedQuerySnapshot'
+import type { QueryRequestSnapshot } from '#core/app/composables/useRetainedQuerySnapshot'
+import { useToastFeedback } from '#core/app/composables/useToastFeedback'
 import type { FileRow } from '~~/server/utils/file-store'
-import MultiSelectFilter from '@/components/MultiSelectFilter.vue'
-import FilterChip from '@/components/FilterChip.vue'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import MultiSelectFilter from '#core/app/components/MultiSelectFilter.vue'
+import FilterChip from '#core/app/components/FilterChip.vue'
+import { Button } from '#core/app/components/ui/button'
+import { Card, CardContent } from '#core/app/components/ui/card'
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from '@/components/ui/empty'
-import { Input } from '@/components/ui/input'
+} from '#core/app/components/ui/empty'
+import { Input } from '#core/app/components/ui/input'
 
 
-import { Separator } from '@/components/ui/separator'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Separator } from '#core/app/components/ui/separator'
+import { Skeleton } from '#core/app/components/ui/skeleton'
 import {
   Table,
   TableBody,
@@ -35,7 +35,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table'
+} from '#core/app/components/ui/table'
 import { onBeforeRouteLeave } from 'vue-router'
 import EditFileDialog from '@/components/files/EditFileDialog.vue'
 import DeleteFileDialog from '@/components/files/DeleteFileDialog.vue'

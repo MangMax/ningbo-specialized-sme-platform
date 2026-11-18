@@ -3,8 +3,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Page from '../../../pages/platform-business-processes.vue'
 import PlatformFilterSelect from '../../../components/PlatformFilterSelect.vue'
-import TablePagination from '../../../components/TablePagination.vue'
-import { Select } from '../../../components/ui/select'
+import TablePagination from '../../../layers/core/app/components/TablePagination.vue'
+import { Select } from '../../../layers/core/app/components/ui/select'
 
 const row = {
   kind: 'record' as const,

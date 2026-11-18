@@ -2,7 +2,7 @@
 import { mount } from '@vue/test-utils'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Toaster, toast } from 'vue-sonner'
-import { useToastFeedback } from '../../../composables/useToastFeedback'
+import { useToastFeedback } from '../../../layers/core/app/composables/useToastFeedback'
 
 // Happy DOM lacks WAAPI; exercise vue-sonner's JS fallback (same setup as
 // tests/ui/settings/credential-controls.ui.test.ts).

@@ -18,11 +18,11 @@ import {
   resourceTypeLabel,
   sourceLabel
 } from './logPresentation'
-import { Button } from '@/components/ui/button'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableRow, TableCell } from '@/components/ui/table'
-import TableFailureState from '@/components/TableFailureState.vue'
+import { Button } from '#core/app/components/ui/button'
+import { Alert, AlertDescription } from '#core/app/components/ui/alert'
+import { Skeleton } from '#core/app/components/ui/skeleton'
+import { Table, TableBody, TableRow, TableCell } from '#core/app/components/ui/table'
+import TableFailureState from '#core/app/components/TableFailureState.vue'
 import { RouterLink } from 'vue-router'
 const props = defineProps<{ id: string }>()
 const key = computed(() => props.id)

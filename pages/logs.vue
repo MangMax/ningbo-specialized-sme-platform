@@ -7,14 +7,14 @@ import { describeLogRow, sourceLabel, outcomeLabel, logModuleLabel } from '@/com
 import LogFilters from '@/components/logs/LogFilters.vue'
 import LogDetail from '@/components/logs/LogDetail.vue'
 import LogManagement from '@/components/logs/LogManagement.vue'
-import PageHeader from '@/components/PageHeader.vue'
-import TableLoadingStatus from '@/components/TableLoadingStatus.vue'
-import TableFailureState from '@/components/TableFailureState.vue'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/skeleton'
+import PageHeader from '#core/app/components/PageHeader.vue'
+import TableLoadingStatus from '#core/app/components/TableLoadingStatus.vue'
+import TableFailureState from '#core/app/components/TableFailureState.vue'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '#core/app/components/ui/tabs'
+import { Button } from '#core/app/components/ui/button'
+import { Badge } from '#core/app/components/ui/badge'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '#core/app/components/ui/card'
+import { Skeleton } from '#core/app/components/ui/skeleton'
 import {
   Table,
   TableBody,
@@ -22,16 +22,16 @@ import {
   TableHead,
   TableHeader,
   TableRow
-} from '@/components/ui/table'
-import TablePagination from '@/components/TablePagination.vue'
+} from '#core/app/components/ui/table'
+import TablePagination from '#core/app/components/TablePagination.vue'
 import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
   SheetDescription
-} from '@/components/ui/sheet'
-import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from '@/components/ui/empty'
+} from '#core/app/components/ui/sheet'
+import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from '#core/app/components/ui/empty'
 useHead({ title: '运行日志' })
 const route = useRoute(),
   router = useRouter()

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { FileWarning, Loader2, Unplug } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
-import { Progress } from '@/components/ui/progress'
+import { Button } from '#core/app/components/ui/button'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '#core/app/components/ui/empty'
+import { Progress } from '#core/app/components/ui/progress'
 
 /**
  * 预览器内部的加载态与错误态。三个预览器共用,保证「正在读」和「读不了」

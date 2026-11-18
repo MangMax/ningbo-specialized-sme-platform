@@ -8,7 +8,7 @@ import {
   reviewTimeLabel,
 } from '~~/lib/roster/review-display'
 import AssessmentStatusBadge from './AssessmentStatusBadge.vue'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 
 defineProps<{ coverage: ReviewAssessment['queryCoverage'] }>()
 

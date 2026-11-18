@@ -19,9 +19,9 @@ import {
   ZoomIn,
   ZoomOut,
 } from '@lucide/vue'
-import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '#core/app/components/ui/alert'
+import { Badge } from '#core/app/components/ui/badge'
+import { Button } from '#core/app/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -29,15 +29,15 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
+} from '#core/app/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { Textarea } from '@/components/ui/textarea'
+} from '#core/app/components/ui/dropdown-menu'
+import { Textarea } from '#core/app/components/ui/textarea'
 import type { WorkbenchRow } from '~~/lib/ocr-workbench'
 import { pageReviewState, STATE_WORD } from '~~/lib/ocr-workbench'
 import { OCR_CHANNELS } from '~~/lib/labels'

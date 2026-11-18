@@ -2,7 +2,7 @@ import { UNLABELED_LOG_MODULE, type LogEvent, type LogSummary } from '~~/lib/log
 import { getAppModules } from '~~/lib/app-modules'
 import { errorCodeMissingIsInformative, fieldOmission } from '~~/lib/logging/detail-profile'
 import { isDrizzleQueryAttempt } from '~~/lib/logging/drizzle-query'
-import type { BadgeVariants } from '@/components/ui/badge'
+import type { BadgeVariants } from '#core/app/components/ui/badge'
 
 const moduleLabels = new Map(getAppModules().map(({ id, name }) => [id, id === 'core' ? '平台' : name]))
 export const logModuleOptions = [...moduleLabels.keys(), UNLABELED_LOG_MODULE]

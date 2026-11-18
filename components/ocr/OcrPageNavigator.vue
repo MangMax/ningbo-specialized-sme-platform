@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Button } from '#core/app/components/ui/button'
+import { Input } from '#core/app/components/ui/input'
 import OcrPageCell from './OcrPageCell.vue'
 import {
   pageReviewState,

@@ -13,9 +13,9 @@ import {
   ZoomIn,
   ZoomOut,
 } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
-import { cn } from '@/lib/utils'
+import { Button } from '#core/app/components/ui/button'
+import { Separator } from '#core/app/components/ui/separator'
+import { cn } from '#core/lib/utils'
 
 /**
  * 预览器的工具栏。Word / Excel / PPT / PDF / 图片共用这一条,

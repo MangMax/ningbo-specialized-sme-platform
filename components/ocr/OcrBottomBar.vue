@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { ChevronLeft, ChevronRight, Loader2, Pencil, Save, X } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
+import { Button } from '#core/app/components/ui/button'
 
 /**
  * 唯一逻辑翻页控制器。

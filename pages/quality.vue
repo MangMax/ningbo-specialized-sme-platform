@@ -2,16 +2,16 @@
 import { useQuery } from '@pinia/colada'
 import { computed } from 'vue'
 import { orderBy, sumBy } from 'es-toolkit'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '#core/app/components/ui/card'
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from '@/components/ui/empty'
+} from '#core/app/components/ui/empty'
 import { CheckCircle2 } from '@lucide/vue'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Skeleton } from '#core/app/components/ui/skeleton'
 import {
   Table,
   TableBody,
@@ -19,7 +19,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table'
+} from '#core/app/components/ui/table'
 
 interface QualitySample {
   enterpriseId: number

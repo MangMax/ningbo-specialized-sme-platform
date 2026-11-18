@@ -6,9 +6,9 @@ import { platformBusinessFields, platformPresentationFields, platformRelatedRawF
 import { formatFetchTime } from '~~/lib/reconcile-time'
 import type { ExportRowSource, RelationSource } from '~~/lib/roster/correspondence-view'
 import PlatformQueryProvenance from '@/components/PlatformQueryProvenance.vue'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import PlatformFieldConflicts from '@/components/PlatformFieldConflicts.vue'
-import { Badge } from '@/components/ui/badge'
+import { Badge } from '#core/app/components/ui/badge'
 
 const props = defineProps<{ relation?: RelationSource | null; exportRow?: ExportRowSource | null; compact?: boolean; presentation?: 'source' | 'business' }>()
 const source = computed(() => props.relation?.query.interface ?? '')

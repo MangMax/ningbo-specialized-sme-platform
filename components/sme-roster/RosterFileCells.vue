@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { Badge } from '@/components/ui/badge'
-import { TableCell } from '@/components/ui/table'
+import { Badge } from '#core/app/components/ui/badge'
+import { TableCell } from '#core/app/components/ui/table'
 import SourceChip from '@/components/SourceChip.vue'
 import { CATEGORY_STATES, KINDS, PARSE_STATES } from '~~/lib/labels'
 import { joinSeries, partBatches, partYears } from '~~/lib/file-parts'

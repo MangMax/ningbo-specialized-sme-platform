@@ -2,12 +2,12 @@
 import { shallowRef } from 'vue'
 import type { RecordComparisonResult } from '~~/lib/roster/record-comparison-view'
 import { PLATFORM_INTERFACES } from '~~/lib/labels'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import TablePagination from '@/components/TablePagination.vue'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
+import TablePagination from '#core/app/components/TablePagination.vue'
 import SourceReader from './SourceReader.vue'
 import ComparisonBusinessObservation from './ComparisonBusinessObservation.vue'
 import { comparisonLinkText as linkText } from '~~/lib/roster/record-comparison-display'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '#core/app/components/ui/dialog'
 
 // Pure presentation boundary: the parent owns scope/loading/pagination; no client deduplication.
 defineProps<{ groups: RecordComparisonResult['businessGroups']; counts: RecordComparisonResult['businessCounts']; loading: boolean; returnTo: string }>()

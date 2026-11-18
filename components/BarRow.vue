@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Progress } from '@/components/ui/progress'
+import { Progress } from '#core/app/components/ui/progress'
 
 /**
  * 构成条:标签 | 条形 | 数值。用于来源、事件、区县这类「几项到几十项」的计数。

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@/components/ui/field'
-import { Switch } from '@/components/ui/switch'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Button } from '#core/app/components/ui/button'
+import { Checkbox } from '#core/app/components/ui/checkbox'
+import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '#core/app/components/ui/field'
+import { Switch } from '#core/app/components/ui/switch'
+import { Tabs, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 
 /**
  * 单个采集器（HTTP / TUS）的“记录内容”编辑器。
