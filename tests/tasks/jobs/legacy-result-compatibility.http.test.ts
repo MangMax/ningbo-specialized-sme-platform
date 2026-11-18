@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import * as h3 from 'h3'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { initializeDb } from '../../../db/client'
-import { __resetJobRunner, clearJobSpecs, registerJob, whenIdle } from '../../../server/utils/job-runner'
-import { setJobResult } from '../../../server/utils/job-store'
+import { __resetJobRunner, clearJobSpecs, registerJob, whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { setJobResult } from '../../../layers/core/server/utils/job-store'
 
 const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
 vi.mock('@db', () => ({ useDb: () => active.db }))
@@ -18,14 +18,14 @@ beforeEach(async () => {
   __resetJobRunner(); clearJobSpecs()
   for (const [key, value] of Object.entries(h3)) vi.stubGlobal(key, value)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-a9bc-key', filesDir: dir, browserTasksEnabled: false }))
-  const list = (await import('../../../server/api/jobs/index.get')).default
-  const detail = (await import('../../../server/api/jobs/[id].get')).default
-  const submit = (await import('../../../server/api/jobs/index.post')).default
-  const cancel = (await import('../../../server/api/jobs/[id].delete')).default
+  const list = (await import('../../../layers/core/server/api/jobs/index.get')).default
+  const detail = (await import('../../../layers/core/server/api/jobs/[id].get')).default
+  const submit = (await import('../../../layers/core/server/api/jobs/index.post')).default
+  const cancel = (await import('../../../layers/core/server/api/jobs/[id].delete')).default
   const artifact = (await import('../../../server/api/job-artifacts/[id].get')).default
-  const tasks = (await import('../../../server/api/task-center/index.get')).default
-  const task = (await import('../../../server/api/task-center/[id].get')).default
-  const taskCancel = (await import('../../../server/api/task-center/[id]/cancel.post')).default
+  const tasks = (await import('../../../layers/core/server/api/task-center/index.get')).default
+  const task = (await import('../../../layers/core/server/api/task-center/[id].get')).default
+  const taskCancel = (await import('../../../layers/core/server/api/task-center/[id]/cancel.post')).default
   const router = h3.createRouter().get('/api/jobs', list).post('/api/jobs', submit)
     .get('/api/jobs/:id', detail).delete('/api/jobs/:id', cancel)
     .get('/api/job-artifacts/:id', artifact).get('/api/task-center', tasks)

@@ -1,9 +1,9 @@
 import { useDb } from '@db'
-import { isJobId } from '~~/lib/job'
+import { isJobId } from '#core/lib/job'
 import { ensureJobRunnerReady } from '../../utils/job-runner'
 import { getJob, getJobSummary } from '../../utils/job-store'
-import { jobReadProjector } from '../../utils/job-read'
-import { registerJobSpecs } from '../../utils/job-specs'
+import { jobReadProjector } from '../../../../../server/utils/job-read'
+import { registerJobSpecs } from '../../../../../server/utils/job-specs'
 
 /**
  * 查一个任务。`GET /api/jobs/:id`

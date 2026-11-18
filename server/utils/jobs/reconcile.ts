@@ -2,7 +2,7 @@ import { resolvePlatformCookie } from '../platform-credential'
 import type { ComparisonDirection } from '../../../lib/comparison'
 import { TITLE_ORDER } from '../../../lib/labels'
 import { runPlatformReconcile, type ReconcileReport } from '../platform-reconcile'
-import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../job-runner'
+import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../../../layers/core/server/utils/job-runner'
 
 /**
  * `reconcile` —— **批量平台核查**(工信部 `businessList` / `applyList` 两个接口)。

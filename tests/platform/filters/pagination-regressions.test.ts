@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
 import { updateCredential } from '../../../server/utils/credential-state'
-import { whenIdle } from '../../../server/utils/job-runner'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { handlePlatformBatchRequest } from '../../../server/utils/platform-batch-http'
 
 const dir = mkdtempSync(join(tmpdir(), 'pagination-regressions-'))

@@ -20,7 +20,7 @@ import type { RosterImportPlatformQuery } from '../../../lib/roster-import-clien
 import { updateCredential } from '../../../server/utils/credential-state'
 import { handlePlatformBatchRequest } from '../../../server/utils/platform-batch-http'
 import { recognizedResultToImport, platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import { whenIdle } from '../../../server/utils/job-runner'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { platformSummaryCache } from '../../../server/utils/platform-summary-cache'
 import { importExecutor } from '../../../server/utils/import-execution'
 import { readMcpToken, resolveMcpAuth } from '../../../server/utils/mcp-auth'

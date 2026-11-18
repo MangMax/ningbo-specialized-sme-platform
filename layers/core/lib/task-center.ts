@@ -1,10 +1,4 @@
 import type { JobState } from './job'
-export const TASK_EXPORTS = [
-  { titleCode: 'little_giant', label: '专精特新“小巨人”', path: '/api/roster/exports/current/little-giant' },
-  { titleCode: 'specialized_sme', label: '专精特新中小企业', path: '/api/roster/exports/current/specialized-sme' },
-  { titleCode: 'innovative_sme', label: '创新型中小企业', path: '/api/roster/exports/current/innovative-sme' },
-] as const
-export type TaskExportTitle = typeof TASK_EXPORTS[number]['titleCode']
 export const TASK_STATES: Record<JobState, string> = { queued: '排队中', running: '运行中', done: '已完成', failed: '失败', cancelled: '已取消' }
 export interface TaskSummary {
   id: string; kind: string; label: string; module: string | null; group: string; state: JobState
@@ -22,7 +16,7 @@ export interface TaskSummary {
     positionsTruncated: boolean
   }
   export?: {
-    titleCode: TaskExportTitle | null; regenerateOf: string | null; phase: string
+    titleCode: string | null; regenerateOf: string | null; phase: string
     generatedAt: string | null; snapshotStartedAt: string | null; ruleVersion: string | null; dataVersion: string | null
     counts: { eligible: number; pending: number; excluded: number } | null
     artifact: { id: string; downloadUrl: string; filename: string; size: number; sha256: string; generatedAt: string; expiresAt: string; availability: 'available' | 'expired' | 'missing' } | null

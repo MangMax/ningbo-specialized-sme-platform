@@ -1,4 +1,4 @@
-import { getAppModules } from './app-modules'
+import { getAppModules } from '../../../lib/app-modules'
 
 const modules = getAppModules()
 const kinds = new Map(modules.flatMap(({ id, jobKinds }) =>

@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
 import { runPlatformReconcile } from '../../../server/utils/platform-reconcile'
-import { whenIdle } from '../../../server/utils/job-runner'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { emptyReply, platformFixture, platformReplay, type PlatformCall } from '../fixtures/source-replay'
 
 const fixture = platformFixture

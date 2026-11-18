@@ -13,7 +13,7 @@ import { createEnterpriseReadExecutor } from '../../../server/utils/enterprise-r
 import { createImportExecutionWorker } from '../../../server/utils/import-execution-worker-location'
 import { listTargetBusinessProcesses } from '../../../server/utils/platform-business-processes-target'
 import { runPlatformReconcile } from '../../../server/utils/platform-reconcile'
-import { whenIdle } from '../../../server/utils/job-runner'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import type { RosterImportRequest } from '../../../lib/roster-import-client'
 
 const cleanup:Array<()=>void|Promise<unknown>>=[]

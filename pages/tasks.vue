@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { clientRequestReference } from '#core/lib/client-logging/request-reference'
 import { computed, ref, watch } from 'vue'
+import TaskListPanel from '#core/app/components/tasks/TaskListPanel.vue'
 import CandidateTaskCreate from '@/components/tasks/CandidateTaskCreate.vue'
-import { TASK_EXPORTS, TASK_STATES, type TaskExportTitle, type TaskList, type TaskSummary } from '~~/lib/task-center'
-import { getTaskGroups, resolveTaskFilters, taskTabs } from '~~/lib/task-catalog'
-import { JOB_STATES, type JobState } from '~~/lib/job'
-import { useTaskPolling } from '~/composables/useTaskPolling'
+import { TASK_EXPORTS, type TaskExportTitle } from '../lib/sme-roster/task-exports'
+import { TASK_STATES, type TaskList, type TaskSummary } from '#core/lib/task-center'
+import { getTaskGroups, resolveTaskFilters, taskTabs } from '#core/lib/task-catalog'
+import { JOB_STATES, type JobState } from '#core/lib/job'
+import { useTaskPolling } from '#core/app/composables/useTaskPolling'
 import { useCurrentRosterExport, taskBrowserHeaders } from '~/composables/useCurrentRosterExport'
 import { Button } from '#core/app/components/ui/button'
 import { Label } from '#core/app/components/ui/label'
@@ -13,10 +15,7 @@ import { Tabs, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
 import { Badge } from '#core/app/components/ui/badge'
 import { Alert } from '#core/app/components/ui/alert'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '#core/app/components/ui/table'
-import { Card, CardContent } from '#core/app/components/ui/card'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '#core/app/components/ui/sheet'
-import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from '#core/app/components/ui/empty'
 useHead({ title: '后台任务' })
 const route = useRoute(), router = useRouter()
 const scalar = (raw: unknown) => typeof raw === 'string' ? raw : ''
@@ -63,7 +62,7 @@ function setTab(value: string | number) {
 }
 
 function regenerate(task: TaskSummary) {
-  const code = task.export?.titleCode
+  const code = task.export?.titleCode as TaskExportTitle | null | undefined
   if (code) void submitExport(code, task.id)
 }
 const { exportRequests, submitting, disabledReason: exportDisabledReason, submitExport: requestExport, discovering, discoveryFailed, discoverExports } = useCurrentRosterExport(readOnlyReason)
@@ -124,7 +123,7 @@ const downloadReason = (task: TaskSummary) => {
   return ''
 }
 const regenerateReason = (task: TaskSummary) => {
-  if (task.export?.titleCode && exportDisabledReason(task.export.titleCode)) return exportDisabledReason(task.export.titleCode)
+  if (task.export?.titleCode && exportDisabledReason(task.export.titleCode as TaskExportTitle)) return exportDisabledReason(task.export.titleCode as TaskExportTitle)
   if (readOnlyReason.value) return readOnlyReason.value
   if (!task.export?.canRegenerate) return task.state === 'queued' || task.state === 'running' ? '任务仍在执行，结束后才能重新生成。' : '当前状态不支持重新生成。'
   return ''
@@ -225,48 +224,15 @@ watch(job, (next, previous) => { if (previous && !next) closingRow.value = previ
       <!-- 全页唯一的 live region：受理/下载结果只在这里说一次 -->
       <p v-if="exportNotice && !job" :role="exportNotice.tone" :aria-live="exportNotice.tone === 'status' ? 'polite' : 'assertive'" data-testid="export-notice" class="text-sm break-words" :class="exportNotice.tone === 'alert' && 'text-destructive'">{{ exportNotice.text }}</p>
 
-      <Card class="min-w-0 gap-0 overflow-hidden py-0 shadow-none">
-        <CardContent class="relative p-0">
-        <TableLoadingStatus :loading="loading" kind="files" label="正在读取后台任务…" />
-        <TableFailureState v-if="failed" title="任务列表加载失败" :compact="!!data" :pending="loading" :description="failureDescription" @retry="reload" />
-        <p v-if="stale && data && !failed" role="status" class="text-muted-foreground px-4 py-2 text-sm">正在切换筛选，暂时显示上次结果（第 {{ data.page }} 页）。</p>
-        <!-- 桌面：表格；窄屏：同一份数据的摘要，状态与操作不必横向滚动 -->
-        <div class="hidden overflow-x-auto sm:block">
-          <Table class="data-table">
-            <TableHeader><TableRow><TableHead>类型 / 任务编号</TableHead><TableHead>状态</TableHead><TableHead>阶段进度</TableHead><TableHead>创建时间</TableHead><TableHead>详情</TableHead></TableRow></TableHeader>
-            <TableBody>
-              <TableRow v-for="row in rows" :key="row.id" :data-task-row="row.id">
-                <TableCell><div class="flex flex-col gap-1"><span>{{ row.label }}</span><span class="text-muted-foreground font-mono text-xs break-all">{{ row.id }}</span><span v-if="row.error" class="text-destructive max-w-xs text-xs">{{ row.error }}</span></div></TableCell>
-                <TableCell><div class="flex flex-col items-start gap-1"><Badge :variant="row.state === 'failed' ? 'destructive' : 'secondary'" class="whitespace-nowrap">{{ TASK_STATES[row.state] ?? row.state }}</Badge><span v-if="row.export?.artifact" class="text-muted-foreground text-xs">{{ availabilityLabels[row.export.artifact.availability] }}</span></div></TableCell>
-                <TableCell><TaskProgress v-if="row.progress?.stage" :progress="row.progress" /></TableCell>
-                <TableCell class="text-muted-foreground text-xs"><time v-if="row.createdAt" :datetime="row.createdAt">{{ dated(row.createdAt) }}</time></TableCell>
-                <TableCell><Button variant="outline" size="sm" data-row-action :aria-label="`查看 ${row.label} ${row.id}`" @click="openDetail(row.id)">查看</Button></TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </div>
-        <ul v-if="rows.length" class="flex flex-col divide-y sm:hidden" aria-label="任务列表">
-          <li v-for="row in rows" :key="row.id" :data-task-row="row.id" class="flex min-w-0 flex-col gap-2 p-3" data-testid="task-card">
-            <div class="flex items-start justify-between gap-3">
-              <div class="flex min-w-0 flex-col gap-1">
-                <span class="font-medium break-words">{{ row.label }}</span>
-                <span class="text-muted-foreground font-mono text-xs break-all">{{ row.id }}</span>
-              </div>
-              <Button variant="outline" size="sm" class="min-h-11 shrink-0" data-row-action :aria-label="`查看 ${row.label} ${row.id}`" @click="openDetail(row.id)">查看</Button>
-            </div>
-            <div class="flex flex-wrap items-center gap-2">
-              <Badge :variant="row.state === 'failed' ? 'destructive' : 'secondary'" class="whitespace-nowrap">{{ TASK_STATES[row.state] ?? row.state }}</Badge>
-              <span v-if="row.export?.artifact" class="text-muted-foreground text-xs">{{ availabilityLabels[row.export.artifact.availability] }}</span>
-              <TaskProgress v-if="row.progress?.stage" :progress="row.progress" inline />
-              <time v-if="row.createdAt" :datetime="row.createdAt" class="text-muted-foreground text-xs">{{ dated(row.createdAt) }}</time>
-            </div>
-            <p v-if="row.error" class="text-destructive text-xs">{{ row.error }}</p>
-          </li>
-        </ul>
-        <Empty v-if="!loading && !failed && !rows.length"><EmptyHeader><EmptyTitle>暂无任务</EmptyTitle><EmptyDescription>当前分类和状态没有任务记录。</EmptyDescription></EmptyHeader></Empty>
-        <div class="border-t p-3"><TablePagination :page="data?.page ?? page" :page-size="data?.pageSize ?? pageSize" :total="data?.total ?? 0" unit="个任务" :loading="loading || stale" @update:page="navigate({ page: $event })" @update:page-size="navigate({ pageSize: $event, page: 1 })" /></div>
-        </CardContent>
-      </Card>
+      <TaskListPanel
+        :rows="rows" :data="data" :page="page" :page-size="pageSize"
+        :loading="loading" :failed="failed" :stale="stale" :failure-description="failureDescription" :dated="dated"
+        @reload="reload" @open-detail="openDetail" @page="navigate({ page: $event })" @page-size="navigate({ pageSize: $event, page: 1 })"
+      >
+        <template #status="{ row }">
+          <span v-if="row.export?.artifact" class="text-muted-foreground text-xs">{{ availabilityLabels[row.export.artifact.availability] }}</span>
+        </template>
+      </TaskListPanel>
     </section>
 
     <Sheet :open="!!job" @update:open="value => { if (!value) void closeDetail() }">
@@ -281,7 +247,7 @@ watch(job, (next, previous) => { if (previous && !next) closingRow.value = previ
         <template #actions="{ task, current, refresh: refreshDetail }">
           <template v-if="task.export">
             <Button :disabled="!current || downloading || !task.export.canDownload" @click="downloadExport(task, refreshDetail)">{{ downloading ? '校验下载中…' : '下载 Excel' }}</Button>
-            <Button variant="outline" :disabled="!current || submitting || !task.export.canRegenerate || !task.export.titleCode || !!exportDisabledReason(task.export.titleCode)" @click="regenerate(task)">重新生成</Button>
+            <Button variant="outline" :disabled="!current || submitting || !task.export.canRegenerate || !task.export.titleCode || !!exportDisabledReason(task.export.titleCode as TaskExportTitle)" @click="regenerate(task)">重新生成</Button>
             <Button v-if="discoveryFailed" variant="outline" :disabled="discovering" @click="discoverExports">重新发现导出能力</Button>
           </template>
         </template>

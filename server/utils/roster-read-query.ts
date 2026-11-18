@@ -9,7 +9,7 @@
  * 只认字典里有的值,别的给 400。静默忽略会让筛选悄悄失效,使用者只会看到空结果
  * 而不知道为什么。
  */
-import { parseCsvQuery } from '../../lib/csv'
+import { parseCsvQuery } from '../../layers/core/lib/csv'
 import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '../../lib/comparison'
 import {
   DIFFERENCE_REASONS,

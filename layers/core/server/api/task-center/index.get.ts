@@ -1,4 +1,4 @@
-import { createTaskCenterRoute } from '../../utils/task-center-route'
+import { createTaskCenterRoute } from '../../../../../server/utils/task-center-route'
 
 defineRouteMeta({
   openAPI: {

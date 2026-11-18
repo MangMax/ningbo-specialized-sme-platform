@@ -1,5 +1,5 @@
 import routes from '#current-export-routes'
-import { getJobSpec } from '../../../../utils/job-runner'
+import { getJobSpec } from '../../../../../layers/core/server/utils/job-runner'
 import { registerJobSpecs } from '../../../../utils/job-specs'
 defineRouteMeta({ openAPI: {
   tags: ['当前名录导出'], summary: '发现已部署当前名录导出入口',

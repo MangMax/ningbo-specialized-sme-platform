@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import type { TaskExportTitle } from '~~/lib/task-center'
+import type { TaskExportTitle } from '../lib/sme-roster/task-exports'
 import { useCurrentRosterExport } from '~/composables/useCurrentRosterExport'
 import { Button } from '#core/app/components/ui/button'
 import { Alert } from '#core/app/components/ui/alert'

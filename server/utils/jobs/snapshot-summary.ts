@@ -1,5 +1,5 @@
 import type { useApplicationDb } from '../../../db/client'
-import type { TaskSummary } from '../../../lib/task-center'
+import type { TaskSummary } from '../../../layers/core/lib/task-center'
 
 /** Project scalars in SQLite: never hydrate archives, conditions or backup paths. */
 export function readSnapshotSummary(db: ReturnType<typeof useApplicationDb>, id: string): NonNullable<TaskSummary['snapshot']> {

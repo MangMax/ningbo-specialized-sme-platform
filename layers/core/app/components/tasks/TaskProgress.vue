@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { TaskSummary } from '~~/lib/task-center'
+import type { TaskSummary } from '#core/lib/task-center'
 
 /**
  * 阶段进度。总量未知时不造百分比，只写“总量未知”。

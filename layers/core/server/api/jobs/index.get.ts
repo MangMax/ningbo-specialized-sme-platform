@@ -1,10 +1,10 @@
 import { useDb } from '@db'
-import { parseCsvQuery } from '~~/lib/csv'
-import { JOB_STATES, type JobState } from '~~/lib/job'
+import { parseCsvQuery } from '#core/lib/csv'
+import { JOB_STATES, type JobState } from '#core/lib/job'
 import { ensureJobRunnerReady } from '../../utils/job-runner'
 import { DEFAULT_JOB_LIMIT, listJobs, listJobSummaries, MAX_JOB_LIMIT } from '../../utils/job-store'
-import { jobReadProjector } from '../../utils/job-read'
-import { registerJobSpecs } from '../../utils/job-specs'
+import { jobReadProjector } from '../../../../../server/utils/job-read'
+import { registerJobSpecs } from '../../../../../server/utils/job-specs'
 
 /**
  * 列出任务。`GET /api/jobs?kind=&state=&limit=`

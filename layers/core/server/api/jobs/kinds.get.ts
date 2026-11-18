@@ -1,5 +1,5 @@
 import { jobSpecs } from '../../utils/job-runner'
-import { registerJobSpecs } from '../../utils/job-specs'
+import { registerJobSpecs } from '../../../../../server/utils/job-specs'
 
 /**
  * 列出**任务种类**。`GET /api/jobs/kinds`

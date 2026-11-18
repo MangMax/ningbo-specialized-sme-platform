@@ -1,9 +1,9 @@
 import { resolve } from 'node:path'
-import { isJobId } from '../../../lib/job'
+import { isJobId } from '../../../layers/core/lib/job'
 import { appLog } from '../../../layers/core/lib/logging'
 import { DEFAULT_DPI, isPdfPath } from '../../../lib/pdf-page'
-import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../job-runner'
-import { setJobResult } from '../job-store'
+import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../../../layers/core/server/utils/job-runner'
+import { setJobResult } from '../../../layers/core/server/utils/job-store'
 import { acquireOcrAttempt, checkpointOriginalOcrAttempt, fenceOriginalOcrPublication, prepareOcrPublication, recordSharedOcrPublication, sharedOcrPublication, updateOcrAttempt, verifyOcrInput, type OcrAttemptUpdate, type OcrCapture, type OcrPublication } from '../ocr-publication'
 import { listOcrResults } from '../ocr-result'
 import {

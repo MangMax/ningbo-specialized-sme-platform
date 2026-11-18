@@ -14,7 +14,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { readMcpToken, resolveMcpAuth } from '../../../server/utils/mcp-auth'
 import { importExecutor } from '../../../server/utils/import-execution'
 import { platformSummaryCache } from '../../../server/utils/platform-summary-cache'
-import { whenIdle } from '../../../server/utils/job-runner'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { useDb, schema } from '../../../db'
 import { runPlatformLiveQuery } from '../../../server/utils/platform-live-query'
 import { recognizedResultToImport } from '../../../lib/platform/recognized-evidence'

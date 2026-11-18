@@ -9,10 +9,10 @@ import {
   clearJobSpecs,
   ensureJobRunnerReady,
   whenIdle,
-} from '../../../server/utils/job-runner'
+} from '../../../layers/core/server/utils/job-runner'
 import { submitCandidateDiscovery } from '../../../server/utils/jobs/candidate-discovery'
 import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
-import { getJob } from '../../../server/utils/job-store'
+import { getJob } from '../../../layers/core/server/utils/job-store'
 const dirs: string[] = []
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'candidate-214-'))
@@ -267,7 +267,7 @@ it('rejects invalid scopes and conflicting request reuse while keeping empty sco
 
 it('cancels before discovery writes and retries the same frozen scope without duplicate audit', async () => {
   const f = fixture()
-  const { requestJobCancel } = await import('../../../server/utils/job-runner')
+  const { requestJobCancel } = await import('../../../layers/core/server/utils/job-runner')
   const { retryCandidateDiscovery } = await import('../../../server/utils/jobs/candidate-discovery')
   const task = submitCandidateDiscovery(f.db, { eventIds: [f.event.id], clientRequestId: 'native-cancel' }, f.dir)
   expect(requestJobCancel(f.db, task.jobId)).toMatchObject({ ok: true })

@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import * as h3 from 'h3'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../../../db'
-import { whenIdle } from '../../../server/utils/job-runner'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { DEFAULT_DPI } from '../../../lib/pdf-page'
 import { pageDirRelPath, PAGES_MANIFEST_NAME, pageImageRelPath } from '../../../lib/pdf-page'
 import { renderPdfPages } from '../../../server/utils/pdf-pages'
@@ -46,9 +46,9 @@ beforeAll(async () => {
   vi.stubEnv('MIIT_COOKIE', '')
   for (const key of ['defineEventHandler', 'getQuery', 'getRouterParam', 'readBody', 'createError', 'setHeader', 'setResponseStatus'] as const) vi.stubGlobal(key, h3[key])
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir, apiToken: 'issue309-api', ocrToken: 'issue309-synthetic-ocr', ocrBaseUrl: api?.origin }))
-  const post = (await import('../../../server/api/jobs/index.post')).default
-  const get = (await import('../../../server/api/jobs/[id].get')).default
-  const cancel = (await import('../../../server/api/jobs/[id].delete')).default
+  const post = (await import('../../../layers/core/server/api/jobs/index.post')).default
+  const get = (await import('../../../layers/core/server/api/jobs/[id].get')).default
+  const cancel = (await import('../../../layers/core/server/api/jobs/[id].delete')).default
   const read = (await import('../../../server/api/files/[id]/ocr-pages/[page].get')).default
   const save = (await import('../../../server/api/files/[id]/ocr-pages/[page].put')).default
   const router = h3.createRouter().post('/api/jobs', post).get('/api/jobs/:id', get).delete('/api/jobs/:id', cancel)
@@ -465,7 +465,7 @@ it("concurrent accepted followers use the first durable capture and one publicat
     const parent = (await response.json()).jobId as string
     await vi.waitFor(async () => expect((await status(parent)).result?.publication.files[0].requests['1'].state).toBe('accepted'))
     await stopChild(original.child)
-    const { reconcileInterruptedJobs } = await import('../../../server/utils/job-store')
+    const { reconcileInterruptedJobs } = await import('../../../layers/core/server/utils/job-store')
     expect(reconcileInterruptedJobs(db)).toBe(1)
     const [a, b] = await Promise.all([submit(file, parent), submit(file, parent)])
     await vi.waitFor(async () => {
@@ -493,8 +493,8 @@ it("terminal source claim metadata survives stale checkpoints, finishes, reconci
   await submit(file, parent)
   await whenIdle()
   const before = await status(parent)
-  const { setJobResult, setJobProgress, markJobRunning, finishJob, reconcileInterruptedJobs } = await import('../../../server/utils/job-store')
-  const { enqueuePersistedJob } = await import('../../../server/utils/job-runner')
+  const { setJobResult, setJobProgress, markJobRunning, finishJob, reconcileInterruptedJobs } = await import('../../../layers/core/server/utils/job-store')
+  const { enqueuePersistedJob } = await import('../../../layers/core/server/utils/job-runner')
   setJobResult(db, parent, { publication: 'stale whole result' })
   setJobProgress(db, parent, { done: 0, total: 99 })
   expect(markJobRunning(db, parent)).toBe(null)
@@ -515,7 +515,7 @@ it("late capture after descendant restart reconciliation preserves the shared cl
   const initial = await status(parent)
   const a = await submit(file, parent)
   await vi.waitFor(async () => expect((await status(a)).result?.publication.files[0].requests['1'].state).toBe('accepted'))
-  const { reconcileInterruptedJobs } = await import('../../../server/utils/job-store')
+  const { reconcileInterruptedJobs } = await import('../../../layers/core/server/utils/job-store')
   expect(reconcileInterruptedJobs(db)).toBe(1)
   const interrupted = await status(a)
   expect(interrupted.state).toBe('failed')

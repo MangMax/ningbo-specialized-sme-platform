@@ -4,7 +4,7 @@ import type { StoredFileContentIdentity } from '../file-content-identity'
 import { isPdfPath, normalizeDpi } from '../../../lib/pdf-page'
 import type { RenderOutcome } from '../pdf-pages'
 import { renderPdfPages } from '../pdf-pages'
-import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../job-runner'
+import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../../../layers/core/server/utils/job-runner'
 
 /**
  * `render-pages` —— **批量**把 PDF 逐页渲染成 PNG。

@@ -14,7 +14,7 @@ import {
   normalizeJobParams,
   progressPercent,
   type JobState,
-} from '../../../lib/job'
+} from '../../../layers/core/lib/job'
 import {
   readApiToken,
   resolveApiAuth,
@@ -33,7 +33,7 @@ import {
   whenIdle,
   type JobContext,
   type JobSpec,
-} from '../../../server/utils/job-runner'
+} from '../../../layers/core/server/utils/job-runner'
 import {
   createJob,
   finishJob,
@@ -43,8 +43,8 @@ import {
   reconcileInterruptedJobs,
   setJobProgress,
   toJobDto,
-} from '../../../server/utils/job-store'
-import { parseCsvQuery } from '../../../lib/csv'
+} from '../../../layers/core/server/utils/job-store'
+import { parseCsvQuery } from '../../../layers/core/lib/csv'
 import { parseRenderPagesParams } from '../../../server/utils/jobs/render-pages'
 import { shouldHideOpenApiPath } from '../../../server/utils/openapi-guard'
 import { registerJobSpecs } from '../../../server/utils/job-specs'
@@ -835,6 +835,7 @@ describe('api-auth 鉴权判据', () => {
 
 /** 路由文件的目录(测试从 cwd 跑,与 vitest.config.ts 的 root 一致)。 */
 const ROUTE_DIR = join(process.cwd(), 'server/api')
+const CORE_ROUTE_DIR = join(process.cwd(), 'layers/core/server/api')
 
 describe('Nitro 内建 OpenAPI 的暴露面', () => {
   /** 按当前 nuxt.config 的口径问 nitro:它注册了哪些路由。 */
@@ -908,7 +909,7 @@ describe('Nitro 内建 OpenAPI 的暴露面', () => {
       'jobs/kinds.get.ts',
     ]
     for (const rel of routes) {
-      const source = await readFile(join(ROUTE_DIR, rel), 'utf8')
+      const source = await readFile(join(rel.startsWith('jobs/') ? CORE_ROUTE_DIR : ROUTE_DIR, rel), 'utf8')
       expect(source, rel).toContain('defineRouteMeta({')
       // 宏必须写在**顶层**(nitro 只认顶层 ExpressionStatement),所以别塞进函数里。
       expect(/^defineRouteMeta\(/m.test(source), rel).toBe(true)

@@ -1,5 +1,5 @@
 import {afterEach,afterAll,beforeAll,beforeEach,describe,expect,it,vi} from 'vitest'
-import {clearJobSpecs,getJobSpec,jobSpecs,type JobSpec,type JobContext} from '../../../server/utils/job-runner'
+import {clearJobSpecs,getJobSpec,jobSpecs,type JobSpec,type JobContext} from '../../../layers/core/server/utils/job-runner'
 import {registerJobSpecs} from '../../../server/utils/job-specs'
 import {reconcileSpec} from '../../../server/utils/jobs/reconcile'
 import {nativeImportDb} from '../../roster/imports/fixtures/native-import'

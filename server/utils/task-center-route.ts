@@ -1,8 +1,8 @@
-import { taskCenterBrowserAccess } from './task-center-access'
+import { taskCenterBrowserAccess } from '../../layers/core/server/utils/task-center-access'
 import { requestLogContext } from '../../layers/core/lib/logging'
 import { useDb } from '@db'
 import { handleTaskCenterRequest } from './task-center-http'
-import { ensureJobRunnerReady } from './job-runner'
+import { ensureJobRunnerReady } from '../../layers/core/server/utils/job-runner'
 import { registerJobSpecs } from './job-specs'
 /** Thin Nitro binding; HTTP fixtures exercise the same core. */
 export function createTaskCenterRoute(action: 'list' | 'detail' | 'cancel' | 'retry') {

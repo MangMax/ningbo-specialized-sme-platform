@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { JOB_ID_RE } from '../../../lib/job'
+import { JOB_ID_RE } from '../../../layers/core/lib/job'
 import { annualTaskContext } from '../../utils/annual-correspondence-read'
 import { annualTaskMcpRequest } from '../../utils/annual-correspondence-mcp'
 import { writeGuard } from '../../utils/mcp-guard'

@@ -1,5 +1,6 @@
-import { isJobId } from '../../../lib/job'
-import { TASK_EXPORTS, type TaskSummary } from '../../../lib/task-center'
+import { isJobId } from '../../../layers/core/lib/job'
+import { TASK_EXPORTS } from '../../../lib/sme-roster/task-exports'
+import { type TaskSummary } from '../../../layers/core/lib/task-center'
 import { CANDIDATE_JOB_KIND, type CandidateJobResult } from './candidate-discovery'
 import { EVENT_ARCHIVE_RULE_VERSION } from '../event-archive-discovery'
 import type { ProjectedTask } from './task-summary'

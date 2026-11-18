@@ -18,8 +18,8 @@ import { DEFAULT_DPI } from '../../../lib/pdf-page'
 import { renderPdfPages } from '../../../server/utils/pdf-pages'
 import { minimalPdf } from '../../support/minimal-pdf'
 import { startMiniOcrApi, type MiniOcrApi } from './fixtures/provider-api'
-import { createJob, markJobRunning } from '../../../server/utils/job-store'
-import { newJobId } from '../../../lib/job'
+import { createJob, markJobRunning } from '../../../layers/core/server/utils/job-store'
+import { newJobId } from '../../../layers/core/lib/job'
 
 /**
  * 票 14 通路 a —— **在线 PaddleOCR API**(异步、可批量)。
@@ -834,9 +834,9 @@ it('fails closed with a sanitized error when the credential database is unavaila
 })
 
 it('queued OCR retains its submission credential for submit and poll without persisting it in job history', async () => {
-  const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../../../server/utils/job-runner')
+  const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../../../layers/core/server/utils/job-runner')
   const { ocrSpec } = await import('../../../server/utils/jobs/ocr')
-  const { getJob } = await import('../../../server/utils/job-store')
+  const { getJob } = await import('../../../layers/core/server/utils/job-store')
   const { updateCredential } = await import('../../../server/utils/credential-state')
   let release: (() => void) | undefined
   try {
@@ -861,9 +861,9 @@ it('queued OCR retains its submission credential for submit and poll without per
 })
 
 it.each([{ name: 'failed', failed: true }, { name: 'successful', failed: false }])('keeps encoded OCR credentials out of persisted job history and OCR rows ($name)', async ({ failed }) => {
-  const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../../../server/utils/job-runner')
+  const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../../../layers/core/server/utils/job-runner')
   const { ocrSpec } = await import('../../../server/utils/jobs/ocr')
-  const { getJob } = await import('../../../server/utils/job-store')
+  const { getJob } = await import('../../../layers/core/server/utils/job-store')
   const { updateCredential } = await import('../../../server/utils/credential-state')
   const token = 'synthetic-"quoted"\\+/=task-secret'
   const echoes = [token, encodeURIComponent(token), JSON.stringify(token).slice(1, -1)]

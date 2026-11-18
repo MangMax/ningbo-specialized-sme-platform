@@ -78,7 +78,7 @@ router.get('/health', h3.defineEventHandler(() => ({ isolated: true })))
 // Test-only observation of the actual runner finishing, including a still-live
 // original executor whose persisted row was marked failed by another process.
 router.get('/issue309/idle', h3.defineEventHandler(async () => {
-  const { whenIdle } = await load.import(resolve(root, 'server/utils/job-runner.ts'))
+  const { whenIdle } = await load.import(resolve(root, 'layers/core/server/utils/job-runner.ts'))
   await whenIdle()
   return { idle: true }
 }))

@@ -1,9 +1,9 @@
-import { requestLogContext } from '../../../layers/core/lib/logging'
+import { requestLogContext } from '../../../lib/logging'
 import { useDb } from '@db'
-import { normalizeJobParams } from '~~/lib/job'
-import { requireApiToken } from '../../utils/api-guard'
+import { normalizeJobParams } from '#core/lib/job'
+import { requireApiToken } from '../../../../../server/utils/api-guard'
 import { ensureJobRunnerReady, getJobSpec, jobSpecs, submitJob } from '../../utils/job-runner'
-import { registerJobSpecs } from '../../utils/job-specs'
+import { registerJobSpecs } from '../../../../../server/utils/job-specs'
 
 /**
  * 提交一个**异步任务**。`POST /api/jobs`

@@ -91,7 +91,7 @@ it('batch retry preserves accepted pages and correlates only unfinished item col
   const { initializeDb } = await import('../../../db/client')
   const { updateCredential } = await import('../../../server/utils/credential-state')
   const { handlePlatformBatchRequest } = await import('../../../server/utils/platform-batch-http')
-  const { whenIdle } = await import('../../../server/utils/job-runner')
+  const { whenIdle } = await import('../../../layers/core/server/utils/job-runner')
   const db = initializeDb({ dbPath: join(root, 'batch.db'), create: true })
   updateCredential('sme-roster.miitCookie', 'session=PRIVATE185_COOKIE', { db })
   const nativeFetch = globalThis.fetch

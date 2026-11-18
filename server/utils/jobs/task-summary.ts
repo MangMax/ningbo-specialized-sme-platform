@@ -4,13 +4,14 @@ import { readCandidateSummary, candidateProjection } from './candidate-summary'
 import { readExportSummary, exportProjection } from './export-summary'
 import { readReconcileSummary, reconcileProjection } from './reconcile-summary'
 import { readBatchSummary, batchProjection } from './batch-summary'
-import { readOcrLinks, ocrProjection } from './ocr-summary'
+import { readOcrLinks, ocrProjection } from '../../../layers/core/server/utils/jobs/ocr-summary'
 import { CANDIDATE_JOB_KIND } from './candidate-discovery'
 import { desc, sql, type SQL } from 'drizzle-orm'
 import { schema, type useApplicationDb } from '../../../db/client'
-import { isJobId } from '../../../lib/job'
-import { TASK_EXPORTS, type TaskSummary } from '../../../lib/task-center'
-import { getTaskKind } from '../../../lib/task-catalog'
+import { isJobId } from '../../../layers/core/lib/job'
+import { TASK_EXPORTS } from '../../../lib/sme-roster/task-exports'
+import { type TaskSummary } from '../../../layers/core/lib/task-center'
+import { getTaskKind } from '../../../layers/core/lib/task-catalog'
 
 type Db = ReturnType<typeof useApplicationDb>
 const j = schema.job

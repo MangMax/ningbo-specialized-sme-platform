@@ -16,7 +16,7 @@
  *     条件 chip(`source` / `eventType` / `rosterState` 走后者:它们是 `/stats`
  *     下钻带进来的,不给常驻控件,但**绝不静默丢弃**)。
  */
-import { parseCsvQuery } from '../csv'
+import { parseCsvQuery } from '../../layers/core/lib/csv'
 import {
   DEFAULT_ROSTER_ENTERPRISE_SORT,
   ROSTER_ENTERPRISE_SORTS,

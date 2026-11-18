@@ -1,10 +1,10 @@
-import { requestLogContext } from '../../../layers/core/lib/logging'
+import { requestLogContext } from '../../../lib/logging'
 import { useDb } from '@db'
-import { isJobId } from '~~/lib/job'
-import { requireApiToken } from '../../utils/api-guard'
+import { isJobId } from '#core/lib/job'
+import { requireApiToken } from '../../../../../server/utils/api-guard'
 import { ensureJobRunnerReady, requestJobCancel } from '../../utils/job-runner'
 import { getJob, toJobDto } from '../../utils/job-store'
-import { registerJobSpecs } from '../../utils/job-specs'
+import { registerJobSpecs } from '../../../../../server/utils/job-specs'
 
 /**
  * 取消一个任务。`DELETE /api/jobs/:id`

@@ -1,5 +1,5 @@
 import { activateCandidateDiscoveryTasks } from './jobs/candidate-discovery'
-import { ensureJobRunnerReady } from './job-runner'
+import { ensureJobRunnerReady } from '../../layers/core/server/utils/job-runner'
 import { serialize } from 'node:v8'
 import type Database from 'better-sqlite3'
 import { realpathSync, statSync } from 'node:fs'

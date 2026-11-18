@@ -1,4 +1,4 @@
-import type { JobProgress, JobState } from '../job'
+import type { JobProgress, JobState } from '../../layers/core/lib/job'
 
 export const ANNUAL_CORRESPONDENCE_KIND = 'event-annual-correspondence'
 export const ANNUAL_CORRESPONDENCE_RULE = 'event-annual-process'
