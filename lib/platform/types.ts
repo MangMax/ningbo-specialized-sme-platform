@@ -5,10 +5,10 @@
  * 免得 `identity.ts` / `payload.ts` 各自再定义一遍。
  *
  * ⚠️ 平台接口的取值与联合类型(`PlatformInterface` / `PLATFORM_INTERFACE_VALUES`)**不在
- * 这里转出** —— 它们的唯一出处是 `lib/labels.ts` 的枚举表(契约 §2.4),平台层内外一律
+ * 这里转出** —— 它们的唯一出处是 `layers/sme-roster/lib/labels.ts` 的枚举表(契约 §2.4),平台层内外一律
  * 直接 import 那里。少一层转出,就少一个「从哪儿取」的分叉。
  */
-import type { PlatformInterface } from '../labels'
+import type { PlatformInterface } from '../../layers/sme-roster/lib/labels'
 
 export type { PlatformRow, PlatformRawRow, PlatformJsonValue, PlatformRdjb, PlatformListResult } from './adapter'
 

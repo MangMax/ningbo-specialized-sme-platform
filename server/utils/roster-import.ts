@@ -38,11 +38,11 @@ import { and,desc,eq,inArray,isNull,ne,sql,type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { isPageCapable } from '../../lib/roster/evidence-page'
-import { normalizeName,normalizeUscc } from '../../lib/domain'
-import { duplicateTwinKey } from '../../lib/roster/duplicate-merge'
-import { missingUsccSourceFields,usccFormatVerdict } from '../../lib/roster/uscc-research'
+import { normalizeName,normalizeUscc } from '../../layers/sme-roster/lib/domain'
+import { duplicateTwinKey } from '../../layers/sme-roster/lib/roster/duplicate-merge'
+import { missingUsccSourceFields,usccFormatVerdict } from '../../layers/sme-roster/lib/roster/uscc-research'
 import { diagnoseOfficialEventFields,readCurrentQualificationAssessment } from '../../lib/roster/current-qualification'
-import { PLATFORM_INTERFACE_VALUES,TITLE_ORDER,type PlatformInterface } from '../../lib/labels'
+import { PLATFORM_INTERFACE_VALUES,TITLE_ORDER,type PlatformInterface } from '../../layers/sme-roster/lib/labels'
 import type {
 DuplicateNameCandidate,
 RosterImportAlias,
@@ -73,8 +73,8 @@ import { recordImportReceipt } from './import-receipt-ledger'
 import { refreshDerivedFileParts } from './file-parts'
 import { legacyPlatformProvenanceItemsSchema } from '../../lib/platform/legacy-provenance'
 import { inspectLegacyPlatformProvenance,writeLegacyPlatformProvenance,LegacyProvenanceError } from './platform-legacy-provenance'
-import { canonicalEnterpriseId,currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
-import { mergeTargetEnterpriseIdentity } from './enterprise-merge-target'
+import { canonicalEnterpriseId,currentEnterpriseIdentity } from '../../layers/sme-roster/lib/roster/enterprise-identity'
+import { mergeTargetEnterpriseIdentity } from '../../layers/sme-roster/server/utils/enterprise-merge-target'
 
 type Db = BetterSQLite3Database<typeof schema>
 /** Internal persistence only; the public summary keeps its existing counts/projection shape. */
@@ -98,7 +98,7 @@ export type Executor = Db | Tx
 // 这些集合**不重述取值** —— 一律从既有的冻结出处派生：
 //  - 表列的枚举取自 `db/schema.ts` 的 `*.enumValues`（drizzle 把 `text('c',{enum:[…]})`
 //    的取值挂在列对象上），于是「表的枚举」与「写入侧的校验」不可能各自漂移；
-//  - 没有表列的（称号、平台接口）取自 `lib/labels.ts` / `db/titles.ts` 的既有常量。
+//  - 没有表列的（称号、平台接口）取自 `layers/sme-roster/lib/labels.ts` / `db/titles.ts` 的既有常量。
 // 旧写法是把 `not_queried` / `failed` / … 逐个再抄一遍，抄漏一个就成了静默放行。
 
 /** 把一列已冻结的枚举取值变成校验集合。 */
@@ -113,7 +113,7 @@ const REVIEW_OUTCOMES = enumSet(schema.recordEvent.reviewOutcome.enumValues)
 const SOURCES = enumSet(schema.record.source.enumValues)
 const ALIAS_SOURCE_KINDS = enumSet(schema.enterpriseAlias.sourceKind.enumValues)
 const VERIFICATION_STATUSES = enumSet(schema.enterpriseAlias.verificationStatus.enumValues)
-/** 平台接口取值集 = `lib/labels.ts` 的唯一出处（契约 §2.4）。 */
+/** 平台接口取值集 = `layers/sme-roster/lib/labels.ts` 的唯一出处（契约 §2.4）。 */
 const PLATFORM_INTERFACE_SET = new Set<string>(PLATFORM_INTERFACE_VALUES)
 const QUERY_STATUSES = enumSet(schema.platformCollection.status.enumValues)
 const MATCH_BASES = enumSet(schema.platformObservationAssignment.matchBasis.enumValues)
@@ -131,7 +131,7 @@ const IMPORT_SOURCE_KINDS = new Set<string>(['announcement', 'platform_export', 
 
 /**
  * 归一化统一社会信用代码;**空值 → `null`**(写入侧按「未给统代」处理)。
- * 归一化规则本身只有一处实现:{@link normalizeUscc}(`lib/domain.ts`,紧邻 `normalizeName`)。
+ * 归一化规则本身只有一处实现:{@link normalizeUscc}(`layers/sme-roster/lib/domain.ts`,紧邻 `normalizeName`)。
  */
 function usccOrNull(raw: unknown): string | null {
   return normalizeUscc(raw) || null
@@ -1576,7 +1576,7 @@ export function planRosterImport(
   // 排在 `merges` **之前**：本项只把一家无统代企业的 `uscc_norm` 填上，而 `merges` 会
   // **删掉**被并企业行 —— 两项若指向同一行，先归并会让补录在写入阶段找不到企业
   // （进而整批回滚）。读侧计划从不为同一个目标同时给出两者（见
-  // `server/utils/uscc-research.ts`：一个目标要么有规范行可并、要么只能补录）。
+  // `layers/sme-roster/server/utils/uscc-research.ts`：一个目标要么有规范行可并、要么只能补录）。
   const backfills = Array.isArray(payload.usccBackfills) ? payload.usccBackfills : []
   backfills.forEach((backfill, index) => planUsccBackfill(db, backfill, index, push))
 

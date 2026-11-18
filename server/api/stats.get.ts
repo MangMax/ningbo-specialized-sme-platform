@@ -1,5 +1,5 @@
 import { useDb } from '@db'
-import { getStats } from '~~/lib/query'
+import { readRosterStatistics } from '#sme-roster/public'
 import { getFirstRecognitionYearBuckets } from '~~/lib/roster/recognitions'
 
 /** 统计聚合,可按标题 / 区县 / 来源过滤(与 SPEC 契约一致)。 */
@@ -28,7 +28,7 @@ export default defineEventHandler((event) => {
   }
   const db = useDb()
   return {
-    ...getStats(db, filter),
+    ...readRosterStatistics(db, filter),
     byFirstRecognitionYear: getFirstRecognitionYearBuckets(db, filter),
   }
 })

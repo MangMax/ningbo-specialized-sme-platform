@@ -1,7 +1,7 @@
 /** Query processing facts only; business interpretation remains with the agent. */
 import { describe, expect, it } from 'vitest'
 import { classifyRawQuery, type PlatformRow } from '../../../lib/platform'
-import type { PlatformInterface } from '../../../lib/labels'
+import type { PlatformInterface } from '../../../layers/sme-roster/lib/labels'
 import { relationFromRow, type PlatformRelationRecord } from '../../../lib/platform/identity'
 import {
   type ReconcileQueryEvidence,

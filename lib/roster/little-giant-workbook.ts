@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { Workbook, Worksheet } from 'documonster/excel'
 import { assertExcelSheets, inspectExcelSource } from '../excel-source'
 import { createExcelValueReader } from '../excel-read-value'
-import { isNingboDistrict, normalizeUscc } from '../domain'
+import { isNingboDistrict, normalizeUscc } from '../../layers/sme-roster/lib/domain'
 
 /**
  * RL-02 —— 经信局《公布历年小巨人企业名单》工作簿的**只读解析器**。

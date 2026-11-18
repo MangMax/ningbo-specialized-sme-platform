@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
-import TitleBadge from './TitleBadge.vue'
+import type { RosterEnterpriseDetail } from '#sme-roster/lib/roster/enterprise-roster'
+import RosterTitleBadge from '../layers/sme-roster/app/components/TitleBadge.vue'
 import DisclosurePanel from '../layers/core/app/components/DisclosurePanel.vue'
-import EventChip from './EventChip.vue'
+import RosterEventChip from '../layers/sme-roster/app/components/EventChip.vue'
 type BusinessEvent = RosterEnterpriseDetail['businessTimeline']['sources'][number]['events'][number]
 defineProps<{ event: BusinessEvent }>()
 const matters: Record<string, string> = { recognition: '认定', award: '认定', review: '复核', apply: '申报', update: '更新', cancel: '取消' }
@@ -11,7 +11,7 @@ const conclusions = { passed: '通过', invalid: '无效', processing: '办理�
 
 <template>
   <article class="bg-card min-w-0 rounded-md border p-4 text-sm leading-6 break-words [overflow-wrap:anywhere]" data-testid="business-event">
-    <h4 class="flex flex-wrap items-center gap-2"><TitleBadge v-if="event.title" :code="event.title" /><span v-else>称号未知</span><EventChip v-if="event.matter === 'award' || event.matter === 'review'" :type="event.matter" hide-batch /><span v-else>{{ matters[event.matter] ?? event.matterRaw ?? '事项未知' }}</span></h4>
+    <h4 class="flex flex-wrap items-center gap-2"><RosterTitleBadge v-if="event.title" :code="event.title" /><span v-else>称号未知</span><RosterEventChip v-if="event.matter === 'award' || event.matter === 'review'" :type="event.matter" hide-batch /><span v-else>{{ matters[event.matter] ?? event.matterRaw ?? '事项未知' }}</span></h4>
     <p v-if="event.platformName" class="text-muted-foreground mt-1">来源原名：{{ event.platformName }}</p>
     <div class="mt-3 grid gap-x-6 gap-y-2 border-t pt-3 sm:grid-cols-2">
       <p><span class="text-muted-foreground">结论：</span>{{ conclusions[event.conclusion] }}<template v-if="event.statusRaw != null">（{{ event.statusRaw }}）</template></p>

@@ -9,8 +9,8 @@ import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { getComparison,type ComparisonDirection } from '../../lib/comparison'
-import { normalizeName } from '../../lib/domain'
-import type { PlatformInterface } from '../../lib/labels'
+import { normalizeName } from '../../layers/sme-roster/lib/domain'
+import type { PlatformInterface } from '../../layers/sme-roster/lib/labels'
 import {
 type PlatformFetch,
 type PlatformQueryOutcome,

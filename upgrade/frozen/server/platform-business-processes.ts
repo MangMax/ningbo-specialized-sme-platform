@@ -4,7 +4,7 @@ import { withArchiveProcessFacts } from '../../../lib/platform/observation-facts
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../legacy-schema'
-import { normalizeName, normalizeUscc } from '../../../lib/domain'
+import { normalizeName, normalizeUscc } from '../../../layers/sme-roster/lib/domain'
 import { normalizeDeclareKind } from '../../../lib/platform/identity'
 import { normalizePlatformRelation } from '../../../lib/platform/normalization'
 import { legacyRowTitle, type PlatformObservationFact } from '../../../lib/platform/observation-facts'

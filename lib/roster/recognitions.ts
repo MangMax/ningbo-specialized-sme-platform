@@ -13,10 +13,10 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { and, asc, eq, sql } from 'drizzle-orm'
 import * as schema from '../../db/schema'
-import { MAX_PAGE_SIZE } from '../query'
+import { MAX_PAGE_SIZE } from '../../layers/sme-roster/lib/query'
 import { readRecognitionPage } from './recognition-read'
 import type { RecognitionEntry } from './first-recognition'
-import { computeTitleLifecycle, type LifecycleEvent } from './lifecycle'
+import { computeTitleLifecycle, type LifecycleEvent } from '../../layers/sme-roster/lib/roster/lifecycle'
 
 type Db = BetterSQLite3Database<typeof schema>
 

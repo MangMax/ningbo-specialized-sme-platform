@@ -1,6 +1,6 @@
 import { resolvePlatformCookie } from '../platform-credential'
 import type { ComparisonDirection } from '../../../lib/comparison'
-import { TITLE_ORDER } from '../../../lib/labels'
+import { TITLE_ORDER } from '../../../layers/sme-roster/lib/labels'
 import { runPlatformReconcile, type ReconcileReport } from '../platform-reconcile'
 import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../../../layers/core/server/utils/job-runner'
 

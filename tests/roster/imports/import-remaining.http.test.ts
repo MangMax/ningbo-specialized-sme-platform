@@ -10,7 +10,7 @@ import { rosterImportMcpPayloadSchema } from '../../../server/utils/roster-impor
 import { commitRosterImport, preflightRosterImport, readImportBatchOutcome } from '../../../server/utils/roster-import'
 import { startRosterApi } from './fixtures/import-server'
 import { listEnterprises } from '../../../server/utils/mcp-roster'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import { saveDecision102 } from '../../../server/utils/decision-lifecycle-102'
 import { listPlatformQueries } from '../../../lib/platform/read'
 

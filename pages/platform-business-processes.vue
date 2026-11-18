@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { Search } from '@lucide/vue'
-import { PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '~~/lib/labels'
+import { PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '#sme-roster/lib/labels'
 import { watchDebounced } from '@vueuse/core'
 import type { BusinessProcessListResult } from '~~/lib/platform/business-processes'
 import { Button } from '#core/app/components/ui/button'

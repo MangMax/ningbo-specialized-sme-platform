@@ -4,8 +4,8 @@ import { withEnterpriseReadSignal } from '../../layers/core/server/utils/enterpr
 import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '~~/lib/comparison'
 import { readWholeComparisonFull } from '~~/lib/comparison-full'
-import { TITLE_ORDER } from '~~/lib/labels'
-import { MAX_PAGE_SIZE } from '~~/lib/query'
+import { TITLE_ORDER } from '#sme-roster/lib/labels'
+import { MAX_PAGE_SIZE } from '#sme-roster/lib/query'
 
 /**
  * 两侧比对结果(已公布 vs 平台导出),带人工标注、**库内平台原因与证据**、旧解释缓存对照。

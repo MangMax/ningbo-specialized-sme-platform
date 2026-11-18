@@ -31,7 +31,7 @@
  * `(source_file, list_no)` 这类原始记录给出,名称/属地只用来**排除**不属于这一条的
  * 那些行。判定仍然由原始记录(那条出处行 + 人工核对的页码)触发。
  */
-import { normalizeName } from '../domain'
+import { normalizeName } from '../../layers/sme-roster/lib/domain'
 // `lib/preview.ts` 是**零依赖**的纯规则(它只按扩展名分派预览类型,不 import 任何东西),
 // 所以「取扩展名」这件事直接用它的那一份,不另抄一遍 —— 抄一份就多一处会跟它走偏的口径。
 import { isSafeBackPath, positiveInt } from '../../layers/core/lib/preview-query'
@@ -117,7 +117,7 @@ export interface EvidencePageCandidate {
   /**
    * 这条**记录**上的属地(公布文件里那一行印的属地)。
    * ⚠️ 判定时**不能只看它** —— 界面上显示、导出里写的属地是「有效属地」
-   * (`lib/roster/enterprise-roster.ts` 的 `effectiveDistrict`:**企业自身属地优先**,
+   * (`layers/sme-roster/lib/roster/enterprise-roster.ts` 的 `effectiveDistrict`:**企业自身属地优先**,
    * 为空才退回记录)。调用方多半是照着界面抄的属地,所以两个都要认,否则一条
    * 看起来完全正确的条目会莫名其妙 `no_match`。
    */

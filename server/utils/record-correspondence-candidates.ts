@@ -1,7 +1,7 @@
 import { asc,eq,inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
-import { normalizeUscc } from '../../lib/domain'
+import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import type { ScopedPlatformObservation } from '../../lib/platform/business-record'
 import type { PlatformObservationFact } from '../../lib/platform/observation-facts'
 import { RDJB_TITLE_CODES,sourcePositionForSequence } from '../../lib/platform/recognized-evidence'

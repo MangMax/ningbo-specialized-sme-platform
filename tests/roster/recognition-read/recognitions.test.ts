@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { listRosterEnterprises } from '../../../lib/roster/enterprise-roster'
+import { listRosterEnterprises } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import { listRosterRecognitions } from '../../../lib/roster/recognitions'
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
 

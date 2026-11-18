@@ -13,8 +13,8 @@
  * 由代理/人看原始关系后确认,确认结果才进 `enterprise_alias`(见 `payload.ts`)。
  * 同名多主体(同一名字挂在不同 USCC 下)是**冲突**,候选一律为空、不自动合并。
  */
-import { normalizeName } from '../domain'
-import type { PlatformInterface } from '../labels'
+import { normalizeName } from '../../layers/sme-roster/lib/domain'
+import type { PlatformInterface } from '../../layers/sme-roster/lib/labels'
 import type { PlatformRow, PlatformQueryMeta } from './types'
 
 /** 一条平台关系(已映射到契约 §1.4 的列含义)。 */
@@ -116,7 +116,7 @@ export function relationFromRow(
 export interface RelationNameGroup {
   /** 来源里的**原值**(取该组出现次数最多/最先出现的写法)。 */
   name: string
-  /** 归一化名(与 `lib/domain.ts` 的 `normalizeName` 同规则)。 */
+  /** 归一化名(与 `layers/sme-roster/lib/domain.ts` 的 `normalizeName` 同规则)。 */
   nameNorm: string
   relations: PlatformRelationRecord[]
   /** 该名字在来源里最早一次申报时间;来源未给出则空。 */

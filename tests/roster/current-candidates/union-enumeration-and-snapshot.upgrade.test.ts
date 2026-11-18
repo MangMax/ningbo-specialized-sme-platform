@@ -33,7 +33,7 @@ import { join } from 'node:path'
 import { platformObservationAssignment as assignment, targetSchema } from '../../../lib/platform/target-schema'
 import { candidateScopeObservation as observation } from '../../../lib/platform/candidate-scope-schema'
 import { currentCandidateSql,currentCandidateBindings } from '../../../upgrade/frozen/current-candidates'
-import { normalizeUscc } from '../../../lib/domain'
+import { normalizeUscc } from '../../../layers/sme-roster/lib/domain'
 import { captureReturnedTitles } from './fixtures/returned-titles'
 import { TargetCurrentCandidateGap } from '../../../lib/roster/current-candidates-target'
 

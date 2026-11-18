@@ -1,10 +1,10 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { EVENT_ORDER, SOURCE_ORDER, TITLE_ORDER } from '~~/lib/labels'
+import { EVENT_ORDER, SOURCE_ORDER, TITLE_ORDER } from '#sme-roster/lib/labels'
 import { FIRST_RECOGNITION_STATUS_VALUES } from '~~/lib/roster/first-recognition'
-import { listRecords } from '~~/lib/query'
-import { parseRecordQuery } from '../../utils/roster-read-query'
+import { listRecords } from '#sme-roster/lib/query'
+import { parseRecordQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
 
 /** 通用记录查询；与 `GET /api/records` 共用参数解析和读模型。 */
 export default defineMcpTool({

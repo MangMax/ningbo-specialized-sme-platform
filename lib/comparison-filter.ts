@@ -1,4 +1,4 @@
-import { normalizeName, normalizeUscc } from './domain'
+import { normalizeName, normalizeUscc } from '../layers/sme-roster/lib/domain'
 
 interface ComparisonFilterRow {
   titleCode: string

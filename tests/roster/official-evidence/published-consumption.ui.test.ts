@@ -7,9 +7,9 @@ import { defineComponent, h, ref } from 'vue'
 import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import { createMemoryHistory, createRouter, RouterLink, RouterView, useRoute as routerUseRoute } from 'vue-router'
-import type { RosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
+import type { RosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import PageHeader from '../../../layers/core/app/components/PageHeader.vue'
-import EnterprisePage from '../../../pages/enterprises/[id].vue'
+import EnterprisePage from '../../../layers/sme-roster/app/pages/enterprises/[id].vue'
 import CorrespondenceItem from '../../../components/record-correspondence/CorrespondenceItem.vue'
 import type { CorrespondenceDetail, EventSource, OfficialPublishedFact, SourceResponse } from '../../../lib/roster/correspondence-view'
 import CurrentPage from '../../../pages/current-enterprises.vue'
@@ -152,7 +152,7 @@ it("keeps the real enterprise page single-root for Nuxt out-in navigation from t
   // Vue Transition requires a component to have one element root:
   // https://vuejs.org/guide/built-ins/transition.html#the-transition-component
   // This page uses the Nuxt out-in transition; UI07 retains the actual SPA failure.
-  const filename = resolve(process.cwd(), 'pages/enterprises/[id].vue')
+  const filename = resolve(process.cwd(), 'layers/sme-roster/app/pages/enterprises/[id].vue')
   const { descriptor, errors } = parse(readFileSync(filename, 'utf8'), { filename })
   expect(errors).toEqual([])
   const roots = descriptor.template!.ast!.children.filter(node => node.type !== 3 && !(node.type === 2 && !node.content.trim()))
@@ -277,7 +277,7 @@ describe("formal source consumer boundaries", () => {
       global: { plugins: [createPinia(), PiniaColada, router], components: { NuxtLink: RouterLink, PageHeader }, stubs: {
         FilePreviewDialog: true,
         EnterpriseLaterProcesses: true,
-        TitleBadge: true, SourceChip: true, EventChip: true,
+        RosterTitleBadge: true, RosterSourceChip: true, RosterEventChip: true,
       } } }); mounted.push(wrapper)
     await flushPromises()
     expect(wrapper.find('#record-event-9').exists()).toBe(true)

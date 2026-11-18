@@ -1,5 +1,5 @@
 import type { FileCategory } from '../../layers/core/lib/core/file-categories'
-import { CATEGORY_STATES, CATEGORY_STATE_ORDER, PARSE_STATES, PARSE_STATE_ORDER, SOURCES, SOURCE_ORDER } from '../labels'
+import { CATEGORY_STATES, CATEGORY_STATE_ORDER, PARSE_STATES, PARSE_STATE_ORDER, SOURCES, SOURCE_ORDER } from '../../layers/sme-roster/lib/labels'
 import { scopeOf } from './file-store-scope'
 
 export const rosterFileCategory = {

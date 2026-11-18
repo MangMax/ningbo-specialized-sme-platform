@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { normalizeUscc } from '../domain'
+import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import { and, eq, isNull, max, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import { drizzle } from 'drizzle-orm/better-sqlite3'

@@ -2,7 +2,7 @@ import { groupBy } from 'es-toolkit'
 import type Database from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../db/schema'
-import { TITLE_ORDER } from '../labels'
+import { TITLE_ORDER } from '../../layers/sme-roster/lib/labels'
 import { readStatisticsEffectiveSnapshot, hydrateStatisticsRows } from './statistics-effective-snapshot'
 export type DistrictFilter = { title?: string; district?: string; page: number; pageSize: number }
 export function readDistrictStatistics(db: BetterSQLite3Database<typeof schema>, filter: DistrictFilter, asOf = Date.now()) {

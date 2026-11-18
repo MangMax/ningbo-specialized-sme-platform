@@ -14,7 +14,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BUSINESS_LIST_PATH, type PlatformFetch } from '../../../lib/platform'
-import type { PlatformInterface } from '../../../lib/labels'
+import type { PlatformInterface } from '../../../layers/sme-roster/lib/labels'
 
 const FIXTURE_DIR = join(import.meta.dirname, '../..', 'fixtures', 'platform')
 

@@ -7,7 +7,7 @@ import * as h3 from 'h3'
 import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
-import { enterpriseReads } from '../../../server/utils/enterprise-read'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
 import { createCurrentCandidateReader } from '../../../lib/roster/current-qualification'
 import { qualificationCycleCases } from "./fixtures/cycle-cases"

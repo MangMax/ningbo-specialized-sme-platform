@@ -18,7 +18,7 @@ import {
 listRosterEnterprises,
 type RosterEnterpriseRow,
 type RosterEnterprisesResult,
-} from '../../lib/roster/enterprise-roster'
+} from '../../layers/sme-roster/lib/roster/enterprise-roster'
 import type { FirstRecognitionStatus } from '../../lib/roster/first-recognition'
 
 type Db = BetterSQLite3Database<typeof schema>

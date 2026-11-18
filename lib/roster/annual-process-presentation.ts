@@ -1,6 +1,6 @@
 import type { PlatformBusinessGroup } from '../platform/business-record'
 import type { EventAnnualProcessPage } from './annual-process'
-import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, TITLES } from '../labels'
+import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, TITLES } from '../../layers/sme-roster/lib/labels'
 
 /** UI presentation input, deliberately independent of the annual HTTP DTO.
  * The HTTP adapter must use the official DTO after its dependency is integrated.

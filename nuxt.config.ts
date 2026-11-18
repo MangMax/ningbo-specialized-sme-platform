@@ -25,7 +25,7 @@ const runtimeWatchIgnores = runtimeDirectories.map(dir => `${fileURLToPath(new U
 
 // SPA only — no SSR. Everything runs in the browser against Nitro server routes.
 export default defineNuxtConfig({
-  extends: ['./layers/core'],
+  extends: ['./layers/core', './layers/sme-roster'],
   // Concurrent owned dev fixtures must not share generated files or Nuxt's lock.
   buildDir: process.env.NUXT_BUILD_DIR || '.nuxt',
   compatibilityDate: '2026-10-13',
@@ -217,7 +217,7 @@ export default defineNuxtConfig({
         // packaging pipeline as the server. Rollup computes a relocatable URL
         // from the launcher's final chunk, including in Nitro dev builds.
         for (const worker of [
-          { location: './server/utils/enterprise-read-worker-location.ts', entry: './lib/roster/enterprise-read-worker.ts', fileName: 'enterprise-read-worker.mjs', factory: 'createEnterpriseWorker', chunk: 'enterprise-read-model' },
+          { location: './layers/sme-roster/server/utils/enterprise-read-worker-location.ts', entry: './layers/sme-roster/lib/roster/enterprise-read-worker.ts', fileName: 'enterprise-read-worker.mjs', factory: 'createEnterpriseWorker', chunk: 'enterprise-read-model' },
           { location: './server/utils/import-execution-worker-location.ts', entry: './lib/roster/import-execution-worker.ts', fileName: 'import-execution-worker.mjs', factory: 'createImportExecutionWorker', chunk: 'import-execution-model' },
           { location: './server/utils/current-export-worker-location.ts', entry: './lib/roster/current-export-worker.ts', fileName: 'current-export-worker.mjs', factory: 'createCurrentExportWorker', chunk: 'current-export-model' },
         ]) {
@@ -236,7 +236,7 @@ export default defineNuxtConfig({
               order: 'post' as const,
               handler(_code: string, id: string) {
                 if (id !== location) return
-                return { code: `import { createEnterpriseReadProcess } from ${JSON.stringify(fileURLToPath(new URL('./server/utils/enterprise-read-process.ts', import.meta.url)))};
+                return { code: `import { createEnterpriseReadProcess } from ${JSON.stringify(fileURLToPath(new URL('./layers/sme-roster/server/utils/enterprise-read-process.ts', import.meta.url)))};
                   export function ${worker.factory}() {
                     return createEnterpriseReadProcess(new URL(import.meta.ROLLUP_FILE_URL_${reference}));
                   }`, map: null }
@@ -288,6 +288,7 @@ export default defineNuxtConfig({
 
   alias: {
     '#core': fileURLToPath(new URL('./layers/core', import.meta.url)),
+    '#sme-roster': fileURLToPath(new URL('./layers/sme-roster', import.meta.url)),
     '@db': fileURLToPath(new URL('./db', import.meta.url)),
   },
 

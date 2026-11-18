@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
-import EnterpriseListTable from '../../../components/EnterpriseListTable.vue'
+import EnterpriseListTable from '../../../layers/sme-roster/app/components/EnterpriseListTable.vue'
 
 const mounted: ReturnType<typeof mount>[] = []
 

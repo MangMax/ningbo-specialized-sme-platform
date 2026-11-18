@@ -3,7 +3,7 @@ import { withEnterpriseReadSignal } from '../../../layers/core/server/utils/ente
 import { readRecognitions } from '../../utils/recognition-read'
 import { useDb } from '@db'
 import { setHeader } from 'h3'
-import { parseRosterRecognitionQuery } from '../../utils/roster-read-query'
+import { parseRosterRecognitionQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
 
 /**
  * **首次认定清单**(契约 §7.5,RL-08)。

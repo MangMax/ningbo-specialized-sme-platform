@@ -10,7 +10,7 @@ import { storedApplyProjection as p } from '../apply-stored-schema';
 import { processStoredInstalled } from '../../process-stored-catalog';
 import { sqliteConnection } from '../../../lib/platform/target-connection';
 import { platformCollection as c, platformLegacyQueryAlias as qa, platformBusinessRecord as b, platformBusinessRecordVersion as v, enterprise as e } from '../../legacy-schema';
-import { normalizeName, normalizeUscc } from '../../../lib/domain';
+import { normalizeName, normalizeUscc } from '../../../layers/sme-roster/lib/domain';
 import { normalizeDeclareKind } from '../../../lib/platform/identity';
 import { declarationFilterSchema, DECLARATION_OBSERVATION_LIMIT, DECLARATION_VERSION_LIMIT, type DeclarationFilter, type DeclarationListResult, type DeclarationDetail, type DeclarationView, type DeclarationIsolatedRow, type DeclarationRecordRow } from '../../../lib/platform/declarations';
 import type { PlatformFilterOptions } from '../../../lib/platform/filter-options';

@@ -10,7 +10,7 @@ import { TUS_ENDPOINT, baseName, targetsEndpoint, type PreviousUpload } from '..
  * 客户端在此**声明**元数据,服务端**裁决**落位;声明错了会被 400 挡回来。
  */
 
-import { KIND_ORDER, KINDS, SOURCE_ORDER, SOURCES } from './labels'
+import { KIND_ORDER, KINDS, SOURCE_ORDER, SOURCES } from '../layers/sme-roster/lib/labels'
 
 /** 来源白名单:经信局 / 工信部。 */
 export type SourceCode = 'jxj' | 'miit'
@@ -46,8 +46,8 @@ export function emptyBatchMeta(): BatchMeta {
 }
 
 /**
- * 选择框用的取值,顺序即展示顺序 —— **中文一律取 `lib/labels.ts` 的单一来源**,
- * 不在这里另写一份(那正是「经信局」在多处漂移的来路)。`lib/labels.ts` 是纯数据、
+ * 选择框用的取值,顺序即展示顺序 —— **中文一律取 `layers/sme-roster/lib/labels.ts` 的单一来源**,
+ * 不在这里另写一份(那正是「经信局」在多处漂移的来路)。`layers/sme-roster/lib/labels.ts` 是纯数据、
  * 客户端可安全引用(它只依赖 `db/titles.ts` 的静态种子,不碰 better-sqlite3)。
  */
 export const SOURCE_OPTIONS: ReadonlyArray<{ value: SourceCode; label: string }> =

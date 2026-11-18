@@ -1,4 +1,4 @@
-import { normalizeUscc } from '../domain'
+import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import type { PlatformBusinessGroup, PlatformBusinessObservationRef, PlatformCorrespondenceRef } from '../platform/business-record'
 import type { EventSource } from './correspondence-view'
 

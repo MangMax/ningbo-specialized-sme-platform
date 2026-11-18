@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { platformRowTitle } from '~~/lib/platform/row-title'
-import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS, RELATION_DECLARE_KINDS, TITLES } from '~~/lib/labels'
+import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS, RELATION_DECLARE_KINDS, TITLES } from '#sme-roster/lib/labels'
 import { platformBusinessFields, platformPresentationFields, platformRelatedRawFields } from '~~/lib/roster/platform-records'
 import { formatFetchTime } from '~~/lib/reconcile-time'
 import type { ExportRowSource, RelationSource } from '~~/lib/roster/correspondence-view'

@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { expect, it } from 'vitest';
 import * as s from '../../../db/schema';
-import { getEnterpriseProfile } from '../../../server/utils/enterprise-profile'
+import { getEnterpriseProfile } from '../../../layers/sme-roster/server/utils/enterprise-profile'
 import { runtimeSchemaStatements } from '../../../db/runtime-schema.generated';
 import { upgradeTitleCycleDisposition } from '../../../db/title-cycle-disposition';
 import { currentDispositions, historyDispositions } from '../../../server/utils/title-cycle-disposition';

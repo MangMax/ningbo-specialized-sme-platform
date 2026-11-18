@@ -4,7 +4,7 @@ import { parseFileMaintenanceOptions } from '../../../layers/core/server/utils/f
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { TITLE_ORDER } from '~~/lib/labels'
+import { TITLE_ORDER } from '#sme-roster/lib/labels'
 import { fileRefShape } from '../../../layers/core/server/utils/file-agent-reference'
 import { setFileCategoryForAgent } from '../../utils/mcp-files'
 import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'

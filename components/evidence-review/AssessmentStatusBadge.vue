@@ -24,7 +24,7 @@ import {
   lineageLabels,
   validityLabels,
 } from '~~/lib/roster/evidence-review-ui'
-import { PLATFORM_QUERY_STATUSES } from '~~/lib/labels'
+import { PLATFORM_QUERY_STATUSES } from '#sme-roster/lib/labels'
 
 type Kind = 'coverage' | 'validity' | 'assessment' | 'impact' | 'lineage' | 'query' | 'review'
 type Tone = 'primary' | 'primary-solid' | 'warning' | 'warning-solid' | 'destructive' | 'muted'

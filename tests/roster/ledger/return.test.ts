@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import { expect, it, vi } from 'vitest'
 import { useQuery } from '@pinia/colada'
-import RosterPage from '../../../pages/roster.vue'
+import RosterPage from '../../../layers/sme-roster/app/pages/roster.vue'
 import { captureQueryRequest } from '../../../layers/core/app/composables/useRetainedQuerySnapshot'
 vi.mock('@pinia/colada', () => ({ useQuery: vi.fn() }))
 
@@ -29,7 +29,7 @@ it('restores current ledger expansion and both scroll layers only after its rows
     return { data: ref({ years: [], firstYears: [] }), isLoading: ref(false), error: ref(null) } as any
   })
   const wrapper = mount(RosterPage, { attachTo: document.body, global: { stubs: {
-    EnterpriseDrawer: { props: ['enterpriseId'], template: '<div aria-label="当前展开企业">{{ enterpriseId }}</div>' },
+    RosterEnterpriseDrawer: { props: ['enterpriseId'], template: '<div aria-label="当前展开企业">{{ enterpriseId }}</div>' },
     PageHeader: { template: '<header><slot/><slot name="actions"/></header>' },
     MultiSelectFilter: true, TablePagination: true, TableLoadingStatus: true, TableFailureState: true,
   } } })

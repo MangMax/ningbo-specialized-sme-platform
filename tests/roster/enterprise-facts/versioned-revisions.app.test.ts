@@ -1,5 +1,5 @@
 import '../../support/compiled-enterprise-reader'
-import { enterpriseReads } from '../../../server/utils/enterprise-read'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { initializeDb } from '../../../db/client'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'

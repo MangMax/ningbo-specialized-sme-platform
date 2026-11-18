@@ -12,7 +12,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
-import { enterpriseReads } from '../../../server/utils/enterprise-read'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { readEvidenceToken113 } from '../../../server/utils/evidence-impact-113'
 import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
 import { createCurrentCandidateReader } from '../../../lib/roster/current-qualification'
@@ -218,7 +218,7 @@ it('incomplete typed fact and legacy termination cannot cancel a retained origin
  await post({...scope,action:'maintain',expectedCurrentId:r.versionId,idempotencyKey:'probe-maintain',actor,basis:'Verified termination',ruleVersion:'probe',effectiveAt:'2024-01-01T00:00:00Z',reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:token.projectionReady}})
  const read=async()=> (await (await fetch(base+`/api/roster/enterprises/${id}`)).json()).qualificationAssessment.titles.find((t:any)=>t.titleCode==='little_giant')
  expect(await read()).toMatchObject({group:'eligible',effectiveQualification:{status:'effective'}})
- const {getEnterpriseFacts,preflightEnterpriseFact,commitEnterpriseFact}=await import('../../../server/utils/enterprise-facts')
+ const {getEnterpriseFacts,preflightEnterpriseFact,commitEnterpriseFact}=await import('../../../layers/sme-roster/server/utils/enterprise-facts')
  const request={action:'assert',expectedVersion:getEnterpriseFacts(db,id).version,idempotencyKey:'probe-pending',actor,basis:'Unknown registration observation',fact:{kind:'registration_status',source:{reference:'probe',statement:'Unknown'},observed:{precision:'year',value:'2024'},effective:{precision:'unknown',value:null},city:null}}
  const plan=preflightEnterpriseFact(db,id,request)
  commitEnterpriseFact(db,id,{request,planHash:plan.planHash})

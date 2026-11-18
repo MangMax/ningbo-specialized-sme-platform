@@ -1,5 +1,5 @@
 import { differenceEvidenceColumns } from './platform/difference-reference-target'
-import { identityFunctions } from './roster/enterprise-read-snapshot'
+import { identityFunctions } from '../layers/sme-roster/lib/roster/enterprise-read-snapshot'
 import { inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'

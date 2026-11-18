@@ -2,7 +2,7 @@ import { captureDiscovery, readDiscoveryArtifact } from '../../../support/develo
 import { resetExportRows } from './reset-rows'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
-import { normalizeUscc } from '../../../../lib/domain'
+import { normalizeUscc } from '../../../../layers/sme-roster/lib/domain'
 import { CURRENT_RULE_VERSION } from '../../../../lib/roster/current-qualification'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'

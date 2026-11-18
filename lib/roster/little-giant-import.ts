@@ -1,4 +1,4 @@
-import { normalizeName } from '../domain'
+import { normalizeName } from '../../layers/sme-roster/lib/domain'
 import type {
   RosterImportEvidence,
   RosterImportEvent,

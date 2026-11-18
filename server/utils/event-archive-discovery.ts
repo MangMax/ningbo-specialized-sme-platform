@@ -1,7 +1,7 @@
 import { and,asc,count,eq,inArray,or,sql,type SQLWrapper } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
-import { normalizeUscc } from '../../lib/domain'
+import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import { readCandidateTargetQueries,targetCandidateTables,targetCandidateTitle } from './candidate-target-sources'
 import type { ReceiptRedactor } from './import-receipt-redaction'
 import { CorrespondenceError } from './record-correspondence'

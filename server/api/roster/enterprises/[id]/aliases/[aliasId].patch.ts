@@ -1,6 +1,6 @@
 import { semanticRouteHandler } from '../../../../../../layers/core/server/utils/core-route'
 import { useDb } from '@db'
-import { maintainEnterpriseAlias } from '../../../../../utils/alias-maintenance'
+import { maintainEnterpriseAlias } from '../../../../../../layers/sme-roster/server/utils/alias-maintenance'
 import { requireApiToken } from '../../../../../../layers/core/server/utils/api-guard'
 
 defineRouteMeta({ openAPI: {

@@ -14,7 +14,7 @@ import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
 import type { ComparisonDirection } from './comparison'
-import { normalizeUscc } from './domain'
+import { normalizeUscc } from '../layers/sme-roster/lib/domain'
 
 export interface ComparisonAlias {
   id: number
@@ -30,7 +30,7 @@ export interface ComparisonAlias {
 export interface ComparisonDisposition {
   /**
    * 存下来的解释行 id;**`null` = 还没有解释记录** —— 此时 `status` 就是状态机的
-   * 默认态 `not_queried`(与 `lib/roster/enterprise-roster.ts` 的 `explanationId` 同义)。
+   * 默认态 `not_queried`(与 `layers/sme-roster/lib/roster/enterprise-roster.ts` 的 `explanationId` 同义)。
    */
   explanationId: number | null
   status: string
@@ -113,7 +113,7 @@ interface RowKey {
  */
 /**
  * 归一化统代后比对:`''` → `null` 表示「这个值给不出统代」。
- * 规则本身在 `lib/domain.ts` 的 `normalizeUscc`(**单一来源**)—— 与写入侧落
+ * 规则本身在 `layers/sme-roster/lib/domain.ts` 的 `normalizeUscc`(**单一来源**)—— 与写入侧落
  * `uscc_norm`、与 `enterprise-roster.ts` 的 `normUscc` 是同一条,不另写一份。
  */
 function normUscc(uscc: string | null | undefined): string | null {
@@ -176,7 +176,7 @@ function attachPlatformEvidenceSnapshot<T extends RowKey>(
     .where(inArray(schema.differenceReason.enterpriseId, enterpriseIds))
     .all()
 
-  // 企业自身的查询键 —— 与 `lib/roster/enterprise-roster.ts` 同一口径。
+  // 企业自身的查询键 —— 与 `layers/sme-roster/lib/roster/enterprise-roster.ts` 同一口径。
   const enterprises = db
     .select({
       id: schema.enterprise.id,

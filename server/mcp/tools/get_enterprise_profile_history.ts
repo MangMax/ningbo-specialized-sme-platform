@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { getEnterpriseProfileHistory } from '../../utils/enterprise-profile'
+import { getEnterpriseProfileHistory } from '../../../layers/sme-roster/server/utils/enterprise-profile'
 export default defineMcpTool({
   name: 'get_enterprise_profile_history', title: '分页读取企业资料更正历史',
   description: '等价 GET /api/roster/enterprises/:id/profile-history；公开只读，actor/basis、前后资料、版本和旧名ID。不返回请求原文或幂等键。',

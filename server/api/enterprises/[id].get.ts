@@ -1,5 +1,5 @@
 import { useDb } from '@db'
-import { getEnterpriseDetail } from '~~/lib/query'
+import { getEnterpriseDetail } from '#sme-roster/lib/query'
 
 /**
  * 一个企业的详情(含它的记录与事件)。

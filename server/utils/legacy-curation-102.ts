@@ -1,6 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm'
 import * as s from '../../db/schema'
-import { normalizeUscc } from '../../lib/domain'
+import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import { patchCuration, type CurationPatch } from '../../lib/curation'
 import { DecisionError102, managedDecision102, type DecisionDb } from './decision-lifecycle-102'
 

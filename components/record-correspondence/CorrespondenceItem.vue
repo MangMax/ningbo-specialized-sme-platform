@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { correspondenceStatusText, eventDecisionText, type CorrespondenceDetail } from '~~/lib/roster/correspondence-view'
-import { PLATFORM_INTERFACES, TITLES } from '~~/lib/labels'
-import { humanRecordTime, isCurrentContextEdge } from '~~/lib/roster/record-ledger'
+import { PLATFORM_INTERFACES, TITLES } from '#sme-roster/lib/labels'
+import { humanRecordTime, isCurrentContextEdge } from '#sme-roster/lib/roster/record-ledger'
 import EventCorrespondenceDecision from './EventCorrespondenceDecision.vue'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import { Badge } from '#core/app/components/ui/badge'

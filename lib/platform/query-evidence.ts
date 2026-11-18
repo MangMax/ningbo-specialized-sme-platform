@@ -1,6 +1,6 @@
 /** Original public collection-envelope gate, shared without normalizing the command. */
 import { isDeepStrictEqual } from 'node:util'
-import { normalizeUscc } from '../domain'
+import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import type { RosterImportPlatformQuery } from '../roster-import-client'
 import { archiveQueryKey, platformEvidenceError, PLATFORM_PERSISTED_SOURCE, recognizedEvidenceError, recognizedStoredStatus, RDJB_TITLE_CODES } from './recognized-evidence'
 export function queryEvidenceError(query: RosterImportPlatformQuery, originalSource: unknown, owners: {

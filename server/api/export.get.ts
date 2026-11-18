@@ -1,14 +1,14 @@
 import { legacyExportSheet, writeLegacyXlsx } from '../utils/legacy-export-xlsx'
 import { appLog, requestLogContext } from '../../layers/core/lib/logging'
 import { useDb } from '@db'
-import { allRecords, type EventType } from '~~/lib/query'
+import { allRecords, type EventType } from '#sme-roster/lib/query'
 import {
   TITLES,
   SOURCES,
   TITLE_ORDER,
   COMPARISON_LABELS,
   COMPARISON_NO_USCC,
-} from '~~/lib/labels'
+} from '#sme-roster/lib/labels'
 import { attachPlatformEvidence } from '~~/lib/comparison-platform'
 import { getCuratedComparison } from '~~/lib/curation'
 import { filterComparisonRows } from '~~/lib/comparison-filter'

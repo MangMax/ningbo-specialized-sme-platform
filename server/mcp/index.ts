@@ -7,7 +7,7 @@ import { runtimeLogPolicyRpcError } from '../../layers/core/server/utils/logging
 import { decisionRpcError102 } from '../utils/decision-lifecycle-102-mcp'
 import { qualificationPreflight102, qualificationCommit102 } from '../utils/decision-lifecycle-102'
 import { parseRpcError105 } from '../utils/parse-maintenance-105-rpc'
-import { admitEnterpriseResponse } from '../utils/enterprise-read-response'
+import { admitEnterpriseResponse } from '../../layers/sme-roster/server/utils/enterprise-read-response'
 import { eventCorrectionRpcError } from '../utils/mcp-event-correction'
 import { platformQueryRpcError } from '../utils/mcp-platform-query'
 import { currentQualifiedRpcError } from '../utils/current-qualified-filter'

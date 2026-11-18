@@ -1,5 +1,5 @@
 import type { FormalValidity } from './formal-validity'
-import type { LifecycleEvent } from './lifecycle'
+import type { LifecycleEvent } from '../../layers/sme-roster/lib/roster/lifecycle'
 
 /** Original-award cycle adjudication shared by planning and current eligibility.
  * No database or presentation facts enter this module. Infinity means a plan,

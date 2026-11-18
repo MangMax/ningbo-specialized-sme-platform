@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ReviewAssessment } from '~~/lib/roster/evidence-review-ui'
 import { coverageLabels } from '~~/lib/roster/evidence-review-ui'
-import { PLATFORM_QUERY_STATUSES } from '~~/lib/labels'
+import { PLATFORM_QUERY_STATUSES } from '#sme-roster/lib/labels'
 import {
   conditionSummary,
   interfaceLabel,

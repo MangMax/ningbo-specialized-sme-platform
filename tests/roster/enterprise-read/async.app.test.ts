@@ -8,7 +8,7 @@ import { once } from 'node:events'
 import { setTimeout as pause } from 'node:timers/promises'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
-import { createEnterpriseReadExecutor } from '../../../server/utils/enterprise-read'
+import { createEnterpriseReadExecutor } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { startHttpFixture } from '../../support/http'
 import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../lib/platform/collection-target-command'
 import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
@@ -95,7 +95,7 @@ describe('cold detail diagnostics after worker readiness', () => {
 })
 
 it('recovers after worker startup failure and rejects a closed executor without retaining queued work', async () => {
-  const { createEnterpriseWorker } = await import('../../../server/utils/enterprise-read-worker-location')
+  const { createEnterpriseWorker } = await import('../../../layers/sme-roster/server/utils/enterprise-read-worker-location')
   const f = fixture()
   let starts = 0
   const reads = createEnterpriseReadExecutor({ createWorker: () => ++starts === 1

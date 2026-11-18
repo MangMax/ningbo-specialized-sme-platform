@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ROSTER_LEDGER_PATH } from '~~/lib/sme-roster/routes'
-import { ENTERPRISE_LIST_TITLE } from '~~/lib/labels'
+import { ROSTER_LEDGER_PATH } from '#sme-roster/lib/sme-roster/routes'
+import { ENTERPRISE_LIST_TITLE } from '#sme-roster/lib/labels'
 import { ChevronLeft, FileDown } from '@lucide/vue'
 import { describeUnsupported, fileNameOf, fileUrl, isPreviewable, resolvePreviewKind } from '#core/lib/preview'
 import {

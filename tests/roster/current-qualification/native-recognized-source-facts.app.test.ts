@@ -1,5 +1,5 @@
 import '../../support/compiled-enterprise-reader'
-import { enterpriseReads } from '../../../server/utils/enterprise-read'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { createServer } from 'node:http'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'

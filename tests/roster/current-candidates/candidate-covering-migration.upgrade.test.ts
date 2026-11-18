@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import * as s from '../../../upgrade/legacy-schema'
-import { normalizeUscc } from '../../../lib/domain'
+import { normalizeUscc } from '../../../layers/sme-roster/lib/domain'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'

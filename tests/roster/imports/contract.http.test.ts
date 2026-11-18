@@ -11,8 +11,8 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { schema } from '../../../db'
-import { normalizeName } from '../../../lib/domain'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
+import { normalizeName } from '../../../layers/sme-roster/lib/domain'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import {
   RosterImportApiError,
   createRosterImportClient,

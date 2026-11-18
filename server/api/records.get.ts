@@ -1,6 +1,6 @@
 import { useDb } from '@db'
-import { listRecords } from '~~/lib/query'
-import { parseRecordQuery } from '../utils/roster-read-query'
+import { listRecords } from '#sme-roster/lib/query'
+import { parseRecordQuery } from '../../layers/sme-roster/server/utils/roster-read-query'
 
 /**
  * 通用台账查询(一行 = 企业 × 称号；行内保留全部来源、事件与出处)。

@@ -71,7 +71,7 @@ describe('列表页 min-w 收敛为推导值', () => {
   })
 
   it('index（EnterpriseListTable）的最小宽度挂在响应式断点上，窄屏 min-w-0', () => {
-    const table = readPage('components/EnterpriseListTable.vue')
+    const table = readPage('layers/sme-roster/app/components/EnterpriseListTable.vue')
     // 窄屏按内容铺开(min-w-0),lg 起才有列宽下限 980px。
     expect(table).toContain('min-w-0')
     expect(table).toMatch(/lg:min-w-\[980px\]/)

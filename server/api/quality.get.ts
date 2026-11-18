@@ -1,5 +1,5 @@
 import { useDb } from '@db'
-import { getQuality } from '~~/lib/query'
+import { getQuality } from '#sme-roster/lib/query'
 
 /** 质量清单;`?kind=` 按质量项过滤(不传返回全部)。 */
 defineRouteMeta({

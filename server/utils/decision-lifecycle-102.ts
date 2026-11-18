@@ -4,13 +4,13 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import * as s from '../../db/schema'
-import { normalizeUscc } from '../../lib/domain'
+import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import { differenceEvidenceColumns,differencePublicColumns,targetDifferenceReason } from '../../lib/platform/difference-reference-target'
 import { readDifferenceCollection,readDifferenceCollectionScope,readDifferenceObservation } from '../../lib/platform/difference-sources'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
-import { readLatestDecisionHead102 as latestDecisionHead102,whereDecisionScope102 as whereScope } from './decision-lifecycle-102/head'
+import { readLatestDecisionHead102 as latestDecisionHead102,whereDecisionScope102 as whereScope } from '../../layers/sme-roster/server/utils/decision-lifecycle-102/head'
 import { readEvidenceToken113 } from './evidence-impact-113'
-export { readLatestDecisionHead102 as latestDecisionHead102 } from './decision-lifecycle-102/head'
+export { readLatestDecisionHead102 as latestDecisionHead102 } from '../../layers/sme-roster/server/utils/decision-lifecycle-102/head'
 
 export type DecisionDb = BetterSQLite3Database<typeof s>
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)

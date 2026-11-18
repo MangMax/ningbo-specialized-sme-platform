@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto';
 import { and,eq } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { z } from 'zod';
-import { normalizeUscc } from '../domain';
+import { normalizeUscc } from '../../layers/sme-roster/lib/domain';
 import type { RosterImportItemResult,RosterImportPlatformQuery,RosterImportRelation } from '../roster-import-client';
 import { platformQueriesInputSchema } from '../../server/utils/roster-import-platform-schema';
 import { targetSchema as s } from './target-schema';

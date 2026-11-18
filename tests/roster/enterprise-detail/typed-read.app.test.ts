@@ -10,7 +10,7 @@ import { createServer } from 'node:http'
 import { createApp, createError, createRouter, defineEventHandler, getRouterParam, setHeader, toNodeListener } from 'h3'
 import { afterEach, expect, it, vi } from 'vitest'
 import { schema } from '../../../db'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 
 const cleanup: Array<() => void | Promise<void>> = []
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.unstubAllEnvs(); vi.unstubAllGlobals() })

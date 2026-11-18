@@ -10,7 +10,7 @@
  * (单值、可排序,页面标签写作「公布年份/批次」),与这里的**内容年份/批次**是两回事 —— 别混。
  *
  */
-import { EVENT_ORDER, TITLE_ORDER, TITLE_RANK } from './labels'
+import { EVENT_ORDER, TITLE_ORDER, TITLE_RANK } from '../layers/sme-roster/lib/labels'
 
 /** 事件类型。与 `record_event.event_type`、`stored_file_part.event_kind` 同一套取值。 */
 export type EventKind = 'award' | 'review' | 'maintain' | 'nurture'
@@ -57,7 +57,7 @@ export function partKey(p: PartEvidence): string {
 /**
  * 称号等级(小巨人 1 < 专精特新 2 < 创新型 3);认不出排最后。
  *
- * 直接用 `lib/labels.ts` 的 `TITLE_RANK`(称号 → 等级的唯一来源),不另算一份 ——
+ * 直接用 `layers/sme-roster/lib/labels.ts` 的 `TITLE_RANK`(称号 → 等级的唯一来源),不另算一份 ——
  * 两处各算一次,迟早有一处忘了改。
  */
 function titleRank(code: string): number {

@@ -1,6 +1,6 @@
 import type { PlatformBusinessMetadata, PlatformBusinessObservationRef, PlatformCorrespondenceRef } from '../platform/business-record'
 import type { PlatformObservationFact } from '../platform/observation-facts'
-import { normalizeName, normalizeUscc } from '../domain'
+import { normalizeName, normalizeUscc } from '../../layers/sme-roster/lib/domain'
 
 /** Lightweight archive references. No raw body or derived authoritative decision. */
 export type PlatformDetailObservation = Pick<PlatformBusinessObservationRef,

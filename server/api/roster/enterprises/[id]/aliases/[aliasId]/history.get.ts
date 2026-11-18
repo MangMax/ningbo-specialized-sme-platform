@@ -1,6 +1,6 @@
 import { semanticRouteHandler } from '../../../../../../../layers/core/server/utils/core-route'
 import { useDb } from '@db'
-import { getEnterpriseAliasHistory } from '../../../../../../utils/alias-maintenance'
+import { getEnterpriseAliasHistory } from '../../../../../../../layers/sme-roster/server/utils/alias-maintenance'
 defineRouteMeta({ openAPI: {
   tags: ['企业别名维护'], summary: '按别名精确查询追加历史',
   description: '审计ID升序；包括action/actor/basis/idempotencyKey/requestHash/createdAt及before/after快照，不读取平台原文。归并折叠后用保留方企业和别名ID查询；快照保留原始IDs。',

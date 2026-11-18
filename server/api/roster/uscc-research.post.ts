@@ -1,9 +1,9 @@
 import { createReadTurns } from '../../../layers/core/server/utils/read-turn'
 import { withReadTurn } from '../../../layers/core/server/utils/read-turn-http'
 import { useDb } from '@db'
-import { collectUsccTargets, pageUsccChecklist, planUsccResearch } from '~~/server/utils/uscc-research'
-import { parseUsccResearchBody } from '~~/server/utils/uscc-research-query'
-import { normalizeUsccVerdicts, type UsccVerdictFile } from '~~/server/utils/uscc-verdicts'
+import { collectUsccTargets, pageUsccChecklist, planUsccResearch } from '#sme-roster/server/utils/uscc-research'
+import { parseUsccResearchBody } from '#sme-roster/server/utils/uscc-research-query'
+import { normalizeUsccVerdicts, type UsccVerdictFile } from '#sme-roster/server/utils/uscc-verdicts'
 
 /**
  * 与 `GET` 同一份清单与计划，但**多收一批公开来源查证结果**（票面路径二）。

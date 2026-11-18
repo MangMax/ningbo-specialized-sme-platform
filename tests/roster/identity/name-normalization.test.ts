@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeName } from '../../../lib/domain'
+import { normalizeName } from '../../../layers/sme-roster/lib/domain'
 
 describe('shared name normalization', () => {
   it('NoEvidence_RetainsCityPrefixAndSearchText', () => {

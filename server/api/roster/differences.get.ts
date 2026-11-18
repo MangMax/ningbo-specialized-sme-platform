@@ -1,10 +1,10 @@
 import { requestLogContext } from '../../../layers/core/lib/logging'
 import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS } from '~~/lib/comparison'
-import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES } from '~~/lib/labels'
+import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES } from '#sme-roster/lib/labels'
 import { readDifferences } from '../../utils/difference-read'
 import { withEnterpriseReadSignal } from '../../../layers/core/server/utils/enterprise-read-signal'
-import { parseRosterDifferenceQuery } from '../../utils/roster-read-query'
+import { parseRosterDifferenceQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
 
 /**
  * **差异与解释**(契约 §7.3,RL-04)。

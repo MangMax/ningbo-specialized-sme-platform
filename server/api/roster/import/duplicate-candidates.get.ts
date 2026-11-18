@@ -1,5 +1,5 @@
 import { useDb } from '@db'
-import { planDuplicateMerge } from '~~/server/utils/roster-duplicate-merge'
+import { planDuplicateMerge } from '#sme-roster/server/utils/roster-duplicate-merge'
 
 /**
  * **重名候选报告**（RL-14）：某批导入报出的重名候选，以及「哪些有证据可并、哪些待核」。

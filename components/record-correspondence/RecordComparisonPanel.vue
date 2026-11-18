@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 
 import { GitCompareArrows, RefreshCw } from '@lucide/vue'
 import { COMPARISON_CLASSES, comparisonRequest, comparisonRouteFromQuery, comparisonRouteKey, comparisonRouteQuery, comparisonSelectionQuery, instantFromLocalDateTime, localDateTimeForInstant, type ComparisonRouteState, type ComparisonSelection, type ComparisonSource, type RecordComparisonResult } from '~~/lib/roster/record-comparison-view'
 import { useEvidencePreviewScrollRestore } from '~~/lib/roster/evidence-preview-return'
-import { humanRecordTime } from '~~/lib/roster/record-ledger'
+import { humanRecordTime } from '#sme-roster/lib/roster/record-ledger'
 import { useCorrespondenceReadback } from '~/composables/useCorrespondenceReadback'
 import ComparisonSourcePicker from './ComparisonSourcePicker.vue'
 import ComparisonProofPicker from './ComparisonProofPicker.vue'

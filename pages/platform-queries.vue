@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { ChevronLeft, GitCompareArrows } from '@lucide/vue'
-import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS } from '~~/lib/labels'
+import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS } from '#sme-roster/lib/labels'
 import type { PlatformQueriesResult } from '~~/lib/platform/read'
 import { Badge } from '#core/app/components/ui/badge'
 import { Card, CardContent, CardHeader } from '#core/app/components/ui/card'

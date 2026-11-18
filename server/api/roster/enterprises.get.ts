@@ -1,13 +1,13 @@
 import { requestLogContext } from '../../../layers/core/lib/logging'
-import { admitEnterpriseResponse } from '../../utils/enterprise-read-response'
+import { admitEnterpriseResponse } from '../../../layers/sme-roster/server/utils/enterprise-read-response'
 import { useDb } from '@db'
 import {
   DIFF_STATUS_NONE,
   ROSTER_ENTERPRISE_SORTS,
   ROSTER_STATES,
-} from '~~/lib/roster/enterprise-roster'
-import { parseRosterEnterpriseQuery } from '../../utils/roster-read-query'
-import { enterpriseReads } from '../../utils/enterprise-read'
+} from '#sme-roster/lib/roster/enterprise-roster'
+import { parseRosterEnterpriseQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { withEnterpriseReadSignal } from '../../../layers/core/server/utils/enterprise-read-signal'
 
 /**

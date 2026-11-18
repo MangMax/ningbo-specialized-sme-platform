@@ -1,4 +1,4 @@
-import { createEnterpriseReadProcess } from '../../../server/utils/enterprise-read-process'
+import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

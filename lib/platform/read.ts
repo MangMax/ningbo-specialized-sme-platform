@@ -1,7 +1,7 @@
 /** Collection/observation evidence read model; public IDs use retained aliases. */
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../db/schema'
-import type { PlatformInterface } from '../labels'
+import type { PlatformInterface } from '../../layers/sme-roster/lib/labels'
 import type { PlatformNormalizationConflict } from './normalization'
 import type { LegacyProvenanceDisplay } from './legacy-provenance'
 import { listTargetPlatformQueries } from './target-query-read'

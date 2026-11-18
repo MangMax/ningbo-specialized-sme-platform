@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { Badge } from '#core/app/components/ui/badge'
 import { TableCell } from '#core/app/components/ui/table'
-import SourceChip from '@/components/SourceChip.vue'
-import { CATEGORY_STATES, KINDS, PARSE_STATES } from '~~/lib/labels'
+import RosterSourceChip from '#sme-roster/app/components/SourceChip.vue'
+import { CATEGORY_STATES, KINDS, PARSE_STATES } from '#sme-roster/lib/labels'
 import { joinSeries, partBatches, partYears } from '~~/lib/file-parts'
 import type { RosterFileFields } from '~~/server/modules/sme-roster/files'
 
@@ -44,7 +44,7 @@ function publishedYearBatch(row: Partial<RosterFileFields>): string {
   <TableCell>
     <!-- 方标 = 来源语言:经信局藏青、工信部金色(与台账页同一个 SourceChip)。
          写成一个灰底 Badge 就看不出哪份是国家级名单了。 -->
-    <SourceChip v-if="row.source" :code="row.source" />
+    <RosterSourceChip v-if="row.source" :code="row.source" />
     <span v-else class="text-muted-foreground text-xs">—</span>
   </TableCell>
   <TableCell class="text-muted-foreground text-xs">

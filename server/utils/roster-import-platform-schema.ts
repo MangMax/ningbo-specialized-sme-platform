@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { platformCollection,platformObservationAssignment } from '../../db/schema'
-import { PLATFORM_INTERFACE_VALUES,TITLE_ORDER } from '../../lib/labels'
+import { PLATFORM_INTERFACE_VALUES,TITLE_ORDER } from '../../layers/sme-roster/lib/labels'
 import { platformQueryResultShape } from '../../lib/platform/live-query'
 import type { RosterImportPlatformQuery,RosterImportRelation } from '../../lib/roster-import-client'
 

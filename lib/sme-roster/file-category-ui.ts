@@ -1,6 +1,6 @@
 import { defineAsyncComponent } from 'vue'
 import type { FileCategoryUi } from '../../layers/core/lib/core/file-category-ui'
-import manifest from './manifest'
+import manifest from '../../layers/sme-roster/manifest'
 
 export const rosterFileCategoryUi = {
   id: manifest.id,

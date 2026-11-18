@@ -1,5 +1,5 @@
 import '../../support/compiled-enterprise-reader'
-import { enterpriseReads } from '../../../server/utils/enterprise-read'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, getQuery, getRouterParam, defineEventHandler, createError, setHeader } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../../../db'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import { listEnterprises } from '../../../server/utils/mcp-roster'
 
 const dir = mkdtempSync(join(tmpdir(), 'enterprise-read-http-'))

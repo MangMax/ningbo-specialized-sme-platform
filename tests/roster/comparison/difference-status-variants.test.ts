@@ -5,7 +5,7 @@ import { cn } from '../../../layers/core/lib/utils'
 import {
   DIFFERENCE_STATUSES,
   DIFFERENCE_STATUS_VARIANTS,
-} from '../../../lib/labels'
+} from '../../../layers/sme-roster/lib/labels'
 
 
 const STATES = Object.keys(DIFFERENCE_STATUSES)

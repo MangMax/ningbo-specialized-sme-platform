@@ -2,8 +2,8 @@ import type { LogContext } from '../../layers/core/lib/logging'
 import type { useApplicationDb } from '../../db/client'
 import { getDbOwnerIdentity } from '../../db/client'
 import { listRosterRecognitions, type RosterRecognitionFilter } from '../../lib/roster/recognitions'
-import { restoreReaderError } from '../../lib/roster/offmain-read-protocol'
-import { enterpriseReads } from './enterprise-read'
+import { restoreReaderError } from '../../layers/sme-roster/lib/roster/offmain-read-protocol'
+import { enterpriseReads } from '../../layers/sme-roster/server/utils/enterprise-read'
 import { createReadTurns, runReadTurn } from '../../layers/core/server/utils/read-turn'
 
 /** New-consumer policy only. Normal operations submit directly to the singleton;

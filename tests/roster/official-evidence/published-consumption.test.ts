@@ -20,7 +20,7 @@ import * as official from '../../../server/utils/official-evidence'
 
 
 
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import { listCurrentQualified, type CurrentQualifiedResult } from '../../../lib/roster/current-qualified-query'
 import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
 
@@ -28,7 +28,7 @@ const routeContext = vi.hoisted(() => ({ db: undefined as any }))
 // The package's defineMcpTool is an identity function; loading its Nitro registration cache needs virtual storage.
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
 vi.mock('@db', () => ({ useDb: () => routeContext.db }))
-vi.mock('../../../server/utils/enterprise-read', () => ({ enterpriseReads: {
+vi.mock('../../../layers/sme-roster/server/utils/enterprise-read', () => ({ enterpriseReads: {
   json: async (_path: string, request: {enterpriseId: number}) => {
     const value = getRosterEnterpriseDetail(routeContext.db, request.enterpriseId)
     return { found: value != null, body: Buffer.from(JSON.stringify(value)) }
@@ -431,7 +431,7 @@ it.each([{ case: 'escaped-below', repeats: 48, available: true }, { case: 'escap
 )
 
 it('detail and ledger preserve each published name and original coordinates after filtering', async () => {
-  const { getEnterpriseDetail, allRecords } = await import('../../../lib/query')
+  const { getEnterpriseDetail, allRecords } = await import('../../../layers/sme-roster/lib/query')
   const f = await paired()
   const detail = getEnterpriseDetail(f.db, 1)!
   expect(detail.name).toBe('现用名')
@@ -448,7 +448,7 @@ it('detail and ledger preserve each published name and original coordinates afte
 })
 
 it('uncaptured and captured unknown names stay distinct from unavailable', async () => {
-  const { getEnterpriseDetail, allRecords } = await import('../../../lib/query')
+  const { getEnterpriseDetail, allRecords } = await import('../../../layers/sme-roster/lib/query')
   const f = await fixture()
   await f.commit(f.announcement([f.record('specialized_sme', [{ eventType: 'award', year: 2024, batchSeq: 1, evidence: [
     f.evidence(f.published(null)), { sourceFile: '2024公布.pdf', page: 1, listNo: 9 },
@@ -496,7 +496,7 @@ it('actual legacy HTTP detail and sync XLSX retain a literal matrix with per-sou
 })
 
 it('ledger batches selected groups and isolates an unavailable group without changing rows', async () => {
-  const { allRecords } = await import('../../../lib/query')
+  const { allRecords } = await import('../../../layers/sme-roster/lib/query')
   const f = await paired()
   await f.commit(f.announcement([f.record('specialized_sme', [{ eventType: 'award', year: 2024, batchSeq: 1, evidence: [
     f.evidence(f.published('第二公布名', 3, 2, { usccRaw: null })),
@@ -515,7 +515,7 @@ it('ledger batches selected groups and isolates an unavailable group without cha
 })
 
 it('large display batches retain names in independently bounded groups', async () => {
-  const { allRecords } = await import('../../../lib/query')
+  const { allRecords } = await import('../../../layers/sme-roster/lib/query')
   const f = await fixture(), names = ['A'.repeat(1500), 'B'.repeat(1500)]
   await f.commit(f.announcement(names.map((name, index) => f.record('specialized_sme', [{
     eventType: 'award', year: 2024, batchSeq: 1,

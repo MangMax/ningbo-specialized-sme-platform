@@ -19,7 +19,7 @@
  * 解析顺序:**JSON 信封 → HTML 内嵌 zrarData → 已渲染 `<table>`**;三级都拿不到就抛
  * {@link PlatformResponseError},绝不静默返回空 —— 「看不懂」与「没有记录」是两回事。
  */
-import type { PlatformInterface } from '../labels'
+import type { PlatformInterface } from '../../layers/sme-roster/lib/labels'
 
 /** 平台基址(常量唯一出处)。 */
 export const PLATFORM_BASE = 'https://zjtx.miit.gov.cn/zxqy/'
@@ -34,7 +34,7 @@ export const RECOGNIZED_GRID = 'businessGrid'
 /**
  * `businessList` 的 `rdjb`(认定级别)**取值集**:1 创新型 / 2 专精特新中小企业 / 3 小巨人。
  *
- * ⚠️ 与 `lib/labels.ts` 的 `PLATFORM_RDJBS`(`Record<string,string>`,code → 中文)是
+ * ⚠️ 与 `layers/sme-roster/lib/labels.ts` 的 `PLATFORM_RDJBS`(`Record<string,string>`,code → 中文)是
  * **两个不同的东西**——此处是「要查哪几个取值」,那里是「怎么显示」。所以这里叫
  * `RDJB_VALUES`(旧名 `PLATFORM_RDJBS` 与 labels 同名不同义,import 时必须加别名)。
  */

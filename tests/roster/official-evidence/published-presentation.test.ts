@@ -22,7 +22,7 @@ import { assertOfficialPublishedBudget, readOfficialPublishedPresentation, Offic
 import { currentWorkbookValues } from '../../../lib/roster/current-workbook-presentation'
 import * as receiptRedaction from '../../../server/utils/import-receipt-redaction'
 import * as credentialState from '../../../layers/core/server/utils/credential-state'
-import { readPublicPublishedNames, getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
+import { readPublicPublishedNames, getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
 
 // Retain the original logical per-event page assertions while observing the new

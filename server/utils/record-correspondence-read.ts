@@ -1,7 +1,7 @@
 import { asc,eq,inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
-import { readPublicPublishedNames } from '../../lib/roster/enterprise-roster'
+import { readPublicPublishedNames } from '../../layers/sme-roster/lib/roster/enterprise-roster'
 import type { ReceiptRedactor } from './import-receipt-redaction'
 import { readTargetRelationEvidenceDisplay } from './platform-relation-evidence-display-target'
 import { getRecordCorrespondenceAudit,listRecordCorrespondenceRefs,type CorrespondenceRead } from './record-correspondence'

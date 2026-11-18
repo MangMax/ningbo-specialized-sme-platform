@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { Search } from '@lucide/vue'
-import { PLATFORM_RDJBS } from '~~/lib/labels'
+import { PLATFORM_RDJBS } from '#sme-roster/lib/labels'
 import { watchDebounced } from '@vueuse/core'
 import type { RecognizedDirectoryListResult } from '~~/lib/platform/recognized-directory'
 import { Button } from '#core/app/components/ui/button'

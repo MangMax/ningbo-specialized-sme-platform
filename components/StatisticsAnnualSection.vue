@@ -4,7 +4,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '#core/app/components/u
 const reducedMotion = useReducedMotion()
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import type { AnnualStatistics } from '~~/lib/roster/annual-statistics'
-import { TITLES, TITLE_ORDER } from '~~/lib/labels'
+import { TITLES, TITLE_ORDER } from '#sme-roster/lib/labels'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
 import { Skeleton } from '#core/app/components/ui/skeleton'
 import { Button } from '#core/app/components/ui/button'

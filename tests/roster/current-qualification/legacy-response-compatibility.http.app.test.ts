@@ -7,7 +7,7 @@ import * as h3 from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
 import { executeNativeImport, startRosterApi } from '../imports/fixtures/import-server'
-import { enterpriseReads } from '../../../server/utils/enterprise-read'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { readEvidenceToken113 } from '../../../server/utils/evidence-impact-113'
 
 const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))

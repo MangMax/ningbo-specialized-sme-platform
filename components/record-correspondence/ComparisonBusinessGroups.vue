@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { shallowRef } from 'vue'
 import type { RecordComparisonResult } from '~~/lib/roster/record-comparison-view'
-import { PLATFORM_INTERFACES } from '~~/lib/labels'
+import { PLATFORM_INTERFACES } from '#sme-roster/lib/labels'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import TablePagination from '#core/app/components/TablePagination.vue'
 import SourceReader from './SourceReader.vue'

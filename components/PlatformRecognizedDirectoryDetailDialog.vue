@@ -6,7 +6,7 @@ import { Badge } from '#core/app/components/ui/badge'
 import { Skeleton } from '#core/app/components/ui/skeleton'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import type { RecognizedDirectoryDetail } from '~~/lib/platform/recognized-directory'
-import { PLATFORM_RDJBS } from '~~/lib/labels'
+import { PLATFORM_RDJBS } from '#sme-roster/lib/labels'
 import { formatFetchTime } from '~~/lib/reconcile-time'
 
 const props = defineProps<{ recordId: number | null; open: boolean }>()

@@ -2,7 +2,7 @@ import type { LogContext } from '../../../layers/core/lib/logging'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { enterpriseReads } from '../../utils/enterprise-read'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 
 /** 与 `GET /api/roster/enterprises/:id` 共用企业详情读模型。 */
 export default defineMcpTool({

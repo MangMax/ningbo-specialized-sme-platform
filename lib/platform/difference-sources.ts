@@ -5,8 +5,8 @@ import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
 import { targetSchema } from './target-schema'
-import { identityFunctions, identityUsccSql } from '../roster/enterprise-read-snapshot'
-import { normalizeUscc } from '../domain'
+import { identityFunctions, identityUsccSql } from '../../layers/sme-roster/lib/roster/enterprise-read-snapshot'
+import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 
 type Db = BetterSQLite3Database<typeof s>
 const c = s.platformCollection, qa = s.platformLegacyQueryAlias

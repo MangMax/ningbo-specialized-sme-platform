@@ -1,5 +1,5 @@
 import '../../support/compiled-enterprise-reader'
-import { enterpriseReads } from '../../../server/utils/enterprise-read'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { initializeDb } from '../../../db/client'
 import { assertEnterpriseDetailSnapshotEqual } from '../assertions/enterprise-detail-snapshot'
 import { decodeJsonRead } from '../../support/json-read'
@@ -8,9 +8,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { listRecords } from '../../../lib/query'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import { parseRecordQuery } from '../../../server/utils/roster-read-query'
+import { listRecords } from '../../../layers/sme-roster/lib/query'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { parseRecordQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-record-query-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'records.db') })

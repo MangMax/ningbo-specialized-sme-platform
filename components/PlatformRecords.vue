@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
-import { TITLES } from '~~/lib/labels'
+import type { RosterEnterpriseDetail } from '#sme-roster/lib/roster/enterprise-roster'
+import { TITLES } from '#sme-roster/lib/labels'
 import PlatformBusinessHistory from './PlatformBusinessHistory.vue'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'

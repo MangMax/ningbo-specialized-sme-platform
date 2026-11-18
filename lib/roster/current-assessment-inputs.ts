@@ -3,9 +3,9 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
 import { readTitleCycleDispositionInputs } from './title-cycle-disposition-inputs'
 import { readPlatformQualificationFacts, type PlatformQualificationFactsReader } from './platform-qualification'
-import { hasEnterpriseMergeIdentity } from './enterprise-identity'
+import { hasEnterpriseMergeIdentity } from '../../layers/sme-roster/lib/roster/enterprise-identity'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
-import type { EnterpriseFactEffectRow } from './enterprise-fact-effects'
+import type { EnterpriseFactEffectRow } from '../../layers/sme-roster/lib/roster/enterprise-fact-effects'
 
 type Executor = Pick<BetterSQLite3Database<typeof s>, 'select'>
 function byTitle<T extends { enterpriseId: number; titleCode: string }>(rows: T[]) {

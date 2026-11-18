@@ -1,4 +1,4 @@
-import { normalizeUscc } from '../../lib/domain'
+import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 
 type Identity = { enterpriseId?: number | null; uscc: string | null }
 /** Shared by full source validation and narrow refs, including unassigned rows. */

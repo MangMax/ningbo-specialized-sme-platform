@@ -2,7 +2,7 @@ import { createReadTurns, runReadTurn } from '../../../layers/core/server/utils/
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { TITLE_ORDER } from '~~/lib/labels'
+import { TITLE_ORDER } from '#sme-roster/lib/labels'
 import { listDifferences } from '../../utils/mcp-roster'
 
 const differenceReads = createReadTurns((input: Parameters<typeof listDifferences>[1] & { [key: string]: string | number | undefined }) =>

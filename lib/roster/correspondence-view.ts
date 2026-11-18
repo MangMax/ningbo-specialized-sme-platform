@@ -1,5 +1,5 @@
 /** Client read shape of #66's sanitized correspondence source routes. */
-import { EVENTS, REVIEW_OUTCOMES } from '../labels'
+import { EVENTS, REVIEW_OUTCOMES } from '../../layers/sme-roster/lib/labels'
 import type { OfficialPublishedFact } from './official-published-presentation'
 export type { OfficialPublishedFact }
 
@@ -88,7 +88,7 @@ export interface RelationSource {
     failureReason: string | null
     relationCount: number
     collectionEvidence: import('../platform/live-query').PlatformLiveQueryResult | null
-    legacyProvenance?: import('./enterprise-roster').RosterPlatformQueryRow['legacyProvenance']
+    legacyProvenance?: import('../../layers/sme-roster/lib/roster/enterprise-roster').RosterPlatformQueryRow['legacyProvenance']
   }
   correspondences: CorrespondenceRef[]
 }

@@ -7,7 +7,7 @@
  *
  * ── 为什么客户端在 `lib/` 而不是 `server/` ─────────────────────────────
  * 项目外的 `pipeline/`（解析/清洗/导入）要**退化为本 API 的客户端**，而它按
- * `lib/domain.ts` 的先例直接 import 本仓的 `lib/*` 来共用契约 —— 这条通路要求
+ * `layers/sme-roster/lib/domain.ts` 的先例直接 import 本仓的 `lib/*` 来共用契约 —— 这条通路要求
  * 客户端不依赖 Nuxt/Nitro 的运行时（只用标准 `fetch`，可注入）。
  *
  * ── 用凭证的方式（硬约束）──────────────────────────────────────────────
@@ -19,7 +19,7 @@
  * 要么一条不落并把逐项错误交回。幂等键是 body 的 `idempotencyKey`，
  * 同一来源重复调用不会重复写企业/事件。
  */
-import type { PlatformInterface } from './labels'
+import type { PlatformInterface } from '../layers/sme-roster/lib/labels'
 import type { CurrentQualificationSnapshot, OfficialEventFieldDiagnostics } from './roster/current-qualification'
 
 export type OfficialDeclaration =

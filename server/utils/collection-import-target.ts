@@ -8,14 +8,14 @@ import { targetReplaySource, writeCollectionTarget, CollectionReplayError } from
 import { readDifferenceCollection } from '../../lib/platform/difference-sources'
 import { verifyFingerprint, legacyFingerprintInput, FingerprintVerificationError, withFingerprintVerificationSnapshot } from '../../lib/platform/fingerprint-verifier'
 import { bootstrapFingerprint } from '../../lib/platform/fingerprint-bootstrap'
-import { RELATION_DECLARE_KIND_ORDER } from '../../lib/labels'
-import { normalizeUscc } from '../../lib/domain'
+import { RELATION_DECLARE_KIND_ORDER } from '../../layers/sme-roster/lib/labels'
+import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
 import { planPlatformObservation, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE, PlatformProjectionError } from './platform-business-record'
 import { captureQueryRevision113 } from './evidence-impact-113'
 import type { RosterImportPlatformQuery, RosterImportItemResult } from '../../lib/roster-import-client'
 import type { PlatformProjectionResult } from '../../lib/platform/business-record'
-import { canonicalEnterpriseId } from '../../lib/roster/enterprise-identity'
+import { canonicalEnterpriseId } from '../../layers/sme-roster/lib/roster/enterprise-identity'
 
 export function collectionImportSource(db: Executor, queryId: number) {
   const selected = readDifferenceCollection(db, queryId)

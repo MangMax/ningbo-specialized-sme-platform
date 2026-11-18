@@ -35,7 +35,7 @@ it('REST differences native lock leaves health responsive before independent rel
       const {startRosterApi}=await load.import(${JSON.stringify(resolve(root, 'tests/roster/imports/fixtures/import-server.ts'))});
       const imports=await startRosterApi({db:writer,apiToken:'synthetic-m2'});
       process.env.NUXT_DB_READONLY='1';
-      const hooks={};(await load.import(${JSON.stringify(resolve(root, 'server/plugins/enterprise-read.ts'))})).default({hooks:{hook:(n,f)=>hooks[n]=f}});
+      const hooks={};(await load.import(${JSON.stringify(resolve(root, 'layers/sme-roster/server/plugins/enterprise-read.ts'))})).default({hooks:{hook:(n,f)=>hooks[n]=f}});
       const route=(await load.import(${JSON.stringify(resolve(root, 'server/api/roster/differences.get.ts'))})).default;
       const recognitions=(await load.import(${JSON.stringify(resolve(root, 'server/api/roster/recognitions.get.ts'))})).default;
       const history=(await load.import(${JSON.stringify(resolve(root, 'server/api/roster/decision-lifecycle/history.get.ts'))})).default;

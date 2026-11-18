@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { enterpriseAlias } from '../../db/schema'
-import { PLATFORM_INTERFACE_VALUES } from '../../lib/labels'
+import { PLATFORM_INTERFACE_VALUES } from '../../layers/sme-roster/lib/labels'
 import type { RosterImportAlias, RosterPlatformRef } from '../../lib/roster-import-client'
 
 export const platformRefDiscoverySchema = z.looseObject({

@@ -4,7 +4,7 @@ import { motion, useReducedMotion } from 'motion-v'
 const reducedMotion = useReducedMotion()
 import StatisticsMovementsSection from '@/components/statistics/StatisticsMovementsSection.vue'
 import type { PublishedStatistics } from '~~/lib/roster/published-statistics'
-import { TITLES, TITLE_ORDER } from '~~/lib/labels'
+import { TITLES, TITLE_ORDER } from '#sme-roster/lib/labels'
 const title = ref('')
 const status = ref('confirmed')
 const page = ref(1)

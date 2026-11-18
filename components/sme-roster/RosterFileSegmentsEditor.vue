@@ -29,7 +29,7 @@ import {
 } from '#core/app/components/ui/table'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import FileEventSync from '@/components/files/FileEventSync.vue'
-import { TITLES, TITLE_ORDER, EVENTS, EVENT_ORDER } from '~~/lib/labels'
+import { TITLES, TITLE_ORDER, EVENTS, EVENT_ORDER } from '#sme-roster/lib/labels'
 import { describeFetchError } from '../../layers/core/lib/file-content-status'
 import type {
   getParse105,

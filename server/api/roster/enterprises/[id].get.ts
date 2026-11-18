@@ -1,7 +1,7 @@
 import { requestLogContext } from '../../../../layers/core/lib/logging'
-import { admitEnterpriseResponse } from '../../../utils/enterprise-read-response'
+import { admitEnterpriseResponse } from '../../../../layers/sme-roster/server/utils/enterprise-read-response'
 import { useDb } from '@db'
-import { enterpriseReads } from '../../../utils/enterprise-read'
+import { enterpriseReads } from '../../../../layers/sme-roster/server/utils/enterprise-read'
 import { withEnterpriseReadSignal } from '../../../../layers/core/server/utils/enterprise-read-signal'
 
 /**

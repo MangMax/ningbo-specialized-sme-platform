@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { TITLE_ORDER } from '../../lib/labels'
+import { TITLE_ORDER } from '../../layers/sme-roster/lib/labels'
 import type { RosterImportExportRow, RosterImportExportSnapshot } from '../../lib/roster-import-client'
 
 const exportSnapshotDiscoverySchema = z.looseObject({

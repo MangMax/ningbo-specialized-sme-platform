@@ -16,7 +16,7 @@ import { legacyPlatformProvenanceItemsSchema, type LegacyPlatformCollection, typ
 import { platformEvidenceError } from '../../../lib/platform/recognized-evidence'
 import { listPlatformQueries } from '../../../lib/platform/read'
 import { readPlatformQueryEvidence } from '../../../lib/platform/evidence-read'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import { rosterImportMcpPayloadSchema } from '../../../server/utils/roster-import-schema'
 import type { RosterImportRequest } from '../../../lib/roster-import-client'
 

@@ -2,8 +2,8 @@ import { requestLogContext } from '../../../layers/core/lib/logging'
 import { createError, getQuery, setHeader } from 'h3'
 import { useDb } from '@db'
 import { parseCurrentQualifiedQuery } from '../../utils/current-qualified-filter'
-import { enterpriseReads } from '../../utils/enterprise-read'
-import { admitEnterpriseResponse } from '../../utils/enterprise-read-response'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
+import { admitEnterpriseResponse } from '../../../layers/sme-roster/server/utils/enterprise-read-response'
 import { withEnterpriseReadSignal } from '../../../layers/core/server/utils/enterprise-read-signal'
 
 defineRouteMeta({ openAPI: {

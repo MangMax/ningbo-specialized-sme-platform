@@ -1,8 +1,8 @@
 import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
 import { importExecutor } from '../../../server/utils/import-execution'
-import * as readerLocation from '../../../server/utils/enterprise-read-worker-location'
-import { createEnterpriseReadProcess } from '../../../server/utils/enterprise-read-process'
-import { enterpriseReads } from '../../../server/utils/enterprise-read'
+import * as readerLocation from '../../../layers/sme-roster/server/utils/enterprise-read-worker-location'
+import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { initializeDb } from '../../../db/client'
 import { assertEnterpriseDetailSnapshotEqual } from '../../roster/assertions/enterprise-detail-snapshot'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -14,7 +14,7 @@ import { createRosterImportClient } from '../../../lib/roster-import-client'
 import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
 import { runPlatformLiveQuery } from '../../../server/utils/platform-live-query'
 import { startEvidenceServer } from '../fixtures/evidence-server'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 
 const dir = mkdtempSync(join(tmpdir(), 'recognized-evidence-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })

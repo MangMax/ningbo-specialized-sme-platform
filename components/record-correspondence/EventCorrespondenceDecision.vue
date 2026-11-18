@@ -2,7 +2,7 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { EventArchiveCandidate, EventArchivePage } from '~~/lib/roster/event-archive-candidates'
 import { CORRESPONDENCE_ROLES, eventDecisionText, type CorrespondenceDetail, type EventSource } from '~~/lib/roster/correspondence-view'
-import { TITLES } from '~~/lib/labels'
+import { TITLES } from '#sme-roster/lib/labels'
 import { REVIEW_DRAFTS_KEY } from '~/composables/useReviewDrafts'
 import { refreshCorrespondenceViews } from '~/composables/useCorrespondenceReadback'
 import { DECISION_EFFECTS, platformDecisionSummary, replacementDecisionOptions } from './event-correspondence-presentation'

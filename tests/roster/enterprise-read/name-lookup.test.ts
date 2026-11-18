@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   ENTERPRISE_NAME_PAGE_LIMIT,
   lookupEnterpriseNames,
-} from '../../../lib/roster/enterprise-name-lookup'
+} from '../../../layers/sme-roster/lib/roster/enterprise-name-lookup'
 
 describe('bounded enterprise name lookup', () => {
   it('deduplicates and caps the page at 25 IDs', async () => {

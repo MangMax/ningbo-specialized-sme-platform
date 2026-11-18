@@ -32,7 +32,7 @@ it('recognition native lock leaves health responsive before independent release 
     const {startRosterApi}=await load.import(${JSON.stringify(resolve('tests/roster/imports/fixtures/import-server.ts'))});
     const imports=await startRosterApi({db:writer,apiToken:'synthetic-m1'});
     process.env.NUXT_DB_READONLY='1';
-    const hooks={};(await load.import(${JSON.stringify(resolve('server/plugins/enterprise-read.ts'))})).default({hooks:{hook:(n,f)=>hooks[n]=f}});
+    const hooks={};(await load.import(${JSON.stringify(resolve('layers/sme-roster/server/plugins/enterprise-read.ts'))})).default({hooks:{hook:(n,f)=>hooks[n]=f}});
     const route=(await load.import(${JSON.stringify(resolve('server/api/roster/recognitions.get.ts'))})).default;
     const enterprises=(await load.import(${JSON.stringify(resolve('server/api/roster/enterprises.get.ts'))})).default;
     const app=h.createApp({debug:false});app.use(h.defineEventHandler(e=>hooks.request(e)));

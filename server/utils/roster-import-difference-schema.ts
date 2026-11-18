@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { differenceReason } from '../../db/schema'
-import { TITLE_ORDER } from '../../lib/labels'
+import { TITLE_ORDER } from '../../layers/sme-roster/lib/labels'
 import type { RosterImportDifference } from '../../lib/roster-import-client'
 import { platformRefDiscoverySchema, relationRefDiscoverySchema } from './roster-import-alias-schema'
 

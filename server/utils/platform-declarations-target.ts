@@ -5,7 +5,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { groupBy } from 'es-toolkit';
 import { platformBusinessRecord as b,platformCollection as c,enterprise as e,platformLegacyQueryAlias as qa,platformBusinessRecordVersion as v } from '../../db/schema';
-import { normalizeName,normalizeUscc } from '../../lib/domain';
+import { normalizeName,normalizeUscc } from '../../layers/sme-roster/lib/domain';
 import { storedApplyProjection as p } from '../../lib/platform/apply-stored-schema';
 import { DECLARATION_OBSERVATION_LIMIT,DECLARATION_VERSION_LIMIT,declarationFilterSchema,type DeclarationDetail,type DeclarationFilter,type DeclarationIsolatedRow,type DeclarationListResult,type DeclarationRecordRow,type DeclarationView } from '../../lib/platform/declarations';
 import type { PlatformFilterOptions } from '../../lib/platform/filter-options';

@@ -1,6 +1,6 @@
 import { statisticsInteger } from '../../utils/statistics-query'
 import { useDb } from '@db'
-import { TITLE_ORDER } from '~~/lib/labels'
+import { TITLE_ORDER } from '#sme-roster/lib/labels'
 import { readDistrictStatistics } from '~~/lib/roster/district-statistics'
 
 

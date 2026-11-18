@@ -2,7 +2,7 @@ import { countBy } from 'es-toolkit'
 import type { Database } from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../db/schema'
-import { TITLE_ORDER } from '../labels'
+import { TITLE_ORDER } from '../../layers/sme-roster/lib/labels'
 
 /** Formal award history only. Current qualification, platform maintenance and reviews
  * cannot create or remove a published enterprise. Identity follows stored IDs;

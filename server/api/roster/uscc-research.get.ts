@@ -1,8 +1,8 @@
 import { createReadTurns } from '../../../layers/core/server/utils/read-turn'
 import { withReadTurn } from '../../../layers/core/server/utils/read-turn-http'
 import { useDb } from '@db'
-import { collectUsccTargets, pageUsccChecklist, planUsccResearch } from '~~/server/utils/uscc-research'
-import { parseUsccChecklistQuery } from '~~/server/utils/uscc-research-query'
+import { collectUsccTargets, pageUsccChecklist, planUsccResearch } from '#sme-roster/server/utils/uscc-research'
+import { parseUsccChecklistQuery } from '#sme-roster/server/utils/uscc-research-query'
 
 /**
  * **缺统一社会信用代码企业的待查清单 + 库内补录计划**（RL-06）。

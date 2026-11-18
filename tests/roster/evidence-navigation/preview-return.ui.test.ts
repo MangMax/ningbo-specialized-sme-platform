@@ -2,16 +2,16 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h, ref, type Ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import RosterEnterpriseTable, { type EnterpriseRow } from '../../../components/RosterEnterpriseTable.vue'
-import RosterTitleTable, { type TitleRow } from '../../../components/RosterTitleTable.vue'
+import RosterEnterpriseTable, { type EnterpriseRow } from '../../../layers/sme-roster/app/components/RosterEnterpriseTable.vue'
+import RosterTitleTable, { type TitleRow } from '../../../layers/sme-roster/app/components/RosterTitleTable.vue'
 import {
   hasEvidencePreviewReturn,
   rememberEvidencePreviewReturn,
   shouldNuxtScrollToTop,
   useEvidencePreviewScrollRestore,
 } from '../../../lib/roster/evidence-preview-return'
-import type { RosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import EnterprisePage from '../../../pages/enterprises/[id].vue'
+import type { RosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import EnterprisePage from '../../../layers/sme-roster/app/pages/enterprises/[id].vue'
 
 vi.mock('@tanstack/vue-virtual', async () => {
   const { computed } = await import('vue')
@@ -161,9 +161,9 @@ const globalStubs = {
   FilePreviewDialog: true,
   RecordSourceReader: true,
   EnterpriseLaterProcesses: true,
-  EventChip: true,
-  SourceChip: true,
-  TitleBadge: true,
+  RosterEventChip: true,
+  RosterSourceChip: true,
+  RosterTitleBadge: true,
   Badge: true,
   Button: { template: '<button><slot /></button>' },
   Collapsible: CollapsibleStub,
@@ -365,7 +365,7 @@ describe('出处预览返回滚动恢复', () => {
     await flushPromises()
     expect(page.text()).toContain('原认定 2021 年 · 复核结论 2024 年 · 复核不通过')
     expect(page.text()).not.toContain('failed')
-    expect(page.getComponent({ name: 'EventChip' }).props('hideBatch')).toBe(true)
+    expect(page.getComponent({ name: 'RosterEventChip' }).props('hideBatch')).toBe(true)
     page.unmount()
   })
 

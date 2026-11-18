@@ -5,7 +5,7 @@ import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import { Input } from '#core/app/components/ui/input'
 import { Label } from '#core/app/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
-import { KIND_ORDER, KINDS, SOURCES, SOURCE_ORDER, TITLE_ORDER, TITLES } from '~~/lib/labels'
+import { KIND_ORDER, KINDS, SOURCES, SOURCE_ORDER, TITLE_ORDER, TITLES } from '#sme-roster/lib/labels'
 import type { RosterFileFields } from '~~/server/modules/sme-roster/files'
 import type { FileRow } from '#core/server/utils/file-store'
 import type { FileDetailDraft } from '#core/lib/core/file-categories'
@@ -61,7 +61,7 @@ const titleModel = computed({
   set: (v: string) => (form.value.titleCode = blank(v)),
 })
 
-/** 下拉项一律从 `lib/labels.ts` 的单一来源取,不在这里重写中文 —— 避免文案漂移。 */
+/** 下拉项一律从 `layers/sme-roster/lib/labels.ts` 的单一来源取,不在这里重写中文 —— 避免文案漂移。 */
 const SOURCE_ITEMS = SOURCE_ORDER.map((code) => ({ value: code, label: SOURCES[code] ?? code }))
 const KIND_ITEMS = KIND_ORDER.map((code) => ({ value: code, label: KINDS[code] ?? code }))
 

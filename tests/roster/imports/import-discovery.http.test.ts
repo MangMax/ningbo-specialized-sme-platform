@@ -10,7 +10,7 @@ import { rosterImportMcpPayloadSchema } from '../../../server/utils/roster-impor
 import { commitRosterImport, preflightRosterImport, readImportBatchOutcome } from '../../../server/utils/roster-import'
 import { startRosterApi } from './fixtures/import-server'
 import { listEnterprises } from '../../../server/utils/mcp-roster'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import { getPlatformExportRows, listPlatformSnapshots } from '../../../lib/platform-snapshots'
 
 it('preserves legacy HTTP item errors, numeric normalization and idempotent receipts after MCP discovery parsing', async () => {

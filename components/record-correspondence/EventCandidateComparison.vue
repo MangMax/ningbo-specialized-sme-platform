@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { EventArchiveCandidate } from '~~/lib/roster/event-archive-candidates'
 import { ARCHIVE_CONFLICT_LABELS } from '~~/lib/roster/event-archive-candidates'
-import { TITLES } from '~~/lib/labels'
+import { TITLES } from '#sme-roster/lib/labels'
 
 const props = defineProps<{ candidate: EventArchiveCandidate }>()
 const fields = computed(() => {

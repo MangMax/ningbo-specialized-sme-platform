@@ -1,14 +1,14 @@
 import { landingSegments, matchesLandingPath } from '../../../lib/sme-roster/file-landing'
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import * as schema from '../../../db/schema'
-import { KIND_ORDER, PARSE_STATE_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../../../lib/labels'
+import { KIND_ORDER, PARSE_STATE_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../../../layers/sme-roster/lib/labels'
 import { categoryStateOf, deriveClassification, type CategoryState, type FileKind, type FileSource, type ParseState } from '../../../lib/stored-file'
 import type { StoredFilePart } from '../../../lib/file-parts'
 import { classificationColumns, fileClassificationJoin } from '../../utils/roster-file-classification'
 import { listFileParts } from '../../utils/file-parts'
 import { listRegisteredDeclarations681, registeredSummary681 } from '../../utils/registered-declarations'
 import { type FileStoreDb as Db, type FileCategoryServer, type FileRow } from '../../../layers/core/server/utils/file-store'
-import manifest from '../../../lib/sme-roster/manifest'
+import manifest from '../../../layers/sme-roster/manifest'
 import { rosterFileOpenApi } from './file-openapi'
 
 const KINDS: readonly FileKind[] = KIND_ORDER as FileKind[]

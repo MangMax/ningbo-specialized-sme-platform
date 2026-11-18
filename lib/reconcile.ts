@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import type { ComparisonDirection } from './comparison'
-import type { ReconcileReason } from './labels'
+import type { ReconcileReason } from '../layers/sme-roster/lib/labels'
 
 /**
  * 比对差异的**平台解释**(入库管线重整 票 16)。

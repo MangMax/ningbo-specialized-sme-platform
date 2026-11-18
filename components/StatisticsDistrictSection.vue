@@ -3,7 +3,7 @@ import { motion, useReducedMotion } from 'motion-v'
 const reducedMotion = useReducedMotion()
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import type { DistrictStatistics } from '~~/lib/roster/district-statistics'
-import { TITLES, TITLE_ORDER } from '~~/lib/labels'
+import { TITLES, TITLE_ORDER } from '#sme-roster/lib/labels'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
 import { Skeleton } from '#core/app/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '#core/app/components/ui/tabs'

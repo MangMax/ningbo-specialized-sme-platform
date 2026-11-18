@@ -4,7 +4,7 @@ import { safeLogEvent } from '../../../layers/core/lib/logging/privacy'
 
 const reads = vi.hoisted(() => ({ json: vi.fn() }))
 vi.mock('@db', () => ({ useDb: () => ({ $client: { name: 'context-compat.db' } }) }))
-vi.mock('../../../server/utils/enterprise-read', () => ({ enterpriseReads: reads }))
+vi.mock('../../../layers/sme-roster/server/utils/enterprise-read', () => ({ enterpriseReads: reads }))
 
 describe('request log context compatibility', () => {
   let handler: (event: unknown) => Promise<unknown>

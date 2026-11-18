@@ -1,6 +1,6 @@
 import type { EventArchiveCandidate } from '~~/lib/roster/event-archive-candidates'
 import type { RelationSource } from '~~/lib/roster/correspondence-view'
-import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, RELATION_DECLARE_KINDS, TITLES } from '~~/lib/labels'
+import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, RELATION_DECLARE_KINDS, TITLES } from '#sme-roster/lib/labels'
 
 export const DECISION_EFFECTS = {
   confirm: '确认这条平台记录与本次正式事项有关。只确认当前这条来源的对应关系，不代表其他接口的记录也已确认。',

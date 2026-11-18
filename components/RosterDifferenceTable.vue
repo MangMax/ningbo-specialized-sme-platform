@@ -10,8 +10,8 @@ import {
   PLATFORM_INTERFACES,
   PLATFORM_QUERY_STATUSES,
   TITLES,
-} from '~~/lib/labels'
-import TitleBadge from '@/components/TitleBadge.vue'
+} from '#sme-roster/lib/labels'
+import RosterTitleBadge from '#sme-roster/app/components/TitleBadge.vue'
 import { Badge, type BadgeVariants } from '#core/app/components/ui/badge'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '#core/app/components/ui/empty'
 import { Skeleton } from '#core/app/components/ui/skeleton'
@@ -123,7 +123,7 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs f
               <Badge variant="outline" class="font-normal">当前已不是差异(解释留档)</Badge>
             </div>
           </TableCell>
-          <TableCell><TitleBadge :code="row.titleCode" /></TableCell>
+          <TableCell><RosterTitleBadge :code="row.titleCode" /></TableCell>
           <TableCell class="text-xs">{{ comparisonDirectionLabel(row.direction) }}</TableCell>
           <TableCell>
             <QueryAssessmentSummary v-if="row.queryCoverage && row.currentDecision && row.explanationValidity && row.assessment" :assessment="row as ReviewAssessment" compact />

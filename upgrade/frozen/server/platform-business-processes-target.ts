@@ -10,7 +10,7 @@ import { platformCollection as c, platformLegacyQueryAlias as qa, platformBusine
 import { storedProcessProjection as p } from '../process-stored-schema';
 import { processStoredInstalled } from '../../process-stored-catalog';
 import { sqliteConnection } from '../../../lib/platform/target-connection';
-import { normalizeName, normalizeUscc } from '../../../lib/domain';
+import { normalizeName, normalizeUscc } from '../../../layers/sme-roster/lib/domain';
 import { normalizeDeclareKind } from '../../../lib/platform/identity';
 import { fail, orderedScopes, pageOf } from './platform-business-read';
 import { businessProcessFilterSchema, BUSINESS_PROCESS_VERSION_LIMIT, BUSINESS_PROCESS_OBSERVATION_LIMIT, type BusinessProcessFilter, type BusinessProcessListResult, type BusinessProcessIsolatedRow, type BusinessProcessDetail, type BusinessProcessView } from '../../../lib/platform/business-processes';

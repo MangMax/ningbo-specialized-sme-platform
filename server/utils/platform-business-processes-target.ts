@@ -4,7 +4,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { groupBy } from 'es-toolkit';
 import { platformBusinessRecord as b,platformCollection as c,enterprise as e,platformLegacyQueryAlias as qa,platformBusinessRecordVersion as v } from '../../db/schema';
-import { normalizeName,normalizeUscc } from '../../lib/domain';
+import { normalizeName,normalizeUscc } from '../../layers/sme-roster/lib/domain';
 import { BUSINESS_PROCESS_OBSERVATION_LIMIT,BUSINESS_PROCESS_VERSION_LIMIT,businessProcessFilterSchema,type BusinessProcessDetail,type BusinessProcessFilter,type BusinessProcessIsolatedRow,type BusinessProcessListResult,type BusinessProcessView } from '../../lib/platform/business-processes';
 import { readObservationCorrespondenceRefs } from '../../lib/platform/correspondence-target';
 import type { PlatformFilterOptions } from '../../lib/platform/filter-options';

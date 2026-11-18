@@ -14,7 +14,7 @@ import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
 import ExcelJS from 'exceljs'
 import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
 import * as candidates from '../../../upgrade/frozen/current-candidates'
-import { normalizeUscc } from '../../../lib/domain'
+import { normalizeUscc } from '../../../layers/sme-roster/lib/domain'
 
 const relationIndex = 'platform_relation_current_candidate_cover_idx'
 const queryIndex = 'platform_query_current_candidate_cover_idx'

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { RecordComparisonResult } from '~~/lib/roster/record-comparison-view'
 import { comparisonReasonText } from '~~/lib/roster/record-comparison-view'
-import { TITLES } from '~~/lib/labels'
-import { humanRecordTime } from '~~/lib/roster/record-ledger'
+import { TITLES } from '#sme-roster/lib/labels'
+import { humanRecordTime } from '#sme-roster/lib/roster/record-ledger'
 import { Badge } from '#core/app/components/ui/badge'
 import { Button } from '#core/app/components/ui/button'
 import { comparisonLinkText as linkText, comparisonQualificationText as qualificationText, comparisonDecisionText as decisionText } from '~~/lib/roster/record-comparison-display'

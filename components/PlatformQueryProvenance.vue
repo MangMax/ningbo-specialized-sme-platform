@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS } from '~~/lib/labels'
+import { PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS } from '#sme-roster/lib/labels'
 import { formatFetchTime } from '~~/lib/reconcile-time'
 import { platformFailureForDisplay } from '~~/lib/roster/platform-records'
 import type { PlatformRecordQuery } from '~~/lib/roster/platform-records'

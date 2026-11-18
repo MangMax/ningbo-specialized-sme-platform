@@ -11,7 +11,7 @@ import { dispatchCandidateJobMcp, handleCandidateJobRequest } from '../../../ser
 import { operationLogContext } from '../../../layers/core/server/utils/operation-log-context'
 import type { AnnualScopeReader } from '../../../server/utils/annual-correspondence'
 import { createImportExecutor } from '../../../server/utils/import-execution'
-import { createEnterpriseReadProcess } from '../../../server/utils/enterprise-read-process'
+import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
 
 let root: string, db: ReturnType<typeof initializeDb>
 const previous = process.env.NUXT_LOG_DIR

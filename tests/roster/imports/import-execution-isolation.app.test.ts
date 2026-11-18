@@ -1,5 +1,5 @@
 import { createImportExecutor } from '../../../server/utils/import-execution'
-import { createEnterpriseReadProcess } from '../../../server/utils/enterprise-read-process'
+import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
 import { serialize } from 'node:v8'
 import { mkdtempSync, rmSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -53,7 +53,7 @@ it('HTTP import keeps the event loop responsive during native write contention a
 
 it('a worker that dies before readiness fails its admitted request without spawning a retry', async () => {
   const { createImportExecutor } = await import('../../../server/utils/import-execution')
-  const { createEnterpriseReadProcess } = await import('../../../server/utils/enterprise-read-process')
+  const { createEnterpriseReadProcess } = await import('../../../layers/sme-roster/server/utils/enterprise-read-process')
   const dir = mkdtempSync(join(tmpdir(), 'import-startup-'))
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
   const db = initializeDb({ create: true,  dbPath: join(dir, 'roster.db') })

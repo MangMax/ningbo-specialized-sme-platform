@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef, watch } from 'vue'
 import type { PlatformQualificationFact } from '~~/lib/roster/platform-qualification'
-import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
+import type { RosterEnterpriseDetail } from '#sme-roster/lib/roster/enterprise-roster'
 import type { CurrentTitle } from '~~/lib/roster/current-titles'
 import { CURRENT_STATUS_LABELS } from '~~/lib/roster/current-status'
-import TitleBadge from './TitleBadge.vue'
+import RosterTitleBadge from '../layers/sme-roster/app/components/TitleBadge.vue'
 import PlatformRecords from './PlatformRecords.vue'
 import { Button } from '#core/app/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '#core/app/components/ui/dialog'
-import { reviewOutcomeLabel, timelineEventIdentity, type TimelineEventFacts } from '~~/lib/roster/enterprise-timeline'
+import { reviewOutcomeLabel, timelineEventIdentity, type TimelineEventFacts } from '#sme-roster/lib/roster/enterprise-timeline'
 
 const props = defineProps<{ events?: readonly TimelineEventFacts[]; enterpriseId?: number; source?: PlatformQualificationFact; inheritedFrom?: CurrentTitle }>()
 const open = ref(false)
@@ -76,7 +76,7 @@ const steps = computed(() => {
         <section aria-label="当前资格摘要" class="bg-muted/30 min-w-0 space-y-3 rounded-lg border p-4 text-sm leading-6 break-words [overflow-wrap:anywhere]">
           <p>评估时点：{{ detail.qualificationAssessment.asOf }}</p>
           <article v-for="assessment in detail.qualificationAssessment.titles" :key="assessment.titleCode" class="space-y-2 border-t pt-3">
-            <h3 class="flex flex-wrap items-center gap-2"><TitleBadge :code="assessment.titleCode" /><span>{{ assessment.effectiveQualification ? CURRENT_STATUS_LABELS[assessment.effectiveQualification.status] : { eligible: '宁波当前可纳入', pending: '宁波当前待核', excluded: '不纳入宁波当前结果' }[assessment.group] }}</span></h3>
+            <h3 class="flex flex-wrap items-center gap-2"><RosterTitleBadge :code="assessment.titleCode" /><span>{{ assessment.effectiveQualification ? CURRENT_STATUS_LABELS[assessment.effectiveQualification.status] : { eligible: '宁波当前可纳入', pending: '宁波当前待核', excluded: '不纳入宁波当前结果' }[assessment.group] }}</span></h3>
             <p v-for="basis in assessment.effectiveQualification?.presentationBasis ?? []" :key="basis">{{ basis }}</p>
             <p v-if="!assessment.effectiveQualification?.source">公布依据：{{ assessment.officialQualification.message }}</p>
             <p>主体：{{ assessment.subject.message }}；地域：{{ assessment.region.message }}</p>

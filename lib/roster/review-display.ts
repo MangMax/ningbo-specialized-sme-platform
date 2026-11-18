@@ -11,7 +11,7 @@ import {
   PLATFORM_INTERFACES,
   TITLES,
   comparisonDirectionLabel,
-} from '../labels'
+} from '../../layers/sme-roster/lib/labels'
 import { formatFetchTime } from '../reconcile-time'
 import type { ImpactRow, ReviewAssessment } from './evidence-review-ui'
 

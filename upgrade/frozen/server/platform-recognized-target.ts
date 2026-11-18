@@ -12,7 +12,7 @@ import { platformCollection as c, platformLegacyQueryAlias as qa, platformBusine
 import { storedRecognizedProjection as p } from '../recognized-stored-schema';
 import { recognizedStoredInstalled } from '../../recognized-stored-catalog';
 import { sqliteConnection } from '../../../lib/platform/target-connection';
-import { normalizeName, normalizeUscc } from '../../../lib/domain';
+import { normalizeName, normalizeUscc } from '../../../layers/sme-roster/lib/domain';
 import { fail, orderedScopes, pageOf } from './platform-business-read';
 import { recognizedDirectoryFilterSchema, RECOGNIZED_DIRECTORY_VERSION_LIMIT, RECOGNIZED_DIRECTORY_OBSERVATION_LIMIT, type RecognizedDirectoryFilter, type RecognizedDirectoryListResult, type RecognizedDirectoryIsolatedRow, type RecognizedDirectoryDetail, type RecognizedDirectoryView } from '../../../lib/platform/recognized-directory';
 import type { PlatformFilterOptions } from '../../../lib/platform/filter-options';

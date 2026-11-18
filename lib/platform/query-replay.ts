@@ -1,6 +1,6 @@
 /** Immutable replay comparison shared by public planning and explicit target commands. */
 import { isDeepStrictEqual } from 'node:util'
-import type { PlatformInterface } from '../labels'
+import type { PlatformInterface } from '../../layers/sme-roster/lib/labels'
 import type { RosterImportPlatformQuery, RosterImportRelation, RosterImportItemResult } from '../roster-import-client'
 import { normalizePlatformRelation } from './normalization'
 import { platformObservationPayload } from './observation-plan'

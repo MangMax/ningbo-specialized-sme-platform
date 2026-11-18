@@ -2,7 +2,7 @@ import type { LogContext } from '../../../layers/core/lib/logging'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { currentQualifiedFilterSchema } from '../../utils/current-qualified-filter'
-import { enterpriseReads } from '../../utils/enterprise-read'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 
 export default defineMcpTool({
   name: 'list_current_qualified_enterprises',

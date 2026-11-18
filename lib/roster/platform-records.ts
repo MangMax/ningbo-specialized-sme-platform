@@ -1,4 +1,4 @@
-import type { RosterPlatformQueryRow, RosterPlatformRelationRow } from './enterprise-roster'
+import type { RosterPlatformQueryRow, RosterPlatformRelationRow } from '../../layers/sme-roster/lib/roster/enterprise-roster'
 import type { PlatformFactField, PlatformObservationFact } from '../platform/observation-facts'
 
 export type PlatformRecordQuery = RosterPlatformQueryRow

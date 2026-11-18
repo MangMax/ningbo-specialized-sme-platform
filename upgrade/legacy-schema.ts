@@ -568,7 +568,7 @@ export const enterpriseAlias = sqliteTable(
     originalSourceRefId: integer('original_source_ref_id'),
     /** 当前别名解释；初始原值和来源单独冻结，历次变动追加审计。 */
     name: text('name').notNull(),
-    /** 归一化别名(与 `lib/domain.ts` 的 `normalizeName` 同规则),供按曾用名搜索。 */
+    /** 归一化别名(与 `layers/sme-roster/lib/domain.ts` 的 `normalizeName` 同规则),供按曾用名搜索。 */
     nameNorm: text('name_norm').notNull(),
     /** 来源类别:平台业务接口 / 平台申报接口 / 公布文件 / 人工登记。 */
     sourceKind: text('source_kind', {

@@ -3,9 +3,9 @@ import { qualificationExportFixture } from '../current-export/fixtures/qualifica
 import { createCurrentQualificationAssessmentReader, CURRENT_TITLES } from '../../../lib/roster/current-qualification'
 import { getComparison } from '../../../lib/comparison'
 import { listRosterDifferences } from '../../../lib/roster/difference-list'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import { selectEnterpriseCoordinates } from '../../../lib/roster/enterprise-list-selection'
-import { listRosterDifferences as legacyDifferences } from '../../../lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { selectEnterpriseCoordinates } from '../../../layers/sme-roster/lib/roster/enterprise-list-selection'
+import { listRosterDifferences as legacyDifferences } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import { listDifferences } from '../../../server/utils/mcp-roster'
 const f = qualificationExportFixture()
 afterAll(() => { vi.useRealTimers(); return f.close() })

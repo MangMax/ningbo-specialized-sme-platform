@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { record, recordEvent, sourceDocument } from '../../db/schema'
-import { TITLE_ORDER } from '../../lib/labels'
+import { TITLE_ORDER } from '../../layers/sme-roster/lib/labels'
 import { officialPublishedRowSchema } from './official-evidence-plan'
 
 // Discovery describes commands; legacy normalization and item errors remain in roster-import.

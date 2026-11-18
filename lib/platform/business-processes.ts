@@ -1,6 +1,6 @@
 import type { PlatformBusinessMetadata } from './business-record'
 import { z } from 'zod'
-import { MAX_PAGE_SIZE } from '../query-limits'
+import { MAX_PAGE_SIZE } from '../../layers/sme-roster/lib/query-limits'
 
 /** Local business_list (关联办理) queries. These read the source-specific typed projection, never raw JSON. */
 export const BUSINESS_PROCESS_VIEWS = ['records', 'isolated'] as const

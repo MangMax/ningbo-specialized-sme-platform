@@ -7,7 +7,7 @@ import { targetSchema as s } from '../platform/target-schema'
 import { witnessCollection,witnessObservation,witnessCondition } from '../platform/recognized-witness-schema'
 import { witnessInstalled } from '../platform/recognized-witness-catalog'
 import { sqliteConnection } from '../platform/target-connection'
-import { normalizeUscc } from '../domain'
+import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import type { RecognizedWitnessReader,RecognizedWitnessResult } from './recognized-witness-reader'
 const SUPPORTED_RULE='recognized-witness-input-v1'
 const wc=alias(witnessCollection,'witness_collection_capture'),wo=alias(witnessObservation,'witness_position_capture')

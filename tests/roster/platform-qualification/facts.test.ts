@@ -24,7 +24,7 @@ it('retains unknown source status and never renews from an update or submission 
   expect(platformBusinessFact('apply_list', { declareKind: '新事项', status: '新状态 ', year: null, appliedAt: '2026-01-01' })).toMatchObject({ matter: 'unknown', conclusion: 'unknown', statusRaw: '新状态 ', matterRaw: '新事项', businessYear: null })
 })
 
-import { normalizeUscc } from '../../../lib/domain'
+import { normalizeUscc } from '../../../layers/sme-roster/lib/domain'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { createRuntimeSchema } from '../../../db/create-runtime'

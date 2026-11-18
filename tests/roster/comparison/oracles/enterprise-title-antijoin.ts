@@ -5,7 +5,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { orderBy } from 'es-toolkit'
 import * as schema from '../../../../db/schema'
 import type { TitleCode } from '../../../../db/titles'
-import { TITLE_ORDER } from '../../../../lib/labels'
+import { TITLE_ORDER } from '../../../../layers/sme-roster/lib/labels'
 
 export const COMPARISON_DIRECTIONS = ['missing_in_miit', 'extra_in_miit'] as const
 export type ComparisonDirection = (typeof COMPARISON_DIRECTIONS)[number]

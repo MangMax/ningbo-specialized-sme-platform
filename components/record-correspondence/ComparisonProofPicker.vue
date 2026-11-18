@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { TITLES } from '~~/lib/labels'
+import { TITLES } from '#sme-roster/lib/labels'
 import type { ComparisonProof, ComparisonProofAudit, ComparisonProofCatalog, ComparisonSelection } from '~~/lib/roster/record-comparison-view'
-import { humanRecordTime } from '~~/lib/roster/record-ledger'
+import { humanRecordTime } from '#sme-roster/lib/roster/record-ledger'
 import { Badge } from '#core/app/components/ui/badge'
 import { Button } from '#core/app/components/ui/button'
 import { Checkbox } from '#core/app/components/ui/checkbox'

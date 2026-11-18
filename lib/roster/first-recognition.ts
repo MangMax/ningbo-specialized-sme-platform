@@ -25,13 +25,13 @@
  * (契约 §6.4)。首次认定的年份看的是 `award` 自己的年份,**不共用那个标志** ——
  * 把两件事并成一个标,读的人就分不清「这个年份存疑」还是「下次到期存疑」。
  */
-import type { TitleLifecycle } from './lifecycle'
+import type { TitleLifecycle } from '../../layers/sme-roster/lib/roster/lifecycle'
 import { isPageCapable } from './evidence-page'
 
 /**
  * 首次认定的两态。
  *
- * 名字带 `_VALUES`:中文标签表在 `lib/labels.ts` 里叫 `FIRST_RECOGNITION_STATUSES`
+ * 名字带 `_VALUES`:中文标签表在 `layers/sme-roster/lib/labels.ts` 里叫 `FIRST_RECOGNITION_STATUSES`
  * (与 `DIFFERENCE_STATUSES` / `VERIFICATION_STATUSES` 同一命名),同仓的
  * `PLATFORM_INTERFACE_VALUES`↔`PLATFORM_INTERFACES` 就是这么分的。**两处同名会逼着调用方
  * 起别名**,别名一起就没人分得清哪个是取值、哪个是文案。

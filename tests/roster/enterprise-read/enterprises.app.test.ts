@@ -12,8 +12,8 @@ import {
   getRosterEnterpriseDetail,
   listRosterDifferences,
   listRosterEnterprises,
-} from '../../../lib/roster/enterprise-roster'
-import type { PlatformInterface } from '../../../lib/labels'
+} from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import type { PlatformInterface } from '../../../layers/sme-roster/lib/labels'
 import { executeNativeImport, startRosterApi, type RosterApiServer } from '../imports/fixtures/import-server'
 
 /**

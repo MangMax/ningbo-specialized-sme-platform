@@ -6,7 +6,7 @@ import { Badge } from '#core/app/components/ui/badge'
 import { Skeleton } from '#core/app/components/ui/skeleton'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import type { BusinessProcessDetail } from '~~/lib/platform/business-processes'
-import { PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '~~/lib/labels'
+import { PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '#sme-roster/lib/labels'
 import { formatFetchTime } from '~~/lib/reconcile-time'
 
 const props = defineProps<{ recordId: number | null; open: boolean }>()

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER } from '../../../lib/labels'
+import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER } from '../../../layers/sme-roster/lib/labels'
 import { listPlatformQueries } from '../../../lib/platform/read'
 
 export default defineMcpTool({

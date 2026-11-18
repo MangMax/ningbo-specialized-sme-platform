@@ -4,7 +4,7 @@ import { computed } from 'vue'
 import { ExternalLink, History } from '@lucide/vue'
 import type { BusinessProcessRow } from '~~/lib/platform/business-processes'
 import { formatFetchTime } from '~~/lib/reconcile-time'
-import { PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '~~/lib/labels'
+import { PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '#sme-roster/lib/labels'
 import { Button } from '#core/app/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '#core/app/components/ui/table'
 

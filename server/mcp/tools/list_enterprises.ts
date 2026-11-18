@@ -2,10 +2,10 @@ import type { LogContext } from '../../../layers/core/lib/logging'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { TITLE_ORDER } from '~~/lib/labels'
+import { TITLE_ORDER } from '#sme-roster/lib/labels'
 import { FIRST_RECOGNITION_STATUS_VALUES } from '~~/lib/roster/first-recognition'
 import { enterpriseListFilter } from '../../utils/mcp-roster'
-import { enterpriseReads } from '../../utils/enterprise-read'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 
 const titleCodeSchema = z.enum(TITLE_ORDER as [string, ...string[]])
 

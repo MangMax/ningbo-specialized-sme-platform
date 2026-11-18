@@ -4,7 +4,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
 import type { TitleCode } from '../db/titles'
 import { COMPARISON_DIRECTIONS, getComparison, type ComparisonDirection, type ComparisonRow } from './comparison'
-import { TITLE_ORDER } from './labels'
+import { TITLE_ORDER } from '../layers/sme-roster/lib/labels'
 
 export interface CuratedRow extends ComparisonRow { nameNorm: string; note?: string }
 interface Annotation { note?: string; by?: string; at: string }

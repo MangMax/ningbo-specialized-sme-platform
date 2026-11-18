@@ -6,7 +6,7 @@ import { alias } from 'drizzle-orm/sqlite-core';
 import { groupBy } from 'es-toolkit';
 import type * as legacySchema from '../../db/schema';
 import { platformBusinessRecord as b,platformCollection as c,enterprise as e,platformLegacyQueryAlias as qa,platformBusinessRecordVersion as v } from '../../db/schema';
-import { normalizeName,normalizeUscc } from '../../lib/domain';
+import { normalizeName,normalizeUscc } from '../../layers/sme-roster/lib/domain';
 import { readObservationCorrespondenceRefs } from '../../lib/platform/correspondence-target';
 import type { PlatformFilterOptions } from '../../lib/platform/filter-options';
 import type { PlatformNormalizationConflict } from '../../lib/platform/normalization';

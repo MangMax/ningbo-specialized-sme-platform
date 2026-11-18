@@ -4,7 +4,7 @@ import type { TaskExportTitle } from '../lib/sme-roster/task-exports'
 import { useCurrentRosterExport } from '~/composables/useCurrentRosterExport'
 import { Button } from '#core/app/components/ui/button'
 import { Alert } from '#core/app/components/ui/alert'
-import { TITLES } from '~~/lib/labels'
+import { TITLES } from '#sme-roster/lib/labels'
 import { CURRENT_TITLES } from '~~/lib/roster/current-titles'
 
 const props = defineProps<{ titleCode: TaskExportTitle }>()

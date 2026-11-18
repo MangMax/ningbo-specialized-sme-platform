@@ -6,7 +6,7 @@ import { enterprise, record, differenceReason, recordCorrespondence } from '../.
 import { platformObservationAssignment as a, platformBusinessObservation as o, targetSchema } from '../platform/target-schema'
 import { PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION } from '../../db/schema-phase'
 import { sqliteConnection } from '../platform/target-connection'
-import { normalizeUscc } from '../domain'
+import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import { TITLE_RDJB_CODES } from '../platform/recognized-evidence'
 import type { CurrentTitle } from './current-titles'
 import type { CurrentCandidateReader } from './current-candidate-reader'

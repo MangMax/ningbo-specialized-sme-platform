@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { TITLE_ORDER } from '../labels'
+import { TITLE_ORDER } from '../../layers/sme-roster/lib/labels'
 import type { PlatformBusinessMetadata } from '../platform/business-record'
 
 // Negative official source refs are existing record_evidence identities, never DB foreign keys.

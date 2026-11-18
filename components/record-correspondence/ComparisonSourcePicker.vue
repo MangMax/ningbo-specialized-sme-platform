@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { PLATFORM_QUERY_STATUSES } from '~~/lib/labels'
-import { humanRecordTime } from '~~/lib/roster/record-ledger'
+import { PLATFORM_QUERY_STATUSES } from '#sme-roster/lib/labels'
+import { humanRecordTime } from '#sme-roster/lib/roster/record-ledger'
 import {
   comparisonSourceEnterpriseDetails,
   comparisonSourceEnterpriseLine,

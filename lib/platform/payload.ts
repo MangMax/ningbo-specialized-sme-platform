@@ -38,7 +38,7 @@
  * 二选一 —— 静默取其中一个正是那条规则要禁掉的事。
  */
 import { createHash } from 'node:crypto'
-import { normalizeName } from '../domain'
+import { normalizeName } from '../../layers/sme-roster/lib/domain'
 import type { ComparisonDirection } from '../comparison'
 import type {
   RosterImportAlias,
@@ -52,7 +52,7 @@ import type {
 } from '../roster-import-client'
 import type { PlatformQueryOutcome } from './client'
 import { type PlatformRelationRecord, relationFromRow } from './identity'
-import type { PlatformInterface } from '../labels'
+import type { PlatformInterface } from '../../layers/sme-roster/lib/labels'
 import type { StoredReplayInput } from './reconcile-replay-input'
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import { useDb } from '@db'
-import { MAX_PAGE_SIZE } from '~~/lib/query'
-import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER } from '~~/lib/labels'
+import { MAX_PAGE_SIZE } from '#sme-roster/lib/query'
+import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER } from '#sme-roster/lib/labels'
 import { getHeader, getResponseHeader } from 'h3'
 import { platformSummaryCache } from '../../utils/platform-summary-cache'
 
@@ -47,7 +47,7 @@ defineRouteMeta({
   },
 })
 
-/** 平台接口取值 —— 直接用唯一出处(`lib/labels.ts`),不在这里重列一遍。 */
+/** 平台接口取值 —— 直接用唯一出处(`layers/sme-roster/lib/labels.ts`),不在这里重列一遍。 */
 const INTERFACES = PLATFORM_INTERFACE_VALUES
 // ⚠️ 唯一**有意**的例外:上面 `defineRouteMeta` 里的 `enum` 必须保持**字面量** ——
 // nitro 的 `handlers-meta` 按 AST 静态求值抽 spec,写标识符它求值不出来(见 `tests/setup.ts`)。

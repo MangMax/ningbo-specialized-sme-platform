@@ -1,6 +1,6 @@
 import { semanticRouteHandler } from '../../../../../../layers/core/server/utils/core-route'
 import { useDb } from '@db'
-import { getEnterpriseAlias } from '../../../../../utils/alias-maintenance'
+import { getEnterpriseAlias } from '../../../../../../layers/sme-roster/server/utils/alias-maintenance'
 defineRouteMeta({ openAPI: {
   tags: ['企业别名维护'], summary: '按企业和别名稳定ID精确查询',
   parameters: [
