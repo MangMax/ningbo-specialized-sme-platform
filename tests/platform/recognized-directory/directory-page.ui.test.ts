@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import Page from '../../../pages/platform-recognized-directory.vue'
-import PlatformQueriesPage from '../../../pages/platform-queries.vue'
-import PlatformFilterSelect from '../../../components/PlatformFilterSelect.vue'
+import Page from '../../../layers/sme-roster/app/pages/platform-recognized-directory.vue'
+import PlatformQueriesPage from '../../../layers/sme-roster/app/pages/platform-queries.vue'
+import PlatformFilterSelect from '../../../layers/sme-roster/app/components/PlatformFilterSelect.vue'
 import TablePagination from '../../../layers/core/app/components/TablePagination.vue'
 import { Select } from '../../../layers/core/app/components/ui/select'
 
@@ -28,7 +28,7 @@ const row = {
 const response = { view: 'records' as const, rows: [row], total: 1, page: 1, pageSize: 25 }
 const stubs = {
   NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' },
-  PlatformRecognizedDirectoryDetailDialog: { template: '<div />' },
+  RosterPlatformRecognizedDirectoryDetailDialog: { template: '<div />' },
 }
 function mountPage() {
   return mount(Page, { global: { stubs } })

@@ -8,7 +8,7 @@ import { processReaderFixture } from '../fixtures/migrated-business-processes'
 import { transferCorrespondence } from '../../../upgrade/correspondence'
 import { transferDifferenceReferences } from '../../../upgrade/difference-references'
 import { writeNewCollectionTarget } from '../../../upgrade/frozen/collection-target-command'
-import { reserveLegacyIds } from '../../../lib/platform/target-archive'
+import { reserveLegacyIds } from '../../../layers/sme-roster/lib/platform/target-archive'
 import * as schema from '../../../upgrade/legacy-schema'
 
 let f: Awaited<ReturnType<typeof processReaderFixture>>, source: string, target: string

@@ -1,5 +1,5 @@
 /** Offline historical oracle from ab503081dae3e24680afc9b07395a7e3ff21fc9f. */
-import { platformNormalizationConflict } from '../../../lib/platform/normalization'
+import { platformNormalizationConflict } from '../../../layers/sme-roster/lib/platform/normalization'
 /** Apply reader for stored capture and the completed target catalog. */
 import { and, count, countDistinct, desc, eq, exists, inArray, isNull, max, min, ne, or, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
@@ -8,17 +8,17 @@ import { groupBy } from 'es-toolkit';
 import { targetSchema, platformBusinessObservation as o, platformObservationAssignment as a, platformLegacyRelationAlias as ra } from '../../target-schema';
 import { storedApplyProjection as p } from '../apply-stored-schema';
 import { processStoredInstalled } from '../../process-stored-catalog';
-import { sqliteConnection } from '../../../lib/platform/target-connection';
+import { sqliteConnection } from '../../../layers/sme-roster/lib/platform/target-connection';
 import { platformCollection as c, platformLegacyQueryAlias as qa, platformBusinessRecord as b, platformBusinessRecordVersion as v, enterprise as e } from '../../legacy-schema';
 import { normalizeName, normalizeUscc } from '../../../layers/sme-roster/lib/domain';
-import { normalizeDeclareKind } from '../../../lib/platform/identity';
-import { declarationFilterSchema, DECLARATION_OBSERVATION_LIMIT, DECLARATION_VERSION_LIMIT, type DeclarationFilter, type DeclarationListResult, type DeclarationDetail, type DeclarationView, type DeclarationIsolatedRow, type DeclarationRecordRow } from '../../../lib/platform/declarations';
-import type { PlatformFilterOptions } from '../../../lib/platform/filter-options';
+import { normalizeDeclareKind } from '../../../layers/sme-roster/lib/platform/identity';
+import { declarationFilterSchema, DECLARATION_OBSERVATION_LIMIT, DECLARATION_VERSION_LIMIT, type DeclarationFilter, type DeclarationListResult, type DeclarationDetail, type DeclarationView, type DeclarationIsolatedRow, type DeclarationRecordRow } from '../../../layers/sme-roster/lib/platform/declarations';
+import type { PlatformFilterOptions } from '../../../layers/sme-roster/lib/platform/filter-options';
 import { fail, pageOf } from './platform-business-read';
 // The old public DTO understates SQLite's legal cells. Keep target cells unknown
 // at this explicit boundary rather than asserting that a BLOB/REAL is a string/int.
-import { withArchiveProcessFacts, type PlatformObservationFact } from '../../../lib/platform/observation-facts';
-import type { PlatformNormalizationConflict } from '../../../lib/platform/normalization';
+import { withArchiveProcessFacts, type PlatformObservationFact } from '../../../layers/sme-roster/lib/platform/observation-facts';
+import type { PlatformNormalizationConflict } from '../../../layers/sme-roster/lib/platform/normalization';
 type ExactCells = { titleRaw: unknown; declareKind: unknown; declarationYear: unknown; appliedAt: unknown; status: unknown };
 export type TargetDeclarationListResult = Omit<DeclarationListResult, 'rows'> & {
     rows: (DeclarationRecordRow | (Omit<DeclarationIsolatedRow, keyof ExactCells> & ExactCells))[];

@@ -8,8 +8,8 @@ import { verifyFingerprint, FingerprintVerificationError } from './fingerprint-v
 import { bootstrapFingerprint } from './fingerprint-bootstrap'
 import { requireCaptureForeignKeys } from './fingerprint-capture'
 import { isDeepStrictEqual } from 'node:util'
-import { planPlatformObservation, platformObservationPayload, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE } from '../../lib/platform/observation-plan'
-import { PlatformProjectionError } from '../../lib/platform/projection-error'
+import { planPlatformObservation, platformObservationPayload, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE } from '../../layers/sme-roster/lib/platform/observation-plan'
+import { PlatformProjectionError } from '../../layers/sme-roster/lib/platform/projection-error'
 import { ensureApplyTargetContent } from './apply-target-writer'
 import { ensureProcessTargetContent } from './process-target-writer'
 import { ensureRecognizedTargetContent } from './recognized-target-writer'
@@ -24,8 +24,8 @@ import { platformQueriesInputSchema } from './server/roster-import-platform-sche
 import { FINGERPRINT_BASIS_VERSION } from '../schema-phase'
 import { targetSchema as s } from '../target-schema'
 import { replayOptionalString as optionalString, platformQuerySourceConflict, stagedPlatformQuerySource, type PlatformQueryReplaySource } from './query-replay'
-import { queryEvidenceError } from '../../lib/platform/query-evidence'
-import { normalizePlatformRelation } from '../../lib/platform/normalization'
+import { queryEvidenceError } from '../../layers/sme-roster/lib/platform/query-evidence'
+import { normalizePlatformRelation } from '../../layers/sme-roster/lib/platform/normalization'
 import { writeNewCollectionTarget, type NewCollectionTargetCommand } from './collection-target-command'
 
 /** Drizzle exposes $client on the database and the same client on a nested session.

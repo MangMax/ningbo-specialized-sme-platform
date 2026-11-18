@@ -9,7 +9,7 @@ import { platformQueriesMcpSchema } from './roster-import-platform-schema'
 import { differencesMcpSchema } from './roster-import-difference-schema'
 import { usccBackfillsMcpSchema } from './roster-import-uscc-schema'
 import { mergesMcpSchema } from './roster-import-merge-schema'
-import { legacyPlatformProvenanceItemsSchema } from '../../lib/platform/legacy-provenance'
+import { legacyPlatformProvenanceItemsSchema } from '../../layers/sme-roster/lib/platform/legacy-provenance'
 
 const importCorrectionSchema = evidenceCorrectionRequestSchema.omit({ idempotencyKey: true }).optional()
 const { $schema: _correctionDialect, ...importCorrectionDiscovery } = z.toJSONSchema(importCorrectionSchema, { io: 'input' })

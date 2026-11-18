@@ -11,7 +11,7 @@ import { derivedPartsForFile, listFileParts } from './file-parts'
 import { applyParseResult, normalizeParseParts } from './parse-result'
 import { partKey } from '../../lib/file-parts'
 import { readPdfPageCount } from '../../layers/core/server/utils/pdf-pages'
-import { listRegisteredDeclarations681, registeredSummary681 } from './registered-declarations'
+import { listRegisteredDeclarations681, registeredSummary681 } from '../../layers/sme-roster/server/utils/registered-declarations'
 import { getStoredFile } from './stored-files'
 
 type Db = BetterSQLite3Database<typeof schema>

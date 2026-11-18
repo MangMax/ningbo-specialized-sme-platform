@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
-import PlatformEvidenceChunk from '../../../components/PlatformEvidenceChunk.vue'
+import PlatformEvidenceChunk from '../../../layers/sme-roster/app/components/PlatformEvidenceChunk.vue'
 const wrappers: ReturnType<typeof mount>[] = []
 afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); vi.unstubAllGlobals() })
 function part(offset: number, bytes: number[], more: boolean) {
@@ -25,7 +25,7 @@ it('loads only on demand, retries the failed byte offset and decodes split Unico
   expect(w.text()).toContain('完整')
 })
 
-import PlatformQueryEvidence from '../../../components/PlatformQueryEvidence.vue'
+import PlatformQueryEvidence from '../../../layers/sme-roster/app/components/PlatformQueryEvidence.vue'
 it.each([
   { name: 'one chunk', chunks: [[239, 187, 191, 232, 175, 129, 230, 141, 174]] },
   { name: 'BOM split after byte one', chunks: [[239], [187, 191, 232, 175, 129, 230, 141, 174]] },

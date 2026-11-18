@@ -10,10 +10,10 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
 import { createEnterpriseReadExecutor } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { startHttpFixture } from '../../support/http'
-import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../lib/platform/collection-target-command'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformRawRow } from '../../../lib/platform/adapter'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
+import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../layers/sme-roster/lib/platform/collection-target-command'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformRawRow } from '../../../layers/sme-roster/lib/platform/adapter'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 
 const cleanup: Array<() => unknown | Promise<unknown>> = []
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close() })

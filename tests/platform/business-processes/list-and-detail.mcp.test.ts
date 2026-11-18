@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterAll,beforeAll,expect,it,vi } from 'vitest'
 import { schema } from '../../../db'
 import { initializeDb } from '../../../db/client'
-import { getTargetBusinessProcess,listTargetBusinessProcesses } from '../../../server/utils/platform-business-processes-target'
+import { getTargetBusinessProcess,listTargetBusinessProcesses } from '../../../layers/sme-roster/server/utils/platform-business-processes-target'
 import { submitNativePlatformQuery } from '../fixtures/native-query'
 
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))

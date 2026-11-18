@@ -1,6 +1,6 @@
 import { getRouterParam, setHeader } from 'h3'
 import { useDb } from '@db'
-import { getTargetBusinessProcess } from '../../../utils/platform-business-processes-target'
+import { getTargetBusinessProcess } from '../../../../layers/sme-roster/server/utils/platform-business-processes-target'
 
 defineRouteMeta({
   openAPI: {

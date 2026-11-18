@@ -127,7 +127,7 @@ it('missing credentials are not queried and do not fall back to a real environme
   } finally { if (previous === undefined) delete process.env.MIIT_COOKIE; else process.env.MIIT_COOKIE = previous }
 })
 it('enforces the time budget while waiting for the shared global request slots', async () => {
-  const { queryPlatformSlots } = await import('../../../lib/platform/client')
+  const { queryPlatformSlots } = await import('../../../layers/sme-roster/lib/platform/client')
   let release!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })
   let entered = 0
@@ -142,7 +142,7 @@ it('enforces the time budget while waiting for the shared global request slots',
   } finally { release(); await Promise.all([...legacy, pending]) }
 })
 it('all single queries and legacy retry backoff share at most two platform slots', async () => {
-  const { queryPlatformSlots } = await import('../../../lib/platform/client')
+  const { queryPlatformSlots } = await import('../../../layers/sme-roster/lib/platform/client')
   let releaseBackoff!: () => void
   let backoffStarted!: () => void
   const backoff = new Promise<void>(resolve => { releaseBackoff = resolve })
@@ -193,7 +193,7 @@ it('public capabilities describe source differences and strict RPC validation re
   expect(cap.limits.maxConcurrentRequests).toBe(2)
   const route = (await import('../../../server/api/platform/capabilities.get')).default as any
   expect(route({})).toEqual(cap)
-  const { platformQueryRpcError } = await import('../../../server/utils/mcp-platform-query')
+  const { platformQueryRpcError } = await import('../../../layers/sme-roster/server/utils/mcp-platform-query')
   for (const args of [{ source: 'queryList', name: '合成', cookie }, { source: 'queryList', name: '合成', sqsj: '2025' }]) {
     const rejected = platformQueryRpcError({ jsonrpc: '2.0', method: 'tools/call', id: 1, params: { name: 'query_platform', arguments: args } })!
     expect(rejected.status).toBe(400)

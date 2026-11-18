@@ -61,7 +61,7 @@ export function currentQualificationFixture() {
 // Native synthetic policy fixtures.
 import { eq } from 'drizzle-orm'
 import type { CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-titles'
-import type { PlatformRow } from '../../../lib/platform/types'
+import type { PlatformRow } from '../../../layers/sme-roster/lib/platform/types'
 import { reviewCurrentExportDecision } from './qualification-decisions'
 import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../server/utils/record-correspondence'
 import { mkdtempSync, rmSync } from 'node:fs'

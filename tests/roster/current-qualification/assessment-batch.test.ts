@@ -14,9 +14,9 @@ import { readTargetIdentityKeyVariants } from '../../../layers/sme-roster/lib/ro
 import { readQueryCoverage, readQueryCoverageBatch } from '../../../lib/roster/query-assessment'
 import { currentWorkbookValues } from '../../../layers/sme-roster/lib/roster/current-workbook-presentation'
 import { writeCurrentWorkbook, writeCurrentWorkbookWithCandidates } from '../../../layers/sme-roster/lib/roster/current-workbook'
-import { writeNewCollectionTarget } from '../../../lib/platform/collection-target-command'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
+import { writeNewCollectionTarget } from '../../../layers/sme-roster/lib/platform/collection-target-command'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 
 const roots: string[] = [], dbs: ReturnType<typeof initializeDb>[] = []
 const at = Date.parse('2026-11-14T04:00:00Z')

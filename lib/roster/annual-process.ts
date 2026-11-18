@@ -1,5 +1,5 @@
 import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
-import type { PlatformBusinessGroup, PlatformBusinessObservationRef, PlatformCorrespondenceRef } from '../platform/business-record'
+import type { PlatformBusinessGroup, PlatformBusinessObservationRef, PlatformCorrespondenceRef } from '../../layers/sme-roster/lib/platform/business-record'
 import type { EventSource } from './correspondence-view'
 
 export const ANNUAL_PROCESS_RULE_VERSION = 'annual-process-250-v1'

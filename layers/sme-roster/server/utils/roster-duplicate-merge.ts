@@ -22,7 +22,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import type { NameMatchLevel } from '../../lib/roster/uscc-research'
-import { getPlatformExportRows,listPlatformSnapshots } from '../../../../lib/platform-snapshots'
+import { getPlatformExportRows,listPlatformSnapshots } from '../../lib/platform-snapshots'
 import {
 duplicateTwinKey,
 type DuplicateMergeEvidence,
@@ -49,7 +49,7 @@ const ALIAS_SOURCE_KIND: Record<string, 'platform_business' | 'platform_apply' |
 /**
  * 以该统代为查询键的**全部**查询（只读）。
  *
- * 为什么不用 `lib/platform/read.ts` 的 `listPlatformQueries`：那个是**分页**的呈现读接口
+ * 为什么不用 `layers/sme-roster/lib/platform/read.ts` 的 `listPlatformQueries`：那个是**分页**的呈现读接口
  * （默认 25 条），拿它当证据查找会在查询很多时**静默截断**掉真正的证据 —— 归并的判据不能
  * 受分页影响。这里只做一次全量取数 + 归一化比较（查询键可能是小写/带空格的写法）。
  */
@@ -218,7 +218,7 @@ function candidateKey(candidate: DuplicateNameCandidate): string {
  * 批内取该统代**源行号最小**的那一行的名字；名字为空的批次不算（空值优于错误值）。
  * **取不到就返回 `null`,绝不猜** —— 调用方据此不改规范行名。
  *
- * 表的读走 `lib/platform-snapshots.ts` 的两个读函数（导出快照的读侧在那边），
+ * 表的读走 `layers/sme-roster/lib/platform-snapshots.ts` 的两个读函数（导出快照的读侧在那边），
  * 本函数不自己扫表 —— 「导出快照长什么样」只有一处知识。
  */
 export function findExportSideName(db: Db, usccRaw: string | null): string | null {

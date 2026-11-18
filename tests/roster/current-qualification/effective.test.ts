@@ -47,11 +47,11 @@ it.each(['cancelled','moved_out'])('still excludes an old giant with a confirmed
 })
 
 import { eq } from 'drizzle-orm'
-import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../lib/platform/collection-target-command'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformRawRow } from '../../../lib/platform/types'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
-import { processFactsFromRow } from '../../../lib/platform/identity'
+import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../layers/sme-roster/lib/platform/collection-target-command'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformRawRow } from '../../../layers/sme-roster/lib/platform/types'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
+import { processFactsFromRow } from '../../../layers/sme-roster/lib/platform/identity'
 function collectionCommand(row: PlatformRawRow, queriedAt: string, source: PlatformLiveQueryResult['source'] = 'queryBusList'): NewCollectionTargetCommand {
   const evidence: PlatformLiveQueryResult = {
     source, status: 'success', effectiveConditions: source === 'businessList' ? { uscc: String(row.tyshxydm), combination: 'and' } : { name: 'Example', combination: 'and' },

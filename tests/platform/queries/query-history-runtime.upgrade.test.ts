@@ -11,11 +11,11 @@ import { copyFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../../../db/schema'
-import { targetSchema } from '../../../lib/platform/target-schema'
+import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
 import { witnessReaderFixture } from '../fixtures/recognized-witness-upgrade'
-import { reserveLegacyIds } from '../../../lib/platform/target-archive'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
+import { reserveLegacyIds } from '../../../layers/sme-roster/lib/platform/target-archive'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 import type { RosterImportRequest } from '../../../lib/roster-import-client'
 import { preflightRosterImport, commitRosterImport, replayRosterImport } from '../../../server/utils/roster-import'
 import { createApp, createRouter, toNodeListener } from 'h3'
@@ -46,7 +46,7 @@ beforeEach(() => {
   trace.length = 0
 })
 
-import { listPlatformQueries } from '../../../lib/platform/read'
+import { listPlatformQueries } from '../../../layers/sme-roster/lib/platform/read'
 function collection(source: PlatformLiveQueryResult['source'] = 'businessList', time = '2026-11-13T00:00:00Z', rows: Record<string,string>[] = [{ id: 'NORMAL', rdjb: '2', qymc: 'Alpha', tyshxydm: '91330200712345678A', cszt: '终审通过', year: '2024', sblx: '申请' }]): PlatformLiveQueryResult {
   return { source, status: rows.length ? 'success' : 'no_record', effectiveConditions: { uscc: '91330200712345678A', combination: 'and' },
     titleScope: source === 'queryList' ? { mode: 'source_default', rdjb: [] } : { mode: 'selected', rdjb: ['2'] },
@@ -99,10 +99,10 @@ it('reads ordinary target imports through the generic history entry with literal
  expect(listPlatformQueries(db,{view:'summary'})).toMatchObject({total:1,counts:{success:1},rows:[{relationsIncluded:false,query:{id:8001,relationCount:1},relations:[]}]})
 })
 
-import { readPlatformQueryEvidence } from '../../../lib/platform/evidence-read'
-import { platformSummaryCache } from '../../../server/utils/platform-summary-cache'
+import { readPlatformQueryEvidence } from '../../../layers/sme-roster/lib/platform/evidence-read'
+import { platformSummaryCache } from '../../../layers/sme-roster/server/utils/platform-summary-cache'
 import { eq } from 'drizzle-orm'
-import type { PlatformQueryFilter } from '../../../lib/platform/read'
+import type { PlatformQueryFilter } from '../../../layers/sme-roster/lib/platform/read'
 
 // A second native DB exercises independently committed source inputs; literal assertions below
 // own IDs, business fields, counts and budgets. Historical bytes use the frozen SQL oracle.

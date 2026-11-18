@@ -98,7 +98,7 @@ it("formal_eligible_survives_platform_query_failure", () => {
 import { createHash } from 'node:crypto'
 import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import type { CurrentQualifiedFilter } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
-import type { PlatformRow } from '../../../lib/platform/types'
+import type { PlatformRow } from '../../../layers/sme-roster/lib/platform/types'
 import { qualificationMatrix, qualificationFileFixture, type MatrixEvent408 as MatrixEvent } from '../fixtures/qualification-matrix'
 
 const pendingEvents: MatrixEvent[] = [

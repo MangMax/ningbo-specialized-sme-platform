@@ -1,5 +1,5 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 import { it, expect, afterAll, beforeEach } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -25,7 +25,7 @@ import { setImmediate } from 'node:timers/promises'
 import { getJob, createJob, finishJob } from '../../../layers/core/server/utils/job-store'
 import { newJobId } from '../../../layers/core/lib/job'
 import * as s from '../../../db/schema'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 async function settled(id: string, store = db) {
   for (let i=0;i<100;i++) { const row=getJob(store,id)!; if (!['queued','running'].includes(row.state)) return row; await setImmediate() }
   throw new Error('job did not settle')
@@ -117,9 +117,9 @@ it('rejects retry after backup checksum changes without changing the checkpoint'
   await expect(snapshotOperation(db,dir,{action:'retry',jobId:row.id})).rejects.toThrow('Backup checksum mismatch')
   expect(getJob(db,row.id)!.result).toEqual(prior.result)
 })
-vi.mock('../../../server/utils/platform-live-query', () => ({ runPlatformLiveQuery: vi.fn(async (input: {source: PlatformLiveQueryResult['source']}) => ({...archive((input as {source:PlatformLiveQueryResult['source']}).source,true),pages:[],effectiveConditions:{combination:'and'},unfinished:[],completeness:'partial'})) }))
+vi.mock('../../../layers/sme-roster/server/utils/platform-live-query', () => ({ runPlatformLiveQuery: vi.fn(async (input: {source: PlatformLiveQueryResult['source']}) => ({...archive((input as {source:PlatformLiveQueryResult['source']}).source,true),pages:[],effectiveConditions:{combination:'and'},unfinished:[],completeness:'partial'})) }))
 
-import { runPlatformLiveQuery } from '../../../server/utils/platform-live-query'
+import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
 // Restore the deterministic provider fixture between scenarios. Real-provider
 // cases install transports with retry backoff that must not leak into scope-only
 // checks (or other scenarios when execution order changes).
@@ -201,7 +201,7 @@ it('runs real provider pagination with metadata-only checkpoints and complete bu
   const db=initializeDb({create:true,dbPath:join(dir,'provider.db')}); activeDb=db
   const e=db.insert(s.enterprise).values({name:'fixture provider',nameNorm:'fixtureprovider',usccNorm:'91330200222222222X'}).returning().get()
   db.insert(s.record).values({enterpriseId:e.id,titleCode:'innovative_sme',source:'jxj'}).run()
-  const actual=await vi.importActual<typeof import('../../../server/utils/platform-live-query')>('../../../server/utils/platform-live-query')
+  const actual=await vi.importActual<typeof import('../../../layers/sme-roster/server/utils/platform-live-query')>('../../../layers/sme-roster/server/utils/platform-live-query')
   const calls:{source:string;page:number}[]=[]
   vi.mocked(runPlatformLiveQuery).mockImplementation((input,ctx)=>actual.runPlatformLiveQuery(input,{...ctx,cookie:'fixture-cookie',transport:{fetchImpl:async (url,init)=>{
     const source=String(url).includes('queryBusList')?'queryBusList':String(url).includes('businessList')?'businessList':'queryList'
@@ -229,7 +229,7 @@ it.each(['short-tail','retained-total'] as const)('real provider public snapshot
   const db=initializeDb({create:true,dbPath:join(dir,mode+'.db')}); activeDb=db
   const e=db.insert(s.enterprise).values({name:'fixture provider',nameNorm:'fixtureprovider',usccNorm:'91330200222222222X'}).returning().get()
   db.insert(s.record).values({enterpriseId:e.id,titleCode:'innovative_sme',source:'jxj'}).run()
-  const actual=await vi.importActual<typeof import('../../../server/utils/platform-live-query')>('../../../server/utils/platform-live-query')
+  const actual=await vi.importActual<typeof import('../../../layers/sme-roster/server/utils/platform-live-query')>('../../../layers/sme-roster/server/utils/platform-live-query')
   const calls:number[]=[]
   let retry=false
   vi.mocked(runPlatformLiveQuery).mockImplementation((input,ctx)=>actual.runPlatformLiveQuery(input,{...ctx,cookie:'fixture-cookie',transport:{fetchImpl:async (url,init)=>{

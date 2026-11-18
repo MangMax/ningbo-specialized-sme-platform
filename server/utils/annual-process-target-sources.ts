@@ -2,12 +2,12 @@ import { and, eq, inArray, max, or, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
-import { targetSchema } from '../../lib/platform/target-schema'
+import { targetSchema } from '../../layers/sme-roster/lib/platform/target-schema'
 import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import { identityFunctions } from '../../layers/sme-roster/lib/roster/enterprise-read-snapshot'
 import type { AnnualEventScope, AnnualSourceRows } from './event-annual-process-read'
-import { readTargetDeclarationFacts } from './platform-declarations-target'
-import { readTargetBusinessProcessFacts } from './platform-business-processes-target'
+import { readTargetDeclarationFacts } from '../../layers/sme-roster/server/utils/platform-declarations-target'
+import { readTargetBusinessProcessFacts } from '../../layers/sme-roster/server/utils/platform-business-processes-target'
 
 type Db = BetterSQLite3Database<typeof s>
 const { platformBusinessObservation: o, platformObservationAssignment: a, platformLegacyRelationAlias: ra } = targetSchema

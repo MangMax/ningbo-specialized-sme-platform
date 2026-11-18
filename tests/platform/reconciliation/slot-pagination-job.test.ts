@@ -17,8 +17,8 @@ import type { TaskList, TaskSummary } from '../../../layers/core/lib/task-center
 // Keep real retries/page capture/credentials; advance only the injected backoff.
 // The client/reconcile I/O suites own real scheduling and cancellation during sleep.
 const backoffs = vi.hoisted(() => [] as number[])
-vi.mock('../../../lib/platform/client', async importOriginal => {
-  const actual = await importOriginal<typeof import('../../../lib/platform/client')>()
+vi.mock('../../../layers/sme-roster/lib/platform/client', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../../layers/sme-roster/lib/platform/client')>()
   return { ...actual, queryPlatformSlots: (options: Parameters<typeof actual.queryPlatformSlots>[0], slots: Parameters<typeof actual.queryPlatformSlots>[1]) =>
     actual.queryPlatformSlots({ ...options, sleep: async ms => { backoffs.push(ms) } }, slots) }
 })

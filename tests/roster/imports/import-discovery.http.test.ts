@@ -11,7 +11,7 @@ import { commitRosterImport, preflightRosterImport, readImportBatchOutcome } fro
 import { startRosterApi } from './fixtures/import-server'
 import { listEnterprises } from '../../../server/utils/mcp-roster'
 import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
-import { getPlatformExportRows, listPlatformSnapshots } from '../../../lib/platform-snapshots'
+import { getPlatformExportRows, listPlatformSnapshots } from '../../../layers/sme-roster/lib/platform-snapshots'
 
 it('preserves legacy HTTP item errors, numeric normalization and idempotent receipts after MCP discovery parsing', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'issue315-'))

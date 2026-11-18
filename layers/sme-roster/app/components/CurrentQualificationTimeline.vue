@@ -5,7 +5,7 @@ import type { RosterEnterpriseDetail } from '#sme-roster/lib/roster/enterprise-r
 import type { CurrentTitle } from '#sme-roster/lib/roster/current-titles'
 import { CURRENT_STATUS_LABELS } from '#sme-roster/lib/roster/current-status'
 import RosterTitleBadge from './TitleBadge.vue'
-import PlatformRecords from '../../../../components/PlatformRecords.vue'
+import RosterPlatformRecords from './PlatformRecords.vue'
 import { Button } from '#core/app/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '#core/app/components/ui/dialog'
 import { reviewOutcomeLabel, timelineEventIdentity, type TimelineEventFacts } from '#sme-roster/lib/roster/enterprise-timeline'
@@ -82,7 +82,7 @@ const steps = computed(() => {
             <p>主体：{{ assessment.subject.message }}；地域：{{ assessment.region.message }}</p>
           </article>
         </section>
-        <PlatformRecords :key="enterpriseId" :timeline="detail.businessTimeline" />
+        <RosterPlatformRecords :key="enterpriseId" :timeline="detail.businessTimeline" />
       </template>
     </DialogContent>
   </Dialog>

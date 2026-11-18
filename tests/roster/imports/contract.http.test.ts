@@ -1,5 +1,5 @@
 import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
-import {differencePublicColumns} from '../../../lib/platform/difference-reference-target'
+import {differencePublicColumns} from '../../../layers/sme-roster/lib/platform/difference-reference-target'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { nativeQueryRows, nativeRelationRows } from '../../platform/fixtures/native-evidence'
 import { initializeDb } from '../../../db/client'

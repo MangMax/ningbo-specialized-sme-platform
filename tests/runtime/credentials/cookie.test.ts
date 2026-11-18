@@ -7,9 +7,9 @@ import { join } from 'node:path'
 import { afterAll, afterEach, beforeEach, expect, it } from 'vitest'
 import { useDb } from '../../../db'
 import { credentialStatus, updateCredential } from '../../../layers/core/server/utils/credential-state'
-import { resolvePlatformCookie } from '../../../server/utils/platform-credential'
+import { resolvePlatformCookie } from '../../../layers/sme-roster/server/utils/platform-credential'
 import { handleCredentialsRequest } from '../../../layers/core/server/utils/credentials-http'
-import { queryAllRdjb } from '../../../lib/platform/client'
+import { queryAllRdjb } from '../../../layers/sme-roster/lib/platform/client'
 import { EMPTY_APPLY_RESPONSE, platformFixture } from '../../platform/fixtures/source-replay'
 const dir = mkdtempSync(join(tmpdir(), 'cookie-credentials-'))
 let db: ReturnType<typeof useDb>

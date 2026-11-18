@@ -1,9 +1,9 @@
 import { createError, defineEventHandler, getQuery, setHeader } from 'h3'
 import { useDb } from '@db'
-import { platformFilterOptionsQueryFromQuery } from '../../../lib/platform/filter-options'
-import { readTargetDeclarationOptions } from '../../utils/platform-declarations-target'
-import { readTargetBusinessProcessOptions } from '../../utils/platform-business-processes-target'
-import { readTargetRecognizedOptions } from '../../utils/platform-recognized-target'
+import { platformFilterOptionsQueryFromQuery } from '../../../layers/sme-roster/lib/platform/filter-options'
+import { readTargetDeclarationOptions } from '../../../layers/sme-roster/server/utils/platform-declarations-target'
+import { readTargetBusinessProcessOptions } from '../../../layers/sme-roster/server/utils/platform-business-processes-target'
+import { readTargetRecognizedOptions } from '../../../layers/sme-roster/server/utils/platform-recognized-target'
 
 defineRouteMeta({
   openAPI: {

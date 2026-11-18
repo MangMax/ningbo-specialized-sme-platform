@@ -1,5 +1,5 @@
 import { useDb } from '@db'
-import { handlePlatformSnapshotRequest } from '../../utils/platform-snapshots-http'
+import { handlePlatformSnapshotRequest } from '../../../layers/sme-roster/server/utils/platform-snapshots-http'
 
 /**
  * 平台导出**快照与版本**(契约 §7.7,RL-05)。
@@ -8,7 +8,7 @@ import { handlePlatformSnapshotRequest } from '../../utils/platform-snapshots-ht
  * (`record*`)**分开存储、分开查询** —— 平台快照永不改写公布历史(契约 §0)。
  *
  * 读接口**不鉴权**(与既有分法一致:读不鉴权,写/任务鉴权)。
- * 逻辑在 `server/utils/platform-snapshots-http.ts`(不 import h3,可被真实 HTTP 回放测试驱动)。
+ * 逻辑在 `layers/sme-roster/server/utils/platform-snapshots-http.ts`(不 import h3,可被真实 HTTP 回放测试驱动)。
  */
 defineRouteMeta({
   openAPI: {

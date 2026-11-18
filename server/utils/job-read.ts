@@ -1,5 +1,5 @@
 import type { useApplicationDb } from '../../db/client'
-import { cookieRedactor } from '../../lib/platform/client'
+import { cookieRedactor } from '../../layers/sme-roster/lib/platform/client'
 import { credentialContext, resolveCredential } from '../../layers/core/server/utils/credential-state'
 import { sanitizeEvidence } from './record-correspondence-read'
 import type { JobDto, JobRow } from '../../layers/core/server/utils/job-store'

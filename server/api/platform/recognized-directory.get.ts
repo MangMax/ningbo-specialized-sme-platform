@@ -1,7 +1,7 @@
 import { getQuery, setHeader } from 'h3'
 import { useDb } from '@db'
-import { recognizedDirectoryFilterFromQuery } from '../../../lib/platform/recognized-directory'
-import { listTargetRecognizedDirectory } from '../../utils/platform-recognized-target'
+import { recognizedDirectoryFilterFromQuery } from '../../../layers/sme-roster/lib/platform/recognized-directory'
+import { listTargetRecognizedDirectory } from '../../../layers/sme-roster/server/utils/platform-recognized-target'
 
 defineRouteMeta({
   openAPI: {

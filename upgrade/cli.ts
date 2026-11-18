@@ -3,7 +3,7 @@ import { installReconcileSlotPrerequisite, requireReconcileSlotSchema } from './
 import { RECONCILE_SLOT_T04 } from './frozen/reconcile-slot-capture'
 import { completeReconcileSlotCapture } from './reconcile-slot-capture'
 import { businessStatusRule } from './business-status-catalog'
-import { BUSINESS_STATUS_V2 } from '../lib/platform/business-status'
+import { BUSINESS_STATUS_V2 } from '../layers/sme-roster/lib/platform/business-status'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'

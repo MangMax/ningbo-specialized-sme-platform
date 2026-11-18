@@ -1,13 +1,13 @@
-import type { PlatformStoredRelation } from './platform/read'
-import { differencePublicColumns } from './platform/difference-reference-target'
-import { readTargetDeclarationFacts } from '../server/utils/platform-declarations-target'
-import { readTargetBusinessProcessFacts } from '../server/utils/platform-business-processes-target'
-import { readTargetRecognizedFacts } from '../server/utils/platform-recognized-target'
+import type { PlatformStoredRelation } from '../layers/sme-roster/lib/platform/read'
+import { differencePublicColumns } from '../layers/sme-roster/lib/platform/difference-reference-target'
+import { readTargetDeclarationFacts } from '../layers/sme-roster/server/utils/platform-declarations-target'
+import { readTargetBusinessProcessFacts } from '../layers/sme-roster/server/utils/platform-business-processes-target'
+import { readTargetRecognizedFacts } from '../layers/sme-roster/server/utils/platform-recognized-target'
 import { readCorrespondenceTargetQueries, readCorrespondenceTargetSources } from '../server/utils/record-correspondence-target-sources'
-import { targetSchema as target } from './platform/target-schema'
-import type { PlatformObservationFact } from './platform/observation-facts'
-import { sourcePositionForSequence } from './platform/recognized-evidence'
-import { type PlatformNormalizationConflict } from './platform/normalization'
+import { targetSchema as target } from '../layers/sme-roster/lib/platform/target-schema'
+import type { PlatformObservationFact } from '../layers/sme-roster/lib/platform/observation-facts'
+import { sourcePositionForSequence } from '../layers/sme-roster/lib/platform/recognized-evidence'
+import { type PlatformNormalizationConflict } from '../layers/sme-roster/lib/platform/normalization'
 /** Batch native evidence for comparison rows; stored decisions remain authoritative. */
 import { and, eq, inArray, max, or } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
@@ -72,7 +72,7 @@ export interface ComparisonRelation {
 }
 
 export interface ComparisonQuerySummary {
-  collectionEvidence?: import('./platform/live-query').PlatformLiveQueryResult | null
+  collectionEvidence?: import('../layers/sme-roster/lib/platform/live-query').PlatformLiveQueryResult | null
   titleCode?: string | null
   id: number
   interface: string

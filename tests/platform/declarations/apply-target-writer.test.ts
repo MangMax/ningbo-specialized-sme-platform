@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { afterEach, expect, it } from 'vitest'
-import { targetSchema } from '../../../lib/platform/target-schema'
-import { writeApplyTarget, type ApplyTargetInput } from '../../../lib/platform/apply-target-writer'
+import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
+import { writeApplyTarget, type ApplyTargetInput } from '../../../layers/sme-roster/lib/platform/apply-target-writer'
 
 const owned: { root: string; sqlite: Database.Database }[] = []
 afterEach(() => {

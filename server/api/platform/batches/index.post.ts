@@ -1,4 +1,4 @@
-import { createPlatformBatchRoute } from '../../../utils/platform-batch-route'
+import { createPlatformBatchRoute } from '../../../../layers/sme-roster/server/utils/platform-batch-route'
 defineRouteMeta({ openAPI: {
   tags: ['平台实时查询'], summary: '异步提交平台查询批次（不写业务数据）', security: [{ bearerAuth: [] }],
   description: '需要 API 任务 token。仅保存无凭据任务参数和脱敏结果；batchId/itemId 稳定。最多50项，每次执行200请求/120秒，累计5000行/8MiB（默认2MiB），最多10次执行。各项复用单项来源语义和全局max2。状态GET不需token；partial必须显式重试，重启标failed不会自动恢复。完整契约见 server/api/platform/batches/index.post.ts。',

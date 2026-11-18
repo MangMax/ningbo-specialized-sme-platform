@@ -3,7 +3,7 @@ import { normalizeUscc } from '../domain'
 import { and, eq, isNull, max, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { targetSchema } from '../../../../lib/platform/target-schema'
+import { targetSchema } from '../platform/target-schema'
 
 export type IdentityKeyVariants = ReadonlyMap<string, readonly string[]>
 /** Execution-local, narrow identity keys only. Canonical keys need no entry.

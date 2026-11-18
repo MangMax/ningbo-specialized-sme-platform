@@ -91,7 +91,7 @@ export function normalizeName(
  * **给不出值时返回空串**,「空」的落点由调用方决定(写入侧按「未给统代」处理,
  * 解析侧按「源里缺」处理);本函数**不**在这里替调用方决定 `null` 还是 `''`。
  *
- * 唯一**有意**的例外:`lib/platform-snapshots.ts` 的 `snapshotRowKey` 用的是
+ * 唯一**有意**的例外:`layers/sme-roster/lib/platform-snapshots.ts` 的 `snapshotRowKey` 用的是
  * 「trim + 大写」,那是 RL-05 快照行身份键**自己写明**的口径(见该函数注释),
  * 不是这里的漏网之鱼 —— 要改它等于改快照 diff 的键规则,不属本处收敛范围。
  */

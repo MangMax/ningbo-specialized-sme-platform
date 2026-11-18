@@ -3,9 +3,9 @@
 import { isDeepStrictEqual } from 'node:util'
 import type { PlatformInterface } from '../../layers/sme-roster/lib/labels'
 import type { RosterImportPlatformQuery, RosterImportRelation, RosterImportItemResult } from '../../lib/roster-import-client'
-import { normalizePlatformRelation } from '../../lib/platform/normalization'
-import { platformObservationPayload } from '../../lib/platform/observation-plan'
-import { PlatformProjectionError } from '../../lib/platform/projection-error'
+import { normalizePlatformRelation } from '../../layers/sme-roster/lib/platform/normalization'
+import { platformObservationPayload } from '../../layers/sme-roster/lib/platform/observation-plan'
+import { PlatformProjectionError } from '../../layers/sme-roster/lib/platform/projection-error'
 export const replayOptionalString = (value: unknown) => typeof value === 'string' ? value.trim() || null : null
 const optionalInt = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : null
 function failure(kind: string, ref: string, code: string, message: string, field?: string): RosterImportItemResult {

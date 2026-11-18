@@ -1,6 +1,6 @@
-import type { PlatformStoredQuery, PlatformStoredRelation } from '../../../../lib/platform/read'
-import { sourceRelationFields } from '../../../../lib/platform/source-snapshot-fields'
-import { checkedBusinessStatus } from '../../../../lib/platform/business-status'
+import type { PlatformStoredQuery, PlatformStoredRelation } from '../platform/read'
+import { sourceRelationFields } from '../platform/source-snapshot-fields'
+import { checkedBusinessStatus } from '../platform/business-status'
 /** Enterprise history membership is structured. Archives attach only after selection.
  * Qualification, coverage and business grouping continue to consume original facts.
  */
@@ -8,14 +8,14 @@ import { and, eq, inArray, max, or, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../../../db/schema'
-import { targetSchema as t } from '../../../../lib/platform/target-schema'
+import { targetSchema as t } from '../platform/target-schema'
 import { identityUsccSql } from './enterprise-read-snapshot'
 import { normalizeUscc } from '../domain'
-import { resolveSelectedLegacyProvenance } from '../../../../lib/platform/target-legacy-provenance'
-import { assertTargetDisplayBudget } from '../../../../lib/platform/target-query-budget'
-import { readTargetCollectionDisplay } from '../../../../lib/platform/target-query-display'
-import { readTargetRelationDisplay } from '../../../../lib/platform/target-relation-display'
-import { cellExpression, snapshotSchema } from '../../../../lib/platform/target-evidence-read'
+import { resolveSelectedLegacyProvenance } from '../platform/target-legacy-provenance'
+import { assertTargetDisplayBudget } from '../platform/target-query-budget'
+import { readTargetCollectionDisplay } from '../platform/target-query-display'
+import { readTargetRelationDisplay } from '../platform/target-relation-display'
+import { cellExpression, snapshotSchema } from '../platform/target-evidence-read'
 
 type Db = BetterSQLite3Database<typeof s>
 const chunks = <T>(items: T[]) => Array.from({ length: Math.ceil(items.length / 300) }, (_, i) => items.slice(i * 300, i * 300 + 300))

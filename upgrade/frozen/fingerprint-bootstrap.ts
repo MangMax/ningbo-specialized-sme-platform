@@ -11,7 +11,7 @@ import { writeApplyTarget } from './apply-target-writer'
 import { writeProcessTarget } from './process-target-writer'
 import { writeRecognizedTarget } from './recognized-target-writer'
 import { insertArchiveValue, bindArchive, sealArchiveOwner } from './target-archive'
-import { PLATFORM_PROJECTION_RULE } from '../../lib/platform/observation-plan'
+import { PLATFORM_PROJECTION_RULE } from '../../layers/sme-roster/lib/platform/observation-plan'
 import { reconstructWitnessCollectionSource } from './recognized-witness-write'
 export function bootstrapFingerprint(t:Database.Database,owner:FingerprintOwner,mode:'ordinary'|'reference') {
  const db=drizzle(t,{schema:s})

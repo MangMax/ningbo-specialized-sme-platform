@@ -8,7 +8,7 @@ import {preflightRosterImport,commitRosterImport,planRosterImport} from '../../.
 import type {RosterImportRequest} from '../../../lib/roster-import-client'
 import {createSemanticRecorder} from './assertions/import-semantics'
 import {businessSource} from './fixtures/native-import'
-import {listPlatformQueries} from '../../../lib/platform/read'
+import {listPlatformQueries} from '../../../layers/sme-roster/lib/platform/read'
 const dirs:string[]=[]
 function makeDb(){const dir=mkdtempSync(join(tmpdir(),'native-import-semantics-'));dirs.push(dir);return initializeDb({create:true,dbPath:join(dir,'native.sqlite')})}
 afterAll(()=>{for(const dir of dirs)rmSync(dir,{recursive:true,force:true})})

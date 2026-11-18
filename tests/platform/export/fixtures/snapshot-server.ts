@@ -11,7 +11,7 @@
 
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
-import { handlePlatformSnapshotRequest } from '../../../../server/utils/platform-snapshots-http'
+import { handlePlatformSnapshotRequest } from '../../../../layers/sme-roster/server/utils/platform-snapshots-http'
 import { handleRosterImportRequest } from '../../../../server/utils/roster-import-http'
 import { startHttpFixture, type FixtureHandler } from '../../../support/http'
 

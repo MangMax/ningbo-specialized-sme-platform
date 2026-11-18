@@ -4,7 +4,7 @@ import { ref } from 'vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import SourceReader from '../../../components/record-correspondence/SourceReader.vue'
 import SourceRowDetail from '../../../components/record-correspondence/SourceRowDetail.vue'
-import { platformRelatedRawFields, platformPresentationFields } from '../../../lib/roster/platform-records'
+import { platformRelatedRawFields, platformPresentationFields } from '../../../layers/sme-roster/lib/roster/platform-records'
 import type { RelationSource } from '../../../lib/roster/correspondence-view'
 
 const query = { id: 20, interface: 'business_list', queryKey: 'PRIVATE-QUERY', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T06:52:23.017Z', status: 'success', failureReason: null, relationCount: 1, collectionEvidence: null }

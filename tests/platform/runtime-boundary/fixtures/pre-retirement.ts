@@ -24,8 +24,8 @@ import { indexLegacyProvenance } from '../../../../upgrade/legacy-provenance'
 import { completeReconcileSlotCapture } from '../../../../upgrade/reconcile-slot-capture'
 import { ensurePlatformObservation } from '../../../../upgrade/frozen/server/platform-business-record'
 import * as schema from '../../../../upgrade/legacy-schema'
-import { BUSINESS_STATUS_V2 } from '../../../../lib/platform/business-status'
-import { RECONCILE_SLOT_T04 } from '../../../../lib/platform/reconcile-slot-capture'
+import { BUSINESS_STATUS_V2 } from '../../../../layers/sme-roster/lib/platform/business-status'
+import { RECONCILE_SLOT_T04 } from '../../../../layers/sme-roster/lib/platform/reconcile-slot-capture'
 const roots: string[] = []
 afterAll(() => { for (const root of roots) rmSync(root, {recursive:true,force:true}) })
 let template: ReturnType<typeof build> | undefined

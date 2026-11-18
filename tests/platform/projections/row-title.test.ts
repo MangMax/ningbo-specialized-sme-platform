@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { platformRowTitle } from '../../../lib/platform/row-title'
+import { platformRowTitle } from '../../../layers/sme-roster/lib/platform/row-title'
 it('mixed scopes use only the current row title', () => {
  expect(['1','2','3'].map(rdjb => platformRowTitle('1,2,3', {rdjb}))).toEqual(['1','2','3'])
  expect(platformRowTitle('1,2,3', null)).toBe('')

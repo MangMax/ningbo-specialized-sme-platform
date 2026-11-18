@@ -1,7 +1,7 @@
 import { getQuery, setHeader } from 'h3'
 import { useDb } from '@db'
-import { businessProcessFilterFromQuery } from '../../../lib/platform/business-processes'
-import { listTargetBusinessProcesses } from '../../utils/platform-business-processes-target'
+import { businessProcessFilterFromQuery } from '../../../layers/sme-roster/lib/platform/business-processes'
+import { listTargetBusinessProcesses } from '../../../layers/sme-roster/server/utils/platform-business-processes-target'
 
 defineRouteMeta({
   openAPI: {

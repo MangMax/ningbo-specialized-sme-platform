@@ -1,6 +1,6 @@
 import { getRouterParam, setHeader } from 'h3'
 import { useDb } from '@db'
-import { getTargetRecognizedRecord } from '../../../utils/platform-recognized-target'
+import { getTargetRecognizedRecord } from '../../../../layers/sme-roster/server/utils/platform-recognized-target'
 
 defineRouteMeta({
   openAPI: {

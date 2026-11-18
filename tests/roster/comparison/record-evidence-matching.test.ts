@@ -1,6 +1,6 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { listPlatformQueries } from '../../../lib/platform/read'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
+import { listPlatformQueries } from '../../../layers/sme-roster/lib/platform/read'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 import type { RosterImportPlatformQuery, RosterImportRelation } from '../../../lib/roster-import-client'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'

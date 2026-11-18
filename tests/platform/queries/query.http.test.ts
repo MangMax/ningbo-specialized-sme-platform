@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, getQuery, setHeader, defineEventHandler, createError } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../../../db'
-import { platformSummaryCache } from '../../../server/utils/platform-summary-cache'
+import { platformSummaryCache } from '../../../layers/sme-roster/server/utils/platform-summary-cache'
 const dir = mkdtempSync(join(tmpdir(), 'platform-query-http-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 let server: ReturnType<typeof createServer>, base: string

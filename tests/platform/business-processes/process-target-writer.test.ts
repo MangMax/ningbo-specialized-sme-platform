@@ -3,8 +3,8 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { createHash } from 'node:crypto'
 import { afterEach, expect, it } from 'vitest'
-import { targetSchema } from '../../../lib/platform/target-schema'
-import { writeProcessTarget, type ProcessTargetInput } from '../../../lib/platform/process-target-writer'
+import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
+import { writeProcessTarget, type ProcessTargetInput } from '../../../layers/sme-roster/lib/platform/process-target-writer'
 
 const owned: Database.Database[] = []
 afterEach(() => {

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
 import { updateCredential } from '../../../layers/core/server/utils/credential-state'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
-import { handlePlatformBatchRequest } from '../../../server/utils/platform-batch-http'
+import { handlePlatformBatchRequest } from '../../../layers/sme-roster/server/utils/platform-batch-http'
 
 const dir = mkdtempSync(join(tmpdir(), 'pagination-regressions-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'test.sqlite') })

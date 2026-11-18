@@ -10,7 +10,7 @@ import * as s from '../../db/schema'
 import { DecisionError102, decisionScope102, parse102, readDecision102, currentDecision102, type DecisionDb } from './decision-lifecycle-102'
 import { captureRuleRevision113, evidenceDigest113, evaluateEvidenceImpact113, processEvidenceImpacts113, readEvidenceRevision113, readEvidenceToken113 } from './evidence-impact-113'
 import { readQueryCoverage } from '../../lib/roster/query-assessment'
-import { differenceEvidenceColumns } from '../../lib/platform/difference-reference-target'
+import { differenceEvidenceColumns } from '../../layers/sme-roster/lib/platform/difference-reference-target'
 import { currentEnterpriseIdentity } from '../../layers/sme-roster/lib/roster/enterprise-identity'
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 const limit = positive.max(100).default(50), cursor = z.string().min(1).max(2048).optional()

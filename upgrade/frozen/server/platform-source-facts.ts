@@ -1,7 +1,7 @@
 /** Offline historical oracle from ab503081dae3e24680afc9b07395a7e3ff21fc9f. */
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../legacy-schema'
-import type { PlatformFactInterface, PlatformObservationFact } from '../../../lib/platform/observation-facts'
+import type { PlatformFactInterface, PlatformObservationFact } from '../../../layers/sme-roster/lib/platform/observation-facts'
 import { readPlatformDeclarationFacts } from './platform-declarations'
 import { readPlatformBusinessProcessFacts } from './platform-business-processes'
 import { readPlatformRecognizedFacts } from './platform-recognized-directory'

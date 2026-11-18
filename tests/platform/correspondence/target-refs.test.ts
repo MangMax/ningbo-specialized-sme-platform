@@ -3,7 +3,7 @@ import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {expect,it} from 'vitest'
 import {initializeDb,schema} from '../../../db/client'
-import {writeNewCollectionTarget} from '../../../lib/platform/collection-target-command'
+import {writeNewCollectionTarget} from '../../../layers/sme-roster/lib/platform/collection-target-command'
 import {preflightRecordCorrespondences,commitRecordCorrespondences,getRecordCorrespondence,listRecordCorrespondenceRefs,type CorrespondenceRequest} from '../../../server/utils/record-correspondence'
 
 it('revalidates native correspondence refs after identity changes without returning original bodies',()=>{

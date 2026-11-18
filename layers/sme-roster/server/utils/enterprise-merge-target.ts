@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
 import type { Executor } from '../../../../server/utils/roster-import'
-import { targetSchema as s } from '../../../../lib/platform/target-schema'
-import { currentDifferenceAssignment } from '../../../../lib/platform/difference-sources'
+import { targetSchema as s } from '../../lib/platform/target-schema'
+import { currentDifferenceAssignment } from '../../lib/platform/difference-sources'
 import { hasEnterpriseMergeIdentity, canonicalEnterpriseId } from '../../lib/roster/enterprise-identity'
 
 /** The merge command changes current attribution by appending revisions; source facts stay intact. */

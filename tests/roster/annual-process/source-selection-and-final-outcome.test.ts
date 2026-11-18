@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { buildAnnualProcess, type AnnualProcessEvent } from '../../../lib/roster/annual-process'
-import type { PlatformBusinessGroup, PlatformBusinessObservationRef } from '../../../lib/platform/business-record'
+import type { PlatformBusinessGroup, PlatformBusinessObservationRef } from '../../../layers/sme-roster/lib/platform/business-record'
 
 const event: AnnualProcessEvent = { id: 1, eventType: 'award', year: 2024, decidedYear: null, reviewOutcome: null, record: { enterpriseId: 1, titleCode: 'specialized_sme', usccRaw: '91330211255994457P' } }
 function group(id: number, facts: Record<string, unknown> = {}, overrides: Partial<PlatformBusinessObservationRef> = {}): PlatformBusinessGroup {

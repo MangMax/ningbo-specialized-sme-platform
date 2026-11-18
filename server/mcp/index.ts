@@ -9,7 +9,7 @@ import { qualificationPreflight102, qualificationCommit102 } from '../utils/deci
 import { parseRpcError105 } from '../utils/parse-maintenance-105-rpc'
 import { admitEnterpriseResponse } from '../../layers/sme-roster/server/utils/enterprise-read-response'
 import { eventCorrectionRpcError } from '../utils/mcp-event-correction'
-import { platformQueryRpcError } from '../utils/mcp-platform-query'
+import { platformQueryRpcError } from '../../layers/sme-roster/server/utils/mcp-platform-query'
 import { currentQualifiedRpcError } from '../../layers/sme-roster/server/utils/current-qualified-filter'
 import { getHeader, getMethod, readBody, setHeader } from 'h3'
 import { defineMcpHandler, getMcpTools, getMcpResources, getMcpPrompts } from '@nuxtjs/mcp-toolkit/server'

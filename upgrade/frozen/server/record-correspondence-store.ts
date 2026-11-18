@@ -1,6 +1,6 @@
 /** Offline historical oracle from ab503081dae3e24680afc9b07395a7e3ff21fc9f. */
 import { requireH1cReady } from '../../h1c-catalog'
-import { sqliteConnection } from '../../../lib/platform/target-connection'
+import { sqliteConnection } from '../../../layers/sme-roster/lib/platform/target-connection'
 /** Correspondence's explicit successor binding; ordinary startup remains guarded. */
 import { getTableColumns, sql } from 'drizzle-orm'
 import { integer, sqliteTable } from 'drizzle-orm/sqlite-core'

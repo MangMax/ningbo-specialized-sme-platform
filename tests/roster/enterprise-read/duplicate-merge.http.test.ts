@@ -8,8 +8,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
 import type { DuplicateMergeReport } from '../../../layers/sme-roster/lib/roster/duplicate-merge'
 import { createRosterImportClient, type RosterImportRequest } from '../../../lib/roster-import-client'
-import { classifyRawQuery } from '../../../lib/platform'
-import { buildPlatformWritePayload, type KnownEnterprise, type PlatformQueryInput } from '../../../lib/platform/payload'
+import { classifyRawQuery } from '../../../layers/sme-roster/lib/platform'
+import { buildPlatformWritePayload, type KnownEnterprise, type PlatformQueryInput } from '../../../layers/sme-roster/lib/platform/payload'
 import {
   enterpriseExists,
   planRosterImport,

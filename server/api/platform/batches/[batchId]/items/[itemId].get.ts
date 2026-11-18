@@ -1,4 +1,4 @@
-import { createPlatformBatchRoute } from '../../../../../utils/platform-batch-route'
+import { createPlatformBatchRoute } from '../../../../../../layers/sme-roster/server/utils/platform-batch-route'
 defineRouteMeta({ openAPI: {
   tags: ['平台实时查询'], summary: '按稳定itemId取单项结果（no-store）',
   parameters: [{ in: 'path', name: 'batchId', required: true, schema: { type: 'string' } }, { in: 'path', name: 'itemId', required: true, schema: { type: 'string' } }],

@@ -1,6 +1,6 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../db/schema'
-import { writeNewCollectionTarget } from '../../../lib/platform/collection-target-command'
+import { writeNewCollectionTarget } from '../../../layers/sme-roster/lib/platform/collection-target-command'
 import type { RosterImportPlatformQuery } from '../../../lib/roster-import-client'
 
 /** Seed a native collection using the supplied original command and explicit row ownership.

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterAll,beforeAll,expect,it,vi } from 'vitest'
 import { schema } from '../../../db'
 import { initializeDb } from '../../../db/client'
-import { getTargetRecognizedRecord,listTargetRecognizedDirectory } from '../../../server/utils/platform-recognized-target'
+import { getTargetRecognizedRecord,listTargetRecognizedDirectory } from '../../../layers/sme-roster/server/utils/platform-recognized-target'
 import { submitNativePlatformQuery } from '../fixtures/native-query'
 
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))

@@ -2,8 +2,8 @@
 /** Capture-time authentication. Never an online completeness fallback. */
 import { createHash } from 'node:crypto'
 import type { platformQuery, platformRelation } from '../legacy-schema'
-import { readCompleteLegacySlot } from '../../lib/platform/client'
-import type { PlatformRow } from '../../lib/platform/types'
+import { readCompleteLegacySlot } from '../../layers/sme-roster/lib/platform/client'
+import type { PlatformRow } from '../../layers/sme-roster/lib/platform/types'
 
 export const RECONCILE_SLOT_RULE = 'legacy-reconcile-slot-v1'
 export const RECONCILE_SLOT_T04 = 't04-collection-reconcile-slot-v2'

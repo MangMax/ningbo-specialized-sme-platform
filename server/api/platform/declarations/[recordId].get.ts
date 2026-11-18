@@ -1,6 +1,6 @@
 import { getRouterParam, setHeader } from 'h3'
 import { useDb } from '@db'
-import { getTargetDeclaration } from '../../../utils/platform-declarations-target'
+import { getTargetDeclaration } from '../../../../layers/sme-roster/server/utils/platform-declarations-target'
 
 defineRouteMeta({
   openAPI: {

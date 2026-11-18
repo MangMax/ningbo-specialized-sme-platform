@@ -1,6 +1,6 @@
 import {afterEach,expect,it} from 'vitest'
 import * as schema from '../../../db/schema'
-import {runPlatformReconcile} from '../../../server/utils/platform-reconcile'
+import {runPlatformReconcile} from '../../../layers/sme-roster/server/utils/platform-reconcile'
 import {preflightRosterImport,commitRosterImport} from '../../../server/utils/roster-import'
 import {nativeImportDb} from '../../roster/imports/fixtures/native-import'
 import {platformReplay,emptyReply} from '../fixtures/source-replay'

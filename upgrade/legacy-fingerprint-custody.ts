@@ -1,4 +1,4 @@
-import { BUSINESS_STATUS_V1, BUSINESS_STATUS_V2 } from '../lib/platform/business-status'
+import { BUSINESS_STATUS_V1, BUSINESS_STATUS_V2 } from '../layers/sme-roster/lib/platform/business-status'
 import { businessStatusRule } from './business-status-catalog'
 import { RECONCILE_SLOT_T04 } from './frozen/reconcile-slot-capture'
 /** Source-only recovery from operator-owned fixed artifacts. Tokens prove source binding,
@@ -7,7 +7,7 @@ import type Database from 'better-sqlite3'
 import {statSync} from 'node:fs'
 import {z} from 'zod'
 import {withFrozenSource,assertFrozenSource,fileHash,type FrozenSource} from './frozen-source'
-import {rowSnapshot,observationManifest,schemaHash} from '../lib/platform/sqlite-row-cells'
+import {rowSnapshot,observationManifest,schemaHash} from '../layers/sme-roster/lib/platform/sqlite-row-cells'
 const active=new WeakMap<object,{legacy:FrozenSource,predecessor:FrozenSource,hash:string}>()
 export type LegacyFingerprintCustody=object
 const receipt=z.object({state:z.literal('complete'),source_snapshot_sha256:z.string(),source_schema_hash:z.string(),source_manifest_sha256:z.string()})

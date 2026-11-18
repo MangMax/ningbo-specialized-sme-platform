@@ -390,7 +390,7 @@ it('native workbook digest hashes mixed groups in sheet order then stable identi
 
 
 it('default native export keeps its title digest and never invokes comparison', async () => {
-  const core = await import('../../../lib/roster/platform-comparison')
+  const core = await import('../../../layers/sme-roster/lib/roster/platform-comparison')
   const spy = vi.spyOn(core, 'comparePlatformComparison')
   const { db, file } = fixture()
   try {

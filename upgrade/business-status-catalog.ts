@@ -1,7 +1,7 @@
 /** Offline original status schema catalog from ab503081. */
 import type Database from 'better-sqlite3'
 import { z } from 'zod'
-import { BUSINESS_STATUS_V1, BUSINESS_STATUS_V2, businessStatusChecks } from '../lib/platform/business-status'
+import { BUSINESS_STATUS_V1, BUSINESS_STATUS_V2, businessStatusChecks } from '../layers/sme-roster/lib/platform/business-status'
 
 const oldChecks = {
   stored_status_kind_ck: `stored_status_kind IS NULL OR (stored_status_kind IN ('absent','null','text','number','boolean','array','object','invalid') AND (stored_status_kind NOT IN ('absent','null','array','object','invalid','boolean') OR stored_status IS NULL))`,

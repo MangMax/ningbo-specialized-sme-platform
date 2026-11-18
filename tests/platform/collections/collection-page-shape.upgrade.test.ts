@@ -5,10 +5,10 @@ import { join } from 'node:path'
 import { expect,it } from 'vitest'
 import { captureCollectionPageShape } from '../../../upgrade/collection-page-shape'
 import { initializeDb,schema } from '../../../db/client'
-import { writeNewCollectionTarget } from '../../../lib/platform/collection-target-command'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import { readDifferenceCollectionScope,readDifferenceCollectionScopes,selectDifferenceCollections } from '../../../lib/platform/difference-sources'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
+import { writeNewCollectionTarget } from '../../../layers/sme-roster/lib/platform/collection-target-command'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import { readDifferenceCollectionScope,readDifferenceCollectionScopes,selectDifferenceCollections } from '../../../layers/sme-roster/lib/platform/difference-sources'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 
 it('captures missing, explicit null and numeric maxPage from original archived pages atomically',()=>{
   const db=new Database(':memory:')

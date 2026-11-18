@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeWorkerLogging, applicationLogs, closeApplicationLogging } from '../../../layers/core/lib/logging'
-import { runPlatformLiveQuery } from '../../../server/utils/platform-live-query'
+import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
 
 // Application seam + actual upstream HTTP + real evlog drain. This is not actual Nuxt.
 const root = mkdtempSync(join(tmpdir(), 'platform-logging185-'))
@@ -73,7 +73,7 @@ it('records credential unavailable as skipped rather than no_record or upstream 
   expect(await events('req185-missing')).toEqual([expect.objectContaining({ operation: 'platform.query_list.query', outcome: 'skipped', errorCode: 'credential_unavailable', counts: { done: 0, total: 0, failed: 0 } })])
 })
 it('legacy retry records transport retry separately from one semantic slot outcome', async () => {
-  const { queryPlatformSlots } = await import('../../../lib/platform/client')
+  const { queryPlatformSlots } = await import('../../../layers/sme-roster/lib/platform/client')
   status = 503; rows = []
   const result = await queryPlatformSlots({ uscc: '91330211255994457P', cookie: 'session=PRIVATE185_COOKIE', baseUrl, retries: 1,
     sleep: async () => { status = 200 }, logContext: { requestId: 'req185-retry' },
@@ -90,7 +90,7 @@ it('legacy retry records transport retry separately from one semantic slot outco
 it('batch retry preserves accepted pages and correlates only unfinished item collection', async () => {
   const { initializeDb } = await import('../../../db/client')
   const { updateCredential } = await import('../../../layers/core/server/utils/credential-state')
-  const { handlePlatformBatchRequest } = await import('../../../server/utils/platform-batch-http')
+  const { handlePlatformBatchRequest } = await import('../../../layers/sme-roster/server/utils/platform-batch-http')
   const { whenIdle } = await import('../../../layers/core/server/utils/job-runner')
   const db = initializeDb({ dbPath: join(root, 'batch.db'), create: true })
   updateCredential('sme-roster.miitCookie', 'session=PRIVATE185_COOKIE', { db })

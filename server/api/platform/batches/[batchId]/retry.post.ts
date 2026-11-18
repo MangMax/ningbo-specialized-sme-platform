@@ -1,4 +1,4 @@
-import { createPlatformBatchRoute } from '../../../../utils/platform-batch-route'
+import { createPlatformBatchRoute } from '../../../../../layers/sme-roster/server/utils/platform-batch-route'
 defineRouteMeta({ openAPI: {
   tags: ['平台实时查询'], summary: '显式补查指定未完成项/页，保留batchId/itemId', security: [{ bearerAuth: [] }],
   description: '仅终态批次可重试；指定itemIds必须属于本批且未完成。最多10次执行；完成项拒绝重查。使用本次重试提交时的新内存凭据快照。保留之前segments/时间，仅查询unfinished。',

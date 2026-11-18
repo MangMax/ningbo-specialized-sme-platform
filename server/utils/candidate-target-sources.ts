@@ -3,12 +3,12 @@ import { and,count,eq,inArray,max,or,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { alias } from 'drizzle-orm/sqlite-core'
 import * as s from '../../db/schema'
-import type { PlatformFactInterface } from '../../lib/platform/observation-facts'
-import { targetSchema as t } from '../../lib/platform/target-schema'
+import type { PlatformFactInterface } from '../../layers/sme-roster/lib/platform/observation-facts'
+import { targetSchema as t } from '../../layers/sme-roster/lib/platform/target-schema'
 import { identityFunctions } from '../../layers/sme-roster/lib/roster/enterprise-read-snapshot'
-import { readTargetBusinessProcessFacts } from './platform-business-processes-target'
-import { readTargetDeclarationFacts } from './platform-declarations-target'
-import { readTargetRecognizedFacts } from './platform-recognized-target'
+import { readTargetBusinessProcessFacts } from '../../layers/sme-roster/server/utils/platform-business-processes-target'
+import { readTargetDeclarationFacts } from '../../layers/sme-roster/server/utils/platform-declarations-target'
+import { readTargetRecognizedFacts } from '../../layers/sme-roster/server/utils/platform-recognized-target'
 
 type Db = BetterSQLite3Database<typeof s>
 const c = s.platformCollection, qa = s.platformLegacyQueryAlias

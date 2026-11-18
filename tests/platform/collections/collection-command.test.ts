@@ -1,17 +1,17 @@
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
-import { resolveLegacyReference } from '../../../lib/platform/target-archive'
+import { resolveLegacyReference } from '../../../layers/sme-roster/lib/platform/target-archive'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { copyFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest'
-import { targetSchema } from '../../../lib/platform/target-schema'
-import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../lib/platform/collection-target-command'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformLiveQueryResult, PlatformQuerySource } from '../../../lib/platform/live-query'
+import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
+import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../layers/sme-roster/lib/platform/collection-target-command'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformLiveQueryResult, PlatformQuerySource } from '../../../layers/sme-roster/lib/platform/live-query'
 
 const owned: {root:string; sqlite:Database.Database}[]=[]
 afterEach(()=>{for(const f of owned.splice(0)){if(f.sqlite.open)f.sqlite.close();rmSync(f.root,{recursive:true,force:true})}})

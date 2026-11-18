@@ -1,18 +1,18 @@
 import { explainCurrentDifferences, type DifferenceQualification } from '../../../../lib/roster/current-difference'
 import { enterpriseBusinessTimeline } from './enterprise-business-timeline'
 import { readCorrespondenceTargetQueries,readCorrespondenceTargetSources,correspondenceQueryRelationIds } from '../../../../server/utils/record-correspondence-target-sources'
-import type { PlatformStoredQuery } from '../../../../lib/platform/read'
-import type { PlatformStoredRelation } from '../../../../lib/platform/read'
-import { differencePublicColumns } from '../../../../lib/platform/difference-reference-target'
+import type { PlatformStoredQuery } from '../platform/read'
+import type { PlatformStoredRelation } from '../platform/read'
+import { differencePublicColumns } from '../platform/difference-reference-target'
 import type { PublishedPresentation } from '../../../../lib/roster/correspondence-view'
 import { readQueryAssessment,readQueryCoverage,type QueryAssessment } from '../../../../lib/roster/query-assessment'
-import { sourcePositionForSequence } from '../../../../lib/platform/recognized-evidence'
-import { legacySourcePositionForSequence,type LegacyProvenanceDisplay } from '../../../../lib/platform/legacy-provenance'
-import { type PlatformNormalizationConflict } from '../../../../lib/platform/normalization'
+import { sourcePositionForSequence } from '../platform/recognized-evidence'
+import { legacySourcePositionForSequence,type LegacyProvenanceDisplay } from '../platform/legacy-provenance'
+import { type PlatformNormalizationConflict } from '../platform/normalization'
 import { readEnterpriseSnapshot,readEnterpriseHistories,enterpriseComparisonCoordinates } from './enterprise-read-snapshot'
-import { readPlatformBusinessDetails,readPlatformDetailFacts } from '../../../../server/utils/platform-business-detail-read'
+import { readPlatformBusinessDetails,readPlatformDetailFacts } from '../../server/utils/platform-business-detail-read'
 import { createCurrentQualificationAssessmentReader,type CurrentQualificationSnapshot } from './current-qualification'
-import type { PlatformBusinessDetail } from '../../../../lib/roster/platform-business-detail'
+import type { PlatformBusinessDetail } from './platform-business-detail'
 export { readPublicPublishedNames } from './official-published-presentation'
 /**
  * 跨称号去重企业总表 / 企业详情 / 差异与解释 —— 契约 §7.1 / §7.2 / §7.3 的**读模型**(RL-04)。
@@ -68,7 +68,7 @@ export type RosterState = (typeof ROSTER_STATES)[number]
 //
 // 台账规模是「几千企业 / 几万事件」级(实测 7352 / 19729 / 21189),一次读全表比
 // 为每种筛选拼一套 join 更简单也更快;仓库里既有的读模型(`server/utils/mcp-roster.ts`、
-// `lib/platform/read.ts`)同一取舍。
+// `layers/sme-roster/lib/platform/read.ts`)同一取舍。
 
 interface Snapshot {
   enterprises: (typeof schema.enterprise)['$inferSelect'][]
@@ -761,7 +761,7 @@ export interface RosterPlatformQueryRow {
   status: string
   failureReason: string | null
   relationCount: number
-  collectionEvidence?: import('../../../../lib/platform/live-query').PlatformLiveQueryResult | null
+  collectionEvidence?: import('../platform/live-query').PlatformLiveQueryResult | null
   titleCode?: string | null
 }
 

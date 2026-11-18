@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { getTargetRecognizedRecord } from '../../utils/platform-recognized-target'
+import { getTargetRecognizedRecord } from '../../../layers/sme-roster/server/utils/platform-recognized-target'
 
 export default defineMcpTool({
   name: 'get_platform_recognized_record',

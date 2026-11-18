@@ -1,5 +1,5 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { listPlatformQueries } from '../../../lib/platform/read'
+import { listPlatformQueries } from '../../../layers/sme-roster/lib/platform/read'
 import type { RosterImportRelation } from '../../../lib/roster-import-client'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'

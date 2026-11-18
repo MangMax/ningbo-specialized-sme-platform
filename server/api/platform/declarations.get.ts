@@ -1,7 +1,7 @@
 import { getQuery, setHeader } from 'h3'
 import { useDb } from '@db'
-import { declarationFilterFromQuery } from '../../../lib/platform/declarations'
-import { listTargetDeclarations } from '../../utils/platform-declarations-target'
+import { declarationFilterFromQuery } from '../../../layers/sme-roster/lib/platform/declarations'
+import { listTargetDeclarations } from '../../../layers/sme-roster/server/utils/platform-declarations-target'
 
 defineRouteMeta({
   openAPI: {

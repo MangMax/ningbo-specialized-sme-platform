@@ -3,11 +3,11 @@
 import { and, eq, inArray, notExists, or, gt } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { sqliteConnection } from '../../../../lib/platform/target-connection'
-import { targetSchema as s } from '../../../../lib/platform/target-schema'
+import { sqliteConnection } from '../platform/target-connection'
+import { targetSchema as s } from '../platform/target-schema'
 import { normalizeUscc } from '../domain'
 import { isValidUscc } from './uscc-research'
-import { RDJB_TITLE_CODES } from '../../../../lib/platform/recognized-evidence'
+import { RDJB_TITLE_CODES } from '../platform/recognized-evidence'
 import type { CurrentTitle } from './current-titles'
 
 export interface PlatformBusinessDate {

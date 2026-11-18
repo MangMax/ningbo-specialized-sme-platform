@@ -1,4 +1,4 @@
-import { readOwnerArchive } from '../../../lib/platform/target-archive'
+import { readOwnerArchive } from '../../../layers/sme-roster/lib/platform/target-archive'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createApp, defineEventHandler, toNodeListener } from 'h3'

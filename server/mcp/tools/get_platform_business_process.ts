@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { getTargetBusinessProcess } from '../../utils/platform-business-processes-target'
+import { getTargetBusinessProcess } from '../../../layers/sme-roster/server/utils/platform-business-processes-target'
 
 export default defineMcpTool({
   name: 'get_platform_business_process',

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { platformRowTitle } from '~~/lib/platform/row-title'
+import { platformRowTitle } from '#sme-roster/lib/platform/row-title'
 import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS, RELATION_DECLARE_KINDS, TITLES } from '#sme-roster/lib/labels'
-import { platformBusinessFields, platformPresentationFields, platformRelatedRawFields } from '~~/lib/roster/platform-records'
+import { platformBusinessFields, platformPresentationFields, platformRelatedRawFields } from '#sme-roster/lib/roster/platform-records'
 import { formatFetchTime } from '~~/lib/reconcile-time'
 import type { ExportRowSource, RelationSource } from '~~/lib/roster/correspondence-view'
-import PlatformQueryProvenance from '@/components/PlatformQueryProvenance.vue'
+import RosterPlatformQueryProvenance from '#sme-roster/app/components/PlatformQueryProvenance.vue'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
-import PlatformFieldConflicts from '@/components/PlatformFieldConflicts.vue'
+import RosterPlatformFieldConflicts from '#sme-roster/app/components/PlatformFieldConflicts.vue'
 import { Badge } from '#core/app/components/ui/badge'
 
 const props = defineProps<{ relation?: RelationSource | null; exportRow?: ExportRowSource | null; compact?: boolean; presentation?: 'source' | 'business' }>()
@@ -46,7 +46,7 @@ const completeRaw = computed(() => JSON.stringify(props.relation?.rawFields ?? n
     <template v-if="relation && presentation === 'business'">
       <h4 class="text-sm font-medium">{{ PLATFORM_INTERFACES[source] ?? '平台接口记录' }}</h4>
       <p class="text-muted-foreground mt-1 text-sm">采集时间：{{ formatFetchTime(relation.query.queriedAt) ?? relation.query.queriedAt }} · {{ PLATFORM_QUERY_STATUSES[relation.query.status] ?? '状态待核' }}</p>
-      <PlatformFieldConflicts :conflicts="relation.normalizationConflicts" />
+      <RosterPlatformFieldConflicts :conflicts="relation.normalizationConflicts" />
       <dl class="mt-3 grid min-w-0 grid-cols-1 gap-x-4 gap-y-2 break-words [overflow-wrap:anywhere] sm:grid-cols-[auto_minmax(0,1fr)]" data-testid="platform-business-facts">
         <template v-if="!businessFields.some(field => field.key === 'qymc')"><dt class="text-muted-foreground">企业原名</dt><dd>{{ relation.nameRaw || '未提供' }}</dd></template>
         <template v-if="!businessFields.some(field => field.key === 'tyshxydm') && relation.usccRaw"><dt class="text-muted-foreground">信用代码原值</dt><dd>{{ relation.usccRaw }}</dd></template>
@@ -72,7 +72,7 @@ const completeRaw = computed(() => JSON.stringify(props.relation?.rawFields ?? n
             <dd class="whitespace-pre-wrap">{{ rawStateLabels[field.state] }}<template v-if="field.state !== 'missing'">：{{ field.value }}</template></dd>
           </template>
         </dl>
-        <PlatformQueryProvenance class="mt-2" :queries="[relation.query]" :source-label="PLATFORM_INTERFACES[source] ?? '平台接口'" />
+        <RosterPlatformQueryProvenance class="mt-2" :queries="[relation.query]" :source-label="PLATFORM_INTERFACES[source] ?? '平台接口'" />
         <p class="text-muted-foreground mt-2">以下为本条接口原文；未核实字段不据缩写推断业务含义。日期与有效期保留原值，不推断生命周期。</p>
         <pre class="mt-2 max-w-full whitespace-pre-wrap break-words text-xs [overflow-wrap:anywhere]" data-testid="platform-complete-raw">{{ completeRaw }}</pre>
       </DisclosurePanel>
@@ -82,7 +82,7 @@ const completeRaw = computed(() => JSON.stringify(props.relation?.rawFields ?? n
         <strong>{{ PLATFORM_INTERFACES[source] ?? '平台接口记录' }} · 原行 {{ relation.sequenceNo }}</strong>
         <Badge variant="outline">{{ PLATFORM_QUERY_STATUSES[relation.query.status] ?? '状态待核' }}</Badge>
       </div>
-      <PlatformFieldConflicts :conflicts="relation.normalizationConflicts" />
+      <RosterPlatformFieldConflicts :conflicts="relation.normalizationConflicts" />
       <dl class="mt-2 grid min-w-0 grid-cols-1 gap-x-3 gap-y-1 break-words [overflow-wrap:anywhere] sm:grid-cols-[auto_minmax(0,1fr)]">
         <dt class="text-muted-foreground">企业原名</dt><dd>{{ relation.nameRaw ?? '未提供' }}</dd>
         <dt class="text-muted-foreground">信用代码原值</dt><dd>{{ relation.usccRaw ?? '未提供' }}</dd>
@@ -101,9 +101,9 @@ const completeRaw = computed(() => JSON.stringify(props.relation?.rawFields ?? n
         <dl class="grid min-w-0 grid-cols-1 gap-x-3 gap-y-1 break-words [overflow-wrap:anywhere] sm:grid-cols-[auto_minmax(0,1fr)]">
           <template v-for="field in fields" :key="field.key"><dt class="text-muted-foreground">{{ field.label }}（{{ field.key }}）</dt><dd>{{ field.value }}</dd></template>
         </dl>
-        <PlatformQueryProvenance class="mt-2" :queries="[relation.query]" :source-label="PLATFORM_INTERFACES[source] ?? '平台接口'" />
+        <RosterPlatformQueryProvenance class="mt-2" :queries="[relation.query]" :source-label="PLATFORM_INTERFACES[source] ?? '平台接口'" />
       </DisclosurePanel>
-      <PlatformQueryProvenance v-else class="mt-2" :queries="[relation.query]" :source-label="PLATFORM_INTERFACES[source] ?? '平台接口'" />
+      <RosterPlatformQueryProvenance v-else class="mt-2" :queries="[relation.query]" :source-label="PLATFORM_INTERFACES[source] ?? '平台接口'" />
     </template>
     <template v-else-if="exportRow">
       <div class="flex flex-wrap items-center gap-2"><strong>平台导出快照 · 源行 {{ exportRow.sourceRowNo }}</strong><Badge variant="outline">{{ TITLES[exportRow.batch.titleCode] ?? exportRow.batch.titleCode }}</Badge></div>

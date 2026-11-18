@@ -356,8 +356,8 @@ it('locks independent after-event snapshot throughout every successor stage',()=
 })
 
 import { writeNewCollectionTarget } from '../../../upgrade/frozen/collection-target-command'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 it.each(['queryList','businessList','queryBusList'] as const)('recovers original writer envelope produced by a full %s collection command',sourceKind=>{
   const f=fixture(s=>s.exec("INSERT INTO title(code,name_zh,level,rank) VALUES('specialized_sme','专精特新中小企业','municipal',2)"));f.t.close()
   const source=f.target+'.71606';copyFileSync(f.target,source)

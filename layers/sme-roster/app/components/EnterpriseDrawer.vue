@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ROSTER_LEDGER_PATH } from '#sme-roster/lib/sme-roster/routes'
-import PlatformRecords from '../../../../components/PlatformRecords.vue'
+import RosterPlatformRecords from './PlatformRecords.vue'
 import type { RosterEnterpriseDetail } from '#sme-roster/lib/roster/enterprise-roster'
 import type { ReviewAssessment, ReviewScope } from '~~/lib/roster/evidence-review-ui'
 import { computed, watch } from 'vue'
@@ -366,7 +366,7 @@ function eventSuffix(item: TimelineItem): string {
             </dd>
           </dl>
 
-          <PlatformRecords :key="detail.enterprise.enterpriseId" :timeline="detail.businessTimeline" />
+          <RosterPlatformRecords :key="detail.enterprise.enterpriseId" :timeline="detail.businessTimeline" />
 
           <!-- 称号历史：年份 + 事件；普通分隔线，不做节点/连线装饰。 -->
           <h3 class="text-muted-foreground mt-5 border-t pt-4 text-xs font-medium">称号历史</h3>

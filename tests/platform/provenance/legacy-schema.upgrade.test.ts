@@ -14,7 +14,7 @@ import { transferDifferenceReferences } from '../../../upgrade/difference-refere
 import { indexLegacyProvenance } from '../../../upgrade/legacy-provenance'
 import { installLegacyProvenance } from '../../../upgrade/legacy-provenance-schema'
 import { requireLegacyProvenanceReady } from '../../../upgrade/legacy-provenance-catalog'
-import { legacyPlatformProvenanceSchema } from '../../../lib/platform/legacy-provenance'
+import { legacyPlatformProvenanceSchema } from '../../../layers/sme-roster/lib/platform/legacy-provenance'
 import { allocateLegacyAlias, bindArchive, sealArchiveOwner, insertArchiveValue, reserveLegacyIds } from '../../../upgrade/frozen/target-archive'
 import { writeNewCollectionTarget } from '../../../upgrade/frozen/collection-target-command'
 

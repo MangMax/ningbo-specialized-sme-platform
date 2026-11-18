@@ -1,5 +1,5 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { listPlatformQueries } from '../../../lib/platform/read'
+import { listPlatformQueries } from '../../../layers/sme-roster/lib/platform/read'
 import { initializeDb } from '../../../db/client'
 /**
  * RL-06：**缺统一社会信用代码企业的补录**。
@@ -41,8 +41,8 @@ import {
 } from '../../../layers/sme-roster/lib/roster/uscc-research'
 import { normalizeName } from '../../../layers/sme-roster/lib/domain'
 import { createRosterImportClient, type RosterImportRequest } from '../../../lib/roster-import-client'
-import { classifyRawQuery } from '../../../lib/platform'
-import { buildPlatformWritePayload, type KnownEnterprise, type PlatformQueryInput } from '../../../lib/platform/payload'
+import { classifyRawQuery } from '../../../layers/sme-roster/lib/platform'
+import { buildPlatformWritePayload, type KnownEnterprise, type PlatformQueryInput } from '../../../layers/sme-roster/lib/platform/payload'
 import { listUsccChecklist, planUsccResearch, usccResearchIdempotencyKey } from '../../../layers/sme-roster/server/utils/uscc-research'
 import { normalizeUsccVerdicts, type UsccVerdictFile } from '../../../layers/sme-roster/server/utils/uscc-verdicts'
 import { parseUsccChecklistQuery, parseUsccResearchBody } from '../../../layers/sme-roster/server/utils/uscc-research-query'

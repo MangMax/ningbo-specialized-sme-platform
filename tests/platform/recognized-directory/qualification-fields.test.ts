@@ -2,10 +2,10 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { expect, it } from 'vitest'
 import { createRuntimeSchema } from '../../../db/create-runtime'
-import { targetSchema } from '../../../lib/platform/target-schema'
-import { parseRecognizedQualificationFields } from '../../../lib/platform/recognized-projection'
-import { ensureRecognizedTargetContent } from '../../../lib/platform/recognized-target-writer'
-import { planPlatformObservation } from '../../../lib/platform/observation-plan'
+import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
+import { parseRecognizedQualificationFields } from '../../../layers/sme-roster/lib/platform/recognized-projection'
+import { ensureRecognizedTargetContent } from '../../../layers/sme-roster/lib/platform/recognized-target-writer'
+import { planPlatformObservation } from '../../../layers/sme-roster/lib/platform/observation-plan'
 
 const raw = { id: 'recognized-808', rdtime: '2023-12-28 08:50:25', rddqrq: '2026-12-28', sfyx: '1', sxsj: '', sxyy: '', szsfmc: '浙江省', szsmc: '宁波市', szqmc: '海曙区', szq: '133020300' }
 const expected = { sourceRecognizedAt: '2023-12-28 08:50:25', sourceValidFlag: '1', sourceInvalidatedAt: '', sourceInvalidationReason: '', sourceProvinceName: '浙江省', sourceCityName: '宁波市', sourceDistrictName: '海曙区', qualificationFieldsRule: 'recognized-qualification-fields-v1' }
@@ -36,11 +36,11 @@ it('completes an existing content version on recollection without replacing iden
   } finally { sqlite.close() }
 })
 
-import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../lib/platform/collection-target-command'
-import { writeRecognizedTarget, type RecognizedTargetInput } from '../../../lib/platform/recognized-target-writer'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformRawRow } from '../../../lib/platform/types'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
+import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../layers/sme-roster/lib/platform/collection-target-command'
+import { writeRecognizedTarget, type RecognizedTargetInput } from '../../../layers/sme-roster/lib/platform/recognized-target-writer'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformRawRow } from '../../../layers/sme-roster/lib/platform/types'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 function collectionCommand(row: PlatformRawRow, queriedAt: string): NewCollectionTargetCommand {
   const evidence: PlatformLiveQueryResult = {
     source: 'queryBusList', status: 'success', effectiveConditions: { name: 'Example', combination: 'and' },

@@ -1,7 +1,7 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { declarationFilterSchema } from '../../../lib/platform/declarations'
-import { listTargetDeclarations } from '../../utils/platform-declarations-target'
+import { declarationFilterSchema } from '../../../layers/sme-roster/lib/platform/declarations'
+import { listTargetDeclarations } from '../../../layers/sme-roster/server/utils/platform-declarations-target'
 
 export default defineMcpTool({
   name: 'list_platform_declarations',

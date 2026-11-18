@@ -1,4 +1,4 @@
-import {differencePublicColumns} from '../../../lib/platform/difference-reference-target'
+import {differencePublicColumns} from '../../../layers/sme-roster/lib/platform/difference-reference-target'
 import { nativeQueryRows, nativeRelationRows } from '../fixtures/native-evidence'
 import { initializeDb } from '../../../db/client'
 /**
@@ -23,15 +23,15 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
 import { createRosterImportClient } from '../../../lib/roster-import-client'
-import { classifyRawQuery } from '../../../lib/platform'
+import { classifyRawQuery } from '../../../layers/sme-roster/lib/platform'
 import {
   buildPlatformWritePayload,
   type KnownEnterprise,
   type PlatformQueryInput,
   type QueryRef,
   type RelationRef,
-} from '../../../lib/platform/payload'
-import type { PlatformQueriesResult } from '../../../lib/platform/read'
+} from '../../../layers/sme-roster/lib/platform/payload'
+import type { PlatformQueriesResult } from '../../../layers/sme-roster/lib/platform/read'
 import { readMergeLineage, searchEnterpriseIdsByName } from '../../../server/utils/roster-import'
 import { startEvidenceServer, type EvidenceServer } from '../fixtures/evidence-server'
 

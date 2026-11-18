@@ -1,6 +1,6 @@
 import {expect,it} from 'vitest'
 import * as schema from '../../../db/schema'
-import {readPlatformComparisonProcesses} from '../../../server/utils/platform-comparison-input'
+import {readPlatformComparisonProcesses} from '../../../layers/sme-roster/server/utils/platform-comparison-input'
 import {nativeImportDb} from '../../roster/imports/fixtures/native-import'
 it.each([0,999])('rejects unavailable event owner %i without fabricating empty comparison',eventId=>{
  const db=nativeImportDb()

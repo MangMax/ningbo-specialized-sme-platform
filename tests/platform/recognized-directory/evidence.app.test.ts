@@ -11,8 +11,8 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { schema } from '../../../db'
 import { createRosterImportClient } from '../../../lib/roster-import-client'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
-import { runPlatformLiveQuery } from '../../../server/utils/platform-live-query'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
+import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
 import { startEvidenceServer } from '../fixtures/evidence-server'
 import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 
@@ -138,7 +138,7 @@ it('rejects missing provenance, false complete/zero claims, wrong source, row ma
 })
 
 it('archives complete zero, partial, login failure and not queried separately, with title filtering and historical pagination', async () => {
-  const { recognizedResultToImport } = await import('../../../lib/platform/recognized-evidence')
+  const { recognizedResultToImport } = await import('../../../layers/sme-roster/lib/platform/recognized-evidence')
   const zero = archive()
   zero.queriedAt = '2024-01-01T00:00:00Z'; zero.completedAt = '2024-01-01T00:01:00Z'
   zero.status = 'no_record'; zero.rows = []; zero.fetchedCount = 0; zero.declaredTotal = 0
@@ -194,7 +194,7 @@ it('same natural identity replays idempotently, conflicting archive cannot mutat
 })
 
 it('MCP history and enterprise detail match REST, preserve cross-source identical IDs, and evidence never changes enterprise records or decisions implicitly', async () => {
-  const { recognizedResultToImport } = await import('../../../lib/platform/recognized-evidence')
+  const { recognizedResultToImport } = await import('../../../layers/sme-roster/lib/platform/recognized-evidence')
   const seed = await client.commit({ idempotencyKey: 'seed-enterprise', sourceKind: 'announcement', sourceIdentity: 'synthetic-seed', payload: { announcement: {
     sourceDocument: { source: 'jxj', title: '合成种子' }, records: [{ enterprise: { name: '合成主档', uscc: USCC }, titleCode: 'innovative_sme', events: [{ eventType: 'award', year: 2023 }] }],
   } } })
@@ -244,7 +244,7 @@ it('MCP history and enterprise detail match REST, preserve cross-source identica
 })
 
 it('explicit same-batch difference references resolve real query and row IDs while wrong source, title and subject references are rejected', async () => {
-  const { recognizedResultToImport } = await import('../../../lib/platform/recognized-evidence')
+  const { recognizedResultToImport } = await import('../../../layers/sme-roster/lib/platform/recognized-evidence')
   const evidence = archive(); evidence.queriedAt = '2025-08-01T00:00:00Z'; evidence.completedAt = '2025-08-01T00:01:00Z'
   const query = recognizedResultToImport(evidence)
   const ref = { interface: 'recognized_list' as const, queryKey: USCC, rdjb: '1,2,3', queriedAt: evidence.queriedAt }
@@ -272,7 +272,7 @@ it('synthetic paginated public live result transfers explicitly to SQLite withou
   const result = await liveResponse.json() as PlatformLiveQueryResult
   expect(result).toMatchObject({ status: 'success', completeness: 'complete', fetchedCount: 4, declaredTotal: 4 })
   expect(result.pages.map(p => [p.rdjb, p.page, p.maxPage])).toEqual([['1', 1, 2], ['1', 2, 2], ['2', 1, 1], ['3', 1, 1]])
-  const { recognizedResultToImport } = await import('../../../lib/platform/recognized-evidence')
+  const { recognizedResultToImport } = await import('../../../layers/sme-roster/lib/platform/recognized-evidence')
   const req = { ...request(result, 'live-transfer'), payload: { platformQueries: [recognizedResultToImport(result)] } }
   expect((await client.preflight(req)).preflight.conflicts).toEqual([])
   expect((await client.commit(req)).status).toBe('committed')
@@ -283,7 +283,7 @@ it('synthetic paginated public live result transfers explicitly to SQLite withou
 })
 
 it('single-title name candidates remain unmatched and a completed continuation stays partial rather than whole-range no-record', async () => {
-  const { recognizedResultToImport } = await import('../../../lib/platform/recognized-evidence')
+  const { recognizedResultToImport } = await import('../../../layers/sme-roster/lib/platform/recognized-evidence')
   const candidate = archive()
   candidate.queriedAt = '2025-09-01T00:00:00Z'; candidate.completedAt = '2025-09-01T00:01:00Z'
   candidate.titleScope.rdjb = ['2']; candidate.effectiveConditions = { name: '合成主档', combination: 'and' }
@@ -313,7 +313,7 @@ it.each(['query-ref', 'row-ref', 'query-id', 'row-id'] as const)('rejects contra
     sourceDocument: { source: 'jxj', title: '主体冲突合成种子' }, records: [{ enterprise: { name: '合成主档', uscc: USCC }, titleCode: 'innovative_sme', events: [{ eventType: 'award', year: 2023 }] }],
   } } })
   expect(seed.status).toBe('committed')
-  const { recognizedResultToImport } = await import('../../../lib/platform/recognized-evidence')
+  const { recognizedResultToImport } = await import('../../../layers/sme-roster/lib/platform/recognized-evidence')
   const evidence = archive()
   evidence.queriedAt = `2025-10-0${['query-ref', 'row-ref', 'query-id', 'row-id'].indexOf(kind) + 1}T00:00:00Z`
   evidence.completedAt = evidence.queriedAt.replace('00:00:00', '00:01:00')
@@ -347,7 +347,7 @@ it.each(['query-ref', 'row-ref', 'query-id', 'row-id'] as const)('rejects contra
 })
 
 it.each(['uscc', 'name'] as const)('archive-before-master %s query preserves every recognized source row in REST/MCP detail and comparison without confirming identity or exposing unrelated queries', async (subject) => {
-  const { recognizedResultToImport } = await import('../../../lib/platform/recognized-evidence')
+  const { recognizedResultToImport } = await import('../../../layers/sme-roster/lib/platform/recognized-evidence')
   const code = subject === 'uscc' ? '91330200000000001H' : '91330211255994457P'
   const name = subject === 'uscc' ? '合成代码归档先于主档企业' : '合成名称归档先于主档企业'
   const queryKey = subject === 'uscc' ? code : `name:${name}`
@@ -402,7 +402,7 @@ it('imports a complete title-wide recognized archive through public preflight an
   expect(read.rows[0].relations[0]).toMatchObject({ sequenceNo: 1, sourceRdjb: '2', sourcePage: 1, rawFields: evidence.rows[0] })
 })
 it('preserves title-wide zero and partial archives through public import', async () => {
-  const { recognizedResultToImport } = await import('../../../lib/platform/recognized-evidence')
+  const { recognizedResultToImport } = await import('../../../layers/sme-roster/lib/platform/recognized-evidence')
   const zero = titleWideArchive()
   zero.queriedAt = '2026-10-18T03:00:00.000Z'; zero.completedAt = '2026-10-18T03:01:00.000Z'
   zero.status = 'no_record'; zero.rows = []; zero.fetchedCount = 0; zero.declaredTotal = 0
@@ -449,7 +449,7 @@ it('rejects malformed title-wide conditions, title scope and page proof through 
 it('a publicly saved title-wide archive can register current equivalence and qualify public comparison', async () => {
   const evidence = titleWideArchive()
   evidence.queriedAt = '2026-10-18T05:00:00.000Z'; evidence.completedAt = '2026-10-18T05:01:00.000Z'
-  const item = (await import('../../../lib/platform/recognized-evidence')).recognizedResultToImport(evidence)
+  const item = (await import('../../../layers/sme-roster/lib/platform/recognized-evidence')).recognizedResultToImport(evidence)
   expect((await client.commit({ idempotencyKey: 'proof-title-wide-query', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/proof/query', payload: { platformQueries: [item] } })).status).toBe('committed')
   const queryRead = await (await fetch(`${api.baseUrl}/api/platform/queries?interface=recognized_list&queryKey=${encodeURIComponent(item.queryKey)}`)).json()
   const queryId = queryRead.rows.find((row: any) => row.query.queriedAt === evidence.queriedAt).query.id as number

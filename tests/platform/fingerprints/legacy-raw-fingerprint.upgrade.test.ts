@@ -25,7 +25,7 @@ import { indexLegacyProvenance } from '../../../upgrade/legacy-provenance'
 
 
 
-import type { LegacyPlatformCollection } from '../../../lib/platform/legacy-provenance'
+import type { LegacyPlatformCollection } from '../../../layers/sme-roster/lib/platform/legacy-provenance'
 
 import { ensurePlatformObservation, readPlatformObservationPlan } from '../../../upgrade/frozen/server/platform-business-record'
 import { legacyFingerprintInput, verifyFingerprint } from '../../../upgrade/frozen/fingerprint-verifier'

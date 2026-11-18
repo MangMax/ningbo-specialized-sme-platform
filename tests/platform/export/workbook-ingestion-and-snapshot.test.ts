@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import ExcelJS from 'exceljs'
-import { buildExportSnapshotPayload, readPlatformExport, splitRegistrationAddress } from '../../../lib/platform-export'
+import { buildExportSnapshotPayload, readPlatformExport, splitRegistrationAddress } from '../../../layers/sme-roster/lib/platform-export'
 
 // ---------------------------------------------------------------------------
 // 合成夹具:按列号摆好两行表头与数据,验证「按列号读」而不是「按列名读」。

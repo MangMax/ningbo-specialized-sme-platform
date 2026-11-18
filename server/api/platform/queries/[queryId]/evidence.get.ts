@@ -1,6 +1,6 @@
 import { defineEventHandler, getQuery, getRouterParam, setHeader } from 'h3'
 import { useDb } from '@db'
-import { readPlatformQueryEvidence, type PlatformEvidenceInput } from '../../../../../lib/platform/evidence-read'
+import { readPlatformQueryEvidence, type PlatformEvidenceInput } from '../../../../../layers/sme-roster/lib/platform/evidence-read'
 
 defineRouteMeta({
   openAPI: {

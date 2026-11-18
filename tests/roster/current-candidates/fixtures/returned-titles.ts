@@ -1,6 +1,6 @@
-import { writeNewCollectionTarget } from '../../../../lib/platform/collection-target-command'
-import { platformResultToImport } from '../../../../lib/platform/recognized-evidence'
-import type { PlatformLiveQueryResult } from '../../../../lib/platform/live-query'
+import { writeNewCollectionTarget } from '../../../../layers/sme-roster/lib/platform/collection-target-command'
+import { platformResultToImport } from '../../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformLiveQueryResult } from '../../../../layers/sme-roster/lib/platform/live-query'
 
 /** Real source writer: request scope and returned row title are deliberately independent. */
 export function captureReturnedTitles(db: Parameters<typeof writeNewCollectionTarget>[0], source: PlatformLiveQueryResult['source'], rows: Record<string, string>[], owners: (number | null)[], requested = ['1', '2', '3'], queriedAt = '2026-11-17T00:00:00Z') {

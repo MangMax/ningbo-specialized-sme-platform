@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import type { PlatformBusinessGroup, PlatformBusinessObservationRef, PlatformCorrespondenceRef } from '../../../lib/platform/business-record'
+import type { PlatformBusinessGroup, PlatformBusinessObservationRef, PlatformCorrespondenceRef } from '../../../layers/sme-roster/lib/platform/business-record'
 import { presentAnnualSources } from '../../../lib/roster/annual-process-presentation'
 
 it('keeps every interface version and observation decision local instead of copying a group confirmation', () => {

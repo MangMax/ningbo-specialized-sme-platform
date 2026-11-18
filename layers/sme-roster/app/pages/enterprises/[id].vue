@@ -16,7 +16,7 @@ import { sourceReturnTarget, type OfficialPublishedFact } from '~~/lib/roster/co
 import OfficialEvidenceView from '@/components/record-correspondence/OfficialEvidence.vue'
 import { eventDecisionText } from '~~/lib/roster/correspondence-view'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
-import PlatformRecords from '@/components/PlatformRecords.vue'
+import RosterPlatformRecords from '#sme-roster/app/components/PlatformRecords.vue'
 import RosterTitleBadge from '#sme-roster/app/components/TitleBadge.vue'
 import { QUALITY_FLAGS, TITLE_ORDER } from '#sme-roster/lib/labels'
 import { fileUrl, fileNameOf } from '#core/lib/preview'
@@ -405,7 +405,7 @@ function openPreview(e: Evidence) {
             </DisclosurePanel>
           </section>
 
-          <PlatformRecords v-if="data" :key="id" :timeline="data.businessTimeline">
+          <RosterPlatformRecords v-if="data" :key="id" :timeline="data.businessTimeline">
             <template #publication="{ title: selectedBusinessTitle }">
           <section class="bg-card overflow-hidden rounded-lg border" aria-label="认定与复核记录">
             <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b px-4 py-3">
@@ -456,7 +456,7 @@ function openPreview(e: Evidence) {
             </Tabs>
           </section>
             </template>
-          </PlatformRecords>
+          </RosterPlatformRecords>
 
       </div>
     </template>

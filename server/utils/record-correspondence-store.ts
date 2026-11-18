@@ -1,7 +1,7 @@
 import { getTableColumns,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../db/schema'
-import { targetSchema } from '../../lib/platform/target-schema'
+import { targetSchema } from '../../layers/sme-roster/lib/platform/target-schema'
 
 type Db = BetterSQLite3Database<typeof s>
 const a = targetSchema.platformLegacyRelationAlias

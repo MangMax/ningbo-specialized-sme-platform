@@ -201,7 +201,7 @@ export interface RosterImportPlatformQuery {
   queriedAt: string
   status?: 'success' | 'failed' | 'no_record' | 'not_queried' | 'partial'
   /** recognized_list 必填；三来源 typed 归档带原封套。dataRows 选择不含响应正文的全部 typed 业务字段；rawData.version=1 选择真实原行，缺省保持 legacy，不补造类型/时间。 */
-  collectionEvidence?: import('./platform/live-query').PlatformLiveQueryResult | null
+  collectionEvidence?: import('../layers/sme-roster/lib/platform/live-query').PlatformLiveQueryResult | null
   failureReason?: string | null
   rawResponse?: string | null
   relations?: RosterImportRelation[]
@@ -369,7 +369,7 @@ export interface RosterImportPayload {
   /** Server reads original observations; 1..100 per request, no client hashes/raw. */
   platformRecordObservations?: { relationId: number }[]
   /** Explicit immutable legacy pagination metadata; never typed collectionEvidence. */
-  platformLegacyProvenance?: import('./platform/legacy-provenance').LegacyPlatformProvenanceInput[]
+  platformLegacyProvenance?: import('../layers/sme-roster/lib/platform/legacy-provenance').LegacyPlatformProvenanceInput[]
   exportSnapshot?: RosterImportExportSnapshot
   differences?: RosterImportDifference[]
   /** 归并与回填（RL-11 增量扩展，见 `RosterImportMerge`）。 */
@@ -510,7 +510,7 @@ export interface RosterImportSummary {
   /** Absent on historical receipts; never inferred on replay. */
   platformFields?: { status: 'ready' | 'partial' | 'not_performed'; eligibleVersions: number; projectionsCreated: number; projectionsReused: number; projectionsChecked: number; observationsChecked: number; quarantinedObservations: number }
   /** Separate from the legacy query/relation rowsWritten count. */
-  canonicalProjection?: import('./platform/business-record').PlatformProjectionSummary
+  canonicalProjection?: import('../layers/sme-roster/lib/platform/business-record').PlatformProjectionSummary
   written: number
   skipped: number
   failed: number

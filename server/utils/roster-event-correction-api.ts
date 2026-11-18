@@ -5,7 +5,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { readApiToken, resolveApiAuth } from '../../layers/core/server/utils/api-auth'
 import { sanitizeEvidence } from './record-correspondence-read'
-import { cookieRedactor } from '../../lib/platform/client'
+import { cookieRedactor } from '../../layers/sme-roster/lib/platform/client'
 import { credentialContext, resolveCredential } from '../../layers/core/server/utils/credential-state'
 import { commitEventCorrections, eventCorrectionRequestSchema, finalizedCorrectionReadback, preflightEventCorrections, readEventCorrectionAudit, readOfficialEvent } from './roster-event-correction'
 

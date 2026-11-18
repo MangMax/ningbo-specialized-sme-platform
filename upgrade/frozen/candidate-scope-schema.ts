@@ -3,7 +3,7 @@
 import { check, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import { sql } from 'drizzle-orm'
 import * as s from '../legacy-schema'
-import { CANDIDATE_SCOPE_RULE } from '../../lib/platform/candidate-scope-capture'
+import { CANDIDATE_SCOPE_RULE } from '../../layers/sme-roster/lib/platform/candidate-scope-capture'
 export const candidateScopeColumns = [
   'candidate_scope_mask','candidate_scope_rule','candidate_scope_archive_id','candidate_scope_rdjb',
   'candidate_scope_title_code','candidate_scope_sequence_no','candidate_scope_error','candidate_scope_state',

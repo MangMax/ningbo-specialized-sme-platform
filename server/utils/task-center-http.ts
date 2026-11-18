@@ -11,7 +11,7 @@ import { type TaskList } from '../../layers/core/lib/task-center'
 import { getTaskFilterKinds, getTaskKind, resolveTaskFilters, taskTabs } from '../../layers/core/lib/task-catalog'
 import { readApiToken,resolveApiAuth } from '../../layers/core/server/utils/api-auth'
 import { requestJobCancel,jobSpecs } from '../../layers/core/server/utils/job-runner'
-import { retryPlatformBatch } from './platform-batch-query'
+import { retryPlatformBatch } from '../../layers/sme-roster/server/utils/platform-batch-query'
 
 type Db = ReturnType<typeof useApplicationDb>
 type Request = { method: string; path: string; query?: Record<string, unknown>; headers?: Record<string, string | undefined>; body?: unknown }

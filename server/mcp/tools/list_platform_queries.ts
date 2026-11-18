@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER } from '../../../layers/sme-roster/lib/labels'
-import { listPlatformQueries } from '../../../lib/platform/read'
+import { listPlatformQueries } from '../../../layers/sme-roster/lib/platform/read'
 
 export default defineMcpTool({
   name: 'list_platform_queries', title: '读取已存平台证据历史',

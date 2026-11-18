@@ -2,7 +2,7 @@ import { useDb } from '@db'
 import { MAX_PAGE_SIZE } from '#sme-roster/lib/query'
 import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER } from '#sme-roster/lib/labels'
 import { getHeader, getResponseHeader } from 'h3'
-import { platformSummaryCache } from '../../utils/platform-summary-cache'
+import { platformSummaryCache } from '../../../layers/sme-roster/server/utils/platform-summary-cache'
 
 /**
  * 平台查询证据(契约 §7.6):工信部三个来源取回的**原始关系**,逐条可查。

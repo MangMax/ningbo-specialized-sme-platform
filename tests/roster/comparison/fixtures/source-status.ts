@@ -1,5 +1,5 @@
 import { submitNativePlatformQuery } from '../../../platform/fixtures/native-query'
-import { listPlatformQueries } from '../../../../lib/platform/read'
+import { listPlatformQueries } from '../../../../layers/sme-roster/lib/platform/read'
 import type { useDb } from '../../../../db'
 import { schema } from '../../../../db'
 import type { PlatformInterface } from '../../../../layers/sme-roster/lib/labels'

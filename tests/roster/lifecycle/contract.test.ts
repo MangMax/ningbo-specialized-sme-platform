@@ -1,5 +1,5 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { listPlatformQueries } from '../../../lib/platform/read'
+import { listPlatformQueries } from '../../../layers/sme-roster/lib/platform/read'
 import { initializeDb } from '../../../db/client'
 /**
  * 名录生命周期**冻结契约**的验收样例(RL-01)。

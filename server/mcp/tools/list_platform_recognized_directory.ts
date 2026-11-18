@@ -1,7 +1,7 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { recognizedDirectoryFilterSchema } from '../../../lib/platform/recognized-directory'
-import { listTargetRecognizedDirectory } from '../../utils/platform-recognized-target'
+import { recognizedDirectoryFilterSchema } from '../../../layers/sme-roster/lib/platform/recognized-directory'
+import { listTargetRecognizedDirectory } from '../../../layers/sme-roster/server/utils/platform-recognized-target'
 
 export default defineMcpTool({
   name: 'list_platform_recognized_directory',

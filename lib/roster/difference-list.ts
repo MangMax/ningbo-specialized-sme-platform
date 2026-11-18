@@ -1,4 +1,4 @@
-import { differencePublicColumns } from '../platform/difference-reference-target'
+import { differencePublicColumns } from '../../layers/sme-roster/lib/platform/difference-reference-target'
 /** #132 differences-only read plan. No persisted or cross-request cache. */
 import { eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'

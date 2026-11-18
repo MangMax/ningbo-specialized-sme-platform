@@ -449,7 +449,7 @@ it('explicit_407_receipts_preserve_frozen_literal_bytes', async () => {
 })
 
 it('explicit_prior_versions_preserve_frozen_legacy_and_current_consumers_share_default_without_core', async () => {
-  const core = await import('../../../lib/roster/platform-comparison')
+  const core = await import('../../../layers/sme-roster/lib/roster/platform-comparison')
   const { createCurrentQualificationAssessmentReader } = await import('../../../layers/sme-roster/lib/roster/current-qualification')
   const spy = vi.spyOn(core, 'comparePlatformComparison')
   seedPublishedLegacyReceipt()

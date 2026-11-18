@@ -6,7 +6,7 @@ import { categoryStateOf, deriveClassification, type CategoryState, type FileKin
 import type { StoredFilePart } from '../../../lib/file-parts'
 import { classificationColumns, fileClassificationJoin } from '../../utils/roster-file-classification'
 import { listFileParts } from '../../utils/file-parts'
-import { listRegisteredDeclarations681, registeredSummary681 } from '../../utils/registered-declarations'
+import { listRegisteredDeclarations681, registeredSummary681 } from '../../../layers/sme-roster/server/utils/registered-declarations'
 import { type FileStoreDb as Db, type FileCategoryServer, type FileRow } from '../../../layers/core/server/utils/file-store'
 import manifest from '../../../layers/sme-roster/manifest'
 import { rosterFileOpenApi } from './file-openapi'

@@ -1,7 +1,7 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { platformBatchItemShape, platformBatchItemResultShape } from '../../../lib/platform/batch-query'
-import { getPlatformBatchItem } from '../../utils/platform-batch-query'
+import { platformBatchItemShape, platformBatchItemResultShape } from '../../../layers/sme-roster/lib/platform/batch-query'
+import { getPlatformBatchItem } from '../../../layers/sme-roster/server/utils/platform-batch-query'
 export default defineMcpTool({
   name: 'get_platform_batch_item', title: '按batchId和稳定itemId读取本项全部原始关系、原查询时间和unfinished',
   description: '按batchId和稳定itemId读取本项全部原始关系、原查询时间和unfinished。逐页来源见segments；不按代码去重。',

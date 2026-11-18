@@ -4,7 +4,7 @@ import Database from 'better-sqlite3'
 import { statSync, statfsSync, realpathSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
-import { schemaHash } from '../lib/platform/sqlite-row-cells'
+import { schemaHash } from '../layers/sme-roster/lib/platform/sqlite-row-cells'
 import { assertFrozenSource, fileHash, type FrozenSource } from './collections'
 
 export const reconcileSlotColumns = ['reconcile_slot_state','reconcile_slot_rule','reconcile_slot_raw_archive_id','reconcile_slot_row_count','reconcile_slot_input_sha256','reconcile_slot_reason'] as const

@@ -59,7 +59,7 @@ export interface EventSource {
 }
 
 export interface RelationSource {
-  normalizationConflicts?: import('../platform/normalization').PlatformNormalizationConflict[]
+  normalizationConflicts?: import('../../layers/sme-roster/lib/platform/normalization').PlatformNormalizationConflict[]
   id: number
   queryId: number
   sequenceNo: number
@@ -87,7 +87,7 @@ export interface RelationSource {
     status: string
     failureReason: string | null
     relationCount: number
-    collectionEvidence: import('../platform/live-query').PlatformLiveQueryResult | null
+    collectionEvidence: import('../../layers/sme-roster/lib/platform/live-query').PlatformLiveQueryResult | null
     legacyProvenance?: import('../../layers/sme-roster/lib/roster/enterprise-roster').RosterPlatformQueryRow['legacyProvenance']
   }
   correspondences: CorrespondenceRef[]

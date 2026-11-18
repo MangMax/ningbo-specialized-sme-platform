@@ -1,7 +1,7 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { businessProcessFilterSchema } from '../../../lib/platform/business-processes'
-import { listTargetBusinessProcesses } from '../../utils/platform-business-processes-target'
+import { businessProcessFilterSchema } from '../../../layers/sme-roster/lib/platform/business-processes'
+import { listTargetBusinessProcesses } from '../../../layers/sme-roster/server/utils/platform-business-processes-target'
 
 export default defineMcpTool({
   name: 'list_platform_business_processes',

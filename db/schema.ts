@@ -1,4 +1,4 @@
-import { businessStatusCell, businessStatusChecks } from '../lib/platform/business-status'
+import { businessStatusCell, businessStatusChecks } from '../layers/sme-roster/lib/platform/business-status'
 import type { CredentialKey } from '../lib/app-modules'
 import type { FormalValidity } from '../layers/sme-roster/lib/roster/formal-validity'
 import { sql } from 'drizzle-orm'

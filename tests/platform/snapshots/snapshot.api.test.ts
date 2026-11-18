@@ -7,7 +7,7 @@ import { initializeDb } from '../../../db/client'
  *   - `GET /api/platform/snapshots/diff?from=&to=` —— 两个快照的新增/消失/字段变化(追溯源行号)。
  *
  * 分两层测:
- *   1. **HTTP 核心**(`server/utils/platform-snapshots-http.ts`,不 import h3)——
+ *   1. **HTTP 核心**(`layers/sme-roster/server/utils/platform-snapshots-http.ts`,不 import h3)——
  *      状态码与响应体的全部判据;这也正是真实 HTTP 回放测试打的同一份实现;
  *   2. **Nitro 路由**——只是薄薄地转调核心,这里用 `vi.stubGlobal` 补 h3 的编译期宏与
  *      自动导入(裸 node 下没有),断言它转调到位、状态码写进响应。
@@ -18,7 +18,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { handlePlatformSnapshotRequest } from '../../../server/utils/platform-snapshots-http'
+import { handlePlatformSnapshotRequest } from '../../../layers/sme-roster/server/utils/platform-snapshots-http'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-snapshot-api-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))

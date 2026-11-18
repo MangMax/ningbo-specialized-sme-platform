@@ -87,7 +87,7 @@ it.each([
   const input = { source: 'queryBusList', name: '合成', ...extra }
   expect(await query(input)).toMatchObject({ error: { code: 'invalid_input' } })
   await expect(tool.handler(input)).rejects.toMatchObject({ statusCode: 400 })
-  const { platformQueryRpcError } = await import('../../../server/utils/mcp-platform-query')
+  const { platformQueryRpcError } = await import('../../../layers/sme-roster/server/utils/mcp-platform-query')
   const rejected = platformQueryRpcError({ method: 'tools/call', id: 1, params: { name: 'query_platform', arguments: input } })!
   expect(rejected.status).toBe(400)
   expect(await rejected.text()).not.toContain('synthetic-query-secret')
@@ -172,7 +172,7 @@ it('REST capabilities MCP discovery and OpenAPI advertise only verified recogniz
   expect(input.properties.whpc.description).toContain('whpcyear')
   const output = routeMeta.openAPI.responses[200].content['application/json'].schema.properties.effectiveConditions.properties
   for (const key of ['sqsj', 'rddqrq', 'whpcyear', 'whpc', 'szq', 'orderField', 'orderDirection']) expect(output[key].type).toBe('string')
-  const { platformQueryRpcError } = await import('../../../server/utils/mcp-platform-query')
+  const { platformQueryRpcError } = await import('../../../layers/sme-roster/server/utils/mcp-platform-query')
   expect(platformQueryRpcError({ method: 'tools/call', params: { name: 'query_platform', arguments: { source: 'queryBusList', name: '合成', rdjb: ['2'], whpcyear: '2023', whpc: '2' } } })).toBeNull()
 })
 it('recognized query works through HTTP and sets no-store', async () => {

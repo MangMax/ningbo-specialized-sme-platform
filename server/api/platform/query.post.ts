@@ -1,4 +1,4 @@
-import { runPlatformLiveQuery } from '../../utils/platform-live-query'
+import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
 import { requestLogContext } from '../../../layers/core/lib/logging'
 
 defineRouteMeta({

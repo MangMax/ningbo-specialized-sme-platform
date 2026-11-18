@@ -134,7 +134,7 @@ it('P_closed_public_award', async () => {
 })
 
 // Independent public partitions; original P fixture above remains byte-identical.
-import { readPlatformComparisonProcesses } from '../../../server/utils/platform-comparison-input'
+import { readPlatformComparisonProcesses } from '../../../layers/sme-roster/server/utils/platform-comparison-input'
 type PublicPartition428 = {title:'innovative_sme'|'specialized_sme'|'little_giant';eventType:'award'|'review';opposite:boolean;trace?:'P'|'Z';change?:'unlinked'|'rejected'|'ended'|'candidate'|'source_hash'|'event_revision'|'version_change'|'ABA'|'history_interface'|'future'|'tie'|'unknown_status'|'retry_same'|'potential_later'|'unknown_normalization'}
 async function publicPartition428(spec:PublicPartition428) {
   const dir = mkdtempSync(join(tmpdir(), 'issue428-public-'))

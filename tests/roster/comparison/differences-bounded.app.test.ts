@@ -8,7 +8,7 @@ import { initializeDb } from '../../../db/client'
 import { commitRosterImport } from '../../../server/utils/roster-import'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import type { RosterImportPayload } from '../../../lib/roster-import-client'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 
 const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
 vi.mock('@db', () => ({ useDb: () => active.db }))

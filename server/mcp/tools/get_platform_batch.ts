@@ -1,7 +1,7 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { platformBatchIdShape, platformBatchResultShape } from '../../../lib/platform/batch-query'
-import { getPlatformBatch } from '../../utils/platform-batch-query'
+import { platformBatchIdShape, platformBatchResultShape } from '../../../layers/sme-roster/lib/platform/batch-query'
+import { getPlatformBatch } from '../../../layers/sme-roster/server/utils/platform-batch-query'
 export default defineMcpTool({
   name: 'get_platform_batch', title: '读取平台批次状态、真实完成项进度、完整性和全部segments；failed/partial不是无记录；重启后不自动恢复',
   description: '读取平台批次状态、真实完成项进度、完整性和全部segments；failed/partial不是无记录；重启后不自动恢复。',

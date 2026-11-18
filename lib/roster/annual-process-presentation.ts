@@ -1,4 +1,4 @@
-import type { PlatformBusinessGroup } from '../platform/business-record'
+import type { PlatformBusinessGroup } from '../../layers/sme-roster/lib/platform/business-record'
 import type { EventAnnualProcessPage } from './annual-process'
 import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, TITLES } from '../../layers/sme-roster/lib/labels'
 

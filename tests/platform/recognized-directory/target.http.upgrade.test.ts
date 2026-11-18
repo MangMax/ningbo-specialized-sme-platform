@@ -12,12 +12,12 @@ import { seedRecognizedDirectory } from './fixtures/migrated-directory'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { targetSchema } from '../../../lib/platform/target-schema'
+import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
 import { listPlatformRecognizedDirectory, getPlatformRecognizedRecord } from '../../../upgrade/frozen/server/platform-recognized-directory'
 import { readPlatformFilterOptions } from '../../../upgrade/frozen/server/platform-filter-options'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
-import { writeCollectionTarget } from '../../../lib/platform/collection-target-command'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
+import { writeCollectionTarget } from '../../../layers/sme-roster/lib/platform/collection-target-command'
 
 // Seed the legacy source once, then run the complete chain once (no discarded prefix).
 async function historicalFixture(extra?: (source: Database.Database) => void) {

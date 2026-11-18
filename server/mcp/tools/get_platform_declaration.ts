@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { getTargetDeclaration } from '../../utils/platform-declarations-target'
+import { getTargetDeclaration } from '../../../layers/sme-roster/server/utils/platform-declarations-target'
 
 export default defineMcpTool({
   name: 'get_platform_declaration',

@@ -1,4 +1,4 @@
-import { cookieRedactor } from '../../lib/platform/client'
+import { cookieRedactor } from '../../layers/sme-roster/lib/platform/client'
 import { credentialContext, resolveCredential } from '../../layers/core/server/utils/credential-state'
 import { sanitizeEvidence } from './record-correspondence-read'
 import { z } from 'zod'

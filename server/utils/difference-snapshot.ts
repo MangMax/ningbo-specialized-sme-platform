@@ -7,14 +7,14 @@ import { z } from 'zod'
 import type { useApplicationDb } from '../../db/client'
 import * as s from '../../db/schema'
 import { newJobId } from '../../layers/core/lib/job'
-import type { PlatformLiveQueryResult } from '../../lib/platform/live-query'
-import { runPlatformLiveQuery } from './platform-live-query'
-import { resolvePlatformCookie } from './platform-credential'
+import type { PlatformLiveQueryResult } from '../../layers/sme-roster/lib/platform/live-query'
+import { runPlatformLiveQuery } from '../../layers/sme-roster/server/utils/platform-live-query'
+import { resolvePlatformCookie } from '../../layers/sme-roster/server/utils/platform-credential'
 import { createJob, getJob, setJobResult } from '../../layers/core/server/utils/job-store'
 import { enqueuePersistedJob, ensureJobRunnerReady, getJobSpec, registerJob, requeueFinishedJob, type JobSpec } from '../../layers/core/server/utils/job-runner'
 
-import { reuseCollectedPlatformResult } from './platform-collection-reuse'
-import { platformResultToImport } from '../../lib/platform/recognized-evidence'
+import { reuseCollectedPlatformResult } from '../../layers/sme-roster/server/utils/platform-collection-reuse'
+import { platformResultToImport } from '../../layers/sme-roster/lib/platform/recognized-evidence'
 import { preflightRosterImport, commitRosterImport } from './roster-import'
 
 type Db = ReturnType<typeof useApplicationDb>
@@ -74,7 +74,7 @@ export const differenceSnapshotSpec: JobSpec = {
       if (item.complete) continue
       const scope = result.scope.find(e => e.enterpriseId === item.enterpriseId)!
       if (scope.uscc || item.source !== 'businessList' && scope.name && scope.name.length <= 200) {
-        const pages = new Map<number, import('../../lib/platform/live-query').PlatformQueryPage>()
+        const pages = new Map<number, import('../../layers/sme-roster/lib/platform/live-query').PlatformQueryPage>()
         for (const segment of item.segments) for (const page of segment.pages) if (page.rdjb === item.rdjb && page.status === 'success') pages.set(page.page,page)
         let startPage = 1
         while (pages.has(startPage)) startPage++

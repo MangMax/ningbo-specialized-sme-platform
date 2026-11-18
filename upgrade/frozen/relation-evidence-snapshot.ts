@@ -5,10 +5,10 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { RosterImportRelation } from '../../lib/roster-import-client'
 import { targetSchema as s } from '../target-schema'
 import { insertArchiveValue, bindArchive } from './target-archive'
-import { normalizePlatformRelation } from '../../lib/platform/normalization'
-import { materializedText } from '../../lib/platform/apply-materialization'
-import { captureSqlFactTitle } from '../../lib/platform/apply-stored-cells'
-import { sqliteConnection } from '../../lib/platform/target-connection'
+import { normalizePlatformRelation } from '../../layers/sme-roster/lib/platform/normalization'
+import { materializedText } from '../../layers/sme-roster/lib/platform/apply-materialization'
+import { captureSqlFactTitle } from '../../layers/sme-roster/lib/platform/apply-stored-cells'
+import { sqliteConnection } from '../../layers/sme-roster/lib/platform/target-connection'
 export const relationEvidenceColumns = [
   ['id','id'],['queryId','query_id'],['sequenceNo','sequence_no'],['relationKey','relation_key'],
   ['enterpriseId','enterprise_id'],['rawFields','raw_fields'],['titleRaw','title_raw'],['sourceText','source_text'],

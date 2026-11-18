@@ -1,17 +1,17 @@
-import { platformNormalizationConflict } from '../../lib/platform/normalization'
-import type { PlatformStoredQuery,PlatformStoredRelation } from '../../lib/platform/read'
-import { sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
+import { platformNormalizationConflict } from '../../layers/sme-roster/lib/platform/normalization'
+import type { PlatformStoredQuery,PlatformStoredRelation } from '../../layers/sme-roster/lib/platform/read'
+import { sourceRelationFields } from '../../layers/sme-roster/lib/platform/source-snapshot-fields'
 /** Structured decision facts, plus original cells solely for historical fingerprints. */
 import { and,eq,inArray,max,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { alias } from 'drizzle-orm/sqlite-core'
 import * as legacy from '../../db/schema'
-import { storedApplyProjection } from '../../lib/platform/apply-stored-schema'
-import type { PlatformNormalizationConflict } from '../../lib/platform/normalization'
-import { storedProcessProjection } from '../../lib/platform/process-stored-schema'
-import { storedRecognizedProjection } from '../../lib/platform/recognized-stored-schema'
-import { cellExpression,snapshotSchema } from '../../lib/platform/target-evidence-read'
-import { targetSchema as s } from '../../lib/platform/target-schema'
+import { storedApplyProjection } from '../../layers/sme-roster/lib/platform/apply-stored-schema'
+import type { PlatformNormalizationConflict } from '../../layers/sme-roster/lib/platform/normalization'
+import { storedProcessProjection } from '../../layers/sme-roster/lib/platform/process-stored-schema'
+import { storedRecognizedProjection } from '../../layers/sme-roster/lib/platform/recognized-stored-schema'
+import { cellExpression,snapshotSchema } from '../../layers/sme-roster/lib/platform/target-evidence-read'
+import { targetSchema as s } from '../../layers/sme-roster/lib/platform/target-schema'
 
 type Db = BetterSQLite3Database<typeof legacy>
 const fields = [

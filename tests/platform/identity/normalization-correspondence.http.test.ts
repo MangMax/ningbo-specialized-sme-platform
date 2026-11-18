@@ -2,7 +2,7 @@ import {expect,it} from 'vitest'
 import * as schema from '../../../db/schema'
 import {relationSource} from '../../../server/utils/record-correspondence-read'
 import {preflightRecordCorrespondences,commitRecordCorrespondences} from '../../../server/utils/record-correspondence'
-import {listPlatformQueries} from '../../../lib/platform/read'
+import {listPlatformQueries} from '../../../layers/sme-roster/lib/platform/read'
 import {nativeImportDb,businessSource,commitNativeSource} from '../../roster/imports/fixtures/native-import'
 it('uses native normalized source facts for an explicit correspondence without changing original raw bytes',()=>{
  const db=nativeImportDb()

@@ -7,8 +7,8 @@ import { currentDecision102, currentDecisionState102, currentDecisions102, curre
 import { normalizeUscc } from '../../layers/sme-roster/lib/domain'
 import { identityFunctions } from '../../layers/sme-roster/lib/roster/enterprise-read-snapshot'
 import { identityKeys, type IdentityKeyVariants } from '../../layers/sme-roster/lib/roster/current-identity-keys'
-import { platformQueryResultShape, type PlatformQueryPage } from '../platform/live-query'
-import { readDifferenceCollectionScopes, selectDifferenceCollections, selectDifferenceCollectionsBatch } from '../platform/difference-sources'
+import { platformQueryResultShape, type PlatformQueryPage } from '../../layers/sme-roster/lib/platform/live-query'
+import { readDifferenceCollectionScopes, selectDifferenceCollections, selectDifferenceCollectionsBatch } from '../../layers/sme-roster/lib/platform/difference-sources'
 
 export type AssessmentScope = Parameters<typeof currentDecision102>[1]
 type CoverageStatus = 'not_queried' | 'complete' | 'partial' | 'failed' | 'unknown'

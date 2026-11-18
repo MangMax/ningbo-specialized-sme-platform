@@ -1,6 +1,6 @@
-import type { PlatformStoredQuery } from '../../../../lib/platform/read'
-import type { PlatformStoredRelation } from '../../../../lib/platform/read'
-import { differencePublicColumns } from '../../../../lib/platform/difference-reference-target'
+import type { PlatformStoredQuery } from '../platform/read'
+import type { PlatformStoredRelation } from '../platform/read'
+import { differencePublicColumns } from '../platform/difference-reference-target'
 /** Enterprise-only reads. No raw platform archives enter a list aggregation. */
 import { eq, getTableColumns, inArray, sql, asc, and } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'

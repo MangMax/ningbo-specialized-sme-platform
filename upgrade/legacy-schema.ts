@@ -1,7 +1,7 @@
 /** Frozen expand schema from HEAD ab503081dae3e24680afc9b07395a7e3ff21fc9f.
  * Original db/schema.ts SHA256: 9287138f2170847771f08f5529fd7c77e2363d53a5885f0770bdce304269e13c.
  * Declarations preserved for offline migration and historical oracles only. */
-import { businessStatusCell, businessStatusChecks } from '../lib/platform/business-status'
+import { businessStatusCell, businessStatusChecks } from '../layers/sme-roster/lib/platform/business-status'
 import type { FormalValidity } from '../layers/sme-roster/lib/roster/formal-validity'
 import { sql } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
@@ -670,7 +670,7 @@ export const platformQuery = sqliteTable(
     /** 原始响应 / HTML 原文,供回溯。 */
     rawResponse: text('raw_response'),
     /** 原始逐来源采集结果，旧查询留 null；含原时间、页、条件及原行。 */
-    collectionEvidence: text('collection_evidence', { mode: 'json' }).$type<import('../lib/platform/live-query').PlatformLiveQueryResult>(),
+    collectionEvidence: text('collection_evidence', { mode: 'json' }).$type<import('../layers/sme-roster/lib/platform/live-query').PlatformLiveQueryResult>(),
     createdAt: text('created_at')
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -794,7 +794,7 @@ export const platformQueryLegacyProvenance = sqliteTable('platform_query_legacy_
   sourceIdentity: text('source_identity').notNull(),
   sourceSha256: text('source_sha256').notNull(),
   segmentIndex: integer('segment_index').notNull(),
-  collection: text('collection', { mode: 'json' }).notNull().$type<import('../lib/platform/legacy-provenance').LegacyPlatformCollection>(),
+  collection: text('collection', { mode: 'json' }).notNull().$type<import('../layers/sme-roster/lib/platform/legacy-provenance').LegacyPlatformCollection>(),
   inputFingerprint: text('input_fingerprint').notNull(),
   importBatchId: integer('import_batch_id').notNull().references(() => importBatch.id),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
