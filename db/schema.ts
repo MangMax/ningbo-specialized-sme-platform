@@ -461,6 +461,7 @@ export const job = sqliteTable(
   },
   (t) => [
     index('job_kind_idx').on(t.kind),
+    // sme-roster owns current-roster-export request deduplication.
     uniqueIndex('job_export_request_uq').on(t.kind, sql`json_extract(${t.params}, '$.clientRequestId')`).where(sql`${t.kind} = 'current-roster-export'`),
     index('job_state_idx').on(t.state),
     index('job_created_at_idx').on(t.createdAt),

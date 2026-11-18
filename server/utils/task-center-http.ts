@@ -6,7 +6,8 @@ import { ANNUAL_CORRESPONDENCE_KIND } from '../../lib/roster/annual-corresponden
 import { and,eq,inArray,sql } from 'drizzle-orm'
 import { schema,type useApplicationDb } from '../../db/client'
 import { isJobId,JOB_STATES,type JobState } from '../../lib/job'
-import { TASK_EXPORTS,TASK_GROUPS,TASK_TABS,type TaskList,type TaskTab } from '../../lib/task-center'
+import { TASK_EXPORTS, type TaskList } from '../../lib/task-center'
+import { getTaskFilterKinds, getTaskKind, resolveTaskFilters, taskTabs } from '../../lib/task-catalog'
 import { readApiToken,resolveApiAuth } from './api-auth'
 import { requestJobCancel,jobSpecs } from './job-runner'
 import { retryPlatformBatch } from './platform-batch-query'
@@ -25,19 +26,19 @@ export async function handleTaskCenterRequest(action: 'list' | 'detail' | 'cance
   if (req.method !== method) return error(405, 'Method not allowed')
   const q = req.query ?? {}
   if (action === 'list') {
-    const tab = TASK_TABS.includes(q.tab as TaskTab) ? q.tab as TaskTab : 'all'
+    const { tab, group } = resolveTaskFilters(q.tab, q.group)
     const state = JOB_STATES.includes(q.state as JobState) ? q.state as JobState : undefined
     const page = positive(q.page, 1, 1000000), pageSize = positive(q.pageSize, 25, 200)
     const title = TASK_EXPORTS.find(t => t.titleCode === q.titleCode)
     const stateWhere = and(state ? eq(j.state, state) : undefined, title ? and(eq(j.kind, 'current-roster-export'), exportTitleFilter(title.titleCode)) : undefined)
-    const where = and(stateWhere, tab === 'all' ? undefined : inArray(j.kind, TASK_GROUPS[tab]))
+    const where = and(stateWhere, tab.id === 'all' ? undefined : inArray(j.kind, getTaskFilterKinds(tab.id, group?.id)))
     const total = ctx.db.select({ n: sql<number>`count(*)` }).from(j).where(where).get()!.n
     const rows = await Promise.all(readTasks(ctx.db, where, pageSize, (page - 1) * pageSize).map(row => summarize(row, row.kind === ANNUAL_CORRESPONDENCE_KIND ? apiAuthorized : authorized, ctx.db)))
-    const counts: TaskList['counts'] = { all: 0, ocr: 0, platform: 0, export: 0 }
+    const counts: TaskList['counts'] = { ...Object.fromEntries(taskTabs.map(({ id }) => [id, 0])), all: 0 }
     for (const row of ctx.db.select({ kind: j.kind, n: sql<number>`count(*)` }).from(j).where(stateWhere).groupBy(j.kind).all()) {
       counts.all += row.n
-      const group = Object.entries(TASK_GROUPS).find(([, kinds]) => kinds.includes(row.kind))?.[0] as keyof typeof TASK_GROUPS | undefined
-      if (group) counts[group] += row.n
+      const module = getTaskKind(row.kind)?.module
+      if (module) counts[module] = (counts[module] ?? 0) + row.n
     }
     return { status: 200, headers, body: { rows, total, page, pageSize, counts, exportReady: jobSpecs().some(spec => spec.kind === 'current-roster-export' && spec.status === 'ready'), authorized } satisfies TaskList }
   }

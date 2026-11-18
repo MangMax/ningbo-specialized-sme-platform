@@ -21,7 +21,7 @@ onBeforeUnmount(() => { active = false })
 const { exportRequests, submitting, discovering, discoveryFailed, disabledReason, discoverExports, submitExport } = useCurrentRosterExport()
 const error = ref('')
 const accepted = computed(() => exportRequests.value[`${props.titleCode}:initial`]?.jobId)
-const taskLocation = (job: string, code = props.titleCode) => ({ path: '/tasks', query: { tab: 'export', titleCode: code, page: '1', job } })
+const taskLocation = (job: string, code = props.titleCode) => ({ path: '/tasks', query: { tab: 'sme-roster', group: 'export', titleCode: code, page: '1', job } })
 async function submit() {
   const code = props.titleCode
   const version = contextVersion

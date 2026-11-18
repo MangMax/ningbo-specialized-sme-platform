@@ -45,12 +45,7 @@ defineRouteMeta({
             properties: {
               kind: {
                 type: 'string',
-                enum: ['render-pages', 'ocr', 'reconcile', 'platform-query-batch', 'current-roster-export', 'event-archive-candidates'],
-                description:
-                  '任务种类。`render-pages`(默认 300 DPI 渲染页图)、`ocr`(并发逐张 PNG 调 PaddleOCR,按页码入库)与 ' +
-                  '`reconcile`(批量平台核查:实查工信部 businessList / applyList → 落关系证据 → 标记查询状态、交代理核实 → ' +
-                  '经统一导入 API 一个批次写回)均已接入。' +
-                  '`GET /api/jobs/kinds` 报的是实时状态与各 kind 的 `paramsHint`。',
+                description: '任务种类。请通过 GET /api/jobs/kinds 发现当前已登记的种类、接入状态及参数提示。',
               },
               params: {
                 type: 'object',

@@ -98,7 +98,7 @@ async function runBatch(ctx: JobContext, raw: Record<string, unknown>, cookie: s
       failed: result.items.filter(item => item.status === 'failed' || item.status === 'auth_failed').length } }, logContext)
   return { result, progress: { done: result.items.filter(item => item.completeness === 'complete').length, total: result.items.length }, ...(ctx.cancelled() ? { cancelled: true } : result.completeness !== 'complete' ? { error: '批次仍有未完成范围，请查看逐项结果并显式重试。' } : {}) }
 }
-const batchSpec: JobSpec = {
+export const batchSpec: JobSpec = {
   kind: PLATFORM_BATCH_KIND, status: 'ready', summary: '只读平台批量查询（仅保存任务结果）',
   paramsHint: 'Use POST /api/platform/batches; items[{query}], limits; no credentials.',
   // Generic job submission must pass the same strict public validation and generate IDs.

@@ -59,7 +59,7 @@ function refresh(result: Receipt) {
   result.counts.rows=result.items.reduce((n,i)=>n+(i.rows??0),0)
   result.counts.unfinished=result.items.filter(i=>!i.complete).length
 }
-const spec: JobSpec = {
+export const differenceSnapshotSpec: JobSpec = {
   kind: SNAPSHOT_KIND, status: 'ready', summary: '公布企业平台业务采集',
   paramsHint: 'Use POST /api/roster/difference-snapshots; backup must precede task writes',
   parse: () => ({ ok: false, message: 'Use dedicated difference-snapshots endpoint for verified prestart backup' }),
@@ -125,7 +125,7 @@ export async function snapshotOperation(db: Db, filesDir: string, raw: unknown) 
   const parsed = snapshotInput.safeParse(raw)
   if (!parsed.success) return fail(400, 'Invalid snapshot action or parameters')
   const input = parsed.data
-  if (!getJobSpec(SNAPSHOT_KIND)) registerJob(spec)
+  if (!getJobSpec(SNAPSHOT_KIND)) registerJob(differenceSnapshotSpec)
   if (input.action !== 'create') {
     const row = getJob(db, input.jobId)
     if (!row || row.kind !== SNAPSHOT_KIND) return fail(404, 'Snapshot not found')
