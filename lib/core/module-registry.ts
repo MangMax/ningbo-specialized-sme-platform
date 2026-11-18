@@ -1,5 +1,4 @@
 import type { LucideIcon } from '@lucide/vue'
-import type { Component } from 'vue'
 
 type AppNavLink = {
   readonly title: string
@@ -33,8 +32,6 @@ type AppModuleManifest = {
 type AppDashboardCard = {
   readonly id: string
   readonly title: string
-  // The component owns its query and retry state.
-  readonly loadComponent: () => Promise<Component>
 }
 
 export function defineAppModule(manifest: AppModuleManifest): AppModuleManifest {

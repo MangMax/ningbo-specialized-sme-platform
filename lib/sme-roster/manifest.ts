@@ -15,7 +15,6 @@ export default defineAppModule({
     {
       id: 'roster-stats',
       title: '名录统计',
-      loadComponent: () => import('../../components/RosterDashboardStats.vue').then(module => module.default),
     },
   ],
   nav: [

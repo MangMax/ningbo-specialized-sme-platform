@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ArrowRight } from '@lucide/vue'
-import { defineAsyncComponent } from 'vue'
 import { getAppModules } from '~~/lib/app-modules'
+import { getDashboardCardComponent } from '~~/lib/dashboard-card-components'
 import PageHeader from '@/components/PageHeader.vue'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -10,10 +10,10 @@ const modules = getAppModules()
   .filter(module => module.id !== 'core')
   .map(({ dashboard, ...module }) => ({
     ...module,
-    cards: dashboard?.map(({ id, title, loadComponent }) => ({
+    cards: dashboard?.map(({ id, title }) => ({
       id,
       title,
-      component: defineAsyncComponent(loadComponent),
+      component: getDashboardCardComponent(id),
     })) ?? [],
   }))
 

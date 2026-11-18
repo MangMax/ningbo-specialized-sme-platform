@@ -5,6 +5,7 @@ import { createPinia } from 'pinia'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter, RouterLink } from 'vue-router'
 import * as registry from '../../../lib/app-modules'
+import * as dashboard from '../../../lib/dashboard-card-components'
 import Workbench from '../../../pages/index.vue'
 
 afterEach(() => {
@@ -50,6 +51,9 @@ it('shows the roster entry and both statistics on the workbench', async () => {
 
 it('keeps the workbench and a successful card visible when roster statistics fail and are retried', async () => {
   const [core, roster] = registry.getAppModules()
+  const getComponent = dashboard.getDashboardCardComponent
+  vi.spyOn(dashboard, 'getDashboardCardComponent')
+    .mockImplementation(id => id === 'ready-card' ? { template: '<p>服务可用</p>' } : getComponent(id))
   vi.spyOn(registry, 'getAppModules').mockReturnValue([core, {
     ...roster,
     dashboard: [
@@ -57,7 +61,6 @@ it('keeps the workbench and a successful card visible when roster statistics fai
       {
         id: 'ready-card',
         title: '服务状态',
-        loadComponent: async () => ({ template: '<p>服务可用</p>' }),
       },
     ],
   }])
