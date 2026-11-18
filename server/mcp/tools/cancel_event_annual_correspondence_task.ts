@@ -3,7 +3,7 @@ import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { JOB_ID_RE } from '../../../layers/core/lib/job'
 import { annualTaskContext } from '../../utils/annual-correspondence-read'
 import { annualTaskMcpRequest } from '../../utils/annual-correspondence-mcp'
-import { writeGuard } from '../../utils/mcp-guard'
+import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 export default defineMcpTool({
   name: 'cancel_event_annual_correspondence_task',
   title: '取消年度对应任务',

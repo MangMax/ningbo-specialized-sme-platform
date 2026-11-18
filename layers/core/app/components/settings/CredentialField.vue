@@ -5,7 +5,7 @@ import { Button } from '#core/app/components/ui/button'
 import { Input } from '#core/app/components/ui/input'
 import { Label } from '#core/app/components/ui/label'
 import LoadingIndicator from './LoadingIndicator.vue'
-import type { CredentialOperation, CredentialStatus } from '@/composables/useCredentialSettings'
+import type { CredentialOperation, CredentialStatus } from '#core/app/composables/useCredentialSettings'
 defineProps<{ id: string; label: string; status: CredentialStatus; raw: string; replacement: string; busy: boolean; operation?: CredentialOperation; description: string; sensitive: boolean }>()
 defineEmits<{ 'update:replacement': [value: string | number]; save: []; clear: []; reveal: [copy: boolean] }>()
 const reducedMotion = useReducedMotion()

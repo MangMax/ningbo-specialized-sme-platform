@@ -11,7 +11,7 @@ import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
 import { clearJobSpecs, whenIdle } from '../../../layers/core/server/utils/job-runner'
-import { updateCredential } from '../../../server/utils/credential-state'
+import { updateCredential } from '../../../layers/core/server/utils/credential-state'
 import type { TaskList, TaskSummary } from '../../../layers/core/lib/task-center'
 
 // Keep real retries/page capture/credentials; advance only the injected backoff.

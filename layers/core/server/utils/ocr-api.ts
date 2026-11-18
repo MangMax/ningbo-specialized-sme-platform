@@ -1,4 +1,4 @@
-import { credentialContext, resolveCredential } from '../../../../server/utils/credential-state'
+import { credentialContext, resolveCredential } from './credential-state'
 /**
  * **通路 a:在线 PaddleOCR API**(票 14)。每次异步提交一张已渲染页图 → 轮询 → 取 JSONL 结果。
  *

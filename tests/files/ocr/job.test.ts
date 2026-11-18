@@ -787,7 +787,7 @@ describe('中转命中判据(纯函数)', () => {
 })
 
 it('uses saved credentials for new OCR runs while a running submit and poll retain their startup snapshot', async () => {
-  const { updateCredential } = await import('../../../server/utils/credential-state')
+  const { updateCredential } = await import('../../../layers/core/server/utils/credential-state')
   try {
     updateCredential('core.ocrToken', 'synthetic-start-value', { db, env: {} })
     const file = 'credential-snapshot.pdf'
@@ -837,7 +837,7 @@ it('queued OCR retains its submission credential for submit and poll without per
   const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../../../layers/core/server/utils/job-runner')
   const { ocrSpec } = await import('../../../layers/core/server/utils/jobs/ocr')
   const { getJob } = await import('../../../layers/core/server/utils/job-store')
-  const { updateCredential } = await import('../../../server/utils/credential-state')
+  const { updateCredential } = await import('../../../layers/core/server/utils/credential-state')
   let release: (() => void) | undefined
   try {
     const file = 'queued-credential.pdf'
@@ -864,7 +864,7 @@ it.each([{ name: 'failed', failed: true }, { name: 'successful', failed: false }
   const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../../../layers/core/server/utils/job-runner')
   const { ocrSpec } = await import('../../../layers/core/server/utils/jobs/ocr')
   const { getJob } = await import('../../../layers/core/server/utils/job-store')
-  const { updateCredential } = await import('../../../server/utils/credential-state')
+  const { updateCredential } = await import('../../../layers/core/server/utils/credential-state')
   const token = 'synthetic-"quoted"\\+/=task-secret'
   const echoes = [token, encodeURIComponent(token), JSON.stringify(token).slice(1, -1)]
   try {

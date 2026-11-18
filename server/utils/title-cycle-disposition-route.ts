@@ -1,7 +1,7 @@
 import { getQuery, readBody, setHeader, setResponseStatus } from 'h3'
 import { useDb } from '@db'
-import { semanticRouteHandler } from './core-route'
-import { requireApiToken } from './api-guard'
+import { semanticRouteHandler } from '../../layers/core/server/utils/core-route'
+import { requireApiToken } from '../../layers/core/server/utils/api-guard'
 import { dispositionOperation, dispositionFailure, type DispositionAction } from './title-cycle-disposition-protocol'
 export function dispositionRoute(action: DispositionAction) {
  return semanticRouteHandler(`maintenance.disposition.${action}`, async event => {

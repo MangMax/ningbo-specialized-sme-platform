@@ -1,8 +1,9 @@
 import type { LogContext } from '../../../lib/logging'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { fileRefShape, openFileStore } from '../../../../../server/utils/mcp-files'
-import { writeGuard } from '../../../../../server/utils/mcp-guard'
+import { fileRefShape } from '../../utils/file-agent-reference'
+import { openFileStore } from '../../../../../server/utils/mcp-files'
+import { writeGuard } from '../../utils/mcp-guard'
 import { saveOcrImport, requireOcrFileRef, ocrExpectedVersionSchema, ocrPageSchema } from '../../utils/ocr-page-lifecycle'
 
 /**

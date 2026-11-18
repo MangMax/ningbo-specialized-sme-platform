@@ -1,6 +1,6 @@
 import { useDb } from '@db'
 import { snapshotOperation } from '../../../utils/difference-snapshot'
-import { requireApiToken } from '../../../utils/api-guard'
+import { requireApiToken } from '../../../../layers/core/server/utils/api-guard'
 defineRouteMeta({ openAPI: { tags: ['任务'], summary: '读取公布名单快照进度与结果摘要', security: [{ bearerAuth: [] }] } })
 export default defineEventHandler(async event => {
   requireApiToken(event)

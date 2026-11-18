@@ -1,6 +1,6 @@
 import type { useApplicationDb } from '../../db/client'
 import { cookieRedactor } from '../../lib/platform/client'
-import { credentialContext, resolveCredential } from './credential-state'
+import { credentialContext, resolveCredential } from '../../layers/core/server/utils/credential-state'
 import { sanitizeEvidence } from './record-correspondence-read'
 import type { JobDto, JobRow } from '../../layers/core/server/utils/job-store'
 import { currentJobDto } from './current-export-artifact'

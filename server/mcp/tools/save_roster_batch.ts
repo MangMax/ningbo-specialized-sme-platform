@@ -2,7 +2,7 @@ import { submitRosterImportMcp } from '../../utils/roster-import-mcp-submission'
 import { z } from 'zod'
 import { rosterImportMcpPayloadSchema } from '../../utils/roster-import-schema'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { writeGuard } from '../../utils/mcp-guard'
+import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 
 /**
  * `save_roster_batch` —— **通路 e**：代理经 MCP 把清理后的名单写入统一 API（RL-11，契约 §9）。

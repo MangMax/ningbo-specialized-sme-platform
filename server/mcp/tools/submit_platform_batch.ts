@@ -2,7 +2,7 @@ import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { platformBatchInputShape, platformBatchReceiptShape } from '../../../lib/platform/batch-query'
 import { submitPlatformBatch } from '../../utils/platform-batch-query'
-import { writeGuard } from '../../utils/mcp-guard'
+import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 import { platformMcpLogContext } from '../../utils/mcp-platform-query'
 export default defineMcpTool({
   name: 'submit_platform_batch', title: '异步提交平台批次',

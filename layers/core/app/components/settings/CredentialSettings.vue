@@ -5,7 +5,7 @@ import { Button } from '#core/app/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 import CredentialField from './CredentialField.vue'
 import LoadingIndicator from './LoadingIndicator.vue'
-import { useCredentialSettings } from '@/composables/useCredentialSettings'
+import { useCredentialSettings } from '#core/app/composables/useCredentialSettings'
 import { credentialGroups } from '@/lib/app-modules'
 const { replacement, state, raw, busy, pending, failed, message, resetPresentation, load, save, clear, reveal } = useCredentialSettings()
 const reducedMotion = useReducedMotion()

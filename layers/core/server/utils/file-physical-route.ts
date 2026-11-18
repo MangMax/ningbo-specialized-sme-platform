@@ -1,5 +1,5 @@
 import { useDb } from '@db'
-import { requireApiToken } from '../../../../server/utils/api-guard'
+import { requireApiToken } from './api-guard'
 import { splitFileMaintenanceBody } from './file-maintenance'
 import { readPhysicalIntent, recoverStoredFile } from './file-physical'
 import { createError, defineEventHandler, getQuery, getRouterParam, readBody, setHeader } from 'h3'

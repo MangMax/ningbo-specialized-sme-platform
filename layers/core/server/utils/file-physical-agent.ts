@@ -1,6 +1,6 @@
 import { useDb } from '@db'
 import { createError } from 'h3'
-import { requireFileRef, type FileRefInput } from '../../../../server/utils/mcp-files'
+import { requireFileRef, type FileRefInput } from './file-agent-reference'
 import { type FileMaintenanceOptions } from './file-maintenance'
 import { quarantineStoredFile, readPhysicalIntent, recoverStoredFile } from './file-physical'
 export function physicalFileForAgent(action: 'quarantine' | 'recover' | 'read', input: FileRefInput & FileMaintenanceOptions & { intentId?: string }) {

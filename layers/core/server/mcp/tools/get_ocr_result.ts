@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { fileRefShape, openFileStore } from '../../../../../server/utils/mcp-files'
+import { fileRefShape } from '../../utils/file-agent-reference'
+import { openFileStore } from '../../../../../server/utils/mcp-files'
 import { getOcrResultForFile, requireOcrFileRef, ocrPageSchema } from '../../utils/ocr-page-lifecycle'
 
 /**

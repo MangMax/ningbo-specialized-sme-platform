@@ -1,7 +1,7 @@
 import { verifyFileRead } from '../utils/file-read-identity'
 import { requestLogContext } from '../../lib/logging'
 import { useDb } from '@db'
-import { findFileIdByRelPath } from '../../../../server/utils/mcp-files'
+import { findFileIdByRelPath } from '../utils/file-agent-reference'
 import { stat } from 'node:fs/promises'
 import { isPdfPath, normalizeDpi } from '#core/lib/pdf-page'
 import { renderPdfPages, resolveWithinRoot } from '../utils/pdf-pages'

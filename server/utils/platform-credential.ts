@@ -1,4 +1,4 @@
-import { resolveCredential, type CredentialContext } from './credential-state'
+import { resolveCredential, type CredentialContext } from '../../layers/core/server/utils/credential-state'
 
 /** The application reads database overrides; explicit callbacks remain controlled overrides. */
 export function resolvePlatformCookie(override?: string | (() => string) | null, ctx?: CredentialContext): string {

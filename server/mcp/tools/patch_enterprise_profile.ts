@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { writeGuard } from '../../utils/mcp-guard'
+import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 import { enterpriseProfilePatchSchema, patchEnterpriseProfile } from '../../utils/enterprise-profile'
 export default defineMcpTool({
   name: 'patch_enterprise_profile', title: '原子更正企业资料并保留已确认旧名',

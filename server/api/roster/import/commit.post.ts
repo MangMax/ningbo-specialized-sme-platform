@@ -1,4 +1,4 @@
-import type { DiscoveryJsonSchema, NitroDiscoverySchema } from '../../../utils/nitro-discovery-schema'
+import type { DiscoveryJsonSchema, NitroDiscoverySchema } from '../../../../layers/core/server/utils/nitro-discovery-schema'
 import { createRosterImportHandler } from '../../../utils/roster-import-route'
 
 /**

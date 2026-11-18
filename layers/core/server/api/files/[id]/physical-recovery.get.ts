@@ -1,4 +1,4 @@
-import type { NitroDiscoverySchema } from '../../../../../../server/utils/nitro-discovery-schema'
+import type { NitroDiscoverySchema } from '../../../utils/nitro-discovery-schema'
 import { physicalRecoveryRoute } from '../../../utils/file-physical-route'
 defineRouteMeta({ openAPI: {
   tags: ['文件库'], summary: '读取文件物理删除意图和完成回执',

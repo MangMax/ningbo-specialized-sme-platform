@@ -14,7 +14,7 @@
  * 不落库、不进仓库、不进日志；本文件也不回显任何 token 值。
  */
 
-import { readApiToken, resolveApiAuth, unauthorizedApiMessage } from './api-auth'
+import { readApiToken, resolveApiAuth, unauthorizedApiMessage } from '../../layers/core/server/utils/api-auth'
 import {
   replayRosterImport,
   hasOfficialFactInput,

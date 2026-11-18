@@ -8,7 +8,7 @@ import {
 } from '~~/lib/roster/enterprise-roster'
 import { parseRosterEnterpriseQuery } from '../../utils/roster-read-query'
 import { enterpriseReads } from '../../utils/enterprise-read'
-import { withEnterpriseReadSignal } from '../../utils/enterprise-read-signal'
+import { withEnterpriseReadSignal } from '../../../layers/core/server/utils/enterprise-read-signal'
 
 /**
  * **跨称号去重的企业总表**(契约 §7.1,RL-04)。

@@ -1,7 +1,7 @@
 import { requestLogContext } from '../../../lib/logging'
 import { useDb } from '@db'
 import { normalizeJobParams } from '#core/lib/job'
-import { requireApiToken } from '../../../../../server/utils/api-guard'
+import { requireApiToken } from '../../utils/api-guard'
 import { ensureJobRunnerReady, getJobSpec, jobSpecs, submitJob } from '../../utils/job-runner'
 import { registerJobSpecs } from '../../../../../server/utils/job-specs'
 

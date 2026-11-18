@@ -1,6 +1,6 @@
 import type { LogContext } from '../../lib/logging'
 import { useDb } from '@db'
-import { requireFileRef, type FileRefInput } from '../../../../server/utils/mcp-files'
+import { requireFileRef, type FileRefInput } from './file-agent-reference'
 import { maintainStoredFile, requireVersionedFileMaintenanceOptions, type FileMaintenanceAction, type FileMaintenanceOptions } from './file-maintenance'
 export async function maintainFileForAgent(action: FileMaintenanceAction, input: FileRefInput & FileMaintenanceOptions & { patch?: unknown }, context: LogContext = {}) {
   const db = useDb()

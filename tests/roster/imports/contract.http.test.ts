@@ -28,7 +28,7 @@ import {
   searchEnterpriseIdsByName,
   validateImportRequest,
 } from '../../../server/utils/roster-import'
-import { MCP_WRITE_TOOLS } from '../../../server/utils/mcp-auth'
+import { MCP_WRITE_TOOLS } from '../../../server/mcp-access-policy'
 import { listDifferences, listEnterprises } from '../../../server/utils/mcp-roster'
 import { startRosterApi as startWorkerRosterApi, executeNativeImport } from './fixtures/import-server'
 const startRosterApi: typeof startWorkerRosterApi = options => startWorkerRosterApi({ ...options, executeImport: options.executeImport ?? executeNativeImport })

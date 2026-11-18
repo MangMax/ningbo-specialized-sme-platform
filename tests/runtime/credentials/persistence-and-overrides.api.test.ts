@@ -6,7 +6,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterEach, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { handleCredentialsRequest } from '../../../server/utils/credentials-http'
+import { handleCredentialsRequest } from '../../../layers/core/server/utils/credentials-http'
 import { startHttpFixture, type HttpFixture } from '../../support/http'
 let dir: string
 let db: ReturnType<typeof useDb>

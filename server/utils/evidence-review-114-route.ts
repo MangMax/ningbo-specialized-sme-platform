@@ -1,6 +1,6 @@
 import { getHeader, getQuery, getRouterParam, readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { useDb } from '@db'
-import { readApiToken, resolveApiAuth } from './api-auth'
+import { readApiToken, resolveApiAuth } from '../../layers/core/server/utils/api-auth'
 import { DecisionError102, parse102 } from './decision-lifecycle-102'
 import { decisionOutput102, decisionFailure102 } from './decision-lifecycle-102-output'
 import { impactList114, impactGet114, impactSources114, impactEvents114, impactPreview114, workCommand114, listImpacts114, getImpact114, listSources114, listEvents114, previewImpacts114, work114 } from './evidence-review-114'

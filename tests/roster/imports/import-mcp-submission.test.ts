@@ -7,7 +7,7 @@ vi.mock('../../../server/utils/import-execution', () => ({ importExecutor: { exe
 vi.mock('../../../server/utils/roster-import-page-validation', () => ({ validateRosterImportPageCounts: f.page }))
 vi.mock('../../../layers/core/lib/logging', () => ({ appLog: f.log }))
 vi.mock('../../../server/utils/roster-import-logging', () => ({ logImportFailure: f.failure }))
-vi.mock('../../../server/utils/mcp-guard', () => ({ writeGuard: f.guard }))
+vi.mock('../../../layers/core/server/utils/mcp-guard', () => ({ writeGuard: f.guard }))
 import preflight from '../../../server/mcp/tools/preflight_roster_batch'
 import commit from '../../../server/mcp/tools/save_roster_batch'
 import { rosterImportMcpContext } from '../../../server/utils/roster-import-mcp-context'

@@ -9,7 +9,7 @@ import { isJobId,JOB_STATES,type JobState } from '../../layers/core/lib/job'
 import { TASK_EXPORTS } from '../../lib/sme-roster/task-exports'
 import { type TaskList } from '../../layers/core/lib/task-center'
 import { getTaskFilterKinds, getTaskKind, resolveTaskFilters, taskTabs } from '../../layers/core/lib/task-catalog'
-import { readApiToken,resolveApiAuth } from './api-auth'
+import { readApiToken,resolveApiAuth } from '../../layers/core/server/utils/api-auth'
 import { requestJobCancel,jobSpecs } from '../../layers/core/server/utils/job-runner'
 import { retryPlatformBatch } from './platform-batch-query'
 

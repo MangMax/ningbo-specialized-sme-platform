@@ -17,13 +17,13 @@ import { schema } from '../../../db'
 import { eq, sql } from 'drizzle-orm'
 import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
 import type { RosterImportPlatformQuery } from '../../../lib/roster-import-client'
-import { updateCredential } from '../../../server/utils/credential-state'
+import { updateCredential } from '../../../layers/core/server/utils/credential-state'
 import { handlePlatformBatchRequest } from '../../../server/utils/platform-batch-http'
 import { recognizedResultToImport, platformResultToImport } from '../../../lib/platform/recognized-evidence'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { platformSummaryCache } from '../../../server/utils/platform-summary-cache'
 import { importExecutor } from '../../../server/utils/import-execution'
-import { readMcpToken, resolveMcpAuth } from '../../../server/utils/mcp-auth'
+import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
 
 const dir = mkdtempSync(join(tmpdir(), 'issue327-typed-archive-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })

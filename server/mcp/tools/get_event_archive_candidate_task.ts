@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { dispatchCandidateJobMcp } from '../../utils/candidate-job-api'
-import { readMcpToken, resolveMcpAuth } from '../../utils/mcp-auth'
+import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
 export default defineMcpTool({
   name: 'get_event_archive_candidate_task',
   title: '读取公布事件候选任务',

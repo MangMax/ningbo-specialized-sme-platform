@@ -1,4 +1,4 @@
-import { createReadTurns, runReadTurn } from '../../utils/read-turn'
+import { createReadTurns, runReadTurn } from '../../../layers/core/server/utils/read-turn'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'

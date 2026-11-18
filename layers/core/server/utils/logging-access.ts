@@ -1,5 +1,5 @@
 import { getHeader, getRequestURL, type H3Event } from 'h3'
-import { readApiToken, resolveApiAuth } from '../../../../server/utils/api-auth'
+import { readApiToken, resolveApiAuth } from './api-auth'
 import { taskCenterBrowserAllowed } from './task-center-browser-auth'
 /** Same-origin page access is enabled by default; remote clients still use API tokens. */
 export function logAccessAllowed(event: H3Event): boolean {

@@ -1,6 +1,7 @@
 import { describeFileRead } from '../../utils/file-read-identity'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { fileRefShape, openFileStore, requireFileRef } from '../../../../../server/utils/mcp-files'
+import { fileRefShape, requireFileRef } from '../../utils/file-agent-reference'
+import { openFileStore } from '../../../../../server/utils/mcp-files'
 
 /**
  * `get_file` —— 一个文件的完整元数据(票 18,只读)。

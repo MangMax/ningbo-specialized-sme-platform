@@ -1,4 +1,4 @@
-import { semanticRouteHandler } from './core-route'
+import { semanticRouteHandler } from '../../layers/core/server/utils/core-route'
 import { getHeader, getMethod, getQuery, getRouterParam, readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { useDb } from '@db'
 import { handleRecordCorrespondenceRequest, type CorrespondenceAction } from './record-correspondence-api'

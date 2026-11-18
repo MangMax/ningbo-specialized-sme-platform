@@ -1,11 +1,8 @@
 import { useDb } from '@db'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
-import {
-  ensureFileStoreReady,
-  resolveFileRef,
-  type FileRefInput,
-} from '../../../../server/utils/mcp-files'
+import { resolveFileRef, type FileRefInput } from './file-agent-reference'
+import { ensureFileStoreReady } from '../../../../server/utils/mcp-files'
 import type { StoredFileRow } from '../../../../server/utils/stored-files'
 
 type Db = BetterSQLite3Database<typeof schema>

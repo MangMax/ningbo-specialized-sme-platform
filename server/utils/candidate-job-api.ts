@@ -2,7 +2,7 @@ import type { useApplicationDb } from '../../db/client'
 import type { LogContext } from '../../layers/core/lib/logging'
 import { operationLogContext } from '../../layers/core/server/utils/operation-log-context'
 import { isJobId } from '../../layers/core/lib/job'
-import { readApiToken, resolveApiAuth } from './api-auth'
+import { readApiToken, resolveApiAuth } from '../../layers/core/server/utils/api-auth'
 import {
   CANDIDATE_JOB_KIND,
   submitCandidateDiscovery,

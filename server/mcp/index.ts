@@ -1,7 +1,7 @@
 import { dispositionSchemas, dispositionToolActions } from '../utils/title-cycle-disposition-protocol'
 import toolkitConfig from '#nuxt-mcp-toolkit/config.mjs'
 import { useEvent } from 'nitropack/runtime'
-import { isSessionEvent } from '../utils/mcp-session-runtime'
+import { isSessionEvent } from '../../layers/core/server/utils/mcp-session-runtime'
 import { officialEvidenceRpcError } from '../utils/official-evidence-read'
 import { runtimeLogPolicyRpcError } from '../../layers/core/server/utils/logging-mcp'
 import { decisionRpcError102 } from '../utils/decision-lifecycle-102-mcp'
@@ -17,16 +17,8 @@ import { requestLogContext } from '../../layers/core/lib/logging'
 import { mcpToolLogModule } from '../../layers/core/lib/logging/module'
 import { applyMcpLogMetadata } from '../../layers/core/server/utils/mcp-log-context'
 import { logSemanticOperation, semanticErrorCode } from '../../layers/core/server/utils/semantic-operation-log'
-import {
-  MCP_WRITE_TOOLS,
-  readMcpToken,
-  resolveMcpAuth,
-  unauthorizedMessage,
-  writeToolCallIn,
-  type McpAuthState,
-  type McpAuthReason,
-  type McpWriteTool,
-} from '../utils/mcp-auth'
+import { MCP_WRITE_TOOLS, writeToolCallIn, type McpWriteTool, sessionReadTools } from '../mcp-access-policy'
+import { readMcpToken, resolveMcpAuth, unauthorizedMessage, type McpAuthState, type McpAuthReason } from '../../layers/core/server/utils/mcp-auth'
 
 /**
  * MCP server 的**默认 handler**(票 18):`POST /mcp`。
@@ -58,7 +50,7 @@ export default defineMcpHandler({
   tools: async configuredEvent => (await getMcpTools())
     // Keep the original discovery order when the toolkit collects multiple layers.
     .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', 'en'))
-    .filter(tool => !isSessionEvent(configuredEvent) || ['list_enterprises', 'get_enterprise_detail'].includes(tool.name ?? '')).map(tool => ({
+    .filter(tool => !isSessionEvent(configuredEvent) || sessionReadTools.includes(tool.name ?? '')).map(tool => ({
     ...tool,
     ...(tool.name && tool.name in dispositionToolActions ? { inputSchema: dispositionSchemas[dispositionToolActions[tool.name as keyof typeof dispositionToolActions]] as unknown as NonNullable<typeof tool.inputSchema> } : {}),
     // Toolkit 0.24 types expose only raw shapes, but its registration forwards

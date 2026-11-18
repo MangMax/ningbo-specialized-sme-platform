@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 
 let sequence = 0
 
-import { createSessionAdmission } from '../../../server/utils/mcp-session-admission'
+import { createSessionAdmission } from '../../../layers/core/server/utils/mcp-session-admission'
 
 function admissionDeferred<T>() {
   let resolve!: (value: T) => void
@@ -213,7 +213,7 @@ describe('A_actual_session_admission', () => {
   })
 })
 
-import { createSessionInitializationTransport as createActualSessionInitializationTransport, type InitializationDependencies, type SessionOwner, type OwnedIngress } from '../../../server/utils/mcp-session-transport'
+import { createSessionInitializationTransport as createActualSessionInitializationTransport, type InitializationDependencies, type SessionOwner, type OwnedIngress } from '../../../layers/core/server/utils/mcp-session-transport'
 
 function controlledPeer() {
   const receipt=admissionDeferred<{closed:true}>(),listeners=new Set<()=>void>();let ended=false
@@ -520,7 +520,7 @@ describe('B_ingress_pure', () => {
   })
 })
 
-import { createSocketOwnership } from '../../../server/utils/mcp-session-transport'
+import { createSocketOwnership } from '../../../layers/core/server/utils/mcp-session-transport'
 
 describe('W_socket_ownership_pure', () => {
   it("_socket_observers_detach_and_already_closed_notify_once",()=>{

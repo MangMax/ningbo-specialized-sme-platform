@@ -2,7 +2,7 @@ import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { candidateJobInput } from '../../utils/jobs/candidate-discovery'
 import { dispatchCandidateJobMcp } from '../../utils/candidate-job-api'
-import { writeGuard } from '../../utils/mcp-guard'
+import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 export default defineMcpTool({
   name: 'submit_event_archive_candidate_task',
   title: '异步生成归档候选任务',

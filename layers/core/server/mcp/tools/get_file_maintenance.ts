@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { fileRefShape, requireFileRef } from '../../../../../server/utils/mcp-files'
+import { fileRefShape, requireFileRef } from '../../utils/file-agent-reference'
 import { readFileMaintenance } from '../../utils/file-maintenance'
 export default defineMcpTool({
   name: 'get_file_maintenance', title: '读取文件维护修订与历史',

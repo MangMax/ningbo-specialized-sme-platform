@@ -4,7 +4,7 @@ import { getDbOwnerIdentity } from '../../db/client'
 import { listRosterRecognitions, type RosterRecognitionFilter } from '../../lib/roster/recognitions'
 import { restoreReaderError } from '../../lib/roster/offmain-read-protocol'
 import { enterpriseReads } from './enterprise-read'
-import { createReadTurns, runReadTurn } from './read-turn'
+import { createReadTurns, runReadTurn } from '../../layers/core/server/utils/read-turn'
 
 /** New-consumer policy only. Normal operations submit directly to the singleton;
  * fallback is exactly one original synchronous reader on its acquired owner. */

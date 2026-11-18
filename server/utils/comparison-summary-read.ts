@@ -4,7 +4,7 @@ import { getDbOwnerIdentity } from '../../db/client'
 import { readWholeComparisonSummary, type ComparisonSummaryOptions } from '../../lib/comparison-summary-read'
 import { restoreReaderError } from '../../lib/roster/offmain-read-protocol'
 import { enterpriseReads } from './enterprise-read'
-import { createReadTurns, runReadTurn } from './read-turn'
+import { createReadTurns, runReadTurn } from '../../layers/core/server/utils/read-turn'
 
 /** Eligible reads enter the existing child directly; only the original whole,
  * synchronous callback uses the shared FIFO for at-most-once fallback. */

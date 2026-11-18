@@ -1,3 +1,4 @@
+import { sessionReadTools } from '../../../../server/mcp-access-policy'
 import { defineEventHandler, getRequestURL, toWebHandler, readBody } from 'h3'
 import { useEvent, useNitroApp, useRuntimeConfig, useStorage } from 'nitropack/runtime'
 import toolkitHandler from '#mcp-session-toolkit'
@@ -15,7 +16,7 @@ const endpoint = createSessionEndpoint({
     const bytes = await request.arrayBuffer()
     const frame = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
     if (!acceptsSessionFrame(frame)) return new Response(JSON.stringify({ error: { code: 'task_not_supported' } }), { status: 400, headers: { 'content-type': 'application/json' } })
-    if (frame.method === 'tools/call' && !['list_enterprises', 'get_enterprise_detail'].includes(frame.params?.name)) {
+    if (frame.method === 'tools/call' && !sessionReadTools.includes(frame.params?.name)) {
       return new Response(JSON.stringify({ error: { code: 'tool_not_allowed' } }), { status: 403, headers: { 'content-type': 'application/json' } })
     }
     const token = createSessionReplay(async current => {

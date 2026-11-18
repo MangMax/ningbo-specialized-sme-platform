@@ -1,5 +1,5 @@
 import { requestLogContext } from '../../../lib/logging'
-import { requireApiToken } from '../../../../../server/utils/api-guard'
+import { requireApiToken } from '../../utils/api-guard'
 import { hasFileMaintenanceControls } from '../../utils/file-maintenance'
 import { useDb } from '@db'
 import { handleStoredFilePatchRequest } from '../../utils/stored-file-patch-http'

@@ -2,7 +2,7 @@ import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { platformBatchRetryShape, platformBatchReceiptShape } from '../../../lib/platform/batch-query'
 import { retryPlatformBatch } from '../../utils/platform-batch-query'
-import { writeGuard } from '../../utils/mcp-guard'
+import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 import { platformMcpLogContext } from '../../utils/mcp-platform-query'
 export default defineMcpTool({
   name: 'retry_platform_batch', title: '显式补查itemIds指定未完成项/页，保留batchId/itemId和所有已完成行/查询时间',

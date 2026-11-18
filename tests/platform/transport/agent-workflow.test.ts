@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { initializeDb } from '../../../db/client'
-import { updateCredential } from '../../../server/utils/credential-state'
+import { updateCredential } from '../../../layers/core/server/utils/credential-state'
 import { startPlatformBatchApi } from './fixtures/batch-api'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 const dir = mkdtempSync(join(tmpdir(), 'platform-agent-'))

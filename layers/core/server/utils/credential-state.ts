@@ -1,13 +1,13 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { eq } from 'drizzle-orm'
-import { useDb } from '../../db'
-import { serviceCredential } from '../../db/schema'
-import { isCredentialKey, registeredCredentials, type CredentialKey } from '../../lib/app-modules'
+import { useDb } from '../../../../db'
+import { serviceCredential } from '../../../../db/schema'
+import { isCredentialKey, registeredCredentials, type CredentialKey } from '../../../../lib/app-modules'
 
 export interface CredentialValue { value: string; updatedAt: string }
 type State = Partial<Record<CredentialKey, CredentialValue>>
 export interface CredentialContext {
-  db?: BetterSQLite3Database<typeof import('../../db/schema')>
+  db?: BetterSQLite3Database<typeof import('../../../../db/schema')>
   ocrToken?: string
   env?: Record<string, string | undefined>
 }

@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { DEFAULT_DPI } from '#core/lib/pdf-page'
-import { fileRefShape, openFileStore, pageImagesForAgent } from '../../../../../server/utils/mcp-files'
+import { fileRefShape, pageImagesForAgent } from '../../utils/file-agent-reference'
+import { openFileStore } from '../../../../../server/utils/mcp-files'
 
 /**
  * `list_page_images` —— 一份 PDF 的页图(票 18,只读;产物来自票 13)。

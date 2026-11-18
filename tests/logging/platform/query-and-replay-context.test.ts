@@ -89,7 +89,7 @@ it('legacy retry records transport retry separately from one semantic slot outco
 })
 it('batch retry preserves accepted pages and correlates only unfinished item collection', async () => {
   const { initializeDb } = await import('../../../db/client')
-  const { updateCredential } = await import('../../../server/utils/credential-state')
+  const { updateCredential } = await import('../../../layers/core/server/utils/credential-state')
   const { handlePlatformBatchRequest } = await import('../../../server/utils/platform-batch-http')
   const { whenIdle } = await import('../../../layers/core/server/utils/job-runner')
   const db = initializeDb({ dbPath: join(root, 'batch.db'), create: true })

@@ -20,7 +20,7 @@ import {
   resolveApiAuth,
   specLeaksToken,
   unauthorizedApiMessage,
-} from '../../../server/utils/api-auth'
+} from '../../../layers/core/server/utils/api-auth'
 import {
   __resetJobRunner,
   clearJobSpecs,
@@ -46,7 +46,7 @@ import {
 } from '../../../layers/core/server/utils/job-store'
 import { parseCsvQuery } from '../../../layers/core/lib/csv'
 import { parseRenderPagesParams } from '../../../layers/core/server/utils/jobs/render-pages'
-import { shouldHideOpenApiPath } from '../../../server/utils/openapi-guard'
+import { shouldHideOpenApiPath } from '../../../layers/core/server/utils/openapi-guard'
 import { registerJobSpecs } from '../../../server/utils/job-specs'
 import { minimalPdf } from '../../support/minimal-pdf'
 import { parseUploadDeclaration, registerStoredFile } from '../../../server/modules/sme-roster/file-upload'

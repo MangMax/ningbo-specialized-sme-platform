@@ -1,7 +1,7 @@
 import { getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
 import { z } from 'zod'
 import { useDb } from '@db'
-import { requireApiToken } from './api-guard'
+import { requireApiToken } from '../../layers/core/server/utils/api-guard'
 import { checkBrowserReviewRequest } from './browser-review-102'
 import { syncRequestSchema, preflightFileEventSync, commitFileEventSync } from './file-event-sync'
 const business = syncRequestSchema.omit({ actor: true })

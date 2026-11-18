@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { mount, flushPromises } from '@vue/test-utils'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
-import CredentialSettings from '../../../components/settings/CredentialSettings.vue'
+import CredentialSettings from '../../../layers/core/app/components/settings/CredentialSettings.vue'
 import { Toaster, toast } from 'vue-sonner'
 
 // Happy DOM creates unhandled WAAPI cancellation promises during teardown.

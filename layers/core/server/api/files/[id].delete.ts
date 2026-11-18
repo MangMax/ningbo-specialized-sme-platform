@@ -1,5 +1,5 @@
 import { appLog, requestLogContext } from '../../../lib/logging'
-import { requireApiToken } from '../../../../../server/utils/api-guard'
+import { requireApiToken } from '../../utils/api-guard'
 import { quarantineStoredFile } from '../../utils/file-physical'
 import { useDb } from '@db'
 import { hasFileMaintenanceControls, maintainStoredFileSync, splitFileMaintenanceBody } from '../../utils/file-maintenance'

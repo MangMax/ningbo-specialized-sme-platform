@@ -1,7 +1,7 @@
 import { requestLogContext } from '../../../../lib/logging'
 import { useDb } from '@db'
 import { maintainStoredFile, splitFileMaintenanceBody, requireVersionedFileMaintenanceOptions } from '../../../utils/file-maintenance'
-import { requireApiToken } from '../../../../../../server/utils/api-guard'
+import { requireApiToken } from '../../../utils/api-guard'
 
 defineRouteMeta({ openAPI: {
   tags: ['文件库'], summary: '恢复已移出的文件',

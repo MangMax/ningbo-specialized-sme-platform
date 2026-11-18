@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { writeGuard } from '../../utils/mcp-guard'
+import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 import { commitEnterpriseFact, enterpriseFactCommitSchema } from '../../utils/enterprise-facts'
 export default defineMcpTool({
  name: 'commit_enterprise_fact', title: 'commit enterprise assertions',

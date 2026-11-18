@@ -1,6 +1,6 @@
 import { requestLogContext } from '../../layers/core/lib/logging'
 import { useDb } from '@db'
-import { createCoreRouteHandler } from './core-route'
+import { createCoreRouteHandler } from '../../layers/core/server/utils/core-route'
 import { handleRosterImportRequest, type RosterImportAction } from './roster-import-http'
 
 /**

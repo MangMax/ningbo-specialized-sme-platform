@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { writeGuard } from '../../../../../server/utils/mcp-guard'
+import { writeGuard } from '../../utils/mcp-guard'
 import { loggingMcpResult } from '../../utils/logging-mcp'
 import { LOG_FIELD_PROFILES } from '../../../lib/logging/field-controls'
 import { LOG_LEVELS, LOG_SOURCES, LOG_SUPPORTED_INTEGRATIONS } from '../../../lib/logging/contract'

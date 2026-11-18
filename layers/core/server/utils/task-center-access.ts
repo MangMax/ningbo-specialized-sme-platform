@@ -1,5 +1,5 @@
 import { getHeader, getRequestURL, type H3Event } from 'h3'
-import { requireApiToken } from '../../../../server/utils/api-guard'
+import { requireApiToken } from './api-guard'
 import { taskCenterBrowserAllowed } from './task-center-browser-auth'
 
 /** Scope same-origin page access to task-center actions and current-roster exports. */

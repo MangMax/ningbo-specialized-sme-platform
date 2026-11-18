@@ -1,4 +1,4 @@
-import { isCredentialKey, registeredCredentials, type CredentialKey } from '../../lib/app-modules'
+import { isCredentialKey, registeredCredentials, type CredentialKey } from '../../../../lib/app-modules'
 import { credentialStatus, resolveCredential, updateCredential, updateCredentials, type CredentialContext } from './credential-state'
 import type { CoreRequest, CoreResponse } from './core-route'
 export function handleCredentialsRequest(action: 'state' | 'reveal', request: CoreRequest, ctx: CredentialContext, revealKey?: string): CoreResponse {

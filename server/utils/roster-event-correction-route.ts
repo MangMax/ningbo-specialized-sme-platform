@@ -1,8 +1,8 @@
-import { semanticRouteHandler } from './core-route'
+import { semanticRouteHandler } from '../../layers/core/server/utils/core-route'
 import { getHeader, getMethod, getQuery, getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
 import { useDb } from '@db'
 import { handleEventCorrectionRequest, type EventCorrectionAction } from './roster-event-correction-api'
-import { readApiToken, resolveApiAuth } from './api-auth'
+import { readApiToken, resolveApiAuth } from '../../layers/core/server/utils/api-auth'
 export function eventCorrectionRoute(action: EventCorrectionAction) {
   return semanticRouteHandler(`maintenance.event.${action}`, async event => {
     setHeader(event, 'cache-control', 'no-store')

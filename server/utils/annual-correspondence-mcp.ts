@@ -1,4 +1,4 @@
-import { readMcpToken, resolveMcpAuth } from './mcp-auth'
+import { readMcpToken, resolveMcpAuth } from '../../layers/core/server/utils/mcp-auth'
 import { dispatchAnnualTaskMcp, type AnnualTaskAction, type AnnualTaskContext } from './annual-correspondence-api'
 
 export async function annualTaskMcpRequest(
