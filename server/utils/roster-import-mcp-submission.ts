@@ -22,7 +22,7 @@ export function submitRosterImportMcp(action: 'preflight' | 'commit', input: {
       payload: input.payload,
     })
     if (!validated.ok) {
-      appLog({ source: 'import', operation: `import.submission.${action}`, outcome: 'denied', errorCode: 'invalid_import_request' }, context)
+      appLog({ module: 'sme-roster', source: 'import', operation: `import.submission.${action}`, outcome: 'denied', errorCode: 'invalid_import_request' }, context)
       throw createError({ statusCode: validated.status, message: validated.message })
     }
     try {

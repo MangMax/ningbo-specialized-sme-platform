@@ -139,7 +139,7 @@ export async function runRenderPages(
   for (let i = 0; i < files.length; i += 1) {
     // 每份之前看一眼取消标记 —— 这是「尽力而为」唯一的检查点。
     if (ctx.cancelled()) {
-      appLog({ source: 'file', operation: 'file.render.batch', outcome: 'cancelled', counts: { done: i, total: files.length, failed } }, logContext)
+      appLog({ module: 'core', source: 'file', operation: 'file.render.batch', outcome: 'cancelled', counts: { done: i, total: files.length, failed } }, logContext)
       return {
         result: { ...snapshot(), cancelled: true, done: i },
         cancelled: true,
@@ -185,7 +185,7 @@ export async function runRenderPages(
   }
 
   const result = snapshot()
-  appLog({ source: 'file', operation: 'file.render.batch', outcome: failed ? (result.ok ? 'partial' : 'failure') : 'success', level: failed ? 'error' : 'info', counts: { done: outcomes.length, total: files.length, failed } }, logContext)
+  appLog({ module: 'core', source: 'file', operation: 'file.render.batch', outcome: failed ? (result.ok ? 'partial' : 'failure') : 'success', level: failed ? 'error' : 'info', counts: { done: outcomes.length, total: files.length, failed } }, logContext)
   return failed
     ? { result, error: `${files.length} 份里 ${failed} 份渲染失败(逐项原因见 result.files[].error)` }
     : { result }

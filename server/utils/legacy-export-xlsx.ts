@@ -32,17 +32,17 @@ export async function writeLegacyXlsx(
 ) {
   const logContext = requestLogContext({ context: event.context ?? {} }), startedAt = Date.now()
   const operation = `export.legacy.${kind}`
-  appLog({ source: 'export', operation: operation + '.workbook', outcome: 'started' }, logContext)
+  appLog({ module: 'sme-roster', source: 'export', operation: operation + '.workbook', outcome: 'started' }, logContext)
   let disconnected = false, downloadRecorded = false
   const recordDownload = (outcome: 'success' | 'failure' | 'cancelled', errorCode?: string) => {
     if (downloadRecorded) return
     downloadRecorded = true
-    appLog({ source: 'export', operation: operation + '.download', outcome, durationMs: Date.now() - startedAt, errorCode, level: outcome === 'failure' ? 'error' : outcome === 'success' ? 'info' : 'warn' }, logContext)
+    appLog({ module: 'sme-roster', source: 'export', operation: operation + '.download', outcome, durationMs: Date.now() - startedAt, errorCode, level: outcome === 'failure' ? 'error' : outcome === 'success' ? 'info' : 'warn' }, logContext)
   }
   let dir: string
   try { dir = mkdtempSync(join(tmpdir(), 'roster-export-')) }
   catch (error) {
-    appLog({ source: 'export', operation: operation + '.workbook', outcome: 'failure', level: 'error', errorCode: 'legacy_workbook_failed' }, logContext)
+    appLog({ module: 'sme-roster', source: 'export', operation: operation + '.workbook', outcome: 'failure', level: 'error', errorCode: 'legacy_workbook_failed' }, logContext)
     throw error
   }
   const filename = join(dir, 'download.xlsx')
@@ -58,9 +58,9 @@ export async function writeLegacyXlsx(
     event.node?.res?.off('close', abort)
     try {
       rmSync(dir, { recursive: true, force: true })
-      appLog({ source: 'export', operation: operation + '.cleanup', outcome: 'success' }, logContext)
+      appLog({ module: 'sme-roster', source: 'export', operation: operation + '.cleanup', outcome: 'success' }, logContext)
     } catch (error) {
-      appLog({ source: 'export', operation: operation + '.cleanup', outcome: 'failure', level: 'error', errorCode: 'legacy_cleanup_failed' }, logContext)
+      appLog({ module: 'sme-roster', source: 'export', operation: operation + '.cleanup', outcome: 'failure', level: 'error', errorCode: 'legacy_cleanup_failed' }, logContext)
       throw error
     }
   }
@@ -145,10 +145,10 @@ export async function writeLegacyXlsx(
     download = createReadStream(filename)
     download.on('error', () => recordDownload(disconnected ? 'cancelled' : 'failure', disconnected ? 'download_disconnected' : 'legacy_read_failed')) // Observe before h3 attaches.
     download.once('close', cleanup)
-    appLog({ source: 'export', operation: operation + '.workbook', outcome: 'success', durationMs: Date.now() - startedAt }, logContext)
+    appLog({ module: 'sme-roster', source: 'export', operation: operation + '.workbook', outcome: 'success', durationMs: Date.now() - startedAt }, logContext)
     return download
   } catch (error) {
-    appLog({ source: 'export', operation: operation + '.workbook', outcome: disconnected ? 'cancelled' : 'failure', level: disconnected ? 'warn' : 'error', errorCode: disconnected ? 'download_disconnected' : 'legacy_workbook_failed' }, logContext)
+    appLog({ module: 'sme-roster', source: 'export', operation: operation + '.workbook', outcome: disconnected ? 'cancelled' : 'failure', level: disconnected ? 'warn' : 'error', errorCode: disconnected ? 'download_disconnected' : 'legacy_workbook_failed' }, logContext)
     sink?.destroy()
     textSink?.destroy()
     await settled

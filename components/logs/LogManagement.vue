@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { logModuleLabel } from './logPresentation'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { LOG_LEVELS } from '~~/lib/logging/contract'
 import type {
@@ -140,6 +141,7 @@ const filterLabels: Record<string, string> = {
   to: '结束时间',
   level: '级别',
   source: '来源',
+  module: '模块',
   outcome: '结果',
   operation: '操作',
   requestId: '请求标识',
@@ -1180,7 +1182,7 @@ async function confirm() {
           ><p class="text-sm">清理以下已固定范围，每次最多 1000 条：</p>
           <Table><TableBody><TableRow v-for="(value, key) in dialogReview.filter" :key="key">
             <TableCell class="text-muted-foreground">{{ filterLabels[key] ?? key }}</TableCell>
-            <TableCell class="break-all">{{ key === 'from' || key === 'to' ? localRange(String(value)) : value }}</TableCell>
+            <TableCell class="break-all">{{ key === 'from' || key === 'to' ? localRange(String(value)) : key === 'module' ? logModuleLabel(String(value)) : value }}</TableCell>
           </TableRow></TableBody></Table>
         </template>
         <DialogFooter

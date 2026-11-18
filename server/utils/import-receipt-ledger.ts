@@ -49,7 +49,7 @@ export function recordImportReceipt<T extends { status: string }>(db: Db, operat
   }, { behavior: 'immediate' })
   if ('replayed' in attempt) {
     const result = run()
-    if (!enclosingTransaction) appLog({ source: 'import', operation: `import.${operation}.replay`, outcome: 'success', batchId: attempt.batchId, receiptId: attempt.receiptId }, context)
+    if (!enclosingTransaction) appLog({ module: 'sme-roster', source: 'import', operation: `import.${operation}.replay`, outcome: 'success', batchId: attempt.batchId, receiptId: attempt.receiptId }, context)
     return result
   }
   let result: T
@@ -72,7 +72,7 @@ export function recordImportReceipt<T extends { status: string }>(db: Db, operat
     const conflicts = stored.preflight?.conflicts.length ?? 0
     const businessConflict = conflicts > 0 || stored.items?.some(item => !item.ok && item.error && !['commit_rolled_back', 'not_executed'].includes(item.error.code))
     // A savepoint inside someone else's transaction is not a durable commit.
-    if (!enclosingTransaction) appLog({ source: 'import', operation: `import.${operation}`,
+    if (!enclosingTransaction) appLog({ module: 'sme-roster', source: 'import', operation: `import.${operation}`,
       outcome: result.status === 'failed' ? 'failure' : conflicts ? 'denied' : 'success',
       ...(result.status === 'failed' ? { errorCode: businessConflict ? 'import_conflict' : 'import_batch_failed' } : conflicts ? { errorCode: 'import_conflict', level: 'warn' as const } : {}),
       batchId: stored.batchId, receiptId: attempt.id,

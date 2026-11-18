@@ -110,7 +110,7 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
   }
   const startedAt = Date.now()
   let summaryComplete = false, workbookStarted = false, ownedTransaction = false
-  appLog({ source: 'export', operation: 'export.current.summary', outcome: 'started' }, logContext)
+  appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.summary', outcome: 'started' }, logContext)
   try {
     // SQLite functions must be registered before a streaming SELECT is active.
     prepareCurrentReader(db)
@@ -141,7 +141,7 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
     }
     const snapshotStartedAt = new Date().toISOString()
     workbookStarted = true
-    appLog({ source: 'export', operation: 'export.current.workbook', outcome: 'started' }, logContext)
+    appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.workbook', outcome: 'started' }, logContext)
     const workbook = new Stream.WorkbookWriter({ stream: output, useStyles: true, useSharedStrings: false, trueStreaming: true })
     const counts = { eligible: 0, pending: 0, excluded: 0 }, hash = createHash('sha256').update(JSON.stringify([candidateReader === undefined ? 'current-export-assessment-title-v3' : 'current-export-assessment-409-v2',QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,year,title]) + '\n')
     const statusCounts = { effective: 0, expired: 0, terminated: 0, moved_out: 0, unrecognized: 0 }
@@ -213,7 +213,7 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
       // pinned snapshot. No additional query/pass is introduced for logging.
       if (group === 'effective') {
         summaryComplete = true
-        appLog({ source: 'export', operation: 'export.current.summary', outcome: 'success', durationMs: Date.now() - startedAt, counts: { done: total, total } }, logContext)
+        appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.summary', outcome: 'success', durationMs: Date.now() - startedAt, counts: { done: total, total } }, logContext)
       }
       if (group !== 'effective') deferred[group].length = 0
     }
@@ -239,11 +239,11 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
     await completed
     db.exec('COMMIT')
     ownedTransaction = false
-    appLog({ source: 'export', operation: 'export.current.workbook', outcome: 'success', durationMs: Date.now() - startedAt, counts: { done: total, total } }, logContext)
+    appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.workbook', outcome: 'success', durationMs: Date.now() - startedAt, counts: { done: total, total } }, logContext)
     return { generatedAt, snapshotStartedAt, dataVersion, ruleVersion: CURRENT_RULE_VERSION, counts, statusCounts, total }
   } catch (error) {
-    if (!summaryComplete) appLog({ source: 'export', operation: 'export.current.summary', outcome: 'failure', level: 'error', errorCode: 'summary_failed' }, logContext)
-    if (workbookStarted) appLog({ source: 'export', operation: 'export.current.workbook', outcome: 'failure', level: 'error', errorCode: error instanceof CurrentWorkbookLimitError ? 'workbook_limit' : 'workbook_failed' }, logContext)
+    if (!summaryComplete) appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.summary', outcome: 'failure', level: 'error', errorCode: 'summary_failed' }, logContext)
+    if (workbookStarted) appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.workbook', outcome: 'failure', level: 'error', errorCode: error instanceof CurrentWorkbookLimitError ? 'workbook_limit' : 'workbook_failed' }, logContext)
     output.destroy(); await completed.catch(() => {}); if (ownedTransaction && db.inTransaction) db.exec('ROLLBACK'); throw error
   } finally {
     rmSync(overflowDir,{recursive:true,force:true})

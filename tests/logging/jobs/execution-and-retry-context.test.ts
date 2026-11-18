@@ -14,7 +14,7 @@ afterAll(async () => { await whenIdle(); __resetJobRunner(); clearJobSpecs(); aw
 it('retains submission context after return and logs one terminal with bounded progress and no payload', async () => {
   let release!: () => void
   const gate = new Promise<void>(resolve => { release=resolve })
-  const context = { requestId:'request184',traceId:'trace184' }
+  const context = { requestId:'request184',traceId:'trace184',module:'sme-roster' }
   let captured: unknown
   registerJob({ kind:'logging184',status:'ready',summary:'fixture',parse:params=>({ok:true,params}),run:async ctx=>{
     captured=ctx.logContext
@@ -30,7 +30,7 @@ it('retains submission context after return and logs one terminal with bounded p
   const {rows}=await applicationLogs().list({taskId:job.id})
   expect(rows.filter(r=>r.operation==='task.finished')).toHaveLength(1)
   expect(rows.map(r=>r.operation)).toEqual(['task.finished','task.progress','task.started','task.queued'])
-  expect(rows.every(r=>r.requestId==='request184' && r.traceId==='trace184')).toBe(true)
+  expect(rows.every(r=>r.requestId==='request184' && r.traceId==='trace184' && r.module===null)).toBe(true)
   const details=await Promise.all(rows.map(r=>applicationLogs().detail(r.id)))
   expect(details.find(r=>r?.operation==='task.finished')?.counts).toEqual({done:100,total:100})
   expect(JSON.stringify(details)).not.toMatch(/PRIVATE184|params|filesDir|mutated184/)

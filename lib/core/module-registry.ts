@@ -35,6 +35,15 @@ export type AppModuleManifest = {
   readonly home?: string
   readonly dashboard?: readonly AppDashboardCard[]
   readonly dependsOn?: readonly string[]
+  readonly routes?: readonly string[]
+  /** Browser-safe log page tokens and their static path prefixes. */
+  readonly clientPages?: readonly {
+    readonly page: string
+    readonly paths: readonly string[]
+    /** Existing operation label when ownership changes with a page move. */
+    readonly operationPage?: string
+  }[]
+  readonly mcpTools?: readonly string[]
   readonly credentials?: readonly AppCredential[]
   readonly nav?: readonly AppNavItem[]
   readonly jobKinds?: readonly AppJobKind[]
@@ -49,10 +58,16 @@ export function defineAppModule<const T extends AppModuleManifest>(manifest: T):
   return manifest
 }
 
+const clientPageToken = /^[a-z][a-z0-9-]{0,63}$/
+
 export function validateAppModules(manifests: readonly AppModuleManifest[]): void {
   const modulesById = new Map<string, AppModuleManifest>()
   const navOwners = new Map<string, string>()
   const jobOwners = new Map<string, string>()
+  const routes = new Set<string>()
+  const clientPages = new Set(['other'])
+  const clientPaths = new Set<string>()
+  const tools = new Set<string>()
 
   for (const manifest of manifests) {
     const { id, nav, jobKinds, credentials } = manifest
@@ -61,6 +76,30 @@ export function validateAppModules(manifests: readonly AppModuleManifest[]): voi
     }
     if (modulesById.has(id)) throw new Error(`模块「${id}」的 id 重复`)
     modulesById.set(id, manifest)
+
+    for (const prefix of manifest.routes ?? []) {
+      if (!/^\/api(?:\/(?:[a-z0-9-]+|:[a-zA-Z][a-zA-Z0-9]*))+$/.test(prefix)) {
+        throw new Error(`模块「${id}」的 API 前缀「${prefix}」无效`)
+      }
+      if (routes.has(prefix)) throw new Error(`API 前缀「${prefix}」重复登记`)
+      routes.add(prefix)
+    }
+    for (const { page, paths, operationPage = page } of manifest.clientPages ?? []) {
+      if (!clientPageToken.test(page) || !clientPageToken.test(operationPage) || clientPages.has(page)) {
+        throw new Error(`模块「${id}」的客户端日志分类「${page}」无效或重复`)
+      }
+      clientPages.add(page)
+      for (const path of paths) {
+        if (!/^(?:\/|(?:\/[a-z0-9-]+)+)$/.test(path) || clientPaths.has(path)) {
+          throw new Error(`模块「${id}」的客户端日志路径「${path}」无效或重复`)
+        }
+        clientPaths.add(path)
+      }
+    }
+    for (const tool of manifest.mcpTools ?? []) {
+      if (tools.has(tool)) throw new Error(`MCP 工具「${tool}」重复登记`)
+      tools.add(tool)
+    }
 
     for (const { kind } of jobKinds ?? []) {
       const owner = jobOwners.get(kind)

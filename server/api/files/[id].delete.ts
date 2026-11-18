@@ -61,7 +61,7 @@ export default defineEventHandler(async (event) => {
       const { options } = splitFileMaintenanceBody(body, 'remove')
       requireApiToken(event)
       const receipt = quarantineStoredFile(useDb(), useRuntimeConfig().filesDir, id, options)
-      appLog({ source: 'file', operation: 'file.disk.remove', outcome: 'success', fileId: id }, requestLogContext(event))
+      appLog({ module: 'core', source: 'file', operation: 'file.disk.remove', outcome: 'success', fileId: id }, requestLogContext(event))
       return receipt
     }
     else {
@@ -70,12 +70,12 @@ export default defineEventHandler(async (event) => {
       result = { row, diskDeleted: false, referenceCount: row.referenceCount }
     }
   } catch (error) {
-    appLog({ source: 'file', operation: deleteDisk ? 'file.disk.remove' : 'file.maintenance.remove', outcome: ((error as { statusCode?: number }).statusCode ?? 500) < 500 ? 'denied' : 'failure', level: 'error', errorCode: 'file_remove_failed', fileId: id }, requestLogContext(event))
+    appLog({ module: 'core', source: 'file', operation: deleteDisk ? 'file.disk.remove' : 'file.maintenance.remove', outcome: ((error as { statusCode?: number }).statusCode ?? 500) < 500 ? 'denied' : 'failure', level: 'error', errorCode: 'file_remove_failed', fileId: id }, requestLogContext(event))
     throw createError({ statusCode: (error as { statusCode?: number }).statusCode ?? 500, message: (error as Error).message })
   }
   if (!result) throw createError({ statusCode: 404, message: '文件不存在' })
 
-  appLog({ source: 'file', operation: deleteDisk ? 'file.disk.remove' : 'file.maintenance.remove', outcome: 'success', fileId: result.row.id }, requestLogContext(event))
+  appLog({ module: 'core', source: 'file', operation: deleteDisk ? 'file.disk.remove' : 'file.maintenance.remove', outcome: 'success', fileId: result.row.id }, requestLogContext(event))
   return {
     removed: result.row.removedAt !== null,
     diskDeleted: result.diskDeleted,

@@ -111,7 +111,7 @@ it('keeps a healthy hot connection after real BUSY and never authorizes a locked
   expect(await f.call('policy')).toMatchObject({ ok: true, result: { revision: 0, collection: { sources: { task: { enabled: true } } } }, observation: { opens: 1, inTransaction: false } })
   await expect.poll(() => f.diagnostic()).toContain('"nativeCode":"SQLITE_BUSY"')
   const diagnostic = JSON.parse(f.diagnostic().trim().split('\n')[0]!)
-  expect(diagnostic).toEqual({ source: 'system', operation: 'logging.storage', outcome: 'failure', code: 'storage_unavailable', nativeCode: 'SQLITE_BUSY', action: 'policy', phase: 'command' })
+  expect(diagnostic).toEqual({ module: 'core', source: 'system', operation: 'logging.storage', outcome: 'failure', code: 'storage_unavailable', nativeCode: 'SQLITE_BUSY', action: 'policy', phase: 'command' })
   db.exec('ROLLBACK')
   expect((await f.call('write', [event('busy.recovered')])).result.stored).toBe(1)
   expect(f.output()).not.toContain('busy.denied')

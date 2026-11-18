@@ -132,12 +132,12 @@ export async function maintainStoredFile(db: Db, root: string, id: number, actio
   const startedAt = Date.now()
   try {
     const result = await maintainStoredFileUnlogged(db, root, id, action, patch, options)
-    appLog({ source: 'file', operation: `file.maintenance.${action}`, outcome: 'success', fileId: result.id, durationMs: Date.now() - startedAt }, context)
+    appLog({ module: 'core', source: 'file', operation: `file.maintenance.${action}`, outcome: 'success', fileId: result.id, durationMs: Date.now() - startedAt }, context)
     return result
   } catch (error) {
     // The attempted target: a failed command must not imply the file exists.
     const attemptedFileId = Number.isSafeInteger(id) && id > 0 ? id : undefined
-    appLog({ source: 'file', operation: `file.maintenance.${action}`, outcome: error instanceof FileMaintenanceError ? 'denied' : 'failure', level: 'error', errorCode: 'file_maintenance_failed', durationMs: Date.now() - startedAt, ...(attemptedFileId ? { fileId: attemptedFileId } : {}) }, context)
+    appLog({ module: 'core', source: 'file', operation: `file.maintenance.${action}`, outcome: error instanceof FileMaintenanceError ? 'denied' : 'failure', level: 'error', errorCode: 'file_maintenance_failed', durationMs: Date.now() - startedAt, ...(attemptedFileId ? { fileId: attemptedFileId } : {}) }, context)
     throw error
   }
 }

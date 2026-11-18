@@ -338,10 +338,10 @@ export function setFileCategoryForAgent(
 
   try {
     const row = maintainStoredFileSync(db, found.row.id, 'update', patch, maintenanceOptions)
-    appLog({ source: 'file', operation: 'file.maintenance.update', outcome: 'success', fileId: row.id }, context)
+    appLog({ module: 'core', source: 'file', operation: 'file.maintenance.update', outcome: 'success', fileId: row.id }, context)
     return { ok: true, row }
   } catch (error) {
-    appLog({ source: 'file', operation: 'file.maintenance.update', outcome: ((error as { statusCode?: number }).statusCode ?? 500) < 500 ? 'denied' : 'failure', fileId: found.row.id, level: 'error', errorCode: 'file_maintenance_failed' }, context)
+    appLog({ module: 'core', source: 'file', operation: 'file.maintenance.update', outcome: ((error as { statusCode?: number }).statusCode ?? 500) < 500 ? 'denied' : 'failure', fileId: found.row.id, level: 'error', errorCode: 'file_maintenance_failed' }, context)
     return { ok: false, statusCode: (error as { statusCode?: number }).statusCode ?? 500, message: (error as Error).message }
   }
 }

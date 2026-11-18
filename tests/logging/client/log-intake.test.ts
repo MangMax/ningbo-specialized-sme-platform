@@ -1,9 +1,24 @@
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../lib/logging'
+import { clientPage } from '../../../lib/client-logging/contract'
+import { createClientErrorTransport } from '../../../lib/client-logging/transport'
 import { createClientLogIntake } from '../../../server/utils/client-log-intake'
+
+// Exercise a new registration while keeping the running application's declarations.
+vi.mock(import('../../../lib/app-modules'), async (importOriginal) => {
+  const registry = await importOriginal()
+  const { defineAppModule, validateAppModules } = await import('../../../lib/core/module-registry')
+  const modules = [...registry.getAppModules(), defineAppModule({
+    id: 'enterprise-services',
+    name: '企业服务',
+    clientPages: [{ page: 'service-desk', paths: ['/enterprise-services'] }],
+  })] as const
+  validateAppModules(modules)
+  return { ...registry, getAppModules: () => modules }
+})
 
 const dirs: string[] = []
 const oldDir = process.env.NUXT_LOG_DIR
@@ -12,15 +27,57 @@ beforeEach(() => {
   initializeWorkerLogging()
 })
 afterEach(async () => {
+  vi.unstubAllGlobals()
   await closeApplicationLogging()
   if (oldDir === undefined) delete process.env.NUXT_LOG_DIR
   else process.env.NUXT_LOG_DIR = oldDir
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
+it.each([
+  ['/', 'core', 'roster'],
+  ['/roster', 'sme-roster', 'other'],
+  ['/enterprises/1', 'sme-roster', 'roster'],
+  ['/comparison', 'sme-roster', 'other'],
+  ['/platform-declarations', 'sme-roster', 'other'],
+  ['/files', 'core', 'files'],
+  ['/preview', 'core', 'other'],
+  ['/ocr', 'core', 'other'],
+  ['/enterprise-services/PRIVATE189', 'enterprise-services', 'service-desk'],
+  ['/enterprise-services-other', null, 'other'],
+] as const)('attributes browser reports on %s to %s through transport and intake', async (path, module, page) => {
+  const intake = createClientLogIntake()
+  const requests: string[] = []
+  vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+    const body = String(init.body)
+    requests.push(body)
+    const result = intake.accept(JSON.parse(body), 'browser', { requestId: 'client-intake' })
+    return { ok: result.status === 202 }
+  })
+  const transport = createClientErrorTransport()
+  try {
+    transport.report('script_error', clientPage(path))
+    transport.reportLibrary('router_navigation_error', clientPage(path))
+    await transport.flush()
+    expect(transport.status().sent).toBe(2)
+    expect(requests.join('')).not.toContain('PRIVATE189')
+    await applicationLogs().flush()
+    const { rows } = await applicationLogs().list({ source: 'client' })
+    expect(rows).toHaveLength(2)
+    for (const row of rows) expect(row).toMatchObject({ source: 'client', module, requestId: 'client-intake' })
+    expect(rows.find(row => row.origin?.integration === 'vue-router')).toMatchObject({
+      operation: 'client.router.navigation_error', outcome: 'failure', level: 'error',
+    })
+    expect(rows.find(row => row.origin?.integration === 'browser')).toMatchObject({
+      operation: `client.${page}.script_error`, outcome: 'failure', level: 'error',
+    })
+  } finally {
+    transport.dispose()
+  }
+})
 it('stores only classified client claims with server intake correlation through evlog', async () => {
   const intake = createClientLogIntake()
-  const result = intake.accept([{ event: { kind: 'script_error', page: 'roster', level: 'error',
-    origin: {runtime:'node',integration:'tus',capture:'framework'}, source: 'worker', operation: 'import.commit', id: 'forged-id', timestamp: '2000-01-01',
+  const result = intake.accept([{ event: { kind: 'script_error', page: clientPage('/platform-declarations'), level: 'error',
+    origin: {runtime:'node',integration:'tus',capture:'framework'}, source: 'worker', module: 'core', operation: 'import.commit', id: 'forged-id', timestamp: '2000-01-01',
     requestId: 'claimed-request', taskId: 'claimed-task', fileId: 189, resourceId: 'claimed-resource',
     message: 'PRIVATE189 input /Users/private?token=secret', stack: 'PRIVATE189',
   } }], 'connection-one', { requestId: 'server-request', traceId: 'server-trace' })
@@ -29,7 +86,7 @@ it('stores only classified client claims with server intake correlation through 
   const listed = await applicationLogs().list({ source: 'client' })
   expect(listed.rows).toHaveLength(1)
   const detail = await applicationLogs().detail(listed.rows[0]!.id)
-  expect(detail).toMatchObject({ source: 'client', operation: 'client.roster.script_error', outcome: 'failure', level: 'error', requestId: 'server-request', traceId: 'server-trace' })
+  expect(detail).toMatchObject({ source: 'client', module: 'sme-roster', operation: 'client.other.script_error', outcome: 'failure', level: 'error', requestId: 'server-request', traceId: 'server-trace' })
   expect(detail?.id).not.toBe('forged-id')
   expect(detail?.origin).toEqual({runtime:'browser',integration:'browser',capture:'hook',execution:'page'})
   expect(JSON.stringify(detail)).not.toMatch(/PRIVATE189|claimed|forged|2000-01-01|taskId|fileId|resourceId|message|stack/)

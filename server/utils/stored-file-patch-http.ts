@@ -11,11 +11,11 @@ export function handleStoredFilePatchRequest(method: string, idValue: unknown, b
   try {
     const { options, patch } = splitFileMaintenanceBody(body, 'update')
     const row = maintainStoredFileSync(db, id, 'update', patch, options)
-    appLog({ source: 'file', operation: 'file.maintenance.update', outcome: 'success', fileId: row.id }, context)
+    appLog({ module: 'core', source: 'file', operation: 'file.maintenance.update', outcome: 'success', fileId: row.id }, context)
     return { status: 200, body: row }
   } catch (error) {
     const status = (error as { statusCode?: number }).statusCode ?? 500
-    appLog({ source: 'file', operation: 'file.maintenance.update', outcome: status < 500 ? 'denied' : 'failure', level: 'error', errorCode: 'file_maintenance_failed', fileId: id }, context)
+    appLog({ module: 'core', source: 'file', operation: 'file.maintenance.update', outcome: status < 500 ? 'denied' : 'failure', level: 'error', errorCode: 'file_maintenance_failed', fileId: id }, context)
     return { status, body: { message: (error as Error).message } }
   }
 }

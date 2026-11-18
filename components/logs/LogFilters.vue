@@ -1,7 +1,7 @@
 <!--
   LogFilters —— 快速筛选与高级筛选在同一个 Card 表面里。
 
-  页面把本组件放进唯一一张筛选卡：顶部一行是级别/来源/结果/操作与提交动作，
+  页面把本组件放进唯一一张筛选卡：顶部一行是级别/来源/模块/结果/操作与提交动作，
   下方是「更多筛选」折叠区，二者共用这张卡的底色和边框，不再出现“裸工具条 +
   独立白卡”两个表面。
 
@@ -15,7 +15,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { LOG_LEVELS, LOG_OUTCOMES, LOG_SOURCES, type LogFilter } from '~~/lib/logging/contract'
-import { sourceLabel, outcomeLabel } from './logPresentation'
+import { sourceLabel, outcomeLabel, logModuleLabel, logModuleOptions } from './logPresentation'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Input } from '@/components/ui/input'
@@ -45,6 +45,7 @@ const ids = [
 const choices = [
   { key: 'level', label: '级别', values: LOG_LEVELS },
   { key: 'source', label: '来源', values: LOG_SOURCES },
+  { key: 'module', label: '模块', values: logModuleOptions },
   { key: 'outcome', label: '结果', values: LOG_OUTCOMES }
 ]
 // 操作在工具栏里，不在折叠区内：折叠条只报它真正装着的条件。
@@ -60,10 +61,10 @@ const advancedTitle = computed(() =>
 )
 const showReset = computed(() => liveValues.value.length > 0)
 const choiceLabel = (key: string, value: string) =>
-  key === 'source' ? sourceLabel(value) : key === 'outcome' ? outcomeLabel(value) : value
+  key === 'source' ? sourceLabel(value) : key === 'outcome' ? outcomeLabel(value) : key === 'module' ? logModuleLabel(value) : value
 /** 收起时也认得出每个下拉管的是哪一类；选中后把类别带在值前面。 */
 const summary = (choice: (typeof choices)[number]) =>
-  draft[choice.key] && draft[choice.key] !== 'all'
+  draft[choice.key] && draft[choice.key] !== ':all'
     ? `${choice.label} · ${choiceLabel(choice.key, draft[choice.key]!)}`
     : `全部${choice.label}`
 function localTime(iso: string | undefined) {
@@ -77,7 +78,7 @@ watch(
     for (const key of ['operation', ...ids.map((i) => i.key)])
       draft[key] = String(filter[key as keyof LogFilter] ?? '')
     for (const choice of choices)
-      draft[choice.key] = String(filter[choice.key as keyof LogFilter] ?? 'all')
+      draft[choice.key] = String(filter[choice.key as keyof LogFilter] ?? ':all')
     draft.from = localTime(filter.from)
     draft.to = localTime(filter.to)
     if (filter.from || filter.to || ids.some((i) => !!filter[i.key as keyof LogFilter])) advancedOpen.value = true
@@ -87,13 +88,13 @@ watch(
 function apply() {
   const value: Record<string, string> = {}
   for (const key of ['operation', ...ids.map((i) => i.key), ...choices.map((i) => i.key)])
-    if (draft[key] && draft[key] !== 'all') value[key] = draft[key]!.trim()
+    if (draft[key] && draft[key] !== ':all') value[key] = draft[key]!.trim()
   for (const key of ['from', 'to']) if (draft[key]) value[key] = new Date(draft[key]!).toISOString()
   emit('apply', value)
 }
 function reset() {
   for (const key of ['operation', ...ids.map((i) => i.key)]) draft[key] = ''
-  for (const choice of choices) draft[choice.key] = 'all'
+  for (const choice of choices) draft[choice.key] = ':all'
   draft.from = ''
   draft.to = ''
   advancedOpen.value = false
@@ -113,7 +114,8 @@ function reset() {
         v-for="choice in choices"
         :key="choice.key"
         orientation="horizontal"
-        class="w-28 shrink-0 sm:w-32"
+        class="shrink-0"
+        :class="choice.key === 'module' ? 'w-36 sm:w-40' : 'w-28 sm:w-32'"
       >
         <FieldLabel :for="`log-${choice.key}`" class="sr-only">{{ choice.label }}</FieldLabel>
         <Select v-model="draft[choice.key]">
@@ -121,12 +123,12 @@ function reset() {
             :id="`log-${choice.key}`"
             size="sm"
             class="bg-card w-full shadow-none data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground"
-            :data-active="!!draft[choice.key] && draft[choice.key] !== 'all'"
+            :data-active="!!draft[choice.key] && draft[choice.key] !== ':all'"
           >
             <SelectValue>{{ summary(choice) }}</SelectValue>
           </SelectTrigger>
           <SelectContent><SelectGroup>
-            <SelectItem value="all">全部{{ choice.label }}</SelectItem>
+            <SelectItem value=":all">全部{{ choice.label }}</SelectItem>
             <SelectItem v-for="value in choice.values" :key="value" :value="value">{{ choiceLabel(choice.key, value) }}</SelectItem>
           </SelectGroup></SelectContent>
         </Select>

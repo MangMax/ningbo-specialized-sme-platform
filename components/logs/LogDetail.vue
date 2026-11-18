@@ -13,6 +13,7 @@ import {
   operationLabel,
   outcomeLabel,
   queryAttemptTotal,
+  logModuleLabel,
   resourceIdLabel,
   resourceTypeLabel,
   sourceLabel
@@ -50,6 +51,7 @@ const fieldLabels: Record<string, string> = {
   timestamp: `记录时间（本地 ${zoneLabel}）`,
   level: '级别',
   source: '来源',
+  module: '模块',
   operation: '操作',
   outcome: '结果',
   durationMs: '耗时（毫秒）',
@@ -212,6 +214,7 @@ const safe = computed<Record<string, unknown> | null>(() => {
     'timestamp',
     'level',
     'source',
+    'module',
     'operation',
     'outcome',
     'durationMs',
@@ -260,6 +263,7 @@ const displayValue = (name: string, value: unknown): string => {
       JSON.stringify(value)
     )
   if (name === 'outcome') return `${outcomeLabel(String(value))}（${String(value)}）`
+  if (name === 'module') return logModuleLabel(value as string | null)
   if (name === 'source') return `${sourceLabel(String(value))}（${String(value)}）`
   if (name === 'resourceType') {
     const label = resourceTypeLabel(String(value))
@@ -321,7 +325,7 @@ const groups = computed(() => {
       const value =
         name === 'untrustedRelatedRequestId'
           ? validatedReference
-          : detailFieldValue(data.value!, name)
+          : name === 'module' ? data.value!.module ?? null : detailFieldValue(data.value!, name)
       const omission = fieldOmission(data.value!, name)
       return {
         name,

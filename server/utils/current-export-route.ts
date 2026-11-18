@@ -22,12 +22,12 @@ export function currentExportRoute(titleCode: CurrentTitle) {
     if (parsed.params.regenerateOf) operation = 'export.current.regenerate'
     const input = {kind:'current-roster-export',params:parsed.params,filesDir:useRuntimeConfig(event).filesDir,logContext}
     const job = submitJob(db,input)
-    appLog({ source: 'export', operation, outcome: 'success', taskId: job.id, ...(parsed.params.regenerateOf ? { resourceType: 'export_job', resourceId: String(parsed.params.regenerateOf) } : {}) }, logContext)
+    appLog({ module: 'sme-roster', source: 'export', operation, outcome: 'success', taskId: job.id, ...(parsed.params.regenerateOf ? { resourceType: 'export_job', resourceId: String(parsed.params.regenerateOf) } : {}) }, logContext)
     setResponseStatus(event,202); setHeader(event,'location',`/api/jobs/${job.id}`)
     return {jobId:job.id,kind:job.kind,state:job.state}
     } catch (error) {
       const status = (error as { statusCode?: number })?.statusCode
-      appLog({ source: 'export', operation, outcome: status && status < 500 ? 'denied' : 'failure', level: status && status < 500 ? 'warn' : 'error', statusCode: status ?? 500, errorCode: status === 401 ? 'export_access_denied' : status === 429 ? 'export_capacity' : status === 409 ? 'export_conflict' : status === 400 ? 'invalid_export_request' : 'export_submission_failed' }, logContext)
+      appLog({ module: 'sme-roster', source: 'export', operation, outcome: status && status < 500 ? 'denied' : 'failure', level: status && status < 500 ? 'warn' : 'error', statusCode: status ?? 500, errorCode: status === 401 ? 'export_access_denied' : status === 429 ? 'export_capacity' : status === 409 ? 'export_conflict' : status === 400 ? 'invalid_export_request' : 'export_submission_failed' }, logContext)
       throw error
     }
   })

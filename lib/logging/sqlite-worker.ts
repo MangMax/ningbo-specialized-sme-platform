@@ -1,5 +1,5 @@
 import { boundedLogOutput } from './output'
-import { LOG_LEVELS, LOG_SOURCES, LOG_SUPPORTED_INTEGRATIONS } from './contract'
+import { LOG_LEVELS, LOG_SOURCES, LOG_SUPPORTED_INTEGRATIONS, UNLABELED_LOG_MODULE } from './contract'
 import { LOG_FIELD_PROFILES, defaultFieldControls, validateFieldControlsPatch, validateCompleteFieldControls, mergeFieldControls, projectLogFields } from './field-controls'
 import { collectionAllowsAtLevels, defaultLogCollection, validateCollectionWithCatalog, decodeStoredLogCollection } from './policy'
 /** Runs in a dedicated node Worker. Kept self contained so Nitro's native packaging is relocatable. */
@@ -11,6 +11,7 @@ const Database = require(workerData.sqliteModule)
 const LOG_LEVELS = ${JSON.stringify(LOG_LEVELS)}
 const LOG_SOURCES = ${JSON.stringify(LOG_SOURCES)}
 const LOG_SUPPORTED_INTEGRATIONS = ${JSON.stringify(LOG_SUPPORTED_INTEGRATIONS)}
+const UNLABELED_LOG_MODULE = ${JSON.stringify(UNLABELED_LOG_MODULE)}
 const profiles = ${JSON.stringify(LOG_FIELD_PROFILES)}
 const defaultFieldControls = ${defaultFieldControls.toString()}
 const validateFieldControlsPatch = ${validateFieldControlsPatch.toString()}
@@ -82,8 +83,14 @@ function open() {
     policy = readPolicy()
     if (decoded.needsMigration) db.prepare('UPDATE log_collection SET collection=? WHERE id=1').run(encodeCollection(decoded.collection,decoded.fieldControls))
   }).immediate()
-  db.exec('CREATE TABLE IF NOT EXISTS log_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, timestamp TEXT NOT NULL, level TEXT NOT NULL, source TEXT NOT NULL, operation TEXT NOT NULL, outcome TEXT NOT NULL, requestId TEXT, traceId TEXT, taskId TEXT, fileId INTEGER, batchId TEXT, resourceId TEXT, summary TEXT NOT NULL, detail TEXT NOT NULL)')
+  db.exec('CREATE TABLE IF NOT EXISTS log_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, timestamp TEXT NOT NULL, level TEXT NOT NULL, source TEXT NOT NULL, module TEXT, operation TEXT NOT NULL, outcome TEXT NOT NULL, requestId TEXT, traceId TEXT, taskId TEXT, fileId INTEGER, batchId TEXT, resourceId TEXT, summary TEXT NOT NULL, detail TEXT NOT NULL)')
   for (const key of ['timestamp','level','source','operation','outcome','requestId','traceId','taskId','fileId','batchId','resourceId']) db.exec('CREATE INDEX IF NOT EXISTS log_' + key + ' ON log_events(' + key + ',seq)')
+  const hasModule = () => db.pragma('table_info(log_events)').some(column => column.name === 'module')
+  if (!hasModule()) db.transaction(() => {
+    // Recheck under the writer lock when multiple producers open an old store.
+    if (!hasModule()) db.exec('ALTER TABLE log_events ADD COLUMN module TEXT')
+  }).immediate()
+  db.exec('CREATE INDEX IF NOT EXISTS log_module ON log_events(module,seq)')
   policy = readPolicy()
   cap()
   initialized = true
@@ -120,6 +127,8 @@ function where(filter) {
   for (const key of ['level','source','operation','outcome','requestId','traceId','taskId','fileId','batchId','resourceId']) {
     if (filter[key] !== undefined) { terms.push(key + '=?'); params.push(String(filter[key])) }
   }
+  if (filter.module === UNLABELED_LOG_MODULE) terms.push('module IS NULL')
+  else if (filter.module !== undefined) { terms.push('module=?'); params.push(filter.module) }
   if (filter.from) { terms.push('timestamp >= ?'); params.push(filter.from) }
   if (filter.to) { terms.push('timestamp <= ?'); params.push(filter.to) }
   return { sql: terms.join(' AND '), params }
@@ -159,11 +168,11 @@ function execute(action, data) {
       if (!allowed.length) return result
       try {
         cap()
-        const insert = db.prepare('INSERT INTO log_events(id,timestamp,level,source,operation,outcome,requestId,traceId,taskId,fileId,batchId,resourceId,summary,detail) VALUES(@id,@timestamp,@level,@source,@operation,@outcome,@requestId,@traceId,@taskId,@fileId,@batchId,@resourceId,@summary,@detail)')
+        const insert = db.prepare('INSERT INTO log_events(id,timestamp,level,source,module,operation,outcome,requestId,traceId,taskId,fileId,batchId,resourceId,summary,detail) VALUES(@id,@timestamp,@level,@source,@module,@operation,@outcome,@requestId,@traceId,@taskId,@fileId,@batchId,@resourceId,@summary,@detail)')
         const write = db.transaction(() => { for (const event of allowed) {
           const { auditId, receiptId, parentEventId, ...summary } = event
           writeMayCommit = true
-          insert.run({requestId:null,traceId:null,taskId:null,fileId:null,batchId:null,resourceId:null,...event,batchId:event.batchId===undefined?null:String(event.batchId),resourceId:event.resourceId===undefined?null:String(event.resourceId),summary:JSON.stringify(summary),detail:JSON.stringify(event)})
+          insert.run({module:null,requestId:null,traceId:null,taskId:null,fileId:null,batchId:null,resourceId:null,...event,batchId:event.batchId===undefined?null:String(event.batchId),resourceId:event.resourceId===undefined?null:String(event.resourceId),summary:JSON.stringify(summary),detail:JSON.stringify(event)})
         } })
         write()
         result.stored = allowed.length
@@ -197,13 +206,13 @@ function execute(action, data) {
     // Cleanup is bounded; expired rows never leak through a larger cleanup backlog.
     f.sql += ' AND timestamp >= ?'; f.params.push(new Date(now-policy.retentionDays*86400000).toISOString())
     if (data.beforeSeq) { f.sql += ' AND seq < ?'; f.params.push(data.beforeSeq) }
-    const rows = db.prepare('SELECT seq,summary FROM log_events WHERE ' + f.sql + ' ORDER BY seq DESC LIMIT ?').all(...f.params, data.limit + 1)
+    const rows = db.prepare('SELECT seq,module,summary FROM log_events WHERE ' + f.sql + ' ORDER BY seq DESC LIMIT ?').all(...f.params, data.limit + 1)
     const more = rows.length > data.limit; if (more) rows.pop()
-    return { rows: rows.map(r => JSON.parse(r.summary)), nextSeq: more ? rows[rows.length-1].seq : null }
+    return { rows: rows.map(r => ({ ...JSON.parse(r.summary), module: r.module })), nextSeq: more ? rows[rows.length-1].seq : null }
   }
   if (action === 'detail') {
-    const row = db.prepare('SELECT detail FROM log_events WHERE id=? AND timestamp>=?').get(data, new Date(now - policy.retentionDays * 86400000).toISOString())
-    return row ? JSON.parse(row.detail) : null
+    const row = db.prepare('SELECT module,detail FROM log_events WHERE id=? AND timestamp>=?').get(data, new Date(now - policy.retentionDays * 86400000).toISOString())
+    return row ? { ...JSON.parse(row.detail), module: row.module } : null
   }
   if (action === 'policy') {
     // Capacity pruning must commit before measuring physical bytes. It can
@@ -245,7 +254,7 @@ parentPort.on('message', ({id,action,data,time}) => {
     // Fixed categories only: never expose SQL, paths, payloads or error messages.
     const diagnosticCode = ['SQLITE_BUSY','SQLITE_BUSY_RECOVERY','SQLITE_BUSY_SNAPSHOT','SQLITE_BUSY_TIMEOUT','SQLITE_LOCKED','SQLITE_FULL','SQLITE_READONLY','SQLITE_IOERR','SQLITE_CORRUPT','SQLITE_NOTADB'].includes(error?.code) ? error.code : 'other'
     const operation = ['write','list','detail','policy','clear','maintain','close'].includes(action) ? action : 'other'
-    diagnostics.write(JSON.stringify({source:'system',operation:'logging.storage',outcome:'failure',code,nativeCode:diagnosticCode,action:operation,phase:initialized?'command':'open'})+'\n')
+    diagnostics.write(JSON.stringify({module:'core',source:'system',operation:'logging.storage',outcome:'failure',code,nativeCode:diagnosticCode,action:operation,phase:initialized?'command':'open'})+'\n')
     parentPort.postMessage({id,ok:false,code,...(action === 'write' ? {writeOutcome:writeMayCommit ? 'unknown' : 'not_written'} : {})})
     if (!reusableAfterBusy(error)) {
       try { db?.close() } catch {}

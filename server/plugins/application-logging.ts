@@ -25,7 +25,11 @@ export default defineNitroPlugin(app => {
   app.hooks.hook('beforeResponse', event => {
     // The router has matched by now; success/denied responses emit after this hook.
     attachHttpRoute(event)
-    event.context.log?.set(event.context.applicationLogContext)
+    const context = event.context.applicationLogContext
+    event.context.log?.set({
+      ...context,
+      ...(context?.module !== undefined ? { applicationLogModule: context.module } : {}),
+    })
     const path = event.path.split('?')[0]!
     if (path === '/api/logs' || path.startsWith('/api/logs/')) event.context._evlogShouldEmit = false
   })

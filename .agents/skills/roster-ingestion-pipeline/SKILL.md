@@ -30,6 +30,8 @@ description: '用于本应用的宁波专精特新名录清洗与入库：分类
 
 业务数据库、源文件、上传文件、凭据和个案证据保存在 Git 外。文件/页图/OCR、正式事件、身份、查询覆盖、入库回执和业务判断分开报告。
 
+排查运行故障时，用已授权的 `GET /api/logs` 或 MCP `list_runtime_logs`，按 `module=sme-roster` 与已知的 `requestId` 或 `taskId` 缩小范围。PDF 转图、文件管理和 OCR 使用 `module=core`。需要查看未标注的历史记录时传 `module=:unlabeled`。业务结果仍以回执和审计读回为准。
+
 ## 新流程与旧数据边界（#484）
 
 先备份数据库，再用 `difference_snapshot` / `POST /api/roster/difference-snapshots` 采集三接口。可选 `enterpriseIds` 限定公布企业；省略为全部。按接口原编号更新已有业务记录，缺少则新增，保存全部业务字段和类型；采集任务不保存请求参数原文、响应正文或 HTML。同一任务重试只恢复未完成范围。

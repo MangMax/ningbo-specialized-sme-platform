@@ -181,9 +181,9 @@ export async function runOcr(
   const publication = prepared ?? prepareOcrPublication(ctx.db, ctx.filesDir, files, effectiveModel, ocrRequestVariant(effectiveModel), config.baseUrl, resumeJobId)
   const logContext = { ...ctx.logContext, taskId: ctx.jobId }
   const startedAt = Date.now()
-  appLog({ source: 'ocr', operation: 'ocr.recognize', outcome: 'started', counts: { total: files.length } }, logContext)
+  appLog({ module: 'core', source: 'ocr', operation: 'ocr.recognize', outcome: 'started', counts: { total: files.length } }, logContext)
   if (!config.token) {
-    appLog({ source: 'ocr', operation: 'ocr.recognize', outcome: 'failure', level: 'error', errorCode: 'ocr_not_configured' }, logContext)
+    appLog({ module: 'core', source: 'ocr', operation: 'ocr.recognize', outcome: 'failure', level: 'error', errorCode: 'ocr_not_configured' }, logContext)
     // 配置错**在动手之前**就报出来 —— 逐份失败会得到 N 条一模一样的错,而它一次就说清了。
     throw new Error(
       '缺少 OCR token:在配置页面保存,或设 `NUXT_OCR_TOKEN`(或 `PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN`)再提交。' +
@@ -289,7 +289,7 @@ export async function runOcr(
               }
               cachedPages += 1
               processedPages += 1
-              appLog({ source: 'ocr', operation: 'ocr.page.cache', outcome: 'skipped', durationMs: Date.now() - pageStarted }, pageContext)
+              appLog({ module: 'core', source: 'ocr', operation: 'ocr.page.cache', outcome: 'skipped', durationMs: Date.now() - pageStarted }, pageContext)
               continue
             }
             if (remote?.state === 'unknown') throw new Error('远端提交结果未知;保留原回执,禁止自动重复付费提交')
@@ -360,10 +360,10 @@ export async function runOcr(
               createdAt: capture.createdAt,
             })
             processedPages += 1
-            appLog({ source: 'ocr', operation: 'ocr.page', outcome: 'success', durationMs: Date.now() - pageStarted }, pageContext)
+            appLog({ module: 'core', source: 'ocr', operation: 'ocr.page', outcome: 'success', durationMs: Date.now() - pageStarted }, pageContext)
           } catch (error) {
             const timedOut = error instanceof OcrApiError && error.failureKind === 'timeout'
-            appLog({ source: 'ocr', operation: 'ocr.page', outcome: ctx.cancelled() ? 'cancelled' : timedOut ? 'timeout' : 'failure', level: ctx.cancelled() ? 'info' : 'error', errorCode: ctx.cancelled() ? undefined : timedOut ? 'ocr_page_timeout' : 'ocr_page_failed', durationMs: Date.now() - pageStarted }, pageContext)
+            appLog({ module: 'core', source: 'ocr', operation: 'ocr.page', outcome: ctx.cancelled() ? 'cancelled' : timedOut ? 'timeout' : 'failure', level: ctx.cancelled() ? 'info' : 'error', errorCode: ctx.cancelled() ? undefined : timedOut ? 'ocr_page_timeout' : 'ocr_page_failed', durationMs: Date.now() - pageStarted }, pageContext)
             if (ctx.cancelled()) return
             failedPages += 1
             if (timedOut) timedOutPages += 1
@@ -379,7 +379,7 @@ export async function runOcr(
         ),
       )
       if (ctx.cancelled()) {
-        appLog({ source: 'ocr', operation: 'ocr.file', outcome: 'cancelled', fileId, counts: { done: processedPages, total: expectedPages, failed: failedPages }, durationMs: Date.now() - fileStarted }, logContext)
+        appLog({ module: 'core', source: 'ocr', operation: 'ocr.file', outcome: 'cancelled', fileId, counts: { done: processedPages, total: expectedPages, failed: failedPages }, durationMs: Date.now() - fileStarted }, logContext)
         receipt.state = 'cancelled'
         checkpoint()
         return null
@@ -419,7 +419,7 @@ export async function runOcr(
         recordSharedOcrPublication(tx, publication, receipt, ctx.jobId)
         setJobResult(tx, ctx.jobId, snapshot())
       }, { behavior: 'immediate' })
-      appLog({ source: 'ocr', operation: 'ocr.file', outcome: 'success', fileId, counts: { done: completePages.length, total: expectedPages }, durationMs: Date.now() - fileStarted }, logContext)
+      appLog({ module: 'core', source: 'ocr', operation: 'ocr.file', outcome: 'success', fileId, counts: { done: completePages.length, total: expectedPages }, durationMs: Date.now() - fileStarted }, logContext)
       return {
         file,
         ok: true,
@@ -434,7 +434,7 @@ export async function runOcr(
         elapsedMs: Date.now() - startedAt,
       }
     } catch (error) {
-      appLog({ source: 'ocr', operation: 'ocr.file', outcome: ctx.cancelled() ? 'cancelled' : processedPages > 0 ? 'partial' : timedOutPages === expectedPages ? 'timeout' : 'failure', level: ctx.cancelled() ? 'info' : 'error', ...(fileId === null ? {} : { fileId }), counts: { done: processedPages, total: expectedPages, failed: failedPages }, errorCode: ctx.cancelled() ? undefined : 'ocr_file_failed', durationMs: Date.now() - fileStarted }, logContext)
+      appLog({ module: 'core', source: 'ocr', operation: 'ocr.file', outcome: ctx.cancelled() ? 'cancelled' : processedPages > 0 ? 'partial' : timedOutPages === expectedPages ? 'timeout' : 'failure', level: ctx.cancelled() ? 'info' : 'error', ...(fileId === null ? {} : { fileId }), counts: { done: processedPages, total: expectedPages, failed: failedPages }, errorCode: ctx.cancelled() ? undefined : 'ocr_file_failed', durationMs: Date.now() - fileStarted }, logContext)
       receipt.error = (error as Error).message ?? String(error)
       if (Object.values(receipt.requests).some(request => request.state === 'unknown')) receipt.error += ';远端提交结果未知,禁止自动重复付费提交'
       delete receipt.publishedVersions
@@ -467,12 +467,12 @@ export async function runOcr(
   ))
 
   if (ctx.cancelled()) {
-    appLog({ source: 'ocr', operation: 'ocr.recognize', outcome: 'cancelled', counts: { done: doneFiles, total: files.length, failed }, durationMs: Date.now() - startedAt }, logContext)
+    appLog({ module: 'core', source: 'ocr', operation: 'ocr.recognize', outcome: 'cancelled', counts: { done: doneFiles, total: files.length, failed }, durationMs: Date.now() - startedAt }, logContext)
     return { result: { ...snapshot(), cancelled: true, done: doneFiles }, cancelled: true }
   }
 
   const result = snapshot()
-  appLog({ source: 'ocr', operation: 'ocr.recognize', outcome: failed ? (result.ok ? 'partial' : 'failure') : 'success', level: failed ? 'error' : 'info', counts: { done: doneFiles, total: files.length, failed }, durationMs: Date.now() - startedAt }, logContext)
+  appLog({ module: 'core', source: 'ocr', operation: 'ocr.recognize', outcome: failed ? (result.ok ? 'partial' : 'failure') : 'success', level: failed ? 'error' : 'info', counts: { done: doneFiles, total: files.length, failed }, durationMs: Date.now() - startedAt }, logContext)
   return failed
     ? { result, error: `${files.length} 份里 ${failed} 份识别失败(逐项原因见 result.files[].error)` }
     : { result }

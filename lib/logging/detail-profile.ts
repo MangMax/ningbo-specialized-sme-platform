@@ -177,7 +177,7 @@ export function detailProfile(event: DetailEvent): DetailSection[] {
   const sections: DetailSection[] = [
     {
       title: '基本信息',
-      fields: ['id', 'timestamp', 'source', 'level', 'operation'].filter(key => present(event, key)),
+      fields: ['id', 'timestamp', 'source', 'module', 'level', 'operation'].filter(key => key === 'module' || present(event, key)),
     },
     {
       title: '目标与对象',

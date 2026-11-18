@@ -7,6 +7,7 @@ import {
   type LogEvent, type LogInput, type McpClientMetadata, type McpLogContext, type TusLogContext,
 } from './contract'
 import { safeHttpMethod, safeHttpRoute } from './http'
+import { httpLogModule, mcpLogModule, registeredLogModule } from './module'
 const identifier = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/
 const operation = /^[a-z][a-z0-9_.:-]{0,95}$/
 const finite = (n: unknown) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER
@@ -93,6 +94,7 @@ export function safeTusContext(value: unknown): TusLogContext | undefined {
 export function safeLogEvent(input: LogInput): LogEvent {
   const event: LogEvent = {
     id: randomUUID(), timestamp: new Date().toISOString(),
+    module: registeredLogModule(input.module),
     source: LOG_SOURCES.includes(input.source) ? input.source : 'system',
     operation: typeof input.operation === 'string' && operation.test(input.operation) ? input.operation : 'invalid.operation',
     outcome: LOG_OUTCOMES.includes(input.outcome) ? input.outcome : 'unknown',
@@ -152,7 +154,12 @@ export function projectEvlog(input: Record<string, unknown>): LogInput {
   if (input.applicationLog && typeof input.applicationLog === 'object') return input.applicationLog as LogInput
   const status = typeof input.status === 'number' ? input.status : 200
   const path = typeof input.path === 'string' ? input.path.split('?')[0]! : ''
+  const route = safeHttpRoute(input.httpRoute)
+  const mcp = safeMcpContext(input.applicationLogMcp, input.mcp, true)
+  const module = path === '/mcp' ? mcpLogModule(mcp)
+    : route ? httpLogModule(route) : registeredLogModule(input.applicationLogModule)
   return {
+    module,
     origin: { runtime: 'node', integration: input.applicationLogMcp ? 'mcp-toolkit' : 'nuxt-nitro', capture: 'framework', execution: 'request' },
     source: path === '/mcp' ? 'mcp' : 'http',
     operation: path === '/mcp' ? 'mcp.request' : 'http.request',
@@ -162,12 +169,12 @@ export function projectEvlog(input: Record<string, unknown>): LogInput {
     durationMs: typeof input.durationMs === 'number' ? input.durationMs : typeof input.duration === 'number' ? input.duration : undefined,
     // The request hook copies a framework-matched template here; the concrete path is never used.
     httpMethod: safeHttpMethod(input.method) ?? safeHttpMethod(input.httpMethod),
-    httpRoute: safeHttpRoute(input.httpRoute),
+    httpRoute: route,
     // Generated server-side in the request hook; incoming x-request-id is never trusted.
     requestId: typeof input.requestId === 'string' ? input.requestId : undefined,
     traceId: typeof input.traceId === 'string' ? input.traceId : undefined,
     // App entry metadata wins; toolkit's own `mcp` object can only fill method.
-    mcp: safeMcpContext(input.applicationLogMcp, input.mcp, true),
+    mcp,
     tus: safeTusContext(input.applicationLogTus),
   }
 }
