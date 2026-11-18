@@ -12,6 +12,7 @@ afterAll(() => { vi.useRealTimers(); return f.close() })
 it('retains raw extras alongside effective inherited qualification and stored history through expiry', () => {
  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-06-01T00:00:00Z'))
  const c=f.candidate('current-overlay',[{eventType:'award',year:2025,batchSeq:1}],'specialized_sme')
+ f.db.insert(schema.rosterLegacyMember).values({enterpriseId:c.enterprise.id}).run()
  f.db.$client.prepare("insert into record (enterprise_id,title_code,source,name_raw) values (?,'innovative_sme','miit','current-overlay')").run(c.enterprise.id)
  const scope={title:['innovative_sme'],direction:['extra_in_miit'] as ['extra_in_miit']}
  expect(getComparison(f.db).rows).toContainEqual(expect.objectContaining({enterpriseId:c.enterprise.id,titleCode:'innovative_sme',direction:'extra_in_miit'}))

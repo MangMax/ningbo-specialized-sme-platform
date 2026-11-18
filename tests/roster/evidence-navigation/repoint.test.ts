@@ -377,8 +377,16 @@ describe('RL-19:幂等键被消费后,收敛仍补得上(重放入口 §8.9.3)',
       }
       // Synthetic pre-#103 fixture: retain the original batch and every business row,
       // but remove its newly generated recovery receipt to model a real old ledger.
-      db.delete(schema.importReceipt).where(eq(schema.importReceipt.batchId, consumed.batchId)).run()
-      db.delete(schema.rosterAnnouncementIntake).where(eq(schema.rosterAnnouncementIntake.idempotencyKey, request.idempotencyKey)).run()
+      db.transaction(tx => {
+        const intake = tx.select({ id: schema.rosterAnnouncementIntake.id }).from(schema.rosterAnnouncementIntake)
+          .where(eq(schema.rosterAnnouncementIntake.idempotencyKey, request.idempotencyKey)).get()!
+        const members = tx.select({ enterpriseId: schema.rosterAnnouncementMember.enterpriseId }).from(schema.rosterAnnouncementMember)
+          .where(eq(schema.rosterAnnouncementMember.intakeId, intake.id)).all()
+        tx.insert(schema.rosterLegacyMember).values(members).onConflictDoNothing().run()
+        tx.delete(schema.rosterAnnouncementMember).where(eq(schema.rosterAnnouncementMember.intakeId, intake.id)).run()
+        tx.delete(schema.rosterAnnouncementIntake).where(eq(schema.rosterAnnouncementIntake.id, intake.id)).run()
+        tx.delete(schema.importReceipt).where(eq(schema.importReceipt.batchId, consumed.batchId)).run()
+      })
 
       // 3) 键被消费之后的**如实**预检:同键提交不会再改任何行 —— 不再报一份做不到的计划。
       const after = await client.preflight(request)

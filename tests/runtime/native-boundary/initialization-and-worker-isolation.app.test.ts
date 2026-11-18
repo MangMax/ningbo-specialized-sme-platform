@@ -79,6 +79,7 @@ it('serves native source read workers and commits an import through the actual s
   const {db,path}=fixture()
   db.insert(s.enterprise).values({name:'Native current',nameNorm:'Native current',usccNorm:'91330200712345678C'}).run()
   const entity=db.select().from(s.enterprise).get()!
+  db.insert(s.rosterLegacyMember).values({enterpriseId:entity.id}).run()
   const record=db.insert(s.record).values({enterpriseId:entity.id,titleCode:'little_giant',source:'jxj',nameRaw:entity.name}).returning().get()
   db.insert(s.recordEvent).values({recordId:record.id,eventType:'award',year:2025,batchSeq:1}).run()
   const reads=createEnterpriseReadExecutor();cleanup.push(()=>reads.close())

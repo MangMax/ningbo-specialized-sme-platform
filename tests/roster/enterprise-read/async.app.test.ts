@@ -23,6 +23,7 @@ function fixture() {
   const path = join(dir, 'test.db'), db = initializeDb({ dbPath: path, create:true })
   cleanup.push(() => db.$client.close())
   const enterprise = db.insert(schema.enterprise).values({ name: '合成企业', nameNorm: '合成企业' }).returning().get()
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: enterprise.id }).run()
   const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
   db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).run()
   const reads = createEnterpriseReadExecutor()
@@ -169,16 +170,18 @@ it('keeps aggregate counts and hydrated rows in one snapshot during independent 
   const f = fixture()
   f.db.$client.transaction(() => {
     const insert = f.db.$client.prepare('insert into enterprise(name,name_norm) values(?,?)')
-    for (let i=0; i<5000; i++) insert.run(`无关${i}`, `无关${i}`)
+    const enroll = f.db.$client.prepare('insert into roster_legacy_member(enterprise_id) values(?)')
+    for (let i=0; i<5000; i++) enroll.run(insert.run(`无关${i}`, `无关${i}`).lastInsertRowid)
     f.db.$client.prepare('update enterprise set name=? where id=?').run('代数5001', f.enterprise.id)
   })()
   const writer = new Worker(`
     const {parentPort,workerData}=require('node:worker_threads');
     const Database=require(workerData.driver),db=new Database(workerData.path);
     const insert=db.prepare("insert into enterprise(name,name_norm) values('新增','新增')");
+    const enroll=db.prepare('insert into roster_legacy_member(enterprise_id) values(?)');
     const update=db.prepare('update enterprise set name=? where id=?');
     const count=db.prepare('select count(*) n from enterprise');
-    const commit=db.transaction(()=>{insert.run();update.run('代数'+count.get().n,workerData.owner)});
+    const commit=db.transaction(()=>{enroll.run(insert.run().lastInsertRowid);update.run('代数'+count.get().n,workerData.owner)});
     const timer=setInterval(commit,2);parentPort.postMessage('writing');
     parentPort.once('message',()=>{clearInterval(timer);db.close();parentPort.close()});
   `, { eval: true, execArgv: [], workerData: { driver: createRequire(import.meta.url).resolve('better-sqlite3'), path: f.path, owner: f.enterprise.id } })

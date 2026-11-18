@@ -13,6 +13,7 @@ function fixture(){
  const sqlite=new Database(':memory:');close.push(sqlite)
  createRuntimeSchema(sqlite); const db=drizzle(sqlite,{schema})
  const ids=[1,2].map(i=>{const e=db.insert(schema.enterprise).values({name:`刷新${i}`,nameNorm:`刷新${i}`,usccNorm:`9133021125599445${i}P`}).returning().get();db.insert(schema.record).values({enterpriseId:e.id,titleCode:'specialized_sme',source:'jxj',nameRaw:e.name}).run();return e.id})
+ db.insert(schema.rosterLegacyMember).values(ids.map(enterpriseId=>({enterpriseId}))).run()
  return {db,sqlite,ids}
 }
 const at='2026-11-06T00:00:00.000Z'

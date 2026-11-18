@@ -48,6 +48,7 @@ function seed(
     .values({ name, nameNorm: name, usccNorm: uscc, district })
     .returning({ id: schema.enterprise.id })
     .get().id
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: id }).run()
   const recordId = db
     .insert(schema.record)
     .values({ enterpriseId: id, titleCode, source: 'jxj' })
