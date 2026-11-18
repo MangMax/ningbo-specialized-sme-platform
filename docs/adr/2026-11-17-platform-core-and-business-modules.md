@@ -96,9 +96,9 @@ core 提供 `defineAppModule()`，每个模块（包括 core 自己）调用它�
 - **日志并入审计**：运行日志是可清理的运维数据，业务审计是证据，二者保留期和清理语义不同；日志继续留在独立库，清日志不清审计（与[来源分域](0001-source-domain-boundaries.md)一致）。
 - **提前做多租户、多用户身份与权限**：当前 token 是单机防护，没有多租户需求；另行立项，不在本次调整里预埋。
 
-## 待定事项
+## 企业主体
 
-- **企业主体归属**：企业主体是留在 `sme-roster` 内，还是升级为 core 共享内核供后续模块引用，尚未决定，由 [#886](https://github.com/MangMax/ningbo-specialized-sme-platform/issues/886) 讨论并另立 ADR。决定之前，新模块不得直接 join 名录的企业表；需要时通过 `sme-roster` 的 public 出口读取，并只保存企业 ID 引用。
+- [企业主体共享内核 ADR](2026-11-18-enterprise-shared-kernel.md) 确定共享字段、领域归属和切换顺序。切换完成前，新模块通过 `sme-roster` 的 public 出口读取名录主体，并只保存企业 ID 引用。
 
 ## 后果
 
