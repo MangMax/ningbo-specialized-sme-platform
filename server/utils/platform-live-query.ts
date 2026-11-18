@@ -1,9 +1,9 @@
 import { APPLY_GRID, APPLY_LIST_PATH, BUSINESS_GRID, BUSINESS_LIST_PATH, RECOGNIZED_GRID, RECOGNIZED_LIST_PATH, PlatformSessionExpiredError, parsePlatformPage } from '../../lib/platform/adapter'
 import { cookieRedactor, PlatformHttpError, postPlatformRequest, type PlatformQueryOptions } from '../../lib/platform/client'
 import { platformQueryInputSchema, platformQueryTitles, recognizedConditionShape, type PlatformLiveQueryResult, type PlatformQueryPage, type PlatformQueryError } from '../../lib/platform/live-query'
-import type { CredentialContext } from './credential-state'
+import type { CredentialContext } from '../../layers/core/server/utils/credential-state'
 import { resolvePlatformCookie } from './platform-credential'
-import { newLogContext, type LogContext } from '../../lib/logging'
+import { newLogContext, type LogContext } from '../../layers/core/lib/logging'
 import { logPlatformResult, platformOperation, platformQueryOperation } from '../../lib/platform/logging'
 
 export interface PlatformLiveQueryContext {

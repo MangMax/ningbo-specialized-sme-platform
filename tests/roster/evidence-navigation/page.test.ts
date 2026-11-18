@@ -1,15 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import {
-  EVIDENCE_PAGE_WORDS,
-  evidencePageState,
-  evidencePreviewHref,
-  isPageCapable,
-  isSafeBackPath,
-  parseEvidencePreviewQuery,
-  planEvidencePages as planEvidencePagesWithCount,
-  type EvidencePageCandidate,
-  type EvidencePageEntry,
-} from '../../../lib/roster/evidence-page'
+import { isSafeBackPath, parseEvidencePreviewQuery } from '../../../layers/core/lib/preview-query'
+import { EVIDENCE_PAGE_WORDS, evidencePageState, evidencePreviewHref, isPageCapable, planEvidencePages as planEvidencePagesWithCount, type EvidencePageCandidate, type EvidencePageEntry } from '../../../lib/roster/evidence-page'
 
 /**
  * RL-10 —— 出处页码的纯判据(写入侧定位 + 读侧三态 + 跳转链接)。

@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { createApp, defineEventHandler, getQuery, setHeader, toNodeListener } from 'h3'
 import { initializeDb } from '../../../db/client'
 import { commitRosterImport } from '../../../server/utils/roster-import'
-import { whenIdle } from '../../../server/utils/job-runner'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import type { RosterImportPayload } from '../../../lib/roster-import-client'
 import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
 

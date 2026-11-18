@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { expect, it } from 'vitest'
-import ContentPreview from '../../../components/preview/ContentPreview.vue'
+import ContentPreview from '../../../layers/core/app/components/preview/ContentPreview.vue'
 
 it('renders headings lists GFM and merged OCR tables while blocking active HTML and resources', async () => {
   const source = '# 名单\n\n- 企业甲\n\n| 企业 | 年份 |\n| --- | --- |\n| 宁波甲 | 2026 |\n\n<table><tr><td rowspan="2" colspan="3" onclick="alert(1)">合并</td></tr></table>\n\n<script>alert(1)</script><iframe src="https://evil.test"></iframe><img src="https://evil.test/x" onerror="alert(1)">\n\n![远程图](https://evil.test/a.png)\n\n[官网](https://example.com)\n\n<a href="javascript:alert(1)">危险</a>'

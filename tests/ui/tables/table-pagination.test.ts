@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils'
 import { expect, it } from 'vitest'
-import TablePagination from '../../../components/TablePagination.vue'
+import TablePagination from '../../../layers/core/app/components/TablePagination.vue'
 
 it('offers bounded cursor navigation without a total or last-page claim', async () => {
   const wrapper = mount(TablePagination, { props: { mode: 'cursor', page: 2, pageSize: 25, unit: '条', hasNext: true, maxPageSize: 100 } })

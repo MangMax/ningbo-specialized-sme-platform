@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { platformRowTitle } from '~~/lib/platform/row-title'
-import DisclosurePanel from './DisclosurePanel.vue'
+import DisclosurePanel from '../layers/core/app/components/DisclosurePanel.vue'
 import { platformBusinessFields } from '~~/lib/roster/platform-records'
 import type { PlatformRecord, PlatformRecordQuery } from '~~/lib/roster/platform-records'
 import { PLATFORM_RDJBS } from '~~/lib/labels'
 import { ChevronDown } from '@lucide/vue'
 import PlatformFieldConflicts from './PlatformFieldConflicts.vue'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Button } from '#core/app/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '#core/app/components/ui/dialog'
 const props = defineProps<{ record: PlatformRecord; query?: PlatformRecordQuery }>()
 const allFields = computed(() => platformBusinessFields(props.record.rawFields))
 const isEmpty = (key: string) => {

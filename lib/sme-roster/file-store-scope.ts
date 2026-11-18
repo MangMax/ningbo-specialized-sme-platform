@@ -1,6 +1,6 @@
 /** 入库范围的唯一可执行规则。按库内相对路径及同目录兄弟名排除通知、入库培育和重复转换件。 */
 
-import { baseName, extensionOf } from '../core/file-path'
+import { baseName, extensionOf } from '../../layers/core/lib/core/file-path'
 
 /** 入库范围判定的**原因码**。`in-scope` 是唯一「入库」的取值。 */
 export type StoreScopeReason =

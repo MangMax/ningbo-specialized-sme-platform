@@ -1,10 +1,10 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
-import TablePagination from '../../../components/TablePagination.vue'
-import TableLoadingStatus from '../../../components/TableLoadingStatus.vue'
-import TableFailureState from '../../../components/TableFailureState.vue'
-import { Select } from '../../../components/ui/select'
+import TablePagination from '../../../layers/core/app/components/TablePagination.vue'
+import TableLoadingStatus from '../../../layers/core/app/components/TableLoadingStatus.vue'
+import TableFailureState from '../../../layers/core/app/components/TableFailureState.vue'
+import { Select } from '../../../layers/core/app/components/ui/select'
 
 const mounted: ReturnType<typeof mount>[] = []
 afterEach(() => { for (const view of mounted.splice(0)) view.unmount() })

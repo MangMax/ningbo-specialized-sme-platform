@@ -2,9 +2,9 @@
 import { ArrowRight } from '@lucide/vue'
 import { getAppModules } from '~~/lib/app-modules'
 import { getDashboardCardComponent } from '~~/lib/dashboard-card-components'
-import PageHeader from '@/components/PageHeader.vue'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import PageHeader from '#core/app/components/PageHeader.vue'
+import { Button } from '#core/app/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '#core/app/components/ui/card'
 
 const modules = getAppModules()
   .filter(module => module.id !== 'core')

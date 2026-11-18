@@ -2,13 +2,13 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
 import { recognizedConditionShape, platformQueryTitles, type PlatformLiveQueryResult } from '../../lib/platform/live-query'
 import { cookieRedactor } from '../../lib/platform/client'
-import { newJobId } from '../../lib/job'
+import { newJobId } from '../../layers/core/lib/job'
 import { MAX_BATCH_ATTEMPTS, PLATFORM_BATCH_KIND, platformBatchInputSchema, platformBatchStatusSchema, platformBatchItemSchema, platformBatchRetrySchema, type PlatformBatchItem, type PlatformBatchParams, type PlatformBatchResult } from '../../lib/platform/batch-query'
 import { resolvePlatformCookie } from './platform-credential'
-import { ensureJobRunnerReady, getJobSpec, registerJob, submitJob, requeueFinishedJob, type JobContext, type JobSpec } from './job-runner'
-import { getJob, setJobResult } from './job-store'
+import { ensureJobRunnerReady, getJobSpec, registerJob, submitJob, requeueFinishedJob, type JobContext, type JobSpec } from '../../layers/core/server/utils/job-runner'
+import { getJob, setJobResult } from '../../layers/core/server/utils/job-store'
 import { runPlatformLiveQuery } from './platform-live-query'
-import { appLog, newLogContext, type LogContext } from '../../lib/logging'
+import { appLog, newLogContext, type LogContext } from '../../layers/core/lib/logging'
 import { logPlatformResult, platformOperation } from '../../lib/platform/logging'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -99,6 +99,10 @@ async function runBatch(ctx: JobContext, raw: Record<string, unknown>, cookie: s
   return { result, progress: { done: result.items.filter(item => item.completeness === 'complete').length, total: result.items.length }, ...(ctx.cancelled() ? { cancelled: true } : result.completeness !== 'complete' ? { error: '批次仍有未完成范围，请查看逐项结果并显式重试。' } : {}) }
 }
 export const batchSpec: JobSpec = {
+  openAPIParams: {
+    order: 20,
+    description: 'platform-query-batch 使用 /api/platform/batches 的 items/limits，推荐专用接口（支持稳定 itemId 和局部重试）。',
+  },
   kind: PLATFORM_BATCH_KIND, status: 'ready', summary: '只读平台批量查询（仅保存任务结果）',
   paramsHint: 'Use POST /api/platform/batches; items[{query}], limits; no credentials.',
   // Generic job submission must pass the same strict public validation and generate IDs.

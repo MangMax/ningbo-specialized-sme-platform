@@ -1,5 +1,5 @@
 import { useDb } from '@db'
-import { createCoreRouteHandler } from '../../../utils/core-route'
+import { createCoreRouteHandler } from '../../../../layers/core/server/utils/core-route'
 import { handleEvidencePagesRequest } from '../../../utils/roster-evidence-pages'
 
 /**

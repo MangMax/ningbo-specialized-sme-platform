@@ -3,8 +3,8 @@ import { computed, ref } from 'vue'
 import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
 import { TITLES } from '~~/lib/labels'
 import PlatformBusinessHistory from './PlatformBusinessHistory.vue'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
 const props = defineProps<{ timeline: RosterEnterpriseDetail['businessTimeline'] }>()
 const source = ref('publication')
 const title = ref('all')

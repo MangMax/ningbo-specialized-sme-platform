@@ -13,13 +13,13 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { useDb } from '../../../db'
-import { updateCredential } from '../../../server/utils/credential-state'
+import { updateCredential } from '../../../layers/core/server/utils/credential-state'
 import { handlePlatformBatchRequest } from '../../../server/utils/platform-batch-http'
 import { recognizedResultToImport } from '../../../lib/platform/recognized-evidence'
-import { whenIdle } from '../../../server/utils/job-runner'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { platformSummaryCache } from '../../../server/utils/platform-summary-cache'
 import { importExecutor } from '../../../server/utils/import-execution'
-import { readMcpToken, resolveMcpAuth } from '../../../server/utils/mcp-auth'
+import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
 
 const dir = mkdtempSync(join(tmpdir(), 'issue298-raw-json-http-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })

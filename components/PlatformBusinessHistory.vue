@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { RosterEnterpriseDetail } from '~~/lib/roster/enterprise-roster'
 import TitleBadge from './TitleBadge.vue'
-import DisclosurePanel from './DisclosurePanel.vue'
+import DisclosurePanel from '../layers/core/app/components/DisclosurePanel.vue'
 import EventChip from './EventChip.vue'
 type BusinessEvent = RosterEnterpriseDetail['businessTimeline']['sources'][number]['events'][number]
 defineProps<{ event: BusinessEvent }>()

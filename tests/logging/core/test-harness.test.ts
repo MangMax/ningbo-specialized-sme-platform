@@ -1,6 +1,6 @@
 import { createLogger, initLogger, isEnabled, type WideEvent } from 'evlog'
 import { afterEach, expect, it, vi } from 'vitest'
-import { appLog } from '../../../lib/logging'
+import { appLog } from '../../../layers/core/lib/logging'
 
 afterEach(() => vi.restoreAllMocks())
 

@@ -3,10 +3,10 @@ import { computed, ref, shallowRef, watch } from 'vue'
 import { CalendarIcon } from '@lucide/vue'
 import { getLocalTimeZone, today, parseDateTime, Time, toCalendarDate, toCalendarDateTime, type DateValue } from '@internationalized/date'
 import { TimeFieldInput, TimeFieldRoot } from 'reka-ui'
-import { Button } from '@/components/ui/button'
-import { Calendar } from '@/components/ui/calendar'
-import { Label } from '@/components/ui/label'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Button } from '#core/app/components/ui/button'
+import { Calendar } from '#core/app/components/ui/calendar'
+import { Label } from '#core/app/components/ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from '#core/app/components/ui/popover'
 
 const props = withDefaults(defineProps<{ id: string; modelValue: string; label?: string }>(), { label: '截止日期和时间' })
 const emit = defineEmits<{ 'update:modelValue': [value: string]; 'validity-change': [valid: boolean] }>()

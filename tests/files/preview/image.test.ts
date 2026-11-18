@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
-import ImagePreview from '../../../components/preview/ImagePreview.vue'
-import PageImageGallery from '../../../components/preview/PageImageGallery.vue'
-import PreviewToolbar from '../../../components/preview/PreviewToolbar.vue'
-import { PAGE_IMAGE_ZOOM_MIN } from '../../../lib/page-gallery'
-import { fitZoom, nextZoom, retrySrc, ZOOM_ABS_MAX } from '../../../lib/preview'
+import ImagePreview from '../../../layers/core/app/components/preview/ImagePreview.vue'
+import PageImageGallery from '../../../layers/core/app/components/preview/PageImageGallery.vue'
+import PreviewToolbar from '../../../layers/core/app/components/preview/PreviewToolbar.vue'
+import { PAGE_IMAGE_ZOOM_MIN } from '../../../layers/core/lib/page-gallery'
+import { fitZoom, nextZoom, retrySrc, ZOOM_ABS_MAX } from '../../../layers/core/lib/preview'
 
 /**
  * 图片预览的**失败 → 重试**恢复路径(票 13 回归)。

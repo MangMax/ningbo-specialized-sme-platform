@@ -12,6 +12,7 @@ RUN apt-get update \
 
 RUN npm install --global --no-audit --no-fund pnpm@12.11.2
 
+# Include both the root application and its local Nuxt layers in the build.
 COPY . .
 RUN pnpm install --frozen-lockfile --store-dir /tmp/pnpm-store \
   && pnpm build \

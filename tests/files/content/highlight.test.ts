@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { highlightContent } from '../../../lib/content-highlight'
+import { highlightContent } from '../../../layers/core/lib/content-highlight'
 it('highlights real code and Markdown with local grammars across themes and escapes HTML', async () => {
   const light = await highlightContent('const 企业 = "<script>"', 'js', 'light')
   expect(light).toContain('shiki github-light')

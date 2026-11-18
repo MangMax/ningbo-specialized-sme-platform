@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb, schema } from '../../../db/client'
 import { eq } from 'drizzle-orm'
-import { __resetJobRunner, clearJobSpecs, ensureJobRunnerReady, registerJob, submitJob, whenIdle } from '../../../server/utils/job-runner'
-import { newJobId } from '../../../lib/job'
+import { __resetJobRunner, clearJobSpecs, ensureJobRunnerReady, registerJob, submitJob, whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { newJobId } from '../../../layers/core/lib/job'
 import { handleTaskCenterRequest } from '../../../server/utils/task-center-http'
 import { startHttpFixture, type HttpFixture, type FixtureRequest } from '../../support/http'
 
@@ -235,7 +235,7 @@ it('reads bounded snapshot results only with task-center authorization and keeps
 it('accepts same-origin browser snapshot reads over HTTP but withholds details from unmarked and cross-origin reads', async () => {
   const { createServer } = await import('node:http')
   const { createApp, toNodeListener, defineEventHandler, getRequestURL, getHeader } = await import('h3')
-  const { taskCenterBrowserAccess } = await import('../../../server/utils/task-center-access')
+  const { taskCenterBrowserAccess } = await import('../../../layers/core/server/utils/task-center-access')
   db.update(schema.job).set({ kind: 'difference-snapshot', result: { counts: { enterprises: 1, requests: 0, rows: 0, unfinished: 7 }, items: [] } }).where(eq(schema.job.id, ids.batch)).run()
   const server = createServer(toNodeListener(createApp().use(defineEventHandler(async event => {
     const result = await handleTaskCenterRequest('detail', { method: 'GET', path: getRequestURL(event).pathname, headers: { authorization: getHeader(event,'authorization') } },

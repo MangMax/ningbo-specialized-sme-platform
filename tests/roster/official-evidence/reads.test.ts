@@ -557,7 +557,7 @@ it('raw valid opt-in boundaries and domain cursor dispatch', async () => {
 })
 it('raw auth precedes legacy strict malformed and batch dispatch', async () => {
   const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
-  const { resolveMcpAuth } = await import('../../../server/utils/mcp-auth')
+  const { resolveMcpAuth } = await import('../../../layers/core/server/utils/mcp-auth')
   for (const auth of [{ given: null, configured: 'synthetic-399-mcp' }, { given: 'wrong', configured: 'synthetic-399-mcp' }, { given: 'synthetic-399-mcp', configured: '' }, { given: 'synthetic-399-api', configured: 'synthetic-399-mcp' }]) {
     expect(resolveMcpAuth(auth).writeAuthorized).toBe(false)
     for (const args of [{ batchId: 1 }, { batchId: 1, pageSize: 51 }, {}, null, { ...events399, pageSize: 51 }]) {

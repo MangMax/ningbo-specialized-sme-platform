@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { requestLogContext } from '../../../lib/logging'
-import { safeLogEvent } from '../../../lib/logging/privacy'
+import { requestLogContext } from '../../../layers/core/lib/logging'
+import { safeLogEvent } from '../../../layers/core/lib/logging/privacy'
 
 const reads = vi.hoisted(() => ({ json: vi.fn() }))
 vi.mock('@db', () => ({ useDb: () => ({ $client: { name: 'context-compat.db' } }) }))

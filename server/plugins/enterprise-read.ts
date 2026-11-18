@@ -1,6 +1,6 @@
-import { requestLogContext } from '../../lib/logging'
+import { requestLogContext } from '../../layers/core/lib/logging'
 import { enterpriseReads } from '../utils/enterprise-read'
-import { withEnterpriseReadSignal } from '../utils/enterprise-read-signal'
+import { withEnterpriseReadSignal } from '../../layers/core/server/utils/enterprise-read-signal'
 
 export default defineNitroPlugin(app => {
   // Per-request definitions: never mutate the global tool registry or depend on

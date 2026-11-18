@@ -4,8 +4,8 @@ import { correspondenceStatusText, eventDecisionText, type CorrespondenceDetail 
 import { PLATFORM_INTERFACES, TITLES } from '~~/lib/labels'
 import { humanRecordTime, isCurrentContextEdge } from '~~/lib/roster/record-ledger'
 import EventCorrespondenceDecision from './EventCorrespondenceDecision.vue'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import { Badge } from '@/components/ui/badge'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
+import { Badge } from '#core/app/components/ui/badge'
 
 /**
  * 一条对应关系。

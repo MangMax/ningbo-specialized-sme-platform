@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createTus, MAX_SIZE, TUS_PATH, withTusObservation, type TusObservation } from '../../../server/utils/tus'
+import { createTus, MAX_SIZE, TUS_PATH, withTusObservation, type TusObservation } from '../../../layers/core/server/utils/tus'
 
 /**
  * tus 端点的**协议端到端**测试。

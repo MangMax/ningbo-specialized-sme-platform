@@ -1,6 +1,6 @@
 import type { ReconcileReportCounts } from '../platform-reconcile'
 import { sql } from 'drizzle-orm'
-import type { TaskSummary } from '../../../lib/task-center'
+import type { TaskSummary } from '../../../layers/core/lib/task-center'
 import { schema } from '../../../db/client'
 const j = schema.job
 // Reconcile historical coverage is unknown unless every nested container and

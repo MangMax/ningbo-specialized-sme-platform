@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Button } from '@/components/ui/button'
+import { Button } from '#core/app/components/ui/button'
 
 const props = defineProps<{ enterpriseIds: number[]; disabled?: boolean }>()
 const emit = defineEmits<{ refreshed: [] }>()

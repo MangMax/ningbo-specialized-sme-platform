@@ -11,11 +11,11 @@ import {
   comparisonSourceUnconfirmedLine,
 } from '~~/lib/roster/record-comparison-display'
 import { sourceSelectionKey, type ComparisonSelection, type ComparisonSource, type ComparisonSourceCatalog, type ComparisonSourceKind } from '~~/lib/roster/record-comparison-view'
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Badge } from '@/components/ui/badge'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
+import { Button } from '#core/app/components/ui/button'
+import { Checkbox } from '#core/app/components/ui/checkbox'
+import { Badge } from '#core/app/components/ui/badge'
+import { Tabs, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 
 const props = defineProps<{ selection: ComparisonSelection; kind?: ComparisonSourceKind }>()
 const emit = defineEmits<{

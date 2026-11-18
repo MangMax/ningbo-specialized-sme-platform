@@ -32,20 +32,20 @@ import {
   type LedgerState,
 } from '~~/lib/roster/ledger-view'
 import { ROSTER_DIFFERENCE_FILTER_OPTIONS, rosterDifferenceFilterLabel } from '~~/lib/roster/ledger-contract'
-import { captureQueryRequest, useRetainedQuerySnapshot } from '~/composables/useRetainedQuerySnapshot'
-import type { QueryRequestSnapshot } from '~/composables/useRetainedQuerySnapshot'
+import { captureQueryRequest, useRetainedQuerySnapshot } from '#core/app/composables/useRetainedQuerySnapshot'
+import type { QueryRequestSnapshot } from '#core/app/composables/useRetainedQuerySnapshot'
 import EnterpriseDrawer from '@/components/EnterpriseDrawer.vue'
 import EnterpriseDifferenceRefresh from '@/components/EnterpriseDifferenceRefresh.vue'
 import EnterpriseListTable, {
   type EnterpriseListRow,
 } from '@/components/EnterpriseListTable.vue'
-import FilterChip from '@/components/FilterChip.vue'
-import MultiSelectFilter from '@/components/MultiSelectFilter.vue'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import FilterChip from '#core/app/components/FilterChip.vue'
+import MultiSelectFilter from '#core/app/components/MultiSelectFilter.vue'
+import { Button } from '#core/app/components/ui/button'
+import { Card, CardContent } from '#core/app/components/ui/card'
+import { Input } from '#core/app/components/ui/input'
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
 
 /**
  * **企业列表**(RL-20)—— 一行一家企业的唯一台账表。

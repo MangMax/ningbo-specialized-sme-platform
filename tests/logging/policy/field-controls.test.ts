@@ -1,6 +1,6 @@
 import { expect, expectTypeOf, it } from 'vitest'
-import { LOG_LEVELS, LOG_SOURCES, type LogEvent, type LogFieldControlsPatch, type LogInput } from '../../../lib/logging/contract'
-import { LOG_FIELD_PROFILES, defaultFieldControls, validateFieldControlsPatch, mergeFieldControls, projectLogFields } from '../../../lib/logging/field-controls'
+import { LOG_LEVELS, LOG_SOURCES, type LogEvent, type LogFieldControlsPatch, type LogInput } from '../../../layers/core/lib/logging/contract'
+import { LOG_FIELD_PROFILES, defaultFieldControls, validateFieldControlsPatch, mergeFieldControls, projectLogFields } from '../../../layers/core/lib/logging/field-controls'
 
 const fields = ['httpMethod', 'httpRoute', 'statusCode', 'durationMs'] as const
 function event(level: LogEvent['level'] = 'info'): LogEvent {

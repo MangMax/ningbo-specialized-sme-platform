@@ -1,7 +1,7 @@
 import { platformBatchInputSchema, platformBatchStatusSchema, platformBatchItemSchema, platformBatchRetrySchema } from '../../lib/platform/batch-query'
 import { platformQueryInputSchema } from '../../lib/platform/live-query'
 import { platformEvidenceInputSchema } from '../../lib/platform/evidence-read'
-import type { LogContext } from '../../lib/logging'
+import type { LogContext } from '../../layers/core/lib/logging'
 
 /** Per-request toolkit hook passes server context through a non-wire symbol. */
 export const platformMcpContextKey = Symbol('platform-log-context')

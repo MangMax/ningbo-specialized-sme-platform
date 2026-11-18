@@ -2,10 +2,10 @@
 import { ref, watch } from 'vue'
 import { correspondenceStatusText, CORRESPONDENCE_ROLES, type CorrespondenceSummary, type SourceKind } from '~~/lib/roster/correspondence-view'
 import SourceReader from './SourceReader.vue'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Card, CardContent, CardHeader } from '#core/app/components/ui/card'
+import { Badge } from '#core/app/components/ui/badge'
+import { Button } from '#core/app/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '#core/app/components/ui/dialog'
 
 const props = defineProps<{ enterpriseId: number; returnTo?: string | null }>()
 type Result = { rows: CorrespondenceSummary[]; total: number; page: number; pageSize: number }

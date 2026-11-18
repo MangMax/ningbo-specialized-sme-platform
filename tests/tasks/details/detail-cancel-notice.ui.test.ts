@@ -12,9 +12,9 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import TaskDetail from '../../../components/tasks/TaskDetail.vue'
-import TableFailureState from '../../../components/TableFailureState.vue'
-import TaskProgress from '../../../components/tasks/TaskProgress.vue'
-import type { TaskSummary } from '~~/lib/task-center'
+import TableFailureState from '../../../layers/core/app/components/TableFailureState.vue'
+import TaskProgress from '../../../layers/core/app/components/tasks/TaskProgress.vue'
+import type { TaskSummary } from '#core/lib/task-center'
 
 const TASK_ID = '01M5BEPVCXD5619ZW4C6CATMWX'
 

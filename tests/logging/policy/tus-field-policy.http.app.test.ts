@@ -5,8 +5,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
-import { LOG_LEVELS } from '../../../lib/logging/contract'
-import { LOG_FIELD_PROFILES } from '../../../lib/logging/field-controls'
+import { LOG_LEVELS } from '../../../layers/core/lib/logging/contract'
+import { LOG_FIELD_PROFILES } from '../../../layers/core/lib/logging/field-controls'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
 
 // Only this checkout's already-built artifact; caller records its frozen tree.

@@ -4,7 +4,7 @@ import { ref, watch } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useQuery } from '@pinia/colada'
 import RosterPage from '../../../pages/roster.vue'
-import FilesPage from '../../../pages/files.vue'
+import FilesPage from '../../../layers/core/app/pages/files.vue'
 
 vi.mock('@pinia/colada', () => ({ useQuery: vi.fn(), useQueryCache: () => ({ invalidateQueries: vi.fn() }) }))
 vi.mock('vue-router', () => ({ onBeforeRouteLeave: vi.fn() }))

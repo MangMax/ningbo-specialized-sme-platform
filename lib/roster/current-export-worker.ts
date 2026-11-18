@@ -4,7 +4,7 @@ import { getHeapStatistics } from 'node:v8'
 import Database from 'better-sqlite3'
 import { CurrentWorkbookLimitError, writeCurrentWorkbook } from './current-workbook'
 import { CURRENT_RULE_VERSION, type CurrentTitle } from './current-qualification'
-import { initializeWorkerLogging, closeApplicationLogging, type LogContext } from '../logging'
+import { initializeWorkerLogging, closeApplicationLogging, type LogContext } from '../../layers/core/lib/logging'
 initializeWorkerLogging()
 process.on('disconnect', () => process.exit(1))
 process.once('message', async (request: { dbPath: string; title: CurrentTitle; temporaryPath: string; jobId: string; logContext?: LogContext; receiptRuntime?: ReceiptRuntimeContext }) => {

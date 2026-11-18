@@ -1,7 +1,7 @@
-import { semanticRouteHandler } from '../../../../../utils/core-route'
+import { semanticRouteHandler } from '../../../../../../layers/core/server/utils/core-route'
 import { useDb } from '@db'
 import { maintainEnterpriseAlias } from '../../../../../utils/alias-maintenance'
-import { requireApiToken } from '../../../../../utils/api-guard'
+import { requireApiToken } from '../../../../../../layers/core/server/utils/api-guard'
 
 defineRouteMeta({ openAPI: {
   tags: ['企业别名维护'], summary: '显式确认、更正或撤回企业别名',

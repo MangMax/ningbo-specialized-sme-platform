@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import ExcelJS from 'exceljs'
-import { newJobId } from '../../../lib/job'
+import { newJobId } from '../../../layers/core/lib/job'
 import { createHash } from 'node:crypto'
 import { channel } from 'node:diagnostics_channel'
 import { eq } from 'drizzle-orm'
@@ -269,7 +269,10 @@ it('OpenAPI任务与受控下载发现', async () => {
   const response=await Promise.resolve(new Response(JSON.stringify(await readDevelopmentDiscovery())));expect(response.status).toBe(200)
   const spec=await json(response)
   expect(spec.paths['/api/roster/exports/current/little-giant'].post.security).toEqual([{bearerAuth:[]}])
-  expect(spec.paths['/api/jobs'].post.requestBody.content['application/json'].schema.properties.kind.enum).toContain('current-roster-export')
+  expect(spec.paths['/api/jobs/kinds'].get.responses['200']).toBeDefined()
+  const kinds = await fetch(url('/api/jobs/kinds'))
+  expect(kinds.status).toBe(200)
+  expect((await kinds.json()).kinds).toContainEqual(expect.objectContaining({ kind: 'current-roster-export', status: 'ready' }))
   expect(spec.paths['/api/job-artifacts/{id}'].get.security).toEqual([{bearerAuth:[]}])
   expect(spec.paths['/api/job-artifacts/{id}'].get.responses['200'].content['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'].schema.format).toBe('binary')
 })

@@ -1,12 +1,13 @@
-import type { LogContext } from '../../../lib/logging'
-import { legacyFileMaintenanceControlShape } from '../../utils/file-maintenance-contract'
-import { parseFileMaintenanceOptions } from '../../utils/file-maintenance'
+import type { LogContext } from '../../../layers/core/lib/logging'
+import { legacyFileMaintenanceControlShape } from '../../../layers/core/server/utils/file-maintenance-contract'
+import { parseFileMaintenanceOptions } from '../../../layers/core/server/utils/file-maintenance'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { TITLE_ORDER } from '~~/lib/labels'
-import { fileRefShape, setFileCategoryForAgent } from '../../utils/mcp-files'
-import { writeGuard } from '../../utils/mcp-guard'
+import { fileRefShape } from '../../../layers/core/server/utils/file-agent-reference'
+import { setFileCategoryForAgent } from '../../utils/mcp-files'
+import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 
 /**
  * `set_file_category` —— 回写文件分类(票 18,**写入**,需鉴权)。

@@ -13,7 +13,7 @@ import {
   pageNoOfMarker,
   PAGE_MARKER_RE,
   splitMarkdown,
-} from '../../../lib/ocr-markdown'
+} from '../../../layers/core/lib/ocr-markdown'
 import {
   listOcrResults,
   ocrMarkdown,
@@ -21,7 +21,7 @@ import {
   pagesFromInput,
   validateOcrPages,
   writeOcrResult,
-} from '../../../server/utils/ocr-result'
+} from '../../../layers/core/server/utils/ocr-result'
 
 /**
  * 票 14 —— OCR 结果入库与 markdown 导出。

@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
-import { updateCredential } from '../../../server/utils/credential-state'
-import { whenIdle } from '../../../server/utils/job-runner'
+import { updateCredential } from '../../../layers/core/server/utils/credential-state'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { handlePlatformBatchRequest } from '../../../server/utils/platform-batch-http'
 import { MAX_BATCH_ATTEMPTS } from '../../../lib/platform/batch-query'
 
@@ -191,7 +191,7 @@ it.each<[string, () => any, string]>([
   expect(JSON.stringify({ item, history })).not.toContain('synthetic-batch-secret')
 })
 it('queued mixed-source batches retain one submission credential snapshot across settings changes and retries capture anew', async () => {
-  const { registerJob, submitJob } = await import('../../../server/utils/job-runner')
+  const { registerJob, submitJob } = await import('../../../layers/core/server/utils/job-runner')
   let release!: () => void
   registerJob({ kind: 'batch-test-holder', status: 'ready', summary: 'Synthetic gate', parse: () => ({ ok: true, params: {} }), run: async () => { await new Promise<void>(r => { release = r }); return { result: {} } } })
   submitJob(db, { kind: 'batch-test-holder', params: {}, filesDir: dir })

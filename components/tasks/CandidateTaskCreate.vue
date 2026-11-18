@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { shallowRef } from 'vue'
-import { TASK_EXPORTS } from '~~/lib/task-center'
-import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
+import { TASK_EXPORTS } from '../../lib/sme-roster/task-exports'
+import { Button } from '#core/app/components/ui/button'
+import { Label } from '#core/app/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -10,7 +10,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from '#core/app/components/ui/select'
 const emit = defineEmits<{ created: [jobId: string] }>()
 const title = shallowRef('specialized_sme')
 const pending = shallowRef(false)

@@ -1,6 +1,6 @@
-import { requestLogContext } from '../../lib/logging'
+import { requestLogContext } from '../../layers/core/lib/logging'
 import { readSummary } from '../utils/comparison-summary-read'
-import { withEnterpriseReadSignal } from '../utils/enterprise-read-signal'
+import { withEnterpriseReadSignal } from '../../layers/core/server/utils/enterprise-read-signal'
 import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '~~/lib/comparison'
 import { readWholeComparisonFull } from '~~/lib/comparison-full'

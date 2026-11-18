@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
-import { updateCredential } from '../../../server/utils/credential-state'
+import { updateCredential } from '../../../layers/core/server/utils/credential-state'
 
 const dir = mkdtempSync(join(tmpdir(), 'platform-business-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'test.db') })

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { createClientErrorTransport } from '../../../lib/client-logging/transport'
+import { createClientErrorTransport } from '../../../layers/core/lib/client-logging/transport'
 const transports: ReturnType<typeof createClientErrorTransport>[] = []
 afterEach(() => { for (const transport of transports.splice(0)) transport.dispose(); vi.unstubAllGlobals(); vi.useRealTimers() })
 function fixture(options = {}) { const transport = createClientErrorTransport(options); transports.push(transport); return transport }
@@ -76,7 +76,7 @@ it('sends a separate bounded response reference without accepting arbitrary cont
 })
 
 it('keeps only valid request references at the exact length boundary without coercing or truncating claims', async () => {
-  const { clientErrorReport } = await import('../../../lib/client-logging/contract')
+  const { clientErrorReport } = await import('../../../layers/core/lib/client-logging/contract')
   const base = { kind: 'interaction_failure', page: 'tasks', level: 'error' }
   expect(clientErrorReport({ ...base, relatedRequestId: 'r'.repeat(128) })?.relatedRequestId).toBe('r'.repeat(128))
   for (const value of ['r'.repeat(129), '', '/private?token=secret', '<script>', 'line\nbreak', { toString() { throw Error('never coerce') } }, ['id'], 180]) {

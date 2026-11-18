@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Badge } from '@/components/ui/badge'
-import { HoverCard, HoverCardTrigger } from '@/components/ui/hover-card'
-import { interactiveTriggerState } from '@/lib/utils'
-import TableHoverCardContent from './TableHoverCardContent.vue'
+import { Badge } from '#core/app/components/ui/badge'
+import { HoverCard, HoverCardTrigger } from '#core/app/components/ui/hover-card'
+import { interactiveTriggerState } from '#core/lib/utils'
+import TableHoverCardContent from '../layers/core/app/components/TableHoverCardContent.vue'
 defineProps<{ names: string[] }>()
 const open = ref(false)
 </script>

@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { annualTaskContext } from '../../utils/annual-correspondence-read'
 import { annualTaskMcpRequest } from '../../utils/annual-correspondence-mcp'
-import { writeGuard } from '../../utils/mcp-guard'
+import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 export default defineMcpTool({
   name: 'submit_event_annual_correspondence_task',
   title: '启动年度对应任务',

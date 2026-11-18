@@ -46,6 +46,15 @@ beforeAll(async () => {
   child.stdout.on('data', chunk => { output += chunk })
   child.stderr.on('data', chunk => { output += chunk })
   try { await waitForHttp(`${baseUrl}/api/health`, { child }) } catch (error) { throw new Error(`${error}\n${output}`) }
+  const coldPath = 'jxj/announcement/2024/1/cold.pdf'
+  mkdirSync(join(root, 'jxj/announcement/2024/1'), { recursive: true })
+  writeFileSync(join(root, coldPath), minimalPdf({ pages: 1 }))
+  const cold = await fetch(`${baseUrl}/api/ocr-results?file=${encodeURIComponent(coldPath)}`)
+  expect(cold.status).toBe(200)
+  expect(await cold.json()).toMatchObject({
+    file: { relPath: coldPath, filename: 'cold.pdf', ext: 'pdf', parseState: 'unparsed' },
+    count: 0,
+  })
 }, 120_000)
 afterAll(async () => { await app?.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 beforeEach(async () => {
@@ -192,7 +201,13 @@ it('page redo and deletion preserve source bytes, images, file parts, formal eve
   mkdirSync(pageDir, { recursive: true })
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aY1sAAAAASUVORK5CYII=', 'base64')
   writeFileSync(join(pageDir, 'p001.png'), png)
+  // OCR and PDF reads leave source-derived parts to file maintenance.
+  expect((await rest('GET')).status).toBe(200)
+  expect((await call('get_ocr_result', { fileId: file.id, page: 1 })).results).toHaveLength(1)
+  expect(await call('list_page_images', { fileId: file.id })).toMatchObject({ file: { id: file.id, relPath: file.relPath }, pageCount: 6 })
+  expect(db.select().from(schema.storedFilePart).all()).toMatchObject([{ origin: 'agent' }])
   const fileBefore = await call('get_file', { fileId: file.id })
+  expect(fileBefore.parts).toEqual(expect.arrayContaining([expect.objectContaining({ origin: 'derived' })]))
   const detailUrl = `${app.baseUrl}/api/roster/enterprises/${owner.id}`
   const before = await (await fetch(detailUrl)).json()
   expect(before.events).toEqual(expect.arrayContaining([expect.objectContaining({ id: event.id })]))

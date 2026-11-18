@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
-import TableFailureState from '@/components/TableFailureState.vue'
+import TableFailureState from '#core/app/components/TableFailureState.vue'
 
 interface RosterStats {
   totalRecords: number

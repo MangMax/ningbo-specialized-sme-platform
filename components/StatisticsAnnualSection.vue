@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { motion, useReducedMotion } from 'motion-v'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '#core/app/components/ui/tabs'
 const reducedMotion = useReducedMotion()
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import type { AnnualStatistics } from '~~/lib/roster/annual-statistics'
 import { TITLES, TITLE_ORDER } from '~~/lib/labels'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
+import { Skeleton } from '#core/app/components/ui/skeleton'
+import { Button } from '#core/app/components/ui/button'
 import { ArrowUpRight, ChartNoAxesCombined, CircleAlert } from '@lucide/vue'
 import { CurveType } from 'nuxt-charts/enums'
 const year = ref('today'), title = ref('specialized_sme'), status = ref('effective'), page = ref(1), pageSize = ref(25)

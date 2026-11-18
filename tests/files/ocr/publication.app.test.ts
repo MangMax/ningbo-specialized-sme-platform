@@ -10,10 +10,10 @@ import { tmpdir } from 'node:os'
 import * as h3 from 'h3'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../../../db'
-import { whenIdle } from '../../../server/utils/job-runner'
-import { DEFAULT_DPI } from '../../../lib/pdf-page'
-import { pageDirRelPath, PAGES_MANIFEST_NAME, pageImageRelPath } from '../../../lib/pdf-page'
-import { renderPdfPages } from '../../../server/utils/pdf-pages'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { DEFAULT_DPI } from '../../../layers/core/lib/pdf-page'
+import { pageDirRelPath, PAGES_MANIFEST_NAME, pageImageRelPath } from '../../../layers/core/lib/pdf-page'
+import { renderPdfPages } from '../../../layers/core/server/utils/pdf-pages'
 import { minimalPdf } from '../../support/minimal-pdf'
 import { startMiniOcrApi } from './fixtures/provider-api'
 import type { ModelApiFixture } from './fixtures/provider-api'
@@ -46,11 +46,11 @@ beforeAll(async () => {
   vi.stubEnv('MIIT_COOKIE', '')
   for (const key of ['defineEventHandler', 'getQuery', 'getRouterParam', 'readBody', 'createError', 'setHeader', 'setResponseStatus'] as const) vi.stubGlobal(key, h3[key])
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir, apiToken: 'issue309-api', ocrToken: 'issue309-synthetic-ocr', ocrBaseUrl: api?.origin }))
-  const post = (await import('../../../server/api/jobs/index.post')).default
-  const get = (await import('../../../server/api/jobs/[id].get')).default
-  const cancel = (await import('../../../server/api/jobs/[id].delete')).default
-  const read = (await import('../../../server/api/files/[id]/ocr-pages/[page].get')).default
-  const save = (await import('../../../server/api/files/[id]/ocr-pages/[page].put')).default
+  const post = (await import('../../../layers/core/server/api/jobs/index.post')).default
+  const get = (await import('../../../layers/core/server/api/jobs/[id].get')).default
+  const cancel = (await import('../../../layers/core/server/api/jobs/[id].delete')).default
+  const read = (await import('../../../layers/core/server/api/files/[id]/ocr-pages/[page].get')).default
+  const save = (await import('../../../layers/core/server/api/files/[id]/ocr-pages/[page].put')).default
   const router = h3.createRouter().post('/api/jobs', post).get('/api/jobs/:id', get).delete('/api/jobs/:id', cancel)
     .get('/api/files/:id/ocr-pages/:page', read).put('/api/files/:id/ocr-pages/:page', save)
   server = createServer(h3.toNodeListener(h3.createApp({ debug: false }).use(router)))
@@ -60,7 +60,7 @@ beforeAll(async () => {
   // and its auth middleware are outside this focused harness.
   mcp = new McpServer({ name: 'issue309', version: '1' })
   for (const name of ['get_ocr_result', 'save_ocr_result']) {
-    const tool = (await import(`../../../server/mcp/tools/${name}.ts`)).default as unknown as { inputSchema: ZodRawShape; handler: (input: Record<string, unknown>) => Promise<unknown> }
+    const tool = (await import(`../../../layers/core/server/mcp/tools/${name}.ts`)).default as unknown as { inputSchema: ZodRawShape; handler: (input: Record<string, unknown>) => Promise<unknown> }
     mcp.registerTool(name, { inputSchema: tool.inputSchema }, async input => ({ content: [{ type: 'text', text: JSON.stringify(await tool.handler(input)) }] }))
   }
   client = new Client({ name: 'issue309-client', version: '1' })
@@ -180,7 +180,7 @@ it('partial rejection retains successful raw in the task and explicit retry only
   expect(failed.result.publication.files[0].captures[0].raw).toEqual({ markdown: { text: 'paid original' } })
   expect((await request(pagePath)).status).toBe(404)
   // Discard the accelerator; retained paid output must come from job.result.
-  const { ocrPageCacheDirAbs } = await import('../../../server/utils/ocr-page-cache')
+  const { ocrPageCacheDirAbs } = await import('../../../layers/core/server/utils/ocr-page-cache')
   rmSync(ocrPageCacheDirAbs(filesDir, file), { recursive: true, force: true })
   const retry = await submit(file, id)
   await whenIdle()
@@ -242,7 +242,7 @@ it('SIGKILL after a paid-page checkpoint preserves raw across restart and resume
     })
     first.child.kill('SIGKILL'); await once(first.child, 'exit')
     // Remove all optional caches. SQLite task receipts are the recovery source.
-    const { ocrPageCacheDirAbs } = await import('../../../server/utils/ocr-page-cache')
+    const { ocrPageCacheDirAbs } = await import('../../../layers/core/server/utils/ocr-page-cache')
     rmSync(ocrPageCacheDirAbs(filesDir, file), { recursive: true, force: true })
     const restarted = await childHost()
     base = restarted.base
@@ -465,7 +465,7 @@ it("concurrent accepted followers use the first durable capture and one publicat
     const parent = (await response.json()).jobId as string
     await vi.waitFor(async () => expect((await status(parent)).result?.publication.files[0].requests['1'].state).toBe('accepted'))
     await stopChild(original.child)
-    const { reconcileInterruptedJobs } = await import('../../../server/utils/job-store')
+    const { reconcileInterruptedJobs } = await import('../../../layers/core/server/utils/job-store')
     expect(reconcileInterruptedJobs(db)).toBe(1)
     const [a, b] = await Promise.all([submit(file, parent), submit(file, parent)])
     await vi.waitFor(async () => {
@@ -493,8 +493,8 @@ it("terminal source claim metadata survives stale checkpoints, finishes, reconci
   await submit(file, parent)
   await whenIdle()
   const before = await status(parent)
-  const { setJobResult, setJobProgress, markJobRunning, finishJob, reconcileInterruptedJobs } = await import('../../../server/utils/job-store')
-  const { enqueuePersistedJob } = await import('../../../server/utils/job-runner')
+  const { setJobResult, setJobProgress, markJobRunning, finishJob, reconcileInterruptedJobs } = await import('../../../layers/core/server/utils/job-store')
+  const { enqueuePersistedJob } = await import('../../../layers/core/server/utils/job-runner')
   setJobResult(db, parent, { publication: 'stale whole result' })
   setJobProgress(db, parent, { done: 0, total: 99 })
   expect(markJobRunning(db, parent)).toBe(null)
@@ -515,7 +515,7 @@ it("late capture after descendant restart reconciliation preserves the shared cl
   const initial = await status(parent)
   const a = await submit(file, parent)
   await vi.waitFor(async () => expect((await status(a)).result?.publication.files[0].requests['1'].state).toBe('accepted'))
-  const { reconcileInterruptedJobs } = await import('../../../server/utils/job-store')
+  const { reconcileInterruptedJobs } = await import('../../../layers/core/server/utils/job-store')
   expect(reconcileInterruptedJobs(db)).toBe(1)
   const interrupted = await status(a)
   expect(interrupted.state).toBe('failed')
@@ -663,7 +663,7 @@ it.each(['claimed', 'complete'] as const)("SIGKILL after committed %s claim neve
     expect(claim.state).toBe(phase)
     expect(api!.stats.submits).toBe(phase === 'claimed' ? 1 : 2)
     await stopChild(one.child); await pending
-    const { ocrPageCacheDirAbs } = await import('../../../server/utils/ocr-page-cache')
+    const { ocrPageCacheDirAbs } = await import('../../../layers/core/server/utils/ocr-page-cache')
     rmSync(ocrPageCacheDirAbs(filesDir, file), { recursive: true, force: true })
     two = await childHost()
     expect((await at(two.base, `/api/jobs/${parent}`)).status).toBe(200)
@@ -885,8 +885,8 @@ it("different original pages share durable authority after reconciliation withou
 
 it("legacy cache with unknown capture time retains null provenance without inventing a timestamp or paying", async () => {
   const { file, row, pagePath } = await setup()
-  const { ocrRequestVariant } = await import('../../../server/utils/ocr-api')
-  const { ocrPageCacheDirAbs, ocrPageCacheKey } = await import('../../../server/utils/ocr-page-cache')
+  const { ocrRequestVariant } = await import('../../../layers/core/server/utils/ocr-api')
+  const { ocrPageCacheDirAbs, ocrPageCacheKey } = await import('../../../layers/core/server/utils/ocr-page-cache')
   const model = 'PaddleOCR-VL-1.6', variant = ocrRequestVariant(model)
   const imageSha256 = createHash('sha256').update(readFileSync(join(filesDir, pageImageRelPath(file, 1)))).digest('hex')
   const cache = ocrPageCacheDirAbs(filesDir, file)

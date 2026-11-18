@@ -1,17 +1,17 @@
 <script setup lang="ts">
-import { clientRequestReference } from '~~/lib/client-logging/request-reference'
+import { clientRequestReference } from '#core/lib/client-logging/request-reference'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import type { TaskSummary } from '~~/lib/task-center'
-import { TASK_STATES } from '~~/lib/task-center'
-import { getTaskKind } from '~~/lib/task-catalog'
-import { useTaskPolling } from '~/composables/useTaskPolling'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardHeader, CardDescription, CardContent } from '@/components/ui/card'
-import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
-import { Separator } from '@/components/ui/separator'
+import type { TaskSummary } from '#core/lib/task-center'
+import { TASK_STATES } from '#core/lib/task-center'
+import { getTaskKind } from '#core/lib/task-catalog'
+import { useTaskPolling } from '#core/app/composables/useTaskPolling'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
+import { Button } from '#core/app/components/ui/button'
+import { Badge } from '#core/app/components/ui/badge'
+import { Card, CardHeader, CardDescription, CardContent } from '#core/app/components/ui/card'
+import { Alert, AlertTitle, AlertDescription } from '#core/app/components/ui/alert'
+import { Separator } from '#core/app/components/ui/separator'
 
 /**
  * 一条任务的详情。

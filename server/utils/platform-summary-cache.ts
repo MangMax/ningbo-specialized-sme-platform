@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import { realpathSync, statSync } from 'node:fs'
 import { channel } from 'node:diagnostics_channel'
 import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { createDrizzleLogger } from '../../lib/logging/drizzle'
+import { createDrizzleLogger } from '../../layers/core/lib/logging/drizzle'
 import * as schema from '../../db/schema'
 import { listPlatformQueries, type PlatformQueryFilter } from '../../lib/platform/read'
 

@@ -11,7 +11,7 @@ import type { RosterImportRequest } from '../../../lib/roster-import-client'
 import { initializeDb } from '../../../db/client'
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
 import { readImportReceipt } from '../../../server/utils/import-receipts'
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../lib/logging'
+import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
 
 
 // Preserve real IPC, worker logging and durable commits using the artifact CI builds.

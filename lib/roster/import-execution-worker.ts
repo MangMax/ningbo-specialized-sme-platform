@@ -3,12 +3,12 @@ import { deserialize } from 'node:v8'
 import { realpathSync, statSync } from 'node:fs'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { createDrizzleLogger } from '../logging/drizzle'
+import { createDrizzleLogger } from '../../layers/core/lib/logging/drizzle'
 import * as schema from '../../db/schema'
 import { preflightRosterImport, commitRosterImport } from '../../server/utils/roster-import'
 import { ImportReceiptError } from '../../server/utils/import-receipts'
 import type { ImportExecutionMessage } from '../../server/utils/import-execution'
-import { initializeWorkerLogging, closeApplicationLogging } from '../logging'
+import { initializeWorkerLogging, closeApplicationLogging } from '../../layers/core/lib/logging'
 
 initializeWorkerLogging()
 

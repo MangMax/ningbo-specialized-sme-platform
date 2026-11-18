@@ -1,5 +1,5 @@
 import { cookieRedactor } from '../../lib/platform/client'
-import { credentialContext, resolveCredential } from './credential-state'
+import { credentialContext, resolveCredential } from '../../layers/core/server/utils/credential-state'
 import { sanitizeEvidence } from './record-correspondence-read'
 import { z } from 'zod'
 import { DecisionError102, decisionScope102, type DecisionDb } from './decision-lifecycle-102'

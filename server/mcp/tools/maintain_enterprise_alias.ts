@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { writeGuard } from '../../utils/mcp-guard'
+import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 import { aliasDecisionInput, maintainEnterpriseAlias } from '../../utils/alias-maintenance'
 export default defineMcpTool({
   name: 'maintain_enterprise_alias', title: '确认、更正或撤回企业别名',

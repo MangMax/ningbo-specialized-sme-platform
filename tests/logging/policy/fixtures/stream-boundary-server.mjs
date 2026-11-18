@@ -10,8 +10,8 @@ import { createApp, toNodeListener, setHeader } from 'h3'
 const { createJiti } = createRequire(import.meta.resolve('nuxt/package.json'))('jiti')
 const jiti = createJiti(import.meta.url)
 Reflect.set(globalThis, 'useRuntimeConfig', () => ({ apiToken: 'synthetic-field-api' }))
-const { createLoggingRoute } = await jiti.import(resolve('server/utils/logging-route.ts'))
-const { closeApplicationLogging } = await jiti.import(resolve('lib/logging/index.ts'))
+const { createLoggingRoute } = await jiti.import(resolve('layers/core/server/utils/logging-route.ts'))
+const { closeApplicationLogging } = await jiti.import(resolve('layers/core/lib/logging/index.ts'))
 const routes = { patch: createLoggingRoute('setPolicy'), clear: createLoggingRoute('clear') }
 const app = createApp().use(async event => {
   const req = event.node.req, on = req.on, off = req.off

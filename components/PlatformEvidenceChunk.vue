@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from 'vue'
-import { Button } from '@/components/ui/button'
-import TableFailureState from './TableFailureState.vue'
+import { Button } from '#core/app/components/ui/button'
+import TableFailureState from '../layers/core/app/components/TableFailureState.vue'
 
 const props = defineProps<{
   queryId: number

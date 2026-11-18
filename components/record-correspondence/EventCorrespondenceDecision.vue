@@ -9,12 +9,12 @@ import { DECISION_EFFECTS, platformDecisionSummary, replacementDecisionOptions }
 import SourceReader from './SourceReader.vue'
 import EventCandidateComparison from './EventCandidateComparison.vue'
 import OfficialEvidence from './OfficialEvidence.vue'
-import TablePagination from '@/components/TablePagination.vue'
-import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import TablePagination from '#core/app/components/TablePagination.vue'
+import { Button } from '#core/app/components/ui/button'
+import { Label } from '#core/app/components/ui/label'
+import { Textarea } from '#core/app/components/ui/textarea'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '#core/app/components/ui/dialog'
 
 interface Edge { type: string; eventId: number; relationId: number; role: string }
 interface Existing { id: number; revision: number; status: string; requiresRevalidation?: boolean; type?: string; eventId?: number | null; relationId?: number | null; role?: string }

@@ -3,7 +3,7 @@ import path from 'node:path'
 import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
 
-const cssDir = path.resolve(__dirname, '../../../assets/css')
+const cssDir = path.resolve(__dirname, '../../../layers/core/app/assets/css')
 const cssPath = path.join(cssDir, 'tailwind.css')
 
 async function compileTailwind(candidates: string[]) {

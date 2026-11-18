@@ -1,4 +1,4 @@
-import {newJobId} from '../../../lib/job'
+import {newJobId} from '../../../layers/core/lib/job'
 import {submitNativePlatformQuery} from '../fixtures/native-query'
 import { nativeRelationRows } from '../fixtures/native-evidence'
 import { initializeDb } from '../../../db/client'
@@ -10,9 +10,9 @@ import * as h3 from 'h3'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { clearJobSpecs, whenIdle } from '../../../server/utils/job-runner'
-import { updateCredential } from '../../../server/utils/credential-state'
-import type { TaskList, TaskSummary } from '../../../lib/task-center'
+import { clearJobSpecs, whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { updateCredential } from '../../../layers/core/server/utils/credential-state'
+import type { TaskList, TaskSummary } from '../../../layers/core/lib/task-center'
 
 // Keep real retries/page capture/credentials; advance only the injected backoff.
 // The client/reconcile I/O suites own real scheduling and cancellation during sleep.
@@ -61,7 +61,7 @@ beforeAll(async () => {
   for (const key of ['defineEventHandler', 'readBody', 'createError', 'setResponseStatus', 'setHeader', 'getRouterParam', 'getQuery', 'getRequestURL', 'getHeader'] as const) vi.stubGlobal(key, h3[key])
   vi.doMock('@db', () => ({ useDb: () => db }))
   const routes = await Promise.all([
-    import('../../../server/api/jobs/index.post'), import('../../../server/api/jobs/[id].get'), import('../../../server/api/jobs/[id].delete'), import('../../../server/api/platform/queries.get'), import('../../../server/api/task-center/[id].get'), import('../../../server/api/task-center/index.get'),
+    import('../../../layers/core/server/api/jobs/index.post'), import('../../../layers/core/server/api/jobs/[id].get'), import('../../../layers/core/server/api/jobs/[id].delete'), import('../../../server/api/platform/queries.get'), import('../../../layers/core/server/api/task-center/[id].get'), import('../../../layers/core/server/api/task-center/index.get'),
   ])
   const router = h3.createRouter()
   router.post('/api/jobs', routes[0].default).get('/api/jobs/:id', routes[1].default).delete('/api/jobs/:id', routes[2].default).get('/api/platform/queries', routes[3].default)

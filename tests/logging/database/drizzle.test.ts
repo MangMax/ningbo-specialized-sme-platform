@@ -2,10 +2,10 @@ import { afterEach, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { createDrizzleLogger } from '../../../lib/logging/drizzle'
+import { createDrizzleLogger } from '../../../layers/core/lib/logging/drizzle'
 
 const { emit } = vi.hoisted(() => ({ emit: vi.fn() }))
-vi.mock('../../../lib/logging/index', () => ({ appLog: emit }))
+vi.mock('../../../layers/core/lib/logging/index', () => ({ appLog: emit }))
 const connections: Database.Database[] = []
 function fixture() {
   const client = new Database(':memory:')

@@ -9,9 +9,9 @@ import {enrichAnnualProcessFinalQualification,readAnnualWriteScope} from '../../
 import {qualifyAnnualFinal,readAnnualDecisionRefs,reconcileAnnualStep} from '../../../server/utils/annual-correspondence'
 import {submitNativePlatformQuery} from '../../platform/fixtures/native-query'
 import {commitRecordCorrespondences,preflightRecordCorrespondences,type CorrespondenceRequest,listRecordCorrespondences} from '../../../server/utils/record-correspondence'
-import {clearJobSpecs,__resetJobRunner,whenIdle} from '../../../server/utils/job-runner'
+import {clearJobSpecs,__resetJobRunner,whenIdle} from '../../../layers/core/server/utils/job-runner'
 import {handleAnnualTaskRequest} from '../../../server/utils/annual-correspondence-api'
-import {getJob} from '../../../server/utils/job-store'
+import {getJob} from '../../../layers/core/server/utils/job-store'
 let active:ReturnType<typeof initializeDb>
 vi.mock('@nuxtjs/mcp-toolkit/server',()=>({defineMcpTool:(definition:unknown)=>definition}))
 vi.mock('@db',()=>({useDb:()=>active}))

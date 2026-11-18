@@ -2,7 +2,7 @@ import { validateReceiptRuntimeContext, type ReceiptRuntimeContext } from './rec
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../db/schema'
 import { cookieRedactor } from '../../lib/platform/client'
-import { credentialContext, resolveCredential } from './credential-state'
+import { credentialContext, resolveCredential } from '../../layers/core/server/utils/credential-state'
 import { sanitizeEvidence } from './record-correspondence-read'
 
 type Db = BetterSQLite3Database<typeof schema>

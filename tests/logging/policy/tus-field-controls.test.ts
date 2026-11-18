@@ -1,7 +1,7 @@
 import { expect, expectTypeOf, it } from 'vitest'
-import { LOG_LEVELS, type LogInput, type LogEvent, type LogFieldControlsPatch, type FieldCapturedLogEvent } from '../../../lib/logging/contract'
-import { LOG_FIELD_PROFILES, defaultFieldControls, mergeFieldControls, validateFieldControlsPatch, projectLogFields } from '../../../lib/logging/field-controls'
-import { safeLogEvent, safeTusContext } from '../../../lib/logging/privacy'
+import { LOG_LEVELS, type LogInput, type LogEvent, type LogFieldControlsPatch, type FieldCapturedLogEvent } from '../../../layers/core/lib/logging/contract'
+import { LOG_FIELD_PROFILES, defaultFieldControls, mergeFieldControls, validateFieldControlsPatch, projectLogFields } from '../../../layers/core/lib/logging/field-controls'
+import { safeLogEvent, safeTusContext } from '../../../layers/core/lib/logging/privacy'
 
 const fields = ['tus.method', 'tus.uploadId', 'tus.size', 'tus.offset'] as const
 const input = (level: LogEvent['level'] = 'info') => safeLogEvent({ source: 'file', operation: 'file.upload', level, outcome: 'success', origin: { runtime: 'node', integration: 'tus', capture: 'hook' }, tus: { uploadId: 'a'.repeat(32), phase: 'completed', method: 'PATCH', size: 8, offset: 0 }, statusCode: 204, durationMs: 0, errorCode: 'known_code', counts: { done: 0 }, requestId: 'req-tus' })

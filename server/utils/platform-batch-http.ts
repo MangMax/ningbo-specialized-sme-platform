@@ -2,9 +2,9 @@ import { z } from 'zod'
 import { platformBatchRetryShape } from '../../lib/platform/batch-query'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../db/schema'
-import { readApiToken, resolveApiAuth } from './api-auth'
+import { readApiToken, resolveApiAuth } from '../../layers/core/server/utils/api-auth'
 import { getPlatformBatch, getPlatformBatchItem, retryPlatformBatch, submitPlatformBatch } from './platform-batch-query'
-import type { LogContext } from '../../lib/logging'
+import type { LogContext } from '../../layers/core/lib/logging'
 export async function handlePlatformBatchRequest(action: 'submit' | 'status' | 'item' | 'retry', req: { body?: unknown; batchId?: string; itemId?: string; headers?: Record<string, string | undefined> }, ctx: { db: BetterSQLite3Database<typeof schema>; apiToken?: string | null; filesDir: string; logContext?: LogContext }) {
   const headers: Record<string, string> = { 'cache-control': 'no-store' }
   if ((action === 'submit' || action === 'retry') && !resolveApiAuth({ given: readApiToken(req.headers), configured: ctx.apiToken }).writeAuthorized) return { status: 401, headers, body: { error: 'Platform batch submission/retry requires API authorization' } }

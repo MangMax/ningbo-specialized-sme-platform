@@ -4,7 +4,7 @@ import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { writeOcrResult } from '../../../server/utils/ocr-result'
+import { writeOcrResult } from '../../../layers/core/server/utils/ocr-result'
 import { initializeDb, schema } from '../../../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 

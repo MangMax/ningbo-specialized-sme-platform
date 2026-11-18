@@ -1,8 +1,8 @@
-import type { LogContext } from '../../../lib/logging'
+import type { LogContext } from '../../../layers/core/lib/logging'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { parseCommitMcp310, commitRanges669 } from '../../utils/parse-maintenance-105'
-import { writeGuard } from '../../utils/mcp-guard'
+import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 export default defineMcpTool({
   name: 'commit_file_parse_result', title: '提交冻结输入的名单解析',
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },

@@ -6,9 +6,9 @@ import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, getQuery, getRouterParam, defineEventHandler, createError } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb } from '../../../db'
-import { newJobId } from '../../../lib/job'
-import { createJob, finishJob, markJobRunning, setJobProgress, setJobResult } from '../../../server/utils/job-store'
-import { ensureJobRunnerReady } from '../../../server/utils/job-runner'
+import { newJobId } from '../../../layers/core/lib/job'
+import { createJob, finishJob, markJobRunning, setJobProgress, setJobResult } from '../../../layers/core/server/utils/job-store'
+import { ensureJobRunnerReady } from '../../../layers/core/server/utils/job-runner'
 
 const dir = mkdtempSync(join(tmpdir(), 'jobs-summary-http-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
@@ -25,8 +25,8 @@ beforeAll(async () => {
   createJob(db, { id, kind: 'ocr', params: { files: ['jxj/synthetic.pdf'] }, progress: { done: 0, total: 3 } })
   setJobProgress(db, id, { done: 2, total: 3 })
   finishJob(db, id, { state: 'done', result })
-  const list = (await import('../../../server/api/jobs/index.get')).default
-  const detail = (await import('../../../server/api/jobs/[id].get')).default
+  const list = (await import('../../../layers/core/server/api/jobs/index.get')).default
+  const detail = (await import('../../../layers/core/server/api/jobs/[id].get')).default
   const router = createRouter().get('/api/jobs', list).get('/api/jobs/:id', detail)
   server = createServer(toNodeListener(createApp({ debug: false }).use(router)))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))

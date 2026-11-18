@@ -8,9 +8,9 @@ import {
 import { historicalAliasNamesForDisplay } from '~~/lib/roster/enterprise-name-display'
 import EnterpriseTitleSummary from './EnterpriseTitleSummary.vue'
 import EnterpriseAliasSummary from './EnterpriseAliasSummary.vue'
-import { Button } from '@/components/ui/button'
-import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '#core/app/components/ui/button'
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '#core/app/components/ui/empty'
+import { Skeleton } from '#core/app/components/ui/skeleton'
 import {
   Table,
   TableBody,
@@ -18,7 +18,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table'
+} from '#core/app/components/ui/table'
 import { LayoutList } from '@lucide/vue'
 
 /** 企业粒度表格：身份、认定摘要与原因；完整历史留在抽屉。 */

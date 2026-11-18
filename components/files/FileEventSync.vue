@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Button } from '@/components/ui/button'
+import { Button } from '#core/app/components/ui/button'
 import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
   SheetDescription,
-} from '@/components/ui/sheet'
-import TablePagination from '@/components/TablePagination.vue'
-import { Textarea } from '@/components/ui/textarea'
+} from '#core/app/components/ui/sheet'
+import TablePagination from '#core/app/components/TablePagination.vue'
+import { Textarea } from '#core/app/components/ui/textarea'
 const props = defineProps<{ fileId: number; disabled?: boolean }>()
 const emit = defineEmits<{ synced: []; active: [value:boolean] }>()
 const open = ref(false),

@@ -1,4 +1,4 @@
-import { semanticRouteHandler } from '../../../../../utils/core-route'
+import { semanticRouteHandler } from '../../../../../../layers/core/server/utils/core-route'
 import { useDb } from '@db'
 import { listEnterpriseAliases } from '../../../../../utils/alias-maintenance'
 defineRouteMeta({ openAPI: {

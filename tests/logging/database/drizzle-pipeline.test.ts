@@ -5,9 +5,9 @@ import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { sql } from 'drizzle-orm'
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../lib/logging'
-import { LOG_DEFAULTS, type LogPolicyPatch } from '../../../lib/logging/contract'
-import { createDrizzleLogger } from '../../../lib/logging/drizzle'
+import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
+import { LOG_DEFAULTS, type LogPolicyPatch } from '../../../layers/core/lib/logging/contract'
+import { createDrizzleLogger } from '../../../layers/core/lib/logging/drizzle'
 
 describe('Drizzle real evlog and independent SQLite pipeline', () => {
   let directory: string, previous: string | undefined, client: Database.Database

@@ -1,9 +1,9 @@
-import { requestLogContext } from '../../../lib/logging'
+import { requestLogContext } from '../../../layers/core/lib/logging'
 import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS } from '~~/lib/comparison'
 import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES } from '~~/lib/labels'
 import { readDifferences } from '../../utils/difference-read'
-import { withEnterpriseReadSignal } from '../../utils/enterprise-read-signal'
+import { withEnterpriseReadSignal } from '../../../layers/core/server/utils/enterprise-read-signal'
 import { parseRosterDifferenceQuery } from '../../utils/roster-read-query'
 
 /**

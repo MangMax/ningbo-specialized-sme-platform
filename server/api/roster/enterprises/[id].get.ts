@@ -1,8 +1,8 @@
-import { requestLogContext } from '../../../../lib/logging'
+import { requestLogContext } from '../../../../layers/core/lib/logging'
 import { admitEnterpriseResponse } from '../../../utils/enterprise-read-response'
 import { useDb } from '@db'
 import { enterpriseReads } from '../../../utils/enterprise-read'
-import { withEnterpriseReadSignal } from '../../../utils/enterprise-read-signal'
+import { withEnterpriseReadSignal } from '../../../../layers/core/server/utils/enterprise-read-signal'
 
 /**
  * **企业详情**(契约 §7.2,RL-04):一家企业的全部称号历史与证据。

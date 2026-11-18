@@ -5,10 +5,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
-import { SQLITE_WORKER } from '../../../lib/logging/sqlite-worker'
-import { LOG_DEFAULTS } from '../../../lib/logging/contract'
-import { defaultLogCollection } from '../../../lib/logging/policy'
-import { safeLogEvent } from '../../../lib/logging/privacy'
+import { SQLITE_WORKER } from '../../../layers/core/lib/logging/sqlite-worker'
+import { LOG_DEFAULTS } from '../../../layers/core/lib/logging/contract'
+import { defaultLogCollection } from '../../../layers/core/lib/logging/policy'
+import { safeLogEvent } from '../../../layers/core/lib/logging/privacy'
 
 const dirs: string[] = [], workers: Worker[] = [], peers: Database.Database[] = []
 const base = { retentionDays: 7, maxBytes: LOG_DEFAULTS.maxBytes }

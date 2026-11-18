@@ -1,6 +1,7 @@
-import { describeFileRead } from '../../utils/file-read-identity'
+import { describeFileRead } from '../../../layers/core/server/utils/file-read-identity'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { fileRefShape, openFileStore, requireFileRef } from '../../utils/mcp-files'
+import { fileRefShape, requireFileRef } from '../../../layers/core/server/utils/file-agent-reference'
+import { openFileStore } from '../../utils/mcp-files'
 
 /**
  * `list_file_parts` —— 一份文件里含哪些**段**(票 18,只读)。

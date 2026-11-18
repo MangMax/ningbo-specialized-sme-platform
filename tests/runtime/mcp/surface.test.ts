@@ -3,22 +3,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import {
-  MCP_WRITE_TOOLS,
-  readMcpToken,
-  resolveMcpAuth,
-  tokenMatches,
-  unauthorizedMessage,
-  writeToolCallIn,
-} from '../../../server/utils/mcp-auth'
-import {
-  __resetFileStoreReady,
-  ensureFileStoreReady,
-  findFileIdByRelPath,
-  pageImagesForAgent,
-  resolveFileRef,
-  setFileCategoryForAgent,
-} from '../../../server/utils/mcp-files'
+import { MCP_WRITE_TOOLS, writeToolCallIn } from '../../../server/mcp-access-policy'
+import { readMcpToken, resolveMcpAuth, tokenMatches, unauthorizedMessage } from '../../../layers/core/server/utils/mcp-auth'
+import { findFileIdByRelPath, pageImagesForAgent, resolveFileRef } from '../../../layers/core/server/utils/file-agent-reference'
+import { __resetFileStoreReady, ensureFileStoreReady, setFileCategoryForAgent } from '../../../server/utils/mcp-files'
 import { applyParseResult, normalizeParseParts } from '../../../server/utils/parse-result'
 import { getStoredFile, listStoredFiles } from '../../../server/utils/stored-files'
 

@@ -26,8 +26,8 @@ import {
   whenIdle,
   type JobCompletion,
   type JobSpec,
-} from '../../../server/utils/job-runner'
-import { getJob, toJobDto } from '../../../server/utils/job-store'
+} from '../../../layers/core/server/utils/job-runner'
+import { getJob, toJobDto } from '../../../layers/core/server/utils/job-store'
 
 const dir = mkdtempSync(join(tmpdir(), 'job-contract-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'test.sqlite') })
@@ -56,7 +56,7 @@ function contractKind(name: string, ending: Ending): JobSpec {
       // 与 `runBatch` 的 `persist()` 同构:执行中把检查点写进库里。
       ctx.progress(1, 2)
       return await (async () => {
-        const { setJobResult } = await import('../../../server/utils/job-store')
+        const { setJobResult } = await import('../../../layers/core/server/utils/job-store')
         setJobResult(db, ctx.jobId, checkpoint)
         if (ending === 'throw') throw new Error('synthetic execution interruption')
         // 真实 handler 的取消语义:带上**已经做完的那部分**(这里的 partial 项是残缺的)。
@@ -117,7 +117,7 @@ describe('一次执行没有产出时,finishJob 保留已检查点的 result', (
   it('已结束的任务再取消不生效:终态与 result 都不动', async () => {
     // 队列侧的取消收尾(`finishJob(db, id, { state:'cancelled', error })`)同样不给 result。
     // 这里验公开取消面对已结束任务的行为:不重写终态、不碰 result。
-    const { requestJobCancel } = await import('../../../server/utils/job-runner')
+    const { requestJobCancel } = await import('../../../layers/core/server/utils/job-runner')
     registerJob(contractKind('contract-queued', 'throw'))
     const row = submitJob(db, { kind: 'contract-queued', params: {}, filesDir: dir })
     await whenIdle()

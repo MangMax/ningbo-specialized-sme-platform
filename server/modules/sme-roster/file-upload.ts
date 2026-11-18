@@ -1,5 +1,5 @@
-import type { LogContext } from '../../../lib/logging'
-import { extensionOf } from '../../../lib/core/file-path'
+import type { LogContext } from '../../../layers/core/lib/logging'
+import { extensionOf } from '../../../layers/core/lib/core/file-path'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { eq } from 'drizzle-orm'
 import * as schema from '../../../db/schema'
@@ -9,11 +9,11 @@ import {
   type FileSource,
 } from '../../../lib/stored-file'
 import { checkAdmission, getStoredFile, type StoredFileRow } from '../../utils/stored-files'
-import { runFileRegistration, sha256Of, splitRegistrationPath, UploadRegistrationError, type RegistrationWriter } from '../../utils/file-store'
+import { runFileRegistration, sha256Of, splitRegistrationPath, UploadRegistrationError, type RegistrationWriter } from '../../../layers/core/server/utils/file-store'
 import { createClassifiedFile } from '../../utils/roster-file-classification'
-import { recordLegacyFileMaintenanceWrite } from '../../utils/file-maintenance'
+import { recordLegacyFileMaintenanceWrite } from '../../../layers/core/server/utils/file-maintenance'
 import { landingSegments } from '../../../lib/sme-roster/file-landing'
-import { compareFileContentIdentity } from '../../utils/file-content-identity'
+import { compareFileContentIdentity } from '../../../layers/core/server/utils/file-content-identity'
 
 /**
  * 上传完成后的**登记**(票 10):把 tus 已经落位的文件写进 `stored_file`(票 09 的表)。

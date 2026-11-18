@@ -1,12 +1,14 @@
-import core from './core/manifest'
+import core from '../layers/core/lib/core/manifest'
 import smeRoster from './sme-roster/manifest'
-import type { AppModuleManifest } from './core/module-registry'
+import type { AppModuleManifest } from '../layers/core/lib/core/module-registry'
 
 const appModules = [core, smeRoster] as const
 
 export function getAppModules(): readonly AppModuleManifest[] {
   return appModules
 }
+
+export const ocrFileSources = getAppModules().flatMap(module => module.fileCategories?.ocrSources ?? [])
 
 type NamespacedKey<M> = M extends { id: infer Id extends string; credentials: readonly { key: infer Key extends string }[] }
   ? `${Id}.${Key}` : never

@@ -10,7 +10,7 @@
  * 颜色只作辅助，读屏与色觉差异都能靠文字与形状区分。
  */
 import { computed } from 'vue'
-import { Badge } from '@/components/ui/badge'
+import { Badge } from '#core/app/components/ui/badge'
 import {
   AlertTriangle,
   Check,

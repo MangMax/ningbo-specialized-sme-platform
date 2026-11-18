@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLogService, type LogServiceOptions } from '../../../lib/logging/service'
+import { createLogService, type LogServiceOptions } from '../../../layers/core/lib/logging/service'
 const owned: { root: string; service: ReturnType<typeof createLogService> }[] = []
 function fixture(options: Omit<Partial<LogServiceOptions>, 'directory'> = {}) {
   const root = mkdtempSync(join(tmpdir(), 'logging-overload-180-'))
@@ -56,7 +56,7 @@ it.each(severityPairs)('full queue keeps the correct event for %s then %s', asyn
   expect((await service.list()).rows.map(row => row.id)).toEqual([replaces ? next : original])
 })
 it('releases enough lower severity bytes while preserving surviving FIFO order and both queue budgets', async () => {
-  const { safeLogEvent } = await import('../../../lib/logging/privacy')
+  const { safeLogEvent } = await import('../../../layers/core/lib/logging/privacy')
   const small = { source: 'system', operation: 'small.event', outcome: 'started', level: 'debug', resourceId: '0' } as const
   const large = { source: 'task', operation: 'task.finished', outcome: 'failure', resourceId: 'L'.repeat(80) } as const
   const size = Buffer.byteLength(JSON.stringify(safeLogEvent(small)))
@@ -73,7 +73,7 @@ it('releases enough lower severity bytes while preserving surviving FIFO order a
   expect((await service.list()).rows.map(row => row.id)).toEqual([terminal, ids[2]])
 })
 it('rejects atomically without discarding lower events when protected bytes still prevent admission', async () => {
-  const { safeLogEvent } = await import('../../../lib/logging/privacy')
+  const { safeLogEvent } = await import('../../../layers/core/lib/logging/privacy')
   const low = { source: 'system', operation: 'low.event', outcome: 'started', level: 'debug' } as const
   const high = { source: 'worker', operation: 'high.event', outcome: 'failure' } as const
   const next = { source: 'http', operation: 'next.event', outcome: 'denied', level: 'warn', resourceId: 'L'.repeat(80) } as const

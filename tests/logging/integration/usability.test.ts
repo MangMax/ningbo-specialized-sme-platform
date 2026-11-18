@@ -2,9 +2,9 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { appLog, applicationLogs, closeApplicationLogging, initializeWorkerLogging, requestLogContext } from '../../../lib/logging'
-import { projectEvlog, safeLogEvent } from '../../../lib/logging/privacy'
-import { safeHttpMethod, safeHttpRoute } from '../../../lib/logging/http'
+import { appLog, applicationLogs, closeApplicationLogging, initializeWorkerLogging, requestLogContext } from '../../../layers/core/lib/logging'
+import { projectEvlog, safeLogEvent } from '../../../layers/core/lib/logging/privacy'
+import { safeHttpMethod, safeHttpRoute } from '../../../layers/core/lib/logging/http'
 
 /**
  * #180 runtime-log usability. Uses the real evlog -> allowlist -> SQLite drain;
@@ -211,7 +211,7 @@ it('drops non-template applicationLog routes from stdout and SQLite while keepin
 
 it('still lists and reads rows written before the new fields and list counts existed', async () => {
   const legacyDirectory = mkdtempSync(join(tmpdir(), 'log-usability-legacy-'))
-  const { createLogService } = await import('../../../lib/logging/service')
+  const { createLogService } = await import('../../../layers/core/lib/logging/service')
   const service = createLogService({ directory: legacyDirectory })
   try {
     service.emit({ source: 'worker', operation: 'legacy.fixture', outcome: 'failure', errorCode: 'old_code', counts: { done: 1 }, taskId: 'task-legacy' })

@@ -1,7 +1,7 @@
 import { getAppModules } from '../../lib/app-modules'
-import * as core from '../modules/core/job-specs'
+import * as core from '../../layers/core/server/modules/core/job-specs'
 import * as roster from '../modules/sme-roster/job-specs'
-import { getJobSpec, registerJob, type JobSpec } from './job-runner'
+import { getJobSpec, registerJob, type JobSpec } from '../../layers/core/server/utils/job-runner'
 
 // Bind the shared manifest references to server-only implementations.
 const moduleSpecs: ReadonlyMap<string, Record<string, JobSpec>> = new Map<string, Record<string, JobSpec>>([

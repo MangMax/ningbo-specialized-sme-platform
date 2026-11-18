@@ -4,7 +4,7 @@ import { FIRST_RECOGNITION_REASONS, TITLES } from '~~/lib/labels'
 import { allRosterEnterprises, type RosterEnterpriseRow } from '~~/lib/roster/enterprise-roster'
 import { evidencePointerText, firstRecognitionYearText } from '~~/lib/roster/first-recognition'
 import { parseRosterEnterpriseQuery } from '../../utils/roster-read-query'
-import { appLog, requestLogContext } from '../../../lib/logging'
+import { appLog, requestLogContext } from '../../../layers/core/lib/logging'
 
 /**
  * **企业总表导出**(RL-04)。与 `GET /api/roster/enterprises` **同一套筛选解析、

@@ -1,7 +1,7 @@
 
 import { describe, expect, it } from 'vitest'
-import { badgeVariants } from '../../../components/ui/badge'
-import { cn } from '../../../lib/utils'
+import { badgeVariants } from '../../../layers/core/app/components/ui/badge'
+import { cn } from '../../../layers/core/lib/utils'
 import {
   DIFFERENCE_STATUSES,
   DIFFERENCE_STATUS_VARIANTS,

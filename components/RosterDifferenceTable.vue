@@ -12,9 +12,9 @@ import {
   TITLES,
 } from '~~/lib/labels'
 import TitleBadge from '@/components/TitleBadge.vue'
-import { Badge, type BadgeVariants } from '@/components/ui/badge'
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Badge, type BadgeVariants } from '#core/app/components/ui/badge'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '#core/app/components/ui/empty'
+import { Skeleton } from '#core/app/components/ui/skeleton'
 import {
   Table,
   TableBody,
@@ -22,7 +22,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table'
+} from '#core/app/components/ui/table'
 import { GitCompareArrows } from '@lucide/vue'
 
 /**

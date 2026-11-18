@@ -2,6 +2,7 @@
 import { readdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+export const loggingBusiness = '日志 · 审计'
 const owners = {
   "名录 · 导入与证据": [
     "roster/imports",
@@ -24,7 +25,7 @@ const owners = {
     "statistics/published",
     "statistics/retired-models"
   ],
-  "日志 · 审计": [
+  [loggingBusiness]: [
     "logging/client",
     "logging/context",
     "logging/core",

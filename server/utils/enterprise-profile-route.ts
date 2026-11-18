@@ -1,7 +1,7 @@
-import { semanticRouteHandler } from './core-route'
+import { semanticRouteHandler } from '../../layers/core/server/utils/core-route'
 import { getQuery, getRouterParam, readBody, setHeader } from 'h3'
 import { useDb } from '@db'
-import { requireApiToken } from './api-guard'
+import { requireApiToken } from '../../layers/core/server/utils/api-guard'
 import { EnterpriseProfileError, getEnterpriseProfile, getEnterpriseProfileHistory, patchEnterpriseProfile } from './enterprise-profile'
 
 export function enterpriseProfileRoute(action: 'get' | 'patch' | 'history') {

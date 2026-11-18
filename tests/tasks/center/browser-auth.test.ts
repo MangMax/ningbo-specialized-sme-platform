@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { taskCenterBrowserAllowed } from '../../../server/utils/task-center-browser-auth'
+import { taskCenterBrowserAllowed } from '../../../layers/core/server/utils/task-center-browser-auth'
 
 const origin = 'http://127.0.0.1:3474'
 const input = () => ({

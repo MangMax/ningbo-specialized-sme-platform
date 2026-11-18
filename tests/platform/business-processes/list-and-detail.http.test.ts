@@ -10,7 +10,7 @@ import { afterAll,beforeAll,expect,it,vi } from 'vitest'
 import { schema } from '../../../db'
 import { initializeDb } from '../../../db/client'
 import type { RosterImportPlatformQuery,RosterImportRequest } from '../../../lib/roster-import-client'
-import { whenIdle } from '../../../server/utils/job-runner'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
 
 const dir = mkdtempSync(join(tmpdir(), 'business-processes-http-'))

@@ -6,12 +6,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { createTus, TUS_PATH } from '../../../server/utils/tus'
+import { createTus, TUS_PATH } from '../../../layers/core/server/utils/tus'
 import {
   parseUploadDeclaration,
   registerStoredFile,
 } from '../../../server/modules/sme-roster/file-upload'
-import { UploadRegistrationError } from '../../../server/utils/file-store'
+import { UploadRegistrationError } from '../../../layers/core/server/utils/file-store'
 import { listStoredFiles } from '../../../server/utils/stored-files'
 
 /**

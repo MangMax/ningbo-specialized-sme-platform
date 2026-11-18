@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
-import { LOG_DEFAULTS, LOG_INTEGRATIONS, LOG_SUPPORTED_INTEGRATIONS, type LogOrigin } from '../../../lib/logging/contract'
-import { createLogService, type LogService } from '../../../lib/logging/service'
-import { safeLogEvent } from '../../../lib/logging/privacy'
-import { detailProfile } from '../../../lib/logging/detail-profile'
+import { LOG_DEFAULTS, LOG_INTEGRATIONS, LOG_SUPPORTED_INTEGRATIONS, type LogOrigin } from '../../../layers/core/lib/logging/contract'
+import { createLogService, type LogService } from '../../../layers/core/lib/logging/service'
+import { safeLogEvent } from '../../../layers/core/lib/logging/privacy'
+import { detailProfile } from '../../../layers/core/lib/logging/detail-profile'
 
 const added = ['drizzle', 'tus-client', 'embedpdf', 'pinia-colada', 'vue-router'] as const
 const services: LogService[] = [], directories: string[] = []

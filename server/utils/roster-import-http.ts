@@ -14,7 +14,7 @@
  * 不落库、不进仓库、不进日志；本文件也不回显任何 token 值。
  */
 
-import { readApiToken, resolveApiAuth, unauthorizedApiMessage } from './api-auth'
+import { readApiToken, resolveApiAuth, unauthorizedApiMessage } from '../../layers/core/server/utils/api-auth'
 import {
   replayRosterImport,
   hasOfficialFactInput,
@@ -25,7 +25,7 @@ import * as schema from '../../db/schema'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
 import { ImportReceiptError } from './import-receipts'
 import { importExecutor } from './import-execution'
-import { appLog, type LogContext } from '../../lib/logging'
+import { appLog, type LogContext } from '../../layers/core/lib/logging'
 import { logImportFailure } from './roster-import-logging'
 
 type Db = BetterSQLite3Database<typeof schema>

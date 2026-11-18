@@ -3,9 +3,9 @@ import { computed, ref, watch } from 'vue'
 import { TITLES } from '~~/lib/labels'
 import type { ComparisonProof, ComparisonProofAudit, ComparisonProofCatalog, ComparisonSelection } from '~~/lib/roster/record-comparison-view'
 import { humanRecordTime } from '~~/lib/roster/record-ledger'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
+import { Badge } from '#core/app/components/ui/badge'
+import { Button } from '#core/app/components/ui/button'
+import { Checkbox } from '#core/app/components/ui/checkbox'
 
 const props = defineProps<{ selection: ComparisonSelection; asOf: string }>()
 const emit = defineEmits<{ change: [proofIds: number[]]; settled: [scopeKey: string, ready: boolean] }>()

@@ -1,9 +1,13 @@
-import type { FileCategory } from '../core/file-categories'
+import type { FileCategory } from '../../layers/core/lib/core/file-categories'
 import { CATEGORY_STATES, CATEGORY_STATE_ORDER, PARSE_STATES, PARSE_STATE_ORDER, SOURCES, SOURCE_ORDER } from '../labels'
 import { scopeOf } from './file-store-scope'
 
 export const rosterFileCategory = {
   admission: scopeOf,
+  ocrSources: [
+    { value: 'jxj', label: '市经信局' },
+    { value: 'miit', label: '工信部' },
+  ],
   columns: [
     { label: '来源', width: 81 },
     { label: '类别', width: 80 },

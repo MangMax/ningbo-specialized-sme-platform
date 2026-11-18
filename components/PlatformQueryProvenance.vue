@@ -4,7 +4,7 @@ import { PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS } from '~~/lib/labels'
 import { formatFetchTime } from '~~/lib/reconcile-time'
 import { platformFailureForDisplay } from '~~/lib/roster/platform-records'
 import type { PlatformRecordQuery } from '~~/lib/roster/platform-records'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 const props = defineProps<{ queries: PlatformRecordQuery[]; sourceLabel: string }>()
 const time = (value: string) => formatFetchTime(value) ?? value
 const title = (value: string | null) => PLATFORM_RDJBS[value ?? ''] ?? '称号未标注'

@@ -1,7 +1,7 @@
 import { getRouterParam, readBody, setHeader } from 'h3'
 import { useDb } from '@db'
-import { semanticRouteHandler } from './core-route'
-import { requireApiToken } from './api-guard'
+import { semanticRouteHandler } from '../../layers/core/server/utils/core-route'
+import { requireApiToken } from '../../layers/core/server/utils/api-guard'
 import { EnterpriseProfileError } from './enterprise-profile'
 import { getEnterpriseFacts, preflightEnterpriseFact, commitEnterpriseFact } from './enterprise-facts'
 export function enterpriseFactsRoute(action: 'get' | 'preflight' | 'commit') {

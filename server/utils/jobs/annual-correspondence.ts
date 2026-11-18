@@ -1,13 +1,13 @@
 import { setImmediate as yieldTurn } from 'node:timers/promises'
-import type { LogContext } from '../../../lib/logging'
+import type { LogContext } from '../../../layers/core/lib/logging'
 import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import * as s from '../../../db/schema'
-import { newJobId } from '../../../lib/job'
+import { newJobId } from '../../../layers/core/lib/job'
 import { ANNUAL_CORRESPONDENCE_KIND as KIND, ANNUAL_CORRESPONDENCE_VERSION as VERSION, type AnnualTaskReceipt, type AnnualTaskResult } from '../../../lib/roster/annual-correspondence'
 import { annualDbReadonly, annualFail, annualHash, qualifyAnnualFinal, readAnnualScopes, reconcileAnnualStep, type AnnualDb, type AnnualScopeReader } from '../annual-correspondence'
-import { createJob, getJob, setJobResult } from '../job-store'
-import { enqueuePersistedJob, ensureJobRunnerReady, getJobSpec, registerJob, requeueFinishedJob, type JobContext, type JobSpec } from '../job-runner'
+import { createJob, getJob, setJobResult } from '../../../layers/core/server/utils/job-store'
+import { enqueuePersistedJob, ensureJobRunnerReady, getJobSpec, registerJob, requeueFinishedJob, type JobContext, type JobSpec } from '../../../layers/core/server/utils/job-runner'
 
 export const annualTaskInput = z.strictObject({ clientRequestId: z.string().trim().min(1).max(120), eventIds: z.array(z.number().int().positive()).min(1).max(200) })
 interface Params extends Record<string, unknown> {

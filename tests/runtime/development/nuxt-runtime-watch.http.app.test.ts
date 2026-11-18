@@ -14,8 +14,8 @@ it('does not scan changing runtime databases as icon source while real API error
   const dir = mkdtempSync(join(tmpdir(), 'nuxt-runtime-watch-'))
   const cache = join(root, '.cache', id)
   const sentinel = join(root, '.runtime-logs', `${id}.db`)
-  const component = join(root, 'components/files', `RuntimeWatch${id.replaceAll('-', '')}.vue`)
-  const route = join(root, 'server/api/files', `${id}.get.ts`)
+  const component = join(root, 'layers/core/app/components/files', `RuntimeWatch${id.replaceAll('-', '')}.vue`)
+  const route = join(root, 'layers/core/server/api/files', `${id}.get.ts`)
   const trace = join(dir, 'reads.jsonl')
   const preload = join(dir, 'observe.cjs')
   let child: ChildProcess | undefined

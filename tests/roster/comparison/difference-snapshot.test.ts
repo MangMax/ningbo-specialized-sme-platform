@@ -22,8 +22,8 @@ it('backs up before task writes and keeps missing archives unfinished on idempot
 })
 
 import { setImmediate } from 'node:timers/promises'
-import { getJob, createJob, finishJob } from '../../../server/utils/job-store'
-import { newJobId } from '../../../lib/job'
+import { getJob, createJob, finishJob } from '../../../layers/core/server/utils/job-store'
+import { newJobId } from '../../../layers/core/lib/job'
 import * as s from '../../../db/schema'
 import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
 async function settled(id: string, store = db) {

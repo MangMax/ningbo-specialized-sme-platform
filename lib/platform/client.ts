@@ -30,7 +30,7 @@ import {
 import type { PlatformInterface } from '../labels'
 import type { PlatformQueryError, PlatformQueryPage, PlatformQueryPosition } from './live-query'
 import { withPlatformRequestBudget } from './request-budget'
-import { appLog, newLogContext, type LogContext } from '../logging'
+import { appLog, newLogContext, type LogContext } from '../../layers/core/lib/logging'
 import { logPlatformResult, platformOperation } from './logging'
 
 export type PlatformFetch = (

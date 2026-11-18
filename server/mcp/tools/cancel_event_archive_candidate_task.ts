@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { dispatchCandidateJobMcp } from '../../utils/candidate-job-api'
-import { writeGuard } from '../../utils/mcp-guard'
+import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 export default defineMcpTool({
   name: 'cancel_event_archive_candidate_task',
   title: '取消公布事件候选任务',

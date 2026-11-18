@@ -26,7 +26,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { defineComponent, h, reactive } from 'vue'
-import type { TaskList, TaskSummary } from '~~/lib/task-center'
+import type { TaskList, TaskSummary } from '#core/lib/task-center'
 
 // Nuxt injects these namespaced modules at build time; vitest runs on bare node
 // (see tests/setup.ts). Register the exact specifiers the generated imports use,
@@ -209,12 +209,12 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 // of what these tests are about.
 async function autoRegisteredComponents() {
   const [PageHeader, NuxtLink, TablePagination, TableLoadingStatus, TableFailureState, TaskProgress, TaskDetail] = await Promise.all([
-    import('../../../components/PageHeader.vue'),
+    import('../../../layers/core/app/components/PageHeader.vue'),
     import('vue-router').then(m => m.RouterLink),
-    import('../../../components/TablePagination.vue'),
-    import('../../../components/TableLoadingStatus.vue'),
-    import('../../../components/TableFailureState.vue'),
-    import('../../../components/tasks/TaskProgress.vue'),
+    import('../../../layers/core/app/components/TablePagination.vue'),
+    import('../../../layers/core/app/components/TableLoadingStatus.vue'),
+    import('../../../layers/core/app/components/TableFailureState.vue'),
+    import('../../../layers/core/app/components/tasks/TaskProgress.vue'),
     import('../../../components/tasks/TaskDetail.vue'),
   ])
   const component = (mod: { default: unknown }) => mod.default as ReturnType<typeof defineComponent>

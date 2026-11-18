@@ -5,8 +5,8 @@ import { ExternalLink, History } from '@lucide/vue'
 import type { BusinessProcessRow } from '~~/lib/platform/business-processes'
 import { formatFetchTime } from '~~/lib/reconcile-time'
 import { PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '~~/lib/labels'
-import { Button } from '@/components/ui/button'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Button } from '#core/app/components/ui/button'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '#core/app/components/ui/table'
 
 const props = defineProps<{ view: 'records' | 'isolated'; rows: BusinessProcessRow[]; loading?: boolean }>()
 const emit = defineEmits<{ 'open-record': [recordId: number] }>()

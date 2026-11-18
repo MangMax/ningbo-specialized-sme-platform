@@ -10,7 +10,7 @@ import { buildPlatformWritePayload } from '../../../lib/platform/payload'
 import { commitRosterImport, preflightRosterImport } from '../../../server/utils/roster-import'
 import { readImportReceipt } from '../../../server/utils/import-receipts'
 import { runPlatformReconcile } from '../../../server/utils/platform-reconcile'
-import { whenIdle } from '../../../server/utils/job-runner'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { emptyReply, platformReplay } from '../fixtures/source-replay'
 import type { RosterImportRequest } from '../../../lib/roster-import-client'
 

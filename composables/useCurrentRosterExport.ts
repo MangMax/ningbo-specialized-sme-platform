@@ -1,6 +1,6 @@
 import { onMounted, ref, type Ref } from 'vue'
-import { TASK_EXPORTS, type TaskExportTitle } from '~~/lib/task-center'
-import { isJobId } from '~~/lib/job'
+import { TASK_EXPORTS, type TaskExportTitle } from '../lib/sme-roster/task-exports'
+import { isJobId } from '#core/lib/job'
 import { useExportRequestLog } from './useExportRequestLog'
 
 export const taskBrowserHeaders = { 'x-task-center-browser': '1' }

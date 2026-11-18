@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ComparisonRouteState, ComparisonSource } from '~~/lib/roster/record-comparison-view'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 
 defineProps<{
   scope: ComparisonRouteState

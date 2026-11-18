@@ -1,4 +1,4 @@
-import { appLog, type LogContext, type LogInput } from '../../lib/logging'
+import { appLog, type LogContext, type LogInput } from '../../layers/core/lib/logging'
 import { channel } from 'node:diagnostics_channel'
 import type { RosterEnterpriseFilter, RosterEnterprisesResult } from '../../lib/roster/enterprise-roster'
 import type { EnterpriseReadRequest } from '../../lib/roster/enterprise-read-worker'

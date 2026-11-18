@@ -5,7 +5,7 @@ import { finished } from 'node:stream/promises'
 import { setImmediate } from 'node:timers/promises'
 import type { H3Event } from 'h3'
 import { Stream } from 'documonster/excel'
-import { appLog, requestLogContext } from '../../lib/logging'
+import { appLog, requestLogContext } from '../../layers/core/lib/logging'
 
 type Pace = (characters: number) => Promise<void>
 

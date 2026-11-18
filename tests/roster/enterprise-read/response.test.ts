@@ -4,7 +4,7 @@ import { PassThrough } from 'node:stream'
 import { createApp, defineEventHandler, toNodeListener } from 'h3'
 import { expect, it } from 'vitest'
 import { admitEnterpriseResponse } from '../../../server/utils/enterprise-read-response'
-import { withEnterpriseReadSignal } from '../../../server/utils/enterprise-read-signal'
+import { withEnterpriseReadSignal } from '../../../layers/core/server/utils/enterprise-read-signal'
 
 it('reclaims responses disconnected before readiness and cancels already terminal reads', async () => {
   let ready!: () => void

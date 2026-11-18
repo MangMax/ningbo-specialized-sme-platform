@@ -9,7 +9,7 @@ import { createApp, createError, defineEventHandler, getQuery, setHeader, toNode
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb } from '../../../db'
 import { legacyExportSheet, writeLegacyXlsx } from '../../../server/utils/legacy-export-xlsx'
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging, newLogContext } from '../../../lib/logging'
+import { applicationLogs, closeApplicationLogging, initializeWorkerLogging, newLogContext } from '../../../layers/core/lib/logging'
 
 const state = vi.hoisted(() => ({ fail: false, directories: [] as string[], slowRead: false, slowWrite: false, generationRows: 0, settledRequests: 0 }))
 // Inject failure at the external filesystem boundary; queries and XLSX serialization stay real.

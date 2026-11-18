@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { siblingIndex } from '../../../lib/core/file-path'
+import { siblingIndex } from '../../../layers/core/lib/core/file-path'
 import { getAppModules } from '../../../lib/app-modules'
 
 const scopeOf = getAppModules().find(module => module.id === 'sme-roster')!.fileCategories!.admission

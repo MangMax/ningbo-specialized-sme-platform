@@ -5,7 +5,7 @@ import EnterpriseListTable from '../../../components/EnterpriseListTable.vue'
 import EnterpriseAliasSummary from '../../../components/EnterpriseAliasSummary.vue'
 import EnterpriseTitleSummary from '../../../components/EnterpriseTitleSummary.vue'
 import RosterEnterpriseTable from '../../../components/RosterEnterpriseTable.vue'
-import PreviewToolbar from '../../../components/preview/PreviewToolbar.vue'
+import PreviewToolbar from '../../../layers/core/app/components/preview/PreviewToolbar.vue'
 
 const mounted: ReturnType<typeof mount>[] = []
 afterEach(() => {

@@ -18,7 +18,7 @@ import { createEnterpriseReadProcess } from '../../../server/utils/enterprise-re
 import { importExecutor } from '../../../server/utils/import-execution'
 import { readExactEvidence } from '../../../server/utils/roster-evidence-correction'
 import { readLatestOfficialEvidence } from '../../../server/utils/official-evidence'
-import { readMcpToken, resolveMcpAuth } from '../../../server/utils/mcp-auth'
+import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
 
 // Dedicated transport suite: run only in the parent's heavy slot. Production tools,
 // SDK HTTP transport and the real serial import process execute against one synthetic DB.

@@ -4,7 +4,7 @@ import { once } from 'node:events'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initializeWorkerLogging, applicationLogs, closeApplicationLogging } from '../../../lib/logging'
+import { initializeWorkerLogging, applicationLogs, closeApplicationLogging } from '../../../layers/core/lib/logging'
 import { runPlatformLiveQuery } from '../../../server/utils/platform-live-query'
 
 // Application seam + actual upstream HTTP + real evlog drain. This is not actual Nuxt.
@@ -89,9 +89,9 @@ it('legacy retry records transport retry separately from one semantic slot outco
 })
 it('batch retry preserves accepted pages and correlates only unfinished item collection', async () => {
   const { initializeDb } = await import('../../../db/client')
-  const { updateCredential } = await import('../../../server/utils/credential-state')
+  const { updateCredential } = await import('../../../layers/core/server/utils/credential-state')
   const { handlePlatformBatchRequest } = await import('../../../server/utils/platform-batch-http')
-  const { whenIdle } = await import('../../../server/utils/job-runner')
+  const { whenIdle } = await import('../../../layers/core/server/utils/job-runner')
   const db = initializeDb({ dbPath: join(root, 'batch.db'), create: true })
   updateCredential('sme-roster.miitCookie', 'session=PRIVATE185_COOKIE', { db })
   const nativeFetch = globalThis.fetch

@@ -1,5 +1,5 @@
 import { activateCandidateDiscoveryTasks } from './jobs/candidate-discovery'
-import { ensureJobRunnerReady } from './job-runner'
+import { ensureJobRunnerReady } from '../../layers/core/server/utils/job-runner'
 import { serialize } from 'node:v8'
 import type Database from 'better-sqlite3'
 import { realpathSync, statSync } from 'node:fs'
@@ -9,7 +9,7 @@ import type { RosterImportRequest, RosterImportItemResult } from '../../lib/rost
 import { commitRosterImport, preflightRosterImport } from './roster-import'
 import { ImportReceiptError } from './import-receipts'
 import { createImportExecutionWorker } from './import-execution-worker-location'
-import { appLog, type LogContext } from '../../lib/logging'
+import { appLog, type LogContext } from '../../layers/core/lib/logging'
 import { logImportFailure } from './roster-import-logging'
 import { beginImportWrite } from './import-write-barrier'
 

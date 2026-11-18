@@ -3,8 +3,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter, RouterLink, useRoute } from 'vue-router'
-import AppSidebar from '../../../components/AppSidebar.vue'
-import { SidebarProvider } from '../../../components/ui/sidebar'
+import AppSidebar from '../../../layers/core/app/components/AppSidebar.vue'
+import { SidebarProvider } from '../../../layers/core/app/components/ui/sidebar'
 
 afterEach(() => vi.unstubAllGlobals())
 

@@ -2,15 +2,15 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../lib/logging'
-import { clientPage } from '../../../lib/client-logging/contract'
-import { createClientErrorTransport } from '../../../lib/client-logging/transport'
-import { createClientLogIntake } from '../../../server/utils/client-log-intake'
+import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
+import { clientPage } from '../../../layers/core/lib/client-logging/contract'
+import { createClientErrorTransport } from '../../../layers/core/lib/client-logging/transport'
+import { createClientLogIntake } from '../../../layers/core/server/utils/client-log-intake'
 
 // Exercise a new registration while keeping the running application's declarations.
 vi.mock(import('../../../lib/app-modules'), async (importOriginal) => {
   const registry = await importOriginal()
-  const { defineAppModule, validateAppModules } = await import('../../../lib/core/module-registry')
+  const { defineAppModule, validateAppModules } = await import('../../../layers/core/lib/core/module-registry')
   const modules = [...registry.getAppModules(), defineAppModule({
     id: 'enterprise-services',
     name: '企业服务',

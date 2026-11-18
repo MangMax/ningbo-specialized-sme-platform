@@ -5,14 +5,18 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { CURRENT_RULE_VERSION, CURRENT_TITLES } from '../../../lib/roster/current-qualification'
-import { isJobId } from '../../../lib/job'
-import type { JobSpec } from '../job-runner'
-import { setJobResult } from '../job-store'
+import { isJobId } from '../../../layers/core/lib/job'
+import type { JobSpec } from '../../../layers/core/server/utils/job-runner'
+import { setJobResult } from '../../../layers/core/server/utils/job-store'
 import { createCurrentExportWorker } from '../current-export-worker-location'
 import { cleanupCurrentExports, currentExportDbPath, exportDirectory, EXPORT_RETENTION_MS } from '../current-export-artifact'
-import { appLog } from '../../../lib/logging'
+import { appLog } from '../../../layers/core/lib/logging'
 const paramsSchema = z.strictObject({ titleCode: z.enum(CURRENT_TITLES), clientRequestId: z.string().trim().min(1).max(128), regenerateOf: z.string().refine(isJobId).optional() })
 export const currentRosterExportSpec: JobSpec = {
+  openAPIParams: {
+    order: 10,
+    description: 'current-roster-export 使用 { titleCode: little_giant|specialized_sme|innovative_sme, clientRequestId: string, regenerateOf?: jobId }；运行/排队最多9个，独立进程生成，产物保留7天。',
+  },
   kind: 'current-roster-export', maxPending: 9, deduplicateRequest: true, status: 'ready', summary: '当前有效名录 Excel（后台独立进程）',
   paramsHint: '{ titleCode: little_giant|specialized_sme|innovative_sme, clientRequestId: string, regenerateOf?: jobId }；保留7天；同请求标识去重',
   parse(raw) { const parsed = paramsSchema.safeParse(raw); return parsed.success ? {ok:true, params:parsed.data} : {ok:false,message:'需要有效 titleCode、clientRequestId；不接受日期或额外参数'} },

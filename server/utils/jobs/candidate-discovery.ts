@@ -1,6 +1,6 @@
 import { whenImportWriterIdle } from '../import-write-barrier'
 import { setImmediate as yieldTurn } from 'node:timers/promises'
-import type { LogContext } from '../../../lib/logging'
+import type { LogContext } from '../../../layers/core/lib/logging'
 import { createHash } from 'node:crypto'
 import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
@@ -18,8 +18,8 @@ import {
   preflightRecordCorrespondences,
   type CorrespondenceEdge,
 } from '../record-correspondence'
-import { createJob, getJob, setJobResult } from '../job-store'
-import { JOB_ID_RE, newJobId } from '../../../lib/job'
+import { createJob, getJob, setJobResult } from '../../../layers/core/server/utils/job-store'
+import { JOB_ID_RE, newJobId } from '../../../layers/core/lib/job'
 import { stageAnnualCorrespondence, activateAnnualCorrespondence } from './annual-correspondence'
 import {
   ensureJobRunnerReady,
@@ -30,7 +30,7 @@ import {
   submitJob,
   type JobContext,
   type JobSpec,
-} from '../job-runner'
+} from '../../../layers/core/server/utils/job-runner'
 
 type Db = BetterSQLite3Database<typeof schema>
 export const CANDIDATE_JOB_KIND = 'event-archive-candidates'

@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import PageImageGallery from '../../../components/preview/PageImageGallery.vue'
-import { DPI_PRESETS } from '../../../lib/page-gallery'
+import PageImageGallery from '../../../layers/core/app/components/preview/PageImageGallery.vue'
+import { DPI_PRESETS } from '../../../layers/core/lib/page-gallery'
 
 /**
  * 页图库的**分辨率下拉**(组件级;与同目录的 `page-gallery.test.ts` 分开 ——

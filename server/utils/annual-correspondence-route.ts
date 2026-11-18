@@ -1,8 +1,8 @@
 import { createError, defineEventHandler, getHeader, getMethod, getRouterParam, readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { z } from 'zod'
-import { requestLogContext } from '../../lib/logging'
+import { requestLogContext } from '../../layers/core/lib/logging'
 import { checkBrowserReviewRequest } from './browser-review-102'
-import { readApiToken, resolveApiAuth } from './api-auth'
+import { readApiToken, resolveApiAuth } from '../../layers/core/server/utils/api-auth'
 import { handleAnnualTaskRequest, type AnnualTaskAction, type AnnualTaskContext } from './annual-correspondence-api'
 
 /** The context supplies the shared reader. Browser calls carry no token; exact

@@ -1,4 +1,4 @@
-import { appLog, type LogContext } from '../../lib/logging'
+import { appLog, type LogContext } from '../../layers/core/lib/logging'
 import { ImportReceiptError } from './import-receipts'
 
 /** Only application-owned codes cross the logging boundary; never error text or keys. */

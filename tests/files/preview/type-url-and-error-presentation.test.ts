@@ -8,7 +8,7 @@ import {
   isLegacyOffice,
   isPreviewable,
   resolvePreviewKind,
-} from '../../../lib/preview'
+} from '../../../layers/core/lib/preview'
 
 describe('preview 文件类型解析', () => {
   it('取扩展名时忽略查询串与锚点,并统一小写', () => {

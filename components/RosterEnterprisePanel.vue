@@ -23,18 +23,18 @@ import {
   TITLE_ORDER,
   VERIFICATION_STATUSES,
 } from '~~/lib/labels'
-import { fileNameOf, fileUrl, isPreviewable } from '~~/lib/preview'
+import { fileNameOf, fileUrl, isPreviewable } from '#core/lib/preview'
 import { EVIDENCE_PAGE_WORDS, evidencePageState, evidencePreviewHref } from '~~/lib/roster/evidence-page'
 import { rememberEvidencePreviewReturn } from '~~/lib/roster/evidence-preview-return'
 import { evidencePointerText } from '~~/lib/roster/first-recognition'
-import FilePreviewDialog from '@/components/preview/FilePreviewDialog.vue'
+import FilePreviewDialog from '#core/app/components/preview/FilePreviewDialog.vue'
 import EventChip from '@/components/EventChip.vue'
 import SourceChip from '@/components/SourceChip.vue'
 import TitleBadge from '@/components/TitleBadge.vue'
-import { Badge, type BadgeVariants } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Badge, type BadgeVariants } from '#core/app/components/ui/badge'
+import { Button } from '#core/app/components/ui/button'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
+import { Skeleton } from '#core/app/components/ui/skeleton'
 
 /**
  * 企业展开面板 —— 一家企业的**全部**称号历史与证据(契约 §7.2 的落点)。

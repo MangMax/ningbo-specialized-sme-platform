@@ -4,9 +4,9 @@ const reducedMotion = useReducedMotion()
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import type { DistrictStatistics } from '~~/lib/roster/district-statistics'
 import { TITLES, TITLE_ORDER } from '~~/lib/labels'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
+import { Skeleton } from '#core/app/components/ui/skeleton'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '#core/app/components/ui/tabs'
 const title = ref('specialized_sme'), district = ref('all'), page = ref(1), pageSize = ref(25), open = ref(false)
 const result = shallowRef<DistrictStatistics>()
 const loading = ref(false), failed = ref(false)

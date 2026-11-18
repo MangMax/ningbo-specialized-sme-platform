@@ -1,8 +1,8 @@
-import { semanticRouteHandler } from './core-route'
+import { semanticRouteHandler } from '../../layers/core/server/utils/core-route'
 import { getHeader, getMethod, getQuery, getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
 import { useDb } from '@db'
 import { handleEvidenceCorrectionRequest, type EvidenceCorrectionAction } from './roster-evidence-correction-api'
-import { readApiToken, resolveApiAuth } from './api-auth'
+import { readApiToken, resolveApiAuth } from '../../layers/core/server/utils/api-auth'
 export function evidenceCorrectionRoute(action: EvidenceCorrectionAction) {
   return semanticRouteHandler(`maintenance.evidence.${action}`, async event => {
     setHeader(event, 'cache-control', 'no-store')

@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { createDrizzleLogger } from '../../lib/logging/drizzle'
+import { createDrizzleLogger } from '../../layers/core/lib/logging/drizzle'
 import { setImmediate } from 'node:timers/promises'
 import type { useApplicationDb } from '../../db/client'
 import * as schema from '../../db/schema'

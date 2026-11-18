@@ -1,4 +1,4 @@
-import { resolveInsideRoot, scanFileStore } from '../../../server/utils/file-store'
+import { resolveInsideRoot, scanFileStore } from '../../../layers/core/server/utils/file-store'
 import { createClassifiedFile } from '../../../server/utils/roster-file-classification'
 import { initializeDb } from '../../../db/client'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'

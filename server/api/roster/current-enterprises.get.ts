@@ -1,10 +1,10 @@
-import { requestLogContext } from '../../../lib/logging'
+import { requestLogContext } from '../../../layers/core/lib/logging'
 import { createError, getQuery, setHeader } from 'h3'
 import { useDb } from '@db'
 import { parseCurrentQualifiedQuery } from '../../utils/current-qualified-filter'
 import { enterpriseReads } from '../../utils/enterprise-read'
 import { admitEnterpriseResponse } from '../../utils/enterprise-read-response'
-import { withEnterpriseReadSignal } from '../../utils/enterprise-read-signal'
+import { withEnterpriseReadSignal } from '../../../layers/core/server/utils/enterprise-read-signal'
 
 defineRouteMeta({ openAPI: {
   tags: ['当前有效称号查询'], summary: '分页查询指定称号当前有效及搜索定位的已公布待核企业',

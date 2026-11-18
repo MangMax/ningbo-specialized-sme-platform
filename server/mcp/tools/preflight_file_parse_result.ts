@@ -1,7 +1,7 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { parsePreflightMcp310, preflightRanges669 } from '../../utils/parse-maintenance-105'
-import { writeGuard } from '../../utils/mcp-guard'
+import { writeGuard } from '../../../layers/core/server/utils/mcp-guard'
 export default defineMcpTool({
   name: 'preflight_file_parse_result', title: '冻结名单解析文件/OCR输入',
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },

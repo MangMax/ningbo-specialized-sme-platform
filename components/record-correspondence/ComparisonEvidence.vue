@@ -5,10 +5,10 @@ import { comparisonReasonText } from '~~/lib/roster/record-comparison-view'
 import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, TITLES } from '~~/lib/labels'
 import { humanRecordTime } from '~~/lib/roster/record-ledger'
 import SourceReader from './SourceReader.vue'
-import DisclosurePanel from '@/components/DisclosurePanel.vue'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
+import { Badge } from '#core/app/components/ui/badge'
+import { Button } from '#core/app/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '#core/app/components/ui/dialog'
 
 defineProps<{ result: RecordComparisonResult; returnTo: string }>()
 const navigatingToEvent = ref(false)

@@ -7,7 +7,7 @@ import ComparisonProofPicker from '../../../components/record-correspondence/Com
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import RecordComparisonPanel from '../../../components/record-correspondence/RecordComparisonPanel.vue'
 import ComparisonDateTimePicker from '../../../components/record-correspondence/ComparisonDateTimePicker.vue'
-import { Select } from '../../../components/ui/select'
+import { Select } from '../../../layers/core/app/components/ui/select'
 import { rememberEvidencePreviewReturn } from '../../../lib/roster/evidence-preview-return'
 
 const calls = vi.hoisted(() => ({ query: [] as Record<string, unknown>[] }))

@@ -2,9 +2,9 @@
 import { computed, ref } from 'vue'
 import { CalendarIcon } from '@lucide/vue'
 import { parseDate, type DateValue } from '@internationalized/date'
-import { Button } from '@/components/ui/button'
-import { Calendar } from '@/components/ui/calendar'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Button } from '#core/app/components/ui/button'
+import { Calendar } from '#core/app/components/ui/calendar'
+import { Popover, PopoverContent, PopoverTrigger } from '#core/app/components/ui/popover'
 
 const props = defineProps<{ id: string; label: string; modelValue: string }>()
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()

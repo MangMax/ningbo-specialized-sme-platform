@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { BadgeVariants } from '@/components/ui/badge'
-import { Badge } from '@/components/ui/badge'
+import type { BadgeVariants } from '#core/app/components/ui/badge'
+import { Badge } from '#core/app/components/ui/badge'
 import { TITLE_LEVEL, TITLE_RANK, TITLES } from '~~/lib/labels'
 
 /**

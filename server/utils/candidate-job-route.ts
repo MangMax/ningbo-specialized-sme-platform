@@ -1,6 +1,6 @@
 import { useDb } from '@db'
-import { requestLogContext } from '../../lib/logging'
-import { taskCenterBrowserAccess } from './task-center-access'
+import { requestLogContext } from '../../layers/core/lib/logging'
+import { taskCenterBrowserAccess } from '../../layers/core/server/utils/task-center-access'
 import {
   handleCandidateJobRequest,
   type CandidateJobAction,

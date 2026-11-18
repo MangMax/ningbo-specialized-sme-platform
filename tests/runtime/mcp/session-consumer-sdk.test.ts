@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path'
 
 import { fileURLToPath } from 'node:url'
 
-import { installSessionFrontend, inspectPublicSessionPost, isPublicSessionTarget, ownAllRequests, hasNativeSessionOwnership, createSessionRuntime, acceptsSessionFrame, createCredentialSnapshot } from '../../../server/utils/mcp-session-runtime'
+import { installSessionFrontend, inspectPublicSessionPost, isPublicSessionTarget, ownAllRequests, hasNativeSessionOwnership, createSessionRuntime, acceptsSessionFrame, createCredentialSnapshot } from '../../../layers/core/server/utils/mcp-session-runtime'
 
 const finished = () => {
   let resolve!: (receipt: { finished: true }) => void
@@ -213,7 +213,7 @@ async function refusal445NativeResponse() {
 
 describe('445 early refusal literals', () => {
   it('L_exact_JSON_native_end_precedes_termination_for_each_early_exit', async () => {
-    const { createResponseTermination, queueSessionResponse } = await import('../../../server/utils/mcp-session-runtime')
+    const { createResponseTermination, queueSessionResponse } = await import('../../../layers/core/server/utils/mcp-session-runtime')
     for (const [code, status] of [['session_binding_unavailable', 503], ['body_capacity', 503], ['invalid_identity', 401]] as const) {
       const { res, events, headers } = await refusal445NativeResponse()
       const terminate = createResponseTermination(res, () => { events.push('original-owner-terminate') })
@@ -238,7 +238,7 @@ describe('445 early refusal literals', () => {
     }
   })
   it('L_closed_sync_and_unfinished_close_remove_only_owned_observers', async () => {
-    const { createResponseTermination } = await import('../../../server/utils/mcp-session-runtime')
+    const { createResponseTermination } = await import('../../../layers/core/server/utils/mcp-session-runtime')
     for (const already of [false, true]) {
       const { res } = await refusal445NativeResponse()
       let calls = 0
@@ -255,8 +255,8 @@ describe('445 early refusal literals', () => {
     }
   })
   it('L_real_socket_ownership_rechecks_prior_and_late_foreign_after_finish', async () => {
-    const { createResponseTermination } = await import('../../../server/utils/mcp-session-runtime')
-    const { createSocketOwnership } = await import('../../../server/utils/mcp-session-transport')
+    const { createResponseTermination } = await import('../../../layers/core/server/utils/mcp-session-runtime')
+    const { createSocketOwnership } = await import('../../../layers/core/server/utils/mcp-session-transport')
     const ownership = createSocketOwnership<object>(), socket = {}
     let destroyed = 0, closed = false
     const rejected = ownership.register(socket, () => { destroyed++ })
@@ -277,8 +277,8 @@ describe('445 early refusal literals', () => {
     ownership.closed(socket); await Promise.resolve(); expect(closed).toBe(true)
   })
   it('L_real_S1_rejected_body_remains_charged_until_actual_close_after_JSON', async () => {
-    const { createResponseTermination, queueSessionResponse } = await import('../../../server/utils/mcp-session-runtime')
-    const { createSocketOwnership, createSessionInitializationTransport } = await import('../../../server/utils/mcp-session-transport')
+    const { createResponseTermination, queueSessionResponse } = await import('../../../layers/core/server/utils/mcp-session-runtime')
+    const { createSocketOwnership, createSessionInitializationTransport } = await import('../../../layers/core/server/utils/mcp-session-transport')
     const ownership = createSocketOwnership<object>(), socket = {}
     let destroyed = 0
     const handle = ownership.register(socket, () => { destroyed++ })

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { useDb } from '@db'
 import { checkBrowserReviewRequest } from './browser-review-102'
 import { getParse105, preflightRanges669, commitRanges669, parseFrozenCommit310, ParseMaintenanceError } from './parse-maintenance-105'
-import { requestLogContext } from '../../lib/logging'
+import { requestLogContext } from '../../layers/core/lib/logging'
 
 const preflight = z.strictObject({ expectedVersion: z.string().regex(/^[a-f0-9]{64}$/), verifyPhysicalPages: z.boolean().optional() })
 const { actor: _actorSchema, ...businessShape } = parseFrozenCommit310.shape

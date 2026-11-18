@@ -3,9 +3,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../lib/logging'
-import { __resetJobRunner, clearJobSpecs, registerJob, submitJob, whenIdle } from '../../../server/utils/job-runner'
-import { getJob } from '../../../server/utils/job-store'
+import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
+import { __resetJobRunner, clearJobSpecs, registerJob, submitJob, whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { getJob } from '../../../layers/core/server/utils/job-store'
 const dir = mkdtempSync(join(tmpdir(), 'jobs184-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'fixture.db') })
 const previous = process.env.NUXT_LOG_DIR
@@ -37,8 +37,8 @@ it('retains submission context after return and logs one terminal with bounded p
 })
 
 it('cancel retry recovery and duplicate finalization retain business checkpoints and unique terminals', async () => {
-  const { requestJobCancel, requeueFinishedJob, ensureJobRunnerReady } = await import('../../../server/utils/job-runner')
-  const { createJob, finishJob, setJobResult } = await import('../../../server/utils/job-store')
+  const { requestJobCancel, requeueFinishedJob, ensureJobRunnerReady } = await import('../../../layers/core/server/utils/job-runner')
+  const { createJob, finishJob, setJobResult } = await import('../../../layers/core/server/utils/job-store')
   let release!: () => void
   const gate=new Promise<void>(resolve=>{release=resolve})
   registerJob({kind:'cancel184',status:'ready',summary:'fixture',parse:params=>({ok:true,params}),run:async ctx=>{
@@ -75,7 +75,7 @@ it('cancel retry recovery and duplicate finalization retain business checkpoints
   expect(recovered.every(r=>!r.requestId)).toBe(true)
 })
 it('runner failure and idempotent resubmission preserve result and do not duplicate lifecycle',async()=>{
- const { setJobResult }=await import('../../../server/utils/job-store')
+ const { setJobResult }=await import('../../../layers/core/server/utils/job-store')
  registerJob({kind:'failure184',status:'ready',summary:'fixture',deduplicateRequest:true,parse:params=>({ok:true,params}),run:async ctx=>{
   setJobResult(db,ctx.jobId,{retained:1})
   throw new Error('PRIVATE184_THROW')
