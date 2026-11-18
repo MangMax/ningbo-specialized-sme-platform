@@ -8,8 +8,9 @@ export default defineAppModule({
   name: '平台底座',
   clientPages: [
     { page: 'workbench', paths: ['/'], operationPage: 'roster' },
-    { page: 'files', paths: ['/files', '/preview'] },
-    { page: 'ocr', paths: ['/ocr'] },
+    { page: 'files', paths: ['/files'] },
+    { page: 'preview', paths: ['/preview'], operationPage: 'other' },
+    { page: 'ocr', paths: ['/ocr'], operationPage: 'other' },
     { page: 'tasks', paths: ['/tasks'] },
     { page: 'logs', paths: ['/logs'] },
     { page: 'settings', paths: ['/settings'] },

@@ -35,7 +35,13 @@ afterEach(async () => {
 })
 it.each([
   ['/', 'core', 'roster'],
-  ['/roster', 'sme-roster', 'roster'],
+  ['/roster', 'sme-roster', 'other'],
+  ['/enterprises/1', 'sme-roster', 'roster'],
+  ['/comparison', 'sme-roster', 'other'],
+  ['/platform-declarations', 'sme-roster', 'other'],
+  ['/files', 'core', 'files'],
+  ['/preview', 'core', 'other'],
+  ['/ocr', 'core', 'other'],
   ['/enterprise-services/PRIVATE189', 'enterprise-services', 'service-desk'],
   ['/enterprise-services-other', null, 'other'],
 ] as const)('attributes browser reports on %s to %s through transport and intake', async (path, module, page) => {
@@ -80,7 +86,7 @@ it('stores only classified client claims with server intake correlation through 
   const listed = await applicationLogs().list({ source: 'client' })
   expect(listed.rows).toHaveLength(1)
   const detail = await applicationLogs().detail(listed.rows[0]!.id)
-  expect(detail).toMatchObject({ source: 'client', module: 'sme-roster', operation: 'client.roster.script_error', outcome: 'failure', level: 'error', requestId: 'server-request', traceId: 'server-trace' })
+  expect(detail).toMatchObject({ source: 'client', module: 'sme-roster', operation: 'client.other.script_error', outcome: 'failure', level: 'error', requestId: 'server-request', traceId: 'server-trace' })
   expect(detail?.id).not.toBe('forged-id')
   expect(detail?.origin).toEqual({runtime:'browser',integration:'browser',capture:'hook',execution:'page'})
   expect(JSON.stringify(detail)).not.toMatch(/PRIVATE189|claimed|forged|2000-01-01|taskId|fileId|resourceId|message|stack/)

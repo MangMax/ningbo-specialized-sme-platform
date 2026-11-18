@@ -412,6 +412,9 @@ async function waitFiltered(minimum: number) {
 it.each([
   ['workbench', 'core', 'client.roster.script_error'],
   ['roster', 'sme-roster', 'client.roster.script_error'],
+  ['roster-workspace', 'sme-roster', 'client.other.script_error'],
+  ['preview', 'core', 'client.other.script_error'],
+  ['ocr', 'core', 'client.other.script_error'],
 ])('stores the registered module for the %s browser page through Nitro intake', async (page, module, operation) => {
   const accepted = await call('/api/logs/client', {
     method: 'POST',

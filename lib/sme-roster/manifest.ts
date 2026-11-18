@@ -17,21 +17,23 @@ export default defineAppModule({
       title: '名录统计',
     },
   ],
-  clientPages: [{
-    page: 'roster',
-    paths: [
-      ROSTER_LEDGER_PATH,
-      '/current-enterprises',
-      '/enterprises',
-      '/comparison',
-      '/quality',
-      '/stats',
-      '/platform-business-processes',
-      '/platform-declarations',
-      '/platform-queries',
-      '/platform-recognized-directory',
-    ],
-  }],
+  clientPages: [
+    { page: 'roster', paths: ['/current-enterprises', '/enterprises'] },
+    {
+      page: 'roster-workspace',
+      operationPage: 'other',
+      paths: [
+        ROSTER_LEDGER_PATH,
+        '/comparison',
+        '/quality',
+        '/stats',
+        '/platform-business-processes',
+        '/platform-declarations',
+        '/platform-queries',
+        '/platform-recognized-directory',
+      ],
+    },
+  ],
   routes: [
     '/api/comparison',
     '/api/enterprises',
