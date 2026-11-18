@@ -51,11 +51,27 @@ test('cross-layer re-exports and dynamic imports must resolve to the public entr
   expect(result.stderr).toContain('import("#layers/billing/card.vue")')
 })
 
-test('permits a public entrance, same-layer code, core facilities and application composition', () => {
+test('rejects a core or business dependency through application-root bridges', () => {
   const result = verify({
-    'layers/core/service.ts': 'export { install } from "~/server/composition"',
-    'server/composition.ts': 'import { read } from "#layers/billing/internal"; export const install = { read }',
+    'layers/core/service.ts': 'export { read } from "~/server/bridge"',
+    'layers/alpha/service.ts': 'export { read } from "#server/bridge"',
+    'server/bridge.ts': 'export { read } from "../lib/second-bridge"',
+    'lib/second-bridge.ts': 'import "../server/bridge"\nexport { read } from "#layers/billing/internal"',
+    'layers/billing/internal.ts': 'export function read() {}',
+  })
+
+  expect(result.status).toBe(1)
+  expect(result.stderr).toContain('lib/second-bridge.ts:2:1: core cannot depend on billing:\n  export { read } from "#layers/billing/internal"')
+  expect(result.stderr).toContain('lib/second-bridge.ts:2:1: alpha must use billing/public.ts:\n  export { read } from "#layers/billing/internal"')
+})
+
+test('permits standalone application composition, same-layer code, core facilities and public entrances', () => {
+  const result = verify({
+    'layers/core/service.ts': 'export function install() {}',
+    'server/composition.ts': 'import { install } from "#core/service"; import { read } from "#layers/billing/internal"; install(); read()',
     'layers/advice/use.ts': 'export { read } from "../billing/public.js"',
+    'layers/advice/use-bridge.ts': 'export { read } from "~/server/public-bridge"',
+    'server/public-bridge.ts': 'export { read } from "#layers/billing/public"',
     'layers/advice/use-core.ts': 'export { install } from "#core/service"',
     'layers/billing/public.ts': 'export { read } from "./internal"',
     'layers/billing/internal.ts': 'export function read() {}',
@@ -95,6 +111,69 @@ test.each([
 
   expect(result.status).toBe(1)
   expect(result.stderr).toMatch(/layers\/advice\/query\.ts:2:\d+: advice cannot reference table invoice owned by billing in SQL:/)
+})
+
+test.each([
+  ['nested FROM target', 'SELECT * FROM ((main.[Invoice]))'],
+  ['parenthesized JOIN target', 'SELECT * FROM mine JOIN (invoice AS i) ON 1 = 1'],
+  ['comma inside a parenthesized table group', 'SELECT * FROM (mine, invoice)'],
+  ['physical table inside a derived query', 'SELECT * FROM (SELECT * FROM invoice)'],
+])('checks foreign SQL tables in a %s', (_name, sql) => {
+  const result = verify({
+    'layers/billing/schema.ts': 'export const invoice = sqliteTable("invoice", {})',
+    'layers/advice/query.ts': `\ndb.prepare(${JSON.stringify(sql)})`,
+  })
+
+  expect(result.status).toBe(1)
+  expect(result.stderr).toContain('layers/advice/query.ts:2:12: advice cannot reference table invoice owned by billing in SQL:')
+})
+
+test('resolves a local const interpolation at its lexical use site', () => {
+  const statement = 'db.prepare(`SELECT * FROM ${table} WHERE id = ${id}`)'
+  const result = verify({
+    'layers/billing/schema.ts': 'export const invoice = sqliteTable("invoice", {})',
+    'layers/advice/query.ts': [
+      'const table = "own_table"',
+      statement,
+      'function read(id: number) {',
+      '  const suffix = "voice" as const',
+      '  const table = ("in" + suffix)',
+      `  ${statement}`,
+      '}',
+    ].join('\n'),
+  })
+
+  expect(result.status).toBe(1)
+  expect(result.stderr.trim()).toBe(`layers/advice/query.ts:6:14: advice cannot reference table invoice owned by billing in SQL:\n  ${statement.slice('db.prepare('.length, -1)}`)
+})
+
+test('permits references to local CTEs named like a foreign table', () => {
+  const result = verify({
+    'layers/billing/schema.ts': 'export const invoice = sqliteTable("invoice", {})',
+    'layers/advice/query.ts': [
+      'db.prepare("WITH seed AS (SELECT 1), [Invoice](id) AS NOT MATERIALIZED (SELECT * FROM seed) SELECT * FROM ([invoice])")',
+      'db.prepare("WITH RECURSIVE invoice(id) AS (VALUES (1) UNION ALL SELECT id + 1 FROM invoice WHERE id < 2) SELECT * FROM invoice")',
+    ].join('\n'),
+  })
+
+  expect(result.stderr).toBe('')
+  expect(result.status).toBe(0)
+})
+
+test.each([
+  ['schema-qualified read', 'WITH invoice AS (SELECT 1) SELECT * FROM main.invoice'],
+  ['schema-qualified read in a CTE body', 'WITH invoice AS (SELECT * FROM main.invoice) SELECT * FROM invoice'],
+  ['write target', 'WITH invoice AS (SELECT 1) UPDATE invoice SET id = 2'],
+  ['outside the nested CTE scope', 'SELECT * FROM (WITH invoice AS (SELECT 1) SELECT * FROM invoice), invoice'],
+  ['in the subsequent statement', 'WITH invoice AS (SELECT 1) SELECT * FROM invoice; SELECT * FROM invoice'],
+])('still reports a physical table for a CTE with a foreign name: %s', (_name, sql) => {
+  const result = verify({
+    'layers/billing/schema.ts': 'export const invoice = sqliteTable("invoice", {})',
+    'layers/advice/query.ts': `\ndb.exec(${JSON.stringify(sql)})`,
+  })
+
+  expect(result.status).toBe(1)
+  expect(result.stderr).toContain('layers/advice/query.ts:2:9: advice cannot reference table invoice owned by billing in SQL:')
 })
 
 test('SQL can reference own and core tables and can mention foreign names in values or comments', () => {

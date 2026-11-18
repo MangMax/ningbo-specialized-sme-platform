@@ -105,6 +105,7 @@ const program = ts.createProgram(
   programOptions,
   host,
 )
+const checker = program.getTypeChecker()
 const { tableOwners, importedTables } = indexTableOwnership({
   root, program, files, layerOf, layers: new Set(layerDirs.map(dir => basename(dir))), walk, report, violations,
 })
@@ -118,34 +119,41 @@ function checkTableReferences(source, node, layer, tables, action) {
   }
 }
 
-for (const path of files) {
-  const layer = layerOf(path)
-  const source = program.getSourceFile(path)
-  walk(source, node => {
-    const specifier = importSpecifier(node)
-    if (!specifier || !ts.isStringLiteralLike(specifier)) {
-      if (layer !== 'core' && tableOwners.size) {
-        checkTableReferences(source, node, layer, tablesInSql(node), (table, owner) => `reference table ${table} owned by ${owner} in SQL`)
-      }
-      return
-    }
-    const target = resolveImport(specifier.text, path)
-    if (!target) return
-    const owner = layerOf(target)
-    if (owner && owner !== layer && owner !== 'core') {
-      if (layer === 'core') {
-        report(source, node, `core cannot depend on ${owner}`)
+for (const dir of layerDirs) {
+  const layer = basename(dir)
+  const reachable = new Set(files.filter(path => layerOf(path) === layer))
+  // Follow app-root bridges with the importing layer's rules. Each layer checks
+  // its own internal graph, so crossing a legal public entry ends this traversal.
+  for (const path of reachable) {
+    const source = program.getSourceFile(path) ?? readSource(path)
+    const inLayer = layerOf(path) === layer
+    walk(source, node => {
+      const specifier = importSpecifier(node)
+      if (!specifier || !ts.isStringLiteralLike(specifier)) {
+        if (inLayer && layer !== 'core' && tableOwners.size) {
+          checkTableReferences(source, node, layer, tablesInSql(node, checker), (table, owner) => `reference table ${table} owned by ${owner} in SQL`)
+        }
         return
       }
-      if (target !== resolve(layersDir, owner, 'public.ts')) {
-        report(source, node, `${layer} must use ${owner}/public.ts`)
-        return
+      const target = resolveImport(specifier.text, path)
+      if (!target) return
+      const owner = layerOf(target)
+      if (!owner && sourceExtension.test(target)) reachable.add(target)
+      if (owner && owner !== layer && owner !== 'core') {
+        if (layer === 'core') {
+          report(source, node, `core cannot depend on ${owner}`)
+          return
+        }
+        if (target !== resolve(layersDir, owner, 'public.ts')) {
+          report(source, node, `${layer} must use ${owner}/public.ts`)
+          return
+        }
       }
-    }
-    if (layer !== 'core' && tableOwners.size) {
-      checkTableReferences(source, node, layer, importedTables(node, target), (table, owner) => `import table ${table} owned by ${owner}`)
-    }
-  })
+      if (inLayer && layer !== 'core' && tableOwners.size) {
+        checkTableReferences(source, node, layer, importedTables(node, target), (table, owner) => `import table ${table} owned by ${owner}`)
+      }
+    })
+  }
 }
 
 if (violations.length) {
