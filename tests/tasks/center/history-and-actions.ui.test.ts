@@ -430,7 +430,7 @@ it('按清单显示模块 Tab，并在名录模块内筛选导出任务', async 
   })
   const wrapper = await mountPage({ viewport: 'mobile' })
   const tabs = wrapper.findAll('[role="tab"]')
-  expect(tabs.map(item => item.text().replace(/\d+$/, ''))).toEqual(['全部任务', '平台底座', '优质中小企业'])
+  expect(tabs.map(item => item.text().replace(/\d+$/, ''))).toEqual(['全部任务', '平台底座', '优质中小企业', '线索名单'])
   expect(wrapper.text()).toContain('legacy-import')
   const roster = tabs[2]!
   await roster.trigger('mousedown', { button: 0 })
