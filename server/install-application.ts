@@ -15,6 +15,7 @@ import { installMcpFilePreparation } from './mcp-file-store'
 import { configureFileStore } from './file-store'
 import type { JobSpec } from '../layers/core/server/utils/job-runner'
 
+import * as leadListSpecs from '../layers/lead-lists/server/utils/export-job'
 import { leadListFileServerCategory } from '../layers/lead-lists/server/utils/file-category'
 
 export function installApplicationServer(): void {
@@ -31,6 +32,7 @@ export function installApplicationServer(): void {
   installJobSpecs(new Map<string, Readonly<Record<string, JobSpec>>>([
     ['core', coreSpecs],
     ['sme-roster', rosterSpecs],
+    ['lead-lists', leadListSpecs],
   ]))
   registerJobSpecs()
 }

@@ -13,12 +13,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '#core/app/components/ui/table'
 import type { LeadCatalog, LeadRow, LeadVersionDetail } from '../../../lib/contracts'
 import LeadListRegistration from '../../components/LeadListRegistration.vue'
+import LeadListExport from '../../components/LeadListExport.vue'
 import LeadListSupplement from '../../components/LeadListSupplement.vue'
 
 const route = useRoute()
 const router = useRouter()
 const registration = ref(false)
-const reviewing = ref<LeadRow | null>(null)
+const reviewing = ref<{ row: LeadRow; versionId: number } | null>(null)
 const catalog = useQuery({
   key: () => ['lead-lists', 'versions'],
   query: () => $fetch<LeadCatalog>('/api/lead-lists/versions'), placeholderData: previous => previous,
@@ -44,7 +45,7 @@ const sourceLabels = computed(() => new Map(catalog.data.value?.channels.map(ite
 const listTypeLabels = computed(() => new Map(catalog.data.value?.listTypes.map(item => [item.code, item.name])))
 
 function navigate(id: number) {
-  if (Number.isSafeInteger(id) && id > 0) void router.push({ query: { ...route.query, version: String(id) } })
+  if (Number.isSafeInteger(id) && id > 0) void router.push({ query: { ...route.query, version: String(id), exportJob: undefined } })
 }
 function switchSeries(name: unknown) {
   const first = versions.value.find(item => item.series === name)
@@ -92,20 +93,28 @@ useHead({ title: '线索名单' })
             </Button>
             <Badge v-else variant="outline">原文件已移出</Badge>
           </div>
+          <LeadListExport :key="displayed.id" :version-id="displayed.id" :disabled="!showingActive || Boolean(detail.error.value)" />
         </CardHeader>
         <CardContent class="p-0">
           <div class="data-table-scroll">
-            <Table class="data-table min-w-[700px]">
-              <TableHeader><TableRow><TableHead>序号</TableHead><TableHead>企业名称</TableHead><TableHead>统一社会信用代码</TableHead><TableHead>区县</TableHead><TableHead>备注</TableHead><TableHead>基础库</TableHead></TableRow></TableHeader>
+            <Table class="data-table table-fixed sm:min-w-[700px]">
+              <TableHeader><TableRow><TableHead class="w-14">序号</TableHead><TableHead>企业名称</TableHead><TableHead class="hidden w-44 sm:table-cell">统一社会信用代码</TableHead><TableHead class="hidden w-24 sm:table-cell">区县</TableHead><TableHead class="hidden sm:table-cell">备注</TableHead><TableHead class="w-20">基础库</TableHead></TableRow></TableHeader>
               <TableBody><TableRow v-for="item in displayed.rows" :key="item.id">
                 <TableCell>{{ item.rowNumber }}</TableCell>
-                <TableCell class="max-w-60 whitespace-normal wrap-anywhere">{{ item.name }}</TableCell>
-                <TableCell>{{ item.uscc ?? '—' }}</TableCell>
-                <TableCell>{{ item.district ?? '—' }}</TableCell>
-                <TableCell class="max-w-60 whitespace-normal wrap-anywhere">{{ item.note ?? '—' }}</TableCell>
+                <TableCell class="whitespace-normal wrap-anywhere">
+                  <div class="font-medium">{{ item.name }}</div>
+                  <dl v-if="item.uscc || item.district || item.note" class="text-muted-foreground mt-1 space-y-0.5 text-xs sm:hidden">
+                    <div v-if="item.uscc"><dt class="sr-only">统一社会信用代码</dt><dd class="font-mono">{{ item.uscc }}</dd></div>
+                    <div v-if="item.district"><dt class="sr-only">区县</dt><dd>{{ item.district }}</dd></div>
+                    <div v-if="item.note"><dt class="sr-only">备注</dt><dd>{{ item.note }}</dd></div>
+                  </dl>
+                </TableCell>
+                <TableCell class="hidden whitespace-normal wrap-anywhere sm:table-cell">{{ item.uscc ?? '—' }}</TableCell>
+                <TableCell class="hidden whitespace-normal sm:table-cell">{{ item.district ?? '—' }}</TableCell>
+                <TableCell class="hidden whitespace-normal wrap-anywhere sm:table-cell">{{ item.note ?? '—' }}</TableCell>
                 <TableCell>
                   <Badge v-if="item.enterpriseId" variant="secondary">已关联</Badge>
-                  <Button v-else variant="ghost" size="sm" :disabled="!showingActive || Boolean(detail.error.value)" :aria-label="`补充企业基础库：${item.name}`" @click="reviewing = item">补充</Button>
+                  <Button v-else variant="ghost" size="sm" :disabled="!showingActive || Boolean(detail.error.value)" :aria-label="`补充企业基础库：${item.name}`" @click="reviewing = { row: item, versionId: displayed.id }">补充</Button>
                 </TableCell>
               </TableRow></TableBody>
             </Table>
@@ -119,6 +128,6 @@ useHead({ title: '线索名单' })
     <Empty v-else-if="catalog.data.value">
       <EmptyHeader><EmptyMedia variant="icon"><FileText aria-hidden="true" /></EmptyMedia><EmptyTitle>还没有名单版本</EmptyTitle></EmptyHeader>
     </Empty>
-    <LeadListSupplement :row="reviewing" :version-id="displayed?.id" @close="reviewing = null" @saved="supplemented" />
+    <LeadListSupplement :row="reviewing?.row ?? null" :version-id="reviewing?.versionId" @close="reviewing = null" @saved="supplemented" />
   </div>
 </template>
