@@ -296,14 +296,19 @@ export function createFileStore<const Categories extends readonly FileCategorySe
     if (!rows.length) return []
     const ids = rows.map(row => row.id)
     const fields = categories.map(category => category.readFields?.(db, ids))
-    return rows.map(row => Object.assign({
-      ...row,
-      contentIdentity: {
-        registered: { fileId: row.id, relPath: row.relPath, sha256: row.sha256, bytes: row.bytes },
-        status: 'unknown' as const,
-        historical: 'unknown' as const,
-      },
-    }, ...fields.map(byId => byId?.get(row.id))) as Row)
+    return rows.map(row => {
+      const contributions = fields.map(byId => byId?.get(row.id))
+      const counts = contributions.flatMap(fields =>
+        fields && 'referenceCount' in fields && typeof fields.referenceCount === 'number' ? [fields.referenceCount] : [])
+      return Object.assign({
+        ...row,
+        contentIdentity: {
+          registered: { fileId: row.id, relPath: row.relPath, sha256: row.sha256, bytes: row.bytes },
+          status: 'unknown' as const,
+          historical: 'unknown' as const,
+        },
+      }, ...contributions, counts.length ? { referenceCount: counts.reduce((sum, count) => sum + count, 0) } : {}) as Row
+    })
   }
 
   function checkAdmission(relPath: string, siblings?: ReadonlySet<string>) {

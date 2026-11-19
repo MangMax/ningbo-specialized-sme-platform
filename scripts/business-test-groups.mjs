@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 export const loggingBusiness = '日志 · 审计'
 const owners = {
+  "线索 · 版本名单": ["lead-lists/versions"],
   "名录 · 导入与证据": [
     "roster/imports",
     "roster/official-evidence",

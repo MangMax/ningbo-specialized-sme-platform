@@ -103,7 +103,7 @@ describe("file maintenance public transports", () => {
   it('publishes the same list query parameters from the enabled categories in development OpenAPI', () => {
     const list = discovery.paths['/api/files'].get
     expect(list.parameters.map((param: { name: string }) => param.name))
-      .toEqual(['source', 'categoryState', 'parseState', 'q', 'page', 'pageSize', 'rescan'])
+      .toEqual(['source', 'categoryState', 'parseState', 'leadListUsage', 'q', 'page', 'pageSize', 'rescan'])
     expect(list.parameters.slice(0, 3)).toEqual([
       { name: 'source', in: 'query', schema: { type: 'string' }, description: '来源,多值:`jxj` / `miit`。' },
       { name: 'categoryState', in: 'query', schema: { type: 'string' }, description: '分类状态,多值:`set`(已定)/ `inferred`(程序推的)/ `unset`(未定)。' },

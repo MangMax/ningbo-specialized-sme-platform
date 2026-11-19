@@ -34,7 +34,7 @@ describe('task center public HTTP', () => {
     const all = await allResponse.json()
     expect(all.total).toBe(5)
     expect(all.rows).toHaveLength(2)
-    expect(all.counts).toEqual({ all: 5, core: 2, 'sme-roster': 2 })
+    expect(all.counts).toEqual({ all: 5, core: 2, 'sme-roster': 2, 'lead-lists': 0 })
     const ocr = await (await fetch(`${api.baseUrl}/api/task-center?tab=core&group=ocr&state=failed`)).json()
     expect(ocr.rows).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'ocr', label: 'OCR 识别', module: 'core', group: 'ocr' }),
