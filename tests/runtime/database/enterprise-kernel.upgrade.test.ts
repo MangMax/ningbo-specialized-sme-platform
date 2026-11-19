@@ -2,7 +2,7 @@ import Database from 'better-sqlite3'
 import { expect, test } from 'vitest'
 import { assertApplicationSchema } from '../../../db/schema-phase'
 import { createRuntimeSchema } from '../../../db/create-runtime'
-import { createPreEnterpriseKernelFixture } from '../../support/pre-enterprise-kernel'
+import { createPreEnterpriseKernelFixture, syntheticEnterpriseDictionaries } from '../../support/pre-enterprise-kernel'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../db/schema'
 import { allRosterEnterprises, listRosterEnterprises } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
@@ -62,6 +62,49 @@ test('cold upgrade keeps legacy aliases and rejects both a merge cycle and parti
     expect(db.prepare('SELECT alias_id,uscc,renamed_year FROM enterprise_former_name').get())
       .toEqual({ alias_id: 41, uscc: '91330226MA2CL6FP2U', renamed_year: null })
     expect(db.pragma('foreign_key_check')).toEqual([])
+  } finally {
+    db.close()
+  }
+})
+
+test('cold upgrade links a legacy announcement only when its committed byte identity is unique', async () => {
+  const { upgradeEnterpriseKernel } = await import('../../../upgrade/enterprise-kernel')
+  const db = new Database(':memory:')
+  const registered = 'a'.repeat(64)
+  const other = 'b'.repeat(64)
+  try {
+    createPreEnterpriseKernelFixture(db)
+    db.exec(`
+      INSERT INTO enterprise(id,name,name_norm) VALUES (1,'甲','甲'),(2,'乙','乙');
+      INSERT INTO record(id,enterprise_id,title_code,source) VALUES
+        (1,1,'specialized_sme','jxj'),(2,2,'specialized_sme','jxj');
+      INSERT INTO record_event(id,record_id,event_type,year) VALUES (1,1,'award',2025),(2,2,'award',2025);
+      INSERT INTO record_evidence(id,record_event_id,source_file,list_no) VALUES
+        (1,1,'unique.pdf',1),(2,2,'conflict.pdf',1);
+      INSERT INTO source_document(id,source,title,path) VALUES
+        (1,'jxj','唯一版本','unique.pdf'),(2,'jxj','冲突版本','conflict.pdf');
+      INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES
+        (1,'unique.pdf','unique.pdf','pdf',1,'${registered}','2025-01-01'),
+        (2,'conflict.pdf','conflict.pdf','pdf',1,'${registered}','2025-01-01');
+      INSERT INTO roster_file_classification(file_id,source,kind) VALUES
+        (1,'jxj','announcement'),(2,'jxj','announcement');
+    `)
+    const batch = db.prepare(`INSERT INTO import_batch
+      (idempotency_key,source_kind,source_identity,source_sha256,status,created_at)
+      VALUES (?,'announcement',?,?,?,'2025-01-01')`)
+    batch.run('unique', 'unique.pdf', registered, 'committed')
+    batch.run('duplicate', 'unique.pdf', registered, 'committed')
+    batch.run('unknown-hash', 'unique.pdf', null, 'committed')
+    batch.run('uncommitted', 'unique.pdf', other, 'preflight')
+    batch.run('first', 'conflict.pdf', registered, 'committed')
+    batch.run('second', 'conflict.pdf', other, 'committed')
+
+    expect(upgradeEnterpriseKernel(db, syntheticEnterpriseDictionaries)).toMatchObject({
+      migrated: true, linked: 1, unresolvedEvidenceIds: [2],
+    })
+    expect(db.prepare(`SELECT l.enterprise_id, s.file_id, s.version_key
+      FROM enterprise_source_link l JOIN enterprise_source s ON s.id=l.source_id`).all())
+      .toEqual([{ enterprise_id: 1, file_id: 1, version_key: `1:${registered}` }])
   } finally {
     db.close()
   }
