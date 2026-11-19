@@ -1,15 +1,15 @@
-import { createEnterpriseReadProcess } from '../../../server/utils/enterprise-read-process'
+import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { expect, it } from 'vitest'
 import { initializeDb } from '../../../db/client'
-import { createImportExecutor } from '../../../server/utils/import-execution'
-import { registerJob, submitJob, whenIdle } from '../../../server/utils/job-runner'
-import { getJob } from '../../../server/utils/job-store'
-import { submitCandidateDiscovery } from '../../../server/utils/jobs/candidate-discovery'
-import type { RosterImportRequest } from '../../../lib/roster-import-client'
+import { createImportExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
+import { registerJob, submitJob, whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { getJob } from '../../../layers/core/server/utils/job-store'
+import { submitCandidateDiscovery } from '../../../layers/sme-roster/server/utils/jobs/candidate-discovery'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 
 it.each(['completion', 'candidate checkpoint'] as const)('persists %s after an active import without blocking lock release or losing its result', async mode => {
   const dir = mkdtempSync(join(tmpdir(), 'job-import-contention-'))

@@ -2,7 +2,7 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { reactive } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
-import Page from '../../../pages/platform-queries.vue'
+import Page from '../../../layers/sme-roster/app/pages/platform-queries.vue'
 const wrappers: ReturnType<typeof mount>[] = []
 afterEach(() => { wrappers.splice(0).forEach(w => w.unmount()); vi.unstubAllGlobals() })
 const summary = (key: string, id = 7) => ({ total: 1, page: 1, pageSize: 50, counts: { partial: 1 }, rows: [{ relationsIncluded: false, query: { id, queryKey: key, interface: 'recognized_list', status: 'partial', rdjb: '2', queriedAt: '2026-10-21', createdAt: '2026-10-21', relationCount: 1 }, relations: [] }] })

@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { expect, it } from 'vitest'
-import { captureCandidateScope } from '../../../lib/platform/candidate-scope-capture'
+import { captureCandidateScope } from '../../../layers/sme-roster/lib/platform/candidate-scope-capture'
 import { relationScopeSql } from '../../../upgrade/frozen/current-platform-scope'
 
 it.each([

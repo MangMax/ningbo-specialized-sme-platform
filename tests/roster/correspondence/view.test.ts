@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classifyEventLinks, correspondenceStatusText, eventDecisionText, sourceReturnTarget, type CorrespondenceRef } from '../../../lib/roster/correspondence-view'
+import { classifyEventLinks, correspondenceStatusText, eventDecisionText, sourceReturnTarget, type CorrespondenceRef } from '../../../layers/sme-roster/lib/roster/correspondence-view'
 
 describe('record correspondence view contracts', () => {
   it('keeps later workflows independent from the event evidence and export context', () => {

@@ -4,9 +4,9 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import { createRouter, createMemoryHistory, RouterLink } from 'vue-router'
-import Page from '../../../pages/current-enterprises.vue'
-import { TASK_EXPORTS } from '../../../lib/task-center'
-import { Select } from '../../../components/ui/select'
+import Page from '../../../layers/sme-roster/app/pages/current-enterprises.vue'
+import { TASK_EXPORTS } from '../../../layers/sme-roster/lib/sme-roster/task-exports'
+import { Select } from '../../../layers/core/app/components/ui/select'
 
 const JOB = '01M5BEPVCXD5619ZW4C6CATRET'
 const KEY = 'task-center-export-requests-v1'
@@ -69,7 +69,7 @@ it.each(['q', 'district'] as const)('default URL pending export opens accepted t
   else wrapper.findAllComponents(Select).find(select => select.find('[aria-label="按区县筛选"]').exists())!.vm.$emit('update:modelValue', '鄞州区')
   await vi.waitFor(() => expect(router.currentRoute.value.query).toEqual({ titleCode: 'little_giant', [filter]: filter === 'q' ? '宁波' : '鄞州区' }))
   resolve({ status: 202, _data: { jobId: JOB } }); await flushPromises()
-  expect(router.currentRoute.value).toMatchObject({ path: '/tasks', query: { tab: 'export', titleCode: 'little_giant', page: '1', job: JOB } })
+  expect(router.currentRoute.value).toMatchObject({ path: '/tasks', query: { tab: 'sme-roster', group: 'export', titleCode: 'little_giant', page: '1', job: JOB } })
   expect(fetcher.raw).toHaveBeenCalledTimes(1)
   expect(fetcher.raw.mock.calls[0]![0]).toBe('/api/roster/exports/current/little-giant')
   expect(fetcher.raw.mock.calls[0]![1].body).toEqual({ clientRequestId: expect.any(String) })
@@ -92,7 +92,7 @@ for (const entry of TASK_EXPORTS) it(`${entry.titleCode}: filtered query submits
   expect(Object.keys(posts[0]!.options.body)).toEqual(['clientRequestId'])
   expect(posts[0]!.options.query).toBeUndefined()
   expect(JSON.stringify(posts[0])).not.toMatch(/旧名|鄞州|validYear|maintenanceYear|pageSize|authorization/i)
-  expect(router.currentRoute.value).toMatchObject({ path: '/tasks', query: { tab: 'export', titleCode: entry.titleCode, job: JOB } })
+  expect(router.currentRoute.value).toMatchObject({ path: '/tasks', query: { tab: 'sme-roster', group: 'export', titleCode: entry.titleCode, job: JOB } })
 })
 
 it('lost acceptance survives leaving and remounting; retry and accepted-task recovery reuse the same identity', async () => {

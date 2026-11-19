@@ -1,17 +1,18 @@
 import { afterAll, expect, it, vi } from 'vitest'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
-import { createCurrentQualificationAssessmentReader, CURRENT_TITLES } from '../../../lib/roster/current-qualification'
-import { getComparison } from '../../../lib/comparison'
-import { listRosterDifferences } from '../../../lib/roster/difference-list'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import { selectEnterpriseCoordinates } from '../../../lib/roster/enterprise-list-selection'
-import { listRosterDifferences as legacyDifferences } from '../../../lib/roster/enterprise-roster'
-import { listDifferences } from '../../../server/utils/mcp-roster'
+import { createCurrentQualificationAssessmentReader, CURRENT_TITLES } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { getComparison } from '../../../layers/sme-roster/lib/comparison'
+import { listRosterDifferences } from '../../../layers/sme-roster/lib/roster/difference-list'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { selectEnterpriseCoordinates } from '../../../layers/sme-roster/lib/roster/enterprise-list-selection'
+import { listRosterDifferences as legacyDifferences } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { listDifferences } from '../../../layers/sme-roster/server/utils/mcp-roster'
 const f = qualificationExportFixture()
 afterAll(() => { vi.useRealTimers(); return f.close() })
 it('retains raw extras alongside effective inherited qualification and stored history through expiry', () => {
  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-06-01T00:00:00Z'))
  const c=f.candidate('current-overlay',[{eventType:'award',year:2025,batchSeq:1}],'specialized_sme')
+ f.db.insert(schema.rosterLegacyMember).values({enterpriseId:c.enterprise.id}).run()
  f.db.$client.prepare("insert into record (enterprise_id,title_code,source,name_raw) values (?,'innovative_sme','miit','current-overlay')").run(c.enterprise.id)
  const scope={title:['innovative_sme'],direction:['extra_in_miit'] as ['extra_in_miit']}
  expect(getComparison(f.db).rows).toContainEqual(expect.objectContaining({enterpriseId:c.enterprise.id,titleCode:'innovative_sme',direction:'extra_in_miit'}))
@@ -62,11 +63,11 @@ it('keeps historical moved-in qualification readable without granting ordinary q
 
 import { schema } from '../../../db/client'
 import { eq } from 'drizzle-orm'
-import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../lib/platform/collection-target-command'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformRawRow } from '../../../lib/platform/types'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
-import { processFactsFromRow } from '../../../lib/platform/identity'
+import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../layers/sme-roster/lib/platform/collection-target-command'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformRawRow } from '../../../layers/sme-roster/lib/platform/types'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
+import { processFactsFromRow } from '../../../layers/sme-roster/lib/platform/identity'
 function collectionCommand(row: PlatformRawRow, queriedAt: string, source: PlatformLiveQueryResult['source'] = 'queryBusList'): NewCollectionTargetCommand {
   const evidence: PlatformLiveQueryResult = {
     source, status: 'success', effectiveConditions: source === 'businessList' ? { uscc: String(row.tyshxydm), combination: 'and' } : { name: 'Example', combination: 'and' },

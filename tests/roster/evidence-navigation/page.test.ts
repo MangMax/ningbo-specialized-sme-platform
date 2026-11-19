@@ -1,15 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import {
-  EVIDENCE_PAGE_WORDS,
-  evidencePageState,
-  evidencePreviewHref,
-  isPageCapable,
-  isSafeBackPath,
-  parseEvidencePreviewQuery,
-  planEvidencePages as planEvidencePagesWithCount,
-  type EvidencePageCandidate,
-  type EvidencePageEntry,
-} from '../../../lib/roster/evidence-page'
+import { isSafeBackPath, parseEvidencePreviewQuery } from '../../../layers/core/lib/preview-query'
+import { EVIDENCE_PAGE_WORDS, evidencePageState, evidencePreviewHref, isPageCapable, planEvidencePages as planEvidencePagesWithCount, type EvidencePageCandidate, type EvidencePageEntry } from '../../../layers/sme-roster/lib/roster/evidence-page'
 
 /**
  * RL-10 —— 出处页码的纯判据(写入侧定位 + 读侧三态 + 跳转链接)。
@@ -128,7 +119,7 @@ describe('planEvidencePages —— 分节定位(裸序号一律拒收)', () => {
 
   it('★ 属地按「有效属地」认:记录上的对不上、**企业自身**的对得上,也算命中', () => {
     // 界面上给人看的属地是「有效属地」,它**优先取企业自身的**(见
-    // `lib/roster/enterprise-roster.ts` 的 `effectiveDistrict`)。调用方多半照着界面抄,
+    // `layers/sme-roster/lib/roster/enterprise-roster.ts` 的 `effectiveDistrict`)。调用方多半照着界面抄,
     // 只认记录上的那一个,就会让一条看起来完全正确的条目莫名其妙 `no_match`。
     const rows: EvidencePageCandidate[] = [
       {
@@ -272,7 +263,7 @@ describe('evidencePageState —— 「本来就没有页」与「还没定」是
 
 describe('跳转链接 —— 出处 → 预览页', () => {
   it('带页码的链接把 file / page / back 都编进去(中文、书名号、空格都能往返)', () => {
-    const back = '/?view=enterprise&q=宁波&page=2&expand=204'
+    const back = '/roster?view=enterprise&q=宁波&page=2&expand=204'
     const href = evidencePreviewHref({ sourceFile: F145, page: 8, back })
 
     expect(href.startsWith('/preview?')).toBe(true)
@@ -281,14 +272,14 @@ describe('跳转链接 —— 出处 → 预览页', () => {
   })
 
   it('没有页码时**不写** page 参数 —— 不假装知道第几页', () => {
-    const href = evidencePreviewHref({ sourceFile: F145, page: null, back: '/' })
+    const href = evidencePreviewHref({ sourceFile: F145, page: null, back: '/roster' })
     expect(href).not.toContain('page=')
     expect(parseEvidencePreviewQuery(Object.fromEntries(new URL(href, 'http://x').searchParams)).page).toBeNull()
   })
 
   it('★ 非 PDF 的链接里永远没有 page —— Word / Excel 不给猜测页', () => {
     const docx = 'jxj/announcement/2023/1/关于公布2023年宁波市“专精特新”中小企业名单的通知.docx'
-    const href = evidencePreviewHref({ sourceFile: docx, page: 5, back: '/' })
+    const href = evidencePreviewHref({ sourceFile: docx, page: 5, back: '/roster' })
     expect(href).not.toContain('page=')
     expect(parseEvidencePreviewQuery(Object.fromEntries(new URL(href, 'http://x').searchParams)).page).toBeNull()
   })
@@ -300,7 +291,7 @@ describe('跳转链接 —— 出处 → 预览页', () => {
       expect(isSafeBackPath(bad)).toBe(false)
     }
     expect(isSafeBackPath('/')).toBe(true)
-    expect(isSafeBackPath('/?view=title')).toBe(true)
+    expect(isSafeBackPath('/roster?view=title')).toBe(true)
   })
 
   it('返回目标拒绝控制字符和解析后跨源的 URL,并保留合法站内路径', () => {
@@ -321,7 +312,7 @@ describe('跳转链接 —— 出处 → 预览页', () => {
       expect(evidencePreviewHref({ sourceFile: F145, page: 8, back })).not.toContain('back=')
     }
 
-    const valid = '/?view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91'
+    const valid = '/roster?view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91'
     expect(isSafeBackPath(valid, appOrigin)).toBe(true)
     expect(parseEvidencePreviewQuery({ back: valid }).back).toBe(valid)
   })

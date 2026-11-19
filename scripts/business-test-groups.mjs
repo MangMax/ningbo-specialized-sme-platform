@@ -2,6 +2,7 @@
 import { readdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+export const loggingBusiness = '日志 · 审计'
 const owners = {
   "名录 · 导入与证据": [
     "roster/imports",
@@ -17,14 +18,8 @@ const owners = {
     "tasks/details",
     "tasks/jobs"
   ],
-  "统计 · 称号统计": [
-    "statistics/annual",
-    "statistics/districts",
-    "statistics/movements",
-    "statistics/published",
-    "statistics/retired-models"
-  ],
-  "日志 · 审计": [
+  "统计 · 称号统计": ["roster/statistics"],
+  [loggingBusiness]: [
     "logging/client",
     "logging/context",
     "logging/core",
@@ -105,6 +100,7 @@ const owners = {
     "roster/legacy-export",
     "roster/status-workbook"
   ],
+  "名录 · 导出任务执行": ["roster/export-execution"],
   "名录 · 企业台账与年度流程": [
     "roster/annual-process",
     "roster/aliases",

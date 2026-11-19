@@ -5,10 +5,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
-import { SQLITE_WORKER } from '../../../lib/logging/sqlite-worker'
-import { LOG_DEFAULTS } from '../../../lib/logging/contract'
-import { defaultLogCollection } from '../../../lib/logging/policy'
-import { safeLogEvent } from '../../../lib/logging/privacy'
+import { SQLITE_WORKER } from '../../../layers/core/lib/logging/sqlite-worker'
+import { LOG_DEFAULTS } from '../../../layers/core/lib/logging/contract'
+import { defaultLogCollection } from '../../../layers/core/lib/logging/policy'
+import { safeLogEvent } from '../../../layers/core/lib/logging/privacy'
 
 const dirs: string[] = [], workers: Worker[] = [], peers: Database.Database[] = []
 const base = { retentionDays: 7, maxBytes: LOG_DEFAULTS.maxBytes }
@@ -111,7 +111,7 @@ it('keeps a healthy hot connection after real BUSY and never authorizes a locked
   expect(await f.call('policy')).toMatchObject({ ok: true, result: { revision: 0, collection: { sources: { task: { enabled: true } } } }, observation: { opens: 1, inTransaction: false } })
   await expect.poll(() => f.diagnostic()).toContain('"nativeCode":"SQLITE_BUSY"')
   const diagnostic = JSON.parse(f.diagnostic().trim().split('\n')[0]!)
-  expect(diagnostic).toEqual({ source: 'system', operation: 'logging.storage', outcome: 'failure', code: 'storage_unavailable', nativeCode: 'SQLITE_BUSY', action: 'policy', phase: 'command' })
+  expect(diagnostic).toEqual({ module: 'core', source: 'system', operation: 'logging.storage', outcome: 'failure', code: 'storage_unavailable', nativeCode: 'SQLITE_BUSY', action: 'policy', phase: 'command' })
   db.exec('ROLLBACK')
   expect((await f.call('write', [event('busy.recovered')])).result.stored).toBe(1)
   expect(f.output()).not.toContain('busy.denied')

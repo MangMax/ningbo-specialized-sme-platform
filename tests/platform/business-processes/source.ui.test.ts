@@ -2,10 +2,10 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import SourceReader from '../../../components/record-correspondence/SourceReader.vue'
-import SourceRowDetail from '../../../components/record-correspondence/SourceRowDetail.vue'
-import { platformRelatedRawFields, platformPresentationFields } from '../../../lib/roster/platform-records'
-import type { RelationSource } from '../../../lib/roster/correspondence-view'
+import SourceReader from '../../../layers/sme-roster/app/components/record-correspondence/SourceReader.vue'
+import SourceRowDetail from '../../../layers/sme-roster/app/components/record-correspondence/SourceRowDetail.vue'
+import { platformRelatedRawFields, platformPresentationFields } from '../../../layers/sme-roster/lib/roster/platform-records'
+import type { RelationSource } from '../../../layers/sme-roster/lib/roster/correspondence-view'
 
 const query = { id: 20, interface: 'business_list', queryKey: 'PRIVATE-QUERY', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T06:52:23.017Z', status: 'success', failureReason: null, relationCount: 1, collectionEvidence: null }
 const relation: RelationSource = { id: 30, queryId: 20, sequenceNo: 4, relationKey: 'INTERNAL-KEY', enterpriseId: 42, usccRaw: '913300000000000004', nameRaw: '企业原名', province: null, status: null, batch: null, declareKind: null, appliedAt: null, awardBatchLabel: null, year: null, sourceRdjb: '2', sourcePage: 3, rawFields: { id: 'RAW-ID', qymc: '企业原名', cszt: '终审通过', sqsj: '2026-05-08 10:32:24', whpc: '2026-1', rdtime: '2026-05-25 19:20:54', zsrxm: '未核姓名', cz: '未核操作', rdsj: '', rdrq: null, nested: { retained: [false, 0, null] } }, query, correspondences: [] }

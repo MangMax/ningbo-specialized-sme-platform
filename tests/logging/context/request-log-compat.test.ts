@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { requestLogContext } from '../../../lib/logging'
-import { safeLogEvent } from '../../../lib/logging/privacy'
+import { requestLogContext } from '../../../layers/core/lib/logging'
+import { safeLogEvent } from '../../../layers/core/lib/logging/privacy'
 
 const reads = vi.hoisted(() => ({ json: vi.fn() }))
 vi.mock('@db', () => ({ useDb: () => ({ $client: { name: 'context-compat.db' } }) }))
-vi.mock('../../../server/utils/enterprise-read', () => ({ enterpriseReads: reads }))
+vi.mock('../../../layers/sme-roster/server/utils/enterprise-read', () => ({ enterpriseReads: reads }))
 
 describe('request log context compatibility', () => {
   let handler: (event: unknown) => Promise<unknown>
@@ -12,7 +12,7 @@ describe('request log context compatibility', () => {
     vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
     vi.stubGlobal('getQuery', () => ({}))
     vi.stubGlobal('setHeader', vi.fn())
-    handler = (await import('../../../server/api/roster/enterprises.get')).default as unknown as typeof handler
+    handler = (await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default as unknown as typeof handler
   })
   beforeEach(() => reads.json.mockReset())
   afterAll(() => vi.unstubAllGlobals())
@@ -47,7 +47,7 @@ describe('request log context compatibility', () => {
     await expect(handler(event)).resolves.toBe(body)
     expect(reads.json).toHaveBeenLastCalledWith(
       'context-compat.db', expect.objectContaining({ operation: 'list' }), expect.any(AbortSignal),
-      { requestId: 'req-compat', traceId: 'trace-compat', taskId: 'task-compat', httpMethod: 'GET', httpRoute: '/api/roster/enterprises' },
+      { requestId: 'req-compat', traceId: 'trace-compat', taskId: 'task-compat', module: 'sme-roster', httpMethod: 'GET', httpRoute: '/api/roster/enterprises' },
     )
     expect(event.context.applicationLogContext).toBe(metadata)
     expect(event.context.applicationLogContext).toEqual({ requestId: 'req-compat', traceId: 'trace-compat', taskId: 'task-compat' })
@@ -55,7 +55,7 @@ describe('request log context compatibility', () => {
       ...requestLogContext(event), source: 'task', operation: 'task.queued', outcome: 'started',
       origin: { runtime: 'node', integration: 'application', capture: 'manual', execution: 'background' },
     })
-    expect(task).toMatchObject({ source: 'task', taskId: 'task-compat', requestId: 'req-compat', origin: { execution: 'background' } })
+    expect(task).toMatchObject({ source: 'task', module: 'sme-roster', taskId: 'task-compat', requestId: 'req-compat', origin: { execution: 'background' } })
     expect(task).not.toHaveProperty('httpMethod')
     expect(task).not.toHaveProperty('httpRoute')
   })

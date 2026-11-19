@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
-import FileDisplayNameEditor from '../../../components/files/FileDisplayNameEditor.vue'
-import type { StoredFileRow } from '../../../server/utils/stored-files'
+import FileDisplayNameEditor from '../../../layers/core/app/components/files/FileDisplayNameEditor.vue'
+import type { StoredFileRow } from '../../../layers/core/server/utils/stored-files'
 
 const mounted: ReturnType<typeof mount>[] = []
 

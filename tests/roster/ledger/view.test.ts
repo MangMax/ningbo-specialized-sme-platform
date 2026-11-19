@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { DIFFERENCE_REASONS } from '../../../lib/labels'
-import { ROSTER_DIFFERENCE_FILTER_OPTIONS, rosterDifferenceFilterLabel } from '../../../lib/roster/ledger-contract'
+import { DIFFERENCE_REASONS } from '../../../layers/sme-roster/lib/labels'
+import { ROSTER_DIFFERENCE_FILTER_OPTIONS, rosterDifferenceFilterLabel } from '../../../layers/sme-roster/lib/roster/ledger-contract'
 import {
   DEFAULT_SORT,
   EMPTY_LEDGER_STATE,
@@ -11,7 +11,7 @@ import {
   ledgerStateFromQuery,
   ledgerYearOptions,
   type LedgerState,
-} from '../../../lib/roster/ledger-view'
+} from '../../../layers/sme-roster/lib/roster/ledger-view'
 
 const FILTERED: LedgerState = {
   ...EMPTY_LEDGER_STATE,

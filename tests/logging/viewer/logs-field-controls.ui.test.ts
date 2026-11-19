@@ -9,9 +9,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { LogFieldControls, LogFieldControlsPatch } from '../../../lib/logging/contract'
-import { LOG_FIELD_PROFILES } from '../../../lib/logging/field-controls'
-import { createLogService } from '../../../lib/logging/service'
+import type { LogFieldControls, LogFieldControlsPatch } from '../../../layers/core/lib/logging/contract'
+import { LOG_FIELD_PROFILES } from '../../../layers/core/lib/logging/field-controls'
+import { createLogService } from '../../../layers/core/lib/logging/service'
 
 vi.mock('motion-v', async (original) => {
   const actual = await original<typeof import('motion-v')>()
@@ -126,7 +126,7 @@ async function mountManagement(
     if (options.method === 'PATCH') return write ? write(options.body) : read()
     return read()
   })
-  const { default: Management } = await import('../../../components/logs/LogManagement.vue')
+  const { default: Management } = await import('../../../layers/core/app/components/logs/LogManagement.vue')
   const wrapper = mount(Management, {
     props: { filter: {} },
     attachTo: document.body,

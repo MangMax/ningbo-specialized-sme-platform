@@ -1,12 +1,12 @@
 /** Offline historical oracle from ab503081dae3e24680afc9b07395a7e3ff21fc9f. */
-import { withArchiveProcessFacts } from '../../../lib/platform/observation-facts'
+import { withArchiveProcessFacts } from '../../../layers/sme-roster/lib/platform/observation-facts'
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../legacy-schema'
 type Db = BetterSQLite3Database<typeof schema>
-import { normalizeName, normalizeUscc } from '../../../lib/domain'
-import { normalizePlatformRelation } from '../../../lib/platform/normalization'
-import { legacyRowTitle, type PlatformObservationFact } from '../../../lib/platform/observation-facts'
+import { normalizeName, normalizeUscc } from '../../../layers/sme-roster/lib/domain'
+import { normalizePlatformRelation } from '../../../layers/sme-roster/lib/platform/normalization'
+import { legacyRowTitle, type PlatformObservationFact } from '../../../layers/sme-roster/lib/platform/observation-facts'
 import { factBatches, legacyRelationColumns, readLegacyRelationRows } from './platform-legacy-relation-read'
 import {
   businessEnterpriseExists, enterpriseAssignments, fail, orderedScopes, pageOf, titleScopesByQuery,
@@ -23,7 +23,7 @@ import {
   type RecognizedDirectoryRecordRow,
   type RecognizedDirectoryVersion,
   type RecognizedDirectoryVersionFields,
-} from '../../../lib/platform/recognized-directory'
+} from '../../../layers/sme-roster/lib/platform/recognized-directory'
 
 /** Stable conflict order for records and details. */
 const CONFLICT_ORDER = ['title_conflict', 'unverifiable_observation', 'enterprise_assignment_conflict'] as const

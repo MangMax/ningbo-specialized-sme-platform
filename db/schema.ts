@@ -1,5 +1,7 @@
-import { businessStatusCell, businessStatusChecks } from '../lib/platform/business-status'
-import type { FormalValidity } from '../lib/roster/formal-validity'
+import { businessStatusCell, businessStatusChecks } from './business-status'
+import type { FilePart } from './file-part'
+import type { FormalValidity } from './record-event-formal-validity'
+import type { DispositionFact } from './title-cycle-disposition'
 import { sql } from 'drizzle-orm'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import {
@@ -22,7 +24,7 @@ const exactCell = customType<{ data: unknown; driverData: unknown }>({ dataType:
 
 /** 后台外部服务凭据。仅配置服务读取，不加入台账导出或任务历史。 */
 export const serviceCredential = sqliteTable('service_credential', {
-  key: text('key', { enum: ['ocrToken', 'miitCookie'] }).primaryKey(),
+  key: text('key').primaryKey(),
   value: text('value').notNull(),
   updatedAt: text('updated_at').notNull(),
 })
@@ -179,10 +181,6 @@ export const recordEvidence = sqliteTable(
  *
  * `rel_path` 是文件库内**相对路径**(`jxj/announcement/2024/1/….pdf`),与
  * `record_evidence.source_file` 同一口径 —— 「被记录引用数」即按此列精确匹配计数。
- *
- * `source` / `kind` / `year` / `batch` **可空**:允许「上传时未定、后续回写」(票 12)。
- * 分类状态与解析状态分开记:`category_state` 说的是**分类**是否确定,
- * `parse_state` 说的是**解析**(从文件产出记录)是否完成;两者互不蕴含。
  */
 export const storedFile = sqliteTable(
   'stored_file',
@@ -197,6 +195,25 @@ export const storedFile = sqliteTable(
     ext: text('ext').notNull(),
     bytes: integer('bytes').notNull(),
     sha256: text('sha256').notNull(),
+    createdAt: text('created_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    /**
+     * 移出文件库的时间。**软删除标志**:DELETE 默认只打这个标、不删磁盘。
+     * 有它回填才不会把刚移出的文件又插回来(回填是幂等的,见 `layers/core/server/utils/stored-files.ts`)。
+     */
+    removedAt: text('removed_at'),
+  },
+  (t) => [
+    uniqueIndex('stored_file_rel_path_uq').on(t.relPath),
+  ],
+)
+
+/** 文件的名录分类允许未定；分类和解析状态分别记录。 */
+export const rosterFileClassification = sqliteTable(
+  'roster_file_classification',
+  {
+    fileId: integer('file_id').primaryKey().references(() => storedFile.id, { onDelete: 'cascade' }),
     /** 分类(可空,见上)。 */
     source: text('source', { enum: ['jxj', 'miit'] }),
     kind: text('kind', { enum: ['announcement', 'export'] }),
@@ -219,20 +236,11 @@ export const storedFile = sqliteTable(
     parseState: text('parse_state', { enum: ['unparsed', 'parsed', 'failed'] })
       .notNull()
       .default('unparsed'),
-    createdAt: text('created_at')
-      .notNull()
-      .$defaultFn(() => new Date().toISOString()),
-    /**
-     * 移出文件库的时间。**软删除标志**:DELETE 默认只打这个标、不删磁盘。
-     * 有它回填才不会把刚移出的文件又插回来(回填是幂等的,见 `server/utils/stored-files.ts`)。
-     */
-    removedAt: text('removed_at'),
   },
   (t) => [
-    uniqueIndex('stored_file_rel_path_uq').on(t.relPath),
-    index('stored_file_source_idx').on(t.source),
-    index('stored_file_category_state_idx').on(t.categoryState),
-    index('stored_file_parse_state_idx').on(t.parseState),
+    index('roster_file_classification_source_idx').on(t.source),
+    index('roster_file_classification_category_state_idx').on(t.categoryState),
+    index('roster_file_classification_parse_state_idx').on(t.parseState),
   ],
 )
 
@@ -261,7 +269,7 @@ export const storedFileAudit = sqliteTable(
  * 在同一个附件里并置 2021 与 2022 两段名单。所以文件级的单个 `year`/`batch` 表达不了它,
  * 真实粒度在这里:`(称号, 事件类型, 年份, 批次, 附件)`。
  *
- * 与 `stored_file.year` / `batch`(**公布**年份/批次,单值)分工明确:那里答「这份文件是
+ * 与 `roster_file_classification.year` / `batch`(**公布**年份/批次,单值)分工明确:那里答「这份文件是
  * 哪一批公布的」,这里答「文件里都有什么」。**别把两者混用**。
  *
  * `derived` 是从 `record_evidence` 聚合的派生结果,`agent` 是代理解析声明;升级前已存在的
@@ -269,6 +277,7 @@ export const storedFileAudit = sqliteTable(
  * legacy 行与 evidence 完全一致时可归为 derived,不一致时保留并标记冲突。
  *
  */
+// Owned by sme-roster. Physical relocation is tracked by #884.
 export const storedFilePart = sqliteTable(
   'stored_file_part',
   {
@@ -276,7 +285,7 @@ export const storedFilePart = sqliteTable(
     fileId: integer('file_id')
       .notNull()
       .references(() => storedFile.id, { onDelete: 'cascade' }),
-    /** 该段的称号。与 `stored_file.title_code` 同源表(称号字典)。 */
+    /** 该段的称号。与 `roster_file_classification.title_code` 同源表(称号字典)。 */
     titleCode: text('title_code')
       .notNull()
       .references(() => title.code),
@@ -290,7 +299,7 @@ export const storedFilePart = sqliteTable(
      */
     year: integer('year'),
     batch: integer('batch'),
-    /** 归一后的附件名(`附件` / `附件N`),见 `lib/attachment.ts`。可空(导出表无附件)。 */
+    /** 归一后的附件名(`附件` / `附件N`),见 `layers/sme-roster/lib/attachment.ts`。可空(导出表无附件)。 */
     attachment: text('attachment'),
     /** 该段的行数(这一段名单有多少条被台账引用)。 */
     rowCount: integer('row_count').notNull().default(0),
@@ -455,6 +464,7 @@ export const job = sqliteTable(
   },
   (t) => [
     index('job_kind_idx').on(t.kind),
+    // sme-roster owns current-roster-export request deduplication.
     uniqueIndex('job_export_request_uq').on(t.kind, sql`json_extract(${t.params}, '$.clientRequestId')`).where(sql`${t.kind} = 'current-roster-export'`),
     index('job_state_idx').on(t.state),
     index('job_created_at_idx').on(t.createdAt),
@@ -464,7 +474,7 @@ export const job = sqliteTable(
 // ===========================================================================
 // 名录生命周期契约(RL-01)—— 冻结的领域对象。
 //
-// 写入载荷类型见 `lib/roster-import-client.ts`,领域决策见
+// 写入载荷类型见 `layers/sme-roster/lib/roster-import-client.ts`,领域决策见
 // `docs/adr/2026-10-16-roster-lifecycle-model.md`。本段是**全仓共享基线**:
 // 只由 RL-01 落一次,后续票(RL-02..RL-11)**增量消费,不再改这里的列语义**。
 //
@@ -573,7 +583,7 @@ export const enterpriseAlias = sqliteTable(
     originalSourceRefId: integer('original_source_ref_id'),
     /** 当前别名解释；初始原值和来源单独冻结，历次变动追加审计。 */
     name: text('name').notNull(),
-    /** 归一化别名(与 `lib/domain.ts` 的 `normalizeName` 同规则),供按曾用名搜索。 */
+    /** 归一化别名(与 `layers/sme-roster/lib/domain.ts` 的 `normalizeName` 同规则),供按曾用名搜索。 */
     nameNorm: text('name_norm').notNull(),
     /** 来源类别:平台业务接口 / 平台申报接口 / 公布文件 / 人工登记。 */
     sourceKind: text('source_kind', {
@@ -620,8 +630,8 @@ export const enterpriseProfileAudit = sqliteTable('enterprise_profile_audit', {
   requestHash: text('request_hash').notNull(),
   beforeVersion: text('before_version').notNull(),
   afterVersion: text('after_version').notNull(),
-  before: text('before', { mode: 'json' }).$type<{ enterpriseId: number; name: string; city: string | null; district: string | null }>().notNull(),
-  after: text('after', { mode: 'json' }).$type<{ enterpriseId: number; name: string; city: string | null; district: string | null }>().notNull(),
+  before: text('before', { mode: 'json' }).$type<{ enterpriseId: number; name: string; city: string | null; district: string | null; uscc?: string | null }>().notNull(),
+  after: text('after', { mode: 'json' }).$type<{ enterpriseId: number; name: string; city: string | null; district: string | null; uscc?: string | null }>().notNull(),
   actor: text('actor', { mode: 'json' }).$type<{ type: 'user' | 'agent'; id: string }>().notNull(),
   basis: text('basis').notNull(),
   retainedAliasId: integer('retained_alias_id'),
@@ -1385,7 +1395,7 @@ export function differenceReasonFields() { return {
     titleCode: text('title_code')
       .notNull()
       .references(() => title.code),
-    /** 差异方向,与 `lib/comparison.ts` 的 `COMPARISON_DIRECTIONS` 同值。 */
+    /** 差异方向,与 `layers/sme-roster/lib/comparison.ts` 的 `COMPARISON_DIRECTIONS` 同值。 */
     direction: text('direction', {
       enum: ['missing_in_miit', 'extra_in_miit'],
     }).notNull(),
@@ -1663,6 +1673,7 @@ export const fileMaintenanceAudit = sqliteTable('file_maintenance_audit', {
 }, t => [uniqueIndex('file_maintenance_revision_uq').on(t.fileId, t.revision), uniqueIndex('file_maintenance_key_uq').on(t.idempotencyKey)])
 
 /** #105: parse-only immutable receipts. List projections omit before/after snapshots. */
+// Owned by sme-roster. Physical relocation is tracked by #884.
 export const fileParseAudit105 = sqliteTable('file_parse_audit_105', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   fileId: integer('file_id').notNull().references(() => storedFile.id),
@@ -1883,7 +1894,7 @@ export const fileDeclaration669 = sqliteTable('file_declaration_669', {
   active: integer('active', { mode: 'boolean' }).notNull(),
   sha256: text('sha256').notNull(),
   contentVersion: text('content_version'),
-  part: text('part', { mode: 'json' }).$type<import('../lib/file-parts').FilePart>().notNull(),
+  part: text('part', { mode: 'json' }).$type<FilePart>().notNull(),
   pageRanges: text('page_ranges', { mode: 'json' }).$type<{ start: number; end: number }[] | null>(),
 }, t => [index('file_declaration_669_file_idx').on(t.fileId)])
 
@@ -2024,7 +2035,7 @@ export const titleCycleDispositionRevision = sqliteTable('title_cycle_dispositio
   cycleRevision: integer('cycle_revision'),
   effectivePrecision: text('effective_precision', { enum: ['unknown', 'year', 'month', 'day'] }).notNull(),
   effectiveValue: text('effective_value'),
-  fact: text('fact', { mode: 'json' }).$type<import('../server/utils/title-cycle-disposition').DispositionFact>().notNull(),
+  fact: text('fact', { mode: 'json' }).$type<DispositionFact>().notNull(),
   audit: text('audit', { mode: 'json' }).$type<unknown>().notNull(),
 }, t => [
   unique().on(t.id, t.revision),
@@ -2039,3 +2050,78 @@ export const titleCycleDispositionReceipt = sqliteTable('title_cycle_disposition
   requestHash: text('request_hash').notNull(),
   receipt: text('receipt', { mode: 'json' }).$type<{ ids: string[]; version: string; committedAt: string }>().notNull(),
 });
+
+export const enterpriseKernelCompletion = sqliteTable('enterprise_kernel_completion', {
+  id: integer('id').primaryKey(),
+  version: integer('version').notNull(),
+  regionSha256: text('region_sha256'),
+  industrySha256: text('industry_sha256'),
+})
+export const enterpriseRegion = sqliteTable('enterprise_region', {
+  code: text('code').primaryKey().notNull(),
+  name: text('name').notNull(),
+  parentCode: text('parent_code').references((): AnySQLiteColumn => enterpriseRegion.code),
+  level: integer('level').notNull(),
+})
+export const enterpriseIndustry = sqliteTable('enterprise_industry', {
+  code: text('code').primaryKey().notNull(),
+  inputId: text('input_id').notNull().unique(),
+  name: text('name').notNull(),
+  parentCode: text('parent_code').references((): AnySQLiteColumn => enterpriseIndustry.code),
+  level: integer('level').notNull(),
+  description: text('description'),
+})
+export const enterpriseDirectory = sqliteTable('enterprise_directory', {
+  enterpriseId: integer('enterprise_id').primaryKey().references(() => enterprise.id),
+  districtCode: text('district_code').references(() => enterpriseRegion.code),
+  townshipCode: text('township_code').references(() => enterpriseRegion.code),
+  industryCode: text('industry_code').references(() => enterpriseIndustry.code),
+  removedReason: text('removed_reason'),
+  revision: integer('revision').notNull().default(1),
+})
+export const enterpriseFormerName = sqliteTable('enterprise_former_name', {
+  aliasId: integer('alias_id').primaryKey().references(() => enterpriseAlias.id, { onDelete: 'cascade' }),
+  uscc: text('uscc'),
+  renamedYear: integer('renamed_year'),
+})
+export const enterpriseSourceChannel = sqliteTable('enterprise_source_channel', {
+  code: text('code').primaryKey().notNull(),
+  name: text('name').notNull(),
+})
+export const enterpriseSourceListType = sqliteTable('enterprise_source_list_type', {
+  code: text('code').primaryKey().notNull(),
+  name: text('name').notNull(),
+})
+export const enterpriseSource = sqliteTable('enterprise_source', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  module: text('module').notNull(),
+  businessTable: text('business_table').notNull(),
+  versionKey: text('version_key').notNull(),
+  channelCode: text('channel_code').notNull().references(() => enterpriseSourceChannel.code),
+  listTypeCode: text('list_type_code').notNull().references(() => enterpriseSourceListType.code),
+  acquiredOn: text('acquired_on'),
+  series: text('series').notNull(),
+  fileId: integer('file_id').references(() => storedFile.id),
+  sha256: text('sha256'),
+}, t => [uniqueIndex('enterprise_source_version_uq').on(t.module, t.businessTable, t.versionKey)])
+export const enterpriseSourceLink = sqliteTable('enterprise_source_link', {
+  enterpriseId: integer('enterprise_id').notNull().references(() => enterprise.id),
+  sourceId: integer('source_id').notNull().references(() => enterpriseSource.id),
+}, t => [primaryKey({ columns: [t.enterpriseId, t.sourceId] }), index('enterprise_source_link_source_idx').on(t.sourceId, t.enterpriseId)])
+export const rosterAnnouncementIntake = sqliteTable('roster_announcement_intake', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  idempotencyKey: text('idempotency_key').notNull().unique(),
+  digest: text('digest').notNull(),
+  request: text('request').notNull(),
+  removedReason: text('removed_reason'),
+  supplementDigest: text('supplement_digest'),
+  reviewedRequest: text('reviewed_request'),
+  receipt: text('receipt'),
+})
+export const rosterLegacyMember = sqliteTable('roster_legacy_member', {
+  enterpriseId: integer('enterprise_id').primaryKey().references(() => enterprise.id, { onDelete: 'cascade' }),
+})
+export const rosterAnnouncementMember = sqliteTable('roster_announcement_member', {
+  enterpriseId: integer('enterprise_id').notNull().references(() => enterprise.id, { onDelete: 'cascade' }),
+  intakeId: integer('intake_id').notNull().references(() => rosterAnnouncementIntake.id),
+}, t => [primaryKey({ columns: [t.enterpriseId, t.intakeId] }), index('roster_announcement_member_intake_idx').on(t.intakeId)])

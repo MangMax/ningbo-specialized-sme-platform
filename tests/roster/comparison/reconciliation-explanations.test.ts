@@ -2,12 +2,12 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { ComparisonDirection } from '../../../lib/comparison'
-import { attachReconcile, readReconcile, reconcileKey } from '../../../lib/reconcile'
-import { formatFetchTime } from '../../../lib/reconcile-time'
+import type { ComparisonDirection } from '../../../layers/sme-roster/lib/comparison'
+import { attachReconcile, readReconcile, reconcileKey } from '../../../layers/sme-roster/lib/reconcile'
+import { formatFetchTime } from '../../../layers/sme-roster/lib/reconcile-time'
 import {
   RECONCILE_LABELS,
-} from '../../../lib/labels'
+} from '../../../layers/sme-roster/lib/labels'
 import explainFixture from '../../fixtures/reconcile-explain.json'
 
 /** 夹具是从 pipeline 真实生成的 explain.json 里原样摘录的 3 条(见文件内 source.note)。 */

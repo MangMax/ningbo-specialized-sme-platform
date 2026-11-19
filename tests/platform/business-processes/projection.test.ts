@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseBusinessProcess } from '../../../lib/platform/business-projection'
+import { parseBusinessProcess } from '../../../layers/sme-roster/lib/platform/business-projection'
 
 describe('business_list typed projection parser', () => {
   it('projects only explicit source row facts and trims text', () => {

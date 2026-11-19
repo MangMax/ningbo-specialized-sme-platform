@@ -2,16 +2,16 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h, ref, type Ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import RosterEnterpriseTable, { type EnterpriseRow } from '../../../components/RosterEnterpriseTable.vue'
-import RosterTitleTable, { type TitleRow } from '../../../components/RosterTitleTable.vue'
+import RosterEnterpriseTable, { type EnterpriseRow } from '../../../layers/sme-roster/app/components/RosterEnterpriseTable.vue'
+import RosterTitleTable, { type TitleRow } from '../../../layers/sme-roster/app/components/RosterTitleTable.vue'
 import {
   hasEvidencePreviewReturn,
   rememberEvidencePreviewReturn,
   shouldNuxtScrollToTop,
   useEvidencePreviewScrollRestore,
-} from '../../../lib/roster/evidence-preview-return'
-import type { RosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import EnterprisePage from '../../../pages/enterprises/[id].vue'
+} from '../../../layers/sme-roster/lib/roster/evidence-preview-return'
+import type { RosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import EnterprisePage from '../../../layers/sme-roster/app/pages/enterprises/[id].vue'
 
 vi.mock('@tanstack/vue-virtual', async () => {
   const { computed } = await import('vue')
@@ -48,7 +48,7 @@ vi.mock('@pinia/colada', async () => {
   }
 })
 
-const safeBack = '/?view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91'
+const safeBack = '/roster?view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91'
 const businessTimeline = {
   asOf: '2026-11-17',
   sources: [
@@ -160,10 +160,10 @@ const globalStubs = {
   },
   FilePreviewDialog: true,
   RecordSourceReader: true,
-  EnterpriseLaterProcesses: true,
-  EventChip: true,
-  SourceChip: true,
-  TitleBadge: true,
+  RosterEnterpriseLaterProcesses: true,
+  RosterEventChip: true,
+  RosterSourceChip: true,
+  RosterTitleBadge: true,
   Badge: true,
   Button: { template: '<button><slot /></button>' },
   Collapsible: CollapsibleStub,
@@ -339,16 +339,16 @@ describe('出处预览返回滚动恢复', () => {
       to: { fullPath: string },
       from: { path: string },
     ) => boolean
-    expect(scrollToTop({ fullPath: '/enterprises/91' }, { path: '/' })).toBe(true)
+    expect(scrollToTop({ fullPath: '/enterprises/91' }, { path: '/roster' })).toBe(true)
     // Nuxt may ask for its position after the ready-state restore consumed the session entry.
     expect(scrollToTop({ fullPath: '/enterprises/91' }, { path: '/preview' })).toBe(false)
-    expect(shouldNuxtScrollToTop('/?view=title&page=2', '/enterprises/91')).toBe(false)
-    expect(shouldNuxtScrollToTop('/?view=title&page=2', '/files')).toBe(true)
+    expect(shouldNuxtScrollToTop('/roster?view=title&page=2', '/enterprises/91')).toBe(false)
+    expect(shouldNuxtScrollToTop('/roster?view=title&page=2', '/files')).toBe(true)
     sessionStorage.setItem(
       'roster:evidence-preview-return',
       JSON.stringify([{ back: '/enterprises/91', scrollY: 70, scrollTop: null, scrollLeft: null }]),
     )
-    expect(scrollToTop({ fullPath: '/enterprises/91' }, { path: '/' })).toBe(false)
+    expect(scrollToTop({ fullPath: '/enterprises/91' }, { path: '/roster' })).toBe(false)
     detailPage.unmount()
   })
 
@@ -365,13 +365,13 @@ describe('出处预览返回滚动恢复', () => {
     await flushPromises()
     expect(page.text()).toContain('原认定 2021 年 · 复核结论 2024 年 · 复核不通过')
     expect(page.text()).not.toContain('failed')
-    expect(page.getComponent({ name: 'EventChip' }).props('hideBatch')).toBe(true)
+    expect(page.getComponent({ name: 'RosterEventChip' }).props('hideBatch')).toBe(true)
     page.unmount()
   })
 
   it('浏览器 Back 的默认企业 URL 匹配显式 view=enterprise 回链状态', async () => {
-    const historyPath = '/?page=2&pageSize=100&expand=91'
-    const savedBack = '/?view=enterprise&page=2&pageSize=100&expand=91'
+    const historyPath = '/roster?page=2&pageSize=100&expand=91'
+    const savedBack = '/roster?view=enterprise&page=2&pageSize=100&expand=91'
     sessionStorage.setItem(
       'roster:evidence-preview-return',
       JSON.stringify([{ back: savedBack, scrollY: 96, scrollTop: 1538, scrollLeft: 0 }]),
@@ -535,7 +535,7 @@ describe('出处预览返回滚动恢复', () => {
     ])
     const ledgerLink = detailReturn.findAll('a').find((link) => link.text().includes('企业列表'))
     expect(ledgerLink?.attributes('data-target')).toBe(
-      JSON.stringify({ path: '/', query: { view: 'enterprise', q: '开诚', page: '2', expand: '91' } }),
+      JSON.stringify({ path: '/roster', query: { view: 'enterprise', q: '开诚', page: '2', expand: '91' } }),
     )
     detailReturn.unmount()
 
@@ -573,7 +573,7 @@ describe('出处预览返回滚动恢复', () => {
   })
 
   it('称号视图名称入口保留 view/page 和表格滚动，并完成详情预览返回链', async () => {
-    const ledgerPath = '/?view=title&district=%E6%B5%B7%E6%9B%99%E5%8C%BA&page=2'
+    const ledgerPath = '/roster?view=title&district=%E6%B5%B7%E6%9B%99%E5%8C%BA&page=2'
     const backQuery = 'view=title&district=%E6%B5%B7%E6%9B%99%E5%8C%BA&page=2'
     const detailPath = `/enterprises/35?back=${encodeURIComponent(backQuery)}`
     const ledgerWindowTop = 70
@@ -687,7 +687,7 @@ describe('出处预览返回滚动恢复', () => {
     ])
     const ledgerLink = detailReturn.findAll('a').find((link) => link.text().includes('企业列表'))
     expect(ledgerLink?.attributes('data-target')).toBe(
-      JSON.stringify({ path: '/', query: { view: 'title', district: '海曙区', page: '2' } }),
+      JSON.stringify({ path: '/roster', query: { view: 'title', district: '海曙区', page: '2' } }),
     )
     detailReturn.unmount()
 

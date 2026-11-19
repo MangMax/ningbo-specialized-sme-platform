@@ -1,10 +1,11 @@
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, renameSync, unlinkSync, symlinkSync, realpathSync, statSync, fstatSync, openSync, writeSync, closeSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { afterAll, expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { initializeDb, schema } from '../../../db/client'
-import { getParse105, historyParse105, saveParse105, saveParseMcp105, preflightParse310, commitRanges669 } from '../../../server/utils/parse-maintenance-105'
+import { getParse105, historyParse105, saveParse105, saveParseMcp105, preflightParse310, commitRanges669 } from '../../../layers/sme-roster/server/utils/parse-maintenance-105'
 
 // Schedule physical mutations after real filesystem calls, without replacing
 // their results, the production input checker, digest or database.
@@ -35,7 +36,7 @@ function fixture(bytes = Buffer.from('synthetic original bytes')) {
   const relPath = `input-${++serial}.pdf`
   writeFileSync(join(root, relPath), bytes)
   const sha256 = createHash('sha256').update(bytes).digest('hex')
-  const f = db.insert(schema.storedFile).values({ relPath, filename: relPath, ext: 'pdf', bytes: bytes.length, sha256 }).returning().get()
+  const f = createClassifiedFile(db, { relPath, filename: relPath, ext: 'pdf', bytes: bytes.length, sha256 }, {})
   const p = db.insert(schema.ocrResult).values({ fileId: f.id, pageNo: 1, markdown: 'original OCR', raw: { syntheticCapture310: true, content: ['original nonempty response'] }, channel: 'upload' }).returning().get()
   return { f, p, pages: [{ page: 1, version: `${p.id}:1` }] }
 }

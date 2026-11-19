@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -6,6 +7,7 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
 import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { minimalPdf } from '../../support/minimal-pdf'
 
 const dir = mkdtempSync(join(tmpdir(), 'file-maintenance-104-'))
 const root = join(dir, 'files')
@@ -60,6 +62,120 @@ beforeAll(async () => {
 afterAll(async () => { if (service) await service.stop(); rmSync(dir, { recursive: true, force: true }) })
 
 describe("file maintenance public transports", () => {
+  it('exposes common files through list and detail, and only scopes the list when a category filter is selected', async () => {
+    const notice = await file()
+    const relPath = 'shared/common-reference.txt'
+    const text = 'fixture-owned reference'
+    mkdirSync(join(root, 'shared'), { recursive: true })
+    writeFileSync(join(root, relPath), text)
+    const { id } = db.insert(schema.storedFile).values({
+      relPath, filename: 'common-reference.txt', ext: 'txt', bytes: Buffer.byteLength(text),
+      sha256: createHash('sha256').update(text).digest('hex'),
+    }).returning({ id: schema.storedFile.id }).get()
+    const getList = async (query = '') => {
+      const res = await fetch(service.baseUrl + '/api/files' + query)
+      expect(res.status).toBe(200)
+      return await res.json()
+    }
+
+    expect(await getList('?pageSize=1')).toMatchObject({ total: 2 })
+    expect(await getList('?q=common-reference')).toMatchObject({ total: 1, rows: [{ id, relPath }] })
+    expect(await getList('?q=common-reference&source=unknown')).toMatchObject({ total: 1 })
+    expect(await getList('?source=jxj&categoryState=set&parseState=unparsed')).toMatchObject({
+      total: 1, rows: [{ id: notice.id, source: 'jxj' }],
+    })
+    expect(await rest(String(id))).toEqual({ status: 200, body: text })
+    const detail = await rest(`${id}/maintenance`)
+    expect(detail).toMatchObject({ status: 200, body: { revision: 0, file: { id, relPath } } })
+    expect(detail.body.file).not.toHaveProperty('categoryState')
+    expect((await rpc('get_file', { fileId: id })).value).toMatchObject({ id, relPath })
+    expect(await rest(String(id), 'PATCH', { displayName: '通用参考' })).toMatchObject({
+      status: 200, body: { id, relPath, displayName: '通用参考' },
+    })
+    expect(await rest(`${id}/maintenance`)).toMatchObject({
+      status: 200, body: { revision: 1, rows: [{ after: { displayName: '通用参考' } }] },
+    })
+
+    expect(await rest(String(id), 'DELETE')).toMatchObject({ status: 200 })
+    expect(await rest(String(notice.id), 'DELETE')).toMatchObject({ status: 200 })
+  })
+
+  it('publishes the same list query parameters from the enabled categories in development OpenAPI', () => {
+    const list = discovery.paths['/api/files'].get
+    expect(list.parameters.map((param: { name: string }) => param.name))
+      .toEqual(['source', 'categoryState', 'parseState', 'q', 'page', 'pageSize', 'rescan'])
+    expect(list.parameters.slice(0, 3)).toEqual([
+      { name: 'source', in: 'query', schema: { type: 'string' }, description: '来源,多值:`jxj` / `miit`。' },
+      { name: 'categoryState', in: 'query', schema: { type: 'string' }, description: '分类状态,多值:`set`(已定)/ `inferred`(程序推的)/ `unset`(未定)。' },
+      { name: 'parseState', in: 'query', schema: { type: 'string' }, description: '解析状态,多值:`unparsed` / `parsed` / `failed`。' },
+    ])
+    const patch = discovery.paths['/api/files/{id}'].patch
+    expect(patch.requestBody.content['application/json'].schema.oneOf[0].properties).toMatchObject({
+      source: { type: 'string', enum: ['jxj', 'miit'], nullable: true },
+      year: { type: 'integer', nullable: true },
+    })
+    const properties = patch.responses[200].content['application/json'].schema.properties
+    expect(properties.parts.items.properties.origin.enum).toEqual(['derived', 'agent', 'legacy'])
+  })
+
+  it('publishes the upload registration selector and legacy optionality in development OpenAPI', () => {
+    const register = discovery.paths['/api/files/register'].post
+    const schema = register.requestBody.content['application/json'].schema
+    expect(schema.required).toEqual(['relPath'])
+    expect(schema.properties).toMatchObject({ relPath: { type: 'string' }, fileCategory: { type: 'string' } })
+    expect(Object.keys(register.responses)).toEqual(['200', '201', '400', '409'])
+  })
+
+  it('keeps registration, classification, parsing, preview and soft removal on one uploaded file ID', async () => {
+    const filename = 'classification-lifecycle.pdf'
+    const pdf = minimalPdf({ pages: 2 })
+    const meta = { filename, source: 'jxj', kind: 'announcement' }
+    const metadata = Object.entries(meta).map(([key, value]) => `${key} ${Buffer.from(value).toString('base64')}`).join(',')
+    const uploadHeaders = { 'Tus-Resumable': '1.0.0' }
+    const created = await fetch(service.baseUrl + '/api/uploads', {
+      method: 'POST',
+      headers: { ...uploadHeaders, 'Upload-Length': String(pdf.length), 'Upload-Metadata': metadata },
+    })
+    expect(created.status).toBe(201)
+    const landed = await fetch(new URL(created.headers.get('location')!, service.baseUrl), {
+      method: 'PATCH',
+      headers: { ...uploadHeaders, 'Upload-Offset': '0', 'Content-Type': 'application/offset+octet-stream' },
+      body: Uint8Array.from(pdf),
+    })
+    expect(landed.status).toBe(204)
+    const relPath = decodeURIComponent(landed.headers.get('x-upload-path')!)
+    expect(relPath).toBe(`jxj/announcement/${filename}`)
+
+    const registration = await rest('register', 'POST', { relPath, source: 'jxj', kind: 'announcement' })
+    expect(registration.status).toBe(201)
+    const { id } = registration.body
+    expect(registration.body).toMatchObject({ relPath, categoryState: 'unset', year: null, parseState: 'unparsed' })
+    const classified = await rest(String(id), 'PATCH', { year: 2024, batch: 1, titleCode: 'specialized_sme' })
+    expect(classified).toMatchObject({ status: 200, body: { id, categoryState: 'set', year: 2024, batch: 1 } })
+    const changed = await rpc('set_file_category', { fileId: id, year: 2025, batch: 2 })
+    expect(changed.value.file).toMatchObject({ id, relPath, year: 2025, batch: 2, titleCode: 'specialized_sme' })
+
+    const parse = await rest(`${id}/parse-result`, 'GET')
+    const saved = await rest(`${id}/parse-result`, 'PUT', {
+      expectedVersion: parse.body.version, idempotencyKey: 'uploaded-classification-parse',
+      actor: { type: 'agent', id: 'fixture' }, reason: 'Synthetic announcement',
+      parts: [{ titleCode: 'specialized_sme', eventKind: 'award', year: 2025, batch: 2, rowCount: 3 }],
+    })
+    expect(saved).toMatchObject({ status: 200, body: { state: { fileId: id, parseState: 'parsed', parts: [{ year: 2025, rowCount: 3 }] } } })
+    const filtered = await fetch(service.baseUrl + `/api/files?source=jxj&categoryState=set&parseState=parsed&q=${filename}`)
+    expect(await filtered.json()).toMatchObject({ total: 1, rows: [{ id, year: 2025, parseState: 'parsed' }] })
+
+    const removed = await rest(String(id), 'DELETE')
+    expect(removed).toMatchObject({ status: 200, body: { removed: true, diskDeleted: false } })
+    const listing = await fetch(service.baseUrl + `/api/files?q=${filename}`)
+    expect(await listing.json()).toEqual({ total: 0, rows: [] })
+    const after = await rest(`${id}/parse-result`)
+    expect(after.body).toMatchObject({ fileId: id, removedAt: expect.any(String), parseState: 'parsed' })
+    const preview = await fetch(service.baseUrl + `/api/files/${id}`)
+    expect(preview.status).toBe(200)
+    expect(Buffer.from(await preview.arrayBuffer())).toEqual(Buffer.from(pdf))
+  })
+
   it('accepts exact baseline REST and MCP payloads and invalidates modern revisions after legacy writes', async () => {
     const f = await file()
     expect((await rest(`${f.id}`, 'PATCH', { year: 2025 }, false)).status).toBe(200)

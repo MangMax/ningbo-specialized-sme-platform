@@ -3,15 +3,15 @@ import { createError } from 'h3'
 const f = vi.hoisted(() => ({ db: vi.fn(), page: vi.fn(), execute: vi.fn(), log: vi.fn(), failure: vi.fn(), guard: vi.fn() }))
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 vi.mock('@db', () => ({ useDb: f.db }))
-vi.mock('../../../server/utils/import-execution', () => ({ importExecutor: { execute: f.execute } }))
-vi.mock('../../../server/utils/roster-import-page-validation', () => ({ validateRosterImportPageCounts: f.page }))
-vi.mock('../../../lib/logging', () => ({ appLog: f.log }))
-vi.mock('../../../server/utils/roster-import-logging', () => ({ logImportFailure: f.failure }))
-vi.mock('../../../server/utils/mcp-guard', () => ({ writeGuard: f.guard }))
-import preflight from '../../../server/mcp/tools/preflight_roster_batch'
-import commit from '../../../server/mcp/tools/save_roster_batch'
-import { rosterImportMcpContext } from '../../../server/utils/roster-import-mcp-context'
-import { ImportReceiptError } from '../../../server/utils/import-receipts'
+vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: { execute: f.execute } }))
+vi.mock('../../../layers/sme-roster/server/utils/roster-import-page-validation', () => ({ validateRosterImportPageCounts: f.page }))
+vi.mock('../../../layers/core/lib/logging', () => ({ appLog: f.log }))
+vi.mock('../../../layers/sme-roster/server/utils/roster-import-logging', () => ({ logImportFailure: f.failure }))
+vi.mock('../../../layers/core/server/utils/mcp-guard', () => ({ writeGuard: f.guard }))
+import preflight from '../../../layers/sme-roster/server/mcp/tools/preflight_roster_batch'
+import commit from '../../../layers/sme-roster/server/mcp/tools/save_roster_batch'
+import { rosterImportMcpContext } from '../../../layers/sme-roster/server/utils/roster-import-mcp-context'
+import { ImportReceiptError } from '../../../layers/sme-roster/server/utils/import-receipts'
 const input = { idempotencyKey: 'fixture-180', sourceKind: 'platform_export', sourceIdentity: 'fixture180', payload: { exportSnapshot: {} } }
 beforeEach(() => { vi.clearAllMocks(); f.db.mockReturnValue('db'); f.page.mockResolvedValue([]); f.execute.mockResolvedValue({ status: 'preflight' }); vi.stubGlobal('createError', createError); vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: '/fixture' })) })
 afterEach(() => vi.unstubAllGlobals())

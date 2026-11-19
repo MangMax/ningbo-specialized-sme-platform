@@ -25,7 +25,7 @@ it('serves explicit text as inert text and rejects hidden sensitive files', asyn
   vi.stubGlobal('setHeader', (_: unknown, name: string, value: string) => headers.set(name, value))
   vi.stubGlobal('getRequestHeader', () => undefined)
   vi.stubGlobal('sendStream', (_: unknown, stream: import('node:fs').ReadStream) => { sent = stream; return 'stream' })
-  const route = (await import('../../../server/api/files/[id].get')).default
+  const route = (await import('../../../layers/core/server/api/files/[id].get')).default
   expect(await route({} as never)).toBe('stream')
   expect(headers.get('content-type')).toBe('text/plain; charset=utf-8')
   expect(headers.get('x-content-type-options')).toBe('nosniff')

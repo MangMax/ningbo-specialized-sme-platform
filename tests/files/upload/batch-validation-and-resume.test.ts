@@ -1,23 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import type { PreviousUpload, UploadMetadata } from '../../../lib/upload'
-import {
-  MAX_SIZE,
-  TUS_ENDPOINT,
-  baseName,
-  buildMetadata,
-  formatBytes,
-  formatEta,
-  isBatchComplete,
-  isFilenameSafe,
-  landingPath,
-  matchPreviousUpload,
-  metadataPayload,
-  resumeKey,
-  suggestBatch,
-  targetsEndpoint,
-  toUploadFailure,
-  validateBatch,
-} from '../../../lib/upload'
+import { formatBytes } from '../../../layers/core/lib/core/file-size'
+import type { PreviousUpload } from '../../../layers/core/lib/upload-transport'
+import type { UploadMetadata } from '../../../layers/sme-roster/lib/upload'
+import { MAX_SIZE, TUS_ENDPOINT, baseName, formatEta, isFilenameSafe, targetsEndpoint, toUploadFailure } from '../../../layers/core/lib/upload-transport'
+import { buildMetadata, isBatchComplete, landingPath, matchPreviousUpload, metadataPayload, resumeKey, suggestBatch, validateBatch } from '../../../layers/sme-roster/lib/upload'
 
 /**
  * 上传的**模型层**单测:只测规则本身(文件名推导、落位路径、续传匹配、错误翻译),

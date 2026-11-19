@@ -3,13 +3,13 @@ import { mkdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { createDrizzleLogger } from '../lib/logging/drizzle'
+import { createDrizzleLogger } from '../layers/core/lib/logging/drizzle'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { readMigrationFiles } from 'drizzle-orm/migrator'
 import * as schema from './legacy-schema'
 import { assertApplicationRuntime, assertFinalPlatformRuntime, PLATFORM_RUNTIME_VERSION } from './schema-phase'
 import { TITLE_SEED } from '../db/titles'
-import { readOwnerIdentity, sameReadOwner, type ReadOwnerIdentity } from '../lib/roster/offmain-read-protocol'
+import { readOwnerIdentity, sameReadOwner, type ReadOwnerIdentity } from '../db/read-owner-identity'
 
 export interface DbOptions {
   /** SQLite 文件路径。默认 `NUXT_DB_PATH` → `<cwd>/data/roster.db`。 */

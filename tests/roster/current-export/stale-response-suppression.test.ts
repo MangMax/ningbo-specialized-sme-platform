@@ -3,10 +3,10 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createRouter, createMemoryHistory, RouterLink } from 'vue-router'
-import Entry from '../../../components/CurrentRosterExportEntry.vue'
-import { Button } from '../../../components/ui/button'
-import { useCurrentRosterExport } from '../../../composables/useCurrentRosterExport'
-import { TASK_EXPORTS } from '../../../lib/task-center'
+import Entry from '../../../layers/sme-roster/app/components/CurrentRosterExportEntry.vue'
+import { Button } from '../../../layers/core/app/components/ui/button'
+import { useRosterCurrentExport } from '../../../layers/sme-roster/app/composables/useRosterCurrentExport'
+import { TASK_EXPORTS } from '../../../layers/sme-roster/lib/sme-roster/task-exports'
 
 const KEY = 'task-center-export-requests-v1'
 const LG_JOB = '01M5BEPVCXD5619ZW4C6CATRET'
@@ -44,7 +44,7 @@ async function queryEntry() {
 }
 async function regeneration() {
   const wrapper = mount(defineComponent({ setup() {
-    const { submitExport } = useCurrentRosterExport()
+    const { submitExport } = useRosterCurrentExport()
     const result = ref('')
     return () => h('div', [h(Button, { onClick: async () => {
       const receipt = await submitExport('specialized_sme', OLD_SME)
@@ -67,7 +67,7 @@ it('an optional lifecycle reason blocks submission until the current read comple
   const raw = mockFetch(async () => ({ status: 202, _data: { jobId: SME_JOB } }))
   const reason = ref('正在读取当前筛选，读完即可操作。')
   const wrapper = mount(defineComponent({ setup() {
-    const { submitExport, disabledReason } = useCurrentRosterExport(reason)
+    const { submitExport, disabledReason } = useRosterCurrentExport(reason)
     return () => h('div', [h(Button, { onClick: () => submitExport('specialized_sme', OLD_SME) }, () => '重新生成'), h('p', disabledReason('specialized_sme'))])
   } }))
   mounted.push(wrapper); await flushPromises()
@@ -170,7 +170,7 @@ it.each(['q', 'district'] as const)('pending export acceptance navigates to its 
   await query.router.push({ path: '/current-enterprises', query: { titleCode: 'little_giant', [filter]: filter === 'q' ? '宁波' : '鄞州区' } })
   receipt.resolve({ status: 202, _data: { jobId: LG_JOB } }); await flushPromises()
   expect(query.router.currentRoute.value.path).toBe('/tasks')
-  expect(query.router.currentRoute.value.query).toEqual({ tab: 'export', titleCode: 'little_giant', page: '1', job: LG_JOB })
+  expect(query.router.currentRoute.value.query).toEqual({ tab: 'sme-roster', group: 'export', titleCode: 'little_giant', page: '1', job: LG_JOB })
   expect(raw).toHaveBeenCalledTimes(1)
   expect(raw.mock.calls[0]![0]).toBe('/api/roster/exports/current/little-giant')
   expect(raw.mock.calls[0]![1].body).toEqual({ clientRequestId: expect.any(String) })

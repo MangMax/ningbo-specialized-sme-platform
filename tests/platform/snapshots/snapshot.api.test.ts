@@ -7,7 +7,7 @@ import { initializeDb } from '../../../db/client'
  *   - `GET /api/platform/snapshots/diff?from=&to=` —— 两个快照的新增/消失/字段变化(追溯源行号)。
  *
  * 分两层测:
- *   1. **HTTP 核心**(`server/utils/platform-snapshots-http.ts`,不 import h3)——
+ *   1. **HTTP 核心**(`layers/sme-roster/server/utils/platform-snapshots-http.ts`,不 import h3)——
  *      状态码与响应体的全部判据;这也正是真实 HTTP 回放测试打的同一份实现;
  *   2. **Nitro 路由**——只是薄薄地转调核心,这里用 `vi.stubGlobal` 补 h3 的编译期宏与
  *      自动导入(裸 node 下没有),断言它转调到位、状态码写进响应。
@@ -18,7 +18,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { handlePlatformSnapshotRequest } from '../../../server/utils/platform-snapshots-http'
+import { handlePlatformSnapshotRequest } from '../../../layers/sme-roster/server/utils/platform-snapshots-http'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-snapshot-api-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -200,8 +200,8 @@ describe('Nitro 路由只是薄薄地转调 HTTP 核心', () => {
     })
     vi.stubGlobal('setHeader', () => undefined)
     vi.doMock('@db', () => ({ useDb: () => db }))
-    snapshots = (await import('../../../server/api/platform/snapshots.get')).default as typeof snapshots
-    diff = (await import('../../../server/api/platform/snapshots/diff.get')).default as typeof diff
+    snapshots = (await import('../../../layers/sme-roster/server/api/platform/snapshots.get')).default as typeof snapshots
+    diff = (await import('../../../layers/sme-roster/server/api/platform/snapshots/diff.get')).default as typeof diff
   })
 
   beforeEach(() => {
@@ -224,7 +224,7 @@ describe('Nitro 路由只是薄薄地转调 HTTP 核心', () => {
 
   it('两条路由都带顶层 defineRouteMeta(spec 的唯一输入)', async () => {
     const { readFile } = await import('node:fs/promises')
-    const routes = ['../../../server/api/platform/snapshots.get.ts', '../../../server/api/platform/snapshots/diff.get.ts']
+    const routes = ['../../../layers/sme-roster/server/api/platform/snapshots.get.ts', '../../../layers/sme-roster/server/api/platform/snapshots/diff.get.ts']
     for (const rel of routes) {
       const source = await readFile(new URL(rel, import.meta.url), 'utf8')
       expect(source, rel).toContain('defineRouteMeta({')

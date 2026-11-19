@@ -1,6 +1,6 @@
 import {afterEach,expect,it} from 'vitest'
-import {listPlatformQueries,MAX_FULL_QUERY_BYTES} from '../../../lib/platform/read'
-import {readPlatformQueryEvidence} from '../../../lib/platform/evidence-read'
+import {listPlatformQueries,MAX_FULL_QUERY_BYTES} from '../../../layers/sme-roster/lib/platform/read'
+import {readPlatformQueryEvidence} from '../../../layers/sme-roster/lib/platform/evidence-read'
 import {submitNativePlatformQuery} from '../fixtures/native-query'
 import {nativeImportDb,businessSource} from '../../roster/imports/fixtures/native-import'
 const handles:ReturnType<typeof nativeImportDb>[]=[]

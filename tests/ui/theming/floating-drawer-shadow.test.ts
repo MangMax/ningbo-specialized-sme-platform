@@ -18,7 +18,7 @@ import { describe, expect, it } from 'vitest'
  */
 
 const tailwindCss = readFileSync(
-  fileURLToPath(new URL('../../../assets/css/tailwind.css', import.meta.url)),
+  fileURLToPath(new URL('../../../layers/core/app/assets/css/tailwind.css', import.meta.url)),
   'utf8',
 )
 

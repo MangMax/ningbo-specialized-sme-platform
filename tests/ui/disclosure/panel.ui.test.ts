@@ -2,7 +2,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h, onMounted, ref } from 'vue'
 import { afterEach, expect, it } from 'vitest'
-import DisclosurePanel from '../../../components/DisclosurePanel.vue'
+import DisclosurePanel from '../../../layers/core/app/components/DisclosurePanel.vue'
 
 const mounted: ReturnType<typeof mount>[] = []
 afterEach(() => { for (const wrapper of mounted.splice(0)) wrapper.unmount() })

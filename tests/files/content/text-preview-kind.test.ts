@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { resolvePreviewKind } from '../../../lib/preview'
+import { resolvePreviewKind } from '../../../layers/core/lib/preview'
 
 it('dispatches explicit Markdown and common code extensions without admitting config or binary files', () => {
   expect(resolvePreviewKind('名单.MD?x=1')).toMatchObject({ kind: 'markdown', language: 'markdown' })

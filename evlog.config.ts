@@ -1,6 +1,6 @@
 import { defineEvlog } from 'evlog'
-import { applicationLogRedaction } from './lib/logging/privacy'
-import { drainApplicationEvent } from './lib/logging'
+import { applicationLogRedaction } from './layers/core/lib/logging/privacy'
+import { drainApplicationEvent } from './layers/core/lib/logging'
 export default defineEvlog({
   redact: applicationLogRedaction,
   service: 'ningbo-sme', enabled: true, silent: true, pretty: false,

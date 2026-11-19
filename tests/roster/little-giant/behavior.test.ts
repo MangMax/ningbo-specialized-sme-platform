@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from 'vitest'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
-import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
-import { readStatisticsEffectiveSnapshot } from '../../../lib/roster/statistics-effective-snapshot'
+import { readCurrentQualificationAssessment } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { readStatisticsEffectiveSnapshot } from '../../../layers/sme-roster/lib/roster/statistics-effective-snapshot'
 const f = qualificationExportFixture()
 const at = Date.parse('2026-06-01T00:00:00Z')
 afterAll(() => f.close())
@@ -118,8 +118,8 @@ it('specialized qualification alone supports innovative without inventing events
 })
 
 it('upper-only candidates are deduplicated in common lists filters and XLSX with literal identities', async () => {
- const { listCurrentQualified } = await import('../../../lib/roster/current-qualified-query')
- const { writeCurrentWorkbook } = await import('../../../lib/roster/current-workbook')
+ const { listCurrentQualified } = await import('../../../layers/sme-roster/lib/roster/current-qualified-query')
+ const { writeCurrentWorkbook } = await import('../../../layers/sme-roster/lib/roster/current-workbook')
  const { readExportWorkbook } = await import('../../support/read-workbook')
  const { readFileSync } = await import('node:fs')
  const { join } = await import('node:path')

@@ -11,8 +11,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { McpToolCallbackResult } from '@nuxtjs/mcp-toolkit/server'
 import { schema, initializeDb } from '../../../db/client'
-import type { EventCorrectionRequest } from '../../../server/utils/roster-event-correction'
-import { dispatchEventCorrectionMcp, isEventCorrectionMcpResult } from '../../../server/utils/mcp-event-correction'
+import type { EventCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-event-correction'
+import { dispatchEventCorrectionMcp, isEventCorrectionMcpResult } from '../../../layers/sme-roster/server/utils/mcp-event-correction'
 
 // Replace only Nuxt registration discovery. Exported tool schemas/handlers,
 // MCP SDK HTTP transport, the domain command and SQLite are real.
@@ -116,9 +116,9 @@ async function fixture() {
     idempotencyKey: `issue304-${key}`, sourceIdentity: 'synthetic:issue304', actor: { type: 'agent', id: 'issue304-test' }, basis: 'Synthetic verified announcement conclusions', operations,
   })
   const op = (id: number, patch: EventCorrectionRequest['operations'][number]['patch'], expectedRevision = 1) => ({ eventId: id, recordId: record.id, enterpriseId: enterprise.id, expectedRevision, patch })
-  const { eventCorrectionRoute } = await import('../../../server/utils/roster-event-correction-route')
-  const { correspondenceRoute } = await import('../../../server/utils/record-correspondence-route')
-  const { default: annualRoute } = await import('../../../server/api/roster/events/[id]/annual-process.get')
+  const { eventCorrectionRoute } = await import('../../../layers/sme-roster/server/utils/roster-event-correction-route')
+  const { correspondenceRoute } = await import('../../../layers/sme-roster/server/utils/record-correspondence-route')
+  const { default: annualRoute } = await import('../../../layers/sme-roster/server/api/roster/events/[id]/annual-process.get')
   const router = createRouter(), app = createApp()
   router.use('/api/roster/events/corrections/preflight', eventCorrectionRoute('preflight'))
   router.use('/api/roster/events/corrections/commit', eventCorrectionRoute('commit'))
@@ -130,10 +130,10 @@ async function fixture() {
   router.use('/api/roster/correspondences/:id', correspondenceRoute('get', { id: true }))
   app.use(router)
   const [{ default: preflight }, { default: commit }, { default: get }, { default: auditTool }] = await Promise.all([
-    import('../../../server/mcp/tools/preflight_event_corrections'),
-    import('../../../server/mcp/tools/commit_event_corrections'),
-    import('../../../server/mcp/tools/get_official_event'),
-    import('../../../server/mcp/tools/get_event_correction_audit'),
+    import('../../../layers/sme-roster/server/mcp/tools/preflight_event_corrections'),
+    import('../../../layers/sme-roster/server/mcp/tools/commit_event_corrections'),
+    import('../../../layers/sme-roster/server/mcp/tools/get_official_event'),
+    import('../../../layers/sme-roster/server/mcp/tools/get_event_correction_audit'),
   ])
   const sessions: McpServer[] = []
   const serveMcp = async (req: Parameters<typeof listener>[0], res: Parameters<typeof listener>[1]) => {

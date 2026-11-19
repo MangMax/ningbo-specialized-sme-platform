@@ -10,7 +10,7 @@ import {
   classifyPlatformResponse,
   extractEmbeddedZrar,
   parsePlatformList,
-} from '../../../lib/platform/adapter'
+} from '../../../layers/sme-roster/lib/platform/adapter'
 
 const fixture = (name: string) =>
   readFileSync(join(import.meta.dirname, '../../fixtures/platform', name), 'utf8')

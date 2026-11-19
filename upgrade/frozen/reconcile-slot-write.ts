@@ -7,10 +7,10 @@ import { and, asc, eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
 import { targetSchema as s, platformReconcileCapture as c } from '../target-schema'
-import { migrationFinished } from '../../lib/platform/migration-readiness'
+import { migrationFinished } from '../../layers/sme-roster/lib/platform/migration-readiness'
 import { captureReconcileSlot, RECONCILE_SLOT_COMPLETION, slotFallbackColumns, type SlotInput, type SlotRelation } from './reconcile-slot-capture'
 import { sourceFieldComparison } from './source-extraction'
-import type { LegacySlotCollection } from '../../lib/platform/client'
+import type { LegacySlotCollection } from '../../layers/sme-roster/lib/platform/client'
 
 const columns = ['reconcile_slot_state','reconcile_slot_rule','reconcile_slot_raw_archive_id','reconcile_slot_row_count','reconcile_slot_input_sha256','reconcile_slot_reason']
 const barriers = ['reconcile_slot_insert','reconcile_slot_binding','reconcile_slot_immutable','reconcile_slot_delete','reconcile_slot_observation_insert','reconcile_slot_observation_update','reconcile_slot_observation_delete']

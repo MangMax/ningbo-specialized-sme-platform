@@ -1,9 +1,12 @@
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { normalizeAttachment } from '../../../lib/attachment'
+import { normalizeAttachment } from '../../../layers/sme-roster/lib/attachment'
+import type { FilePart } from '../../../db/file-part'
+import type { RosterFileFields } from '../../../layers/sme-roster/server/modules/sme-roster/files'
 import {
   aggregateParts,
   compareParts,
@@ -12,19 +15,18 @@ import {
   partKey,
   partYears,
   seriesLabel,
-  type FilePart,
-} from '../../../lib/file-parts'
-import { backfillFileParts, listFileParts } from '../../../server/utils/file-parts'
-import { applyParseResult } from '../../../server/utils/parse-result'
-import { listStoredFiles } from '../../../server/utils/stored-files'
+} from '../../../layers/sme-roster/lib/file-parts'
+import { backfillFileParts, listFileParts } from '../../../layers/sme-roster/server/utils/file-parts'
+import { applyParseResult } from '../../../layers/sme-roster/server/utils/parse-result'
+import { listStoredFiles } from '../../../layers/core/server/utils/stored-files'
 
 /**
  * 票 17 —— **文件含多段**:年份/批次/事件按「段」建模。
  *
  * 分三块:
- *  1. 附件名归一(`lib/attachment.ts`)——「附件」「附 件 1」「附件1」「附件2」同形状;
- *  2. 段聚合与排序(`lib/file-parts.ts`)—— 纯函数,口径可单测;
- *  3. 回填(`server/utils/file-parts.ts`)—— 对**真实形状**的种子核对 192号 = 2 段、
+ *  1. 附件名归一(`layers/sme-roster/lib/attachment.ts`)——「附件」「附 件 1」「附件1」「附件2」同形状;
+ *  2. 段聚合与排序(`layers/sme-roster/lib/file-parts.ts`)—— 纯函数,口径可单测;
+ *  3. 回填(`layers/sme-roster/server/utils/file-parts.ts`)—— 对**真实形状**的种子核对 192号 = 2 段、
  *     145号 = 2 段,以及幂等。
  *
  * 种子用的是 `files/` 里那两份文件的**真实路径、真实段与真实行数**(389/67 与 301/413),
@@ -201,22 +203,7 @@ let schema: typeof import('../../../db')['schema']
 function seedFile(relPath: string, over: Partial<{ year: number; batch: number }> = {}): number {
   const segments = relPath.split('/')
   const miit = relPath.startsWith('miit')
-  return db
-    .insert(schema.storedFile)
-    .values({
-      relPath,
-      filename: segments[segments.length - 1]!,
-      ext: miit ? 'xlsx' : 'pdf',
-      bytes: 1,
-      sha256: 'a'.repeat(64),
-      source: miit ? 'miit' : 'jxj',
-      kind: miit ? 'export' : 'announcement',
-      year: over.year ?? null,
-      batch: over.batch ?? null,
-      categoryState: 'set',
-    })
-    .returning({ id: schema.storedFile.id })
-    .get().id
+  return createClassifiedFile(db, { relPath, filename: segments[segments.length - 1]!, ext: miit ? 'xlsx' : 'pdf', bytes: 1, sha256: 'a'.repeat(64) }, { source: miit ? 'miit' : 'jxj', kind: miit ? 'export' : 'announcement', year: over.year ?? null, batch: over.batch ?? null, categoryState: 'set' }).id
 }
 
 let seq = 0
@@ -410,15 +397,15 @@ describe('从 record_evidence 回填段', () => {
 
   it('列表行带上段,且年份/批次汇总是内容年份(页面「年份」列就靠它)', () => {
     const rows = listStoredFiles(db, { pageSize: 200 }).rows
-    const byPath = new Map(rows.map((r) => [r.relPath, r]))
+    const byPath = new Map(rows.map((r) => [r.relPath, r as typeof r & Partial<RosterFileFields>]))
 
     // 192号 年份列显示两个年 —— 验收里的那一条。
     expect(byPath.get(FILE_192)!.parts).toHaveLength(2)
-    expect(partYears(byPath.get(FILE_192)!.parts).map(String).join('、')).toBe('2021、2024')
-    expect(partBatches(byPath.get(FILE_192)!.parts)).toEqual([2])
+    expect(partYears(byPath.get(FILE_192)!.parts!).map(String).join('、')).toBe('2021、2024')
+    expect(partBatches(byPath.get(FILE_192)!.parts!)).toEqual([2])
 
     // 145号 年份列也是两个年(同一附件、两年名单)。
-    expect(partYears(byPath.get(FILE_145)!.parts).map(String).join('、')).toBe('2021、2022')
+    expect(partYears(byPath.get(FILE_145)!.parts!).map(String).join('、')).toBe('2021、2022')
 
     // 公布年份/批次仍是文件级的单值,与内容年份互不影响。
     const f192 = byPath.get(FILE_192)!
@@ -427,12 +414,13 @@ describe('从 record_evidence 回填段', () => {
 
   it('工信部导出也按维护批次分段(attachment 为空)', () => {
     const miit = listStoredFiles(db, { q: '导出Excel' }).rows.find((r) => r.relPath === FILE_MIIT)!
-    expect(miit.parts.map((p) => `${p.eventKind}/${p.year}`)).toEqual([
+    const parts = miit.parts as RosterFileFields['parts']
+    expect(parts.map((p) => `${p.eventKind}/${p.year}`)).toEqual([
       'maintain/2024',
       'maintain/2025',
     ])
-    expect(miit.parts.every((p) => p.attachment === null)).toBe(true)
-    expect(partYears(miit.parts)).toEqual([2024, 2025])
+    expect(parts.every((p) => p.attachment === null)).toBe(true)
+    expect(partYears(parts)).toEqual([2024, 2025])
   })
 
   it('没有引用的文件不留段(留给票 11 解析时写),但公布年份还在', () => {

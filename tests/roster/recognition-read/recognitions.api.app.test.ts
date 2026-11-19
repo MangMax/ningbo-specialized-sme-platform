@@ -48,6 +48,7 @@ function seed(
     .values({ name, nameNorm: name, usccNorm: uscc, district })
     .returning({ id: schema.enterprise.id })
     .get().id
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: id }).run()
   const recordId = db
     .insert(schema.record)
     .values({ enterpriseId: id, titleCode, source: 'jxj' })
@@ -135,10 +136,10 @@ beforeAll(async () => {
     { eventType: 'award', year: 2021 },
   ])
 
-  handlerRecognitions = (await import('../../../server/api/roster/recognitions.get')).default as unknown as typeof handlerRecognitions
-  handlerEnterprises = decodeJsonRead((await import('../../../server/api/roster/enterprises.get')).default) as unknown as typeof handlerEnterprises
-  handlerExport = (await import('../../../server/api/roster/export.get')).default as unknown as typeof handlerExport
-  handlerStats = (await import('../../../server/api/stats.get')).default as unknown as typeof handlerStats
+  handlerRecognitions = (await import('../../../layers/sme-roster/server/api/roster/recognitions.get')).default as unknown as typeof handlerRecognitions
+  handlerEnterprises = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default) as unknown as typeof handlerEnterprises
+  handlerExport = (await import('../../../layers/sme-roster/server/api/roster/export.get')).default as unknown as typeof handlerExport
+  handlerStats = (await import('../../../layers/sme-roster/server/api/stats.get')).default as unknown as typeof handlerStats
 })
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }))

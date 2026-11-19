@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { comparePlatformComparison, type CandidateComparisonInput } from '../../../lib/roster/platform-comparison'
+import { comparePlatformComparison, type CandidateComparisonInput } from '../../../layers/sme-roster/lib/roster/platform-comparison'
 
 type Mutable<T> = T extends readonly (infer E)[] ? Mutable<E>[] : T extends object ? { -readonly [K in keyof T]: Mutable<T[K]> } : T
 type Input = Mutable<CandidateComparisonInput>

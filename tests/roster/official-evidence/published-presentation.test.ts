@@ -1,5 +1,7 @@
+import { completeInProcessIntake } from '../imports/fixtures/in-process-intake'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { createRuntimeSchema } from '../../../db/create-runtime'
-import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -8,21 +10,21 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import ExcelJS from 'exceljs'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../../../db/schema'
-import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } from '../../../lib/roster-import-client'
-import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
-import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
-import { handleEvidenceCorrectionRequest } from '../../../server/utils/roster-evidence-correction-api'
-import { readCurrentQualificationAssessment, createCurrentQualificationAssessmentReader, readCurrentCandidate, type CurrentTitle } from '../../../lib/roster/current-qualification'
-import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
+import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } from '../../../layers/sme-roster/lib/roster-import-client'
+import { preflightRosterImport, commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
+import { handleEvidenceCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-evidence-correction-api'
+import { readCurrentQualificationAssessment, createCurrentQualificationAssessmentReader, readCurrentCandidate, type CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
 import { startHttpFixture } from '../../support/http'
 import { minimalPdf } from '../../support/minimal-pdf'
-import * as official from '../../../server/utils/official-evidence'
-import { assertOfficialPublishedBudget, readOfficialPublishedPresentation, OfficialPublishedPresentationError, type OfficialPublishedFact } from '../../../lib/roster/official-published-presentation'
-import { currentWorkbookValues } from '../../../lib/roster/current-workbook-presentation'
-import * as receiptRedaction from '../../../server/utils/import-receipt-redaction'
-import * as credentialState from '../../../server/utils/credential-state'
-import { readPublicPublishedNames, getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
+import * as official from '../../../layers/sme-roster/server/utils/official-evidence'
+import { assertOfficialPublishedBudget, readOfficialPublishedPresentation, OfficialPublishedPresentationError, type OfficialPublishedFact } from '../../../layers/sme-roster/lib/roster/official-published-presentation'
+import { currentWorkbookValues } from '../../../layers/sme-roster/lib/roster/current-workbook-presentation'
+import * as receiptRedaction from '../../../layers/sme-roster/server/utils/import-receipt-redaction'
+import * as credentialState from '../../../layers/core/server/utils/credential-state'
+import { readPublicPublishedNames, getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { listCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
 
 // Retain the original logical per-event page assertions while observing the new
 // batch seam. This records real requests and always executes the real reader.
@@ -51,7 +53,7 @@ async function fixture() {
   // Infrastructure catalog only. Normal domain facts below go through B public commands.
   for (const [index, path] of ['2021公布.pdf', '2024公布.pdf', '独立佐证.pdf'].entries()) {
     writeFileSync(join(filesDir, path), sourceBytes)
-    db.insert(schema.storedFile).values({ id: index + 1, relPath: path, filename: path, ext: 'pdf', source: 'jxj', kind: 'announcement', bytes: Buffer.byteLength(sourceBytes), sha256: digest, createdAt: 'synthetic' }).run()
+    createClassifiedFile(db, { id: index + 1, relPath: path, filename: path, ext: 'pdf', bytes: Buffer.byteLength(sourceBytes), sha256: digest, createdAt: 'synthetic' }, { source: 'jxj', kind: 'announcement' })
   }
   const server = await startHttpFixture({ routes: {
     ...Object.fromEntries((['preflight', 'commit'] as const).map(action => ['/import/' + action, (input: Parameters<typeof handleRosterImportRequest>[1]) => handleRosterImportRequest(action, input, { db, apiToken: 'synthetic-355', filesDir, executeImport: async (database, a, request, errors, context) => a === 'preflight' ? preflightRosterImport(database, request, errors, { ...context, filesDir }) : commitRosterImport(database, request, errors, { ...context, filesDir }) })])),
@@ -63,7 +65,7 @@ async function fixture() {
     const response = await fetch(server.baseUrl + path, { method: body === undefined ? 'GET' : 'POST', headers: { authorization: 'Bearer synthetic-355', 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
     const result = await response.json(); trace.push({ path, body, status: response.status, result })
     expect(response.status, JSON.stringify(result)).toBe(200)
-    return result
+    return path === '/import/commit' ? await completeInProcessIntake(db, result, body as import('../../../layers/sme-roster/lib/roster-import-client').RosterImportRequest, filesDir) as typeof result : result
   }
   const commit = async (payload: RosterImportPayload, key: string) => {
     const request = { idempotencyKey: key, sourceKind: 'announcement', sourceIdentity: 'synthetic-355', payload }
@@ -494,7 +496,7 @@ function redactor391(db: ReturnType<typeof fixture391>['db'], token = 'cx391-onl
 function secrets391(db: ReturnType<typeof fixture391>['db']) {
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'rt391-api-distinct', mcpToken: 'rt391-mcp-distinct' }))
   vi.stubEnv('NUXT_API_TOKEN', 'env391-api-distinct'); vi.stubEnv('NUXT_MCP_TOKEN', 'env391-mcp-distinct')
-  db.insert(schema.serviceCredential).values([{ key: 'miitCookie', value: 'saved391-cookie-distinct', updatedAt: 'synthetic' }, { key: 'ocrToken', value: 'saved391-ocr-distinct', updatedAt: 'synthetic' }]).run()
+  db.insert(schema.serviceCredential).values([{ key: 'sme-roster.miitCookie', value: 'saved391-cookie-distinct', updatedAt: 'synthetic' }, { key: 'core.ocrToken', value: 'saved391-ocr-distinct', updatedAt: 'synthetic' }]).run()
   closes.push(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 }
 
@@ -505,7 +507,7 @@ it('factory_union_order preserves the complete context runtime env and credentia
   const actual = redact({ name: 'cx391-only-A7mN5p9Q rt391-api-distinct rt391-mcp-distinct env391-api-distinct env391-mcp-distinct saved391-cookie-distinct saved391-ocr-distinct',
     'cx391-only-A7mN5p9Q': 'ok', nested: '{"name":"cx391-only-A7mN5p9Q","token":"arbitrary"}', bearer: 'Bearer arbitrary-value' })
   expect(actual).toEqual({ name: '[REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED]', '[REDACTED]': 'ok', nested: '{"name":"[REDACTED]","token":"[REDACTED]"}', bearer: 'Bearer [REDACTED]' })
-  expect(credentials.mock.calls.map(call => call[0])).toEqual(['miitCookie', 'ocrToken'])
+  expect(credentials.mock.calls.map(call => call[0])).toEqual(['sme-roster.miitCookie', 'core.ocrToken'])
   expect(redact).toHaveProperty('knownRedactors')
   expect(redact.knownRedactors).toHaveLength(7)
   expect(redact.knownRedactors.map(r => r('cx391-only-A7mN5p9Q rt391-api-distinct rt391-mcp-distinct env391-api-distinct env391-mcp-distinct saved391-cookie-distinct saved391-ocr-distinct'))).toEqual([
@@ -740,7 +742,7 @@ it.each([true, false])("typed_name_union shares one closure with context %s", in
   const input = { evidenceId: 17, eventId: 9, revision: 3, availability: 'captured', nameRaw, sourceBindingKnown: true }
   const typedFirst = redact(input, 'official_published_name'), genericFirst = redact({ name: nameRaw })
   const typedSecond = redact(input, 'official_published_name'), genericSecond = redact(nameRaw)
-  expect(credentials.mock.calls.map(call => call[0])).toEqual(['miitCookie', 'ocrToken'])
+  expect(credentials.mock.calls.map(call => call[0])).toEqual(['sme-roster.miitCookie', 'core.ocrToken'])
   expect(redact.knownRedactors).toBe(known)
   expect(known).toHaveLength(includeContext ? 7 : 6)
   expect(genericFirst).toEqual({ name: expected }); expect(genericSecond).toBe(expected)

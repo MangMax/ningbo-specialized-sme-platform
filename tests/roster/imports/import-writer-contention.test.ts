@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { expect, it } from 'vitest'
 import { initializeDb } from '../../../db/client'
-import { commitRosterImport } from '../../../server/utils/roster-import'
-import { readImportReceipt } from '../../../server/utils/import-receipts'
+import { commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { readImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipts'
 
 it.each([
   { phase: 'reservation', transaction: 1 },

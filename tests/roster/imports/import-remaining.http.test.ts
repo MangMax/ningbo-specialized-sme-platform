@@ -1,3 +1,5 @@
+import { finishFixtureAnnouncement } from './fixtures/reviewed-announcement'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -6,13 +8,13 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
-import { rosterImportMcpPayloadSchema } from '../../../server/utils/roster-import-schema'
-import { commitRosterImport, preflightRosterImport, readImportBatchOutcome } from '../../../server/utils/roster-import'
+import { rosterImportMcpPayloadSchema } from '../../../layers/sme-roster/server/utils/roster-import-schema'
+import { commitRosterImport, preflightRosterImport, readImportBatchOutcome } from '../../../layers/sme-roster/server/utils/roster-import'
 import { startRosterApi } from './fixtures/import-server'
-import { listEnterprises } from '../../../server/utils/mcp-roster'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import { saveDecision102 } from '../../../server/utils/decision-lifecycle-102'
-import { listPlatformQueries } from '../../../lib/platform/read'
+import { listEnterprises } from '../../../layers/sme-roster/server/utils/mcp-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { saveDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
+import { listPlatformQueries } from '../../../layers/sme-roster/lib/platform/read'
 
 async function fixture(run: (f: any) => Promise<void>) {
   const dir = mkdtempSync(join(tmpdir(), '315remaining-'))
@@ -22,9 +24,13 @@ async function fixture(run: (f: any) => Promise<void>) {
   const api = await startRosterApi({ db, apiToken: 'synthetic', executeImport: async (database, action, request, errors, context) => action === 'preflight' ? preflightRosterImport(database, request, errors, context) : commitRosterImport(database, request, errors, context) })
   let serial = 0
   async function post(action: string, key: string, payload: unknown, sourceKind = 'alias_evidence') {
-    const response = await fetch(`${api.baseUrl}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer synthetic', 'content-type': 'application/json' }, body: JSON.stringify({ idempotencyKey: key, sourceKind, sourceIdentity: 'synthetic-315remaining', payload }) })
+    const body = { idempotencyKey: key, sourceKind, sourceIdentity: 'synthetic-315remaining', payload } as RosterImportRequest
+    const response = await fetch(`${api.baseUrl}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer synthetic', 'content-type': 'application/json' }, body: JSON.stringify(body) })
     expect(response.status).toBe(200)
-    return response.json()
+    const result = await response.json()
+    if (result.status !== 'staged') return result
+    const receipt = await finishFixtureAnnouncement(api.baseUrl, 'synthetic', db, body, result)
+    return { ...receipt, status: receipt.status === 'supplemented' ? 'committed' : receipt.status }
   }
   async function invalid(payload: unknown, code: string, field: string) {
     const key = `invalid-${serial++}`

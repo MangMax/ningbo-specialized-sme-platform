@@ -2,8 +2,8 @@ import { expect, it } from 'vitest'
 import { createHash } from 'node:crypto'
 // Independent JSON literals for the private cross-request assertion adapter.
 import { assertQualificationRowsSnapshotEqual } from '../fixtures/qualification-matrix'
-import type { CurrentQualifiedRow } from '../../../lib/roster/current-qualified-query'
-import type { CurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
+import type { CurrentQualifiedRow } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import type { CurrentQualificationAssessment } from '../../../layers/sme-roster/lib/roster/current-qualification'
 
 function crossRequestLiteralRows(asOf: string): CurrentQualifiedRow[] {
   return [4081, 4082].map(enterpriseId => {

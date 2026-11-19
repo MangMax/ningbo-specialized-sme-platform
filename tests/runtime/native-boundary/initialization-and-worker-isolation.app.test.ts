@@ -8,13 +8,13 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { initializeDb, useApplicationDb } from '../../../db/client'
 import { RETIRED_PLATFORM_TABLES } from '../../../db/schema-phase'
 import * as s from '../../../db/schema'
-import { commitRosterImport } from '../../../server/utils/roster-import'
-import { createEnterpriseReadExecutor } from '../../../server/utils/enterprise-read'
-import { createImportExecutionWorker } from '../../../server/utils/import-execution-worker-location'
-import { listTargetBusinessProcesses } from '../../../server/utils/platform-business-processes-target'
-import { runPlatformReconcile } from '../../../server/utils/platform-reconcile'
-import { whenIdle } from '../../../server/utils/job-runner'
-import type { RosterImportRequest } from '../../../lib/roster-import-client'
+import { commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { createEnterpriseReadExecutor } from '../../../layers/sme-roster/server/utils/enterprise-read'
+import { createImportExecutionWorker } from '../../../layers/sme-roster/server/utils/import-execution-worker-location'
+import { listTargetBusinessProcesses } from '../../../layers/sme-roster/server/utils/platform-business-processes-target'
+import { runPlatformReconcile } from '../../../layers/sme-roster/server/utils/platform-reconcile'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const cleanup:Array<()=>void|Promise<unknown>>=[]
 afterEach(async()=>{await whenIdle();for(const close of cleanup.splice(0).reverse())await close()})
@@ -27,7 +27,7 @@ function fixture() {
 }
 function expectNative(db:Database.Database) {
   expect(db.pragma('foreign_key_check')).toEqual([])
-  expect(db.pragma('user_version',{simple:true})).toBe(71613)
+  expect(db.pragma('user_version',{simple:true})).toBe(71614)
   for(const name of RETIRED_PLATFORM_TABLES)expect(db.prepare('select name from sqlite_schema where type=? and name=?').get('table',name)).toBeUndefined()
 }
 function sourceRequest(key:string):RosterImportRequest {
@@ -79,6 +79,7 @@ it('serves native source read workers and commits an import through the actual s
   const {db,path}=fixture()
   db.insert(s.enterprise).values({name:'Native current',nameNorm:'Native current',usccNorm:'91330200712345678C'}).run()
   const entity=db.select().from(s.enterprise).get()!
+  db.insert(s.rosterLegacyMember).values({enterpriseId:entity.id}).run()
   const record=db.insert(s.record).values({enterpriseId:entity.id,titleCode:'little_giant',source:'jxj',nameRaw:entity.name}).returning().get()
   db.insert(s.recordEvent).values({recordId:record.id,eventType:'award',year:2025,batchSeq:1}).run()
   const reads=createEnterpriseReadExecutor();cleanup.push(()=>reads.close())

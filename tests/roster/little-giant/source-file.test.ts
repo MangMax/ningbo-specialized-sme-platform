@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { buildLittleGiantImportReport } from '../../../lib/roster/little-giant-import'
-import { parseLittleGiantWorkbook, type LittleGiantWorkbook } from '../../../lib/roster/little-giant-workbook'
+import { buildLittleGiantImportReport } from '../../../layers/sme-roster/lib/roster/little-giant-import'
+import { parseLittleGiantWorkbook, type LittleGiantWorkbook } from '../../../layers/sme-roster/lib/roster/little-giant-workbook'
 import {
   SYNTHETIC_DUPLICATE_USCC,
   hasRealSource,

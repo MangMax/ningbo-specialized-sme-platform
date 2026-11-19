@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { afterEach, expect, it } from 'vitest'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import * as schema from '../../../db/schema'
-import { insertArchiveValue, readArchiveValue, readOwnerArchive, bindArchive, sealArchiveOwner, resolveLegacyReference } from '../../../lib/platform/immutable-archive'
+import { insertArchiveValue, readArchiveValue, readOwnerArchive, bindArchive, sealArchiveOwner, resolveLegacyReference } from '../../../layers/sme-roster/lib/platform/immutable-archive'
 import { submitNativePlatformQuery } from '../fixtures/native-query'
 const connections: Database.Database[] = []
 afterEach(() => { for (const s of connections.splice(0)) s.close() })

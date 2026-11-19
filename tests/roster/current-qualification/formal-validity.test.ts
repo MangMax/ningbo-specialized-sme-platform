@@ -9,9 +9,9 @@ import { join } from 'node:path'
 import ExcelJS from 'exceljs'
 import { afterEach, expect, it, vi } from 'vitest'
 import * as schema from '../../../db/schema'
-import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
-import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
-import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
+import { readCurrentQualificationAssessment } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { listCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
 import { reviewCurrentExportDecision } from '../fixtures/qualification-decisions'
 
 const opened: Database.Database[] = []

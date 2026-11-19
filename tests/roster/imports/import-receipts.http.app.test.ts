@@ -1,3 +1,5 @@
+import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
+import { reviewFixtureRows } from './fixtures/reviewed-announcement'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -18,13 +20,21 @@ const processing = db.insert(schema.importBatch).values({ idempotencyKey: 'inter
 db.insert(schema.importReceipt).values({ batchId: processing.id, operation: 'commit', requestHash: 'synthetic-hash', requestBody: '{}', status: 'processing', createdAt: '2026-10-19T00:00:00Z' }).run()
 const foreignBatch = db.insert(schema.importBatch).values({ idempotencyKey: 'correspondence-only', sourceKind: 'correspondence_decision', sourceIdentity: 'synthetic/correspondence' }).returning().get()
 const longLegacy = db.insert(schema.importBatch).values({ idempotencyKey: 'K'.repeat(4100), sourceKind: 'announcement', sourceIdentity: 'S'.repeat(4100), status: 'committed', summary: { written: 1, skipped: 0, failed: 0 }, itemResults: [{ ok: true, kind: 'record', ref: 'record:991', detail: { raw: 'LEGACY_RAW_ONLY'.repeat(8192) } }] }).returning().get()
-db.run(sql`CREATE TRIGGER synthetic_receipt_rollback BEFORE INSERT ON enterprise WHEN NEW.name = '合成触发回滚企业' BEGIN SELECT RAISE(ABORT, 'synthetic transaction rollback'); END`)
+db.run(sql`CREATE TRIGGER synthetic_receipt_rollback BEFORE INSERT ON record WHEN NEW.name_raw = '合成触发回滚企业' BEGIN SELECT RAISE(ABORT, 'synthetic transaction rollback'); END`)
 let service: { baseUrl: string; stop: () => Promise<void> }
 const apiToken = 'synthetic-api-103'
 const mcpToken = 'synthetic-mcp-103'
 const api = (suffix = '') => `${service.baseUrl}/api/roster/import/receipts${suffix}`
 const get = (suffix = '', token: string | null = apiToken) => fetch(api(suffix), { headers: token ? { authorization: `Bearer ${token}` } : {} })
 const post = (action: string, body: unknown) => fetch(`${service.baseUrl}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: `Bearer ${apiToken}`, 'content-type': 'application/json' }, body: JSON.stringify(body) })
+async function supplement(body: RosterImportRequest) {
+  const client = createRosterImportClient({ baseUrl: service.baseUrl, token: apiToken })
+  const staged = await client.commit(body)
+  if (staged.status !== 'staged') throw new Error(JSON.stringify(staged))
+  const intake = await client.readIntake(staged.intakeId)
+  const review = intake.review ?? reviewFixtureRows(db, staged.sourceDigest, body)
+  return client.supplement(staged.intakeId, review)
+}
 async function rpc(name: string, args: Record<string, unknown>, token: string | null = mcpToken, method = 'tools/call') {
   const response = await fetch(`${service.baseUrl}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ jsonrpc: '2.0', id: 103, method, params: method === 'tools/list' ? {} : { name, arguments: args } }) })
   const raw = await response.text()
@@ -32,7 +42,7 @@ async function rpc(name: string, args: Record<string, unknown>, token: string | 
   return { status: response.status, body: JSON.parse(payload) }
 }
 const value = (result: any) => JSON.parse(result.body.result.content[0].text)
-const request = (key: string) => ({ idempotencyKey: key, sourceKind: 'announcement', sourceIdentity: `synthetic/${key}`, payload: { announcement: { sourceDocument: { source: 'jxj', title: '合成回执公告' }, records: [{ enterprise: { name: '合成回执企业' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026 }] }] } } })
+const request = (key: string) => ({ idempotencyKey: key, sourceKind: 'announcement' as const, sourceIdentity: `synthetic/${key}`, payload: { announcement: { sourceDocument: { source: 'jxj' as const, title: '合成回执公告' }, records: [{ enterprise: { name: '合成回执企业' }, titleCode: 'specialized_sme', events: [{ eventType: 'award' as const, year: 2026 }] }] } } })
 
 async function startService(configured = true) {
   await readDevelopmentDiscovery()
@@ -74,10 +84,12 @@ describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
   })
   it('recovers a committed original-body submission after losing its response without replaying it', async () => {
     const submitted = request('disconnect/精确?key=103')
+    const staged = await (await post('commit', submitted)).json()
+    const review = reviewFixtureRows(db, staged.sourceDigest, submitted)
     await new Promise<void>((resolve, reject) => {
-      const outgoing = httpRequest(`${service.baseUrl}/api/roster/import/commit`, { method: 'POST', headers: { authorization: `Bearer ${apiToken}`, 'content-type': 'application/json' } }, response => { response.destroy(); resolve() })
+      const outgoing = httpRequest(`${service.baseUrl}/api/roster/import/intake/${staged.intakeId}/supplement`, { method: 'POST', headers: { authorization: `Bearer ${apiToken}`, 'content-type': 'application/json' } }, response => { response.destroy(); resolve() })
       outgoing.on('error', reject)
-      outgoing.end(JSON.stringify(submitted))
+      outgoing.end(JSON.stringify(review))
     })
     const selector = `?idempotencyKey=${encodeURIComponent(submitted.idempotencyKey)}`
     const receipt = await (await get(selector)).json()
@@ -86,55 +98,47 @@ describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
     expect(value(await rpc('get_roster_import_receipt', { idempotencyKey: submitted.idempotencyKey }))).toEqual(receipt)
     const retry = await post('commit', submitted)
     expect(retry.status).toBe(200)
-    expect(await retry.json()).toMatchObject({ batchId: receipt.batchId, status: 'committed', summary: { written: 4, failed: 0 } })
+    expect(await retry.json()).toEqual(staged)
+    expect(await supplement(submitted)).toMatchObject({ batchId: receipt.batchId, status: 'supplemented', summary: { written: 4, failed: 0 } })
     expect(await (await get(selector)).json()).toEqual(receipt)
     const reordered = { ...submitted, payload: { announcement: { records: submitted.payload.announcement.records, sourceDocument: { title: submitted.payload.announcement.sourceDocument.title, source: 'jxj' } } } }
     expect((await post('commit', reordered)).status).toBe(200)
     expect(await (await get(`/history${selector}&pageSize=1`)).json()).toMatchObject({ total: 1, rows: [{ receiptId: receipt.receiptId, status: 'committed' }] })
     expect((await post('commit', { request: submitted, planHash: 'not-the-import-protocol' })).status).toBe(400)
   })
-  it('preserves immutable failed history while correcting the same key and rejects a different committed request', async () => {
+  it('preserves immutable failed history when corrected source rows use a new key', async () => {
     const submitted = request('retry-history')
     submitted.payload.announcement.records[0]!.titleCode = 'invalid_title'
     expect((await post('preflight', submitted)).status).toBe(200)
-    const failed = await (await post('commit', submitted)).json()
+    const failed = await supplement(submitted)
     expect(failed).toMatchObject({ status: 'failed', summary: { written: 0, failed: 1 } })
     const selector = `?batchId=${failed.batchId}`
     const failure = await (await get(selector)).json()
     expect(failure.status).toBe('failed')
     expect(await (await get(`/items?receiptId=${failure.receiptId}`)).json()).toMatchObject({ total: 1, rows: [{ ok: false, errorCode: 'title_unknown', errorField: 'titleCode' }] })
-    submitted.payload.announcement.records[0]!.titleCode = 'specialized_sme'
-    expect(await (await post('commit', submitted)).json()).toMatchObject({ batchId: failed.batchId, status: 'committed' })
-    const current = await (await get(selector)).json()
-    expect(current.receiptId).not.toBe(failure.receiptId)
+    const corrected = request('retry-history-corrected')
+    expect((await post('commit', { ...corrected, idempotencyKey: submitted.idempotencyKey })).status).toBe(409)
+    const current = await supplement(corrected)
+    expect(current).toMatchObject({ status: 'supplemented' })
+    expect(current.batchId).not.toBe(failed.batchId)
     const historical = await (await get(`?receiptId=${failure.receiptId}`)).json()
     expect(historical).toEqual(failure)
-    expect(historical).toMatchObject({ status: 'failed', summary: { written: 0, failed: 1 }, receiptId: failure.receiptId })
-    const history = await (await get(`/history${selector}&page=2&pageSize=1`)).json()
-    expect(history).toMatchObject({ total: 3, rows: [{ receiptId: failure.receiptId, status: 'failed' }] })
-    expect(value(await rpc('list_roster_import_receipts', { batchId: failed.batchId, page: 2, pageSize: 1 }))).toEqual(history)
-    const conflict = await post('commit', { ...submitted, payload: {} })
-    expect(conflict.status).toBe(409)
-    expect(await conflict.json()).toMatchObject({ error: { code: 'idempotency_conflict' } })
-    expect((await post('commit', { ...submitted, sourceIdentity: 'synthetic/different' })).status).toBe(409)
-    const mcpConflict = await rpc('save_roster_batch', { ...submitted, payload: {} })
-    expect(mcpConflict.body.result.isError).toBe(true)
-    expect(value(mcpConflict)).toMatchObject({ error: { code: 'idempotency_conflict' } })
-    expect(await (await get(selector)).json()).toEqual(current)
-    expect(await (await get(`/history${selector}`)).json()).toMatchObject({ total: 3 })
+    const history = await (await get(`/history${selector}`)).json()
+    expect(history).toMatchObject({ total: 2, rows: [expect.objectContaining({ status: 'preflight' }), expect.objectContaining({ receiptId: failure.receiptId, status: 'failed' })] })
+    expect(value(await rpc('list_roster_import_receipts', { batchId: failed.batchId }))).toEqual(history)
   })
   it('pages exact item outcomes in stable input order without raw or private details on either transport', async () => {
     const submitted = request('item-pages')
-    submitted.payload.announcement.records = Array.from({ length: 3 }, (_, i) => ({ enterprise: { name: `合成分页企业${i}` }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026 }] }))
-    const committed = await (await post('commit', submitted)).json()
-    expect(committed.status).toBe('committed')
+    submitted.payload.announcement.records = Array.from({ length: 3 }, (_, i) => ({ enterprise: { name: `合成分页企业${i}` }, titleCode: 'specialized_sme', events: [{ eventType: 'award' as const, year: 2026 }] }))
+    const committed = await supplement(submitted)
+    expect(committed.status).toBe('supplemented')
     const first = await get(`/items?batchId=${committed.batchId}&pageSize=2`)
     expect(first.status).toBe(200)
     const page = await first.json()
-    expect(page).toMatchObject({ total: 3, page: 1, pageSize: 2, rows: [{ index: 0, ok: true, kind: 'record_event', ref: committed.items[0].ref }, { index: 1, ok: true, kind: 'record_event', ref: committed.items[1].ref }] })
+    expect(page).toMatchObject({ total: 3, page: 1, pageSize: 2, rows: [{ index: 0, ok: true, kind: 'record_event', ref: committed.items[0]!.ref }, { index: 1, ok: true, kind: 'record_event', ref: committed.items[1]!.ref }] })
     expect(page.rows[0]).not.toHaveProperty('detail')
     const second = await (await get(`/items?batchId=${committed.batchId}&page=2&pageSize=2`)).json()
-    expect(second).toMatchObject({ total: 3, rows: [{ index: 2, ref: committed.items[2].ref }] })
+    expect(second).toMatchObject({ total: 3, rows: [{ index: 2, ref: committed.items[2]!.ref }] })
     expect(value(await rpc('list_roster_import_items', { idempotencyKey: submitted.idempotencyKey, page: 2, pageSize: 2 }))).toEqual(second)
     expect(await (await get(`/items?batchId=${committed.batchId}&page=3&pageSize=2`)).json()).toMatchObject({ total: 3, rows: [] })
     expect(await (await get(`/items?batchId=${legacy.id}`)).json()).toMatchObject({ total: 0, rows: [] })
@@ -142,8 +146,8 @@ describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
   it('reads only explicitly requested redacted UTF8 byte chunks and never defaults to the full request', async () => {
     const submitted = { ...request('raw-chunks'), payload: { ...request('raw-chunks').payload, externalRaw: { marker: 'RAW_ONLY_103_中文'.repeat(6000), Authorization: 'Bearer FAKE_AUTH_103', cookie: 'FAKE_COOKIE_103', api_key: 'FAKE_KEY_103', echo: apiToken, encoded: encodeURIComponent('{"session":"FAKE_SESSION_103"}'), nested: [{ password: 'FAKE_PASS_103', value: '{"access_token":"FAKE_JSON_TOKEN_103","name":"保留原事实"}' }] } } }
     expect((await post('preflight', submitted)).status).toBe(200)
-    const committed = await (await post('commit', submitted)).json()
-    expect(committed.status).toBe('committed')
+    const committed = await supplement(submitted)
+    expect(committed.status).toBe('supplemented')
     const shared = db.get<{ body: string; owner: number }>(sql`SELECT request_body AS body, body_receipt_id AS owner FROM import_receipt WHERE batch_id=${committed.batchId} ORDER BY id DESC LIMIT 1`)!
     expect(shared.body).toBe('')
     expect(shared.owner).toBeGreaterThan(0)
@@ -185,19 +189,23 @@ describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
     expect(value(await rpc('get_roster_import_receipt', { batchId: 99999999 }))).toMatchObject({ error: { code: 'not_found' } })
     const preflight = await (await post('preflight', submitted)).json()
     expect(await (await get(`?batchId=${preflight.batchId}`)).json()).toMatchObject({ status: 'preflight', summary: null })
-    expect(await (await post('commit', submitted)).json()).toMatchObject({ batchId: preflight.batchId, status: 'committed' })
+    expect(await supplement(submitted)).toMatchObject({ batchId: preflight.batchId, status: 'supplemented' })
   })
-  it('retains failed transaction outcomes and rolls back business writes before same-key correction', async () => {
+  it('retains failed transaction outcomes and rolls back business writes before a corrected version', async () => {
     const submitted = request('transaction-rollback')
     submitted.payload.announcement.sourceDocument.title = '合成事务回滚独立公告'
     submitted.payload.announcement.records[0]!.enterprise.name = '合成触发回滚企业'
-    const failure = await (await post('commit', submitted)).json()
+    const failure = await supplement(submitted)
     expect(failure).toMatchObject({ status: 'failed', summary: { written: 0, failed: 1 } })
     const receipt = await (await get(`?batchId=${failure.batchId}`)).json()
     expect(receipt.status).toBe('failed')
     expect(await (await get(`/items?receiptId=${receipt.receiptId}`)).json()).toMatchObject({ rows: [{ ok: false, errorCode: 'commit_rolled_back' }] })
-    const recovered = await rpc('save_roster_batch', { ...submitted, payload: { announcement: { ...submitted.payload.announcement, records: [{ ...submitted.payload.announcement.records[0], enterprise: { name: '合成回滚恢复企业' } }] } } })
-    expect(value(recovered)).toMatchObject({ status: 'committed', batchId: failure.batchId, summary: { written: 4 } })
+    const recovered = { ...submitted, idempotencyKey: 'transaction-rollback-corrected', payload: { announcement: { ...submitted.payload.announcement, records: [{ ...submitted.payload.announcement.records[0]!, enterprise: { name: '合成回滚恢复企业' } }] } } }
+    const staged = value(await rpc('save_roster_batch', recovered))
+    expect(staged).toMatchObject({ status: 'staged' })
+    const committed = await supplement(recovered)
+    expect(committed).toMatchObject({ status: 'supplemented', summary: { written: 4 } })
+    expect(committed.batchId).not.toBe(failure.batchId)
     expect(await (await get(`?receiptId=${receipt.receiptId}`)).json()).toEqual(receipt)
   })
   it('enforces independent credentials and advertises read-only receipt tools only to authorized callers', async () => {
@@ -237,9 +245,9 @@ describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
   it('keeps fixed-page responses bounded when unrelated retained request bytes grow', async () => {
     const submitted = request('bounded-target')
     submitted.payload.announcement.sourceDocument.title = '合成有界分页公告'
-    submitted.payload.announcement.records = Array.from({ length: 120 }, (_, i) => ({ enterprise: { name: `合成有界企业${i}` }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2026 }] }))
-    const committed = await (await post('commit', { ...submitted, payload: { ...submitted.payload, rawPadding: 'TARGET_RAW_PADDING'.repeat(16384) } })).json()
-    expect(committed.status).toBe('committed')
+    submitted.payload.announcement.records = Array.from({ length: 120 }, (_, i) => ({ enterprise: { name: `合成有界企业${i}` }, titleCode: 'specialized_sme', events: [{ eventType: 'award' as const, year: 2026 }] }))
+    const committed = await supplement({ ...submitted, payload: { ...submitted.payload, rawPadding: 'TARGET_RAW_PADDING'.repeat(16384) } } as RosterImportRequest)
+    expect(committed.status).toBe('supplemented')
     const path = `?batchId=${committed.batchId}`
     const before = await (await get(path)).text()
     const itemBefore = await (await get(`/items${path}&page=3&pageSize=50`)).text()

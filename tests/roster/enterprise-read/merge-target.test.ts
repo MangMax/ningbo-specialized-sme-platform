@@ -6,16 +6,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
-import { targetSchema } from '../../../lib/platform/target-schema'
+import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
 import { initializeDb } from '../../../db/client'
-import { commitRosterImport, findEnterpriseById, preflightRosterImport } from '../../../server/utils/roster-import'
-import { buildPlatformEvidenceIndex, findUsccKeyedRelationEvidence } from '../../../server/utils/roster-duplicate-merge'
-import { listRosterEnterprises, getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import { readDifferenceObservation } from '../../../lib/platform/difference-sources'
-import { readEnterpriseFactEffects } from '../../../lib/roster/enterprise-fact-effects'
-import { getEnterpriseProfile, patchEnterpriseProfile } from '../../../server/utils/enterprise-profile'
-import { readUsccTargets } from '../../../server/utils/uscc-research-read'
-import type { RosterImportRequest } from '../../../lib/roster-import-client'
+import { commitRosterImport, findEnterpriseById, preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { buildPlatformEvidenceIndex, findUsccKeyedRelationEvidence } from '../../../layers/sme-roster/server/utils/roster-duplicate-merge'
+import { listRosterEnterprises, getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { readDifferenceObservation } from '../../../layers/sme-roster/lib/platform/difference-sources'
+import { readEnterpriseFactEffects } from '../../../layers/sme-roster/lib/roster/enterprise-fact-effects'
+import { getEnterpriseProfile, patchEnterpriseProfile } from '../../../layers/sme-roster/server/utils/enterprise-profile'
+import { readUsccTargets } from '../../../layers/sme-roster/server/utils/uscc-research-read'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const root = mkdtempSync(join(tmpdir(), 'enterprise-merge-target-'))
 const from = 91001, into = 91002, third = 91003
@@ -36,6 +36,7 @@ beforeEach(() => {
     { id: into, name: currentName, nameNorm: currentName, usccNorm: uscc },
     { id: third, name: '第三现名', nameNorm: '第三现名', usccNorm: thirdUscc },
   ]).run()
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: from }).run()
   trace.length = 0
 })
 afterEach(() => sqlite?.close())

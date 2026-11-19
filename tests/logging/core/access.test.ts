@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { createServer } from 'node:http'
 import { createApp, defineEventHandler, setResponseStatus, toNodeListener } from 'h3'
-import { logAccessAllowed } from '../../../server/utils/logging-access'
+import { logAccessAllowed } from '../../../layers/core/server/utils/logging-access'
 
 afterEach(() => vi.unstubAllGlobals())
 it('enables same-origin log reads and settings without a capability switch or API token while rejecting foreign requests', async () => {

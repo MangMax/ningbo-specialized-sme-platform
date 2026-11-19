@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { mount, flushPromises } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
-import EnterpriseDifferenceRefresh from '../../../components/EnterpriseDifferenceRefresh.vue'
+import EnterpriseDifferenceRefresh from '../../../layers/sme-roster/app/components/EnterpriseDifferenceRefresh.vue'
 afterEach(()=>vi.unstubAllGlobals())
 it('refreshes exactly the displayed enterprises and emits success with counts', async()=>{
  const fetcher=vi.fn().mockResolvedValue({refreshed:2,unchanged:4});vi.stubGlobal('$fetch',fetcher)

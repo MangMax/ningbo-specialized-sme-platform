@@ -1,8 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { clientErrorReport } from '../../../lib/client-logging/contract'
-import { clientLibraryReport, CLIENT_LIBRARY_SIGNALS } from '../../../lib/client-logging/library-contract'
-import { clientLogReport, clientReportKey } from '../../../lib/client-logging/report'
-import { createClientErrorTransport } from '../../../lib/client-logging/transport'
+import { clientErrorReport } from '../../../layers/core/lib/client-logging/contract'
+import { clientLibraryReport, CLIENT_LIBRARY_SIGNALS } from '../../../layers/core/lib/client-logging/library-contract'
+import { clientLogReport, clientReportKey } from '../../../layers/core/lib/client-logging/report'
+import { createClientErrorTransport } from '../../../layers/core/lib/client-logging/transport'
 const transports: ReturnType<typeof createClientErrorTransport>[] = []
 afterEach(() => { for (const item of transports.splice(0)) item.dispose(); vi.unstubAllGlobals() })
 function transport(options = {}) { const item = createClientErrorTransport(options); transports.push(item); return item }

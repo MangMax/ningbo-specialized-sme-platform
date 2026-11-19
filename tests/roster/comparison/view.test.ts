@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { comparisonRequest, comparisonRouteFromQuery, comparisonRouteKey, comparisonRouteQuery, comparisonSelectionFromQuery, comparisonSelectionQuery, instantFromLocalDateTime, localDateTimeForInstant, sourceSelectionKey } from '../../../lib/roster/record-comparison-view'
+import { comparisonRequest, comparisonRouteFromQuery, comparisonRouteKey, comparisonRouteQuery, comparisonSelectionFromQuery, comparisonSelectionQuery, instantFromLocalDateTime, localDateTimeForInstant, sourceSelectionKey } from '../../../layers/sme-roster/lib/roster/record-comparison-view'
 
 afterEach(() => vi.unstubAllEnvs())
 

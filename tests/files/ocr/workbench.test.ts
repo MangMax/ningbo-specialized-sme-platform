@@ -1,9 +1,10 @@
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { assembleMarkdown, splitMarkdown } from '../../../lib/ocr-markdown'
+import { assembleMarkdown, splitMarkdown } from '../../../layers/core/lib/ocr-markdown'
 import {
   buildWorkbenchRows,
   confirmWrittenPage,
@@ -13,10 +14,10 @@ import {
   pendingLabel,
   reviewBreakdown,
   workbenchCounts,
-} from '../../../lib/ocr-workbench'
-import { decodeOcrImport } from '../../../server/utils/ocr-import'
-import type { OcrProvenance } from '../../../server/utils/ocr-provenance'
-import { listOcrResults, ocrPageNumbers, removeOcrPage, writeOcrResult } from '../../../server/utils/ocr-result'
+} from '../../../layers/core/lib/ocr-workbench'
+import { decodeOcrImport } from '../../../layers/core/server/utils/ocr-import'
+import type { OcrProvenance } from '../../../layers/core/server/utils/ocr-provenance'
+import { listOcrResults, ocrPageNumbers, removeOcrPage, writeOcrResult } from '../../../layers/core/server/utils/ocr-result'
 
 /**
  * OCR 清理工作台的规则层(2026-10-15)。
@@ -414,20 +415,7 @@ function rawOf(
 function seedFile(relPath: string): number {
   const base = relPath.split('/').pop()!
   const dot = base.lastIndexOf('.')
-  return db
-    .insert(schema.storedFile)
-    .values({
-      relPath,
-      filename: base,
-      ext: dot > 0 ? base.slice(dot + 1).toLowerCase() : '',
-      bytes: 1,
-      sha256: '0'.repeat(64),
-      source: 'jxj',
-      kind: 'announcement',
-      categoryState: 'set',
-    })
-    .returning({ id: schema.storedFile.id })
-    .get().id
+  return createClassifiedFile(db, { relPath, filename: base, ext: dot > 0 ? base.slice(dot + 1).toLowerCase() : '', bytes: 1, sha256: '0'.repeat(64) }, { source: 'jxj', kind: 'announcement', categoryState: 'set' }).id
 }
 
 describe('逐页增删改查', () => {

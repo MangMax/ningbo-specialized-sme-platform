@@ -1,3 +1,5 @@
+import { reviewFixtureRows } from '../imports/fixtures/reviewed-announcement'
+import { supplementAnnouncement } from '../../../layers/sme-roster/server/utils/announcement-intake'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -10,15 +12,20 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv'
 import * as schema from '../../../db/schema'
-import type { OfficialPublishedRow, RosterImportPayload, RosterImportRequest, RosterImportRecord } from '../../../lib/roster-import-client'
+import type { OfficialPublishedRow, RosterImportPayload, RosterImportRequest, RosterImportRecord } from '../../../layers/sme-roster/lib/roster-import-client'
 import { minimalPdf } from '../../support/minimal-pdf'
-import { commitRosterImport, preflightRosterImport, readImportBatchOutcome } from '../../../server/utils/roster-import'
+import { commitRosterImport, preflightRosterImport, readImportBatchOutcome } from '../../../layers/sme-roster/server/utils/roster-import'
 
 const current = vi.hoisted((): { db?: BetterSQLite3Database<typeof schema>; filesDir: string } => ({ filesDir: '' }))
 vi.mock('@db', () => ({ useDb: () => { if (!current.db) throw new Error('Synthetic database unavailable'); return current.db } }))
-type Execute = typeof import('../../../server/utils/import-execution')['importExecutor']['execute']
+type Execute = typeof import('../../../layers/sme-roster/server/utils/import-execution')['importExecutor']['execute']
 // Only off-process admission is replaced; production H3 routes, commands and SQLite run unchanged.
-vi.mock('../../../server/utils/import-execution', () => ({ importExecutor: { execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
+vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: {
+  stage: async (db: Parameters<Execute>[0], request: Parameters<Execute>[2], errors: NonNullable<Parameters<Execute>[3]>) => {
+    const { stageAnnouncement } = await import('../../../layers/sme-roster/server/utils/announcement-intake')
+    return stageAnnouncement(db as Parameters<typeof stageAnnouncement>[0], request, errors)
+  },
+  execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
 const closes: (() => void | Promise<void>)[] = []
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close() })
 afterAll(() => vi.unstubAllGlobals())
@@ -27,14 +34,14 @@ let itemsMetadata: unknown
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-c-api', mcpToken: 'synthetic-c-mcp', filesDir: current.filesDir }))
-  router.post('/api/roster/import/preflight', (await import('../../../server/api/roster/import/preflight.post')).default)
-  router.post('/api/roster/import/commit', (await import('../../../server/api/roster/import/commit.post')).default)
-  router.post('/api/roster/evidence/corrections/preflight', (await import('../../../server/api/roster/evidence/corrections/preflight.post')).default)
-  router.post('/api/roster/evidence/corrections/commit', (await import('../../../server/api/roster/evidence/corrections/commit.post')).default)
-  router.get('/api/roster/evidence/:id', (await import('../../../server/api/roster/evidence/[id].get')).default)
-  router.get('/api/roster/events/:id', (await import('../../../server/api/roster/events/[id].get')).default)
+  router.post('/api/roster/import/preflight', (await import('../../../layers/sme-roster/server/api/roster/import/preflight.post')).default)
+  router.post('/api/roster/import/commit', (await import('../../../layers/sme-roster/server/api/roster/import/commit.post')).default)
+  router.post('/api/roster/evidence/corrections/preflight', (await import('../../../layers/sme-roster/server/api/roster/evidence/corrections/preflight.post')).default)
+  router.post('/api/roster/evidence/corrections/commit', (await import('../../../layers/sme-roster/server/api/roster/evidence/corrections/commit.post')).default)
+  router.get('/api/roster/evidence/:id', (await import('../../../layers/sme-roster/server/api/roster/evidence/[id].get')).default)
+  router.get('/api/roster/events/:id', (await import('../../../layers/sme-roster/server/api/roster/events/[id].get')).default)
   vi.stubGlobal('defineRouteMeta', (meta: unknown) => { itemsMetadata = meta; return meta })
-  router.get('/api/roster/import/receipts/items', (await import('../../../server/api/roster/import/receipts/items.get')).default)
+  router.get('/api/roster/import/receipts/items', (await import('../../../layers/sme-roster/server/api/roster/import/receipts/items.get')).default)
 })
 const resultSchema = z.object({ status: z.string().optional(), batchId: z.number().optional(), items: z.array(z.object({ kind: z.string(), detail: z.unknown() }).passthrough()).optional(), preflight: z.object({ conflicts: z.array(z.unknown()), officialEvidencePlanHash: z.string().optional() }).optional() }).passthrough()
 const exactSchema = z.object({ evidenceId: z.number(), eventId: z.number(), recordId: z.number(), enterpriseId: z.number(), version: z.string(), event: z.object({ revision: z.number() }) })
@@ -51,7 +58,10 @@ async function fixture() {
   closes.push(() => { expect(sqlite.pragma('foreign_keys', { simple: true })).toBe(1); sqlite.close() })
   const db = drizzle(sqlite, { schema }); createRuntimeSchema(sqlite)
   // Only infrastructure catalog uses SQL. Domain state is established through public commands below.
-  for (const [id, path, body] of [[1,'notice.txt',bytes],[2,'other.txt','different content\n']] as const) sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(?,?,?,'txt','jxj','announcement','specialized_sme',?,?,'synthetic')").run(id,path,path,Buffer.byteLength(body),createHash('sha256').update(body).digest('hex'))
+  for (const [id, path, body] of [[1,'notice.txt',bytes],[2,'other.txt','different content\n']] as const) {
+    sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(?,?,?,'txt',?,?,'synthetic')").run(id,path,path,Buffer.byteLength(body),createHash('sha256').update(body).digest('hex'))
+    sqlite.prepare("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (?, 'jxj', 'announcement', 'specialized_sme')").run(id)
+  }
   current.db = db; current.filesDir = filesDir
   const server = createServer(toNodeListener(createApp().use(router)))
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0,'127.0.0.1',resolve) })
@@ -69,7 +79,17 @@ async function fixture() {
     const parsed=resultSchema.parse(plan.body); expect(parsed.preflight?.conflicts).toEqual([])
     const bound=parsed.preflight?.officialEvidencePlanHash ? {...input,payload:{...payload,officialEvidencePlanHash:parsed.preflight.officialEvidencePlanHash}} : input
     const result=await http('/api/roster/import/commit',bound); expect(result.status).toBe(200)
-    const committed=resultSchema.parse(result.body); expect(committed.status,JSON.stringify(committed)).toBe('committed')
+    const stage = z.object({ status: z.literal('staged'), intakeId: z.number(), sourceDigest: z.string(), officialEvidencePreflightRequired: z.literal(true).optional() }).safeParse(result.body)
+    let receipt = result.body
+    if (stage.success) {
+      const review = reviewFixtureRows(db, stage.data.sourceDigest, bound)
+      const preview = stage.data.officialEvidencePreflightRequired
+        ? await supplementAnnouncement(db, stage.data.intakeId, { ...review, preflight: true }, filesDir)
+        : undefined
+      receipt = await supplementAnnouncement(db, stage.data.intakeId, { ...review, officialEvidencePlanHash: preview?.officialEvidencePlanHash }, filesDir)
+    }
+    const committed = resultSchema.parse(receipt)
+    expect(committed.status, JSON.stringify(committed)).toBe(stage.success ? 'supplemented' : 'committed')
     return {result:committed,bound}
   }
   const row = (nameRaw: string | null,listNo=1): OfficialPublishedRow => ({nameRaw,usccRaw:'原统代',districtRaw:'原属地',declaration:{kind:'independent',sourceDocument:{source:'jxj',title:'Declared publication',docNumber:null,issueDate:null,path:'notice.txt'},basis:'Independent publication verified'},storedFileId:1,path:'notice.txt',sha256:digest,bytes:Buffer.byteLength(bytes),attachment:null,sectionKey:'名单',listNo,page:null,sourceBindingKnown:true,actor:{type:'agent',id:'synthetic-c'},basis:'Exact published row'})
@@ -292,7 +312,8 @@ it('redacts captured raw actor basis and path in the new projection while preser
 it('preserves a declared captured attachment section page and file ID without reading current file bytes',async()=>{
   const f=await fixture(),pdf=minimalPdf({pages:3}),sha256=createHash('sha256').update(pdf).digest('hex')
   writeFileSync(join(f.dir,'files','notice.pdf'),pdf)
-  f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(3,'notice.pdf','notice.pdf','pdf','jxj','announcement','specialized_sme',?,?,'synthetic')").run(pdf.length,sha256)
+  f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(3,'notice.pdf','notice.pdf','pdf',?,?,'synthetic')").run(pdf.length,sha256)
+  f.sqlite.exec("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (3, 'jxj', 'announcement', 'specialized_sme')")
   const published={...f.row(' 原名 '),storedFileId:3,path:'notice.pdf',sha256,bytes:pdf.length,attachment:'附件 二',sectionKey:'2021 认定名单',page:2,declaration:{kind:'independent' as const,sourceDocument:{source:'jxj' as const,title:'Declared publication',docNumber:null,issueDate:null,path:'notice.pdf'},basis:'Actual PDF publication'}}
   const record=f.record('Canonical',2021,published);record.events![0]!.evidence![0]={sourceFile:'notice.pdf',attachment:published.attachment,listNo:1,page:2,publishedRow:published}
   await f.commit(f.announcement([record]),'coordinates')
@@ -355,7 +376,7 @@ it('checks redaction expansion against the final full envelope budget',async()=>
 })
 
 it('validates raw MCP opt-in arguments before SDK stripping and retains old anonymous exact reads',async()=>{
-  const {officialEvidenceRpcError}=await import('../../../server/utils/official-evidence-read')
+  const {officialEvidenceRpcError}=await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   const body=(name:string,args:unknown)=>({jsonrpc:'2.0',id:351,method:'tools/call',params:{name,arguments:args}})
   const invalid=officialEvidenceRpcError(body('get_roster_evidence',{id:1,official:'latest',unknown:1}),true)
   expect(invalid?.status).toBe(400);expect(await invalid!.json()).toMatchObject({error:{code:-32602}})
@@ -476,7 +497,7 @@ it.each([
   { case: 'undefined-own-key', args: { batchId: undefined } },
   { case: 'empty-object', args: {} },
 ])('raw legacy dispatch delegates values to SDK: $case', async ({ args }) => {
-  const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
+  const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   // null proves raw dispatch only, never HTTP200 or an SDK tool-error envelope.
   expect(officialEvidenceRpcError(rpc399(args), true)).toBeNull()
 })
@@ -484,13 +505,13 @@ it.each([
   { case: 'missing', body: { jsonrpc: '2.0', id: 399, method: 'tools/call', params: { name: 'list_roster_import_items' } } },
   ...[undefined, null, [], 1, 'x', true].map((args, i) => ({ case: ['undefined', 'null', 'array', 'number', 'string', 'boolean'][i], body: rpc399(args) })),
 ])("raw malformed root $case", async ({ body }) => {
-  const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
+  const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   const result = officialEvidenceRpcError(body, true)
   expect(result?.status).toBe(400)
   expect(await result!.json()).toEqual({ jsonrpc: '2.0', id: 399, error: { code: -32602, message: 'Invalid exact official read arguments' } })
 })
 it.each(['projection', 'source', 'itemIndex', 'oldRecordId', 'cursor', 'maxBytes', 'extra'])("raw own key stays strict %s", async key => {
-  const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
+  const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   for (const value of [undefined, null, 'invalid']) {
     // Invalid old paging distinguishes strict routing even for optional undefined.
     const result = officialEvidenceRpcError(rpc399({ batchId: 1, pageSize: 51, [key]: value }), true)
@@ -538,7 +559,7 @@ const strictInvalid399: { case: string; args: Record<string, unknown> }[] = [
   { case: 'cursor-over', args: { ...events399, cursor: 'x'.repeat(513) } },
 ]
 it.each(strictInvalid399)("raw strict rejection $case", async ({ args }) => {
-  const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
+  const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   const result = officialEvidenceRpcError(rpc399(args), true)
   expect(result?.status).toBe(400)
   const body = await result!.json()
@@ -546,14 +567,14 @@ it.each(strictInvalid399)("raw strict rejection $case", async ({ args }) => {
   expect(body).not.toHaveProperty('result')
 })
 it('raw valid opt-in boundaries and domain cursor dispatch', async () => {
-  const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
+  const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   for (const args of [snapshot399, events399, { ...snapshot399, source: 'redacted_receipt', batchId: undefined, receiptId: 2 }, { ...events399, source: 'private_batch', receiptId: undefined, batchId: 1 }, { ...events399, pageSize: 1, maxBytes: 1 }, { ...events399, pageSize: 50, maxBytes: 65536, itemIndex: Number.MAX_SAFE_INTEGER - 1, oldRecordId: Number.MAX_SAFE_INTEGER, cursor: 'x'.repeat(512) }, { ...events399, cursor: 'not-base64' }, { ...events399, cursor: Buffer.from(JSON.stringify({ source: 'redacted_receipt', sourceId: 2, itemIndex: 0, oldRecordId: 1, afterIndex: 999999 })).toString('base64url') }]) {
     expect(officialEvidenceRpcError(rpc399(args), true)).toBeNull()
   }
 })
 it('raw auth precedes legacy strict malformed and batch dispatch', async () => {
-  const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
-  const { resolveMcpAuth } = await import('../../../server/utils/mcp-auth')
+  const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
+  const { resolveMcpAuth } = await import('../../../layers/core/server/utils/mcp-auth')
   for (const auth of [{ given: null, configured: 'synthetic-399-mcp' }, { given: 'wrong', configured: 'synthetic-399-mcp' }, { given: 'synthetic-399-mcp', configured: '' }, { given: 'synthetic-399-api', configured: 'synthetic-399-mcp' }]) {
     expect(resolveMcpAuth(auth).writeAuthorized).toBe(false)
     for (const args of [{ batchId: 1 }, { batchId: 1, pageSize: 51 }, {}, null, { ...events399, pageSize: 51 }]) {
@@ -569,7 +590,7 @@ it('raw auth precedes legacy strict malformed and batch dispatch', async () => {
   expect(await officialEvidenceRpcError([invalid, rpc399({})], true)!.json()).toMatchObject({ id: 2, error: { code: -32602 } })
 })
 it('raw other tools retain their original dispatch and strict opt-in', async () => {
-  const { officialEvidenceRpcError } = await import('../../../server/utils/official-evidence-read')
+  const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   for (const [name, args] of [['get_roster_evidence', { id: 1, legacyIgnored: 1 }], ['get_official_event', { eventId: 1 }], ['list_roster_import_receipts', { batchId: 1, pageSize: 51 }], ['get_roster_import_request', { batchId: 1, maxBytes: 65537 }]] as const) {
     expect(officialEvidenceRpcError({ ...rpc399(args), params: { name, arguments: args } }, false)).toBeNull()
   }
@@ -582,8 +603,8 @@ async function handler399() {
   // Identity definition adapter only; production handler, schema, error class and
   // importReceiptMcpResult are real. This is not toolkit/SDK transport evidence.
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-  const tool = (await import('../../../server/mcp/tools/list_roster_import_items')).default
-  const dbModule = await import('@db'), receipts = await import('../../../server/utils/import-receipts')
+  const tool = (await import('../../../layers/sme-roster/server/mcp/tools/list_roster_import_items')).default
+  const dbModule = await import('@db'), receipts = await import('../../../layers/sme-roster/server/utils/import-receipts')
   const db = {} as ReturnType<typeof dbModule.useDb>
   const acquire = vi.spyOn(dbModule, 'useDb').mockReturnValue(db)
   const read = vi.spyOn(receipts, 'readImportReceipt').mockReturnValue({ batchId: 1, receiptId: null, status: 'committed', page: 1, pageSize: 20, total: 0, rows: [] })
@@ -625,20 +646,20 @@ it('handler preserves accepted selectors undefined normalization and content byt
       expect(await f.tool.handler(args as never, {} as never)).toEqual({ content: [{ type: 'text', text: '{"batchId":1,"receiptId":null,"status":"committed","page":1,"pageSize":20,"total":0,"rows":[]}' }] })
       expect(f.acquire).toHaveBeenCalledOnce(); expect(f.read).toHaveBeenCalledExactlyOnceWith(f.db, 'items', expected)
     }
-    const { ImportReceiptError } = await import('../../../server/utils/import-receipts')
+    const { ImportReceiptError } = await import('../../../layers/sme-roster/server/utils/import-receipts')
     f.read.mockImplementationOnce(() => { throw new ImportReceiptError(404, 'not_found', 'Import batch or receipt not found') })
     expect(await f.tool.handler({ batchId: 1 } as never, {} as never)).toEqual({ isError: true, structuredContent: { error: { code: 'not_found', message: 'Import batch or receipt not found' } } })
   } finally { f.restore() }
 })
 it.each(invalidFields399)("SDK field schema rejects legacy $case", async ({ args }) => {
-  const { importItemsReadShape } = await import('../../../server/utils/official-evidence-read')
+  const { importItemsReadShape } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   const { objectFromShape, safeParseAsync } = await import('@modelcontextprotocol/sdk/server/zod-compat.js')
   // Actual installed SDK schema adapter only. SDK server ordering is inspected
   // statically; HTTP/status/result.isError remains a separate UNRUN lane.
   expect((await safeParseAsync(objectFromShape(importItemsReadShape), args)).success).toBe(false)
 })
 it('SDK raw shape accepts selector combinations for handler validation', async () => {
-  const { importItemsReadShape } = await import('../../../server/utils/official-evidence-read')
+  const { importItemsReadShape } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
   const { objectFromShape, safeParseAsync } = await import('@modelcontextprotocol/sdk/server/zod-compat.js')
   for (const args of [{}, { batchId: 1, receiptId: 2 }, { idempotencyKey: '   ' }]) expect((await safeParseAsync(objectFromShape(importItemsReadShape), args)).success).toBe(true)
 })

@@ -5,7 +5,7 @@ import {
   effectiveYear,
   isQualifyingEvent,
   type LifecycleEvent,
-} from '../../../lib/roster/lifecycle'
+} from '../../../layers/sme-roster/lib/roster/lifecycle'
 
 /**
  * 契约 §6 的生命周期语义 —— 纯函数层。

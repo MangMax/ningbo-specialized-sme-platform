@@ -1,4 +1,4 @@
-import {readPlatformQueryEvidence} from '../../../lib/platform/evidence-read'
+import {readPlatformQueryEvidence} from '../../../layers/sme-roster/lib/platform/evidence-read'
 import {submitNativePlatformQuery} from '../fixtures/native-query'
 import { nativeQueryRows, nativeRelationRows } from '../fixtures/native-evidence'
 import { initializeDb } from '../../../db/client'
@@ -17,8 +17,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { runPlatformReconcile } from '../../../server/utils/platform-reconcile'
-import { whenIdle } from '../../../server/utils/job-runner'
+import { runPlatformReconcile } from '../../../layers/sme-roster/server/utils/platform-reconcile'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { emptyReply, platformFixture, platformReplay, type PlatformCall } from '../fixtures/source-replay'
 
 const fixture = platformFixture

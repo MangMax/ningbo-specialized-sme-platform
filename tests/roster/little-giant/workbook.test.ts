@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { parseLittleGiantWorkbook } from '../../../lib/roster/little-giant-workbook'
+import { parseLittleGiantWorkbook } from '../../../layers/sme-roster/lib/roster/little-giant-workbook'
 import {
   buildLittleGiantWorkbookBuffer,
   LITTLE_GIANT_HEADERS,

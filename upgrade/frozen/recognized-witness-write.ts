@@ -6,7 +6,7 @@ import { and,eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import type Database from 'better-sqlite3'
 import { targetSchema as s } from '../target-schema'
-import { captureWitnessInputs,captureWitnessPosition,WITNESS_RULE,witnessConditionNames } from '../../lib/platform/recognized-witness-capture'
+import { captureWitnessInputs,captureWitnessPosition,WITNESS_RULE,witnessConditionNames } from '../../layers/sme-roster/lib/platform/recognized-witness-capture'
 import { witnessCollection as c,witnessCondition as k,witnessObservation as o } from './recognized-witness-schema'
 import { witnessInstalled } from './recognized-witness-catalog'
 function original(t:Database.Database,id:number) {

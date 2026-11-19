@@ -1,4 +1,5 @@
-import { whenIdle } from '../../../server/utils/job-runner'
+import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -8,8 +9,8 @@ import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, getQuery, defineEventHandler, createError } from 'h3'
 import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { useDb } from '../../../db'
-import { createRosterImportClient, type RosterImportPayload } from '../../../lib/roster-import-client'
-import type { RosterRecognitionsResult } from '../../../lib/roster/recognitions'
+import { type RosterImportPayload } from '../../../layers/sme-roster/lib/roster-import-client'
+import type { RosterRecognitionsResult } from '../../../layers/sme-roster/lib/roster/recognitions'
 import { startRosterApi, executeNativeImport } from '../imports/fixtures/import-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'recognitions-130-'))
@@ -19,7 +20,7 @@ let server: ReturnType<typeof createServer>, base: string
 let imports: Awaited<ReturnType<typeof startRosterApi>>
 let batch = 0
 async function seed(payload: RosterImportPayload) {
-  const result = await createRosterImportClient({ baseUrl: imports.baseUrl, token: 'synthetic-130' }).commit({
+  const result = await createReviewedFixtureImportClient({ baseUrl: imports.baseUrl, token: 'synthetic-130' }, db).commit({
     idempotencyKey: `recognitions-130-${++batch}`, sourceKind: 'announcement',
     sourceIdentity: `synthetic/130/${batch}`, payload,
   })
@@ -65,7 +66,7 @@ beforeEach(async () => {
   vi.stubGlobal('getQuery', getQuery)
   vi.stubGlobal('createError', createError)
   imports = await startRosterApi({ db, apiToken: 'synthetic-130', executeImport: executeNativeImport })
-  const route = (await import('../../../server/api/roster/recognitions.get')).default
+  const route = (await import('../../../layers/sme-roster/server/api/roster/recognitions.get')).default
   server = createServer(toNodeListener(createApp({ debug: false }).use(createRouter().get('/api/roster/recognitions', route))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/roster/recognitions`

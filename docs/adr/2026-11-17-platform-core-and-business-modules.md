@@ -36,7 +36,7 @@ core 提供 `defineAppModule()`，每个模块（包括 core 自己）调用它�
 | `dependsOn` | 依赖的其他模块 id；不允许成环。`core` 隐含为所有模块的依赖，不必声明 | 模块 | 否，缺省为空 |
 | `nav` | 侧栏菜单项。业务模块的项进“业务模块”分组，core 的项进“平台管理”分组 | 模块 | 否 |
 | `dashboard` | 平台工作台上的卡片（入口与关键数字） | 模块 | 否 |
-| `jobKinds` | 本模块拥有的任务种类：kind、显示名、任务中心分组 | 模块 | 否 |
+| `jobKinds` | 本模块拥有的任务种类：kind、显示名、任务中心分组、服务端 JobSpec 引用 | 模块 | 否 |
 | `logScope` | 本模块日志写入的 `module` 值；取值必须等于 `id` | 模块 | 否，缺省为 `id` |
 | `credentials` | 本模块需要的密钥：key、显示名、说明；存储键为 `<id>.<key>` | 模块 | 否 |
 | `fileCategories` | 本模块对文件的分类扩展：文件分类、入库策略、文件页筛选项和详情面板插槽 | 模块 | 否 |
@@ -60,11 +60,13 @@ core 提供 `defineAppModule()`，每个模块（包括 core 自己）调用它�
 
 **跨模块原子写**由发起方编排：发起方开启一个 SQLite 事务，依次调用各模块 public 出口上的公开命令；各模块仍只写自己的表。这是单库单机才有的便利，不引入分布式事务或补偿机制。
 
-**禁止**（由 CI 边界校验拦截，校验脚本由实现子票提供）：
+**禁止**（`pnpm verify:module-boundaries` 是 CI 静态检查和最终 `check` 的硬门禁）：
 
 - 直接 join 或查询别的业务模块的表；
 - import 别的模块 public 出口之外的内部实现；
 - 在业务模块之间建外键。别的业务模块的实体只存 ID 引用。
+
+公开入口为各业务 layer 根目录的 `public.ts`。表归属取自 layer 内的 schema 声明，集中在 `db/schema.ts` 的表由 [归属清单](../../scripts/shared-schema-table-owners.json) 声明。
 
 ## 变更规则：一次切换，不留兼容层
 
@@ -79,8 +81,8 @@ core 提供 `defineAppModule()`，每个模块（包括 core 自己）调用它�
 ## 拆分清单
 
 - **文件分类**：`stored_file` 上的 source、kind、year、batch、title_code、category_state、parse_state 迁到名录模块的分类表（暂定 `roster_file_classification`，以 file_id 为主键），`stored_file_part`、解析审计和入库范围规则归名录；同一次迁移删除 `stored_file` 上的这些列。
-- **日志**：日志库增加 `module` 维度（取值为模块 id 或 `core`），与技术来源 `source` 正交；历史日志的 module 为空，不猜测回填。
-- **任务**：`job` 表外壳不变，kind 的登记、显示名和分组改由清单提供，按 kind 建的唯一索引归所属模块。
+- **日志**：日志库增加 `module` 维度（取值为模块 id 或 `core`），与技术来源 `source` 正交；历史日志的 module 为空，不猜测回填。按模块配置保留期与容量留待后续。
+- **任务**：`job` 表外壳不变，kind 的登记、显示名和分组改由清单提供，按 kind 建的唯一索引归所属模块。名录导出的 `job_export_request_uq` 由 `sme-roster` 所有。
 
 ## Nuxt Layers 的两个坑
 

@@ -2,7 +2,7 @@
 import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../layers/core/app/components/ui/tabs'
 
 // Keep DOM semantics real while avoiding Happy DOM's WAAPI cancellation promises.
 const nativeAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')

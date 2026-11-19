@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { and, count, eq, sql, type SQL } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { allRecords, getEnterpriseDetail, getQuality, getStats, listRecords, type EventType } from '../../../lib/query'
+import { allRecords, getEnterpriseDetail, getQuality, getStats, listRecords, type EventType } from '../../../layers/sme-roster/lib/query'
 
 let dir: string
 let db: (typeof import('../../../db'))['useDb']

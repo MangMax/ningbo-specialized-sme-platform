@@ -5,10 +5,10 @@ import { readPlatformQueryEvidence as readLegacyEvidence } from '../oracles/lega
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
-import { readSource } from '../../../server/utils/record-correspondence-read'
+import { readSource } from '../../../layers/sme-roster/server/utils/record-correspondence-read'
 import { witnessReaderFixture } from '../fixtures/recognized-witness-upgrade'
-import { targetSchema } from '../../../lib/platform/target-schema'
-import { readTargetRelationEvidenceDisplay } from '../../../server/utils/platform-relation-evidence-display-target'
+import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
+import { readTargetRelationEvidenceDisplay } from '../../../layers/sme-roster/server/utils/platform-relation-evidence-display-target'
 
 async function migrated(page: number) {
   const fixture = await witnessReaderFixture(old => {

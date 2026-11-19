@@ -92,7 +92,17 @@ it('actual Nuxt preserves full summary differences and MCP evidence with canonic
       { enterprise: { name: 'Next acknowledged' }, titleCode: 'little_giant', events: [] },
       { enterprise: { name: 'Legacy history', uscc: legacy.usccNorm }, titleCode: 'specialized_sme', events: [] },
     ] } } }) })
-    expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ status: 'committed' })
+    expect(response.status).toBe(200)
+    const staged = await response.json()
+    expect(staged.status).toBe('staged')
+    const supplement = await fetch(base + `/api/roster/import/intake/${staged.intakeId}/supplement`, {
+      method: 'POST', headers: { authorization: 'Bearer synthetic-canonical', 'content-type': 'application/json' },
+      body: JSON.stringify({ sourceDigest: staged.sourceDigest, basis: 'Synthetic canonical identities', rows: [
+        { action: 'create', fields: { name: 'Next acknowledged' } },
+        { action: 'attach', enterpriseId: legacy.id, expectedRevision: 1 },
+      ] }),
+    })
+    expect(await supplement.json()).toMatchObject({ status: 'supplemented' })
     for (const path of ['/api/comparison?q=Next', '/api/comparison?view=summary&q=Next', '/api/roster/differences?q=Next']) {
       expect(await get(path)).toMatchObject({ total: 1, rows: [{ name: 'Next acknowledged', titleCode: 'little_giant', direction: 'missing_in_miit' }] })
     }

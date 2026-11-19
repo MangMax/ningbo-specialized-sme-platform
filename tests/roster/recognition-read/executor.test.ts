@@ -1,7 +1,7 @@
 import { EventEmitter, getEventListeners } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createEnterpriseReadExecutor, enterpriseReads } from '../../../server/utils/enterprise-read'
-import { captureReaderError, restoreReaderError, type RecognitionReadInput } from '../../../lib/roster/offmain-read-protocol'
+import { createEnterpriseReadExecutor, enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
+import { captureReaderError, restoreReaderError, type RecognitionReadInput } from '../../../layers/sme-roster/lib/roster/offmain-read-protocol'
 import { createError, isError } from 'h3'
 
 class Transport extends EventEmitter {
@@ -191,7 +191,7 @@ it('initial global readiness rejection stays captured and prevents the recogniti
   const start=vi.spyOn(enterpriseReads,'start').mockRejectedValue(original)
   vi.stubGlobal('defineNitroPlugin',(plugin:unknown)=>plugin)
   try {
-    const plugin=(await import('../../../server/plugins/enterprise-read')).default
+    const plugin=(await import('../../../layers/sme-roster/server/plugins/enterprise-read')).default
     plugin({hooks:{hook:(name:string,handler:any)=>{hooks[name]=handler}}} as any)
     await expect(hooks.request!({})).rejects.toBe(original)
     start.mockResolvedValue()

@@ -1,9 +1,9 @@
 /** Historical offline command fixture from ab503081dae3e24680afc9b07395a7e3ff21fc9f. */
 import { z } from 'zod'
 import { platformQuery, platformRelation } from '../../legacy-schema'
-import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER } from '../../../lib/labels'
-import { platformQueryResultShape } from '../../../lib/platform/live-query'
-import type { RosterImportPlatformQuery, RosterImportRelation } from '../../../lib/roster-import-client'
+import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER } from '../../../layers/sme-roster/lib/labels'
+import { platformQueryResultShape } from '../../../layers/sme-roster/lib/platform/live-query'
+import type { RosterImportPlatformQuery, RosterImportRelation } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const relation = z.looseObject({
   sequenceNo: z.number().describe('沿用核心 optionalInt；原查询内序号'),

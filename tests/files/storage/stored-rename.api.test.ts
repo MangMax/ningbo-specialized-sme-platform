@@ -5,13 +5,14 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { schema, useDb } from '../../../db'
-import { fileUrl } from '../../../lib/preview'
-import { pageImageRelPath } from '../../../lib/pdf-page'
-import { normalizeName } from '../../../lib/domain'
-import { handleStoredFilePatchRequest } from '../../../server/utils/stored-file-patch-http'
-import { renderPdfPages } from '../../../server/utils/pdf-pages'
-import { listStoredFiles, resolveInsideRoot } from '../../../server/utils/stored-files'
-import { registerStoredFile } from '../../../server/utils/stored-files-upload'
+import { fileUrl } from '../../../layers/core/lib/preview'
+import { pageImageRelPath } from '../../../layers/core/lib/pdf-page'
+import { normalizeName } from '../../../layers/sme-roster/lib/domain'
+import { handleStoredFilePatchRequest } from '../../../layers/core/server/utils/stored-file-patch-http'
+import { renderPdfPages } from '../../../layers/core/server/utils/pdf-pages'
+import { resolveInsideRoot } from '../../../layers/core/server/utils/file-store'
+import { listStoredFiles } from '../../../layers/core/server/utils/stored-files'
+import { registerStoredFile } from '../../../layers/sme-roster/server/modules/sme-roster/file-upload'
 import { startHttpFixture, type HttpFixture } from '../../support/http'
 import { minimalPdf } from '../../support/minimal-pdf'
 
@@ -202,7 +203,7 @@ describe('PATCH /api/files/:id 用户显示名称', () => {
 describe('文件管理 rename OpenAPI contract', () => {
   it('PATCH 路由文档说明 displayName 只改显示名并写审计,不改磁盘路径', async () => {
     const { readFile } = await import('node:fs/promises')
-    const route = await readFile(join(process.cwd(), 'server/api/files/[id].patch.ts'), 'utf8')
+    const route = await readFile(join(process.cwd(), 'layers/core/server/api/files/[id].patch.ts'), 'utf8')
     expect(route).toContain('displayName')
     expect(route).toContain('审计')
     expect(route).toContain('stored_file.id')

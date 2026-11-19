@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import PlatformRecognizedDirectoryTable from '../../../components/PlatformRecognizedDirectoryTable.vue'
-import PlatformRecognizedDirectoryDetailDialog from '../../../components/PlatformRecognizedDirectoryDetailDialog.vue'
-import type { RecognizedDirectoryDetail, RecognizedDirectoryRow } from '../../../lib/platform/recognized-directory'
+import PlatformRecognizedDirectoryTable from '../../../layers/sme-roster/app/components/PlatformRecognizedDirectoryTable.vue'
+import PlatformRecognizedDirectoryDetailDialog from '../../../layers/sme-roster/app/components/PlatformRecognizedDirectoryDetailDialog.vue'
+import type { RecognizedDirectoryDetail, RecognizedDirectoryRow } from '../../../layers/sme-roster/lib/platform/recognized-directory'
 
 const nativeAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
 beforeAll(() => { Reflect.deleteProperty(Element.prototype, 'animate') })

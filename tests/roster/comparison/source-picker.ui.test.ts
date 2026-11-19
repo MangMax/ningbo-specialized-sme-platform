@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
-import ComparisonSourcePicker from '../../../components/record-correspondence/ComparisonSourcePicker.vue'
-import { Tabs } from '../../../components/ui/tabs'
+import ComparisonSourcePicker from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonSourcePicker.vue'
+import { Tabs } from '../../../layers/core/app/components/ui/tabs'
 
 const rows = {
   official_document: [{ kind: 'official_document', id: 3, label: '2024 年专精特新公布名单', subtitle: '甬经信〔2024〕1号', titleCode: null, titleName: null, observedAt: '2024-10-01', status: 'available', selectable: true, path: 'jxj/a.pdf' }],

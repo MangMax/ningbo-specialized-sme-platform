@@ -8,8 +8,8 @@ import {
   PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION, RETIRED_PLATFORM_TABLES,
 } from '../db/schema-phase'
 import { requireLegacyProvenanceReady } from './legacy-provenance-catalog'
-import { migrationFinished } from '../lib/platform/migration-readiness'
-import { rowSnapshot } from '../lib/platform/sqlite-row-cells'
+import { migrationFinished } from '../layers/sme-roster/lib/platform/migration-readiness'
+import { rowSnapshot } from '../layers/sme-roster/lib/platform/sqlite-row-cells'
 import { upgradeEnterpriseMergeIdentity } from './enterprise-merge'
 import { z } from 'zod'
 import { installPlatformArchiveLookupIndexes } from './platform-archive-indexes'

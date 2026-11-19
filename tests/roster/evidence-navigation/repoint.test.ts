@@ -1,3 +1,4 @@
+import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
 import { initializeDb } from '../../../db/client'
 /**
  * RL-16(票 #17)—— **来源文件入库后,出处指针怎么收敛**。
@@ -6,12 +7,12 @@ import { initializeDb } from '../../../db/client'
  * 于是解析不到文件,名录行的预览/跳转全断(用户 2026-10-16 反馈)。
  *
  * 修法(两条一起才成立):
- *  1. 导入侧把来源标识换成**库内相对路径**(见 `lib/roster/little-giant-import.ts`);
+ *  1. 导入侧把来源标识换成**库内相对路径**(见 `layers/sme-roster/lib/roster/little-giant-import.ts`);
  *  2. 统一写入 API 重放同一份来源时,**只把出处的 `source_file` 收敛到新路径** ——
  *     事件坐标不变 ⇒ 历史一行不改、一行不加、一行不删。
  *
  * 这个文件盯着第 2 条。走的是**真实 HTTP**(`tests/helpers/roster-http-server.ts` 起真端口,
- * `lib/roster-import-client.ts` 发真请求),库只用 drizzle **读**计数。
+ * `layers/sme-roster/lib/roster-import-client.ts` 发真请求),库只用 drizzle **读**计数。
  */
 
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -20,14 +21,14 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { schema, useDb } from '../../../db'
-import { createRosterImportClient, type RosterImportRequest } from '../../../lib/roster-import-client'
+import { type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import {
   buildLittleGiantImportReport,
   buildLittleGiantImportRequest,
   LITTLE_GIANT_SOURCE_FILE,
-} from '../../../lib/roster/little-giant-import'
-import { parseLittleGiantWorkbook } from '../../../lib/roster/little-giant-workbook'
-import { rosterRowCounts } from '../../../server/utils/roster-import'
+} from '../../../layers/sme-roster/lib/roster/little-giant-import'
+import { parseLittleGiantWorkbook } from '../../../layers/sme-roster/lib/roster/little-giant-workbook'
+import { rosterRowCounts } from '../../../layers/sme-roster/server/utils/roster-import'
 import { executeNativeImport, startRosterApi } from '../imports/fixtures/import-server'
 import { loadLittleGiantSource } from '../little-giant/fixtures/official-source'
 
@@ -108,7 +109,7 @@ describe('RL-16:重导把出处指针收敛到库内路径,历史一行不改', 
   it('首次导入用库外路径 → 重导(来源标识变了 ⇒ 换键)后只换指针,不多不少', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN, executeImport: executeNativeImport })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     try {
       // 1) 历史批次:库外路径(RL-02 的口径)。
       const legacy = littleGiantRequest({
@@ -156,7 +157,7 @@ describe('RL-16:重导把出处指针收敛到库内路径,历史一行不改', 
   it('同键重放是彻底的空操作:指针不再变、一行不增、也不报「改了」', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN, executeImport: executeNativeImport })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     try {
       const request = littleGiantRequest({
         idempotencyKey: `${LIBRARY_SOURCE_FILE}#sha256:${SHA_STABLE}`,
@@ -179,7 +180,7 @@ describe('RL-16:重导把出处指针收敛到库内路径,历史一行不改', 
   it('收敛只认**坐标逐字相同**的出处行:序号不同的那条不会被误改', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN, executeImport: executeNativeImport })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     try {
       // 同一家企业、同一坐标的事件,但出处序号是 20(而不是重导载荷里的 14)。
       const legacy = littleGiantRequest({
@@ -263,13 +264,13 @@ describe('RL-19:预检报的行数 = 提交真改的行数(计划项口径与行
   it('库中出处指向旧路径 → 以新来源标识重导 → 全部收敛,企业/记录/事件/出处计数一行不变', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN, executeImport: executeNativeImport })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     try {
       const source = await loadLittleGiantSource()
       const workbook = await parseLittleGiantWorkbook(source.buffer)
       const report = buildLittleGiantImportReport(workbook)
       const request = buildLittleGiantImportRequest(workbook, { sourceFile: LIBRARY_SOURCE_FILE })
-      // 报告的数字是**独立于写入侧**手算出来的(见 `lib/roster/little-giant-import.ts`
+      // 报告的数字是**独立于写入侧**手算出来的(见 `layers/sme-roster/lib/roster/little-giant-import.ts`
       // 的 `totals`):记录数 = 去重后的企业数,事件数 = 出处行数(一条认定事件一条出处)。
       const recordCount = report.totals.records
       const evidenceCount = report.totals.evidences
@@ -338,7 +339,7 @@ describe('RL-19:幂等键被消费后,收敛仍补得上(重放入口 §8.9.3)',
   it('键已消费 → 预检如实报「同键提交什么都不改」→ commit 空操作 → replay 把指针收敛掉,计数一行不变', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN, executeImport: executeNativeImport })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     try {
       const source = await loadLittleGiantSource()
       const workbook = await parseLittleGiantWorkbook(source.buffer)
@@ -363,7 +364,7 @@ describe('RL-19:幂等键被消费后,收敛仍补得上(重放入口 §8.9.3)',
       //    这一条提交的输出形状与票面实测**逐字一致**:`written: 0`,而 `skipped` = 被跳过的事件数
       //    + 判为 skip 的计划项数(`records`)。真件上正是 `0 / 1021`(= 511 + 510)。
       const consumed = await client.commit(withEvidencePath(request, LEGACY_SOURCE_FILE))
-      expect(consumed.status).toBe('committed')
+      if (consumed.status !== 'committed') throw new Error(JSON.stringify(consumed))
       expect(consumed.summary.written).toBe(0)
       expect(consumed.summary.evidenceRepointed).toBe(0)
       expect(consumed.summary.skipped).toBe(evidenceCount + recordCount)
@@ -376,7 +377,16 @@ describe('RL-19:幂等键被消费后,收敛仍补得上(重放入口 §8.9.3)',
       }
       // Synthetic pre-#103 fixture: retain the original batch and every business row,
       // but remove its newly generated recovery receipt to model a real old ledger.
-      db.delete(schema.importReceipt).where(eq(schema.importReceipt.batchId, consumed.batchId)).run()
+      db.transaction(tx => {
+        const intake = tx.select({ id: schema.rosterAnnouncementIntake.id }).from(schema.rosterAnnouncementIntake)
+          .where(eq(schema.rosterAnnouncementIntake.idempotencyKey, request.idempotencyKey)).get()!
+        const members = tx.select({ enterpriseId: schema.rosterAnnouncementMember.enterpriseId }).from(schema.rosterAnnouncementMember)
+          .where(eq(schema.rosterAnnouncementMember.intakeId, intake.id)).all()
+        tx.insert(schema.rosterLegacyMember).values(members).onConflictDoNothing().run()
+        tx.delete(schema.rosterAnnouncementMember).where(eq(schema.rosterAnnouncementMember.intakeId, intake.id)).run()
+        tx.delete(schema.rosterAnnouncementIntake).where(eq(schema.rosterAnnouncementIntake.id, intake.id)).run()
+        tx.delete(schema.importReceipt).where(eq(schema.importReceipt.batchId, consumed.batchId)).run()
+      })
 
       // 3) 键被消费之后的**如实**预检:同键提交不会再改任何行 —— 不再报一份做不到的计划。
       const after = await client.preflight(request)
@@ -425,7 +435,7 @@ describe('RL-19:幂等键被消费后,收敛仍补得上(重放入口 §8.9.3)',
   it('重放**只**改指针:在空库上重放,业务表一行都不新增', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN, executeImport: executeNativeImport })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     try {
       const source = await loadLittleGiantSource()
       const workbook = await parseLittleGiantWorkbook(source.buffer)

@@ -7,11 +7,11 @@ import Database from 'better-sqlite3'
 import * as h3 from 'h3'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { initializeDb } from '../../../db/client'
-import { newJobId } from '../../../lib/job'
-import { ensureJobRunnerReady } from '../../../server/utils/job-runner'
-import { createJob, getJob } from '../../../server/utils/job-store'
+import { newJobId } from '../../../layers/core/lib/job'
+import { ensureJobRunnerReady } from '../../../layers/core/server/utils/job-runner'
+import { createJob, getJob } from '../../../layers/core/server/utils/job-store'
 
-let listJobsRoute: Awaited<typeof import('../../../server/api/jobs/index.get')>['default']
+let listJobsRoute: Awaited<typeof import('../../../layers/core/server/api/jobs/index.get')>['default']
 const ownedDirectories: string[] = []
 const ownedServers: Server[] = []
 const ownedConnections: Database.Database[] = []
@@ -19,7 +19,7 @@ const ownedDbs: Array<ReturnType<typeof initializeDb>> = []
 
 beforeAll(async () => {
   for (const [name, value] of Object.entries(h3)) vi.stubGlobal(name, value)
-  listJobsRoute = (await import('../../../server/api/jobs/index.get')).default
+  listJobsRoute = (await import('../../../layers/core/server/api/jobs/index.get')).default
 })
 
 afterEach(async () => {

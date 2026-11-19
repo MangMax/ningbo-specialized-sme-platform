@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import QueryAssessmentSummary from '../../../components/evidence-review/QueryAssessmentSummary.vue'
+import QueryAssessmentSummary from '../../../layers/sme-roster/app/components/evidence-review/QueryAssessmentSummary.vue'
 
 const assessment = (patch: Record<string, unknown> = {}) => ({
   queryCoverage: { status: 'complete', sources: [], truncated: false },

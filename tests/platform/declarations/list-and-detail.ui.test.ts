@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import PlatformDeclarationTable from '../../../components/PlatformDeclarationTable.vue'
-import PlatformDeclarationDetailDialog from '../../../components/PlatformDeclarationDetailDialog.vue'
+import PlatformDeclarationTable from '../../../layers/sme-roster/app/components/PlatformDeclarationTable.vue'
+import PlatformDeclarationDetailDialog from '../../../layers/sme-roster/app/components/PlatformDeclarationDetailDialog.vue'
 
 const record = {
   kind: 'record' as const,

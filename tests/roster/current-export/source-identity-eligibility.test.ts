@@ -5,8 +5,8 @@ import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } f
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import { schema as s } from '../../../db/client'
 import { specializedExportFixture, rows, year } from './fixtures/specialized-export'
-import { readEvidenceToken113 } from '../../../server/utils/evidence-impact-113'
-import { readQueryAssessment } from '../../../lib/roster/query-assessment'
+import { readEvidenceToken113 } from '../../../layers/sme-roster/server/utils/evidence-impact-113'
+import { readQueryAssessment } from '../../../layers/sme-roster/lib/roster/query-assessment'
 const f=nativeWorkbookFixture()
 beforeEach(()=>f.resetBusiness())
 afterAll(f.close)

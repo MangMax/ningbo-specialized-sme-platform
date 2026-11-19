@@ -6,12 +6,12 @@ import { expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { candidateFixture } from '../../platform/fixtures/candidate-scope-upgrade'
 import { finalizeCandidateScopes } from '../../../upgrade/candidate-scope'
-import { writeNewCollectionTarget, writeCollectionTarget, type NewCollectionTargetCommand } from '../../../lib/platform/collection-target-command'
+import { writeNewCollectionTarget, writeCollectionTarget, type NewCollectionTargetCommand } from '../../../layers/sme-roster/lib/platform/collection-target-command'
 import { candidateScopeObservation as o } from '../../../upgrade/frozen/candidate-scope-schema'
-import { listTargetDeclarations } from '../../../server/utils/platform-declarations-target'
+import { listTargetDeclarations } from '../../../layers/sme-roster/server/utils/platform-declarations-target'
 import { targetSchema } from '../../../upgrade/target-schema'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformQuerySource, PlatformLiveQueryResult } from '../../../lib/platform/live-query'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformQuerySource, PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 
 function logicalBytes(t:Database.Database) {
   const bytes=t.serialize(); for(const offset of [24,92])bytes.fill(0,offset,offset+4); return bytes

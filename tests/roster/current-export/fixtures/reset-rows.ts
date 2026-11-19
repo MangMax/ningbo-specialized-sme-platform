@@ -10,7 +10,10 @@ export function resetExportRows(db: Database.Database) {
     db.transaction(() => {
       const triggers = db.prepare("select name,sql from sqlite_master where type='trigger'").all() as {name:string;sql:string}[]
       for (const {name} of triggers) db.exec('drop trigger "'+name.replaceAll('"','""')+'"')
-      const tables = db.prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%' and name not like '%migration%' and name not in ('title','platform_runtime_capability','platform_runtime_completion','platform_legacy_alias_sequence')").all() as {name:string}[]
+      const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table'
+        AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '%migration%'
+        AND name NOT IN ('title','platform_runtime_capability','platform_runtime_completion','platform_legacy_alias_sequence',
+          'enterprise_kernel_completion','enterprise_region','enterprise_industry','enterprise_source_channel','enterprise_source_list_type')`).all() as {name:string}[]
       for (const {name} of tables) db.exec('delete from "'+name.replaceAll('"','""')+'"')
       for (const {sql} of triggers) db.exec(sql)
     })()

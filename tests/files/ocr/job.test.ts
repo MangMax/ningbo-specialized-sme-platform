@@ -1,24 +1,25 @@
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { parseOcrParams, runOcr } from '../../../server/utils/jobs/ocr'
-import { listOcrResults, writeOcrResult } from '../../../server/utils/ocr-result'
+import { parseOcrParams, runOcr } from '../../../layers/core/server/utils/jobs/ocr'
+import { listOcrResults, writeOcrResult } from '../../../layers/core/server/utils/ocr-result'
 import {
   DEFAULT_OCR_OPTIONAL_PAYLOAD,
   ocrRequestVariant,
   pagesFromJsonl,
   resolveOcrConfig,
-} from '../../../server/utils/ocr-api'
-import { ocrPageCacheDirAbs, ocrPageCacheKey } from '../../../server/utils/ocr-page-cache'
-import { DEFAULT_DPI } from '../../../lib/pdf-page'
-import { renderPdfPages } from '../../../server/utils/pdf-pages'
+} from '../../../layers/core/server/utils/ocr-api'
+import { ocrPageCacheDirAbs, ocrPageCacheKey } from '../../../layers/core/server/utils/ocr-page-cache'
+import { DEFAULT_DPI } from '../../../layers/core/lib/pdf-page'
+import { renderPdfPages } from '../../../layers/core/server/utils/pdf-pages'
 import { minimalPdf } from '../../support/minimal-pdf'
 import { startMiniOcrApi, type MiniOcrApi } from './fixtures/provider-api'
-import { createJob, markJobRunning } from '../../../server/utils/job-store'
-import { newJobId } from '../../../lib/job'
+import { createJob, markJobRunning } from '../../../layers/core/server/utils/job-store'
+import { newJobId } from '../../../layers/core/lib/job'
 
 /**
  * 票 14 通路 a —— **在线 PaddleOCR API**(异步、可批量)。
@@ -88,20 +89,7 @@ async function seedPdf(relPath: string, pages = 3): Promise<number> {
   const bytes = minimalPdf({ pages, widthPt: Math.max(120, 30 * pages + 20), heightPt: 60 })
   await writeFile(abs, bytes)
   const base = relPath.split('/').pop()!
-  return db
-    .insert(schema.storedFile)
-    .values({
-      relPath,
-      filename: base,
-      ext: 'pdf',
-      bytes: bytes.length,
-      sha256: createHash('sha256').update(bytes).digest('hex'),
-      source: 'jxj',
-      kind: 'announcement',
-      categoryState: 'set',
-    })
-    .returning({ id: schema.storedFile.id })
-    .get().id
+  return createClassifiedFile(db, { relPath, filename: base, ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }, { source: 'jxj', kind: 'announcement', categoryState: 'set' }).id
 }
 
 /** 跑一次 ocr 任务,附上 ctx。 */
@@ -799,14 +787,14 @@ describe('中转命中判据(纯函数)', () => {
 })
 
 it('uses saved credentials for new OCR runs while a running submit and poll retain their startup snapshot', async () => {
-  const { updateCredential } = await import('../../../server/utils/credential-state')
+  const { updateCredential } = await import('../../../layers/core/server/utils/credential-state')
   try {
-    updateCredential('ocrToken', 'synthetic-start-value', { db, env: {} })
+    updateCredential('core.ocrToken', 'synthetic-start-value', { db, env: {} })
     const file = 'credential-snapshot.pdf'
     const credentialFileId = await seedPdf(file, 1)
     await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
     api = await startMiniOcrApi({ pages: ['# synthetic result'], onSubmit: () => {
-      updateCredential('ocrToken', 'synthetic-replacement', { db, env: {} })
+      updateCredential('core.ocrToken', 'synthetic-replacement', { db, env: {} })
     } })
     process.env.NUXT_OCR_BASE_URL = api.origin
     const params = { files: [file], model: null }
@@ -846,22 +834,22 @@ it('fails closed with a sanitized error when the credential database is unavaila
 })
 
 it('queued OCR retains its submission credential for submit and poll without persisting it in job history', async () => {
-  const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../../../server/utils/job-runner')
-  const { ocrSpec } = await import('../../../server/utils/jobs/ocr')
-  const { getJob } = await import('../../../server/utils/job-store')
-  const { updateCredential } = await import('../../../server/utils/credential-state')
+  const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../../../layers/core/server/utils/job-runner')
+  const { ocrSpec } = await import('../../../layers/core/server/utils/jobs/ocr')
+  const { getJob } = await import('../../../layers/core/server/utils/job-store')
+  const { updateCredential } = await import('../../../layers/core/server/utils/credential-state')
   let release: (() => void) | undefined
   try {
     const file = 'queued-credential.pdf'
     await seedPdf(file, 1); await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
     api = await startMiniOcrApi({ pages: ['# queued synthetic result'] })
     process.env.NUXT_OCR_BASE_URL = api.origin
-    updateCredential('ocrToken', 'synthetic-queued-ocr-A', { db, env: {} })
+    updateCredential('core.ocrToken', 'synthetic-queued-ocr-A', { db, env: {} })
     clearJobSpecs(); registerJob(ocrSpec)
     registerJob({ kind: 'hold', status: 'ready', summary: 'synthetic gate', parse: () => ({ ok: true, params: {} }), run: async () => { await new Promise<void>(r => { release = r }); return { result: {} } } })
     submitJob(db, { kind: 'hold', params: {}, filesDir })
     const row = submitJob(db, { kind: 'ocr', params: { files: [file], model: null }, filesDir })
-    updateCredential('ocrToken', 'synthetic-queued-ocr-B', { db, env: {} })
+    updateCredential('core.ocrToken', 'synthetic-queued-ocr-B', { db, env: {} })
     release!(); release = undefined; await whenIdle()
     expect(getJob(db, row.id)?.state).toBe('done')
     expect(api.stats.submits).toBe(1)
@@ -873,14 +861,14 @@ it('queued OCR retains its submission credential for submit and poll without per
 })
 
 it.each([{ name: 'failed', failed: true }, { name: 'successful', failed: false }])('keeps encoded OCR credentials out of persisted job history and OCR rows ($name)', async ({ failed }) => {
-  const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../../../server/utils/job-runner')
-  const { ocrSpec } = await import('../../../server/utils/jobs/ocr')
-  const { getJob } = await import('../../../server/utils/job-store')
-  const { updateCredential } = await import('../../../server/utils/credential-state')
+  const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../../../layers/core/server/utils/job-runner')
+  const { ocrSpec } = await import('../../../layers/core/server/utils/jobs/ocr')
+  const { getJob } = await import('../../../layers/core/server/utils/job-store')
+  const { updateCredential } = await import('../../../layers/core/server/utils/credential-state')
   const token = 'synthetic-"quoted"\\+/=task-secret'
   const echoes = [token, encodeURIComponent(token), JSON.stringify(token).slice(1, -1)]
   try {
-    updateCredential('ocrToken', token, { db, env: {} })
+    updateCredential('core.ocrToken', token, { db, env: {} })
     const file = 'encoded-echo.pdf'
     const fileId = await seedPdf(file, 1)
     await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })

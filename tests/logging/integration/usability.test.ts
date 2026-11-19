@@ -2,9 +2,9 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { appLog, applicationLogs, closeApplicationLogging, initializeWorkerLogging, requestLogContext } from '../../../lib/logging'
-import { projectEvlog, safeLogEvent } from '../../../lib/logging/privacy'
-import { safeHttpMethod, safeHttpRoute } from '../../../lib/logging/http'
+import { appLog, applicationLogs, closeApplicationLogging, initializeWorkerLogging, requestLogContext } from '../../../layers/core/lib/logging'
+import { projectEvlog, safeLogEvent } from '../../../layers/core/lib/logging/privacy'
+import { safeHttpMethod, safeHttpRoute } from '../../../layers/core/lib/logging/http'
 
 /**
  * #180 runtime-log usability. Uses the real evlog -> allowlist -> SQLite drain;
@@ -80,10 +80,10 @@ it('keeps counts, failure codes and HTTP transport facts in list and detail for 
 })
 
 it('rejects concrete or hostile path values as routes and never derives a template from the path', () => {
-  for (const route of ['/api/files/123', '/api/files/PRIVATE180', '/api/files/alice', '/api/files/bob-smith', '/api/private-secret', '/api/files/a@b.example', '/api/files/20261013', '/api/files/:id?token=1', '/api/files/:id/../x', 'https://untrusted.invalid/api/files/:id']) {
+  for (const route of ['/api/files/123', '/api/files/PRIVATE180', '/api/files/alice', '/api/files/bob-smith', '/api/private-secret', '/api/files/a@b.example', '/api/files/20261013', '/api/files/:id?token=1', '/api/files/:id/../x', 'https://untrusted.invalid/api/files/:id', '/api/settings/credentials/synthetic-path-value/reveal']) {
     expect(safeHttpRoute(route), route).toBeUndefined()
   }
-  for (const route of ['/api/files/:id', '/api/files/**:path', '/api/roster/decision-lifecycle/commands', '/api/roster/exports/current/specialized-sme', '/api/settings/credentials/miitCookie/reveal', '/api/settings/credentials/ocrToken/reveal', '/mcp']) {
+  for (const route of ['/api/files/:id', '/api/files/**:path', '/api/roster/decision-lifecycle/commands', '/api/roster/exports/current/specialized-sme', '/api/settings/credentials/:key/reveal', '/mcp']) {
     expect(safeHttpRoute(route), route).toBe(route)
   }
   expect(safeHttpMethod('patch')).toBe('PATCH')
@@ -211,7 +211,7 @@ it('drops non-template applicationLog routes from stdout and SQLite while keepin
 
 it('still lists and reads rows written before the new fields and list counts existed', async () => {
   const legacyDirectory = mkdtempSync(join(tmpdir(), 'log-usability-legacy-'))
-  const { createLogService } = await import('../../../lib/logging/service')
+  const { createLogService } = await import('../../../layers/core/lib/logging/service')
   const service = createLogService({ directory: legacyDirectory })
   try {
     service.emit({ source: 'worker', operation: 'legacy.fixture', outcome: 'failure', errorCode: 'old_code', counts: { done: 1 }, taskId: 'task-legacy' })

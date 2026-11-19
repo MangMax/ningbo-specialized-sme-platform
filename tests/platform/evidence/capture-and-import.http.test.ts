@@ -1,4 +1,4 @@
-import {differencePublicColumns} from '../../../lib/platform/difference-reference-target'
+import {differencePublicColumns} from '../../../layers/sme-roster/lib/platform/difference-reference-target'
 import { nativeQueryRows, nativeRelationRows } from '../fixtures/native-evidence'
 import { initializeDb } from '../../../db/client'
 /**
@@ -22,17 +22,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { createRosterImportClient } from '../../../lib/roster-import-client'
-import { classifyRawQuery } from '../../../lib/platform'
+import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
+import { classifyRawQuery } from '../../../layers/sme-roster/lib/platform'
 import {
   buildPlatformWritePayload,
   type KnownEnterprise,
   type PlatformQueryInput,
   type QueryRef,
   type RelationRef,
-} from '../../../lib/platform/payload'
-import type { PlatformQueriesResult } from '../../../lib/platform/read'
-import { readMergeLineage, searchEnterpriseIdsByName } from '../../../server/utils/roster-import'
+} from '../../../layers/sme-roster/lib/platform/payload'
+import type { PlatformQueriesResult } from '../../../layers/sme-roster/lib/platform/read'
+import { readMergeLineage, searchEnterpriseIdsByName } from '../../../layers/sme-roster/server/utils/roster-import'
 import { startEvidenceServer, type EvidenceServer } from '../fixtures/evidence-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-platform-e2e-'))
@@ -126,8 +126,8 @@ beforeAll(async () => {
   }))
   vi.doMock('@db', () => ({ useDb: () => db }))
 
-  const queriesRoute = (await import('../../../server/api/platform/queries.get')).default as unknown as (event: unknown) => unknown
-  const comparisonRoute = (await import('../../../server/api/comparison.get')).default as unknown as (event: unknown) => unknown
+  const queriesRoute = (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default as unknown as (event: unknown) => unknown
+  const comparisonRoute = (await import('../../../layers/sme-roster/server/api/comparison.get')).default as unknown as (event: unknown) => unknown
 
   server = await startEvidenceServer({
     db,
@@ -171,7 +171,7 @@ describe('第一批 · 平台查询与关系经统一 API 落库', () => {
 
   it('commit 落 5 次查询与 8 条关系', async () => {
     const request = buildPlatformWritePayload({ sourceIdentity: 'platform/91330211255994457P.json', queries, enterprises })
-    commitResult = (await client().commit(request)) as unknown as typeof commitResult
+    commitResult = (await client().commitCommand(request)) as unknown as typeof commitResult
     expect(commitResult.status).toBe('committed')
     expect(commitResult.summary.written).toBeGreaterThan(0)
   })
@@ -351,7 +351,7 @@ describe('第二批 · 曾用名、已核验处置与归并', () => {
   it('commit 第二批:代理确认的曾用名 + 差异原因/措施 + 归并', async () => {
     const pre = await client().preflight(request)
     expect(pre.preflight.conflicts).toEqual([])
-    const committed = await client().commit(request)
+    const committed = await client().commitCommand(request)
     expect(committed.status).toBe('committed')
     expect(committed.summary.failed).toBe(0)
   })
@@ -450,7 +450,7 @@ describe('第二批 · 曾用名、已核验处置与归并', () => {
       differences: db.select(differencePublicColumns(db)).from(schema.differenceReason).all().length,
       batches: db.select().from(schema.importBatch).all().length,
     }
-    const replay = await client().commit(request)
+    const replay = await client().commitCommand(request)
     expect(replay.status).toBe('committed')
     expect(db.select().from(schema.enterpriseAlias).all().length).toBe(before.aliases)
     expect(db.select(differencePublicColumns(db)).from(schema.differenceReason).all().length).toBe(before.differences)

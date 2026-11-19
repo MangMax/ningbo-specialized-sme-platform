@@ -5,10 +5,10 @@ import { join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { spawn, type ChildProcess } from 'node:child_process'
 import Database from 'better-sqlite3'
-import { createLogService, validatePolicy, type LogService } from '../../../lib/logging/service'
-import { LOG_DEFAULTS, LOG_LEVELS, LOG_SOURCES, LOG_SUPPORTED_INTEGRATIONS } from '../../../lib/logging/contract'
-import { collectionAllows, defaultLogCollection } from '../../../lib/logging/policy'
-import { safeLogEvent, projectEvlog } from '../../../lib/logging/privacy'
+import { createLogService, validatePolicy, type LogService } from '../../../layers/core/lib/logging/service'
+import { LOG_DEFAULTS, LOG_LEVELS, LOG_SOURCES, LOG_SUPPORTED_INTEGRATIONS } from '../../../layers/core/lib/logging/contract'
+import { collectionAllows, defaultLogCollection } from '../../../layers/core/lib/logging/policy'
+import { safeLogEvent, projectEvlog } from '../../../layers/core/lib/logging/privacy'
 
 const dirs: string[] = [], services: LogService[] = [], children: ChildProcess[] = []
 const base = { retentionDays: 7, maxBytes: LOG_DEFAULTS.maxBytes }
@@ -98,7 +98,7 @@ async function childWriter(directory: string) {
   writeFileSync(script, `
 import {createRequire} from 'node:module'
 const {createJiti}=createRequire(import.meta.url)(${JSON.stringify(jiti)})
-const logging=await createJiti(import.meta.url).import(${JSON.stringify(resolve('lib/logging/index.ts'))})
+const logging=await createJiti(import.meta.url).import(${JSON.stringify(resolve('layers/core/lib/logging/index.ts'))})
 logging.initializeWorkerLogging()
 const service=logging.applicationLogs()
 process.on('message',async m=>{
@@ -206,7 +206,7 @@ it('publishes the same closed keys and complete rules in REST OpenAPI metadata',
   let metadata:any
   vi.stubGlobal('defineRouteMeta', (value:any)=>{metadata=value})
   try {
-    await import('../../../server/api/logs/policy.patch')
+    await import('../../../layers/core/server/api/logs/policy.patch')
     const schema=metadata.openAPI.requestBody.content['application/json'].schema
     expect(schema.additionalProperties).toBe(false)
     expect(schema.required).toEqual(['retentionDays','maxBytes'])

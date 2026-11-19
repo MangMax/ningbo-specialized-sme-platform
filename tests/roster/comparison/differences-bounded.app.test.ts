@@ -5,10 +5,10 @@ import { createServer } from 'node:http'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createApp, defineEventHandler, getQuery, setHeader, toNodeListener } from 'h3'
 import { initializeDb } from '../../../db/client'
-import { commitRosterImport } from '../../../server/utils/roster-import'
-import { whenIdle } from '../../../server/utils/job-runner'
-import type { RosterImportPayload } from '../../../lib/roster-import-client'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
+import { commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
+import type { RosterImportPayload } from '../../../layers/sme-roster/lib/roster-import-client'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 
 const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
 vi.mock('@db', () => ({ useDb: () => active.db }))
@@ -86,8 +86,8 @@ async function publicReads() {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('getQuery', getQuery)
   vi.stubGlobal('setHeader', setHeader)
-  const handler = (await import('../../../server/api/roster/differences.get')).default
-  const tool = (await import('../../../server/mcp/tools/list_differences')).default as unknown as { handler: (input: Record<string, unknown>) => unknown }
+  const handler = (await import('../../../layers/sme-roster/server/api/roster/differences.get')).default
+  const tool = (await import('../../../layers/sme-roster/server/mcp/tools/list_differences')).default as unknown as { handler: (input: Record<string, unknown>) => unknown }
   const app = createApp().use('/api/roster/differences', handler)
   const server = createServer(toNodeListener(app))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -115,11 +115,11 @@ it('bounds assessment work for REST and MCP pages while keeping the current expl
 
 it('preserves REST filters counts deep pages evidence and the intentionally narrower MCP projection', async () => {
   const f = fixture(), api = await publicReads()
-  const { listRosterDifferences: reference } = await import('../../../lib/roster/enterprise-roster')
+  const { listRosterDifferences: reference } = await import('../../../layers/sme-roster/lib/roster/enterprise-roster')
   f.write({ platformQueries: [{ interface: 'business_list', queryKey: 'name:合成差异00', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19T00:00:00.000Z', status: 'failed', rawResponse: 'SYNTHETIC_RAW', failureReason: 'synthetic failure', relations: [{ sequenceNo: 1, nameRaw: '合成旧名称', usccRaw: '91330211255994457P', verificationStatus: 'confirmed' }, { sequenceNo: 2, nameRaw: 'unmatched synthetic' }] }],
     aliases: [{ enterpriseName: '合成差异00', name: '合成旧名称', sourceKind: 'platform_business', verificationStatus: 'confirmed', sourceRelationRef: { interface: 'business_list', queryKey: 'name:合成差异00', rdjb: '2', sequenceNo: 1 } }, { enterpriseName: '合成差异01', name: '合成旧名称', sourceKind: 'platform_apply', verificationStatus: 'pending' }],
     differences: [{ enterpriseName: '合成差异00', titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', verificationStatus: 'confirmed', recordedAt: '2026-10-19T00:00:00.000Z', evidenceQueryRef: { interface: 'business_list', queryKey: 'name:合成差异00', rdjb: '2' } }, { enterpriseName: '合成差异01', titleCode: 'specialized_sme', direction: 'extra_in_miit', status: 'confirmed_no_diff', measureCode: 'none', verificationStatus: 'confirmed', recordedAt: '2026-10-19T00:00:00.000Z' }, { enterpriseName: '合成差异02', titleCode: 'little_giant', direction: 'missing_in_miit', status: 'needs_review', reasonCode: 'moved_in', measureCode: 'record_moved_in', movedIn: { city: '合成城市' }, recordedAt: '2026-10-19T00:00:00.000Z' }] })
-  const { parseRosterDifferenceQuery } = await import('../../../server/utils/roster-read-query')
+  const { parseRosterDifferenceQuery } = await import('../../../layers/sme-roster/server/utils/roster-read-query')
   for (const args of [{}, { page: '3', pageSize: '7' }, { page: '200', pageSize: '5' }, { q: '合成（旧）名称', title: 'specialized_sme,little_giant' }, { status: 'confirmed_reason,confirmed_no_diff', direction: 'missing_in_miit,extra_in_miit' }, { reason: 'pending_review,moved_in', pageSize: '1' }, { q: 'does-not-exist' }]) {
     const query = new URLSearchParams(args as Record<string, string>).toString()
     expect(await api.rest('?' + query)).toEqual(reference(f.db, parseRosterDifferenceQuery(args)))
@@ -138,8 +138,8 @@ it('preserves REST filters counts deep pages evidence and the intentionally narr
 
 it('keeps title coverage history truncation and withdrawal fresh after application commits', async () => {
   const f = fixture(), api = await publicReads()
-  const { listRosterDifferences: reference } = await import('../../../lib/roster/enterprise-roster')
-  const { saveDecision102 } = await import('../../../server/utils/decision-lifecycle-102')
+  const { listRosterDifferences: reference } = await import('../../../layers/sme-roster/lib/roster/enterprise-roster')
+  const { saveDecision102 } = await import('../../../layers/sme-roster/server/utils/decision-lifecycle-102')
   const first = (await api.rest('?q=合成差异00&direction=missing_in_miit')).rows[0]
   const scope = { enterpriseId: first.enterpriseId, titleCode: 'specialized_sme' as const, direction: 'missing_in_miit' as const }
   const latest = saveDecision102(f.db, { ...scope, action: 'replace', expectedCurrentId: first.explanationId, idempotencyKey: 'synthetic132-replace', actor: { type: 'agent', id: 'synthetic132' }, basis: 'synthetic independent decision', ruleVersion: '1', effectiveAt: '2026-10-20T00:00:00.000Z', decision: { status: 'confirmed_no_diff', measureCode: 'none', verificationStatus: 'confirmed' } })
@@ -177,7 +177,7 @@ it('does not materialize unrelated raw archives when added synthetic payload siz
 
 it('preserves exact identity title partitions source conditions and no record outcomes on both public readers', async () => {
   const f = fixture(), api = await publicReads()
-  const { listRosterDifferences: reference } = await import('../../../lib/roster/enterprise-roster')
+  const { listRosterDifferences: reference } = await import('../../../layers/sme-roster/lib/roster/enterprise-roster')
   const uscc = '91330211255994457P'
   const evidence = (source: 'queryBusList', rdjb: string, conditions: PlatformLiveQueryResult['effectiveConditions'] = { uscc, combination: 'and' }): PlatformLiveQueryResult => ({
     source, status: 'no_record' as const, effectiveConditions: conditions,
@@ -224,7 +224,7 @@ it('preserves exact identity title partitions source conditions and no record ou
 it('bounds legacy key normalization by distinct raw keys while preserving public coverage history', async () => {
   let meter!: ReturnType<typeof coverageFunctionMeter>
   const f = fixture(db => { meter = coverageFunctionMeter(db) }), api = await publicReads()
-  const { listRosterDifferences: reference } = await import('../../../lib/roster/enterprise-roster')
+  const { listRosterDifferences: reference } = await import('../../../layers/sme-roster/lib/roster/enterprise-roster')
   const legacy = [' 91330211\u200b255994457p ', '91330211\t255994457p']
   const excluded = ['９１３３０２１１２５５９９４４５７ｐ', '91330211255994457p\0', 'archive:91330211255994457p\u200b']
   const names = ['name:合成差异00', 'name:合成差异01']

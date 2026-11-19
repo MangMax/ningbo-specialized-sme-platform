@@ -1,15 +1,16 @@
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
-import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { eq } from 'drizzle-orm'
-import { newJobId } from '../../../lib/job'
+import { newJobId } from '../../../layers/core/lib/job'
 import ExcelJS from 'exceljs'
 import { initializeDb, schema as s } from '../../../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 
 const dir = mkdtempSync(join(tmpdir(), 'task-export-121-'))
 const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
@@ -54,6 +55,24 @@ beforeAll(async () => {
 
 afterAll(async () => { await stop?.(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 
+it('discovers module and subgroup filters in development OpenAPI and lists all startup JobSpecs', async () => {
+  const contract = await readDevelopmentDiscovery()
+  const parameters = contract.paths['/api/task-center'].get.parameters
+  expect(parameters).toEqual(expect.arrayContaining([
+    expect.objectContaining({ name: 'tab', in: 'query', schema: { type: 'string', default: 'all' } }),
+    expect.objectContaining({ name: 'group', in: 'query', schema: { type: 'string' } }),
+  ]))
+  expect(contract.paths['/api/jobs/kinds'].get.responses['200']).toBeDefined()
+  const { kinds } = await read('/api/jobs/kinds', false)
+  expect(kinds.map((entry: { kind: string }) => entry.kind)).toEqual([
+    'current-roster-export', 'difference-snapshot', 'event-annual-correspondence', 'event-archive-candidates',
+    'ocr', 'platform-query-batch', 'reconcile', 'render-pages',
+  ])
+  const snapshot = await request('/api/jobs', { method: 'POST', headers, body: JSON.stringify({ kind: 'difference-snapshot' }) })
+  expect(snapshot.status).toBe(400)
+  expect(await snapshot.text()).toContain('dedicated difference-snapshots endpoint')
+}, 120000)
+
 it('discovers a real export in both tabs and downloads the named workbook through its safe summary', async () => {
   // Independent legacy seed in beforeAll has no batch, page or list number.
   const expectedDisplay = Object.freeze({
@@ -65,10 +84,10 @@ it('discovers a real export in both tabs and downloads the named workbook throug
   const id = await submit('first')
   const done = await terminal(id)
   expect(done).toMatchObject({ id, group: 'export', state: 'done', export: { titleCode: 'little_giant', ruleVersion: CURRENT_RULE_VERSION, artifact: { id, availability: 'available', filename: 'current-little_giant.xlsx' } } })
-  const exports = await read('/api/task-center?tab=export&titleCode=little_giant&state=done')
-  expect(exports).toMatchObject({ exportReady: true, total: 1, counts: { export: 1 } })
+  const exports = await read('/api/task-center?tab=sme-roster&group=export&titleCode=little_giant&state=done')
+  expect(exports).toMatchObject({ exportReady: true, total: 1, counts: { 'sme-roster': 1 } })
   expect(exports.rows.map((row: any) => row.id)).toEqual([id])
-  expect((await read('/api/task-center?tab=export&titleCode=innovative_sme')).rows).toEqual([])
+  expect((await read('/api/task-center?tab=sme-roster&group=export&titleCode=innovative_sme')).rows).toEqual([])
   expect((await read('/api/task-center?tab=all')).rows.map((row: any) => row.id)).toContain(id)
   const response = await request(done.export.artifact.downloadUrl, { headers })
   expect(response.status).toBe(200)
@@ -92,7 +111,7 @@ it('rechecks artifact availability and permissions without leaking raw results o
   expect(unauthorized.export).toMatchObject({ canDownload: false, canRegenerate: false, artifact: { filename: 'current-little_giant.xlsx', downloadUrl: '/api/job-artifacts/' + id } })
   expect((await request('/api/job-artifacts/' + id)).status).toBe(401)
   expect((await read('/api/task-center/' + id)).export.canDownload).toBe(true)
-  for (const path of ['/api/task-center?tab=export', '/api/task-center/' + id]) {
+  for (const path of ['/api/task-center?tab=sme-roster&group=export', '/api/task-center/' + id]) {
     const response = await request(path), body = await response.text()
     expect(response.headers.get('cache-control')).toBe('no-store')
     for (const secret of ['PRIVATE_', '/Users/', 'invalid.example', '"params"', '"raw"']) expect(body).not.toContain(secret)
@@ -206,7 +225,7 @@ it('default same-origin browser flow submits views cancels regenerates and downl
     await terminal(id)
     const summary = await browserRead('/api/task-center/' + id)
     expect(summary).toMatchObject({ state: 'done', export: { canDownload: true, canRegenerate: true } })
-    const list = await browserRead('/api/task-center?tab=export')
+    const list = await browserRead('/api/task-center?tab=sme-roster&group=export')
     expect(list.rows.some((row: any) => row.id === id)).toBe(true)
     const download = await request(summary.export.artifact.downloadUrl, { headers: browserHeaders })
     expect(download.status).toBe(200)

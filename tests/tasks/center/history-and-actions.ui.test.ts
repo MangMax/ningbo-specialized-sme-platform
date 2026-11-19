@@ -26,7 +26,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { defineComponent, h, reactive } from 'vue'
-import type { TaskList, TaskSummary } from '~~/lib/task-center'
+import type { TaskList, TaskSummary } from '#core/lib/task-center'
 
 // Nuxt injects these namespaced modules at build time; vitest runs on bare node
 // (see tests/setup.ts). Register the exact specifiers the generated imports use,
@@ -80,6 +80,7 @@ function exportTask(patch: Partial<TaskSummary> = {}, exportPatch: Partial<NonNu
     id: jobId('MW'),
     kind: 'current-roster-export',
     label: '专精特新“小巨人”导出',
+    module: 'sme-roster',
     group: 'export',
     state: 'done',
     createdAt: '2026-10-20T01:27:12.029Z',
@@ -141,7 +142,8 @@ function unknownTask(patch: Partial<TaskSummary> = {}): TaskSummary {
     id: jobId('LGC'),
     kind: 'legacy-import',
     label: 'legacy-import',
-    group: 'all' as TaskSummary['group'],
+    module: null,
+    group: 'all',
     state: 'running',
     export: undefined,
     outcome: null,
@@ -156,7 +158,7 @@ function listOf(rows: TaskSummary[], authorized = false): TaskList {
     total: rows.length,
     page: 1,
     pageSize: 25,
-    counts: { all: rows.length, ocr: 0, platform: rows.filter(r => r.group === 'platform').length, export: rows.filter(r => r.group === 'export').length },
+    counts: { all: rows.length, core: rows.filter(r => r.module === 'core').length, 'sme-roster': rows.filter(r => r.module === 'sme-roster').length },
     exportReady: true,
     authorized,
   }
@@ -207,19 +209,19 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 // of what these tests are about.
 async function autoRegisteredComponents() {
   const [PageHeader, NuxtLink, TablePagination, TableLoadingStatus, TableFailureState, TaskProgress, TaskDetail] = await Promise.all([
-    import('../../../components/PageHeader.vue'),
+    import('../../../layers/core/app/components/PageHeader.vue'),
     import('vue-router').then(m => m.RouterLink),
-    import('../../../components/TablePagination.vue'),
-    import('../../../components/TableLoadingStatus.vue'),
-    import('../../../components/TableFailureState.vue'),
-    import('../../../components/tasks/TaskProgress.vue'),
-    import('../../../components/tasks/TaskDetail.vue'),
+    import('../../../layers/core/app/components/TablePagination.vue'),
+    import('../../../layers/core/app/components/TableLoadingStatus.vue'),
+    import('../../../layers/core/app/components/TableFailureState.vue'),
+    import('../../../layers/core/app/components/tasks/TaskProgress.vue'),
+    import('../../../layers/sme-roster/app/components/tasks/TaskDetail.vue'),
   ])
   const component = (mod: { default: unknown }) => mod.default as ReturnType<typeof defineComponent>
   return {
     PageHeader: component(PageHeader), NuxtLink, TablePagination: component(TablePagination),
     TableLoadingStatus: component(TableLoadingStatus), TableFailureState: component(TableFailureState),
-    TaskProgress: component(TaskProgress), TaskDetail: component(TaskDetail),
+    TaskProgress: component(TaskProgress), RosterTaskDetail: component(TaskDetail),
   }
 }
 
@@ -289,7 +291,7 @@ async function mountPage(options: { attach?: boolean, viewport?: 'desktop' | 'mo
   restoreLayout.push(layout(options.viewport ?? 'desktop'))
   // The page's polling/watchers belong to the page instance; a module loaded once
   // is fine, but a test that remounts after "leaving" gets a fresh module too.
-  if (!pageModule || options.freshPage) pageModule = await import('../../../pages/tasks.vue')
+  if (!pageModule || options.freshPage) pageModule = await import('../../../layers/sme-roster/app/pages/tasks.vue')
   const { default: PagesTasks } = pageModule
   const components = await autoRegisteredComponents()
   const Host = defineComponent({ components: { RouterView }, template: '<RouterView />' })
@@ -298,6 +300,7 @@ async function mountPage(options: { attach?: boolean, viewport?: 'desktop' | 'mo
     routes: [
       { path: '/tasks', component: PagesTasks },
       { path: '/ocr', component: defineComponent({ render: () => h('div', '识别校对') }) },
+      { path: '/comparison', component: defineComponent({ render: () => h('div', '比对与核查') }) },
     ],
   })
   // Mount at the URL the test describes; afterwards the mounted router is the
@@ -418,6 +421,35 @@ function sheetButton(dialog: HTMLElement, name: RegExp): HTMLButtonElement {
   return match
 }
 
+it('按清单显示模块 Tab，并在名录模块内筛选导出任务', async () => {
+  const calls = installFetch(({ url, query }) => {
+    if (url.endsWith('/capabilities')) return capabilities
+    const filters = query as { tab: string; group?: string }
+    const rows = filters.tab === 'sme-roster' ? filters.group === 'export' ? [exportTask()] : [exportTask(), platformTask()] : state.list.rows
+    return json(listOf(rows, true))
+  })
+  const wrapper = await mountPage({ viewport: 'mobile' })
+  const tabs = wrapper.findAll('[role="tab"]')
+  expect(tabs.map(item => item.text().replace(/\d+$/, ''))).toEqual(['全部任务', '平台底座', '优质中小企业'])
+  expect(wrapper.text()).toContain('legacy-import')
+  const roster = tabs[2]!
+  await roster.trigger('mousedown', { button: 0 })
+  await settle()
+  expect(roster.attributes('aria-selected')).toBe('true')
+  expect(wrapper.text()).not.toContain('legacy-import')
+  const group = wrapper.get('[aria-label="任务分组"]')
+  await group.trigger('pointerdown', { button: 0, pointerType: 'mouse' })
+  await group.trigger('click')
+  await settle()
+  const exportGroup = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(option => option.textContent?.trim() === '导出')!
+  expect(exportGroup).toBeTruthy()
+  exportGroup.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  await settle()
+  expect(calls.filter(call => call.url === '/api/task-center').at(-1)?.query).toMatchObject({ tab: 'sme-roster', group: 'export' })
+  expect(wrapper.text()).not.toContain('平台批量查询')
+  expect(wrapper.text()).toContain('专精特新“小巨人”导出')
+})
+
 describe('同源任务页面操作', () => {
   it('列表兼容 authorized=false 不阻断详情已开放的重新生成能力', async () => {
     const calls = installFetch(({ url, method }) => {
@@ -426,7 +458,7 @@ describe('同源任务页面操作', () => {
       if (url.startsWith('/api/task-center/')) return json(state.detail)
       return json(listOf(state.list.rows, false))
     })
-    state.query = { tab: 'export', job: jobId('MW') }
+    state.query = { tab: 'sme-roster', group: 'export', job: jobId('MW') }
     await mountPage()
     await settle()
     const button = sheetButton(await waitForSheet(), /重新生成/)
@@ -442,7 +474,7 @@ describe('同源任务页面操作', () => {
       if (method === 'POST') return json({ jobId: jobId('RET') }, 202)
       return json(listOf(state.list.rows, true))
     })
-    state.query = { tab: 'export', job: jobId('MW') }
+    state.query = { tab: 'sme-roster', group: 'export', job: jobId('MW') }
     const wrapper = await mountPage({ attach: true })
     await settle()
     await waitForSheet()
@@ -471,13 +503,13 @@ describe('同源任务页面操作', () => {
     expect(document.body.textContent).not.toContain('清除授权')
   })
 
-  it('任务页不再提供临时新建导出入口，历史导出 tab 仍保留', async () => {
+  it('任务页在名录模块保留历史导出的二级筛选', async () => {
     installFetch(({ url }) => url.endsWith('/capabilities') ? capabilities : listRead(true))
     const wrapper = await mountPage()
     await settle()
     expect(wrapper.text()).not.toContain('发起新的名录导出')
     expect(wrapper.find('[data-testid="export-action"]').exists()).toBe(false)
-    expect(wrapper.find('[data-task-tab="export"]').exists()).toBe(true)
+    expect(wrapper.find('[data-task-tab="sme-roster"]').exists()).toBe(true)
   })
 
 })
@@ -638,7 +670,7 @@ describe('任务详情抽屉', () => {
     // The open task is not in the rows the current filter returned.
     state.detail = platformTask()
     installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf([exportTask()], true)))
-    state.query = { tab: 'export', job: jobId('PLT') }
+    state.query = { tab: 'sme-roster', group: 'export', job: jobId('PLT') }
     const wrapper = await mountPage({ attach: true, viewport: 'desktop' })
     const dialog = await waitForSheet()
     expect(document.querySelector(`[data-task-row="${jobId('PLT')}"]`)).toBeNull()
@@ -649,7 +681,7 @@ describe('任务详情抽屉', () => {
     expect(state.query.job).toBeUndefined()
     const active = document.activeElement as HTMLElement
     const selectedTab = document.querySelector<HTMLElement>('[data-slot="tabs-trigger"][data-state="active"]')!
-    expect(selectedTab.dataset.taskTab).toBe('export')
+    expect(selectedTab.dataset.taskTab).toBe('sme-roster')
     expect(active).toBe(selectedTab)
     expect(document.activeElement).not.toBe(document.body)
     expect(focusableButtons()).toContain(active)
@@ -881,7 +913,7 @@ describe('一次播报、一处确认', () => {
       return json(listOf(state.list.rows, true))
     })
     sessionStorage.setItem(EXPORT_KEY, JSON.stringify({ 'little_giant:initial': { clientRequestId: '7b7f0f2e-2a5c-4a33-9d8a-1c2b3d4e5f60', jobId: jobId('MW') } }))
-    state.query = { tab: 'export', job: jobId('MW') }
+    state.query = { tab: 'sme-roster', group: 'export', job: jobId('MW') }
     const wrapper = await mountPage({ attach: true })
     await settle()
     await waitForSheet()
@@ -977,7 +1009,7 @@ describe('caught task interaction reports', () => {
       'content-disposition': `attachment; filename="${state.detail.export!.artifact!.filename}"`,
       'x-request-id': 'artifact-response-180',
     } })))
-    state.query = { job: state.detail.id, tab: 'export' }
+    state.query = { job: state.detail.id, tab: 'sme-roster', group: 'export' }
     installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf([state.detail], true)))
     await mountPage({ attach: true })
     const dialog = await waitForSheet()
@@ -992,16 +1024,16 @@ it('navigates the snapshot result link to the task section and shows unfinished 
   state.detail = platformTask({ kind: 'difference-snapshot', label: '公布名单归档快照', outcome: null,
     snapshot: { enterprises: 2, requests: 3, rows: 5, unfinished: 1, truncated: false,
       positions: [{ enterpriseId: 12, source: 'queryList', rdjb: null, rows: null, page: 2 }] },
-    links: [{ label: '快照范围、计数与未完成位置', to: `/tasks?tab=platform&job=${platformTask().id}#snapshot-result` }],
+    links: [{ label: '快照范围、计数与未完成位置', to: `/tasks?tab=sme-roster&group=platform&job=${platformTask().id}#snapshot-result` }],
   })
-  state.query = { tab: 'platform', job: state.detail.id }
+  state.query = { tab: 'sme-roster', group: 'platform', job: state.detail.id }
   installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf([state.detail], true)))
   await mountPage({ attach: true })
   const dialog = await waitForSheet()
   const link = Array.from(dialog.querySelectorAll('a')).find(a => a.textContent === '快照范围、计数与未完成位置')!
   expect(link).toBeTruthy()
   link.click(); await flushPromises()
-  expect(routerRef.current!.currentRoute.value.fullPath).toBe(`/tasks?tab=platform&job=${state.detail.id}#snapshot-result`)
+  expect(routerRef.current!.currentRoute.value.fullPath).toBe(`/tasks?tab=sme-roster&group=platform&job=${state.detail.id}#snapshot-result`)
   const section = dialog.querySelector('#snapshot-result')!
   expect(section.textContent).toContain('本任务选定公布企业 · 2 家')
   expect(section.textContent).toContain('未完成 1 范围')

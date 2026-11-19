@@ -1,4 +1,6 @@
-import {differencePublicColumns} from '../../../lib/platform/difference-reference-target'
+import { createReviewedFixtureImportClient } from './fixtures/reviewed-announcement'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
+import {differencePublicColumns} from '../../../layers/sme-roster/lib/platform/difference-reference-target'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { nativeQueryRows, nativeRelationRows } from '../../platform/fixtures/native-evidence'
 import { initializeDb } from '../../../db/client'
@@ -10,13 +12,12 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { schema } from '../../../db'
-import { normalizeName } from '../../../lib/domain'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
+import { normalizeName } from '../../../layers/sme-roster/lib/domain'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 import {
   RosterImportApiError,
-  createRosterImportClient,
   type RosterImportRequest,
-} from '../../../lib/roster-import-client'
+} from '../../../layers/sme-roster/lib/roster-import-client'
 import {
   commitRosterImport,
   enterpriseExists,
@@ -26,9 +27,9 @@ import {
   rosterRowCounts,
   searchEnterpriseIdsByName,
   validateImportRequest,
-} from '../../../server/utils/roster-import'
-import { MCP_WRITE_TOOLS } from '../../../server/utils/mcp-auth'
-import { listDifferences, listEnterprises } from '../../../server/utils/mcp-roster'
+} from '../../../layers/sme-roster/server/utils/roster-import'
+import { MCP_WRITE_TOOLS } from '../../../server/mcp-access-policy'
+import { listDifferences, listEnterprises } from '../../../layers/sme-roster/server/utils/mcp-roster'
 import { startRosterApi as startWorkerRosterApi, executeNativeImport } from './fixtures/import-server'
 const startRosterApi: typeof startWorkerRosterApi = options => startWorkerRosterApi({ ...options, executeImport: options.executeImport ?? executeNativeImport })
 import { minimalPdf } from '../../support/minimal-pdf'
@@ -166,18 +167,16 @@ function seedEvent(
 function seedStoredFileHash(db: ReturnType<typeof makeDb>, relPath: string, sha256: string) {
   const filename = relPath.split('/').at(-1) ?? relPath
   const ext = filename.includes('.') ? filename.split('.').at(-1)!.toLowerCase() : ''
-  db.insert(schema.storedFile)
-    .values({ relPath, filename, ext, bytes: 1, sha256, categoryState: 'unset' })
-    .run()
+  createClassifiedFile(db, { relPath, filename, ext, bytes: 1, sha256 }, { categoryState: 'unset' })
 }
 
 async function withRosterHttp<T>(
   db: ReturnType<typeof makeDb>,
-  run: (client: ReturnType<typeof createRosterImportClient>) => Promise<T>,
+  run: (client: ReturnType<typeof createReviewedFixtureImportClient>) => Promise<T>,
 ): Promise<T> {
   const server = await startRosterApi({ db, apiToken: TOKEN })
   try {
-    return await run(createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN }))
+    return await run(createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db))
   } finally {
     await server.close()
   }
@@ -442,7 +441,7 @@ describe('出处重放记账不进入调用方逐项结果', () => {
   it('空事件经真实 HTTP 返回结构化错误且不写业务行', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const malformed = announcementRequest({ idempotencyKey: 'synthetic/null-event#sha256:stable' })
     malformed.payload.announcement!.records[0]!.events = [null as never]
     const before = rosterRowCounts(db)
@@ -468,7 +467,7 @@ describe('出处重放记账不进入调用方逐项结果', () => {
   it('已有匹配记录时空事件仍经真实 HTTP 返回结构化错误且批次失败', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const enterpriseId = seedEnterprise(db, {
       name: '合成计划企业有限公司',
       uscc: '91330211255994457P',
@@ -501,7 +500,7 @@ describe('出处重放记账不进入调用方逐项结果', () => {
   it('已有匹配事件遇到 evidence:[null] 时返回结构化出处错误且不写入', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const enterpriseId = seedEnterprise(db, { name: '合成空出处企业有限公司', uscc: '91330211255994457P' })
     const recordId = seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
     seedEvent(db, recordId, 'award', 2026, 1)
@@ -530,7 +529,7 @@ describe('出处重放记账不进入调用方逐项结果', () => {
   it('同批重复新事件合并遇到 evidence:[null] 时保留结构化出处错误且不写入', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const enterpriseId = seedEnterprise(db, { name: '合成重复新事件空出处企业', uscc: '91330211255994457P' })
     seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
     const before = rosterRowCounts(db)
@@ -562,7 +561,7 @@ describe('出处重放记账不进入调用方逐项结果', () => {
   it('commit、重试、replay 与批次读回隐藏内部目标快照，同时保留可重放记账', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const expectPublicItems = (items: Array<{ detail?: Record<string, unknown> }>) => {
       for (const item of items) {
         expect(item.detail).not.toHaveProperty('evidenceRepointTargets')
@@ -615,7 +614,7 @@ describe('出处重放记账不进入调用方逐项结果', () => {
   it('replay 指纹包含公告默认来源，来源改变时重新解析目标记录', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const jxjBase = evidencePlanRequest('synthetic/default-source-jxj', 'synthetic/default-source-A.pdf')
     const miitBase = evidencePlanRequest('synthetic/default-source-miit', 'synthetic/default-source-A.pdf', 'miit')
     const target = evidencePlanRequest(
@@ -1356,7 +1355,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   ] as const)('唯一既有企业的统代与名称写法合并重复新事件出处且顺序无关（%s）', async (_order, reverse) => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const name = '合成写法归组企业有限公司'
     const uscc = '91330211255994457P'
     const enterpriseId = seedEnterprise(db, { name, uscc })
@@ -1394,7 +1393,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('同名但不同 USCC 的既有企业各自写入事件和出处，不跨企业合并', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const name = '合成同名不同统代企业'
     const enterpriseA = seedEnterprise(db, { name, uscc: '91330211255994457P' })
     const enterpriseB = seedEnterprise(db, { name, uscc: '91330201753252106U' })
@@ -1422,7 +1421,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('重复事件落到有歧义的同名企业时返回冲突且不写入', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const name = '合成歧义同名企业'
     const enterpriseId = seedEnterprise(db, { name, uscc: '91330211255994457P' })
     seedEnterprise(db, { name, uscc: '91330201753252106U' })
@@ -1435,9 +1434,10 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     ]
 
     try {
-      const result = await client.commit(request)
-      expect(result.status).toBe('failed')
-      expect(result.items.some((item) => item.error?.code === 'enterprise_ambiguous')).toBe(true)
+      const staged = await client.stage(request)
+      if (staged.status !== 'staged') throw new Error(JSON.stringify(staged))
+      await expect(client.supplement(staged.intakeId, { sourceDigest: staged.sourceDigest, basis: '同名待核', rows: [{ action: 'same_subject', row: 0 }] }))
+        .rejects.toMatchObject({ status: 422 })
       expect(rosterRowCounts(db)).toEqual(before)
     } finally {
       await server.close()
@@ -1450,7 +1450,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   ] as const)('明确指向第二家 USCC 的记录与歧义 name-only 记录顺序无关地整批失败（%s）', async (_order, nameOnlyFirst) => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const name = '合成歧义顺序企业'
     seedEnterprise(db, { name, uscc: '91330211255994457P' })
     seedEnterprise(db, { name, uscc: '91330201753252106U' })
@@ -1478,15 +1478,10 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       )
       expect(rosterRowCounts(db)).toEqual(before)
 
-      const result = await client.commit(request)
-      expect(result.status).toBe('failed')
-      expect(result.items).toContainEqual(
-        expect.objectContaining({
-          ok: false,
-          error: expect.objectContaining({ code: 'enterprise_ambiguous' }),
-        }),
-      )
-      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      const staged = await client.stage(request)
+      if (staged.status !== 'staged') throw new Error(JSON.stringify(staged))
+      await expect(client.supplement(staged.intakeId, { sourceDigest: staged.sourceDigest, basis: '同名待核', rows: [{ action: 'same_subject', row: 0 }] }))
+        .rejects.toMatchObject({ status: 422 })
       expect(rosterRowCounts(db)).toEqual(before)
     } finally {
       await server.close()
@@ -1496,7 +1491,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('单条 name-only 记录命中多家同名企业时预检与提交均结构化拒绝', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const name = '合成单条歧义企业'
     seedEnterprise(db, { name, uscc: '91330211255994457P' })
     seedEnterprise(db, { name, uscc: '91330201753252106U' })
@@ -1513,12 +1508,10 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       )
       expect(rosterRowCounts(db)).toEqual(before)
 
-      const result = await client.commit(request)
-      expect(result.status).toBe('failed')
-      expect(result.items).toContainEqual(
-        expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'enterprise_ambiguous' }) }),
-      )
-      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      const staged = await client.stage(request)
+      if (staged.status !== 'staged') throw new Error(JSON.stringify(staged))
+      await expect(client.supplement(staged.intakeId, { sourceDigest: staged.sourceDigest, basis: '同名待核', rows: [{ action: 'same_subject', row: 0 }] }))
+        .rejects.toMatchObject({ status: 422 })
       expect(rosterRowCounts(db)).toEqual(before)
     } finally {
       await server.close()
@@ -1528,7 +1521,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('唯一名称写法仍可写入既有企业', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const name = '合成唯一名称导入企业'
     const enterpriseId = seedEnterprise(db, { name, uscc: '91330211255994457P' })
     const recordId = seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
@@ -1552,7 +1545,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('存在同名企业时明确 USCC 仍可写入对应既有企业', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const name = '合成明确统代导入企业'
     seedEnterprise(db, { name, uscc: '91330211255994457P' })
     const targetId = seedEnterprise(db, { name, uscc: '91330201753252106U' })
@@ -1580,7 +1573,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   ] as const)('空库同名混合 USCC/name-only 记录顺序无关地写成一个企业事件和两条出处（%s）', async (_order, nameOnlyFirst) => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const name = '合成空库批次归组企业'
     const uscc = '91330201753252106U'
     const explicit = {
@@ -1601,7 +1594,10 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       expect(preflight.preflight).toMatchObject({ add: 1, conflicts: [] })
       expect(rosterRowCounts(db)).toMatchObject({ enterprise: 0, record: 0, record_event: 0, record_evidence: 0 })
 
-      const result = await client.commit(request)
+      const result = await client.commit(request, [
+        { action: 'create', fields: { name: explicit.enterprise.name, uscc: explicit.enterprise.uscc } },
+        { action: 'same_subject', row: 0 },
+      ])
       expect(result.status, JSON.stringify(result)).toBe('committed')
       expect(result.summary.failed).toBe(0)
       expect(rosterRowCounts(db)).toMatchObject({ enterprise: 1, record: 1, record_event: 1, record_evidence: 2 })
@@ -1627,7 +1623,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   ] as const)('批内同名多 USCC 时 name-only 返回 enterprise_ambiguous 且整批不写（%s）', async (_order, nameOnlyFirst) => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const name = '合成批内多统代歧义企业'
     const explicitA = {
       enterprise: { name, uscc: '91330211255994457P' },
@@ -1655,12 +1651,10 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       )
       expect(rosterRowCounts(db)).toEqual(before)
 
-      const result = await client.commit(request)
-      expect(result.status).toBe('failed')
-      expect(result.items).toContainEqual(
-        expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'enterprise_ambiguous' }) }),
-      )
-      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      const staged = await client.stage(request)
+      if (staged.status !== 'staged') throw new Error(JSON.stringify(staged))
+      await expect(client.supplement(staged.intakeId, { sourceDigest: staged.sourceDigest, basis: '同名待核', rows: [{ action: 'same_subject', row: 0 }] }))
+        .rejects.toMatchObject({ status: 422 })
       expect(rosterRowCounts(db)).toEqual(before)
     } finally {
       await server.close()
@@ -1673,7 +1667,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   ] as const)('既有 USCC A 与批内 USCC B 是不同候选时 name-only 顺序无关地整批失败（%s）', async (_order, nameOnlyFirst) => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const name = '合成既有与批内统代混合候选企业'
     const enterpriseA = seedEnterprise(db, { name, uscc: '91330211255994457P' })
     const existingRecord = seedRecord(db, enterpriseA, 'specialized_sme', 'jxj')
@@ -1702,12 +1696,10 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       )
       expect(rosterRowCounts(db)).toEqual(before)
 
-      const result = await client.commit(request)
-      expect(result.status).toBe('failed')
-      expect(result.items).toContainEqual(
-        expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'enterprise_ambiguous' }) }),
-      )
-      expect(db.select().from(schema.importBatch).all().find((batch) => batch.id === result.batchId)?.status).toBe('failed')
+      const staged = await client.stage(request)
+      if (staged.status !== 'staged') throw new Error(JSON.stringify(staged))
+      await expect(client.supplement(staged.intakeId, { sourceDigest: staged.sourceDigest, basis: '同名待核', rows: [{ action: 'same_subject', row: 0 }] }))
+        .rejects.toMatchObject({ status: 422 })
       expect(rosterRowCounts(db)).toEqual(before)
     } finally {
       await server.close()
@@ -1817,7 +1809,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('空库中仅一个 name-only 记录仍可按名称新建企业', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const name = '合成空库单名称企业'
     const request = announcementRequest({ idempotencyKey: 'synthetic/batch-identity/single-name-only' })
     request.payload.announcement!.records = [
@@ -1841,7 +1833,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('客户端走完整个回放序列，结果与直接调核心逻辑一致', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const request = announcementRequest({ idempotencyKey: 'http/replay#sha256:abc' })
 
     try {
@@ -1867,7 +1859,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       expect(replay.summary).toEqual(committed.summary)
       expect(rosterRowCounts(db)).toEqual(after)
 
-      // 4. 失败恢复：坏载荷 → failed（一行不写）；修好后以同一键重试 → committed。
+      // 4. 补充失败不写业务。更正原行须提交新版本。
       const broken = announcementRequest({ idempotencyKey: 'http/recover#sha256:abc' })
       ;(broken.payload.announcement!.records[0] as { titleCode: string }).titleCode = 'nope'
       const failed = await client.commit(broken)
@@ -1875,11 +1867,11 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
       expect(failed.items.some((i) => i.error?.code === 'title_unknown')).toBe(true)
       expect(rosterRowCounts(db)).toEqual(after)
 
-      const fixed = announcementRequest({ idempotencyKey: 'http/recover#sha256:abc' })
+      const fixed = announcementRequest({ idempotencyKey: 'http/recover#sha256:corrected' })
       fixed.payload.announcement!.records[0]!.events = [{ eventType: 'award', year: 2026, batchSeq: 1 }]
       const recovered = await client.commit(fixed)
       expect(recovered.status).toBe('committed')
-      expect(recovered.batchId).toBe(failed.batchId)
+      expect(recovered.batchId).not.toBe(failed.batchId)
       // 同一 record 上：复核(replay 批) + 认定(recover 批)—— 事件一条不丢。
       expect(rosterRowCounts(db).record_event).toBe(2)
 
@@ -1916,7 +1908,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('公告事件出处保留 PDF 正整数页码,并允许非 PDF 的缺省 / null 页码', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const request = announcementRequest({ idempotencyKey: 'http/stable-evidence-pages#sha256:abc' })
     request.payload.announcement!.records[0]!.events![0]!.evidence = [
       { sourceFile: 'synthetic/notice.pdf', attachment: '附件', listNo: 1, page: 7 },
@@ -1968,7 +1960,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
         writeFileSync(sourcePath, entry.sourceState === 'readable' ? minimalPdf({ pages: 23 }) : 'not a PDF')
       }
       const server = await startRosterApi({ db, apiToken: TOKEN, filesDir })
-      const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+      const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
       const request = announcementRequest({
         idempotencyKey: `http/import-page-count/${entry.name}`,
         sourceIdentity: sourceFile,
@@ -2011,7 +2003,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     mkdirSync(join(sourcePath, '..'), { recursive: true })
     writeFileSync(sourcePath, minimalPdf({ pages: 23 }))
     const server = await startRosterApi({ db, apiToken: TOKEN, filesDir })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const request = announcementRequest({
       idempotencyKey: 'http/import-page-count/boundary-23',
       sourceIdentity: sourceFile,
@@ -2084,7 +2076,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('出处指针显式重放会清空 DOCX 旧页码并保留 PDF 实际页码', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     for (const path of [
       'synthetic/legacy/notice.docx',
       'synthetic/legacy/first-write.docx',
@@ -2142,7 +2134,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('重复事件提交共用非 PDF 页码清空与 PDF 页码保留规则', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     for (const path of [
       'synthetic/legacy/duplicate.docx',
       'synthetic/legacy/duplicate-first-write.docx',
@@ -2199,7 +2191,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('旧路径和目标路径有相同 SHA 时预检、commit 与 replay 才能收敛', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const oldPath = 'synthetic/hash-match/old.pdf'
     const targetPath = 'synthetic/hash-match/new.pdf'
     seedStoredFileHash(db, oldPath, SAME_SOURCE_SHA)
@@ -2247,7 +2239,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   ] as const)('旧/目标内容不能证明相同则保留旧出处并返回冲突（%s）', async (_case, oldSha, targetSha, registerOld, registerTarget, errorCode, oldSourceIsLogical) => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const oldPath = `synthetic/hash-conflict/${_case}/old.pdf`
     const targetPath = `synthetic/hash-conflict/${_case}/new.pdf`
     if (registerOld) seedStoredFileHash(db, oldPath, oldSha)
@@ -2297,7 +2289,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   ] as const)('重复坐标的既有出处按计划只改一次，commit 与 replay 不反向切换（%s）', async (_order, sources) => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     for (const path of ['synthetic/source-a.pdf', 'synthetic/source-b.pdf']) seedStoredFileHash(db, path, SAME_SOURCE_SHA)
     const original = announcementRequest({
       idempotencyKey: 'synthetic/source-a-existing#sha256:stable-content',
@@ -2359,7 +2351,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   ] as const)('同载荷中新事件的重复坐标合并不同来源且去重，顺序无关（%s）', async (_order, sources) => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const enterpriseId = seedEnterprise(db, {
       name: '新事件重复坐标企业',
       uscc: '91330206793007818K',
@@ -2414,7 +2406,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   ] as const)('跨重复 records 项的新事件出处也按整份载荷合并（%s）', async (_order, sources) => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const enterpriseId = seedEnterprise(db, { name: '跨记录新事件企业', uscc: '913302110000000098' })
     const recordId = seedRecord(db, enterpriseId, 'specialized_sme', 'jxj')
     const request = announcementRequest({
@@ -2455,7 +2447,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('同路径 no-op 不占用后续目标：预检、commit、replay 同计一行', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     for (const path of ['synthetic/source-a.docx', 'synthetic/source-b.docx']) seedStoredFileHash(db, path, SAME_SOURCE_SHA)
     const original = announcementRequest({
       idempotencyKey: 'synthetic/source-a#sha256:stable-content',
@@ -2512,7 +2504,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('同一出处有多个不同目标路径时按歧义跳过：预检、commit、replay 均不改行', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     for (const path of [
       'synthetic/source-a-conflict.docx',
       'synthetic/source-b-conflict.docx',
@@ -2567,7 +2559,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('跨重复记录的不同目标路径也按歧义跳过：计划和两种写入不改行', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     for (const path of [
       'synthetic/source-a-record-conflict.docx',
       'synthetic/source-b-record-conflict.docx',
@@ -2618,7 +2610,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('PDF 出处仍按实际页号精确匹配', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const original = announcementRequest({
       idempotencyKey: 'synthetic/pdf-page-seven#sha256:stable-content',
       sourceIdentity: 'synthetic/pdf-page-seven',
@@ -2653,7 +2645,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
   it('非 PDF 页码归一后出处坐标不唯一时不误收敛', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     const original = announcementRequest({
       idempotencyKey: 'synthetic/legacy/ambiguous#sha256:stable-content',
       sourceIdentity: 'synthetic/legacy/ambiguous',
@@ -2700,7 +2692,7 @@ describe('真实 HTTP：预检 → 提交 → 重放 → 失败恢复 → 完整
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
     try {
-      const client = createRosterImportClient({ baseUrl: server.baseUrl, token: 'wrong' })
+      const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: 'wrong' }, db)
       await expect(client.commit(announcementRequest())).rejects.toBeInstanceOf(RosterImportApiError)
       await expect(client.commit(announcementRequest())).rejects.toMatchObject({ status: 401 })
     } finally {
@@ -2821,7 +2813,7 @@ describe('大载荷：MB 级导出快照经真实 HTTP 提交', () => {
   it('6273 行 × 数十列的载荷能完整收到并落库（实测字节数）', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     try {
       // 实测最大一张导出表 6273 行；rawFields 键 = 1-based 列号字符串、只留非空值。
       const rows = Array.from({ length: 6273 }, (_, i) => {
@@ -3113,9 +3105,9 @@ describe('读面：list_enterprises / list_differences', () => {
   it('企业总表去重、按现名与已确认曾用名都能搜到、未确认别名不命中', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     try {
-      await client.commit({
+      const result = await client.commit({
         idempotencyKey: 'read/enterprises#sha256:r1',
         sourceKind: 'announcement',
         sourceIdentity: 'jxj/announcement/2026/1/读面.pdf',
@@ -3161,6 +3153,7 @@ describe('读面：list_enterprises / list_differences', () => {
         },
       })
 
+      expect(result.status, JSON.stringify(result)).toBe('committed')
       const all = listEnterprises(db, {})
       expect(all.counts.total).toBe(2)
       const target = all.rows.find((r) => r.name === '宁波读面企业有限公司')!
@@ -3185,7 +3178,7 @@ describe('读面：list_enterprises / list_differences', () => {
   it('差异取「当前解释」（recordedAt 最新），原因与措施成对', async () => {
     const db = makeDb()
     const server = await startRosterApi({ db, apiToken: TOKEN })
-    const client = createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+    const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
     try {
       await client.commit({
         idempotencyKey: 'read/differences#sha256:r2',

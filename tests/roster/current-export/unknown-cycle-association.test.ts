@@ -4,7 +4,7 @@ import { afterAll, beforeEach, expect, it } from 'vitest'
 import { year as y } from './fixtures/specialized-export'
 import { qualificationReferenceCases } from "../current-qualification/fixtures/reference-cases"
 import { currentQualificationWorkbookAssertions, type EffectiveQualificationCase } from './assertions/qualification'
-import { readCurrentCandidate } from '../../../lib/roster/current-qualification'
+import { readCurrentCandidate } from '../../../layers/sme-roster/lib/roster/current-qualification'
 
 const f = nativeWorkbookFixture()
 beforeEach(async () => { await f.resetBusiness() }, 90000)

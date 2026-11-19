@@ -3,8 +3,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { ref, watch } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useQuery } from '@pinia/colada'
-import IndexPage from '../../../pages/index.vue'
-import FilesPage from '../../../pages/files.vue'
+import RosterPage from '../../../layers/sme-roster/app/pages/roster.vue'
+import FilesPage from '../../../layers/core/app/pages/files.vue'
 
 vi.mock('@pinia/colada', () => ({ useQuery: vi.fn(), useQueryCache: () => ({ invalidateQueries: vi.fn() }) }))
 vi.mock('vue-router', () => ({ onBeforeRouteLeave: vi.fn() }))
@@ -13,11 +13,11 @@ const failure = { props: ['description'], emits: ['retry'], template: '<button d
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks() })
 
 describe.each([
-  { name: '企业列表', component: IndexPage, namespace: 'ledger-enterprises', size: 25 },
-  { name: '文件列表', component: FilesPage, namespace: 'files', size: 50 },
-])('$name retained page behavior', ({ component, namespace, size }) => {
+  { name: '企业列表', path: '/roster', component: RosterPage, namespace: 'ledger-enterprises', size: 25 },
+  { name: '文件列表', path: '/files', component: FilesPage, namespace: 'files', size: 50 },
+])('$name retained page behavior', ({ path, component, namespace, size }) => {
   it('retains successful rows and pagination after failure, then switches both on explicit retry', async () => {
-    vi.stubGlobal('useRoute', () => ({ path: '/', fullPath: '/', query: {} }))
+    vi.stubGlobal('useRoute', () => ({ path, fullPath: path, query: {} }))
     vi.stubGlobal('useRouter', () => ({ replace: vi.fn(async () => {}) }))
     vi.stubGlobal('useHead', vi.fn())
     vi.stubGlobal('definePageMeta', vi.fn())
@@ -46,7 +46,7 @@ describe.each([
     const view = mount(component as any, { global: { stubs: {
       TablePagination: pagination, TableFailureState: failure, TableLoadingStatus: true,
       PageHeader: { template: '<header><slot/><slot name="actions"/></header>' },
-      EnterpriseDrawer: true, EnterpriseDifferenceRefresh: true, MultiSelectFilter: true,
+      RosterEnterpriseDrawer: true, RosterEnterpriseDifferenceRefresh: true, MultiSelectFilter: true,
       EditFileDialog: true, DeleteFileDialog: true, UploadDialog: true, PdfViewDialog: true,
       FileSegmentsEditor: true, NuxtLink: { template: '<a><slot/></a>' },
     } } })

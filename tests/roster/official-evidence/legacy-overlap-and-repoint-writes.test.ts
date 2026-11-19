@@ -1,3 +1,6 @@
+import { supplementAnnouncement } from '../../../layers/sme-roster/server/utils/announcement-intake'
+import { reviewFixtureRows } from '../imports/fixtures/reviewed-announcement'
+import { completeInProcessIntake } from '../imports/fixtures/in-process-intake'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -9,17 +12,22 @@ import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import * as schema from '../../../db/schema'
-import type { OfficialPublishedRow, RosterImportRecord, RosterImportPayload, RosterImportRequest } from '../../../lib/roster-import-client'
-import { commitRosterImport, preflightRosterImport } from '../../../server/utils/roster-import'
-import { readExactEvidence } from '../../../server/utils/roster-evidence-correction'
-import { appendOfficialEvidenceRevision } from '../../../server/utils/official-evidence'
+import type { OfficialPublishedRow, RosterImportRecord, RosterImportPayload, RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
+import { commitRosterImport, preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { readExactEvidence } from '../../../layers/sme-roster/server/utils/roster-evidence-correction'
+import { appendOfficialEvidenceRevision } from '../../../layers/sme-roster/server/utils/official-evidence'
 
-type Execute = typeof import('../../../server/utils/import-execution')['importExecutor']['execute']
+type Execute = typeof import('../../../layers/sme-roster/server/utils/import-execution')['importExecutor']['execute']
 const current = vi.hoisted((): { db?: BetterSQLite3Database<typeof schema>; filesDir: string } => ({ filesDir: '' }))
 vi.mock('@db', () => ({ useDb: () => { if (!current.db) throw new Error('Synthetic database not initialized'); return current.db } }))
 // Only off-process admission is replaced. Actual H3 routes, validation, preflight,
 // final-set planner and IMMEDIATE commit execute unchanged against real SQLite.
-vi.mock('../../../server/utils/import-execution', () => ({ importExecutor: { execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
+vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: {
+  stage: async (db: Parameters<Execute>[0], request: Parameters<Execute>[2], errors: NonNullable<Parameters<Execute>[3]>) => {
+    const { stageAnnouncement } = await import('../../../layers/sme-roster/server/utils/announcement-intake')
+    return stageAnnouncement(db as Parameters<typeof stageAnnouncement>[0], request, errors)
+  },
+  execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
 const closes: (() => void | Promise<void>)[] = []
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close() })
 afterAll(() => { vi.unstubAllGlobals() })
@@ -27,8 +35,8 @@ const router = createRouter()
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-r1', filesDir: current.filesDir }))
-  router.post('/api/roster/import/preflight', (await import('../../../server/api/roster/import/preflight.post')).default)
-  router.post('/api/roster/import/commit', (await import('../../../server/api/roster/import/commit.post')).default)
+  router.post('/api/roster/import/preflight', (await import('../../../layers/sme-roster/server/api/roster/import/preflight.post')).default)
+  router.post('/api/roster/import/commit', (await import('../../../layers/sme-roster/server/api/roster/import/commit.post')).default)
 })
 const responseSchema = z.object({ status: z.string().optional(), batchId: z.number().optional(), preflight: z.object({ conflicts: z.array(z.object({ error: z.object({ code: z.string() }) })), officialEvidencePlanHash: z.string().optional() }).optional() }).passthrough()
 const text = 'synthetic official source\n', padded = 'different padded file bytes'
@@ -45,7 +53,8 @@ async function fixture() {
     INSERT INTO record_event(id,record_id,event_type,year) VALUES(1,1,'award',2021),(2,2,'award',2024);
     INSERT INTO record_evidence(id,record_event_id,source_file,list_no) VALUES(1,1,'other.txt',1);
     INSERT INTO source_document(id,source,title,path) VALUES(1,'jxj','Declared publication','notice.txt');
-    INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(1,'notice.txt','notice.txt','txt','jxj','announcement','specialized_sme',${Buffer.byteLength(text)},'${digest(text)}','synthetic');`)
+    INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(1,'notice.txt','notice.txt','txt',${Buffer.byteLength(text)},'${digest(text)}','synthetic');
+    INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (1, 'jxj', 'announcement', 'specialized_sme');`)
   current.db = db; current.filesDir = filesDir
   const server = createServer(toNodeListener(createApp().use(router)))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -56,10 +65,11 @@ async function fixture() {
   const record = (name: 'Alpha' | 'Beta', ev = evidence(), year = name === 'Alpha' ? 2022 : 2023): RosterImportRecord => ({ enterprise: { name, ...(name === 'Beta' ? { uscc: '91330211255994457P' } : {}) }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year, evidence: [ev] }] })
   const announcement = (records: RosterImportRecord[]): RosterImportPayload => ({ announcement: { sourceDocument: { source: 'jxj', title: 'Declared publication' }, records } })
   const request = (payload: RosterImportPayload, key = 'synthetic-r1'): RosterImportRequest => ({ idempotencyKey: key, sourceKind: 'announcement', sourceIdentity: 'synthetic-r1', payload })
-  const post = async (action: 'preflight' | 'commit', body: RosterImportRequest) => {
+  const post = async (action: 'preflight' | 'commit', body: RosterImportRequest, completeIntake = true) => {
     const response = await fetch(`http://127.0.0.1:${address.port}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer synthetic-r1', 'content-type': 'application/json' }, body: JSON.stringify(body) })
     expect(response.status).toBe(200)
-    return responseSchema.parse(await response.json())
+    const result = await response.json()
+    return responseSchema.parse(completeIntake ? await completeInProcessIntake(db, result, body, filesDir) : result)
   }
   const commit = async (input: RosterImportRequest) => {
     const plan = await post('preflight', input); expect(plan.preflight?.conflicts).toEqual([])
@@ -188,7 +198,8 @@ for (const reverse of [false, true]) it(`R1 F2 typed and legacy duplicate normal
 
 type OfficialFixture = Awaited<ReturnType<typeof fixture>>
 function seedRepoint(f: OfficialFixture, from = 'other.txt', known?: 'section' | 'declaration') {
-  f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(2,'other.txt','other.txt','txt','jxj','announcement','specialized_sme',?,?,'synthetic')").run(Buffer.byteLength(text), digest(text))
+  f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(2,'other.txt','other.txt','txt',?,?,'synthetic')").run(Buffer.byteLength(text), digest(text))
+  f.sqlite.exec("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (2, 'jxj', 'announcement', 'specialized_sme')")
   f.sqlite.prepare('INSERT INTO record_evidence(id,record_event_id,source_file,list_no) VALUES(2,2,?,10)').run(from)
   if (known) {
     f.sqlite.exec("INSERT INTO import_batch(id,idempotency_key,source_kind,source_identity,created_at) VALUES(1,'seed','announcement','synthetic','synthetic')")
@@ -304,11 +315,16 @@ it("S1 current same owner cannot excuse an incoming unknown repoint", async () =
 it("S1 repoint locator drift after preflight invalidates the common locked plan hash", async () => {
   const f = await fixture(); seedRepoint(f)
   const input = f.request({ ...legacyRepoint(f, 'notice.txt'), officialEvidenceAppends: [f.append(f.row({ listNo: 30 }))] })
-  const plan = await f.post('preflight', input); expect(plan.preflight?.conflicts).toEqual([])
+  const stage = z.object({ status: z.literal('staged'), intakeId: z.number(), sourceDigest: z.string() }).parse(await f.post('commit', input, false))
+  const review = reviewFixtureRows(f.db, stage.sourceDigest, input)
+  const plan = await supplementAnnouncement(f.db, stage.intakeId, { ...review, preflight: true }, f.filesDir)
+  expect(plan.conflicts).toEqual([])
+  expect(plan.officialEvidencePlanHash).toMatch(/^[a-f0-9]{64}$/)
   writeFileSync(join(f.filesDir, 'third.txt'), text)
-  f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(3,'third.txt','third.txt','txt','jxj','announcement','specialized_sme',?,?,'synthetic')").run(Buffer.byteLength(text), digest(text))
+  f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(3,'third.txt','third.txt','txt',?,?,'synthetic')").run(Buffer.byteLength(text), digest(text))
+  f.sqlite.exec("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (3, 'jxj', 'announcement', 'specialized_sme')")
   f.sqlite.exec("UPDATE record_evidence SET source_file='third.txt' WHERE id=2")
-  const saved = await f.post('commit', { ...input, payload: { ...input.payload, officialEvidencePlanHash: plan.preflight?.officialEvidencePlanHash } })
+  const saved = await supplementAnnouncement(f.db, stage.intakeId, { ...review, officialEvidencePlanHash: plan.officialEvidencePlanHash }, f.filesDir)
   expect(saved.status).toBe('failed')
   expect(saved).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'plan_mismatch' }) })]) })
   expect(f.sqlite.prepare('SELECT source_file FROM record_evidence WHERE id=2').get()).toEqual({ source_file: 'third.txt' })
@@ -317,9 +333,13 @@ it("S1 repoint locator drift after preflight invalidates the common locked plan 
 it("S1 later SQLite failure rolls back an already executed legacy repoint", async () => {
   const f = await fixture(); seedRepoint(f); const before = businessSnapshot(f)
   const input = f.request({ ...legacyRepoint(f, 'notice.txt'), officialEvidenceAppends: [f.append(f.row({ listNo: 30 }))] })
-  const plan = await f.post('preflight', input); expect(plan.preflight?.conflicts).toEqual([])
+  const stage = z.object({ status: z.literal('staged'), intakeId: z.number(), sourceDigest: z.string() }).parse(await f.post('commit', input, false))
+  const review = reviewFixtureRows(f.db, stage.sourceDigest, input)
+  const plan = await supplementAnnouncement(f.db, stage.intakeId, { ...review, preflight: true }, f.filesDir)
+  expect(plan.conflicts).toEqual([])
+  expect(plan.officialEvidencePlanHash).toMatch(/^[a-f0-9]{64}$/)
   f.sqlite.exec("CREATE TRIGGER synthetic_failure BEFORE INSERT ON official_evidence_row_revision BEGIN SELECT RAISE(ABORT,'synthetic repoint rollback'); END")
-  const saved = await f.post('commit', { ...input, payload: { ...input.payload, officialEvidencePlanHash: plan.preflight?.officialEvidencePlanHash } })
+  const saved = await supplementAnnouncement(f.db, stage.intakeId, { ...review, officialEvidencePlanHash: plan.officialEvidencePlanHash }, f.filesDir)
   expect(saved.status).toBe('failed'); expect(businessSnapshot(f)).toEqual(before)
 })
 it("S1 historical known capture hash stays intact during a live equal-content locator move", async () => {

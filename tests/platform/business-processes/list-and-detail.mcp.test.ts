@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterAll,beforeAll,expect,it,vi } from 'vitest'
 import { schema } from '../../../db'
 import { initializeDb } from '../../../db/client'
-import { getTargetBusinessProcess,listTargetBusinessProcesses } from '../../../server/utils/platform-business-processes-target'
+import { getTargetBusinessProcess,listTargetBusinessProcesses } from '../../../layers/sme-roster/server/utils/platform-business-processes-target'
 import { submitNativePlatformQuery } from '../fixtures/native-query'
 
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
@@ -13,8 +13,8 @@ const dir = mkdtempSync(join(tmpdir(), 'business-processes-mcp-'))
 const dbPath = join(dir, 'business.sqlite')
 vi.stubEnv('NUXT_DB_PATH', dbPath)
 const db = initializeDb({ create: true, dbPath })
-let listTool: typeof import('../../../server/mcp/tools/list_platform_business_processes').default
-let detailTool: typeof import('../../../server/mcp/tools/get_platform_business_process').default
+let listTool: typeof import('../../../layers/sme-roster/server/mcp/tools/list_platform_business_processes').default
+let detailTool: typeof import('../../../layers/sme-roster/server/mcp/tools/get_platform_business_process').default
 let recordId = 0
 
 beforeAll(async () => {
@@ -26,8 +26,8 @@ beforeAll(async () => {
       rawFields: { id: 'SQ-MCP-READ', qymc: enterprise.name, tyshxydm: enterprise.usccNorm, sblx: '复核', year: '2023', sqsj: '2023-02-01', cszt: '终审通过', whpc: '2023-2', personuuid: '第三批', szsfmc: '浙江省', unknownSensitiveField: 'PRIVATE-MCP-MARKER' } }],
   })
   recordId = written.observations[0]!.recordId!
-  listTool = (await import('../../../server/mcp/tools/list_platform_business_processes')).default
-  detailTool = (await import('../../../server/mcp/tools/get_platform_business_process')).default
+  listTool = (await import('../../../layers/sme-roster/server/mcp/tools/list_platform_business_processes')).default
+  detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_business_process')).default
 })
 afterAll(() => {
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true })

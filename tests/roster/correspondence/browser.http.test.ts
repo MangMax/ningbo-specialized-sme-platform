@@ -7,8 +7,8 @@ import { createApp, toNodeListener, defineEventHandler } from 'h3'
 import { afterAll, expect, it, vi } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { browserCorrespondenceRoute } from '../../../server/utils/browser-correspondence'
-import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
+import { browserCorrespondenceRoute } from '../../../layers/sme-roster/server/utils/browser-correspondence'
+import { handleRecordCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-api'
 
 const dir = mkdtempSync(join(tmpdir(), 'browser-correspondence-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'test.db') })

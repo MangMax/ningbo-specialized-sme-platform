@@ -1,7 +1,7 @@
 import { afterAll, expect, it } from 'vitest'
 import { specializedExportFixture, year } from '../current-export/fixtures/specialized-export'
-import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
-import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
+import { listCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import { readCurrentQualificationAssessment } from '../../../layers/sme-roster/lib/roster/current-qualification'
 const f = specializedExportFixture()
 afterAll(() => f.close())
 

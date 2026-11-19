@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { initializeDb, schema } from '../../../db/client'
-import { createTargetCurrentCandidateReader } from '../../../lib/roster/current-candidates-target'
-import { normalizeUscc } from '../../../lib/domain'
+import { createTargetCurrentCandidateReader } from '../../../layers/sme-roster/lib/roster/current-candidates-target'
+import { normalizeUscc } from '../../../layers/sme-roster/lib/domain'
 import { captureReturnedTitles } from './fixtures/returned-titles'
 
 const cleanups: (() => void)[] = []

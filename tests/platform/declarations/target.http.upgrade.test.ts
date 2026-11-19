@@ -15,8 +15,8 @@ const statements: { sql: string; params: unknown[] }[] = []
 let fixture: ReturnType<typeof ready>, old: Database.Database
 let legacy: ReturnType<typeof drizzle<typeof legacySchema>>
 let request: ReturnType<typeof toWebHandler>
-let listTool: typeof import('../../../server/mcp/tools/list_platform_declarations')['default']
-let detailTool: typeof import('../../../server/mcp/tools/get_platform_declaration')['default']
+let listTool: typeof import('../../../layers/sme-roster/server/mcp/tools/list_platform_declarations')['default']
+let detailTool: typeof import('../../../layers/sme-roster/server/mcp/tools/get_platform_declaration')['default']
 const json = (value: unknown) => JSON.parse(JSON.stringify(value))
 async function get(path = '') {
   const response = await request(new Request(`http://localhost/api/platform/${path}`))
@@ -44,12 +44,12 @@ beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('createError', createError)
   const router = createRouter()
-    .get('/api/platform/declarations', (await import('../../../server/api/platform/declarations.get')).default)
-    .get('/api/platform/declarations/:recordId', (await import('../../../server/api/platform/declarations/[recordId].get')).default)
-    .get('/api/platform/filter-options', (await import('../../../server/api/platform/filter-options.get')).default)
+    .get('/api/platform/declarations', (await import('../../../layers/sme-roster/server/api/platform/declarations.get')).default)
+    .get('/api/platform/declarations/:recordId', (await import('../../../layers/sme-roster/server/api/platform/declarations/[recordId].get')).default)
+    .get('/api/platform/filter-options', (await import('../../../layers/sme-roster/server/api/platform/filter-options.get')).default)
   request = toWebHandler(createApp().use(router))
-  listTool = (await import('../../../server/mcp/tools/list_platform_declarations')).default
-  detailTool = (await import('../../../server/mcp/tools/get_platform_declaration')).default
+  listTool = (await import('../../../layers/sme-roster/server/mcp/tools/list_platform_declarations')).default
+  detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_declaration')).default
 }, 60000)
 afterAll(() => {
   if (process.env.APPLY_STORED_EVIDENCE_DIR) writeFileSync(join(process.env.APPLY_STORED_EVIDENCE_DIR, 'HTTP-MCP-SQL.json'), JSON.stringify(statements, null, 2))

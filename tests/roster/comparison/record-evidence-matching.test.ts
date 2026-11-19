@@ -1,7 +1,7 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { listPlatformQueries } from '../../../lib/platform/read'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { RosterImportPlatformQuery, RosterImportRelation } from '../../../lib/roster-import-client'
+import { listPlatformQueries } from '../../../layers/sme-roster/lib/platform/read'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { RosterImportPlatformQuery, RosterImportRelation } from '../../../layers/sme-roster/lib/roster-import-client'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -9,8 +9,8 @@ import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { getRecordComparison, previewRecordCorrespondenceImpact, queryProofFingerprint } from '../../../server/utils/record-comparison'
-import { commitRecordCorrespondences, preflightRecordCorrespondences, type CorrespondenceOperation } from '../../../server/utils/record-correspondence'
+import { getRecordComparison, previewRecordCorrespondenceImpact, queryProofFingerprint } from '../../../layers/sme-roster/server/utils/record-comparison'
+import { commitRecordCorrespondences, preflightRecordCorrespondences, type CorrespondenceOperation } from '../../../layers/sme-roster/server/utils/record-correspondence'
 
 const dirs: string[] = []
 function fixture() {

@@ -3,8 +3,8 @@ import {
   buildLittleGiantImportReport,
   buildLittleGiantImportRequest,
   LITTLE_GIANT_SOURCE_FILE,
-} from '../../../lib/roster/little-giant-import'
-import { parseLittleGiantWorkbook } from '../../../lib/roster/little-giant-workbook'
+} from '../../../layers/sme-roster/lib/roster/little-giant-import'
+import { parseLittleGiantWorkbook } from '../../../layers/sme-roster/lib/roster/little-giant-workbook'
 import { buildLittleGiantWorkbookBuffer } from './fixtures/workbook'
 
 /**

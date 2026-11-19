@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { confirmedAnnualStep, orderedAnnualSteps, type AnnualTimelineView, type AnnualTimelineStep } from '../../../lib/roster/annual-process-presentation'
+import { confirmedAnnualStep, orderedAnnualSteps, type AnnualTimelineView, type AnnualTimelineStep } from '../../../layers/sme-roster/lib/roster/annual-process-presentation'
 
 it('refuses a confirmed marker without an identified source generation or without the current latest step', () => {
   const view = { eventId: 7, generation: '', latestStepId: 'latest', qualification: { eventId: 7, generation: '', stepId: 'latest', status: 'confirmed' } } as AnnualTimelineView

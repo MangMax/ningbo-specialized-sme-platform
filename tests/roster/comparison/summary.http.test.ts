@@ -1,4 +1,6 @@
 import { executeNativeImport } from '../imports/fixtures/import-server'
+import { reviewFixtureRows } from '../imports/fixtures/reviewed-announcement'
+import { supplementAnnouncement } from '../../../layers/sme-roster/server/utils/announcement-intake'
 import { initializeDb } from '../../../db/client'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -6,11 +8,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp, createRouter, createError, defineEventHandler, getQuery, readBody, setHeader, setResponseStatus, toNodeListener } from 'h3'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
 import { eq } from 'drizzle-orm'
 import { enterprise } from '../../../db/schema'
-import { reconcileKey } from '../../../lib/reconcile'
-import { saveDecision102 } from '../../../server/utils/decision-lifecycle-102'
+import { reconcileKey } from '../../../layers/sme-roster/lib/reconcile'
+import { saveDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
 
 const dir = mkdtempSync(join(tmpdir(), 'comparison-summary-http-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'fixture.db') })
@@ -37,12 +39,12 @@ beforeAll(async () => {
   vi.stubGlobal('setResponseStatus', setResponseStatus)
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath, reconcilePath, apiToken: 'synthetic-token' }))
   vi.doMock('@db', () => ({ useDb: () => db }))
-  const handler = (await import('../../../server/api/comparison.get')).default
-  const evidence = (await import('../../../server/api/platform/queries/[queryId]/evidence.get')).default
-  const curate = (await import('../../../server/api/comparison/curated.patch')).default
+  const handler = (await import('../../../layers/sme-roster/server/api/comparison.get')).default
+  const evidence = (await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default
+  const curate = (await import('../../../layers/sme-roster/server/api/comparison/curated.patch')).default
   const router = createRouter()
   router.get('/api/comparison', handler)
-  const { comparisonScopeProofRoute } = await import('../../../server/utils/comparison-scope-proof-route')
+  const { comparisonScopeProofRoute } = await import('../../../layers/sme-roster/server/utils/comparison-scope-proof-route')
   router.post('/api/roster/comparison-scope-proofs/preflight', comparisonScopeProofRoute('preflight'))
   router.post('/api/roster/comparison-scope-proofs/commit', comparisonScopeProofRoute('commit'))
   router.get('/api/roster/comparison-scope-proofs/:id', comparisonScopeProofRoute('get', 'id'))
@@ -50,9 +52,15 @@ beforeAll(async () => {
   router.patch('/api/comparison/curated', curate)
   router.get('/api/platform/queries/:queryId/evidence', evidence)
   router.post('/api/roster/import/commit', defineEventHandler(async event => {
+    const request = await readBody(event)
     const response = await handleRosterImportRequest('commit', {
-      method: 'POST', headers: { authorization: 'Bearer synthetic-test-token' }, body: await readBody(event),
+      method: 'POST', headers: { authorization: 'Bearer synthetic-test-token' }, body: request,
     }, { db, apiToken: 'synthetic-test-token', executeImport: executeNativeImport })
+    const staged = response.body as { status?: string; intakeId: number; sourceDigest: string }
+    if (staged.status === 'staged') {
+      const result = await supplementAnnouncement(db, staged.intakeId, reviewFixtureRows(db, staged.sourceDigest, request))
+      return { ...result, status: result.status === 'supplemented' ? 'committed' : result.status }
+    }
     return response.body
   }))
   const app = createApp().use(router)

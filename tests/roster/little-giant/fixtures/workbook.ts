@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs'
 
 /**
- * 造一份**结构同真件**的小巨人工作簿,供 `lib/roster/little-giant-workbook.ts` 的用例使用。
+ * 造一份**结构同真件**的小巨人工作簿,供 `layers/sme-roster/lib/roster/little-giant-workbook.ts` 的用例使用。
  *
  * 为什么要自造而不是拿真件(`经信局公布历年小巨人企业名单.xlsx`)当夹具:
  *

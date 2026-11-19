@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
-import { updateCredential } from '../../../server/utils/credential-state'
-import { whenIdle } from '../../../server/utils/job-runner'
-import { handlePlatformBatchRequest } from '../../../server/utils/platform-batch-http'
-import { MAX_BATCH_ATTEMPTS } from '../../../lib/platform/batch-query'
+import { updateCredential } from '../../../layers/core/server/utils/credential-state'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { handlePlatformBatchRequest } from '../../../layers/sme-roster/server/utils/platform-batch-http'
+import { MAX_BATCH_ATTEMPTS } from '../../../layers/sme-roster/lib/platform/batch-query'
 
 const dir = mkdtempSync(join(tmpdir(), 'platform-batch-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'test.sqlite') })
@@ -20,7 +20,7 @@ function response(grid: string, rows: Record<string, string>[], page = 1, total 
   return { ok: true, status: 200, text: async () => JSON.stringify({ zrarData: { grid: { [grid]: { pageSet: rows, page, ...(grid === 'businessGrid' ? { pageSize: 1 } : {}), maxCount: total, maxPage: Math.max(1, total) } } } }) }
 }
 beforeAll(() => { vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite')); vi.stubEnv('MIIT_COOKIE', ''); vi.stubEnv('MIIT_COOKIE_FILE', '') })
-beforeEach(() => { updateCredential('miitCookie', cookie, { db }); upstream.mockReset(); vi.stubGlobal('fetch', upstream) })
+beforeEach(() => { updateCredential('sme-roster.miitCookie', cookie, { db }); upstream.mockReset(); vi.stubGlobal('fetch', upstream) })
 afterAll(async () => { await whenIdle(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 it('REST accepts a mixed-source batch asynchronously and retrieves stable individual results without business writes', async () => {
   upstream.mockImplementation(async (url: string, init: any) => {
@@ -121,7 +121,7 @@ it.each([
   ['result maximum', { items: [{ query: { source: 'queryList', name: '合成' } }], limits: { maxResultBytes: 8388609 } }],
   ['unknown root', { items: [{ query: { source: 'queryList', name: '合成' } }], cookie }],
 ] as const)('REST and raw MCP reject invalid batch %s before any platform request', async (_label, input) => {
-  const { platformQueryRpcError } = await import('../../../server/utils/mcp-platform-query')
+  const { platformQueryRpcError } = await import('../../../layers/sme-roster/server/utils/mcp-platform-query')
   expect((await invoke('submit', input)).status).toBe(400)
   const error = platformQueryRpcError({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'submit_platform_batch', arguments: input } })
   expect(error?.status).toBe(400)
@@ -191,7 +191,7 @@ it.each<[string, () => any, string]>([
   expect(JSON.stringify({ item, history })).not.toContain('synthetic-batch-secret')
 })
 it('queued mixed-source batches retain one submission credential snapshot across settings changes and retries capture anew', async () => {
-  const { registerJob, submitJob } = await import('../../../server/utils/job-runner')
+  const { registerJob, submitJob } = await import('../../../layers/core/server/utils/job-runner')
   let release!: () => void
   registerJob({ kind: 'batch-test-holder', status: 'ready', summary: 'Synthetic gate', parse: () => ({ ok: true, params: {} }), run: async () => { await new Promise<void>(r => { release = r }); return { result: {} } } })
   submitJob(db, { kind: 'batch-test-holder', params: {}, filesDir: dir })
@@ -209,7 +209,7 @@ it('queued mixed-source batches retain one submission credential snapshot across
     { query: { source: 'businessList', uscc, rdjb: 'all', pageSize: 1 } },
     { query: { source: 'queryBusList', name: '合成', rdjb: ['1', '2'], pageSize: 1 } },
   ] })).body as any
-  updateCredential('miitCookie', 'session=synthetic-replacement-secret', { db })
+  updateCredential('sme-roster.miitCookie', 'session=synthetic-replacement-secret', { db })
   release(); await whenIdle()
   expect(seen).toEqual(Array(5).fill(cookie))
   const before = (await invoke('status', undefined, receipt.batchId)).body as any
@@ -249,8 +249,8 @@ it('batch preserves divergent source failure policies and retries every unfinish
   expect(batch.items[0].segments.flatMap((s: any) => s.rows).map((r: any) => r.relation)).toEqual(['business:2', 'business:3', 'business:1'])
 })
 it('all batches singles and legacy retry backoff share the process-wide maximum of two platform requests', async () => {
-  const { queryPlatformSlots } = await import('../../../lib/platform/client')
-  const { runPlatformLiveQuery } = await import('../../../server/utils/platform-live-query')
+  const { queryPlatformSlots } = await import('../../../layers/sme-roster/lib/platform/client')
+  const { runPlatformLiveQuery } = await import('../../../layers/sme-roster/server/utils/platform-live-query')
   let releaseBackoff!: () => void
   let inBackoff!: () => void
   const entered = new Promise<void>(r => { inBackoff = r })
@@ -278,10 +278,10 @@ it('all batches singles and legacy retry backoff share the process-wide maximum 
 })
 it('MCP batch submit status item and retry return schema-valid equivalent REST business results', async () => {
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-  const submit = (await import('../../../server/mcp/tools/submit_platform_batch')).default as any
-  const status = (await import('../../../server/mcp/tools/get_platform_batch')).default as any
-  const item = (await import('../../../server/mcp/tools/get_platform_batch_item')).default as any
-  const retry = (await import('../../../server/mcp/tools/retry_platform_batch')).default as any
+  const submit = (await import('../../../layers/sme-roster/server/mcp/tools/submit_platform_batch')).default as any
+  const status = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_batch')).default as any
+  const item = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_batch_item')).default as any
+  const retry = (await import('../../../layers/sme-roster/server/mcp/tools/retry_platform_batch')).default as any
   const { z } = await import('zod')
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: dir }))
   let failing = true
@@ -327,14 +327,14 @@ it('maximum item count is accepted while stable item ownership and unknown retry
   expect((await invoke('retry', { itemIds: [receipt.itemIds[0]], cookie }, receipt.batchId)).status).toBe(400)
 })
 it('missing submission credentials leave all title ranges not queried and an explicit retry succeeds after maintenance', async () => {
-  updateCredential('miitCookie', null, { db })
+  updateCredential('sme-roster.miitCookie', null, { db })
   const receipt = (await invoke('submit', { items: [{ query: { source: 'queryBusList', name: '合成', pageSize: 1 } }] })).body as any
   await whenIdle()
   const before = (await invoke('status', undefined, receipt.batchId)).body as any
   expect(before.items[0]).toMatchObject({ status: 'not_queried', completeness: 'partial' })
   expect(before.items[0].unfinished.map((p: any) => [p.rdjb, p.page])).toEqual([['1', 1], ['2', 1], ['3', 1]])
   expect(upstream).not.toHaveBeenCalled()
-  updateCredential('miitCookie', cookie, { db })
+  updateCredential('sme-roster.miitCookie', cookie, { db })
   upstream.mockImplementation(async () => response('businessGrid', []))
   await invoke('retry', { itemIds: receipt.itemIds }, receipt.batchId); await whenIdle()
   const after = (await invoke('status', undefined, receipt.batchId)).body as any
@@ -362,11 +362,11 @@ it('OpenAPI and MCP discovery expose bounded batch contracts and resolve shared 
   const captured: any[] = []
   vi.stubGlobal('defineRouteMeta', (meta: any) => captured.push(meta.openAPI))
   vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
-  await import('../../../server/api/platform/query.post')
-  await import('../../../server/api/platform/batches/index.post')
-  await import('../../../server/api/platform/batches/[batchId].get')
-  await import('../../../server/api/platform/batches/[batchId]/retry.post')
-  await import('../../../server/api/platform/batches/[batchId]/items/[itemId].get')
+  await import('../../../layers/sme-roster/server/api/platform/query.post')
+  await import('../../../layers/sme-roster/server/api/platform/batches/index.post')
+  await import('../../../layers/sme-roster/server/api/platform/batches/[batchId].get')
+  await import('../../../layers/sme-roster/server/api/platform/batches/[batchId]/retry.post')
+  await import('../../../layers/sme-roster/server/api/platform/batches/[batchId]/items/[itemId].get')
   const single = captured.find(m => m.requestBody?.content?.['application/json']?.schema?.properties?.source)
   const submit = captured.find(m => m.requestBody?.content?.['application/json']?.schema?.properties?.items)
   const queryRef = submit.requestBody.content['application/json'].schema.properties.items.items.properties.query.$ref
@@ -376,9 +376,9 @@ it('OpenAPI and MCP discovery expose bounded batch contracts and resolve shared 
   expect(submit.requestBody.content['application/json'].schema.properties.items.maxItems).toBe(50)
   expect(submit.requestBody.content['application/json'].schema.properties.limits.properties.maxResultBytes.maximum).toBe(8388608)
   expect(captured).toHaveLength(5)
-  const { platformQueryCapabilities } = await import('../../../lib/platform/live-query')
+  const { platformQueryCapabilities } = await import('../../../layers/sme-roster/lib/platform/live-query')
   expect(platformQueryCapabilities.batch).toMatchObject({ available: true, maxItems: 50, maxAttempts: 10 })
-  const { platformQueryRpcError } = await import('../../../server/utils/mcp-platform-query')
+  const { platformQueryRpcError } = await import('../../../layers/sme-roster/server/utils/mcp-platform-query')
   for (const [name, args] of [
     ['get_platform_batch', { batchId: '01M56FKFXYBPSBEN8FYTDH2JV4', cookie }],
     ['get_platform_batch_item', { batchId: '01M56FKFXYBPSBEN8FYTDH2JV4', itemId: '01M56FKFXYBPSBEN8FYTDH2JV4', cookie }],
@@ -416,7 +416,7 @@ it('retry shares the original item request bound across unfinished titles and re
   expect(batch).toMatchObject({ state: 'failed', completeness: 'partial', attempt: 2 })
 })
 it('short credential components do not reject fixed numeric bounds or title selectors as secret echoes', async () => {
-  updateCredential('miitCookie', 'session=1', { db })
+  updateCredential('sme-roster.miitCookie', 'session=1', { db })
   upstream.mockImplementation(async () => response('businessListGrid', []))
   const submitted = await invoke('submit', { items: [{ query: { source: 'businessList', uscc, rdjb: '1', pageSize: 1 } }] })
   expect(submitted.status).toBe(202); await whenIdle()

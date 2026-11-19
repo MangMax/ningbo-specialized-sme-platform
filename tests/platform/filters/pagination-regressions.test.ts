@@ -3,9 +3,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
-import { updateCredential } from '../../../server/utils/credential-state'
-import { whenIdle } from '../../../server/utils/job-runner'
-import { handlePlatformBatchRequest } from '../../../server/utils/platform-batch-http'
+import { updateCredential } from '../../../layers/core/server/utils/credential-state'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { handlePlatformBatchRequest } from '../../../layers/sme-roster/server/utils/platform-batch-http'
 
 const dir = mkdtempSync(join(tmpdir(), 'pagination-regressions-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'test.sqlite') })
@@ -33,15 +33,15 @@ beforeAll(async () => {
   vi.stubGlobal('setHeader', vi.fn())
   vi.stubGlobal('setResponseStatus', vi.fn())
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-  rest = (await import('../../../server/api/platform/query.post')).default as any
-  const tool = (await import('../../../server/mcp/tools/query_platform')).default as any
+  rest = (await import('../../../layers/sme-roster/server/api/platform/query.post')).default as any
+  const tool = (await import('../../../layers/sme-roster/server/mcp/tools/query_platform')).default as any
   mcp = async input => {
     const wire = await tool.handler(input)
     expect(JSON.parse(wire.content[0].text)).toEqual(wire.structuredContent)
     return wire.structuredContent
   }
 })
-beforeEach(() => { updateCredential('miitCookie', cookie, { db }); upstream.mockReset(); vi.stubGlobal('fetch', upstream) })
+beforeEach(() => { updateCredential('sme-roster.miitCookie', cookie, { db }); upstream.mockReset(); vi.stubGlobal('fetch', upstream) })
 afterAll(async () => { await whenIdle(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 
 it.each([true, false, [], [1], ' ', {}, -1, 1.5, 'NaN', '9007199254740992'])('REST and MCP keep malformed totals unknown and traverse every relation (case %#)', async total => {

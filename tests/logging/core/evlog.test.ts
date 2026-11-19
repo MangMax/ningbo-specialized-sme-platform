@@ -2,7 +2,7 @@ import { it, expect } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { appLog, applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../lib/logging'
+import { appLog, applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
 it('routes standalone worker events through the real evlog pipeline with safe explicit context', async () => {
   const directory = mkdtempSync(join(tmpdir(),'evlog181-'))
   const previous = process.env.NUXT_LOG_DIR; process.env.NUXT_LOG_DIR = directory

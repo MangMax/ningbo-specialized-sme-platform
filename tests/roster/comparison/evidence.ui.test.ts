@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
-import ComparisonEvidence from '../../../components/record-correspondence/ComparisonEvidence.vue'
-import ComparisonEventRow from '../../../components/record-correspondence/ComparisonEventRow.vue'
-import type { RecordComparisonResult } from '../../../lib/roster/record-comparison-view'
+import ComparisonEvidence from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonEvidence.vue'
+import ComparisonEventRow from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonEventRow.vue'
+import type { RecordComparisonResult } from '../../../layers/sme-roster/lib/roster/record-comparison-view'
 
 const row = {
   event: { id: 9, recordId: 2, eventType: 'award', year: 2024, batchSeq: 1, decidedYear: 2024, reviewOutcome: null },
@@ -26,7 +26,7 @@ const mounted: ReturnType<typeof mount>[] = []
 afterEach(() => { for (const wrapper of mounted.splice(0)) wrapper.unmount(); vi.unstubAllGlobals() })
 
 it('keeps positive same-subject rows visible while qualification stays unknown', async () => {
-  const wrapper = mount(ComparisonEvidence, { props: { result, returnTo: '/comparison?mode=record' }, global: { stubs: { SourceReader: true } } })
+  const wrapper = mount(ComparisonEvidence, { props: { result, returnTo: '/comparison?mode=record' }, global: { stubs: { RosterSourceReader: true } } })
   mounted.push(wrapper)
   for (const name of ['record-current-consistency', 'record-comparison-coverage', 'record-platform-unlinked']) {
     await wrapper.get(`[data-testid="${name}"] [data-slot="accordion-trigger"]`).trigger('click')
@@ -47,7 +47,7 @@ it('links the actual stored PDF page and saves comparison scroll before detail n
   sessionStorage.clear()
   history.replaceState(null, '', '/comparison?mode=record&queryIds=7')
   Object.defineProperty(window, 'scrollY', { configurable: true, value: 380 })
-  const wrapper = mount(ComparisonEventRow, { props: { row, returnTo: '/comparison?mode=record&queryIds=7' }, global: { stubs: { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' }, SourceReader: true } } })
+  const wrapper = mount(ComparisonEventRow, { props: { row, returnTo: '/comparison?mode=record&queryIds=7' }, global: { stubs: { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' }, RosterSourceReader: true } } })
   mounted.push(wrapper)
   await flushPromises()
   const pageLink = wrapper.findAll('a').find(link => link.text() === '第 3 页')
@@ -65,11 +65,11 @@ it('links the actual stored PDF page and saves comparison scroll before detail n
 
 it('shows the review conclusion and original award years without exposing aggregate implementation metrics', async () => {
   const review = { ...row, event: { ...row.event, eventType: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'failed' } } as RecordComparisonResult['rows'][number]
-  const item = mount(ComparisonEventRow, { props: { row: review, returnTo: '/comparison?mode=record' }, global: { stubs: { NuxtLink: true, SourceReader: true } } })
+  const item = mount(ComparisonEventRow, { props: { row: review, returnTo: '/comparison?mode=record' }, global: { stubs: { NuxtLink: true, RosterSourceReader: true } } })
   mounted.push(item)
   expect(item.text()).toContain('原认定 2021 年 · 复核结论 2024 年 · 复核不通过')
   expect(item.text()).not.toContain('failed')
-  const summary = mount(ComparisonEvidence, { props: { result, returnTo: '/comparison?mode=record' }, global: { stubs: { SourceReader: true } } })
+  const summary = mount(ComparisonEvidence, { props: { result, returnTo: '/comparison?mode=record' }, global: { stubs: { RosterSourceReader: true } } })
   mounted.push(summary)
   await summary.get('[data-testid="record-current-consistency"] [data-slot="accordion-trigger"]').trigger('click')
   await flushPromises()
@@ -165,7 +165,7 @@ it('keeps duplicate unlinked evidence rows separately located and opens every or
 })
 
 it('keeps useful source rows when aggregate counts differ from the filtered result', async () => {
-  const wrapper = mount(ComparisonEvidence, { props: { result: { ...result, total: 1, counts: { ...result.counts, distinctEvents: 12 } }, returnTo: '/comparison?mode=record&classification=historical_conflict' }, global: { stubs: { SourceReader: true } } })
+  const wrapper = mount(ComparisonEvidence, { props: { result: { ...result, total: 1, counts: { ...result.counts, distinctEvents: 12 } }, returnTo: '/comparison?mode=record&classification=historical_conflict' }, global: { stubs: { RosterSourceReader: true } } })
   mounted.push(wrapper)
   for (const name of ['record-platform-unlinked', 'record-current-consistency']) {
     await wrapper.get(`[data-testid="${name}"] [data-slot="accordion-trigger"]`).trigger('click')

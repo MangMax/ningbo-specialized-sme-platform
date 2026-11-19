@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import PlatformRecords from '../../../components/PlatformRecords.vue'
-import type { RosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
+import PlatformRecords from '../../../layers/sme-roster/app/components/PlatformRecords.vue'
+import type { RosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 
 const nativeAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
 beforeAll(() => { Reflect.deleteProperty(Element.prototype, 'animate') })
@@ -38,7 +38,7 @@ it('distinguishes unknown business time from collection time and keeps submissio
 })
 
 it('switches every peer source and filters same-enterprise titles without replacing original dates or names', async () => {
-  const { Select } = await import('../../../components/ui/select')
+  const { Select } = await import('../../../layers/core/app/components/ui/select')
   const known = timeline.sources[1]!.events[0]!
   const other = { ...known, key: 'recognized_list:2', title: 'innovative_sme' as const, platformName: '另一称号原名', businessTime: date('2024-05-08'), period: { from: date('2024-05-08'), until: date('2027-05-07') } }
   const view = mount(PlatformRecords, { props: { timeline: { ...timeline, sources: timeline.sources.map(s => s.source === 'recognized_list' ? { ...s, events: [known, other] } : s) } }, slots: { publication: '公布文件预览' } })

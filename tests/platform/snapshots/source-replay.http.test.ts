@@ -11,19 +11,19 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { readMcpToken, resolveMcpAuth } from '../../../server/utils/mcp-auth'
-import { importExecutor } from '../../../server/utils/import-execution'
-import { platformSummaryCache } from '../../../server/utils/platform-summary-cache'
-import { whenIdle } from '../../../server/utils/job-runner'
+import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
+import { importExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
+import { platformSummaryCache } from '../../../layers/sme-roster/server/utils/platform-summary-cache'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { useDb, schema } from '../../../db'
-import { runPlatformLiveQuery } from '../../../server/utils/platform-live-query'
-import { recognizedResultToImport } from '../../../lib/platform/recognized-evidence'
-import { commitRosterImport, preflightRosterImport } from '../../../server/utils/roster-import'
-import type { RosterImportRequest, RosterImportPlatformQuery, RosterImportExportSnapshot } from '../../../lib/roster-import-client'
+import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
+import { recognizedResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import { commitRosterImport, preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import type { RosterImportRequest, RosterImportPlatformQuery, RosterImportExportSnapshot } from '../../../layers/sme-roster/lib/roster-import-client'
 
 // Exercise the actual route and domain transaction in one process. Off-process
 // admission is unchanged and belongs to the separately scheduled transport run.
-vi.mock('../../../server/utils/import-execution', async importOriginal => process.env.ISSUE300_REAL_TRANSPORT === '1' ? await importOriginal() : ({ importExecutor: { execute: async (db: any, action: string, request: any, errors: any, context: any) => action === 'preflight' ? preflightRosterImport(db, request, errors, context) : commitRosterImport(db, request, errors, { ...context, deferCandidateTasks: true }) } }))
+vi.mock('../../../layers/sme-roster/server/utils/import-execution', async importOriginal => process.env.ISSUE300_REAL_TRANSPORT === '1' ? await importOriginal() : ({ importExecutor: { execute: async (db: any, action: string, request: any, errors: any, context: any) => action === 'preflight' ? preflightRosterImport(db, request, errors, context) : commitRosterImport(db, request, errors, { ...context, deferCandidateTasks: true }) } }))
 const realTransport = process.env.ISSUE300_REAL_TRANSPORT === '1'
 const protocol = realTransport ? 'MCP' : 'HTTP'
 const dir = mkdtempSync('/tmp/issue300-http-')
@@ -39,15 +39,15 @@ beforeAll(async () => {
   const router = createRouter()
   for (const action of ['preflight', 'commit'] as const) {
     vi.stubGlobal('defineRouteMeta', (value: any) => { metadata[action] = value.openAPI })
-    router.post(`/api/roster/import/${action}`, (await import(`../../../server/api/roster/import/${action}.post.ts`)).default)
+    router.post(`/api/roster/import/${action}`, (await import(`../../../layers/sme-roster/server/api/roster/import/${action}.post.ts`)).default)
   }
   vi.stubGlobal('defineRouteMeta', () => {})
-  router.get('/api/platform/queries', (await import('../../../server/api/platform/queries.get')).default)
+  router.get('/api/platform/queries', (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default)
   const listener = toNodeListener(createApp().use(router))
   const tools: any[] = []
   if (realTransport) {
     vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (value: unknown) => value }))
-    for (const name of ['preflight_roster_batch', 'save_roster_batch', 'list_platform_queries']) tools.push((await import(`../../../server/mcp/tools/${name}.ts`)).default)
+    for (const name of ['preflight_roster_batch', 'save_roster_batch', 'list_platform_queries']) tools.push((await import(`../../../layers/sme-roster/server/mcp/tools/${name}.ts`)).default)
   }
   server = createServer((req, res) => {
     if (req.url !== '/mcp') { listener(req, res); return }

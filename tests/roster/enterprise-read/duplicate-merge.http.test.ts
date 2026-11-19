@@ -1,3 +1,4 @@
+import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
 import { nativeQueryRows, nativeRelationRows } from '../../platform/fixtures/native-evidence'
 import { initializeDb } from '../../../db/client'
 /** Real HTTP duplicate-candidate, evidence-backed merge and idempotent replay contracts. */
@@ -6,10 +7,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
-import type { DuplicateMergeReport } from '../../../lib/roster/duplicate-merge'
-import { createRosterImportClient, type RosterImportRequest } from '../../../lib/roster-import-client'
-import { classifyRawQuery } from '../../../lib/platform'
-import { buildPlatformWritePayload, type KnownEnterprise, type PlatformQueryInput } from '../../../lib/platform/payload'
+import type { DuplicateMergeReport } from '../../../layers/sme-roster/lib/roster/duplicate-merge'
+import { type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
+import { classifyRawQuery } from '../../../layers/sme-roster/lib/platform'
+import { buildPlatformWritePayload, type KnownEnterprise, type PlatformQueryInput } from '../../../layers/sme-roster/lib/platform/payload'
 import {
   enterpriseExists,
   planRosterImport,
@@ -17,7 +18,7 @@ import {
   readMergeLineage,
   rosterRowCounts,
   searchEnterpriseIdsByName,
-} from '../../../server/utils/roster-import'
+} from '../../../layers/sme-roster/server/utils/roster-import'
 import { startEvidenceServer, type EvidenceServer } from '../../platform/fixtures/evidence-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-duplicate-merge-'))
@@ -112,7 +113,7 @@ const importRequest: RosterImportRequest = {
 
 let server: EvidenceServer
 let currentQuery: Record<string, unknown> = {}
-const client = () => createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+const client = () => createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
 const json = async <T>(path: string): Promise<T> => {
   const response = await fetch(`${server.baseUrl}${path}`)
   expect(response.status, `${path} 应返回 200`).toBe(200)
@@ -130,7 +131,7 @@ beforeAll(async () => {
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: join(dir, 'none.json'), reconcilePath: join(dir, 'none.json') }))
   vi.doMock('@db', () => ({ useDb: () => db }))
 
-  const route = (await import('../../../server/api/roster/import/duplicate-candidates.get')).default as unknown as (
+  const route = (await import('../../../layers/sme-roster/server/api/roster/import/duplicate-candidates.get')).default as unknown as (
     event: unknown,
   ) => unknown
 

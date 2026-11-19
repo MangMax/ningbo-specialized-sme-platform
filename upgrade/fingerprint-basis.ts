@@ -2,7 +2,7 @@ import { upgradeIntegrityGate, upgradeForeignKeyFailures } from './integrity-pol
 /** #724 offline successor only. Absent from startup migrations and public routing. */
 import { readFingerprintEvents, verifyOriginalCommand, type FingerprintEventSource } from './fingerprint-events'
 import type Database from 'better-sqlite3'
-import { legacyFingerprintRaw } from '../lib/platform/legacy-fingerprint-raw'
+import { legacyFingerprintRaw } from '../layers/sme-roster/lib/platform/legacy-fingerprint-raw'
 
 export function requireFingerprintForeignKeys(t: Database.Database) {
   if(t.pragma('foreign_keys',{simple:true})!==1)throw new Error('fingerprint writes require foreign_keys=ON before entry')
@@ -52,7 +52,7 @@ import { targetSchema as s } from './target-schema'
 import { withFrozenSource, assertFrozenSource, fileHash, schemaHash, type FrozenSource } from './collections'
 import { projectionManifest } from './projections'
 import * as expand from './legacy-schema'
-import { canonicalPlatformJson, planPlatformObservation, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE } from '../lib/platform/observation-plan'
+import { canonicalPlatformJson, planPlatformObservation, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE } from '../layers/sme-roster/lib/platform/observation-plan'
 import { insertArchiveValue } from './frozen/immutable-archive'
 import { rowSnapshot } from './observations'
 import { TextDecoder } from 'node:util'

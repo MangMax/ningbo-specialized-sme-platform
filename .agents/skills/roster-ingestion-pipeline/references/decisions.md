@@ -28,7 +28,7 @@
 
 ## 当前有效资格
 
-按[ADR 0002](../../../../docs/adr/0002-qualification-source-precedence.md)和[共享资格读取](../../../../lib/roster/current-qualification.ts)执行；版本从代码的 `CURRENT_RULE_VERSION`、`QUALIFICATION_ASSESSMENT_VERSION` 读取，部署是否更新另行核对。
+按[ADR 0002](../../../../docs/adr/0002-qualification-source-precedence.md)和[共享资格读取](../../../../layers/sme-roster/lib/roster/current-qualification.ts)执行；版本从代码的 `CURRENT_RULE_VERSION`、`QUALIFICATION_ASSESSMENT_VERSION` 读取，部署是否更新另行核对。
 
 - 同企业、同称号已有判断时点适用的公布依据时，按公布裁定，包括到期、失败和取消；接口较晚期限或通过记录不能延长它。未来公布事实不提前适用。
 - 缺少适用公布依据时，依次以平台认定目录、关联办理、申报记录兜底，适用于全部企业。系统核对主体、称号、属地、业务时间、期间和明确否定事实；有行或 `sfyx=1` 本身不足以确认有效。明确身份的接口事实自动参与，不要求人工绑定、迁入资格确认或差异办结。
@@ -55,5 +55,5 @@
 
 ## 文件与凭据
 
-- 文件范围以 `lib/file-store-scope.ts` 为唯一可执行规则。证据路径必须指向文件库内文件。
+- 文件范围以 `lib/sme-roster/file-store-scope.ts` 为唯一可执行规则。证据路径必须指向文件库内文件。
 - 凭据保存在运行时密钥存储。业务数据库、源文档、上传文件保存在 Git 外。

@@ -1,6 +1,6 @@
 /** Offline-only frozen stage dependency from ab503081dae3e24680afc9b07395a7e3ff21fc9f. */
 import { ensureProcessStoredReady } from '../process-stored-catalog'
-import { sqliteConnection } from '../../lib/platform/target-connection'
+import { sqliteConnection } from '../../layers/sme-roster/lib/platform/target-connection'
 /** Offline target-only evidence mechanism. No runtime selector. */
 import { createHash } from 'node:crypto'
 import { eq, sql } from 'drizzle-orm'

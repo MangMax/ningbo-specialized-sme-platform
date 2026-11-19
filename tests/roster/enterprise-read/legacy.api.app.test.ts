@@ -69,6 +69,7 @@ const tempDir = mkdtempSync(join(tmpdir(), 'roster-enterprise-legacy-api-'))
 beforeAll(async () => {
   db = initializeDb({ create: true, dbPath: join(tempDir, 'roster.db') })
   db.insert(schema.enterprise).values(enterprise).run()
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: enterprise.id }).run()
   db.insert(schema.record).values(record).run()
   db.insert(schema.recordEvent).values(event).run()
   db.insert(schema.recordEvidence).values(legacyEvidence).run()
@@ -80,8 +81,8 @@ beforeAll(async () => {
   vi.stubGlobal('getRouterParam', () => String(enterprise.id))
   vi.doMock('@db', () => ({ useDb: () => db }))
 
-  listHandler = decodeJsonRead((await import('../../../server/api/roster/enterprises.get')).default) as unknown as typeof listHandler
-  detailHandler = decodeJsonRead((await import('../../../server/api/roster/enterprises/[id].get')).default) as unknown as typeof detailHandler
+  listHandler = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default) as unknown as typeof listHandler
+  detailHandler = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default) as unknown as typeof detailHandler
 })
 
 afterAll(() => {

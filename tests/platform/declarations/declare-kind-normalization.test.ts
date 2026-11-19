@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { normalizePlatformRelation, PLATFORM_PROCESS_RAW_KEYS, platformProcessRawFromJson } from '../../../lib/platform/normalization'
+import { normalizePlatformRelation, PLATFORM_PROCESS_RAW_KEYS, platformProcessRawFromJson } from '../../../layers/sme-roster/lib/platform/normalization'
 
 const known = [
   { label: 'apply', chinese: '申请', english: 'apply' },

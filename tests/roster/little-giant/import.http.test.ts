@@ -1,3 +1,4 @@
+import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
 import { initializeDb } from '../../../db/client'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -7,14 +8,13 @@ import { eq } from 'drizzle-orm'
 import { schema, useDb } from '../../../db'
 import {
   ROSTER_IMPORT_COMMIT_PATH,
-  createRosterImportClient,
   type RosterImportCommitResponse,
   type RosterImportRequest,
-} from '../../../lib/roster-import-client'
-import { buildLittleGiantImportRequest, LITTLE_GIANT_SOURCE_FILE } from '../../../lib/roster/little-giant-import'
-import { parseLittleGiantWorkbook, type LittleGiantWorkbook } from '../../../lib/roster/little-giant-workbook'
-import { rosterRowCounts } from '../../../server/utils/roster-import'
-import { landingSegments } from '../../../server/utils/tus'
+} from '../../../layers/sme-roster/lib/roster-import-client'
+import { buildLittleGiantImportRequest, LITTLE_GIANT_SOURCE_FILE } from '../../../layers/sme-roster/lib/roster/little-giant-import'
+import { parseLittleGiantWorkbook, type LittleGiantWorkbook } from '../../../layers/sme-roster/lib/roster/little-giant-workbook'
+import { rosterRowCounts } from '../../../layers/sme-roster/server/utils/roster-import'
+import { landingSegments } from '../../../layers/sme-roster/lib/sme-roster/file-landing'
 import { executeNativeImport, startRosterApi, type RosterApiServer } from '../imports/fixtures/import-server'
 import { SYNTHETIC_DUPLICATE_USCC, hasRealSource, loadLittleGiantSource, type LittleGiantSource } from './fixtures/official-source'
 
@@ -25,7 +25,7 @@ import { SYNTHETIC_DUPLICATE_USCC, hasRealSource, loadLittleGiantSource, type Li
  * ── 走的是哪条链路 ──────────────────────────────────────────────────────
  * `tests/helpers/roster-http-server.ts` 在**真端口**上起一个 node:http 服务,挂的是
  * **Nitro 路由同款**的 `handleRosterImportRequest`(RL-11 的验收夹具,不是另写的替身);
- * 客户端用 `lib/roster-import-client.ts`(**契约类型 + HTTP 客户端**)。全程 `pnpm test` 默认跑,
+ * 客户端用 `layers/sme-roster/lib/roster-import-client.ts`(**契约类型 + HTTP 客户端**)。全程 `pnpm test` 默认跑,
  * 不需要环境变量:真件在就用真件,不在就用合成夹具跑**同一条链路**(见 `helpers/little-giant-source.ts`)。
  *
  * ── 为什么可以读库 ──────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ describe('RL-02 端到端:经真实 HTTP 提交小巨人工作簿', () => {
     if (dir) rmSync(dir, { recursive: true, force: true })
   })
 
-  const client = () => createRosterImportClient({ baseUrl: server.baseUrl, token: TOKEN })
+  const client = () => createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
 
   it('预检:只算影响、不写业务数据,且没有逐项冲突', async () => {
     const result = await client().preflight(request)
@@ -115,7 +115,10 @@ describe('RL-02 端到端:经真实 HTTP 提交小巨人工作簿', () => {
   })
 
   it(`首次提交(${hasRealSource ? '真件' : '合成夹具'}):逐条源行落到事件,企业按信用代码去重`, async () => {
-    first = await client().commit(request)
+    const result = await client().commit(request)
+    expect(result.status).toBe('committed')
+    if (result.status !== 'committed') throw new Error(JSON.stringify(result))
+    first = result
 
     expect(first.status).toBe('committed')
     expect(first.error ?? null).toBeNull()
@@ -210,9 +213,8 @@ describe('RL-02 端到端:经真实 HTTP 提交小巨人工作簿', () => {
     expect(response.headers.get('content-type')).toContain('application/json')
 
     // 注意:`response.status` 是 HTTP 状态,批次的 `status` 在 JSON body 里 —— 两者别混。
-    const body = (await response.json()) as RosterImportCommitResponse
-    expect(body.status).toBe('committed')
-    expect(body.batchId).toBe(first.batchId)
+    expect(await response.json()).toMatchObject({ status: 'staged', rowCount: request.payload.announcement!.records.length })
+    expect(await client().commit(request)).toEqual(first)
 
     expect(rosterRowCounts(db)).toEqual(before)
     expect(db.select().from(schema.importBatch).all()).toHaveLength(1)

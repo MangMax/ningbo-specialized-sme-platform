@@ -1,8 +1,8 @@
 import { createServer } from 'node:http'
 import { createApp, defineEventHandler, toNodeListener } from 'h3'
 import { expect, it } from 'vitest'
-import { createReadTurns, runReadTurn } from '../../../server/utils/read-turn'
-import { withReadTurn } from '../../../server/utils/read-turn-http'
+import { createReadTurns, runReadTurn } from '../../../layers/core/server/utils/read-turn'
+import { withReadTurn } from '../../../layers/core/server/utils/read-turn-http'
 
 it('cleans real queued disconnects and lifecycle listeners without a new HTTP domain error', async () => {
   const reads: string[] = [], listeners: number[][] = []

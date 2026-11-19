@@ -37,7 +37,7 @@ beforeAll(async () => {
     curatedPath: join(dir, 'curation.json'),
     reconcilePath: join(dir, 'reconcile.json'),
   }))
-  handler = (await import('../../../server/api/export.get'))
+  handler = (await import('../../../layers/sme-roster/server/api/export.get'))
     .default as unknown as typeof handler
   const seed = (
     name: string,

@@ -1,3 +1,5 @@
+import { upgradeRosterFileClassification } from '../../../upgrade/roster-file-classification'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { createHash } from 'node:crypto'
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -7,7 +9,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
-import { handleEvidenceCorrectionRequest } from '../../../server/utils/roster-evidence-correction-api'
+import { handleEvidenceCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-evidence-correction-api'
 import { startHttpFixture } from '../../support/http'
 import { minimalPdf } from '../../support/minimal-pdf'
 
@@ -46,7 +48,8 @@ it.each(['fresh', 'upgrade', 'integration-upgrade'])('executes evidence correcti
   migrate(db, { migrationsFolder })
   expect(sqlite.prepare('SELECT * FROM __drizzle_migrations ORDER BY id').all()).toEqual(upgradedLedger)
   if (mode === 'fresh') seed()
-  db.insert(schema.storedFile).values({ relPath: 'notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: Buffer.byteLength(bytes), sha256: createHash('sha256').update(bytes).digest('hex'), source: 'jxj', kind: 'announcement' }).run()
+  upgradeRosterFileClassification(sqlite)
+  createClassifiedFile(db, { relPath: 'notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: Buffer.byteLength(bytes), sha256: createHash('sha256').update(bytes).digest('hex') }, { source: 'jxj', kind: 'announcement' })
   const app = await startHttpFixture({ routes: {
     '/evidence': r => handleEvidenceCorrectionRequest({ ...r, action: 'get', id: 401 }, { db }),
     '/preflight': r => handleEvidenceCorrectionRequest({ ...r, action: 'preflight' }, { db, filesDir, apiToken: 'synthetic' }),

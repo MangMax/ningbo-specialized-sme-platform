@@ -7,7 +7,7 @@
  * Nuxt 的 `@db` 等别名也要 `nuxt build` 之后才在 `.nuxt` 成型 —— 所以进程内 `createNitro`
  * 拿不到业务路由(见 `tests/agent-http.test.ts` 里那个只用来「问路由表」的 `createNitro`)。
  * 办法是:`node:http` 起**真端口**,把 Nitro 路由也在调的**同一份**核心函数挂上去
- * (`server/utils/roster-import-http.ts` / `platform-snapshots-http.ts`,
+ * (`layers/sme-roster/server/utils/roster-import-http.ts` / `platform-snapshots-http.ts`,
  * 路由文件只是薄转调)。测的不是替身实现,契约只有一份。
  *
  * ── 这个文件负责的,就是那三份夹具里**逐字重复**的部分 ────────────────────
@@ -58,6 +58,7 @@ export interface FixtureRoutes {
   routes?: Record<string, FixtureHandler>
   /** 路径 → 处理器,只接 `GET`(读面走这里)。 */
   getRoutes?: Record<string, FixtureHandler>
+  matchRoute?: (path: string) => FixtureHandler | undefined
 }
 
 export interface HttpFixture {
@@ -97,6 +98,7 @@ async function dispatch(
   const method = req.method ?? 'GET'
   // 先查「不看方法」的表(写面),再按 GET 查读面 —— 方法守卫留给核心,不在这里拦。
   const handler = routes.routes?.[url.pathname] ?? (method === 'GET' ? routes.getRoutes?.[url.pathname] : undefined)
+    ?? routes.matchRoute?.(url.pathname)
   if (!handler) {
     sendJson(res, 404, {}, { message: 'not found' })
     return

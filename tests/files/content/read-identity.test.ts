@@ -6,7 +6,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../../../db/schema'
-import { registerStoredFile, parseUploadDeclaration } from '../../../server/utils/stored-files-upload'
+import { registerStoredFile, parseUploadDeclaration } from '../../../layers/sme-roster/server/modules/sme-roster/file-upload'
 
 let root: string
 let sqlite: Database.Database
@@ -36,7 +36,7 @@ it('raw path and stable ID reject same-size replacement and allow exact original
   const headers = new Map<string, unknown>()
   vi.stubGlobal('setHeader', (_: unknown, key: string, value: unknown) => headers.set(key, value))
   vi.stubGlobal('sendStream', async (_: unknown, stream: import('node:fs').ReadStream) => { let text = ''; for await (const chunk of stream) text += chunk; return text })
-  const route = (await import('../../../server/api/files/[id].get')).default
+  const route = (await import('../../../layers/core/server/api/files/[id].get')).default
   expect(await route({} as never)).toBe('abc')
   expect(headers.get('cache-control')).toContain('no-store')
   expect(headers.get('x-file-id')).toBe(String(row.id))
@@ -55,7 +55,7 @@ it('unregistered legacy paths stay readable with explicitly unknown history', as
   const headers = new Map<string, unknown>()
   vi.stubGlobal('setHeader', (_: unknown, key: string, value: unknown) => headers.set(key, value))
   vi.stubGlobal('sendStream', async (_: unknown, stream: import('node:fs').ReadStream) => { let text = ''; for await (const chunk of stream) text += chunk; return text })
-  const route = (await import('../../../server/api/files/[id].get')).default
+  const route = (await import('../../../layers/core/server/api/files/[id].get')).default
   expect(await route({} as never)).toBe('legacy bytes')
   expect(headers.get('x-file-content-status')).toBe('unknown')
   expect(headers.get('x-file-historical-identity')).toBe('unknown')
@@ -75,7 +75,7 @@ it('raw page URLs reject foreign lineage and retain unknown legacy pages without
   const headers = new Map<string, unknown>()
   vi.stubGlobal('setHeader', (_: unknown, key: string, value: unknown) => headers.set(key, value))
   vi.stubGlobal('sendStream', async (_: unknown, stream: import('node:fs').ReadStream) => { let text = ''; for await (const chunk of stream) text += chunk; return text })
-  const route = (await import('../../../server/api/files/[id].get')).default
+  const route = (await import('../../../layers/core/server/api/files/[id].get')).default
   await expect(route({} as never)).rejects.toMatchObject({ statusCode: 409, data: { code: 'file_content_conflict', fileId: row.id, reason: 'page_source_mismatch' } })
   writeFileSync(join(root, '.notice.pdf.pages/.pages.json'), JSON.stringify({ ...manifest, file: 'another.pdf', sourceSha256: ABC }))
   await expect(route({} as never)).rejects.toMatchObject({ statusCode: 409, data: { code: 'file_content_conflict', fileId: row.id, reason: 'page_source_mismatch' } })
@@ -95,7 +95,7 @@ it('range requests cannot return replaced registered bytes', async () => {
   vi.stubGlobal('getRequestHeader', () => 'bytes=0-0')
   vi.stubGlobal('setHeader', () => {})
   vi.stubGlobal('sendStream', async (_: unknown, stream: import('node:fs').ReadStream) => { for await (const _chunk of stream) { /* Drain denied baseline reads before fixture teardown. */ } return 'unexpected range' })
-  const route = (await import('../../../server/api/files/[id].get')).default
+  const route = (await import('../../../layers/core/server/api/files/[id].get')).default
   await expect(route({} as never)).rejects.toMatchObject({ statusCode: 409, data: { code: 'file_content_conflict' } })
 })
 
@@ -104,7 +104,7 @@ it('official source reads expose registered identity while keeping historical bi
   writeFileSync(join(root, locator), 'abc')
   const { row } = await registerStoredFile(db, root, parseUploadDeclaration({ relPath: locator }))
   const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', path: locator, title: 'official fixture' }).returning().get()
-  const { readOfficialSourceDocuments } = await import('../../../server/utils/official-source-directory')
+  const { readOfficialSourceDocuments } = await import('../../../layers/sme-roster/server/utils/official-source-directory')
   const before = db.select().from(schema.sourceDocument).all()
   expect(readOfficialSourceDocuments(db, [doc.id])[0]).toMatchObject({ id: doc.id, path: locator, contentIdentity: { status: 'unknown', historical: 'unknown', registered: { fileId: row.id, sha256: ABC, bytes: 3 } } })
   writeFileSync(join(root, locator), 'xyz')

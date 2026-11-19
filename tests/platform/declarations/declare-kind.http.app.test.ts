@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto'
 import Database from 'better-sqlite3'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { initializeDb } from '../../../db/client'
-import { createRosterImportClient, type RosterImportRequest } from '../../../lib/roster-import-client'
+import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { spawnOwnedChild as spawn, spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 // Every business write uses the app API on a new isolated SQLite database.
@@ -142,7 +142,11 @@ it('identical full raw reuses a content version across stored synonyms while cha
 it('synonym reads preserve full raw source fingerprints and cannot clear stale source qualification', async () => {
   const name = '合成同义来源资格企业', uscc = '91330211000000001F'
   const announcement: RosterImportRequest = { idempotencyKey: '249:official', sourceKind: 'announcement', sourceIdentity: 'synthetic:249:official', payload: { announcement: { sourceDocument: { source: 'jxj', title: '合成来源资格公告' }, records: [{ enterprise: { name, uscc }, titleCode: 'innovative_sme', events: [{ eventType: 'award', year: 2025 }] }] } } }
-  expect(await client.commit(announcement)).toMatchObject({ status: 'committed' })
+  const staged = await client.commit(announcement)
+  if (staged.status !== 'staged') throw new Error(JSON.stringify(staged))
+  expect(await client.supplement(staged.intakeId, { sourceDigest: staged.sourceDigest, basis: 'Synthetic formal source', rows: [
+    { action: 'create', fields: { name, uscc } },
+  ] })).toMatchObject({ status: 'supplemented' })
   const request = input('fingerprint', 'apply_list', [{ sequenceNo: 1, declareKind: '申请', usccRaw: uscc, rawFields: { sblx: 'apply', originalOnly: '完整原档仍参与指纹' } }])
   request.payload.platformQueries![0]!.rdjb = '1'
   request.payload.platformQueries![0]!.titleCode = 'innovative_sme'

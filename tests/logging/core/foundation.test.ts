@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { createLogService } from '../../../lib/logging/service'
+import { createLogService } from '../../../layers/core/lib/logging/service'
 
 const dirs: string[] = []
 const services: ReturnType<typeof createLogService>[] = []
@@ -29,7 +29,7 @@ it('persists safe events and projects bounded summaries without raw error conten
 })
 
 it('denies every log action without explicit capability and rejects unbounded clearing', async () => {
-  const { dispatchLogAction } = await import('../../../lib/logging/application')
+  const { dispatchLogAction } = await import('../../../layers/core/lib/logging/application')
   const { service } = fixture()
   for (const action of ['list','detail','policy','setPolicy','clear'] as const) {
     const denied = await dispatchLogAction(service, action, {}, false)
@@ -90,7 +90,7 @@ it('exposes unavailable and drop accounting when real filesystem storage fails',
   expect(service.emit({ source: 'worker', operation: 'fault.run', outcome: 'success' })).toBeTruthy()
   await service.flush()
   expect(service.status()).toMatchObject({ dropped: 1, stored: 0, unavailable: true, lastError: 'storage_unavailable' })
-  const { dispatchLogAction } = await import('../../../lib/logging/application')
+  const { dispatchLogAction } = await import('../../../layers/core/lib/logging/application')
   const result = await dispatchLogAction(service, 'policy', {}, true)
   expect(result.status).toBe(503)
   expect(result.body).toMatchObject({ status: { unavailable: true, dropped: 1 } })
@@ -181,7 +181,7 @@ it('refuses to activate a smaller cap until bounded pruning physically satisfies
     })()
     expect(db.prepare('SELECT count(*) AS n FROM log_events').get()).toEqual({n:33280})
     expect(service.status()).toMatchObject({stored:1,dropped:0,writeUnknown:0,unavailable:false})
-    const {dispatchLogAction}=await import('../../../lib/logging/application')
+    const {dispatchLogAction}=await import('../../../layers/core/lib/logging/application')
     const before = await service.policy()
     const started = Date.now()
     const pending=await dispatchLogAction(service,'setPolicy',{retentionDays:3,maxBytes:1048576,collection:{integrations:{application:{enabled:false,minLevel:'error'}}}},true)

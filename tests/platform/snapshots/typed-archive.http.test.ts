@@ -1,5 +1,5 @@
 import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
-import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
+import { preflightRosterImport, commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
 
@@ -15,15 +15,15 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { schema } from '../../../db'
 import { eq, sql } from 'drizzle-orm'
-import type { PlatformLiveQueryResult } from '../../../lib/platform/live-query'
-import type { RosterImportPlatformQuery } from '../../../lib/roster-import-client'
-import { updateCredential } from '../../../server/utils/credential-state'
-import { handlePlatformBatchRequest } from '../../../server/utils/platform-batch-http'
-import { recognizedResultToImport, platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import { whenIdle } from '../../../server/utils/job-runner'
-import { platformSummaryCache } from '../../../server/utils/platform-summary-cache'
-import { importExecutor } from '../../../server/utils/import-execution'
-import { readMcpToken, resolveMcpAuth } from '../../../server/utils/mcp-auth'
+import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
+import type { RosterImportPlatformQuery } from '../../../layers/sme-roster/lib/roster-import-client'
+import { updateCredential } from '../../../layers/core/server/utils/credential-state'
+import { handlePlatformBatchRequest } from '../../../layers/sme-roster/server/utils/platform-batch-http'
+import { recognizedResultToImport, platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { platformSummaryCache } from '../../../layers/sme-roster/server/utils/platform-summary-cache'
+import { importExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
+import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
 
 const dir = mkdtempSync(join(tmpdir(), 'issue327-typed-archive-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
@@ -51,18 +51,18 @@ beforeAll(async () => {
   vi.spyOn(importExecutor, 'execute').mockImplementation(executeNativeImport)
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
   vi.stubEnv('MIIT_COOKIE', ''); vi.stubEnv('MIIT_COOKIE_FILE', '')
-  updateCredential('miitCookie', 'sid=synthetic-raw-wire-secret', { db })
+  updateCredential('sme-roster.miitCookie', 'sid=synthetic-raw-wire-secret', { db })
   for (const [key, value] of Object.entries({ defineEventHandler, readBody, setHeader, setResponseStatus, getQuery, createError, useRuntimeConfig: () => ({ filesDir: dir, apiToken: token }) })) vi.stubGlobal(key, value)
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (value: unknown) => value }))
-  for (const path of ['query_platform', 'preflight_roster_batch', 'save_roster_batch', 'list_platform_queries', 'get_platform_batch_item', 'submit_platform_batch', 'retry_platform_batch']) tools.push((await import(`../../../server/mcp/tools/${path}.ts`)).default)
-  const queryRoute = (await import('../../../server/api/platform/query.post')).default
-  const readRoute = (await import('../../../server/api/platform/queries.get')).default
-  const evidenceRoute = (await import('../../../server/api/platform/queries/[queryId]/evidence.get')).default
-  const declarationsRoute = (await import('../../../server/api/platform/declarations.get')).default
+  for (const path of ['query_platform', 'preflight_roster_batch', 'save_roster_batch', 'list_platform_queries', 'get_platform_batch_item', 'submit_platform_batch', 'retry_platform_batch']) tools.push((await import(`../../../layers/sme-roster/server/mcp/tools/${path}.ts`)).default)
+  const queryRoute = (await import('../../../layers/sme-roster/server/api/platform/query.post')).default
+  const readRoute = (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default
+  const evidenceRoute = (await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default
+  const declarationsRoute = (await import('../../../layers/sme-roster/server/api/platform/declarations.get')).default
   const router = createRouter().post('/api/platform/query', queryRoute).get('/api/platform/queries', readRoute).get('/api/platform/queries/:queryId/evidence', evidenceRoute).get('/api/platform/declarations', declarationsRoute)
   for (const action of ['preflight', 'commit'] as const) {
     vi.stubGlobal('defineRouteMeta', (value: any) => { importMetadata[action] = value.openAPI })
-    router.post(`/api/roster/import/${action}`, (await import(`../../../server/api/roster/import/${action}.post.ts`)).default)
+    router.post(`/api/roster/import/${action}`, (await import(`../../../layers/sme-roster/server/api/roster/import/${action}.post.ts`)).default)
   }
   router.post('/api/platform/batches', defineEventHandler(async event => {
     const out = await handlePlatformBatchRequest('submit', { body: await readBody(event), headers: { authorization: event.node.req.headers.authorization } }, { db, apiToken: token, filesDir: dir })

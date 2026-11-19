@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import { createRouter, createMemoryHistory, useRoute } from 'vue-router'
 import { expect, it, vi } from 'vitest'
-import { useOcrWorkbench } from '../../../composables/useOcrWorkbench'
+import { useOcrWorkbench } from '../../../layers/core/app/composables/useOcrWorkbench'
 it('current page conflict keeps historical OCR text and binding while disabling writes', async () => {
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] })
   await router.push('/')
@@ -27,13 +27,13 @@ it('current page conflict keeps historical OCR text and binding while disabling 
   vi.unstubAllGlobals()
 })
 
-import UploadDialog from '../../../components/files/UploadDialog.vue'
+import UploadDialog from '../../../layers/sme-roster/app/components/sme-roster/RosterFileUploadDialog.vue'
 it('registration retry keeps the uploaded metadata snapshot after conflict', async () => {
   const api = vi.fn().mockRejectedValueOnce({ data: { data: { code: 'file_content_conflict' } } }).mockResolvedValueOnce({})
   vi.stubGlobal('$fetch', api)
-  const wrapper = mount(UploadDialog, { props: { open: true }, global: { stubs: { DialogTitle: { template: '<h2><slot /></h2>' }, DialogDescription: { template: '<p><slot /></p>' }, UploadPanel: { name: 'UploadPanel', template: '<div />' }, Dialog: { template: '<div><slot /></div>' }, DialogContent: { template: '<div><slot /></div>' } } } })
+  const wrapper = mount(UploadDialog, { props: { open: true }, global: { stubs: { DialogTitle: { template: '<h2><slot /></h2>' }, DialogDescription: { template: '<p><slot /></p>' }, RosterUploadPanel: { name: 'RosterUploadPanel', template: '<div />' }, Dialog: { template: '<div><slot /></div>' }, DialogContent: { template: '<div><slot /></div>' } } } })
   const payload = { name: '原附件.pdf', relPath: 'jxj/announcement/2024/1/a.pdf', size: 3, meta: { source: 'jxj', kind: 'announcement', year: '2024', batch: '1' } }
-  wrapper.findComponent({ name: 'UploadPanel' }).vm.$emit('uploaded', payload)
+  wrapper.findComponent({ name: 'RosterUploadPanel' }).vm.$emit('uploaded', payload)
   await flushPromises()
   expect(wrapper.text()).toContain('内容已变化')
   expect(wrapper.text()).toContain('重试登记 原附件.pdf')
@@ -43,4 +43,35 @@ it('registration retry keeps the uploaded metadata snapshot after conflict', asy
   expect(wrapper.emitted('registered')).toHaveLength(1)
   wrapper.unmount()
   vi.unstubAllGlobals()
+})
+
+it('restores a registered OCR source from a deep link before the file list loads', async () => {
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: { template: '<div />' } }] })
+  await router.push('/?source=archive')
+  vi.stubGlobal('useRoute', useRoute)
+  vi.stubGlobal('$fetch', vi.fn(async () => ({
+    rows: [
+      { id: 1, relPath: 'archive.pdf', ext: 'pdf', filename: 'archive.pdf', source: 'archive' },
+      { id: 2, relPath: 'other.pdf', ext: 'pdf', filename: 'other.pdf' },
+    ],
+    total: 2,
+  })))
+  let work!: ReturnType<typeof useOcrWorkbench>
+  const wrapper = mount(defineComponent({
+    setup() {
+      work = useOcrWorkbench([{ value: 'archive', label: '档案馆' }])
+      return () => 'workbench'
+    },
+  }), { global: { plugins: [router] } })
+  try {
+    expect(work.source.value).toBe('archive')
+    await work.loadFiles()
+    expect(work.fileMatches.value.map(file => file.relPath)).toEqual(['archive.pdf'])
+    await router.push('/?source=unregistered')
+    await flushPromises()
+    expect(work.source.value).toBe('')
+  } finally {
+    wrapper.unmount()
+    vi.unstubAllGlobals()
+  }
 })

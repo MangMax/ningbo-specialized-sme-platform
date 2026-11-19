@@ -13,8 +13,8 @@ const jszip = createRequire(createRequire(import.meta.url).resolve('exceljs/pack
 
 const source = vi.hoisted(() => ({ rows: [] as object[], read: 0 }))
 vi.mock('@db', () => ({ useDb: () => ({}) }))
-vi.mock('../../../lib/query', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../../lib/query')>(),
+vi.mock('../../../layers/sme-roster/lib/query', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../layers/sme-roster/lib/query')>(),
   allRecords: () => source.rows,
 }))
 
@@ -24,7 +24,7 @@ beforeAll(async () => {
   for (const [name, value] of Object.entries({ createError, createEvent, defineEventHandler, getQuery, sendStream, setHeader })) {
     vi.stubGlobal(name, value)
   }
-  handler = (await import('../../../server/api/export.get')).default
+  handler = (await import('../../../layers/sme-roster/server/api/export.get')).default
 })
 afterAll(() => vi.unstubAllGlobals())
 

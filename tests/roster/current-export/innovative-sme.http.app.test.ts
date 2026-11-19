@@ -1,6 +1,6 @@
 import { resetExportRows } from './fixtures/reset-rows'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { CURRENT_RULE_VERSION } from '../../../lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { readDevelopmentDiscovery, businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './fixtures/specialized-export'
 import { reviewCurrentExportDecision, confirmCurrentExportExclusion } from '../fixtures/qualification-decisions'
 import { createHash } from 'node:crypto'
@@ -215,7 +215,10 @@ it('创新型入口鉴权参数边界与OpenAPI可发现', async () => {
   expect(operation.security).toEqual([{ bearerAuth: [] }])
   expect(operation.requestBody.content['application/json'].schema.additionalProperties).toBe(false)
   expect(operation.responses['202']).toBeDefined()
-  expect(spec.paths['/api/jobs'].post.requestBody.content['application/json'].schema.properties.kind.enum).toContain('current-roster-export')
+  expect(spec.paths['/api/jobs/kinds'].get.responses['200']).toBeDefined()
+  const kinds = await fetch(url('/api/jobs/kinds'))
+  expect(kinds.status).toBe(200)
+  expect((await kinds.json()).kinds).toContainEqual(expect.objectContaining({ kind: 'current-roster-export', status: 'ready' }))
   expect(spec.paths['/api/job-artifacts/{id}'].get.security).toEqual([{ bearerAuth: [] }])
   for (const body of [{}, [], null, { clientRequestId: '' }, { clientRequestId: ' ' }, { clientRequestId: 'x'.repeat(129) }, { clientRequestId: '119-invalid', titleCode }, { clientRequestId: '119-invalid', asOf: '2020-01-01' }, { clientRequestId: '119-invalid', unknown: true }]) {
     expect((await fetch(url(endpoint), { method: 'POST', headers, body: JSON.stringify(body) })).status).toBe(400)

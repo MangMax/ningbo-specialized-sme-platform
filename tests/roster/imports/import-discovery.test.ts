@@ -1,12 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { rosterImportMcpPayloadSchema } from '../../../server/utils/roster-import-schema'
+import { rosterImportMcpPayloadSchema } from '../../../layers/sme-roster/server/utils/roster-import-schema'
 
 const httpPayloadCache = new Map<string, any>()
 function httpPayload(action: string) {
   if (httpPayloadCache.has(action)) return httpPayloadCache.get(action)
-  const source = readFileSync(new URL(`../../../server/api/roster/import/${action}.post.ts`, import.meta.url), 'utf8')
+  const source = readFileSync(new URL(`../../../layers/sme-roster/server/api/roster/import/${action}.post.ts`, import.meta.url), 'utf8')
   const payload = JSON.parse(source.match(/payload: (\{\n[\s\S]*?\n\}),/)![1]!)
   httpPayloadCache.set(action, payload)
   return payload

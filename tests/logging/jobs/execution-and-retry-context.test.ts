@@ -3,9 +3,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../lib/logging'
-import { __resetJobRunner, clearJobSpecs, registerJob, submitJob, whenIdle } from '../../../server/utils/job-runner'
-import { getJob } from '../../../server/utils/job-store'
+import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
+import { __resetJobRunner, clearJobSpecs, registerJob, submitJob, whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { getJob } from '../../../layers/core/server/utils/job-store'
 const dir = mkdtempSync(join(tmpdir(), 'jobs184-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'fixture.db') })
 const previous = process.env.NUXT_LOG_DIR
@@ -14,7 +14,7 @@ afterAll(async () => { await whenIdle(); __resetJobRunner(); clearJobSpecs(); aw
 it('retains submission context after return and logs one terminal with bounded progress and no payload', async () => {
   let release!: () => void
   const gate = new Promise<void>(resolve => { release=resolve })
-  const context = { requestId:'request184',traceId:'trace184' }
+  const context = { requestId:'request184',traceId:'trace184',module:'sme-roster' }
   let captured: unknown
   registerJob({ kind:'logging184',status:'ready',summary:'fixture',parse:params=>({ok:true,params}),run:async ctx=>{
     captured=ctx.logContext
@@ -30,15 +30,15 @@ it('retains submission context after return and logs one terminal with bounded p
   const {rows}=await applicationLogs().list({taskId:job.id})
   expect(rows.filter(r=>r.operation==='task.finished')).toHaveLength(1)
   expect(rows.map(r=>r.operation)).toEqual(['task.finished','task.progress','task.started','task.queued'])
-  expect(rows.every(r=>r.requestId==='request184' && r.traceId==='trace184')).toBe(true)
+  expect(rows.every(r=>r.requestId==='request184' && r.traceId==='trace184' && r.module===null)).toBe(true)
   const details=await Promise.all(rows.map(r=>applicationLogs().detail(r.id)))
   expect(details.find(r=>r?.operation==='task.finished')?.counts).toEqual({done:100,total:100})
   expect(JSON.stringify(details)).not.toMatch(/PRIVATE184|params|filesDir|mutated184/)
 })
 
 it('cancel retry recovery and duplicate finalization retain business checkpoints and unique terminals', async () => {
-  const { requestJobCancel, requeueFinishedJob, ensureJobRunnerReady } = await import('../../../server/utils/job-runner')
-  const { createJob, finishJob, setJobResult } = await import('../../../server/utils/job-store')
+  const { requestJobCancel, requeueFinishedJob, ensureJobRunnerReady } = await import('../../../layers/core/server/utils/job-runner')
+  const { createJob, finishJob, setJobResult } = await import('../../../layers/core/server/utils/job-store')
   let release!: () => void
   const gate=new Promise<void>(resolve=>{release=resolve})
   registerJob({kind:'cancel184',status:'ready',summary:'fixture',parse:params=>({ok:true,params}),run:async ctx=>{
@@ -75,7 +75,7 @@ it('cancel retry recovery and duplicate finalization retain business checkpoints
   expect(recovered.every(r=>!r.requestId)).toBe(true)
 })
 it('runner failure and idempotent resubmission preserve result and do not duplicate lifecycle',async()=>{
- const { setJobResult }=await import('../../../server/utils/job-store')
+ const { setJobResult }=await import('../../../layers/core/server/utils/job-store')
  registerJob({kind:'failure184',status:'ready',summary:'fixture',deduplicateRequest:true,parse:params=>({ok:true,params}),run:async ctx=>{
   setJobResult(db,ctx.jobId,{retained:1})
   throw new Error('PRIVATE184_THROW')

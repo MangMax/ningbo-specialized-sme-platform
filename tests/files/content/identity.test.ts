@@ -7,10 +7,10 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
-import { backfillFromDisk, getStoredFile, listStoredFiles } from '../../../server/utils/stored-files'
-import { parseUploadDeclaration, registerStoredFile } from '../../../server/utils/stored-files-upload'
-import { compareFileContentIdentity, readStoredFileContentIdentity } from '../../../server/utils/file-content-identity'
-import { readFileMaintenance } from '../../../server/utils/file-maintenance'
+import { backfillFromDisk, getStoredFile, listStoredFiles } from '../../../layers/core/server/utils/stored-files'
+import { parseUploadDeclaration, registerStoredFile } from '../../../layers/sme-roster/server/modules/sme-roster/file-upload'
+import { compareFileContentIdentity, readStoredFileContentIdentity } from '../../../layers/core/server/utils/file-content-identity'
+import { readFileMaintenance } from '../../../layers/core/server/utils/file-maintenance'
 
 const ABC_SHA = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
 const XYZ_SHA = '3608bca1e44ea6c4d268eb6db02260269892c0b42b86bbf1e77a6fa16c3c9282'
@@ -52,7 +52,8 @@ describe("A registered content identity", () => {
   it('scan reports same-size replacement without changing registered identity or parse state', async () => {
     await backfillFromDisk(db, root)
     const first = listStoredFiles(db).rows[0]!
-    db.update(schema.storedFile).set({ parseState: 'parsed', displayName: 'Reviewed notice' }).where(eq(schema.storedFile.id, first.id)).run()
+    db.update(schema.storedFile).set({ displayName: 'Reviewed notice' }).where(eq(schema.storedFile.id, first.id)).run()
+    db.update(schema.rosterFileClassification).set({ parseState: 'parsed' }).where(eq(schema.rosterFileClassification.fileId, first.id)).run()
     const before = getStoredFile(db, first.id)
     const maintenance = readFileMaintenance(db, first.id)
     put(relPath, 'xyz')
@@ -68,7 +69,8 @@ describe("A registered content identity", () => {
 
   it('upload rejects changed bytes with 409 and preserves removed state and maintenance history', async () => {
     const { row } = await register()
-    db.update(schema.storedFile).set({ removedAt: '2026-11-05T00:00:00.000Z', parseState: 'parsed' }).where(eq(schema.storedFile.id, row.id)).run()
+    db.update(schema.storedFile).set({ removedAt: '2026-11-05T00:00:00.000Z' }).where(eq(schema.storedFile.id, row.id)).run()
+    db.update(schema.rosterFileClassification).set({ parseState: 'parsed' }).where(eq(schema.rosterFileClassification.fileId, row.id)).run()
     const before = readFileMaintenance(db, row.id)
     put(relPath, 'xyz')
     await expect(register()).rejects.toMatchObject({ statusCode: 409, conflict: {

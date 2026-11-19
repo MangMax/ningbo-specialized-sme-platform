@@ -1,3 +1,4 @@
+import { createReviewedFixtureImportClient } from '../../roster/imports/fixtures/reviewed-announcement'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -5,7 +6,6 @@ import { join } from 'node:path'
 import { createApp, createError, defineEventHandler, getQuery, readBody, setHeader, toNodeListener } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { initializeDb } from '../../../db/client'
-import { createRosterImportClient } from '../../../lib/roster-import-client'
 import { executeNativeImport, startRosterApi } from '../../roster/imports/fixtures/import-server'
 const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
 vi.mock('@db', () => ({ useDb: () => active.db }))
@@ -22,11 +22,11 @@ beforeAll(async () => {
   vi.stubGlobal('createError', createError)
   vi.stubGlobal('readBody', readBody)
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: join(dir, 'curated.json'), reconcilePath: join(dir, 'reconcile.json') }))
-  const handler = (await import('../../../server/api/roster/differences.get')).default
-  const recognitions = (await import('../../../server/api/roster/recognitions.get')).default
-  const comparison = (await import('../../../server/api/comparison.get')).default
-  const usccGet = (await import('../../../server/api/roster/uscc-research.get')).default
-  const usccPost = (await import('../../../server/api/roster/uscc-research.post')).default
+  const handler = (await import('../../../layers/sme-roster/server/api/roster/differences.get')).default
+  const recognitions = (await import('../../../layers/sme-roster/server/api/roster/recognitions.get')).default
+  const comparison = (await import('../../../layers/sme-roster/server/api/comparison.get')).default
+  const usccGet = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.get')).default
+  const usccPost = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.post')).default
   const app = createApp().use('/api/roster/differences', handler)
     .use('/api/roster/recognitions', recognitions).use('/api/comparison', comparison)
     .use('/api/roster/uscc-research', defineEventHandler(event => event.method === 'POST' ? usccPost(event) : usccGet(event)))
@@ -41,7 +41,7 @@ afterAll(async () => {
 it('retains literal public differences and sees an API commit on every read after its acknowledgement', async () => {
   const read = async () => { const res = await fetch(base + '/api/roster/differences?pageSize=20'); expect(res.status).toBe(200); expect(res.headers.get('cache-control')).toBe('no-store'); return res.json() }
   expect(await read()).toMatchObject({ rows: [], total: 0 })
-  const client = createRosterImportClient({ baseUrl: imports.baseUrl, token: 'synthetic-fairness' })
+  const client = createReviewedFixtureImportClient({ baseUrl: imports.baseUrl, token: 'synthetic-fairness' }, db)
   for (const [id, name] of [[1, '公平合成甲'], [2, '公平合成乙']] as const) {
     const receipt = await client.commit({ idempotencyKey: `fairness-${id}`, sourceKind: 'announcement', sourceIdentity: `synthetic-fairness-${id}`, payload: { announcement: { sourceDocument: { source: 'jxj', title: `Synthetic ${id}` }, records: [{ enterprise: { name }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2022 }] }] } } })
     expect(receipt).toMatchObject({ status: 'committed', summary: { failed: 0 } })
@@ -65,7 +65,7 @@ it('keeps literal nonempty results and separate universes during mixed public re
     expect(response.status).toBe(200)
     return response.json()
   }
-  const tool = (await import('../../../server/mcp/tools/list_differences')).default as unknown as { handler(input: object): Promise<unknown> }
+  const tool = (await import('../../../layers/sme-roster/server/mcp/tools/list_differences')).default as unknown as { handler(input: object): Promise<unknown> }
   const [recognitions, summary, full, get, post, mcp] = await Promise.all([
     read('/api/roster/recognitions?pageSize=20'), read('/api/comparison?view=summary&pageSize=20'),
     read('/api/comparison?pageSize=20'), read('/api/roster/uscc-research?pageSize=20'),
@@ -106,7 +106,7 @@ it('preserves each scheduled route validation and the import authentication boun
 })
 
 it('propagates the existing MCP cancellation reason instead of a domain response', async () => {
-  const tool = (await import('../../../server/mcp/tools/list_differences')).default as unknown as {
+  const tool = (await import('../../../layers/sme-roster/server/mcp/tools/list_differences')).default as unknown as {
     handler(input: object, extra: { signal: AbortSignal }): Promise<unknown>
   }
   const controller = new AbortController()

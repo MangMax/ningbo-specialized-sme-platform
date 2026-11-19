@@ -1,6 +1,6 @@
 /** Completion flags and necessary columns only; full validation is offline. */
 import type Database from 'better-sqlite3'
-import { hasColumns, migrationFinished } from '../lib/platform/migration-readiness'
+import { hasColumns, migrationFinished } from '../layers/sme-roster/lib/platform/migration-readiness'
 export const DIFFERENCE_REFERENCE_VERSION = 71612
 export const DIFFERENCE_REFERENCE_TRANSFORM = 'difference-evidence-reference-v1'
 export function requireDifferenceReferencesReady(t: Database.Database) {

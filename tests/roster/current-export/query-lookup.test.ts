@@ -1,8 +1,8 @@
 import { afterAll, expect, it } from 'vitest'
 import { specializedExportFixture } from './fixtures/specialized-export'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { readQueryAssessment } from '../../../lib/roster/query-assessment'
-import { readTargetIdentityKeyVariants } from '../../../lib/roster/current-identity-keys'
+import { readQueryAssessment } from '../../../layers/sme-roster/lib/roster/query-assessment'
+import { readTargetIdentityKeyVariants } from '../../../layers/sme-roster/lib/roster/current-identity-keys'
 const f=specializedExportFixture()
 afterAll(()=>f.close())
 it('preserves coverage ordering deduplication truncation and noncanonical identity keys through native snapshot lookup',()=>{
@@ -46,8 +46,8 @@ it('does not retain identity variants across export snapshots or read source bod
 })
 
 it('preserves full three-title workbook snapshots and cells with indexed coverage', async()=>{
-  const { createCurrentQualificationAssessmentReader } = await import('../../../lib/roster/current-qualification')
-  const { currentWorkbookValues } = await import('../../../lib/roster/current-workbook-presentation')
+  const { createCurrentQualificationAssessmentReader } = await import('../../../layers/sme-roster/lib/roster/current-qualification')
+  const { currentWorkbookValues } = await import('../../../layers/sme-roster/lib/roster/current-workbook-presentation')
   const id=f.candidate('Workbook indexed coverage',[]).enterprise.id
   f.db.$client.prepare('update enterprise set uscc_norm=? where id=?').run('WORKBOOK-KEY',id)
   for(const titleCode of ['little_giant','specialized_sme','innovative_sme'] as const)

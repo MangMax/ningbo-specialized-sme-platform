@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { allRosterEnterprises, listRosterEnterprises } from '../../../lib/roster/enterprise-roster'
-import { parseRosterEnterpriseQuery } from '../../../server/utils/roster-read-query'
+import { allRosterEnterprises, listRosterEnterprises } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { parseRosterEnterpriseQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
 
 const directory=mkdtempSync(join(tmpdir(),'rl20-reason-filter-'))
 const db=initializeDb({ create: true,dbPath:join(directory,'test.db')})
@@ -13,6 +13,7 @@ const ids: Record<string,number>={}
 function company(key:string) {
   const name=`宁波${key}企业`
   ids[key]=db.insert(schema.enterprise).values({name,nameNorm:name}).returning({id:schema.enterprise.id}).get().id
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: ids[key]! }).run()
   return ids[key]!
 }
 function reason(enterpriseId:number,titleCode:'specialized_sme'|'little_giant',reasonCode:'other'|'platform_stale'|'pending_review') {

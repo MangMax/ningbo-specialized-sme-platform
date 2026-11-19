@@ -36,6 +36,7 @@ function seed(name: string, uscc: string | null, district: string | null, titleC
     .values({ name, nameNorm: name, usccNorm: uscc, district })
     .returning({ id: schema.enterprise.id })
     .get().id
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: id }).run()
   const recordId = db
     .insert(schema.record)
     .values({ enterpriseId: id, titleCode, source })
@@ -137,10 +138,10 @@ beforeAll(async () => {
     })
     .run()
 
-  handlerEnterprises = decodeJsonRead((await import('../../../server/api/roster/enterprises.get')).default) as unknown as typeof handlerEnterprises
-  handlerDetail = decodeJsonRead((await import('../../../server/api/roster/enterprises/[id].get')).default) as unknown as typeof handlerDetail
-  handlerDifferences = (await import('../../../server/api/roster/differences.get')).default as unknown as typeof handlerDifferences
-  handlerExport = (await import('../../../server/api/roster/export.get')).default as unknown as typeof handlerExport
+  handlerEnterprises = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default) as unknown as typeof handlerEnterprises
+  handlerDetail = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default) as unknown as typeof handlerDetail
+  handlerDifferences = (await import('../../../layers/sme-roster/server/api/roster/differences.get')).default as unknown as typeof handlerDifferences
+  handlerExport = (await import('../../../layers/sme-roster/server/api/roster/export.get')).default as unknown as typeof handlerExport
   const app = createApp()
   app.use('/api/roster/export', handlerExport as never)
   server = createServer(toNodeListener(app))

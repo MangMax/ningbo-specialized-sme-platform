@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { FieldCapturedLogEvent, LogEvent } from '../../../lib/logging/contract'
-import { detailProfile, errorCodeMissingIsInformative, fieldOmission } from '../../../lib/logging/detail-profile'
-import { formatCounts } from '../../../components/logs/logPresentation'
-import { projectEvlog, safeLogEvent, safeMcpContext, safeTusContext } from '../../../lib/logging/privacy'
+import type { FieldCapturedLogEvent, LogEvent } from '../../../layers/core/lib/logging/contract'
+import { detailProfile, errorCodeMissingIsInformative, fieldOmission } from '../../../layers/core/lib/logging/detail-profile'
+import { formatCounts } from '../../../layers/core/app/components/logs/logPresentation'
+import { projectEvlog, safeLogEvent, safeMcpContext, safeTusContext } from '../../../layers/core/lib/logging/privacy'
 
 const event = (over: Partial<LogEvent>): LogEvent => ({
   id: '00000000-0000-4000-8000-000000000180',

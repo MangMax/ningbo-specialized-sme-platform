@@ -10,7 +10,7 @@ import { ensurePlatformObservation } from '../../../upgrade/frozen/server/platfo
 import { witnessReaderFixture } from '../fixtures/recognized-witness-upgrade'
 import { finalizeProcessStored } from '../../../upgrade/process-stored'
 import { processStoredInstalled } from '../../../upgrade/process-stored-catalog'
-import { rowSnapshot, schemaHash } from '../../../lib/platform/sqlite-row-cells'
+import { rowSnapshot, schemaHash } from '../../../layers/sme-roster/lib/platform/sqlite-row-cells'
 import { projectionManifest } from '../../../upgrade/projections'
 import { installProcessStoredSchema } from '../../../upgrade/process-stored-schema'
 import { writeProcessTarget } from '../../../upgrade/frozen/process-target-writer'

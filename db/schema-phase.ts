@@ -1,6 +1,10 @@
 import type Database from 'better-sqlite3'
+import { assertEnterpriseKernelSchema, ENTERPRISE_KERNEL_RUNTIME_VERSION } from './enterprise-kernel-schema'
 export const PLATFORM_RUNTIME_VERSION = 71613
 export const PLATFORM_RETIREMENT_RULE = 'platform-mixed-model-retirement-v1'
+export function isFinalPlatformRuntimeVersion(value: unknown) {
+  return value === PLATFORM_RUNTIME_VERSION || value === ENTERPRISE_KERNEL_RUNTIME_VERSION
+}
 export const RETIRED_PLATFORM_TABLES = [
   'platform_query_legacy_provenance',
   'platform_relation_body_ref', 'platform_query_body_ref', 'platform_version_body_ref',
@@ -19,7 +23,8 @@ export function assertNoRetiredPlatformSchema(sqlite: Database.Database) {
 /** Completion is a one-time offline decision, separate from the 71613 reader phase.
  * Opening a target never installs DDL or replays expand migrations. */
 export function assertFinalPlatformRuntime(sqlite: Database.Database) {
-  if (sqlite.pragma('user_version', { simple: true }) !== PLATFORM_RUNTIME_VERSION) throw new Error('Unsupported final platform runtime schema')
+  const version = sqlite.pragma('user_version', { simple: true })
+  if (!isFinalPlatformRuntimeVersion(version)) throw new Error('Unsupported final platform runtime schema')
   const marker = sqlite.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='platform_runtime_completion'").get()
   if (!marker || !sqlite.prepare('SELECT 1 FROM platform_runtime_completion WHERE id=1 AND rule=? AND schema_version=?').get(PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION)) {
     throw new Error('Platform runtime retirement incomplete; finish explicit offline retirement')
@@ -36,4 +41,21 @@ export function assertFinalPlatformRuntime(sqlite: Database.Database) {
     enterprise_merge e,platform_apply_projection pa,platform_business_projection pb,platform_recognized_projection pr,
     platform_business_record_version v,platform_collection_page cp,platform_collection_unfinished cu,
     platform_collection_condition cc LIMIT 0`).all()
+  return version
+}
+
+export function assertRosterFileClassificationSchema(sqlite: Database.Database) {
+  const columns = sqlite.prepare("SELECT name FROM pragma_table_info('stored_file')").pluck().all()
+  const expected = ['id', 'rel_path', 'display_name', 'filename', 'ext', 'bytes', 'sha256', 'created_at', 'removed_at']
+  if (!expected.every(column => columns.includes(column)) || columns.length !== expected.length
+    || !sqlite.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='roster_file_classification'").get()) {
+    throw new Error('File classification schema missing; run explicit offline file classification upgrade')
+  }
+  sqlite.prepare('SELECT file_id, source, kind, year, batch, title_code, category_state, parse_state FROM roster_file_classification LIMIT 0').all()
+}
+
+export function assertApplicationSchema(sqlite: Database.Database) {
+  const version = assertFinalPlatformRuntime(sqlite)
+  assertRosterFileClassificationSchema(sqlite)
+  assertEnterpriseKernelSchema(sqlite, version)
 }

@@ -1,7 +1,7 @@
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { listCurrentQualified } from '../../../lib/roster/current-qualified-query'
-import { readCurrentQualificationAssessment } from '../../../lib/roster/current-qualification'
+import { listCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import { readCurrentQualificationAssessment } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { AS_OF_408 as AS_OF, currentQualificationFixture } from '../fixtures/qualification-matrix'
 
 let fixture: ReturnType<typeof currentQualificationFixture>
@@ -96,9 +96,9 @@ it("formal_eligible_survives_platform_query_failure", () => {
 
 // Current-contract matrix controls retain the original source facts.
 import { createHash } from 'node:crypto'
-import { createCurrentQualificationAssessmentReader } from '../../../lib/roster/current-qualification'
-import type { CurrentQualifiedFilter } from '../../../lib/roster/current-qualified-query'
-import type { PlatformRow } from '../../../lib/platform/types'
+import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import type { CurrentQualifiedFilter } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import type { PlatformRow } from '../../../layers/sme-roster/lib/platform/types'
 import { qualificationMatrix, qualificationFileFixture, type MatrixEvent408 as MatrixEvent } from '../fixtures/qualification-matrix'
 
 const pendingEvents: MatrixEvent[] = [
@@ -395,7 +395,7 @@ it("empty_dataset_is_a_successful_empty_scope_not_an_unrequested_census", () => 
 
 // Independent nonempty reference controls appended after the frozen 41-case prefix.
 import { qualificationReferenceLiterals } from '../fixtures/qualification-matrix'
-import { createEnterpriseTitleCorrespondenceRefsReader, listRecordCorrespondenceRefs } from '../../../server/utils/record-correspondence'
+import { createEnterpriseTitleCorrespondenceRefsReader, listRecordCorrespondenceRefs } from '../../../layers/sme-roster/server/utils/record-correspondence'
 
 type RefLiteral = { id: number; queryId: number; status: string | null; year: number | null; batch: string | null }
 function assertRefSnapshot(enterpriseId: number, refs: Record<'little_giant' | 'specialized_sme' | 'innovative_sme', RefLiteral[]>, ownQueryIds?: number[]) {
@@ -534,8 +534,8 @@ it('native recognized submission rejects ownership that conflicts with source id
   expect(fixture.sqlite.prepare('select count(*) n from platform_collection').get()).toEqual(before)
 })
 
-import { createCurrentTargetContext } from '../../../lib/roster/current-target-context'
-import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../server/utils/record-correspondence'
+import { createCurrentTargetContext } from '../../../layers/sme-roster/lib/roster/current-target-context'
+import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
 
 it('global filter revalidates only recognition witnesses while full reads retain process refs', () => {
   const m = qualificationMatrix(fixture.sqlite)
@@ -581,7 +581,7 @@ it('global filter revalidates only recognition witnesses while full reads retain
 
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
 import { schema as filterSchema } from '../../../db/client'
-import { preflightEventCorrections, commitEventCorrections } from '../../../server/utils/roster-event-correction'
+import { preflightEventCorrections, commitEventCorrections } from '../../../layers/sme-roster/server/utils/roster-event-correction'
 it.each(['source revision','assignment owner','withdraw','context role','candidate','cross title','canonical owner','no witness'] as const)('global witness filtering preserves %s boundary and complete refs', state => {
   const m=qualificationMatrix(fixture.sqlite)
   const a=m.formal('Witness owner',[{eventType:'award',year:2025,decidedYear:2025,batchSeq:1}])

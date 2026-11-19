@@ -1,4 +1,4 @@
-import { CURRENT_RULE_VERSION } from '../../../../lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION } from '../../../../layers/sme-roster/lib/roster/current-qualification'
 import { expect } from 'vitest'
 import { rows, businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from '../fixtures/specialized-export'
 import type { QualificationCase } from "../../current-qualification/fixtures/cycle-cases"

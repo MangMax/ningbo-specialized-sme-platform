@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as pause } from 'node:timers/promises'
 import { initializeDb } from '../../../db/client'
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../lib/logging'
-import { createEnterpriseReadExecutor } from '../../../server/utils/enterprise-read'
-import { createEnterpriseReadProcess } from '../../../server/utils/enterprise-read-process'
+import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
+import { createEnterpriseReadExecutor } from '../../../layers/sme-roster/server/utils/enterprise-read'
+import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
 const root=mkdtempSync(join(tmpdir(),'enterprise184-'))
 const path=join(root,'fixture.db'), db=initializeDb({ create: true, dbPath:path})
 const previous=process.env.NUXT_LOG_DIR

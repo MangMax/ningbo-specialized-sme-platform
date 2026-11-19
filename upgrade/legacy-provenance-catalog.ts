@@ -1,7 +1,7 @@
 /** Offline historical provenance admission; never imported by runtime. */
 /** Explicit successor description only. W/R own admission; ordinary guards remain CLOSED. */
 import type Database from 'better-sqlite3'
-import { hasColumns, migrationFinished } from '../lib/platform/migration-readiness'
+import { hasColumns, migrationFinished } from '../layers/sme-roster/lib/platform/migration-readiness'
 export const LEGACY_PROVENANCE_VERSION = 71613
 export const LEGACY_PROVENANCE_TRANSFORM = 'collection-legacy-provenance-v1'
 export function requireLegacyProvenanceReady(t: Database.Database) {

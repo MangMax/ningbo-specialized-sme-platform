@@ -8,7 +8,7 @@ import { useDb, schema } from '../../../upgrade/legacy-client'
 import { ensurePlatformObservation } from '../../../upgrade/frozen/server/platform-business-record'
 import { readPlatformBusinessDetails } from '../../../upgrade/frozen/server/platform-business-detail-read'
 import { getPlatformRecognizedRecord, listPlatformRecognizedDirectory } from '../../../upgrade/frozen/server/platform-recognized-directory'
-import { hasKnownPlatformBusiness } from '../../../lib/roster/platform-business-detail'
+import { hasKnownPlatformBusiness } from '../../../layers/sme-roster/lib/roster/platform-business-detail'
 
 const dir = mkdtempSync(join(tmpdir(), 'recognized-directory-shadow-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'shadow.sqlite') })

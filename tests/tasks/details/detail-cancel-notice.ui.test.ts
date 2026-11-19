@@ -11,10 +11,10 @@
 // server says*, never the component's internals — no private ref is written.
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import TaskDetail from '../../../components/tasks/TaskDetail.vue'
-import TableFailureState from '../../../components/TableFailureState.vue'
-import TaskProgress from '../../../components/tasks/TaskProgress.vue'
-import type { TaskSummary } from '~~/lib/task-center'
+import TaskDetail from '../../../layers/sme-roster/app/components/tasks/TaskDetail.vue'
+import TableFailureState from '../../../layers/core/app/components/TableFailureState.vue'
+import TaskProgress from '../../../layers/core/app/components/tasks/TaskProgress.vue'
+import type { TaskSummary } from '#core/lib/task-center'
 
 const TASK_ID = '01M5BEPVCXD5619ZW4C6CATMWX'
 
@@ -23,7 +23,7 @@ function platformTask(state: TaskSummary['state']): TaskSummary {
     id: TASK_ID,
     kind: 'platform-query-batch',
     label: '平台批量查询',
-    group: 'platform',
+    module: 'sme-roster', group: 'platform',
     state,
     createdAt: '2026-10-20T01:27:12.029Z',
     startedAt: '2026-10-20T01:27:12.030Z',

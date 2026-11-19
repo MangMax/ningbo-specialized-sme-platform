@@ -1,13 +1,13 @@
 /** Query processing facts only; business interpretation remains with the agent. */
 import { describe, expect, it } from 'vitest'
-import { classifyRawQuery, type PlatformRow } from '../../../lib/platform'
-import type { PlatformInterface } from '../../../lib/labels'
-import { relationFromRow, type PlatformRelationRecord } from '../../../lib/platform/identity'
+import { classifyRawQuery, type PlatformRow } from '../../../layers/sme-roster/lib/platform'
+import type { PlatformInterface } from '../../../layers/sme-roster/lib/labels'
+import { relationFromRow, type PlatformRelationRecord } from '../../../layers/sme-roster/lib/platform/identity'
 import {
   type ReconcileQueryEvidence,
   type ReconcileTarget,
   decideDifference,
-} from '../../../lib/platform/reconcile'
+} from '../../../layers/sme-roster/lib/platform/reconcile'
 
 import { platformFixture as fixture } from '../fixtures/source-replay'
 

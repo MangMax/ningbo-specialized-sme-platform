@@ -1,17 +1,17 @@
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
-import { resolveLegacyReference } from '../../../lib/platform/target-archive'
+import { resolveLegacyReference } from '../../../layers/sme-roster/lib/platform/target-archive'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { copyFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest'
-import { targetSchema } from '../../../lib/platform/target-schema'
-import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../lib/platform/collection-target-command'
-import { platformResultToImport } from '../../../lib/platform/recognized-evidence'
-import type { PlatformLiveQueryResult, PlatformQuerySource } from '../../../lib/platform/live-query'
+import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
+import { writeNewCollectionTarget, type NewCollectionTargetCommand } from '../../../layers/sme-roster/lib/platform/collection-target-command'
+import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import type { PlatformLiveQueryResult, PlatformQuerySource } from '../../../layers/sme-roster/lib/platform/live-query'
 
 const owned: {root:string; sqlite:Database.Database}[]=[]
 afterEach(()=>{for(const f of owned.splice(0)){if(f.sqlite.open)f.sqlite.close();rmSync(f.root,{recursive:true,force:true})}})
@@ -47,11 +47,11 @@ it.each(['queryList', 'businessList', 'queryBusList'] as const)('executes a comp
   expect(sqlite.prepare('select source,evidence_status,completeness,full_range,provenance_state,parse_state from platform_collection').get()).toEqual({ source, evidence_status: 'success', completeness: 'complete', full_range: 1, provenance_state: 'captured', parse_state: 'valid' })
   expect(sqlite.prepare('select sequence_no,page_row_no,position_state from platform_business_observation').all()).toEqual([{ sequence_no: 1, page_row_no: 1, position_state: 'verified' }])
   expect(statements.filter(text => /\b(platform_query|platform_relation)\b/i.test(text))).toEqual([])
-  expect(sqlite.pragma('user_version', { simple: true })).toBe(71613)
+  expect(sqlite.pragma('user_version', { simple: true })).toBe(71614)
   expect(sqlite.pragma('foreign_key_check')).toEqual([]); sqlite.close()
 })
 
-function changed(input: ReturnType<typeof command>, mutate: (q: import('../../../lib/roster-import-client').RosterImportPlatformQuery) => void) {
+function changed(input: ReturnType<typeof command>, mutate: (q: import('../../../layers/sme-roster/lib/roster-import-client').RosterImportPlatformQuery) => void) {
   const q = JSON.parse(input.queryText)
   mutate(q)
   return { ...input, queryText: JSON.stringify(q), evidenceText: q.collectionEvidence == null ? null : JSON.stringify(q.collectionEvidence) }

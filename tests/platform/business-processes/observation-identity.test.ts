@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { canonicalPlatformJson, planPlatformObservation } from '../../../lib/platform/observation-plan'
+import { canonicalPlatformJson, planPlatformObservation } from '../../../layers/sme-roster/lib/platform/observation-plan'
 it('canonicalizes nested JSON objects only and preserves every JSON value partition', () => {
   expect(canonicalPlatformJson({ z: [{ b: true, a: null }], a: '' })).toBe('{"a":"","z":[{"a":null,"b":true}]}')
   const values = [null, false, 0, '', '0', [], {}, { a: null }, { a: false }, { a: 0 }, { a: '' }, [1, 2], [2, 1]]

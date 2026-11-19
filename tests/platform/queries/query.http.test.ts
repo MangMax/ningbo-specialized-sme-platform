@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, getQuery, setHeader, defineEventHandler, createError } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb, schema } from '../../../db'
-import { platformSummaryCache } from '../../../server/utils/platform-summary-cache'
+import { platformSummaryCache } from '../../../layers/sme-roster/server/utils/platform-summary-cache'
 const dir = mkdtempSync(join(tmpdir(), 'platform-query-http-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 let server: ReturnType<typeof createServer>, base: string
@@ -17,8 +17,8 @@ beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('getQuery', getQuery)
   vi.stubGlobal('createError', createError)
-  const list = (await import('../../../server/api/platform/queries.get')).default
-  const evidence = (await import('../../../server/api/platform/queries/[queryId]/evidence.get')).default
+  const list = (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default
+  const evidence = (await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default
   const router = createRouter().get('/api/platform/queries-no-store', defineEventHandler(event => { setHeader(event, 'cache-control', 'no-store'); return list(event) })).get('/api/platform/queries', list).get('/api/platform/queries/:queryId/evidence', evidence)
   server = createServer(toNodeListener(createApp({ debug: false }).use(router)))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))

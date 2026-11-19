@@ -6,7 +6,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterEach, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { handleCredentialsRequest } from '../../../server/utils/credentials-http'
+import { handleCredentialsRequest } from '../../../layers/core/server/utils/credentials-http'
 import { startHttpFixture, type HttpFixture } from '../../support/http'
 let dir: string
 let db: ReturnType<typeof useDb>
@@ -25,8 +25,8 @@ function connect() {
 async function serve() {
   server = await startHttpFixture({ routes: {
     '/api/settings/credentials': request => handleCredentialsRequest('state', request, { db, env: {} }),
-    '/api/settings/credentials/ocrToken/reveal': request => handleCredentialsRequest('reveal', request, { db, env: {} }),
-    '/api/settings/credentials/miitCookie/reveal': request => handleCredentialsRequest('reveal', request, { db, env: {} }, 'miitCookie'),
+    '/api/settings/credentials/core.ocrToken/reveal': request => handleCredentialsRequest('reveal', request, { db, env: {} }, 'core.ocrToken'),
+    '/api/settings/credentials/sme-roster.miitCookie/reveal': request => handleCredentialsRequest('reveal', request, { db, env: {} }, 'sme-roster.miitCookie'),
   } })
 }
 async function start() {
@@ -43,8 +43,8 @@ it('reads, saves, reveals and clears both credentials without a management token
   const initial = await request()
   expect(initial.status).toBe(200)
   expect(initial.headers.get('cache-control')).toBe('no-store')
-  for (const key of ['ocrToken', 'miitCookie']) {
-    const value = key === 'ocrToken' ? 'synthetic-ocr-first' : 'session=synthetic-cookie-first'
+  for (const key of ['core.ocrToken', 'sme-roster.miitCookie']) {
+    const value = key === 'core.ocrToken' ? 'synthetic-ocr-first' : 'session=synthetic-cookie-first'
     const saved = await request('PATCH', { [key]: value })
     expect(saved.status).toBe(200)
     expect(JSON.stringify(await saved.json()).includes(value)).toBe(false)
@@ -56,57 +56,71 @@ it('reads, saves, reveals and clears both credentials without a management token
     expect((await (await request()).json())[key].configured).toBe(false)
   }
 })
+it('accepts only registered namespaced keys at the settings HTTP boundary', async () => {
+  await start()
+  const key = 'core.ocrToken'
+  expect((await request('PATCH', { [key]: 'synthetic-allowed' })).status).toBe(200)
+  expect((await request('GET')).headers.get('cache-control')).toBe('no-store')
+  expect(await (await request()).json()).toMatchObject({
+    [key]: { configured: true, source: 'saved' },
+    'sme-roster.miitCookie': { configured: false, source: 'none' },
+  })
+  expect((await request('PATCH', { [key]: 'synthetic-not-written', 'core.unregistered': 'synthetic-unknown' })).status).toBe(400)
+  expect((await request('DELETE', { key: 'core.unregistered' })).status).toBe(400)
+  expect((await request('POST', {}, '/core.unregistered/reveal')).status).toBe(404)
+  expect((await (await request('POST', {}, `/${key}/reveal`)).json()).value).toBe('synthetic-allowed')
+})
 it('persists both credentials across database connection and HTTP server restart', async () => {
   await start()
-  await request('PATCH', { ocrToken: 'synthetic-persisted-ocr', miitCookie: 'session=synthetic-persisted-cookie' })
+  await request('PATCH', { 'core.ocrToken': 'synthetic-persisted-ocr', 'sme-roster.miitCookie': 'session=synthetic-persisted-cookie' })
   await server.close(); db.$client.close()
   db = connect(); await serve()
   const state = await (await request()).json()
-  expect(state).toMatchObject({ ocrToken: { source: 'saved', hasSaved: true, masked: 'syn********ocr' }, miitCookie: { source: 'saved', hasSaved: true, masked: 'ses********kie' } })
-  expect((await (await request('POST', {}, '/ocrToken/reveal')).json()).value).toBe('synthetic-persisted-ocr')
-  expect((await (await request('POST', {}, '/miitCookie/reveal')).json()).value).toBe('session=synthetic-persisted-cookie')
+  expect(state).toMatchObject({ 'core.ocrToken': { source: 'saved', hasSaved: true, masked: 'syn********ocr' }, 'sme-roster.miitCookie': { source: 'saved', hasSaved: true, masked: 'ses********kie' } })
+  expect((await (await request('POST', {}, '/core.ocrToken/reveal')).json()).value).toBe('synthetic-persisted-ocr')
+  expect((await (await request('POST', {}, '/sme-roster.miitCookie/reveal')).json()).value).toBe('session=synthetic-persisted-cookie')
 })
 it('keeps independent updates across separate database connections and concurrent HTTP requests', async () => {
   await start()
   const second = connect()
   const other = await startHttpFixture({ routes: { '/api/settings/credentials': req => handleCredentialsRequest('state', req, { db: second, env: {} }) } })
   try {
-    const responses = await Promise.all([request('PATCH', { ocrToken: 'synthetic-ocr-kept' }), fetch(other.baseUrl + '/api/settings/credentials', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ miitCookie: 'session=synthetic-cookie' }) })])
+    const responses = await Promise.all([request('PATCH', { 'core.ocrToken': 'synthetic-ocr-kept' }), fetch(other.baseUrl + '/api/settings/credentials', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ 'sme-roster.miitCookie': 'session=synthetic-cookie' }) })])
     expect(responses.map(r => r.status)).toEqual([200, 200])
-    expect(await (await request()).json()).toMatchObject({ ocrToken: { masked: 'syn********ept' }, miitCookie: { masked: 'ses********kie' } })
-    await request('DELETE', { key: 'miitCookie' })
-    expect((await (await request()).json()).ocrToken.masked).toBe('syn********ept')
+    expect(await (await request()).json()).toMatchObject({ 'core.ocrToken': { masked: 'syn********ept' }, 'sme-roster.miitCookie': { masked: 'ses********kie' } })
+    await request('DELETE', { key: 'sme-roster.miitCookie' })
+    expect((await (await request()).json())['core.ocrToken'].masked).toBe('syn********ept')
   } finally { await other.close() }
 })
 it('rolls back the entire mixed update on a database failure and retries after recovery', async () => {
   await start()
-  await request('PATCH', { ocrToken: 'synthetic-kept-ocr', miitCookie: 'session=synthetic-kept-cookie' })
-  db.$client.exec("CREATE TRIGGER reject_cookie BEFORE INSERT ON service_credential WHEN NEW.key = 'miitCookie' BEGIN SELECT RAISE(ABORT, 'synthetic-sensitive-sql'); END")
-  const failed = await request('PATCH', { ocrToken: 'synthetic-never-written', miitCookie: 'session=synthetic-never-written' })
+  await request('PATCH', { 'core.ocrToken': 'synthetic-kept-ocr', 'sme-roster.miitCookie': 'session=synthetic-kept-cookie' })
+  db.$client.exec("CREATE TRIGGER reject_cookie BEFORE INSERT ON service_credential WHEN NEW.key = 'sme-roster.miitCookie' BEGIN SELECT RAISE(ABORT, 'synthetic-sensitive-sql'); END")
+  const failed = await request('PATCH', { 'core.ocrToken': 'synthetic-never-written', 'sme-roster.miitCookie': 'session=synthetic-never-written' })
   expect(failed.status).toBe(503)
   expect(failed.headers.get('cache-control')).toBe('no-store')
   expect(JSON.stringify(await failed.json())).not.toMatch(/synthetic|service_credential|SQL|INSERT/)
-  expect((await (await request('POST', {}, '/ocrToken/reveal')).json()).value).toBe('synthetic-kept-ocr')
-  expect((await (await request('POST', {}, '/miitCookie/reveal')).json()).value).toBe('session=synthetic-kept-cookie')
+  expect((await (await request('POST', {}, '/core.ocrToken/reveal')).json()).value).toBe('synthetic-kept-ocr')
+  expect((await (await request('POST', {}, '/sme-roster.miitCookie/reveal')).json()).value).toBe('session=synthetic-kept-cookie')
   db.$client.exec('DROP TRIGGER reject_cookie')
-  expect((await request('PATCH', { ocrToken: 'synthetic-retried', miitCookie: 'session=synthetic-retried' })).status).toBe(200)
+  expect((await request('PATCH', { 'core.ocrToken': 'synthetic-retried', 'sme-roster.miitCookie': 'session=synthetic-retried' })).status).toBe(200)
 })
 it('rejects writes on a read-only database while preserving saved values', async () => {
   await start()
-  await request('PATCH', { ocrToken: 'synthetic-kept' })
+  await request('PATCH', { 'core.ocrToken': 'synthetic-kept' })
   const readonly = useDb({ dbPath: join(dir, 'roster.sqlite'), readOnly: true }); connections.push(readonly.$client)
-  for (const [method, body] of [['PATCH', { ocrToken: 'synthetic-rejected' }], ['DELETE', { key: 'ocrToken' }]] as const) {
+  for (const [method, body] of [['PATCH', { 'core.ocrToken': 'synthetic-rejected' }], ['DELETE', { key: 'core.ocrToken' }]] as const) {
     const response = handleCredentialsRequest('state', { method, body, headers: {} }, { db: readonly, env: {} })
     expect(response.status).toBe(503)
     expect(JSON.stringify(response)).not.toContain('synthetic')
   }
-  expect((await (await request('POST', {}, '/ocrToken/reveal')).json()).value).toBe('synthetic-kept')
+  expect((await (await request('POST', {}, '/core.ocrToken/reveal')).json()).value).toBe('synthetic-kept')
 })
 it('fails closed when the database is unavailable instead of falling back or exposing SQL errors', async () => {
   await start()
   db.$client.close()
   for (const action of ['state', 'reveal'] as const) {
-    const response = handleCredentialsRequest(action, { method: action === 'state' ? 'GET' : 'POST', headers: {}, body: null }, { db, env: { NUXT_OCR_TOKEN: 'synthetic-fallback' } })
+    const response = handleCredentialsRequest(action, { method: action === 'state' ? 'GET' : 'POST', headers: {}, body: null }, { db, env: { NUXT_OCR_TOKEN: 'synthetic-fallback' } }, 'core.ocrToken')
     expect(response.status).toBe(503)
     expect(JSON.stringify(response)).not.toMatch(/synthetic|closed|sqlite|roster.sqlite/)
   }
@@ -115,20 +129,20 @@ it('clears only database overrides and restores deployment fallback without chan
   await start()
   const env = { NUXT_OCR_TOKEN: 'synthetic-env-ocr', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: 'synthetic-second', MIIT_COOKIE: 'session=synthetic-env-cookie' }
   const ctx = { db, env }
-  await request('PATCH', { ocrToken: 'synthetic-saved', miitCookie: 'session=synthetic-saved' })
-  for (const key of ['ocrToken', 'miitCookie']) {
+  await request('PATCH', { 'core.ocrToken': 'synthetic-saved', 'sme-roster.miitCookie': 'session=synthetic-saved' })
+  for (const key of ['core.ocrToken', 'sme-roster.miitCookie']) {
     const response = handleCredentialsRequest('state', { method: 'DELETE', body: { key }, headers: {} }, ctx)
     expect(response.status).toBe(200)
-    expect(response.body).toMatchObject({ [key]: { source: key === 'ocrToken' ? 'NUXT_OCR_TOKEN' : 'MIIT_COOKIE', hasSaved: false } })
+    expect(response.body).toMatchObject({ [key]: { source: key === 'core.ocrToken' ? 'NUXT_OCR_TOKEN' : 'MIIT_COOKIE', hasSaved: false } })
   }
   expect(env).toEqual({ NUXT_OCR_TOKEN: 'synthetic-env-ocr', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: 'synthetic-second', MIIT_COOKIE: 'session=synthetic-env-cookie' })
 })
 it('rejects invalid payloads and omitted fields leave the saved credential unchanged', async () => {
   await start()
-  await request('PATCH', { ocrToken: 'synthetic-kept' })
-  for (const body of [null, [], 2, { path: '/tmp/wrong' }, { ocrToken: ' ' }, { ocrToken: null }, { miitCookie: '\r\nsession=bad', ocrToken: 'synthetic-not-written' }]) expect((await request('PATCH', body)).status).toBe(400)
+  await request('PATCH', { 'core.ocrToken': 'synthetic-kept' })
+  for (const body of [null, [], 2, { path: '/tmp/wrong' }, { 'core.ocrToken': ' ' }, { 'core.ocrToken': null }, { 'sme-roster.miitCookie': '\r\nsession=bad', 'core.ocrToken': 'synthetic-not-written' }]) expect((await request('PATCH', body)).status).toBe(400)
   expect((await request('PATCH', {})).status).toBe(200)
-  expect((await (await request('POST', {}, '/ocrToken/reveal')).json()).value).toBe('synthetic-kept')
+  expect((await (await request('POST', {}, '/core.ocrToken/reveal')).json()).value).toBe('synthetic-kept')
   expect((await request('DELETE', {})).status).toBe(400)
 })
 it('configuration writes change only credential rows and never business or task tables', async () => {
@@ -139,8 +153,8 @@ it('configuration writes change only credential rows and never business or task 
     return tables.map(({ name }) => ({ name, rows: db.$client.prepare(`SELECT * FROM "${name.replace(/"/g, '""')}"`).all() }))
   }
   const before = snapshot()
-  await request('PATCH', { ocrToken: 'synthetic-db-only', miitCookie: 'session=synthetic-db-only' })
-  await request('POST', {}, '/ocrToken/reveal')
+  await request('PATCH', { 'core.ocrToken': 'synthetic-db-only', 'sme-roster.miitCookie': 'session=synthetic-db-only' })
+  await request('POST', {}, '/core.ocrToken/reveal')
   expect(db.select().from(schema.serviceCredential).all()).toHaveLength(2)
   expect(snapshot()).toEqual(before)
 })
@@ -150,6 +164,6 @@ it.each([
   { label: 'nine characters', value: '123456789', masked: '123********789' },
 ])('masks OCR and Cookie length boundaries ($label)', async ({ value, masked }) => {
   await start()
-  const response = await request('PATCH', { ocrToken: value, miitCookie: value })
-  expect(await response.json()).toMatchObject({ ocrToken: { masked }, miitCookie: { masked } })
+  const response = await request('PATCH', { 'core.ocrToken': value, 'sme-roster.miitCookie': value })
+  expect(await response.json()).toMatchObject({ 'core.ocrToken': { masked }, 'sme-roster.miitCookie': { masked } })
 })

@@ -1,3 +1,4 @@
+import { completeInProcessIntake } from '../imports/fixtures/in-process-intake'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -9,15 +10,20 @@ import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import * as schema from '../../../db/schema'
-import type { OfficialPublishedRow, RosterImportPayload, RosterImportRequest, RosterImportRecord } from '../../../lib/roster-import-client'
-import type { EvidenceCorrectionRequest } from '../../../server/utils/roster-evidence-correction'
-import { commitRosterImport, preflightRosterImport } from '../../../server/utils/roster-import'
+import type { OfficialPublishedRow, RosterImportPayload, RosterImportRequest, RosterImportRecord } from '../../../layers/sme-roster/lib/roster-import-client'
+import type { EvidenceCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-evidence-correction'
+import { commitRosterImport, preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 
-type Execute = typeof import('../../../server/utils/import-execution')['importExecutor']['execute']
+type Execute = typeof import('../../../layers/sme-roster/server/utils/import-execution')['importExecutor']['execute']
 const current = vi.hoisted((): { db?: BetterSQLite3Database<typeof schema>; filesDir: string } => ({ filesDir: '' }))
 vi.mock('@db', () => ({ useDb: () => { if (!current.db) throw new Error('Synthetic database not initialized'); return current.db } }))
 // Replace only process admission; real production routes/planners/writers run in H3/SQLite.
-vi.mock('../../../server/utils/import-execution', () => ({ importExecutor: { execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
+vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: {
+  stage: async (db: Parameters<Execute>[0], request: Parameters<Execute>[2], errors: NonNullable<Parameters<Execute>[3]>) => {
+    const { stageAnnouncement } = await import('../../../layers/sme-roster/server/utils/announcement-intake')
+    return stageAnnouncement(db as Parameters<typeof stageAnnouncement>[0], request, errors)
+  },
+  execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
 const closes: (() => void | Promise<void>)[] = []
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close() })
 afterAll(() => { vi.unstubAllGlobals() })
@@ -25,11 +31,11 @@ const router = createRouter()
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-r3', filesDir: current.filesDir }))
-  router.post('/api/roster/import/preflight', (await import('../../../server/api/roster/import/preflight.post')).default)
-  router.post('/api/roster/import/commit', (await import('../../../server/api/roster/import/commit.post')).default)
-  router.post('/api/roster/evidence/corrections/preflight', (await import('../../../server/api/roster/evidence/corrections/preflight.post')).default)
-  router.post('/api/roster/evidence/corrections/commit', (await import('../../../server/api/roster/evidence/corrections/commit.post')).default)
-  router.get('/api/roster/evidence/:id', (await import('../../../server/api/roster/evidence/[id].get')).default)
+  router.post('/api/roster/import/preflight', (await import('../../../layers/sme-roster/server/api/roster/import/preflight.post')).default)
+  router.post('/api/roster/import/commit', (await import('../../../layers/sme-roster/server/api/roster/import/commit.post')).default)
+  router.post('/api/roster/evidence/corrections/preflight', (await import('../../../layers/sme-roster/server/api/roster/evidence/corrections/preflight.post')).default)
+  router.post('/api/roster/evidence/corrections/commit', (await import('../../../layers/sme-roster/server/api/roster/evidence/corrections/commit.post')).default)
+  router.get('/api/roster/evidence/:id', (await import('../../../layers/sme-roster/server/api/roster/evidence/[id].get')).default)
 })
 const importResult = z.object({ status: z.string().optional(), batchId: z.number().optional(), items: z.array(z.unknown()).optional(), preflight: z.object({ conflicts: z.array(z.object({ error: z.object({ code: z.string() }) })), officialEvidencePlanHash: z.string().optional() }).optional() }).passthrough()
 const exactResult = z.object({ evidenceId: z.number(), eventId: z.number(), recordId: z.number(), enterpriseId: z.number(), version: z.string(), event: z.object({ revision: z.number() }), coordinate: z.object({ sourceFile: z.string(), attachment: z.string().nullable(), listNo: z.number().nullable(), page: z.number().nullable() }) })
@@ -43,7 +49,10 @@ async function fixture() {
   closes.push(() => { expect(sqlite.pragma('foreign_keys', { simple: true })).toBe(1); sqlite.close() })
   const db = drizzle(sqlite, { schema }); createRuntimeSchema(sqlite)
   // Infrastructure catalog only. All enterprise/record/event/evidence/declaration state below is public-command produced.
-  for (const [id, path] of [[1, 'notice.txt'], [2, 'other.txt']] as const) sqlite.prepare('INSERT INTO stored_file(id,rel_path,filename,ext,source,kind,title_code,bytes,sha256,created_at) VALUES(?,?,?,\'txt\',\'jxj\',\'announcement\',\'specialized_sme\',?,?,\'synthetic\')').run(id, path, path, Buffer.byteLength(text), sha256)
+  for (const [id, path] of [[1, 'notice.txt'], [2, 'other.txt']] as const) {
+    sqlite.prepare('INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(?,?,?,\'txt\',?,?,\'synthetic\')').run(id, path, path, Buffer.byteLength(text), sha256)
+    sqlite.prepare("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (?, 'jxj', 'announcement', 'specialized_sme')").run(id)
+  }
   current.db = db; current.filesDir = filesDir
   const server = createServer(toNodeListener(createApp().use(router)))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -58,7 +67,7 @@ async function fixture() {
   }
   const post = async (action: 'preflight' | 'commit', body: RosterImportRequest) => {
     const response = await http(`/api/roster/import/${action}`, body); expect(response.status).toBe(200)
-    return importResult.parse(response.body)
+    return importResult.parse(await completeInProcessIntake(db, response.body, body, filesDir))
   }
   const request = (payload: RosterImportPayload, key: string): RosterImportRequest => ({ idempotencyKey: key, sourceKind: 'announcement', sourceIdentity: 'synthetic-r3', payload })
   const commit = async (input: RosterImportRequest) => {

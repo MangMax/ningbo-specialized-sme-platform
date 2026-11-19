@@ -1,6 +1,7 @@
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { nativeQueryRows, nativeRelationRows } from '../fixtures/native-evidence'
 /** #428 real public handler HTTP chain; does not claim compiled Nitro evidence. */
-import { CURRENT_RULE_VERSION, LEGACY_CURRENT_RULE_VERSION, LEGACY_QUALIFICATION_ASSESSMENT_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION, LEGACY_CURRENT_RULE_VERSION, LEGACY_QUALIFICATION_ASSESSMENT_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -11,12 +12,12 @@ import { createRuntimeSchema } from '../../../db/create-runtime'
 import { expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
 import { TITLE_SEED } from '../../../db/titles'
-import type { RosterImportRequest } from '../../../lib/roster-import-client'
-import { createCurrentQualificationAssessmentReader } from '../../../lib/roster/current-qualification'
-import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
-import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
-import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
-import { handleEventAnnualProcessRequest } from '../../../server/utils/event-annual-process-api'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
+import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
+import { preflightRosterImport, commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { handleRecordCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-api'
+import { handleEventAnnualProcessRequest } from '../../../layers/sme-roster/server/utils/event-annual-process-api'
 import { startHttpFixture, type HttpFixture, type FixtureRequest } from '../../support/http'
 
 it('P_closed_public_award', async () => {
@@ -38,7 +39,7 @@ it('P_closed_public_award', async () => {
     const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024, decidedYear: 2024, batchSeq: 1 }).returning().get()
     const source = `2024年正式认定合成名单\n1 ${name} ${uscc}\n`
     writeFileSync(join(dir, 'notice.txt'), source)
-    const file = db.insert(schema.storedFile).values({ relPath: 'notice.txt', filename: 'notice.txt', ext: 'txt', source: 'jxj', kind: 'announcement', titleCode: title, bytes: Buffer.byteLength(source), sha256: hash(source) }).returning().get()
+    const file = createClassifiedFile(db, { relPath: 'notice.txt', filename: 'notice.txt', ext: 'txt', bytes: Buffer.byteLength(source), sha256: hash(source) }, { source: 'jxj', kind: 'announcement', titleCode: title })
     const document = db.insert(schema.sourceDocument).values({ source: 'jxj', title: '2024年正式认定合成名单', path: 'notice.txt' }).returning().get()
     const token = 'synthetic428-only'
     api = await startHttpFixture({ routes: {
@@ -133,7 +134,7 @@ it('P_closed_public_award', async () => {
 })
 
 // Independent public partitions; original P fixture above remains byte-identical.
-import { readPlatformComparisonProcesses } from '../../../server/utils/platform-comparison-input'
+import { readPlatformComparisonProcesses } from '../../../layers/sme-roster/server/utils/platform-comparison-input'
 type PublicPartition428 = {title:'innovative_sme'|'specialized_sme'|'little_giant';eventType:'award'|'review';opposite:boolean;trace?:'P'|'Z';change?:'unlinked'|'rejected'|'ended'|'candidate'|'source_hash'|'event_revision'|'version_change'|'ABA'|'history_interface'|'future'|'tie'|'unknown_status'|'retry_same'|'potential_later'|'unknown_normalization'}
 async function publicPartition428(spec:PublicPartition428) {
   const dir = mkdtempSync(join(tmpdir(), 'issue428-public-'))
@@ -157,7 +158,7 @@ async function publicPartition428(spec:PublicPartition428) {
     const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: spec.eventType, year: 2024, decidedYear: businessYear, reviewOutcome: spec.eventType==='review'?'passed':null, batchSeq: 1 }).returning().get()
     const source = `2024年正式认定合成名单\n1 ${name} ${uscc}\n`
     writeFileSync(join(dir, 'notice.txt'), source)
-    const file = db.insert(schema.storedFile).values({ relPath: 'notice.txt', filename: 'notice.txt', ext: 'txt', source: 'jxj', kind: 'announcement', titleCode: title, bytes: Buffer.byteLength(source), sha256: hash(source) }).returning().get()
+    const file = createClassifiedFile(db, { relPath: 'notice.txt', filename: 'notice.txt', ext: 'txt', bytes: Buffer.byteLength(source), sha256: hash(source) }, { source: 'jxj', kind: 'announcement', titleCode: title })
     const document = db.insert(schema.sourceDocument).values({ source: 'jxj', title: '2024年正式认定合成名单', path: 'notice.txt' }).returning().get()
     const token = 'synthetic428-only'
     api = await startHttpFixture({ routes: {

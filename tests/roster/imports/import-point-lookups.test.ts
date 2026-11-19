@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { schema } from '../../../db'
-import type { RosterImportRequest } from '../../../lib/roster-import-client'
-import { commitRosterImport, preflightRosterImport } from '../../../server/utils/roster-import'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
+import { commitRosterImport, preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 
 const dirs: string[] = []
 function makeDb() {

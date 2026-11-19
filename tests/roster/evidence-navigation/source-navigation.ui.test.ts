@@ -3,14 +3,14 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { createMemoryHistory, createRouter, RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import EnterprisePage from '../../../pages/enterprises/[id].vue'
-import SourceChip from '../../../components/SourceChip.vue'
-import EventChip from '../../../components/EventChip.vue'
-import SourceReader from '../../../components/record-correspondence/SourceReader.vue'
-import ComparisonEventRow from '../../../components/record-correspondence/ComparisonEventRow.vue'
-import ComparisonEvidence from '../../../components/record-correspondence/ComparisonEvidence.vue'
-import type { RecordComparisonResult } from '../../../lib/roster/record-comparison-view'
+import type { RosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import EnterprisePage from '../../../layers/sme-roster/app/pages/enterprises/[id].vue'
+import SourceChip from '../../../layers/sme-roster/app/components/SourceChip.vue'
+import EventChip from '../../../layers/sme-roster/app/components/EventChip.vue'
+import SourceReader from '../../../layers/sme-roster/app/components/record-correspondence/SourceReader.vue'
+import ComparisonEventRow from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonEventRow.vue'
+import ComparisonEvidence from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonEvidence.vue'
+import type { RecordComparisonResult } from '../../../layers/sme-roster/lib/roster/record-comparison-view'
 
 const query = { id: 20, interface: 'business_list', queryKey: 'synthetic', rdjb: '2', queriedAt: '2026-10-18', status: 'success', failureReason: null, relationCount: 1 }
 const relation = { id: 30, queryId: 20, enterpriseId: 91, sequenceNo: 1, nameRaw: '合成企业', status: '终审不通过', rawFields: {}, query }
@@ -30,7 +30,7 @@ const detail = { enterprise: { enterpriseId: 91, name: '合成企业', uscc: nul
 vi.mock('@pinia/colada', () => ({ useQuery: () => ({ data: ref(detail), isLoading: ref(false), error: ref(null), refetch: vi.fn() }) }))
 const returnTo = '/comparison?mode=record&queryIds=20&exportBatchIds=6&page=2&q=A%3FB&returnTo=%2Fcurrent-enterprises%3FtitleCode%3Dspecialized_sme%26page%3D4'
 const startTo = (eventId: number, withReturn = true) => ({ path: '/enterprises/91', query: { eventId: String(eventId), ...(withReturn ? { returnTo } : {}) } })
-const stubs = { NuxtLink: RouterLink, PageHeader: { template: '<header><slot name="breadcrumb" /></header>' }, FilePreviewDialog: true, EnterpriseLaterProcesses: true, TitleBadge: true }
+const stubs = { NuxtLink: RouterLink, PageHeader: { template: '<header><slot name="breadcrumb" /></header>' }, FilePreviewDialog: true, RosterEnterpriseLaterProcesses: true, RosterTitleBadge: true }
 const preventNativeNavigation = (event: Event) => event.preventDefault()
 let wrapper: VueWrapper | undefined
 let sourceOwner: VueWrapper | undefined
@@ -63,7 +63,7 @@ afterEach(async () => {
 async function enterprise(eventId: number, withReturn = true) {
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/enterprises/:id', component: EnterprisePage }, { path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
   await router.push(startTo(eventId, withReturn))
-  wrapper = mount(defineComponent({ render: () => h(RouterView) }), { attachTo: document.body, global: { plugins: [router], components: { SourceChip, EventChip }, stubs } })
+  wrapper = mount(defineComponent({ render: () => h(RouterView) }), { attachTo: document.body, global: { plugins: [router], components: { RosterSourceChip: SourceChip, RosterEventChip: EventChip }, stubs } })
   await flushPromises()
   return router
 }
@@ -72,7 +72,7 @@ async function enterprise(eventId: number, withReturn = true) {
 async function openPlatformSource(router: ReturnType<typeof createRouter>, withReturn = true) {
   const row = { event, record, evidence: [], classification: 'historical_aligned', reasons: [], correspondences: [], platformRows: [{ ...relation, interface: 'business_list' }], laterProcesses: [] } as unknown as RecordComparisonResult['rows'][number]
   sourceOwner = mount(ComparisonEventRow, { props: { row, returnTo: withReturn ? returnTo : '' }, attachTo: document.body,
-    global: { plugins: [router], components: { SourceChip, EventChip }, stubs } })
+    global: { plugins: [router], components: { RosterSourceChip: SourceChip, RosterEventChip: EventChip }, stubs } })
   const button = sourceOwner.findAll('button').find(button => button.text() === '查看原始记录')!
   ;(button.element as HTMLButtonElement).focus()
   await button.trigger('click')
@@ -131,7 +131,7 @@ describe('per-title complete history', () => {
     })
     vi.stubGlobal('$fetch', fetch)
     sourceOwner = mount(SourceReader, { props: { kind: 'relation', id: 30, readOnly: true, returnTo },
-      global: { plugins: [router], components: { NuxtLink: RouterLink, SourceChip, EventChip }, stubs } })
+      global: { plugins: [router], components: { NuxtLink: RouterLink, RosterSourceChip: SourceChip, RosterEventChip: EventChip }, stubs } })
     await flushPromises()
     expect(sourceOwner.text()).toContain('合成企业')
     await sourceOwner.setProps({ id: 31 }); await flushPromises()
@@ -196,7 +196,7 @@ describe('source modal reverse event navigation', () => {
     const comparison = defineComponent({ render: () => h(ComparisonEventRow, { row, returnTo }) })
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/comparison', component: comparison }, { path: '/enterprises/:id', component: EnterprisePage }] })
     await router.push('/comparison')
-    wrapper = mount(defineComponent({ render: () => h(RouterView) }), { attachTo: document.body, global: { plugins: [router], components: { SourceChip, EventChip }, stubs } })
+    wrapper = mount(defineComponent({ render: () => h(RouterView) }), { attachTo: document.body, global: { plugins: [router], components: { RosterSourceChip: SourceChip, RosterEventChip: EventChip }, stubs } })
     await wrapper.findAll('button').find(button => button.text() === '查看原始记录')!.trigger('click')
     await flushPromises()
     const link = document.querySelector('[role="dialog"] a') as HTMLAnchorElement
@@ -244,7 +244,7 @@ describe('source modal reverse event navigation', () => {
   it('keeps an inline source reader mounted after ordinary event navigation', async () => {
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
     await router.push('/comparison')
-    wrapper = mount(SourceReader, { props: { kind: 'relation', id: 30, returnTo }, global: { plugins: [router], components: { SourceChip, EventChip }, stubs } })
+    wrapper = mount(SourceReader, { props: { kind: 'relation', id: 30, returnTo }, global: { plugins: [router], components: { RosterSourceChip: SourceChip, RosterEventChip: EventChip }, stubs } })
     await flushPromises()
     await wrapper.get('a').trigger('click', { button: 0 })
     await flushPromises()
@@ -259,8 +259,8 @@ describe('source modal reverse event navigation', () => {
     const row = { event, record, evidence: [], classification: 'historical_aligned', reasons: [], correspondences: [], platformRows: [{ ...relation, interface: 'business_list' }], laterProcesses: [] } as unknown as RecordComparisonResult['rows'][number]
     const result = { counts: {}, coverage: [], officialCoverage: { reasons: [] }, historicalDecisionUnavailable: [], currentSourceConsistency: { reasons: [], recognizedObservations: [], exportObservations: [] }, platformWithoutOfficial: { rows: [{ relation, qualification: 'unresolved', reasons: [] }], total: 1 }, laterProcessPlatformRows: [] } as unknown as RecordComparisonResult
     wrapper = owner === 'event row'
-      ? mount(ComparisonEventRow, { props: { row, returnTo }, attachTo: document.body, global: { plugins: [router], components: { SourceChip, EventChip }, stubs } })
-      : mount(ComparisonEvidence, { props: { result, returnTo }, attachTo: document.body, global: { plugins: [router], components: { SourceChip, EventChip }, stubs } })
+      ? mount(ComparisonEventRow, { props: { row, returnTo }, attachTo: document.body, global: { plugins: [router], components: { RosterSourceChip: SourceChip, RosterEventChip: EventChip }, stubs } })
+      : mount(ComparisonEvidence, { props: { result, returnTo }, attachTo: document.body, global: { plugins: [router], components: { RosterSourceChip: SourceChip, RosterEventChip: EventChip }, stubs } })
     if (owner === 'comparison evidence') {
       await wrapper.get('[data-testid="record-platform-unlinked"] [data-slot="accordion-trigger"]').trigger('click')
       await flushPromises()
@@ -286,7 +286,7 @@ it('ignores a late source success after switching enterprises and keeps the newe
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
   await router.push('/enterprises/91')
   wrapper = mount(SourceReader, { props: { kind: 'relation', id: 30, readOnly: true, returnTo },
-    global: { plugins: [router], components: { NuxtLink: RouterLink, SourceChip, EventChip }, stubs } })
+    global: { plugins: [router], components: { NuxtLink: RouterLink, RosterSourceChip: SourceChip, RosterEventChip: EventChip }, stubs } })
   await router.push('/enterprises/92')
   await wrapper.setProps({ id: 40 }); await flushPromises()
   expect(wrapper.text()).toContain('新企业')

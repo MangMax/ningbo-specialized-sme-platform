@@ -4,8 +4,8 @@ import { eq, getTableColumns, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../upgrade/legacy-schema'
-import { MAX_EVIDENCE_CHUNK_BYTES, type PlatformEvidenceInput, type PlatformEvidenceResult } from '../../../lib/platform/evidence-contract'
-export { MAX_EVIDENCE_CHUNK_BYTES, type PlatformEvidenceInput } from '../../../lib/platform/evidence-contract'
+import { MAX_EVIDENCE_CHUNK_BYTES, type PlatformEvidenceInput, type PlatformEvidenceResult } from '../../../layers/sme-roster/lib/platform/evidence-contract'
+export { MAX_EVIDENCE_CHUNK_BYTES, type PlatformEvidenceInput } from '../../../layers/sme-roster/lib/platform/evidence-contract'
 
 type Db = BetterSQLite3Database<typeof schema>
 export const platformEvidenceInputSchema = z.object({

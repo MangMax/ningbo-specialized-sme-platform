@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
-import { updateCredential } from '../../../server/utils/credential-state'
+import { updateCredential } from '../../../layers/core/server/utils/credential-state'
 
 const dir = mkdtempSync(join(tmpdir(), 'platform-business-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'test.db') })
@@ -26,8 +26,8 @@ beforeAll(async () => {
   vi.stubGlobal('setHeader', vi.fn())
   vi.stubGlobal('setResponseStatus', vi.fn())
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-  rest = (await import('../../../server/api/platform/query.post')).default as any
-  const definition = (await import('../../../server/mcp/tools/query_platform')).default as any
+  rest = (await import('../../../layers/sme-roster/server/api/platform/query.post')).default as any
+  const definition = (await import('../../../layers/sme-roster/server/mcp/tools/query_platform')).default as any
   tool = async args => {
     const wire = await definition.handler(args)
     expect(JSON.parse(wire.content[0].text)).toEqual(wire.structuredContent)
@@ -35,7 +35,7 @@ beforeAll(async () => {
   }
 })
 beforeEach(() => {
-  updateCredential('miitCookie', cookie, { db })
+  updateCredential('sme-roster.miitCookie', cookie, { db })
   fetcher.mockReset()
   vi.stubGlobal('fetch', fetcher)
 })
@@ -115,16 +115,16 @@ it.each([
 ])('REST MCP and raw RPC reject unsupported conditions before upstream access (case %#)', async args => {
   expect(await query(args)).toMatchObject({ error: { code: 'invalid_input' } })
   await expect(tool(args)).rejects.toMatchObject({ statusCode: 400 })
-  const { platformQueryRpcError } = await import('../../../server/utils/mcp-platform-query')
+  const { platformQueryRpcError } = await import('../../../layers/sme-roster/server/utils/mcp-platform-query')
   const r = platformQueryRpcError({ method: 'tools/call', id: 2, params: { name: 'query_platform', arguments: args } })!
   expect(r.status).toBe(400)
   expect(await r.text()).not.toContain('synthetic-business-secret')
   expect(fetcher).not.toHaveBeenCalled()
 })
 it('raw RPC accepts supported title selection and capabilities declare its exact meaning', async () => {
-  const { platformQueryRpcError } = await import('../../../server/utils/mcp-platform-query')
+  const { platformQueryRpcError } = await import('../../../layers/sme-roster/server/utils/mcp-platform-query')
   for (const rdjb of ['1', '2', '3', 'all']) expect(platformQueryRpcError({ method: 'tools/call', params: { name: 'query_platform', arguments: { ...input, rdjb } } })).toBeNull()
-  const cap = (await import('../../../server/mcp/tools/get_platform_capabilities')).default as any
+  const cap = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_capabilities')).default as any
   expect((await cap.handler()).sources.businessList).toMatchObject({ available: true, conditions: ['uscc'], rdjb: ['1', '2', '3', 'all'], titleMeaning: { '1': '创新型中小企业', '2': '专精特新中小企业', '3': '小巨人' } })
 })
 it.each([{ maxRequests: 1 }, { maxRows: 1 }])('one operation safety budget includes all remaining titles for %j', async limits => {
@@ -143,7 +143,7 @@ it('an unknown title total stays unknown while every title is completed', async 
   expect(fetcher).toHaveBeenCalledTimes(4)
 })
 it('missing credentials mark all three titles unqueried', async () => {
-  updateCredential('miitCookie', null, { db })
+  updateCredential('sme-roster.miitCookie', null, { db })
   const previous = process.env.MIIT_COOKIE
   process.env.MIIT_COOKIE = ''
   try {
@@ -207,7 +207,7 @@ it('an active deadline leaves the failed page and all unrequested titles incompl
 it('all titles keep the initial credential snapshot and omit envelope account data', async () => {
   fetcher.mockImplementation(async (_url: string, init: any) => {
     expect(init.headers.Cookie).toBe(cookie)
-    updateCredential('miitCookie', 'session=synthetic-other-business-account', { db })
+    updateCredential('sme-roster.miitCookie', 'session=synthetic-other-business-account', { db })
     return response(JSON.stringify({ account: { token: 'synthetic-envelope-secret' }, zrarData: { grid: { businessListGrid: { pageSet: [{ qymc: '合成' }], maxCount: 1, page: 1 } } } }))
   })
   const r = await query(input)

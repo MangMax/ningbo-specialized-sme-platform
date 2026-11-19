@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { assertEnterpriseDetailSnapshotEqual } from '../../roster/assertions/enterprise-detail-snapshot'
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 import { initializeDb } from '../../../db/client'
@@ -15,7 +16,7 @@ const dbPath = join(dir, 'test.sqlite')
 const root = join(dir, 'files')
 mkdirSync(root)
 const db = initializeDb({ create: true, dbPath })
-const file = db.insert(schema.storedFile).values({ relPath: 'synthetic.pdf', filename: 'synthetic.pdf', ext: 'pdf', bytes: 12, sha256: 'synthetic' }).returning().get()
+const file = createClassifiedFile(db, { relPath: 'synthetic.pdf', filename: 'synthetic.pdf', ext: 'pdf', bytes: 12, sha256: 'synthetic' }, {})
 writeFileSync(join(root, file.relPath), minimalPdf({ pages: 6 }))
 let app: { baseUrl: string; stop(): Promise<void> }
 let rpcId = 0
@@ -45,6 +46,15 @@ beforeAll(async () => {
   child.stdout.on('data', chunk => { output += chunk })
   child.stderr.on('data', chunk => { output += chunk })
   try { await waitForHttp(`${baseUrl}/api/health`, { child }) } catch (error) { throw new Error(`${error}\n${output}`) }
+  const coldPath = 'jxj/announcement/2024/1/cold.pdf'
+  mkdirSync(join(root, 'jxj/announcement/2024/1'), { recursive: true })
+  writeFileSync(join(root, coldPath), minimalPdf({ pages: 1 }))
+  const cold = await fetch(`${baseUrl}/api/ocr-results?file=${encodeURIComponent(coldPath)}`)
+  expect(cold.status).toBe(200)
+  expect(await cold.json()).toMatchObject({
+    file: { relPath: coldPath, filename: 'cold.pdf', ext: 'pdf', parseState: 'unparsed' },
+    count: 0,
+  })
 }, 120_000)
 afterAll(async () => { await app?.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 beforeEach(async () => {
@@ -148,7 +158,7 @@ it('explicit page scope and invalid fields cannot widen OCR writes or deletions'
   expect((await pageRequest('PUT', 7, { markdown: 'out of PDF', expectedVersion: null })).status).toBe(400)
   const outOfBounds = await rpc('tools/call', { name: 'save_ocr_result', arguments: { fileId: file.id, page: 7, markdown: 'out of PDF' } })
   expect(JSON.stringify(outOfBounds.body)).toContain('400')
-  const nonPdf = db.insert(schema.storedFile).values({ relPath: 'synthetic.docx', filename: 'synthetic.docx', ext: 'docx', bytes: 5, sha256: 'synthetic' }).returning().get()
+  const nonPdf = createClassifiedFile(db, { relPath: 'synthetic.docx', filename: 'synthetic.docx', ext: 'docx', bytes: 5, sha256: 'synthetic' }, {})
   writeFileSync(join(root, 'synthetic.docx'), 'dummy')
   expect((await pageRequest('PUT', 1, { markdown: 'wrong source', expectedVersion: null }, 'synthetic-api-106', nonPdf.id)).status).toBe(415)
   const wrongSource = await rpc('tools/call', { name: 'save_ocr_result', arguments: { fileId: nonPdf.id, page: 1, markdown: 'wrong source' } })
@@ -191,7 +201,13 @@ it('page redo and deletion preserve source bytes, images, file parts, formal eve
   mkdirSync(pageDir, { recursive: true })
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aY1sAAAAASUVORK5CYII=', 'base64')
   writeFileSync(join(pageDir, 'p001.png'), png)
+  // OCR and PDF reads leave source-derived parts to file maintenance.
+  expect((await rest('GET')).status).toBe(200)
+  expect((await call('get_ocr_result', { fileId: file.id, page: 1 })).results).toHaveLength(1)
+  expect(await call('list_page_images', { fileId: file.id })).toMatchObject({ file: { id: file.id, relPath: file.relPath }, pageCount: 6 })
+  expect(db.select().from(schema.storedFilePart).all()).toMatchObject([{ origin: 'agent' }])
   const fileBefore = await call('get_file', { fileId: file.id })
+  expect(fileBefore.parts).toEqual(expect.arrayContaining([expect.objectContaining({ origin: 'derived' })]))
   const detailUrl = `${app.baseUrl}/api/roster/enterprises/${owner.id}`
   const before = await (await fetch(detailUrl)).json()
   expect(before.events).toEqual(expect.arrayContaining([expect.objectContaining({ id: event.id })]))
@@ -212,7 +228,7 @@ it('page redo and deletion preserve source bytes, images, file parts, formal eve
 
 it('exact page reads and deletes exclude unrelated text and raw while coverage stays file scoped', async () => {
   await call('save_ocr_result', { fileId: file.id, page: 1, markdown: 'target 🙂' })
-  const other = db.insert(schema.storedFile).values({ relPath: 'unrelated.pdf', filename: 'unrelated.pdf', ext: 'pdf', bytes: 1, sha256: 'unrelated' }).returning().get()
+  const other = createClassifiedFile(db, { relPath: 'unrelated.pdf', filename: 'unrelated.pdf', ext: 'pdf', bytes: 1, sha256: 'unrelated' }, {})
   writeFileSync(join(root, 'unrelated.pdf'), 'x')
   db.$client.transaction(() => {
     const insert = db.$client.prepare('INSERT INTO ocr_result(file_id,page_no,markdown,raw,channel,created_at) VALUES(?,?,?, ?,\'api\',\'2026-10-19\')')

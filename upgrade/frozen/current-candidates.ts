@@ -1,7 +1,7 @@
 /** Original offline candidate oracle API from ab503081; never imported by runtime. */
 import type Database from 'better-sqlite3'
 import { relationScopeSql, TITLE_RDJB_CODES } from './current-platform-scope'
-import type { CurrentTitle } from '../../lib/roster/current-titles'
+import type { CurrentTitle } from '../../layers/sme-roster/lib/roster/current-titles'
 import { resolveRecognizedFactSource, type RecognizedFactSource } from './recognized-filter-source'
 
 /** Same complete candidate set for the current workbook and qualified list. */

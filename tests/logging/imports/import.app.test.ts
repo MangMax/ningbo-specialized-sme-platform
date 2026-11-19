@@ -1,17 +1,17 @@
 import { EventEmitter } from 'node:events'
 import Database from 'better-sqlite3'
-import { createEnterpriseReadProcess } from '../../../server/utils/enterprise-read-process'
+import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
 
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { createImportExecutor } from '../../../server/utils/import-execution'
-import type { RosterImportRequest } from '../../../lib/roster-import-client'
+import { createImportExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
+import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { initializeDb } from '../../../db/client'
-import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
-import { readImportReceipt } from '../../../server/utils/import-receipts'
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../lib/logging'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
+import { readImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipts'
+import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
 
 
 // Preserve real IPC, worker logging and durable commits using the artifact CI builds.
@@ -114,7 +114,7 @@ it('busy admission and lost IPC remain distinct while durable receipt recovery n
 }, 20_000)
 
 it('an enclosing transaction rollback cannot leave a successful commit log for an absent receipt', async () => {
-  const { commitRosterImport } = await import('../../../server/utils/roster-import')
+  const { commitRosterImport } = await import('../../../layers/sme-roster/server/utils/roster-import')
   const { db, input, flush } = fixture()
   expect(() => db.transaction(() => {
     expect(commitRosterImport(db, input)).toMatchObject({ status: 'committed' })

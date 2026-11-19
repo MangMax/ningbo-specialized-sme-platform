@@ -6,10 +6,10 @@ import { createApp } from 'vue'
 import { createPinia, disposePinia } from 'pinia'
 import { PiniaColada, useQueryCache, useMutationCache } from '@pinia/colada'
 // Uses the actual integrated catalog, without a test-only extension.
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging, LOG_DEFAULTS } from '../../../lib/logging'
-import { createClientLogIntake } from '../../../server/utils/client-log-intake'
-import { createClientErrorTransport } from '../../../lib/client-logging/transport'
-import { installColadaLogging } from '../../../lib/client-logging/colada'
+import { applicationLogs, closeApplicationLogging, initializeWorkerLogging, LOG_DEFAULTS } from '../../../layers/core/lib/logging'
+import { createClientLogIntake } from '../../../layers/core/server/utils/client-log-intake'
+import { createClientErrorTransport } from '../../../layers/core/lib/client-logging/transport'
+import { installColadaLogging } from '../../../layers/core/lib/client-logging/colada'
 
 const dirs: string[] = [], previous = process.env.NUXT_LOG_DIR
 beforeEach(() => {

@@ -1,16 +1,17 @@
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
-import { handleComparisonScopeProofRequest } from '../../../server/utils/comparison-scope-proof-api'
+import { handleComparisonScopeProofRequest } from '../../../layers/sme-roster/server/utils/comparison-scope-proof-api'
 
 const dirs: string[] = []
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'spec63-proof-'))
   dirs.push(dir)
   const db = initializeDb({ create: true,  dbPath: join(dir, 'synthetic.db') })
-  const file = db.insert(schema.storedFile).values({ relPath: 'synthetic/notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: 8, sha256: 'a'.repeat(64), source: 'jxj', kind: 'announcement' }).returning().get()
+  const file = createClassifiedFile(db, { relPath: 'synthetic/notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: 8, sha256: 'a'.repeat(64) }, { source: 'jxj', kind: 'announcement' })
   const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Synthetic notice', path: file.relPath }).returning().get()
   const enterprise = db.insert(schema.enterprise).values({ name: 'Synthetic', nameNorm: 'Synthetic', usccNorm: '91330211255994475A' }).returning().get()
   const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()

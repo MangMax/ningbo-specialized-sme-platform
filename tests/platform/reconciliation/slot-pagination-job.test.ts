@@ -1,4 +1,4 @@
-import {newJobId} from '../../../lib/job'
+import {newJobId} from '../../../layers/core/lib/job'
 import {submitNativePlatformQuery} from '../fixtures/native-query'
 import { nativeRelationRows } from '../fixtures/native-evidence'
 import { initializeDb } from '../../../db/client'
@@ -10,15 +10,15 @@ import * as h3 from 'h3'
 import { eq } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { clearJobSpecs, whenIdle } from '../../../server/utils/job-runner'
-import { updateCredential } from '../../../server/utils/credential-state'
-import type { TaskList, TaskSummary } from '../../../lib/task-center'
+import { clearJobSpecs, whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { updateCredential } from '../../../layers/core/server/utils/credential-state'
+import type { TaskList, TaskSummary } from '../../../layers/core/lib/task-center'
 
 // Keep real retries/page capture/credentials; advance only the injected backoff.
 // The client/reconcile I/O suites own real scheduling and cancellation during sleep.
 const backoffs = vi.hoisted(() => [] as number[])
-vi.mock('../../../lib/platform/client', async importOriginal => {
-  const actual = await importOriginal<typeof import('../../../lib/platform/client')>()
+vi.mock('../../../layers/sme-roster/lib/platform/client', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../../layers/sme-roster/lib/platform/client')>()
   return { ...actual, queryPlatformSlots: (options: Parameters<typeof actual.queryPlatformSlots>[0], slots: Parameters<typeof actual.queryPlatformSlots>[1]) =>
     actual.queryPlatformSlots({ ...options, sleep: async ms => { backoffs.push(ms) } }, slots) }
 })
@@ -61,7 +61,7 @@ beforeAll(async () => {
   for (const key of ['defineEventHandler', 'readBody', 'createError', 'setResponseStatus', 'setHeader', 'getRouterParam', 'getQuery', 'getRequestURL', 'getHeader'] as const) vi.stubGlobal(key, h3[key])
   vi.doMock('@db', () => ({ useDb: () => db }))
   const routes = await Promise.all([
-    import('../../../server/api/jobs/index.post'), import('../../../server/api/jobs/[id].get'), import('../../../server/api/jobs/[id].delete'), import('../../../server/api/platform/queries.get'), import('../../../server/api/task-center/[id].get'), import('../../../server/api/task-center/index.get'),
+    import('../../../layers/core/server/api/jobs/index.post'), import('../../../layers/core/server/api/jobs/[id].get'), import('../../../layers/core/server/api/jobs/[id].delete'), import('../../../layers/sme-roster/server/api/platform/queries.get'), import('../../../layers/core/server/api/task-center/[id].get'), import('../../../layers/core/server/api/task-center/index.get'),
   ])
   const router = h3.createRouter()
   router.post('/api/jobs', routes[0].default).get('/api/jobs/:id', routes[1].default).delete('/api/jobs/:id', routes[2].default).get('/api/platform/queries', routes[3].default)
@@ -93,7 +93,7 @@ afterAll(async () => {
 function upstream() {
   reply = normalReply
   upstreamStatus = 200
-  updateCredential('miitCookie', 'session=issue299-original', { db, env: {} })
+  updateCredential('sme-roster.miitCookie', 'session=issue299-original', { db, env: {} })
   vi.stubGlobal('fetch', async (url: string, init: { body: string; headers: Record<string, string> }) => {
     const body = new URLSearchParams(init.body), source = url.includes('/businessList') ? 'businessList' : 'queryList'
     const rdjb = body.get('rdjb') ?? '', n = Number(body.get('pageNum'))
@@ -133,7 +133,7 @@ it('public job retains both sources’ unique row 51 and exact page evidence; co
   const task = await api(`/api/task-center/${job.jobId}`)
   expect(task).toMatchObject({ kind: 'reconcile', state: 'done', outcome: null, reconcile: { targets: 1, needsReview: 1, queryFailed: 0 }, capabilities: { retry: false } })
   expect(task.reconcileCollection).toMatchObject({ complete: 4, partial: 0, failed: 0, unknown: 0, unfinished: 0, positions: [], positionsTruncated: false })
-  expect((await api('/api/task-center?tab=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(task.reconcileCollection)
+  expect((await api('/api/task-center?tab=sme-roster&group=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(task.reconcileCollection)
   expect((await api(`/api/task-center/${second.id}`)).reconcileCollection).toEqual(task.reconcileCollection)
 }, 10000)
 
@@ -227,7 +227,7 @@ it('network retry and subsequent pages keep the submission credential snapshot a
   upstream()
   let failures = 0
   reply = (s, r, n) => {
-    updateCredential('miitCookie', 'session=issue299-replacement', { db, env: {} })
+    updateCredential('sme-roster.miitCookie', 'session=issue299-replacement', { db, env: {} })
     if (s === 'businessList' && r === '3' && n === 2 && failures++ === 0) throw new Error('issue299 transient network error')
     return normalReply(s, r, n)
   }
@@ -305,7 +305,7 @@ it('four failed slots remain four failed collection slots through public task li
     { source: 'businessList', rdjb: '1', page: 1 }, { source: 'businessList', rdjb: '2', page: 1 },
     { source: 'businessList', rdjb: '3', page: 1 }, { source: 'queryList', rdjb: null, page: 1 },
   ], positionsTruncated: false })
-  const list = await api('/api/task-center?tab=platform')
+  const list = await api('/api/task-center?tab=sme-roster&group=platform')
   expect(list.rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
   expect(calls).toHaveLength(4)
 })
@@ -325,7 +325,7 @@ it('historical task reports without collection stay explicitly unknown through p
   expect(detail.outcome).toBeNull()
   expect(detail.reconcile).toMatchObject({ targets: 1, needsReview: 1 })
   expect(detail.reconcileCollection).toEqual({ complete: null, partial: null, failed: null, unknown: null, unfinished: null, positions: [], positionsTruncated: false })
-  expect((await api('/api/task-center?tab=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
+  expect((await api('/api/task-center?tab=sme-roster&group=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
 })
 
 it('task summary bounds locations to 50 while retaining the actual unfinished total and excludes page raw', async () => {
@@ -344,7 +344,7 @@ it('task summary bounds locations to 50 while retaining the actual unfinished to
   expect(detail.reconcileCollection.positions[49]).toEqual({ source: 'businessList', rdjb: '3', page: 50 })
   expect(JSON.stringify(detail)).not.toContain('PRIVATE_')
   expect(JSON.stringify(detail).length).toBeLessThan(12000)
-  expect((await api('/api/task-center?tab=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
+  expect((await api('/api/task-center?tab=sme-roster&group=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
 })
 
 it('malformed historical collection scalars stay unknown without transporting nested raw objects', async () => {
@@ -369,7 +369,7 @@ const unknownCollection = { complete: null, partial: null, failed: null, unknown
 
 async function publicSummaryPair(id: string) {
   const [detailResponse, listResponse] = await Promise.all([
-    nativeFetch(`${baseUrl}/api/task-center/${id}`), nativeFetch(`${baseUrl}/api/task-center?tab=platform`),
+    nativeFetch(`${baseUrl}/api/task-center/${id}`), nativeFetch(`${baseUrl}/api/task-center?tab=sme-roster&group=platform`),
   ])
   expect([detailResponse.status, listResponse.status]).toEqual([200, 200])
   const detail = await detailResponse.json() as TaskSummary

@@ -12,7 +12,7 @@ it('reaps an idle unreferenced reader before its otherwise idle host exits', () 
 const require=createRequire(${JSON.stringify(resolve(root, 'package.json'))});
 const {createJiti}=require(${JSON.stringify(jiti)});
 const load=createJiti(${JSON.stringify(resolve(root, 'package.json'))});
-const {createEnterpriseReadProcess}=await load.import(${JSON.stringify(resolve(root, 'server/utils/enterprise-read-process.ts'))});
+const {createEnterpriseReadProcess}=await load.import(${JSON.stringify(resolve(root, 'layers/sme-roster/server/utils/enterprise-read-process.ts'))});
 const child=createEnterpriseReadProcess(new URL('file:///unused'),"process.send({ready:true});setInterval(()=>{},1000)");
 child.once('message',async()=>{child.unref();await child.terminate();await child.terminate();console.log('reader reaped before host exit')});`
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', host], { encoding: 'utf8', timeout: 10000 })

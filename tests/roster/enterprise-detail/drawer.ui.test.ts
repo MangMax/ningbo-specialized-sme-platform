@@ -3,9 +3,9 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useQuery } from '@pinia/colada'
-import EnterpriseListTable from '../../../components/EnterpriseListTable.vue'
-import EnterpriseDrawer from '../../../components/EnterpriseDrawer.vue'
-import type { RosterEventRow } from '../../../lib/roster/enterprise-roster'
+import EnterpriseListTable from '../../../layers/sme-roster/app/components/EnterpriseListTable.vue'
+import EnterpriseDrawer from '../../../layers/sme-roster/app/components/EnterpriseDrawer.vue'
+import type { RosterEventRow } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 
 vi.mock('@pinia/colada', () => ({ useQuery: vi.fn() }))
 
@@ -433,7 +433,7 @@ it('saves the filtered expanded ledger and both scroll layers when opening the c
   await wrapper.setProps({ backQuery: 'district=海曙区&page=2&pageSize=100&expand=1' })
   await wrapper.findAll('a').find(a => a.text().includes('完整企业页'))!.trigger('click', { button: 0 })
   expect(JSON.parse(sessionStorage.getItem('roster:evidence-preview-return') ?? 'null')).toEqual([
-    { back: '/?district=海曙区&page=2&pageSize=100&expand=1', scrollY: 96, scrollTop: 530, scrollLeft: 80 },
+    { back: '/roster?district=海曙区&page=2&pageSize=100&expand=1', scrollY: 96, scrollTop: 530, scrollLeft: 80 },
   ])
   sessionStorage.clear()
   await wrapper.findAll('a').find(a => a.text().includes('完整企业页'))!.trigger('click', { button: 0, metaKey: true })

@@ -2,8 +2,8 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import FileSegmentsEditor from '../../../components/files/FileSegmentsEditor.vue'
-import type { StoredFileRow } from '../../../server/utils/stored-files'
+import FileSegmentsEditor from '../../../layers/sme-roster/app/components/sme-roster/RosterFileSegmentsEditor.vue'
+import type { StoredFileRow } from '../../../layers/core/server/utils/stored-files'
 const passthrough = defineComponent({ template: '<div><slot /></div>' })
 const button = defineComponent({ template: '<button><slot /></button>' })
 const input = defineComponent({
@@ -74,7 +74,7 @@ function setup(
     },
     global: {
       stubs: {
-        FileEventSync: true,
+        RosterFileEventSync: true,
         DisclosurePanel: passthrough,
         Dialog: passthrough,
         DialogContent: passthrough,

@@ -1,10 +1,10 @@
 /** Offline-only frozen stage dependency from ab503081dae3e24680afc9b07395a7e3ff21fc9f. */
 /** Ingestion-boundary extraction shared with the frozen-source upgrade. */
 import type * as schema from '../legacy-schema'
-import { processFactsFromRow } from '../../lib/platform/identity'
-import { normalizePlatformRelation } from '../../lib/platform/normalization'
-import { checkedBusinessStatus } from '../../lib/platform/business-status'
-import type { PlatformRow } from '../../lib/platform/types'
+import { processFactsFromRow } from '../../layers/sme-roster/lib/platform/identity'
+import { normalizePlatformRelation } from '../../layers/sme-roster/lib/platform/normalization'
+import { checkedBusinessStatus } from '../../db/business-status'
+import type { PlatformRow } from '../../layers/sme-roster/lib/platform/types'
 type Kind=NonNullable<typeof schema.platformApplyProjection.$inferInsert.sourceTitleKind>
 export function sourceValueKind(v:unknown):Kind {
   if(v===undefined)return 'absent'

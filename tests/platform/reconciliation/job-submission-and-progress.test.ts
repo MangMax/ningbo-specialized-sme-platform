@@ -1,7 +1,7 @@
 import {afterEach,afterAll,beforeAll,beforeEach,describe,expect,it,vi} from 'vitest'
-import {clearJobSpecs,getJobSpec,jobSpecs,type JobSpec,type JobContext} from '../../../server/utils/job-runner'
+import {clearJobSpecs,getJobSpec,jobSpecs,type JobSpec,type JobContext} from '../../../layers/core/server/utils/job-runner'
 import {registerJobSpecs} from '../../../server/utils/job-specs'
-import {reconcileSpec} from '../../../server/utils/jobs/reconcile'
+import {reconcileSpec} from '../../../layers/sme-roster/server/utils/jobs/reconcile'
 import {nativeImportDb} from '../../roster/imports/fixtures/native-import'
 import * as schema from '../../../db/schema'
 import * as database from '../../../db'
@@ -20,7 +20,7 @@ describe('参数校验:错参数在**提交那一刻**就被挡住', () => {
     expect(spec.run).toBeTypeOf('function')
     expect(spec.paramsHint).toContain('titles')
     expect(spec.paramsHint).toContain('concurrency')
-    expect(jobSpecs().map((entry) => entry.kind)).toEqual(['current-roster-export', 'event-annual-correspondence', 'event-archive-candidates', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages'])
+    expect(jobSpecs().map((entry) => entry.kind)).toEqual(['current-roster-export', 'difference-snapshot', 'event-annual-correspondence', 'event-archive-candidates', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages'])
     expect(getJobSpec('event-archive-candidates')).toMatchObject({ status: 'ready', run: expect.any(Function), deduplicateRequest: true })
     expect(getJobSpec('event-archive-candidates')!.parse({ queryId: 1, clientRequestId: 'catalog-archive' })).toMatchObject({ ok: true, params: { queryId: 1 } })
   })

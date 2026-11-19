@@ -1,25 +1,15 @@
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import {
-  MCP_WRITE_TOOLS,
-  readMcpToken,
-  resolveMcpAuth,
-  tokenMatches,
-  unauthorizedMessage,
-  writeToolCallIn,
-} from '../../../server/utils/mcp-auth'
-import {
-  __resetFileStoreReady,
-  ensureFileStoreReady,
-  findFileIdByRelPath,
-  pageImagesForAgent,
-  resolveFileRef,
-  setFileCategoryForAgent,
-} from '../../../server/utils/mcp-files'
-import { applyParseResult, normalizeParseParts } from '../../../server/utils/parse-result'
-import { getStoredFile, listStoredFiles } from '../../../server/utils/stored-files'
+import { MCP_WRITE_TOOLS, writeToolCallIn } from '../../../server/mcp-access-policy'
+import { readMcpToken, resolveMcpAuth, tokenMatches, unauthorizedMessage } from '../../../layers/core/server/utils/mcp-auth'
+import { findFileIdByRelPath, pageImagesForAgent, resolveFileRef } from '../../../layers/core/server/utils/file-agent-reference'
+import { __resetFileStoreReady, ensureFileStoreReady, setFileCategoryForAgent } from '../../../layers/sme-roster/server/utils/mcp-files'
+import { applyParseResult, normalizeParseParts } from '../../../layers/sme-roster/server/utils/parse-result'
+import type { RosterFileFields } from '../../../layers/sme-roster/server/modules/sme-roster/files'
+import { getStoredFile, listStoredFiles } from '../../../layers/core/server/utils/stored-files'
 
 /**
  * 票 18 —— 把 app 的能力暴露成 **MCP**。
@@ -223,23 +213,7 @@ function seedFile(
 ): number {
   const segments = relPath.split('/')
   const miit = relPath.startsWith('miit')
-  return db
-    .insert(schema.storedFile)
-    .values({
-      relPath,
-      filename: segments[segments.length - 1]!,
-      ext: miit ? 'xlsx' : 'pdf',
-      bytes: 1,
-      sha256: 'b'.repeat(64),
-      source: miit ? 'miit' : 'jxj',
-      kind: miit ? 'export' : 'announcement',
-      year: over.year ?? null,
-      batch: over.batch ?? null,
-      categoryState: (over.categoryState as 'set' | 'inferred' | 'unset') ?? 'set',
-      removedAt: over.removedAt ?? null,
-    })
-    .returning({ id: schema.storedFile.id })
-    .get().id
+  return createClassifiedFile(db, { relPath, filename: segments[segments.length - 1]!, ext: miit ? 'xlsx' : 'pdf', bytes: 1, sha256: 'b'.repeat(64), removedAt: over.removedAt ?? null }, { source: miit ? 'miit' : 'jxj', kind: miit ? 'export' : 'announcement', year: over.year ?? null, batch: over.batch ?? null, categoryState: (over.categoryState as 'set' | 'inferred' | 'unset') ?? 'set' }).id
 }
 
 let seq = 0
@@ -605,7 +579,7 @@ describe('ensureFileStoreReady 懒回填', () => {
     const id = findFileIdByRelPath(fresh, REL_PDF)!
     const row = getStoredFile(fresh, id)!
     expect(row.parts).toHaveLength(2)
-    expect(row.parts.map((p) => [p.eventKind, p.year, p.batch, p.attachment, p.rowCount])).toEqual([
+    expect((row.parts as RosterFileFields['parts']).map((p) => [p.eventKind, p.year, p.batch, p.attachment, p.rowCount])).toEqual([
       ['award', 2024, 2, '附件1', 389],
       ['review', 2021, 2, '附件2', 67],
     ])
@@ -672,7 +646,7 @@ describe('pageImagesForAgent 页图取值', () => {
     const { minimalPdf } = await import('../../support/minimal-pdf')
     mkdirSync(join(root, 'jxj/announcement/2024/2'), { recursive: true })
     // Use a separately registered real PDF; the shared metadata-only fixture has a synthetic digest.
-    const { registerStoredFile, parseUploadDeclaration } = await import('../../../server/utils/stored-files-upload')
+    const { registerStoredFile, parseUploadDeclaration } = await import('../../../layers/sme-roster/server/modules/sme-roster/file-upload')
     const realPath = 'jxj/announcement/2024/2/unrendered-identity.pdf'
     writeFileSync(join(root, realPath), minimalPdf({ pages: 3 }))
     await registerStoredFile(db, root, parseUploadDeclaration({ relPath: realPath }))

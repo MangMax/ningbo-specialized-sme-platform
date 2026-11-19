@@ -2,7 +2,7 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
-import Decision from '../../../components/record-correspondence/EventCorrespondenceDecision.vue'
+import Decision from '../../../layers/sme-roster/app/components/record-correspondence/EventCorrespondenceDecision.vue'
 let wrapper: ReturnType<typeof mount> | undefined
 const edge = { type: 'event_process', eventId: 7, relationId: 10, role: 'context_only' }
 const point = { ...edge, id: 9, status: 'confirmed', revision: 2 }
@@ -38,7 +38,7 @@ for (const [axis, other] of axes) for (const state of states) {
       throw new Error(url)
     })
     vi.stubGlobal('useState', () => ref(true)); vi.stubGlobal('$fetch', fetch)
-    wrapper = mount(Decision, { props: { edge, existing: point }, attachTo: document.body, global: { stubs: { SourceReader: true } } }); await flushPromises()
+    wrapper = mount(Decision, { props: { edge, existing: point }, attachTo: document.body, global: { stubs: { RosterSourceReader: true } } }); await flushPromises()
     if (state !== 'not_started') {
       await click('取消对应')
       if (['editable_draft', 'unknown_commit', 'receipt_readback_pending'].includes(state)) {
@@ -105,7 +105,7 @@ for (const [axis, other] of axes) for (const interrupted of ['point', 'choices']
       throw new Error(url)
     })
     vi.stubGlobal('useState', () => ref(true)); vi.stubGlobal('$fetch', fetch)
-    wrapper = mount(Decision, { props: { edge, existing: point }, attachTo: document.body, global: { stubs: { SourceReader: true } } }); await flushPromises()
+    wrapper = mount(Decision, { props: { edge, existing: point }, attachTo: document.body, global: { stubs: { RosterSourceReader: true } } }); await flushPromises()
     await click('改选记录')
     await wrapper.setProps({ edge: other, existing: null }); await flushPromises(); await click('确认对应'); await enter('B correction interruption draft')
     finish(interrupted === 'point' ? point : page); await flushPromises()

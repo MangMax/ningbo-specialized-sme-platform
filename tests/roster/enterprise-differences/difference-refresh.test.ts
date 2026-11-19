@@ -4,15 +4,16 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterEach, expect, it } from 'vitest'
 import * as schema from '../../../db/schema'
-import { refreshEnterpriseDifferences, readEnterpriseDifferenceComparisons } from '../../../server/utils/enterprise-difference-refresh'
-import { createCurrentQualificationAssessmentReader } from '../../../lib/roster/current-qualification'
-import { selectEnterpriseCoordinates } from '../../../lib/roster/enterprise-list-selection'
+import { refreshEnterpriseDifferences, readEnterpriseDifferenceComparisons } from '../../../layers/sme-roster/server/utils/enterprise-difference-refresh'
+import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { selectEnterpriseCoordinates } from '../../../layers/sme-roster/lib/roster/enterprise-list-selection'
 const close: Database.Database[]=[]
 afterEach(()=>{for(const d of close.splice(0))d.close()})
 function fixture(){
  const sqlite=new Database(':memory:');close.push(sqlite)
  createRuntimeSchema(sqlite); const db=drizzle(sqlite,{schema})
  const ids=[1,2].map(i=>{const e=db.insert(schema.enterprise).values({name:`刷新${i}`,nameNorm:`刷新${i}`,usccNorm:`9133021125599445${i}P`}).returning().get();db.insert(schema.record).values({enterpriseId:e.id,titleCode:'specialized_sme',source:'jxj',nameRaw:e.name}).run();return e.id})
+ db.insert(schema.rosterLegacyMember).values(ids.map(enterpriseId=>({enterpriseId}))).run()
  return {db,sqlite,ids}
 }
 const at='2026-11-06T00:00:00.000Z'

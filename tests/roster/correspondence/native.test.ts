@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { eq } from 'drizzle-orm'
 import { mkdtempSync,rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -5,10 +6,10 @@ import { join } from 'node:path'
 import { afterEach,expect,it } from 'vitest'
 import { initializeDb } from '../../../db/client'
 import * as schema from '../../../db/schema'
-import type { RosterImportPlatformQuery } from '../../../lib/roster-import-client'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import { commitComparisonScopeProofs,preflightComparisonScopeProofs,readComparisonScopeProof,type ProofRequest } from '../../../server/utils/comparison-scope-proof'
-import { commitRecordCorrespondences,getRecordCorrespondenceAudit,listRecordCorrespondences,preflightRecordCorrespondences,type CorrespondenceRequest } from '../../../server/utils/record-correspondence'
+import type { RosterImportPlatformQuery } from '../../../layers/sme-roster/lib/roster-import-client'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { commitComparisonScopeProofs,preflightComparisonScopeProofs,readComparisonScopeProof,type ProofRequest } from '../../../layers/sme-roster/server/utils/comparison-scope-proof'
+import { commitRecordCorrespondences,getRecordCorrespondenceAudit,listRecordCorrespondences,preflightRecordCorrespondences,type CorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 
 const cleanups: Array<() => void> = []
@@ -90,7 +91,7 @@ it('revalidates native recognized-export proof and correspondence when the selec
   expect(directoryDetail.platform.businessRecords[0]?.observationRefs[0]?.typedFields).toMatchObject({ interface: 'recognized_list', validityDateRaw: '2028-01-01', maintenanceYear: 2026, maintenanceBatch: '2026-1', nameRaw: '原生合同企业' })
   const batch = f.db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'native-export.xlsx', sha256: 'b'.repeat(64), importStatus: 'imported' }).returning().get()
   const exported = f.db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo: 1, usccRaw: raw.tyshxydm, nameRaw: raw.qymc }).returning().get()
-  const freeze = f.db.insert(schema.storedFile).values({ relPath: 'synthetic/native-freeze', filename: 'native-freeze.txt', ext: 'txt', bytes: 24, sha256: 'c'.repeat(64), source: 'miit', kind: 'export' }).returning().get()
+  const freeze = createClassifiedFile(f.db, { relPath: 'synthetic/native-freeze', filename: 'native-freeze.txt', ext: 'txt', bytes: 24, sha256: 'c'.repeat(64) }, { source: 'miit', kind: 'export' })
   const proof: ProofRequest = { idempotencyKey: 'native-proof', sourceIdentity: 'native-freeze', actor: { type: 'agent', id: 'test' }, basis: 'Explicit synthetic same-account full-title snapshot', ruleId: 'native-contract', ruleVersion: '1', operations: [{
     action: 'create', kind: 'current_source_equivalence', status: 'confirmed', evidence: {
       queryId: source.queryId, exportBatchId: batch.id, titleCode: 'specialized_sme', queryReference: 'platform_query.collectionEvidence', exportReference: 'platform_export_batch.sha256',
@@ -113,8 +114,8 @@ it('preflights and commits native correspondence from the same-origin browser wi
   const { createServer } = await import('node:http')
   const { createApp, defineEventHandler, toNodeListener } = await import('h3')
   const { vi } = await import('vitest')
-  const { browserCorrespondenceRoute } = await import('../../../server/utils/browser-correspondence')
-  const { handleRecordCorrespondenceRequest } = await import('../../../server/utils/record-correspondence-api')
+  const { browserCorrespondenceRoute } = await import('../../../layers/sme-roster/server/utils/browser-correspondence')
+  const { handleRecordCorrespondenceRequest } = await import('../../../layers/sme-roster/server/utils/record-correspondence-api')
   const f = fixture(), source = submitNativePlatformQuery(f.db, f.query('2026-10-01T00:00:00Z'))
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   const app = createApp()

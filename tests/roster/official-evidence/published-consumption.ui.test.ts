@@ -7,17 +7,17 @@ import { defineComponent, h, ref } from 'vue'
 import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import { createMemoryHistory, createRouter, RouterLink, RouterView, useRoute as routerUseRoute } from 'vue-router'
-import type { RosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import PageHeader from '../../../components/PageHeader.vue'
-import EnterprisePage from '../../../pages/enterprises/[id].vue'
-import CorrespondenceItem from '../../../components/record-correspondence/CorrespondenceItem.vue'
-import type { CorrespondenceDetail, EventSource, OfficialPublishedFact, SourceResponse } from '../../../lib/roster/correspondence-view'
-import CurrentPage from '../../../pages/current-enterprises.vue'
+import type { RosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import PageHeader from '../../../layers/core/app/components/PageHeader.vue'
+import EnterprisePage from '../../../layers/sme-roster/app/pages/enterprises/[id].vue'
+import CorrespondenceItem from '../../../layers/sme-roster/app/components/record-correspondence/CorrespondenceItem.vue'
+import type { CorrespondenceDetail, EventSource, OfficialPublishedFact, SourceResponse } from '../../../layers/sme-roster/lib/roster/correspondence-view'
+import CurrentPage from '../../../layers/sme-roster/app/pages/current-enterprises.vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import SourceReader from '../../../components/record-correspondence/SourceReader.vue'
-import OfficialEvidence from '../../../components/record-correspondence/OfficialEvidence.vue'
-import { useRecordSource } from '../../../composables/useRecordSource'
-import { refreshCorrespondenceViews } from '../../../composables/useCorrespondenceReadback'
+import SourceReader from '../../../layers/sme-roster/app/components/record-correspondence/SourceReader.vue'
+import OfficialEvidence from '../../../layers/sme-roster/app/components/record-correspondence/OfficialEvidence.vue'
+import { useRosterRecordSource } from '../../../layers/sme-roster/app/composables/useRosterRecordSource'
+import { rosterRefreshCorrespondenceViews } from '../../../layers/sme-roster/app/composables/useRosterCorrespondenceReadback'
 
 const mounted: ReturnType<typeof mount>[] = []
 const stubs = { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' } }
@@ -90,17 +90,17 @@ it("reports failed explicit readback and recovers without replacing retained suc
   const fetch = vi.fn().mockResolvedValueOnce(source('保留公布名')).mockResolvedValueOnce(unavailable()).mockResolvedValueOnce(source('恢复公布名'))
   vi.stubGlobal('$fetch', fetch)
   const wrapper = render(); await flushPromises()
-  await expect(refreshCorrespondenceViews()).rejects.toThrow('readback_failed'); await flushPromises()
+  await expect(rosterRefreshCorrespondenceViews()).rejects.toThrow('readback_failed'); await flushPromises()
   expect(wrapper.text()).toContain('保留公布名')
-  await expect(refreshCorrespondenceViews()).resolves.toBeUndefined(); await flushPromises()
+  await expect(rosterRefreshCorrespondenceViews()).resolves.toBeUndefined(); await flushPromises()
   expect(wrapper.text()).toContain('恢复公布名')
 })
 
 it("accepts old responses and platform raw unavailable strings without guessing typed failure", async () => {
   const payload = { source: { id: 1, nameRaw: 'unavailable', rawFields: { publishedPresentation: { availability: 'unavailable' } } }, correspondences: [] }
   vi.stubGlobal('$fetch', vi.fn(async () => payload))
-  let reader!: ReturnType<typeof useRecordSource>
-  const wrapper = mount(defineComponent({ setup() { reader = useRecordSource('relation', 1); return () => null } })); mounted.push(wrapper)
+  let reader!: ReturnType<typeof useRosterRecordSource>
+  const wrapper = mount(defineComponent({ setup() { reader = useRosterRecordSource('relation', 1); return () => null } })); mounted.push(wrapper)
   await flushPromises(); expect(reader.displayed.value).toEqual(payload); expect(reader.error.value).toBe(false)
 })
 
@@ -152,7 +152,7 @@ it("keeps the real enterprise page single-root for Nuxt out-in navigation from t
   // Vue Transition requires a component to have one element root:
   // https://vuejs.org/guide/built-ins/transition.html#the-transition-component
   // This page uses the Nuxt out-in transition; UI07 retains the actual SPA failure.
-  const filename = resolve(process.cwd(), 'pages/enterprises/[id].vue')
+  const filename = resolve(process.cwd(), 'layers/sme-roster/app/pages/enterprises/[id].vue')
   const { descriptor, errors } = parse(readFileSync(filename, 'utf8'), { filename })
   expect(errors).toEqual([])
   const roots = descriptor.template!.ast!.children.filter(node => node.type !== 3 && !(node.type === 2 && !node.content.trim()))
@@ -276,8 +276,8 @@ describe("formal source consumer boundaries", () => {
     const wrapper = mount(defineComponent({ render: () => h(RouterView) }), { attachTo: document.body,
       global: { plugins: [createPinia(), PiniaColada, router], components: { NuxtLink: RouterLink, PageHeader }, stubs: {
         FilePreviewDialog: true,
-        EnterpriseLaterProcesses: true,
-        TitleBadge: true, SourceChip: true, EventChip: true,
+        RosterEnterpriseLaterProcesses: true,
+        RosterTitleBadge: true, RosterSourceChip: true, RosterEventChip: true,
       } } }); mounted.push(wrapper)
     await flushPromises()
     expect(wrapper.find('#record-event-9').exists()).toBe(true)
@@ -335,7 +335,7 @@ describe("formal source consumer boundaries", () => {
     await vi.waitFor(() => expect(wrapper.get('#record-event-9').attributes('data-highlighted')).toBe('true'))
     expect(document.querySelector('[role="dialog"]')).toBeNull() // no retired detail dialog
     const breadcrumb = wrapper.get('header a')
-    const expectedBack = context === 'current' ? { path: '/current-enterprises', query: { titleCode: 'specialized_sme', q: 'Acme', district: '鄞州区', page: '2' } } : context === 'back' ? { path: '/', query: { titleCode: 'specialized_sme', page: '4' } } : comparison
+    const expectedBack = context === 'current' ? { path: '/current-enterprises', query: { titleCode: 'specialized_sme', q: 'Acme', district: '鄞州区', page: '2' } } : context === 'back' ? { path: '/roster', query: { titleCode: 'specialized_sme', page: '4' } } : comparison
     expect(breadcrumb.attributes('href')).toBe(router.resolve(expectedBack).href)
     await breadcrumb.trigger('click', { button: 0 }); await flushPromises()
     expect(router.currentRoute.value.fullPath).toBe(router.resolve(expectedBack).fullPath)

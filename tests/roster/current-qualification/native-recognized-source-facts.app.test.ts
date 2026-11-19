@@ -1,5 +1,5 @@
 import '../../support/compiled-enterprise-reader'
-import { enterpriseReads } from '../../../server/utils/enterprise-read'
+import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { createServer } from 'node:http'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -8,9 +8,9 @@ import { afterEach, beforeAll, afterAll, expect, it, vi } from 'vitest'
 import { initializeDb } from '../../../db/client'
 import { qualificationMatrix } from '../fixtures/qualification-matrix'
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
-import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../server/utils/record-correspondence'
-import { listCurrentQualified, type CurrentQualifiedResult } from '../../../lib/roster/current-qualified-query'
-import { writeCurrentWorkbook } from '../../../lib/roster/current-workbook'
+import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
+import { listCurrentQualified, type CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
 import { readExportWorkbook } from '../../support/read-workbook'
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 // Real current-qualified reader startup belongs to setup, outside case budgets.
@@ -56,7 +56,7 @@ it('native source facts preserve malformed padded missing null empty and typed v
 it('HTTP MCP and parsed XLSX consume native recognized facts without a staged projection or source selector',async()=>{
  const {db,dir,seed}=setup(),{formal}=seed('四消费者企业',{whpcyear:'',whpc:'2023-2'})
  const h3=await import('h3');vi.stubGlobal('defineEventHandler',h3.defineEventHandler)
- const handler=(await import('../../../server/api/roster/current-enterprises.get')).default
+ const handler=(await import('../../../layers/sme-roster/server/api/roster/current-enterprises.get')).default
  const server=createServer(h3.toNodeListener(h3.createApp().use(h3.createRouter().get('/api/roster/current-enterprises',handler))))
  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));cleanup.push(()=>new Promise<void>(resolve=>server.close(()=>resolve())))
  const base=`http://127.0.0.1:${(server.address() as {port:number}).port}`
@@ -64,7 +64,7 @@ it('HTTP MCP and parsed XLSX consume native recognized facts without a staged pr
  const response=await fetch(base+'/api/roster/current-enterprises?titleCode=innovative_sme&validYear=2028&maintenanceYear=2023')
  expect(response.status).toBe(200)
  const http=await response.json() as CurrentQualifiedResult
- const tool=(await import('../../../server/mcp/tools/list_current_qualified_enterprises')).default
+ const tool=(await import('../../../layers/sme-roster/server/mcp/tools/list_current_qualified_enterprises')).default
  const mcp=JSON.parse(await (tool as any).handler(filter,{})) as CurrentQualifiedResult
  for(const result of[http,mcp,listCurrentQualified(db.$client,filter)]){
   expect(result.total).toBe(1)

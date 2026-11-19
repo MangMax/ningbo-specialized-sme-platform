@@ -1,3 +1,5 @@
+import { resolveInsideRoot, scanFileStore } from '../../../layers/core/server/utils/file-store'
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { initializeDb } from '../../../db/client'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -5,23 +7,22 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { categoryStateOf, deriveClassification, deriveParts, parseBatch } from '../../../lib/stored-file'
+import { categoryStateOf, deriveClassification, deriveParts, parseBatch } from '../../../layers/sme-roster/lib/stored-file'
 import {
   backfillFromDisk,
   backfillStoredFiles,
   listStoredFiles,
+  getStoredFile,
   parseMetadataPatch,
   removeStoredFile,
-  resolveInsideRoot,
-  scanFileStore,
   updateStoredFile,
-} from '../../../server/utils/stored-files'
+} from '../../../layers/core/server/utils/stored-files'
 
 /**
  * 票 09 —— 文件表与文件管理页的**规则层**测试。
  *
  * 分三块:
- *  1. 分类规则(`lib/stored-file.ts`)——从目录反推 source/kind/year/batch;
+ *  1. 分类规则(`layers/sme-roster/lib/stored-file.ts`)——从目录反推 source/kind/year/batch;
  *  2. 回填幂等 —— 重跑两次行数不变;
  *  3. 元数据 PATCH 只改元数据 —— 不动 `rel_path`、不动磁盘。
  *  4. **入库范围**(RL-16)——「哪些文件该进文件库」在回填里真的生效。
@@ -199,7 +200,7 @@ describe('stored_file 回填', () => {
     expect(stats.inserted).toBe(4)
     expect(stats.skipped).toEqual([])
 
-    const rows = db.select().from(schema.storedFile).all()
+    const { rows } = listStoredFiles(db)
     expect(rows).toHaveLength(4)
     const notice = rows.find((r) => r.relPath.includes('72号'))!
     expect(notice).toMatchObject({
@@ -239,7 +240,7 @@ describe('stored_file 回填', () => {
     const stats = backfillStoredFiles(db, [
       { relPath: row.relPath, filename: row.filename, ext: row.ext, bytes: 999, sha256: 'x'.repeat(64) },
     ])
-    const after = db.select().from(schema.storedFile).all().find((r) => r.id === row.id)!
+    const after = getStoredFile(db, row.id)!
     expect(after.year).toBe(2019) // 分类保住了
     expect(after.bytes).toBe(row.bytes)
     expect(after.sha256).toBe(row.sha256)
@@ -323,7 +324,7 @@ describe('入库范围:不该入库的文件不进表,并带原因报出', () =>
 
 describe('PATCH 只改元数据', () => {
   it('拒绝当前未支持的展示名 PATCH 后既有出处仍按原 rel_path 解析到预览文件', () => {
-    const row = db.select().from(schema.storedFile).all().find((r) => r.relPath.includes('72号'))!
+    const row = listStoredFiles(db).rows.find((r) => r.relPath.includes('72号'))!
     const enterpriseId = db
       .insert(schema.enterprise)
       .values({ name: '预览路径稳定性测试', nameNorm: '预览路径稳定性测试' })
@@ -404,21 +405,7 @@ describe('PATCH 只改元数据', () => {
   })
 
   it('补齐分类后 unset 自动提升为 set;清空则退回 unset', () => {
-    const id = db
-      .insert(schema.storedFile)
-      .values({
-        relPath: 'jxj/announcement/2027/1/待定.pdf',
-        filename: '待定.pdf',
-        ext: 'pdf',
-        bytes: 10,
-        sha256: 'b'.repeat(64),
-        source: 'jxj',
-        kind: 'announcement',
-        year: null,
-        categoryState: 'unset',
-      })
-      .returning({ id: schema.storedFile.id })
-      .get().id
+    const id = createClassifiedFile(db, { relPath: 'jxj/announcement/2027/1/待定.pdf', filename: '待定.pdf', ext: 'pdf', bytes: 10, sha256: 'b'.repeat(64) }, { source: 'jxj', kind: 'announcement', year: null, categoryState: 'unset' }).id
 
     expect(updateStoredFile(db, id, { year: 2027 })!.categoryState).toBe('set')
     expect(updateStoredFile(db, id, { year: null })!.categoryState).toBe('unset')
@@ -479,7 +466,7 @@ describe('列表与筛选', () => {
     const rows = listStoredFiles(db, { pageSize: 200 }).rows
     const sources = rows.map((r) => r.source)
     expect(sources.indexOf('jxj')).toBeLessThan(sources.indexOf('miit'))
-    const jxjYears = rows.filter((r) => r.source === 'jxj' && r.year !== null).map((r) => r.year!)
+    const jxjYears = rows.flatMap(row => row.source === 'jxj' && typeof row.year === 'number' ? [row.year] : [])
     const sorted = [...jxjYears].sort((a, b) => b - a)
     expect(jxjYears).toEqual(sorted)
   })
@@ -534,5 +521,26 @@ describe('DELETE 默认不删磁盘', () => {
     // 回填不会把移出的文件又插回来。
     const again = await backfillFromDisk(db, filesRoot)
     expect(again.inserted).toBe(0)
+  })
+})
+
+describe('platform files alongside roster files', () => {
+  it('includes a file without roster classification in list totals and detail until a roster filter is selected', () => {
+    const mixedDb = initializeDb({ create: true, dbPath: join(dir, 'mixed.db') })
+    createClassifiedFile(mixedDb, {
+      relPath: 'jxj/announcement/2024/notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: 5, sha256: 'b'.repeat(64),
+    }, { source: 'jxj', categoryState: 'set', parseState: 'unparsed' })
+    const common = { relPath: 'shared/reference.pdf', filename: 'reference.pdf', ext: 'pdf', bytes: 8, sha256: 'c'.repeat(64) }
+    const { id } = mixedDb.insert(schema.storedFile).values(common).returning({ id: schema.storedFile.id }).get()
+    const { rows, total } = listStoredFiles(mixedDb, { pageSize: 1 })
+    expect.soft(total).toBe(2)
+    expect(rows).toHaveLength(1)
+    expect.soft(listStoredFiles(mixedDb, { q: 'reference.pdf' })).toMatchObject({ rows: [common], total: 1 })
+    expect.soft(getStoredFile(mixedDb, id)).toMatchObject(common)
+    expect.soft(listStoredFiles(mixedDb, { q: 'reference.pdf', source: 'invalid' }).total).toBe(1)
+    for (const filters of [{ source: 'jxj' }, { categoryState: 'set' }, { parseState: 'unparsed' }]) {
+      expect(listStoredFiles(mixedDb, { q: 'reference.pdf', ...filters })).toEqual({ rows: [], total: 0 })
+      expect(listStoredFiles(mixedDb, filters).total).toBe(1)
+    }
   })
 })

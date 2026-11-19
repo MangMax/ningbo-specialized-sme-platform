@@ -1,5 +1,5 @@
 /** Offline historical oracle from ab503081dae3e24680afc9b07395a7e3ff21fc9f. */
-import { platformNormalizationConflict } from '../../../lib/platform/normalization'
+import { platformNormalizationConflict } from '../../../layers/sme-roster/lib/platform/normalization'
 /** Explicit 71609–71611 recognition-directory reader. Public routing remains separate. */
 import {readObservationCorrespondenceRefs} from '../correspondence-target';
 import { and, count, countDistinct, desc, eq, exists, inArray, isNull, max, min, ne, or, sql } from 'drizzle-orm';
@@ -11,13 +11,13 @@ import { targetSchema, platformBusinessObservation as o, platformObservationAssi
 import { platformCollection as c, platformLegacyQueryAlias as qa, platformBusinessRecord as b, platformBusinessRecordVersion as v, enterprise as e, recordCorrespondence as correspondence } from '../../legacy-schema';
 import { storedRecognizedProjection as p } from '../recognized-stored-schema';
 import { recognizedStoredInstalled } from '../../recognized-stored-catalog';
-import { sqliteConnection } from '../../../lib/platform/target-connection';
-import { normalizeName, normalizeUscc } from '../../../lib/domain';
+import { sqliteConnection } from '../../../layers/sme-roster/lib/platform/target-connection';
+import { normalizeName, normalizeUscc } from '../../../layers/sme-roster/lib/domain';
 import { fail, orderedScopes, pageOf } from './platform-business-read';
-import { recognizedDirectoryFilterSchema, RECOGNIZED_DIRECTORY_VERSION_LIMIT, RECOGNIZED_DIRECTORY_OBSERVATION_LIMIT, type RecognizedDirectoryFilter, type RecognizedDirectoryListResult, type RecognizedDirectoryIsolatedRow, type RecognizedDirectoryDetail, type RecognizedDirectoryView } from '../../../lib/platform/recognized-directory';
-import type { PlatformFilterOptions } from '../../../lib/platform/filter-options';
-import { withArchiveProcessFacts, legacyRowTitle, type PlatformObservationFact } from '../../../lib/platform/observation-facts';
-import type { PlatformNormalizationConflict } from '../../../lib/platform/normalization';
+import { recognizedDirectoryFilterSchema, RECOGNIZED_DIRECTORY_VERSION_LIMIT, RECOGNIZED_DIRECTORY_OBSERVATION_LIMIT, type RecognizedDirectoryFilter, type RecognizedDirectoryListResult, type RecognizedDirectoryIsolatedRow, type RecognizedDirectoryDetail, type RecognizedDirectoryView } from '../../../layers/sme-roster/lib/platform/recognized-directory';
+import type { PlatformFilterOptions } from '../../../layers/sme-roster/lib/platform/filter-options';
+import { withArchiveProcessFacts, legacyRowTitle, type PlatformObservationFact } from '../../../layers/sme-roster/lib/platform/observation-facts';
+import type { PlatformNormalizationConflict } from '../../../layers/sme-roster/lib/platform/normalization';
 type Db = BetterSQLite3Database<typeof targetSchema> | BetterSQLite3Database<typeof legacySchema>;
 type TargetIsolatedRow = Omit<RecognizedDirectoryIsolatedRow, 'titleRaw'> & {
     titleRaw: unknown;

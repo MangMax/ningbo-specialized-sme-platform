@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { ocrImageFile } from '../../../server/utils/ocr-api'
+import { ocrImageFile } from '../../../layers/core/server/utils/ocr-api'
 import { startMiniOcrApi, type MiniOcrApi } from './fixtures/provider-api'
 
 let dir: string

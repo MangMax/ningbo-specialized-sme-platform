@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { assertFinalPlatformRuntime, assertNoRetiredPlatformSchema, PLATFORM_RETIREMENT_RULE, PLATFORM_RUNTIME_VERSION } from '../db/schema-phase'
-import { parseRecognizedQualificationFields } from '../lib/platform/recognized-projection'
+import { parseRecognizedQualificationFields } from '../layers/sme-roster/lib/platform/recognized-projection'
 
 const columns = ['source_recognized_at','source_valid_flag','source_invalidated_at','source_invalidation_reason','source_province_name','source_city_name','source_district_name','qualification_fields_rule']
 type Options = { batchSize: number; beforeCommit?: (lastId: number) => void; onUnavailable?: (id: number, reason: string) => void }

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
-import DeleteFileDialog from '../../../components/files/DeleteFileDialog.vue'
+import DeleteFileDialog from '../../../layers/core/app/components/files/DeleteFileDialog.vue'
 
 type DeferredRead = { revision: number } | { intent: { id: string; fileId: number; relPath: string; state: string } }
 

@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
@@ -13,7 +14,7 @@ beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-server-only', filesDir: root }))
   vi.doMock('@db', () => ({ useDb: () => db }))
-  const { browserFileSegmentsRoute } = await import('../../../server/utils/browser-file-segments')
+  const { browserFileSegmentsRoute } = await import('../../../layers/sme-roster/server/utils/browser-file-segments')
   const router = createRouter()
   for (const action of ['read', 'preflight', 'commit'] as const) {
     const path = '/:id' + (action === 'read' ? '' : '/' + action)
@@ -37,7 +38,7 @@ async function http(id: number, action = '', body?: unknown, origin?: string) {
 function fixture() {
   const name = `controlled-${crypto.randomUUID()}.pdf`, bytes = 'controlled source, never OCR'
   writeFileSync(join(root, name), bytes)
-  return db.insert(schema.storedFile).values({ relPath: name, filename: name, ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), parseState: 'failed' }).returning().get()
+  return createClassifiedFile(db, { relPath: name, filename: name, ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }, { parseState: 'failed' })
 }
 it('saves explicit combinations through real HTTP, preserves parse state and replays without granting a token', async () => {
   const f = fixture(), initial = (await http(f.id)).body

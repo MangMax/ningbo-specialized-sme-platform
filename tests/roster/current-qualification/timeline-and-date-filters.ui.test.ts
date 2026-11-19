@@ -5,11 +5,11 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import { createMemoryHistory, createRouter, RouterLink } from 'vue-router'
-import Page from '../../../pages/current-enterprises.vue'
-import { Select } from '../../../components/ui/select'
-import { Calendar } from '../../../components/ui/calendar'
+import Page from '../../../layers/sme-roster/app/pages/current-enterprises.vue'
+import { Select } from '../../../layers/core/app/components/ui/select'
+import { Calendar } from '../../../layers/core/app/components/ui/calendar'
 import { CalendarDate } from '@internationalized/date'
-import CurrentRecognitionDatePicker from '../../../components/CurrentRecognitionDatePicker.vue'
+import CurrentRecognitionDatePicker from '../../../layers/sme-roster/app/components/CurrentRecognitionDatePicker.vue'
 
 const mounted: ReturnType<typeof mount>[] = []
 afterEach(() => { mounted.splice(0).forEach(wrapper => wrapper.unmount()); vi.unstubAllGlobals(); vi.restoreAllMocks() })

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initializeDb } from '../../../db/client';
 import * as s from '../../../db/schema';
-import { currentDispositions, historyDispositions, preflightDisposition, commitDisposition } from '../../../server/utils/title-cycle-disposition';
+import { currentDispositions, historyDispositions, preflightDisposition, commitDisposition } from '../../../layers/sme-roster/server/utils/title-cycle-disposition';
 const cleanup: (() => void)[] = [];
 afterEach(() => cleanup.splice(0).forEach(f => f()));
 function fixture() {

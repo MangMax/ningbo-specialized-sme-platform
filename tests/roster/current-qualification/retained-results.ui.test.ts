@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { createPinia } from 'pinia'
 import { PiniaColada } from '@pinia/colada'
 import { createMemoryHistory, createRouter, RouterLink, useRoute, useRouter } from 'vue-router'
-import CurrentPage from '../../../pages/current-enterprises.vue'
+import CurrentPage from '../../../layers/sme-roster/app/pages/current-enterprises.vue'
 
 const views: ReturnType<typeof mount>[] = []
 afterEach(() => { views.forEach(view => view.unmount()); views.length = 0; vi.unstubAllGlobals() })

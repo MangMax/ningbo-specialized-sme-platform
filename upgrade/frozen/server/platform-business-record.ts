@@ -1,6 +1,6 @@
 /** Offline historical oracle from ab503081dae3e24680afc9b07395a7e3ff21fc9f. */
-import { PlatformProjectionError } from '../../../lib/platform/projection-error'
-export { PlatformProjectionError } from '../../../lib/platform/projection-error'
+import { PlatformProjectionError } from '../../../layers/sme-roster/lib/platform/projection-error'
+export { PlatformProjectionError } from '../../../layers/sme-roster/lib/platform/projection-error'
 import { createHash } from 'node:crypto'
 import { and, eq, sql } from 'drizzle-orm'
 import * as schema from '../../legacy-schema'
@@ -8,13 +8,13 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 type HistoricalDb = BetterSQLite3Database<typeof schema>
 type HistoricalTx = Parameters<Parameters<HistoricalDb['transaction']>[0]>[0]
 type Executor = HistoricalDb | HistoricalTx
-import type { PlatformApplyProjectionPreview, PlatformBusinessProjectionPreview, PlatformObservationProjection, PlatformProjectionResult, PlatformRecognizedProjectionPreview } from '../../../lib/platform/business-record'
-import { APPLY_PROJECTION_RULE, parseApplyRecord, type ApplyProjectionFields } from '../../../lib/platform/apply-record'
-import { BUSINESS_PROJECTION_RULE, type BusinessProjectionFields } from '../../../lib/platform/business-projection'
-import { RECOGNIZED_PROJECTION_RULE, type RecognizedSourceFidelity, type RecognizedProjectionFields } from '../../../lib/platform/recognized-projection'
+import type { PlatformApplyProjectionPreview, PlatformBusinessProjectionPreview, PlatformObservationProjection, PlatformProjectionResult, PlatformRecognizedProjectionPreview } from '../../../layers/sme-roster/lib/platform/business-record'
+import { APPLY_PROJECTION_RULE, parseApplyRecord, type ApplyProjectionFields } from '../../../layers/sme-roster/lib/platform/apply-record'
+import { BUSINESS_PROJECTION_RULE, type BusinessProjectionFields } from '../../../layers/sme-roster/lib/platform/business-projection'
+import { RECOGNIZED_PROJECTION_RULE, type RecognizedSourceFidelity, type RecognizedProjectionFields } from '../../../layers/sme-roster/lib/platform/recognized-projection'
 
-import { PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE, canonicalPlatformJson, platformObservationPayload, planPlatformObservation } from '../../../lib/platform/observation-plan'
-export { PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE, canonicalPlatformJson, platformObservationPayload, planPlatformObservation } from '../../../lib/platform/observation-plan'
+import { PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE, canonicalPlatformJson, platformObservationPayload, planPlatformObservation } from '../../../layers/sme-roster/lib/platform/observation-plan'
+export { PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE, canonicalPlatformJson, platformObservationPayload, planPlatformObservation } from '../../../layers/sme-roster/lib/platform/observation-plan'
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 type Input = Parameters<typeof planPlatformObservation>[0]
 

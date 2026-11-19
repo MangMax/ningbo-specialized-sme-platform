@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -12,8 +13,8 @@ import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedCh
 const dir = mkdtempSync(join(tmpdir(), 'spec63-proof-http-'))
 const dbPath = join(dir, 'synthetic.db')
 const db = initializeDb({ create: true,  dbPath })
-const file = db.insert(schema.storedFile).values({ relPath: 'synthetic/notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: 12, sha256: 'a'.repeat(64), source: 'jxj', kind: 'announcement' }).returning().get()
-const freezeFile = db.insert(schema.storedFile).values({ relPath: 'synthetic/archive/freeze-v1', filename: 'freeze-v1.txt', ext: 'txt', bytes: 24, sha256: 'c'.repeat(64), source: 'miit', kind: 'export' }).returning().get()
+const file = createClassifiedFile(db, { relPath: 'synthetic/notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: 12, sha256: 'a'.repeat(64) }, { source: 'jxj', kind: 'announcement' })
+const freezeFile = createClassifiedFile(db, { relPath: 'synthetic/archive/freeze-v1', filename: 'freeze-v1.txt', ext: 'txt', bytes: 24, sha256: 'c'.repeat(64) }, { source: 'miit', kind: 'export' })
 const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Synthetic complete notice', path: file.relPath, issueDate: '2024-05-01' }).returning().get()
 const enterprise = db.insert(schema.enterprise).values({ name: '甲企业', nameNorm: '甲企业', usccNorm: '91330211255994475A' }).returning().get()
 const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()

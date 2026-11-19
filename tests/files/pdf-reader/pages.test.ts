@@ -16,14 +16,14 @@ import {
   pageImageRelPath,
   pageNoOf,
   pixelSizeFor,
-} from '../../../lib/pdf-page'
+} from '../../../layers/core/lib/pdf-page'
 import {
   listPdfPages,
   pageImagePath,
   removePdfPages,
   renderPdfPages,
   resolveWithinRoot,
-} from '../../../server/utils/pdf-pages'
+} from '../../../layers/core/server/utils/pdf-pages'
 import { countDarkRuns, markBand, minimalPdf } from '../../support/minimal-pdf'
 
 /**

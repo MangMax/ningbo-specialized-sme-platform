@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { allRecords, listRecords, type RecordQuery } from '../../../lib/query'
+import { allRecords, listRecords, type RecordQuery } from '../../../layers/sme-roster/lib/query'
 
 let dir: string
 let db: (typeof import('../../../db'))['useDb']

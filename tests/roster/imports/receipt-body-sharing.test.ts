@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest'
 import { nativeImportDb } from './fixtures/native-import'
-import { recordImportReceipt } from '../../../server/utils/import-receipt-ledger'
-import { readImportReceipt } from '../../../server/utils/import-receipts'
+import { recordImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipt-ledger'
+import { readImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipts'
 import { sql } from 'drizzle-orm'
 const dbs: ReturnType<typeof nativeImportDb>[] = []
 afterEach(() => { for (const db of dbs.splice(0)) db.$client.close() })

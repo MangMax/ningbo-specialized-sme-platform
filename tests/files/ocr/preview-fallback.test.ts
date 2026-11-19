@@ -5,7 +5,7 @@ vi.mock('markstream-vue', async importOriginal => ({
   ...await importOriginal<typeof import('markstream-vue')>(),
   parseMarkdownToStructure: () => { throw new Error('display unavailable') },
 }))
-import OcrPageRow from '../../../components/ocr/OcrPageRow.vue'
+import OcrPageRow from '../../../layers/core/app/components/ocr/OcrPageRow.vue'
 
 it('OCR 渲染失败保留有文本、来源和原始编辑草稿，不产生写入或空结果', async () => {
   const source = '# 名单\n\n<table><tr><td>企业甲</td></tr></table>'

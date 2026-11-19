@@ -1,3 +1,5 @@
+import { submitNewFixtureAnnouncement } from '../../imports/fixtures/reviewed-announcement'
+import type { RosterImportRequest } from '../../../../layers/sme-roster/lib/roster-import-client'
 import { expect } from 'vitest'
 
 export const m3Raw = 'M3原始关系\\"\n'.repeat(12000)
@@ -5,12 +7,10 @@ export const m3Uscc = '91330211255994457P'
 export async function seedWorkerComparisonFixture(base: string, token: string) {
   let sequence = 0
   const commit = async (payload: unknown) => {
-    const response = await fetch(base + '/api/roster/import/commit', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({
+    const receipt = await submitNewFixtureAnnouncement(base, token, {
       idempotencyKey: `m3-${++sequence}`, sourceKind: 'announcement', sourceIdentity: `synthetic/m3-${sequence}`, payload,
-    }) })
-    expect(response.status).toBe(200)
-    const receipt = await response.json()
-    expect(receipt, JSON.stringify(receipt)).toMatchObject({ status: 'committed' })
+    } as RosterImportRequest)
+    expect(receipt, JSON.stringify(receipt)).toMatchObject({ status: 'supplemented' })
     return receipt
   }
   await commit({ announcement: { sourceDocument: { source: 'jxj', title: 'M3合成公布' }, records: [

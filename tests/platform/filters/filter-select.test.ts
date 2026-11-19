@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { mount } from '@vue/test-utils'
 import { expect, it } from 'vitest'
-import PlatformFilterSelect from '../../../components/PlatformFilterSelect.vue'
-import { Select } from '../../../components/ui/select'
+import PlatformFilterSelect from '../../../layers/sme-roster/app/components/PlatformFilterSelect.vue'
+import { Select } from '../../../layers/core/app/components/ui/select'
 
 it('selects literal candidates and clears without colliding with a source value named all', async () => {
  const w=mount(PlatformFilterSelect,{props:{modelValue:'all',options:['all','other:value'],label:'状态',placeholder:'全部状态'}})

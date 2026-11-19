@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { initializeDb } from '../../../db/client'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 /** #407 parent-frozen correction/readback cases.
@@ -13,15 +14,15 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../../../db/schema'
-import type { OfficialPublishedRow, RosterImportRequest } from '../../../lib/roster-import-client'
-import * as qualification from '../../../lib/roster/current-qualification'
-import { getRosterEnterpriseDetail } from '../../../lib/roster/enterprise-roster'
-import { handleEventCorrectionRequest } from '../../../server/utils/roster-event-correction-api'
-import type { EventCorrectionRequest } from '../../../server/utils/roster-event-correction'
-import { dispatchEventCorrectionMcp } from '../../../server/utils/mcp-event-correction'
-import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
-import { preflightRosterImport, commitRosterImport } from '../../../server/utils/roster-import'
-import { preflightRecordCorrespondences, commitRecordCorrespondences, type CorrespondenceRequest } from '../../../server/utils/record-correspondence'
+import type { OfficialPublishedRow, RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
+import * as qualification from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { handleEventCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-event-correction-api'
+import type { EventCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-event-correction'
+import { dispatchEventCorrectionMcp } from '../../../layers/sme-roster/server/utils/mcp-event-correction'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
+import { preflightRosterImport, commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { preflightRecordCorrespondences, commitRecordCorrespondences, type CorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence'
 import { startHttpFixture, type HttpFixture } from '../../support/http'
 
 const NOW = Date.parse('2026-01-15T00:00:00.000Z')
@@ -50,7 +51,7 @@ beforeEach(async () => {
   record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'innovative_sme', source: 'jxj', nameRaw: '合成公布原名', usccRaw: enterprise.usccNorm }).returning().get()
   event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'review', year: 2025, batchSeq: null, decidedYear: null, reviewOutcome: null }).returning().get()
   evidence = db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'notice.txt', attachment: '附件2', listNo: 1 }).returning().get()
-  file = db.insert(schema.storedFile).values({ relPath: 'notice.txt', filename: 'notice.txt', ext: 'txt', bytes: Buffer.byteLength(SOURCE), sha256: SOURCE_HASH, source: 'jxj', kind: 'announcement' }).returning().get()
+  file = createClassifiedFile(db, { relPath: 'notice.txt', filename: 'notice.txt', ext: 'txt', bytes: Buffer.byteLength(SOURCE), sha256: SOURCE_HASH }, { source: 'jxj', kind: 'announcement' })
   document = db.insert(schema.sourceDocument).values({ source: 'jxj', title: '2025年新认定第二批及2022年企业复核通过名单', path: 'notice.txt' }).returning().get()
   const correctionRoute = (action: 'preflight' | 'commit' | 'get' | 'audit') =>
     (request: { method: string; headers: Record<string, string | undefined>; body: unknown; query: Record<string, unknown> }) =>
@@ -496,7 +497,7 @@ it('public_replay_rechecks_new_context_without_reader_or_storage_rewrite', async
 
 it('public_unmarked_same_name_slot_keeps_legacy_sanitizer', async () => {
   // Protocol/mock control only: arbitrary same-name JSON is not a core-sealed typed slot.
-  const core = await import('../../../server/utils/roster-event-correction')
+  const core = await import('../../../layers/sme-roster/server/utils/roster-event-correction')
   vi.spyOn(core, 'commitEventCorrections').mockReturnValue({
     qualificationReadbackProtocol: 'event-correction-407-v1',
     qualificationReadback: { stage: 'after', status: 'captured', token: 'synthetic-raw-secret', payload: 'token=synthetic-raw-value' },

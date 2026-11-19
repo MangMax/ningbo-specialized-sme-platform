@@ -27,7 +27,7 @@ MIIT_COOKIE='' MIIT_COOKIE_FILE='' pnpm test tests/platform-agent-workflow.test.
 
 该行为校验启动真实 HTTP 应用夹具，使用临时 SQLite 与服务端合成凭据，执行导出函数、注入登录/第二页失败并检查请求路由。仅调用应用 API/MCP；代理不读或展示平台凭据，不直调平台。这只证明合成上游样例的流程，不代表真实平台验收。候选证据经审阅后，公开查证与独立预检/写入仍分别处理。
 
-证据转存是单独授权步骤。queryBusList 的每个原始结果或批量 `segments[]` 应用 `lib/platform/recognized-evidence.ts` 的 `recognizedResultToImport` 转换，再用同一幂等键统一预检/提交，并通过 REST 历史或 `list_platform_queries` 读回全部查询/行 ID。不能重放实时查询来填补归档缺失的原时间或末页证明，见[转存契约](../../../../lib/platform/recognized-evidence.ts)。
+证据转存是单独授权步骤。queryBusList 的每个原始结果或批量 `segments[]` 应用 `layers/sme-roster/lib/platform/recognized-evidence.ts` 的 `recognizedResultToImport` 转换，再用同一幂等键统一预检/提交，并通过 REST 历史或 `list_platform_queries` 读回全部查询/行 ID。不能重放实时查询来填补归档缺失的原时间或末页证明，见[转存契约](../../../../layers/sme-roster/lib/platform/recognized-evidence.ts)。
 
 合成写入、读回和回滚校验（临时 SQLite，无真实账号）：
 
@@ -49,3 +49,5 @@ pnpm exec vitest run tests/enterprise-fact-protocol-307-mcp.test.ts --no-file-pa
 ```
 
 未提供 URL/DB 时这三个传输测试明确 SKIP，不能报告 PASS。JSON 读回存到合成库旁的 `mcp-fact-protocol-readbacks.json`，不得提交；此验证不代表生产数据、真实平台、UI、导出或独立代理盲测验收。
+
+公布名单用 [announcement-intake.mjs](announcement-intake.mjs) 预检并留存原行。取得 `intakeId` 和 `sourceDigest` 后，另行提供逐行已核对的身份与依据再调用补充。用当前 OpenAPI 核对鉴权和请求字段。

@@ -2,13 +2,13 @@ import { afterEach, expect, it } from 'vitest'
 
 
 import { nativeCorrespondenceFixture } from './fixtures/native-correspondence'
-import { getRecordCorrespondence, listRecordCorrespondences } from '../../../server/utils/record-correspondence'
+import { getRecordCorrespondence, listRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
 const fixtures: ReturnType<typeof nativeCorrespondenceFixture>[] = []
 const fixture = () => { const f = nativeCorrespondenceFixture(); fixtures.push(f); return f }
 afterEach(() => { for (const f of fixtures.splice(0)) f.close() })
 
-import { handleRecordCorrespondenceRequest } from '../../../server/utils/record-correspondence-api'
-import { dispatchRecordCorrespondenceMcp } from '../../../server/utils/mcp-record-correspondence'
+import { handleRecordCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-api'
+import { dispatchRecordCorrespondenceMcp } from '../../../layers/sme-roster/server/utils/mcp-record-correspondence'
 it('native REST writes require authorization and return sanitized source detail', () => {
  const f=fixture(),row=f.add(),body=f.request('api',[{action:'create',status:'confirmed',edge:f.edge(row.id)}])
  expect(handleRecordCorrespondenceRequest({action:'preflight',method:'POST',body},{db:f.db,apiToken:'private'}).status).toBe(401)

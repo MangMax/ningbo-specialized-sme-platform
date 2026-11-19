@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { NURTURE_KEYWORD, scopeOf, siblingIndex } from '../../../lib/file-store-scope'
+import { siblingIndex } from '../../../layers/core/lib/core/file-path'
+import { getAppModules } from '../../../lib/app-modules'
+
+const scopeOf = getAppModules().find(module => module.id === 'sme-roster')!.fileCategories!.admission
 
 /**
  * RL-16(票 #17)—— 文件库**入库范围规则**的规则层测试。
  *
  * 这些是**纯函数**用例:给一个库内相对路径 + 同目录兄弟名,回答「入不入库、为什么」。
- * 规则被 `server/utils/stored-files.ts` 的回填真的用上(见 `stored-file.test.ts` 的
+ * 规则被 `layers/core/server/utils/stored-files.ts` 的回填真的用上(见 `stored-file.test.ts` 的
  * 「入库范围」一节)—— 所以这里钉住的是**行为**,不是一份散文。
  *
  * 判据的出处:`lib/file-store-scope.ts` 的「入库范围」一节 +
@@ -50,7 +53,7 @@ describe('入库范围:该排除的三种情形', () => {
     const verdict = scopeOf('jxj/announcement/2021/甬经信中小〔2021〕160号关于公布2021-2022宁波市“专精特新”入库培育企业名单的通知.pdf')
     expect(verdict.inScope).toBe(false)
     expect(verdict.reason).toBe('nurture')
-    expect(verdict.detail).toContain(NURTURE_KEYWORD)
+    expect(verdict.detail).toContain('入库培育')
   })
 
   it('.doc 且有同名 .docx ⇒ 排除(重复件;保留可预览的那份)', () => {

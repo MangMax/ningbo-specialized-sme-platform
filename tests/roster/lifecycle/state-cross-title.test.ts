@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { listRosterEnterprises } from '../../../lib/roster/enterprise-roster'
+import { listRosterEnterprises } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
 
 /**
  * RL-04 回归钉 —— `rosterState` 的「是否还在最新快照里」必须按 **USCC 的实际出现**判定,
@@ -12,7 +12,7 @@ import { listRosterEnterprises } from '../../../lib/roster/enterprise-roster'
  *
  * 契约 §5 的硬边界:「**公布事件永不因平台快照缺失而删除**」「证据不足不误删」。
  *
- * 旧实现的失效路径(`lib/roster/enterprise-roster.ts` 的 `deriveRosterState`):
+ * 旧实现的失效路径(`layers/sme-roster/lib/roster/enterprise-roster.ts` 的 `deriveRosterState`):
  * 它取 `profile.records.map(r => r.titleCode)` 去查 `latestBatchByTitle`,于是
  * 当企业出现在**别的称号**的快照里、而它自己记录的称号**一张快照都没有**时,
  * 「最新批次」集合是**空的** ⇒ `inLatest = false` ⇒ 判成 `removed_platform_only`。
@@ -36,6 +36,7 @@ function enterprise(key: string, name: string, uscc: string): number {
     .returning({ id: schema.enterprise.id })
     .get().id
   ids[key] = id
+  db.insert(schema.rosterLegacyMember).values({ enterpriseId: id }).run()
   return id
 }
 

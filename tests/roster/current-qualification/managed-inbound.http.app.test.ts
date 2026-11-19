@@ -1,4 +1,4 @@
-import { createCurrentQualificationAssessmentReader } from '../../../lib/roster/current-qualification'
+import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
 import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, expect, it } from 'vitest'

@@ -11,6 +11,8 @@ export default defineConfig({
       'vue-router': createRequire(import.meta.resolve('nuxt/package.json')).resolve('vue-router'),
       '~': fileURLToPath(new URL('.', import.meta.url)),
       '~~': fileURLToPath(new URL('.', import.meta.url)),
+      '#core': fileURLToPath(new URL('./layers/core', import.meta.url)),
+      '#sme-roster': fileURLToPath(new URL('./layers/sme-roster', import.meta.url)),
       '@db': fileURLToPath(new URL('./db', import.meta.url)),
       '@': fileURLToPath(new URL('.', import.meta.url)),
     },

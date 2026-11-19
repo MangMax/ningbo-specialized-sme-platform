@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
-import type { EventArchiveCandidate } from '../../../lib/roster/event-archive-candidates'
-import { platformDecisionSummary, replacementDecisionOptions } from '../../../components/record-correspondence/event-correspondence-presentation'
+import type { EventArchiveCandidate } from '../../../layers/sme-roster/lib/roster/event-archive-candidates'
+import { platformDecisionSummary, replacementDecisionOptions } from '../../../layers/sme-roster/app/components/record-correspondence/event-correspondence-presentation'
 
 const row = (id: number, overrides = {}): EventArchiveCandidate => ({
   edge: { type: 'event_process', eventId: 7, relationId: id, role: 'context_only' },

@@ -1,12 +1,13 @@
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb, schema } from '../../../db/client'
 import { eq } from 'drizzle-orm'
-import { __resetJobRunner, clearJobSpecs, ensureJobRunnerReady, registerJob, submitJob, whenIdle } from '../../../server/utils/job-runner'
-import { newJobId } from '../../../lib/job'
-import { handleTaskCenterRequest } from '../../../server/utils/task-center-http'
+import { __resetJobRunner, clearJobSpecs, ensureJobRunnerReady, registerJob, submitJob, whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { newJobId } from '../../../layers/core/lib/job'
+import { handleTaskCenterRequest } from '../../../layers/sme-roster/server/utils/task-center-http'
 import { startHttpFixture, type HttpFixture, type FixtureRequest } from '../../support/http'
 
 let dir: string
@@ -26,17 +27,28 @@ beforeEach(async () => {
 afterEach(async () => { __resetJobRunner(); clearJobSpecs(); await api?.close(); rmSync(dir, { recursive: true, force: true }) })
 
 describe('task center public HTTP', () => {
-  it('lists disjoint bounded groups and keeps unknown kinds visible without raw payloads', async () => {
+  it('lists disjoint module tabs and keeps JobSpec-only kinds visible without raw payloads', async () => {
+    registerJob({ kind: 'future-kind', status: 'todo', summary: 'synthetic', parse: raw => ({ ok: true, params: raw }) })
     const allResponse = await fetch(`${api.baseUrl}/api/task-center?pageSize=2`)
     expect(allResponse.headers.get('cache-control')).toBe('no-store')
     const all = await allResponse.json()
     expect(all.total).toBe(5)
     expect(all.rows).toHaveLength(2)
-    expect(all.counts).toEqual({ all: 5, ocr: 2, platform: 2, export: 0 })
-    const ocr = await (await fetch(`${api.baseUrl}/api/task-center?tab=ocr&state=failed`)).json()
-    expect(ocr.rows.map((row: any) => row.kind).sort()).toEqual(['ocr', 'render-pages'])
+    expect(all.counts).toEqual({ all: 5, core: 2, 'sme-roster': 2 })
+    const ocr = await (await fetch(`${api.baseUrl}/api/task-center?tab=core&group=ocr&state=failed`)).json()
+    expect(ocr.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'ocr', label: 'OCR 识别', module: 'core', group: 'ocr' }),
+      expect.objectContaining({ kind: 'render-pages', label: 'PDF 转图', module: 'core', group: 'ocr' }),
+    ]))
+    expect(ocr.total).toBe(2)
+    const roster = await (await fetch(`${api.baseUrl}/api/task-center?tab=sme-roster&state=failed`)).json()
+    expect(roster.rows.map((row: any) => row.kind).sort()).toEqual(['platform-query-batch', 'reconcile'])
+    expect(roster.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'platform-query-batch', label: '平台批量查询', module: 'sme-roster', group: 'platform' }),
+      expect.objectContaining({ kind: 'reconcile', label: '平台核查', module: 'sme-roster', group: 'platform' }),
+    ]))
     const unknown = await (await fetch(`${api.baseUrl}/api/task-center?pageSize=200`)).text()
-    expect(unknown).toContain('future-kind')
+    expect(JSON.parse(unknown).rows).toContainEqual(expect.objectContaining({ kind: 'future-kind', label: 'future-kind', module: null, group: 'all' }))
     for (const secret of ['PRIVATE_', '/Users/', 'params', '"raw"']) expect(unknown).not.toContain(secret)
     expect(unknown.length).toBeLessThan(12000)
     const detail = await (await fetch(`${api.baseUrl}/api/task-center/${ids.ocr}`)).json()
@@ -48,12 +60,12 @@ describe('task center public HTTP', () => {
 })
 
 it('locates OCR results by registered file and reports safe platform item ranges', async () => {
-  db.insert(schema.storedFile).values({ id: 801, relPath: 'synthetic/roster.pdf', filename: 'roster.pdf', ext: 'pdf', bytes: 1, sha256: 'synthetic', source: 'jxj', kind: 'announcement' }).run()
+  createClassifiedFile(db, { id: 801, relPath: 'synthetic/roster.pdf', filename: 'roster.pdf', ext: 'pdf', bytes: 1, sha256: 'synthetic' }, { source: 'jxj', kind: 'announcement' })
   db.update(schema.job).set({ result: { files: [{ ok: true, fileId: 801, file: '/Users/private/wrong.pdf' }] } }).where(eq(schema.job.id, ids.ocr)).run()
   const detail = await (await fetch(`${api.baseUrl}/api/task-center/${ids.ocr}`)).json()
   expect(detail.links).toContainEqual({ label: '识别结果 #801', to: '/ocr?file=synthetic%2Froster.pdf' })
   db.update(schema.job).set({ result: { attempt: 2, items: [{ itemId: newJobId(), status: 'auth_failed', completeness: 'partial', segments: [{ rows: ['PRIVATE_ROWS'] }], unfinished: [{ source: 'queryBusList', rdjb: '1', page: 4 }] }] } }).where(eq(schema.job.id, ids.batch)).run()
-  const list = await (await fetch(`${api.baseUrl}/api/task-center?tab=platform`)).json()
+  const list = await (await fetch(`${api.baseUrl}/api/task-center?tab=sme-roster&group=platform`)).json()
   expect(list.rows.find((r: any) => r.id === ids.batch).outcome).toMatchObject({ failed: 1, partial: 1, unfinished: 1, attempt: 2 })
   const result = await (await fetch(`${api.baseUrl}/api/task-center/${ids.batch}`, { headers: { authorization: 'Bearer fixture-key' } })).json()
   expect(result.items[0]).toMatchObject({ status: 'auth_failed', completeness: 'partial', positions: [{ source: 'queryBusList', rdjb: '1', page: 4 }] })
@@ -114,7 +126,7 @@ it('exposes safe retry only for unfinished terminal batch items and enforces exe
 
 it('does not invent completed platform items before first checkpoint', async () => {
   db.update(schema.job).set({ state: 'queued', result: null, error: null, params: { items: [{ itemId: newJobId(), query: { source: 'queryList' } }, { itemId: newJobId(), query: { source: 'queryList' } }] } }).where(eq(schema.job.id, ids.batch)).run()
-  const list = await (await fetch(`${api.baseUrl}/api/task-center?tab=platform&state=queued`)).json()
+  const list = await (await fetch(`${api.baseUrl}/api/task-center?tab=sme-roster&group=platform&state=queued`)).json()
   expect(list.rows[0].outcome).toMatchObject({ complete: 0, notQueried: 2 })
 })
 
@@ -123,7 +135,7 @@ it('reports queued cancellation as cancelled rather than failed and keeps export
   const cancelled = await fetch(`${api.baseUrl}/api/task-center/${ids.ocr}/cancel`, { method: 'POST', headers: { authorization: 'Bearer fixture-key' } })
   expect(cancelled.status).toBe(200)
   expect(await cancelled.json()).toMatchObject({ cancelRequested: false, task: { state: 'cancelled', error: null } })
-  const empty = await (await fetch(`${api.baseUrl}/api/task-center?tab=export&pageSize=99999`)).json()
+  const empty = await (await fetch(`${api.baseUrl}/api/task-center?tab=sme-roster&group=export&pageSize=99999`)).json()
   expect(empty).toMatchObject({ rows: [], total: 0, exportReady: false, pageSize: 200 })
   const page1 = await (await fetch(`${api.baseUrl}/api/task-center?pageSize=2`)).json()
   const page2 = await (await fetch(`${api.baseUrl}/api/task-center?pageSize=2&page=2`)).json()
@@ -139,7 +151,7 @@ it('导出任务摘要兼容历史v1至v9并识别当前v10规则而拒绝未知
     return id
   })
   const before = db.select().from(schema.job).all()
-  const response=await fetch(`${api.baseUrl}/api/task-center?tab=export`)
+  const response=await fetch(`${api.baseUrl}/api/task-center?tab=sme-roster&group=export`)
   expect(response.status).toBe(200)
   const body=await response.json()
   expect(body.total).toBe(versions.length)
@@ -151,7 +163,7 @@ it('导出任务摘要兼容历史v1至v9并识别当前v10规则而拒绝未知
 it('keeps reconcile report targets distinct from collection completeness and missing counts unknown', async () => {
   db.update(schema.job).set({ result: { counts: { total: 7, needsReview: 3, queryFailed: 2, notQueried: 1 }, raw: 'PRIVATE_RAW' } }).where(eq(schema.job.id, ids.reconcile)).run()
   const before = db.select().from(schema.job).all()
-  const list = await (await fetch(`${api.baseUrl}/api/task-center?tab=platform`)).json()
+  const list = await (await fetch(`${api.baseUrl}/api/task-center?tab=sme-roster&group=platform`)).json()
   const report = list.rows.find((row: any) => row.id === ids.reconcile)
   expect(report.outcome).toBeNull()
   expect(report.reconcile).toEqual({ targets: 7, needsReview: 3, queryFailed: 2, notQueried: 1 })
@@ -160,7 +172,7 @@ it('keeps reconcile report targets distinct from collection completeness and mis
   expect(detail.reconcileCollection).toEqual(report.reconcileCollection)
   expect(db.select().from(schema.job).all()).toEqual(before)
   db.update(schema.job).set({ result: { counts: { total: '7', needsReview: -1 } } }).where(eq(schema.job.id, ids.reconcile)).run()
-  const history = await (await fetch(`${api.baseUrl}/api/task-center?tab=platform`)).json()
+  const history = await (await fetch(`${api.baseUrl}/api/task-center?tab=sme-roster&group=platform`)).json()
   expect(history.rows.find((row: any) => row.id === ids.reconcile).reconcile).toEqual({ targets: null, needsReview: null, queryFailed: null, notQueried: null })
 })
 
@@ -216,14 +228,14 @@ it('reads bounded snapshot results only with task-center authorization and keeps
   expect(response.headers.get('cache-control')).toBe('no-store')
   const body = await response.json()
   expect(body.snapshot).toMatchObject({ enterprises: 2, requests: 3, rows: 5, unfinished: 1, positions: [{ enterpriseId: 12, source: 'queryList', rdjb: null, rows: null }] })
-  expect(body.links).toContainEqual({ label: '快照范围、计数与未完成位置', to: `/tasks?tab=platform&job=${ids.batch}#snapshot-result` })
+  expect(body.links).toContainEqual({ label: '快照范围、计数与未完成位置', to: `/tasks?tab=sme-roster&group=platform&job=${ids.batch}#snapshot-result` })
   expect(JSON.stringify(body)).not.toContain('PRIVATE_')
 })
 
 it('accepts same-origin browser snapshot reads over HTTP but withholds details from unmarked and cross-origin reads', async () => {
   const { createServer } = await import('node:http')
   const { createApp, toNodeListener, defineEventHandler, getRequestURL, getHeader } = await import('h3')
-  const { taskCenterBrowserAccess } = await import('../../../server/utils/task-center-access')
+  const { taskCenterBrowserAccess } = await import('../../../layers/core/server/utils/task-center-access')
   db.update(schema.job).set({ kind: 'difference-snapshot', result: { counts: { enterprises: 1, requests: 0, rows: 0, unfinished: 7 }, items: [] } }).where(eq(schema.job.id, ids.batch)).run()
   const server = createServer(toNodeListener(createApp().use(defineEventHandler(async event => {
     const result = await handleTaskCenterRequest('detail', { method: 'GET', path: getRequestURL(event).pathname, headers: { authorization: getHeader(event,'authorization') } },

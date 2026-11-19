@@ -1,3 +1,4 @@
+import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
 import { initializeDb } from '../../../db/client'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -5,8 +6,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp, createRouter, createError, defineEventHandler, getQuery, toNodeListener } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { getComparison, type ComparisonRow } from '../../../lib/comparison'
-import { createRosterImportClient, type RosterImportRecord } from '../../../lib/roster-import-client'
+import { getComparison, type ComparisonRow } from '../../../layers/sme-roster/lib/comparison'
+import { type RosterImportRecord } from '../../../layers/sme-roster/lib/roster-import-client'
 import { startRosterApi, executeNativeImport } from '../imports/fixtures/import-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'comparison-source-selection-'))
@@ -25,7 +26,7 @@ function syntheticUscc(n: number) {
 }
 
 async function seed(records: RosterImportRecord[]) {
-  const result = await createRosterImportClient({ baseUrl: imports.baseUrl, token: 'synthetic-source-selection' }).commit({
+  const result = await createReviewedFixtureImportClient({ baseUrl: imports.baseUrl, token: 'synthetic-source-selection' }, db).commit({
     idempotencyKey: `source-selection-${++batch}`, sourceKind: 'announcement', sourceIdentity: `synthetic/source-selection/${batch}`,
     payload: { announcement: { sourceDocument: { source: 'jxj', title: 'Synthetic source membership' }, records } },
   })
@@ -70,7 +71,7 @@ beforeAll(async () => {
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: join(dir, 'curated.json'), reconcilePath: join(dir, 'reconcile.json') }))
   vi.doMock('@db', () => ({ useDb: () => db }))
   imports = await startRosterApi({ db, apiToken: 'synthetic-source-selection', executeImport: executeNativeImport })
-  const handler = (await import('../../../server/api/comparison.get')).default
+  const handler = (await import('../../../layers/sme-roster/server/api/comparison.get')).default
   server = createServer(toNodeListener(createApp().use(createRouter().get('/api/comparison', handler))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}/api/comparison`

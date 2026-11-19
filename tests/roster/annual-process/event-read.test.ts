@@ -4,8 +4,8 @@ const fixtures:ReturnType<typeof nativeCatalogFixture>[]=[]
 const fixture=()=>{const f=nativeCatalogFixture();fixtures.push(f);return f}
 afterEach(()=>{for(const f of fixtures.splice(0))f.close()})
 
-import { readEventAnnualProcess } from '../../../server/utils/event-annual-process-read'
-import { handleEventAnnualProcessRequest, dispatchEventAnnualProcessMcp } from '../../../server/utils/event-annual-process-api'
+import { readEventAnnualProcess } from '../../../layers/sme-roster/server/utils/event-annual-process-read'
+import { handleEventAnnualProcessRequest, dispatchEventAnnualProcessMcp } from '../../../layers/sme-roster/server/utils/event-annual-process-api'
 it('native annual facts retain A B A versions and selected observation decisions without writes',()=>{
  const f=fixture(),raw=f.raw('ANNUAL',{sblx:'申请',year:2024,sqsj:'2024-03-01',cszt:'终审通过'})
  const a=f.seed('business_list',raw);f.seed('business_list',{...raw,cszt:'终审不通过'});f.seed('business_list',raw)

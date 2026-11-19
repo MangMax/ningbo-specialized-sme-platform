@@ -1,3 +1,4 @@
+import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,7 +13,7 @@ import {
   pageNoOfMarker,
   PAGE_MARKER_RE,
   splitMarkdown,
-} from '../../../lib/ocr-markdown'
+} from '../../../layers/core/lib/ocr-markdown'
 import {
   listOcrResults,
   ocrMarkdown,
@@ -20,7 +21,7 @@ import {
   pagesFromInput,
   validateOcrPages,
   writeOcrResult,
-} from '../../../server/utils/ocr-result'
+} from '../../../layers/core/server/utils/ocr-result'
 
 /**
  * 票 14 —— OCR 结果入库与 markdown 导出。
@@ -186,20 +187,7 @@ beforeEach(() => {
 function seedFile(relPath: string): number {
   const base = relPath.split('/').pop()!
   const dot = base.lastIndexOf('.')
-  return db
-    .insert(schema.storedFile)
-    .values({
-      relPath,
-      filename: base,
-      ext: dot > 0 ? base.slice(dot + 1).toLowerCase() : '',
-      bytes: 1,
-      sha256: '0'.repeat(64),
-      source: 'jxj',
-      kind: 'announcement',
-      categoryState: 'set',
-    })
-    .returning({ id: schema.storedFile.id })
-    .get().id
+  return createClassifiedFile(db, { relPath, filename: base, ext: dot > 0 ? base.slice(dot + 1).toLowerCase() : '', bytes: 1, sha256: '0'.repeat(64) }, { source: 'jxj', kind: 'announcement', categoryState: 'set' }).id
 }
 
 /** 直接读某一页的 `raw`(它不在 `listOcrResults` 的投影里 —— 正文/元数据够用了)。 */

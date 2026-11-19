@@ -3,7 +3,7 @@ import { defineComponent, h, ref } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory, useRoute, useRouter } from 'vue-router'
 import { beforeEach, expect, it, vi } from 'vitest'
-import PreviewPage from '../../../pages/preview.vue'
+import PreviewPage from '../../../layers/sme-roster/app/pages/preview.vue'
 
 vi.mock('@pinia/colada', () => ({ useQuery: () => ({ data: ref(null) }) }))
 
@@ -132,7 +132,7 @@ it.each(['', '0', '-1', '2.5', 'abc'])('reports invalid source parameter %j with
   await flushPromises()
   expect(wrapper.text()).not.toContain('已定位来源')
   expect(router.currentRoute.value.query.page).toBe(page)
-  expect(wrapper.findAll('a').filter(a => a.attributes('href') === '/').length).toBe(2)
+  expect(wrapper.findAll('a').filter(a => a.attributes('href') === '/roster').length).toBe(2)
   wrapper.unmount()
 })
 
@@ -309,7 +309,7 @@ it('shares gallery selections immediately and reopens them without creating init
 
 it.each([
   ['/enterprises/91?back=q%3Dtest', '返回企业详情'],
-  ['/?q=test&page=2', '返回企业列表'],
+  ['/roster?q=test&page=2', '返回企业列表'],
   ['//outside.example', '返回企业列表'],
   ['/files?folder=synthetic', '返回文件库'],
   ['/quality', '返回质量检查'],
@@ -317,6 +317,6 @@ it.each([
   const { wrapper } = await open({ file, page: '3', back })
   const link = wrapper.findAll('a').find(a => a.text() === label)
   expect(link?.exists()).toBe(true)
-  expect(link?.attributes('href')).toBe(back === '//outside.example' ? '/' : back)
+  expect(link?.attributes('href')).toBe(back === '//outside.example' ? '/roster' : back)
   wrapper.unmount()
 })

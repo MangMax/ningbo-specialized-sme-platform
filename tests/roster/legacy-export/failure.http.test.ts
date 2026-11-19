@@ -8,8 +8,8 @@ import { tmpdir } from 'node:os'
 import { createApp, createError, defineEventHandler, getQuery, setHeader, toNodeListener } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { useDb } from '../../../db'
-import { legacyExportSheet, writeLegacyXlsx } from '../../../server/utils/legacy-export-xlsx'
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging, newLogContext } from '../../../lib/logging'
+import { legacyExportSheet, writeLegacyXlsx } from '../../../layers/sme-roster/server/utils/legacy-export-xlsx'
+import { applicationLogs, closeApplicationLogging, initializeWorkerLogging, newLogContext } from '../../../layers/core/lib/logging'
 
 const state = vi.hoisted(() => ({ fail: false, directories: [] as string[], slowRead: false, slowWrite: false, generationRows: 0, settledRequests: 0 }))
 // Inject failure at the external filesystem boundary; queries and XLSX serialization stay real.
@@ -48,8 +48,8 @@ beforeAll(async () => {
   for (const [name, value] of Object.entries({ defineEventHandler, getQuery, setHeader, createError })) vi.stubGlobal(name, value)
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: join(dir, 'curation.json') }))
   const app = createApp({ onRequest: event => { event.context.applicationLogContext = newLogContext(); setHeader(event, 'x-request-id', event.context.applicationLogContext.requestId) }, onError: () => { state.settledRequests++ }, onAfterResponse: () => { state.settledRequests++ } })
-  app.use('/api/export', (await import('../../../server/api/export.get')).default)
-  app.use('/api/roster/export', (await import('../../../server/api/roster/export.get')).default)
+  app.use('/api/export', (await import('../../../layers/sme-roster/server/api/export.get')).default)
+  app.use('/api/roster/export', (await import('../../../layers/sme-roster/server/api/roster/export.get')).default)
   // Exercise the authorized adapter input seam over real HTTP, with a slow disk.
   app.use('/synthetic-export', defineEventHandler((event) => writeLegacyXlsx(event, async (wb, pace) => {
     const sheet = legacyExportSheet(wb, pace, '数据', [{ key: 'text', header: '原文', width: 34 }])

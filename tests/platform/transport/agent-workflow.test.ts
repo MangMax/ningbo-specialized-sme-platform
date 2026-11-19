@@ -3,9 +3,9 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { initializeDb } from '../../../db/client'
-import { updateCredential } from '../../../server/utils/credential-state'
+import { updateCredential } from '../../../layers/core/server/utils/credential-state'
 import { startPlatformBatchApi } from './fixtures/batch-api'
-import { whenIdle } from '../../../server/utils/job-runner'
+import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 const dir = mkdtempSync(join(tmpdir(), 'platform-agent-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'agent.sqlite') })
 const nativeFetch = globalThis.fetch
@@ -17,7 +17,7 @@ let expired = true; let failedPage = true
 const platformRequests: { source: string; name: string; page: number }[] = []
 beforeAll(async () => {
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'agent.sqlite')); vi.stubEnv('MIIT_COOKIE', ''); vi.stubEnv('MIIT_COOKIE_FILE', '')
-  updateCredential('miitCookie', 'session=synthetic-agent-server-only', { db })
+  updateCredential('sme-roster.miitCookie', 'session=synthetic-agent-server-only', { db })
   api = await startPlatformBatchApi({ db, apiToken: 'synthetic-agent-task-token', filesDir: dir })
   workflow = await import(workflowUrl)
   vi.stubGlobal('fetch', async (url: string, init: any) => {

@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, afterEach, describe, it, expect, vi, type Mock } from 'vitest'
-import Business from '../../../pages/platform-business-processes.vue'
-import Declarations from '../../../pages/platform-declarations.vue'
-import Directory from '../../../pages/platform-recognized-directory.vue'
-import TablePagination from '../../../components/TablePagination.vue'
-import PlatformFilterSelect from '../../../components/PlatformFilterSelect.vue'
+import Business from '../../../layers/sme-roster/app/pages/platform-business-processes.vue'
+import Declarations from '../../../layers/sme-roster/app/pages/platform-declarations.vue'
+import Directory from '../../../layers/sme-roster/app/pages/platform-recognized-directory.vue'
+import TablePagination from '../../../layers/core/app/components/TablePagination.vue'
+import PlatformFilterSelect from '../../../layers/sme-roster/app/components/PlatformFilterSelect.vue'
 
 describe.each([
   ['business-processes', Business],

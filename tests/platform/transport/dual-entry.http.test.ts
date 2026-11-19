@@ -7,8 +7,8 @@ import { createServer } from 'node:http'
 import { createApp, createRouter, toNodeListener, defineEventHandler, setHeader, getQuery, getRouterParam, createError, readBody, getHeader, setResponseStatus } from 'h3'
 import { sql } from 'drizzle-orm'
 import { initializeDb } from '../../../db/client'
-import { handleRosterImportRequest } from '../../../server/utils/roster-import-http'
-import type { RosterImportRequest, RosterImportPlatformQuery } from '../../../lib/roster-import-client'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
+import type { RosterImportRequest, RosterImportPlatformQuery } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const platformSources = ['declarations', 'business-processes', 'recognized-directory'] as const
 let platformRoutes: { source: typeof platformSources[number]; list: import('h3').EventHandler; detail: import('h3').EventHandler }[]
@@ -18,8 +18,8 @@ beforeAll(async () => {
   // does. Cold module loading is setup, separate from the default 5s case budget.
   platformRoutes = await Promise.all(platformSources.map(async source => ({
     source,
-    list: (await import(`../../../server/api/platform/${source}.get.ts`)).default,
-    detail: (await import(`../../../server/api/platform/${source}/[recordId].get.ts`)).default,
+    list: (await import(`../../../layers/sme-roster/server/api/platform/${source}.get.ts`)).default,
+    detail: (await import(`../../../layers/sme-roster/server/api/platform/${source}/[recordId].get.ts`)).default,
   })))
 })
 

@@ -6,9 +6,9 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { isDeepStrictEqual } from 'node:util'
 import { targetSchema as s } from '../target-schema'
 import { platformApplyStoredProjection as p, platformApplyStoredObservation as o, storedApplyProjection } from './apply-stored-schema'
-import { applyMaterialization } from '../../lib/platform/apply-materialization'
-import { captureSqlFactTitle, APPLY_STORED_RULE, APPLY_SQL_TITLE_RULE } from '../../lib/platform/apply-stored-cells'
-import { rowSnapshot } from '../../lib/platform/sqlite-row-cells'
+import { applyMaterialization } from '../../layers/sme-roster/lib/platform/apply-materialization'
+import { captureSqlFactTitle, APPLY_STORED_RULE, APPLY_SQL_TITLE_RULE } from '../../layers/sme-roster/lib/platform/apply-stored-cells'
+import { rowSnapshot } from '../../layers/sme-roster/lib/platform/sqlite-row-cells'
 import type { ApplyTargetInput } from './apply-target-writer'
 export const APPLY_STORED_KEYS=['exactStatus','exactDeclareKind','exactAppliedAt','exactYear','exactTitleRaw','exactStoredState','exactStoredRule','exactStoredOrigin','exactStoredReason','sqlFactTitle','sqlFactTitleState','sqlFactTitleRule','sqlFactTitleReason'] as const
 const fields=['status','declare_kind','applied_at','year','title_raw']

@@ -1,6 +1,6 @@
 /** Offline historical oracle from ab503081dae3e24680afc9b07395a7e3ff21fc9f. */
-import { hasColumns, migrationFinished } from '../lib/platform/migration-readiness'
-export { hasColumns, migrationFinished } from '../lib/platform/migration-readiness'
+import { hasColumns, migrationFinished } from '../layers/sme-roster/lib/platform/migration-readiness'
+export { hasColumns, migrationFinished } from '../layers/sme-roster/lib/platform/migration-readiness'
 import { requireDifferenceReferencesReady } from './difference-reference-catalog'
 import { requireLegacyProvenanceReady } from './legacy-provenance-catalog'
 /** Internal target migration readiness; comprehensive validation belongs offline. */
