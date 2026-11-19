@@ -88,6 +88,21 @@ function seedAnnouncementSources(db: Database.Database, terminals: ReadonlyMap<n
   // A captured, version-bound row takes precedence over legacy path evidence.
   // A legacy path needs a single declaration and registered announcement bytes.
   const captures = db.prepare(`
+    WITH committed_announcement AS MATERIALIZED (
+      SELECT source_identity, max(source_sha256) AS sha256
+      FROM import_batch
+      WHERE source_kind='announcement' AND status='committed'
+      GROUP BY source_identity HAVING count(DISTINCT source_sha256)=1
+    ),
+    legacy_original AS MATERIALIZED (
+      SELECT d.id, d.path, d.source, d.title, f.id AS fileId, f.sha256
+      FROM source_document d
+      JOIN stored_file f ON f.rel_path=d.path
+      JOIN roster_file_classification c ON c.file_id=f.id AND c.kind='announcement' AND c.source=d.source
+      JOIN committed_announcement b ON b.source_identity=d.path AND b.sha256=f.sha256
+      WHERE d.source IN ('jxj','miit')
+        AND (SELECT count(*) FROM source_document x WHERE x.path=d.path AND x.source=d.source)=1
+    )
     SELECT h.evidence_id AS evidenceId,r.enterprise_id AS enterpriseId,d.id AS documentId,d.source,
       d.title,h.stored_file_id AS fileId,h.sha256
     FROM official_evidence_row_revision h
@@ -95,17 +110,12 @@ function seedAnnouncementSources(db: Database.Database, terminals: ReadonlyMap<n
     JOIN source_document d ON d.id=h.source_document_id
     WHERE h.source_binding_known=1 AND d.source IN ('jxj','miit')
     UNION ALL
-    SELECT e.id,r.enterprise_id,d.id,d.source,d.title,f.id,f.sha256
-    FROM record_evidence e JOIN record_event v ON v.id=e.record_event_id JOIN record r ON r.id=v.record_id
-    JOIN stored_file f ON f.rel_path=e.source_file
-    JOIN roster_file_classification c ON c.file_id=f.id AND c.kind='announcement'
-    JOIN source_document d ON d.path=e.source_file AND d.source=r.source AND c.source=d.source
-    WHERE d.source IN ('jxj','miit') AND NOT EXISTS (SELECT 1 FROM official_evidence_row_revision h WHERE h.evidence_id=e.id)
-      AND (SELECT count(*) FROM source_document x WHERE x.path=e.source_file AND x.source=d.source)=1
-      AND (SELECT count(DISTINCT source_sha256) FROM import_batch b
-        WHERE b.source_kind='announcement' AND b.status='committed' AND b.source_identity=e.source_file)=1
-      AND EXISTS (SELECT 1 FROM import_batch b WHERE b.source_kind='announcement'
-        AND b.status='committed' AND b.source_identity=e.source_file AND b.source_sha256=f.sha256)
+    SELECT e.id,r.enterprise_id,d.id,d.source,d.title,d.fileId,d.sha256
+    FROM legacy_original d
+    JOIN record_evidence e ON e.source_file=d.path
+    JOIN record_event v ON v.id=e.record_event_id
+    JOIN record r ON r.id=v.record_id AND r.source=d.source
+    WHERE NOT EXISTS (SELECT 1 FROM official_evidence_row_revision h WHERE h.evidence_id=e.id)
   `).all() as { evidenceId: number; enterpriseId: number; documentId: number; source: string; title: string; fileId: number | null; sha256: string }[]
   const insert = db.prepare(`INSERT INTO enterprise_source(module,business_table,version_key,channel_code,list_type_code,series,file_id,sha256)
     VALUES ('sme-roster','source_document',?,?,'announcement',?,?,?)
