@@ -1,5 +1,6 @@
 import { createError } from 'h3'
 import type { useApplicationDb } from '../../../../db/client'
+import { TITLE_SEED } from '../../../../db/titles'
 import { readEffectiveQualifications } from '../../../sme-roster/public'
 import type { JobSpec } from '../../../core/server/utils/job-runner'
 import { LEAD_LIST_EXPORT, leadListExportInput } from '../../lib/export-contract'
@@ -35,11 +36,7 @@ export const leadListVersionExport = {
   run: runLeadListExport,
 } satisfies JobSpec
 
-const titleNames: Record<string, string> = {
-  little_giant: '专精特新小巨人',
-  specialized_sme: '专精特新中小企业',
-  innovative_sme: '创新型中小企业',
-}
+const titleNames = new Map(TITLE_SEED.map(title => [title.code, title.nameZh]))
 const headings = ['系列', '获取日期', '来源原件', '原表序号', '企业名称', '统一社会信用代码', '区县', '备注', '基础库企业编号', '有效称号']
 async function runLeadListExport({ db: database, jobId }: Parameters<NonNullable<JobSpec['run']>>[0], params: Record<string, unknown>) {
   const db = database as NativeDb
@@ -51,7 +48,7 @@ async function runLeadListExport({ db: database, jobId }: Parameters<NonNullable
       const id = row.enterpriseId
       if (id !== null && !qualifications.has(id)) {
         const effective = readEffectiveQualifications(db.$client, id, asOf) ?? []
-        qualifications.set(id, effective.map(item => titleNames[item.titleCode] ?? item.titleCode).join('、'))
+        qualifications.set(id, effective.map(item => titleNames.get(item.titleCode) ?? item.titleCode).join('、'))
       }
       return [version.series, version.acquiredOn, version.fileName, row.rowNumber,
         row.name, row.uscc, row.district, row.note, id, id === null ? '' : (qualifications.get(id) ?? '')]
