@@ -96,14 +96,13 @@ describe('per-title complete history', () => {
     const item = (id: number, recordId: number, eventType: string, year: number, decidedYear: number | null = null, reviewOutcome: string | null = null) => ({ ...event, id, recordId, eventType, year, decidedYear, reviewOutcome })
     detail.events = [item(21, 1, 'review', 2021, 2027, 'passed'), item(22, 1, 'award', 2021), item(23, 1, 'review', 2021, 2024, 'failed'), item(24, 1, 'review', 2021, 2024), item(25, 1, 'review', 2021), item(26, 2, 'nurture', 2020), item(27, 3, 'award', 2025), item(28, 4, 'maintain', 2022)] as typeof detail.events
     const router = await enterprise(25)
-    const history = wrapper!.get('[aria-label="记录台账"]')
+    const history = wrapper!.get('[aria-label="认定与复核记录"]')
     expect(history.findAll('section > header > h3').map(h => h.text())).toEqual(['专精特新“小巨人”', '专精特新中小企业', '创新型中小企业'])
     const lists = history.findAll('ol')
     expect(lists.map(list => list.findAll('[id^="record-event-"]').map(row => row.attributes('id')))).toEqual([
       ['record-event-27'], ['record-event-22', 'record-event-23', 'record-event-24', 'record-event-21', 'record-event-25'], ['record-event-26'],
     ])
-    expect(history.text()).toContain('年份待核')
-    expect(history.text()).toContain('同年及未知时点不表示精确先后')
+    expect(history.get('#record-event-25').text()).toContain('年份待核')
     expect(history.get('#record-event-23').text()).toContain('复核不通过')
     expect(history.get('#record-event-24').text()).toContain('复核结果待核')
     expect(history.get('#record-event-21').text()).toContain('通过')
@@ -113,13 +112,12 @@ describe('per-title complete history', () => {
     expect(history.find('#record-event-28').exists()).toBe(false)
     expect(history.get('#record-event-26').text()).toContain('不表示已持有称号')
     await vi.waitFor(() => expect(history.get('#record-event-25').attributes('data-highlighted')).toBe('true'))
-    const sources = wrapper!.get('[aria-label="记录来源"]')
-    expect(sources.findAll('[role="tab"]').map(tab => tab.text())).toEqual(['公布资料'])
-    expect(wrapper!.get('[aria-label="业务来源"]').findAll('[role="tab"]').map(tab => tab.text())).toEqual(['公布资料', '认定目录', '关联办理', '申报记录'])
+    const sources = wrapper!.get('[aria-label="业务来源"]').findAll('[role="tab"]')
+    expect(sources.map(tab => tab.text())).toEqual(['公布资料', '认定目录', '关联办理', '申报记录'])
     await router.push(startTo(23))
     await flushPromises()
     await vi.waitFor(() => expect(wrapper!.get('#record-event-23').attributes('data-highlighted')).toBe('true'))
-    expect(sources.findAll('[role="tab"]')[0]!.attributes('aria-selected')).toBe('true')
+    expect(sources[0]!.attributes('aria-selected')).toBe('true')
   })
 
   it('retains formal sources and the last successful reader after failure and retries only its target', async () => {
@@ -151,7 +149,7 @@ describe('per-title complete history', () => {
   it('shows a record without events without inventing a step', async () => {
     detail.events = []
     await enterprise(10)
-    const history = wrapper!.get('[aria-label="记录台账"]')
+    const history = wrapper!.get('[aria-label="认定与复核记录"]')
     expect(history.get('h3').text()).toBe('专精特新中小企业')
     expect(history.text()).toContain('该称号暂无事件')
     expect(history.findAll('li')).toHaveLength(0)
@@ -160,8 +158,9 @@ describe('per-title complete history', () => {
   it('shows the no-record state without inventing a title group', async () => {
     detail.records = []; detail.events = []
     await enterprise(10)
-    expect(wrapper!.text()).toContain('该企业暂无记录')
-    expect(wrapper!.find('[aria-label="记录台账"]').exists()).toBe(false)
+    const history = wrapper!.get('[aria-label="认定与复核记录"]')
+    expect(history.text()).toContain('暂无公布记录')
+    expect(history.findAll('h3')).toHaveLength(0)
   })
 })
 
