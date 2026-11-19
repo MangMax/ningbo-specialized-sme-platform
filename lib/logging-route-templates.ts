@@ -36,6 +36,8 @@ export const APPLICATION_LOG_ROUTES: ReadonlySet<string> = new Set([
   "/api/jobs",
   "/api/jobs/:id",
   "/api/jobs/kinds",
+  "/api/lead-lists/exports",
+  "/api/lead-lists/exports/:jobId/download",
   "/api/lead-lists/versions",
   "/api/lead-lists/versions/:id",
   "/api/lead-lists/versions/:id/source",

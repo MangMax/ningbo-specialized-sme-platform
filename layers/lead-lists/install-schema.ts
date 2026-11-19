@@ -33,6 +33,11 @@ export function installLeadListSchema(db: Database.Database) {
       CHECK ((enterprise_id IS NULL) = (review_hash IS NULL)),
       UNIQUE (version_id, row_number)
     );
+    CREATE TABLE IF NOT EXISTS lead_list_export (
+      job_id TEXT PRIMARY KEY NOT NULL REFERENCES job(id) ON DELETE CASCADE,
+      version_id INTEGER NOT NULL REFERENCES lead_list_version(id),
+      content TEXT NOT NULL
+    );
   `)
 }
 

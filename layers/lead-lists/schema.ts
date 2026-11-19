@@ -1,5 +1,5 @@
 import { integer, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core'
-import { enterprise, storedFile } from '../../db/schema'
+import { enterprise, job, storedFile } from '../../db/schema'
 
 export const leadListVersion = sqliteTable('lead_list_version', {
   id: integer('id').primaryKey(),
@@ -27,3 +27,9 @@ export const leadListRow = sqliteTable('lead_list_row', {
   reviewBasis: text('review_basis'),
   reviewedAt: text('reviewed_at'),
 }, table => [unique().on(table.versionId, table.rowNumber)])
+
+export const leadListExport = sqliteTable('lead_list_export', {
+  jobId: text('job_id').primaryKey().references(() => job.id, { onDelete: 'cascade' }),
+  versionId: integer('version_id').notNull().references(() => leadListVersion.id),
+  content: text('content').notNull(),
+})
