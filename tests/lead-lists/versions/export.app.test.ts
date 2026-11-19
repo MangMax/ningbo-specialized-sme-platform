@@ -13,7 +13,9 @@ let qualifiedId: number
 
 beforeAll(async () => {
   fixture.db.$client.transaction(() => installLeadListSchema(fixture.db.$client))()
-  qualifiedId = fixture.candidate('核对取得资格企业').enterprise.id
+  const qualified = fixture.candidate('核对取得资格企业')
+  qualifiedId = qualified.enterprise.id
+  fixture.db.$client.prepare("UPDATE record SET title_code='little_giant' WHERE id=?").run(qualified.record.id)
   mkdirSync(join(fixture.dir, 'files'))
   writeFileSync(join(fixture.dir, 'files', filename), '企业名称\r\n核对取得资格企业\r\n')
   await fixture.start()
@@ -61,7 +63,7 @@ it('exports preserved lead rows with effective roster titles for linked enterpri
   const csv = await downloaded.text()
   expect(csv.trimEnd().split('\r\n')).toEqual([
     '"系列","获取日期","来源原件","原表序号","企业名称","统一社会信用代码","区县","备注","基础库企业编号","有效称号"',
-    `"调研批次","2026-11-18","${filename}","3","原表名称","","","需保留","${qualifiedId}","专精特新中小企业、创新型中小企业"`,
+    `"调研批次","2026-11-18","${filename}","3","原表名称","","","需保留","${qualifiedId}","专精特新“小巨人”、专精特新中小企业、创新型中小企业"`,
     `"调研批次","2026-11-18","${filename}","8","未关联企业","","","'=1+1","",""`,
   ])
 }, 120_000)
