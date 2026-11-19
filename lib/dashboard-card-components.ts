@@ -2,6 +2,7 @@ import { defineAsyncComponent, type Component } from 'vue'
 
 // The workbench resolves components here so Nitro can read the manifests.
 const components = new Map<string, Component>([
+  ['lead-lists-entry', defineAsyncComponent(() => import('../layers/lead-lists/app/components/LeadListDashboardEntry.vue'))],
   ['roster-stats', defineAsyncComponent(() => import('../layers/sme-roster/app/components/RosterDashboardStats.vue'))],
 ])
 

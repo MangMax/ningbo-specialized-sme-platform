@@ -8,7 +8,7 @@
  * they are rejected. The request hook only submits
  * `event.context.matchedRoute.path`; a concrete request path is never used.
  */
-import { APPLICATION_LOG_ROUTES } from './route-templates'
+import { APPLICATION_LOG_ROUTES } from '../../../../lib/logging-route-templates'
 
 /** Fixed server-owned method vocabulary. Incoming headers cannot extend it. */
 const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'])

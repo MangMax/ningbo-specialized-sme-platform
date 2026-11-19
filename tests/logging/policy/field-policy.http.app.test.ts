@@ -10,7 +10,7 @@ import { initializeDb } from '../../../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
 import { LOG_LEVELS } from '../../../layers/core/lib/logging/contract'
 import { LOG_FIELD_PROFILES, defaultFieldControls } from '../../../layers/core/lib/logging/field-controls'
-import { APPLICATION_LOG_ROUTES } from '../../../layers/core/lib/logging/route-templates'
+import { APPLICATION_LOG_ROUTES } from '../../../lib/logging-route-templates'
 
 const root = mkdtempSync(join(tmpdir(), 'field-policy-http-'))
 const logDir = join(root, 'logs'), boundaryLogs = join(root, 'boundary-logs'), dbPath = join(root, 'synthetic.db')

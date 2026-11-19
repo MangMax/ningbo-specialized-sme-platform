@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
- * Regenerate lib/logging/route-templates.ts from the built Nitro route table.
+ * Regenerate the application route allowlist from the built Nitro route table.
  * Run after `pnpm build` whenever an API route is added or renamed.
  */
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const directory = '.output/server/chunks/nitro'
+const target = 'lib/logging-route-templates.ts'
 const source = readdirSync(directory)
   .filter(file => file.endsWith('.mjs'))
   .map(file => readFileSync(join(directory, file), 'utf8'))
@@ -30,9 +31,9 @@ ${body}
 ])
 `
 if (process.argv.includes('--check')) {
-  if (readFileSync('layers/core/lib/logging/route-templates.ts', 'utf8') !== generated) throw new Error('Route templates differ; regenerate after building')
+  if (readFileSync(target, 'utf8') !== generated) throw new Error('Route templates differ; regenerate after building')
   console.log(`verified ${routes.length} route templates`)
 } else {
-  writeFileSync('layers/core/lib/logging/route-templates.ts', generated)
+  writeFileSync(target, generated)
   console.log(`wrote ${routes.length} route templates`)
 }

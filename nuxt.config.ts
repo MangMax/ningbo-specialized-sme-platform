@@ -25,7 +25,7 @@ const runtimeWatchIgnores = runtimeDirectories.map(dir => `${fileURLToPath(new U
 
 // SPA only — no SSR. Everything runs in the browser against Nitro server routes.
 export default defineNuxtConfig({
-  extends: ['./layers/core', './layers/sme-roster'],
+  extends: ['./layers/core', './layers/sme-roster', './layers/lead-lists'],
   // Keep the root pages and aliases while the composition plugin lives under app/.
   srcDir: '.',
   // Concurrent owned dev fixtures must not share generated files or Nuxt's lock.

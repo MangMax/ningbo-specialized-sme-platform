@@ -6,6 +6,7 @@ it('lists the platform and business modules in declaration order', () => {
   expect(getAppModules().map(({ id, name }) => ({ id, name }))).toEqual([
     { id: 'core', name: '平台底座' },
     { id: 'sme-roster', name: '优质中小企业' },
+    { id: 'lead-lists', name: '线索名单' },
   ])
 })
 

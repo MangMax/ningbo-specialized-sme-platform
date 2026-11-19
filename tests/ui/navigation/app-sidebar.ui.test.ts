@@ -44,6 +44,7 @@ it('shows ordered business and platform menus and follows the current route', as
       ['平台认定目录', '/platform-recognized-directory'],
       ['统计', '/stats'],
       ['数据质量', '/quality'],
+      ['线索名单', '/lead-lists'],
     ])
     expect(platform.findAll('a').map(link => [link.text(), link.attributes('href')])).toEqual([
       ['文件管理', '/files'],

@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
 import { initializeDb } from '../../../db/client'
-import { APPLICATION_LOG_ROUTES } from '../../../layers/core/lib/logging/route-templates'
+import { APPLICATION_LOG_ROUTES } from '../../../lib/logging-route-templates'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
