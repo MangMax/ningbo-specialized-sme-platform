@@ -51,6 +51,7 @@ watch(state, value => { if (!value) activeModule.value = initialModule })
             :busy="busy"
             :operation="pending?.key === credential.key ? pending.type : undefined"
             :description="credential.description"
+            :environment="credential.environment"
             :sensitive="credential.sensitive"
             @save="save(credential.key)"
             @clear="clear(credential.key)"

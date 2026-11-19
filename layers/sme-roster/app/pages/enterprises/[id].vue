@@ -2,23 +2,17 @@
 import { ROSTER_LEDGER_PATH } from '#sme-roster/lib/sme-roster/routes'
 import { CURRENT_STATUS_LABELS } from '#sme-roster/lib/roster/current-status'
 import { useQuery } from '@pinia/colada'
-import { computed, nextTick, ref, shallowRef, watch } from 'vue'
-import type { ReviewAssessment } from '#sme-roster/lib/roster/evidence-review-ui'
+import { computed, nextTick, ref, watch } from 'vue'
 import RosterEventChip from '#sme-roster/app/components/EventChip.vue'
 import type { RosterEnterpriseDetail } from '#sme-roster/lib/roster/enterprise-roster'
-import {
-  headerCheckLabel,
-  latestQueryTime,
-  officialTitlesLabel,
-  titleLabel,
-} from '#sme-roster/lib/roster/review-display'
+import { titleLabel } from '#sme-roster/lib/roster/review-display'
 import { sourceReturnTarget, type OfficialPublishedFact } from '#sme-roster/lib/roster/correspondence-view'
 import OfficialEvidenceView from '#sme-roster/app/components/record-correspondence/OfficialEvidence.vue'
 import { eventDecisionText } from '#sme-roster/lib/roster/correspondence-view'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import RosterPlatformRecords from '#sme-roster/app/components/PlatformRecords.vue'
 import RosterTitleBadge from '#sme-roster/app/components/TitleBadge.vue'
-import { QUALITY_FLAGS, TITLE_ORDER } from '#sme-roster/lib/labels'
+import { TITLE_ORDER } from '#sme-roster/lib/labels'
 import { fileUrl, fileNameOf } from '#core/lib/preview'
 import {
   hasEvidencePreviewReturn,
@@ -29,10 +23,9 @@ import {
 import FilePreviewDialog from '#core/app/components/preview/FilePreviewDialog.vue'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import { Alert, AlertDescription, AlertTitle } from '#core/app/components/ui/alert'
-import { Badge } from '#core/app/components/ui/badge'
+import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '#core/app/components/ui/breadcrumb'
 import { Button } from '#core/app/components/ui/button'
 import { Skeleton } from '#core/app/components/ui/skeleton'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 
 definePageMeta({ scrollToTop: (to, from) => shouldNuxtScrollToTop(to.fullPath, from.path) })
 
@@ -67,7 +60,6 @@ interface EnterpriseDetail {
   uscc: string | null
   district: string | null
   titles: string[]
-  qualityFlags: string[]
   records: DetailRecord[]
   firstRecognition: { titleCode: string; year: number | null }[]
   awards: { titleCode: string; year: number | null; batchSeq: number | null }[]
@@ -81,6 +73,8 @@ interface LedgerEvent extends DetailEvent {
 
 const route = useRoute()
 const id = computed(() => String(route.params.id ?? ''))
+const comparisonReturn = computed(() => sourceReturnTarget(route.query.returnTo))
+const backLabel = computed(() => typeof route.query.currentBack === 'string' ? '优质中小企业查询' : comparisonReturn.value ? '记录级对比' : '企业列表')
 
 /**
  * 返回名录台账。
@@ -98,8 +92,7 @@ const backTo = computed(() => {
     for (const [key, value] of new URLSearchParams(route.query.currentBack)) query[key] = value
     return { path: '/current-enterprises', query }
   }
-  const comparison = sourceReturnTarget(route.query.returnTo)
-  if (comparison) return comparison
+  if (comparisonReturn.value) return comparisonReturn.value
   const raw = typeof route.query.back === 'string' ? route.query.back : ''
   if (!raw) return ROSTER_LEDGER_PATH
   const query: Record<string, string> = {}
@@ -117,9 +110,17 @@ const { data, isLoading, error, refetch } = useQuery({
   },
 })
 
-const assessments = computed(() => (data.value?.titleAssessments ?? []) as unknown as ReviewAssessment[])
 // Presentation only: all eligibility and applicability decisions come from the detail snapshot.
 const qualificationRows = computed(() => data.value?.qualificationAssessment?.titles ?? [])
+const assessmentTime = computed(() => data.value?.qualificationAssessment?.asOf)
+const assessmentDateFormat = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  hourCycle: 'h23', timeZone: 'Asia/Shanghai',
+})
+const assessmentTimeLabel = computed(() => {
+  const value = Date.parse(assessmentTime.value ?? '')
+  return Number.isFinite(value) ? assessmentDateFormat.format(value).replace(/\//g, '-') : null
+})
 const qualificationGroupLabel = { eligible: '宁波当前可纳入', pending: '宁波当前待核', excluded: '不纳入宁波当前结果' }
 const detail = computed<EnterpriseDetail | null>(() => {
   const source = data.value
@@ -131,7 +132,6 @@ const detail = computed<EnterpriseDetail | null>(() => {
     uscc: source.enterprise.uscc,
     district: source.enterprise.district,
     titles: source.enterprise.titles ?? [],
-    qualityFlags: source.enterprise.uscc ? [] : ['uscc_missing'],
     firstRecognition: source.enterprise.firstRecognition ?? [],
     awards: source.enterprise.awards ?? [],
     records: source.records.map(record => ({
@@ -179,15 +179,12 @@ const ledgerEvents = computed<LedgerEvent[]>(() => {
       || a.id - b.id)
 })
 
-const historySource = shallowRef('jxj')
-const historySources = [{ code: 'jxj', label: '公布资料' }]
-
-/** 来源分别展示；记录即使没有事件，也保留其称号空状态。 */
-const sourceHistories = computed(() => historySources.map(source => {
-  const present = new Set(detail.value?.records.filter(record => record.source === source.code).map(record => record.titleCode) ?? [])
+/** 公布记录即使没有事件，也保留其称号空状态。 */
+const publicationHistories = computed(() => {
+  const present = new Set(detail.value?.records.filter(record => record.source === 'jxj').map(record => record.titleCode) ?? [])
   const titles = [...TITLE_ORDER.filter(code => present.has(code)), ...[...present].filter(code => !TITLE_ORDER.includes(code))]
-  return { ...source, histories: titles.map(code => ({ code, events: ledgerEvents.value.filter(event => event.source === source.code && event.titleCode === code) })) }
-}))
+  return titles.map(code => ({ code, events: ledgerEvents.value.filter(event => event.source === 'jxj' && event.titleCode === code) }))
+})
 
 /** 资格取自同一详情快照；首次认定与复核安排不推断当前资格。 */
 const titleInfo = computed(() => {
@@ -243,9 +240,8 @@ async function arriveAtEvent(eventId: number | null) {
   if (typeof document === 'undefined') return
   if (eventId == null || focusedEventId.value !== eventId) return
   const record = detail.value?.records.find(record => record.events.some(event => event.id === eventId))
-  if (!record) return
+  if (record?.source !== 'jxj') return
   const enterpriseId = id.value
-  historySource.value = record.source
   await nextTick()
   // Nuxt may still be restoring the page scroll after the route settles; wait two
   // frames and a short delay so the locate is the last scroll, not the first.
@@ -258,11 +254,7 @@ async function arriveAtEvent(eventId: number | null) {
   if (target) highlightEvent(eventId)
 }
 watch([detail, focusedEventId], ([, eventId]) => {
-  if (eventId !== null && eventId === previewReturnEventId) {
-    const record = detail.value?.records.find(record => record.events.some(event => event.id === eventId))
-    if (record) historySource.value = record.source
-    return
-  }
+  if (eventId !== null && eventId === previewReturnEventId) return
   previewReturnEventId = null
   void arriveAtEvent(eventId)
 }, { immediate: true })
@@ -270,24 +262,6 @@ watch([detail, focusedEventId], ([, eventId]) => {
 useHead({
   title: computed(() => (detail.value ? `${detail.value.name} · 企业详情` : '企业详情')),
 })
-const usccMissing = computed(() => detail.value?.qualityFlags?.includes('uscc_missing') ?? false)
-const otherFlags = computed(() => (detail.value?.qualityFlags ?? []).filter((f) => f !== 'uscc_missing'))
-const recordCount = computed(() => detail.value?.records.length ?? 0)
-const eventCount = computed(() => ledgerEvents.value.length)
-
-const titleNames = computed(() => titleInfo.value.map(item => titleLabel(item.code)))
-const lastChecked = computed(() => latestQueryTime(assessments.value))
-/**
- * 头部摘要与正文必须来自同一状态事实：
- * - 称号只陈述“正式称号”这一轴；
- * - 查询时间只陈述平台查询时间，不推断核对完成度。
- */
-const lastCheckedLabel = computed(() => headerCheckLabel(lastChecked.value))
-const titlesLabel = computed(() => officialTitlesLabel(titleNames.value))
-
-function flagLabel(f: string) {
-  return QUALITY_FLAGS[f] ?? f
-}
 
 /**
  * 出处预览弹窗的状态。
@@ -313,7 +287,7 @@ function openPreview(e: Evidence) {
       <div class="flex flex-col gap-2">
         <Skeleton class="h-3 w-24" />
         <Skeleton class="h-7 w-72" />
-        <Skeleton class="h-4 w-96" />
+        <Skeleton class="h-4 w-96 max-w-full" />
       </div>
       <div class="bg-card rounded-lg border p-5">
         <Skeleton class="h-6 w-56" />
@@ -325,8 +299,8 @@ function openPreview(e: Evidence) {
     <Alert v-else-if="error && !detail" variant="destructive">
       <AlertTitle>未能加载企业详情</AlertTitle>
       <AlertDescription class="flex flex-wrap items-center gap-2">
-        请重试读取，或返回台账重新选择。
         <Button variant="outline" size="sm" @click="refetch()">重新读取企业详情</Button>
+        <Button as-child variant="ghost" size="sm"><NuxtLink :to="backTo">返回{{ backLabel }}</NuxtLink></Button>
       </AlertDescription>
     </Alert>
 
@@ -336,30 +310,26 @@ function openPreview(e: Evidence) {
       <section class="bg-card min-w-0 space-y-3 rounded-lg border p-4 sm:p-5" aria-label="企业概况">
       <PageHeader :title="detail.name" class="min-w-0 max-w-full [&_h1]:max-w-full [&_h1]:whitespace-normal [&_h1]:[overflow-wrap:anywhere]">
         <template #breadcrumb>
-          <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">{{ route.query.currentBack != null ? '优质中小企业查询' : sourceReturnTarget(route.query.returnTo) ? '记录级对比' : '企业列表' }}</NuxtLink>
-          <span class="mx-1.5">/</span>
-          <span>企业详情</span>
+          <Breadcrumb aria-label="当前位置">
+            <BreadcrumbList>
+              <BreadcrumbItem><BreadcrumbLink as-child><NuxtLink :to="backTo">{{ backLabel }}</NuxtLink></BreadcrumbLink></BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem><BreadcrumbPage>企业详情</BreadcrumbPage></BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
         </template>
         <template #description>
           <span>{{ detail.district ?? '属地未知' }}</span>
-          <span class="mx-1.5">·</span><span>{{ titlesLabel }}</span>
-          <span class="mx-1.5">·</span><span class="whitespace-nowrap">{{ lastCheckedLabel }}</span>
-          <span class="mx-1.5">·</span><span class="font-mono text-xs whitespace-nowrap">{{ detail.uscc ?? '无统一社会信用代码' }}</span>
-        </template>
-        <template #actions>
-          <Badge v-for="f in otherFlags" :key="f" variant="destructive">{{ flagLabel(f) }}</Badge>
+          <template v-if="detail.uscc"><span class="mx-1.5">·</span><span class="font-mono text-xs break-all">{{ detail.uscc }}</span></template>
         </template>
       </PageHeader>
 
       <p v-if="confirmedAliasNames.length" class="text-muted-foreground border-t pt-3 text-sm leading-6">已确认曾用名：{{ confirmedAliasNames.join('、') }}</p>
       </section>
 
-      <Alert v-if="usccMissing" variant="destructive">
-        <AlertTitle>缺统一社会信用代码,记录按企业名称归并</AlertTitle>
-        <AlertDescription>
-          该企业没有统一社会信用代码,台账按<strong>企业名称</strong>把记录归到一起。
-          若与同名企业混同,需回到公布文件人工核对。
-        </AlertDescription>
+      <Alert v-if="!detail.uscc" variant="destructive">
+        <AlertTitle>缺少统一社会信用代码</AlertTitle>
+        <AlertDescription>记录按企业名称归并。同名企业需查阅公布文件核对。</AlertDescription>
       </Alert>
 
       <div class="flex min-w-0 flex-col gap-5">
@@ -367,7 +337,7 @@ function openPreview(e: Evidence) {
           <section class="bg-card overflow-hidden rounded-lg border" aria-label="称号与复核安排">
             <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b px-4 py-3">
               <h2 class="text-sm font-semibold">称号与复核安排</h2>
-              <span class="text-muted-foreground text-table">{{ titleInfo.length }} 个正式称号</span>
+              <span class="text-muted-foreground text-table">评估时点：<time v-if="assessmentTimeLabel" :datetime="assessmentTime">{{ assessmentTimeLabel }}</time><span v-else>未知</span></span>
             </header>
             <dl v-if="titleInfo.length" class="divide-y">
               <div
@@ -380,7 +350,6 @@ function openPreview(e: Evidence) {
                   <div class="col-span-2 sm:col-span-1"><p class="text-muted-foreground text-sm">当前资格：</p><p class="mt-1 font-semibold">{{ item.qualification?.effectiveQualification ? CURRENT_STATUS_LABELS[item.qualification.effectiveQualification.status] : item.qualification ? qualificationGroupLabel[item.qualification.group] : '未知（尚无评估结果）' }}</p></div>
                   <div><p class="text-muted-foreground text-sm">首次认定</p><p class="mt-1 font-semibold tabular-nums">{{ item.year ?? '年份待核' }}<span v-if="item.batchSeq != null" class="text-muted-foreground ml-2 text-sm font-normal">第 {{ item.batchSeq }} 批</span></p></div>
                   <div><p class="text-muted-foreground text-sm">下次复核</p><p class="mt-1 font-semibold tabular-nums">{{ item.dueYear ?? '年份待核' }}<span v-if="item.needsReview" class="text-warning ml-2 text-sm font-normal">待核</span></p></div>
-                  <p class="text-muted-foreground border-t pt-2 text-sm break-words col-span-2 sm:col-span-3">评估时点：{{ item.qualification ? data?.qualificationAssessment?.asOf ?? '未知' : '未知' }}</p>
                 </dd>
               </div>
             </dl>
@@ -388,10 +357,8 @@ function openPreview(e: Evidence) {
             <DisclosurePanel v-if="qualificationRows.length" trigger-class="px-4" class="border-t">
               <template #title>资格依据</template>
               <div class="flex min-w-0 flex-col gap-4 px-4 pb-4 text-base leading-6">
-                <p class="text-muted-foreground text-sm">评估时点：{{ data?.qualificationAssessment?.asOf }}。下次复核年份用于安排复核，当前资格以下列评估为准。</p>
                 <section v-for="item in qualificationRows" :key="item.titleCode" class="flex min-w-0 flex-col gap-2 break-words">
                   <h3 class="flex flex-wrap items-center gap-2"><RosterTitleBadge :code="item.titleCode" /><span>{{ item.effectiveQualification ? CURRENT_STATUS_LABELS[item.effectiveQualification.status] : qualificationGroupLabel[item.group] }}</span></h3>
-                  <p v-if="item.effectiveQualification">当前有效状态：{{ CURRENT_STATUS_LABELS[item.effectiveQualification.status] }}</p>
                   <p v-for="basis in item.effectiveQualification?.presentationBasis ?? []" :key="basis">{{ basis }}</p>
                   <template v-if="!item.effectiveQualification?.source">
                     <p>公布资格：{{ item.officialQualification.message }}</p>
@@ -410,21 +377,13 @@ function openPreview(e: Evidence) {
           <section class="bg-card overflow-hidden rounded-lg border" aria-label="认定与复核记录">
             <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b px-4 py-3">
               <h2 class="text-sm font-semibold">认定与复核记录</h2>
-              <span class="text-muted-foreground text-table">{{ eventCount }} 条</span>
-              <span class="text-muted-foreground text-table">正式公布文件与复核结论</span>
             </header>
-            <div v-if="recordCount === 0" class="text-muted-foreground py-12 text-center text-sm">
-              该企业暂无记录。
+            <div v-if="!publicationHistories.length" class="text-muted-foreground py-8 text-center text-sm">
+              暂无公布记录。
             </div>
-            <Tabs v-else v-model="historySource" class="min-w-0">
-              <TabsList aria-label="记录来源" class="mx-4 my-3">
-                <TabsTrigger v-for="source in historySources" :key="source.code" :value="source.code">{{ source.label }}</TabsTrigger>
-              </TabsList>
-              <TabsContent v-for="source in sourceHistories" :key="source.code" :value="source.code" class="mt-0">
-              <section aria-label="记录台账">
-              <p v-if="!source.histories.length" class="text-muted-foreground px-4 py-8 text-sm">该来源暂无记录。</p>
-              <p class="text-muted-foreground border-b px-4 py-2 text-sm">按已知年份升序；同年及未知时点不表示精确先后。排列不代表当前有效资格。</p>
-              <section v-for="history in source.histories.filter(h => selectedBusinessTitle === 'all' || h.code === selectedBusinessTitle)" :key="history.code" :aria-label="`${titleLabel(history.code)}历史`" class="min-w-0 border-b last:border-b-0">
+            <div v-else>
+              <p v-if="selectedBusinessTitle !== 'all' && !publicationHistories.some(history => history.code === selectedBusinessTitle)" class="text-muted-foreground py-8 text-center text-sm">该称号暂无公布记录。</p>
+              <section v-for="history in publicationHistories.filter(h => selectedBusinessTitle === 'all' || h.code === selectedBusinessTitle)" :key="history.code" :aria-label="`${titleLabel(history.code)}历史`" class="min-w-0 border-b last:border-b-0">
                 <header class="bg-muted/40 flex flex-wrap items-baseline gap-3 border-b px-4 py-3">
                   <h3 class="text-sm font-semibold">{{ titleLabel(history.code) }}</h3>
                   <span class="text-muted-foreground text-sm">{{ history.events.length }} 条事件</span>
@@ -451,9 +410,7 @@ function openPreview(e: Evidence) {
                   </li>
                 </ol>
               </section>
-              </section>
-              </TabsContent>
-            </Tabs>
+            </div>
           </section>
             </template>
           </RosterPlatformRecords>

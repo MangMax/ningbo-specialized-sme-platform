@@ -177,7 +177,7 @@ function differenceReason(row: EnterpriseListRow): string {
           加载态只在末尾补**一行**骨架(`_shared-brief.md` 写死的):旧行留在原地,
           用户看得见自己在哪一批数据上等,而不是面对一张白表。这一行也**不兼任铺满表体**。
         -->
-        <TableRow v-if="loading" class="hover:bg-transparent">
+        <TableRow v-if="loading" class="hover:bg-transparent" aria-hidden="true">
           <TableCell><Skeleton class="h-3 w-full max-w-40" /></TableCell>
           <TableCell>
             <Skeleton class="h-3 w-full max-w-28" />

@@ -31,7 +31,7 @@ beforeEach(() => {
     aliases: [], records: [{ id: 1, titleCode: 'specialized_sme', source: 'jxj', district: null, lifecycle: { firstRecognitionYear: 2021, dueYear: 2027, needsReview: false } }],
     events: [{ id: 10, recordId: 1, eventType: 'award', year: 2021, batchSeq: 1, decidedYear: null, reviewOutcome: null }],
     evidence: [], platform: { queries: [], relations: [] },
-    qualificationAssessment: { asOf: '2026-11-06T00:00:00.000Z', titles: [{
+    qualificationAssessment: { asOf: '2026-11-06T19:00:00.000Z', titles: [{
       titleCode: 'specialized_sme', group: 'excluded', effectiveQualification: { status: 'expired', presentationBasis: ['正式复核未通过'], notes: [] },
       officialQualification: { message: '正式资格已经结束', notes: [] }, subject: { message: '主体未终止' }, region: { message: '宁波' },
       platform: { message: '未查询', observations: [] }, correspondence: { message: '无对应' }, completeness: { message: '资料齐备', gaps: [] }, cycles: [],
@@ -58,13 +58,15 @@ it('shows assessed qualification and time beside recognition and review arrangem
   await openDetail()
   const summary = view!.get('[aria-label="称号与复核安排"]')
   expect(summary.text()).toContain('当前资格：已到期')
-  expect(summary.text()).toContain('评估时点：2026-11-06T00:00:00.000Z')
+  expect(summary.text()).toContain('评估时点：2026-11-07 03:00')
+  expect(summary.get('time').attributes('datetime')).toBe('2026-11-06T19:00:00.000Z')
   expect(summary.text()).toMatch(/首次认定\s*2021/)
   expect(summary.text()).toMatch(/下次复核\s*2027/)
   expect(summary.text()).not.toContain('正式复核未通过')
   await summary.findAll('button').find(button => button.text() === '资格依据')!.trigger('click')
   await flushPromises()
   expect(summary.text()).toContain('正式复核未通过')
+  expect(summary.text().match(/评估时点/g)).toHaveLength(1)
 })
 it('keeps qualification unknown without assessment despite a future review arrangement', async () => {
   delete state.detail.qualificationAssessment
@@ -198,8 +200,11 @@ it('opens legacy review links as readonly detail without review requests or a le
 
 it('retains the current enterprise list filters in the return link', async () => {
   await openDetail('/enterprises/91?tab=review&currentBack=title%3Dspecialized_sme%26page%3D3')
-  const back = view!.findAll('a').find(link => link.text() === '优质中小企业查询')!
+  const breadcrumb = view!.get('nav[aria-label="当前位置"]')
+  const back = breadcrumb.get('a')
+  expect(back.text()).toBe('优质中小企业查询')
   expect(back.attributes('href')).toBe('/current-enterprises?title=specialized_sme&page=3')
+  expect(breadcrumb.get('[aria-current="page"]').text()).toBe('企业详情')
 })
 it('opens the published original file in the preview dialog', async () => {
   state.detail.evidence = [{ id: 101, eventId: 10, sourceFile: 'jxj/source.pdf', attachment: '附件一', listNo: 6, page: 2 }]

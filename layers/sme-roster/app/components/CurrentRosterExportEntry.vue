@@ -35,7 +35,8 @@ async function submit() {
 
 <template>
   <div class="flex flex-wrap items-center gap-2">
-    <Button size="sm" variant="outline" :disabled="submitting || !!disabledReason(titleCode)" :aria-label="`导出当前称号名单：${TITLES[titleCode]}`" :aria-describedby="disabledReason(titleCode) ? 'current-export-reason' : undefined" @click="submit">{{ submitting ? '正在提交…' : '导出当前称号名单' }}</Button>
+    <Button size="sm" variant="outline" :disabled="submitting || !!disabledReason(titleCode)" :aria-label="`导出该称号全量名单：${TITLES[titleCode]}`" :aria-describedby="disabledReason(titleCode) ? 'current-export-reason current-export-scope' : 'current-export-scope'" @click="submit">{{ submitting ? '正在提交…' : '导出该称号全量名单' }}</Button>
+    <span id="current-export-scope" class="text-muted-foreground text-table">包含全部资格状态</span>
     <Button v-if="accepted" as-child size="sm" variant="ghost"><NuxtLink :to="taskLocation(accepted)">查看本次导出</NuxtLink></Button>
     <Button v-if="discoveryFailed" size="sm" variant="outline" :disabled="discovering" @click="discoverExports">重新发现导出能力</Button>
     <p v-if="disabledReason(titleCode)" id="current-export-reason" class="text-muted-foreground text-table leading-5">{{ disabledReason(titleCode) }}</p>

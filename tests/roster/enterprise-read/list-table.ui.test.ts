@@ -128,3 +128,26 @@ describe('企业列表的抽屉触发器', () => {
     expect(wrapper.emitted('select')?.[0]).toEqual([7289, button])
   })
 })
+
+it('keeps the title foreground token when sizing the award badge', () => {
+  const wrapper = mount(EnterpriseListTable, {
+    props: {
+      rows: [{
+        enterpriseId: 1,
+        name: '样本企业',
+        uscc: null,
+        district: null,
+        aliasNames: [],
+        titles: ['little_giant'],
+        firstRecognition: [{ titleCode: 'little_giant', year: 2025, needsReview: false }],
+        difference: { count: 0, status: null, reasonCode: null, anyCurrent: false },
+      }],
+      loading: false,
+      hasError: false,
+      selectedId: null,
+      filtered: false,
+    },
+  })
+  mounted.push(wrapper)
+  expect(wrapper.get('[data-testid="title-recognition-pair"]').classes()).toEqual(expect.arrayContaining(['bg-tier-1-surface', 'text-tier-1-on']))
+})

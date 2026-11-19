@@ -91,7 +91,7 @@ it('applies a complete recognition range to the URL, removes its chip, and reset
   await apply.trigger('click'); await flushPromises()
   expect(router.currentRoute.value.query).toMatchObject({recognitionFrom:'2024-01-01',recognitionTo:'2024-12-31',validYear:'2027',maintenanceYear:'2023',maintenanceBatch:'2'})
   expect(calls.at(-1)).toMatchObject({recognitionFrom:'2024-01-01',recognitionTo:'2024-12-31',validYear:'2027',maintenanceYear:'2023',maintenanceBatch:'2'})
-  const chip=wrapper.findAll('button').find(button => button.text().includes('认定时间：'))!
+  const chip=wrapper.get('button[aria-label$="认定时间：2024-01-01 至 2024-12-31"]')
   await chip.trigger('click'); await flushPromises()
   expect(router.currentRoute.value.query.recognitionFrom).toBeUndefined()
   const reset=wrapper.findAll('button').find(button => button.text()==='清除筛选')!
@@ -167,7 +167,7 @@ it('discloses mobile filters, applies date and option URLs, keeps chips on colla
   expect(chips().text()).toContain('有效年份：2027')
   expect(chips().text()).toContain('维护批次：第 2 批')
   expect(router.currentRoute.value.query.sort).toBe('name_asc')
-  await chips().findAll('button').find(button => button.text().includes('有效年份：'))!.trigger('click')
+  await chips().get('button[aria-label$="有效年份：2027"]').trigger('click')
   await flushPromises()
   expect(router.currentRoute.value.query.validYear).toBeUndefined()
   await router.push({ path: '/current-enterprises', query: selected }); await flushPromises()

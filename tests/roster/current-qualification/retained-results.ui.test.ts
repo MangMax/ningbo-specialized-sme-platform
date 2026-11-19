@@ -37,7 +37,7 @@ it('does not invent an initial zero count through failure and retry and shows a 
   expect(view.find('[data-testid="current-mobile-loading"] [data-slot="skeleton"]').exists()).toBe(true)
   expect(view.find('[data-table-pagination]').exists()).toBe(false)
   requests[0]!.result.reject(new Error('initial read unavailable')); await flushPromises()
-  expect(view.text()).toContain('当前有效企业查询失败')
+  expect(view.text()).toContain('企业资格查询失败')
   expect(view.find('[data-testid="current-mobile-loading"]').exists()).toBe(false)
   expect(view.find('[data-table-pagination]').exists()).toBe(false)
   await view.findAll('button').find(button => button.text().includes('重新加载'))!.trigger('click'); await flushPromises()

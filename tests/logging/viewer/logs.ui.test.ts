@@ -320,16 +320,17 @@ it('retains source rows on a failed filter, explains both targets, retries expli
   expect(failure).not.toContain('{"')
   expect(failure).not.toContain('筛选 {}')
   expect(wrapper.text()).toContain('未标注')
-  expect(wrapper.text()).toContain('req-original')
+  const retainedRow = '[data-log-detail="00000000-0000-4000-8000-000000000001"]'
+  expect(wrapper.find(retainedRow).exists()).toBe(true)
   expect(wrapper.text()).not.toContain('PRIVATE182_RAW_ERROR')
   await wrapper.get('[data-testid=table-retry]').trigger('click')
   await flushPromises()
   expect(wrapper.text()).toContain('正在读取运行日志')
-  expect(wrapper.text()).toContain('req-original')
+  expect(wrapper.find(retainedRow).exists()).toBe(true)
   response.resolve({ rows: [], nextCursor: null, status: { dropped: 0 } })
   await flushPromises()
   expect(wrapper.text()).toContain('没有符合条件的运行日志')
-  expect(wrapper.text()).not.toContain('req-original')
+  expect(wrapper.find(retainedRow).exists()).toBe(false)
   expect(attempts).toBe(2)
 })
 
@@ -461,11 +462,11 @@ it('holds the result area with skeleton rows and a reading footer during the fir
   // 首次读取：按每页条数铺骨架（桌面行 / 窄屏卡），分页占位，而不是把卡收成一条表头。
   expect(wrapper.findAll('[data-testid=log-row-skeleton]')).toHaveLength(25)
   expect(wrapper.findAll('[data-testid=log-card-skeleton]')).toHaveLength(25)
-  // 骨架与正常结构对齐：桌面 10 列、窄屏 6 个带标签行，而不是旧的 4 行占位。
+  // 骨架与缩减后的列表摘要对齐。
   expect(wrapper.findAll('[data-testid=log-row-skeleton]')[0]!.findAll('td')).toHaveLength(10)
   expect(
     wrapper.findAll('[data-testid=log-card-skeleton]')[0]!.findAll('[data-skeleton-row]')
-  ).toHaveLength(6)
+  ).toHaveLength(5)
   expect(wrapper.get('[data-testid=table-pagination]').text()).toContain('正在读取…')
   pending.resolve({ rows: [listRow('00000000-0000-4000-8000-000000000001')], nextCursor: null, status: { dropped: 0 } })
   await flushPromises()
@@ -1283,7 +1284,8 @@ it('renders independent desktop columns and keeps long operation, route, outcome
   expect(first[0]!.get('time').attributes('datetime')).toBe(rows[0]!.timestamp)
   expect(first[3]!.text()).toBe(longOperation)
   expect(first[3]!.get('span[title]').attributes('title')).toBe(longOperation)
-  expect(first[4]!.text()).toBe(`POST ${longRoute}`)
+  expect(first[4]!.text()).toBe('POST')
+  expect(first[4]!.html()).not.toContain(longRoute)
   expect(first[4]!.text()).not.toContain('file-9')
   expect(first[5]!.text()).toBe('无记录')
   // 失败码是独立列：安全原码 + title，长码靠 truncate 约束，不挤进结果/耗时。
@@ -1366,13 +1368,12 @@ it('labels the 390px summary with a 44px detail target and lets long IDs wrap wi
   const items = wrapper.get('[data-testid=log-card-list]').findAll('li')
   expect(items).toHaveLength(2)
   const first = items[0]!
-  for (const label of ['操作', '来源', '结果', '失败码', '目标', 'HTTP 状态', '耗时', '关联'])
+  for (const label of ['操作', '来源', '结果', '失败码', 'HTTP 状态', '耗时'])
     expect(first.text()).toContain(label)
   expect(first.text()).toContain('HTTP 接口')
-  expect(first.text()).toContain('http')
   expect(first.text()).toContain('已拒绝')
-  expect(first.text()).toContain(longRoute)
-  expect(first.text()).toContain(longestId)
+  expect(first.text()).not.toContain(longRoute)
+  expect(first.text()).not.toContain(longestId)
   // 390 的失败码是独立带标签行，长码可读且不挤进结果/耗时。
   const errorField = first.get('[data-log-field="errorCode"]')
   expect(errorField.text()).toContain('失败码')
@@ -1939,8 +1940,8 @@ it('keeps the list status strip showing unknown writes and the missing-log cavea
   wrappers.push(wrapper)
   await flushPromises()
   const text = wrapper.text()
-  expect(text).toContain('日志存储可用')
-  expect(text).toContain('本进程已丢弃 0 条')
+  expect(text).not.toContain('日志存储可用')
+  expect(text).not.toContain('本进程已丢弃 0 条')
   expect(text).toContain('写入结果未知 2 条')
   // 存储已恢复但仍有无法确认的记录：异常口径保留，不因 unavailable=false 消失。
   expect(text).toContain('日志缺失不代表业务未执行')

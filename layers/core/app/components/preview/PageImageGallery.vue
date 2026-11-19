@@ -477,7 +477,7 @@ watch(
           </SelectContent>
         </Select>
         <Button v-if="action" :variant="action.variant" :disabled="rendering" @click="action.run()">
-          <Loader2 v-if="rendering" class="animate-spin" />
+          <Loader2 v-if="rendering" class="motion-safe:animate-spin" />
           {{ rendering ? '渲染中…' : action.label }}
         </Button>
       </span>
@@ -490,7 +490,7 @@ watch(
       role="status"
       aria-live="polite"
     >
-      <Loader2 class="size-3.5 animate-spin" />
+      <Loader2 class="size-3.5 motion-safe:animate-spin" />
       正在渲染页图…<span v-if="state?.pageCount" class="tabular-nums"
         >共 {{ state.pageCount }} 页,大文件要几秒</span
       >
@@ -550,7 +550,7 @@ watch(
       role="status"
       aria-live="polite"
     >
-      <Loader2 class="size-5 animate-spin" />
+      <Loader2 class="size-5 motion-safe:animate-spin" />
       <span class="text-table">正在渲染页图…</span>
       <span v-if="state?.pageCount" class="text-xs tabular-nums">
         共 {{ state.pageCount }} 页,大文件要几秒

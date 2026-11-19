@@ -47,6 +47,36 @@ it('links a business_list query card to the local business-process page with its
   expect(JSON.parse(link.attributes('data-to')!)).toEqual({ path: '/platform-business-processes', query: { q: '91330211255994457P' } })
 })
 
+it('requests only the original query ID and links its breadcrumb to the actual catalog', async () => {
+  const route = reactive({ query: { queryId: '7' } })
+  vi.stubGlobal('useRoute', () => route)
+  const fetch = vi.fn().mockResolvedValueOnce(summary('shared-key', 7)).mockResolvedValueOnce(summary('shared-key', 8))
+  vi.stubGlobal('$fetch', fetch)
+  const w = mount(Page, { global: { stubs: { NuxtLink: { props: ['to'], template: '<a :href="typeof to === \'string\' ? to : to.path"><slot /></a>' } } } }); wrappers.push(w)
+  await flushPromises()
+  expect(fetch.mock.calls[0]![1].query).toMatchObject({ queryId: '7', view: 'summary', page: 1 })
+  expect(w.findAll('[data-query-id]').map(card => card.attributes('data-query-id'))).toEqual(['7'])
+  expect(w.get('nav[aria-label="页面路径"] a').attributes('href')).toBe('/platform-recognized-directory')
+  expect(w.get('nav[aria-label="页面路径"] [aria-current="page"]').text()).toBe('平台查询证据')
+  expect(w.find('[data-table-pagination]').exists()).toBe(false)
+  route.query.queryId = '8'
+  await flushPromises()
+  expect(fetch.mock.calls[1]![1].query).toMatchObject({ queryId: '8', view: 'summary', page: 1 })
+  expect(w.findAll('[data-query-id]').map(card => card.attributes('data-query-id'))).toEqual(['8'])
+})
+
+it('sends malformed exact selectors for validation instead of broadening to history', async () => {
+  vi.stubGlobal('useRoute', () => reactive({ query: { queryId: ['7', '8'] } }))
+  const fetch = vi.fn().mockRejectedValue(new Error('queryId must be a positive integer'))
+  vi.stubGlobal('$fetch', fetch)
+  const w = mount(Page)
+  wrappers.push(w)
+  await flushPromises()
+  expect(fetch.mock.calls[0]![1].query.queryId).toBe('')
+  expect(w.text()).toContain('queryId must be a positive integer')
+  expect(w.find('[data-query-id]').exists()).toBe(false)
+})
+
 it.each(['failed', 'not_queried', 'no_record', 'unrecognized-status'])('preserves query status %s without interpreting an unloaded relation array', async status => {
   vi.stubGlobal('useRoute', () => reactive({ query: {} }))
   const result = summary('status')

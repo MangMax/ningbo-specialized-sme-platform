@@ -118,7 +118,7 @@ const conflictLabel: Record<string, string> = {
                 <span v-if="row.contentState === 'unverifiable'">原文内容无法核实</span>
               </TableCell>
               <TableCell class="sticky right-0 z-10 border-l bg-card">
-                <NuxtLink :to="{ path: '/platform-queries', query: { queryKey: row.queryKey } }" class="inline-flex items-center gap-1 text-xs hover:underline">查看原查询<ExternalLink class="size-3" /></NuxtLink>
+                <NuxtLink :to="{ path: '/platform-queries', query: { queryId: row.queryId } }" class="inline-flex items-center gap-1 text-xs hover:underline">查看原查询<ExternalLink class="size-3" aria-hidden="true" /></NuxtLink>
               </TableCell>
             </TableRow>
           </TableBody>
@@ -141,7 +141,7 @@ const conflictLabel: Record<string, string> = {
             <span v-else-if="row.identityState === 'conflict'">平台编号冲突</span>
             <span v-if="row.contentState === 'unverifiable'">原文内容无法核实</span>
           </p>
-          <NuxtLink :to="{ path: '/platform-queries', query: { queryKey: row.queryKey } }" class="inline-flex items-center gap-1 text-xs hover:underline">查看原查询<ExternalLink class="size-3" /></NuxtLink>
+          <NuxtLink :to="{ path: '/platform-queries', query: { queryId: row.queryId } }" class="inline-flex items-center gap-1 text-xs hover:underline">查看原查询<ExternalLink class="size-3" aria-hidden="true" /></NuxtLink>
         </li>
       </ul>
     </template>

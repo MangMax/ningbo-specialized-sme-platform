@@ -10,6 +10,9 @@ import { JOB_STATES, type JobState } from '#core/lib/job'
 import { useTaskPolling } from '#core/app/composables/useTaskPolling'
 import { useRosterCurrentExport, rosterTaskBrowserHeaders } from '#sme-roster/app/composables/useRosterCurrentExport'
 import { Button } from '#core/app/components/ui/button'
+import FilterChip from '#core/app/components/FilterChip.vue'
+import { ENTERPRISE_LIST_TITLE } from '#sme-roster/lib/labels'
+import { ROSTER_LEDGER_PATH } from '#sme-roster/lib/sme-roster/routes'
 import { Label } from '#core/app/components/ui/label'
 import { Tabs, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
@@ -31,6 +34,8 @@ const positive = (raw: unknown, fallback: number, max: number) => /^\d+$/.test(s
 const page = computed(() => positive(route.query.page, 1, 1000000)), pageSize = computed(() => positive(route.query.pageSize, 25, 200))
 const job = computed(() => scalar(route.query.job))
 const titleCode = computed(() => showsExportFilter.value && TASK_EXPORTS.some(t => t.titleCode === route.query.titleCode) ? scalar(route.query.titleCode) : 'all')
+const selectedExportTitle = computed(() => TASK_EXPORTS.find(entry => entry.titleCode === titleCode.value)?.label)
+const selectedState = computed(() => state.value === 'all' ? undefined : TASK_STATES[state.value as JobState])
 
 const browserHeaders = rosterTaskBrowserHeaders
 const params = computed(() => ({ tab: tab.value, group: group.value, state: state.value === 'all' ? undefined : state.value, titleCode: titleCode.value === 'all' ? undefined : titleCode.value, page: page.value, pageSize: pageSize.value }))
@@ -166,7 +171,7 @@ watch(job, (next, previous) => { if (previous && !next) closingRow.value = previ
 </script>
 <template>
   <div class="flex min-w-0 flex-col gap-4">
-    <PageHeader title="后台任务" description="按模块查看后台任务。离开页面后，任务继续运行。">
+    <PageHeader title="后台任务">
       <template #actions>
         <Button size="sm" variant="outline" :disabled="loading" @click="reload">刷新列表</Button>
       </template>
@@ -200,7 +205,7 @@ watch(job, (next, previous) => { if (previous && !next) closingRow.value = previ
           </Select>
         </div>
         <Button v-if="tab === 'core'" as-child variant="outline" size="sm" class="bg-card shadow-none"><NuxtLink to="/ocr">识别校对入口</NuxtLink></Button>
-        <Button v-if="showsRosterTools" as-child variant="outline" size="sm" class="bg-card shadow-none"><NuxtLink to="/comparison">比对与核查入口</NuxtLink></Button>
+        <Button v-if="showsRosterTools" as-child variant="outline" size="sm" class="bg-card shadow-none"><NuxtLink :to="ROSTER_LEDGER_PATH">{{ ENTERPRISE_LIST_TITLE }}</NuxtLink></Button>
         <div v-if="showsExportFilter" class="flex min-w-0 items-center gap-2">
           <Label for="export-title-filter" class="sr-only">导出称号</Label>
           <Select :model-value="titleCode" @update:model-value="navigate({ titleCode: $event === 'all' ? undefined : String($event), page: 1, job: undefined })">
@@ -208,6 +213,11 @@ watch(job, (next, previous) => { if (previous && !next) closingRow.value = previ
             <SelectContent class="shadow-none"><SelectGroup><SelectItem value="all">全部称号</SelectItem><SelectItem v-for="entry in TASK_EXPORTS" :key="entry.titleCode" :value="entry.titleCode">{{ entry.label }}</SelectItem></SelectGroup></SelectContent>
           </Select>
         </div>
+      </div>
+      <div v-if="filters.group || selectedState || selectedExportTitle" class="flex flex-wrap items-center gap-1.5" role="group" aria-label="已应用筛选">
+        <FilterChip v-if="filters.group" :label="`分组 · ${filters.group.label}`" @remove="navigate({ group: undefined, titleCode: undefined, page: 1, job: undefined })" />
+        <FilterChip v-if="selectedState" :label="`状态 · ${selectedState}`" @remove="navigate({ state: undefined, page: 1, job: undefined })" />
+        <FilterChip v-if="selectedExportTitle" :label="`称号 · ${selectedExportTitle}`" @remove="navigate({ titleCode: undefined, page: 1, job: undefined })" />
       </div>
 
       <!-- 本次导出：跨分类常驻，只说“请求”状态，与服务端任务状态分开。
@@ -240,7 +250,7 @@ watch(job, (next, previous) => { if (previous && !next) closingRow.value = previ
       <SheetContent floating-size="standard" class="min-w-0 gap-0" @close-auto-focus="restoreListFocus">
         <SheetHeader class="shrink-0 border-b px-6 py-5 pr-12">
           <SheetTitle>任务详情</SheetTitle>
-          <SheetDescription>查看进度、执行结果与可用操作。关闭详情不会停止后台任务。</SheetDescription>
+          <SheetDescription>关闭详情后，任务继续运行。</SheetDescription>
         </SheetHeader>
         <div class="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-6 pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]" data-testid="task-detail-scroll">
         <p v-if="exportNotice" :role="exportNotice.tone" :aria-live="exportNotice.tone === 'status' ? 'polite' : 'assertive'" data-testid="export-notice" class="mb-4 text-sm break-words" :class="exportNotice.tone === 'alert' && 'text-destructive'">{{ exportNotice.text }}</p>

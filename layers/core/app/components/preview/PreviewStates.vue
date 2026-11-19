@@ -40,7 +40,7 @@ const isUnsupported = computed(() => props.status === 'unsupported')
     role="status"
     aria-live="polite"
   >
-    <Loader2 class="size-5 animate-spin" aria-hidden="true" />
+    <Loader2 class="size-5 motion-safe:animate-spin" aria-hidden="true" />
     <div v-if="hasProgress" class="flex w-56 flex-col items-center gap-2">
       <Progress :model-value="progress ?? 0" class="h-1" />
       <span class="text-xs tabular-nums">正在读取 {{ Math.round(progress ?? 0) }}%</span>

@@ -87,11 +87,11 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{ 'update:open': [open: boolean] }>()
-const rowRef = ref<HTMLButtonElement | null>(null)
+const rowRef = ref<InstanceType<typeof Button> | null>(null)
 let focusTimer: ReturnType<typeof setTimeout> | undefined
 function onCloseAutoFocus(event: Event) {
   event.preventDefault()
-  rowRef.value?.focus()
+  rowRef.value?.$el?.focus()
 }
 function onOpenChange(next: boolean) {
   emit('update:open', next)
@@ -103,7 +103,7 @@ function onOpenChange(next: boolean) {
   if (focusTimer) clearTimeout(focusTimer)
   focusTimer = setTimeout(() => {
     focusTimer = undefined
-    rowRef.value?.focus()
+    rowRef.value?.$el?.focus()
   }, 0)
 }
 onBeforeUnmount(() => {
@@ -147,12 +147,13 @@ const sourceFollow = computed(() => props.sourceFollowLabel ?? '')
 <template>
   <Sheet :open="open" @update:open="onOpenChange">
     <SheetTrigger as-child>
-      <button
+      <Button
         ref="rowRef"
         type="button"
+        variant="ghost"
         :data-testid="rowTestId"
         :aria-label="row.label + '配置'"
-        class="group flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent hover:no-underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        class="group flex h-auto w-full min-w-0 justify-start gap-2.5 px-2 py-2 text-left"
       >
         <span
           :class="
@@ -195,7 +196,7 @@ const sourceFollow = computed(() => props.sourceFollowLabel ?? '')
         >
           <Icon name="lucide:chevron-right" class="size-4" />
         </span>
-      </button>
+      </Button>
     </SheetTrigger>
 
     <SheetContent

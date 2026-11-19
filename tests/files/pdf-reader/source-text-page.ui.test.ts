@@ -25,7 +25,8 @@ it.each(['notice.md', 'jxj/announcement/2026/notice.md'])('text source %s shows 
   expect(wrapper.text()).toContain('来源正文')
   if (file.includes('/')) expect(wrapper.get('header').text()).toContain(file)
   else expect(wrapper.get('header').text().split('notice.md')).toHaveLength(2)
-  const returnLink = wrapper.findAll('a').find(a => a.text() === '返回OCR 工作台')!
+  const returnLink = wrapper.get('[data-slot="breadcrumb-link"]')
+  expect(returnLink.text()).toBe('识别校对')
   expect(returnLink.attributes('href')).toBe(back)
   await returnLink.trigger('click')
   await flushPromises()

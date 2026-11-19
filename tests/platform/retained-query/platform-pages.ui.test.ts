@@ -5,6 +5,7 @@ import Business from '../../../layers/sme-roster/app/pages/platform-business-pro
 import Declarations from '../../../layers/sme-roster/app/pages/platform-declarations.vue'
 import Directory from '../../../layers/sme-roster/app/pages/platform-recognized-directory.vue'
 import TablePagination from '../../../layers/core/app/components/TablePagination.vue'
+import { Select } from '../../../layers/core/app/components/ui/select'
 import PlatformFilterSelect from '../../../layers/sme-roster/app/components/PlatformFilterSelect.vue'
 
 describe.each([
@@ -16,7 +17,7 @@ describe.each([
   const response = { view: 'records', rows: [row], total: 80, page: 1, pageSize: 25 }
   type Fetch = (url: string, options: { query: Record<string, unknown> }) => Promise<unknown>
   let fetch: Mock<Fetch>, optionsFetch: Mock<Fetch>
-  const mountPage = () => mount(Page, { global: { stubs: { NuxtLink: { template: '<a><slot/></a>' } } } })
+  const mountPage = () => mount(Page, { global: { stubs: { NuxtLink: { props: ['to'], template: '<a :data-to="JSON.stringify(to)"><slot/></a>' } } } })
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     fetch = vi.fn<Fetch>(async (_url: string, options: { query: Record<string, unknown> }) => ({ ...response, page: options.query.page }))
@@ -62,8 +63,73 @@ describe.each([
     const view = mountPage()
     try {
       await flushPromises(); expect(view.text()).toContain('read unavailable')
+      expect(view.text()).not.toContain('共 0 条')
+      expect(view.find('[data-slot="empty"]').exists()).toBe(false)
       await view.get('[data-testid="table-retry"]').trigger('click'); await flushPromises()
       expect(view.text()).toContain('独立页面样例'); expect(view.text()).not.toContain('read unavailable')
+    } finally { view.unmount() }
+  })
+  it('keeps the successful rows, count and pagination unit when a view change fails, then retries the new view', async () => {
+    const observation = {
+      kind: 'observation', relationId: 41, queryId: 23, queryKey: 'shared-key',
+      queriedAt: '2026-11-18', sequenceNo: 2, nameRaw: '隔离页面样例',
+      identityState: 'missing_key', contentState: 'verified',
+    }
+    fetch.mockResolvedValueOnce({ ...response, page: 2 })
+      .mockRejectedValueOnce(new Error('isolated unavailable'))
+      .mockResolvedValueOnce({ view: 'isolated', rows: [observation], total: 4, page: 1, pageSize: 25 })
+    const view = mountPage()
+    try {
+      await flushPromises()
+      const mode = view.findAllComponents(Select).find(control => control.find('[aria-label$="视图"]').exists())!
+      mode.vm.$emit('update:modelValue', 'isolated')
+      await flushPromises()
+      expect(view.text()).toContain('独立页面样例')
+      expect(view.text()).toContain('共 80 条记录')
+      expect(view.text()).toContain('保留第 2 页结果')
+      expect(view.findComponent(TablePagination).props()).toMatchObject({ page: 2, total: 80, unit: '条记录' })
+      await view.get('[data-testid="table-retry"]').trigger('click')
+      await flushPromises()
+      expect(fetch.mock.calls.at(-1)![1].query).toEqual({ view: 'isolated', page: 1, pageSize: 25 })
+      expect(view.text()).toContain('隔离页面样例')
+      expect(view.text()).toContain('共 4 条观察')
+      expect(view.text()).not.toContain('独立页面样例')
+      expect(view.findComponent(TablePagination).props()).toMatchObject({ page: 1, total: 4, unit: '条观察' })
+      const links = view.findAll('a').filter(link => link.text() === '查看原查询')
+      expect(links.map(link => JSON.parse(link.attributes('data-to')!))).toEqual([
+        { path: '/platform-queries', query: { queryId: 23 } },
+        { path: '/platform-queries', query: { queryId: 23 } },
+      ])
+    } finally { view.unmount() }
+  })
+  it('retains a confirmed empty result if the other view fails', async () => {
+    fetch.mockResolvedValueOnce({ ...response, rows: [], total: 0 })
+      .mockRejectedValueOnce(new Error('isolated unavailable'))
+    const view = mountPage()
+    try {
+      await flushPromises()
+      const title = view.get('[data-slot="empty-title"]').text()
+      const mode = view.findAllComponents(Select).find(control => control.find('[aria-label$="视图"]').exists())!
+      mode.vm.$emit('update:modelValue', 'isolated')
+      await flushPromises()
+      expect(view.text()).toContain('isolated unavailable')
+      expect(view.text()).toContain('共 0 条记录')
+      expect(view.get('[data-slot="empty-title"]').text()).toBe(title)
+    } finally { view.unmount() }
+  })
+  it('shows individually removable filters and omits unavailable facets', async () => {
+    const view = mountPage()
+    try {
+      await flushPromises()
+      expect(view.find('[aria-label="维护批次"]').exists()).toBe(false)
+      await view.get('input[aria-label="企业名称或信用代码"]').setValue('保留条件')
+      view.findAllComponents(PlatformFilterSelect).find(control => control.props('label') === '称号')!.vm.$emit('update:modelValue', '2')
+      await flushPromises()
+      expect(view.findAll('[data-testid="filter-chip"]')).toHaveLength(2)
+      await view.get('[aria-label^="移除筛选条件:称号"]').trigger('click')
+      await flushPromises()
+      expect(view.findAll('[data-testid="filter-chip"]').map(chip => chip.text())).toEqual(['企业：保留条件'])
+      expect(fetch.mock.calls.at(-1)![1].query).toEqual({ view: 'records', q: '保留条件', page: 1, pageSize: 25 })
     } finally { view.unmount() }
   })
 })

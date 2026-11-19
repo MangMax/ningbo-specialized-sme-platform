@@ -16,8 +16,8 @@ import {
   RefreshCw,
   Upload,
   WrapText,
-  X,
 } from '@lucide/vue'
+import FilterChip from '#core/app/components/FilterChip.vue'
 import { useOcrWorkbench } from '#core/app/composables/useOcrWorkbench'
 import { Alert, AlertDescription } from '#core/app/components/ui/alert'
 import { Badge } from '#core/app/components/ui/badge'
@@ -56,7 +56,7 @@ import {
   SheetTitle,
 } from '#core/app/components/ui/sheet'
 import { Skeleton } from '#core/app/components/ui/skeleton'
-import { Tabs, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 import ImagePreview from '#core/app/components/preview/ImagePreview.vue'
 import OcrBottomBar from './OcrBottomBar.vue'
 import OcrFilePicker from './OcrFilePicker.vue'
@@ -143,10 +143,12 @@ const bottomBar = useTemplateRef<{
 }>('bottomBar')
 
 const fileOpen = ref(false)
+const fileTrigger = useTemplateRef<{ $el?: HTMLButtonElement }>('fileTrigger')
 const filterOpen = ref(false)
 const compareOpen = ref(false)
 const compareTrigger = ref<HTMLElement | null>(null)
 const compareMode = ref<'rendered' | 'source'>('rendered')
+const hasCompareText = computed(() => !!currentRow.value?.result?.markdown.trim())
 const compareWrap = ref(true)
 const compareMessage = ref('')
 /** 快速页面导航：桌面 Popover，移动端底部 Sheet；两种壳共用同一面板。 */
@@ -290,13 +292,13 @@ const navBlockedReason = computed(() => {
   if (!ready.value) return '文件还在读取中，稍后再跳页。'
   return ''
 })
-interface FilterChip {
+interface ActivePageFilter {
   key: string
   label: string
   remove: () => void
 }
-const filterChips = computed<FilterChip[]>(() => {
-  const chips: FilterChip[] = filters.value.states.map((state) => ({
+const filterChips = computed<ActivePageFilter[]>(() => {
+  const chips: ActivePageFilter[] = filters.value.states.map((state) => ({
     key: `state-${state}`,
     label: STATE_WORD[state],
     remove: () =>
@@ -340,6 +342,7 @@ function clearFilters() {
 
 function startEdit() {
   if (!currentRow.value || !canEdit.value) return
+  if (isNarrow.value && view.value === 'image') setView('text')
   draft.value = currentRow.value.result?.markdown ?? ''
   editing.value = true
   void nextTick(() => pageRow.value?.focusEditor())
@@ -447,9 +450,14 @@ function selectNavigatorPage(page: number) {
   closePageNav()
 }
 
-/** 输入页号后关闭面板；焦点回到页号入口，不落到 body。 */
+/** 输入页号后关闭面板。 */
 function closePageNav() {
   pageNavOpen.value = false
+}
+
+/** 移动端页号按钮位于 Sheet 外，关闭后显式恢复焦点。 */
+function focusPageNavTrigger(event: Event) {
+  event.preventDefault()
   void nextTick(() => pageNavTrigger.value?.$el?.focus())
 }
 
@@ -592,6 +600,11 @@ function selectAndClose(path: string) {
   if (selectFile(path)) fileOpen.value = false
 }
 
+function focusFileTrigger(event: Event) {
+  event.preventDefault()
+  void nextTick(() => fileTrigger.value?.$el?.focus())
+}
+
 /** Why the file rows are not switchable right now (shown inside the sheet). */
 const fileSheetBlockedReason = computed(() =>
   dirty.value
@@ -608,12 +621,13 @@ const fileSheetBlockedReason = computed(() =>
     aria-label="识别校对工作台"
     @keydown.esc="onRootEscape"
   >
+    <h1 class="sr-only">识别校对</h1>
     <!-- 顶栏、工作区、底栏共用同一列容器与左右锚线：三块同宽、同圆角、同描边，
          不会再出现“通栏硬边横条贴着圆角卡片”的割裂。 -->
     <div class="ocr-shell flex min-h-0 flex-1 flex-col gap-2 p-2">
       <header class="bg-card shrink-0 overflow-hidden rounded-md border">
         <div class="ocr-topbar flex h-14 min-w-0 items-center gap-2 px-2.5 sm:px-3">
-          <span class="hidden shrink-0 text-sm font-semibold md:inline">识别校对</span>
+          <span aria-hidden="true" class="hidden shrink-0 text-sm font-semibold md:inline">识别校对</span>
 
           <div
             role="region"
@@ -621,10 +635,13 @@ const fileSheetBlockedReason = computed(() =>
             class="flex min-w-0 flex-1 items-center gap-1"
           >
             <Button
+              ref="fileTrigger"
               variant="outline"
               size="sm"
               class="max-w-[52vw] min-w-0 sm:max-w-xs"
               aria-label="选择 PDF 文件"
+              aria-haspopup="dialog"
+              :aria-expanded="fileOpen"
               :disabled="writeBusy"
               @click="fileOpen = true"
             >
@@ -811,23 +828,14 @@ const fileSheetBlockedReason = computed(() =>
           <span
             class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto sm:flex-wrap sm:overflow-visible"
           >
-            <Badge
+            <FilterChip
               v-for="chip in filterChips"
               :key="chip.key"
-              variant="quiet"
-              class="max-w-44 shrink-0 gap-1 sm:max-w-52"
-            >
-              <span class="truncate">{{ chip.label }}</span>
-              <button
-                type="button"
-                class="hover:bg-foreground/10 focus-visible:ring-ring -mr-1 inline-flex size-6 shrink-0 items-center justify-center rounded-sm focus-visible:ring-2 focus-visible:outline-none"
-                :aria-label="`移除筛选：${chip.label}`"
-                :disabled="dirty"
-                @click="chip.remove"
-              >
-                <X class="size-3.5" />
-              </button>
-            </Badge>
+              :label="chip.label"
+              :disabled="dirty"
+              class="max-w-44 sm:max-w-52 [&>button]:size-6"
+              @remove="chip.remove"
+            />
             <Button
               v-if="activeFilterCount && visibleRows.length"
               variant="ghost"
@@ -876,9 +884,6 @@ const fileSheetBlockedReason = computed(() =>
             </template>
           </span>
         </div>
-        <div v-else class="text-muted-foreground border-t px-3 py-2 text-xs">
-          选择一份文件后，这里显示页数与识别状态。
-        </div>
       </header>
 
       <main
@@ -893,11 +898,7 @@ const fileSheetBlockedReason = computed(() =>
             <EmptyHeader>
               <EmptyMedia variant="icon"><FileSearch /></EmptyMedia>
               <EmptyTitle>选择一份 PDF 开始校对</EmptyTitle>
-              <EmptyDescription>
-                文件选择在顶栏；切换文件才会重置页码与页筛选。
-              </EmptyDescription>
             </EmptyHeader>
-            <Button size="sm" @click="fileOpen = true">选择 PDF</Button>
           </Empty>
         </div>
 
@@ -1057,7 +1058,11 @@ const fileSheetBlockedReason = computed(() =>
 
     <!-- 移动端的同一面板：底部 Sheet，点选后关闭并回到当前页上下文。 -->
     <Sheet v-if="isNarrow" v-model:open="pageNavOpen">
-      <SheetContent side="bottom" class="max-h-[85dvh] gap-0 p-0">
+      <SheetContent
+        side="bottom"
+        class="max-h-[85dvh] gap-0 p-0"
+        @close-auto-focus="focusPageNavTrigger"
+      >
         <!-- 面板自己带可见标题；这里只给读屏一个标题与说明。 -->
         <SheetHeader class="sr-only">
           <SheetTitle>页面导航</SheetTitle>
@@ -1105,6 +1110,7 @@ const fileSheetBlockedReason = computed(() =>
       @filter="setFileFilter"
       @select="selectAndClose"
       @retry="loadFiles"
+      @close-auto-focus="focusFileTrigger"
     />
 
     <OcrFilterPanel
@@ -1199,97 +1205,82 @@ const fileSheetBlockedReason = computed(() =>
             class="bg-card ocr-text-pane flex min-h-0 flex-col overflow-hidden rounded-lg border"
             aria-label="对照识别文本"
           >
-            <header class="flex h-10 shrink-0 items-center gap-1.5 border-b px-2">
-              <div
-                class="bg-muted flex shrink-0 items-center gap-0.5 rounded-md p-0.5"
-                role="group"
-                aria-label="对照正文显示方式"
+            <Tabs
+              :model-value="hasCompareText ? compareMode : 'rendered'"
+              class="min-h-0 flex-1 gap-0"
+              @update:model-value="compareMode = $event === 'source' ? 'source' : 'rendered'"
+            >
+              <header class="flex h-10 shrink-0 items-center gap-1.5 border-b px-2">
+                <TabsList class="h-8 shrink-0" aria-label="对照正文显示方式">
+                  <TabsTrigger value="rendered" class="text-xs">预览</TabsTrigger>
+                  <TabsTrigger value="source" class="text-xs" :disabled="!hasCompareText">源码</TabsTrigger>
+                </TabsList>
+                <div class="ml-auto flex items-center gap-0.5">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="h-7 px-2 text-xs"
+                    :class="compareWrap ? 'text-foreground' : 'text-muted-foreground'"
+                    :aria-pressed="compareWrap"
+                    @click="compareWrap = !compareWrap"
+                  >
+                    <WrapText />
+                    <span class="hidden sm:inline">自动换行</span>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class="size-8"
+                    aria-label="复制对照原文"
+                    @click="copyCompare"
+                  >
+                    <Copy />
+                  </Button>
+                </div>
+              </header>
+              <p
+                v-if="compareMessage"
+                role="status"
+                class="text-muted-foreground shrink-0 border-b px-3 py-1 text-[11px]"
               >
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="h-7 px-2 text-xs"
-                  :class="
-                    compareMode === 'rendered'
-                      ? 'bg-background text-foreground shadow-sm hover:bg-background'
-                      : 'text-muted-foreground'
-                  "
-                  :aria-pressed="compareMode === 'rendered'"
-                  @click="compareMode = 'rendered'"
-                  >预览</Button
-                >
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="h-7 px-2 text-xs"
-                  :class="
-                    compareMode === 'source'
-                      ? 'bg-background text-foreground shadow-sm hover:bg-background'
-                      : 'text-muted-foreground'
-                  "
-                  :aria-pressed="compareMode === 'source'"
-                  @click="compareMode = 'source'"
-                  >源码</Button
-                >
-              </div>
-              <div class="ml-auto flex items-center gap-0.5">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="h-7 px-2 text-xs"
-                  :class="compareWrap ? 'text-foreground' : 'text-muted-foreground'"
-                  :aria-pressed="compareWrap"
-                  @click="compareWrap = !compareWrap"
-                >
-                  <WrapText />
-                  <span class="hidden sm:inline">自动换行</span>
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="size-8"
-                  aria-label="复制对照原文"
-                  @click="copyCompare"
-                >
-                  <Copy />
-                </Button>
-              </div>
-            </header>
-            <p
-              v-if="compareMessage"
-              role="status"
-              class="text-muted-foreground shrink-0 border-b px-3 py-1 text-[11px]"
-            >
-              {{ compareMessage }}
-            </p>
-            <OcrPageBody
-              v-if="currentRow?.result && currentRow.result.markdown.trim()"
-              :markdown="currentRow.result.markdown"
-              :file-path="selectedPath"
-              :page="currentRow.page"
-              :mode="compareMode"
-              :wrap="compareWrap"
-              :hide-toolbar="true"
-              class="min-h-0 flex-1"
-              content-class="p-4"
-            />
-            <div
-              v-else
-              class="text-muted-foreground flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-4 text-center text-sm"
-            >
-              <FileText class="size-5" />
-              <p class="text-foreground font-medium">
-                {{ currentRow?.result ? '这一页的识别结果是空文本' : '这一页还没有识别文本' }}
+                {{ compareMessage }}
               </p>
-              <p class="text-xs">关掉对照后可以在底部手工录入。</p>
-            </div>
-            <footer
-              data-ocr-pane-footer
-              class="text-muted-foreground flex h-7 shrink-0 items-center border-t px-2.5 text-[11px]"
-            >
-              <span class="truncate">{{ compareMeta || '没有识别结果' }}</span>
-              <span class="ml-auto shrink-0">{{ STATE_WORD[currentState] }}</span>
-            </footer>
+              <TabsContent
+                v-for="mode in ['rendered', 'source'] as const"
+                :key="mode"
+                :value="mode"
+                :tabindex="hasCompareText ? -1 : 0"
+                class="min-h-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+              >
+                <OcrPageBody
+                  v-if="hasCompareText && currentRow?.result"
+                  :markdown="currentRow.result.markdown"
+                  :file-path="selectedPath"
+                  :page="currentRow.page"
+                  :mode="mode"
+                  :wrap="compareWrap"
+                  :hide-toolbar="true"
+                  content-class="p-4"
+                />
+                <div
+                  v-else
+                  class="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-sm"
+                >
+                  <FileText class="size-5" />
+                  <p class="text-foreground font-medium">
+                    {{ currentRow?.result ? '这一页的识别结果是空文本' : '这一页还没有识别文本' }}
+                  </p>
+                  <p class="text-xs">关掉对照后可以在底部手工录入。</p>
+                </div>
+              </TabsContent>
+              <footer
+                data-ocr-pane-footer
+                class="text-muted-foreground flex h-7 shrink-0 items-center border-t px-2.5 text-[11px]"
+              >
+                <span class="truncate">{{ compareMeta || '没有识别结果' }}</span>
+                <span class="ml-auto shrink-0">{{ STATE_WORD[currentState] }}</span>
+              </footer>
+            </Tabs>
           </section>
         </div>
       </DialogContent>

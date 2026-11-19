@@ -34,17 +34,17 @@ const variant = (code: string): BadgeVariants['variant'] => {
         aria-label="查看全部称号年份批次"
         @click.stop="open = true"
       >
-        <Badge :variant="variant(items[0]!.titleCode)" class="inline-flex max-w-full whitespace-nowrap px-1 py-0 text-table leading-[18px] font-normal" data-testid="title-recognition-pair" :data-title-code="items[0]!.titleCode">
+        <Badge :variant="variant(items[0]!.titleCode)" class="inline-flex max-w-full whitespace-nowrap px-1 py-0 text-(length:--text-table) leading-[18px] font-normal" data-testid="title-recognition-pair" :data-title-code="items[0]!.titleCode">
           {{ TITLE_SHORT[items[0]!.titleCode] ?? items[0]!.titleCode }}
           <span class="tabular-nums">{{ batch(items[0]!) }}</span>
         </Badge>
-        <Badge v-if="items.length > 1" variant="quiet" class="py-0 text-table leading-[18px] tabular-nums" data-testid="title-overflow-trigger">+{{ items.length - 1 }}</Badge>
+        <Badge v-if="items.length > 1" variant="quiet" class="py-0 text-(length:--text-table) leading-[18px] tabular-nums" data-testid="title-overflow-trigger">+{{ items.length - 1 }}</Badge>
       </button>
     </HoverCardTrigger>
     <TableHoverCardContent @click.stop>
       <div class="mb-2 text-sm font-medium">称号 · 年份批次</div>
       <div class="flex flex-wrap gap-1.5" data-testid="all-title-awards">
-        <Badge v-for="(item, index) in items" :key="index" :variant="variant(item.titleCode)" class="whitespace-normal text-table font-normal">
+        <Badge v-for="(item, index) in items" :key="index" :variant="variant(item.titleCode)" class="whitespace-normal text-(length:--text-table) leading-5 font-normal">
           {{ TITLES[item.titleCode] ?? item.titleCode }} {{ batch(item) }}
         </Badge>
       </div>
