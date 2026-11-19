@@ -180,7 +180,7 @@ function submit() {
       <DialogFooter>
         <Button variant="ghost" :disabled="pending" @click="open = false">关闭</Button>
         <Button :disabled="!canSubmit || pending" @click="submit">
-          <Loader2 v-if="pending" class="animate-spin" />
+          <Loader2 v-if="pending" class="motion-safe:animate-spin" />
           <Upload v-else />
           {{ pending ? '导入中…' : '导入' }}
         </Button>

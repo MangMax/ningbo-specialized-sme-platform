@@ -4,7 +4,7 @@ useHead({ title: '密钥配置 · 专精特新企业称号台账' })
 </script>
 <template>
   <div class="space-y-5">
-    <PageHeader title="密钥配置" description="管理外部服务凭据" />
+    <PageHeader title="密钥配置" />
     <CredentialSettings />
   </div>
 </template>

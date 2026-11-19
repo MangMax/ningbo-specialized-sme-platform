@@ -83,13 +83,28 @@ async function load() {
   }
 }
 
-const hasFilters = computed(() => [titleRaw.value, enterpriseQuery.value, declareKind.value, yearInput.value, status.value, batch.value, platformKey.value].some(value => value.trim() !== ''))
+const filters = [
+  { field: enterpriseQuery, label: (value: string) => `企业：${value.trim()}` },
+  { field: titleRaw, label: (value: string) => `称号：${titleLabel(value)}` },
+  { field: declareKind, label: (value: string) => `事项：${declareKindLabel(value)}` },
+  { field: yearInput, label: (value: string) => `业务年：${value}` },
+  { field: status, label: (value: string) => `办理状态：${value}` },
+  { field: batch, label: (value: string) => `维护批次：${value}` },
+  { field: platformKey, label: () => '已定位记录' },
+]
+const activeFilters = computed(() => filters
+  .filter(({ field }) => field.value.trim())
+  .map(({ field, label }) => ({ field, label: label(field.value) })))
 
 function loadIfChanged() {
   if (!disposed && JSON.stringify(requestParams()) !== lastRequestKey) void load()
 }
+function clearFilter(field: typeof enterpriseQuery) {
+  field.value = ''
+  search()
+}
 function clearFilters() {
-  for (const field of [titleRaw, enterpriseQuery, declareKind, yearInput, status, batch, platformKey]) field.value = ''
+  for (const { field } of filters) field.value = ''
   lastRequestKey = ''
   search()
 }
@@ -118,37 +133,41 @@ void load()
 
 const total = computed(() => data.value?.total ?? 0)
 const rows = computed(() => data.value?.rows ?? [])
-const emptyTitle = computed(() => view.value === 'records' ? '没有匹配的关联办理记录' : '没有隔离的办理观察')
-const emptyDescription = computed(() => view.value === 'records'
-  ? '未找到符合筛选条件的关联办理记录。'
-  : '缺编号、编号冲突或原文无法核实的办理观察会在此逐条保留，不并入任何业务记录。')
+const resultView = computed(() => data.value?.view ?? 'records')
+const resultUnit = computed(() => resultView.value === 'records' ? '条记录' : '条观察')
+const emptyTitle = computed(() => resultView.value === 'records' ? '没有匹配的关联办理记录' : '没有隔离的办理观察')
+const isolatedDescription = '缺编号、编号冲突或原文无法核实的办理观察会在此逐条保留，不并入任何业务记录。'
 </script>
 
 <template>
   <div class="flex min-w-0 flex-col gap-2 sm:gap-3" :aria-busy="loading">
-    <PageHeader title="关联办理" description="查询企业关联办理记录。" />
+    <PageHeader title="关联办理" />
 
     <div class="flex flex-col gap-2">
       <div class="flex flex-wrap items-center gap-2">
-        <div class="relative w-full min-w-52 flex-1 sm:max-w-[13rem]">
+        <div class="relative w-full min-w-0 sm:w-52">
           <Search class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" aria-hidden="true" />
-          <Input v-model="enterpriseQuery" class="bg-card h-8 pl-8" placeholder="搜索企业名称或信用代码" aria-label="企业名称或信用代码" />
+          <Input v-model="enterpriseQuery" class="bg-card min-h-8 pl-8 pointer-coarse:min-h-11" placeholder="搜索企业名称或信用代码" aria-label="企业名称或信用代码" />
         </div>
-        <RosterPlatformFilterSelect v-model="titleRaw" :options="filterOptions.titles" label="称号" placeholder="全部称号" :disabled="optionsLoading || optionsError" :format-label="titleLabel" class="w-full sm:w-48" />
-        <RosterPlatformFilterSelect v-model="declareKind" :options="filterOptions.declareKinds" label="事项" placeholder="全部事项" :disabled="optionsLoading || optionsError" :format-label="declareKindLabel" class="w-full sm:w-28" />
-        <RosterPlatformFilterSelect v-model="yearInput" :options="filterOptions.years" label="业务年" placeholder="全部业务年" :disabled="optionsLoading || optionsError" class="w-full sm:w-32" />
-        <RosterPlatformFilterSelect v-model="status" :options="filterOptions.statuses" label="办理状态" placeholder="全部状态" :disabled="optionsLoading || optionsError" class="w-full sm:w-32" />
-        <RosterPlatformFilterSelect v-model="batch" :options="filterOptions.batches" label="维护批次" placeholder="全部批次" :disabled="optionsLoading || optionsError" class="w-full sm:w-32" />
         <Select :model-value="view" @update:model-value="view = $event as 'records' | 'isolated'">
-          <SelectTrigger size="sm" class="bg-card w-full sm:w-28" aria-label="关联办理视图"><SelectValue /></SelectTrigger>
+          <SelectTrigger size="sm" class="bg-card w-32 pointer-coarse:min-h-11" aria-label="关联办理视图"><SelectValue>{{ view === 'records' ? '业务记录' : '隔离观察' }}</SelectValue></SelectTrigger>
           <SelectContent>
             <SelectItem value="records">业务记录</SelectItem>
-            <SelectItem value="isolated">缺编号观察</SelectItem>
+            <SelectItem value="isolated">隔离观察</SelectItem>
           </SelectContent>
         </Select>
-        <FilterChip v-if="platformKey" label="已定位记录" @remove="platformKey = ''" />
-        <Button v-if="hasFilters" variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
-        <span class="text-muted-foreground text-table tabular-nums" aria-live="polite">共 {{ total.toLocaleString('zh-CN') }} {{ view === 'records' ? '条记录' : '条观察' }}</span>
+        <div class="grid w-full grid-cols-2 gap-2 empty:hidden sm:contents">
+          <RosterPlatformFilterSelect v-if="filterOptions.titles.length || titleRaw" v-model="titleRaw" :options="filterOptions.titles" label="称号" placeholder="全部称号" :disabled="optionsLoading || optionsError" :format-label="titleLabel" class="w-full pointer-coarse:min-h-11 sm:w-48" />
+          <RosterPlatformFilterSelect v-if="filterOptions.declareKinds.length || declareKind" v-model="declareKind" :options="filterOptions.declareKinds" label="事项" placeholder="全部事项" :disabled="optionsLoading || optionsError" :format-label="declareKindLabel" class="w-full pointer-coarse:min-h-11 sm:w-28" />
+          <RosterPlatformFilterSelect v-if="filterOptions.years.length || yearInput" v-model="yearInput" :options="filterOptions.years" label="业务年" placeholder="全部业务年" :disabled="optionsLoading || optionsError" class="w-full pointer-coarse:min-h-11 sm:w-32" />
+          <RosterPlatformFilterSelect v-if="filterOptions.statuses.length || status" v-model="status" :options="filterOptions.statuses" label="办理状态" placeholder="全部状态" :disabled="optionsLoading || optionsError" class="w-full pointer-coarse:min-h-11 sm:w-32" />
+          <RosterPlatformFilterSelect v-if="filterOptions.batches.length || batch" v-model="batch" :options="filterOptions.batches" label="维护批次" placeholder="全部批次" :disabled="optionsLoading || optionsError" class="w-full pointer-coarse:min-h-11 sm:w-32" />
+        </div>
+        <span v-if="data" class="text-muted-foreground text-table tabular-nums" aria-live="polite">共 {{ total.toLocaleString('zh-CN') }} {{ resultUnit }}</span>
+      </div>
+      <div v-if="activeFilters.length" class="flex flex-wrap items-center gap-2">
+        <FilterChip v-for="filter in activeFilters" :key="filter.label" :label="filter.label" class="h-auto min-h-6 max-w-full shrink wrap-anywhere whitespace-normal" @remove="clearFilter(filter.field)" />
+        <Button variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
       </div>
     </div>
 
@@ -157,24 +176,24 @@ const emptyDescription = computed(() => view.value === 'records'
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
         <TableLoadingStatus kind="ledger" :loading="loading" label="正在加载关联办理…" />
-        <TableFailureState v-if="error" :compact="rows.length > 0" :title="`关联办理第 ${page} 页加载失败`" :description="`${error}${data ? `；保留第 ${data.page} 页结果。` : ''}`" :pending="loading" @retry="load" />
-        <div v-if="loading && !rows.length" class="flex flex-col gap-3 p-3 pt-8" aria-hidden="true">
+        <TableFailureState v-if="error" :compact="Boolean(data)" :title="`关联办理第 ${page} 页加载失败`" :description="`${error}${data ? `；保留第 ${data.page} 页结果（${resultView === 'records' ? '记录' : '隔离观察'}）。` : ''}`" :pending="loading" @retry="load" />
+        <div v-if="loading && !data" class="flex flex-col gap-3 p-3 pt-8" aria-hidden="true">
           <Skeleton class="h-5 w-2/3" />
           <Skeleton class="h-4 w-full" />
           <Skeleton class="h-4 w-3/4" />
         </div>
-        <Empty v-else-if="!error && !rows.length" class="border-0">
+        <Empty v-else-if="data && !rows.length" class="border-0">
           <EmptyHeader>
-            <EmptyMedia variant="icon"><Search /></EmptyMedia>
+            <EmptyMedia variant="icon"><Search aria-hidden="true" /></EmptyMedia>
             <EmptyTitle>{{ emptyTitle }}</EmptyTitle>
-            <EmptyDescription>{{ emptyDescription }}</EmptyDescription>
+            <EmptyDescription v-if="resultView === 'isolated'">{{ isolatedDescription }}</EmptyDescription>
           </EmptyHeader>
         </Empty>
-        <RosterPlatformBusinessProcessTable v-if="rows.length" :view="view" :rows="rows" :loading="loading" @open-record="openRecord" />
+        <RosterPlatformBusinessProcessTable v-if="rows.length" :view="resultView" :rows="rows" :loading="loading" @open-record="openRecord" />
       </CardContent>
     </Card>
 
-    <TablePagination v-if="rows.length" :page="data?.page ?? page" :page-size="data?.pageSize ?? pageSize" :total="total" :loading="loading" :unit="view === 'records' ? '条记录' : '条观察'" @update:page="page = $event" @update:page-size="changeSize" />
+    <TablePagination v-if="rows.length" :page="data?.page ?? page" :page-size="data?.pageSize ?? pageSize" :total="total" :loading="loading || resultView !== view" :unit="resultUnit" @update:page="page = $event" @update:page-size="changeSize" />
 
     <RosterPlatformBusinessProcessDetailDialog v-model:open="detailOpen" :record-id="selectedRecordId" />
   </div>

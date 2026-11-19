@@ -733,6 +733,27 @@ describe('URL 与视图', () => {
 })
 
 describe('草稿保护与动作', () => {
+  it('窄屏从页图进入编辑时聚焦同一文件和页码的文本编辑器', async () => {
+    const matchMedia = window.matchMedia
+    vi.stubGlobal('matchMedia', (media: string) => ({
+      ...matchMedia(media),
+      matches: media === '(max-width: 1023px)',
+    }))
+    const { wrapper, router } = await loadA(4, '甲公司第一页', '甲公司第二页', [2])
+    const query = { file: FILE_A.relPath, page: '2', text: '甲公司第二页' }
+    await router.replace({ query: { ...query, view: 'image' } })
+    const textPane = wrapper.get('[aria-label="当前页识别文本"]')
+    expect(textPane.classes()).toContain('hidden')
+
+    await button(wrapper, '编辑').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query).toEqual(query)
+    expect(textPane.classes()).not.toContain('hidden')
+    const editor = textPane.get('textarea')
+    expect(editor.element.value).toBe('甲公司第二页')
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.element))
+  })
+
   it('未保存草稿阻止换文件、换页、URL 返回和刷新，取消后恢复导航', async () => {
     const { wrapper, router, fetchMock } = await loadA()
     await button(wrapper, '编辑').trigger('click')
@@ -1055,6 +1076,9 @@ describe('文件选择与导入', () => {
   it('非法文件路径不选择也不请求', async () => {
     harness = await mountPage('/ocr?file=../../other.pdf&page=-1')
     expect(harness.wrapper.text()).toContain('选择一份 PDF 开始校对')
+    const selectionButtons = harness.wrapper.findAll('button').filter((item) => item.text().trim() === '选择 PDF')
+    expect(selectionButtons).toHaveLength(1)
+    expect(selectionButtons[0]?.attributes('aria-haspopup')).toBe('dialog')
     expect(
       harness.fetchMock.mock.calls.filter(
         ([url]) => url === '/api/ocr-results' || url === '/api/pdf-pages',
@@ -1078,7 +1102,14 @@ describe('阅读、源码与编辑', () => {
     expect(wrapper.text()).not.toContain('Markdown 文档 · markdown')
     expect(wrapper.text()).not.toContain('原始 file')
 
-    await button(wrapper, '源码').trigger('click')
+    const bodyModes = wrapper.get('[role="tablist"][aria-label="正文显示方式"]')
+    const previewTab = bodyModes.get('[role="tab"][aria-selected="true"]')
+    ;(previewTab.element as HTMLElement).focus()
+    await previewTab.trigger('keydown', { key: 'ArrowRight' })
+    const sourceTab = bodyModes.get('[role="tab"][aria-selected="true"]')
+    expect(sourceTab.text()).toBe('源码')
+    expect(document.activeElement).toBe(sourceTab.element)
+    expect(pageText(wrapper)).toContain('第 1 / 2 页')
     await flushPromises()
     expect(wrapper.get('pre').text()).toContain('<table>')
     expect(wrapper.find('.code-preview').classes()).toContain('wrap-code')
@@ -1421,7 +1452,7 @@ describe("复核回归", () => {
     expect(rows(wrapper)[0]!.get('h1').text()).toBe('原始名单')
     expect(rows(wrapper)[0]!.get('td[rowspan="2"]').text()).toBe('宁波甲公司')
 
-    await button(wrapper, '源码').trigger('click')
+    await button(wrapper, '源码').trigger('mousedown', { button: 0 })
     await flushPromises()
     expect(
       rows(wrapper)[0]!.get('pre').element.textContent!.replace(/\r\n/g, '\n'),
@@ -1434,10 +1465,13 @@ describe("复核回归", () => {
     await flushPromises()
     const dialog = body().get('[data-slot="dialog-content"]')
     expect(dialog.get('td[rowspan="2"]').text()).toBe('宁波甲公司')
-    await dialog
-      .findAll('button')
-      .find((item) => item.text().trim() === '源码')!
-      .trigger('click')
+    const compareModes = dialog.get('[role="tablist"][aria-label="对照正文显示方式"]')
+    const previewTab = compareModes.get('[role="tab"][aria-selected="true"]')
+    ;(previewTab.element as HTMLElement).focus()
+    await previewTab.trigger('keydown', { key: 'ArrowRight' })
+    const sourceTab = compareModes.get('[role="tab"][aria-selected="true"]')
+    expect(sourceTab.text()).toBe('源码')
+    expect(document.activeElement).toBe(sourceTab.element)
     await flushPromises()
     expect(
       dialog.get('pre').element.textContent!.replace(/\r\n/g, '\n'),
@@ -1489,7 +1523,10 @@ describe("复核回归", () => {
         rows(wrapper)[0]!.get('[data-theme]').attributes('data-theme'),
       ).toBe(themeBefore === 'dark' ? 'light' : 'dark')
 
-      await button(wrapper, '源码').trigger('click')
+      await button(wrapper, '源码').trigger('mousedown', { button: 0 })
+      expect(
+        rows(wrapper)[0]!.get('[role="tab"][aria-selected="true"]').text(),
+      ).toBe('源码')
       await wrapper.get('button[aria-label="复制原文"]').trigger('click')
       await flushPromises()
       expect(wrapper.text()).toContain('已复制原文')
@@ -1609,7 +1646,9 @@ describe("复核回归", () => {
     const { wrapper } = await loadA()
     await button(wrapper, '编辑').trigger('click')
     await flushPromises()
-    await wrapper.get('textarea').setValue('未保存修订')
+    const editor = wrapper.get('textarea')
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.element))
+    await editor.setValue('未保存修订')
     const sheet = await openFileSheet(wrapper)
     expect(sheet.text()).toContain('有未保存的草稿')
     const row = sheet
@@ -1621,6 +1660,13 @@ describe("复核回归", () => {
     expect(document.querySelector('[data-slot="sheet-content"]')).not.toBeNull()
     expect(wrapper.get('textarea').element).toHaveProperty('value', '未保存修订')
     expect(pageText(wrapper)).toContain('A-慢.pdf')
+
+    await sheet.get('[data-slot="sheet-content"]').trigger('keydown', { key: 'Escape' })
+    await vi.waitFor(() => {
+      expect(sheet.find('[data-slot="sheet-content"]').exists()).toBe(false)
+      expect(document.activeElement).toBe(wrapper.get('button[aria-label="选择 PDF 文件"]').element)
+    })
+    expect(wrapper.get('textarea').element).toHaveProperty('value', '未保存修订')
   })
 })
 

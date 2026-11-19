@@ -4,9 +4,10 @@ import { Motion, useReducedMotion } from 'motion-v'
 import { Button } from '#core/app/components/ui/button'
 import { Input } from '#core/app/components/ui/input'
 import { Label } from '#core/app/components/ui/label'
+import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import LoadingIndicator from './LoadingIndicator.vue'
 import type { CredentialOperation, CredentialStatus } from '#core/app/composables/useCredentialSettings'
-defineProps<{ id: string; label: string; status: CredentialStatus; raw: string; replacement?: string; busy: boolean; operation?: CredentialOperation; description: string; sensitive: boolean }>()
+defineProps<{ id: string; label: string; status: CredentialStatus; raw: string; replacement?: string; busy: boolean; operation?: CredentialOperation; description: string; environment?: readonly string[]; sensitive: boolean }>()
 defineEmits<{ 'update:replacement': [value: string | number]; save: []; clear: []; reveal: [copy: boolean] }>()
 const reducedMotion = useReducedMotion()
 </script>
@@ -43,5 +44,12 @@ const reducedMotion = useReducedMotion()
         <Button type="button" variant="outline" :data-testid="`clear-${id}`" :aria-busy="operation === 'clear'" :disabled="busy || !status.hasSaved" @click="$emit('clear')"><LoadingIndicator :active="operation === 'clear'" />清除页面保存值</Button>
       </div>
     </form>
+    <DisclosurePanel v-if="environment?.length" compact title="凭据取值顺序" class="border-t pt-2">
+      <ol class="text-muted-foreground list-decimal space-y-1 pl-5 text-sm">
+        <li>调用时显式指定的值</li>
+        <li>页面保存值</li>
+        <li v-for="name in environment" :key="name"><code class="wrap-anywhere">{{ name }}</code></li>
+      </ol>
+    </DisclosurePanel>
   </section>
 </template>

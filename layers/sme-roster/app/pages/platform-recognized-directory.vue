@@ -80,13 +80,27 @@ async function load() {
   }
 }
 
-const hasFilters = computed(() => [titleRaw.value, enterpriseQuery.value, validityDateInput.value, maintenanceBatch.value, district.value, platformKey.value].some(value => value.trim() !== ''))
+const filters = [
+  { field: enterpriseQuery, label: (value: string) => `企业：${value.trim()}` },
+  { field: titleRaw, label: (value: string) => `称号：${titleLabel(value)}` },
+  { field: validityDateInput, label: (value: string) => `有效期：${value}` },
+  { field: maintenanceBatch, label: (value: string) => `维护批次：${value}` },
+  { field: district, label: (value: string) => `属地：${value}` },
+  { field: platformKey, label: () => '已定位记录' },
+]
+const activeFilters = computed(() => filters
+  .filter(({ field }) => field.value.trim())
+  .map(({ field, label }) => ({ field, label: label(field.value) })))
 
 function loadIfChanged() {
   if (!disposed && JSON.stringify(requestParams()) !== lastRequestKey) void load()
 }
+function clearFilter(field: typeof enterpriseQuery) {
+  field.value = ''
+  search()
+}
 function clearFilters() {
-  for (const field of [titleRaw, enterpriseQuery, validityDateInput, maintenanceBatch, district, platformKey]) field.value = ''
+  for (const { field } of filters) field.value = ''
   lastRequestKey = ''
   search()
 }
@@ -123,7 +137,9 @@ void load()
 
 const total = computed(() => data.value?.total ?? 0)
 const rows = computed(() => data.value?.rows ?? [])
-const emptyTitle = computed(() => view.value === 'records' ? '没有匹配的目录记录' : '没有隔离的目录观察')
+const resultView = computed(() => data.value?.view ?? 'records')
+const resultUnit = computed(() => resultView.value === 'records' ? '条记录' : '条观察')
+const emptyTitle = computed(() => resultView.value === 'records' ? '没有匹配的目录记录' : '没有隔离的目录观察')
 </script>
 
 <template>
@@ -134,24 +150,28 @@ const emptyTitle = computed(() => view.value === 'records' ? '没有匹配的目
 
     <div class="flex flex-col gap-2">
       <div class="flex flex-wrap items-center gap-2">
-        <div class="relative w-full min-w-52 flex-1 sm:max-w-[13rem]">
+        <div class="relative w-full min-w-0 sm:w-52">
           <Search class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" aria-hidden="true" />
-          <Input v-model="enterpriseQuery" class="bg-card h-8 pl-8" placeholder="搜索企业名称或信用代码" aria-label="企业名称或信用代码" />
+          <Input v-model="enterpriseQuery" class="bg-card min-h-8 pl-8 pointer-coarse:min-h-11" placeholder="搜索企业名称或信用代码" aria-label="企业名称或信用代码" />
         </div>
-        <RosterPlatformFilterSelect v-model="titleRaw" :options="filterOptions.titles" label="称号" placeholder="全部称号" :disabled="optionsLoading || optionsError" :format-label="titleLabel" class="w-full sm:w-48" />
-        <RosterPlatformFilterSelect v-model="validityDateInput" :options="filterOptions.validityDates" label="有效期" placeholder="全部有效期" :disabled="optionsLoading || optionsError" class="w-full sm:w-48" />
-        <RosterPlatformFilterSelect v-model="maintenanceBatch" :options="filterOptions.batches" label="维护批次" placeholder="全部批次" :disabled="optionsLoading || optionsError" class="w-full sm:w-32" />
-        <RosterPlatformFilterSelect v-model="district" :options="filterOptions.districts" label="属地" placeholder="全部属地" :disabled="optionsLoading || optionsError" class="w-full sm:w-36" />
         <Select :model-value="view" @update:model-value="changeView($event as 'records' | 'isolated')">
-          <SelectTrigger size="sm" class="bg-card w-full sm:w-28" aria-label="目录视图"><SelectValue /></SelectTrigger>
+          <SelectTrigger size="sm" class="bg-card w-32 pointer-coarse:min-h-11" aria-label="目录视图"><SelectValue>{{ view === 'records' ? '目录记录' : '隔离观察' }}</SelectValue></SelectTrigger>
           <SelectContent>
             <SelectItem value="records">目录记录</SelectItem>
             <SelectItem value="isolated">隔离观察</SelectItem>
           </SelectContent>
         </Select>
-        <FilterChip v-if="platformKey" label="已定位记录" @remove="platformKey = ''" />
-        <Button v-if="hasFilters" variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
-        <span class="text-muted-foreground text-table tabular-nums" aria-live="polite">共 {{ total.toLocaleString('zh-CN') }} {{ view === 'records' ? '条记录' : '条观察' }}</span>
+        <div class="grid w-full grid-cols-2 gap-2 empty:hidden sm:contents">
+          <RosterPlatformFilterSelect v-if="filterOptions.titles.length || titleRaw" v-model="titleRaw" :options="filterOptions.titles" label="称号" placeholder="全部称号" :disabled="optionsLoading || optionsError" :format-label="titleLabel" class="w-full pointer-coarse:min-h-11 sm:w-48" />
+          <RosterPlatformFilterSelect v-if="filterOptions.validityDates.length || validityDateInput" v-model="validityDateInput" :options="filterOptions.validityDates" label="有效期" placeholder="全部有效期" :disabled="optionsLoading || optionsError" class="w-full pointer-coarse:min-h-11 sm:w-48" />
+          <RosterPlatformFilterSelect v-if="filterOptions.batches.length || maintenanceBatch" v-model="maintenanceBatch" :options="filterOptions.batches" label="维护批次" placeholder="全部批次" :disabled="optionsLoading || optionsError" class="w-full pointer-coarse:min-h-11 sm:w-32" />
+          <RosterPlatformFilterSelect v-if="filterOptions.districts.length || district" v-model="district" :options="filterOptions.districts" label="属地" placeholder="全部属地" :disabled="optionsLoading || optionsError" class="w-full pointer-coarse:min-h-11 sm:w-36" />
+        </div>
+        <span v-if="data" class="text-muted-foreground text-table tabular-nums" aria-live="polite">共 {{ total.toLocaleString('zh-CN') }} {{ resultUnit }}</span>
+      </div>
+      <div v-if="activeFilters.length" class="flex flex-wrap items-center gap-2">
+        <FilterChip v-for="filter in activeFilters" :key="filter.label" :label="filter.label" class="h-auto min-h-6 max-w-full shrink wrap-anywhere whitespace-normal" @remove="clearFilter(filter.field)" />
+        <Button variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
       </div>
     </div>
 
@@ -160,23 +180,23 @@ const emptyTitle = computed(() => view.value === 'records' ? '没有匹配的目
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
         <TableLoadingStatus kind="ledger" :loading="loading" label="正在加载平台认定目录…" />
-        <TableFailureState v-if="error" :compact="rows.length > 0" :title="`平台认定目录第 ${page} 页加载失败`" :description="`${error}${data ? `；保留第 ${data.page} 页结果。` : ''}`" :pending="loading" @retry="load" />
-        <div v-if="loading && !rows.length" class="flex flex-col gap-3 p-3 pt-8" aria-hidden="true">
+        <TableFailureState v-if="error" :compact="Boolean(data)" :title="`平台认定目录第 ${page} 页加载失败`" :description="`${error}${data ? `；保留第 ${data.page} 页结果（${resultView === 'records' ? '记录' : '隔离观察'}）。` : ''}`" :pending="loading" @retry="load" />
+        <div v-if="loading && !data" class="flex flex-col gap-3 p-3 pt-8" aria-hidden="true">
           <Skeleton class="h-5 w-2/3" />
           <Skeleton class="h-4 w-full" />
           <Skeleton class="h-4 w-3/4" />
         </div>
-        <Empty v-else-if="!error && !rows.length" class="border-0">
+        <Empty v-else-if="data && !rows.length" class="border-0">
           <EmptyHeader>
-            <EmptyMedia variant="icon"><Search /></EmptyMedia>
+            <EmptyMedia variant="icon"><Search aria-hidden="true" /></EmptyMedia>
             <EmptyTitle>{{ emptyTitle }}</EmptyTitle>
           </EmptyHeader>
         </Empty>
-        <RosterPlatformRecognizedDirectoryTable v-if="rows.length" :view="view" :rows="rows" :loading="loading" @open-record="openRecord" />
+        <RosterPlatformRecognizedDirectoryTable v-if="rows.length" :view="resultView" :rows="rows" :loading="loading" @open-record="openRecord" />
       </CardContent>
     </Card>
 
-    <TablePagination v-if="rows.length" :page="data?.page ?? page" :page-size="data?.pageSize ?? pageSize" :total="total" :loading="loading" :unit="view === 'records' ? '条记录' : '条观察'" @update:page="page = $event" @update:page-size="changeSize" />
+    <TablePagination v-if="rows.length" :page="data?.page ?? page" :page-size="data?.pageSize ?? pageSize" :total="total" :loading="loading || resultView !== view" :unit="resultUnit" @update:page="page = $event" @update:page-size="changeSize" />
 
     <RosterPlatformRecognizedDirectoryDetailDialog v-model:open="detailOpen" :record-id="selectedRecordId" />
   </div>

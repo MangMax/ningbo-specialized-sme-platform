@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { useQuery } from '@pinia/colada'
 import { computed } from 'vue'
-import { orderBy, sumBy } from 'es-toolkit'
+import { orderBy } from 'es-toolkit'
+import { Button } from '#core/app/components/ui/button'
+import TableFailureState from '#core/app/components/TableFailureState.vue'
+import TableLoadingStatus from '#core/app/components/TableLoadingStatus.vue'
 import { Card, CardContent, CardHeader, CardTitle } from '#core/app/components/ui/card'
 import {
   Empty,
-  EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
@@ -36,73 +38,57 @@ interface QualityGroup {
 
 const apiGet = $fetch as unknown as <T>(
   url: string,
-  opts?: { query?: Record<string, unknown> },
+  opts?: { retry?: number },
 ) => Promise<T>
 
-const { data, isLoading } = useQuery({
+const { data, error, isLoading, refetch } = useQuery({
   key: () => ['quality'],
-  query: () => apiGet<QualityGroup[]>('/api/quality'),
+  query: () => apiGet<QualityGroup[]>('/api/quality', { retry: 0 }),
 })
 
-/** 条数多的排前面:先看影响面最大的那一类。 */
-const groups = computed<QualityGroup[]>(() => orderBy(data.value ?? [], [(g) => g.n], ['desc']))
-const totalFlagged = computed(() => sumBy(groups.value, (g) => g.n))
+const categoryLabels: Record<string, string> = {
+  uscc_missing: '缺少统一社会信用代码',
+  name_ambiguous: '同名企业',
+  district_off_city: '属地不在宁波',
+}
+const groups = computed(() => orderBy((data.value ?? []).filter(group => group.n > 0), [group => group.n], ['desc']))
 
 const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-10 h-9 text-xs font-medium'
 </script>
 
 <template>
   <div class="flex flex-col gap-5" :aria-busy="isLoading">
-    <PageHeader title="数据质量">
-      <template #description>
-        导入时自动判定的待核对项,共
-        <span class="text-foreground font-medium tabular-nums">{{ totalFlagged }}</span> 家,
-        供人工复核。
-      </template>
-    </PageHeader>
+    <PageHeader title="数据质量" />
 
-    <div class="relative h-6 shrink-0" aria-live="polite" data-testid="quality-loading-status">
-      <template v-if="isLoading">
-        <span class="text-muted-foreground absolute top-0.5 left-0 text-table">正在加载质量清单…</span>
-        <span class="bg-muted absolute inset-x-0 bottom-0 block h-0.5 rounded-full">
-          <span class="bg-primary block h-0.5 w-1/3 rounded-full" />
-        </span>
-      </template>
+    <div v-if="isLoading || error" class="relative">
+      <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在加载质量清单…" />
+      <TableFailureState
+        v-if="error"
+        title="质量清单加载失败"
+        :compact="Boolean(data)"
+        :description="data ? '显示上次加载的质量清单。' : '暂时无法确认是否有待核对项。'"
+        :pending="isLoading"
+        @retry="refetch()"
+      />
     </div>
 
-    <!-- 索引:点一条跳到下面的清单。清单本身重复一遍数字,这里只做导航。 -->
-    <div
-      v-if="groups.length"
-      class="bg-card flex flex-wrap items-center gap-1.5 rounded-lg border p-2"
-    >
-      <a
-        v-for="g in groups"
-        :key="g.kind"
-        :href="`#q-${g.kind}`"
-        class="hover:bg-accent focus-visible:ring-ring flex items-center gap-2 rounded-sm px-2 py-1 text-xs transition-colors focus-visible:ring-3 focus-visible:outline-none"
-      >
-        <span class="text-foreground">{{ g.label }}</span>
-        <span
-          class="text-xs font-medium tabular-nums"
-          :class="g.n > 0 ? 'text-primary' : 'text-muted-foreground'"
-        >
-          {{ g.n.toLocaleString('zh-CN') }}
-        </span>
-      </a>
-    </div>
+    <nav v-if="groups.length > 1" aria-label="待核对类别" class="flex flex-wrap gap-2">
+      <Button v-for="group in groups" :key="group.kind" as-child variant="outline" size="sm">
+        <a :href="`#q-${group.kind}`">{{ categoryLabels[group.kind] ?? group.label }}</a>
+      </Button>
+    </nav>
 
-    <Card v-if="isLoading && !groups.length" class="gap-0 py-0">
+    <Card v-if="isLoading && !data" class="gap-0 py-0">
       <CardContent class="flex flex-col gap-3 p-5">
         <Skeleton class="h-5 w-48" />
         <Skeleton class="h-40 w-full" />
       </CardContent>
     </Card>
 
-    <Empty v-else-if="!groups.length">
+    <Empty v-else-if="data && !groups.length">
       <EmptyHeader>
         <EmptyMedia variant="icon"><CheckCircle2 /></EmptyMedia>
         <EmptyTitle>没有待核对项</EmptyTitle>
-        <EmptyDescription>本次导入没有自动判定出需要人工复核的问题。</EmptyDescription>
       </EmptyHeader>
     </Empty>
 
@@ -114,25 +100,21 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-10 h-9 text-xs f
     >
       <CardHeader class="gap-1 border-b px-5 py-4">
         <div class="flex items-baseline justify-between gap-3">
-          <CardTitle class="text-base font-medium">{{ g.label }}</CardTitle>
-          <span
-            class="text-sm font-medium tabular-nums"
-            :class="g.n > 0 ? 'text-primary' : 'text-muted-foreground'"
-          >
+          <CardTitle class="text-base font-medium">{{ categoryLabels[g.kind] ?? g.label }}</CardTitle>
+          <span class="text-primary shrink-0 text-sm font-medium whitespace-nowrap tabular-nums">
             {{ g.n.toLocaleString('zh-CN') }} 家
           </span>
         </div>
-        <!-- 只在样本被截断时说一次;没截断的类目不必写这句。 -->
-        <p v-if="g.samples.length < g.n" class="text-muted-foreground text-xs">
-          下面是前 {{ g.samples.length }} 家样本。
+        <p v-if="g.samples.length < g.n" class="text-muted-foreground text-sm">
+          显示前 {{ g.samples.length }} 家
         </p>
       </CardHeader>
       <CardContent class="p-0">
-        <Table>
+        <Table class="data-table">
           <TableHeader>
             <TableRow class="hover:bg-transparent">
               <TableHead :class="TH_CLASS">企业名称</TableHead>
-              <TableHead :class="[TH_CLASS, 'w-40']">统一社会信用代码</TableHead>
+              <TableHead :class="[TH_CLASS, 'hidden w-40 sm:table-cell']">统一社会信用代码</TableHead>
               <TableHead :class="[TH_CLASS, 'w-20']">区县</TableHead>
             </TableRow>
           </TableHeader>
@@ -140,18 +122,20 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-10 h-9 text-xs f
             <TableRow
               v-for="s in g.samples"
               :key="s.enterpriseId"
-              class="hover:bg-accent/70 cursor-pointer"
             >
-              <TableCell class="max-w-0 truncate">
+              <TableCell class="min-w-0 whitespace-normal">
                 <NuxtLink
                   :to="`/enterprises/${s.enterpriseId}`"
-                  class="hover:text-primary font-medium hover:underline"
+                  class="hover:text-primary font-medium break-words hover:underline"
                 >
                   {{ s.name }}
                 </NuxtLink>
+                <span v-if="s.uscc" class="text-muted-foreground block font-mono text-xs wrap-anywhere sm:hidden">
+                  {{ s.uscc }}
+                </span>
               </TableCell>
               <TableCell
-                class="font-mono text-xs"
+                class="hidden font-mono text-xs sm:table-cell"
                 :class="s.uscc ? 'text-muted-foreground' : 'text-destructive'"
               >
                 {{ s.uscc ?? '缺失' }}
@@ -160,7 +144,7 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-10 h-9 text-xs f
             </TableRow>
             <TableRow v-if="g.samples.length === 0" class="hover:bg-transparent">
               <TableCell :colspan="3" class="text-muted-foreground py-8 text-center text-xs">
-                这一类名下没有样本企业。
+                暂无企业样本
               </TableCell>
             </TableRow>
           </TableBody>

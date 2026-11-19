@@ -10,6 +10,8 @@ const modules = getAppModules()
   .filter(module => module.id !== 'core')
   .map(({ dashboard, ...module }) => ({
     ...module,
+    homeTitle: module.nav?.flatMap(item => item.items ?? [item])
+      .find(item => item.url === module.home)?.title ?? module.name,
     cards: dashboard?.map(({ id, title }) => ({
       id,
       title,
@@ -35,9 +37,9 @@ useHead({ title: '平台工作台' })
           <h2 :id="`module-${module.id}`" class="text-base font-semibold">{{ module.name }}</h2>
           <p v-if="module.description" class="text-muted-foreground text-sm">{{ module.description }}</p>
         </div>
-        <Button v-if="module.home" as-child variant="outline" size="sm">
-          <NuxtLink :to="module.home" :aria-label="`进入${module.name}`">
-            进入模块 <ArrowRight aria-hidden="true" />
+        <Button v-if="module.home" as-child size="sm">
+          <NuxtLink :to="module.home">
+            {{ module.homeTitle }} <ArrowRight aria-hidden="true" />
           </NuxtLink>
         </Button>
       </div>

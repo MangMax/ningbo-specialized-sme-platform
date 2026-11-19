@@ -96,8 +96,8 @@ describe('申报记录页面', () => {
     const view = mountPage()
     try {
       await flushPromises()
-      expect(view.text()).toContain('没有匹配的申报记录')
-      expect(view.text()).toContain('未找到符合筛选条件的申报记录。')
+      expect(view.get('[data-slot="empty-title"]').text()).toBe('没有匹配的申报记录')
+      expect(view.text()).toContain('共 0 条记录')
     } finally { view.unmount() }
   })
 

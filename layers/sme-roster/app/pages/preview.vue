@@ -2,81 +2,70 @@
 import { computed } from 'vue'
 import { ROSTER_LEDGER_PATH } from '#sme-roster/lib/sme-roster/routes'
 import { ENTERPRISE_LIST_TITLE } from '#sme-roster/lib/labels'
-import { ChevronLeft, FileDown } from '@lucide/vue'
+import { FileDown } from '@lucide/vue'
 import { describeUnsupported, fileNameOf, fileUrl, isPreviewable, resolvePreviewKind } from '#core/lib/preview'
-import {
-  EVIDENCE_PAGE_WORDS,
-  evidencePageState,
-  isPageCapable,
-} from '#sme-roster/lib/roster/evidence-page'
+import { isPageCapable } from '#sme-roster/lib/roster/evidence-page'
 import FilePreview from '#core/app/components/preview/FilePreview.vue'
 import { useSourcePdfRoute } from '#core/app/composables/useSourcePdfRoute'
 import SourcePdfPreview from '#core/app/components/preview/SourcePdfPreview.vue'
 import { Alert, AlertDescription, AlertTitle } from '#core/app/components/ui/alert'
-import { Badge } from '#core/app/components/ui/badge'
+import { Button } from '#core/app/components/ui/button'
+import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '#core/app/components/ui/breadcrumb'
 
 const route = useRoute()
 const { parsed, sourcePage, target, invalid, visible, changeView } = useSourcePdfRoute()
 const file = computed(() => parsed.value.file)
-const page = sourcePage
 const backTo = computed(() => parsed.value.back || ROSTER_LEDGER_PATH)
 const backLabel = computed(() => {
   const path = new URL(backTo.value, 'http://app.invalid').pathname
-  if (/^\/enterprises\/\d+\/?$/.test(path)) return '返回企业详情'
-  const names: Record<string, string> = { '/': '平台工作台', '/files': '文件库', [ROSTER_LEDGER_PATH]: ENTERPRISE_LIST_TITLE, '/quality': '质量检查', '/stats': '统计分析', '/comparison': '企业对比', '/ocr': 'OCR 工作台', '/platform-queries': '平台查询' }
-  return `返回${names[path] ?? ` ${path}`}`
+  if (/^\/enterprises\/\d+\/?$/.test(path)) return '企业详情'
+  const names: Record<string, string> = {
+    '/': '平台工作台',
+    '/files': '文件管理',
+    [ROSTER_LEDGER_PATH]: ENTERPRISE_LIST_TITLE,
+    '/quality': '数据质量',
+    '/stats': '称号统计',
+    '/comparison': ENTERPRISE_LIST_TITLE,
+    '/ocr': '识别校对',
+    '/platform-queries': '平台查询证据',
+  }
+  return names[path] ?? '上一页'
 })
 const name = computed(() => file.value ? fileNameOf(file.value) : '')
 const text = computed(() => ['markdown', 'text'].includes(resolvePreviewKind(file.value)?.kind ?? ''))
 const pdf = computed(() => isPageCapable(file.value))
 const previewable = computed(() => file.value ? isPreviewable(file.value) : false)
-const pageState = computed(() => evidencePageState(file.value, page.value))
 
 useHead({ title: computed(() => (name.value ? `${name.value} · 来源预览` : '来源预览')) })
 </script>
 
 <template>
   <div class="flex min-w-0 flex-col gap-4">
-    <PageHeader class="rise-in" :title="file ? name : '来源预览'">
+    <PageHeader class="rise-in [&_h1]:wrap-anywhere" :title="file ? name : '来源预览'">
       <template #breadcrumb>
-        <NuxtLink :to="backTo" class="hover:text-foreground hover:underline">名录台账</NuxtLink>
-        <span class="mx-1.5">/</span><span>来源预览</span>
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink as-child><NuxtLink :to="backTo">{{ backLabel }}</NuxtLink></BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem><BreadcrumbPage>来源预览</BreadcrumbPage></BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
       </template>
-      <template v-if="!text || file !== name" #description>
-        <span class="inline-block font-mono break-all">{{ file || '(缺 file 参数)' }}</span>
+      <template v-if="file && file !== name" #description>
+        <span class="inline-block font-mono wrap-anywhere">{{ file }}</span>
       </template>
-      <template #actions>
-        <div class="flex items-center gap-3">
-          <!-- 页码三态就在这儿说清楚:有页码 / 待核 / 这类文件本来就没有页。 -->
-          <Badge v-if="!pdf && pageState === 'assigned'" variant="secondary" class="tabular-nums">
-            来源第 {{ page }} 页
-          </Badge>
-          <span v-else-if="!pdf && pageState === 'pending'" class="text-muted-foreground text-xs">
-            {{ EVIDENCE_PAGE_WORDS.pending }}
-          </span>
-          <a
-            v-if="file && previewable && !text"
-            :href="fileUrl(file)"
-            class="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs"
-            target="_blank"
-            rel="noopener"
-            download
-          >
-            <FileDown class="size-3.5" />下载原文
-          </a>
-          <NuxtLink
-            :to="backTo"
-            class="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs"
-          >
-            <ChevronLeft class="size-3.5" />{{ backLabel }}
-          </NuxtLink>
-        </div>
+      <template v-if="file && previewable && !text" #actions>
+        <Button as-child variant="outline" size="sm">
+          <a :href="fileUrl(file)" download><FileDown aria-hidden="true" />下载原文</a>
+        </Button>
       </template>
     </PageHeader>
 
     <Alert v-if="!file">
-      <AlertTitle>缺少 file 参数</AlertTitle>
-      <AlertDescription>请给来源文件路径,例如 /preview?file=…&amp;page=8。</AlertDescription>
+      <AlertTitle>未选择来源文件</AlertTitle>
+      <AlertDescription>请从{{ backLabel === '上一页' ? '原页面' : backLabel }}重新打开文件。</AlertDescription>
     </Alert>
 
     <Alert v-else-if="!previewable">

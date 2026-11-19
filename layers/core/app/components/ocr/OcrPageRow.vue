@@ -37,6 +37,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '#core/app/components/ui/dropdown-menu'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 import { Textarea } from '#core/app/components/ui/textarea'
 import type { WorkbenchRow } from '#core/lib/ocr-workbench'
 import { pageReviewState, STATE_WORD } from '#core/lib/ocr-workbench'
@@ -517,203 +518,190 @@ onBeforeUnmount(() => {
         class="bg-card ocr-text-pane flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border"
         :class="view === 'image' ? 'hidden lg:flex' : 'flex'"
       >
-        <header
-          data-ocr-pane-header
-          class="flex h-10 shrink-0 items-center gap-1.5 border-b px-2"
+        <Tabs
+          :model-value="hasText ? sourceMode : 'rendered'"
+          class="min-h-0 flex-1 gap-0"
+          @update:model-value="sourceMode = $event === 'source' ? 'source' : 'rendered'"
         >
-          <template v-if="editing">
-            <span class="text-xs font-medium">原始 Markdown</span>
-            <Badge v-if="dirty" variant="dashed" class="shrink-0">未保存</Badge>
-          </template>
-          <template v-else>
-            <div
-              class="bg-muted flex shrink-0 items-center gap-0.5 rounded-md p-0.5"
-              role="group"
-              aria-label="正文显示方式"
-            >
-              <Button
-                variant="ghost"
-                size="sm"
-                class="h-7 px-2 text-xs"
-                :class="
-                  sourceMode === 'rendered'
-                    ? 'bg-background text-foreground shadow-sm hover:bg-background'
-                    : 'text-muted-foreground'
-                "
-                :aria-pressed="sourceMode === 'rendered'"
-                @click="sourceMode = 'rendered'"
-                >预览</Button
-              >
-              <Button
-                variant="ghost"
-                size="sm"
-                class="h-7 px-2 text-xs"
-                :class="
-                  sourceMode === 'source'
-                    ? 'bg-background text-foreground shadow-sm hover:bg-background'
-                    : 'text-muted-foreground'
-                "
-                :aria-pressed="sourceMode === 'source'"
-                :disabled="!hasText"
-                @click="sourceMode = 'source'"
-                >源码</Button
-              >
-            </div>
-            <div class="ml-auto flex min-w-0 items-center gap-0.5">
-              <Button
-                variant="ghost"
-                size="sm"
-                class="h-7 px-2 text-xs"
-                :class="wrap ? 'text-foreground' : 'text-muted-foreground'"
-                :aria-pressed="wrap"
-                title="自动换行"
-                @click="wrap = !wrap"
-              >
-                <WrapText />
-                <span class="hidden sm:inline">自动换行</span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                class="size-8"
-                aria-label="复制原文"
-                title="复制原文"
-                :disabled="!hasText"
-                @click="copyText"
-              >
-                <Copy />
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger as-child>
-                  <Button
-                    ref="overflowTrigger"
-                    variant="ghost"
-                    size="icon"
-                    class="size-8"
-                    aria-label="本页更多操作"
-                  >
-                    <MoreHorizontal />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="end"
-                  @close-auto-focus="preventMenuAutoFocus"
-                >
-                  <DropdownMenuItem :disabled="!hasText" @select="download">
-                    <Download />
-                    下载原文
-                  </DropdownMenuItem>
-                  <template v-if="result">
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      variant="destructive"
-                      :disabled="pending || disabled"
-                      @select="askDelete"
-                    >
-                      <Trash2 />
-                      删除本页结果…
-                    </DropdownMenuItem>
-                  </template>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </template>
-        </header>
-        <p v-if="result" role="status" class="shrink-0 border-b px-3 py-2 text-sm break-words">{{ historicalContentMessage(result.historicalBinding) }}</p>
-
-        <p
-          v-if="copyMessage"
-          role="status"
-          class="text-muted-foreground shrink-0 border-b px-3 py-1 text-[11px]"
-        >
-          {{ copyMessage }}
-        </p>
-
-        <Alert v-if="failure" variant="destructive" class="rounded-none border-x-0 border-t-0">
-          <AlertDescription class="text-destructive! flex flex-wrap items-center gap-2 font-medium">
-            <span>{{ failure }}</span>
-            <Button variant="outline" size="sm" @click="retryFailure">
-              {{ failureRetryLabel() }}</Button
-            >
-          </AlertDescription>
-        </Alert>
-
-        <div
-          ref="textPaneBody"
-          :key="`${filePath}:${row.page}:text`"
-          class="min-h-0 flex-1 overflow-hidden"
-        >
-          <Textarea
-            v-if="editing"
-            ref="editor"
-            :model-value="draft"
-            :readonly="pending"
-            :aria-label="`${pageLabel(row.page)}的 OCR 文本`"
-            spellcheck="false"
-            class="h-full min-h-0 w-full resize-none rounded-none border-0 bg-transparent p-4 font-mono text-[length:var(--ocr-code-size)] leading-relaxed shadow-none transition-none focus-visible:ring-0 motion-reduce:transition-none"
-            placeholder="这一页的识别文本（原始 Markdown）。空白页留空即可——空结果也会占住页号。"
-            @update:model-value="emit('update:draft', $event)"
-            @select="rememberCaret"
-            @keyup="rememberCaret"
-            @click="rememberCaret"
-            @blur="rememberCaret"
-          />
-          <OcrPageBody
-            v-else-if="hasText"
-            :markdown="markdown"
-            :file-path="filePath"
-            :page="row.page"
-            :mode="sourceMode"
-            :wrap="wrap"
-            :hide-toolbar="true"
-            content-class="p-4 lg:p-5"
-          />
-          <div
-            v-else
-            class="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-sm leading-relaxed"
+          <header
+            data-ocr-pane-header
+            class="flex h-10 shrink-0 items-center gap-1.5 border-b px-2"
           >
-            <FileText class="size-5" />
-            <p class="text-foreground font-medium">
-              {{ result ? STATE_WORD[state] : '这一页还没有识别文本' }}
-            </p>
-            <p class="text-table leading-relaxed">
-              {{
-                result
-                  ? '这一页的正文为空（已保存为空结果）。可以编辑、手工补录，或继续翻页。'
-                  : '可以用底部的「手工录入」贴入这一页的文本，或继续翻页。'
-              }}
-            </p>
+            <template v-if="editing">
+              <span class="text-xs font-medium">原始 Markdown</span>
+              <Badge v-if="dirty" variant="dashed" class="shrink-0">未保存</Badge>
+            </template>
+            <template v-else>
+              <TabsList class="h-8 shrink-0" aria-label="正文显示方式">
+                <TabsTrigger value="rendered" class="text-xs">预览</TabsTrigger>
+                <TabsTrigger value="source" class="text-xs" :disabled="!hasText">源码</TabsTrigger>
+              </TabsList>
+              <div class="ml-auto flex min-w-0 items-center gap-0.5">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="h-7 px-2 text-xs"
+                  :class="wrap ? 'text-foreground' : 'text-muted-foreground'"
+                  :aria-pressed="wrap"
+                  title="自动换行"
+                  @click="wrap = !wrap"
+                >
+                  <WrapText />
+                  <span class="hidden sm:inline">自动换行</span>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="size-8"
+                  aria-label="复制原文"
+                  title="复制原文"
+                  :disabled="!hasText"
+                  @click="copyText"
+                >
+                  <Copy />
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger as-child>
+                    <Button
+                      ref="overflowTrigger"
+                      variant="ghost"
+                      size="icon"
+                      class="size-8"
+                      aria-label="本页更多操作"
+                    >
+                      <MoreHorizontal />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    @close-auto-focus="preventMenuAutoFocus"
+                  >
+                    <DropdownMenuItem :disabled="!hasText" @select="download">
+                      <Download />
+                      下载原文
+                    </DropdownMenuItem>
+                    <template v-if="result">
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        variant="destructive"
+                        :disabled="pending || disabled"
+                        @select="askDelete"
+                      >
+                        <Trash2 />
+                        删除本页结果…
+                      </DropdownMenuItem>
+                    </template>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </template>
+          </header>
+          <p v-if="result" role="status" class="shrink-0 border-b px-3 py-2 text-sm break-words">{{ historicalContentMessage(result.historicalBinding) }}</p>
+
+          <p
+            v-if="copyMessage"
+            role="status"
+            class="text-muted-foreground shrink-0 border-b px-3 py-1 text-[11px]"
+          >
+            {{ copyMessage }}
+          </p>
+
+          <Alert v-if="failure" variant="destructive" class="rounded-none border-x-0 border-t-0">
+            <AlertDescription class="text-destructive! flex flex-wrap items-center gap-2 font-medium">
+              <span>{{ failure }}</span>
+              <Button variant="outline" size="sm" @click="retryFailure">
+                {{ failureRetryLabel() }}</Button
+              >
+            </AlertDescription>
+          </Alert>
+
+          <div
+            ref="textPaneBody"
+            :key="`${filePath}:${row.page}:text`"
+            class="min-h-0 flex-1 overflow-hidden"
+          >
+            <Textarea
+              v-if="editing"
+              ref="editor"
+              :model-value="draft"
+              :readonly="pending"
+              :aria-label="`${pageLabel(row.page)}的 OCR 文本`"
+              spellcheck="false"
+              class="h-full min-h-0 w-full resize-none rounded-none border-0 bg-transparent p-4 font-mono text-[length:var(--ocr-code-size)] leading-relaxed shadow-none transition-none focus-visible:ring-0 motion-reduce:transition-none"
+              placeholder="这一页的识别文本（原始 Markdown）。空白页留空即可——空结果也会占住页号。"
+              @update:model-value="emit('update:draft', $event)"
+              @select="rememberCaret"
+              @keyup="rememberCaret"
+              @click="rememberCaret"
+              @blur="rememberCaret"
+            />
+            <template v-else>
+              <TabsContent
+                v-for="mode in ['rendered', 'source'] as const"
+                :key="mode"
+                :value="mode"
+                :tabindex="hasText ? -1 : 0"
+                class="h-full min-h-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+              >
+                <OcrPageBody
+                  v-if="hasText"
+                  :markdown="markdown"
+                  :file-path="filePath"
+                  :page="row.page"
+                  :mode="mode"
+                  :wrap="wrap"
+                  :hide-toolbar="true"
+                  content-class="p-4 lg:p-5"
+                />
+                <div
+                  v-else
+                  class="text-muted-foreground flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-sm leading-relaxed"
+                >
+                  <FileText class="size-5" />
+                  <p class="text-foreground font-medium">
+                    {{ result ? STATE_WORD[state] : '这一页还没有识别文本' }}
+                  </p>
+                  <p class="text-table leading-relaxed">
+                    {{
+                      result
+                        ? '这一页的正文为空（已保存为空结果）。可以编辑、手工补录，或继续翻页。'
+                        : '可以用底部的「手工录入」贴入这一页的文本，或继续翻页。'
+                    }}
+                  </p>
+                </div>
+              </TabsContent>
+            </template>
           </div>
-        </div>
 
-        <div
-          v-if="hasHorizontalOverflow && !editing"
-          data-ocr-horizontal-hint
-          class="text-muted-foreground bg-muted/50 flex h-7 shrink-0 items-center gap-1.5 border-t px-2.5 text-[11px]"
-        >
-          <MoveHorizontal class="size-3.5" />
-          内容较宽，左右滚动查看全部列
-        </div>
+          <div
+            v-if="hasHorizontalOverflow && !editing"
+            data-ocr-horizontal-hint
+            class="text-muted-foreground bg-muted/50 flex h-7 shrink-0 items-center gap-1.5 border-t px-2.5 text-[11px]"
+          >
+            <MoveHorizontal class="size-3.5" />
+            内容较宽，左右滚动查看全部列
+          </div>
 
-        <footer
-          data-ocr-pane-footer
-          class="text-muted-foreground flex h-7 shrink-0 items-center gap-2 border-t px-2.5 text-[11px]"
-        >
-          <template v-if="editing">
-            <span class="truncate">
-              保存使用原始 Markdown；预览只读，不参与保存。
-            </span>
-          </template>
-          <template v-else-if="result">
-            <span class="truncate" :title="[...metaParts, timeText].filter(Boolean).join(' · ')">
-              {{ [...metaParts, timeText].filter(Boolean).join(' · ') }}
-            </span>
-            <span class="ml-auto shrink-0">{{ STATE_WORD[state] }}</span>
-          </template>
-          <template v-else>
-            <span>未识别</span>
-          </template>
-        </footer>
+          <footer
+            data-ocr-pane-footer
+            class="text-muted-foreground flex h-7 shrink-0 items-center gap-2 border-t px-2.5 text-[11px]"
+          >
+            <template v-if="editing">
+              <span class="truncate">
+                保存使用原始 Markdown；预览只读，不参与保存。
+              </span>
+            </template>
+            <template v-else-if="result">
+              <span class="truncate" :title="[...metaParts, timeText].filter(Boolean).join(' · ')">
+                {{ [...metaParts, timeText].filter(Boolean).join(' · ') }}
+              </span>
+              <span class="ml-auto shrink-0">{{ STATE_WORD[state] }}</span>
+            </template>
+            <template v-else>
+              <span>未识别</span>
+            </template>
+          </footer>
+        </Tabs>
       </section>
     </div>
 

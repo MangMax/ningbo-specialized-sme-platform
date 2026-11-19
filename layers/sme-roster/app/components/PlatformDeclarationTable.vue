@@ -32,7 +32,6 @@ const conflictLabel: Record<string, string> = {
 <template>
   <div class="min-w-0" data-testid="platform-declaration-table">
     <template v-if="view === 'records'">
-      <p v-if="records.length" class="text-muted-foreground mb-2 text-table leading-5 sm:hidden">点开「版本详情」查看完整字段、内容版本。</p>
       <div v-if="records.length" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
         <Table class="data-table min-w-[980px] table-fixed 2xl:min-w-[1080px]" aria-label="申报记录">
           <TableHeader>
@@ -90,7 +89,6 @@ const conflictLabel: Record<string, string> = {
     </template>
 
     <template v-else>
-      <p v-if="isolated.length" class="text-muted-foreground mb-2 text-table leading-5 sm:hidden">缺编号或内容不可核实的观察逐条隔离；点开「查看原查询」核对来源。</p>
       <div v-if="isolated.length" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
         <Table class="data-table min-w-[980px] table-fixed 2xl:min-w-[1080px]" aria-label="缺编号观察">
           <TableHeader>
@@ -123,7 +121,7 @@ const conflictLabel: Record<string, string> = {
                 <span v-if="row.contentState === 'unverifiable'">原文内容无法核实</span>
               </TableCell>
               <TableCell class="sticky right-0 z-10 border-l bg-card">
-                <NuxtLink :to="{ path: '/platform-queries', query: { queryKey: row.queryKey } }" class="inline-flex items-center gap-1 text-xs hover:underline">查看原查询<ExternalLink class="size-3" /></NuxtLink>
+                <NuxtLink :to="{ path: '/platform-queries', query: { queryId: row.queryId } }" class="inline-flex items-center gap-1 text-xs hover:underline">查看原查询<ExternalLink class="size-3" aria-hidden="true" /></NuxtLink>
               </TableCell>
             </TableRow>
           </TableBody>
@@ -147,7 +145,7 @@ const conflictLabel: Record<string, string> = {
             <span v-else-if="row.identityState === 'conflict'">平台编号冲突</span>
             <span v-if="row.contentState === 'unverifiable'">原文内容无法核实</span>
           </p>
-          <NuxtLink :to="{ path: '/platform-queries', query: { queryKey: row.queryKey } }" class="inline-flex items-center gap-1 text-xs hover:underline">查看原查询<ExternalLink class="size-3" /></NuxtLink>
+          <NuxtLink :to="{ path: '/platform-queries', query: { queryId: row.queryId } }" class="inline-flex items-center gap-1 text-xs hover:underline">查看原查询<ExternalLink class="size-3" aria-hidden="true" /></NuxtLink>
         </li>
       </ul>
     </template>

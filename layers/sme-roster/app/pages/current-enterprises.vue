@@ -21,6 +21,7 @@ import { Tabs, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 import PageHeader from '#core/app/components/PageHeader.vue'
 import RosterCurrentQualificationTimeline from '#sme-roster/app/components/CurrentQualificationTimeline.vue'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
+import FilterChip from '#core/app/components/FilterChip.vue'
 import RosterCurrentRosterExportEntry from '#sme-roster/app/components/CurrentRosterExportEntry.vue'
 import RosterCurrentRecognitionDatePicker from '#sme-roster/app/components/CurrentRecognitionDatePicker.vue'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
@@ -121,9 +122,27 @@ const failureDescription = computed(() => displayed.value
   : undefined)
 const allDistricts = [...new Set([...NINGBO_DISTRICTS, ...NINGBO_INDEPENDENT_ZONES])]
 const detailUrl = (id: number) => ({ path: `/enterprises/${id}`, query: { currentBack: new URLSearchParams(Object.entries(displayed.value!.request.params).filter((pair) => pair[1] != null).map(([key, value]) => [key, String(value)])).toString() } })
-const activeFilterCount = computed(() => [q.value, district.value, recognitionFrom.value || recognitionTo.value, validYear.value, maintenanceYear.value, maintenanceBatch.value].filter(Boolean).length)
-const hasFilters = computed(() => activeFilterCount.value > 0)
-function clearFilters() { search.value = ''; dateFrom.value=''; dateTo.value=''; update({ q: undefined, district: undefined, recognitionFrom: undefined, recognitionTo: undefined, validYear: undefined, maintenanceYear: undefined, maintenanceBatch: undefined, page: undefined }) }
+const activeFilters = computed(() => {
+  const filters: { key: string; label: string; clear: () => void }[] = []
+  if (status.value !== 'effective') filters.push({ key: 'status', label: `状态：${CURRENT_STATUS_LABELS[status.value]}`, clear: () => update({ status: undefined, page: undefined }) })
+  if (q.value) filters.push({ key: 'q', label: `搜索：${q.value}`, clear: () => { search.value = ''; update({ q: undefined, page: undefined }) } })
+  if (district.value) filters.push({ key: 'district', label: `区县：${district.value}`, clear: () => update({ district: undefined, page: undefined }) })
+  if (recognitionFrom.value || recognitionTo.value) {
+    const range = [recognitionFrom.value, recognitionTo.value].filter(Boolean).join(' 至 ')
+    filters.push({ key: 'recognition', label: `认定时间：${range}`, clear: clearDate })
+  }
+  if (validYear.value) filters.push({ key: 'validYear', label: `有效年份：${validYear.value}`, clear: () => update({ validYear: undefined, page: undefined }) })
+  if (maintenanceYear.value) filters.push({ key: 'maintenanceYear', label: `维护年份：${maintenanceYear.value}`, clear: () => update({ maintenanceYear: undefined, maintenanceBatch: undefined, page: undefined }) })
+  if (maintenanceBatch.value) filters.push({ key: 'maintenanceBatch', label: `维护批次：第 ${maintenanceBatch.value} 批`, clear: () => update({ maintenanceBatch: undefined, page: undefined }) })
+  return filters
+})
+const advancedFilterCount = computed(() => activeFilters.value.filter(filter => filter.key !== 'q' && filter.key !== 'status').length)
+function clearFilters() {
+  search.value = ''
+  dateFrom.value = ''
+  dateTo.value = ''
+  update({ status: undefined, q: undefined, district: undefined, recognitionFrom: undefined, recognitionTo: undefined, validYear: undefined, maintenanceYear: undefined, maintenanceBatch: undefined, page: undefined })
+}
 useHead({ title: '优质中小企业查询' })
 </script>
 
@@ -170,7 +189,7 @@ useHead({ title: '优质中小企业查询' })
       </TabsList>
     </Tabs>
     <div class="flex flex-wrap items-center gap-2">
-      <div class="relative min-w-40 flex-1 sm:w-72 sm:flex-none">
+      <div class="relative w-full sm:w-72">
         <Search class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" aria-hidden="true" />
         <Input v-model="search" class="bg-card h-8 pl-8 shadow-none" placeholder="名称、曾用名或信用代码" aria-label="搜索企业名称、已确认曾用名或统一社会信用代码" />
       </div>
@@ -179,32 +198,26 @@ useHead({ title: '优质中小企业查询' })
         <SelectContent><SelectGroup><SelectItem v-for="(label, code) in CURRENT_STATUS_LABELS" :key="code" :value="code">{{ code === 'effective' ? '有效' : label }}</SelectItem></SelectGroup></SelectContent>
       </Select>
       <ReuseFilters v-if="!isNarrow" />
-      <Button v-if="hasFilters" variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
     </div>
     <ReuseDates v-if="!isNarrow" />
-    <DisclosurePanel v-else v-model:open="advancedOpen" compact :heading-level="2" :title="`高级筛选与排序（已选 ${activeFilterCount} 项）`">
+    <DisclosurePanel v-else v-model:open="advancedOpen" compact :heading-level="2" :title="`高级筛选与排序（已选 ${advancedFilterCount} 项）`">
       <div class="flex flex-col gap-3">
         <div class="flex flex-wrap items-center gap-2"><ReuseFilters /></div>
         <ReuseDates />
       </div>
     </DisclosurePanel>
-    <div v-if="hasFilters" class="flex flex-wrap items-center gap-1.5" aria-label="已选筛选条件">
-      <span class="text-muted-foreground text-xs">已选条件：</span>
-      <Button v-if="q" variant="outline" size="sm" class="h-auto min-h-8 max-w-full whitespace-normal text-left" @click="search=''; update({q:undefined,page:undefined})"><span class="min-w-0 [overflow-wrap:anywhere]">搜索：{{ q }} ×</span></Button>
-      <Button v-if="district" variant="outline" size="sm" @click="update({district:undefined,page:undefined})">区县：{{ district }} ×</Button>
-      <Button v-if="recognitionFrom && recognitionTo" variant="outline" size="sm" @click="clearDate">认定时间：{{ recognitionFrom }} 至 {{ recognitionTo }} ×</Button>
-      <Button v-if="validYear" variant="outline" size="sm" @click="update({validYear:undefined,page:undefined})">有效年份：{{ validYear }} ×</Button>
-      <Button v-if="maintenanceYear" variant="outline" size="sm" @click="update({maintenanceYear:undefined,maintenanceBatch:undefined,page:undefined})">维护年份：{{ maintenanceYear }} ×</Button>
-      <Button v-if="maintenanceBatch" variant="outline" size="sm" @click="update({maintenanceBatch:undefined,page:undefined})">维护批次：第 {{ maintenanceBatch }} 批 ×</Button>
+    <div v-if="activeFilters.length" class="flex flex-wrap items-center gap-1.5" role="group" aria-label="已选筛选条件">
+      <FilterChip v-for="filter in activeFilters" :key="filter.key" :label="filter.label" @remove="filter.clear()" />
+      <Button variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
     </div>
     </section>
     <p v-if="displayed?.uncertainTotal && displayed.request.params.recognitionFrom" class="text-muted-foreground text-sm">另有 {{ displayed.uncertainTotal }} 家仅有年份精度，与所选时间部分重叠或缺少日期事实，未计入确定结果。</p>
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
-        <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在查询当前有效企业…" />
-        <TableFailureState v-if="error" class="[overflow-wrap:anywhere]" title="当前有效企业查询失败" :compact="Boolean(displayed)" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
+        <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在查询企业资格…" />
+        <TableFailureState v-if="error" class="[overflow-wrap:anywhere]" title="企业资格查询失败" :compact="Boolean(displayed)" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
         <div v-if="!error || displayed" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
-          <Table class="data-table min-w-[850px] table-fixed">
+          <Table class="data-table min-w-[850px] table-fixed" aria-label="企业资格查询结果">
             <TableHeader class="sticky top-0 z-10"><TableRow class="hover:bg-transparent">
               <TableHead class="bg-muted w-[24%]">企业名称</TableHead><TableHead class="bg-muted w-[19%]">统一社会信用代码</TableHead><TableHead class="bg-muted w-[12%]">区县</TableHead><TableHead class="bg-muted w-[31%]">认定与复核</TableHead><TableHead class="bg-muted w-[14%]">详情与出处</TableHead>
             </TableRow></TableHeader>
@@ -214,9 +227,9 @@ useHead({ title: '优质中小企业查询' })
                 <TableCell class="align-top break-all font-mono text-xs">{{ row.uscc ?? '未记录' }}</TableCell>
                 <TableCell class="align-top">{{ row.district ?? '未记录' }}</TableCell>
                 <TableCell class="align-top"><RosterCurrentQualificationTimeline :source="timelineAssessment(row)?.effectiveQualification?.source" :events="timelineAssessment(row)?.evidence" :inherited-from="selectedAssessment(row)?.effectiveQualification?.supportingTitle" :enterprise-id="row.enterpriseId" /></TableCell>
-                <TableCell class="align-top"><Button as-child variant="outline" size="sm" class="h-auto min-h-8 max-w-full whitespace-normal text-center"><NuxtLink :to="detailUrl(row.enterpriseId)">查看详情与出处</NuxtLink></Button></TableCell>
+                <TableCell class="align-top"><Button as-child variant="outline" size="sm" class="px-1 text-table whitespace-nowrap"><NuxtLink :to="detailUrl(row.enterpriseId)" :aria-label="`查看 ${row.name} 详情与出处`">查看详情与出处</NuxtLink></Button></TableCell>
               </TableRow>
-              <TableRow v-if="isLoading && !displayed"><TableCell v-for="n in 5" :key="n"><Skeleton class="h-3 w-full" /></TableCell></TableRow>
+              <TableRow v-if="isLoading && !displayed" aria-hidden="true"><TableCell v-for="n in 5" :key="n"><Skeleton class="h-3 w-full" /></TableCell></TableRow>
               <TableRow v-if="displayed && !rows.length"><TableCell colspan="5" class="p-0"><Empty class="border-0"><EmptyHeader><EmptyTitle>没有符合条件的企业</EmptyTitle></EmptyHeader></Empty></TableCell></TableRow>
             </TableBody>
           </Table>
@@ -227,7 +240,7 @@ useHead({ title: '优质中小企业查询' })
           <Skeleton class="h-4 w-full" />
           <Skeleton class="h-4 w-3/4" />
         </div>
-        <ul v-if="rows.length" class="flex flex-col divide-y sm:hidden" aria-label="当前有效企业列表">
+        <ul v-if="rows.length" class="flex flex-col divide-y sm:hidden" aria-label="企业资格查询结果">
           <li v-for="row in rows" :key="row.enterpriseId" class="flex min-w-0 flex-col gap-1.5 p-3" data-testid="current-enterprise-card">
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0"><p class="font-medium break-words">{{ row.name }}</p><p class="text-muted-foreground break-all font-mono text-xs">{{ row.uscc ?? '信用代码未记录' }}</p></div>

@@ -12,6 +12,7 @@ const dir = mkdtempSync(join(tmpdir(), 'platform-query-http-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 let server: ReturnType<typeof createServer>, base: string
 const id = submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: 'synthetic:http', queriedAt: '2026-10-19', status: 'partial', rawResponse: '完整原文🙂' }).queryId
+const laterId = submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: 'synthetic:http', queriedAt: '2026-10-20', status: 'partial', rawResponse: '再次采集' }).queryId
 beforeAll(async () => {
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
   vi.stubGlobal('defineEventHandler', defineEventHandler)
@@ -25,10 +26,15 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${(server.address() as any).port}`
 })
 afterAll(async () => { if (server) await new Promise<void>(resolve => server.close(() => resolve())); platformSummaryCache.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
-it('public HTTP summary and exact ID preserve partial state and complete evidence without authorization', async () => {
+it('public HTTP exact ID opens the earlier original evidence when two captures share a query key', async () => {
+  const history = await fetch(`${base}/api/platform/queries?queryKey=synthetic%3Ahttp&view=summary`)
+  expect(history.status).toBe(200)
+  expect((await history.json()).rows.map((row: { query: { id: number } }) => row.query.id)).toEqual([laterId, id])
   const response = await fetch(`${base}/api/platform/queries?queryId=${id}&view=summary`)
   expect(response.status).toBe(200)
-  expect(await response.json()).toMatchObject({ total: 1, counts: { partial: 1 }, rows: [{ relationsIncluded: false, query: { id, status: 'partial', relationCount: 0 } }] })
+  const summary = await response.json()
+  expect(summary).toMatchObject({ total: 1, counts: { partial: 1 }, rows: [{ relationsIncluded: false, query: { id, status: 'partial', relationCount: 0 } }] })
+  expect(summary.rows).toHaveLength(1)
   const chunk = await fetch(`${base}/api/platform/queries/${id}/evidence?field=rawResponse&offset=0&length=65536`)
   expect(chunk.headers.get('cache-control')).toBe('no-store')
   expect(await chunk.json()).toMatchObject({ data: Buffer.from('完整原文🙂').toString('base64'), hasMore: false })

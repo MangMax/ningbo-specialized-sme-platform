@@ -56,6 +56,7 @@ const emit = defineEmits<{
   filter: [key: 'q' | 'source' | 'year', value: string]
   select: [path: string]
   retry: []
+  closeAutoFocus: [event: Event]
 }>()
 
 const isNarrow = useMediaQuery('(max-width: 639px)')
@@ -97,7 +98,12 @@ function fileMeta(file: OcrWorkbenchFile) {
 
 <template>
   <Sheet v-model:open="open">
-    <SheetContent :side="side" floating-size="standard" class="flex min-h-0 flex-col gap-0 overflow-hidden p-0 max-sm:max-h-dvh">
+    <SheetContent
+      :side="side"
+      floating-size="standard"
+      class="flex min-h-0 flex-col gap-0 overflow-hidden p-0 max-sm:max-h-dvh"
+      @close-auto-focus="emit('closeAutoFocus', $event)"
+    >
       <SheetHeader class="shrink-0 border-b px-4 py-4">
         <SheetTitle>选择 PDF</SheetTitle>
         <SheetDescription>
@@ -235,7 +241,7 @@ function fileMeta(file: OcrWorkbenchFile) {
           <li v-for="file in selected ? otherFiles : fileMatches" :key="file.id">
             <button
               type="button"
-              class="hover:bg-accent/60 focus-visible:border-ring focus-visible:ring-ring/50 flex min-h-11 w-full items-start gap-2 rounded-sm px-2 py-2 text-left transition-colors focus-visible:ring-3 focus-visible:outline-none"
+              class="hover:bg-accent/60 focus-visible:border-ring focus-visible:ring-ring/50 flex min-h-11 w-full items-start gap-2 rounded-sm px-2 py-2 text-left motion-safe:transition-colors ease-snap focus-visible:ring-3 focus-visible:outline-none"
               :disabled="disabled || !!blockedReason"
               :title="file.filename"
               @click="choose(file.relPath)"

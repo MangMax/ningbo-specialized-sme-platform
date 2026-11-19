@@ -7,6 +7,7 @@ import { describeLogRow, sourceLabel, outcomeLabel, logModuleLabel } from '#core
 import LogFilters from '#core/app/components/logs/LogFilters.vue'
 import LogDetail from '#core/app/components/logs/LogDetail.vue'
 import LogManagement from '#core/app/components/logs/LogManagement.vue'
+import FilterChip from '#core/app/components/FilterChip.vue'
 import PageHeader from '#core/app/components/PageHeader.vue'
 import TableLoadingStatus from '#core/app/components/TableLoadingStatus.vue'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
@@ -118,8 +119,11 @@ watch([data, sourceKey, loading], () => {
   else if (cursors.value[page.value] !== boundary)
     cursors.value = [...cursors.value.slice(0, page.value), boundary]
 }, { flush: 'post' })
-/** 每行只派生一次：来源/操作/目标/结果/耗时/状态/关联都由 presentation 模块决定。 */
-const described = computed(() => rows.value.map((row) => ({ row, view: describeLogRow(row) })))
+const described = computed(() => rows.value.map(row => {
+  const view = describeLogRow(row)
+  const isHttpRoute = row.source === 'http' && !!row.httpRoute
+  return { row, view, isHttpRoute, targetLabel: isHttpRoute ? (row.httpMethod ?? '接口请求') : view.target.text }
+}))
 /** 首次读取（还没有任何结果）才铺骨架；刷新/换页保留旧结果。 */
 const firstLoad = computed(() => loading.value && !data.value && !error.value)
 
@@ -144,19 +148,23 @@ const localStamp = (iso: string) => {
     ? iso
     : date.toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
 }
-/** 失败说明只用人能读的筛选摘要；不再序列化筛选对象，也不泄露内部键名。 */
-function filterSummary(value: LogFilter) {
-  const parts: string[] = []
-  for (const [key, label] of Object.entries(FILTER_LABELS)) {
+function appliedFilters(value: LogFilter) {
+  return Object.entries(FILTER_LABELS).flatMap(([key, label]) => {
     const raw = value[key as keyof LogFilter]
-    if (raw === undefined || raw === null || raw === '') continue
+    if (raw === undefined || raw === null || raw === '') return []
     const display = key === 'from' || key === 'to' ? localStamp(String(raw))
       : key === 'source' ? sourceLabel(String(raw))
       : key === 'module' ? logModuleLabel(String(raw))
       : key === 'outcome' ? outcomeLabel(String(raw)) : String(raw)
-    parts.push(`${label} ${display}`)
-  }
-  return parts.length ? parts.join(' · ') : '未设筛选'
+    return [{ key, value: String(raw), label: `${label} ${display}` }]
+  })
+}
+const chips = computed(() => appliedFilters(filter.value))
+function filterSummary(value: LogFilter) {
+  return appliedFilters(value).map(item => item.label).join(' · ') || '未设筛选'
+}
+function removeFilter(key: string) {
+  void apply(Object.fromEntries(chips.value.filter(item => item.key !== key).map(item => [item.key, item.value])))
 }
 /** 旧结果还在时，先说清“看到的是哪一页、哪组条件”。 */
 const retainedSummary = computed(() =>
@@ -169,6 +177,15 @@ const failureDescription = computed(() => {
   if (!data.value || !source.value)
     return `筛选已保留（${asked}），可以重新加载。`
   return `${retainedSummary.value}；当前筛选（${asked}）未能读取。`
+})
+const storageWarning = computed(() => {
+  const status = data.value?.status
+  if (!status) return []
+  return [
+    status.unavailable ? '日志存储不可用' : '',
+    status.dropped > 0 ? `本进程已丢弃 ${status.dropped} 条` : '',
+    status.writeUnknown ? `写入结果未知 ${status.writeUnknown} 条` : '',
+  ].filter(Boolean)
 })
 async function apply(value: Record<string, string>) {
   requestReset()
@@ -285,8 +302,7 @@ function restoreFocus(event: Event) {
   <div class="flex min-w-0 flex-col gap-2 sm:h-[calc(100dvh-6rem)] sm:min-h-0 sm:gap-3">
     <PageHeader
       class="shrink-0"
-      title="运行日志"
-      description="按操作和关联标识排查运行情况。运行日志不代替业务审计或回执。"
+      title="日志"
       ><template #actions
         ><Button v-if="activeTab === 'logs'" variant="outline" size="sm" :disabled="loading" @click="fresh"
           >刷新最新日志</Button
@@ -303,6 +319,9 @@ function restoreFocus(event: Event) {
     <Card class="min-w-0 shrink-0 gap-0 py-0 shadow-none"
       ><CardContent class="p-3"><LogFilters :filter="filter" @apply="apply" /></CardContent></Card
     >
+    <div v-if="chips.length" class="flex min-w-0 shrink-0 flex-wrap gap-1.5" role="group" aria-label="已应用筛选">
+      <FilterChip v-for="chip in chips" :key="chip.key" :label="chip.label" @remove="removeFilter(chip.key)" />
+    </div>
     <section
       ref="resultsRef"
       aria-labelledby="log-list-heading"
@@ -314,36 +333,14 @@ function restoreFocus(event: Event) {
       >
         <CardContent class="relative flex min-h-0 flex-1 flex-col p-0">
         <TableLoadingStatus :loading="loading" kind="files" label="正在读取运行日志…" />
-        <!-- 存储状态属于这份列表，不属于筛选：压在卡片顶部，收起时也不单独占一段。 -->
         <p
-          v-if="data?.status"
-          class="text-muted-foreground flex shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-b px-4 py-2 text-table leading-5"
+          v-if="storageWarning.length"
+          role="status"
+          class="text-muted-foreground shrink-0 border-b px-4 py-2 text-table leading-5"
         >
-          <span :class="data.status.unavailable ? 'text-destructive' : ''">{{
-            data.status.unavailable ? '日志存储不可用' : '日志存储可用'
-          }}</span>
-          <span aria-hidden="true">·</span>
-          <span class="tabular-nums">本进程已丢弃 {{ data.status.dropped }} 条</span>
-          <!-- 发出写请求后失去确认的记录既不能算已存，也不能算确定丢失。 -->
-          <template v-if="(data.status.writeUnknown ?? 0) > 0">
-            <span aria-hidden="true">·</span>
-            <span class="tabular-nums">写入结果未知 {{ data.status.writeUnknown }} 条</span>
-          </template>
-          <template
-            v-if="
-              data.status.unavailable ||
-              data.status.dropped > 0 ||
-              (data.status.writeUnknown ?? 0) > 0
-            "
-          >
-            <span aria-hidden="true">·</span>
-            <span>日志缺失不代表业务未执行</span>
-          </template>
+          <span class="font-medium tabular-nums" :class="{ 'text-destructive': data?.status?.unavailable }">{{ storageWarning.join(' · ') }}</span>
+          <span>。日志缺失不代表业务未执行</span>
         </p>
-        <!-- 首次读取时状态条先占住同样的高度，结果区不会因为少这一行而跳。 -->
-        <div v-else-if="firstLoad" class="flex shrink-0 items-center border-b px-4 py-2">
-          <Skeleton class="h-5 w-56" aria-hidden="true" />
-        </div>
         <TableFailureState
           v-if="error"
           class="shrink-0"
@@ -431,11 +428,6 @@ function restoreFocus(event: Event) {
                         <span class="truncate text-table" :title="item.view.sourceLabel">{{
                           item.view.sourceLabel
                         }}</span>
-                        <span
-                          class="text-muted-foreground truncate font-mono text-xs"
-                          :title="item.view.sourceCode"
-                          >{{ item.view.sourceCode }}</span
-                        >
                         <span data-log-field="module" class="text-muted-foreground text-xs">
                           {{ logModuleLabel(item.row.module) }}
                         </span>
@@ -444,20 +436,9 @@ function restoreFocus(event: Event) {
                     <TableCell class="overflow-hidden">
                       <div class="flex min-w-0 flex-col leading-4">
                         <span
-                          v-if="item.view.operationLabel"
                           class="truncate text-table"
-                          :title="item.view.operationLabel"
-                          >{{ item.view.operationLabel }}</span
-                        >
-                        <span
-                          class="truncate font-mono"
-                          :class="
-                            item.view.operationLabel
-                              ? 'text-muted-foreground text-xs'
-                              : 'text-table'
-                          "
-                          :title="item.view.operationCode"
-                          >{{ item.view.operationCode }}</span
+                          :title="item.view.operationLabel ?? item.view.operationCode"
+                          >{{ item.view.operationLabel ?? item.view.operationCode }}</span
                         >
                       </div>
                     </TableCell>
@@ -465,8 +446,8 @@ function restoreFocus(event: Event) {
                       <span
                         class="block min-w-0 truncate text-table"
                         :class="item.view.target.missing ? 'text-muted-foreground' : ''"
-                        :title="item.view.target.text"
-                        >{{ item.view.target.text }}</span
+                        :title="item.targetLabel"
+                        >{{ item.targetLabel }}</span
                       >
                       <span
                         v-if="item.view.target.untrusted"
@@ -560,7 +541,7 @@ function restoreFocus(event: Event) {
                   </div>
                   <div class="flex min-w-0 flex-col gap-1">
                     <div
-                      v-for="row in 6"
+                      v-for="row in 5"
                       :key="row"
                       class="flex min-w-0 items-baseline gap-1.5"
                       data-skeleton-row
@@ -594,13 +575,7 @@ function restoreFocus(event: Event) {
                     </div>
                     <div class="flex min-w-0 items-baseline gap-1.5">
                       <span class="text-muted-foreground shrink-0 text-xs">操作</span>
-                      <span class="min-w-0 break-all text-table"
-                        ><template v-if="item.view.operationLabel"
-                          >{{ item.view.operationLabel }}<span class="text-muted-foreground">
-                            · </span
-                          ></template
-                        ><span class="font-mono text-xs">{{ item.view.operationCode }}</span></span
-                      >
+                      <span class="min-w-0 wrap-anywhere text-table">{{ item.view.operationLabel ?? item.view.operationCode }}</span>
                     </div>
                   </div>
                   <Button
@@ -616,12 +591,7 @@ function restoreFocus(event: Event) {
                 <div class="flex min-w-0 flex-col gap-1 text-table">
                   <div class="flex min-w-0 items-baseline gap-1.5">
                     <span class="text-muted-foreground shrink-0 text-xs">来源</span>
-                    <span class="min-w-0 break-all"
-                      >{{ item.view.sourceLabel }}
-                      <span class="text-muted-foreground font-mono text-xs">{{
-                        item.view.sourceCode
-                      }}</span></span
-                    >
+                    <span class="min-w-0 wrap-anywhere">{{ item.view.sourceLabel }}</span>
                   </div>
                   <div class="flex min-w-0 items-baseline gap-1.5">
                     <span class="text-muted-foreground shrink-0 text-xs">模块</span>
@@ -644,7 +614,7 @@ function restoreFocus(event: Event) {
                       >{{ item.view.errorCodeText }}</span
                     >
                   </div>
-                  <div class="flex min-w-0 items-baseline gap-1.5">
+                  <div v-if="!item.isHttpRoute" class="flex min-w-0 items-baseline gap-1.5">
                     <span class="text-muted-foreground shrink-0 text-xs">目标</span>
                     <span
                       class="min-w-0 break-all"
@@ -669,19 +639,6 @@ function restoreFocus(event: Event) {
                       :class="item.view.durationMissing ? 'text-muted-foreground' : ''"
                       >{{ item.view.durationText }}</span
                     >
-                  </div>
-                  <div class="flex min-w-0 items-baseline gap-1.5">
-                    <span class="text-muted-foreground shrink-0 text-xs">关联</span>
-                    <span
-                      v-if="item.view.primaryReference"
-                      class="min-w-0 break-all font-mono text-xs"
-                      >{{ item.view.primaryReference.kind }}
-                      {{ item.view.primaryReference.value }}<template
-                        v-if="item.view.extraReferenceCount"
-                        >&nbsp;· +{{ item.view.extraReferenceCount }}</template
-                      ></span
-                    >
-                    <span v-else class="text-muted-foreground">未记录</span>
                   </div>
                 </div>
               </li>

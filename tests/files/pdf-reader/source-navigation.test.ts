@@ -51,7 +51,7 @@ it('opens original source without page images and confirms only the rendered sou
   engine().vm.$emit('position', { page: 3 })
   await flushPromises()
   expect(wrapper.text()).toContain('已定位来源第 3 页')
-  expect(wrapper.findAll('a').filter(a => a.attributes('href') === back).length).toBe(2)
+  expect(wrapper.get('[data-slot="breadcrumb-link"]').attributes('href')).toBe(back)
   wrapper.unmount()
 })
 
@@ -132,7 +132,7 @@ it.each(['', '0', '-1', '2.5', 'abc'])('reports invalid source parameter %j with
   await flushPromises()
   expect(wrapper.text()).not.toContain('已定位来源')
   expect(router.currentRoute.value.query.page).toBe(page)
-  expect(wrapper.findAll('a').filter(a => a.attributes('href') === '/roster').length).toBe(2)
+  expect(wrapper.get('[data-slot="breadcrumb-link"]').attributes('href')).toBe('/roster')
   wrapper.unmount()
 })
 
@@ -308,15 +308,15 @@ it('shares gallery selections immediately and reopens them without creating init
 })
 
 it.each([
-  ['/enterprises/91?back=q%3Dtest', '返回企业详情'],
-  ['/roster?q=test&page=2', '返回企业列表'],
-  ['//outside.example', '返回企业列表'],
-  ['/files?folder=synthetic', '返回文件库'],
-  ['/quality', '返回质量检查'],
+  ['/enterprises/91?back=q%3Dtest', '企业详情'],
+  ['/roster?q=test&page=2', '企业列表'],
+  ['//outside.example', '企业列表'],
+  ['/files?folder=synthetic', '文件管理'],
+  ['/quality', '数据质量'],
 ])('names the validated return destination for %s', async (back, label) => {
   const { wrapper } = await open({ file, page: '3', back })
-  const link = wrapper.findAll('a').find(a => a.text() === label)
-  expect(link?.exists()).toBe(true)
-  expect(link?.attributes('href')).toBe(back === '//outside.example' ? '/roster' : back)
+  const link = wrapper.get('[data-slot="breadcrumb-link"]')
+  expect(link.text()).toBe(label)
+  expect(link.attributes('href')).toBe(back === '//outside.example' ? '/roster' : back)
   wrapper.unmount()
 })

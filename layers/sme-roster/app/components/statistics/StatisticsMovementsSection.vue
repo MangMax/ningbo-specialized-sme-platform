@@ -2,6 +2,7 @@
 import { computed, ref, shallowRef, watch } from 'vue'
 import { MOVEMENT_KINDS, type MovementStatistics, type MovementKind } from '#sme-roster/lib/roster/movement-statistics'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
+import { Button } from '#core/app/components/ui/button'
 import { ArrowDownLeft, ArrowUpRight, Minus } from '@lucide/vue'
 const labels = { moved_in: '迁入', moved_out: '迁出', cancelled: '注销' }
 const year = ref('all')
@@ -37,8 +38,13 @@ function select(k: MovementKind, s: string) { year.value = result.value?.year ??
   <div class="stats-movement-metrics">
     <article v-for="bucket in buckets" :key="bucket.kind" class="stats-movement-item">
       <div class="stats-movement-label"><span class="stats-movement-icon" :class="`stats-movement-icon--${bucket.kind}`" aria-hidden="true"><component :is="bucket.kind==='moved_in'?ArrowDownLeft:bucket.kind==='moved_out'?ArrowUpRight:Minus" class="size-4" /></span><span>{{ labels[bucket.kind] }}</span></div>
-      <button class="stats-movement-number" :aria-label="`${labels[bucket.kind]}已确认明细`" :disabled="!result" @click="select(bucket.kind,'confirmed')">{{ bucket.confirmed ?? '—' }}<small>家</small></button>
-      <div class="stats-movement-foot"><button :aria-label="`${labels[bucket.kind]}发生年未知明细`" :disabled="!result" @click="select(bucket.kind,'unknown')">年份未知 {{ bucket.unknown ?? '—' }}</button><button :aria-label="`${labels[bucket.kind]}待核明细`" :disabled="!result" @click="select(bucket.kind,'pending')">待核 {{ bucket.pending ?? '—' }}</button></div>
+      <Button variant="ghost" class="stats-movement-number h-auto justify-start p-0 hover:bg-transparent hover:text-inherit dark:hover:bg-transparent" :aria-label="`${labels[bucket.kind]}已确认明细`" :disabled="!result" @click="select(bucket.kind, 'confirmed')">
+        {{ bucket.confirmed ?? '—' }}<small>家</small>
+      </Button>
+      <div class="stats-movement-foot">
+        <Button variant="link" class="h-auto p-0 text-xs" :aria-label="`${labels[bucket.kind]}发生年未知明细`" :disabled="!result" @click="select(bucket.kind, 'unknown')">年份未知 {{ bucket.unknown ?? '—' }}</Button>
+        <Button variant="link" class="h-auto p-0 text-xs" :aria-label="`${labels[bucket.kind]}待核明细`" :disabled="!result" @click="select(bucket.kind, 'pending')">待核 {{ bucket.pending ?? '—' }}</Button>
+      </div>
     </article>
   </div>
   <div v-if="failed" class="stats-inline-failure"><TableFailureState :title="`${target}加载失败`" :compact="!!result" :pending="loading" :description="result ? `保留${yearLabel(result.year)}的上次结果，请重试。` : '尚未加载主体事实，请重试。'" @retry="load" /></div>

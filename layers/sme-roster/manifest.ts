@@ -155,7 +155,7 @@ export default defineAppModule({
     key: 'miitCookie',
     openAPI: { actionLabel: '平台核查', patchDescription: '完整 Cookie，非空且无换行，最多 65536 字符' },
     name: '平台 Cookie',
-    description: '保存后供新查询和核查任务使用，不会自动登录、刷新会话或发起核查。优先级为显式覆盖、页面保存值、MIIT_COOKIE。',
+    description: '保存后供新发起的平台查询和核查使用。',
     purpose: '工信部平台查询与核查',
     environment: ['MIIT_COOKIE'],
     singleLine: true,

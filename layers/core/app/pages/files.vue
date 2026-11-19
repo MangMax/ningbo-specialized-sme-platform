@@ -2,7 +2,7 @@
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { watchDebounced } from '@vueuse/core'
-import { ChevronRight, FolderUp, Search } from '@lucide/vue'
+import { ChevronRight, FolderOpen, FolderUp, Search } from '@lucide/vue'
 import { formatBytes } from '#core/lib/core/file-size'
 import { getFileCategoryUi } from '~~/lib/app-file-category-ui'
 import { describeFetchError } from '../../lib/file-content-status'
@@ -18,7 +18,6 @@ import { Button } from '#core/app/components/ui/button'
 import { Card, CardContent } from '#core/app/components/ui/card'
 import {
   Empty,
-  EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
@@ -119,6 +118,10 @@ const {
   failureDescription,
 } = useRetainedQuerySnapshot<FilesQueryParams, FilesQueryResult>(data, isLoading, error, activeRequest)
 const rows = computed<ListedFile[]>(() => displayedResult.value?.rows ?? [])
+const displayedHasFilters = computed(() => {
+  const displayed = displayedResult.value?.request.params
+  return displayed ? Object.entries(displayed).some(([key, value]) => key !== 'page' && key !== 'pageSize' && Boolean(value)) : false
+})
 const total = computed(() => displayedResult.value?.total ?? 0)
 const displayedPage = computed(() => displayedResult.value?.request.page ?? page.value)
 const displayedPageSize = computed(() => displayedResult.value?.request.pageSize ?? pageSize.value)
@@ -177,7 +180,7 @@ const activeFilters = computed(() => [
   ...(q.value ? [{
     key: 'q',
     label: `搜索 · ${q.value}`,
-    clear: () => { search.value = ''; q.value = '' },
+    clear: () => { search.value = ''; q.value = ''; page.value = 1 },
   }] : []),
 ])
 const hasFilters = computed(() => activeFilters.value.length > 0)
@@ -386,14 +389,12 @@ watch([selections, q, page, pageSize], async (values, previous) => {
 
 <template>
   <div class="files-page flex min-w-0 flex-col gap-2 sm:gap-3">
-    <PageHeader
-      title="文件管理"
-      description="查看、预览和维护文件库里的文件。"
-    >
+    <PageHeader title="文件管理">
       <template #actions>
+        <Button variant="ghost" size="sm" @click="deleting = null; deleteFailure = ''; deleteOpen = true">恢复隔离文件</Button>
         <!-- 上传接 tus(票 10):点开是上传弹窗,传完登记进库并失效列表查询,
              列表会立即出现新行 —— 不必手动刷新。 -->
-        <Button v-for="upload in uploadDialogs" :key="upload.id" variant="outline" size="sm" title="上传文件到文件库" @click="uploading = upload.id">
+        <Button v-for="upload in uploadDialogs" :key="upload.id" size="sm" @click="uploading = upload.id">
           <FolderUp />
           {{ uploadDialogs.length === 1 ? '上传' : `上传 · ${upload.name}` }}
         </Button>
@@ -427,11 +428,11 @@ watch([selections, q, page, pageSize], async (values, previous) => {
       v-if="activeFilters.length"
       tag="div"
       class="flex flex-wrap items-center gap-1.5"
-      enter-active-class="transition duration-150 ease-snap"
+      enter-active-class="transition duration-150 ease-snap motion-reduce:transition-none"
       enter-from-class="scale-90 opacity-0"
-      leave-active-class="transition duration-100 ease-snap"
+      leave-active-class="transition duration-100 ease-snap motion-reduce:transition-none"
       leave-to-class="scale-90 opacity-0"
-      move-class="transition duration-150 ease-snap"
+      move-class="transition duration-150 ease-snap motion-reduce:transition-none"
     >
       <FilterChip v-for="f in activeFilters" :key="f.key" :label="f.label" @remove="f.clear()" />
       <Button
@@ -448,9 +449,9 @@ watch([selections, q, page, pageSize], async (values, previous) => {
     <Card class="gap-0 overflow-hidden py-0 shadow-none">
       <CardContent class="relative p-0">
         <TableLoadingStatus kind="files" :loading="isLoading" label="正在筛选与加载文件…" />
-        <TableFailureState v-if="error" title="文件列表暂时无法加载" :compact="rows.length > 0" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
+        <TableFailureState v-if="error" title="文件列表暂时无法加载" :compact="Boolean(displayedResult)" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
         <div
-          v-if="!error || rows.length > 0"
+          v-if="!error || displayedResult"
           ref="tableScroller"
           data-testid="files-table-scroll"
           class="data-table-scroll [container-type:inline-size] [&_[data-slot=table-container]]:overflow-visible"
@@ -477,7 +478,7 @@ watch([selections, q, page, pageSize], async (values, previous) => {
               </TableRow>
             </TableHeader>
             <TableBody :data-loading="isLoading ? 'true' : 'false'">
-              <TableRow v-if="isLoading && rows.length === 0" class="hover:bg-transparent">
+              <TableRow v-if="isLoading && !displayedResult" class="hover:bg-transparent">
                 <TableCell :colspan="columnCount" class="p-0">
                   <div class="flex flex-col">
                     <div
@@ -576,15 +577,12 @@ watch([selections, q, page, pageSize], async (values, previous) => {
                 </template>
               </template>
 
-              <TableRow v-else class="hover:bg-transparent">
+              <TableRow v-else-if="displayedResult" class="hover:bg-transparent">
                 <TableCell :colspan="columnCount" class="p-0">
-                  <Empty class="border-0">
+                  <Empty class="sticky left-0 w-[100cqw] border-0">
                     <EmptyHeader>
-                      <EmptyMedia variant="icon"><Search /></EmptyMedia>
-                      <EmptyTitle>没有匹配的文件</EmptyTitle>
-                      <EmptyDescription>
-                        {{ hasFilters ? '去掉一两个筛选条件,或换个关键词再试。' : '文件库还是空的。' }}
-                      </EmptyDescription>
+                      <EmptyMedia variant="icon"><Search v-if="displayedHasFilters" /><FolderOpen v-else /></EmptyMedia>
+                      <EmptyTitle>{{ displayedHasFilters ? '没有匹配的文件' : '暂无文件' }}</EmptyTitle>
                     </EmptyHeader>
                     <Button v-if="hasFilters" variant="outline" size="sm" @click="clearFilters">
                       清除全部筛选
@@ -598,7 +596,7 @@ watch([selections, q, page, pageSize], async (values, previous) => {
       </CardContent>
     </Card>
 
-    <TablePagination v-if="!error || rows.length > 0" :page="displayedPage" :page-size="displayedPageSize" :total="total" :loading="paginationDisabled" unit="个文件" @update:page="setPage" @update:page-size="setPageSize" />
+    <TablePagination v-if="displayedResult" :page="displayedPage" :page-size="displayedPageSize" :total="total" :loading="paginationDisabled" unit="个文件" @update:page="setPage" @update:page-size="setPageSize" />
 
     <component
       :is="upload.component"
@@ -623,7 +621,6 @@ watch([selections, q, page, pageSize], async (values, previous) => {
     />
 
 
-    <Button variant="outline" @click="deleting = null; deleteFailure = ''; deleteOpen = true">恢复隔离文件</Button>
     <DeleteFileDialog
       v-model:open="deleteOpen"
       :file-id="deleting?.id"
