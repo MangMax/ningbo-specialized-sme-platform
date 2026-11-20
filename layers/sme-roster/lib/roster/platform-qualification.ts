@@ -160,40 +160,62 @@ export function createPlatformQualificationFactsReader(db: BetterSQLite3Database
         .innerJoin(s.platformApplyProjection, eq(s.platformApplyProjection.versionId, o.versionId))
         .where(and(latest, inArray(s.platformApplyProjection.usccRaw, applyScope))).all() : []
       for (const row of [...recognized.map(r => ({ ...r, source: 'recognized_list' as const })), ...business.map(r => ({ ...r, source: 'business_list' as const })), ...declarations.map(r => ({ ...r, source: 'apply_list' as const }))]) {
-        const p = row.p, uscc = normalizeUscc(p.usccRaw)
-        const ids = owners.get(uscc)!
-        const title = RDJB_TITLE_CODES[p.titleRaw ?? ''] as CurrentTitle | undefined
-        const reasons = [...(ids.size === 1 ? [] : ['identity_ambiguous']), ...(title ? [] : ['title_unknown'])]
-        let fact: PlatformQualificationFact = {
-          enterpriseId: ids.size === 1 ? [...ids][0]! : null, uscc, title: title ?? null,
-          source: row.source, platformName: p.nameRaw,
-          recordId: row.recordId!, versionId: row.versionId!, observationId: row.observationId, collectedAt: row.collectedAt,
-          matter: 'recognition', matterRaw: null, conclusion: 'unknown', statusRaw: null,
-          businessTime: sourceDate(null), businessTimeKind: 'recognition', businessYear: null,
-          period: { from: sourceDate(null), until: sourceDate(null) }, periodReason: 'period_unknown',
-          location: { province: null, city: null, district: null }, invalidatedAt: sourceDate(null), invalidationReason: null, reasons,
-        }
-        if ('qualificationFieldsRule' in p) {
-          fact.statusRaw = typeof p.sourceValidFlag === 'string' || typeof p.sourceValidFlag === 'number' ? p.sourceValidFlag : null
-          fact.businessTime = sourceDate(p.sourceRecognizedAt)
-          fact.period = { from: fact.businessTime, until: sourceDate(p.sourceValidityDate) }
-          fact.periodReason = fact.period.from.value && fact.period.until.value ? 'explicit_period' : 'period_unknown'
-          fact.location = { province: p.sourceProvinceName, city: p.sourceCityName, district: p.sourceDistrictName }
-          fact.invalidatedAt = sourceDate(p.sourceInvalidatedAt); fact.invalidationReason = p.sourceInvalidationReason
-          // Preserve invalidation timing for the asOf adjudicator; do not turn future invalidation into current cancellation.
-          fact.conclusion = p.sourceValidFlag === '1' || p.sourceValidFlag === 1 ? 'passed' : p.sourceValidFlag === '0' || p.sourceValidFlag === 0 ? 'invalid' : 'unknown'
-          if (!p.qualificationFieldsRule) reasons.push('qualification_fields_uncaptured')
-        } else {
-          const process = platformBusinessFact(row.source as ProcessSource, { declareKind: p.declareKind, status: p.status, year: 'businessYear' in p ? p.businessYear : p.declarationYear, appliedAt: p.appliedAt })
-          fact = { ...fact, ...process }
-          if ('province' in p) fact.location.province = p.province
-          if (process.matter === 'unknown') reasons.push('matter_unknown')
-        }
-        if (fact.conclusion === 'unknown') reasons.push('status_unknown')
-        if (fact.periodReason === 'period_unknown') reasons.push('period_unknown')
-        facts.push(fact)
+        const fact = projectPlatformQualificationFact(row, owners)
+        if (fact) facts.push(fact)
       }
     }
     return facts.sort((a, b) => a.recordId - b.recordId)
   }
+}
+
+type PlatformFactProjection = {
+  usccRaw: string | null; titleRaw: string | null; nameRaw: string | null
+} & ({
+  qualificationFieldsRule: string | null; sourceValidFlag: unknown; sourceRecognizedAt: string | null
+  sourceValidityDate: string | null; sourceProvinceName: string | null; sourceCityName: string | null
+  sourceDistrictName: string | null; sourceInvalidatedAt: string | null; sourceInvalidationReason: string | null
+} | {
+  declareKind: string | null; status: string | null; appliedAt: string | null
+} & ({ businessYear: number | null; province: string | null } | { declarationYear: number | null }))
+
+export type PlatformQualificationInputRow = {
+  recordId: number | null; versionId: number | null; observationId: number; collectedAt: string
+  source: PlatformQualificationFact['source']; p: PlatformFactProjection
+}
+
+/** Map source-owned projections consistently on both storage backends. */
+export function projectPlatformQualificationFact(row: PlatformQualificationInputRow, owners: ReadonlyMap<string, ReadonlySet<number>>): PlatformQualificationFact | null {
+  const p = row.p, uscc = normalizeUscc(p.usccRaw)
+  const ids = owners.get(uscc)
+  if (!ids) return null
+  const title = RDJB_TITLE_CODES[p.titleRaw ?? ''] as CurrentTitle | undefined
+  const reasons = [...(ids.size === 1 ? [] : ['identity_ambiguous']), ...(title ? [] : ['title_unknown'])]
+  let fact: PlatformQualificationFact = {
+    enterpriseId: ids.size === 1 ? [...ids][0]! : null, uscc, title: title ?? null,
+    source: row.source, platformName: p.nameRaw,
+    recordId: row.recordId!, versionId: row.versionId!, observationId: row.observationId, collectedAt: row.collectedAt,
+    matter: 'recognition', matterRaw: null, conclusion: 'unknown', statusRaw: null,
+    businessTime: sourceDate(null), businessTimeKind: 'recognition', businessYear: null,
+    period: { from: sourceDate(null), until: sourceDate(null) }, periodReason: 'period_unknown',
+    location: { province: null, city: null, district: null }, invalidatedAt: sourceDate(null), invalidationReason: null, reasons,
+  }
+  if ('qualificationFieldsRule' in p) {
+    fact.statusRaw = typeof p.sourceValidFlag === 'string' || typeof p.sourceValidFlag === 'number' ? p.sourceValidFlag : null
+    fact.businessTime = sourceDate(p.sourceRecognizedAt)
+    fact.period = { from: fact.businessTime, until: sourceDate(p.sourceValidityDate) }
+    fact.periodReason = fact.period.from.value && fact.period.until.value ? 'explicit_period' : 'period_unknown'
+    fact.location = { province: p.sourceProvinceName, city: p.sourceCityName, district: p.sourceDistrictName }
+    fact.invalidatedAt = sourceDate(p.sourceInvalidatedAt); fact.invalidationReason = p.sourceInvalidationReason
+    // Preserve invalidation timing for the asOf adjudicator; do not turn future invalidation into current cancellation.
+    fact.conclusion = p.sourceValidFlag === '1' || p.sourceValidFlag === 1 ? 'passed' : p.sourceValidFlag === '0' || p.sourceValidFlag === 0 ? 'invalid' : 'unknown'
+    if (!p.qualificationFieldsRule) reasons.push('qualification_fields_uncaptured')
+  } else {
+    const process = platformBusinessFact(row.source as ProcessSource, { declareKind: p.declareKind, status: p.status, year: 'businessYear' in p ? p.businessYear : p.declarationYear, appliedAt: p.appliedAt })
+    fact = { ...fact, ...process }
+    if ('province' in p) fact.location.province = p.province
+    if (process.matter === 'unknown') reasons.push('matter_unknown')
+  }
+  if (fact.conclusion === 'unknown') reasons.push('status_unknown')
+  if (fact.periodReason === 'period_unknown') reasons.push('period_unknown')
+  return fact
 }

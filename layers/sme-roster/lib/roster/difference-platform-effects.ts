@@ -65,6 +65,12 @@ export function readDifferencePlatformEffects(db: Db, enterpriseId: number, titl
   const rows=readEffectRows(db,enterpriseId)
   if (!rows.length) return []
   const pages = db.select().from(s.platformCollectionPage).where(inArray(s.platformCollectionPage.collectionId, [...new Set(rows.map(r => r.collectionId))])).orderBy(s.platformCollectionPage.ordinal).all()
+  return platformEffectsForTitle(rows, pages, title).map(effectReference)
+}
+
+type EffectScope = Pick<ReturnType<typeof readEffectRows>[number], 'collectionId' | 'titleCode' | 'rdjb' | 'sequenceNo'>
+type PageScope = Pick<typeof s.platformCollectionPage.$inferSelect, 'collectionId' | 'status' | 'sequenceStart' | 'sequenceEnd' | 'rdjb'>
+export function platformEffectsForTitle<T extends EffectScope>(rows: T[], pages: PageScope[], title: string) {
   return rows.filter(r => {
     let rowTitle = r.titleCode ?? RDJB_TITLE_CODES[r.rdjb] ?? null
     if (r.rdjb.includes(',')) {
@@ -72,5 +78,5 @@ export function readDifferencePlatformEffects(db: Db, enterpriseId: number, titl
       rowTitle = page?.rdjb ? RDJB_TITLE_CODES[page.rdjb] ?? r.titleCode : r.titleCode
     }
     return rowTitle === title || rowTitle === null && r.rdjb.split(',').includes(({ innovative_sme: '1', specialized_sme: '2', little_giant: '3' } as Record<string, string>)[title]!)
-  }).map(effectReference)
+  })
 }
