@@ -418,6 +418,30 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
       const content = JSON.parse(raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : raw)
       return rpcValue({ status: response.status, body: content })
     }
+    const mcpDetail = await nativeTool('get_enterprise_detail',{enterpriseId:firstOwner.id})
+    expect(mcpDetail.isError).toBe(false)
+    expect(comparable(mcpDetail.body)).toEqual(comparable(rosterNative))
+    const curatedPath = join(pgDir,'curated.json')
+    const legacyCuratedPath = join(dir,'curated.json')
+    const legacyKey = JSON.stringify([event.uscc,scope.titleCode,scope.direction])
+    const annotations = JSON.stringify({[legacyKey]:{note:'合成旧标注',by:'核对人员'},invalid:{note:'旧键待核'}})
+    writeFileSync(curatedPath,annotations)
+    writeFileSync(legacyCuratedPath,annotations)
+    try {
+      const previewPath = '/api/roster/decision-lifecycle/legacy-preview'
+      const legacy = await http(previewPath)
+      const native = await app.request(previewPath)
+      expect(legacy.status).toBe(200)
+      expect(native.status).toBe(200)
+      expect(await native.json()).toEqual(legacy.body)
+      expect(await nativeTool('preview_legacy_difference_decisions',{})).toEqual({body:legacy.body,isError:false})
+      expect(legacy.body).toMatchObject({total:2,rows:expect.arrayContaining([
+        expect.objectContaining({legacyKey,enterpriseId:firstOwner.id,conflicts:expect.arrayContaining(['formal_withdrawal_exists'])}),
+      ])})
+    } finally {
+      rmSync(curatedPath,{force:true})
+      rmSync(legacyCuratedPath,{force:true})
+    }
     for (const [path, name, args] of decisionReads) {
       const source = await http(path), native = await app.request(path)
       expect(source.status, JSON.stringify(source.body)).toBe(200)
@@ -959,6 +983,59 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     expect(await codeOf(subjects[0].id)).toBe(uscc)
     expect(await codeOf(subjects[1].id)).toBeNull()
     expect(await nativeTool('save_roster_batch',backfillCommand)).toMatchObject({isError:false,body:backfillReceipt})
+    const aliasSource = archiveQuery('business_list')
+    const alias = { uscc:event.uscc,name:'合成原值',sourceKind:'platform_business',verificationStatus:'confirmed',
+      sourceRelationRef:{ interface:aliasSource.interface,queryKey:aliasSource.queryKey,rdjb:aliasSource.rdjb,
+        queriedAt:aliasSource.queriedAt,sequenceNo:1,relationKey:aliasSource.relations[0]!.relationKey } }
+    const aliasRequest = { idempotencyKey:'native-platform-alias',sourceKind:'alias_evidence',
+      sourceIdentity:'synthetic-platform-alias',payload:{aliases:[alias]} }
+    expect((await nativeTool('preflight_roster_batch',aliasRequest)).body).toMatchObject({
+      status:'preflight',preflight:{add:1,conflicts:[]} })
+    const aliasReceipt = await (await stage(aliasRequest)).json()
+    expect(aliasReceipt).toMatchObject({status:'committed',summary:{written:1},items:[{kind:'alias',detail:{rowsWritten:1}}]})
+    const aliasId = Number(aliasReceipt.items[0].ref.slice('alias:'.length))
+    const aliasOwner = aliasReceipt.items[0].detail.enterpriseId
+    const aliasRead = await app.request('/api/roster/enterprises/'+aliasOwner+'/aliases/'+aliasId)
+    expect(await aliasRead.json()).toMatchObject({ id:aliasId,name:alias.name,verificationStatus:'confirmed' })
+    const mismatch = { ...aliasRequest,idempotencyKey:'native-platform-alias-mismatch',
+      payload:{aliases:[{...alias,name:'非该条证据的名称'}]} }
+    expect((await nativeTool('save_roster_batch',mismatch)).body).toMatchObject({
+      status:'failed',items:[{error:{code:'alias_source_evidence_mismatch'}}] })
+    const repeatAlias = { ...aliasRequest,idempotencyKey:'native-platform-alias-repeat' }
+    expect(await (await stage(repeatAlias)).json()).toMatchObject({status:'committed',summary:{written:0,skipped:1}})
+    const legacyRow = { id:'native-legacy-page-row',rdjb:'2',qymc:'合成分页主体',tyshxydm:event.uscc }
+    const queriedAt = '2026-10-10T08:12:00.000Z'
+    const legacyQuery = { interface:'business_list',queryKey:event.uscc,rdjb:'1,2,3',queriedAt,status:'success',
+      rawResponse:'synthetic-legacy-original',relations:[{ sequenceNo:1,relationKey:legacyRow.id,rawFields:legacyRow }] }
+    const historical = await stage({ idempotencyKey:'native-legacy-page-original',sourceKind:'platform_archive',
+      sourceIdentity:'synthetic-legacy-original',payload:{platformQueries:[legacyQuery]} })
+    const originalReceipt = await historical.json()
+    expect(historical.status, JSON.stringify(originalReceipt) + (historical.ok ? '' : '\n' + app.output + readFileSync(join(pgDir, 'pg.log'), 'utf8').slice(-4000))).toBe(200)
+    expect(originalReceipt).toMatchObject({status:'committed'})
+    const queryId = Number(originalReceipt.items[0].ref.slice('query:'.length))
+    const pagination = { source:'businessList',status:'success',effectiveConditions:{uscc:event.uscc,combination:'and'},
+      titleScope:{mode:'selected',rdjb:['1','2','3']},queriedAt,completedAt:'2026-10-10T08:13:00.000Z',
+      rows:[legacyRow],pages:['1','2','3'].map(rdjb=>({source:'businessList',rdjb,page:1,status:'success',
+        fetchedCount:rdjb==='2' ? 1 : 0,declaredTotal:rdjb==='2' ? 1 : 0,error:null})),
+      fetchedCount:1,declaredTotal:1,completeness:'complete',fullRange:true,unfinished:[],error:null,
+      limits:{maxRequests:100,maxRows:5000,maxDurationMs:60000,pageSize:50} }
+    const provenanceInput = { queryId,interface:'business_list',queryKey:event.uscc,rdjb:'1,2,3',queriedAt,
+      sourceIdentity:'synthetic-legacy-pages.json',sourceSha256:'f'.repeat(64),segmentIndex:0,
+      collection:pagination,relations:[{sequenceNo:1,relationKey:legacyRow.id,rawFields:legacyRow}] }
+    const provenance = { idempotencyKey:'native-legacy-page-provenance',sourceKind:'platform_archive',
+      sourceIdentity:'synthetic-legacy-pages.json',payload:{platformLegacyProvenance:[provenanceInput]} }
+    const legacyPlanResponse = await app.request('/api/roster/import/preflight',{method:'POST',body:JSON.stringify(provenance)})
+    expect(await legacyPlanResponse.json()).toMatchObject({ status:'preflight',preflight:{add:1,conflicts:[],
+      platformLegacyProvenanceSources:[{queryId,inputFingerprint:expect.stringMatching(/^[a-f0-9]{64}$/)}],
+    } })
+    const provenanceResponse = await stage(provenance)
+    const provenanceReceipt = await provenanceResponse.json()
+    expect(provenanceReceipt).toMatchObject({status:'committed',summary:{written:1},
+      items:[{kind:'platform_legacy_provenance',detail:{typedState:'unknown',relationCount:1}}] })
+    const legacyArchive = await nativeTool('get_platform_query_evidence',{queryId,field:'legacyProvenance'})
+    expect(legacyArchive).toMatchObject({isError:false,body:{data:Buffer.from(JSON.stringify(pagination)).toString('base64'),hasMore:false}})
+    const repeatProvenance = await stage({...provenance,idempotencyKey:'native-legacy-page-repeat'})
+    expect(await repeatProvenance.json()).toMatchObject({status:'committed',summary:{written:0,skipped:1}})
 
   } finally {
     await app.close()

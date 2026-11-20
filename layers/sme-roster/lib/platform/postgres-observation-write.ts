@@ -55,7 +55,7 @@ async function completeVersionProjection(tx: Tx, source: Source, plan: Content, 
   return true
 }
 
-async function ensureContent(tx: Tx, source: Source, plan: Content, now: string) {
+export async function ensurePostgresObservationContent(tx: Tx, source: Source, plan: Content, now: string) {
   const result: { recordId: number | null; versionId: number | null; recordCreated: boolean; versionCreated: boolean; projectionCreated: boolean } =
     { recordId:null,versionId:null,recordCreated:false,versionCreated:false,projectionCreated:false }
   if (!plan.platformKey) return result
@@ -92,7 +92,8 @@ function persistedFields(row: RosterImportRelation, source: Source, createdAt: s
   const normalized = normalizePlatformRelation(source,row)
   const fields = Object.fromEntries(Object.entries(normalized).map(([key,value]) => [key,materializedText(value)]))
   const rawFields = row.rawFields ?? null
-  return { ...fields,rawFields,titleRaw:materializedText(rawFields?.rdjb),
+  return { ...fields,nameRaw:materializedText(row.nameRaw),usccRaw:materializedText(row.usccRaw),
+    rawFields,titleRaw:materializedText(rawFields?.rdjb),
     year: typeof normalized.year === 'number' && Number.isFinite(normalized.year) ? Math.trunc(normalized.year) : null, createdAt } as unknown as
       Omit<SlotRelation,'id'> & { titleRaw: string | null; createdAt: string }
 }
@@ -149,7 +150,7 @@ export async function writePostgresObservation(tx: Tx, collection: Collection, r
   if (source !== 'recognized_list' && ((assignment.nameRaw ?? null) !== fields.nameRaw || (assignment.usccRaw ?? null) !== fields.usccRaw)) {
     throw new Error('Source materialization does not match the original assignment')
   }
-  const values = await ensureContent(tx,source,content,now)
+  const values = await ensurePostgresObservationContent(tx,source,content,now)
   const fingerprintInput = { collectionId:collection.collectionId,position,row,assignment,batchId }
   const inputFingerprint = stamp(fingerprintInput)
   const { rows: [next] } = await tx.execute<{ id: number }>(sql`

@@ -14,13 +14,15 @@ type Action = 'preflight' | 'commit'
 type Batch = {
   id: number; status: NonNullable<RosterImportPreflight['batchStatus']>; kind: string; identity: string; sha256: string | null
   summary: unknown; items: RosterImportItemResult[] | null
+  preflight: RosterImportPreflight | null
 }
 const zeroSummary = { written: 0, skipped: 0, failed: 0, evidenceRepointed: 0 }
 
 export async function lockPostgresRosterImportBatch(tx: Tx, key: string) {
   const { rows: [row] } = await tx.execute<Batch>(sql`
     SELECT id::float8 AS id,status,source_kind AS kind,source_identity AS identity,source_sha256 AS sha256,
-      summary::json AS summary,item_results::json AS items FROM import_batch WHERE idempotency_key=${key} FOR UPDATE`)
+      summary::json AS summary,item_results::json AS items,preflight_result::json AS preflight
+    FROM import_batch WHERE idempotency_key=${key} FOR UPDATE`)
   return row
 }
 
@@ -80,9 +82,15 @@ export async function executePostgresRosterImport(db: NodePgDatabase, action: Ac
     if (batch.kind !== request.sourceKind || batch.identity !== request.sourceIdentity || batch.sha256 !== bound.sourceSha256) {
       conflict('Idempotency key belongs to a different source')
     }
-    const { rows: [previous] } = await tx.execute<{ status: string; hash: string }>(sql`
-      SELECT status,request_hash AS hash FROM import_receipt WHERE batch_id=${batch.id} ORDER BY id DESC LIMIT 1`)
-    if (previous && ['committed','processing'].includes(previous.status) && previous.hash !== hash) {
+    const { rows: [previous] } = await tx.execute<{ status: string; hash: string; historical: boolean }>(sql`
+      SELECT r.status,r.request_hash AS hash,
+        (nullif(coalesce(owner.request_body,r.request_body),'')::jsonb->'payload')
+          ?| ARRAY['platformRecordObservations','platformLegacyProvenance'] AS historical
+      FROM import_receipt r LEFT JOIN import_receipt owner ON owner.id=r.body_receipt_id
+      WHERE r.batch_id=${batch.id} ORDER BY r.id DESC LIMIT 1`)
+    const immutableSource = request.payload.platformRecordObservations !== undefined
+      || request.payload.platformLegacyProvenance !== undefined || previous?.historical
+    if (previous && (immutableSource || ['committed','processing'].includes(previous.status)) && previous.hash !== hash) {
       conflict('Idempotency key belongs to a different request')
     }
     if (batch.status === 'committed') return { batch, receipt: null }

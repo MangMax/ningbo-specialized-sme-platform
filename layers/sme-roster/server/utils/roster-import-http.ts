@@ -26,6 +26,7 @@ import { stagePostgresAnnouncement } from './announcement-intake-postgres'
 import { runPostgresExportImport } from './roster-export-import-postgres'
 import { runPostgresPlatformImport } from './collection-import-postgres'
 import { runPostgresUsccBackfill } from './uscc-backfill-postgres'
+import { runPostgresAliasImport } from './alias-import-postgres'
 import { hasAnnouncementRows } from '../../lib/roster-import-client'
 import * as schema from '../../../../db/schema'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
@@ -111,6 +112,8 @@ export async function handleRosterImportRequest(
     if (nativePlatform !== undefined) return json(200, nativePlatform)
     const nativeBackfill = await runPostgresUsccBackfill(action, validated.value)
     if (nativeBackfill !== undefined) return json(200, nativeBackfill)
+    const nativeAliases = await runPostgresAliasImport(action,validated.value)
+    if (nativeAliases !== undefined) return json(200,nativeAliases)
     const pageCountErrors =
       (action === 'preflight' || action === 'commit') && deps.filesDir
         ? await validateRosterImportPageCounts(validated.value, deps.filesDir)
