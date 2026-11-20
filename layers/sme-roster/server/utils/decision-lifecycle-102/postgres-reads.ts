@@ -62,6 +62,16 @@ export async function currentPostgresDecisions102(db: Reader, scopes: readonly S
   })
 }
 
+export async function readPostgresQualificationDecisionHeads(db: Reader, enterpriseId: number, titles: readonly string[]) {
+  const { rows } = await db.execute<{ decision: PublicRow }>(sql`
+    SELECT ${postgresDifferenceRow()} AS decision
+    FROM unnest(${sql.param(titles)}::text[]) AS t(title)
+    CROSS JOIN (VALUES ('missing_in_miit'),('extra_in_miit')) AS s(direction)
+    JOIN LATERAL (SELECT * FROM difference_reason d WHERE d.enterprise_id=${enterpriseId} AND d.title_code=t.title
+      AND d.direction=s.direction ORDER BY d.recorded_at DESC,d.id DESC LIMIT 1) p ON true`)
+  return rows.map(({ decision }) => decision)
+}
+
 export async function readPostgresDecision102(db: Reader, id: number) {
   const { rows: [stored] } = await db.execute<{ row: PublicRow }>(sql`
     SELECT ${postgresDifferenceRow()} AS row FROM difference_reason p WHERE id=${id}`)

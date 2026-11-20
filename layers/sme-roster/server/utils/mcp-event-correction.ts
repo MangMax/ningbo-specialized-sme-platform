@@ -6,6 +6,7 @@ import { eventCorrectionRequestSchema } from './roster-event-correction'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { handleEventCorrectionRequest, type EventCorrectionAction } from './roster-event-correction-api'
+import { handlePostgresEventCorrectionWrite } from './roster-event-correction-write-postgres'
 
 /** Accept transport-safe SDK results without copying or executing object code. */
 export function isEventCorrectionMcpResult(value: unknown): value is McpToolCallbackResult {
@@ -31,6 +32,16 @@ export function isEventCorrectionMcpResult(value: unknown): value is McpToolCall
 export function dispatchEventCorrectionMcp(action: EventCorrectionAction, args: Record<string, unknown>, context: { db: BetterSQLite3Database<typeof schema>; authorized?: boolean }): McpToolCallbackResult {
   const write = action === 'preflight' || action === 'commit'
   const output = handleEventCorrectionRequest({ action, method: write ? 'POST' : 'GET', id: args.eventId, query: action==='get' ? Object.fromEntries(Object.entries(args).filter(([key,v])=>key!=='eventId' && v!==undefined)) : action === 'audit' ? Object.fromEntries(Object.entries({ page: args.page, pageSize: args.pageSize }).filter(([,v]) => v !== undefined)) : undefined, body: args, headers: context.authorized ? { authorization: 'Bearer mcp-event-internal' } : undefined }, { db: context.db, apiToken: 'mcp-event-internal' })
+  return eventCorrectionMcpResult(action, args, output)
+}
+
+export async function dispatchPostgresEventCorrectionMcp(action: 'preflight' | 'commit', args: Record<string, unknown>) {
+  const apiToken = 'mcp-event-internal'
+  const output = await handlePostgresEventCorrectionWrite(action, { method: 'POST', body: args, headers: { authorization: 'Bearer ' + apiToken }, apiToken })
+  if (output) return eventCorrectionMcpResult(action, args, output)
+}
+
+function eventCorrectionMcpResult(action: EventCorrectionAction, args: Record<string, unknown>, output: { status: number; body: unknown }): McpToolCallbackResult {
   if (output.status !== 200) { const error = output.body as { error: { code: string; message: string } }; throw Object.assign(new Error(action==='get' && args.official!==undefined?JSON.stringify(output.body):error.error.message), { code: error.error.code, statusCode: output.status }) }
   if (!isEventCorrectionMcpResult(output.body)) throw Object.assign(new Error('Invalid event correction MCP result'), { code: 'internal_error', statusCode: 500 })
   return output.body

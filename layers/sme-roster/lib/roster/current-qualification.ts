@@ -1185,6 +1185,22 @@ export function evaluateLoadedCurrentQualification(
   return evaluated
 }
 
+export type LegacyQualificationInput = LoadedCurrentQualificationInput & Pick<CandidateSource,
+  'readLegacyHeads' | 'readLegacyAssessment' | 'readLegacyReceipt' | 'readLegacyObservation'>
+
+export function assessLegacyQualificationInputs(enterpriseId: number, asOf: number, inputs: ReadonlyMap<CurrentTitle, LegacyQualificationInput>): CurrentQualificationSnapshot {
+  const assessmentVersion = LEGACY_QUALIFICATION_ASSESSMENT_VERSION
+  const date = new Date(asOf)
+  const titles = CURRENT_TITLES.map(title => {
+    const input = inputs.get(title)!
+    const result = evaluateCandidate(input, () => { throw new Error('Legacy qualification does not inherit titles') },
+      input.enterprise.id, title, date.getUTCFullYear(), asOf, undefined, false, true, { assessmentVersion })
+    return result.row.assessment!
+  })
+  const scope = { enterpriseId, asOf: date.toISOString(), ruleVersion: LEGACY_CURRENT_RULE_VERSION, assessmentVersion }
+  return { ...scope, snapshotId: assessmentDigest([scope, titles]), titles }
+}
+
 export function currentQualificationSnapshot(enterpriseId: number, asOf: number, titles: CurrentQualificationAssessment[]): CurrentQualificationSnapshot {
   const scope = { enterpriseId, asOf: new Date(asOf).toISOString(), ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION }
   return { ...scope, snapshotId: assessmentDigest([scope, titles]), titles }

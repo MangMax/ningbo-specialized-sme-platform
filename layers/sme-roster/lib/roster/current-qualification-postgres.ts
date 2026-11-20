@@ -4,8 +4,8 @@ import * as schema from '../../../../db/schema'
 import { postgresRosterRow } from './postgres-rows'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import {
-  assessCurrentQualificationInputs, currentQualificationSnapshot, evaluateLoadedCurrentQualification, formatQualificationCorrespondence,
-  type CandidateEvent, type CandidateFile, type CurrentQualificationInput, type LoadedCurrentQualificationInput, type QualificationDisposition,
+  assessCurrentQualificationInputs, assessLegacyQualificationInputs, currentQualificationSnapshot, evaluateLoadedCurrentQualification, formatQualificationCorrespondence,
+  type CandidateEvent, type CandidateFile, type CurrentQualificationInput, type LoadedCurrentQualificationInput, type LegacyQualificationInput, type QualificationDisposition,
 } from './current-qualification'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
 import { evaluateEnterpriseFactEffects, type EnterpriseFactEffectRow } from './enterprise-fact-effects'
@@ -23,6 +23,10 @@ import type { PublishedPresentation } from './correspondence-view'
 import { importPostgresReceiptRedactor } from '../../server/utils/import-receipt-redaction'
 import { CANDIDATE_SCOPE_RULE } from '../platform/candidate-scope-capture'
 import { readPostgresCorrespondenceRefs } from '../../server/utils/record-correspondence-postgres-refs'
+
+import { readPostgresQualificationDecisionHeads } from '../../server/utils/decision-lifecycle-102/postgres-reads'
+import { readPostgresDifferenceObservations } from '../platform/difference-sources-postgres'
+import { readPostgresQueryAssessments } from './query-assessment-postgres'
 
 type Reader = Pick<NodePgDatabase, 'execute'>
 export type PostgresQualificationTransaction = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -345,4 +349,33 @@ export async function readPostgresDifferenceQualifications(tx: PostgresQualifica
       [...evaluateLoadedCurrentQualification(asOf, inputs).values()].map(result => ({ enterpriseId, assessment: result.row.assessment! }))),
     facts: loaded.flatMap(([, inputs]) => inputs.get('specialized_sme')!.readPlatformFacts()),
   }
+}
+
+export async function readPostgresLegacyQualification(tx: PostgresQualificationTransaction, enterpriseId: number, asOf: number) {
+  const loaded = await readQualificationInputs(tx, [enterpriseId], asOf, { mode: 'detail', title: 'specialized_sme' })
+  const inputs = loaded[0]?.[1]
+  if (!inputs) throw new Error('Qualification enterprise not found')
+  const owner = inputs.get('specialized_sme')!.enterprise.id
+  const { coverage } = await prepareDetailedQualificationSources(tx, loaded, CURRENT_TITLES)
+  const heads = await readPostgresQualificationDecisionHeads(tx, owner, CURRENT_TITLES)
+  const active = heads.filter(row => row.lifecycleAction !== 'withdraw' && row.verificationStatus === 'confirmed' && row.status === 'confirmed_reason'
+    && !['pending_review','platform_stale','renamed'].includes(row.reasonCode ?? ''))
+  const assessments = await readPostgresQueryAssessments(tx, active.map(row => ({
+    enterpriseId: owner, titleCode: row.titleCode, direction: row.direction as 'missing_in_miit' | 'extra_in_miit',
+  })), coverage)
+  const byScope = new Map(assessments.map(result => [result.currentDecision.titleCode + ':' + result.currentDecision.direction, result]))
+  const observations = await readPostgresDifferenceObservations(tx, active.flatMap(row => row.evidenceRelationId === null ? [] : [row.evidenceRelationId]))
+  const receipts = active.length ? (await tx.execute<{ id: number; receipt: { basis: string; effectiveAt: string } }>(sql`
+    SELECT DISTINCT ON(decision_id) decision_id::float8 AS id, json_build_object('basis',basis,'effectiveAt',effective_at) AS receipt
+    FROM evidence_review_receipt_114 WHERE decision_id=ANY(${pgIds(active.map(row => row.id))}) AND reviewed_revision_id IS NOT NULL
+    ORDER BY decision_id,id DESC`)).rows : []
+  const byDecision = new Map(receipts.map(row => [row.id, row.receipt]))
+  const projected = new Map<CurrentTitle, LegacyQualificationInput>([...inputs].map(([title, input]) => [title, {
+    ...input,
+    readLegacyHeads: () => heads,
+    readLegacyAssessment: (target, direction) => byScope.get(target + ':' + direction)!,
+    readLegacyReceipt: id => byDecision.get(id),
+    readLegacyObservation: id => observations.get(id),
+  }]))
+  return assessLegacyQualificationInputs(enterpriseId, asOf, projected)
 }

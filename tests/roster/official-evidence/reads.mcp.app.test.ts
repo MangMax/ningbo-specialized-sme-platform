@@ -561,6 +561,48 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     const replayBody = await replay.text()
     const replayEvent = replayBody.startsWith('event:') ? replayBody.split('\n').find(line => line.startsWith('data: '))!.slice(6) : replayBody
     expect(JSON.parse(JSON.parse(replayEvent).result.content[0].text)).toEqual(committed[0])
+
+    const eventPath = '/api/roster/events/' + event.id
+    const legacyEvent = await http(eventPath)
+    const eventBefore = z.object({ event: z.object({ revision: z.number(), batchSeq: z.number().nullable() }),
+      record: z.object({ id: z.number(), enterpriseId: z.number() }) }).parse(legacyEvent.body)
+    const priorNative = await (await app.request(eventPath)).json()
+    const eventRequest = {
+      idempotencyKey: 'native-event-correction', sourceIdentity: '合成原件', actor, basis,
+      operations: [{ eventId: event.id, recordId: eventBefore.record.id, enterpriseId: eventBefore.record.enterpriseId,
+        expectedRevision: eventBefore.event.revision, patch: { batchSeq: (eventBefore.event.batchSeq ?? 0) + 42 } }],
+    }
+    const eventRoot = '/api/roster/events/corrections/'
+    const nativeEventCommand = (action: string, body: unknown) => app.request(eventRoot + action, {
+      method: 'POST', body: JSON.stringify(body),
+    })
+    const proof = z.object({ stage: z.string(), status: z.literal('captured'), target: z.object({ enterpriseId: z.number() }),
+      assessment: z.object({ assessmentVersion: z.literal('enterprise-qualification-407-v1'), ruleVersion: z.literal('current-roster-116-v8'),
+        titles: z.array(z.unknown()).length(3) }) })
+    const legacyEventPlan = await http(eventRoot + 'preflight', eventRequest)
+    const nativeEventPlanResponse = await nativeEventCommand('preflight', eventRequest)
+    const nativeEventPlan = await nativeEventPlanResponse.json()
+    expect(legacyEventPlan.status, JSON.stringify(legacyEventPlan.body)).toBe(200)
+    expect(nativeEventPlanResponse.status, JSON.stringify(nativeEventPlan)).toBe(200)
+    expect(nativeEventPlan).toMatchObject({ targets: z.object({ targets: z.array(z.unknown()) }).parse(legacyEventPlan.body).targets })
+    expect(nativeEventPlan.planHash).toEqual(z.object({ planHash: z.string() }).parse(legacyEventPlan.body).planHash)
+    expect(proof.parse(nativeEventPlan.qualificationReadback)).toEqual(proof.parse(z.object({ qualificationReadback: z.unknown() }).parse(legacyEventPlan.body).qualificationReadback))
+    expect(await nativeTool('preflight_event_corrections', eventRequest)).toEqual({ body: nativeEventPlan, isError: false })
+    const eventCommand = { request: eventRequest, planHash: nativeEventPlan.planHash }
+    const legacyEventCommit = await http(eventRoot + 'commit', eventCommand)
+    const responsesToEvent = await Promise.all([nativeEventCommand('commit', eventCommand), nativeEventCommand('commit', eventCommand)])
+    const eventReceipts = await Promise.all(responsesToEvent.map(response => response.json()))
+    expect(legacyEventCommit.status, JSON.stringify(legacyEventCommit.body)).toBe(200)
+    expect(responsesToEvent.map(response => response.status), JSON.stringify(eventReceipts)).toEqual([200, 200])
+    expect(eventReceipts[0]).toEqual(eventReceipts[1])
+    expect(proof.parse(eventReceipts[0].qualificationReadback)).toEqual(proof.parse(z.object({ qualificationReadback: z.unknown() }).parse(legacyEventCommit.body).qualificationReadback))
+    expect(await nativeTool('commit_event_corrections', eventCommand)).toEqual({ body: eventReceipts[0], isError: false })
+    const corrected = await (await app.request(eventPath)).json()
+    expect(corrected.event).toMatchObject({ id: event.id, revision: eventBefore.event.revision + 1, batchSeq: eventRequest.operations[0]!.patch.batchSeq })
+    expect(corrected.evidence).toEqual(priorNative.evidence)
+    const eventAudit = await (await app.request(eventPath + '/audit')).json()
+    expect(eventAudit.rows).toEqual([expect.objectContaining({ eventId: event.id, before: priorNative.event, after: corrected.event })])
+
   } finally {
     await app.close()
     if (started) run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-m', 'fast', 'stop'])
