@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { readLatestOfficialEvidence } from '../../../layers/sme-roster/server/utils/official-evidence'
 import { nativeAppAdapter } from '../../support/native-app'
 import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { reviewFixtureRows } from '../imports/fixtures/reviewed-announcement'
@@ -289,7 +290,7 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     args: [join(cwd, '.output/server/index.mjs')],
     env: { NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_MCP_TOKEN: mcpToken,
       NUXT_DB_READONLY: '1', NUXT_POSTGRES_ROSTER_READ: '1', NUXT_POSTGRES_DIRECTORY_URL: url,
-      NUXT_POSTGRES_DIRECTORY_WRITE: '1' },
+      NUXT_POSTGRES_DIRECTORY_WRITE: '1', NUXT_FILES_DIR: filesDir },
   }) })
   const env = {
     PATH: process.env.PATH, LANG: 'C', PGHOST: pgDir, PGPORT: '5432', PGDATABASE: 'postgres',
@@ -407,6 +408,40 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     ])
     expect(nativeRows).toEqual(legacyRows)
     expect(JSON.stringify(nativeRows)).toContain('2021旧名')
+
+    const { evidenceId } = sqlite.prepare('SELECT evidence_id AS evidenceId FROM official_evidence_row_revision WHERE source_binding_known=1 ORDER BY evidence_id LIMIT 1').get() as { evidenceId: number }
+    const exactPath = '/api/roster/evidence/' + evidenceId
+    const row = await (await app.request(exactPath)).json()
+    expect(row).toEqual((await http(exactPath)).body)
+    const { sourceDocumentId, revision, nameRaw, usccRaw, districtRaw, storedFileId, path, sha256: sourceHash, bytes, attachment, sectionKey, listNo, page, sourceBindingKnown } =
+      readLatestOfficialEvidence(db, evidenceId).row!
+    const actor = { type: 'agent', id: 'native-evidence-review' }, basis = '按原件更正原文'
+    const change = { idempotencyKey: 'native-exact-evidence', actor, basis, operations: [{
+      evidenceId, eventId: row.eventId, recordId: row.recordId, enterpriseId: row.enterpriseId,
+      expectedVersion: row.version, expectedRowRevision: revision, coordinate: row.coordinate,
+      publishedRow: { nameRaw: nameRaw + '（更正）', usccRaw, districtRaw, storedFileId, path, sha256: sourceHash, bytes, attachment,
+        sectionKey, listNo, page, sourceBindingKnown, declaration: { kind: 'existing', sourceDocumentId, basis }, actor, basis },
+    }] }
+    const correction = (operation: string, body: unknown) => app.request('/api/roster/evidence/corrections/' + operation, {
+      method: 'POST', body: JSON.stringify(body),
+    })
+    const before = await http('/api/roster/evidence/corrections/preflight', change)
+    expect(before.status, JSON.stringify(before.body)).toBe(200)
+    const nativeBefore = await correction('preflight', change)
+    const nativeCorrectionPlan = await nativeBefore.json()
+    expect(nativeBefore.status, JSON.stringify(nativeCorrectionPlan)).toBe(200)
+    expect(nativeCorrectionPlan).toEqual(before.body)
+    const command = { request: change, planHash: nativeCorrectionPlan.planHash }
+    const responses = await Promise.all([correction('commit', command), correction('commit', command)])
+    const receipts = await Promise.all(responses.map(response => response.json()))
+    expect(responses.map(response => response.status), JSON.stringify(receipts)).toEqual([200, 200])
+    expect(receipts[0]).toEqual(receipts[1])
+    expect(receipts[0]).toMatchObject({ status: 'committed', evidenceIds: [evidenceId], impact: { updated: 1, audit: 1 } })
+    expect(await (await app.request(exactPath)).json()).toMatchObject({ evidenceId, event: { revision: row.event.revision + 1 } })
+    const audit = await (await app.request(exactPath + '/audit')).json()
+    expect(audit.rows.at(-1)).toMatchObject({ before: { row: { revision, nameRaw } }, after: { rowRevision: revision + 1 } })
+    expect(await (await app.request('/api/roster/evidence/corrections/batches/' + change.idempotencyKey)).json()).toEqual(receipts[0])
+    expect((await http(exactPath)).body).toEqual(row)
 
     const intake = sqlite.prepare('SELECT id,digest FROM roster_announcement_intake WHERE removed_reason IS NULL AND receipt IS NOT NULL ORDER BY id LIMIT 1').get() as { id: number; digest: string }
     const intakePath = `/api/roster/import/intake/${intake.id}`

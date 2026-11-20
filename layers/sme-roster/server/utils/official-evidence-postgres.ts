@@ -1,10 +1,10 @@
-import { sql } from 'drizzle-orm'
+import { sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/schema'
 import { computeTitleLifecycle } from '../../lib/roster/lifecycle'
 import { postgresRosterRow, readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
 import { projectExactEvidence } from './roster-evidence-correction'
-import { checkOfficialEvidenceFields, OfficialEvidenceError, type OfficialEvidenceRow, type OfficialEvidencePageRequest, type OfficialEvidencePageResult } from './official-evidence'
+import { checkOfficialEvidenceFields, OfficialEvidenceError, type OfficialEvidenceRow, type OfficialEvidenceSourceKey, type OfficialEvidenceCandidate, type OfficialEvidencePageRequest, type OfficialEvidencePageResult } from './official-evidence'
 import { officialProjectionBudget, officialProjectionResponse, type EvidenceRead, type EventRead } from './official-evidence-read'
 import { importPostgresReceiptRedactor } from './import-receipt-redaction'
 
@@ -69,6 +69,49 @@ const capturedShape = sql`json_build_object('formatVersion', r.format_version, '
 const oversizedField = sql`greatest(length(r.name_raw),length(r.uscc_raw),length(r.district_raw),length(r.path),length(r.sha256),
   length(r.attachment),length(r.section_key),length(r.basis),length(r.actor::json ->> 'id'),
   length(r.correction_batch_key),length(r.created_at)) > 4000`
+
+type FactRead = { id: number } | { key: OfficialEvidenceSourceKey }
+export async function readPostgresOfficialPlanFacts(db: Db, input: { id: number }): Promise<OfficialEvidenceRow | null>
+export async function readPostgresOfficialPlanFacts(db: Db, input: { key: OfficialEvidenceSourceKey }): Promise<OfficialEvidenceCandidate[]>
+export async function readPostgresOfficialPlanFacts(db: Db, input: FactRead) {
+  const key = 'key' in input ? input.key : null
+  let select: SQL, shape: SQL, guard: SQL
+  if ('key' in input) {
+    const key = input.key
+    select = sql`SELECT r.* FROM official_evidence_row_revision r WHERE r.source_binding_known=1
+      AND r.source_document_id=${key.sourceDocumentId} AND r.sha256=${key.sha256} AND r.bytes=${key.bytes}
+      AND r.attachment IS NOT DISTINCT FROM ${key.attachment} AND r.section_key=${key.sectionKey} AND r.list_no=${key.listNo}
+      AND NOT EXISTS(SELECT 1 FROM official_evidence_row_revision newer WHERE newer.evidence_id=r.evidence_id AND newer.revision>r.revision)
+      ORDER BY r.evidence_id LIMIT 101`
+    shape = sql`json_build_object('evidenceId',r.evidence_id,'eventId',r.event_id,'revision',r.revision,
+      'capturedRecordId',r.captured_record_id,'capturedEnterpriseId',r.captured_enterprise_id,
+      'nameRaw',r.name_raw,'usccRaw',r.uscc_raw,'districtRaw',r.district_raw,'currentOwner',
+      CASE WHEN owner.id IS NOT NULL THEN json_build_object('recordId',rec.id,'enterpriseId',owner.id) END)`
+    guard = sql`greatest(length(r.name_raw),length(r.uscc_raw),length(r.district_raw))>4000`
+  } else {
+    select = sql`SELECT * FROM official_evidence_row_revision WHERE evidence_id=${input.id} ORDER BY revision DESC LIMIT 1`
+    shape = capturedShape
+    guard = oversizedField
+  }
+  const { rows: [result] } = await db.execute<{ count: number; fieldLimit: boolean; facts: (OfficialEvidenceRow | OfficialEvidenceCandidate)[] | null }>(sql`
+    WITH selected AS (${select}), projected AS (
+      SELECT r.evidence_id,${shape} AS body,${guard} AS field_limit
+      FROM selected r LEFT JOIN record_event e ON e.id=r.event_id
+      LEFT JOIN record rec ON rec.id=e.record_id LEFT JOIN enterprise owner ON owner.id=rec.enterprise_id
+    )
+    SELECT count(*)::int AS count,coalesce(bool_or(field_limit),false) AS "fieldLimit",
+      CASE WHEN count(*)<=100 AND NOT coalesce(bool_or(field_limit),false)
+        AND coalesce(sum(octet_length(body::text)),0)<=65536+count(*)*160
+        THEN coalesce(json_agg(body ORDER BY evidence_id),'[]'::json) END AS facts
+    FROM projected`)
+  if (result!.count > 100) throw new OfficialEvidenceError(413, 'source_limit', 'Source scope exceeds the supported limit')
+  if (result!.fieldLimit) throw new OfficialEvidenceError(413, 'field_limit', 'Stored field exceeds the read limit')
+  const facts = result!.facts
+  const projection = key ? { formatVersion: 1, key, candidates: facts } : { formatVersion: 1, row: facts?.[0] ?? null }
+  if (!facts || Buffer.byteLength(JSON.stringify(projection)) > 65536) throw new OfficialEvidenceError(413, 'response_limit', 'Projection exceeds maxBytes')
+  checkOfficialEvidenceFields(facts)
+  return key ? facts : facts[0] ?? null
+}
 
 export async function readPostgresPublicOfficialEvidence(db: NodePgDatabase, kind: 'event' | 'evidence', args: EventRead | EvidenceRead) {
   const pageSize = args.official === 'history' || kind === 'event' ? args.pageSize ?? 20 : 1

@@ -44,3 +44,23 @@ export async function appendPostgresEvidenceRevision(tx: Tx, input: Revision) {
     VALUES (${revision.id},${input.eventId},${input.enterpriseId},${input.titleCode}) ON CONFLICT DO NOTHING`)
   return revision.id
 }
+
+export async function capturePostgresOfficialEventRevision(tx: Tx, eventId: number, beforeRevision: number, afterRevision: number) {
+  const { rows: [owner] } = await tx.execute<{ enterpriseId: number; titleCode: string }>(sql`
+    SELECT r.enterprise_id::float8 AS "enterpriseId",r.title_code AS "titleCode"
+    FROM record_event e JOIN record r ON r.id=e.record_id WHERE e.id=${eventId}`)
+  if (!owner) throw new Error('Official event owner missing')
+  return appendPostgresEvidenceRevision(tx, { sourceKind: 'official_event', sourceKey: String(eventId), sourceVersion: String(afterRevision),
+    ...owner, eventId, beforeFactDigest: evidenceDigest113([eventId, beforeRevision]), factDigest: evidenceDigest113([eventId, afterRevision]),
+    metadata: { eventId, beforeRevision, afterRevision },
+  })
+}
+
+export async function advancePostgresOfficialEventRevision(tx: Tx, eventId: number, expectedRevision: number) {
+  const revision = expectedRevision + 1
+  const changed = await tx.execute(sql`UPDATE record_event SET revision=${revision}
+    WHERE id=${eventId} AND revision=${expectedRevision}`)
+  if (changed.rowCount !== 1) throw Object.assign(new Error('Official event revision changed'), { code: 'stale_revision', statusCode: 409 })
+  await capturePostgresOfficialEventRevision(tx, eventId, expectedRevision, revision)
+  return revision
+}
