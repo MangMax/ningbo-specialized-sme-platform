@@ -8,7 +8,8 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { initializeDb } from '../../../db/client'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { listRosterEnterprises } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
-import { parseRosterEnterpriseQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
+import { listRecords } from '../../../layers/sme-roster/lib/query'
+import { parseRecordQuery, parseRosterEnterpriseQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
 
 const url = process.env.TEST_PROFILE_POSTGRES_URL
 let request: ReturnType<typeof toWebHandler>
@@ -55,7 +56,9 @@ beforeAll(async () => {
   vi.doMock('@db', () => ({ useDb: () => { throw new Error('Unexpected SQLite access in PostgreSQL mode') } }))
   const handler = (await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default
   const download = (await import('../../../layers/sme-roster/server/api/roster/export.get')).default
-  request = toWebHandler(createApp().use(createRouter().get('/api/roster/enterprises', handler).get('/api/roster/export', download)))
+  const ledger = (await import('../../../layers/sme-roster/server/api/records.get')).default
+  request = toWebHandler(createApp().use(createRouter()
+    .get('/api/roster/enterprises', handler).get('/api/roster/export', download).get('/api/records', ledger)))
 })
 
 it.skipIf(!url)('exports every matched enterprise as an XLSX row independent of list paging', async () => {
@@ -102,4 +105,21 @@ it.skipIf(!url)('matches the SQLite historical roster for membership, source int
     { diffStatus: 'not_queried', sort: 'name' },
   ]
   for (const query of filters) await paired(query)
+})
+
+it.skipIf(!url)('preserves complete ledger history in the matching groups and applies derived filters before pagination', async () => {
+  const pairs: Record<string, string>[] = [
+    {}, { page: '2', pageSize: '1' }, { page: '90', pageSize: '1' },
+    { q: '原名称宁波', source: 'jxj', eventType: 'review', year: '2022' },
+    { q: 'ma2gmdfh', firstYear: '2024', firstStatus: 'confirmed' },
+    { q: '%' }, { q: '_' }, { q: '\\' },
+    { firstStatus: 'pending', pageSize: '1' }, { flags: 'uscc_missing' },
+    { dueYear: '2028' }, { dueYear: '2028', pageSize: '1', page: '2' },
+  ]
+  for (const query of pairs) {
+    const response = await request(new Request('http://localhost/api/records?' + new URLSearchParams(query)))
+    const result = await response.json()
+    expect(response.status, JSON.stringify(result)).toBe(200)
+    expect(result).toEqual(listRecords(sqlite, parseRecordQuery(query)))
+  }
 })

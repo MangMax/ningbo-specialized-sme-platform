@@ -109,6 +109,14 @@ export interface RecordRow {
   flags: string[]
 }
 
+export type LedgerGroup = { enterpriseId: number; titleCode: string }
+export type LedgerSource = LedgerGroup & {
+  recordId: number; name: string; uscc: string | null; district: string | null;
+  source: string; flags: string[] | null
+}
+export type LedgerEvent = Pick<RecordEvent, 'id' | 'recordId' | 'type' | 'year' | 'decidedYear' | 'reviewOutcome' | 'seq'> & { sortKey: number }
+export type LedgerEvidence = RecordEvent['evidence'][number] & { recordEventId: number }
+
 export { MAX_PAGE_SIZE } from './query-limits'
 
 /**
@@ -234,22 +242,13 @@ export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; t
       .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
       .where(where)
       .groupBy(schema.record.enterpriseId, schema.record.titleCode)
-      .orderBy(sql`min(${titleRank})`, sql`min(${schema.enterprise.name})`)
+      .orderBy(sql`min(${titleRank})`, sql`min(${schema.enterprise.name})`, schema.record.enterpriseId, schema.record.titleCode)
 
   if (params.dueYear != null || params.firstYear?.length || params.firstStatus?.length) {
     // 生命周期到期年、首次认定年与首次认定状态都是派生值，先对所有候选组合计算，再排序/分页。
     const candidates = groupsQuery().all()
     if (!candidates.length) return { rows: [], total: 0 }
-    const derivedRows = buildRecordRows(db, candidates).filter((row) => {
-      if (params.dueYear != null && row.lifecycle.dueYear !== params.dueYear) return false
-      if (
-        (params.firstYear?.length || params.firstStatus?.length) &&
-        !matchesRecordRecognition(row, params)
-      ) {
-        return false
-      }
-      return true
-    })
+    const derivedRows = buildRecordRows(db, candidates).filter(row => matchesLedgerDerivedFilters(row, params))
     return {
       rows: derivedRows.slice((page - 1) * pageSize, page * pageSize),
       total: derivedRows.length,
@@ -268,6 +267,11 @@ export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; t
 
   const pageGroups = groupsQuery().limit(pageSize).offset((page - 1) * pageSize).all()
   return { rows: buildRecordRows(db, pageGroups), total }
+}
+
+export function matchesLedgerDerivedFilters(row: RecordRow, params: RecordQuery) {
+  return (params.dueYear == null || row.lifecycle.dueYear === params.dueYear) &&
+    (!(params.firstYear?.length || params.firstStatus?.length) || matchesRecordRecognition(row, params))
 }
 
 /** 首次年份与状态都使用 RL-08 已有的共享判定和筛选语义。 */
@@ -297,7 +301,7 @@ function matchesRecordRecognition(row: RecordRow, params: RecordQuery): boolean 
 /** 读取分组下全部来源/事件/出处并投影同一生命周期结果。 */
 function buildRecordRows(
   db: Db,
-  pageGroups: { enterpriseId: number; titleCode: string }[],
+  pageGroups: LedgerGroup[],
 ): RecordRow[] {
   if (!pageGroups.length) return []
   const groupKeys = pageGroups.map((g) => groupKey(g.enterpriseId, g.titleCode))
@@ -352,6 +356,10 @@ function buildRecordRows(
         .all()
     : []
 
+  return projectLedgerRows(pageGroups, matched, rawEvents, evidence)
+}
+
+export function projectLedgerRows(pageGroups: LedgerGroup[], matched: LedgerSource[], rawEvents: LedgerEvent[], evidence: LedgerEvidence[]): RecordRow[] {
   const evidenceByEvent = groupBy(evidence, (row) => row.recordEventId)
   const eventsByRecord = groupBy(rawEvents, (e) => e.recordId)
   const recordsByKey = groupBy(matched, (r) => groupKey(r.enterpriseId, r.titleCode))
