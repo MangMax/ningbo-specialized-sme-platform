@@ -84,6 +84,60 @@ function retainFilterWitnesses(row: CurrentRow, matching: CurrentQualificationWi
   row.matchedMaintenance = matching.flatMap(w => w.matchedMaintenance ? [w.matchedMaintenance] : []).filter((fact,index,all) => all.findIndex(other => other.year === fact.year && other.batch === fact.batch) === index).sort((a,b) => a.year-b.year || (a.batch ?? 0)-(b.batch ?? 0))
 }
 
+export function projectCurrentQualifiedRow({ rows, snapshot, publishedPresentation }: {
+  rows: CurrentRow[]; snapshot: CurrentQualificationSnapshot; publishedPresentation?: PublishedPresentation
+}, title: CurrentTitle): CurrentQualifiedRow {
+  const { assessment, ...row } = rows.find(item => item.assessment!.titleCode === title)!
+  return { ...row, group: assessment!.group, qualificationAssessment: snapshot, publishedPresentation: publishedPresentation! }
+}
+
+export function createCurrentQualifiedPage(filter: CurrentQualifiedFilter, snapshotStartedAt: string) {
+  const page = filter.page ?? 1, pageSize = filter.pageSize ?? 25
+  const qName = normalizeName(filter.q ?? ''), qUscc = normalizeUscc(filter.q ?? '')
+  const requested = Boolean(qName || qUscc)
+  let total = 0
+  let uncertainTotal = 0
+  const selected: { id: number; matching: CurrentQualificationWitness[] }[] = []
+  const recognitionYears = new Set<number>(), validYears = new Set<number>(), maintenanceYears = new Set<number>()
+  const maintenanceBatchesByYear = new Map<number, Set<number>>()
+
+  function observe(id: number, row: Pick<CurrentRow, 'name' | 'aliases' | 'uscc' | 'district' | 'qualificationWitnesses'>, effectiveStatus: import('./current-status').CurrentStatus) {
+    const identityMatch = (!filter.district || row.district === filter.district) && (!filter.q
+      || Boolean(qName && [row.name, ...row.aliases].some(name => normalizeName(name).includes(qName)))
+      || Boolean(qUscc && normalizeUscc(row.uscc).includes(qUscc)))
+    for (const witness of (effectiveStatus === 'effective' ? row.qualificationWitnesses : []) ?? []) {
+      recognitionYears.add(witness.recognition.year)
+      if (witness.matchedValidYear != null) validYears.add(witness.matchedValidYear)
+      if (witness.matchedMaintenance) {
+        maintenanceYears.add(witness.matchedMaintenance.year)
+        if (witness.matchedMaintenance.batch != null) {
+          const batches=maintenanceBatchesByYear.get(witness.matchedMaintenance.year) ?? new Set<number>()
+          batches.add(witness.matchedMaintenance.batch); maintenanceBatchesByYear.set(witness.matchedMaintenance.year,batches)
+        }
+      }
+    }
+    if (effectiveStatus !== (filter.status ?? 'effective')) return
+    if (!identityMatch) return
+    const { matching, uncertain, filterMatch } = selectFilterWitnesses(row.qualificationWitnesses ?? [], filter)
+    if (filterMatch.status !== 'matched') { if (uncertain) uncertainTotal++; return }
+    if (total >= (page - 1) * pageSize && selected.length < pageSize) selected.push({ id, matching })
+    total++
+  }
+  function result(hydrate: (id: number) => CurrentQualifiedRow): CurrentQualifiedResult {
+    const rows = selected.map(({ id, matching }) => {
+      const hydrated = hydrate(id)
+      if (filter.recognitionFrom || filter.validYear != null || filter.maintenanceYear != null) {
+        retainFilterWitnesses(hydrated, matching)
+      }
+      return hydrated
+    })
+    const ascending = (values: Set<number>) => [...values].sort((a,b) => a-b)
+    // Keep the old response field; the five-state reader has no pending bucket.
+    return { responseVersion: 'current-qualified-478-v2', rows, publishedPending: { requested, rows: [], total: 0, page, pageSize }, total, uncertainTotal, options: { recognitionYears: ascending(recognitionYears), validYears: ascending(validYears), maintenanceYears: ascending(maintenanceYears), maintenanceBatchesByYear: Object.fromEntries([...maintenanceBatchesByYear].map(([year,batches]) => [year,ascending(batches)])) }, page, pageSize, titleCode: filter.titleCode, ruleVersion: CURRENT_RULE_VERSION, snapshotStartedAt }
+  }
+  return { observe, result, selectedIds: () => selected.map(row => row.id) }
+}
+
 /** Count all candidates in one snapshot; hydrate only the requested page. */
 export function listCurrentQualified(db: Database.Database, filter: CurrentQualifiedFilter): CurrentQualifiedResult {
   return listCurrentQualifiedBody(db, filter, undefined )
@@ -100,7 +154,6 @@ export function listCurrentQualifiedWithCandidatesAndWitnesses(db:Database.Datab
 }
 function listCurrentQualifiedBody(db:Database.Database,filter:CurrentQualifiedFilter,candidateReader:CurrentCandidateReader|undefined,witnesses?:RecognizedWitnessReader):CurrentQualifiedResult {
   if(candidateReader && candidateReader.connection!==db)throw new Error('Candidate reader must use the caller connection')
-  const page = filter.page ?? 1, pageSize = filter.pageSize ?? 25
   const snapshotStartedAt = new Date().toISOString()
   const at = Date.parse(snapshotStartedAt)
   prepareCurrentReader(db)
@@ -112,22 +165,10 @@ function listCurrentQualifiedBody(db:Database.Database,filter:CurrentQualifiedFi
     const assessmentReader = witnesses ? createCurrentQualificationAssessmentReaderWithWitnesses(db,witnesses)
       : target.assessment
     const keys = target.keys
-    const qName = normalizeName(filter.q ?? ''), qUscc = normalizeUscc(filter.q ?? '')
-    const requested = Boolean(qName || qUscc)
-    let total = 0
-    let uncertainTotal = 0
-    const selected: { id: number; matching: CurrentQualificationWitness[] }[] = []
+    const page = createCurrentQualifiedPage(filter, snapshotStartedAt)
     const hydratedPage = new Map<number, ReturnType<typeof assessmentReader.readCurrent>>()
-    const hydrate = (id: number): CurrentQualifiedRow => {
-      const { rows: titleRows, snapshot, publishedPresentation } = hydratedPage.get(id) ?? assessmentReader.readCurrent(id, at, filter.titleCode, keys.queries)
-      const row = titleRows.find(item => item.assessment!.titleCode === filter.titleCode)!
-      const { assessment, ...publicRow } = row
-      // Preserve the public-name budget and the complete shared assessment.
-      return { ...publicRow, group: assessment!.group, qualificationAssessment: snapshot,
-        publishedPresentation }
-    }
-    const recognitionYears = new Set<number>(), validYears = new Set<number>(), maintenanceYears = new Set<number>()
-    const maintenanceBatchesByYear = new Map<number, Set<number>>()
+    const hydrate = (id: number) => projectCurrentQualifiedRow(
+      hydratedPage.get(id) ?? assessmentReader.readCurrent(id, at, filter.titleCode, keys.queries), filter.titleCode)
     function* candidateIds() {
       for (const { id } of candidates.iterate(filter.titleCode, filter.sort)) yield id
     }
@@ -135,46 +176,16 @@ function listCurrentQualifiedBody(db:Database.Database,filter:CurrentQualifiedFi
       const assessed = candidateReader === undefined
         ? assessmentReader.readFilterCandidates(ids, filter.titleCode, at, keys, filter.status ?? 'effective')
         : ids.map(id => ({ id, ...assessmentReader.readFilterCandidate(id, filter.titleCode, at, keys) }))
-      for (const { id, row, effectiveStatus } of assessed) {
-        const identityMatch = (!filter.district || row.district === filter.district) && (!filter.q
-          || Boolean(qName && [row.name, ...row.aliases].some(name => normalizeName(name).includes(qName)))
-          || Boolean(qUscc && normalizeUscc(row.uscc).includes(qUscc)))
-        for (const witness of (effectiveStatus === 'effective' ? row.qualificationWitnesses : []) ?? []) {
-          recognitionYears.add(witness.recognition.year)
-          if (witness.matchedValidYear != null) validYears.add(witness.matchedValidYear)
-          if (witness.matchedMaintenance) {
-            maintenanceYears.add(witness.matchedMaintenance.year)
-            if (witness.matchedMaintenance.batch != null) {
-              const batches=maintenanceBatchesByYear.get(witness.matchedMaintenance.year) ?? new Set<number>()
-              batches.add(witness.matchedMaintenance.batch); maintenanceBatchesByYear.set(witness.matchedMaintenance.year,batches)
-            }
-          }
-        }
-        if (effectiveStatus !== (filter.status ?? 'effective')) continue
-        if (!identityMatch) continue
-        const { matching, uncertain, filterMatch } = selectFilterWitnesses(row.qualificationWitnesses ?? [], filter)
-        if (filterMatch.status !== 'matched') { if (uncertain) uncertainTotal++; continue }
-        if (total >= (page - 1) * pageSize && selected.length < pageSize) selected.push({ id, matching })
-        total++
-      }
+      for (const { id, row, effectiveStatus } of assessed) page.observe(id, row, effectiveStatus)
     }
     // Exhausting the candidate iterator releases its active SQLite statement
     // before read() opens a nested SAVEPOINT. The outer BEGIN is still active:
     // Counts, witnesses and full T2 hydration share the same read snapshot/time.
-    if (candidateReader === undefined) for (const ids of currentCandidateIdBlocks(selected.map(row => row.id))) {
+    if (candidateReader === undefined) for (const ids of currentCandidateIdBlocks(page.selectedIds())) {
       const reads = assessmentReader.readCurrentBatch(ids, at, filter.titleCode, keys.queries)
       ids.forEach((id, index) => hydratedPage.set(id, reads[index]!))
     }
-    const rows = selected.map(({ id, matching }) => {
-      const hydrated = hydrate(id)
-      if (filter.recognitionFrom || filter.validYear != null || filter.maintenanceYear != null) {
-        retainFilterWitnesses(hydrated, matching)
-      }
-      return hydrated
-    })
-    const ascending = (values: Set<number>) => [...values].sort((a,b) => a-b)
-    // Keep the old response field; the five-state reader has no pending bucket.
-    return { responseVersion: 'current-qualified-478-v2', rows, publishedPending: { requested, rows: [], total: 0, page, pageSize }, total, uncertainTotal, options: { recognitionYears: ascending(recognitionYears), validYears: ascending(validYears), maintenanceYears: ascending(maintenanceYears), maintenanceBatchesByYear: Object.fromEntries([...maintenanceBatchesByYear].map(([year,batches]) => [year,ascending(batches)])) }, page, pageSize, titleCode: filter.titleCode, ruleVersion: CURRENT_RULE_VERSION, snapshotStartedAt }
+    return page.result(hydrate)
     }
     const snapshotWitnesses = witnesses ?? target.witnesses
     const result = snapshotWitnesses.withinSnapshot(read)

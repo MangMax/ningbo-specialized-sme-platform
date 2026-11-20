@@ -1163,15 +1163,35 @@ export type CurrentQualificationInput = Omit<CandidateSource,
   & { platformReferences: readonly CurrentPlatformReference[] }
 
 /** Evaluate already-loaded inputs using the default qualification rules. */
-export function assessCurrentQualificationInputs(enterpriseId: number, asOf: number, inputs: ReadonlyMap<CurrentTitle, CurrentQualificationInput>) {
+export type LoadedCurrentQualificationInput = CurrentQualificationInput & Pick<CandidateSource,
+  'readWitnesses' | 'readCoverage' | 'readPublishedNames' | 'readPlatformEffects'>
+
+export function evaluateLoadedCurrentQualification(
+  asOf: number, inputs: ReadonlyMap<CurrentTitle, LoadedCurrentQualificationInput>,
+  filterTitle?: CurrentTitle, mode: 'scan' | 'detail' | 'workbook' = 'detail', observePresentation?: CurrentPublishedNameObservation,
+) {
   const evaluated = new Map<CurrentTitle, CandidateResult>()
   const year = Number(qualificationDay(asOf).slice(0, 4))
-  const titles: CurrentQualificationTitle[] = CURRENT_TITLES.map(title => {
+  const titles = mode === 'workbook' ? CURRENT_TITLES.slice(0, CURRENT_TITLES.indexOf(filterTitle!) + 1) : CURRENT_TITLES
+  for (const title of titles) {
     const input = inputs.get(title)!
+    const filtering = title === filterTitle && mode !== 'workbook'
     const result = evaluateCandidate(input, () => { throw new Error('Qualification dependencies must be evaluated in title order') },
-      input.enterprise.id, title, year, asOf, undefined, false, true, {}, false, input.platformReferences, undefined, undefined, undefined,
-      { giant: evaluated.get('little_giant')?.row, specialized: evaluated.get('specialized_sme')?.row })
+      input.enterprise.id, title, year, asOf, undefined, filtering, mode !== 'scan', mode === 'scan' ? undefined : {},
+      filtering, input.platformReferences, undefined, title === filterTitle ? observePresentation : undefined, undefined,
+      { giant: evaluated.get('little_giant')?.row, specialized: evaluated.get('specialized_sme')?.row, qualificationOnly: mode === 'scan' })
     evaluated.set(title, result)
+  }
+  return evaluated
+}
+
+export function currentQualificationSnapshot(enterpriseId: number, asOf: number, titles: CurrentQualificationAssessment[]): CurrentQualificationSnapshot {
+  const scope = { enterpriseId, asOf: new Date(asOf).toISOString(), ruleVersion: CURRENT_RULE_VERSION, assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION }
+  return { ...scope, snapshotId: assessmentDigest([scope, titles]), titles }
+}
+
+export function assessCurrentQualificationInputs(enterpriseId: number, asOf: number, inputs: ReadonlyMap<CurrentTitle, CurrentQualificationInput>) {
+  const titles: CurrentQualificationTitle[] = [...evaluateLoadedCurrentQualification(asOf, inputs).values()].map(result => {
     const { titleCode, group, cycles, officialQualification, subject, region, evidence, sourceVersions, effectiveQualification, shadow, completeness } = result.row.assessment!
     return { titleCode, group, cycles, officialQualification, subject, region, evidence, sourceVersions,
       effectiveQualification: effectiveQualification!, shadow, fieldGaps: completeness.fieldGaps ?? [],

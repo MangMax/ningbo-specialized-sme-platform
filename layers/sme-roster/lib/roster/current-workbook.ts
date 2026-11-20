@@ -8,12 +8,13 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { once } from 'node:events'
 import { finished } from 'node:stream/promises'
-import { CURRENT_RULE_VERSION, qualificationDay, prepareCurrentReader, QUALIFICATION_ASSESSMENT_VERSION, type CurrentTitle } from './current-qualification'
+import { CURRENT_RULE_VERSION, qualificationDay, prepareCurrentReader, QUALIFICATION_ASSESSMENT_VERSION, type CurrentQualificationSnapshot, type CurrentRow, type CurrentTitle } from './current-qualification'
 import { TITLES } from '../labels'
 import { CURRENT_STATUS_LABELS, type CurrentStatus } from './current-status'
 import { CURRENT_COLUMNS, currentWorkbookValues } from './current-workbook-presentation'
 import { appLog, type LogContext } from '../../../core/lib/logging'
 import { currentCandidateIdBlocks, type CurrentCandidateReader } from './current-candidate-reader'
+import type { OfficialPublishedFact } from './official-published-presentation'
 import { createCurrentTargetContext } from './current-target-context'
 
 export class CurrentWorkbookLimitError extends Error {}
@@ -53,7 +54,53 @@ export async function writeCurrentWorkbookWithCandidates(db: Database.Database, 
   return writeCurrentWorkbookBody(db, title, filename, progress, candidateReader, logContext, receiptRuntime)
 }
 async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTitle, filename: string, progress: (done: number,total: number,snapshotStartedAt: string) => void, candidateReader: CurrentCandidateReader | undefined, logContext?: LogContext, receiptRuntime?: ReceiptRuntimeContext) {
-  const generatedAt = new Date().toISOString(), year = Number(qualificationDay(Date.parse(generatedAt)).slice(0,4))
+  const generatedAt = new Date().toISOString()
+  prepareCurrentReader(db)
+  db.exec('BEGIN')
+  try {
+    const target = createCurrentTargetContext(db, receiptRuntime)
+    const candidates = candidateReader ?? target.candidates
+    const queryKeys = target.keys.queries
+    const assessment = target.assessment
+    const source: CurrentWorkbookSource = {
+      *candidateIds() { for (const { id } of candidates.iterate(title)) yield id },
+      classify(ids, asOf) {
+        return candidateReader === undefined ? assessment.readEffectiveTitles(ids, asOf, title)
+          : new Map(ids.map(id => [id, assessment.readEffectiveTitle(id, title, asOf).effectiveStatus]))
+      },
+      readRows(ids, asOf) {
+        const rows = candidateReader === undefined ? assessment.readWorkbookRowsBatch(ids, asOf, title, queryKeys)
+          : ids.map(id => assessment.readWorkbook(id, asOf, title, queryKeys))
+        return new Map(ids.map((id, index) => [id, rows[index]!]))
+      },
+    }
+    const result = await writeCurrentWorkbookFromSource(source, title, filename, progress, logContext,
+      candidateReader === undefined ? 'current-export-assessment-title-v3' : 'current-export-assessment-409-v2', generatedAt)
+    db.exec('COMMIT')
+    return result
+  } catch (error) {
+    if (db.inTransaction) db.exec('ROLLBACK')
+    throw error
+  }
+}
+
+type WorkbookSourceRows = {
+  rows: CurrentRow[]
+  snapshot: CurrentQualificationSnapshot
+  workbookPublished: ReadonlyMap<number, OfficialPublishedFact>
+}
+export interface CurrentWorkbookSource {
+  candidateIds: () => Iterable<number> | Promise<Iterable<number>>
+  classify: (ids: number[], asOf: number) => Map<number, CurrentStatus> | Promise<Map<number, CurrentStatus>>
+  readRows: (ids: number[], asOf: number) => Map<number, WorkbookSourceRows> | Promise<Map<number, WorkbookSourceRows>>
+}
+
+export async function writeCurrentWorkbookFromSource(
+  source: CurrentWorkbookSource, title: CurrentTitle, filename: string,
+  progress: (done: number, total: number, snapshotStartedAt: string) => void, logContext?: LogContext,
+  dataVersionRule = 'current-export-assessment-title-v3', generatedAt = new Date().toISOString(),
+) {
+  const year = Number(qualificationDay(Date.parse(generatedAt)).slice(0,4))
   const output = createWriteStream(filename)
   const completed = finished(output, { cleanup: true })
   // Observe early open/write failures even before the final workbook commit.
@@ -109,27 +156,16 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
     })
   }
   const startedAt = Date.now()
-  let summaryComplete = false, workbookStarted = false, ownedTransaction = false
+  let summaryComplete = false, workbookStarted = false
   appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.summary', outcome: 'started' }, logContext)
   try {
-    // SQLite functions must be registered before a streaming SELECT is active.
-    prepareCurrentReader(db)
-    db.exec('BEGIN')
-    ownedTransaction = true
-    // Enumerate narrow query keys once inside this pinned snapshot. The export
-    // evaluates its title and actual inheritance dependency in bounded blocks.
-    const target = createCurrentTargetContext(db, receiptRuntime)
-    const candidates = candidateReader ?? target.candidates
-    const queryKeys = target.keys.queries
-    const assessmentReader = target.assessment
-    // Exhaust this one ordered SELECT before full assessments open SAVEPOINTs.
     // Five sheets can hold at most 5 * 1048575 IDs: Float64 chunks cap this
     // narrow projection at 40MiB, without a workbook-sized array of row objects.
     // Consume/release chunks during the canonical pass; deferred IDs keep the
     // existing per-sheet bounds. No temporary ID file survives worker cancellation.
     const candidateChunks: Float64Array[] = []
     let total = 0
-    for (const { id } of candidates.iterate(title)) {
+    for (const id of await source.candidateIds()) {
       if (total >= 5 * 1048575) throw new CurrentWorkbookLimitError('Excel 五个状态表超过总行数上限，未发布文件；请拆分数据范围')
       const offset = total % 4096
       if (offset === 0) candidateChunks.push(new Float64Array(4096))
@@ -143,7 +179,7 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
     workbookStarted = true
     appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.workbook', outcome: 'started' }, logContext)
     const workbook = new Stream.WorkbookWriter({ stream: output, useStyles: true, useSharedStrings: false, trueStreaming: true })
-    const counts = { eligible: 0, pending: 0, excluded: 0 }, hash = createHash('sha256').update(JSON.stringify([candidateReader === undefined ? 'current-export-assessment-title-v3' : 'current-export-assessment-409-v2',QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,year,title]) + '\n')
+    const counts = { eligible: 0, pending: 0, excluded: 0 }, hash = createHash('sha256').update(JSON.stringify([dataVersionRule,QUALIFICATION_ASSESSMENT_VERSION,CURRENT_RULE_VERSION,year,title]) + '\n')
     const statusCounts = { effective: 0, expired: 0, terminated: 0, moved_out: 0, unrecognized: 0 }
     const deferred: Record<CurrentStatus, number[]> = { effective: [], expired: [], terminated: [], moved_out: [], unrecognized: [] }
     progress(0,total,snapshotStartedAt)
@@ -169,14 +205,11 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
       }
       const ids = group === 'effective' ? candidateIds() : deferred[group]
       for (const block of currentCandidateIdBlocks(ids)) {
-        const classifications = group === 'effective' ? candidateReader === undefined
-          ? assessmentReader.readEffectiveTitles(block, Date.parse(generatedAt), title)
-          : new Map(block.map(id => [id, assessmentReader.readEffectiveTitle(id,title,Date.parse(generatedAt)).effectiveStatus]))
+        const asOf = Date.parse(generatedAt)
+        const classifications = group === 'effective' ? await source.classify(block, asOf)
           : new Map(block.map(id => [id, group]))
         const admitted = block.filter(id => classifications.get(id) === group)
-        const prepared = candidateReader === undefined ? assessmentReader.readWorkbookRowsBatch(admitted, Date.parse(generatedAt), title, queryKeys)
-          : admitted.map(id => assessmentReader.readWorkbook(id,Date.parse(generatedAt),title,queryKeys))
-        const workbookReads = new Map(admitted.map((id, index) => [id, prepared[index]!]))
+        const workbookReads = await source.readRows(admitted, asOf)
         for (const id of block) {
           // Count the canonical scan once; defer IDs only, never T2 or cell data.
           // Classification needs eligibility only. The written row below still
@@ -237,14 +270,12 @@ async function writeCurrentWorkbookBody(db: Database.Database, title: CurrentTit
     for (const [index,row] of [['项目','说明'],['生成时间',generatedAt],['范围',`当前库已识别的${TITLES[title]}企业；未实时采集，不证明全市完整。`],...Object.entries(CURRENT_STATUS_LABELS).map(([status,label]) => [label,String(statusCounts[status as CurrentStatus])]),['判定说明','复用正式资格期间与完整注销/吊销、迁出事实；资料缺口与来源仅备注。到期无复核不在有效。']].entries()) styledRow(explanation,row,index===0)
     await workbook.commit()
     await completed
-    db.exec('COMMIT')
-    ownedTransaction = false
     appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.workbook', outcome: 'success', durationMs: Date.now() - startedAt, counts: { done: total, total } }, logContext)
     return { generatedAt, snapshotStartedAt, dataVersion, ruleVersion: CURRENT_RULE_VERSION, counts, statusCounts, total }
   } catch (error) {
     if (!summaryComplete) appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.summary', outcome: 'failure', level: 'error', errorCode: 'summary_failed' }, logContext)
     if (workbookStarted) appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.workbook', outcome: 'failure', level: 'error', errorCode: error instanceof CurrentWorkbookLimitError ? 'workbook_limit' : 'workbook_failed' }, logContext)
-    output.destroy(); await completed.catch(() => {}); if (ownedTransaction && db.inTransaction) db.exec('ROLLBACK'); throw error
+    output.destroy(); await completed.catch(() => {}); throw error
   } finally {
     rmSync(overflowDir,{recursive:true,force:true})
   }

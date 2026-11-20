@@ -106,19 +106,27 @@ export function selectDifferenceCollectionsBatch(db: Db, inputs: readonly Differ
     .from(ranked).innerJoin(c, eq(c.id, rankedRef.collectionId)).where(sql`${rankedRef.rank}<=51`)
     .orderBy(asc(rankedRef.slot), asc(rankedRef.rank)).all()
 }
-type ScopeRows = {
+export type DifferenceCollectionScopeRows = {
   collection: typeof c.$inferSelect
-  conditions: (typeof s.platformCollectionCondition.$inferSelect)[]
+  conditions: Pick<typeof s.platformCollectionCondition.$inferSelect, 'name' | 'valueKind' | 'textValue' | 'integerValue'>[]
   pages: (typeof s.platformCollectionPage.$inferSelect)[]
   unfinished: (typeof s.platformCollectionUnfinished.$inferSelect)[]
   titles: string[]
 }
-export function readDifferenceCollectionScope(db: Db, collectionId: number, loaded?: ScopeRows) {
+export function readDifferenceCollectionScope(db: Db, collectionId: number, loaded?: DifferenceCollectionScopeRows) {
   const collection = loaded?.collection ?? db.select().from(c).where(eq(c.id, collectionId)).get()
   if (!collection) throw new Error('Difference collection not found')
+  const pages = loaded?.pages ?? db.select().from(s.platformCollectionPage).where(eq(s.platformCollectionPage.collectionId, collectionId)).orderBy(s.platformCollectionPage.ordinal).all()
+  const unfinished = loaded?.unfinished ?? db.select().from(s.platformCollectionUnfinished).where(eq(s.platformCollectionUnfinished.collectionId, collectionId)).orderBy(s.platformCollectionUnfinished.ordinal).all()
+  const titles = loaded?.titles ?? db.select({ rdjb: targetSchema.platformQueryTitleScope.rdjb }).from(targetSchema.platformQueryTitleScope).where(eq(targetSchema.platformQueryTitleScope.collectionId, collectionId)).all().map(r => r.rdjb)
+  const conditions = loaded?.conditions ?? db.select().from(s.platformCollectionCondition).where(eq(s.platformCollectionCondition.collectionId, collectionId)).all()
+  return projectDifferenceCollectionScope({ collection, conditions, pages, unfinished, titles })
+}
+
+export function projectDifferenceCollectionScope({ collection, conditions: input, pages, unfinished, titles }: DifferenceCollectionScopeRows) {
   const conditions: Record<string, unknown> = {}
   let conditionsKnown = true
-  for (const row of loaded?.conditions ?? db.select().from(s.platformCollectionCondition).where(eq(s.platformCollectionCondition.collectionId, collectionId)).all()) {
+  for (const row of input) {
     switch (row.valueKind) {
       case 'absent': break
       case 'null': conditions[row.name] = null; break
@@ -128,9 +136,6 @@ export function readDifferenceCollectionScope(db: Db, collectionId: number, load
       default: conditionsKnown = false
     }
   }
-  const pages = loaded?.pages ?? db.select().from(s.platformCollectionPage).where(eq(s.platformCollectionPage.collectionId, collectionId)).orderBy(s.platformCollectionPage.ordinal).all()
-  const unfinished = loaded?.unfinished ?? db.select().from(s.platformCollectionUnfinished).where(eq(s.platformCollectionUnfinished.collectionId, collectionId)).orderBy(s.platformCollectionUnfinished.ordinal).all()
-  const titles = loaded?.titles ?? db.select({ rdjb: targetSchema.platformQueryTitleScope.rdjb }).from(targetSchema.platformQueryTitleScope).where(eq(targetSchema.platformQueryTitleScope.collectionId, collectionId)).all().map(r => r.rdjb)
   const metadata = collection.parseState === 'valid' && conditionsKnown ? {
     source: collection.source, status: collection.evidenceStatus, effectiveConditions: conditions,
     titleScope: { mode: collection.scopeMode, rdjb: titles },

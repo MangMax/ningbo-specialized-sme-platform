@@ -35,7 +35,7 @@ export interface PostgresJobSpec {
   /** E.g. refresh a download receipt against the module’s current artifact state. */
   projectResult?(db: NodePgDatabase, job: JobDto): Promise<unknown>
   taskCenter?: {
-    summaries(db: NodePgDatabase, ids: string[], detail: boolean): Promise<Map<string, Partial<Pick<TaskSummary, 'outcome' | 'items' | 'links' | 'capabilities' | 'error'>>>>
+    summaries(db: NodePgDatabase, ids: string[], detail: boolean, authorized: boolean): Promise<Map<string, Partial<Pick<TaskSummary, 'outcome' | 'items' | 'links' | 'capabilities' | 'error' | 'export'>>>>
     retry?(db: NodePgDatabase, task: TaskSummary, context: LogContext): Promise<unknown>
   }
   /** Validate admission and optionally capture non-secret execution inputs. */

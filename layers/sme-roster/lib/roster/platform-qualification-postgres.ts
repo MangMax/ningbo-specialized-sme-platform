@@ -22,12 +22,31 @@ function recognizedFlag({ flag, flagStorage }: Pick<RecognizedRow, 'flag' | 'fla
   return null
 }
 
-export async function readPostgresPlatformQualificationFacts(db: Reader, subjects: readonly { id: number; uscc_norm: string | null }[]) {
-  const byUscc = Map.groupBy(subjects, owner => normalizeUscc(owner.uscc_norm))
-  const codes = [...byUscc.keys()].filter(isValidUscc)
+export function createPostgresPlatformQualificationReader(db: Reader) {
+  let variants: Promise<Map<string, { raw: string; normalized: string }[]>> | undefined
+  return async (subjects: readonly { id: number; uscc_norm: string | null }[]) => {
+    const byUscc = Map.groupBy(subjects, owner => normalizeUscc(owner.uscc_norm))
+    const codes = [...byUscc.keys()].filter(isValidUscc)
+    if (!codes.length) return new Map<number, PlatformQualificationFact[]>()
+    const known = await (variants ??= readQualificationKeyVariants(db))
+    const raw = codes.flatMap(code => [code, ...(known.get(code) ?? []).map(key => key.raw)])
+    return readFacts(db, byUscc, codes, raw)
+  }
+}
+
+export type PostgresPlatformQualificationReader = ReturnType<typeof createPostgresPlatformQualificationReader>
+
+async function readQualificationKeyVariants(db: Reader) {
+  const { rows } = await db.execute<{ raw: string }>(sql`
+    SELECT uscc_raw AS raw FROM platform_recognized_projection WHERE uscc_raw COLLATE "C" !~ '^[0-9A-Z]{18}$'
+    UNION SELECT uscc_raw FROM platform_business_projection WHERE uscc_raw COLLATE "C" !~ '^[0-9A-Z]{18}$'
+    UNION SELECT uscc_raw FROM platform_apply_projection WHERE uscc_raw COLLATE "C" !~ '^[0-9A-Z]{18}$'`)
+  return Map.groupBy(rows.map(({ raw }) => ({ raw, normalized: normalizeUscc(raw) })), key => key.normalized)
+}
+
+async function readFacts(db: Reader, byUscc: Map<string, { id: number; uscc_norm: string | null }[]>, codes: string[], raw: string[]) {
   const results = new Map<number, PlatformQualificationFact[]>()
-  if (!codes.length) return results
-  const scope = qualificationUsccCandidate(sql`p.uscc_raw`, codes)
+  const scope = sql`p.uscc_raw = ANY(${sql.param(raw)}::text[])`
   const recognized = await db.execute<RecognizedRow>(sql`
     SELECT ${latestProjection}, 'recognized_list' AS source,
       p.source_valid_flag AS flag, p.source_valid_flag_sqlite_storage AS "flagStorage",
@@ -75,13 +94,11 @@ export async function readPostgresPlatformQualificationFacts(db: Reader, subject
 }
 
 const latestProjection = sql`o.record_id AS "recordId", o.version_id AS "versionId",
-  o.id AS "observationId", c.queried_at AS "collectedAt"`
+  o.id AS "observationId", o.queried_at AS "collectedAt"`
 const latestObservation = sql`
-  JOIN platform_business_observation o ON o.version_id = p.version_id
-  JOIN platform_collection c ON c.id = o.collection_id
-  AND NOT EXISTS (
-    SELECT 1 FROM platform_business_observation newer
-    JOIN platform_collection captured ON captured.id = newer.collection_id
-    WHERE newer.record_id = o.record_id AND newer.content_state = 'verified'
-      AND (captured.queried_at COLLATE "C", newer.id) > (c.queried_at COLLATE "C", o.id)
-  )`
+  JOIN LATERAL (
+    SELECT o.record_id, o.version_id, o.id, c.queried_at
+    FROM platform_business_observation o JOIN platform_collection c ON c.id = o.collection_id
+    WHERE o.record_id = p.record_id AND o.content_state = 'verified'
+    ORDER BY c.queried_at COLLATE "C" DESC, o.id DESC LIMIT 1
+  ) o ON o.version_id = p.version_id`

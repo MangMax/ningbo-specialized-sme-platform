@@ -324,7 +324,7 @@ it("reads actual H3 routes and MCP handlers through the same serialized DTO whil
   expect([detail.status,query.status,source.status]).toEqual([200,200,200])
   expect(factsOf(detail.body)).toEqual(expected);expect(factsOf(query.body.rows[0])).toEqual(expected);expect(factsOf(source.body.source)).toEqual([expected[1]])
   const { dispatchRecordCorrespondenceMcp }=await import('../../../layers/sme-roster/server/utils/mcp-record-correspondence')
-  expect(dispatchRecordCorrespondenceMcp('source',{kind:'event',id:2},{db:f.db})).toEqual(source.body)
+  expect(await dispatchRecordCorrespondenceMcp('source',{kind:'event',id:2},{db:f.db})).toEqual(source.body)
   const detailTool=(await import('../../../layers/sme-roster/server/mcp/tools/get_enterprise_detail')).default
   const currentTool=(await import('../../../layers/sme-roster/server/mcp/tools/list_current_qualified_enterprises')).default
   // Direct tool handlers, not the real MCP transport or native admission.

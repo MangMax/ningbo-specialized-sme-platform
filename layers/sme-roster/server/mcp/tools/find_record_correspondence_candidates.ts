@@ -22,7 +22,7 @@ export default defineMcpTool({
     total: z.number().int(), page: z.number().int(), pageSize: z.number().int(), coverage: z.array(z.record(z.string(), z.unknown())), exportBatches: z.array(z.record(z.string(), z.unknown())),
   },
   handler: async input => {
-    const result = dispatchRecordCorrespondenceMcp('candidates', input, { get db() { return useDb() } })
+    const result = await dispatchRecordCorrespondenceMcp('candidates', input, { get db() { return useDb() } })
     if (result && typeof result === 'object' && 'isError' in result) return result
     return { structuredContent: result as Record<string, unknown>, content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
   },

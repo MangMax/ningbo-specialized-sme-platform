@@ -38,11 +38,8 @@ function condition(id:number,kind:string|null,value:unknown):unknown {
  if(!ok)throw new TargetRecognizedWitnessGap(id,'condition_capture')
  return value
 }
-export function createTargetRecognizedWitnessReader(db:BetterSQLite3Database<typeof s>):RecognizedWitnessReader {
- const connection=sqliteConnection(db)
- const gate=()=>{if(!witnessInstalled(connection))throw new TargetRecognizedWitnessGap(null,'completed_A_required')}
- gate()
- const select=(ids:number[])=>db.select({
+function selectWitnessRows(db: BetterSQLite3Database<typeof s>, ids: number[]) {
+ return db.select({
   relationId:s.platformLegacyRelationAlias.oldId,observationId:s.platformBusinessObservation.id,
   collectionId:s.platformCollection.id,queryId:s.platformLegacyQueryAlias.oldId,titleCode:s.platformCollection.titleCode,rdjb:s.platformCollection.rdjb,
   interface:s.platformCollection.interface,status:s.platformCollection.status,sequenceNo:s.platformBusinessObservation.sequenceNo,
@@ -69,7 +66,60 @@ export function createTargetRecognizedWitnessReader(db:BetterSQLite3Database<typ
  .leftJoin(year,and(eq(year.collectionId,s.platformCollection.id),eq(year.name,'whpcyear')))
  .leftJoin(batch,and(eq(batch.collectionId,s.platformCollection.id),eq(batch.name,'whpc')))
  .where(inArray(s.platformLegacyRelationAlias.oldId,ids))
- const unavailable=(reason:Extract<RecognizedWitnessResult,{kind:'unavailable'}>['reason']):RecognizedWitnessResult=>({kind:'unavailable',reason})
+}
+
+export type RecognizedWitnessRow = ReturnType<ReturnType<typeof selectWitnessRows>['all']>[number]
+type WitnessInput = Parameters<RecognizedWitnessReader['readMany']>[0]
+
+const unavailable=(reason:Extract<RecognizedWitnessResult,{kind:'unavailable'}>['reason']):RecognizedWitnessResult=>({kind:'unavailable',reason})
+
+export function projectRecognizedWitnesses(input: WitnessInput, rows: RecognizedWitnessRow[]) {
+  const ids = [...new Set(input.relationIds)]
+  const found = new Map<number, RecognizedWitnessResult | Error>()
+  for(const row of rows) {
+   try {
+   const id=row.relationId
+   let result:RecognizedWitnessResult
+   if(row.assignmentId===null)throw new TargetRecognizedWitnessGap(id,'assignment_missing')
+   if(row.enterpriseId!==input.enterpriseId&&!(row.enterpriseId===null&&input.uscc!==null&&(normalizeUscc(row.uscc)||null)===input.uscc))result=unavailable('owner')
+   else if(row.verification!=='confirmed')result=unavailable('unconfirmed')
+   else if(row.interface!=='recognized_list'||row.status!=='success')result=unavailable('not_applicable')
+   else if(row.rule!==SUPPORTED_RULE)throw new TargetRecognizedWitnessGap(id,'unsupported_capture_rule')
+   else if(row.state==='uncaptured')result=unavailable('evidence_uncaptured')
+   else {
+    if(row.archiveId===null||row.refId!==row.archiveId||row.sealed!==1||row.archiveOwner!==row.archiveId||row.sha!==row.archiveSha)throw new TargetRecognizedWitnessGap(id,'collection_binding')
+    if(row.state==='error')throw sourceError(row.errorName,row.error)
+    if(row.state!=='captured'||(row.gate!==0&&row.gate!==1))throw new TargetRecognizedWitnessGap(id,'collection_state')
+    if(row.gate!==1)result=unavailable('not_applicable')
+    else if(row.identity!=='resolved'||row.content!=='verified'||row.recordInterface!=='recognized_list'||row.projectionId===null)result=unavailable('unverified')
+    else if(row.yearAbsent===null)result=unavailable('fidelity_uncaptured')
+    else {
+     if(row.positionRule!==SUPPORTED_RULE||row.positionCollection!==row.collectionId||row.positionSequence!==row.sequenceNo||row.positionArchive!==row.archiveId||row.positionSha!==row.sha)throw new TargetRecognizedWitnessGap(id,'position_binding')
+     if(row.positionState==='error')throw sourceError(row.positionErrorName,row.positionError)
+     if(row.positionState==='rejected')result=unavailable('position_rejected')
+     else {
+      if(row.queryId===null)throw new TargetRecognizedWitnessGap(id,'query_alias_missing')
+      if(row.positionState!=='matched'&&row.positionState!=='unmatched')throw new TargetRecognizedWitnessGap(id,'position_state')
+      if(row.positionState==='matched'&&(row.ordinal===null||row.pageKind===null))throw new TargetRecognizedWitnessGap(id,'position_metadata')
+      result={kind:'available',source:{queryId:row.queryId,titleCode:row.titleCode,rdjb:row.rdjb,sequenceNo:row.sequenceNo,
+       conditionValidYear:condition(id,row.validKind,row.valid),conditionMaintenanceYear:condition(id,row.yearKind,row.year),conditionMaintenanceBatch:condition(id,row.batchKind,row.batch),
+       rawValid:row.rawValid,rawMaintenanceYear:row.yearAbsent?null:0,rawMaintenanceBatch:row.rawMaintenanceBatch,
+       position:row.positionState==='unmatched'?{state:'unmatched'}:{state:'matched',ordinal:row.ordinal!,pageKind:row.pageKind!,rdjbKey:row.key===null?null:witnessPropertyKey(row.key)}}}
+     }
+    }
+   }
+   found.set(id,result)
+   }catch(error){if(!(error instanceof Error))throw error;found.set(row.relationId,error)}
+  }
+  const ordered=new Map<number,RecognizedWitnessResult>()
+  for(const id of ids){const result=found.get(id);if(result instanceof Error)throw result;ordered.set(id,result??unavailable('missing'))}
+  return ordered
+}
+
+export function createTargetRecognizedWitnessReader(db:BetterSQLite3Database<typeof s>):RecognizedWitnessReader {
+ const connection=sqliteConnection(db)
+ const gate=()=>{if(!witnessInstalled(connection))throw new TargetRecognizedWitnessGap(null,'completed_A_required')}
+ gate()
  let active=0
  function withinSnapshot<T>(read:()=>T):T {
   if(active){if(!connection.inTransaction)throw new TargetRecognizedWitnessGap(null,'snapshot_scope');return read()}
@@ -80,8 +130,8 @@ export function createTargetRecognizedWitnessReader(db:BetterSQLite3Database<typ
   return connection.inTransaction?run():db.transaction(run)
  }
  const readRows = (ids: readonly number[]) => {
-  const rows: ReturnType<ReturnType<typeof select>['all']> = []
-  for (let start=0;start<ids.length;start+=256) rows.push(...select(ids.slice(start,start+256)).all())
+  const rows: RecognizedWitnessRow[] = []
+  for (let start=0;start<ids.length;start+=256) rows.push(...selectWitnessRows(db, ids.slice(start,start+256)).all())
   return rows
  }
  let batchRows: Map<number, ReturnType<typeof readRows>[number]> | undefined
@@ -95,46 +145,9 @@ export function createTargetRecognizedWitnessReader(db:BetterSQLite3Database<typ
  },readMany(input){
   if(!Number.isSafeInteger(input.enterpriseId)||input.enterpriseId<1||input.relationIds.some(id=>!Number.isSafeInteger(id)||id<1))throw new Error('Invalid witness identity')
   const read=()=>{
-   const ids=[...new Set(input.relationIds)],found=new Map<number,RecognizedWitnessResult|Error>()
+   const ids=[...new Set(input.relationIds)]
    const rows = batchRows ? ids.flatMap(id => { const row = batchRows!.get(id); return row ? [row] : [] }) : readRows(ids)
-   for(const row of rows) {
-    try {
-    const id=row.relationId
-    let result:RecognizedWitnessResult
-    if(row.assignmentId===null)throw new TargetRecognizedWitnessGap(id,'assignment_missing')
-    if(row.enterpriseId!==input.enterpriseId&&!(row.enterpriseId===null&&input.uscc!==null&&(normalizeUscc(row.uscc)||null)===input.uscc))result=unavailable('owner')
-    else if(row.verification!=='confirmed')result=unavailable('unconfirmed')
-    else if(row.interface!=='recognized_list'||row.status!=='success')result=unavailable('not_applicable')
-    else if(row.rule!==SUPPORTED_RULE)throw new TargetRecognizedWitnessGap(id,'unsupported_capture_rule')
-    else if(row.state==='uncaptured')result=unavailable('evidence_uncaptured')
-    else {
-     if(row.archiveId===null||row.refId!==row.archiveId||row.sealed!==1||row.archiveOwner!==row.archiveId||row.sha!==row.archiveSha)throw new TargetRecognizedWitnessGap(id,'collection_binding')
-     if(row.state==='error')throw sourceError(row.errorName,row.error)
-     if(row.state!=='captured'||(row.gate!==0&&row.gate!==1))throw new TargetRecognizedWitnessGap(id,'collection_state')
-     if(row.gate!==1)result=unavailable('not_applicable')
-     else if(row.identity!=='resolved'||row.content!=='verified'||row.recordInterface!=='recognized_list'||row.projectionId===null)result=unavailable('unverified')
-     else if(row.yearAbsent===null)result=unavailable('fidelity_uncaptured')
-     else {
-      if(row.positionRule!==SUPPORTED_RULE||row.positionCollection!==row.collectionId||row.positionSequence!==row.sequenceNo||row.positionArchive!==row.archiveId||row.positionSha!==row.sha)throw new TargetRecognizedWitnessGap(id,'position_binding')
-      if(row.positionState==='error')throw sourceError(row.positionErrorName,row.positionError)
-      if(row.positionState==='rejected')result=unavailable('position_rejected')
-      else {
-       if(row.queryId===null)throw new TargetRecognizedWitnessGap(id,'query_alias_missing')
-       if(row.positionState!=='matched'&&row.positionState!=='unmatched')throw new TargetRecognizedWitnessGap(id,'position_state')
-       if(row.positionState==='matched'&&(row.ordinal===null||row.pageKind===null))throw new TargetRecognizedWitnessGap(id,'position_metadata')
-       result={kind:'available',source:{queryId:row.queryId,titleCode:row.titleCode,rdjb:row.rdjb,sequenceNo:row.sequenceNo,
-        conditionValidYear:condition(id,row.validKind,row.valid),conditionMaintenanceYear:condition(id,row.yearKind,row.year),conditionMaintenanceBatch:condition(id,row.batchKind,row.batch),
-        rawValid:row.rawValid,rawMaintenanceYear:row.yearAbsent?null:0,rawMaintenanceBatch:row.rawMaintenanceBatch,
-        position:row.positionState==='unmatched'?{state:'unmatched'}:{state:'matched',ordinal:row.ordinal!,pageKind:row.pageKind!,rdjbKey:row.key===null?null:witnessPropertyKey(row.key)}}}
-      }
-     }
-    }
-    found.set(id,result)
-    }catch(error){if(!(error instanceof Error))throw error;found.set(row.relationId,error)}
-   }
-   const ordered=new Map<number,RecognizedWitnessResult>()
-   for(const id of ids){const result=found.get(id);if(result instanceof Error)throw result;ordered.set(id,result??unavailable('missing'))}
-   return ordered
+   return projectRecognizedWitnesses(input, rows)
   }
   return withinSnapshot(read)
  }}

@@ -36,33 +36,68 @@ function state(db: ProofExecutor, proofId: number) {
   const latest = auditRows(db, proofId).at(-1)
   return latest ? { status: latest.toStatus, revision: latest.resultingRevision, decidedAt: latest.decidedAt } : null
 }
-function plan(db: ProofExecutor, request: ProofRequest) {
+type ProofRow = typeof schema.comparisonScopeProof.$inferSelect
+type ProofHead = { proof: ProofRow; state: ReturnType<typeof state> }
+type ProofSourceRead = { type: 'source'; kind: ProofRow['kind']; evidence: OfficialEvidence | CurrentEvidence; canBeMissing: boolean }
+type ProofPlanRead = { type: 'head'; proofId: number } | ProofSourceRead
+type ProofPlanTarget = { kind: ProofRow['kind']; evidenceHash: string; sourceFingerprint: string; status: 'candidate' | 'confirmed' }
+  | { proofId: number; revision: number; fromStatus: ProofStatus; sourceFingerprint: string; observedFingerprint: string | null; status: 'confirmed' | 'revoked' }
+
+export type ComparisonProofPlan = {
+  requestHash: string
+  targets: ProofPlanTarget[]
+  impact: { created: number; audit: number }
+  planHash: string
+}
+
+export function* comparisonProofPlanSteps(request: ProofRequest): Generator<ProofPlanRead, ComparisonProofPlan, ProofHead | string | null> {
   const touched = new Set<number>()
-  const targets: unknown[] = []
+  const targets: ProofPlanTarget[] = []
   let audit = 0
   for (const op of request.operations) {
     if (op.action === 'create') {
-      const observed = source(db, op.kind, op.evidence)
-      targets.push({ kind: op.kind, evidenceHash: fingerprint(op.evidence), sourceFingerprint: observed.sourceFingerprint, status: op.status })
+      const sourceFingerprint = (yield { type: 'source', kind: op.kind, evidence: op.evidence, canBeMissing: false }) as string
+      targets.push({ kind: op.kind, evidenceHash: fingerprint(op.evidence), sourceFingerprint, status: op.status })
       audit += op.status === 'confirmed' ? 2 : 1
     } else {
       if (touched.has(op.proofId)) fail('invalid_transition', 'One request may decide each proof only once')
       touched.add(op.proofId)
-      const row = db.select().from(schema.comparisonScopeProof).where(eq(schema.comparisonScopeProof.id, op.proofId)).get()
-      if (!row) fail('not_found', 'Proof not found')
-      const old = state(db, op.proofId)
+      const head = (yield { type: 'head', proofId: op.proofId }) as ProofHead | null
+      if (!head) fail('not_found', 'Proof not found')
+      const { proof: row, state: old } = head
       if (!old || old.revision !== op.expectedRevision) fail('stale_revision', 'Proof revision changed')
       if (!(old.status === 'candidate' && ['confirmed', 'revoked'].includes(op.status)) && !(old.status === 'confirmed' && op.status === 'revoked')) fail('invalid_transition', 'Invalid proof transition')
-      let observedFingerprint: string | null = null
-      try { observedFingerprint = source(db, row.kind, row.evidence as OfficialEvidence | CurrentEvidence).sourceFingerprint }
-      catch (error) { if (!(error instanceof ProofSourceError) || op.status !== 'revoked') throw error }
+      const observedFingerprint = (yield { type: 'source', kind: row.kind, evidence: row.evidence as OfficialEvidence | CurrentEvidence, canBeMissing: op.status === 'revoked' }) as string | null
       if (op.status === 'confirmed' && observedFingerprint !== row.sourceFingerprint) fail('plan_mismatch', 'Archived source drifted before confirmation')
       targets.push({ proofId: row.id, revision: old.revision, fromStatus: old.status, sourceFingerprint: row.sourceFingerprint, observedFingerprint, status: op.status })
       audit++
     }
   }
   const impact = { created: request.operations.filter(op => op.action === 'create').length, audit }
-  return { requestHash: requestHash(request), targets, impact, planHash: fingerprint({ requestHash: requestHash(request), targets, impact }) }
+  const hash = requestHash(request)
+  return { requestHash: hash, targets, impact, planHash: fingerprint({ requestHash: hash, targets, impact }) }
+}
+
+function readPlanSource(db: ProofExecutor, input: ProofSourceRead) {
+  try { return source(db, input.kind, input.evidence).sourceFingerprint }
+  catch (error) {
+    if (!(error instanceof ProofSourceError) || !input.canBeMissing) throw error
+    return null
+  }
+}
+
+function plan(db: ProofExecutor, request: ProofRequest) {
+  const steps = comparisonProofPlanSteps(request)
+  let step = steps.next()
+  while (!step.done) {
+    const read = step.value
+    if (read.type === 'source') step = steps.next(readPlanSource(db, read))
+    else {
+      const proof = db.select().from(schema.comparisonScopeProof).where(eq(schema.comparisonScopeProof.id, read.proofId)).get()
+      step = steps.next(proof ? { proof, state: state(db, read.proofId) } : null)
+    }
+  }
+  return step.value
 }
 
 export function preflightComparisonScopeProofs(db: Db, request: ProofRequest) {

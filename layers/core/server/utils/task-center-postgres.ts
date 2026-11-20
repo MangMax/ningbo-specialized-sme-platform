@@ -1,3 +1,4 @@
+import { TITLE_SEED } from '../../../../db/titles'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { createError, getHeader, getQuery, getRouterParam, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { requestLogContext } from '../../lib/logging'
@@ -17,7 +18,7 @@ async function projectSummaries(db: NodePgDatabase, rows: JobSummaryDto[], autho
   for (const [kind, tasks] of Map.groupBy(rows, row => row.kind)) {
     const handler = postgresJobHandler(kind)?.taskCenter
     if (!handler) continue
-    for (const [id, fields] of await handler.summaries(db, tasks.map(row => row.id), detail)) projections.set(id, fields)
+    for (const [id, fields] of await handler.summaries(db, tasks.map(row => row.id), detail, authorizedFor(kind))) projections.set(id, fields)
   }
   return rows.map(row => {
     const authorized = authorizedFor(row.kind)
@@ -68,9 +69,10 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
     const state = JOB_STATES.includes(q.state as JobState) ? q.state as JobState : undefined
     const page = positive(q.page, 1, 1_000_000)
     const pageSize = positive(q.pageSize, 25, 200)
+    const titleCode = TITLE_SEED.find(title => title.code === q.titleCode)?.code
     const kinds = tab.id === 'all' ? undefined : getTaskFilterKinds(tab.id, group?.id)
     const { data, rows } = await db.transaction(async tx => {
-      const data = await listPostgresTaskCenter(tx, { page, pageSize, state, kinds })
+      const data = await listPostgresTaskCenter(tx, { page, pageSize, state, kinds, titleCode })
       return { data, rows: await projectSummaries(tx, data.rows, authorizedFor) }
     }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
     const counts: TaskList['counts'] = { ...Object.fromEntries(getTaskTabs().map(({ id }) => [id, 0])), all: 0 }
@@ -81,7 +83,7 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
     }
     return {
       total: data.total, rows,
-      page, pageSize, counts, exportReady: false, authorized: apiAuthorized || browserAuthorized,
+      page, pageSize, counts, exportReady: Boolean(postgresJobHandler('current-roster-export')), authorized: apiAuthorized || browserAuthorized,
     } satisfies TaskList
   }
 

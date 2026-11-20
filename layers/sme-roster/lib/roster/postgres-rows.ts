@@ -16,3 +16,12 @@ export function postgresRosterRow(table: Table, alias: string) {
   })
   return sql`json_build_object(${sql.join(fields, sql`,`)})`
 }
+
+export async function readPostgresRosterPage<T extends Table>(
+  db: Pick<NodePgDatabase, 'execute'>, table: T, from: SQL, page: number, pageSize: number,
+) {
+  const { rows: [total] } = await db.execute<{ count: string }>(sql`SELECT count(*) AS count ${from}`)
+  const { rows } = await db.execute<{ row: T['$inferSelect'] }>(sql`
+    SELECT ${postgresRosterRow(table, 'p')} AS row ${from} ORDER BY p.id LIMIT ${pageSize} OFFSET ${Math.min(Number.MAX_SAFE_INTEGER, (page - 1) * pageSize)}`)
+  return { rows: rows.map(row => row.row), total: Number(total?.count), page, pageSize }
+}

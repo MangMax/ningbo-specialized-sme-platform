@@ -1,9 +1,12 @@
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
+import { pagePostgresCorrespondenceSummaries } from './record-correspondence-postgres'
+import { readPostgresRosterPage } from '../../lib/roster/postgres-rows'
 import { z } from 'zod'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
-import { importReceiptRedactor } from './import-receipt-redaction'
+import { importPostgresReceiptRedactor, importReceiptRedactor } from './import-receipt-redaction'
+import { usePostgresRosterDb } from './postgres-roster-db'
 import { commitRecordCorrespondences, CorrespondenceError, getRecordCorrespondence, listRecordCorrespondences, pageRecordCorrespondences, pageRecordCorrespondenceAudit, preflightRecordCorrespondences, readRecordCorrespondenceBatch, type CorrespondenceFilter } from './record-correspondence'
 import { detail, details, sourceReader, sanitizeEvidence, summaries, type SourceKind } from './record-correspondence-read'
 import { discoverEventArchives } from './event-archive-discovery'
@@ -78,6 +81,65 @@ function scalar(value: unknown) { return typeof value === 'string' && value.leng
 function ids(input: Record<string, unknown>, keys: string[]) { const result: Record<string, number> = {}; for (const key of keys) if (input[key] != null) { const value = int(input[key]); if (!value) return null; result[key] = value } return result }
 function permitted(input: Record<string, unknown>, keys: string[]) { return Object.keys(input).every(key => keys.includes(key)) }
 function auth(input: CorrespondenceApiInput, configured: string | null | undefined) { return resolveApiAuth({ given: readApiToken(input.headers), configured }).writeAuthorized }
+function auditPaging(query: Record<string, unknown>) {
+  return permitted(query, ['page', 'pageSize']) ? page(query) : null
+}
+function auditResponse<T extends { rows: { evidence: unknown }[] }>(result: T, redactors: ReadonlyArray<(text: string) => string>) {
+  return ok({ ...result, rows: result.rows.map(({ evidence, ...row }) => ({ ...row, evidence: sanitizeEvidence(evidence) })) }, redactors)
+}
+function batchResponse(receipt: object | null | undefined, redactors: ReadonlyArray<(text: string) => string>) {
+  return receipt ? ok(receipt, redactors) : fail(404, 'not_found', 'Committed receipt not found')
+}
+
+function parseListQuery(query: Record<string, unknown>) {
+  const paging = page(query)
+  const keys = ['eventId', 'relationId', 'exportRowId', 'enterpriseId', 'titleCode', 'type', 'role', 'status', 'ruleVersion', 'page', 'pageSize', 'view']
+  if (!paging || !permitted(query, keys)) return fail(400, 'invalid_request', 'Invalid list query')
+  if (query.view != null && query.view !== 'summary') return fail(400, 'invalid_request', 'Invalid view')
+  const numeric = ids(query, ['eventId', 'relationId', 'exportRowId', 'enterpriseId']); if (!numeric) return fail(400, 'invalid_request', 'Invalid source ID')
+  const types = ['event_process', 'event_recognized', 'later_process', 'event_export_context', 'process_export_context', 'recognized_export']
+  const statuses = ['candidate', 'confirmed', 'rejected', 'unlinked']
+  if (query.type != null && !types.includes(query.type as string) || query.status != null && !statuses.includes(query.status as string)) return fail(400, 'invalid_request', 'Invalid type or status')
+  for (const key of ['titleCode', 'role', 'ruleVersion']) if (query[key] != null && !scalar(query[key])) return fail(400, 'invalid_request', `Invalid ${key}`)
+  const filter = { ...numeric, ...(query.titleCode ? { titleCode: query.titleCode as string } : {}), ...(query.type ? { type: query.type as typeof types[number] } : {}), ...(query.status ? { status: query.status as typeof statuses[number] } : {}), ...(query.role ? { role: query.role as string } : {}), ...(query.ruleVersion ? { ruleVersion: query.ruleVersion as string } : {}) }
+  return { filter: filter as CorrespondenceFilter, paging, view: query.view }
+}
+
+export async function readPostgresCorrespondenceRequest(input: CorrespondenceApiInput, apiToken?: string | null): Promise<CorrespondenceApiOutput | undefined> {
+  const summary = input.action === 'list' && input.query?.view === 'summary'
+  if (!summary && input.action !== 'audit' && input.action !== 'batch') return
+  const db = usePostgresRosterDb()
+  if (!db) return
+  if (input.action === 'batch' && !auth(input, apiToken)) return fail(401, 'unauthorized', 'Configured API token required')
+  if (input.method !== 'GET') return fail(405, 'method_not_allowed', 'GET required')
+  return db.transaction(async tx => {
+    const { knownRedactors } = await importPostgresReceiptRedactor(tx, { additionalSecrets: [apiToken] })
+    if (summary) {
+      const parsed = parseListQuery(input.query ?? {})
+      if ('status' in parsed) return parsed
+      const result = await pagePostgresCorrespondenceSummaries(tx, parsed.filter, parsed.paging)
+      return ok({ ...result, rows: summaries(result.rows) }, knownRedactors)
+    }
+    if (input.action === 'batch') {
+      const key = scalar(input.key)
+      if (!key) return fail(400, 'invalid_request', 'Idempotency key required')
+      const { rows: [batch] } = await tx.execute<{ receipt: object | null }>(sql`
+        SELECT summary::json AS receipt FROM import_batch
+        WHERE idempotency_key = ${key} AND source_kind = 'correspondence_decision' AND status = 'committed'`)
+      return batchResponse(batch?.receipt, knownRedactors)
+    }
+    const id = int(input.id)
+    if (!id) return fail(400, 'invalid_request', 'Positive ID required')
+    const { rows: [match] } = await tx.execute(sql`SELECT 1 FROM record_correspondence WHERE id = ${id}`)
+    if (!match) return fail(404, 'not_found', 'Correspondence not found')
+    const paging = auditPaging(input.query ?? {})
+    if (!paging) return fail(400, 'invalid_request', 'Invalid audit query')
+    const result = await readPostgresRosterPage(tx, schema.recordCorrespondenceAudit,
+      sql`FROM record_correspondence_audit p WHERE p.correspondence_id = ${id}`, paging.page, paging.pageSize)
+    return auditResponse(result, knownRedactors)
+  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
+}
+
 export function handleRecordCorrespondenceRequest(input: CorrespondenceApiInput, context: { db: Db; apiToken?: string | null; browserAuthorized?: boolean }): CorrespondenceApiOutput {
   return ['list', 'get', 'audit', 'source', 'candidates', 'discover'].includes(input.action)
     ? context.db.transaction(() => correspondenceSnapshot(input, context))
@@ -95,18 +157,11 @@ function correspondenceSnapshot(input: CorrespondenceApiInput, context: { db: Db
     const redact = importReceiptRedactor(db, { additionalSecrets: [context.apiToken] })
     const redactors = redact.knownRedactors
     if (input.action === 'list') {
-      const query = input.query ?? {}; const paging = page(query)
-      const keys = ['eventId', 'relationId', 'exportRowId', 'enterpriseId', 'titleCode', 'type', 'role', 'status', 'ruleVersion', 'page', 'pageSize', 'view']
-      if (!paging || !permitted(query, keys)) return fail(400, 'invalid_request', 'Invalid list query')
-      if (query.view != null && query.view !== 'summary') return fail(400, 'invalid_request', 'Invalid view')
-      const numeric = ids(query, ['eventId', 'relationId', 'exportRowId', 'enterpriseId']); if (!numeric) return fail(400, 'invalid_request', 'Invalid source ID')
-      const types = ['event_process', 'event_recognized', 'later_process', 'event_export_context', 'process_export_context', 'recognized_export']
-      const statuses = ['candidate', 'confirmed', 'rejected', 'unlinked']
-      if (query.type != null && !types.includes(query.type as string) || query.status != null && !statuses.includes(query.status as string)) return fail(400, 'invalid_request', 'Invalid type or status')
-      for (const key of ['titleCode', 'role', 'ruleVersion']) if (query[key] != null && !scalar(query[key])) return fail(400, 'invalid_request', `Invalid ${key}`)
-      const filter = { ...numeric, ...(query.titleCode ? { titleCode: query.titleCode as string } : {}), ...(query.type ? { type: query.type as typeof types[number] } : {}), ...(query.status ? { status: query.status as typeof statuses[number] } : {}), ...(query.role ? { role: query.role as string } : {}), ...(query.ruleVersion ? { ruleVersion: query.ruleVersion as string } : {}) }
-      const result = pageRecordCorrespondences(db, filter as CorrespondenceFilter, paging)
-      if (query.view === 'summary') return ok({ ...result, rows: summaries(result.rows) }, redactors)
+      const parsed = parseListQuery(input.query ?? {})
+      if ('status' in parsed) return parsed
+      const { filter, paging, view } = parsed
+      const result = pageRecordCorrespondences(db, filter, paging)
+      if (view === 'summary') return ok({ ...result, rows: summaries(result.rows) }, redactors)
       const body = { ...result, rows: details(db, result.rows, redact) }
       return success(sanitizePublishedObject(body, redactors, (key, value) => key === 'rows'
         ? body.rows.map(row => sanitizePublishedDetail(row, redactors)) : sanitizeEvidence(value, redactors)))
@@ -135,8 +190,7 @@ function correspondenceSnapshot(input: CorrespondenceApiInput, context: { db: Db
     }
     if (input.action === 'batch') {
       const key = scalar(input.key); if (!key) return fail(400, 'invalid_request', 'Idempotency key required')
-      const receipt = readRecordCorrespondenceBatch(db, key)
-      return receipt ? ok(receipt, redactors) : fail(404, 'not_found', 'Committed receipt not found')
+      return batchResponse(readRecordCorrespondenceBatch(db, key), redactors)
     }
     const id = int(input.id); if (!id) return fail(400, 'invalid_request', 'Positive ID required')
     if (input.action === 'source') {
@@ -157,9 +211,8 @@ function correspondenceSnapshot(input: CorrespondenceApiInput, context: { db: Db
       return row ? success(sanitizePublishedDetail(detail(db, row, redact), redactors)) : fail(404, 'not_found', 'Correspondence not found')
     }
     if (!db.select({ id: schema.recordCorrespondence.id }).from(schema.recordCorrespondence).where(eq(schema.recordCorrespondence.id, id)).get()) return fail(404, 'not_found', 'Correspondence not found')
-    const paging = page(input.query ?? {}); if (!paging || !permitted(input.query ?? {}, ['page', 'pageSize'])) return fail(400, 'invalid_request', 'Invalid audit query')
-    const result = pageRecordCorrespondenceAudit(db, id, paging)
-    return ok({ ...result, rows: result.rows.map(({ evidence, ...row }) => ({ ...row, evidence: sanitizeEvidence(evidence) })) }, redactors)
+    const paging = auditPaging(input.query ?? {}); if (!paging) return fail(400, 'invalid_request', 'Invalid audit query')
+    return auditResponse(pageRecordCorrespondenceAudit(db, id, paging), redactors)
   } catch (error) {
     if (error instanceof CorrespondenceError) return fail(error.status, error.code, error.message)
     throw error

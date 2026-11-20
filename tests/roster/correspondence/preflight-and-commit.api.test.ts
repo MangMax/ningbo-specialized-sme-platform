@@ -23,11 +23,11 @@ it('native REST writes require authorization and return sanitized source detail'
  expect(JSON.stringify(detail.body)).not.toContain('PRIVATE-COOKIE')
  expect(getRecordCorrespondence(f.db,id)).toMatchObject({relationId:row.id,status:'confirmed',requiresRevalidation:false})
 })
-it('native REST and MCP list reads share a read-only decision result', () => {
+it('native REST and MCP list reads share a read-only decision result', async () => {
  const f=fixture(),row=f.add();f.save(f.request('read',[{action:'create',status:'confirmed',edge:f.edge(row.id)}]))
  const before=f.db.$client.prepare('select total_changes() n').get()
  const rest=handleRecordCorrespondenceRequest({action:'list',method:'GET',query:{eventId:String(f.event.id)}},{db:f.db})
- const wire=dispatchRecordCorrespondenceMcp('list',{eventId:f.event.id},{db:f.db})
+ const wire=await dispatchRecordCorrespondenceMcp('list',{eventId:f.event.id},{db:f.db})
  expect(rest.status).toBe(200);expect(wire).toEqual(rest.body)
  expect(f.db.$client.prepare('select total_changes() n').get()).toEqual(before)
 })

@@ -1,16 +1,28 @@
+import { decodePostgresExactCell } from '../../../../db/postgresql/exact-cell'
 import { sql } from 'drizzle-orm'
+import * as schema from '../../../../db/schema'
+import { postgresRosterRow } from './postgres-rows'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import {
-  assessCurrentQualificationInputs, formatQualificationCorrespondence, type CandidateEvent, type CandidateFile,
-  type CurrentQualificationInput, type QualificationDisposition,
+  assessCurrentQualificationInputs, currentQualificationSnapshot, evaluateLoadedCurrentQualification, formatQualificationCorrespondence,
+  type CandidateEvent, type CandidateFile, type CurrentQualificationInput, type LoadedCurrentQualificationInput, type QualificationDisposition,
 } from './current-qualification'
-import { CURRENT_TITLES } from './current-titles'
+import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
 import { evaluateEnterpriseFactEffects, type EnterpriseFactEffectRow } from './enterprise-fact-effects'
-import { qualificationUsccCandidate, readPostgresPlatformQualificationFacts } from './platform-qualification-postgres'
+import { qualificationUsccCandidate, createPostgresPlatformQualificationReader, type PostgresPlatformQualificationReader } from './platform-qualification-postgres'
 import { platformEffectsForTitle } from './difference-platform-effects'
 import { currentCandidateIdBlocks } from './current-candidate-reader'
+import type { PlatformInterface } from '../labels'
 import { normalizeUscc } from '../domain'
 import { projectEffectiveQualifications, type EffectiveQualification } from './effective-qualifications'
+import { readPostgresRecognizedWitnesses } from './recognized-witness-postgres'
+import { readPostgresQueryCoverage } from './query-coverage-postgres'
+import { readPostgresOfficialPublishedPresentation } from './official-published-presentation-postgres'
+import { officialPublishedError, projectOfficialPublishedNames, type OfficialPublishedScope, type OfficialPublishedFact } from './official-published-presentation'
+import type { PublishedPresentation } from './correspondence-view'
+import { importPostgresReceiptRedactor } from '../../server/utils/import-receipt-redaction'
+import { CANDIDATE_SCOPE_RULE } from '../platform/candidate-scope-capture'
+import { readPostgresCorrespondenceRefs } from '../../server/utils/record-correspondence-postgres-refs'
 
 type Reader = Pick<NodePgDatabase, 'execute'>
 export type PostgresQualificationTransaction = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -45,10 +57,10 @@ async function readEnterprises(db: Reader, ids: readonly number[]) {
 
 async function readDispositions(db: Reader, ids: readonly number[]) {
   const { rows } = await db.execute<QualificationDisposition & { owner: string }>(sql`
-    SELECT d.enterprise_id AS owner, json_build_object('id',d.id,'revision',d.revision,'status',d.status,'kind',d.kind,'fact',d.fact::json) AS disposition,
-      CASE WHEN f.id IS NOT NULL THEN json_build_object('removedAt',f.removed_at,'sha256',f.sha256) END AS file,
-      CASE WHEN e.id IS NOT NULL THEN json_build_object('id',e.id,'revision',e.revision,'eventType',e.event_type,'year',e.year,'batchSeq',e.batch_seq) END AS cycle,
-      CASE WHEN r.id IS NOT NULL THEN json_build_object('enterpriseId',r.enterprise_id,'titleCode',r.title_code,'source',r.source) END AS record
+    SELECT d.enterprise_id AS owner, ${postgresRosterRow(schema.titleCycleDispositionRevision, 'd')} AS disposition,
+      CASE WHEN f.id IS NOT NULL THEN ${postgresRosterRow(schema.storedFile, 'f')} END AS file,
+      CASE WHEN e.id IS NOT NULL THEN ${postgresRosterRow(schema.recordEvent, 'e')} END AS cycle,
+      CASE WHEN r.id IS NOT NULL THEN ${postgresRosterRow(schema.record, 'r')} END AS record
     FROM title_cycle_disposition_revision d
     LEFT JOIN stored_file f ON f.id = d.source_file_id
     LEFT JOIN record_event e ON e.id = d.cycle_event_id
@@ -60,10 +72,17 @@ async function readDispositions(db: Reader, ids: readonly number[]) {
 }
 
 type PlatformReference = CurrentQualificationInput['platformReferences'][number]
-type PlatformScopeRow = { id: string; queryId: string; interface: PlatformReference["interface"]; queriedAt: string; collectionId: string;
-  sequenceNo: string; titleCode: string | null; rdjb: string; owner: string | null; uscc: string | null }
+type PlatformEffect = PlatformReference & { interface: PlatformInterface; status: string | null; year: number | null; batch: string | null }
+const titleScopeBits = { innovative_sme: 1, specialized_sme: 2, little_giant: 4 } satisfies Record<CurrentTitle, number>
+type PlatformScopeRow = { id: string; queryId: string; interface: PlatformInterface; queriedAt: string; collectionId: string;
+  sequenceNo: string; titleCode: string | null; rdjb: string; owner: string | null; uscc: string | null
+  captured: boolean; mask: number | null; textStatus: string | null; processStatus: Buffer | null; statusStorage: string | null
+  year: number | null; batch: string | null
+  processYear: Buffer | null; yearStorage: string | null
+  processBatch: Buffer | null; batchStorage: string | null
+}
 
-async function readPlatformReferences(db: Reader, subjects: readonly Enterprise[]) {
+async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], hydrated: boolean) {
   const byUscc = Map.groupBy(subjects, owner => normalizeUscc(owner.uscc_norm))
   byUscc.delete('')
   const codes = [...byUscc.keys()]
@@ -71,7 +90,13 @@ async function readPlatformReferences(db: Reader, subjects: readonly Enterprise[
   const { rows } = await db.execute<PlatformScopeRow>(sql`
     SELECT ra.old_id AS id, qa.old_id AS "queryId", c.interface, c.queried_at AS "queriedAt",
       c.id AS "collectionId", o.sequence_no AS "sequenceNo", c.title_code AS "titleCode", c.rdjb,
-      a.enterprise_id AS owner, first.uscc_raw AS uscc
+      a.enterprise_id AS owner, ${hydrated ? sql`a.uscc_raw` : sql`first.uscc_raw`} AS uscc
+      ${hydrated ? sql`, o.candidate_scope_state='captured' AND o.candidate_scope_rule=${CANDIDATE_SCOPE_RULE} AS captured,
+        o.candidate_scope_mask::integer AS mask, coalesce(ap.stored_status,rp.stored_status) AS "textStatus",
+        bp.exact_status AS "processStatus", bp.exact_status_sqlite_storage AS "statusStorage",
+        bp.exact_year AS "processYear", bp.exact_year_sqlite_storage AS "yearStorage",
+        bp.exact_batch AS "processBatch", bp.exact_batch_sqlite_storage AS "batchStorage",
+        coalesce(ap.stored_year,rp.stored_year)::float8 AS year, coalesce(ap.stored_batch,rp.stored_batch) AS batch` : sql.empty()}
     FROM platform_business_observation o
     JOIN platform_legacy_relation_alias ra ON ra.observation_id = o.id
     JOIN platform_collection c ON c.id = o.collection_id
@@ -79,25 +104,41 @@ async function readPlatformReferences(db: Reader, subjects: readonly Enterprise[
     JOIN platform_observation_assignment first ON first.observation_id = o.id AND first.revision = 1
     JOIN platform_observation_assignment a ON a.observation_id = o.id AND a.revision = (
       SELECT max(head.revision) FROM platform_observation_assignment head WHERE head.observation_id = o.id)
+    ${hydrated ? sql`LEFT JOIN platform_business_projection bp ON bp.observation_id=o.id
+      LEFT JOIN platform_apply_projection ap ON ap.observation_id=o.id
+      LEFT JOIN platform_recognized_projection rp ON rp.observation_id=o.id` : sql.empty()}
     WHERE a.enterprise_id = ANY(${pgIds(ids)}) OR (${codes.length > 0} AND a.enterprise_id IS NULL
-      AND ${qualificationUsccCandidate(sql`first.uscc_raw`, codes)})
+      AND ${qualificationUsccCandidate(hydrated ? sql`a.uscc_raw` : sql`first.uscc_raw`, codes)})
     ORDER BY ra.old_id`)
   const exact = rows.flatMap(row => {
     const owners = row.owner !== null ? [Number(row.owner)] : (byUscc.get(normalizeUscc(row.uscc)) ?? []).map(item => item.id)
     return owners.map(owner => ({ ...row, owner, id: Number(row.id), queryId: Number(row.queryId),
       collectionId: Number(row.collectionId), sequenceNo: Number(row.sequenceNo) }))
   })
-  const pageCollections = [...new Set(exact.filter(row => row.rdjb.includes(',')).map(row => row.collectionId))]
+  const pageCollections = hydrated ? [] : [...new Set(exact.filter(row => row.rdjb.includes(',')).map(row => row.collectionId))]
   const pages = pageCollections.length ? (await db.execute<{ page: Parameters<typeof platformEffectsForTitle>[1][number] }>(sql`
     SELECT json_build_object('collectionId',collection_id,'status',status,'sequenceStart',sequence_start,
       'sequenceEnd',sequence_end,'rdjb',rdjb) AS page FROM platform_collection_page
     WHERE collection_id = ANY(${sql.param(pageCollections)}::bigint[]) ORDER BY ordinal`)).rows.map(row => row.page) : []
   const byOwner = Map.groupBy(exact, row => row.owner)
-  return (owner: number, title: string): PlatformReference[] => platformEffectsForTitle(byOwner.get(owner) ?? [], pages, title)
-    .map(({ id, queryId, interface: kind, queriedAt }) => ({ id, queryId, interface: kind, queriedAt }))
+  return (owner: number, title: CurrentTitle): PlatformEffect[] => {
+    const available = byOwner.get(owner) ?? []
+    const selected = hydrated ? available.filter(row => {
+      if (!row.captured || row.mask === null) throw new Error('Current hydration candidate capture unavailable')
+      return Boolean(row.mask & titleScopeBits[title])
+    }) : platformEffectsForTitle(available, pages, title)
+    return selected.map(row => ({
+      id: row.id, queryId: row.queryId, interface: row.interface, queriedAt: row.queriedAt,
+      year: row.processYear == null ? row.year ?? null : decodePostgresExactCell(row.processYear, row.yearStorage) as number | null,
+      batch: row.processBatch == null ? row.batch ?? null : decodePostgresExactCell(row.processBatch, row.batchStorage) as string | null,
+      status: row.processStatus == null ? row.textStatus ?? null : decodePostgresExactCell(row.processStatus, row.statusStorage) as string | null,
+    }))
+  }
 }
 
-async function readQualificationCandidates(tx: PostgresQualificationTransaction, enterpriseIds: readonly number[], asOf: number) {
+async function readQualificationInputs(tx: PostgresQualificationTransaction, enterpriseIds: readonly number[], asOf: number,
+  selectionScope?: { mode: 'scan' | 'detail' | 'workbook' | 'classify'; title: CurrentTitle }, readPlatform = createPostgresPlatformQualificationReader(tx)) {
+  if (!enterpriseIds.length) return []
   const selection = await readEnterprises(tx, enterpriseIds)
   if (!selection.length) return []
   const subjects = [...new Map(selection.map(({ enterprise }) => [enterprise.id, enterprise])).values()]
@@ -132,31 +173,35 @@ async function readQualificationCandidates(tx: PostgresQualificationTransaction,
       'status',r.status,'fact',r.fact::text,'basis',r.basis) AS fact
     FROM enterprise_fact_revision r JOIN members i ON r.enterprise_id = i.id ORDER BY r.id`)
   const dispositions = await readDispositions(tx, ids)
-  const platformFacts = await readPostgresPlatformQualificationFacts(tx, subjects)
-  const platformReferences = await readPlatformReferences(tx, subjects)
-  // Stored links are evidence locators. Live source/proof revalidation is
-  // part of the full detail reader and has no effect on eligibility.
-  const correspondence = await tx.execute<{ owner: string; title: string; id: string; revision: string; status: string }>(sql`
-    SELECT enterprise_id AS owner, title_code AS title, id, revision, status FROM record_correspondence
-    WHERE enterprise_id = ANY(${pgIds(ids)}) ORDER BY id`)
+  const platformFacts = await readPlatform(subjects)
+  const scanning = selectionScope?.mode === 'scan'
+  const classifying = selectionScope?.mode === 'classify'
+  const detailed = selectionScope?.mode === 'detail' || selectionScope?.mode === 'workbook'
+  const platformEffects = scanning || classifying ? undefined : await readPlatformEffects(tx, subjects, detailed)
+  const correspondence = classifying ? [] : await readPostgresCorrespondenceRefs(tx, ids, scanning ? selectionScope.title : undefined)
+  const witnesses = selectionScope?.mode === 'detail' || scanning ? await readPostgresRecognizedWitnesses(tx, [...new Set(correspondence.flatMap(ref =>
+    ref.type === 'event_recognized' && ref.role === 'recognized_corrob' && ref.status === 'confirmed' && !ref.requiresRevalidation
+      && ref.relationId !== null ? [ref.relationId] : []))]) : undefined
   const eventsByOwner = Map.groupBy(events.rows, row => Number(row.owner))
   const evidenceByOwner = Map.groupBy(evidence.rows, row => Number(row.owner))
-  const referencesByOwner = Map.groupBy(correspondence.rows, row => Number(row.owner))
+  const referencesByOwner = Map.groupBy(correspondence, row => row.enterpriseId)
   const aliasesByOwner = Map.groupBy(aliases.rows, row => Number(row.owner))
   const factsByOwner = Map.groupBy(facts.rows, row => Number(row.owner))
   const byCanonical = new Map(subjects.map(enterprise => {
     const { id } = enterprise
     const ownerEvidence = evidenceByOwner.get(id) ?? []
-    const refsByTitle = Map.groupBy(referencesByOwner.get(id) ?? [], row => row.title)
+    const refsByTitle = Map.groupBy(referencesByOwner.get(id) ?? [], row => row.titleCode)
     const rowsByTitle = Map.groupBy(eventsByOwner.get(id) ?? [], row => row.title)
     const evidenceByTitle = Map.groupBy(ownerEvidence, row => row.title)
     const files = new Map(ownerEvidence.flatMap(row => row.file ? [[row.evidence.sourceFile, row.file] as const] : []))
     const captures = new Map(ownerEvidence.flatMap(row => row.capture ? [[row.evidence.id, row.capture] as const] : []))
     const factRows = (factsByOwner.get(id) ?? []).map(row => row.fact)
     const aliasRows = (aliasesByOwner.get(id) ?? []).map(row => row.alias)
-    const snapshot = assessCurrentQualificationInputs(id, asOf, new Map(CURRENT_TITLES.map(title => {
+    const inputs = new Map(CURRENT_TITLES.map(title => {
       const titleEvents = rowsByTitle.get(title) ?? []
-      const input: CurrentQualificationInput = {
+      const effects = platformEffects?.(id, title) ?? []
+      const refs = refsByTitle.get(title) ?? []
+      const input: LoadedCurrentQualificationInput = {
         enterprise,
         events: titleEvents.map(row => row.event),
         evidence: (evidenceByTitle.get(title) ?? []).map(row => row.evidence),
@@ -164,26 +209,107 @@ async function readQualificationCandidates(tx: PostgresQualificationTransaction,
         readFile: path => files.get(path),
         readAliases: () => aliasRows,
         readDispositions: () => dispositions.get(id)?.map(row => row.input) ?? [],
-        platformReferences: platformReferences(id, title),
-        correspondenceReferences: () => (refsByTitle.get(title) ?? []).map(row =>
-          formatQualificationCorrespondence({ id: Number(row.id), revision: Number(row.revision), status: row.status })),
+        platformReferences: effects.map(({ id, queryId, interface: kind, queriedAt }) => ({ id, queryId, interface: kind, queriedAt })),
+        ...(selectionScope ? { readWitnesses: witnesses, readCorrespondences: () => refs }
+          : { correspondenceReferences: () => refs.map(formatQualificationCorrespondence) }),
+        ...(detailed ? { readPlatformEffects: () => effects } : {}),
         readFactEffects: effectiveOnly => evaluateEnterpriseFactEffects(factRows, asOf, effectiveOnly),
         readPlatformFacts: () => platformFacts.get(id) ?? [],
         readCaptureVersion: evidenceId => captures.get(evidenceId),
       }
-      return [title, input]
-    })))
-    return [id, snapshot] as const
+      return [title, input] as const
+    }))
+    return [id, inputs] as const
   }))
-  return selection.map(({ requested, enterprise }) =>
-    [requested, { ...byCanonical.get(enterprise.id)!, enterpriseId: requested }] as const)
+  return selection.map(({ requested, enterprise }) => [requested, byCanonical.get(enterprise.id)!] as const)
+}
+
+async function readQualificationCandidates(tx: PostgresQualificationTransaction, enterpriseIds: readonly number[], asOf: number, readPlatform?: PostgresPlatformQualificationReader) {
+  const inputs = await readQualificationInputs(tx, enterpriseIds, asOf, undefined, readPlatform)
+  return inputs.map(([requested, facts]) => [requested, assessCurrentQualificationInputs(requested, asOf, facts)] as const)
+}
+
+export async function readPostgresCurrentFilterBatch(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, readPlatform?: PostgresPlatformQualificationReader) {
+  const loaded = await readQualificationInputs(tx, ids, asOf, { mode: 'scan', title }, readPlatform)
+  return new Map(loaded.map(([id, inputs]) => [id, evaluateLoadedCurrentQualification(asOf, inputs, title, 'scan').get(title)!]))
+}
+
+export async function readPostgresCurrentStatusBatch(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, readPlatform?: PostgresPlatformQualificationReader) {
+  const loaded = await readQualificationInputs(tx, ids, asOf, { mode: 'classify', title }, readPlatform)
+  return new Map(loaded.map(([id, inputs]) => [id, evaluateLoadedCurrentQualification(asOf, inputs, undefined, 'scan').get(title)!.effectiveStatus]))
+}
+
+async function readPostgresDetailedAssessments(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, mode: 'detail' | 'workbook', readPlatform?: PostgresPlatformQualificationReader) {
+  const hydrated: [number, { rows: import('./current-qualification').CurrentRow[];
+    snapshot: ReturnType<typeof currentQualificationSnapshot>; publishedPresentation?: PublishedPresentation;
+    workbookPublished: Map<number, OfficialPublishedFact> }][] = []
+  if (!ids.length) return new Map(hydrated)
+  const loaded = await readQualificationInputs(tx, ids, asOf, { mode, title }, readPlatform)
+  const coverageOwners = await tx.execute<{ id: number; name_norm: string; uscc_norm: string | null }>(sql`
+    SELECT id::float8 AS id, name_norm, uscc_norm FROM enterprise WHERE id=ANY(${pgIds(ids)})`)
+  const titles = mode === 'workbook' ? CURRENT_TITLES.slice(0, CURRENT_TITLES.indexOf(title) + 1) : CURRENT_TITLES
+  const coverage = await readPostgresQueryCoverage(tx, coverageOwners.rows, titles)
+  const redact = await importPostgresReceiptRedactor(tx)
+  for (const [id, inputs] of loaded) {
+    for (const target of titles) {
+      const input = inputs.get(target)!
+      const scope = input.evidence.map(row => ({ evidenceId: row.id, eventId: row.eventId }))
+      try {
+        const facts = await readPostgresOfficialPublishedPresentation(tx, scope, redact)
+        input.readPublishedNames = () => [...facts.values()]
+      } catch (error) {
+        input.readPublishedNames = () => { throw officialPublishedError(error) }
+      }
+      input.readCoverage = () => coverage.get(id)!.get(target)!
+    }
+    let presentationScope: readonly OfficialPublishedScope[] | undefined
+    let presentationFacts: readonly OfficialPublishedFact[] | undefined
+    let presentationError: unknown
+    const outcome = evaluateLoadedCurrentQualification(asOf, inputs, title, mode, (scope, selected, names, error) => {
+      presentationScope = selected
+      if (scope.length !== selected.length || scope.some((item, index) => item.evidenceId !== selected[index]!.evidenceId || item.eventId !== selected[index]!.eventId)) return
+      if (names.availability === 'unavailable') presentationError = officialPublishedError(error)
+      else presentationFacts = names.facts
+    })
+    if (presentationScope === undefined) throw new Error('Current published-name scope was not evaluated')
+    if (!presentationFacts && !presentationError) {
+      try {
+        const facts = await readPostgresOfficialPublishedPresentation(tx, presentationScope, redact)
+        presentationFacts = [...facts.values()]
+      } catch (error) { presentationError = officialPublishedError(error) }
+    }
+    const rows = mode === 'workbook' ? [outcome.get(title)!.row] : [...outcome.values()].map(result => result.row)
+    const base = { rows, snapshot: currentQualificationSnapshot(id, asOf, rows.map(row => row.assessment!)) }
+    if (mode === 'workbook' && presentationError) throw presentationError
+    const workbookPublished = new Map((presentationFacts ?? []).map(fact => [fact.evidenceId, fact]))
+    let publishedPresentation: PublishedPresentation | undefined
+    if (mode === 'detail') {
+      try {
+        if (presentationError) throw presentationError
+        publishedPresentation = projectOfficialPublishedNames(presentationFacts!, presentationScope, 1, 2)
+      } catch (error) {
+        publishedPresentation = { availability: 'unavailable', error: officialPublishedError(error).code, facts: [] }
+      }
+    }
+    hydrated.push([id, { ...base, publishedPresentation, workbookPublished }] as const)
+  }
+  return new Map(hydrated)
+}
+
+export function readPostgresCurrentDetailBatch(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, readPlatform?: PostgresPlatformQualificationReader) {
+  return readPostgresDetailedAssessments(tx, ids, title, asOf, 'detail', readPlatform)
+}
+
+export function readPostgresCurrentWorkbookBatch(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, readPlatform?: PostgresPlatformQualificationReader) {
+  return readPostgresDetailedAssessments(tx, ids, title, asOf, 'workbook', readPlatform)
 }
 
 /** Read all input families in bounded sets on the caller's fixed snapshot. */
 export async function readPostgresEffectiveQualificationsBatch(tx: PostgresQualificationTransaction, enterpriseIds: readonly number[], asOf: number) {
   const completed = new Map<number, EffectiveQualification[]>()
+  const readPlatform = createPostgresPlatformQualificationReader(tx)
   for (const block of currentCandidateIdBlocks([...new Set(enterpriseIds.filter(Number.isSafeInteger))])) {
-    for (const [id, snapshot] of await readQualificationCandidates(tx, block, asOf)) completed.set(id, projectEffectiveQualifications(snapshot.titles))
+    for (const [id, snapshot] of await readQualificationCandidates(tx, block, asOf, readPlatform)) completed.set(id, projectEffectiveQualifications(snapshot.titles))
   }
   return completed
 }

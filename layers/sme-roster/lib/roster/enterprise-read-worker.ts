@@ -2,7 +2,7 @@ import { appManifests } from '../../../../lib/installed-manifests'
 import { installAppModules } from '../../../../lib/app-modules'
 import { assertApplicationSchema } from '../../../../db/schema-phase'
 import { appLog, initializeWorkerLogging, closeApplicationLogging, type LogContext, type LogInput } from '../../../core/lib/logging/index'
-/** Dedicated native SQLite executor. This entry has no Nitro runtime dependency. */
+/** Enterprise read executor. This entry has no Nitro runtime dependency. */
 import { getHeapStatistics } from 'node:v8'
 import { realpathSync, statSync } from 'node:fs'
 import Database from 'better-sqlite3'
@@ -16,11 +16,15 @@ import { listRosterRecognitions } from './recognitions'
 import { listRosterDifferences } from './difference-list'
 import { readWholeComparisonSummary } from '../comparison-summary-read'
 import { captureReaderError, type RecognitionReadInput, type DifferenceReadInput, type SummaryReadInput } from './offmain-read-protocol'
+import { listPostgresCurrentQualified } from './current-qualified-query-postgres'
+import { usePostgresRosterDb } from '../../server/utils/postgres-roster-db'
+import { closePostgresDirectoryDb } from '../../../../db/postgresql/client'
 import { readOwnerIdentity, sameReadOwner } from '../../../../db/read-owner-identity'
 
-export type EnterpriseReadRequest = { id: number; dbPath: string; logContext?: LogContext } & (
+export type EnterpriseReadInput = { operation: 'postgres-current-qualified'; filter: CurrentQualifiedFilter } | ({ dbPath: string } & (
   { operation: 'list'; filter: RosterEnterpriseFilter } | { operation: 'detail'; enterpriseId: number } | { operation: 'current-qualified'; filter: CurrentQualifiedFilter } | RecognitionReadInput | DifferenceReadInput | SummaryReadInput
-)
+))
+export type EnterpriseReadRequest = { id: number; logContext?: LogContext } & EnterpriseReadInput
 const send = (message: object) => new Promise<void>((resolve, reject) => {
   process.send!(message, error => error ? reject(error) : resolve())
 })
@@ -76,7 +80,10 @@ function observeConnection(client: Database.Database) {
 function closeConnection() { connection?.close(); connection=undefined; identity=undefined }
 installAppModules(appManifests)
 initializeWorkerLogging()
-process.on('disconnect', () => { closeConnection(); void closeApplicationLogging().finally(() => process.exit(0)) })
+process.on('disconnect', () => {
+  closeConnection()
+  void Promise.all([closeApplicationLogging(), closePostgresDirectoryDb()]).finally(() => process.exit(0))
+})
 process.on('message', async (request: EnterpriseReadRequest) => {
   let outcome: LogInput['outcome'] = 'failure'
   appLog({ module: 'sme-roster', source: 'worker', operation: 'enterprise_read.execute', outcome: 'started' }, request.logContext)
@@ -87,45 +94,52 @@ process.on('message', async (request: EnterpriseReadRequest) => {
   measureDetailSql = request.operation === 'detail'
   const started = performance.now()
   try {
-    if ((request.operation === 'recognitions' || request.operation === 'differences' || request.operation === 'summary') && !sameReadOwner(request.owner, readOwnerIdentity(request.dbPath))) {
-      await send({ type: 'failure', id: request.id, code: 'owner_identity_changed' }); return
-    }
-    const path = realpathSync(request.dbPath), stat = statSync(path)
-    const key = `${path}\0${stat.dev}\0${stat.ino}`
-    if (identity !== key) {
-      closeConnection()
-      connection = new Database(path, { readonly: true, fileMustExist: true })
-      observeConnection(connection)
-      identity = key
-    }
-    if ((request.operation === 'recognitions' || request.operation === 'differences' || request.operation === 'summary') && (identity !== `${request.owner.realpath}\0${request.owner.dev}\0${request.owner.ino}`
-      || !sameReadOwner(request.owner, readOwnerIdentity(request.dbPath)))) {
-      closeConnection(); await send({ type: 'failure', id: request.id, code: 'owner_identity_changed' }); return
-    }
-    const connectionMs = performance.now() - started
-
-    const db = drizzle(connection!, { schema, logger: createDrizzleLogger({ connection: 'enterprise_read', execution: 'worker', context: request.logContext }) })
-    // Each whole reader owns one synchronous transaction across every statement. It
-    // lives entirely off-thread, including native cursor drains and JS sorting.
     let result: unknown
-    if (request.operation === 'recognitions' || request.operation === 'differences' || request.operation === 'summary') {
-      // Open/identity/IPC failures remain outside this invocation boundary.
-      // Native admission reads can themselves block or fail; once they start,
-      // every SQLite/schema error is terminal and must not replay on the main owner.
-      try {
-        assertApplicationSchema(connection!)
-        result = request.operation === 'summary' ? readWholeComparisonSummary(db, request.options)
-          : request.operation === 'recognitions' ? listRosterRecognitions(db, request.filter) : listRosterDifferences(db, request.filter)
-      }
-      catch (error) {
-        const captured = captureReaderError(error)
-        closeConnection()
-        await send({ type: 'reader-error', id: request.id, error: captured })
-        return
-      }
+    let connectionMs = 0
+    if (request.operation === 'postgres-current-qualified') {
+      const db = usePostgresRosterDb()
+      if (!db) throw new Error('PostgreSQL roster connection unavailable')
+      result = await listPostgresCurrentQualified(db, request.filter)
     } else {
-      assertApplicationSchema(connection!)
-      result = request.operation === 'list' ? listRosterEnterprises(db, request.filter) : request.operation === 'detail' ? getRosterEnterpriseDetail(db, request.enterpriseId) : listCurrentQualified(connection!, request.filter)
+      if ((request.operation === 'recognitions' || request.operation === 'differences' || request.operation === 'summary') && !sameReadOwner(request.owner, readOwnerIdentity(request.dbPath))) {
+        await send({ type: 'failure', id: request.id, code: 'owner_identity_changed' }); return
+      }
+      const path = realpathSync(request.dbPath), stat = statSync(path)
+      const key = `${path}\0${stat.dev}\0${stat.ino}`
+      if (identity !== key) {
+        closeConnection()
+        connection = new Database(path, { readonly: true, fileMustExist: true })
+        observeConnection(connection)
+        identity = key
+      }
+      if ((request.operation === 'recognitions' || request.operation === 'differences' || request.operation === 'summary') && (identity !== `${request.owner.realpath}\0${request.owner.dev}\0${request.owner.ino}`
+        || !sameReadOwner(request.owner, readOwnerIdentity(request.dbPath)))) {
+        closeConnection(); await send({ type: 'failure', id: request.id, code: 'owner_identity_changed' }); return
+      }
+      connectionMs = performance.now() - started
+
+      const db = drizzle(connection!, { schema, logger: createDrizzleLogger({ connection: 'enterprise_read', execution: 'worker', context: request.logContext }) })
+      // Each whole reader owns one synchronous transaction across every statement. It
+      // lives entirely off-thread, including native cursor drains and JS sorting.
+      if (request.operation === 'recognitions' || request.operation === 'differences' || request.operation === 'summary') {
+        // Open/identity/IPC failures remain outside this invocation boundary.
+        // Native admission reads can themselves block or fail; once they start,
+        // every SQLite/schema error is terminal and must not replay on the main owner.
+        try {
+          assertApplicationSchema(connection!)
+          result = request.operation === 'summary' ? readWholeComparisonSummary(db, request.options)
+            : request.operation === 'recognitions' ? listRosterRecognitions(db, request.filter) : listRosterDifferences(db, request.filter)
+        }
+        catch (error) {
+          const captured = captureReaderError(error)
+          closeConnection()
+          await send({ type: 'reader-error', id: request.id, error: captured })
+          return
+        }
+      } else {
+        assertApplicationSchema(connection!)
+        result = request.operation === 'list' ? listRosterEnterprises(db, request.filter) : request.operation === 'detail' ? getRosterEnterpriseDetail(db, request.enterpriseId) : listCurrentQualified(connection!, request.filter)
+      }
     }
     const projectionMs = performance.now() - started - connectionMs
 

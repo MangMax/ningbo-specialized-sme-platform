@@ -297,6 +297,35 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
   const run = (command: string, args: string[]) => execFileSync(join(pgBin!, command), args, { env, stdio: 'pipe' })
   let started = false
   try {
+    const event = sqlite.prepare(`
+      SELECT ev.id, e.uscc_norm AS uscc FROM record_event ev
+      JOIN record r ON r.id=ev.record_id JOIN enterprise e ON e.id=r.enterprise_id
+      WHERE r.source='jxj' AND r.title_code='specialized_sme' AND e.uscc_norm IS NOT NULL ORDER BY ev.id LIMIT 1
+    `).get() as { id: number; uscc: string }
+    const snapshot = {
+      idempotencyKey: 'correspondence-source', sourceKind: 'platform_export', sourceIdentity: 'history-test.xlsx',
+      payload: { exportSnapshot: {
+        titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-11-20', originalFilename: 'history-test.xlsx', sha256: 'b'.repeat(64),
+        rows: [{ sourceRowNo: 2, nameRaw: '测试来源企业', usccRaw: event.uscc, rawFields: { password: 'synthetic-private-history-value', preserved: '原始信息' } }],
+      } },
+    }
+    const imported = await http('/api/roster/import/commit', snapshot)
+    expect(imported.body).toMatchObject({ status: 'committed' })
+    const { id: exportRowId } = sqlite.prepare("SELECT id FROM platform_export_row ORDER BY id DESC LIMIT 1").get() as { id: number }
+    const decision = {
+      idempotencyKey: 'correspondence-history', sourceIdentity: 'history-test.xlsx',
+      actor: { type: 'agent', id: 'tester' }, basis: '测试审计依据', ruleId: 'manual-review', ruleVersion: '1',
+      operations: [{ action: 'create', status: 'candidate', edge: {
+        type: 'event_export_context', eventId: event.id, exportRowId, role: 'current_snapshot_context',
+      } }],
+    }
+    const preview = await http('/api/roster/correspondences/preflight', decision)
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200)
+    const { planHash } = z.object({ planHash: z.string() }).parse(preview.body)
+    const saved = await http('/api/roster/correspondences/commit', { request: decision, planHash })
+    expect(saved.status).toBe(200)
+    const { correspondenceIds: [correspondenceId] } = z.object({ correspondenceIds: z.array(z.number()).length(1) }).parse(saved.body)
+
     installLeadListSchema(sqlite)
     run('initdb', ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', 'receipt_fixture', '-D', join(pgDir, 'pg')])
     run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-l', join(pgDir, 'pg.log'), '-o', "-c listen_addresses='' -k " + pgDir, 'start'])
@@ -324,14 +353,23 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
       ['/items', 'list_roster_import_items', { projection: 'snapshot', receiptId, source: 'redacted_receipt', itemIndex, oldRecordId }],
       ['/items', 'list_roster_import_items', { projection: 'qualification', batchId: grantBatchId, source: 'private_batch', itemIndex: grantIndex }],
     ] as const
-    for (const [suffix, name, args] of calls) {
-      const path = '/api/roster/import/receipts' + suffix + '?' + query(args)
+    const historyCalls = [
+      [`/api/roster/correspondences/${correspondenceId}/audit?pageSize=1`, 'get_record_correspondence_audit', { id: correspondenceId!, pageSize: 1 }],
+      ['/api/roster/correspondences/batches/' + decision.idempotencyKey, 'get_record_correspondence_batch', { idempotencyKey: decision.idempotencyKey }],
+    ] as const
+    for (const [path, name, args] of [...calls.map(([suffix, name, args]) =>
+      ['/api/roster/import/receipts' + suffix + '?' + query(args), name, args] as const), ...historyCalls]) {
       const expected = await http(path)
       expect(expected.status, path).toBe(200)
       const response = await app.request(path)
       const body = await response.json()
       expect(response.status, JSON.stringify({ path, body })).toBe(200)
       expect(body, path).toEqual(expected.body)
+      if (name === 'get_record_correspondence_audit') {
+        expect(body).toMatchObject({ rows: [{ toStatus: 'candidate', actorId: 'tester', evidence: expect.any(Object) }], total: 1, page: 1, pageSize: 1 })
+        expect(JSON.stringify(body)).not.toContain('synthetic-private-history-value')
+      }
+      if (name === 'get_record_correspondence_batch') expect(body).toEqual(saved.body)
       const remote = await app.request('/mcp', {
         method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream',
           'mcp-protocol-version': '2025-06-18', authorization: 'Bearer ' + mcpToken },
@@ -341,6 +379,15 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
       const text = raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : raw
       expect(JSON.parse(JSON.parse(text).result.content[0].text), name).toEqual(expected.body)
     }
+    const batchPath = '/api/roster/correspondences/batches/' + decision.idempotencyKey
+    const unauthorized = await app.request(batchPath, { headers: {} })
+    expect(unauthorized.status).toBe(401)
+    expect(await unauthorized.json()).toEqual((await http(batchPath, undefined, null)).body)
+    const missing = await app.request('/api/roster/correspondences/batches/' + snapshot.idempotencyKey)
+    expect(missing.status).toBe(404)
+    const invalidAudit = await app.request(`/api/roster/correspondences/${correspondenceId}/audit?pageSize=201`)
+    expect(invalidAudit.status).toBe(400)
+
     const bounded = '/api/roster/import/receipts/items?' + query({ ...selector, projection: 'snapshot', maxBytes: 1 })
     const expected = await http(bounded)
     const response = await app.request(bounded)

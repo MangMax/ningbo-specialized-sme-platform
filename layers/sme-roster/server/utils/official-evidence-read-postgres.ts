@@ -1,14 +1,14 @@
 import { sql } from 'drizzle-orm'
+import { readPostgresRosterPage } from '../../lib/roster/postgres-rows'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { z } from 'zod'
 import * as schema from '../../../../db/schema'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
 import { importPostgresReceiptRedactor } from './import-receipt-redaction'
 import { sanitizeEvidence } from './record-correspondence-read'
-import { readPostgresCorrectionAudit, readPostgresExactEvidence, readPostgresOfficialEvent, readPostgresPublicOfficialEvidence } from './official-evidence-postgres'
+import { readPostgresExactEvidence, readPostgresOfficialEvent, readPostgresPublicOfficialEvidence } from './official-evidence-postgres'
 import { evidenceReadSchema, eventReadSchema, officialReadQuery } from './official-evidence-read'
 import { usePostgresRosterDb } from './postgres-roster-db'
-
 const headers = { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' }
 const failure = (status: number, code: string, message: string) => ({ status, headers, body: { error: { code, message } } })
 const ok = (body: object) => ({ status: 200, headers, body })
@@ -57,13 +57,13 @@ export async function handlePostgresOfficialEvidenceRead(input: Input, context: 
         const { page, pageSize } = paging.data
         if (!event) {
           await readPostgresExactEvidence(tx, value)
-          return ok(await readPostgresCorrectionAudit(tx, schema.evidenceCorrectionAudit,
+          return ok(await readPostgresRosterPage(tx, schema.evidenceCorrectionAudit,
             sql`FROM evidence_correction_audit p WHERE p.evidence_id = ${value}`, page, pageSize))
         }
         const { rowCount } = await tx.execute(sql`SELECT 1 FROM record_event e JOIN record r ON r.id = e.record_id
           WHERE e.id = ${value} AND r.source = 'jxj'`)
         if (!rowCount) return failure(404, 'not_found', 'Official event not found')
-        const result = await readPostgresCorrectionAudit(tx, schema.eventCorrectionAudit,
+        const result = await readPostgresRosterPage(tx, schema.eventCorrectionAudit,
           sql`FROM event_correction_audit p WHERE p.event_id = ${value}`, page, pageSize)
         const redact = await importPostgresReceiptRedactor(tx, { additionalSecrets: [context.apiToken] })
         return ok(sanitizeEvidence(result, redact.knownRedactors) as typeof result)

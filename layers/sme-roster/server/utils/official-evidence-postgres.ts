@@ -1,4 +1,4 @@
-import { sql, type SQL, type Table } from 'drizzle-orm'
+import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/schema'
 import { computeTitleLifecycle } from '../../lib/roster/lifecycle'
@@ -109,15 +109,6 @@ export async function readPostgresPublicOfficialEvidence(db: NodePgDatabase, kin
   checkOfficialEvidenceFields(rows)
   const availability = event ? 'captured_rows' : rows.length ? 'available' : evidence?.beforeRevision === undefined ? 'unknown_legacy' : 'empty_page'
   return officialProjectionResponse(result, availability, maxBytes, await importPostgresReceiptRedactor(db))
-}
-
-export async function readPostgresCorrectionAudit<T extends Table>(
-  db: Db, table: T, from: SQL, page: number, pageSize: number,
-) {
-  const { rows: [total] } = await db.execute<{ count: string }>(sql`SELECT count(*) AS count ${from}`)
-  const { rows } = await db.execute<{ row: T['$inferSelect'] }>(sql`
-    SELECT ${postgresRosterRow(table, 'p')} AS row ${from} ORDER BY p.id LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`)
-  return { rows: rows.map(row => row.row), total: Number(total?.count), page, pageSize }
 }
 
 /** The publication reader requests at most 40 events per wave. */

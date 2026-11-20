@@ -61,7 +61,10 @@ export default defineEventHandler(event => {
   admitEnterpriseResponse(event)
   setHeader(event, 'cache-control', 'no-store')
   return withEnterpriseReadSignal(event, async signal => {
-    const result = await enterpriseReads.currentQualifiedJson(useDb().$client.name, parsed.data, signal, requestLogContext(event))
+    const context = requestLogContext(event)
+    const result = process.env.NUXT_POSTGRES_ROSTER_READ === '1'
+      ? await enterpriseReads.postgresCurrentQualifiedJson(parsed.data, signal, context)
+      : await enterpriseReads.currentQualifiedJson(useDb().$client.name, parsed.data, signal, context)
     setHeader(event, 'content-type', 'application/json; charset=utf-8')
     return result.body
   })

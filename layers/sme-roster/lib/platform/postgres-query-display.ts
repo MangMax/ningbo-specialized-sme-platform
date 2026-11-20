@@ -1,3 +1,4 @@
+import { decodePostgresExactCell } from '../../../../db/postgresql/exact-cell'
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { BUSINESS_STATUS_V1, BUSINESS_STATUS_V2 } from '../../../../db/business-status'
@@ -31,20 +32,9 @@ const facts = [
 const byteBudgetCells = ['raw_fields', 'source_text', 'name_raw', 'alias_name_raw', 'uscc_raw',
   'relation_key', 'province', 'status', 'batch', 'declare_kind', 'applied_at', 'award_batch_label']
 
-function decodeStatus(value: unknown, storage: unknown) {
-  if (!Buffer.isBuffer(value)) return value
-  switch (storage) {
-    case 'text': return value.toString('utf8')
-    case 'blob': return value
-    case 'integer': return Number(value.readBigInt64BE())
-    case 'real': return value.readDoubleBE()
-    default: throw new Error('Unknown stored status type')
-  }
-}
-
 function factValue(row: Record<string, unknown>, field: string, key: string) {
   const data = row[key]
-  if (field === 'status') return decodeStatus(data, row[key + '_sqlite_storage'])
+  if (field === 'status' && Buffer.isBuffer(data)) return decodePostgresExactCell(data, row[key + '_sqlite_storage'] as string | null)
   if (field === 'year' && data != null) return Number(data)
   return data
 }

@@ -1,4 +1,6 @@
-import { expect, it } from 'vitest'
+import { listCurrentQualified, type CurrentQualifiedFilter } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import { listPostgresCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query-postgres'
+import { expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
@@ -7,6 +9,14 @@ import { schema } from '../../../db/client'
 import { drizzle as sqliteDrizzle } from 'drizzle-orm/better-sqlite3'
 import { currentDispositions, preflightDisposition, commitDisposition } from '../../../layers/sme-roster/server/utils/title-cycle-disposition'
 import { readCurrentQualificationAssessment } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { readPostgresQueryCoverage } from '../../../layers/sme-roster/lib/roster/query-coverage-postgres'
+import { readQueryCoverageBatch } from '../../../layers/sme-roster/lib/roster/query-assessment'
+import { readTargetIdentityKeyVariants } from '../../../layers/sme-roster/lib/roster/current-identity-keys'
+import { createTargetRecognizedWitnessReader } from '../../../layers/sme-roster/lib/roster/recognized-witness-target'
+import { readPostgresRecognizedWitnesses } from '../../../layers/sme-roster/lib/roster/recognized-witness-postgres'
+import { readPostgresCurrentCandidateIds } from '../../../layers/sme-roster/lib/roster/current-candidates-postgres'
+import { createTargetCurrentCandidateReader } from '../../../layers/sme-roster/lib/roster/current-candidates-target'
+import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
 import { readEffectiveQualifications, readPostgresCurrentQualification, readPostgresEffectiveQualifications, readPostgresEffectiveQualificationsBatch } from '../../../layers/sme-roster/public'
 import { AS_OF_408, currentQualificationFixture, qualificationMatrix, qualificationReferenceLiterals } from '../fixtures/qualification-matrix'
 
@@ -70,13 +80,31 @@ it.runIf(!!connectionString)('preserves three-title decisions and the public eff
         rdjb: '2', rdtime: '2025-01-01', rddqrq: '2026-06-01', sfyx: '0', szsmc: '宁波市' },
     }] })
     for (const [enterprise, rdjb] of [[platformOnly, '2'], [unclear.enterprise, '1']] as const) {
+      const rawCode = enterprise.id === platformOnly.id
+        ? ' ' + enterprise.usccNorm!.slice(0, 6).toLowerCase() + '\u200b' + enterprise.usccNorm!.slice(6).toLowerCase()
+        : enterprise.usccNorm!
       submitSyntheticRecognizedCollection(db, {
         rdjb, queriedAt: '2026-05-01T00:00:00Z', rows: [{ enterpriseId: null, raw: {
-          id: 'qual-' + enterprise.id, qymc: '平台原名', tyshxydm: enterprise.usccNorm!, rdjb,
+          id: 'qual-' + enterprise.id, qymc: '平台原名', tyshxydm: rawCode, rdjb,
           rdtime: '2025-01-01', rddqrq: '2026-06-01', sfyx: enterprise.id === platformOnly.id ? 1 : '1', szsmc: '宁波市',
         } }],
       })
     }
+    const recognized = submitSyntheticRecognizedCollection(db, { rdjb: '1', queriedAt: '2026-05-03T00:00:00Z',
+      conditions: { uscc: platformOnly.usccNorm!, rddqrq: '2026', whpcyear: '2025', whpc: '2' }, rows: [{ enterpriseId: platformOnly.id,
+        raw: { id: 'witness-' + platformOnly.id, qymc: '平台原名', tyshxydm: platformOnly.usccNorm!,
+          rdjb: '1', rddqrq: '2026-06-01', whpc: '2025-2' } }],
+    })
+    const coverageIds = [platformOnly, unclear.enterprise]
+    const subjects = coverageIds.map(enterprise => ({ id: enterprise.id, name_norm: enterprise.nameNorm, uscc_norm: enterprise.usccNorm }))
+    const titles = ['specialized_sme', 'innovative_sme'] as const
+    const expectedCoverage = readQueryCoverageBatch(db, subjects.flatMap(({ id }) => titles.map(titleCode =>
+      ({ enterpriseId: id, titleCode, direction: 'missing_in_miit' as const }))), readTargetIdentityKeyVariants(sqlite.sqlite, 'queries'))
+    const witnessReader = createTargetRecognizedWitnessReader(sqliteDrizzle(sqlite.sqlite, { schema: targetSchema }))
+    const witnessInput = { enterpriseId: platformOnly.id, uscc: platformOnly.usccNorm, relationIds: recognized.relationIds }
+    const expectedWitnesses = witnessReader.readMany(witnessInput)
+    expect([...expectedWitnesses.values()]).toEqual([expect.objectContaining({ kind: 'available',
+      source: expect.objectContaining({ rawValid: '2026-06-01', rawMaintenanceBatch: '2025-2' }) })])
     const empty = sqlite.sqlite.prepare('insert into enterprise (name, name_norm) values (?, ?) returning id').get('无称号', '无称号') as { id: number }
 
     await copyQualificationsFixture(client, sqlite.sqlite)
@@ -84,6 +112,14 @@ it.runIf(!!connectionString)('preserves three-title decisions and the public eff
     await expect(postgres.transaction(tx => readPostgresEffectiveQualifications(tx, giant.enterprise.id, asOf)))
       .rejects.toThrow('PostgreSQL qualification requires a repeatable-read or serializable transaction')
     await postgres.transaction(async tx => {
+      const candidates = createTargetCurrentCandidateReader(sqliteDrizzle(sqlite.sqlite, { schema: targetSchema }))
+      for (const title of ['innovative_sme', 'specialized_sme', 'little_giant'] as const) {
+        for (const sort of ['id_asc', 'name_asc', 'name_desc'] as const) {
+          expect(await readPostgresCurrentCandidateIds(tx, title, sort)).toEqual([...candidates.iterate(title, sort)].map(row => row.id))
+        }
+      }
+      expect(await readPostgresQueryCoverage(tx, subjects, titles)).toEqual(expectedCoverage)
+      expect((await readPostgresRecognizedWitnesses(tx, witnessInput.relationIds))(witnessInput)).toEqual(expectedWitnesses)
       expect(await readPostgresEffectiveQualifications(tx, 999, asOf)).toBeNull()
       expect(await readPostgresEffectiveQualifications(tx, empty.id, asOf)).toEqual([])
       const qualification = await readPostgresCurrentQualification(tx, giant.enterprise.id, asOf)
@@ -129,6 +165,19 @@ it.runIf(!!connectionString)('preserves three-title decisions and the public eff
       expect(qualifications).toEqual(new Map(sampled.map(id => [id, readEffectiveQualifications(sqlite.sqlite, id, asOf)])))
       expect(await readPostgresEffectiveQualificationsBatch(tx, sampled, asOf)).toEqual(qualifications)
     }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
+    const filters: CurrentQualifiedFilter[] = [
+      { titleCode: 'little_giant', status: 'effective', pageSize: 2 },
+      { titleCode: 'specialized_sme', sort: 'name_desc', pageSize: 2 },
+      { titleCode: 'specialized_sme', q: platformOnly.name, validYear: 2026 },
+      { titleCode: 'innovative_sme', status: 'unrecognized', sort: 'name_asc', pageSize: 2, page: 2 },
+      { titleCode: 'innovative_sme', recognitionFrom: '2019-02-01', recognitionTo: '2025-01-01', pageSize: 1 },
+    ]
+    for (const filter of filters) {
+      const actual = await listPostgresCurrentQualified(postgres, filter, asOf)
+      vi.setSystemTime(new Date(asOf))
+      try { expect(actual, JSON.stringify(filter)).toEqual(listCurrentQualified(sqlite.sqlite, filter)) }
+      finally { vi.useRealTimers() }
+    }
   } finally {
     sqlite.close()
     await client.end()
@@ -142,24 +191,31 @@ async function copyQualificationsFixture(client: pg.Client, sqlite: ReturnType<t
     'official_evidence_row_revision', 'platform_collection', 'platform_business_observation',
     'platform_recognized_projection', 'platform_business_projection', 'platform_apply_projection',
     'platform_observation_assignment', 'platform_legacy_query_alias', 'platform_legacy_relation_alias',
-    'platform_collection_page', 'record_correspondence',
+    'platform_collection_page', 'platform_collection_condition', 'platform_collection_unfinished',
+    'platform_query_title_scope', 'platform_collection_archive_ref', 'platform_observation_archive_ref', 'platform_archive_value',
+    'platform_business_record', 'record_correspondence', 'difference_reason', 'title', 'platform_export_row', 'platform_export_batch',
+    'service_credential',
   ]
   for (const table of tables) {
     const columns = sqlite.pragma(`table_info(${table})`) as { name: string; type: string }[]
     const fields = columns.map(column => '"' + column.name + '"')
-    const tagFlag = table === 'platform_recognized_projection'
-    if (tagFlag) fields.push('typeof(source_valid_flag)')
+    const mixedColumns = table === 'platform_recognized_projection' ? ['source_valid_flag']
+      : table === 'platform_collection_condition' ? ['witness_value'] : table === 'platform_business_projection' ? ['stored_status', 'exact_status', 'exact_year', 'exact_batch'] : []
+    fields.push(...mixedColumns.map(name => 'typeof(' + name + ')'))
     const targetFields = columns.map(({ name, type }) => `"${name}" ${/int/i.test(type) ? 'bigint' : /blob/i.test(type) ? 'bytea' : 'text'}`)
-    if (tagFlag) targetFields.push('source_valid_flag_sqlite_storage text')
+    targetFields.push(...mixedColumns.map(name => name + '_sqlite_storage text'))
     await client.query(`create temp table "${table}" (${targetFields.join(', ')})`)
     for (const raw of sqlite.prepare(`select ${fields.join(', ')} from "${table}"`).raw().all()) {
       const row = raw as unknown[]
-      if (tagFlag && (row.at(-1) === 'integer' || row.at(-1) === 'real')) {
-        const index = columns.findIndex(column => column.name === 'source_valid_flag')
-        const bytes = Buffer.alloc(8)
-        if (row.at(-1) === 'integer') bytes.writeBigInt64BE(BigInt(row[index] as number))
-        else bytes.writeDoubleBE(row[index] as number)
-        row[index] = bytes
+      for (const [offset, name] of mixedColumns.entries()) {
+        const storage = row[columns.length + offset]
+        const index = columns.findIndex(column => column.name === name)
+        if (storage === 'integer' || storage === 'real') {
+          const bytes = Buffer.alloc(8)
+          if (storage === 'integer') bytes.writeBigInt64BE(BigInt(row[index] as number))
+          else bytes.writeDoubleBE(row[index] as number)
+          row[index] = bytes
+        } else if (storage === 'text') row[index] = Buffer.from(row[index] as string)
       }
       await client.query(`insert into "${table}" values (${fields.map((_, i) => '$' + (i + 1)).join(', ')})`, row)
     }

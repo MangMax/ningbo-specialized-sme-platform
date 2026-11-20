@@ -265,11 +265,14 @@ export function completePostgresJob(db: Executor, job: PostgresJobSnapshot, outc
 
 export async function listPostgresTaskCenter(db: Executor, query: {
   kinds?: string[]
+  titleCode?: string
   state?: JobState
   page: number
   pageSize: number
 }) {
-  const state = query.state ? sql`state = ${query.state}` : sql`true`
+  const state = sql`(${query.state ? sql`state = ${query.state}` : sql`true`})
+    ${query.titleCode === undefined ? sql.empty() : sql`AND kind = 'current-roster-export'
+      AND params::json ->> 'titleCode' = ${query.titleCode}`}`
   const kinds = query.kinds?.length
     ? sql`kind IN (${sql.join(query.kinds.map(kind => sql`${kind}`), sql`, `)})`
     : sql`${query.kinds === undefined}`
