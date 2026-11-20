@@ -3,7 +3,7 @@ import { createFileStore, type FileCategoryServer, type FileStoreDb } from '../l
 export let {
   checkAdmission, getStoredFile, listStoredFiles, extensionSnapshot, renameStoredFileDisplayName,
   verifyStoredFileRestoration, restoreVerifiedStoredFile, softRemoveStoredFile,
-  backfillFromDisk, backfillStoredFiles, resolveUploadPlacement, registerUploadedFile, parseMetadataPatch, updateStoredFile,
+  backfillFromDisk, backfillStoredFiles, resolveUploadPlacement, resolveFileRegistration, registerUploadedFile, parseMetadataPatch, updateStoredFile,
 } = createFileStore<readonly FileCategoryServer[]>([])
 
 export let serverFileCategories: readonly FileCategoryServer[] = []
@@ -13,7 +13,7 @@ export function configureFileStore(categories: readonly FileCategoryServer[]): v
   ({
     checkAdmission, getStoredFile, listStoredFiles, extensionSnapshot, renameStoredFileDisplayName,
     verifyStoredFileRestoration, restoreVerifiedStoredFile, softRemoveStoredFile,
-    backfillFromDisk, backfillStoredFiles, resolveUploadPlacement, registerUploadedFile, parseMetadataPatch, updateStoredFile,
+    backfillFromDisk, backfillStoredFiles, resolveUploadPlacement, resolveFileRegistration, registerUploadedFile, parseMetadataPatch, updateStoredFile,
   } = createFileStore(categories))
   serverFileCategories = categories
   fileRowsReady = false

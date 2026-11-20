@@ -1,3 +1,6 @@
+import { usePostgresFileDb } from '../../utils/file-store-postgres'
+import { maintainPostgresFile } from '../../utils/file-maintenance-postgres'
+import { quarantinePostgresFile } from '../../utils/file-physical-postgres'
 import { appLog, requestLogContext } from '../../../lib/logging'
 import { requireApiToken } from '../../utils/api-guard'
 import { quarantineStoredFile } from '../../utils/file-physical'
@@ -48,7 +51,7 @@ export default defineEventHandler(async (event) => {
   setHeader(event, 'cache-control', 'no-store')
   if (hasFileMaintenanceControls(body)) requireApiToken(event)
   const id = Number(getRouterParam(event, 'id'))
-  if (!Number.isInteger(id) || id <= 0) {
+  if (!Number.isSafeInteger(id) || id <= 0) {
     throw createError({ statusCode: 400, statusMessage: '文件 id 非法' })
   }
 
@@ -57,16 +60,20 @@ export default defineEventHandler(async (event) => {
 
   let result
   try {
+    const pg = usePostgresFileDb()
+    const root = useRuntimeConfig().filesDir
     if (deleteDisk) {
       const { options } = splitFileMaintenanceBody(body, 'remove')
       requireApiToken(event)
-      const receipt = quarantineStoredFile(useDb(), useRuntimeConfig().filesDir, id, options)
+      const receipt = pg ? await quarantinePostgresFile(pg, root, id, options) : quarantineStoredFile(useDb(), root, id, options)
       appLog({ module: 'core', source: 'file', operation: 'file.disk.remove', outcome: 'success', fileId: id }, requestLogContext(event))
       return receipt
     }
     else {
       const { options } = splitFileMaintenanceBody(body, 'remove')
-      const row = maintainStoredFileSync(useDb(), id, 'remove', {}, options)
+      const row = pg
+        ? await maintainPostgresFile(pg, root, id, 'remove', {}, options)
+        : maintainStoredFileSync(useDb(), id, 'remove', {}, options)
       result = { row, diskDeleted: false, referenceCount: row.referenceCount }
     }
   } catch (error) {

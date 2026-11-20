@@ -1,3 +1,4 @@
+import { listPostgresFiles, usePostgresFileDb } from '../../utils/file-store-postgres'
 import { useDb } from '@db'
 import { listStoredFiles } from '../../utils/stored-files'
 import { fileListQuery } from '../../utils/file-list-query'
@@ -66,8 +67,10 @@ defineRouteMeta({
 })
 
 export default defineEventHandler(async (event) => {
-  const db = useDb()
   const q = getQuery(event)
+  const pg = usePostgresFileDb()
+  if (pg) return listPostgresFiles(pg, { ...q, includeRemoved: false, ...fileListQuery(q) }, true)
+  const db = useDb()
 
   const result = listStoredFiles(db, {
     ...q,

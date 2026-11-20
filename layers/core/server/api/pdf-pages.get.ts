@@ -1,6 +1,5 @@
-import { useDb } from '@db'
-import { readStoredFileContentIdentity } from '../utils/file-content-identity'
-import { verifyFileRead, verifyPageRead } from '../utils/file-read-identity'
+import { readHttpFileIdentity, verifyHttpFileRead } from '../utils/file-content-http'
+import { verifyRenderedPageRead } from '../utils/file-read-identity'
 import { createReadStream } from 'node:fs'
 import { DEFAULT_DPI, isPdfPath, normalizeDpi } from '#core/lib/pdf-page'
 import { listPdfPages, pageImagePath, resolveWithinRoot } from '../utils/pdf-pages'
@@ -72,8 +71,7 @@ export default defineEventHandler(async (event) => {
   const root = useRuntimeConfig().filesDir
   const q = getQuery(event)
 
-  const db = useDb()
-  const registered = q.fileId === undefined ? null : readStoredFileContentIdentity(db, Number(q.fileId))
+  const registered = q.fileId === undefined ? null : await readHttpFileIdentity(Number(q.fileId))
   if (q.fileId !== undefined && !registered) throw createError({ statusCode: 404, message: '文件不存在' })
   const file = registered?.relPath ?? (typeof q.file === 'string' ? q.file.trim() : '')
   if (registered && q.file !== undefined && q.file !== file) throw createError({ statusCode: 400, message: 'fileId 与 file 不一致' })
@@ -99,11 +97,11 @@ export default defineEventHandler(async (event) => {
   }
 
   setHeader(event, 'cache-control', 'private, no-store')
-  const contentIdentity = await verifyFileRead(db, root, file)
+  const contentIdentity = await verifyHttpFileRead(root, file)
   const rawPage = typeof q.page === 'string' ? q.page : undefined
   if (rawPage === undefined) {
     const state = await listPdfPages(root, file, dpi)
-    if (state.pages.length) await verifyPageRead(db, root, file, undefined, contentIdentity)
+    if (state.pages.length) await verifyRenderedPageRead(root, file, contentIdentity)
     return {
       ...state,
       contentIdentity,
@@ -124,7 +122,7 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  await verifyPageRead(db, root, file, (await import('node:path')).relative(root, abs), contentIdentity)
+  await verifyRenderedPageRead(root, file, contentIdentity, (await import('node:path')).relative(root, abs))
   setHeader(event, 'content-type', 'image/png')
 
   setHeader(event, 'content-disposition', `inline; filename*=UTF-8''p${String(page).padStart(3, '0')}.png`)

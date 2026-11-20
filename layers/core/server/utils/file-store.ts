@@ -4,6 +4,7 @@ import { lstat, readdir, realpath, stat } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import { and, eq, isNull, like, or, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/schema'
 import { baseName, directoryOf, extensionOf, siblingIndex } from '../../lib/core/file-path'
 import { evaluateFileAdmission, type FileAdmissionPolicy, type FileFilter, type FileLanding, type ResolveUploadPlacement } from '../../lib/core/file-categories'
@@ -21,12 +22,22 @@ export interface FileQuery {
 
 export type FileQueryFilters = Readonly<Record<string, readonly string[] | undefined>>
 
+export function selectedFileFilters(filters: readonly FileFilter[], params: Record<string, unknown>): FileQueryFilters {
+  return Object.fromEntries(filters.flatMap(filter => {
+    const raw = params[filter.key]
+    const values = (Array.isArray(raw) ? raw : [raw])
+      .flatMap(value => typeof value === 'string' ? value.split(',').map(part => part.trim()) : [])
+      .filter(value => filter.options.some(option => option.value === value))
+    return values.length ? [[filter.key, values]] : []
+  }))
+}
+
 export interface FileRegistrationResult {
   row: FileRow
   created: boolean
 }
 
-interface RegistrationFile {
+export interface RegistrationFile {
   relPath: string
   filename: string
   abs: string
@@ -54,6 +65,10 @@ export interface FileCategoryServer {
   readonly readFields?: (db: FileStoreDb, ids: readonly number[]) => ReadonlyMap<number, object>
   readonly constraint?: (db: FileStoreDb, filters: FileQueryFilters) => SQL | undefined
   readonly orderBy?: readonly SQL[]
+  readonly postgres?: {
+    readonly constraint?: (filters: FileQueryFilters) => SQL | undefined
+    readonly countReferences?: (db: NodePgDatabase, ids: readonly number[]) => Promise<ReadonlyMap<number, number>>
+  }
   /** Return null to leave the path to another registered category. */
   readonly prepareBackfill?: (path: string) => ((db: FileStoreDb, fileId: number) => void) | null
   readonly metadata?: {
@@ -163,6 +178,19 @@ export async function runFileRegistration(
   checkAdmission: (path: string, siblings: ReadonlySet<string>) => ReturnType<typeof evaluateFileAdmission>,
   context: LogContext,
 ): Promise<FileRegistrationResult> {
+  return registerLandedFile(root, relPath, async () => {
+    const write = await prepare()
+    return file => write(db, file)
+  }, checkAdmission, context)
+}
+
+export async function registerLandedFile(
+  root: string,
+  relPath: string,
+  prepare: () => Promise<(file: RegistrationFile) => Promise<FileRegistrationResult>>,
+  checkAdmission: (path: string, siblings: ReadonlySet<string>) => ReturnType<typeof evaluateFileAdmission>,
+  context: LogContext,
+): Promise<FileRegistrationResult> {
   const startedAt = Date.now()
   try {
     const write = await prepare()
@@ -180,7 +208,7 @@ export async function runFileRegistration(
     const exclusion = checkAdmission(relPath, new Set(siblings.filter(entry => entry.isFile()).map(entry => entry.name)))
     if (exclusion) throw new UploadRegistrationError(exclusion.detail, 400, undefined, exclusion.reason)
 
-    const result = await write(db, { relPath, filename, abs, bytes: info.size })
+    const result = await write({ relPath, filename, abs, bytes: info.size })
     appLog({ module: 'core', source: 'file', operation: result.created ? 'file.register' : 'file.register.refresh', outcome: 'success', fileId: result.row.id, durationMs: Date.now() - startedAt }, context)
     return result
   } catch (error) {
@@ -265,6 +293,27 @@ export class FileMaintenanceError extends Error {
   constructor(public statusCode: number, message: string) { super(message) }
 }
 
+export async function verifyFileRestorationBytes(root: string, current: Pick<FileRow, 'relPath' | 'bytes' | 'sha256'>) {
+  const abs = resolveInsideRoot(root, current.relPath)
+  if (!abs) throw new FileMaintenanceError(409, '文件路径越界')
+  try {
+    const physicalRoot = await realpath(root)
+    const physical = await realpath(abs)
+    if (!physical.startsWith(physicalRoot + sep) || !(await lstat(abs)).isFile()) {
+      throw new FileMaintenanceError(409, '恢复必须指向库内原始普通文件')
+    }
+    const before = await stat(abs)
+    const hash = await sha256Of(abs)
+    const after = await stat(abs)
+    if (before.size !== current.bytes || hash !== current.sha256 || before.ino !== after.ino || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) {
+      throw new FileMaintenanceError(409, '文件字节数或哈希不匹配,不能恢复')
+    }
+  } catch (error) {
+    if (error instanceof FileMaintenanceError) throw error
+    throw new FileMaintenanceError(409, '恢复文件不存在或不可读取')
+  }
+}
+
 export function createFileStore<const Categories extends readonly FileCategoryServer[]>(registered: Categories) {
   type Row = FileRow & Record<string, unknown> & Partial<UnionToIntersection<CategoryFields<Categories[number]>>>
   const categories: readonly FileCategoryServer[] = registered
@@ -325,13 +374,7 @@ export function createFileStore<const Categories extends readonly FileCategorySe
           like(schema.storedFile.filename, `%${params.q}%`),
         ) : undefined,
         ...filtersByCategory.map(({ category, filters }) => {
-          const selected = Object.fromEntries(filters.flatMap(filter => {
-            const raw = params[filter.key]
-            const values = (Array.isArray(raw) ? raw : [raw])
-              .flatMap(value => typeof value === 'string' ? value.split(',').map(part => part.trim()) : [])
-              .filter(value => filter.options.some(option => option.value === value))
-            return values.length ? [[filter.key, values]] : []
-          }))
+          const selected = selectedFileFilters(filters, params)
           return Object.keys(selected).length ? category.constraint?.(tx, selected) : undefined
         }),
       )
@@ -383,24 +426,7 @@ export function createFileStore<const Categories extends readonly FileCategorySe
   async function verifyStoredFileRestoration(db: FileStoreDb, root: string, id: number): Promise<Row> {
     const current = getStoredFile(db, id)
     if (!current) throw new FileMaintenanceError(404, '文件不存在')
-    const abs = resolveInsideRoot(root, current.relPath)
-    if (!abs) throw new FileMaintenanceError(409, '文件路径越界')
-    try {
-      const physicalRoot = await realpath(root)
-      const physical = await realpath(abs)
-      if (!physical.startsWith(physicalRoot + sep) || !(await lstat(abs)).isFile()) {
-        throw new FileMaintenanceError(409, '恢复必须指向库内原始普通文件')
-      }
-      const before = await stat(abs)
-      const hash = await sha256Of(abs)
-      const after = await stat(abs)
-      if (before.size !== current.bytes || hash !== current.sha256 || before.ino !== after.ino || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) {
-        throw new FileMaintenanceError(409, '文件字节数或哈希不匹配,不能恢复')
-      }
-    } catch (error) {
-      if (error instanceof FileMaintenanceError) throw error
-      throw new FileMaintenanceError(409, '恢复文件不存在或不可读取')
-    }
+    await verifyFileRestorationBytes(root, current)
     return current
   }
 
@@ -510,7 +536,7 @@ export function createFileStore<const Categories extends readonly FileCategorySe
     return { segments, assertOwnership }
   }
 
-  function registerUploadedFile(db: FileStoreDb, root: string, body: unknown, context: LogContext) {
+  function resolveFileRegistration(body: unknown) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       throw new UploadRegistrationError('请求体必须是对象')
     }
@@ -531,9 +557,13 @@ export function createFileStore<const Categories extends readonly FileCategorySe
     if (requested && owner !== requested) {
       throw new UploadRegistrationError('上传分类与实际落位不符')
     }
-    const registration = owner?.registration
-    if (!registration) throw new UploadRegistrationError('无法确定登记上传分类')
-    return runFileRegistration(db, root, relPath, () => registration.prepare({ ...input, relPath }), checkAdmission, context)
+    if (!owner?.registration) throw new UploadRegistrationError('无法确定登记上传分类')
+    return { category: owner.id, registration: owner.registration, relPath, input: { ...input, relPath } }
+  }
+
+  function registerUploadedFile(db: FileStoreDb, root: string, body: unknown, context: LogContext) {
+    const { registration, relPath, input } = resolveFileRegistration(body)
+    return runFileRegistration(db, root, relPath, () => registration.prepare(input), checkAdmission, context)
   }
 
   function divideMetadata(input: object) {
@@ -569,7 +599,7 @@ export function createFileStore<const Categories extends readonly FileCategorySe
   }
 
   return {
-    parseMetadataPatch, updateStoredFile, resolveUploadPlacement, registerUploadedFile,
+    parseMetadataPatch, updateStoredFile, resolveUploadPlacement, resolveFileRegistration, registerUploadedFile,
     checkAdmission, listStoredFiles, getStoredFile, extensionSnapshot,
     renameStoredFileDisplayName, verifyStoredFileRestoration, restoreVerifiedStoredFile,
     softRemoveStoredFile, backfillStoredFiles, backfillFromDisk,
