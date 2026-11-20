@@ -2,7 +2,7 @@ import { createError } from 'h3'
 import { sql } from 'drizzle-orm'
 import type { useApplicationDb } from '../../../../db/client'
 import { TITLE_SEED } from '../../../../db/titles'
-import { readEffectiveQualifications, readPostgresEffectiveQualifications } from '../../../sme-roster/public'
+import { readEffectiveQualifications, readPostgresEffectiveQualificationsBatch } from '../../../sme-roster/public'
 import type { JobSpec } from '../../../core/server/utils/job-runner'
 import type { PostgresJobSpec } from '../../../core/server/public'
 import type { LeadVersionDetail } from '../../lib/contracts'
@@ -67,10 +67,8 @@ const postgresExport: PostgresJobSpec = {
     const asOf = Date.now()
     const { version, content } = await ctx.db.transaction(async tx => {
       const version = await readPostgresLeadVersionInSnapshot(tx, Number(params.versionId))
-      const qualifications = new Map<number, string>()
-      for (const id of linkedEnterprises(version)) {
-        qualifications.set(id, qualificationNames(await readPostgresEffectiveQualifications(tx, id, asOf)))
-      }
+      const effective = await readPostgresEffectiveQualificationsBatch(tx, [...linkedEnterprises(version)], asOf)
+      const qualifications = new Map([...effective].map(([id, titles]) => [id, qualificationNames(titles)]))
       return { version, content: exportContent(version, qualifications) }
     }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
     if (await ctx.cancelled()) return { cancelled: true, result: null }

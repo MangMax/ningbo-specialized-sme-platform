@@ -1,6 +1,6 @@
+import { preflightRuntimeEnterpriseFact, commitRuntimeEnterpriseFact } from './enterprise-facts-runtime'
 import { getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
-import { useDb } from '@db'
-import { enterpriseFactCommandSchema, preflightEnterpriseFact, commitEnterpriseFact } from './enterprise-facts'
+import { enterpriseFactCommandSchema } from './enterprise-facts'
 import { EnterpriseProfileError } from './enterprise-profile'
 import { checkBrowserReviewRequest } from './browser-review-102'
 import { z } from 'zod'
@@ -20,8 +20,8 @@ export function browserEnterpriseFactsRoute(action: 'preflight' | 'commit') {
       const input = (action === 'commit' ? commit : business).safeParse(await readBody(event))
       if (!input.success) throw new EnterpriseProfileError(400, 'invalid_request', 'Invalid fact command')
       const body = input.data
-      if ('request' in body) return commitEnterpriseFact(useDb(), id, { request: { ...body.request, actor }, planHash: body.planHash })
-      return preflightEnterpriseFact(useDb(), id, { ...body, actor })
+      if ('request' in body) return await commitRuntimeEnterpriseFact(id, { request: { ...body.request, actor }, planHash: body.planHash })
+      return await preflightRuntimeEnterpriseFact(id, { ...body, actor })
     } catch (error) {
       if (error instanceof EnterpriseProfileError) { setResponseStatus(event, error.statusCode); return { error: { code: error.code, message: error.message } } }
       throw error

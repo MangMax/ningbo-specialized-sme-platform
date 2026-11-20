@@ -1,8 +1,11 @@
+import { execFileSync } from 'node:child_process'
+import { nativeAppAdapter } from '../../support/native-app'
+import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { reviewFixtureRows } from '../imports/fixtures/reviewed-announcement'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
@@ -276,3 +279,75 @@ it('transport other legacy receipt tools retain SDK field errors', async () => {
   const result = await rpc('get_roster_import_request', { batchId: 1, maxBytes: 65537 })
   expect(result.status).toBe(200); expect(result.body).not.toHaveProperty('error'); expect(rpcResult.parse(result.body).result.isError).toBe(true)
 })
+
+const pgBin = process.env.TEST_IMPORT_RECEIPTS_PG_BIN
+it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projections with HTTP and MCP parity', async () => {
+  const pgDir = mkdtempSync('/tmp/receipt-pg-')
+  const url = 'postgresql://receipt_fixture@localhost/postgres?host=' + encodeURIComponent(pgDir)
+  const app = nativeAppAdapter({ dir: pgDir, token: apiToken, launch: ({ cwd, port }) => ({
+    args: [join(cwd, '.output/server/index.mjs')],
+    env: { NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_MCP_TOKEN: mcpToken,
+      NUXT_DB_READONLY: '1', NUXT_POSTGRES_ROSTER_READ: '1', NUXT_POSTGRES_DIRECTORY_URL: url },
+  }) })
+  const env = {
+    PATH: process.env.PATH, LANG: 'C', PGHOST: pgDir, PGPORT: '5432', PGDATABASE: 'postgres',
+    PGUSER: 'receipt_fixture', PGSQL_BIN: join(pgBin!, 'psql'),
+  }
+  const run = (command: string, args: string[]) => execFileSync(join(pgBin!, command), args, { env, stdio: 'pipe' })
+  let started = false
+  try {
+    installLeadListSchema(sqlite)
+    run('initdb', ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', 'receipt_fixture', '-D', join(pgDir, 'pg')])
+    run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-l', join(pgDir, 'pg.log'), '-o', "-c listen_addresses='' -k " + pgDir, 'start'])
+    started = true
+    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', dbPath, 'staged'], { env, stdio: 'pipe' })
+    for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
+      run('psql', ['-X', '-w', '-q', '-v', 'staging=staged', '-f', 'upgrade/postgresql/materialize-' + name + '.sql'])
+    }
+    await app.start()
+    const batch = sqlite.prepare("SELECT id,item_results FROM import_batch WHERE idempotency_key LIKE '%-merge' AND status='committed' ORDER BY id LIMIT 1").get() as { id: number; item_results: string }
+    const items = JSON.parse(batch.item_results)
+    const itemIndex = items.findIndex((item: { kind: string }) => item.kind === 'merge')
+    const { fromRecordId: oldRecordId } = items[itemIndex].detail.lineage.recordsFolded[0]
+    const { id: receiptId } = sqlite.prepare("SELECT id FROM import_receipt WHERE batch_id=? ORDER BY id DESC LIMIT 1").get(batch.id) as { id: number }
+    const { id: grantBatchId, item_results: grantItems } = sqlite.prepare("SELECT id,item_results FROM import_batch WHERE status='committed' AND idempotency_key NOT LIKE '%-merge' ORDER BY id LIMIT 1").get() as { id: number; item_results: string }
+    const grantIndex = JSON.parse(grantItems).findIndex((item: { kind: string }) => item.kind === 'record_event')
+    const selector = { batchId: batch.id, source: 'private_batch', itemIndex, oldRecordId }
+    const calls = [
+      ['', 'get_roster_import_receipt', { receiptId }],
+      ['/history', 'list_roster_import_receipts', { batchId: batch.id, pageSize: 1 }],
+      ['/request', 'get_roster_import_request', { receiptId, offset: 3, maxBytes: 17 }],
+      ['/items', 'list_roster_import_items', { batchId: batch.id, pageSize: 1 }],
+      ['/items', 'list_roster_import_items', { ...selector, projection: 'snapshot' }],
+      ['/items', 'list_roster_import_items', { ...selector, projection: 'eventIds', pageSize: 1 }],
+      ['/items', 'list_roster_import_items', { projection: 'snapshot', receiptId, source: 'redacted_receipt', itemIndex, oldRecordId }],
+      ['/items', 'list_roster_import_items', { projection: 'qualification', batchId: grantBatchId, source: 'private_batch', itemIndex: grantIndex }],
+    ] as const
+    for (const [suffix, name, args] of calls) {
+      const path = '/api/roster/import/receipts' + suffix + '?' + query(args)
+      const expected = await http(path)
+      expect(expected.status, path).toBe(200)
+      const response = await app.request(path)
+      const body = await response.json()
+      expect(response.status, JSON.stringify({ path, body })).toBe(200)
+      expect(body, path).toEqual(expected.body)
+      const remote = await app.request('/mcp', {
+        method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream',
+          'mcp-protocol-version': '2025-06-18', authorization: 'Bearer ' + mcpToken },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+      })
+      const raw = await remote.text()
+      const text = raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : raw
+      expect(JSON.parse(JSON.parse(text).result.content[0].text), name).toEqual(expected.body)
+    }
+    const bounded = '/api/roster/import/receipts/items?' + query({ ...selector, projection: 'snapshot', maxBytes: 1 })
+    const expected = await http(bounded)
+    const response = await app.request(bounded)
+    expect(response.status).toBe(413)
+    expect(await response.json()).toEqual(expected.body)
+  } finally {
+    await app.close()
+    if (started) run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-m', 'fast', 'stop'])
+    rmSync(pgDir, { recursive: true, force: true })
+  }
+}, 90_000)

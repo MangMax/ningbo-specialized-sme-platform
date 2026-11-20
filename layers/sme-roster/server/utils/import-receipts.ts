@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { importItemsReadSchema, officialReadQuery, type ImportItemsRead } from './official-evidence-read'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../../../db/schema'
-import { importReceiptRedactor } from './import-receipt-redaction'
+import { importReceiptRedactor, type ReceiptRedactor } from './import-receipt-redaction'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { CURRENT_TITLES } from '../../lib/roster/current-titles'
@@ -14,15 +14,7 @@ export type ImportReceiptAction = 'get' | 'items' | 'history' | 'request'
 export class ImportReceiptError extends Error {
   constructor(readonly statusCode: number, readonly code: string, message: string, readonly requiredBytes?: number) { super(message) }
 }
-/** Preserve the REST domain error codes inside MCP's tool-error envelope. */
-export function importReceiptMcpResult<T>(run: () => T) {
-  try { return run() }
-  catch (error) {
-    if (!(error instanceof ImportReceiptError)) throw error
-    return { isError: true, structuredContent: { error: { code: error.code, message: error.message, ...(error.requiredBytes===undefined?{}:{requiredBytes:error.requiredBytes}) } } }
-  }
-}
-/** Preserve the same tool-error envelope for isolated asynchronous execution. */
+/** Preserve REST domain error codes in the MCP tool-error envelope. */
 export async function asyncImportReceiptMcpResult<T>(run: () => Promise<T>) {
   try { return await run() }
   catch (error) {
@@ -30,15 +22,15 @@ export async function asyncImportReceiptMcpResult<T>(run: () => Promise<T>) {
     return { isError: true, structuredContent: { error: { code: error.code, message: error.message, ...(error.requiredBytes===undefined?{}:{requiredBytes:error.requiredBytes}) } } }
   }
 }
-const invalid = (message: string): never => { throw new ImportReceiptError(400, 'invalid_query', message) }
-function integer(value: unknown, name: string, fallback?: number, max = Number.MAX_SAFE_INTEGER, min = 1): number {
+export const invalidImportReceiptQuery = (message: string): never => { throw new ImportReceiptError(400, 'invalid_query', message) }
+export function importReceiptInteger(value: unknown, name: string, fallback?: number, max = Number.MAX_SAFE_INTEGER, min = 1): number {
   if (value === undefined && fallback !== undefined) return fallback
-  if ((typeof value !== 'number' && typeof value !== 'string') || !/^(0|[1-9]\d*)$/.test(String(value))) return invalid(`${name} must be an integer`)
+  if ((typeof value !== 'number' && typeof value !== 'string') || !/^(0|[1-9]\d*)$/.test(String(value))) return invalidImportReceiptQuery(`${name} must be an integer`)
   const number = Number(value)
-  if (!Number.isSafeInteger(number) || number < min || number > max) return invalid(`${name} must be between ${min} and ${max}`)
+  if (!Number.isSafeInteger(number) || number < min || number > max) return invalidImportReceiptQuery(`${name} must be between ${min} and ${max}`)
   return number
 }
-interface ReceiptRow {
+export type ReceiptRow = {
   batchId: number; idempotencyKey: string; status: string; sourceKind: string; sourceIdentity: string
   idempotencyKeyTruncated: number; sourceIdentityTruncated: number
   createdAt: string; committedAt: string | null; receiptId: number | null; operation: string | null
@@ -49,7 +41,7 @@ interface ReceiptRow {
 export function readImportReceipt(db: Db, action: ImportReceiptAction, args: Record<string, unknown>) {
   if(action==='items' && args.projection!==undefined) {
     const parsed=importItemsReadSchema.safeParse(officialReadQuery(args))
-    if(!parsed.success) return invalid('Invalid exact merge snapshot selector')
+    if(!parsed.success) return invalidImportReceiptQuery('Invalid exact merge snapshot selector')
     const selector = parsed.data
     if(selector.projection==='qualification') {
       try { return db.transaction(()=>readQualificationProjection(db,selector)) }
@@ -152,13 +144,12 @@ function retainedQualificationDiagnostics(value: unknown, binding: { itemIndex: 
 /** One exact source/item; all raw JSON and length/type gates stay inside SQLite. */
 function readQualificationProjection(db: Db, args: ImportItemsRead) {
   const source = args.source!, sourceId = (source === 'private_batch' ? args.batchId : args.receiptId)!, itemIndex = args.itemIndex!
-  const maxBytes = args.maxBytes ?? 65536
   const sourceQuery = source === 'private_batch'
     ? sql`SELECT b.id AS batch_id,NULL AS receipt_id,b.status,b.status AS batch_status,b.source_kind,'commit' AS operation,b.item_results,b.summary FROM import_batch b WHERE b.id=${sourceId}`
     : sql`SELECT b.id AS batch_id,r.id AS receipt_id,r.status,b.status AS batch_status,b.source_kind,r.operation,r.item_results,r.summary FROM import_receipt r JOIN import_batch b ON b.id=r.batch_id WHERE r.id=${sourceId}`
   const itemPath = `$[${itemIndex}]`
   const diagnosticPath = `$.qualificationDiagnosticsByItem."${itemIndex}"`
-  const row = db.get<{ batchId: number; receiptId: number | null; itemType: string | null; validSource: number; validItem: number; enterpriseId: number | null; recordId: number | null; recordBound: number; captureMissing: number; payload: string | null; diagnosticsMissing: number; diagnosticsBound: number; candidateRef: string | null; diagnosticsDigest: string | null; diagnosticsPayload: string | null }>(sql`
+  const row = db.get<QualificationReceiptRow>(sql`
     WITH source_row AS (${sourceQuery}), normalized AS (
       SELECT *,CASE WHEN json_valid(item_results) THEN item_results ELSE 'null' END AS items,
         CASE WHEN json_valid(summary) THEN summary ELSE 'false' END AS saved_summary FROM source_row
@@ -188,11 +179,17 @@ function readQualificationProjection(db: Db, args: ImportItemsRead) {
       CASE WHEN json_type(diagnostic_entry,'$.candidateRef')='text' AND length(CAST(json_extract(diagnostic_entry,'$.candidateRef') AS BLOB))<=32 THEN json_extract(diagnostic_entry,'$.candidateRef') ELSE NULL END AS candidateRef,
       CASE WHEN json_type(diagnostic_entry,'$.digest')='text' AND length(CAST(json_extract(diagnostic_entry,'$.digest') AS BLOB))=64 THEN json_extract(diagnostic_entry,'$.digest') ELSE NULL END AS diagnosticsDigest,
       CASE WHEN json_type(diagnostic_entry,'$.diagnostics')='object' AND length(CAST(json_extract(diagnostic_entry,'$.diagnostics') AS BLOB))<=65536 THEN json_extract(diagnostic_entry,'$.diagnostics') ELSE NULL END AS diagnosticsPayload FROM selected`)
+  return projectQualificationReceipt(row, args, importReceiptRedactor(db))
+}
+
+export type QualificationReceiptRow = { batchId: number; receiptId: number | null; itemType: string | null; validSource: number | boolean; validItem: number | boolean; enterpriseId: number | null; recordId: number | null; recordBound: number | boolean; captureMissing: number | boolean; payload: string | null; diagnosticsMissing: number | boolean; diagnosticsBound: number | boolean; candidateRef: string | null; diagnosticsDigest: string | null; diagnosticsPayload: string | null }
+
+export function projectQualificationReceipt(row: QualificationReceiptRow | undefined, args: ImportItemsRead, redact: ReceiptRedactor) {
+  const source = args.source!, itemIndex = args.itemIndex!, maxBytes = args.maxBytes ?? 65536
   if (!row || row.itemType === null) throw new ImportReceiptError(404, 'not_found', 'Exact import source or item not found')
   if (!row.validSource || !row.validItem || !qualificationId(row.batchId) || row.receiptId !== null && !qualificationId(row.receiptId) || !qualificationId(row.enterpriseId)) {
     throw new ImportReceiptError(409, 'selector_mismatch', 'Exact announcement record item required')
   }
-  const redact = importReceiptRedactor(db)
   let readback: Record<string, unknown>
   if (row.captureMissing) readback = { stage: 'after', status: 'not_retained', reason: 'legacy_receipt', target: null }
   else if (!row.recordBound || row.payload === null) readback = { stage: 'after', status: 'unavailable', reason: 'read_unavailable', target: { enterpriseId: row.enterpriseId } }
@@ -215,13 +212,23 @@ function readQualificationProjection(db: Db, args: ImportItemsRead) {
   if (requiredBytes > maxBytes) throw new ImportReceiptError(413, 'response_limit', 'Qualification projection exceeds maxBytes', requiredBytes)
   return envelope
 }
-function readImportReceiptSnapshot(db: Db, action: ImportReceiptAction, args: Record<string, unknown>) {
+export function parseImportReceiptSelector(action: ImportReceiptAction, args: Record<string, unknown>) {
   const allowed = new Set(['batchId', 'idempotencyKey', ...(action === 'history' ? [] : ['receiptId']), ...(action === 'history' || action === 'items' ? ['page', 'pageSize'] : []), ...(action === 'request' ? ['offset', 'maxBytes'] : [])])
-  for (const key of Object.keys(args)) if (!allowed.has(key)) invalid('Unsupported query field')
-  if (['batchId', 'idempotencyKey', 'receiptId'].filter(key => args[key] !== undefined).length !== 1) invalid('Supply exactly one batchId, idempotencyKey or receiptId')
-  if (args.idempotencyKey !== undefined && (typeof args.idempotencyKey !== 'string' || !args.idempotencyKey.trim() || args.idempotencyKey.length > 4096)) invalid('Invalid idempotencyKey')
-  const receiptId = args.receiptId === undefined ? undefined : integer(args.receiptId, 'receiptId')
-  const condition = args.batchId !== undefined ? sql`b.id = ${integer(args.batchId, 'batchId')}` : receiptId !== undefined ? sql`b.id = (SELECT batch_id FROM import_receipt WHERE id = ${receiptId})` : sql`b.idempotency_key = ${args.idempotencyKey}`
+  for (const key of Object.keys(args)) if (!allowed.has(key)) invalidImportReceiptQuery('Unsupported query field')
+  if (['batchId', 'idempotencyKey', 'receiptId'].filter(key => args[key] !== undefined).length !== 1) invalidImportReceiptQuery('Supply exactly one batchId, idempotencyKey or receiptId')
+  if (args.idempotencyKey !== undefined && (typeof args.idempotencyKey !== 'string' || !args.idempotencyKey.trim() || args.idempotencyKey.length > 4096)) invalidImportReceiptQuery('Invalid idempotencyKey')
+  const receiptId = args.receiptId === undefined ? undefined : importReceiptInteger(args.receiptId, 'receiptId')
+  return {
+    receiptId,
+    batchId: args.batchId === undefined ? undefined : importReceiptInteger(args.batchId, 'batchId'),
+    key: args.idempotencyKey as string | undefined,
+  }
+}
+
+function readImportReceiptSnapshot(db: Db, action: ImportReceiptAction, args: Record<string, unknown>) {
+  const { receiptId, batchId, key } = parseImportReceiptSelector(action, args)
+  const condition = batchId !== undefined ? sql`b.id = ${batchId}` : receiptId !== undefined
+    ? sql`b.id = (SELECT batch_id FROM import_receipt WHERE id = ${receiptId})` : sql`b.idempotency_key = ${key}`
   const row = db.get<ReceiptRow>(sql`
     SELECT b.id AS batchId, substr(b.idempotency_key, 1, 4096) AS idempotencyKey, length(b.idempotency_key) > 4096 AS idempotencyKeyTruncated,
       coalesce(r.status, b.status) AS status, b.source_kind AS sourceKind,
@@ -237,20 +244,17 @@ function readImportReceiptSnapshot(db: Db, action: ImportReceiptAction, args: Re
     FROM import_batch b LEFT JOIN import_receipt r ON r.id = ${receiptId === undefined ? sql`(SELECT id FROM import_receipt WHERE batch_id = b.id ORDER BY id DESC LIMIT 1)` : sql`${receiptId}`}
     WHERE ${condition} AND b.source_kind IN ('announcement', 'platform_export', 'platform_archive', 'alias_evidence')`)
   if (!row) throw new ImportReceiptError(404, 'not_found', 'Import batch or receipt not found')
-  if (action === 'get') {
-    const { written, skipped, failed, evidenceRepointed, canonicalProjection, ...metadata } = row
-    return { ...metadata, idempotencyKeyTruncated: !!row.idempotencyKeyTruncated, sourceIdentityTruncated: !!row.sourceIdentityTruncated, summary: written === null ? null : { written, skipped: skipped ?? 0, failed: failed ?? 0, evidenceRepointed: evidenceRepointed ?? 0, ...(canonicalProjection ? { canonicalProjection: JSON.parse(canonicalProjection) } : {}) }, originalRequest: row.receiptId === null ? 'not_retained' : 'redacted' }
-  }
+  if (action === 'get') return projectImportReceiptMetadata(row)
   if (action === 'request') {
-    const offset = integer(args.offset, 'offset', 0, Number.MAX_SAFE_INTEGER - 1, 0)
-    const maxBytes = integer(args.maxBytes, 'maxBytes', 16384, 65536)
+    const offset = importReceiptInteger(args.offset, 'offset', 0, Number.MAX_SAFE_INTEGER - 1, 0)
+    const maxBytes = importReceiptInteger(args.maxBytes, 'maxBytes', 16384, 65536)
     if (row.receiptId === null) throw new ImportReceiptError(404, 'not_retained', 'Original request was not retained')
     const body = db.get<{ totalBytes: number; chunk: Buffer }>(sql`SELECT length(CAST(COALESCE((SELECT owner.request_body FROM import_receipt owner WHERE owner.id=import_receipt.body_receipt_id), request_body) AS BLOB)) AS totalBytes, substr(CAST(COALESCE((SELECT owner.request_body FROM import_receipt owner WHERE owner.id=import_receipt.body_receipt_id), request_body) AS BLOB), ${offset + 1}, ${maxBytes}) AS chunk FROM import_receipt WHERE id = ${row.receiptId}`)!
-    if (offset > body.totalBytes) invalid('offset exceeds request bytes')
+    if (offset > body.totalBytes) invalidImportReceiptQuery('offset exceeds request bytes')
     return { batchId: row.batchId, receiptId: row.receiptId, redacted: true, encoding: 'base64', contentType: 'application/json; charset=utf-8', offset, totalBytes: body.totalBytes, nextOffset: offset + body.chunk.length < body.totalBytes ? offset + body.chunk.length : null, data: body.chunk.toString('base64') }
   }
-  const page = integer(args.page, 'page', 1, 1000000)
-  const pageSize = integer(args.pageSize, 'pageSize', 20, 50)
+  const page = importReceiptInteger(args.page, 'page', 1, 1000000)
+  const pageSize = importReceiptInteger(args.pageSize, 'pageSize', 20, 50)
   const offset = (page - 1) * pageSize
   if (action === 'history') {
     const { total } = db.get<{ total: number }>(sql`SELECT count(*) AS total FROM import_receipt WHERE batch_id = ${row.batchId}`)!
@@ -262,23 +266,34 @@ function readImportReceiptSnapshot(db: Db, action: ImportReceiptAction, args: Re
   return { batchId: row.batchId, receiptId: row.receiptId, status: row.status, page, pageSize, total: row.itemCount, rows: rows.map(item => ({ ...item, ok: !!item.ok })) }
 }
 
+export function projectImportReceiptMetadata(row: ReceiptRow) {
+    const { written, skipped, failed, evidenceRepointed, canonicalProjection, ...metadata } = row
+    return { ...metadata, idempotencyKeyTruncated: !!row.idempotencyKeyTruncated, sourceIdentityTruncated: !!row.sourceIdentityTruncated, summary: written === null ? null : { written, skipped: skipped ?? 0, failed: failed ?? 0, evidenceRepointed: evidenceRepointed ?? 0, ...(canonicalProjection ? { canonicalProjection: JSON.parse(canonicalProjection) } : {}) }, originalRequest: row.receiptId === null ? 'not_retained' : 'redacted' }
+}
+
 const cursorSchema=z.strictObject({source:z.enum(['private_batch','redacted_receipt']),sourceId:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),itemIndex:z.number().int().min(0).max(Number.MAX_SAFE_INTEGER-1),oldRecordId:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),afterIndex:z.number().int().min(0).max(Number.MAX_SAFE_INTEGER-1)})
-/** C owns only this exact historical selector. JSON source/item/fold CTEs never leave SQLite. */
-function readMergeSnapshotProjection(db:Db,args:ImportItemsRead) {
+export function mergeReceiptSelection(args: ImportItemsRead) {
   const source=args.source!,sourceId=(source==='private_batch'?args.batchId:args.receiptId)!,itemIndex=args.itemIndex!,oldRecordId=args.oldRecordId!
   const binding={source,sourceId,itemIndex,oldRecordId},maxBytes=args.maxBytes??16384,pageSize=args.pageSize??20
   let afterIndex=-1
   if(args.cursor!==undefined) {
     try {
-      if(!/^[A-Za-z0-9_-]+$/.test(args.cursor)) invalid('Invalid bound event cursor')
+      if(!/^[A-Za-z0-9_-]+$/.test(args.cursor)) invalidImportReceiptQuery('Invalid bound event cursor')
       const decoded=Buffer.from(args.cursor,'base64url')
-      if(decoded.toString('base64url')!==args.cursor) invalid('Invalid bound event cursor')
+      if(decoded.toString('base64url')!==args.cursor) invalidImportReceiptQuery('Invalid bound event cursor')
       const cursor=cursorSchema.parse(JSON.parse(decoded.toString('utf8')))
-      if(cursor.source!==source || cursor.sourceId!==sourceId || cursor.itemIndex!==itemIndex || cursor.oldRecordId!==oldRecordId) invalid('Event cursor does not match exact source selector')
+      if(cursor.source!==source || cursor.sourceId!==sourceId || cursor.itemIndex!==itemIndex || cursor.oldRecordId!==oldRecordId) invalidImportReceiptQuery('Event cursor does not match exact source selector')
       afterIndex=cursor.afterIndex
-    } catch { invalid('Invalid or mismatched event cursor') }
+    } catch { invalidImportReceiptQuery('Invalid or mismatched event cursor') }
   }
   const nextCursor=Buffer.from(JSON.stringify({...binding,afterIndex:afterIndex+pageSize})).toString('base64url')
+  return { binding, maxBytes, pageSize, afterIndex, nextCursor }
+}
+
+/** C owns only this exact historical selector. JSON source/item/fold CTEs never leave SQLite. */
+function readMergeSnapshotProjection(db:Db,args:ImportItemsRead) {
+  const { binding, maxBytes, pageSize, afterIndex, nextCursor } = mergeReceiptSelection(args)
+  const { source, sourceId, itemIndex, oldRecordId } = binding
   const sourceQuery=source==='private_batch'
     ? sql`SELECT b.id AS batch_id,NULL AS receipt_id,b.status,b.status AS batch_status,b.source_kind,CASE WHEN json_valid(b.item_results) THEN b.item_results ELSE 'null' END AS items FROM import_batch b WHERE b.id=${sourceId}`
     : sql`SELECT b.id AS batch_id,r.id AS receipt_id,r.status,b.status AS batch_status,b.source_kind,CASE WHEN json_valid(r.item_results) THEN r.item_results ELSE 'null' END AS items FROM import_receipt r JOIN import_batch b ON b.id=r.batch_id WHERE r.id=${sourceId}`
@@ -332,8 +347,12 @@ function readMergeSnapshotProjection(db:Db,args:ImportItemsRead) {
     SELECT availability,${body} AS body FROM (SELECT batch_id,receipt_id,lineage,fold,snapshot,final_availability AS availability FROM ready)
   ) SELECT availability,length(CAST(body AS BLOB)) AS requiredBytes,
     CASE WHEN availability IN ('available','not_retained') AND length(CAST(body AS BLOB))<=${maxBytes} THEN body ELSE NULL END AS projection FROM rendered`)
+  return projectMergeReceipt(result, maxBytes, () => importReceiptRedactor(db))
+}
+
+export function projectMergeReceipt(result: { availability: string; requiredBytes: number; projection: string | null } | undefined, maxBytes: number, redactor: () => ReceiptRedactor) {
   if(!result) throw new ImportReceiptError(404,'missing','Exact import source not found')
-  if(result.availability==='invalid_cursor') invalid('Event cursor exceeds retained array')
+  if(result.availability==='invalid_cursor') invalidImportReceiptQuery('Event cursor exceeds retained array')
   if(['selector_mismatch','ambiguity'].includes(result.availability)) throw new ImportReceiptError(409,result.availability,'Exact merge selector rejected')
   if(result.availability==='field_limit') throw new ImportReceiptError(413,'field_limit','Stored snapshot field exceeds 4000 characters')
   if(!result.projection) throw new ImportReceiptError(413,'response_limit','Snapshot projection exceeds maxBytes',result.requiredBytes)
@@ -341,7 +360,7 @@ function readMergeSnapshotProjection(db:Db,args:ImportItemsRead) {
   // SQL bounds scalar/byte lengths first; JS checks exact UTF16 after finite materialization.
   const bounded=z.object({snapshot:z.object({titleCode:z.string().refine(value=>value.length<=4000),source:z.string().refine(value=>value.length<=4000),nameRaw:z.string().refine(value=>value.length<=4000).nullable(),usccRaw:z.string().refine(value=>value.length<=4000).nullable(),district:z.string().refine(value=>value.length<=4000).nullable(),qualityFlags:z.array(z.string().refine(value=>value.length<=4000)).nullable()}).optional()}).safeParse(parsed)
   if(!bounded.success) throw new ImportReceiptError(413,'field_limit','Stored snapshot field exceeds 4000 UTF16 characters')
-  const redacted=importReceiptRedactor(db)(parsed)
+  const redacted=redactor()(parsed)
   if(!qualificationObject(redacted)) throw new ImportReceiptError(500,'internal_error','Snapshot object unavailable')
   const finalBytes=Buffer.byteLength(JSON.stringify(redacted))
   if(finalBytes>maxBytes) throw new ImportReceiptError(413,'response_limit','Redacted snapshot projection exceeds maxBytes',finalBytes)

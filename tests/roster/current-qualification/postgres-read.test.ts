@@ -7,7 +7,7 @@ import { schema } from '../../../db/client'
 import { drizzle as sqliteDrizzle } from 'drizzle-orm/better-sqlite3'
 import { currentDispositions, preflightDisposition, commitDisposition } from '../../../layers/sme-roster/server/utils/title-cycle-disposition'
 import { readCurrentQualificationAssessment } from '../../../layers/sme-roster/lib/roster/current-qualification'
-import { readEffectiveQualifications, readPostgresCurrentQualification, readPostgresEffectiveQualifications } from '../../../layers/sme-roster/public'
+import { readEffectiveQualifications, readPostgresCurrentQualification, readPostgresEffectiveQualifications, readPostgresEffectiveQualificationsBatch } from '../../../layers/sme-roster/public'
 import { AS_OF_408, currentQualificationFixture, qualificationMatrix, qualificationReferenceLiterals } from '../fixtures/qualification-matrix'
 
 const asOf = Date.parse(AS_OF_408)
@@ -122,6 +122,12 @@ it.runIf(!!connectionString)('preserves three-title decisions and the public eff
       })
       // 16:00 UTC is midnight in Shanghai, where the confirmed disposition begins.
       expect(await readPostgresEffectiveQualifications(tx, disposed.enterprise.id, asOf + 16 * 3600000)).toEqual([])
+      const sampled = [giant.enterprise.id, disposed.enterprise.id, expired.enterprise.id, unclear.enterprise.id,
+        mergedFrom.id, recovered.enterprise.id, platformOnly.id, empty.id]
+      const ids = [giant.enterprise.id, ...Array.from({ length: 130 }, (_, index) => index + 1000), ...sampled]
+      const qualifications = await readPostgresEffectiveQualificationsBatch(tx, ids, asOf)
+      expect(qualifications).toEqual(new Map(sampled.map(id => [id, readEffectiveQualifications(sqlite.sqlite, id, asOf)])))
+      expect(await readPostgresEffectiveQualificationsBatch(tx, sampled, asOf)).toEqual(qualifications)
     }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
   } finally {
     sqlite.close()

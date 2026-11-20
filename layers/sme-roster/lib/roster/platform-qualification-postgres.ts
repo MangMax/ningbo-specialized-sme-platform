@@ -2,12 +2,12 @@ import { sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { normalizeUscc } from '../domain'
 import { isValidUscc } from './uscc-research'
-import { projectPlatformQualificationFact, type PlatformQualificationInputRow } from './platform-qualification'
+import { projectPlatformQualificationFact, type PlatformQualificationInputRow, type PlatformQualificationFact } from './platform-qualification'
 
 /** Retain JS normalization for Unicode. Restrict the ordinary ASCII path in SQL
  * and recheck the small Unicode candidate set with the same domain function. */
-export function qualificationUsccCandidate(column: SQL, uscc: string) {
-  return sql`(upper(regexp_replace(${column} COLLATE "C", '[[:space:]]', '', 'g')) = ${uscc}
+export function qualificationUsccCandidate(column: SQL, usccs: string[]) {
+  return sql`(upper(regexp_replace(${column} COLLATE "C", '[[:space:]]', '', 'g')) = ANY(${sql.param(usccs)}::text[])
     OR octet_length(${column}) <> char_length(${column}))`
 }
 
@@ -22,10 +22,12 @@ function recognizedFlag({ flag, flagStorage }: Pick<RecognizedRow, 'flag' | 'fla
   return null
 }
 
-export async function readPostgresPlatformQualificationFacts(db: Reader, enterpriseId: number, rawUscc: string | null) {
-  const uscc = normalizeUscc(rawUscc)
-  if (!isValidUscc(uscc)) return []
-  const scope = qualificationUsccCandidate(sql`p.uscc_raw`, uscc)
+export async function readPostgresPlatformQualificationFacts(db: Reader, subjects: readonly { id: number; uscc_norm: string | null }[]) {
+  const byUscc = Map.groupBy(subjects, owner => normalizeUscc(owner.uscc_norm))
+  const codes = [...byUscc.keys()].filter(isValidUscc)
+  const results = new Map<number, PlatformQualificationFact[]>()
+  if (!codes.length) return results
+  const scope = qualificationUsccCandidate(sql`p.uscc_raw`, codes)
   const recognized = await db.execute<RecognizedRow>(sql`
     SELECT ${latestProjection}, 'recognized_list' AS source,
       p.source_valid_flag AS flag, p.source_valid_flag_sqlite_storage AS "flagStorage",
@@ -53,16 +55,23 @@ export async function readPostgresPlatformQualificationFacts(db: Reader, enterpr
     FROM platform_apply_projection p
     ${latestObservation}
     WHERE ${scope}`)
-  const owners = new Map([[uscc, new Set([enterpriseId])]])
   const recognizedFacts = recognized.rows.map(({ flag, flagStorage, ...row }) => ({
     ...row, p: { ...row.p, sourceValidFlag: recognizedFlag({ flag, flagStorage }) },
   }))
-  return [...recognizedFacts, ...business.rows, ...apply.rows].flatMap(row => {
+  const owners = new Map(codes.map(code => [code, new Set([byUscc.get(code)![0]!.id])]))
+  for (const row of [...recognizedFacts, ...business.rows, ...apply.rows]) {
     const fact = projectPlatformQualificationFact({
       ...row, recordId: Number(row.recordId), versionId: Number(row.versionId), observationId: Number(row.observationId),
     }, owners)
-    return fact ? [fact] : []
-  }).sort((a, b) => a.recordId - b.recordId)
+    if (!fact) continue
+    for (const { id } of byUscc.get(fact.uscc)!) {
+      const facts = results.get(id) ?? []
+      facts.push({ ...fact, enterpriseId: id })
+      results.set(id, facts)
+    }
+  }
+  for (const facts of results.values()) facts.sort((a, b) => a.recordId - b.recordId)
+  return results
 }
 
 const latestProjection = sql`o.record_id AS "recordId", o.version_id AS "versionId",

@@ -2,6 +2,8 @@ import '../../support/compiled-enterprise-reader'
 import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { initializeDb } from '../../../db/client'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import pg from 'pg'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -190,3 +192,75 @@ it('overlapping opposite migrations stay pending and confirmed cancellation surv
   expect(read().subject.status).toBe('terminated')
   expect(read().group).toBe('excluded')
 })
+
+const pgBin = process.env.TEST_ROSTER_FACTS_PG_BIN
+it.runIf(!!pgBin)('shares native fact revisions across HTTP and MCP and rolls back a failed receipt', async () => {
+  const enterpriseId = seed()
+  const older = await commit(enterpriseId, await command(enterpriseId, { action: 'assert', fact }))
+  expect(older.status).toBe(200)
+  const original = (await http(enterpriseId)).body
+  const confirm = await command(enterpriseId, { action: 'confirm', factId: older.body.factId })
+  const sqlitePlan = (await http(enterpriseId, '/preflight', confirm)).body.planHash
+  const pgDir = mkdtempSync('/tmp/facts-pg-')
+  const { installLeadListSchema } = await import('../../../layers/lead-lists/install-schema')
+  const { closePostgresDirectoryDb, usePostgresDirectoryDb } = await import('../../../db/postgresql/client')
+  const { readPostgresCurrentQualification } = await import('../../../layers/sme-roster/public')
+  installLeadListSchema(db.$client)
+  const url = 'postgresql://facts_fixture@localhost/postgres?host=' + encodeURIComponent(pgDir)
+  const env = {
+    PATH: process.env.PATH, LANG: 'C', PGHOST: pgDir, PGPORT: '5432', PGDATABASE: 'postgres',
+    PGUSER: 'facts_fixture', PGSQL_BIN: join(pgBin!, 'psql'),
+  }
+  const run = (command: string, args: string[]) => execFileSync(join(pgBin!, command), args, { env, stdio: 'pipe' })
+  let started = false
+  const pool = new pg.Pool({ connectionString: url })
+  try {
+    run('initdb', ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', 'facts_fixture', '-D', join(pgDir, 'pg')])
+    run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-l', join(pgDir, 'pg.log'), '-o', "-c listen_addresses='' -k " + pgDir, 'start'])
+    started = true
+    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', join(dir, 'test.db'), 'staged'], { env, stdio: 'pipe' })
+    for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
+      run('psql', ['-X', '-w', '-q', '-v', 'staging=staged', '-f', 'upgrade/postgresql/materialize-' + name + '.sql'])
+    }
+    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
+    vi.stubEnv('NUXT_DB_READONLY', '1')
+
+    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_WRITE', '1')
+    vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
+    expect((await http(enterpriseId)).body).toEqual(original)
+    expect((await http(enterpriseId, '/preflight', confirm)).body.planHash).toBe(sqlitePlan)
+    const submitted = { request: confirm, planHash: sqlitePlan }
+    expect((await http(enterpriseId, '/commit', submitted, false)).status).toBe(401)
+    const results = await Promise.all([
+      mcp.commit_enterprise_fact.handler({ enterpriseId, request: submitted }),
+      http(enterpriseId, '/commit', submitted).then(result => {
+        expect(result.status).toBe(200)
+        return result.body
+      }),
+    ])
+    expect(results[0]).toEqual(results[1])
+    const confirmed = (await http(enterpriseId)).body
+    expect(confirmed.history.map((row: any) => [row.revision, row.status])).toEqual([[1, 'pending'], [2, 'confirmed']])
+    expect(await mcp.get_enterprise_facts.handler({ enterpriseId })).toEqual(confirmed)
+    expect(db.select().from(schema.enterpriseFactRevision).all().filter(row => row.enterpriseId === enterpriseId)).toEqual(original.history)
+
+    const postgres = usePostgresDirectoryDb()!
+    const qualification = await postgres.transaction(tx => readPostgresCurrentQualification(tx, enterpriseId, Date.parse('2026-11-20T00:00:00Z')),
+      { isolationLevel: 'repeatable read', accessMode: 'read only' })
+    expect(qualification?.titles[0]?.region.status).toBe('outside_ningbo')
+
+    const replacement = await command(enterpriseId, { action: 'replace', factId: older.body.factId, fact: { ...fact, kind: 'cancelled' } })
+    const plan = (await http(enterpriseId, '/preflight', replacement)).body
+    await pool.query("ALTER TABLE business.enterprise_fact_receipt ADD CONSTRAINT reject_new_receipt CHECK (false) NOT VALID")
+    expect((await http(enterpriseId, '/commit', { request: replacement, planHash: plan.planHash })).status).toBe(500)
+    expect((await http(enterpriseId)).body).toEqual(confirmed)
+    await pool.query('ALTER TABLE business.enterprise_fact_receipt DROP CONSTRAINT reject_new_receipt')
+    expect((await http(enterpriseId, '/commit', { request: replacement, planHash: plan.planHash })).status).toBe(200)
+  } finally {
+    vi.unstubAllEnvs()
+    await closePostgresDirectoryDb()
+    await pool.end()
+    if (started) run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-m', 'fast', 'stop'])
+    rmSync(pgDir, { recursive: true, force: true })
+  }
+}, 90_000)

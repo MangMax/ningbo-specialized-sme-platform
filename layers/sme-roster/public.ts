@@ -21,7 +21,7 @@ export function applyReviewedRosterIdentity(db: Parameters<typeof applyReviewedE
 }
 
 export type { EffectiveQualification } from './lib/roster/effective-qualifications'
-export { readPostgresCurrentQualification, readPostgresEffectiveQualifications, type PostgresQualificationTransaction } from './lib/roster/current-qualification-postgres'
+export { readPostgresCurrentQualification, readPostgresEffectiveQualifications, readPostgresEffectiveQualificationsBatch, type PostgresQualificationTransaction } from './lib/roster/current-qualification-postgres'
 
 /** Returns null for a missing enterprise, or its effective qualifications at the given time (epoch milliseconds). */
 export function readEffectiveQualifications(db: Database.Database, enterpriseId: number, asOf: number): EffectiveQualification[] | null {
