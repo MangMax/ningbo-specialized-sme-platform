@@ -1,4 +1,5 @@
-import { sql } from 'drizzle-orm'
+import { sql, type SQL } from 'drizzle-orm'
+import { refreshMetadataKeys, refreshRelationFields, refreshSourceKeys } from '../../lib/platform/difference-hash-inputs'
 import { snapshotSchema } from '../../lib/platform/target-evidence-read'
 import { CURRENT_TITLES } from '../../lib/roster/current-titles'
 import type { PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
@@ -10,13 +11,42 @@ type Material = Record<string, unknown>
 type Enterprise = { name: string; name_norm: string; uscc_norm: string | null; city: string | null; district: string | null }
 const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
 
-// These columns reproduce the legacy fingerprint. Structured ownership selects
-// the sources before sealed archive cells are decoded for hash compatibility.
-const relationFields = ['relation_key','uscc_raw','name_raw','alias_name_raw','province','status','batch','declare_kind','applied_at','award_batch_label','year']
-const sourceFields = ['id','rdjb','rddqrq','whpcyear','whpc','cszt','year','sqsj','sblx','personuuid','szsfmc','szq','rdxx','qymc','tyshxydm']
+// SQLite JSON paths take the first occurrence of a key. Keep JSON token
+// values intact for the existing JS number, string and nested object handling.
+function firstJsonFields(document: SQL, keys: readonly string[]) {
+  return sql`
+    SELECT DISTINCT ON (key COLLATE "C") key, value
+    FROM json_each(CASE WHEN json_typeof(${document})='object' THEN ${document} ELSE '{}'::json END)
+      WITH ORDINALITY fields(key, value, ordinal)
+    WHERE key COLLATE "C"=ANY(${sql.param(keys)}::text[])
+    ORDER BY key COLLATE "C", ordinal`
+}
 
-function relationMaterial(snapshot: Buffer, match_basis: string | null, verification_status: string) {
-  const cells = new Map(snapshotSchema.parse(JSON.parse(snapshot.toString('utf8'))).fields.map(cell => [cell.name, cell]))
+// json_each decodes strings as it scans, including fields we discard. Quote
+// escapes PostgreSQL text cannot represent, along with literal backslashes
+// that could be mistaken for the quoting, before projecting raw JSON tokens.
+function jsonProjectionInput(raw: SQL) {
+  const codeUnit = 'u(?:0000|[dD][89a-fA-F][0-9a-fA-F]{2})'
+  const unsafeEscape = String.raw`\\${codeUnit}`
+  const tokens = String.raw`\\\\|\\(${codeUnit})`
+  const replacement = String.raw`\\\\|\1|`
+  return sql`
+    SELECT CASE WHEN ${raw} IS JSON THEN
+      CASE WHEN ${raw} ~ ${unsafeEscape} THEN regexp_replace(${raw}, ${tokens}, ${replacement}, 'g')::json
+        ELSE ${raw}::json END
+      END AS document, ${raw} ~ ${unsafeEscape} AS quoted`
+}
+
+function restoreJsonEscapes(text: string, quoted: boolean | null) {
+  return quoted ? text.replace(/\\\\\|(u[0-9a-fA-F]{4})?\|/g, (_, escape: string | undefined) => escape ? '\\' + escape : '\\\\') : text
+}
+
+function archiveJsonText(bytes: SQL) {
+  return sql`CASE WHEN position(decode('00','hex') in ${bytes})>0 THEN '{' ELSE convert_from(${bytes},'UTF8') END`
+}
+
+function relationMaterial(snapshot: unknown, match_basis: string | null, verification_status: string, business: string | null, quoted: boolean | null) {
+  const cells = new Map(snapshotSchema.parse(snapshot).fields.map(cell => [cell.name, cell]))
   const original = (name: string) => {
     const cell = cells.get(name)
     if (!cell || cell.storageClass === 'null') return null
@@ -25,13 +55,10 @@ function relationMaterial(snapshot: Buffer, match_basis: string | null, verifica
     if (cell.storageClass === 'blob') throw new Error('Difference refresh cannot hash a binary relation field')
     return value
   }
-  const fields = { ...Object.fromEntries(relationFields.map(name => [name, original(name)])), match_basis, verification_status }
-  const raw = cells.get('raw_fields')
-  if (!raw || raw.storageClass === 'null') return fields
-  try {
-    const value = JSON.parse(Buffer.from(raw.hex, 'hex').toString('utf8'))
-    return { ...fields, sourceBusiness: Object.fromEntries(sourceFields.filter(key => Object.hasOwn(value, key)).map(key => [key, value[key]])) }
-  } catch { return { ...fields, sourceBusinessMalformed: true } }
+  const fields = { ...Object.fromEntries(refreshRelationFields.map(name => [name, original(name)])), match_basis, verification_status }
+  if (business === null) return fields
+  if (business === '{') return { ...fields, sourceBusinessMalformed: true }
+  return { ...fields, sourceBusiness: JSON.parse(restoreJsonEscapes(business, quoted)) }
 }
 
 async function readPlatformMaterials(tx: Tx, enterpriseIds: readonly number[]) {
@@ -60,22 +87,48 @@ async function readPlatformMaterials(tx: Tx, enterpriseIds: readonly number[]) {
   const collectionIds = [...new Set(rows.map(row => row.collection.id))]
   if (!collectionIds.length) return new Map<number, { titleCode: string | null; material: Material }[]>()
   const selected = ids(collectionIds)
-  const { rows: sources } = await tx.execute<{ collectionId: number; snapshot: Buffer; match_basis: string | null; verification_status: string }>(sql`
-    SELECT o.collection_id::float8 AS "collectionId", v.bytes AS snapshot, a.match_basis, a.verification_status
+  const snapshot = sql`convert_from(v.bytes,'UTF8')::json`
+  const { rows: sources } = await tx.execute<{ collectionId: number; snapshot: unknown; match_basis: string | null;
+    verification_status: string; business: string | null; quoted: boolean | null }>(sql`
+    SELECT o.collection_id::float8 AS "collectionId", a.match_basis, a.verification_status,
+      json_build_object('encoding',${snapshot}->>'encoding','fields',coalesce(cells.selected,'[]'::json)) AS snapshot,
+      CASE WHEN original.raw IS NULL THEN NULL WHEN input.document IS NULL OR json_typeof(input.document)='null' THEN '{'
+        ELSE (SELECT coalesce(json_object_agg(key,value),'{}'::json)::text
+          FROM (${firstJsonFields(sql`input.document`, refreshSourceKeys)}) fields)
+      END AS business, input.quoted
     FROM platform_business_observation o JOIN platform_legacy_relation_alias r ON r.observation_id=o.id
     JOIN platform_observation_archive_ref ref ON ref.owner_id=o.id AND ref.field='legacyRowSnapshot'
     JOIN platform_archive_value v ON v.id=ref.archive_id
     JOIN LATERAL (SELECT match_basis,verification_status FROM platform_observation_assignment
       WHERE observation_id=o.id ORDER BY revision DESC LIMIT 1) a ON true
+    CROSS JOIN LATERAL (
+      SELECT json_agg(json_build_object('name',cell->>'name','storageClass',cell->>'storageClass','hex',cell->>'hex')
+        ORDER BY ordinal) FILTER (WHERE cell->>'name'=ANY(${sql.param(refreshRelationFields)}::text[])) AS selected,
+        decode(max(cell->>'hex') FILTER (WHERE cell->>'name'='raw_fields' AND cell->>'storageClass'<>'null'),'hex') AS raw
+      FROM json_array_elements(${snapshot}->'fields') WITH ORDINALITY entries(cell, ordinal)
+    ) cells
+    CROSS JOIN LATERAL (SELECT ${archiveJsonText(sql`cells.raw`)} AS raw) original
+    CROSS JOIN LATERAL (${jsonProjectionInput(sql`original.raw`)}) input
     WHERE o.collection_id=ANY(${selected})`)
   const relations = Map.groupBy(sources.map(row => ({
-    collectionId: row.collectionId, material: relationMaterial(row.snapshot, row.match_basis, row.verification_status),
+    collectionId: row.collectionId, material: relationMaterial(row.snapshot, row.match_basis, row.verification_status, row.business, row.quoted),
   })), row => row.collectionId)
-  const { rows: metadataRows } = await tx.execute<{ collectionId: number; metadata: Buffer | null }>(sql`
-    SELECT ref.owner_id::float8 AS "collectionId", v.bytes AS metadata
+  const { rows: metadataRows } = await tx.execute<{ collectionId: number; metadata: string | null; quoted: boolean | null }>(sql`
+    SELECT ref.owner_id::float8 AS "collectionId", input.quoted,
+      CASE WHEN v.storage_class='null' THEN NULL WHEN input.document IS NULL THEN '{' WHEN json_typeof(input.document)='null' THEN 'null'
+        ELSE (SELECT coalesce(json_object_agg(key,
+          CASE WHEN key='pages' THEN CASE WHEN json_typeof(value)='array' THEN
+            (SELECT coalesce(json_agg(CASE WHEN json_typeof(page)='null' THEN page
+              ELSE json_build_object('rdjb',page->'rdjb','status',page->'status','declaredTotal',page->'declaredTotal') END
+              ORDER BY ordinal),'[]'::json) FROM json_array_elements(value) WITH ORDINALITY pages(page, ordinal))
+          ELSE 'null'::json END ELSE value END),'{}'::json)::text
+          FROM (${firstJsonFields(sql`input.document`, refreshMetadataKeys)}) fields)
+      END AS metadata
     FROM platform_collection_archive_ref ref JOIN platform_archive_value v ON v.id=ref.archive_id
+    CROSS JOIN LATERAL (${jsonProjectionInput(archiveJsonText(sql`v.bytes`))}) input
     WHERE ref.owner_id=ANY(${selected}) AND ref.field='collectionEvidence'`)
-  const metadata = new Map(metadataRows.map(row => [row.collectionId, row.metadata === null ? null : row.metadata.toString('utf8') || '{']))
+  const metadata = new Map(metadataRows.map(row => [row.collectionId,
+    row.metadata === null ? null : restoreJsonEscapes(row.metadata, row.quoted)]))
   const typed = []
   for (const [table, columns] of Object.entries(refreshProjectionColumns)) {
     const fields = sql.join(columns.map(column => sql`p.${sql.identifier(column)}`), sql`,`)

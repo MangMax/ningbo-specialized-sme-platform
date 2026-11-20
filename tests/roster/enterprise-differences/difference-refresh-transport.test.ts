@@ -1,4 +1,5 @@
 import { createRuntimeSchema } from '../../../db/create-runtime'
+import { createHash } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
@@ -70,6 +71,27 @@ it('public refresh keeps frozen lower comparison when only higher qualification 
  expect(readCurrentQualificationAssessment(sqlite,e.id,Date.parse('2026-06-01')).titles.find(t=>t.titleCode==='innovative_sme')!.group).not.toBe('eligible')
 })
 
+function addHistoricalDuplicateStatus(relationId: number, status: string) {
+ const archive = sqlite.prepare(`
+  SELECT v.id, v.bytes FROM platform_archive_value v
+  JOIN platform_observation_archive_ref r ON r.archive_id=v.id AND r.field='legacyRowSnapshot'
+  JOIN platform_legacy_relation_alias a ON a.observation_id=r.owner_id WHERE a.old_id=?
+ `).get(relationId) as { id: number; bytes: Buffer }
+ const snapshot = JSON.parse(archive.bytes.toString()) as { fields: { name: string; hex: string }[] }
+ const raw = snapshot.fields.find(cell => cell.name === 'raw_fields')!
+ const original = Buffer.from(raw.hex, 'hex').toString()
+ raw.hex = Buffer.from(original.replace(/}$/, ',"cszt":' + JSON.stringify(status) + '}')).toString('hex')
+ const bytes = Buffer.from(JSON.stringify(snapshot))
+ // Model a sealed historical cell with duplicate keys that a new command would normalize.
+ sqlite.transaction(() => {
+  const trigger = sqlite.prepare("SELECT sql FROM sqlite_schema WHERE name='platform_archive_no_update'").pluck().get() as string
+  sqlite.exec('DROP TRIGGER platform_archive_no_update')
+  sqlite.prepare('UPDATE platform_archive_value SET bytes=?,byte_length=?,sha256=? WHERE id=?')
+   .run(bytes, bytes.length, createHash('sha256').update(bytes).digest('hex'), archive.id)
+  sqlite.exec(trigger)
+ })()
+}
+
 async function seedComparablePlatformAward() {
  const { submitNativePlatformQuery } = await import('../../platform/fixtures/native-query')
  const { appendOfficialEvidenceRevision } = await import('../../../layers/sme-roster/server/utils/official-evidence')
@@ -96,7 +118,8 @@ async function seedComparablePlatformAward() {
   collectionEvidence: { source: 'businessList', status: 'success', effectiveConditions: { uscc, combination: 'and' },
    titleScope: { mode: 'selected', rdjb: [rdjb] }, queriedAt, completedAt: queriedAt, rows: [raw],
    rawData: { version: 1, rows: [raw], pages: [{ source: 'businessList', rdjb, page: 1, format: 'json',
-    body: JSON.stringify({ zrarData: { grid: { businessListGrid: { pageSet: [raw], page: 1, pageSize: 50, maxCount: 1, maxPage: 1 } } } }) }] },
+    body: JSON.stringify({ transportDetails: 'x'.repeat(256 * 1024),
+     zrarData: { grid: { businessListGrid: { pageSet: [raw], page: 1, pageSize: 50, maxCount: 1, maxPage: 1 } } } }) }] },
    pages: [{ source: 'businessList', rdjb, page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, error: null }],
    fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null,
    limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 } },
@@ -110,11 +133,26 @@ async function seedComparablePlatformAward() {
  commitRecordCorrespondences(db, decision, preflightRecordCorrespondences(db, decision).planHash)
 }
 
+async function seedHistoricalStatusArchive() {
+ const { submitNativePlatformQuery } = await import('../../platform/fixtures/native-query')
+ const name = '历史重复状态'
+ const { id: enterpriseId } = db.insert(schema.enterprise).values({ name, nameNorm: name }).returning().get()
+ const collection = submitNativePlatformQuery(db, {
+  interface: 'business_list', titleCode: 'specialized_sme', rdjb: '2', queryKey: 'name:' + name,
+  queriedAt: '2026-05-31T00:00:00Z', status: 'success', rawResponse: '{}',
+  relations: [{ enterpriseId, sequenceNo: 1, relationKey: 'historical-status', nameRaw: name,
+   rawFields: { cszt: '终审通过', CSZT: 'case-sensitive extra field', transportDetails: 'x'.repeat(256 * 1024),
+    rdxx: { retained: '\u0000', literal: '\\|u0000|', surrogate: '\ud800' } } }],
+ })
+ return { enterpriseId, relationId: collection.relationIds[0]! }
+}
+
 const pgBin = process.env.TEST_DIFFERENCE_REFRESH_PG_BIN
-it.runIf(!!pgBin)('PostgreSQL HTTP and MCP refresh preserve a migrated fingerprint and newer judgment', async () => {
+it.runIf(!!pgBin)('PostgreSQL HTTP and MCP refresh preserve migrated fingerprints and judgments with projected archive reads', async () => {
  const { execFileSync } = await import('node:child_process')
  const { mkdtempSync, rmSync } = await import('node:fs')
  const { join } = await import('node:path')
+ const { types } = await import('pg')
  const { installLeadListSchema } = await import('../../../layers/lead-lists/install-schema')
  const { closePostgresDirectoryDb } = await import('../../../db/postgresql/client')
  const dir = mkdtempSync('/tmp/diff-refresh-')
@@ -123,6 +161,7 @@ it.runIf(!!pgBin)('PostgreSQL HTTP and MCP refresh preserve a migrated fingerpri
   PGUSER: 'refresh_fixture', PGSQL_BIN: join(pgBin!, 'psql') }
  const run = (command: string, args: string[]) => execFileSync(join(pgBin!, command), args, { env, stdio: 'pipe' })
  let started = false
+ let restoreParser: (() => void) | undefined
  try {
   vi.setSystemTime(new Date('2026-06-01T00:00:00Z'))
   await seedComparablePlatformAward()
@@ -130,6 +169,12 @@ it.runIf(!!pgBin)('PostgreSQL HTTP and MCP refresh preserve a migrated fingerpri
   const baseline = await (await request('POST', input)).json()
   const specialized = (result: typeof baseline) => result.enterprises[0].comparisons.find((c: { titleCode: string }) => c.titleCode === 'specialized_sme')
   expect(specialized(baseline)).toMatchObject({ comparisonState: 'synchronized', reasons: ['same_event_result_agrees'], comparisonError: null })
+  const historical = await seedHistoricalStatusArchive()
+  const historicalInput = { enterpriseIds: [historical.enterpriseId] }
+  const historicalBaseline = await (await request('POST', historicalInput)).json()
+  expect(historicalBaseline).toMatchObject({ refreshed: 3, unchanged: 0 })
+  addHistoricalDuplicateStatus(historical.relationId, '终审不通过')
+  expect(await (await request('POST', historicalInput)).json()).toEqual({ ...historicalBaseline, refreshed: 0, unchanged: 3 })
   installLeadListSchema(sqlite)
   const snapshot = join(dir, 'source.sqlite')
   await sqlite.backup(snapshot)
@@ -154,6 +199,16 @@ it.runIf(!!pgBin)('PostgreSQL HTTP and MCP refresh preserve a migrated fingerpri
   psql(`INSERT INTO business.difference_reason(enterprise_id,title_code,direction,status,recorded_at,created_at)
    VALUES (1,'specialized_sme','missing_in_miit','confirmed_no_diff','2026-06-01T01:00:00Z','2026-06-01T01:00:00Z')`)
   vi.setSystemTime(new Date('2026-06-02T00:00:00Z'))
+  let largestFieldBytes = 0
+  const originalParser = types.getTypeParser
+  const parser = vi.spyOn(types, 'getTypeParser').mockImplementation((oid, format) => {
+   const parse = originalParser(oid, format)
+   return (value: string) => {
+    largestFieldBytes = Math.max(largestFieldBytes, Buffer.byteLength(value))
+    return parse(value)
+   }
+  })
+  restoreParser = () => parser.mockRestore()
   const response = await request('POST', input)
   const repeat = await response.json()
   expect(response.status, JSON.stringify(repeat)).toBe(200)
@@ -161,6 +216,13 @@ it.runIf(!!pgBin)('PostgreSQL HTTP and MCP refresh preserve a migrated fingerpri
   expect(repeat.enterprises[0].comparisons.map(({ titleCode, businessFingerprint, changedAt }: Record<string, string>) => ({ titleCode, businessFingerprint, changedAt })))
    .toEqual(baseline.enterprises[0].comparisons.map(({ titleCode, businessFingerprint, changedAt }: Record<string, string>) => ({ titleCode, businessFingerprint, changedAt })))
   expect(specialized(repeat)).toEqual({ ...specialized(baseline), status: 'confirmed_no_diff', refreshedAt: '2026-06-02T00:00:00.000Z' })
+  const historicalResponse = await request('POST', historicalInput)
+  const historicalRepeat = await historicalResponse.json()
+  expect(historicalResponse.status, JSON.stringify(historicalRepeat)).toBe(200)
+  expect(historicalRepeat).toEqual({ refreshed: 0, unchanged: 3, enterprises: [{
+   enterpriseId: historical.enterpriseId,
+   comparisons: historicalBaseline.enterprises[0].comparisons.map((row: object) => ({ ...row, refreshedAt: '2026-06-02T00:00:00.000Z' })),
+  }] })
   psql("UPDATE business.record SET name_raw='变更公布名' WHERE enterprise_id=1 AND title_code='specialized_sme'")
   vi.setSystemTime(new Date('2026-06-03T00:00:00Z'))
   const [toolResult, competing] = await Promise.all([
@@ -188,7 +250,10 @@ it.runIf(!!pgBin)('PostgreSQL HTTP and MCP refresh preserve a migrated fingerpri
   expect((await request('POST', input)).status).toBe(503)
   await expect(refreshTool.handler(input, {} as never)).rejects.toMatchObject({ statusCode: 503 })
   expect((await (await request('GET', undefined, '?enterpriseIds=1')).json()).enterprises).toEqual(restored.enterprises)
+  expect(largestFieldBytes).toBeGreaterThan(0)
+  expect(largestFieldBytes).toBeLessThan(16 * 1024)
  } finally {
+  restoreParser?.()
   vi.useRealTimers()
   vi.unstubAllEnvs()
   await closePostgresDirectoryDb()
