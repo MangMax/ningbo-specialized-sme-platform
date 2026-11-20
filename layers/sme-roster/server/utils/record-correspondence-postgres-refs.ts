@@ -95,9 +95,13 @@ const exportMatches = sql`CASE WHEN p.export_row_id IS NULL THEN
       AND ${storedFields(schema.platformExportBatch, 'b', refValue('exportBatch'))}) END`
 
 type RefSources = { eventIds: number[]; relationIds: number[]; exportRowIds: number[] }
-export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly number[] | RefSources, witnessTitle?: string) {
+export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly number[] | RefSources | { annualDecisionIds: number[] }, witnessTitle?: string) {
   let where: SQL
-  if ('eventIds' in ids) {
+  const annual = 'annualDecisionIds' in ids
+  if (annual) {
+    if (!ids.annualDecisionIds.length) return []
+    where = sql`p.id=ANY(${sql.param(ids.annualDecisionIds)}::bigint[])`
+  } else if ('eventIds' in ids) {
     if (ids.eventIds.length + ids.relationIds.length + ids.exportRowIds.length === 0) return []
     const events = sql`${sql.param(ids.eventIds)}::bigint[]`
     where = sql`(p.event_id=ANY(${events}) OR p.predecessor_event_id=ANY(${events})
@@ -106,13 +110,14 @@ export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly numbe
     if (!ids.length) return []
     where = sql`p.enterprise_id=ANY(${sql.param(ids)}::bigint[])`
   }
+  const validate = annual ? sql`true` : sql`p.status='confirmed'`
   const { rows } = await db.execute<{
     ref: CorrespondenceRefRow; matches: boolean; attribution: CorrespondenceAttribution | null; proof: ProofReference | null
   }>(sql`
     WITH selected AS MATERIALIZED (
       SELECT p.id,p.type,p.role,p.status,p.event_id,p.predecessor_event_id,p.observation_id,p.export_row_id,
         p.enterprise_id,p.title_code,p.revision,ra.old_id AS relation_id,
-        CASE WHEN p.status='confirmed' THEN p.provenance::jsonb END AS provenance_json
+        CASE WHEN ${validate} THEN p.provenance::jsonb END AS provenance_json
       FROM record_correspondence p LEFT JOIN platform_legacy_relation_alias ra ON ra.observation_id=p.observation_id
       WHERE ${where}
       ${witnessTitle === undefined ? sql.empty() : sql`AND p.title_code=${witnessTitle}
@@ -121,12 +126,12 @@ export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly numbe
     SELECT json_build_object('id',p.id,'type',p.type,'role',p.role,'status',p.status,'eventId',p.event_id,
       'predecessorEventId',p.predecessor_event_id,'relationId',p.relation_id,'exportRowId',p.export_row_id,
       'enterpriseId',p.enterprise_id,'titleCode',p.title_code,'revision',p.revision) AS ref,
-      CASE WHEN p.status='confirmed' THEN (
+      CASE WHEN ${validate} THEN (
         (${eventMatches(sql`p.event_id`)}) AND (${eventMatches(sql`p.predecessor_event_id`, true)}) AND
         (${relationMatches()}) AND (${exportMatches})
         AND NOT EXISTS (SELECT 1 FROM platform_business_projection bp WHERE bp.observation_id=p.observation_id AND bp.stored_status_sqlite_storage='blob')
       ) ELSE true END AS matches,
-      CASE WHEN p.status='confirmed' THEN json_build_object('type',p.type,'enterpriseId',p.enterprise_id,
+      CASE WHEN ${validate} THEN json_build_object('type',p.type,'enterpriseId',p.enterprise_id,
         'relationEnterpriseId',a.enterprise_id,'relationStatus',a.verification_status,'relationUscc',${refValue('relation', 'usccRaw')},
         'ownerId',e.id,'ownerUscc',e.uscc_norm,'targetId',target.id,'targetUscc',target.uscc_norm,'targetTitle',t.code)
       END AS attribution,

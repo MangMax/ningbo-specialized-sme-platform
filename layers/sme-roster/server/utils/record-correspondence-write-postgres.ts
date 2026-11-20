@@ -12,7 +12,7 @@ type Batch = {
 }
 const fail = (code: CorrespondenceError['code'], message: string): never => { throw new CorrespondenceError(code, message) }
 
-async function serializable<T>(db: NodePgDatabase, run: (tx: Tx) => Promise<T>) {
+export async function runPostgresCorrespondenceTransaction<T>(db: NodePgDatabase, run: (tx: Tx) => Promise<T>) {
   for (let attempt = 0; ; attempt++) {
     try { return await db.transaction(run, { isolationLevel: 'serializable' }) }
     catch (error) {
@@ -71,18 +71,20 @@ function planResponse(plan: Pick<CorrespondencePlan, 'planHash' | 'impact' | 'ta
 }
 
 export function preflightPostgresCorrespondences(db: NodePgDatabase, request: CorrespondenceRequest) {
-  return serializable(db, async tx => {
-    const batch = await readBatch(tx, request)
-    if (batch?.status === 'committed' && batch.plan) return planResponse(batch.plan, batch.id, 'committed')
-    const { plan } = await loadPlan(tx, request, false)
-    const { rows: [saved] } = await tx.execute<{ id: number }>(sql`
-      INSERT INTO import_batch(idempotency_key,source_kind,source_identity,status,preflight_result,created_at)
-      VALUES (${request.idempotencyKey},'correspondence_decision',${request.sourceIdentity},'preflight',${JSON.stringify(plan)},${new Date().toISOString()})
-      ON CONFLICT (idempotency_key) DO UPDATE SET preflight_result=excluded.preflight_result,error=NULL
-      WHERE import_batch.status='preflight' RETURNING id::float8 AS id`)
-    if (!saved) return fail('idempotency_conflict', 'Batch changed during preflight')
-    return planResponse(plan, saved.id, 'preflight')
-  })
+  return runPostgresCorrespondenceTransaction(db, tx => preflightInTransaction(tx, request))
+}
+
+async function preflightInTransaction(tx: Tx, request: CorrespondenceRequest) {
+  const batch = await readBatch(tx, request)
+  if (batch?.status === 'committed' && batch.plan) return planResponse(batch.plan, batch.id, 'committed')
+  const { plan } = await loadPlan(tx, request, false)
+  const { rows: [saved] } = await tx.execute<{ id: number }>(sql`
+    INSERT INTO import_batch(idempotency_key,source_kind,source_identity,status,preflight_result,created_at)
+    VALUES (${request.idempotencyKey},'correspondence_decision',${request.sourceIdentity},'preflight',${JSON.stringify(plan)},${new Date().toISOString()})
+    ON CONFLICT (idempotency_key) DO UPDATE SET preflight_result=excluded.preflight_result,error=NULL
+    WHERE import_batch.status='preflight' RETURNING id::float8 AS id`)
+  if (!saved) return fail('idempotency_conflict', 'Batch changed during preflight')
+  return planResponse(plan, saved.id, 'preflight')
 }
 
 const decisionColumns = getTableColumns(schema.recordCorrespondence)
@@ -95,40 +97,47 @@ function sqlValues<T extends Record<string, unknown>>(columns: Record<keyof T, {
 }
 
 export function commitPostgresCorrespondences(db: NodePgDatabase, request: CorrespondenceRequest, planHash: string) {
-  return serializable(db, async tx => {
-    const batch = await readBatch(tx, request)
-    if (!batch?.plan || batch.plan.planHash !== planHash) return fail('plan_mismatch', 'Matching bound preflight required')
-    if (batch.status === 'committed') return batch.receipt!
-    const { plan, observed, lookup } = await loadPlan(tx, request, true)
-    if (plan.planHash !== planHash) return fail('plan_mismatch', 'Bound targets or source evidence changed')
-    const at = new Date().toISOString(), correspondenceIds: number[] = []
-    for (const mutation of recordCorrespondenceMutations(lookup, request, observed, batch.id, at)) {
-      const fields = sqlValues(decisionColumns, mutation.changes)
-      let id: number
-      if (mutation.type === 'insert') {
-        const { rows: [created] } = await tx.execute<{ id: number }>(sql`
-          INSERT INTO record_correspondence(${sql.join(fields.map(field => field.name), sql`,`)})
-          VALUES(${sql.join(fields.map(field => sql`${field.value}`), sql`,`)}) RETURNING id::float8 AS id`)
-        id = created!.id
-      } else {
-        id = mutation.row.id
-        const result = await tx.execute(sql`
-          UPDATE record_correspondence SET ${sql.join(fields.map(field => sql`${field.name}=${field.value}`), sql`,`)}
-          WHERE id=${id} AND revision=${mutation.row.revision} ${mutation.candidateOnly ? sql`AND status='candidate'` : sql.empty()}`)
-        if (result.rowCount !== 1) return fail('stale_revision', 'Correspondence revision changed')
-      }
-      for (const audit of mutation.audits) {
-        const fields = sqlValues(auditColumns, { ...audit, correspondenceId: id })
-        await tx.execute(sql`
-          INSERT INTO record_correspondence_audit(${sql.join(fields.map(field => field.name), sql`,`)})
-          VALUES(${sql.join(fields.map(field => sql`${field.value}`), sql`,`)})`)
-      }
-      correspondenceIds.push(id)
+  return runPostgresCorrespondenceTransaction(db, tx => commitInTransaction(tx, request, planHash))
+}
+
+export async function commitPostgresCorrespondenceDecision(tx: Tx, request: CorrespondenceRequest) {
+  const { planHash } = await preflightInTransaction(tx, request)
+  return commitInTransaction(tx, request, planHash)
+}
+
+async function commitInTransaction(tx: Tx, request: CorrespondenceRequest, planHash: string) {
+  const batch = await readBatch(tx, request)
+  if (!batch?.plan || batch.plan.planHash !== planHash) return fail('plan_mismatch', 'Matching bound preflight required')
+  if (batch.status === 'committed') return batch.receipt!
+  const { plan, observed, lookup } = await loadPlan(tx, request, true)
+  if (plan.planHash !== planHash) return fail('plan_mismatch', 'Bound targets or source evidence changed')
+  const at = new Date().toISOString(), correspondenceIds: number[] = []
+  for (const mutation of recordCorrespondenceMutations(lookup, request, observed, batch.id, at)) {
+    const fields = sqlValues(decisionColumns, mutation.changes)
+    let id: number
+    if (mutation.type === 'insert') {
+      const { rows: [created] } = await tx.execute<{ id: number }>(sql`
+        INSERT INTO record_correspondence(${sql.join(fields.map(field => field.name), sql`,`)})
+        VALUES(${sql.join(fields.map(field => sql`${field.value}`), sql`,`)}) RETURNING id::float8 AS id`)
+      id = created!.id
+    } else {
+      id = mutation.row.id
+      const result = await tx.execute(sql`
+        UPDATE record_correspondence SET ${sql.join(fields.map(field => sql`${field.name}=${field.value}`), sql`,`)}
+        WHERE id=${id} AND revision=${mutation.row.revision} ${mutation.candidateOnly ? sql`AND status='candidate'` : sql.empty()}`)
+      if (result.rowCount !== 1) return fail('stale_revision', 'Correspondence revision changed')
     }
-    const receipt: CorrespondenceReceipt = { batchId: batch.id, planHash, impact: plan.impact, correspondenceIds }
-    await tx.execute(sql`
-      UPDATE import_batch SET status='committed',summary=${JSON.stringify(receipt)},item_results=${JSON.stringify(correspondenceIds)},
-        committed_at=${at},error=NULL WHERE id=${batch.id}`)
-    return receipt
-  })
+    for (const audit of mutation.audits) {
+      const fields = sqlValues(auditColumns, { ...audit, correspondenceId: id })
+      await tx.execute(sql`
+        INSERT INTO record_correspondence_audit(${sql.join(fields.map(field => field.name), sql`,`)})
+        VALUES(${sql.join(fields.map(field => sql`${field.value}`), sql`,`)})`)
+    }
+    correspondenceIds.push(id)
+  }
+  const receipt: CorrespondenceReceipt = { batchId: batch.id, planHash, impact: plan.impact, correspondenceIds }
+  await tx.execute(sql`
+    UPDATE import_batch SET status='committed',summary=${JSON.stringify(receipt)},item_results=${JSON.stringify(correspondenceIds)},
+      committed_at=${at},error=NULL WHERE id=${batch.id}`)
+  return receipt
 }

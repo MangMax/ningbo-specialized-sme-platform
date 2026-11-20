@@ -107,7 +107,7 @@ async function selectComparison(db: Reader, input: RecordComparisonInput, verifi
   const byQuery = new Map(queries.map(query => [query.id, query]))
   const observationIds = await readPostgresComparisonIdentities(db, input.queryIds)
   const normalized = await readPostgresObservationComparisonFacts(db, observationIds.map(row => ({ observationId: row.observationId,
-    interface: byQuery.get(row.queryId)!.interface })), true)
+    interface: byQuery.get(row.queryId)!.interface })), 'archive')
   const relations = observationIds.map(({ enterpriseName: _name, relationId: _id, ...row }) => {
     const projection = normalized.get(row.observationId)
     if (!projection) throw new Error('comparison_observation_fact_missing')

@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import { and,asc,eq,inArray,or,sql } from 'drizzle-orm'
+import { and,eq,inArray,or,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { alias } from 'drizzle-orm/sqlite-core'
 import { createHash } from 'node:crypto'
@@ -25,28 +25,31 @@ export function readEventAnnualProcess(db: Db, eventId: number): EventAnnualProc
   if (!Number.isSafeInteger(eventId) || eventId <= 0) throw new Error('Invalid event ID')
   return db.transaction(() => readSnapshot(db, eventId))
 }
-type ScalarQuery = { toSQL(): { sql: string; params: unknown[] } }
 type Rows = Array<{ id: number; queryId: number; sequenceNo: number; relationKey: string | null; enterpriseId: number | null; usccRaw: string | null; nameRaw: string | null; verificationStatus: 'confirmed' | 'pending'; matchBasis: 'uscc' | 'alias' | 'manual' | 'none'; declareKind: string | null; appliedAt: string | null; year: number | null; province: string | null; batch: string | null; awardBatchLabel: string | null; status: string | Buffer | null; rawFields: Record<string, unknown> | null; sourcePage: number | null; sourceRdjb: string | null; identityOnlySource: number }>
 type Titles = Array<{ relationId: number; queryId: number; relationKey: string | null; usccRaw: string | null; titleCode: string | null }>
 type Queries = Array<{ queryId: number; interface: 'apply_list' | 'business_list' | 'recognized_list'; queryKey: string; rdjb: string; titleCode: string | null; queriedAt: string; status: 'success' | 'failed' | 'no_record' | 'not_queried' | 'partial'; completeness: string | null; fullRangeValue: number | null }>
-function eventScope(db: Db, eventId: number, admitHeader?: (query: ScalarQuery, keys: string[]) => void) {
+function eventScope(db: Db, eventId: number) {
+  const joined = annualEventHeader(db, eventId).get()
+  return joined ? scopeAnnualEvent(joined) : null
+}
+type AnnualEventHeader = NonNullable<ReturnType<ReturnType<typeof annualEventHeader>['get']>>
+function annualEventHeader(db: Db, eventId: number) {
   const v = schema.recordEvent, rec = schema.record, ent = schema.enterprise
-  // Explicit event projection: the admitted header has a fixed arity, so a new
-  // record_event column must not widen it or silently change the source digest.
-  const headerQuery = db.select({ event: { id: v.id, recordId: v.recordId, eventType: v.eventType, year: v.year, batchSeq: v.batchSeq, sortKey: v.sortKey, reviewOutcome: v.reviewOutcome, decidedYear: v.decidedYear, revision: v.revision }, record: { id: rec.id, enterpriseId: rec.enterpriseId, titleCode: rec.titleCode, usccRaw: rec.usccRaw, source: rec.source }, enterprise: { nameNorm: ent.nameNorm, usccNorm: ent.usccNorm } })
+  return db.select({ event: { id: v.id, recordId: v.recordId, eventType: v.eventType, year: v.year, batchSeq: v.batchSeq, sortKey: v.sortKey, reviewOutcome: v.reviewOutcome, decidedYear: v.decidedYear, revision: v.revision }, record: { id: rec.id, enterpriseId: rec.enterpriseId, titleCode: rec.titleCode, usccRaw: rec.usccRaw, source: rec.source }, enterprise: { nameNorm: ent.nameNorm, usccNorm: ent.usccNorm } })
     .from(v).innerJoin(rec, eq(v.recordId, rec.id)).innerJoin(ent, eq(rec.enterpriseId, ent.id)).where(eq(v.id, eventId))
-  admitHeader?.(headerQuery, ['id', 'recordId', 'eventType', 'year', 'batchSeq', 'sortKey', 'reviewOutcome', 'decidedYear', 'revision', 'record_id', 'enterpriseId', 'titleCode', 'usccRaw', 'source', 'nameNorm', 'usccNorm'])
-  const joined = headerQuery.get()
-  if (!joined || joined.record.source !== 'jxj' || !['award', 'review'].includes(joined.event.eventType)) return null
+}
+
+export function scopeAnnualEvent(joined: AnnualEventHeader) {
+  if (joined.record.source !== 'jxj' || !['award', 'review'].includes(joined.event.eventType)) return null
   const event = { id: joined.event.id, eventType: joined.event.eventType, year: joined.event.year, decidedYear: joined.event.decidedYear, reviewOutcome: joined.event.reviewOutcome,
     record: { enterpriseId: joined.record.enterpriseId, titleCode: joined.record.titleCode, usccRaw: joined.record.usccRaw ?? joined.enterprise.usccNorm } }
   const owner = event.record.enterpriseId, titleCode = event.record.titleCode
   const identity = normalizeUscc(event.record.usccRaw)
   const businessYear = event.eventType === 'review' ? event.decidedYear : event.year
   const kind: 'review' | 'apply' = event.eventType === 'review' ? 'review' : 'apply'
-  return { headerQuery, joined, event, owner, titleCode, businessYear, kind, identity }
+  return { joined, event, owner, titleCode, businessYear, kind, identity }
 }
-function prepareObservations(scope: NonNullable<ReturnType<typeof eventScope>>, rows: Rows, titleScopeRows: Titles, queries: Queries, metadata: ReturnType<typeof readPlatformBusinessMetadata>, suppliedFacts: Map<number, PlatformObservationFact>) {
+export function prepareAnnualObservations(scope: AnnualEventScope, rows: Rows, titleScopeRows: Titles, queries: Queries, metadata: ReturnType<typeof readPlatformBusinessMetadata>, suppliedFacts: ReadonlyMap<number, AnnualObservationFacts>) {
   const { joined, event, owner, titleCode, businessYear, kind } = scope
   const eventId = event.id
   const coverage: AnnualProcessCoverage[] = queries.map(row => ({ queryId: row.queryId, interface: row.interface, queriedAt: row.queriedAt, status: row.status, completeness: row.completeness, fullRange: row.fullRangeValue == null ? null : row.fullRangeValue === 1 }))
@@ -106,15 +109,9 @@ function evidenceFields() {
   const e = schema.recordEvidence, file = schema.storedFile
   return { id: e.id, sourceFile: e.sourceFile, attachment: e.attachment, listNo: e.listNo, page: e.page, fileId: file.id, sha256: file.sha256, removedAt: file.removedAt }
 }
-function evidenceQuery(db: Db, eventId: number) {
-  const e = schema.recordEvidence, file = schema.storedFile
-  return db.select(evidenceFields())
-    .from(e).leftJoin(file, eq(file.relPath, e.sourceFile)).where(eq(e.recordEventId, eventId)).orderBy(asc(e.id))
-}
-function finishRead(prepared: ReturnType<typeof prepareObservations>, groups: PlatformBusinessGroup[], loadEvidence: () => ReturnType<ReturnType<typeof evidenceQuery>['all']>) {
+export function projectAnnualProcess(prepared: ReturnType<typeof prepareAnnualObservations>, groups: PlatformBusinessGroup[], evidence: AnnualProcessSourceRefs['evidence']) {
   const { joined, event, owner, titleCode, businessYear, kind, coverage, scopeGaps, unresolvedSources, titleScopeRows, metadata } = prepared
   const process = buildAnnualProcess({ event, groups, coverage, scopeGaps })
-  const evidence = loadEvidence()
   const sourceRefs: AnnualProcessSourceRefs = {
     scope: { enterpriseId: owner, titleCode, businessYear, declareKind: kind, ruleVersion: ANNUAL_PROCESS_RULE_VERSION },
     // Explicit event projection: a new record_event column must never widen the
@@ -153,17 +150,18 @@ export function readAnnualProcessBatch(db: Db, eventIds: readonly number[], incl
     // The comparison seam historically reconciles stored/raw observation fields;
     // the annual read uses version facts. Preserve that existing distinction.
     const facts = includeUnknownBusinessTitle ? new Map([...source.facts].map(([id, f]) => [id, f.interface === 'business_list' ? { ...f, ...f.archiveProcessFacts } : { ...f, ...f.archiveProcessFacts }])) : source.facts
-    return prepareObservations(scope, source.rows, source.titles, source.queries, metadata, facts)
+    return prepareAnnualObservations(scope, source.rows, source.titles, source.queries, metadata, facts)
   })
   const groups = readPlatformBusinessGroups(db, prepared.flatMap(p => p.observations), metadata)
   const e = schema.recordEvidence, file = schema.storedFile
   const evidence = eventIds.length ? db.select({ ...evidenceFields(), eventId: e.recordEventId }).from(e).leftJoin(file, eq(file.relPath, e.sourceFile)).where(inArray(e.recordEventId, [...eventIds])).orderBy(e.id).all() : []
   const byEvent = Map.groupBy(evidence, e => e.eventId)
-  return new Map(prepared.map(p => [p.event.id, finishRead(p, groups.filter(g => g.observationRefs[0]?.target.eventId === p.event.id),
-    () => (byEvent.get(p.event.id) ?? []).map(({ eventId: _eventId, ...row }) => row))]))
+  return new Map(prepared.map(p => [p.event.id, projectAnnualProcess(p, groups.filter(g => g.observationRefs[0]?.target.eventId === p.event.id),
+    (byEvent.get(p.event.id) ?? []).map(({ eventId: _eventId, ...row }) => row))]))
 }
 
-export type AnnualEventScope = NonNullable<ReturnType<typeof eventScope>>
+export type AnnualEventScope = NonNullable<ReturnType<typeof scopeAnnualEvent>>
+export type AnnualObservationFacts = Pick<PlatformObservationFact, 'declareKind' | 'appliedAt' | 'year' | 'province' | 'batch' | 'awardBatchLabel' | 'status' | 'normalizationConflicts'>
 export type AnnualSourceRows = { rows: Rows; titles: Titles; queries: Queries; facts: Map<number, PlatformObservationFact> }
 
 /** Stricter admission for the explicit comparison only. W is a policy charge,

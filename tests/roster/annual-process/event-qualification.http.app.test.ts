@@ -2,6 +2,9 @@ import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { setTimeout as delay } from 'node:timers/promises'
+import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
@@ -15,7 +18,8 @@ const db = initializeDb({ create: true,  dbPath })
 const enterprise = db.insert(s.enterprise).values({ name: '合成实际资格协议企业', nameNorm: '合成实际资格协议企业', usccNorm: '91330211255994457P' }).returning().get()
 const record = db.insert(s.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: enterprise.usccNorm }).returning().get()
 const cases = [2024, 2023, 2022].map((year, n) => ({ status: ['confirmed', 'blocked', 'none'][n]!, event: db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year }).returning().get() }))
-const rows = [2024, 2024, 2023].map((year, n) => {
+const eligibleEvent = db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2021 }).returning().get()
+const rows = [2024, 2024, 2023, 2021].map((year, n) => {
   const key = `SQ258-${n}`, appliedAt = n === 1 ? '2024-12-13 10:00:00' : `${year}-03-01 09:00:00`
   const seeded = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: `2026-10-01T00:00:0${n}Z`, status: 'success', rawResponse: 'Synthetic annual HTTP source', relations: [{ sequenceNo: 1, relationKey: key, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { id: key, year, sblx: '申请', sqsj: appliedAt, cszt: n === 0 ? '终审不通过' : '终审通过' } }] })
   return { id: seeded.relationIds[0]! }
@@ -37,8 +41,8 @@ beforeAll(async () => {
   catch (error) { await service.stop(); throw new Error(`${String(error)}\n${output}`) }
 }, 90000)
 afterAll(async () => { await service?.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
-async function mcp(eventId: number) {
-  const response = await fetch(`${service.baseUrl}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: 'Bearer isolated258', 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_event_annual_process', arguments: { eventId, pageSize: 1 } } }) })
+async function mcp(eventId: number, baseUrl = service.baseUrl) {
+  const response = await fetch(`${baseUrl}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: 'Bearer isolated258', 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_event_annual_process', arguments: { eventId, pageSize: 1 } } }) })
   expect(response.status).toBe(200)
   const raw = await response.text()
   return JSON.parse(raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : raw)
@@ -61,3 +65,78 @@ it.each(cases)('real query-only GET and MCP return current $status qualification
   else expect(body.process.finalQualification).toMatchObject({ stepId: null, reasons: ['no_annual_process'], decisionRefs: [] })
   expect(state()).toEqual(before)
 })
+
+const pgBin = process.env.TEST_IMPORT_RECEIPTS_PG_BIN
+it.runIf(!!pgBin)('returns the same source generation, annual reads and runs a deduplicated native PostgreSQL task', async () => {
+  const pgDir = mkdtempSync(join(tmpdir(), 'annual-pg-'))
+  const pgData = join(pgDir, 'db')
+  const env = { ...process.env, PGHOST: pgDir, PGPORT: '5432', PGDATABASE: 'postgres', PGUSER: 'annual_fixture', PGSQL_BIN: join(pgBin!, 'psql') }
+  const run = (name: string, args: string[]) => execFileSync(join(pgBin!, name), args, { env, stdio: 'pipe' })
+  const sqliteCopy = join(pgDir, 'source.sqlite')
+  let clusterStarted = false
+  let child: ReturnType<typeof spawnCompiledApp> | undefined
+  try {
+    installLeadListSchema(db.$client)
+    await db.$client.backup(sqliteCopy)
+    run('initdb', ['-A', 'trust', '--locale=C', '-E', 'UTF8', '-U', env.PGUSER, '-D', pgData])
+    run('pg_ctl', ['-w', '-D', pgData, '-l', join(pgDir, 'pg.log'), '-o', "-c listen_addresses='' -k " + pgDir, 'start'])
+    clusterStarted = true
+    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', sqliteCopy, 'staged'], { env, stdio: 'pipe' })
+    for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
+      run('psql', ['-X', '-w', '-q', '-v', 'staging=staged', '-f', 'upgrade/postgresql/materialize-' + name + '.sql'])
+    }
+    const sqliteEmpty = join(pgDir, 'empty.sqlite')
+    const companion = initializeDb({ create: true, dbPath: sqliteEmpty })
+    companion.$client.close()
+    const port = await reserveLoopbackPort(), baseUrl = 'http://127.0.0.1:' + port
+    child = spawnCompiledApp(port, { cwd: resolve(import.meta.dirname, '../../..'), stdio: ['ignore', 'ignore', 'inherit'],
+      env: { ...process.env, NUXT_DB_PATH: sqliteEmpty, NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(pgDir, 'files'),
+        NUXT_INCOMING_DIR: join(pgDir, 'incoming'), NUXT_MCP_TOKEN: 'isolated258', NUXT_POSTGRES_ROSTER_READ: '1',
+        NUXT_POSTGRES_JOBS: '1', NUXT_POSTGRES_DIRECTORY_WRITE: '1', NUXT_API_TOKEN: 'isolated-annual-api',
+        NUXT_POSTGRES_DIRECTORY_URL: 'postgresql://annual_fixture@localhost/postgres?host=' + encodeURIComponent(pgDir) } })
+    await waitForHttp(baseUrl + '/api/health', { child, timeoutMs: 60000 })
+    for (const id of [...cases.map(entry => entry.event.id), eligibleEvent.id, 99999]) {
+      const path = '/api/roster/events/' + id + '/annual-process?pageSize=1'
+      const original = await fetch(service.baseUrl + path), migrated = await fetch(baseUrl + path)
+      expect(migrated.status).toBe(original.status)
+      const body = await original.json()
+      expect(await migrated.json()).toEqual(body)
+      if (original.ok) expect((await mcp(id, baseUrl)).result.structuredContent).toEqual(body)
+    }
+    const tasks = baseUrl + '/api/roster/annual-correspondence-tasks'
+    const headers = { authorization: 'Bearer isolated-annual-api', 'content-type': 'application/json' }
+    const eventIds = [eligibleEvent.id, cases[1]!.event.id]
+    const submit = (clientRequestId: string, ids = eventIds) => fetch(tasks, {
+      method: 'POST', headers, body: JSON.stringify({ clientRequestId, eventIds: ids }),
+    })
+    const requests = await Promise.all([submit('native-annual-1'), submit('native-annual-2')])
+    for (const request of requests) expect(request.status, await request.clone().text()).toBe(202)
+    const [first, duplicate] = await Promise.all(requests.map(request => request.json()))
+    expect(duplicate.jobId).toBe(first.jobId)
+    expect(duplicate.sourceGenerations).toEqual(first.sourceGenerations)
+    expect((await submit('native-annual-1', [eligibleEvent.id])).status).toBe(409)
+    let task
+    for (let attempt = 0; attempt < 120; attempt++) {
+      const response = await fetch(tasks + '/' + first.jobId, { headers })
+      expect(response.status).toBe(200)
+      task = await response.json()
+      if (['done', 'failed'].includes(task.status)) break
+      await delay(100)
+    }
+    expect(task).toMatchObject({ status: 'done', progress: { done: 2, total: 2 }, result: { attempt: 1 } })
+    expect(task.result.events.find((entry: { eventId: number }) => entry.eventId === eligibleEvent.id)).toMatchObject({
+      status: 'done', outcomes: [{ status: 'created', relationId: rows[3]!.id }],
+      finalQualification: { status: 'confirmed', decisionRefs: [{ status: 'confirmed', relationId: rows[3]!.id }] },
+    })
+    expect(task.result.events.find((entry: { eventId: number }) => entry.eventId === cases[1]!.event.id)).toMatchObject({
+      status: 'done', outcomes: [{ status: 'protected' }], finalQualification: { status: 'blocked', reasons: ['protected_decision'] },
+    })
+    const cancel = await fetch(tasks + '/' + first.jobId + '/cancel', { method: 'POST', headers })
+    expect(cancel.status).toBe(200)
+    expect(await cancel.json()).toMatchObject({ jobId: first.jobId, state: 'done', cancelled: false, alreadyFinished: true })
+  } finally {
+    if (child) await stopOwnedChild(child)
+    if (clusterStarted) run('pg_ctl', ['-w', '-m', 'fast', '-D', pgData, 'stop'])
+    rmSync(pgDir, { recursive: true, force: true })
+  }
+}, 180000)

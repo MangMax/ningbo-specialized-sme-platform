@@ -232,10 +232,10 @@ export async function cancelPostgresJob(db: NodePgDatabase, id: string, logConte
     }
     await tx.execute(sql`UPDATE business.job
       SET state = 'cancelled', error = ${cancelledBeforeStart}, finished_at = ${new Date().toISOString()} WHERE id = ${id}`)
-    return { ...row, updated: true, cancelled: true, cancelRequested: false, alreadyFinished: false, note: '任务尚在排队,已取消,未执行。' }
+    return { ...row, state: 'cancelled' as const, updated: true, cancelled: true, cancelRequested: false, alreadyFinished: false, note: '任务尚在排队,已取消,未执行。' }
   })
   if (!outcome) return null
-  const { kind, state: _state, updated, ...response } = outcome
+  const { kind, updated, ...response } = outcome
   if (updated) appLog({
     module: jobLogModule(kind), source: 'task', taskId: id,
     operation: response.cancelled ? 'task.finished' : 'task.cancel_requested',

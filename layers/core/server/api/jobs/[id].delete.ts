@@ -57,8 +57,9 @@ export default defineEventHandler(async (event) => {
     const config = useRuntimeConfig(event)
     const { db } = startPostgresJobs(config.filesDir)!
     const project = await postgresJobReadProjector(db, config)
-    const outcome = await cancelPostgresJob(db, id, requestLogContext(event))
-    if (!outcome) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
+    const cancelled = await cancelPostgresJob(db, id, requestLogContext(event))
+    if (!cancelled) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
+    const { state: _stateAtCancellation, ...outcome } = cancelled
     const job = await getPostgresJobDetail(db, id)
     if (!job) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
     if (outcome.cancelRequested) setResponseStatus(event, 202)

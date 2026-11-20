@@ -77,18 +77,19 @@ export function readAnnualDecisionRefs(db: AnnualDb, ids: number[], target?: Pic
   const validity = new Map<number, boolean>()
   for (let i = 0; i < rows.length; i += 400) for (const pair of correspondenceRefValidity(db, rows.slice(i,i+400).map(r => r.id))) validity.set(...pair)
   return rows.map(({queryTitle,queryRdjb,queryInterface,queryStatus,...row}) => {
-    const scopes = queryRdjb?.split(',').filter(Boolean) ?? []
-    const scopedTitle = scopes.length === 1 ? RDJB_TITLE_CODES[scopes[0]!] : undefined
-    // Annual title lineage is not native title evidence for sourceForEdge.
-    // Preserve its original process-interface/title guard even for old refs.
-    const nativeValid = ['business_list','apply_list'].includes(queryInterface ?? '') && ['success','partial'].includes(queryStatus ?? '') &&
-      (queryTitle ?? scopedTitle) === row.titleCode && !(queryTitle && scopedTitle && queryTitle !== scopedTitle)
-    return {...row,relationId:row.relationId!,requiresRevalidation:validity.get(row.id) !== false || !nativeValid}
+    return {...row,relationId:row.relationId!,requiresRevalidation:validity.get(row.id) !== false || !validAnnualDecisionQuery(row.titleCode, queryTitle, queryRdjb, queryInterface, queryStatus)}
   })
 }
+export function validAnnualDecisionQuery(titleCode: string, queryTitle: string | null, queryRdjb: string | null, queryInterface: string | null, queryStatus: string | null) {
+  const scopes = queryRdjb?.split(',').filter(Boolean) ?? []
+  const scopedTitle = scopes.length === 1 ? RDJB_TITLE_CODES[scopes[0]!] : undefined
+  // Annual title lineage is not native title evidence for sourceForEdge.
+  // Preserve its original process-interface/title guard even for old refs.
+  return ['business_list','apply_list'].includes(queryInterface ?? '') && ['success','partial'].includes(queryStatus ?? '') &&
+    (queryTitle ?? scopedTitle) === titleCode && !(queryTitle && scopedTitle && queryTitle !== scopedTitle)
+}
 const decisions = readAnnualDecisionRefs
-function assessStep(db: AnnualDb, scope: AnnualWriteScope, step: AnnualWriteStep) {
-  const rows = decisions(db, [...step.protectionRelationIds, ...step.currentRelationIds], scope)
+function assessAnnualStep(scope: AnnualWriteScope, step: AnnualWriteStep, rows: ReturnType<typeof decisions>) {
   const sameTarget = rows.filter(r => r.eventId === scope.eventId && r.enterpriseId === scope.enterpriseId && r.titleCode === scope.titleCode &&
     (r.role === 'context_only' || r.role === (scope.declareKind === 'apply' ? 'supports_award' : 'supports_review')))
   const protectedRows = sameTarget.filter(r => r.status === 'rejected' || r.status === 'unlinked')
@@ -101,10 +102,16 @@ function refs(rows: ReturnType<typeof decisions>): AnnualDecisionRef[] {
 }
 /** Read-only. Caller keeps one snapshot for scope and decision reads. */
 export function qualifyAnnualFinal(db: AnnualDb, scope: AnnualWriteScope, expectedGeneration = scope.generation): AnnualFinalQualification {
+  const step = scope.steps.find(s => s.stepId === scope.finalCandidateStepId)
+  const rows = step && scope.generation === expectedGeneration ? decisions(db, [...step.protectionRelationIds, ...step.currentRelationIds], scope) : []
+  return projectAnnualFinalQualification(scope, rows, expectedGeneration)
+}
+
+export function projectAnnualFinalQualification(scope: AnnualWriteScope, rows: ReturnType<typeof decisions>, expectedGeneration = scope.generation): AnnualFinalQualification {
   if (scope.generation !== expectedGeneration) return { stepId: null, status: 'blocked', decisionRefs: [], reasons: ['source_generation_changed'] }
   const step = scope.steps.find(s => s.stepId === scope.finalCandidateStepId)
   if (!step) return { stepId: null, status: 'none', decisionRefs: [], reasons: scope.reasons }
-  const state = assessStep(db, scope, step)
+  const state = assessAnnualStep(scope, step, rows)
   if (state.protectedRows.length) return { stepId: null, status: 'blocked', decisionRefs: refs(state.protectedRows), reasons: ['protected_decision'] }
   if (!step.eligible) return { stepId: null, status: 'blocked', decisionRefs: [], reasons: step.reasons }
   if (state.confirmed.length) return { stepId: step.stepId, status: 'confirmed', decisionRefs: refs(state.confirmed), reasons: [] }
@@ -120,34 +127,43 @@ export function reconcileAnnualStep(db: AnnualDb, readScope: AnnualScopeReader, 
     if (scope.generation !== input.generation) annualFail('source_generation_changed')
     const step = scope.steps.find(s => s.stepId === input.stepId)
     if (!step) annualFail('source_generation_changed')
-    const state = assessStep(db, scope, step)
-    const outcome = (status: AnnualStepOutcome['status'], rows: ReturnType<typeof decisions>, reasons: string[], relationId = step.preferredRelationId): AnnualStepOutcome => ({ stepId: step.stepId, status, relationId, decisionRefs: refs(rows), reasons })
-    if (state.protectedRows.length) return outcome('protected', state.protectedRows, ['protected_decision'])
-    if (!step.eligible) return outcome('needs_review', [], step.reasons)
-    if (state.confirmed.length) return outcome('existing', state.confirmed, [], state.confirmed[0]!.relationId)
-    if (state.current.some(r => r.status === 'confirmed')) return outcome('needs_review', state.current, ['source_requires_revalidation'])
-    const relationId = step.preferredRelationId
-    if (!relationId || !step.currentRelationIds.includes(relationId)) return outcome('needs_review', [], ['explicit_endpoint_required'])
-    const bytes = targetSourceBytes(db, relationId)
+    const refs = decisions(db, [...step.protectionRelationIds, ...step.currentRelationIds], scope)
+    const plan = planAnnualStep(scope, step, refs)
+    if ('outcome' in plan) return plan.outcome
+    const bytes = targetSourceBytes(db, plan.relationId)
     if (bytes == null || bytes > 4 * 1024 * 1024) annualFail('source_materialization_limit', 422)
-    const candidate = state.current.find(r => r.relationId === relationId && r.role === 'context_only' && r.status === 'candidate')
-    if (candidate?.requiresRevalidation) return outcome('needs_review', [candidate], ['source_requires_revalidation'])
-    const identity = { eventId: scope.eventId, generation: scope.generation, ruleId: ANNUAL_CORRESPONDENCE_RULE, ruleVersion: ANNUAL_CORRESPONDENCE_VERSION, stepId: step.stepId }
-    const request: CorrespondenceRequest = {
-      idempotencyKey: `annual:${annualHash(identity)}`,
-      sourceIdentity: JSON.stringify(identity),
-      actor: { type: 'agent', id: 'annual-correspondence-worker' },
-      basis: JSON.stringify({ ...identity, sourceRefs: scope.sourceRefs, selectedRelationId: relationId, reason: 'complete_explicit_annual_process' }),
-      ruleId: ANNUAL_CORRESPONDENCE_RULE, ruleVersion: ANNUAL_CORRESPONDENCE_VERSION,
-      // No comparison proof is borrowed from a different observation/version.
-      proofIds: [],
-      operations: candidate ? [{ action: 'decide', correspondenceId: candidate.id, expectedRevision: candidate.revision, status: 'confirmed' }] : [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: scope.eventId, relationId, role: 'context_only' } }],
-    }
-    const plan = preflightRecordCorrespondences(db, request)
-    const receipt = commitRecordCorrespondences(db, request, plan.planHash)
-    return outcome('created', decisions(db, [relationId], scope).filter(r => receipt.correspondenceIds.includes(r.id)), [])
+    const preflight = preflightRecordCorrespondences(db, plan.request)
+    const receipt = commitRecordCorrespondences(db, plan.request, preflight.planHash)
+    return plan.created(decisions(db, [plan.relationId], scope).filter(r => receipt.correspondenceIds.includes(r.id)))
   }, { behavior: 'immediate' })
 }
+
+export function planAnnualStep(scope: AnnualWriteScope, step: AnnualWriteStep, rows: ReturnType<typeof decisions>):
+  { outcome: AnnualStepOutcome } | { relationId: number; request: CorrespondenceRequest; created: (rows: ReturnType<typeof decisions>) => AnnualStepOutcome } {
+  const state = assessAnnualStep(scope, step, rows)
+  const outcome = (status: AnnualStepOutcome['status'], rows: ReturnType<typeof decisions>, reasons: string[], relationId = step.preferredRelationId): AnnualStepOutcome => ({ stepId: step.stepId, status, relationId, decisionRefs: refs(rows), reasons })
+  if (state.protectedRows.length) return { outcome: outcome('protected', state.protectedRows, ['protected_decision']) }
+  if (!step.eligible) return { outcome: outcome('needs_review', [], step.reasons) }
+  if (state.confirmed.length) return { outcome: outcome('existing', state.confirmed, [], state.confirmed[0]!.relationId) }
+  if (state.current.some(r => r.status === 'confirmed')) return { outcome: outcome('needs_review', state.current, ['source_requires_revalidation']) }
+  const relationId = step.preferredRelationId
+  if (!relationId || !step.currentRelationIds.includes(relationId)) return { outcome: outcome('needs_review', [], ['explicit_endpoint_required']) }
+  const candidate = state.current.find(r => r.relationId === relationId && r.role === 'context_only' && r.status === 'candidate')
+  if (candidate?.requiresRevalidation) return { outcome: outcome('needs_review', [candidate], ['source_requires_revalidation']) }
+  const identity = { eventId: scope.eventId, generation: scope.generation, ruleId: ANNUAL_CORRESPONDENCE_RULE, ruleVersion: ANNUAL_CORRESPONDENCE_VERSION, stepId: step.stepId }
+  const request: CorrespondenceRequest = {
+    idempotencyKey: `annual:${annualHash(identity)}`,
+    sourceIdentity: JSON.stringify(identity),
+    actor: { type: 'agent', id: 'annual-correspondence-worker' },
+    basis: JSON.stringify({ ...identity, sourceRefs: scope.sourceRefs, selectedRelationId: relationId, reason: 'complete_explicit_annual_process' }),
+    ruleId: ANNUAL_CORRESPONDENCE_RULE, ruleVersion: ANNUAL_CORRESPONDENCE_VERSION,
+    // No comparison proof is borrowed from a different observation/version.
+    proofIds: [],
+    operations: candidate ? [{ action: 'decide', correspondenceId: candidate.id, expectedRevision: candidate.revision, status: 'confirmed' }] : [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: scope.eventId, relationId, role: 'context_only' } }],
+  }
+  return { relationId, request, created: refs => outcome('created', refs, []) }
+}
+
 function targetSourceBytes(db: AnnualDb, relationId: number) {
   const a = targetSchema.platformLegacyRelationAlias, o = targetSchema.platformBusinessObservation
   const r = targetSchema.platformObservationArchiveRef, q = s.platformCollectionArchiveRef, v = s.platformArchiveValue

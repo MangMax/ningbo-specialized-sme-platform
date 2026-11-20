@@ -5,8 +5,13 @@ import { operationLogContext } from '../../../core/server/utils/operation-log-co
 import { annualDbReadonly, annualFail, qualifyAnnualFinal, readAnnualScopes, type AnnualDb, type AnnualScopeReader } from './annual-correspondence'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
 import { getJob } from '../../../core/server/utils/job-store'
+import { cancelPostgresJob, getPostgresJob } from '../../../core/server/utils/job-store-postgres'
+import { postgresJobsEnabled } from '../../../core/server/utils/postgres-jobs'
 import { requestJobCancel } from '../../../core/server/utils/job-runner'
 import { annualErrorCode, retryAnnualCorrespondence, submitAnnualCorrespondence } from './jobs/annual-correspondence'
+import { getPostgresAnnualTask, retryPostgresAnnualCorrespondence, submitPostgresAnnualCorrespondence } from './jobs/annual-correspondence-postgres'
+import { usePostgresRosterDb } from './postgres-roster-db'
+
 export type AnnualTaskAction = 'submit' | 'detail' | 'cancel' | 'retry'
 export interface AnnualTaskContext { db: AnnualDb; readScope: AnnualScopeReader; filesDir: string; apiToken?: string | null; browserAuthorized?: boolean; logContext?: LogContext }
 export function readAnnualTask(db: AnnualDb, read: AnnualScopeReader, id: string, authorized: boolean): AnnualTaskDto | null {
@@ -33,6 +38,27 @@ export async function handleAnnualTaskRequest(action: AnnualTaskAction, req: {me
   const authorized = ctx.browserAuthorized === true || resolveApiAuth({given:readApiToken(req.headers),configured:ctx.apiToken}).writeAuthorized
   if (action !== 'detail' && !authorized) return error(401,'unauthorized')
   try {
+    const postgres = usePostgresRosterDb()
+    if (postgres) {
+      const writable = postgresJobsEnabled() && process.env.NUXT_POSTGRES_DIRECTORY_WRITE === '1'
+      if (action !== 'detail' && !writable) return error(403, 'readonly_database')
+      if (action === 'submit') {
+        const body = await submitPostgresAnnualCorrespondence(postgres, req.body, ctx.filesDir)
+        return { status: 202, headers: { ...headers, location: `/api/roster/annual-correspondence-tasks/${body.jobId}` }, body }
+      }
+      if (!isJobId(req.id)) return error(400, 'invalid_task_id')
+      if (action === 'detail') {
+        const body = await getPostgresAnnualTask(postgres, req.id, authorized && writable)
+        return body ? { status: 200, headers, body } : error(404, 'task_not_found')
+      }
+      if ((await getPostgresJob(postgres, req.id))?.row.kind !== KIND) return error(404, 'task_not_found')
+      if (action === 'retry') return { status: 202, headers, body: await retryPostgresAnnualCorrespondence(postgres, req.id, ctx.filesDir) }
+      const cancelled = await cancelPostgresJob(postgres, req.id, ctx.logContext)
+      if (!cancelled) return error(404, 'task_not_found')
+      const { state, note } = cancelled
+      const outcome = cancelled.alreadyFinished ? { alreadyFinished: true } : cancelled.cancelRequested ? { cancelRequested: true } : {}
+      return { status: 200, headers, body: { jobId: req.id, ok: true, state, cancelled: cancelled.cancelled, ...outcome, note } }
+    }
     if (action !== 'detail' && annualDbReadonly(ctx.db)) return error(403,'readonly_database')
     if (action === 'submit') {
       const body = submitAnnualCorrespondence(ctx.db,ctx.readScope,req.body,ctx.filesDir,ctx.logContext)

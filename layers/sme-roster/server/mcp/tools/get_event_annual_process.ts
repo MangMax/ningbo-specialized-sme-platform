@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
-import { dispatchEventAnnualProcessMcp } from '../../utils/event-annual-process-api'
+import { dispatchRuntimeEventAnnualProcessMcp } from '../../utils/event-annual-process-api'
 export default defineMcpTool({
   name: 'get_event_annual_process', title: '读取正式事件年度过程与末态资格',
   description: '等价GET /api/roster/events/:id/annual-process。完整限定归档scope先计算年度末态，再分页展示steps。保留各接口业务版本、观察出处与原实际决定；finalCandidateStepId仅事实资格，不表示已确认。缺年/partial/unknown如实保留。无asOf/sourceSet，不写ledger或调用preflight。',
@@ -23,7 +23,7 @@ export default defineMcpTool({
     }), sourceGeneration: z.string(), sourceRefs: z.record(z.string(), z.unknown()), total: z.number().int(), page: z.number().int(), pageSize: z.number().int(),
   },
   handler: async input => {
-    const result = dispatchEventAnnualProcessMcp(input, { get db() { return useDb() } })
+    const result = await dispatchRuntimeEventAnnualProcessMcp(input, { get db() { return useDb() } })
     if ('isError' in result) return result
     return { structuredContent: result as Record<string, unknown>, content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
   },

@@ -2,13 +2,13 @@ import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
-import type { PlatformCorrespondenceRef, ScopedPlatformObservation } from '../../lib/platform/business-record'
+import type { ScopedPlatformObservation } from '../../lib/platform/business-record'
 import { postgresRosterRow, readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
 import { EVENT_ARCHIVE_RULE_VERSION, normalizedUscc, type EventArchiveInput } from './event-archive-discovery'
 import { readPostgresCorrespondenceSources } from './record-correspondence-postgres'
 import { safeCollectionEvidence } from './record-correspondence-read'
 import type { ReceiptRedactor } from './import-receipt-redaction'
-import { projectPlatformBusinessGroups, readPostgresPlatformBusinessMetadata } from './platform-business-record-read'
+import { readPostgresPlatformBusinessGroups } from './platform-business-record-read'
 import { projectCandidateRows, type CandidateInput } from './record-correspondence-candidates'
 import { readPostgresObservationComparisonFacts } from './record-correspondence-target-postgres'
 
@@ -103,20 +103,6 @@ async function factsForCandidates(db: Reader, relations: (Sources['relevantRelat
   return result
 }
 
-async function candidateGroups(db: Reader, observations: ScopedPlatformObservation[]) {
-  if (!observations.length) return []
-  const relationIds = observations.map(row => row.relationId)
-  const m = await readPostgresPlatformBusinessMetadata(db, relationIds)
-  const { rows } = await db.execute<{ [K in keyof PlatformCorrespondenceRef]: PlatformCorrespondenceRef[K] }>(sql`
-    SELECT p.id::float8 AS id,a.old_id::float8 AS "relationId",p.export_row_id::float8 AS "exportRowId",p.event_id::float8 AS "eventId",
-      p.predecessor_event_id::float8 AS "predecessorEventId",p.enterprise_id::float8 AS "enterpriseId",p.title_code AS "titleCode",
-      p.type,p.role,p.status,p.revision::float8 AS revision,p.rule_id AS "ruleId",p.rule_version AS "ruleVersion",
-      p.created_at AS "createdAt",p.decided_at AS "decidedAt",p.ended_at AS "endedAt"
-    FROM record_correspondence p JOIN platform_legacy_relation_alias a ON a.observation_id=p.observation_id
-    WHERE a.old_id=ANY(${ids(relationIds)}) ORDER BY p.id`)
-  return projectPlatformBusinessGroups(observations,m,rows)
-}
-
 export async function generatePostgresCandidates(db: Reader, input: CandidateInput, selection?: Selection) {
   const event = input.eventId ? (await db.execute<NonNullable<Sources['event']>>(sql`
     SELECT ${postgresRosterRow(schema.recordEvent,'e')} AS event,${postgresRosterRow(schema.record,'r')} AS record
@@ -155,7 +141,7 @@ export async function generatePostgresCandidates(db: Reader, input: CandidateInp
   const steps = projectCandidateRows(input,{ event,enterprise,queries,batches,relevantRelations,relevantExports,factsByRelation,positions,priors,targetPage,selection })
   const pending = steps.next()
   if (pending.done) return pending.value
-  const final = steps.next(await candidateGroups(db,pending.value))
+  const final = steps.next(await readPostgresPlatformBusinessGroups(db,pending.value))
   if (final.done) return final.value
   throw new Error('Candidate projection did not finish')
 }
