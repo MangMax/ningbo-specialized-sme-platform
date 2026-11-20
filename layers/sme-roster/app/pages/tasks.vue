@@ -4,7 +4,7 @@ import { computed, ref, watch } from 'vue'
 import TaskListPanel from '#core/app/components/tasks/TaskListPanel.vue'
 import RosterCandidateTaskCreate from '#sme-roster/app/components/tasks/CandidateTaskCreate.vue'
 import { TASK_EXPORTS, type TaskExportTitle } from '../../lib/sme-roster/task-exports'
-import { TASK_STATES, type TaskList, type TaskSummary } from '#core/lib/task-center'
+import { TASK_STATES, taskArtifactExpiry, type TaskList, type TaskSummary } from '#core/lib/task-center'
 import { getTaskGroups, resolveTaskFilters, getTaskTabs } from '#core/lib/task-catalog'
 import { JOB_STATES, type JobState } from '#core/lib/job'
 import { useTaskPolling } from '#core/app/composables/useTaskPolling'
@@ -40,8 +40,11 @@ const selectedState = computed(() => state.value === 'all' ? undefined : TASK_ST
 const browserHeaders = rosterTaskBrowserHeaders
 const params = computed(() => ({ tab: tab.value, group: group.value, state: state.value === 'all' ? undefined : state.value, titleCode: titleCode.value === 'all' ? undefined : titleCode.value, page: page.value, pageSize: pageSize.value }))
 const key = computed(() => JSON.stringify([params.value]))
-const { data, sourceKey, loading, failed, retryIn, refresh } = useTaskPolling<TaskList>(key, signal =>
-  $fetch<TaskList>('/api/task-center', { query: params.value, headers: browserHeaders, signal }))
+const { data, sourceKey, loading, failed, retryIn, refresh } = useTaskPolling<TaskList>(
+  key,
+  signal => $fetch<TaskList>('/api/task-center', { query: params.value, headers: browserHeaders, signal }),
+  list => Array.isArray(list.rows) ? Math.min(...list.rows.map(taskArtifactExpiry)) : Infinity,
+)
 // Only a list payload renders rows; anything partial shows as empty instead of
 // throwing mid-render.
 const rows = computed(() => Array.isArray(data.value?.rows) ? data.value.rows : [])

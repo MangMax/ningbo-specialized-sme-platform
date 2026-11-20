@@ -2,8 +2,7 @@
 import { clientRequestReference } from '#core/lib/client-logging/request-reference'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import type { TaskSummary } from '#core/lib/task-center'
-import { TASK_STATES } from '#core/lib/task-center'
+import { TASK_STATES, taskArtifactExpiry, type TaskSummary } from '#core/lib/task-center'
 import { getTaskKind } from '#core/lib/task-catalog'
 import { useTaskPolling } from '#core/app/composables/useTaskPolling'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
@@ -34,9 +33,13 @@ const emit = defineEmits<{ close: []; changed: [] }>()
 const { $clientErrors } = useNuxtApp()
 const key = computed(() => props.id)
 const headers = { 'x-task-center-browser': '1' }
-const { data, sourceKey, loading, failed, refresh: reload } = useTaskPolling(key, signal => $fetch<TaskSummary>(`/api/task-center/${encodeURIComponent(props.id)}`, { headers, signal }))
+const { data, sourceKey, loading, failed, refresh: reload } = useTaskPolling(
+  key,
+  signal => $fetch<TaskSummary>(`/api/task-center/${encodeURIComponent(props.id)}`, { headers, signal }),
+  taskArtifactExpiry,
+)
 /** Event handlers and slot consumers get a plain void wrapper so Vue's handler
- *  typing stays simple; the polling promise is this component's business. */
+ *  typing stays simple. */
 function refresh() { void reload() }
 
 const pending = ref(false)

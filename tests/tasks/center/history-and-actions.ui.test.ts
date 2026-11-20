@@ -539,6 +539,40 @@ describe('提交导出后的找回入口', () => {
 })
 
 describe('任务详情抽屉', () => {
+  it.each(['desktop', 'mobile'] as const)('任务通知刷新 %s 列表和已打开的详情', async (viewport) => {
+    const connections: EventTarget[] = []
+    vi.stubGlobal('EventSource', class extends EventTarget {
+      constructor() {
+        super()
+        connections.push(this)
+      }
+
+      close() {}
+    })
+    state.query = { job: jobId('MW') }
+    state.detail = exportTask({ state: 'queued' })
+    const calls = installFetch(({ url }) => url === '/api/task-center'
+      ? json(listOf([state.detail], true))
+      : json(state.detail))
+    const wrapper = await mountPage({ viewport })
+    const dialog = await waitForSheet()
+    const visibleRow = wrapper.findAll(`[data-task-row="${jobId('MW')}"]`)
+      .find(row => row.element.getClientRects().length > 0)!
+    expect(visibleRow.text()).toContain('排队中')
+    expect(dialog.textContent).toContain('排队中')
+    expect(connections).toHaveLength(1)
+    connections[0]!.dispatchEvent(new Event('ready'))
+    await vi.waitFor(() => expect(calls.filter(call => call.url.startsWith('/api/task-center'))).toHaveLength(4))
+
+    state.detail = exportTask({ state: 'running' })
+    connections[0]!.dispatchEvent(new Event('changed'))
+    await vi.waitFor(() => {
+      expect(visibleRow.text()).toContain('运行中')
+      expect(dialog.textContent).toContain('运行中')
+    })
+    expect(sheetDialog()).toBe(dialog)
+  })
+
   it('打开任务用真实抽屉：URL 带 job，抽屉里有详情标题、执行详情与滚动容器', async () => {
     installFetch(({ url }) => url.startsWith('/api/task-center/') ? json(state.detail) : json(listOf(state.list.rows, true)))
     const wrapper = await mountPage({ attach: true })
