@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterpriseAlias, record } from '../../../../db/schema'
-import { lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
+import { applyPostgresEnterpriseMerge, findPostgresEnterpriseMergeAliasConflict, lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import type { RosterImportItemResult, RosterImportMerge } from '../../lib/roster-import-client'
@@ -92,27 +92,6 @@ async function resolveMerge(tx: Tx, merge: RosterImportMerge, index: number) {
   return { from, into, sourceId, sourceName, intoUscc, sourceRefId, evidenceQueryId }
 }
 
-const aliasPair = sql`(a.name_norm,a.source_kind,a.source_ref_id)=(b.name_norm,b.source_kind,b.source_ref_id)`
-
-async function aliasConflict(tx: Tx, from: number, into: number, ref: string) {
-  const { rows: [clash] } = await tx.execute<{ sourceId: string; survivorId: string; statusConflict: boolean }>(sql`
-    SELECT a.id AS "sourceId",b.id AS "survivorId",checks.status_conflict AS "statusConflict"
-    FROM enterprise_alias a JOIN enterprise_alias b ON b.enterprise_id=${into} AND ${aliasPair}
-    CROSS JOIN LATERAL (SELECT a.verification_status<>b.verification_status AND (
-      'withdrawn' IN (a.verification_status,b.verification_status)
-      OR EXISTS(SELECT 1 FROM enterprise_alias_audit WHERE alias_id IN (a.id,b.id))
-    ) AS status_conflict) checks
-    WHERE a.enterprise_id=${from} AND (checks.status_conflict OR EXISTS(
-      SELECT 1 FROM enterprise_alias_audit x JOIN enterprise_alias_audit y ON y.alias_id=b.id AND y.idempotency_key=x.idempotency_key
-      WHERE x.alias_id=a.id))
-    ORDER BY a.id LIMIT 1`)
-  if (!clash) return null
-  const pair = `${clash.sourceId}/${clash.survivorId}`
-  return clash.statusConflict
-    ? failure(ref, 'merge_alias_lifecycle_conflict', `别名 ${pair} 核验状态不同，须显式处理后再归并`, 'merges')
-    : failure(ref, 'merge_alias_audit_key_conflict', `别名 ${pair} 存在同幂等键审计，不能丢弃任何一条历史`, 'merges')
-}
-
 const differencePair = sql`(a.title_code,a.direction,a.recorded_at)=(b.title_code,b.direction,b.recorded_at)`
 const differenceContent = (alias: string) => sql`ROW(${sql.join([
   'status', 'reason_code', 'reason_note', 'measure_code', 'measure_note', 'evidence_query_id', 'evidence_relation_id',
@@ -130,8 +109,8 @@ async function mergeConflict(tx: Tx, from: number, into: number, ref: string) {
     return failure(ref, 'merge_difference_lifecycle_conflict',
       `差异决定版本 ${managed.id}（企业 ${managed.enterpriseId}/${managed.titleCode}/${managed.direction}）已接管；归并须保留原 ID、历史和接管状态`, 'merges')
   }
-  const alias = await aliasConflict(tx, from, into, ref)
-  if (alias) return alias
+  const alias = await findPostgresEnterpriseMergeAliasConflict(tx, from, into)
+  if (alias) return failure(ref, alias.code, alias.message, 'merges')
   const { rows: [difference] } = await tx.execute<{ titleCode: string; direction: string; recordedAt: string }>(sql`
     SELECT a.title_code AS "titleCode",a.direction,a.recorded_at AS "recordedAt"
     FROM difference_reason a JOIN difference_reason b ON b.enterprise_id=${into} AND ${differencePair}
@@ -157,39 +136,12 @@ export async function planPostgresRosterMerge(tx: Tx, merge: RosterImportMerge, 
   }
 }
 
-async function moveAliases(tx: Tx, from: number, into: number) {
-  // Only the audit lookup ID changes on collision. The original owner and payload stay intact.
-  await tx.execute(sql`
-    UPDATE enterprise_alias_audit audit SET alias_id=b.id FROM enterprise_alias a
-    JOIN enterprise_alias b ON b.enterprise_id=${into} AND ${aliasPair}
-    WHERE a.enterprise_id=${from} AND audit.alias_id=a.id`)
-  await tx.execute(sql`
-    DELETE FROM enterprise_alias a USING enterprise_alias b
-    WHERE a.enterprise_id=${from} AND b.enterprise_id=${into} AND ${aliasPair}`)
-  const { rowCount } = await tx.execute(sql`UPDATE enterprise_alias SET enterprise_id=${into} WHERE enterprise_id=${from}`)
-  return rowCount ?? 0
-}
-
 async function moveDifferences(tx: Tx, from: number, into: number) {
   await tx.execute(sql`
     DELETE FROM difference_reason a USING difference_reason b
     WHERE a.enterprise_id=${from} AND b.enterprise_id=${into} AND ${differencePair}`)
   const { rowCount } = await tx.execute(sql`UPDATE difference_reason SET enterprise_id=${into} WHERE enterprise_id=${from}`)
   return rowCount ?? 0
-}
-
-async function ensureMergeAlias(tx: Tx, enterpriseId: number, name: string, sourceKind: string, sourceRefId: number, note: string) {
-  const nameNorm = normalizeName(name)
-  const { rows: [existing] } = await tx.execute<{ id: number }>(sql`
-    SELECT id::float8 AS id FROM enterprise_alias WHERE enterprise_id=${enterpriseId} AND name_norm=${nameNorm}
-      AND (verification_status='confirmed' OR (source_kind=${sourceKind} AND source_ref_id=${sourceRefId}))
-    ORDER BY (verification_status='confirmed') DESC,id LIMIT 1`)
-  if (existing) return { id: existing.id, created: false }
-  const { rows: [created] } = await tx.execute<{ id: number }>(sql`
-    INSERT INTO enterprise_alias (enterprise_id,name,name_norm,source_kind,source_ref_id,verification_status,note,created_at)
-    VALUES (${enterpriseId},${name},${nameNorm},${sourceKind},${sourceRefId},'confirmed',${note},${new Date().toISOString()})
-    RETURNING id::float8 AS id`)
-  return { id: created!.id, created: true }
 }
 
 async function appendMergeAssignments(tx: Tx, from: number, into: number, basis: string, recordedAt: string) {
@@ -271,27 +223,24 @@ export async function applyPostgresRosterMerge(tx: Tx, plan: PostgresRosterMerge
   const sourceKind = merge.sourceKind ?? 'manual'
   const note = optionalText(merge.note)
   const renamedFrom = canonicalName !== into.name ? into.name : null
-  let renameAlias = { id: null as number | null, created: false }
-  if (renamedFrom !== null) {
-    await tx.execute(sql`UPDATE enterprise SET name=${canonicalName},name_norm=${normalizeName(canonicalName)} WHERE id=${into.id}`)
-    const renameNote = `主名称改为「${canonicalName}」（导出表侧）后被顶掉的原名`
-    renameAlias = await ensureMergeAlias(tx, into.id, renamedFrom, sourceKind, sourceRefId, note ? `${renameNote}；${note}` : renameNote)
-  }
+  const renameNote = `主名称改为「${canonicalName}」（导出表侧）后被顶掉的原名`
   const aliasName = optionalText(merge.aliasName) ?? from.name
-  const alias = aliasName === canonicalName ? { id: null, created: false }
-    : await ensureMergeAlias(tx, into.id, aliasName, sourceKind, sourceRefId, note ?? `归并自 enterprise:${from.id}（${from.name}）`)
-  if (alias.created || renameAlias.created) {
-    const generatedAliasConflict = await aliasConflict(tx, from.id, into.id, ref)
-    if (generatedAliasConflict) return generatedAliasConflict
-  }
-  const aliases = await moveAliases(tx, from.id, into.id)
-  const differences = await moveDifferences(tx, from.id, into.id)
-
   const basis = note ?? ref
-  const recordedAt = new Date().toISOString()
+  const applied = await applyPostgresEnterpriseMerge(tx, {
+    fromEnterpriseId: from.id,
+    intoEnterpriseId: into.id,
+    rename: renamedFrom === null ? null : {
+      from: renamedFrom, to: canonicalName, note: note ? `${renameNote}；${note}` : renameNote,
+    },
+    sourceAlias: aliasName === canonicalName ? null : {
+      name: aliasName, note: note ?? `归并自 enterprise:${from.id}（${from.name}）`,
+    },
+    sourceKind, sourceRefId, basis,
+  })
+  if (!applied.ok) return failure(ref, applied.error.code, applied.error.message, 'merges')
+  const { alias, renameAlias, aliasesMoved, recordedAt } = applied
+  const differences = await moveDifferences(tx, from.id, into.id)
   const relations = await appendMergeAssignments(tx, from.id, into.id, basis, recordedAt)
-  await tx.execute(sql`INSERT INTO enterprise_merge (from_enterprise_id,into_enterprise_id,basis,recorded_at)
-    VALUES (${from.id},${into.id},${basis},${recordedAt})`)
   const records = await moveRecords(tx, from.id, into.id)
   await tx.execute(sql`UPDATE record_correspondence SET enterprise_id=${into.id} WHERE enterprise_id=${from.id}`)
   await captureMergeIdentity(tx, from.id, into.id, identityBefore)
@@ -300,7 +249,7 @@ export async function applyPostgresRosterMerge(tx: Tx, plan: PostgresRosterMerge
     fromEnterpriseId: from.id, fromEnterpriseName: from.name, intoEnterpriseId: into.id, intoUscc: into.uscc ?? '',
     canonicalName, rename: renamedFrom === null ? null : { from: renamedFrom, to: canonicalName, aliasId: renameAlias.id },
     aliasId: alias.id, evidenceQueryId,
-    childRowsMoved: { aliases, differences, relations, records: records.recordsMoved.length + records.recordsFolded.length },
+    childRowsMoved: { aliases: aliasesMoved, differences, relations, records: records.recordsMoved.length + records.recordsFolded.length },
     ...records,
   }
   return { ok: true, kind: 'merge', ref, detail: { lineage, rowsWritten: Number(alias.created) + Number(renameAlias.created) } }
