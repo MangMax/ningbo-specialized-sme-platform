@@ -154,7 +154,7 @@ function optionalInt(value: unknown): number | null {
 }
 
 /** Typed coordinates are verbatim; the old legacy grouping/write rules stay local. */
-function announcementEvidenceCoordinate(evidence: { sourceFile: string; attachment?: unknown; listNo?: unknown; page?: unknown; publishedRow?: unknown }, grouped = false): OfficialCoordinate {
+export function announcementEvidenceCoordinate(evidence: { sourceFile: string; attachment?: unknown; listNo?: unknown; page?: unknown; publishedRow?: unknown }, grouped = false): OfficialCoordinate {
   if (evidence.publishedRow !== undefined) return {
     sourceFile: evidence.sourceFile,
     attachment: typeof evidence.attachment === 'string' ? evidence.attachment : null,
@@ -1062,6 +1062,60 @@ function planNewEventEvidence(
   records: readonly RosterImportAnnouncement['records'][number][],
   identityPlan: AnnouncementBatchIdentityPlan,
 ): { eventsByRecord: Map<number, RosterImportEvent[]>; groupedOccurrences: Set<string> } {
+  return groupNewAnnouncementEvidence(announcement, records, (recordIndex, name) => {
+    const record = records[recordIndex]!
+    const requestedUscc = usccOrNull(record.enterprise?.uscc)
+    const uscc = identityPlan.identityUsccByRecord.get(recordIndex) ?? requestedUscc
+    const nameMatches = findEnterprisesByNorm(db, normalizeName(name))
+    const resolvedByWriteIdentity = announcementOwner(db, identityPlan, recordIndex, name, uscc)
+    const ambiguousNameOnly = !identityPlan.reviewedOwners?.has(recordIndex) && !requestedUscc && (
+      identityPlan.ambiguousNameOnlyRecords.has(recordIndex) || nameMatches.length > 1
+    )
+    const groupIdentity = identityPlan.reviewedOwners?.has(recordIndex) ? `enterprise:${resolvedByWriteIdentity!.id}` : uscc
+      ? resolvedByWriteIdentity
+        ? `enterprise:${resolvedByWriteIdentity.id}`
+        : identityKeyOf({ name, uscc })
+      : nameMatches.length === 1
+        ? `enterprise:${nameMatches[0]!.id}`
+        : identityKeyOf({ name, uscc: null })
+    return { ambiguous: ambiguousNameOnly, key: groupIdentity }
+  }, (recordIndex, titleCode, source, event) => {
+    const representative = records[recordIndex]!
+    const name = optionalString(representative.enterprise.name)!
+    const requestedUscc = usccOrNull(representative.enterprise?.uscc)
+    const uscc = identityPlan.identityUsccByRecord.get(recordIndex) ?? requestedUscc
+    const enterprise = announcementOwner(db, identityPlan, recordIndex, name, uscc)
+    const storedRecord = enterprise
+      ? db
+          .select()
+          .from(schema.record)
+          .where(
+            and(
+              eq(schema.record.enterpriseId, enterprise.id),
+              eq(schema.record.titleCode, titleCode),
+              eq(schema.record.source, source),
+            ),
+          )
+          .get()
+      : undefined
+    const existingEvent = storedRecord
+      ? db
+          .select()
+          .from(schema.recordEvent)
+          .where(eq(schema.recordEvent.recordId, storedRecord.id))
+          .all()
+          .find((row) => matchesEventCoordinates(row, eventCoordinates(storedRecord.id, event)))
+      : undefined
+    return !!existingEvent
+  })
+}
+
+export function groupNewAnnouncementEvidence(
+  announcement: RosterImportAnnouncement,
+  records: readonly RosterImportAnnouncement['records'][number][],
+  identity: (index: number, name: string) => { key: string; ambiguous?: boolean },
+  alreadyStored: (recordIndex: number, titleCode: string, source: 'jxj' | 'miit', event: RosterImportEvent) => boolean,
+): { eventsByRecord: Map<number, RosterImportEvent[]>; groupedOccurrences: Set<string> } {
   interface Occurrence {
     recordIndex: number
     eventIndex: number
@@ -1092,20 +1146,7 @@ function planNewEventEvidence(
     const titleCode = optionalString(record?.titleCode)
     const source = record?.source ?? announcement.sourceDocument?.source
     if (!name || !titleCode || !TITLE_CODES.has(titleCode) || !SOURCES.has(String(source))) continue
-    const requestedUscc = usccOrNull(record.enterprise?.uscc)
-    const uscc = identityPlan.identityUsccByRecord.get(recordIndex) ?? requestedUscc
-    const nameMatches = findEnterprisesByNorm(db, normalizeName(name))
-    const resolvedByWriteIdentity = announcementOwner(db, identityPlan, recordIndex, name, uscc)
-    const ambiguousNameOnly = !identityPlan.reviewedOwners?.has(recordIndex) && !requestedUscc && (
-      identityPlan.ambiguousNameOnlyRecords.has(recordIndex) || nameMatches.length > 1
-    )
-    const groupIdentity = identityPlan.reviewedOwners?.has(recordIndex) ? `enterprise:${resolvedByWriteIdentity!.id}` : uscc
-      ? resolvedByWriteIdentity
-        ? `enterprise:${resolvedByWriteIdentity.id}`
-        : identityKeyOf({ name, uscc })
-      : nameMatches.length === 1
-        ? `enterprise:${nameMatches[0]!.id}`
-        : identityKeyOf({ name, uscc: null })
+    const group = identity(recordIndex, name)
     events.forEach((event, eventIndex) => {
       if (!EVENT_TYPES.has(String(event?.eventType))) return
       const coordinates = eventCoordinates(0, event)
@@ -1117,7 +1158,7 @@ function planNewEventEvidence(
 
       // 一条不唯一的名称无法确认企业身份，不能按名称查询碰巧返回的第一家参与归组。
       // planAnnouncementRecord 会在任何写入解析前拒绝这条 name-only 记录。
-      const identityKey = ambiguousNameOnly ? `ambiguous:${recordIndex}:${eventIndex}` : groupIdentity
+      const identityKey = group.ambiguous ? `ambiguous:${recordIndex}:${eventIndex}` : group.key
       const key = JSON.stringify([identityKey, titleCode, source, coordinates])
       const occurrences = groups.get(key) ?? []
       occurrences.push(occurrence)
@@ -1135,31 +1176,7 @@ function planNewEventEvidence(
     const titleCode = optionalString(representative?.titleCode)
     const source = representative?.source ?? announcement.sourceDocument?.source
     if (!name || !titleCode || !SOURCES.has(String(source))) continue
-    const requestedUscc = usccOrNull(representative.enterprise?.uscc)
-    const uscc = identityPlan.identityUsccByRecord.get(first.recordIndex) ?? requestedUscc
-    const enterprise = announcementOwner(db, identityPlan, first.recordIndex, name, uscc)
-    const storedRecord = enterprise
-      ? db
-          .select()
-          .from(schema.record)
-          .where(
-            and(
-              eq(schema.record.enterpriseId, enterprise.id),
-              eq(schema.record.titleCode, titleCode),
-              eq(schema.record.source, source),
-            ),
-          )
-          .get()
-      : undefined
-    const existingEvent = storedRecord
-      ? db
-          .select()
-          .from(schema.recordEvent)
-          .where(eq(schema.recordEvent.recordId, storedRecord.id))
-          .all()
-          .find((row) => matchesEventCoordinates(row, eventCoordinates(storedRecord.id, first.event)))
-      : undefined
-    if (existingEvent) continue
+    if (alreadyStored(first.recordIndex, titleCode, source, first.event)) continue
 
     const uniqueEvidence = new Map<string, RosterImportEvidence>()
     const invalidEvidence: unknown[] = []
@@ -1223,7 +1240,7 @@ function canonicalEvidencePlanJson(value: unknown): string {
 }
 
 /** 同一幂等键若被复用于不同公告载荷或默认来源,不应复用旧的收敛目标快照。 */
-function evidenceRepointPlanFingerprint(request: RosterImportRequest): string {
+export function evidenceRepointPlanFingerprint(request: RosterImportRequest): string {
   return createHash('sha256')
     .update(canonicalEvidencePlanJson(request.payload?.announcement ?? null))
     .digest('hex')
@@ -1728,6 +1745,43 @@ export function validateAnnouncementIdentityAndEvidence(
 
 // --- 公布文件 --------------------------------------------------------------
 
+export function validateAnnouncementRecord(
+  announcement: RosterImportAnnouncement, record: RosterImportAnnouncement['records'][number], index: number,
+) {
+  const ref = `record:${index}`
+  const name = optionalString(record?.enterprise?.name)
+  if (!name) {
+    return { error: failure('record', ref, 'enterprise_name_required', '记录缺少企业名称', 'records[].enterprise.name') } as const
+  }
+  const titleCode = optionalString(record.titleCode)
+  if (!titleCode || !TITLE_CODES.has(titleCode)) {
+    return { error: failure('record', ref, 'title_unknown', `称号不在字典内：${titleCode ?? '(空)'}`, 'titleCode') } as const
+  }
+  const source = record.source ?? announcement.sourceDocument.source
+  if (!SOURCES.has(String(source))) {
+    return { error: failure('record', ref, 'source_unknown', `来源必须是 jxj / miit，收到：${String(source)}`, 'source') } as const
+  }
+  const events = Array.isArray(record.events) ? record.events : []
+  for (let i = 0; i < events.length; i += 1) {
+    const event = events[i]!
+    const eventRef = `record:${index}#${i}`
+    if (!EVENT_TYPES.has(String(event?.eventType))) {
+      return { error: failure('record_event', eventRef, 'event_type_unknown', `事件类型不在字典内：${String(event?.eventType)}`, 'eventType') } as const
+    }
+    if (event.reviewOutcome != null && !REVIEW_OUTCOMES.has(String(event.reviewOutcome))) {
+      return { error: failure('record_event', eventRef, 'review_outcome_unknown', `复核结论必须是 passed / failed，收到：${String(event.reviewOutcome)}`, 'reviewOutcome') } as const
+    }
+    const evidence = Array.isArray(event.evidence) ? event.evidence : []
+    for (let k = 0; k < evidence.length; k += 1) {
+      if (!optionalString(evidence[k]?.sourceFile)) {
+        return { error: failure('record_evidence', `${eventRef}/e${k}`, 'source_file_required', '出处缺少 sourceFile', 'evidence.sourceFile') } as const
+      }
+    }
+  }
+
+  return { name, titleCode, source, events }
+}
+
 function planAnnouncementRecord(
   db: Executor,
   request: RosterImportRequest,
@@ -1754,41 +1808,12 @@ function planAnnouncementRecord(
   officialState?: OfficialImportState,
 ): void {
   const ref = `record:${index}`
-  const name = optionalString(record?.enterprise?.name)
-  if (!name) {
-    push({ item: failure('record', ref, 'enterprise_name_required', '记录缺少企业名称', 'records[].enterprise.name'), action: 'skip', review: false })
+  const validated = validateAnnouncementRecord(announcement, record, index)
+  if (validated.error) {
+    push({ item: validated.error, action: 'skip', review: false })
     return
   }
-  const titleCode = optionalString(record.titleCode)
-  if (!titleCode || !TITLE_CODES.has(titleCode)) {
-    push({ item: failure('record', ref, 'title_unknown', `称号不在字典内：${titleCode ?? '(空)'}`, 'titleCode'), action: 'skip', review: false })
-    return
-  }
-  const source = record.source ?? announcement.sourceDocument.source
-  if (!SOURCES.has(String(source))) {
-    push({ item: failure('record', ref, 'source_unknown', `来源必须是 jxj / miit，收到：${String(source)}`, 'source'), action: 'skip', review: false })
-    return
-  }
-  const events = Array.isArray(record.events) ? record.events : []
-  for (let i = 0; i < events.length; i += 1) {
-    const event = events[i]!
-    const eventRef = `record:${index}#${i}`
-    if (!EVENT_TYPES.has(String(event?.eventType))) {
-      push({ item: failure('record_event', eventRef, 'event_type_unknown', `事件类型不在字典内：${String(event?.eventType)}`, 'eventType'), action: 'skip', review: false })
-      return
-    }
-    if (event.reviewOutcome != null && !REVIEW_OUTCOMES.has(String(event.reviewOutcome))) {
-      push({ item: failure('record_event', eventRef, 'review_outcome_unknown', `复核结论必须是 passed / failed，收到：${String(event.reviewOutcome)}`, 'reviewOutcome'), action: 'skip', review: false })
-      return
-    }
-    const evidence = Array.isArray(event.evidence) ? event.evidence : []
-    for (let k = 0; k < evidence.length; k += 1) {
-      if (!optionalString(evidence[k]?.sourceFile)) {
-        push({ item: failure('record_evidence', `${eventRef}/e${k}`, 'source_file_required', '出处缺少 sourceFile', 'evidence.sourceFile'), action: 'skip', review: false })
-        return
-      }
-    }
-  }
+  const { name, titleCode, source, events } = validated
 
   const requestedUscc = usccOrNull(record.enterprise.uscc)
   const identityUscc = candidates.identityUscc !== undefined ? candidates.identityUscc : requestedUscc
@@ -2185,7 +2210,7 @@ interface EventCoordinates {
 }
 
 /** 由载荷里的一条事件 + 它所属记录算出坐标。 */
-function eventCoordinates(recordId: number, event: RosterImportEvent): EventCoordinates {
+export function eventCoordinates(recordId: number, event: RosterImportEvent): EventCoordinates {
   return {
     recordId,
     eventType: String(event.eventType),
@@ -2197,7 +2222,7 @@ function eventCoordinates(recordId: number, event: RosterImportEvent): EventCoor
 }
 
 /** 一行 `record_event` 是不是这个坐标。 */
-function matchesEventCoordinates(row: EventCoordinates, values: EventCoordinates): boolean {
+export function matchesEventCoordinates(row: EventCoordinates, values: EventCoordinates): boolean {
   return (
     row.recordId === values.recordId &&
     row.eventType === values.eventType &&
@@ -2254,7 +2279,7 @@ interface EvidenceCoordinateRow {
 }
 
 /** 收集只与其精确路径身份绑定的 SHA-256；逻辑身份不能替另一条出处路径背书。 */
-function evidenceContentHashIndex(db: Executor, request: RosterImportRequest): EvidenceContentHashIndex {
+export function indexedEvidenceHashes(request: RosterImportRequest, sources: readonly { path: string; sha256: string | null }[]) {
   const index: EvidenceContentHashIndex = new Map()
   const add = (path: string | null | undefined, rawHash: unknown) => {
     const sha256 = optionalString(rawHash)
@@ -2264,20 +2289,16 @@ function evidenceContentHashIndex(db: Executor, request: RosterImportRequest): E
     index.set(path, hashes)
   }
 
-  for (const file of db.select({ relPath: schema.storedFile.relPath, sha256: schema.storedFile.sha256 }).from(schema.storedFile).all()) {
-    add(file.relPath, file.sha256)
-  }
-  for (const batch of db
-    .select({ sourceKind: schema.importBatch.sourceKind, sourceIdentity: schema.importBatch.sourceIdentity, sourceSha256: schema.importBatch.sourceSha256, status: schema.importBatch.status })
-    .from(schema.importBatch)
-    .all()) {
-    if (batch.status === 'committed' && batch.sourceKind === 'announcement') {
-      add(batch.sourceIdentity, batch.sourceSha256)
-    }
-  }
-  // The current request's hash proves a path only when sourceIdentity is that exact path.
+  for (const { path, sha256 } of sources) add(path, sha256)
   add(request.sourceIdentity, request.sourceSha256)
   return index
+}
+
+function evidenceContentHashIndex(db: Executor, request: RosterImportRequest): EvidenceContentHashIndex {
+  const files = db.select({ path: schema.storedFile.relPath, sha256: schema.storedFile.sha256 }).from(schema.storedFile).all()
+  const batches = db.select({ path: schema.importBatch.sourceIdentity, sha256: schema.importBatch.sourceSha256 })
+    .from(schema.importBatch).where(and(eq(schema.importBatch.status, 'committed'), eq(schema.importBatch.sourceKind, 'announcement'))).all()
+  return indexedEvidenceHashes(request, [...files, ...batches])
 }
 
 function verifiedEvidenceContentHash(index: EvidenceContentHashIndex, path: string): string | null {
@@ -2423,6 +2444,12 @@ function ambiguousEvidenceRepointIds(
     .where(inArray(schema.recordEvidence.recordEventId, eventIds))
     .all()
 
+  return ambiguousAnnouncementRepoints(records, recordIdByIndex, eventRows, evidenceRows, evidenceContentHashes)
+}
+
+export function ambiguousAnnouncementRepoints(records: readonly RosterImportAnnouncement['records'][number][],
+  recordIdByIndex: ReadonlyMap<number, number>, eventRows: typeof schema.recordEvent.$inferSelect[],
+  evidenceRows: readonly (EvidenceCoordinateRow & { recordEventId: number })[], evidenceContentHashes: EvidenceContentHashIndex) {
   const eventsByRecord = new Map<number, typeof eventRows>()
   for (const row of eventRows) {
     const rows = eventsByRecord.get(row.recordId) ?? []
@@ -2599,6 +2626,12 @@ function countEvidenceRepoints(
     )
     .all()
 
+  return projectAnnouncementRepoints(recordId, events, eventRows, evidenceRows, taken, ambiguous, evidenceContentHashes)
+}
+
+export function projectAnnouncementRepoints(recordId: number, events: readonly RosterImportEvent[],
+  eventRows: readonly typeof schema.recordEvent.$inferSelect[], evidenceRows: readonly (EvidenceCoordinateRow & { recordEventId: number })[],
+  taken: Set<number>, ambiguous: ReadonlySet<number>, evidenceContentHashes: EvidenceContentHashIndex) {
   const byEvent = new Map<number, EvidenceCoordinateRow[]>()
   for (const row of evidenceRows) {
     const list = byEvent.get(row.recordEventId)

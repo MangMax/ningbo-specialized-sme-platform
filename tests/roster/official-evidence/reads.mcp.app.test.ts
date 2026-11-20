@@ -556,6 +556,60 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     const sourceRecordCount = run('psql', ['-X', '-w', '-Atc', "SELECT count(*) FROM business.enterprise WHERE name='合成新企业'"]).toString().trim()
     expect(sourceRecordCount).toBe('0')
 
+    const reviewStaged = (path: string, input: unknown) => app.request(path + '/supplement', { method: 'POST', body: JSON.stringify(input) })
+    const name = '合成新企业'
+    const untypedReview = { sourceDigest: staged[0].sourceDigest, basis, rows: [{ action: 'create', fields: { name } }] }
+    expect((await reviewStaged(newIntakePath, { ...untypedReview, rows: [{ action: 'same_subject', row: 0 }] })).status).toBe(422)
+    const accepted = await reviewStaged(newIntakePath, untypedReview)
+    const supplemented = await accepted.json()
+    expect(accepted.status, JSON.stringify(supplemented)).toBe(200)
+    expect(supplemented).toMatchObject({ status: 'supplemented', owners: [expect.any(Number)], sourceIds: [expect.any(Number)] })
+    expect(await (await reviewStaged(newIntakePath, untypedReview)).json()).toEqual(supplemented)
+    expect((await reviewStaged(newIntakePath, { ...untypedReview, basis: '不同人工核对' })).status).toBe(409)
+    expect((await http(newIntakePath)).body).toMatchObject({ status: 'staged', receipt: null })
+
+    const typedName = '合成类型化补充'
+    const publishedRow = { ...change.operations[0]!.publishedRow, nameRaw: typedName, usccRaw: null,
+      attachment: null, sectionKey: '合成类型化补充清单', listNo: 998, declaration: { kind: 'independent', basis,
+        sourceDocument: { source: 'jxj', title: '合成类型化原件', path: 'notice.txt', docNumber: null, issueDate: null } } }
+    const typedRequest = { ...stagedRequest, idempotencyKey: 'native-typed-announcement', sourceIdentity: 'notice.txt', sourceSha256: sha256,
+      payload: { announcement: { sourceDocument: { source: 'jxj', title: '合成类型化原件' }, records: [
+        { enterprise: { name: typedName }, titleCode: 'specialized_sme', events: [
+          { eventType: 'award', year: 2023, evidence: [{ sourceFile: 'notice.txt', attachment: null, listNo: 998, page: null, publishedRow }] },
+        ] },
+      ] } } }
+    const nativeTypedStage = await stage(typedRequest)
+    const typedIntake = await nativeTypedStage.json()
+    expect(nativeTypedStage.status, JSON.stringify(typedIntake)).toBe(200)
+    expect(typedIntake).toMatchObject({ officialEvidencePreflightRequired: true, status: 'staged' })
+    const sqliteTypedStage = await http('/api/roster/import/commit', typedRequest)
+    expect(sqliteTypedStage.status, JSON.stringify(sqliteTypedStage.body)).toBe(200)
+    const sqliteTyped = z.object({ intakeId: z.number(), sourceDigest: z.string() }).parse(sqliteTypedStage.body)
+    const typedPath = '/api/roster/import/intake/' + typedIntake.intakeId
+    const typedReview = { sourceDigest: typedIntake.sourceDigest, basis, rows: [{ action: 'create', fields: { name: typedName } }] }
+    const typedBefore = await reviewStaged(typedPath, { ...typedReview, preflight: true })
+    const typedPlan = await typedBefore.json()
+    expect(typedBefore.status, JSON.stringify(typedPlan)).toBe(200)
+    expect(typedPlan).toMatchObject({ conflicts: [], officialEvidencePlanHash: expect.stringMatching(/^[a-f0-9]{64}$/) })
+    expect((await http('/api/roster/import/intake/' + sqliteTyped.intakeId + '/supplement', { ...typedReview, preflight: true })).body).toEqual(typedPlan)
+    expect((await (await app.request(typedPath)).json())).toMatchObject({ status: 'staged', receipt: null })
+    const rejected = await reviewStaged(typedPath, { ...typedReview, officialEvidencePlanHash: 'a'.repeat(64) })
+    const rejectedBody = await rejected.json()
+    expect(rejected.status, rejected.ok ? undefined : readFileSync(join(pgDir, 'pg.log'), 'utf8').slice(-4000)).toBe(200)
+    expect(rejectedBody).toMatchObject({ status: 'failed', items: [expect.objectContaining({ error: expect.objectContaining({ code: 'plan_mismatch' }) })] })
+    expect(run('psql', ['-X','-w','-Atc', "SELECT count(*) FROM business.enterprise WHERE name='合成类型化补充'"]).toString().trim()).toBe('0')
+    const reviewedTyped = { ...typedReview, officialEvidencePlanHash: typedPlan.officialEvidencePlanHash }
+    const typedResponses = await Promise.all([reviewStaged(typedPath, reviewedTyped), reviewStaged(typedPath, reviewedTyped)])
+    const typedReceipts = await Promise.all(typedResponses.map(response => response.json()))
+    expect(typedResponses.map(response => response.status), JSON.stringify(typedReceipts) +
+      (typedResponses.some(response => !response.ok) ? readFileSync(join(pgDir, 'pg.log'), 'utf8').slice(-4000) : '')).toEqual([200, 200])
+    expect(typedReceipts[0]).toEqual(typedReceipts[1])
+    expect(typedReceipts[0]).toMatchObject({ status: 'supplemented', sourceIds: [expect.any(Number)], qualificationReadback: { status: 'captured' } })
+    const typedItem = typedReceipts[0].items.find((item: {kind: string}) => item.kind === 'record_event')
+    const published = await app.request('/api/roster/evidence/' + typedItem.detail.evidence[0] + '?official=latest')
+    expect(published.status).toBe(200)
+    expect(await published.json()).toMatchObject({ enterpriseId: typedReceipts[0].owners[0], official: { row: { nameRaw: typedName, listNo: 998 } } })
+
     const exportRequest = { ...snapshot, idempotencyKey: 'postgres-new-export', sourceIdentity: 'new-platform-export.xlsx',
       payload: { exportSnapshot: { ...snapshot.payload.exportSnapshot, year: 2027, sha256: 'c'.repeat(64) } } }
     const exportCommand = (action: string, request = exportRequest) => app.request(`/api/roster/import/${action}`, {

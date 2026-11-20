@@ -94,6 +94,10 @@ function declarationIdentity(db: Executor, declaration: OfficialDeclaration) {
 }
 export function verifyOfficialDeclaration(db: Executor, row: OfficialPublishedRow, outer?: { source: string; title: string; docNumber?: string | null; issueDate?: string | null }) {
   const identity = declarationIdentity(db, row.declaration)
+  return checkOfficialOuterDocument(identity, outer)
+}
+export function checkOfficialOuterDocument(identity: ReturnType<typeof projectOfficialDeclaration>,
+  outer?: { source: string; title: string; docNumber?: string | null; issueDate?: string | null }) {
   if (outer) for (const key of ['source', 'title', 'docNumber', 'issueDate'] as const) {
     if (outer[key] !== undefined && (outer[key] ?? null) !== (identity.document[key] ?? null)) failBinding(`Outer sourceDocument.${key} disagrees with explicit declaration`)
   }

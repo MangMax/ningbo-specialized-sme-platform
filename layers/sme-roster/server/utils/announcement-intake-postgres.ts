@@ -6,7 +6,7 @@ import { ImportReceiptError } from './import-receipts'
 import { committedPostgresImportResult, lockPostgresRosterImportBatch, lockPostgresRosterImportKey } from './roster-export-import-postgres'
 import { usePostgresRosterDb } from './postgres-roster-db'
 
-async function readIntake(db: Pick<NodePgDatabase, 'execute'>, id: number, lock = false) {
+export async function readPostgresIntakeRow(db: Pick<NodePgDatabase, 'execute'>, id: number, lock = false) {
   const { rows: [row] } = await db.execute<IntakeRow>(sql`
     SELECT id::float8 AS id,digest,request,removed_reason,supplement_digest,reviewed_request,receipt
     FROM roster_announcement_intake WHERE id=${id} ${lock ? sql`FOR UPDATE` : sql.empty()}`)
@@ -15,12 +15,12 @@ async function readIntake(db: Pick<NodePgDatabase, 'execute'>, id: number, lock 
 }
 
 export async function readPostgresAnnouncementIntake(db: NodePgDatabase, id: number) {
-  return projectAnnouncementIntake(await readIntake(db, id))
+  return projectAnnouncementIntake(await readPostgresIntakeRow(db, id))
 }
 
 export function removePostgresAnnouncementIntake(db: NodePgDatabase, id: number, sourceDigest: string, reason: string) {
   return db.transaction(async tx => {
-    const row = await readIntake(tx, id, true)
+    const row = await readPostgresIntakeRow(tx, id, true)
     const removed = checkAnnouncementRemoval(row, sourceDigest, reason)
     if (row.removed_reason === null) await tx.execute(sql`UPDATE roster_announcement_intake SET removed_reason=${reason} WHERE id=${id}`)
     return removed
