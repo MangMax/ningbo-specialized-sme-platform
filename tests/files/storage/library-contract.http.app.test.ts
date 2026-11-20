@@ -392,6 +392,51 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     } finally { writeFileSync(join(root, relPath), original) }
   })
 
+  it.skipIf(!enabled)('uses frozen OCR input for parse declarations and shares replay receipts across transports', async () => {
+    const previous = await json('files/41/parse-result', 200)
+    expect(previous).toMatchObject({ parts: expect.arrayContaining([expect.objectContaining({ rowCount: 5, hasConflict: true })]), ingestionStatistics: { rowCount: 1 },
+      declarations: [{ declarationId: 'active-declaration' }] })
+    expect(await tool('get_file_parse_result', { fileId: 41 })).toEqual(previous)
+    const relPath = 'jxj/announcement/2025/3/parse.pdf'
+    mkdirSync(join(root, 'jxj/announcement/2025/3'), { recursive: true })
+    const pdf = minimalPdf({ pages: 2 })
+    writeFileSync(join(root, relPath), pdf)
+    const { id } = await json('files/register', 201, 'POST', { relPath, source: 'jxj', kind: 'announcement', year: 2025, batch: 3 })
+    const path = 'files/' + id + '/parse-result'
+    const page = 'files/' + id + '/ocr-pages/1'
+    await json(page, 200, 'PUT', { markdown: '旧名单', expectedVersion: null })
+    const version = async () => (await json(page, 200)).results[0].version
+    const preflight = (pageVersion: string) => json(path + '/preflight', 200, 'POST', {
+      kind: 'ocr', pages: [{ page: 1, version: pageVersion }], verifyPhysicalPages: true,
+    })
+    const initial = await version()
+    const stale = await preflight(initial)
+    expect(stale.inputRef.physicalSource.pageCount).toBe(2)
+    const parts = [{ titleCode: 'specialized_sme', eventKind: 'award', year: 2025, batch: 3,
+      attachment: '附 件 1', rowCount: 2, pageRanges: [{ start: 1, end: 2 }] }]
+    const fields = { idempotencyKey: 'frozen-parse', actor: { type: 'agent', id: 'fixture' }, reason: '核对过原文', parts }
+    await json(page, 200, 'PUT', { markdown: '正式名单', expectedVersion: initial })
+    await json(path + '/commit', 409, 'POST', { ...fields, ...stale })
+    const command = { ...fields, ...await preflight(await version()) }
+    const saved = await tool('commit_file_parse_result', { fileId: id, ...command })
+    expect(saved).toMatchObject({ replayed: false, state: {
+      parseState: 'parsed', parts: [{ attachment: '附件1', origin: 'agent', hasConflict: false }],
+      declarations: [{ displaySequence: 1, revision: 1, pageRanges: [{ start: 1, end: 2 }] }],
+      inputLineage: { status: 'bound', inputRef: command.inputRef },
+    } })
+    expect(await json(path, 200)).toEqual(saved.state)
+    const replay = await json(path + '/commit', 200, 'POST', command)
+    expect(replay).toEqual({ ...saved, replayed: true })
+    const history = await tool('get_file_parse_history', { fileId: id, receiptId: saved.receiptId })
+    expect(history).toMatchObject({ id: saved.receiptId, after: saved.state, before: { parseState: 'unparsed', parts: [] } })
+    const corrected = await json(path, 200, 'PATCH', {
+      expectedVersion: saved.state.version, idempotencyKey: 'parse-status', actor: fields.actor, reason: fields.reason, parseState: 'failed',
+    })
+    expect(corrected.state).toMatchObject({ parseState: 'failed', parts: saved.state.parts, inputLineage: saved.state.inputLineage })
+    expect((await json(page, 200)).markdown).toBe('<!-- page: 1 -->\n\n正式名单')
+    expect(readFileSync(join(root, relPath))).toEqual(pdf)
+  })
+
   it.skipIf(!enabled)('protects current roster references added after file registration', async () => {
     const relPath = 'uploads/current-roster-evidence.txt'
     writeFileSync(join(root, relPath), original)

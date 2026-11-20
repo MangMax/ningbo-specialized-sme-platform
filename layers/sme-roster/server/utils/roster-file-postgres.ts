@@ -11,16 +11,20 @@ type Lineage = NonNullable<RosterFileFields['partsBinding']>['inputLineage']
 type Declaration = Parameters<typeof registeredSummary681>[0][number]
 
 export async function completePostgresFileParts(db: NodePgDatabase, relPath: string, parts: readonly StoredFilePart[]) {
+  const existing = new Set(parts.map(partKey))
+  const missing = (await derivedPostgresFileParts(db, relPath))
+    .filter(part => !existing.has(partKey(part)))
+    .map(part => ({ ...part, origin: 'derived' as const, hasConflict: false }))
+  return [...parts, ...missing].sort(compareParts)
+}
+
+export async function derivedPostgresFileParts(db: NodePgDatabase, relPath: string) {
   const { rows } = await db.execute<{ part: PartEvidence }>(sql`
     SELECT json_build_object('titleCode', r.title_code, 'eventKind', e.event_type, 'year', e.year,
       'batch', e.batch_seq, 'attachment', v.attachment) AS part
     FROM record_evidence v JOIN record_event e ON e.id = v.record_event_id
     JOIN record r ON r.id = e.record_id WHERE v.source_file = ${relPath}`)
-  const existing = new Set(parts.map(partKey))
-  const missing = aggregateParts(rows.map(({ part }) => ({ ...part, attachment: normalizeAttachment(part.attachment) })))
-    .filter(part => !existing.has(partKey(part)))
-    .map(part => ({ ...part, origin: 'derived' as const, hasConflict: false }))
-  return [...parts, ...missing].sort(compareParts)
+  return aggregateParts(rows.map(({ part }) => ({ ...part, attachment: normalizeAttachment(part.attachment) })))
 }
 
 export const rosterFileMembership = sql`EXISTS (

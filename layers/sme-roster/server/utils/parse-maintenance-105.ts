@@ -9,7 +9,8 @@ import * as schema from '../../../../db/schema'
 import { EVENT_ORDER, TITLE_ORDER } from '../../lib/labels'
 import { derivedPartsForFile, listFileParts } from './file-parts'
 import { applyParseResult, normalizeParseParts } from './parse-result'
-import { partKey } from '../../lib/file-parts'
+import { partKey, type StoredFilePart } from '../../lib/file-parts'
+import type { FilePart } from '../../../../db/file-part'
 import { readPdfPageCount } from '../../../core/server/utils/pdf-pages'
 import { listRegisteredDeclarations681, registeredSummary681 } from './registered-declarations'
 import { getStoredFile } from '../../../core/server/utils/stored-files'
@@ -25,7 +26,7 @@ export const parseInputRef310 = z.strictObject({
   physicalSource: z.strictObject({ pageCount: z.number().int().positive(), contentVersion: z.string().min(1) }).optional(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/), kind: z.enum(['file', 'ocr']), pages: pages310,
 }).refine(v => v.kind === 'ocr' ? v.pages.length > 0 : v.pages.length === 0, '输入类型与 OCR 页不一致')
-type InputRef310 = z.infer<typeof parseInputRef310>
+export type InputRef310 = z.infer<typeof parseInputRef310>
 type InputLineage310 = { status: 'unknown' } | { status: 'bound'; inputRef: InputRef310 }
 const pageRange669 = z.strictObject({ start: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), end: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).refine(r => r.start <= r.end, '页码范围逆序')
 export const parsePart105 = z.strictObject({
@@ -48,7 +49,7 @@ export const parseWrite105 = z.strictObject({
   reason: z.string().trim().min(1).max(2000),
 }).refine(v => v.parts !== undefined || v.parseState !== undefined, '至少给 parts 或 parseState')
   .refine(v => v.inputRef === undefined || v.parts !== undefined, '输入依据只用于替换解析段,状态更正保留原依据')
-const modernEnvelope105 = ['expectedVersion', 'idempotencyKey', 'actor', 'reason'] as const
+export const modernEnvelope105 = ['expectedVersion', 'idempotencyKey', 'actor', 'reason'] as const
 export const parseSave105 = z.strictObject({
   ...parseWrite105.shape,
   fileId: z.number().int().positive().optional(), relPath: z.string().trim().min(1).optional(),
@@ -83,6 +84,20 @@ function currentInput310(db: Db, fileId: number, selection: z.infer<typeof parse
   const file = db.select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt })
     .from(schema.storedFile).where(eq(schema.storedFile.id, fileId)).get()
   if (!file) return fail(404, '文件不存在')
+  const input = readParseInput310(file, selection, filesDir, physicalSource)
+  for (const page of input.pages) {
+    const current = db.select({ id: schema.ocrResult.id, revision: schema.ocrResult.revision }).from(schema.ocrResult)
+      .where(and(eq(schema.ocrResult.fileId, fileId), eq(schema.ocrResult.pageNo, page.page))).get()
+    if (!current || `${current.id}:${current.revision}` !== page.version) return fail(409, '解析 OCR 输入已变化,请重新读取实际采用页后预检')
+  }
+  return input
+}
+
+export function readParseInput310(
+  file: Pick<typeof schema.storedFile.$inferSelect, 'id' | 'relPath' | 'sha256' | 'removedAt'>,
+  selection: Pick<InputRef310, 'kind' | 'pages'>,
+  filesDir: string, physicalSource?: InputRef310['physicalSource'],
+): InputRef310 {
   if (file.removedAt) return fail(409, '已移出文件不允许解析预检')
   let sha256: string
   let contentVersion: string
@@ -118,12 +133,12 @@ function currentInput310(db: Db, fileId: number, selection: z.infer<typeof parse
   } catch { return fail(409, '无法核实解析文件内容身份,请重新读取并核实文件') }
   if (sha256 !== file.sha256) return fail(409, '解析文件内容身份与登记不符,请重新读取并核实文件')
   const pages = [...selection.pages].sort((a, b) => a.page - b.page)
-  for (const page of pages) {
-    const current = db.select({ id: schema.ocrResult.id, revision: schema.ocrResult.revision }).from(schema.ocrResult)
-      .where(and(eq(schema.ocrResult.fileId, fileId), eq(schema.ocrResult.pageNo, page.page))).get()
-    if (!current || `${current.id}:${current.revision}` !== page.version) return fail(409, '解析 OCR 输入已变化,请重新读取实际采用页后预检')
-  }
-  return { format: 1, fileId, relPath: file.relPath, sha256, kind: selection.kind, pages, ...(physicalSource ? { physicalSource: { pageCount: physicalSource.pageCount, contentVersion } } : {}) }
+  return { format: 1, fileId: file.id, relPath: file.relPath, sha256, kind: selection.kind, pages, ...(physicalSource ? { physicalSource: { pageCount: physicalSource.pageCount, contentVersion } } : {}) }
+}
+
+export function equalParseInput(actual: InputRef310, expected: InputRef310) {
+  const { format, fileId, relPath, sha256, kind, pages, physicalSource } = expected
+  return hash(actual) === hash({ format, fileId, relPath, sha256, kind, pages, ...(physicalSource ? { physicalSource } : {}) })
 }
 
 /** The caller supplies versions from the OCR it actually read; never choose newer pages. */
@@ -161,12 +176,12 @@ export async function commitRanges669(db: Db, fileId: number, raw: unknown, file
   const replay = db.select().from(schema.fileParseAudit105).where(and(eq(schema.fileParseAudit105.fileId, fileId), eq(schema.fileParseAudit105.idempotencyKey, input.idempotencyKey))).get()
   if (!replay && input.inputRef.physicalSource) {
     const verified = await physicalInput669(db, fileId, input.inputRef, filesDir)
-    if (hash(verified) !== hash({ format: input.inputRef.format, fileId: input.inputRef.fileId, relPath: input.inputRef.relPath, sha256: input.inputRef.sha256, kind: input.inputRef.kind, pages: input.inputRef.pages, physicalSource: input.inputRef.physicalSource })) return fail(409, '文件内容版本已变化,请重新预检')
+    if (!equalParseInput(verified, input.inputRef)) return fail(409, '文件内容版本已变化,请重新预检')
   }
   return saveParse105(db, fileId, input, undefined, context, filesDir, true)
 }
 
-function lineage310(snapshot: Record<string, unknown> | undefined): InputLineage310 {
+export function lineage310(snapshot: Record<string, unknown> | undefined): InputLineage310 {
   const lineage = snapshot?.inputLineage as InputLineage310 | undefined
   return lineage?.status === 'bound' ? lineage : { status: 'unknown' }
 }
@@ -182,15 +197,25 @@ export function readParse105(db: Db, fileId: number) {
     .where(eq(schema.fileParseAudit105.fileId, fileId)).orderBy(desc(schema.fileParseAudit105.id)).limit(1).get()
   const declarations = listRegisteredDeclarations681(db, [fileId]).get(fileId) ?? []
   const derived = derivedPartsForFile(db, fileId)
-  const version = hash({ sha256: file.sha256, declarations, fileId, parseState: file.parseState, removedAt: file.removedAt, parts, derived, revision: last?.id ?? 0 })
-  return { fileId, parseState: file.parseState, parts, declarations, registeredSummary: registeredSummary681(declarations), ingestionStatistics: { parts: derived, rowCount: derived.reduce((sum, part) => sum + part.rowCount, 0) }, version, removedAt: file.removedAt, inputLineage: lineage310(last?.after) }
+  return projectParseState(file, parts, declarations, derived, last)
 }
+
+export function projectParseState(
+  file: { id: number; sha256: string; parseState: string; removedAt: string | null }, parts: StoredFilePart[],
+  declarations: Parameters<typeof registeredSummary681>[0], derived: FilePart[],
+  last?: { id: number; after: Record<string, unknown> },
+) {
+  const { id: fileId, sha256, parseState, removedAt } = file
+  const version = hash({ sha256, declarations, fileId, parseState, removedAt, parts, derived, revision: last?.id ?? 0 })
+  return { fileId, parseState, parts, declarations, registeredSummary: registeredSummary681(declarations), ingestionStatistics: { parts: derived, rowCount: derived.reduce((sum, part) => sum + part.rowCount, 0) }, version, removedAt, inputLineage: lineage310(last?.after) }
+}
+
 export function getParse105(db: Db, fileId: number) {
   return db.transaction(tx => readParse105(tx as Db, fileId))
 }
 
 /** One atomic parse resource write, shared by REST and MCP. Replay precedes version checks. */
-function saveParse105Unlogged(db: Db, fileId: number, raw: unknown, mode?: 'replace' | 'status', filesDir?: string, verifiedPhysical = false) {
+export function prepareParseWrite105(raw: unknown, mode?: 'replace' | 'status') {
   const parsed = parseWrite105.safeParse(raw)
   if (!parsed.success) return fail(400, parsed.error.message)
   const input = parsed.data
@@ -203,6 +228,23 @@ function saveParse105Unlogged(db: Db, fileId: number, raw: unknown, mode?: 'repl
   const inputRef = input.inputRef && { ...input.inputRef, pages: [...input.inputRef.pages].sort((a, b) => a.page - b.page) }
   // Omit absent lineage to preserve old request hashes and immutable receipt replay.
   const requestHash = hash({ expectedVersion: input.expectedVersion, parts, parseState, actor: input.actor, reason: input.reason, ...(inputRef ? { inputRef } : {}), ...(input.parts?.some(p => p.declarationId !== undefined || p.pageRanges !== undefined) ? { rangeEdits: input.parts.map(p => ({ declarationId: p.declarationId, pageRanges: p.pageRanges })) } : {}) })
+  return { input, parts, parseState, inputRef, requestHash }
+}
+
+export function validateParseRevision(before: ReturnType<typeof projectParseState>, command: ReturnType<typeof prepareParseWrite105>, verifiedPhysical: boolean) {
+  const { input, inputRef, parts } = command
+  if (before.removedAt) return fail(409, '已移出文件不允许修改解析结果')
+  if (before.version !== input.expectedVersion) return fail(409, '解析版本冲突,请重新读取后提交')
+  if (parts !== undefined && !inputRef && before.inputLineage.status === 'bound') {
+    return fail(409, '解析已绑定输入依据,请重新读取并预检后携完整 inputRef 提交;不得降级覆盖')
+  }
+  if (inputRef?.physicalSource && !verifiedPhysical) return fail(409, '物理页码输入必须经冻结commit提交')
+  if (input.parts?.some(p => p.pageRanges?.length) && !inputRef?.physicalSource) return fail(409, '页码范围必须先verifyPhysicalPages预检')
+}
+
+function saveParse105Unlogged(db: Db, fileId: number, raw: unknown, mode?: 'replace' | 'status', filesDir?: string, verifiedPhysical = false) {
+  const command = prepareParseWrite105(raw, mode)
+  const { input, parts, parseState, inputRef, requestHash } = command
   return db.transaction(tx => {
     const scoped = tx as Db
     const receipt = tx.select({ id: schema.fileParseAudit105.id, requestHash: schema.fileParseAudit105.requestHash, after: schema.fileParseAudit105.after }).from(schema.fileParseAudit105)
@@ -212,19 +254,11 @@ function saveParse105Unlogged(db: Db, fileId: number, raw: unknown, mode?: 'repl
       return { receiptId: receipt.id, replayed: true, state: receipt.after }
     }
     const before = readParse105(scoped, fileId)
-    if (before.removedAt) return fail(409, '已移出文件不允许修改解析结果')
-    if (before.version !== input.expectedVersion) return fail(409, '解析版本冲突,请重新读取后提交')
-    // Compatibility may edit unknown history, but cannot erase an established basis.
-    // True immutable receipt replay has already returned above this gate.
-    if (parts !== undefined && !inputRef && before.inputLineage.status === 'bound') {
-      return fail(409, '解析已绑定输入依据,请重新读取并预检后携完整 inputRef 提交;不得降级覆盖')
-    }
-    if (inputRef?.physicalSource && !verifiedPhysical) return fail(409, '物理页码输入必须经冻结commit提交')
-    if (input.parts?.some(p => p.pageRanges?.length) && !inputRef?.physicalSource) return fail(409, '页码范围必须先verifyPhysicalPages预检')
+    validateParseRevision(before, command, verifiedPhysical)
     if (inputRef) {
       if (!filesDir) return fail(409, '无法核实解析输入,请重新读取并预检')
       try {
-        if (hash(currentInput310(scoped, fileId, inputRef, filesDir, inputRef.physicalSource)) !== hash({ format: inputRef.format, fileId: inputRef.fileId, relPath: inputRef.relPath, sha256: inputRef.sha256, kind: inputRef.kind, pages: inputRef.pages, ...(inputRef.physicalSource ? { physicalSource: inputRef.physicalSource } : {}) })) return fail(409, '解析输入已变化,请重新读取并预检后提交')
+        if (!equalParseInput(currentInput310(scoped, fileId, inputRef, filesDir, inputRef.physicalSource), inputRef)) return fail(409, '解析输入已变化,请重新读取并预检后提交')
       } catch (error) {
         if (error instanceof ParseMaintenanceError) return fail(409, '解析输入已变化,请重新读取并预检后提交')
         throw error
@@ -319,7 +353,16 @@ export function saveParse105(db: Db, fileId: number, raw: unknown, mode?: 'repla
 
 function writeDeclarations669(db: Db, fileId: number, raw: z.infer<typeof parsePart105>[], previous: (typeof schema.fileDeclaration669.$inferSelect)[], inputRef?: InputRef310) {
   const sha256 = db.select().from(schema.storedFile).where(eq(schema.storedFile.id, fileId)).get()!.sha256
-  let sequence = db.select({ maximum: sql<number>`coalesce(max(${schema.fileDeclaration669.displaySequence}), 0)` }).from(schema.fileDeclaration669).where(eq(schema.fileDeclaration669.fileId, fileId)).get()!.maximum
+  const sequence = db.select({ maximum: sql<number>`coalesce(max(${schema.fileDeclaration669.displaySequence}), 0)` }).from(schema.fileDeclaration669).where(eq(schema.fileDeclaration669.fileId, fileId)).get()!.maximum
+  const { next, withdrawn } = planDeclarations669(fileId, sha256, raw, previous, sequence, inputRef)
+  for (const old of withdrawn) db.update(schema.fileDeclaration669).set({ active: false, revision: old.revision + 1 }).where(eq(schema.fileDeclaration669.declarationId, old.declarationId)).run()
+  for (const declaration of next) db.insert(schema.fileDeclaration669).values(declaration).onConflictDoUpdate({ target: schema.fileDeclaration669.declarationId, set: declaration }).run()
+}
+
+export function planDeclarations669(
+  fileId: number, sha256: string, raw: z.infer<typeof parsePart105>[],
+  previous: (typeof schema.fileDeclaration669.$inferSelect)[], sequence: number, inputRef?: InputRef310,
+) {
   const used = new Set<string>()
   const next = raw.map(item => {
     const normalized = normalizeParseParts([item])
@@ -345,6 +388,5 @@ function writeDeclarations669(db: Db, fileId: number, raw: z.infer<typeof parseP
     const contentVersion = item.pageRanges !== undefined ? inputRef?.physicalSource?.contentVersion ?? null : old?.contentVersion ?? null
     return { displaySequence: old?.displaySequence ?? ++sequence, contentVersion, declarationId, fileId, revision: (old?.revision ?? 0) + 1, active: true, sha256, part, pageRanges }
   })
-  for (const old of previous) if (!used.has(old.declarationId)) db.update(schema.fileDeclaration669).set({ active: false, revision: old.revision + 1 }).where(eq(schema.fileDeclaration669.declarationId, old.declarationId)).run()
-  for (const declaration of next) db.insert(schema.fileDeclaration669).values(declaration).onConflictDoUpdate({ target: schema.fileDeclaration669.declarationId, set: declaration }).run()
+  return { next, withdrawn: previous.filter(old => !used.has(old.declarationId)) }
 }
