@@ -61,7 +61,7 @@ export interface RosterRecognitionsResult {
 
 const DEFAULT_PAGE_SIZE = 50
 
-function pageOf(input: { page?: number; pageSize?: number }): { page: number; pageSize: number } {
+export function recognitionPageOf(input: { page?: number; pageSize?: number }): { page: number; pageSize: number } {
   const page = Number.isFinite(input.page) && (input.page as number) >= 1 ? Math.floor(input.page as number) : 1
   const size =
     Number.isFinite(input.pageSize) && (input.pageSize as number) >= 1
@@ -79,7 +79,7 @@ export function listRosterRecognitions(
   db: Db,
   filter: RosterRecognitionFilter = {},
 ): RosterRecognitionsResult {
-  const { page, pageSize } = pageOf(filter)
+  const { page, pageSize } = recognitionPageOf(filter)
   return db.transaction(() => readRecognitionPage(db, filter, page, pageSize))
 }
 

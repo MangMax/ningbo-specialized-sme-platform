@@ -4,6 +4,7 @@ import { readRecognitions } from '../../utils/recognition-read'
 import { useDb } from '@db'
 import { setHeader } from 'h3'
 import { parseRosterRecognitionQuery } from '../../utils/roster-read-query'
+import { readPostgresRecognitions, usePostgresRecognitionDb } from '../../utils/postgres-recognition-read'
 
 /**
  * **首次认定清单**(契约 §7.5,RL-08)。
@@ -66,10 +67,12 @@ function recognitionOptions(query: Record<string, unknown>) {
   return { ...parseRosterRecognitionQuery(query) }
 }
 export default defineEventHandler((event) => {
-  const owner = useDb()
   const filter = recognitionOptions(getQuery(event))
   return withEnterpriseReadSignal(event, async signal => {
-    const result = await readRecognitions(owner, filter, signal, undefined, requestLogContext(event))
+    if (signal.aborted) return
+    const pg = usePostgresRecognitionDb()
+    if (pg) return readPostgresRecognitions(pg, filter)
+    const result = await readRecognitions(useDb(), filter, signal, undefined, requestLogContext(event))
     if (Buffer.isBuffer(result)) setHeader(event, 'content-type', 'application/json')
     return result
   })

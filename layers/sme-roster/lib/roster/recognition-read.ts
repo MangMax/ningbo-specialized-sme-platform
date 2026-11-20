@@ -13,6 +13,35 @@ import type { RosterRecognitionFilter, RosterRecognitionRow, RosterRecognitionsR
 
 type Db = BetterSQLite3Database<typeof schema>
 interface Coordinate { enterpriseId: number; name: string; titleCode: string }
+type AwardRow = Coordinate & RecognitionEvent & { hasEvidence: boolean }
+
+function rank(code: string) {
+  const index = TITLE_ORDER.indexOf(code)
+  return index < 0 ? TITLE_ORDER.length : index
+}
+
+export function compareRecognitionCoordinates(a: Coordinate, b: Coordinate) {
+  return rank(a.titleCode) - rank(b.titleCode) || a.name.localeCompare(b.name) || a.enterpriseId - b.enterpriseId
+}
+
+export function* summarizeRecognitionAwards(rows: Iterable<AwardRow>) {
+  let coordinate: Coordinate | undefined
+  let events: AwardRow[] = []
+  const finish = () => {
+    const lifecycle = computeFirstAward(events)
+    const hasEvidence = events.some(event => event.id === lifecycle.firstRecognitionEventId && event.hasEvidence)
+    return { ...coordinate!, ...summarizeFirstRecognition({ titleCode: coordinate!.titleCode, lifecycle, events, hasEvidence })! }
+  }
+  for (const row of rows) {
+    if (coordinate?.enterpriseId !== row.enterpriseId || coordinate?.titleCode !== row.titleCode) {
+      if (coordinate) yield finish()
+      coordinate = { enterpriseId: row.enterpriseId, name: row.name, titleCode: row.titleCode }
+      events = []
+    }
+    events.push(row)
+  }
+  if (coordinate) yield finish()
+}
 
 /** At most one enterprise/title history is materialized at a time. Review,
  * maintenance and nurture cannot affect first recognition, so only award events
@@ -33,26 +62,12 @@ function* summaries(db: Db, titles?: string[], selected?: Coordinate[]) {
   const rows = (db as Db & { $client: Database }).$client.prepare(query.sql).raw().iterate(...query.params) as
     Iterable<[number, string, string, string, number, string, number | null, number | null, string | null, number]>
 
-  let coordinate: Coordinate | undefined
-  let events: RecognitionEvent[] = []
-  let withEvidence = new Set<number>()
-  const finish = () => {
-    const lifecycle = computeFirstAward(events)
-    const summary = summarizeFirstRecognition({ titleCode: coordinate!.titleCode, lifecycle, events,
-      hasEvidence: lifecycle.firstRecognitionEventId != null && withEvidence.has(lifecycle.firstRecognitionEventId) })!
-    return { ...coordinate!, ...summary }
-  }
-  for (const [enterpriseId, name, titleCode, source, id, eventType, year, decidedYear, reviewOutcome, hasEvidence] of rows) {
-    const row = { enterpriseId, name, titleCode, source, id, eventType, year, decidedYear, reviewOutcome, hasEvidence }
-    if (coordinate?.enterpriseId !== row.enterpriseId || coordinate?.titleCode !== row.titleCode) {
-      if (coordinate) yield finish()
-      coordinate = { enterpriseId: row.enterpriseId, name: row.name, titleCode: row.titleCode }
-      events = []; withEvidence = new Set()
+  function* awards() {
+    for (const [enterpriseId, name, titleCode, source, id, eventType, year, decidedYear, reviewOutcome, hasEvidence] of rows) {
+      yield { enterpriseId, name, titleCode, source, id, eventType, year, decidedYear, reviewOutcome, hasEvidence: Boolean(hasEvidence) }
     }
-    events.push(row)
-    if (row.hasEvidence) withEvidence.add(row.id)
   }
-  if (coordinate) yield finish()
+  yield* summarizeRecognitionAwards(awards())
 }
 
 export function readRecognitionPage(db: Db, filter: RosterRecognitionFilter, page: number, pageSize: number): RosterRecognitionsResult {
@@ -68,8 +83,7 @@ export function readRecognitionPage(db: Db, filter: RosterRecognitionFilter, pag
     enterpriseIds.add(summary.enterpriseId)
     titles[summary.titleCode] = (titles[summary.titleCode] ?? 0) + 1
   }
-  const rank = (code: string) => { const i = TITLE_ORDER.indexOf(code); return i < 0 ? TITLE_ORDER.length : i }
-  coordinates.sort((a, b) => rank(a.titleCode) - rank(b.titleCode) || a.name.localeCompare(b.name) || a.enterpriseId - b.enterpriseId)
+  coordinates.sort(compareRecognitionCoordinates)
   const selected = coordinates.slice((page - 1) * pageSize, page * pageSize)
   const counts = { titlePairs: coordinates.length, enterprises: enterpriseIds.size, titles }
   if (!selected.length) return { rows: [], counts, page, pageSize }
