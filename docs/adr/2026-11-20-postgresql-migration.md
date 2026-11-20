@@ -34,6 +34,12 @@ node upgrade/postgresql/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA 
 
 隔离应用显式配置 `NUXT_POSTGRES_DIRECTORY_WRITE=1` 时，企业新增、资料修改、移出、恢复和字典编辑写入 PostgreSQL。企业与直接来源登记共用事务，资料版本在锁定企业行后检查。来自同一身份的并发新增共用事务级锁。线索名单额外设置 `NUXT_POSTGRES_LEAD_REGISTRATION=1`，才启用 PostgreSQL 名单登记、目录、详情和原件下载。登记在文件行锁下重新核对文件身份及隔离意图，并原子写入名单、原行与来源。线索补充和导出在该模式下返回 503，直到事务和任务入口迁入同一数据库。文件维护写入迁移时，隔离和恢复须先获取同一个文件行锁。
 
+隔离应用同时设置 `NUXT_POSTGRES_FILE_LIBRARY=1` 后，核心文件 HTTP 列表、上传登记、原件与页图身份核验、显示名和维护历史、软移出、恢复、物理隔离与恢复使用 PostgreSQL 文件身份和维护账本。继续由独立的 `NUXT_FILES_DIR` 和 `NUXT_INCOMING_DIR` 保存原件和上传分片。文件写入口另需 `NUXT_POSTGRES_DIRECTORY_WRITE=1`。保留 SQLite 只读实例供尚未迁移的模块查询。
+
+物理命令先在 `stored_file` 行锁内提交意图，再获取同一个行锁核对内容身份、修订与引用，移动原字节并提交维护记录与完成回执。线索登记使用同一行锁，引用数在 PostgreSQL 实时读取。事务失败后，使用原幂等键重试或显式恢复未完成意图。文件表从已核验暂存数据生成按原路径计数的名录引用基线，包含尚未登记的出处路径。名录开始在 PostgreSQL 写入前，须将这份静态基线替换为名录模块提供的实时引用查询，并让新增引用与物理命令协调同一文件行锁。
+
+当前兼容文件列表保留线索引用筛选。名录业务字段的投影、排序、筛选、上传登记及编辑由名录迁移接入，已识别但尚未接入的请求返回 503。文件 MCP、OCR 数据和任务执行另行迁移。可使用 `TEST_FILE_LIBRARY_PG_BIN=/path/to/pgsql/bin pnpm test:app tests/files/storage/library-contract.http.app.test.ts --maxWorkers=1` 对同一合成快照验证 SQLite 和独立 PostgreSQL 实例。
+
 重建已实现的原生结构时，先生成业务与日志的已对账暂存 schema，再按以下顺序在隔离数据库运行。第一条命令创建 `business` schema，存在同名 schema 时中止。
 
 ```sh

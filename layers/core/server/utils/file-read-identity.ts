@@ -22,9 +22,15 @@ export function registeredFileAtLocator(db: Db, relPath: string) {
 
 /** A locator resolves a registered ID; it never becomes a content identity. */
 export async function verifyFileRead(db: Db, root: string, locator: string): Promise<FileReadIdentity> {
+  return verifyFileReadAtLocator(root, locator, path => registeredFileAtLocator(db, path))
+}
+
+export async function verifyFileReadAtLocator(
+  root: string, locator: string, lookup: (path: string) => StoredFileContentIdentity | null | Promise<StoredFileContentIdentity | null>,
+): Promise<FileReadIdentity> {
   const abs = resolveInsideRoot(root, locator)
   if (!abs) throw createError({ statusCode: 403, message: '路径越界' })
-  const registered = registeredFileAtLocator(db, relative(root, abs).split('\\').join('/'))
+  const registered = await lookup(relative(root, abs).split('\\').join('/'))
   return verifyRegisteredBytes(abs, registered)
 }
 
@@ -56,6 +62,10 @@ async function verifyRegisteredBytes(abs: string, registered: StoredFileContentI
 /** Existing v2 manifest is the only available page/source lineage. No backfill. */
 export async function verifyPageRead(db: Db, root: string, source: string, pagePath?: string, verified?: FileReadIdentity) {
   const identity = verified ?? await verifyFileRead(db, root, source)
+  return verifyRenderedPageRead(root, source, identity, pagePath)
+}
+
+export async function verifyRenderedPageRead(root: string, source: string, identity: FileReadIdentity, pagePath?: string) {
   const { readFile } = await import('node:fs/promises')
   const { manifestRelPath } = await import('../../lib/pdf-page')
   const manifestAbs = resolveInsideRoot(root, manifestRelPath(source))

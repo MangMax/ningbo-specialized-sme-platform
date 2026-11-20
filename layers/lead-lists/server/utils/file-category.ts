@@ -7,6 +7,19 @@ import manifest from '../../manifest'
 export const leadListFileServerCategory = {
   id: manifest.id,
   ...manifest.fileCategories,
+  postgres: {
+    async countReferences(db, ids) {
+      const { rows } = await db.execute<{ file_id: string; count: string }>(sql`
+        SELECT file_id, count(*) AS count FROM lead_list_version WHERE file_id IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})
+        GROUP BY file_id`)
+      return new Map(rows.map(row => [Number(row.file_id), Number(row.count)]))
+    },
+    constraint(filters) {
+      if (filters.leadListUsage?.includes('source')) {
+        return sql`stored_file.id IN (SELECT file_id FROM lead_list_version)`
+      }
+    },
+  },
   readFields(db, ids) {
     if (!db.get(sql`SELECT 1 FROM sqlite_schema WHERE type='table' AND name='lead_list_row'`)) return new Map()
     const rows = db.select({ id: leadListVersion.fileId, referenceCount: count() }).from(leadListVersion)

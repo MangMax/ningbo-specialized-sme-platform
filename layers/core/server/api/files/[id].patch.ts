@@ -1,6 +1,8 @@
+import { maintainPostgresFile } from '../../utils/file-maintenance-postgres'
+import { usePostgresFileDb } from '../../utils/file-store-postgres'
 import { requestLogContext } from '../../../lib/logging'
 import { requireApiToken } from '../../utils/api-guard'
-import { hasFileMaintenanceControls } from '../../utils/file-maintenance'
+import { hasFileMaintenanceControls, splitFileMaintenanceBody } from '../../utils/file-maintenance'
 import { useDb } from '@db'
 import { handleStoredFilePatchRequest } from '../../utils/stored-file-patch-http'
 
@@ -100,6 +102,17 @@ export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   setHeader(event, 'cache-control', 'no-store')
   if (hasFileMaintenanceControls(body)) requireApiToken(event)
+  const pg = usePostgresFileDb()
+  if (pg) {
+    const id = Number(getRouterParam(event, 'id'))
+    if (!Number.isSafeInteger(id) || id <= 0) throw createError({ statusCode: 400, message: '文件 id 非法' })
+    try {
+      const { options, patch } = splitFileMaintenanceBody(body, 'update')
+      return await maintainPostgresFile(pg, useRuntimeConfig().filesDir, id, 'update', patch, options, requestLogContext(event))
+    } catch (error) {
+      throw createError({ statusCode: (error as { statusCode?: number }).statusCode ?? 500, message: (error as Error).message })
+    }
+  }
   const result = handleStoredFilePatchRequest(
     'PATCH',
     getRouterParam(event, 'id'),

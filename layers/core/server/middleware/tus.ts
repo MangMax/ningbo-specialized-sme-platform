@@ -1,7 +1,18 @@
+import { libraryUploadCategory } from '../../lib/core/library-uploads'
+import type { ResolveUploadPlacement } from '../../lib/core/file-categories'
+import { requirePostgresFileWrite, usePostgresFileDb } from '../utils/file-store-postgres'
 import { appLog, requestLogContext, setRequestLogMetadata, type TusLogContext } from '../../lib/logging'
 import { httpLogModule } from '../../lib/logging/module'
 import { resolveUploadPlacement } from '../utils/stored-files'
 import { TUS_PATH, getTus, withTusObservation, type TusObservation } from '../utils/tus'
+
+const postgresUploadPlacement: ResolveUploadPlacement = metadata => {
+  const placement = resolveUploadPlacement(metadata)
+  if (metadata.fileCategory !== libraryUploadCategory) {
+    throw { status_code: 503, body: '此文件分类尚未接入 PostgreSQL 文件库\n' }
+  }
+  return placement
+}
 
 /**
  * 把 `/api/uploads` 交给 tus `Server` 处理(web 标准入口)。
@@ -27,8 +38,13 @@ export default defineEventHandler(async (event) => {
   const observation: TusObservation = {}
   let logged = false
   try {
+    const pg = usePostgresFileDb()
+    if (pg && event.method !== 'HEAD' && event.method !== 'OPTIONS') {
+      try { requirePostgresFileWrite() }
+      catch (error) { throw createError({ statusCode: 503, message: (error as Error).message }) }
+    }
     const { result: response } = await withTusObservation(() =>
-      getTus(resolveUploadPlacement).handleWeb(toWebRequest(event)), observation,
+      getTus(pg ? postgresUploadPlacement : resolveUploadPlacement).handleWeb(toWebRequest(event)), observation,
     )
     const status = response.status
     // A client disconnect may surface as `Connection: close`; it is an observed

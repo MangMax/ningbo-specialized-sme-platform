@@ -38,11 +38,11 @@ export function splitFileMaintenanceBody(body: unknown, action: FileMaintenanceA
 export function fileMaintenanceRevision(db: Db, id: number) {
   return db.select({ revision: schema.fileMaintenanceAudit.revision }).from(schema.fileMaintenanceAudit).where(eq(schema.fileMaintenanceAudit.fileId, id)).orderBy(desc(schema.fileMaintenanceAudit.revision)).limit(1).get()?.revision ?? 0
 }
-function snapshot(file: StoredFileRow): Record<string, unknown> {
+export function fileMaintenanceSnapshot(file: StoredFileRow, extension: Record<string, unknown> = {}): Record<string, unknown> {
   const { displayName, removedAt, filename, relPath, bytes, sha256 } = file
-  return { ...extensionSnapshot(file), displayName, removedAt, filename, relPath, bytes, sha256 }
+  return { ...extension, displayName, removedAt, filename, relPath, bytes, sha256 }
 }
-function hashRequest(id: number, action: FileMaintenanceAction, patch: unknown, options: FileMaintenanceOptions) {
+export function fileMaintenanceRequestHash(id: number, action: FileMaintenanceAction, patch: unknown, options: FileMaintenanceOptions) {
   return createHash('sha256').update(JSON.stringify({ id, action, patch, expectedRevision: options.expectedRevision ?? null, actor: options.actor ?? null, basis: options.basis ?? null })).digest('hex')
 }
 function replay(db: Db, key: string | undefined, hash: string, id: number) {
@@ -52,20 +52,31 @@ function replay(db: Db, key: string | undefined, hash: string, id: number) {
   if (previous.requestHash !== hash) throw new FileMaintenanceError(409, '幂等键已用于不同请求')
   return getStoredFile(db, id)!
 }
-/** Both transports use this transaction; receipts contain only bounded metadata snapshots. */
-export function maintainStoredFileSync(db: Db, id: number, action: FileMaintenanceAction, rawPatch: unknown, rawOptions: FileMaintenanceOptions = {}, verifiedState?: { file: StoredFileRow; revision: number }) {
-  const options = parseFileMaintenanceOptions(rawOptions)
-  let patch: ReturnType<typeof parseMetadataPatch> | { displayName: string } = {}
+export function normalizeFileMaintenancePatch(action: FileMaintenanceAction, rawPatch: unknown, options: FileMaintenanceOptions, parseMetadata: (input: unknown) => Record<string, unknown>) {
+  let patch: Record<string, unknown> | { displayName: string } = {}
   try {
     if (action === 'update') {
       patch = rawPatch && typeof rawPatch === 'object' && 'displayName' in rawPatch
-        ? { displayName: parseDisplayNamePatch(rawPatch) } : parseMetadataPatch(rawPatch)
+        ? { displayName: parseDisplayNamePatch(rawPatch) } : parseMetadata(rawPatch)
       if (!Object.keys(patch).length && options.expectedRevision !== undefined) throw new Error('至少给一个元数据字段或 displayName')
     }
-  } catch (error) { throw new FileMaintenanceError(400, (error as Error).message) }
+  } catch (error) {
+    if (error instanceof FileMaintenanceError) throw error
+    throw new FileMaintenanceError(400, (error as Error).message)
+  }
   // Normalize field order for transport-independent retries.
-  patch = Object.fromEntries(Object.entries(patch).sort(([a], [b]) => a.localeCompare(b)))
-  const hash = hashRequest(id, action, patch, options)
+  return Object.fromEntries(Object.entries(patch).sort(([a], [b]) => a.localeCompare(b)))
+}
+
+export function validateFileMaintenancePage(page: number, pageSize: number) {
+  if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100 || !Number.isSafeInteger((page - 1) * pageSize)) throw new FileMaintenanceError(400, 'page 必须为正整数,pageSize 范围 1–100')
+}
+
+/** Both transports use this transaction; receipts contain only bounded metadata snapshots. */
+export function maintainStoredFileSync(db: Db, id: number, action: FileMaintenanceAction, rawPatch: unknown, rawOptions: FileMaintenanceOptions = {}, verifiedState?: { file: StoredFileRow; revision: number }) {
+  const options = parseFileMaintenanceOptions(rawOptions)
+  const patch = normalizeFileMaintenancePatch(action, rawPatch, options, parseMetadataPatch)
+  const hash = fileMaintenanceRequestHash(id, action, patch, options)
   const repeated = replay(db, options.idempotencyKey, hash, id)
   if (repeated) return repeated
   const verified = verifiedState?.file
@@ -87,7 +98,7 @@ export function maintainStoredFileSync(db: Db, id: number, action: FileMaintenan
       if (!updated) throw new FileMaintenanceError(404, '未找到可更新的文件分类')
       after = updated
     }
-    const beforeValues = snapshot(current), afterValues = snapshot(after)
+    const beforeValues = fileMaintenanceSnapshot(current, extensionSnapshot(current)), afterValues = fileMaintenanceSnapshot(after, extensionSnapshot(after))
     // An unkeyed no-op needs no duplicate audit. Keyed no-ops retain a replay receipt.
     if (options.idempotencyKey || JSON.stringify(beforeValues) !== JSON.stringify(afterValues)) {
       tx.insert(schema.fileMaintenanceAudit).values({ fileId: id, revision: revision + 1, action, idempotencyKey: options.idempotencyKey ?? null, requestHash: hash, mode: options.expectedRevision === undefined ? 'legacy' : 'versioned', actor: options.actor ?? null, basis: options.basis ?? null, before: beforeValues, after: afterValues }).run()
@@ -96,7 +107,7 @@ export function maintainStoredFileSync(db: Db, id: number, action: FileMaintenan
   }, { behavior: 'immediate' })
 }
 export function readFileMaintenance(db: Db, id: number, page = 1, pageSize = 50) {
-  if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100 || !Number.isSafeInteger((page - 1) * pageSize)) throw new FileMaintenanceError(400, 'page 必须为正整数,pageSize 范围 1–100')
+  validateFileMaintenancePage(page, pageSize)
   return db.transaction(tx => {
     const file = getStoredFile(tx, id)
     if (!file) throw new FileMaintenanceError(404, '文件不存在')
@@ -110,7 +121,7 @@ export function readFileMaintenance(db: Db, id: number, page = 1, pageSize = 50)
 async function maintainStoredFileUnlogged(db: Db, root: string, id: number, action: FileMaintenanceAction, patch: unknown, options: FileMaintenanceOptions = {}) {
   if (action !== 'restore') return maintainStoredFileSync(db, id, action, patch, options)
   const parsed = parseFileMaintenanceOptions(options)
-  const repeated = replay(db, parsed.idempotencyKey, hashRequest(id, action, {}, parsed), id)
+  const repeated = replay(db, parsed.idempotencyKey, fileMaintenanceRequestHash(id, action, {}, parsed), id)
   if (repeated) return repeated
   const revision = fileMaintenanceRevision(db, id)
   const file = await verifyStoredFileRestoration(db, root, id)
@@ -128,15 +139,19 @@ export function hasFileMaintenanceControls(value: unknown): boolean {
 
 /** Registration is an existing blind-write adapter too; its factual refresh invalidates modern edits. */
 export function recordLegacyFileMaintenanceWrite(db: Db, before: StoredFileRow, after: StoredFileRow): void {
-  const beforeValues = snapshot(before), afterValues = snapshot(after)
+  const beforeValues = fileMaintenanceSnapshot(before, extensionSnapshot(before)), afterValues = fileMaintenanceSnapshot(after, extensionSnapshot(after))
   if (JSON.stringify(beforeValues) === JSON.stringify(afterValues)) return
-  db.insert(schema.fileMaintenanceAudit).values({ fileId: after.id, revision: fileMaintenanceRevision(db, after.id) + 1, action: 'update', mode: 'legacy', requestHash: hashRequest(after.id, 'update', afterValues, {}), actor: null, basis: null, before: beforeValues, after: afterValues }).run()
+  db.insert(schema.fileMaintenanceAudit).values({ fileId: after.id, revision: fileMaintenanceRevision(db, after.id) + 1, action: 'update', mode: 'legacy', requestHash: fileMaintenanceRequestHash(after.id, 'update', afterValues, {}), actor: null, basis: null, before: beforeValues, after: afterValues }).run()
 }
 
 export async function maintainStoredFile(db: Db, root: string, id: number, action: FileMaintenanceAction, patch: unknown, options: FileMaintenanceOptions = {}, context: LogContext = {}) {
+  return logFileMaintenance(id, action, context, () => maintainStoredFileUnlogged(db, root, id, action, patch, options))
+}
+
+export async function logFileMaintenance(id: number, action: FileMaintenanceAction, context: LogContext, run: () => Promise<StoredFileRow>) {
   const startedAt = Date.now()
   try {
-    const result = await maintainStoredFileUnlogged(db, root, id, action, patch, options)
+    const result = await run()
     appLog({ module: 'core', source: 'file', operation: `file.maintenance.${action}`, outcome: 'success', fileId: result.id, durationMs: Date.now() - startedAt }, context)
     return result
   } catch (error) {
