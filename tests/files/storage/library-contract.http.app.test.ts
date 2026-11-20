@@ -50,6 +50,7 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
         NUXT_POSTGRES_DIRECTORY_URL: postgres ? pgUrl : '',
         NUXT_POSTGRES_DIRECTORY_WRITE: postgres ? '1' : '0',
         NUXT_POSTGRES_FILE_LIBRARY: postgres ? '1' : '0',
+        NUXT_POSTGRES_JOBS: postgres ? '1' : '0',
         NUXT_POSTGRES_LEAD_REGISTRATION: postgres ? '1' : '0',
         NUXT_MCP_TOKEN: token,
       } }
@@ -63,6 +64,10 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
       41, migratedPath, '历史附件', '原始.TXT', 'txt', original.length, sha256, '2026-01-01T00:00:00.000Z', null,
     )
     db.exec("UPDATE sqlite_sequence SET seq = 80 WHERE name = 'stored_file'")
+    db.prepare(`INSERT INTO ocr_result (id,file_id,page_no,revision,markdown,raw,engine,channel,created_at)
+      VALUES (31,41,1,4,?,?,'paddleocr','api','2026-01-01T00:00:00.000Z')`)
+      .run('历史 OCR 正文', JSON.stringify({ archived: true }))
+    db.exec("UPDATE sqlite_sequence SET seq = 70 WHERE name = 'ocr_result'")
     db.exec(`
       INSERT INTO enterprise (id, name, name_norm) VALUES (1, '样例企业', '样例企业');
       INSERT INTO record (id, enterprise_id, title_code, source) VALUES (1, 1, 'specialized_sme', 'jxj');
@@ -302,6 +307,53 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
       file: { id: file.id, relPath, contentIdentity: { status: 'verified', registered: { sha256: hash } } },
       pageCount: 2, rendered: 0, pages: [], manifest: null,
     })
+  })
+
+  it.skipIf(!enabled)('shares versioned OCR pages between HTTP and MCP without changing the original', async () => {
+    expect(await json('ocr-results?fileId=41&includeVersion=1&markdown=1', 200)).toMatchObject({
+      count: 1, pages: [{ page: 1, version: '31:4', markdown: '历史 OCR 正文', historicalBinding: { status: 'unknown' } }],
+    })
+    const relPath = 'uploads/ocr.pdf'
+    const originalPdf = minimalPdf({ pages: 2 })
+    writeFileSync(join(root, relPath), originalPdf)
+    const file = await json('files/register', 201, 'POST', { relPath })
+    const page = 'files/' + file.id + '/ocr-pages/1'
+    await json(page, 200, 'PUT', { markdown: '原始名单', expectedVersion: null })
+    const first = await json(page, 200)
+    expect(first.markdown).toBe('<!-- page: 1 -->\n\n原始名单')
+    expect(first.results[0].version).toBe('71:1')
+    expect(await tool('get_ocr_result', { fileId: file.id, page: 1, includeVersion: true })).toEqual(first)
+    await json(page, 409, 'PUT', { markdown: '过期写入', expectedVersion: null })
+
+    await tool('save_ocr_result', { fileId: file.id, page: 1, markdown: '复核后的名单', expectedVersion: first.results[0].version })
+    const updated = await json(page, 200)
+    expect(updated.results[0].version).not.toBe(first.results[0].version)
+    expect(updated.markdown).toBe('<!-- page: 1 -->\n\n复核后的名单')
+    const exported = await app.request('/api/ocr-results/markdown?fileId=' + file.id)
+    expect(exported.status).toBe(200)
+    expect(await exported.text()).toBe(updated.markdown)
+    await json(page, 409, 'DELETE', { expectedVersion: first.results[0].version })
+    expect(await json(page, 200, 'DELETE', { expectedVersion: updated.results[0].version })).toMatchObject({ deleted: 1, remaining: 0 })
+    await json(page, 404)
+    expect(readFileSync(join(root, relPath))).toEqual(originalPdf)
+  })
+
+  it.skipIf(!enabled)('renders registered PDF pages through the durable batch task', async () => {
+    const relPath = 'uploads/batch-render.pdf'
+    const pdf = minimalPdf({ pages: 2 })
+    writeFileSync(join(root, relPath), pdf)
+    const file = await json('files/register', 201, 'POST', { relPath })
+    const { jobId } = await json('jobs', 202, 'POST', { kind: 'render-pages', params: { files: [relPath], dpi: 72 } })
+    const job = () => json('jobs/' + jobId, 200)
+    await expect.poll(async () => {
+      const value = await job()
+      return ['done', 'failed'].includes(value.state) ? value : null
+    }, { timeout: 10_000 }).toMatchObject({ state: 'done', result: { files: [
+      { ok: true, file: relPath, contentIdentity: { fileId: file.id, sha256: file.sha256 }, rendered: 2, written: 2 },
+    ] } })
+    const pages = await tool('list_page_images', { fileId: file.id, dpi: 72 })
+    expect(pages).toMatchObject({ pageCount: 2, rendered: 2, pages: [{ page: 1 }, { page: 2 }] })
+    expect(readFileSync(join(root, relPath))).toEqual(pdf)
   })
 
   it.skipIf(!enabled)('registers a landed roster notice and audits factual refreshes without replacing its bytes', async () => {

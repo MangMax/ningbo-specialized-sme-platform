@@ -58,7 +58,7 @@ async function runLeadListExport({ db: database, jobId }: Parameters<NonNullable
 }
 
 const postgresExport: PostgresJobSpec = {
-  async validateSubmission(tx, params) {
+  async prepare(tx, params) {
     const { rows } = await tx.execute(sql`SELECT id FROM lead_list_version WHERE id = ${Number(params.versionId)}`)
     if (!rows.length) throw createError({ statusCode: 404, message: '名单版本不存在' })
   },

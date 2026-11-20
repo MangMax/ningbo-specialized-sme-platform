@@ -82,10 +82,11 @@ it.runIf(!!bin)('submits a registered PostgreSQL handler through the normal API 
     kind: 'fixture-pg', status: 'ready', summary: 'Fixture job',
     parse: params => ({ ok: true, params }), total: () => 3,
     postgres: {
-      async run(ctx, params) {
+      async prepare(_tx, params) { return { labelAtSubmission: params.label } },
+      async run(ctx, params, inputSnapshot) {
         const { rows } = await ctx.db.execute<{ version: string }>((await import('drizzle-orm')).sql`SELECT current_setting('server_version') AS version`)
         await ctx.progress(1, 3)
-        return { result: { version: rows[0]!.version, label: params.label }, progress: { done: 2, total: 3 } }
+        return { result: { version: rows[0]!.version, label: params.label, inputSnapshot }, progress: { done: 2, total: 3 } }
       },
     },
   })
@@ -98,6 +99,8 @@ it.runIf(!!bin)('submits a registered PostgreSQL handler through the normal API 
   const detail = await (await request('/api/jobs/' + jobId)).json()
   expect(detail).toMatchObject({ id: jobId, state: 'done', progress: { done: 2, total: 3 }, percent: 66, result: { label: '合成任务', version: expect.any(String) } })
   expect(detail).not.toHaveProperty('claimToken')
+  expect(detail).not.toHaveProperty('inputSnapshot')
+  expect(detail.result.inputSnapshot).toEqual({ labelAtSubmission: '合成任务' })
   expect(await (await request('/api/jobs?view=summary&kind=fixture-pg')).json()).toMatchObject({
     total: 1, rows: [{ id: jobId, state: 'done', resultSummary: { available: true } }],
   })
@@ -264,10 +267,11 @@ it.runIf(!!bin)('uses the PostgreSQL capability catalog and keeps private task d
   })
   const kinds = await (await request('/api/jobs/kinds')).json()
   expect(kinds.kinds).toEqual(expect.arrayContaining([
-    expect.objectContaining({ kind: 'render-pages', status: 'todo' }),
+    expect.objectContaining({ kind: 'render-pages', status: 'ready' }),
+    expect.objectContaining({ kind: 'ocr', status: 'todo' }),
     expect.objectContaining({ kind: 'fixture-private', status: 'ready' }),
   ]))
-  expect((await submit('render-pages', { files: ['placeholder.pdf'] })).status).toBe(501)
+  expect((await submit('ocr', { files: ['placeholder.pdf'] })).status).toBe(501)
   const response = await submit('fixture-private')
   expect(response.status).toBe(202)
   const { jobId } = await response.json()

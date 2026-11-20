@@ -1,7 +1,5 @@
-import { describeFileRead } from '../../utils/file-read-identity'
 import { MAX_PAGE_NO } from '../../../lib/ocr-markdown'
-import { fileRefFromQuery, resolveOcrFileTarget } from '../../utils/ocr-files'
-import { listOcrResults } from '../../utils/ocr-result'
+import { describeOcrFile, fileRefFromQuery, readOcrFileResults, resolveOcrFileTarget } from '../../utils/ocr-files'
 
 /**
  * 查一个文件的 **OCR 结果清单**。`GET /api/ocr-results?file=<相对路径>|fileId=<id>[&page=3][&markdown=1]`
@@ -108,7 +106,7 @@ export default defineEventHandler(async (event) => {
   const withMarkdown = q.markdown === '1' || q.markdown === 'true'
 
   const withVersion = q.includeVersion === '1' || q.includeVersion === 'true'
-  const rows = listOcrResults(target.db, target.row.id, page)
+  const rows = await readOcrFileResults(target, page)
   return {
     file: {
       id: target.row.id,
@@ -117,7 +115,7 @@ export default defineEventHandler(async (event) => {
       ext: target.row.ext,
       parseState: target.row.parseState,
     },
-    ...(withVersion ? { contentIdentity: await describeFileRead(target.db, target.root, target.row.relPath) } : {}),
+    ...(withVersion ? { contentIdentity: await describeOcrFile(target) } : {}),
     channels: [...new Set(rows.map((r) => r.channel))].sort(),
     pages: rows.map((r) => ({
       page: r.page,

@@ -1,25 +1,17 @@
-import { describeFileRead } from './file-read-identity'
 import { appLog, type LogContext } from '../../lib/logging'
 import { z } from 'zod'
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import * as schema from '../../../../db/schema'
 import { assembleMarkdown, MAX_PAGE_NO } from '../../lib/ocr-markdown'
-import { fileRefShape, resolveFileRef, type FileRefInput } from './file-agent-reference'
-import { listOcrResults } from './ocr-result'
-import type { FileRow } from './file-store'
 import { createError } from 'h3'
 import { isPdfPath } from '../../lib/pdf-page'
 import { guardImportedPageCount, guardTargetPage } from '../../lib/ocr-workbench'
 import { decodeOcrImport } from './ocr-import'
-import { validOcrExpectedVersion, writeOcrResult, type OcrChannel } from './ocr-result'
+import { validOcrExpectedVersion, type OcrChannel } from './ocr-result'
 import { listPdfPages } from './pdf-pages'
-import type { OcrFileTargetResult } from './ocr-files'
-
-type Db = BetterSQLite3Database<typeof schema>
+import { describeOcrFile, readOcrFileResults, writeOcrFileResults, type OcrFileTarget } from './ocr-files'
 
 /** 页面上传、代理 REST 与 MCP 共用同一解码、PDF/页数校验和写事务。 */
 async function saveOcrImportUnlogged(
-  target: Extract<OcrFileTargetResult, { ok: true }>,
+  target: OcrFileTarget,
   body: Record<string, unknown>,
   channel: OcrChannel,
 ) {
@@ -81,7 +73,7 @@ async function saveOcrImportUnlogged(
     if (!guard.ok) throw createError({ statusCode: 400, message: guard.message })
   }
 
-  const written = writeOcrResult(target.db, {
+  const written = await writeOcrFileResults(target, {
     fileId: target.row.id,
     // `raw` **有就带上**:JSONL 导入那条会带 —— 那份 `layoutParsingResults` 项就是
     // 原始响应,与通路 a 落的 `raw` 是同一个东西(用户要求保留 API 原始响应)。
@@ -114,22 +106,14 @@ async function saveOcrImportUnlogged(
 
 export const ocrPageSchema = z.number().int().min(1).max(MAX_PAGE_NO)
 export const ocrExpectedVersionSchema = z.string().regex(/^[1-9]\d*:[1-9]\d*$/).max(64).nullable().optional().describe('预期不透明页版本;null=预期不存在;省略=兼容无条件。冲突409,显式单页适用。')
-const referenceSchema = z.object(fileRefShape).refine(ref => (ref.fileId !== undefined) !== (typeof ref.relPath === 'string' && ref.relPath.trim() !== ''), 'fileId 与 relPath 恰给其一')
-export function requireOcrFileRef(db: Db, input: FileRefInput, allowRemoved = false) {
-  const parsed = referenceSchema.safeParse(input)
-  if (!parsed.success) throw createError({ statusCode: 400, message: '文件引用非法:fileId 与 relPath 恰给其一,ID 必须是正整数' })
-  const found = resolveFileRef(db, parsed.data, { allowRemoved })
-  if (!found.ok) throw createError({ statusCode: 404, message: found.message })
-  return found.row
-}
-
 /** 一次按文件/页定位的显式投影;从不读取 raw,不重复加载正文。 */
-export async function getOcrResultForFile(db: Db, row: FileRow, page?: number, includeVersion = true, root?: string) {
-  const results = listOcrResults(db, row.id, page)
+export async function getOcrResultForFile(target: OcrFileTarget, page?: number, includeVersion = true) {
+  const { row } = target
+  const results = await readOcrFileResults(target, page)
   if (!results.length) throw createError({ statusCode: 404, message: page === undefined ? '这个文件还没有 OCR 结果' : `第 ${page} 页还没有 OCR 结果` })
   return {
     file: { id: row.id, relPath: row.relPath, filename: row.filename },
-    ...(includeVersion ? { contentIdentity: root ? await describeFileRead(db, root, row.relPath) : { registered: null, status: 'unknown', historical: 'unknown' } } : {}),
+    ...(includeVersion ? { contentIdentity: await describeOcrFile(target) } : {}),
     page: page ?? null,
     pages: results.map(result => result.page),
     markdown: assembleMarkdown(results),
@@ -139,7 +123,7 @@ export async function getOcrResultForFile(db: Db, row: FileRow, page?: number, i
 
 /** Edits describe a derived page revision, separately from online recognition and request completion. */
 export async function saveOcrImport(
-  target: Extract<OcrFileTargetResult, { ok: true }>, body: Record<string, unknown>,
+  target: OcrFileTarget, body: Record<string, unknown>,
   channel: OcrChannel, context: LogContext = {},
 ) {
   const startedAt = Date.now()

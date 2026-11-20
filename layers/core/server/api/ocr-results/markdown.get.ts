@@ -1,7 +1,6 @@
-import { describeFileRead } from '../../utils/file-read-identity'
 import { MAX_PAGE_NO } from '../../../lib/ocr-markdown'
-import { fileRefFromQuery, resolveOcrFileTarget } from '../../utils/ocr-files'
-import { ocrMarkdown } from '../../utils/ocr-result'
+import { describeOcrFile, fileRefFromQuery, readOcrFileResults, resolveOcrFileTarget } from '../../utils/ocr-files'
+import { formatOcrMarkdown } from '../../utils/ocr-result'
 
 /**
  * **导出 OCR 结果 markdown**。`GET /api/ocr-results/markdown?file=…|fileId=…[&page=3]`
@@ -58,7 +57,7 @@ export default defineEventHandler(async (event) => {
   const target = await resolveOcrFileTarget(ref.ref, { allowRemoved: true })
   if (!target.ok) throw createError({ statusCode: target.statusCode, message: target.message })
 
-  const out = ocrMarkdown(target.db, target.row.id, page)
+  const out = formatOcrMarkdown(await readOcrFileResults(target, page), target.row.id, page)
   if (!out.ok) throw createError({ statusCode: 404, message: out.message })
 
   // 文件名带页码线索:`p003` 那种单页导出与整份导出一眼分得开。
@@ -72,7 +71,7 @@ export default defineEventHandler(async (event) => {
     `attachment; filename*=UTF-8''${encodeURIComponent(`${base}.${suffix}`)}`,
   )
   // 顺带把「这份导出覆盖了哪几页」放进头里,便于脚本核对(不必解析正文)。
-  const identity = await describeFileRead(target.db, target.root, target.row.relPath)
+  const identity = await describeOcrFile(target)
   setHeader(event, 'cache-control', 'no-store')
   setHeader(event, 'x-file-content-status', identity.status)
   setHeader(event, 'x-file-historical-identity', 'unknown')

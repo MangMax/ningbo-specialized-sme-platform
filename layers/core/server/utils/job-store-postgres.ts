@@ -18,17 +18,18 @@ type JobColumns = Pick<JobRow, 'id' | 'kind' | 'state' | 'createdAt' | 'startedA
   progress: string
 }
 
-type StoredJob = JobColumns & { params: string; result: string | null; error: string | null; claimToken: string | null }
+type StoredJob = JobColumns & { params: string; result: string | null; error: string | null; claimToken: string | null; inputSnapshot: string | null }
 type StoredJobSummary = JobColumns & { hasResult: boolean; hasError: boolean; exportWorkbook: boolean | null }
 
 export interface PostgresJobSnapshot {
   row: JobRow
   claimToken: string | null
+  inputSnapshot: unknown
 }
 
 const commonColumns = sql`id, kind, state, progress, created_at AS "createdAt",
   started_at AS "startedAt", finished_at AS "finishedAt"`
-const jobColumns = sql`${commonColumns}, params, result, error, claim_token AS "claimToken"`
+const jobColumns = sql`${commonColumns}, params, result, error, claim_token AS "claimToken", input_snapshot AS "inputSnapshot"`
 // PostgreSQL rejects escaped NULs and isolated surrogate code units when
 // extracting JSON text. Replace those escapes only for this ASCII phase check.
 const jsonTextEscapes = String.raw`\\u(?:0000|d[89a-f][0-9a-f]{2})`
@@ -40,9 +41,10 @@ const summaryColumns = sql`${commonColumns},
     THEN regexp_replace(result, ${jsonTextEscapes}, ${replacementEscape}, 'gi')::json ->> 'phase' = 'workbook'
     ELSE false END AS "exportWorkbook"`
 
-function decodeJob({ claimToken, params, progress, result, ...columns }: StoredJob): PostgresJobSnapshot {
+function decodeJob({ claimToken, params, progress, result, inputSnapshot, ...columns }: StoredJob): PostgresJobSnapshot {
   return {
     claimToken,
+    inputSnapshot: inputSnapshot === null ? null : JSON.parse(inputSnapshot),
     row: {
       ...columns,
       params: JSON.parse(params),
@@ -108,12 +110,13 @@ export async function createPostgresJob(db: Executor, input: {
   params: Record<string, unknown>
   progress?: JobProgress
   requestKey?: string
+  inputSnapshot?: unknown
 }) {
   const progress = makeProgress(input.progress?.done ?? 0, input.progress?.total ?? 1)
   const { rows } = await db.execute<StoredJob>(sql`INSERT INTO business.job
-    (id, kind, params, state, progress, created_at, request_key)
+    (id, kind, params, state, progress, created_at, request_key, input_snapshot)
     VALUES (${input.id}, ${input.kind}, ${JSON.stringify(input.params)}, 'queued',
-      ${JSON.stringify(progress)}, ${new Date().toISOString()}, ${input.requestKey ?? null})
+      ${JSON.stringify(progress)}, ${new Date().toISOString()}, ${input.requestKey ?? null}, ${JSON.stringify(input.inputSnapshot ?? null)})
     RETURNING ${jobColumns}`)
   return decodeJob(rows[0]!)
 }

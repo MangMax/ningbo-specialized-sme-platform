@@ -41,12 +41,22 @@ function withIdentity(file: FileRow): FileRow {
   return { ...file, contentIdentity: { registered: postgresFileIdentity(file), status: 'unknown', historical: 'unknown' } }
 }
 
-export async function readPostgresFileIdentity(db: PostgresFileDb, locator: number | string) {
-  const where = typeof locator === 'number' ? sql`id = ${locator}` : sql`rel_path = ${locator}`
-  if (typeof locator === 'number' && !Number.isSafeInteger(locator)) return null
-  const { rows: [file] } = await db.execute<{ id: string; relPath: string; sha256: string; bytes: string }>(sql`
+async function readFileIdentities(db: PostgresFileDb, where: SQL) {
+  const { rows } = await db.execute<{ id: string; relPath: string; sha256: string; bytes: string }>(sql`
     SELECT id, rel_path AS "relPath", sha256, bytes FROM stored_file WHERE ${where}`)
-  return file ? postgresFileIdentity({ ...file, id: Number(file.id), bytes: Number(file.bytes) }) : null
+  return rows.map(file => postgresFileIdentity({ ...file, id: Number(file.id), bytes: Number(file.bytes) }))
+}
+
+export async function readPostgresFileIdentity(db: PostgresFileDb, locator: number | string) {
+  if (typeof locator === 'number' && !Number.isSafeInteger(locator)) return null
+  const where = typeof locator === 'number' ? sql`id = ${locator}` : sql`rel_path = ${locator}`
+  return (await readFileIdentities(db, where))[0] ?? null
+}
+
+export async function readPostgresFileIdentities(db: PostgresFileDb, paths: string[]) {
+  const rows = await readFileIdentities(db, sql`rel_path = ANY(${sql.param(paths.filter(path => !path.includes('\0')))}::text[])`)
+  const byPath = new Map(rows.map(row => [row.relPath, row]))
+  return paths.map(path => byPath.get(path) ?? null)
 }
 
 /** Lead registration locks this same stored_file row before inspecting physical intents. */

@@ -33,9 +33,10 @@ export interface PostgresJobSpec {
   parse?: JobSpec['parse']
   /** E.g. refresh a download receipt against the module’s current artifact state. */
   projectResult?(db: NodePgDatabase, job: JobDto): Promise<unknown>
-  validateSubmission?(tx: PostgresJobTransaction, params: Record<string, unknown>): Promise<void>
+  /** Validate admission and optionally capture non-secret execution inputs. */
+  prepare?(tx: PostgresJobTransaction, params: Record<string, unknown>): Promise<unknown>
   /** Resolve dependencies when claimed. Persist only non-secret, replayable parameters. */
-  run(ctx: PostgresJobContext, params: Record<string, unknown>): Promise<JobCompletion>
+  run(ctx: PostgresJobContext, params: Record<string, unknown>, inputSnapshot: unknown): Promise<JobCompletion>
 }
 
 export function postgresJobHandler(kind: string) {
@@ -76,9 +77,9 @@ export async function stagePostgresJob(tx: PostgresJobTransaction, input: Submit
   if (spec.maxPending && await countActivePostgresJobs(tx, input.kind) >= spec.maxPending) {
     throw admissionError(429, '导出执行/排队容量已满，请稍后重试')
   }
-  await handler.validateSubmission?.(tx, params)
+  const inputSnapshot = await handler.prepare?.(tx, params)
   const { row } = await createPostgresJob(tx, {
-    id: input.id ?? newJobId(), kind: input.kind, params, requestKey,
+    id: input.id ?? newJobId(), kind: input.kind, params, requestKey, inputSnapshot,
     progress: { done: 0, total: spec.total?.(params) ?? 1 },
   })
   return { row, inserted: true }
@@ -130,7 +131,7 @@ export function createPostgresJobRunner(db: PostgresJobDb, filesDir: string) {
     try {
       const handler = postgresJobHandler(kind)
       if (!handler) throw new Error('任务种类尚未接入 PostgreSQL')
-      const completion = await handler.run(ctx, params)
+      const completion = await handler.run(ctx, params, job.inputSnapshot)
       if (completion.result === undefined) throw new TypeError('Job completion requires a result')
       await finish({
         state: completion.cancelled ? 'cancelled' : completion.error ? 'failed' : 'done',
