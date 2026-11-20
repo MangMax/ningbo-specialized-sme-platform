@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { attachPostgresReviewedEnterprise, EnterpriseKernelError, type ReviewedSubject } from '../../../core/server/public'
+import { attachPostgresReviewedEnterprise, type ReviewedSubject } from '../../../core/server/public'
 import { evidenceDigest113 } from './evidence-impact-113'
 
 type Transaction = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -56,14 +56,6 @@ export async function applyPostgresReviewedRosterIdentity(tx: Transaction, subje
   if (applied.auditId === null) return applied
   const after = await identityMaterial(tx, subject.enterpriseId)
   if (before === after) return applied
-  try {
-    await captureIdentityRevision(tx, subject.enterpriseId, applied.auditId, evidenceDigest113(after))
-  } catch (error) {
-    // The native roster schema is a required participant in this transaction.
-    if (error instanceof Error && (error.cause as { code?: string } | undefined)?.code === '42P01') {
-      throw new EnterpriseKernelError(503, 'roster_identity_evidence_unavailable', '名录身份依据尚未接入 PostgreSQL 验收库。')
-    }
-    throw error
-  }
+  await captureIdentityRevision(tx, subject.enterpriseId, applied.auditId, evidenceDigest113(after))
   return applied
 }

@@ -16,12 +16,6 @@ export function usePostgresLeadDb() {
   return db
 }
 
-export function requireSqliteLeadOperation() {
-  if (usePostgresLeadDb()) {
-    throw createError({ statusCode: 503, message: '此操作尚未接入 PostgreSQL 验收库。' })
-  }
-}
-
 const summary = sql`SELECT v.id, v.series, v.channel_code AS channel, v.list_type_code AS "listType",
   v.acquired_on AS "acquiredOn", v.file_id AS "fileId", f.rel_path AS "filePath",
   coalesce(f.display_name, f.filename) AS "fileName", f.removed_at IS NULL AS "fileAvailable"
@@ -52,16 +46,18 @@ export function listPostgresLeadVersions(db: NodePgDatabase): Promise<LeadCatalo
 }
 
 export function readPostgresLeadVersion(db: NodePgDatabase, id: number): Promise<LeadVersionDetail> {
-  return db.transaction(async tx => {
-    const version = (await tx.execute<PgSummary>(sql`${summary} WHERE v.id = ${id}`)).rows[0]
-    if (!version) throw createError({ statusCode: 404, message: '名单版本不存在' })
-    const { rows } = await tx.execute<PgRow>(sql`SELECT id, row_number AS "rowNumber", name, uscc, district, note,
-      enterprise_id AS "enterpriseId" FROM lead_list_row WHERE version_id = ${id} ORDER BY row_number`)
-    return { ...versionDto(version), rows: rows.map(row => ({
-      ...row, id: Number(row.id), rowNumber: Number(row.rowNumber),
-      enterpriseId: row.enterpriseId === null ? null : Number(row.enterpriseId),
-    })) }
-  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
+  return db.transaction(tx => readPostgresLeadVersionInSnapshot(tx, id), { isolationLevel: 'repeatable read', accessMode: 'read only' })
+}
+
+export async function readPostgresLeadVersionInSnapshot(db: NodePgDatabase, id: number): Promise<LeadVersionDetail> {
+  const version = (await db.execute<PgSummary>(sql`${summary} WHERE v.id = ${id}`)).rows[0]
+  if (!version) throw createError({ statusCode: 404, message: '名单版本不存在' })
+  const { rows } = await db.execute<PgRow>(sql`SELECT id, row_number AS "rowNumber", name, uscc, district, note,
+    enterprise_id AS "enterpriseId" FROM lead_list_row WHERE version_id = ${id} ORDER BY row_number`)
+  return { ...versionDto(version), rows: rows.map(row => ({
+    ...row, id: Number(row.id), rowNumber: Number(row.rowNumber),
+    enterpriseId: row.enterpriseId === null ? null : Number(row.enterpriseId),
+  })) }
 }
 
 export async function readPostgresLeadVersionSource(db: NodePgDatabase, id: number) {
