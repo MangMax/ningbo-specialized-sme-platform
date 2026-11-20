@@ -6,5 +6,6 @@ export { batchSpec } from '../../utils/platform-batch-query'
 export { reconcileSpec } from '../../utils/jobs/reconcile'
 export { candidateDiscoverySpec } from '../../utils/jobs/candidate-discovery'
 export { currentRosterExportSpec } from '../../utils/jobs/current-roster-export'
+export { rosterExportCleanupSpec } from '../../utils/jobs/roster-export-cleanup'
 
 export const annualSpec = annualCorrespondenceSpec(readAnnualWriteScope)

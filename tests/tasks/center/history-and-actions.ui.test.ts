@@ -560,6 +560,7 @@ describe('任务详情抽屉', () => {
       .find(row => row.element.getClientRects().length > 0)!
     expect(visibleRow.text()).toContain('排队中')
     expect(dialog.textContent).toContain('排队中')
+    expect(dialog.textContent).toContain('关闭详情后，任务会继续执行。')
     expect(connections).toHaveLength(1)
     connections[0]!.dispatchEvent(new Event('ready'))
     await vi.waitFor(() => expect(calls.filter(call => call.url.startsWith('/api/task-center'))).toHaveLength(4))
@@ -571,6 +572,25 @@ describe('任务详情抽屉', () => {
       expect(dialog.textContent).toContain('运行中')
     })
     expect(sheetDialog()).toBe(dialog)
+  })
+
+  it('已完成的清理详情没有继续运行或重新提交提示', async () => {
+    const task = unknownTask({
+      kind: 'roster_export_cleanup',
+      label: '清理过期名录导出文件',
+      state: 'done',
+      capabilities: {
+        cancel: false, retry: false, retryItemIds: [],
+        reason: '此任务不支持安全重试，请从原业务入口核对后重新提交。',
+      },
+    })
+    state.query = { job: task.id }
+    installFetch(({ url }) => url === '/api/task-center' ? json(listOf([task])) : json(task))
+    await mountPage({ attach: true })
+    const dialog = await waitForSheet()
+    await vi.waitFor(() => expect(dialog.textContent).toContain('已完成'))
+    expect(dialog.textContent).not.toContain('关闭详情后，任务会继续执行。')
+    expect(dialog.textContent).not.toContain('请从原业务入口核对后重新提交')
   })
 
   it('打开任务用真实抽屉：URL 带 job，抽屉里有详情标题、执行详情与滚动容器', async () => {
@@ -799,6 +819,8 @@ describe('任务详情抽屉', () => {
 
     const retry = sheetButton(dialog, /重试未完成项/)
     expect(retry.disabled).toBe(false)
+    expect(dialog.textContent).toContain('仅补查本批次未完成项，保留已完成结果。')
+    expect(dialog.textContent).not.toContain('关闭详情后，任务会继续执行。')
     await retry.click()
     await settle()
 

@@ -52,11 +52,17 @@ it('shows ordered business and platform menus and follows the current route', as
       ['文件管理', '/files'],
       ['识别校对', '/ocr'],
       ['后台任务', '/tasks'],
+      ['定时任务', '/scheduled-tasks'],
       ['运行日志', '/logs'],
       ['字典管理', '/dictionaries'],
       ['密钥配置', '/settings'],
     ])
     expect(business.get('a[aria-current="page"]').text()).toBe('关联办理')
+
+    await platform.get('a[href="/scheduled-tasks"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/scheduled-tasks')
+    expect(platform.get('a[aria-current="page"]').text()).toBe('定时任务')
 
     await platform.get('a[href="/logs"]').trigger('click')
     await flushPromises()

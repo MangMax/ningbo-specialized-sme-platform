@@ -202,7 +202,7 @@ describe('任务种类注册表', () => {
   it('启动登记完整任务目录，可重复调用且保留已登记的 spec', () => {
     registerJobSpecs()
     const kinds = jobSpecs()
-    expect(kinds.map((s) => s.kind)).toEqual(['current-roster-export', 'difference-snapshot', 'event-annual-correspondence', 'event-archive-candidates', 'lead-lists-version-export', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages'])
+    expect(kinds.map((s) => s.kind)).toEqual(['current-roster-export', 'difference-snapshot', 'event-annual-correspondence', 'event-archive-candidates', 'lead-lists-version-export', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages', 'roster_export_cleanup'])
     // 票 14 把 ocr 从 todo 接上了;RL-03 收尾把 reconcile 也接上了(核心逻辑搬进 app)。
     // 三个已接入的 kind 都要有 run。
     for (const k of ['render-pages', 'ocr', 'reconcile']) {

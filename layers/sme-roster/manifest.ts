@@ -170,5 +170,6 @@ export default defineAppModule({
     { kind: 'event-archive-candidates', label: '公布事件候选发现', group: platform, spec: 'candidateDiscoverySpec' },
     { kind: 'event-annual-correspondence', label: '年度过程对应', group: platform, spec: 'annualSpec' },
     { kind: 'current-roster-export', label: '当前名录导出', group: rosterExport, spec: 'currentRosterExportSpec', progressPhase: 'workbook' },
+    { kind: 'roster_export_cleanup', label: '清理过期名录导出文件', group: rosterExport, spec: 'rosterExportCleanupSpec', schedule: { cron: '0 * * * *', frequency: '每小时整点' } },
   ],
 })

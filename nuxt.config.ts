@@ -7,6 +7,7 @@ import { actualSessionEntryProfile, configureSessionVirtuals, installSessionOver
 import { installRosterWorkers } from './layers/sme-roster/nuxt-workers'
 import tailwindcss from '@tailwindcss/vite'
 import { LOG_ICON_IDS } from './layers/core/app/components/logs/logIcons'
+import { nitroJobSchedules } from './lib/job-schedules'
 import { appManifests } from './lib/installed-manifests'
 import { validateAppModules } from './layers/core/lib/core/module-registry'
 
@@ -190,7 +191,8 @@ export default defineNuxtConfig({
         installRosterWorkers(config)
       },
     },
-    experimental: { openAPI: true },
+    experimental: { openAPI: true, tasks: true },
+    ...nitroJobSchedules(appManifests, fileURLToPath(new URL('./server/scheduling/dispatch-task.ts', import.meta.url))),
     openAPI: {
       meta: {
         title: '专精特新台账看板 — 代理 HTTP 能力面',

@@ -11,11 +11,19 @@ export const EXPORT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 export const EXPORT_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 export const exportDirectory = (dbPath: string) => dbPath + '.exports'
 export interface ExportArtifact { id: string; filename: string; size: number; sha256: string; generatedAt: string; expiresAt: string; downloadUrl: string; availability: 'available'|'expired'|'missing' }
-export async function currentArtifact(row: Pick<JobRow, 'id' | 'kind' | 'state' | 'result'>, dbPath: string, logContext?: LogContext): Promise<ExportArtifact | null> {
-  const artifact = (row.result as {artifact?: ExportArtifact}|null)?.artifact
-  if (row.kind !== 'current-roster-export' || row.state !== 'done' || !artifact || artifact.id !== row.id) return null
+type ExportJobRecord = Pick<JobRow, 'id' | 'kind' | 'state' | 'result'>
+export function currentExportReceipt(row: ExportJobRecord | null | undefined): ExportArtifact | null {
+  const artifact = (row?.result as {artifact?: ExportArtifact}|null)?.artifact
+  if (row?.kind !== 'current-roster-export' || row.state !== 'done' || !artifact || artifact.id !== row.id) return null
+  return artifact
+}
+export const isExportArtifactExpired = (artifact: ExportArtifact, cutoff = Date.now()) => cutoff >= Date.parse(artifact.expiresAt)
+
+export async function currentArtifact(row: ExportJobRecord, dbPath: string, logContext?: LogContext): Promise<ExportArtifact | null> {
+  const artifact = currentExportReceipt(row)
+  if (!artifact) return null
   const path = join(exportDirectory(dbPath), row.id + '.xlsx')
-  if (Date.now() >= Date.parse(artifact.expiresAt)) {
+  if (isExportArtifactExpired(artifact)) {
     await unlink(path).then(() => {
       appLog({ module: 'sme-roster', source: 'export', operation: 'export.artifact.expire', outcome: 'success', taskId: row.id, resourceType: 'export_artifact', resourceId: artifact.id }, logContext)
     }).catch((error: NodeJS.ErrnoException) => {

@@ -252,7 +252,7 @@ watch(job, (next, previous) => { if (previous && !next) closingRow.value = previ
       <SheetContent floating-size="standard" class="min-w-0 gap-0" @close-auto-focus="restoreListFocus">
         <SheetHeader class="shrink-0 border-b px-6 py-5 pr-12">
           <SheetTitle>任务详情</SheetTitle>
-          <SheetDescription>关闭详情后，任务继续运行。</SheetDescription>
+          <SheetDescription class="sr-only">查看任务状态和执行结果。</SheetDescription>
         </SheetHeader>
         <div class="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-6 pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]" data-testid="task-detail-scroll">
         <p v-if="exportNotice" :role="exportNotice.tone" :aria-live="exportNotice.tone === 'status' ? 'polite' : 'assertive'" data-testid="export-notice" class="mb-4 text-sm break-words" :class="exportNotice.tone === 'alert' && 'text-destructive'">{{ exportNotice.text }}</p>

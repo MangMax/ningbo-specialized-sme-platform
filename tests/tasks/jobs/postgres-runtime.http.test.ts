@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -62,6 +62,7 @@ beforeAll(async () => {
     .get('/api/platform/batches/:batchId', createPlatformBatchRoute('status'))
     .get('/api/platform/batches/:batchId/items/:itemId', createPlatformBatchRoute('item'))
     .post('/api/platform/batches/:batchId/retry', createPlatformBatchRoute('retry'))
+    .get('/api/scheduled-tasks', (await import('../../../layers/core/server/api/scheduled-tasks.get')).default)
     .get('/api/jobs', (await import('../../../layers/core/server/api/jobs/index.get')).default)
     .get('/api/jobs/kinds', (await import('../../../layers/core/server/api/jobs/kinds.get')).default)
     .get('/api/jobs/:id', (await import('../../../layers/core/server/api/jobs/[id].get')).default)
@@ -543,6 +544,65 @@ it.runIf(!!bin)('keeps authorized export downloads available in readonly task su
     expect(await (await request(detail)).json()).toMatchObject({
       id, export: { canDownload: false, canRegenerate: false },
     })
+  } finally {
+    vi.stubEnv('NUXT_POSTGRES_JOBS', '1')
+    vi.stubEnv('NUXT_DB_MODE', undefined)
+  }
+})
+
+it.runIf(!!bin)('cleans expired roster workbooks from PostgreSQL task records with idempotent submission', async () => {
+  const { newJobId } = await import('../../../layers/core/lib/job')
+  const id = newJobId()
+  const expiresAt = '2000-01-01T00:00:00Z'
+  const artifactDir = join(dir, 'must-not-open.sqlite.exports')
+  mkdirSync(artifactDir, { recursive: true })
+  const workbook = join(artifactDir, id + '.xlsx')
+  writeFileSync(workbook, 'expired fixture workbook')
+  await pool.query(`INSERT INTO business.job (id, kind, state, params, result, created_at, finished_at)
+    VALUES ($1, 'current-roster-export', 'done', '{"titleCode":"little_giant"}', $2, $3, $3)`,
+  [id, JSON.stringify({ artifact: { id, expiresAt } }), expiresAt])
+
+  const kind = 'roster_export_cleanup'
+  const params = { clientRequestId: 'fixture-expired-roster-cleanup' }
+  const accepted = await submit(kind, params)
+  expect(accepted.status).toBe(202)
+  const { jobId } = await accepted.json()
+  await expect.poll(async () => (await (await request('/api/jobs/' + jobId)).json()).state).toBe('done')
+  expect(await (await request('/api/jobs/' + jobId)).json()).toMatchObject({
+    kind, result: { removed: 1, failed: 0 },
+  })
+  expect(existsSync(workbook)).toBe(false)
+  expect(await pool.query('SELECT state FROM business.job WHERE id = $1', [id]))
+    .toMatchObject({ rows: [{ state: 'done' }] })
+  expect(await (await submit(kind, params)).json()).toMatchObject({ jobId })
+})
+
+it.runIf(!!bin)('reports one run per scheduled hour and keeps the last result visible in read-only mode', async () => {
+  const { dispatchScheduledJob } = await import('../../../server/scheduling/scheduled-jobs')
+  const kind = 'roster_export_cleanup'
+  const at = new Date('2026-01-08T03:00:00Z')
+  const schedules = async () => (await request('/api/scheduled-tasks')).json()
+  const before = await schedules()
+  expect(before).toMatchObject({ enabled: true, items: expect.arrayContaining([
+    { id: kind, label: '清理过期名录导出文件', frequency: '每小时整点', nextRunAt: expect.any(Number), lastRun: null },
+  ]) })
+
+  const [first, concurrent] = await Promise.all([
+    dispatchScheduledJob(kind, dir, at),
+    dispatchScheduledJob(kind, dir, new Date(at.getTime() + 2000)),
+  ])
+  expect(first.jobId).toEqual(expect.any(String))
+  expect(concurrent).toEqual(first)
+  await expect.poll(async () => (await schedules()).items.find((item: { id: string }) => item.id === kind)?.lastRun)
+    .toMatchObject({ id: first.jobId, status: 'done', finishedAt: expect.any(Number) })
+  vi.stubEnv('NUXT_DB_MODE', 'postgresql')
+  vi.stubEnv('NUXT_POSTGRES_JOBS', '0')
+  try {
+    expect(await dispatchScheduledJob(kind, dir, new Date(at.getTime() + 3600000))).toEqual({ skipped: true })
+    const readOnly = await schedules()
+    expect(readOnly.enabled).toBe(false)
+    expect(readOnly.items.find((item: { id: string }) => item.id === kind))
+      .toMatchObject({ nextRunAt: null, lastRun: { id: first.jobId } })
   } finally {
     vi.stubEnv('NUXT_POSTGRES_JOBS', '1')
     vi.stubEnv('NUXT_DB_MODE', undefined)

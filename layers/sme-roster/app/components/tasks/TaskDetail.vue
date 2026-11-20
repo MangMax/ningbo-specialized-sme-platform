@@ -88,6 +88,11 @@ const cancellationPendingLabel = computed(() => cancelRequested.value && inFligh
 const reconcileCollection = computed(() => data.value?.kind === 'reconcile' ? data.value.reconcileCollection : undefined)
 const itemStatus: Record<string, string> = { success: '查询成功', no_record: '完整查询无记录', auth_failed: '授权失败', failed: '查询失败', partial: '部分', not_queried: '未查询', complete: '完整' }
 const current = computed(() => data.value?.id === props.id && sourceKey.value === key.value && !failed.value)
+const actionReason = computed(() => {
+  const state = data.value?.state
+  if (!current.value || (!showActions.value && state !== 'failed' && state !== 'cancelled')) return ''
+  return capabilities.value?.reason ?? ''
+})
 const links = computed(() => (data.value?.links ?? []).filter(link => !data.value?.discovery || !link.to.startsWith('/enterprises/')))
 // The page renders export-specific content in the `content` slot; a payload
 // without `export` must simply show nothing there.
@@ -157,6 +162,7 @@ async function act(action: 'cancel' | 'retry') {
 
         <template v-if="data">
           <p v-if="!current" role="status" class="text-muted-foreground text-sm">正在读取最新详情，暂时显示上次结果。</p>
+          <p v-else-if="inFlight" class="text-muted-foreground text-sm">关闭详情后，任务会继续执行。</p>
 
           <!-- 业务首屏：进度与下一步 -->
           <div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
@@ -237,7 +243,7 @@ async function act(action: 'cancel' | 'retry') {
           </ul>
 
           <!-- 业务动作 + 页面插槽（导出产物）：同一组，只出现一次 -->
-          <div v-if="showActions || $slots.actions" class="flex flex-col gap-3" data-testid="task-actions">
+          <div v-if="showActions || actionReason || $slots.actions" class="flex flex-col gap-3" data-testid="task-actions">
             <div class="flex flex-wrap items-center gap-2">
               <template v-if="canCancel">
                 <Button variant="outline" :disabled="pending || cancellationPendingLabel" @click="act('cancel')">
@@ -247,7 +253,7 @@ async function act(action: 'cancel' | 'retry') {
               <Button v-if="canRetry" variant="outline" :disabled="pending" @click="act('retry')">重试未完成项</Button>
               <slot name="actions" :task="data" :current="current" :refresh="refresh" />
             </div>
-            <p v-if="data.capabilities?.reason" class="text-muted-foreground text-sm">{{ data.capabilities.reason }}</p>
+            <p v-if="actionReason" class="text-muted-foreground text-sm">{{ actionReason }}</p>
           </div>
 
           <p v-if="cancelReport || notice" role="status" data-testid="task-notice" class="text-sm">{{ cancelReport || notice }}</p>

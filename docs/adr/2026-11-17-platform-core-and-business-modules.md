@@ -115,3 +115,7 @@ core 提供 `defineAppModule()`，每个模块（包括 core 自己）调用它�
 ## 后台任务通知（2026-11-21）
 
 业务与执行器继续通过 HTTP 提交命令，任务状态和结果持久化。页面只需要从服务端接收变化信号，采用 SSE。浏览器可以用 EventSource 重连，并从任务接口补读最新状态；WebSocket 的双向消息协议在当前流程中没有对应的客户端命令。PostgreSQL 的 `LISTEN/NOTIFY` 将提交后的变化送到应用实例，SSE 连接只传刷新信号。业务模块通过清单和摘要提供业务名称、结果和操作权限。具体接入步骤见[后台任务接入与通知](../agents/background-jobs.md)。传输与提交语义见 [H3 v1](https://v1.h3.dev/guide/websocket) 和 [PostgreSQL NOTIFY](https://www.postgresql.org/docs/19/sql-notify.html)。
+
+## 定时任务（2026-11-21）
+
+业务模块在已有任务种类上声明执行频率。应用装配为 Nitro 的定时触发器，复用后台任务的执行、去重、记录和通知。计划页面展示登记的自动任务及最近结果，文件的保留期限与删除条件仍由拥有导出文件的模块决定。[定时触发接入](../agents/background-jobs.md)
