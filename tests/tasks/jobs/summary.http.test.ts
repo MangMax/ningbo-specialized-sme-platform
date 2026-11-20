@@ -81,8 +81,10 @@ it('summary polling reads only projected metadata and preserves every state and 
         capabilities: { cancel: state === 'queued' || state === 'running' } })
       const queries = prepared.mock.calls.map(([query]) => query)
       expect(queries).toHaveLength(1)
-      expect(queries[0]).toContain('select "id", "kind", "state", "progress", "created_at", "started_at", "finished_at", "result" is not null and "result" != \'null\', "error" is not null, case when "kind"=\'current-roster-export\' and "state"=\'running\' then json_extract("result", \'$.phase\') = \'workbook\' else 0 end from "job"')
-      expect(queries[0]).not.toContain('"params"')
+      const projected = db.$client.prepare(queries[0]!).columns()
+      expect(projected.map(({ column }) => column).filter(Boolean)).toEqual([
+        'id', 'kind', 'state', 'progress', 'created_at', 'started_at', 'finished_at',
+      ])
     } finally { prepared.mockRestore() }
   }
   const list = await (await fetch(`${base}/api/jobs?view=summary&kind=summary-states&state=failed,cancelled&limit=1`)).json()
