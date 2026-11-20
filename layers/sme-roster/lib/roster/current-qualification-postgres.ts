@@ -17,7 +17,7 @@ import { normalizeUscc } from '../domain'
 import { projectEffectiveQualifications, type EffectiveQualification } from './effective-qualifications'
 import { readPostgresRecognizedWitnesses } from './recognized-witness-postgres'
 import { readPostgresQueryCoverage } from './query-coverage-postgres'
-import { readPostgresOfficialPublishedPresentation } from './official-published-presentation-postgres'
+import { createPostgresPublishedPresentationReader } from './official-published-presentation-postgres'
 import { officialPublishedError, projectOfficialPublishedNames, type OfficialPublishedScope, type OfficialPublishedFact } from './official-published-presentation'
 import type { PublishedPresentation } from './correspondence-view'
 import { importPostgresReceiptRedactor } from '../../server/utils/import-receipt-redaction'
@@ -250,12 +250,14 @@ async function readPostgresDetailedAssessments(tx: PostgresQualificationTransact
   const titles = mode === 'workbook' ? CURRENT_TITLES.slice(0, CURRENT_TITLES.indexOf(title) + 1) : CURRENT_TITLES
   const coverage = await readPostgresQueryCoverage(tx, coverageOwners.rows, titles)
   const redact = await importPostgresReceiptRedactor(tx)
+  const eventIds = [...new Set(loaded.flatMap(([, inputs]) => titles.flatMap(target => inputs.get(target)!.evidence.map(row => row.eventId))))]
+  const readPublished = createPostgresPublishedPresentationReader(tx, redact, eventIds)
   for (const [id, inputs] of loaded) {
     for (const target of titles) {
       const input = inputs.get(target)!
       const scope = input.evidence.map(row => ({ evidenceId: row.id, eventId: row.eventId }))
       try {
-        const facts = await readPostgresOfficialPublishedPresentation(tx, scope, redact)
+        const facts = await readPublished(scope)
         input.readPublishedNames = () => [...facts.values()]
       } catch (error) {
         input.readPublishedNames = () => { throw officialPublishedError(error) }
@@ -274,7 +276,7 @@ async function readPostgresDetailedAssessments(tx: PostgresQualificationTransact
     if (presentationScope === undefined) throw new Error('Current published-name scope was not evaluated')
     if (!presentationFacts && !presentationError) {
       try {
-        const facts = await readPostgresOfficialPublishedPresentation(tx, presentationScope, redact)
+        const facts = await readPublished(presentationScope)
         presentationFacts = [...facts.values()]
       } catch (error) { presentationError = officialPublishedError(error) }
     }

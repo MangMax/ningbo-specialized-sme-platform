@@ -10,7 +10,7 @@ import { sanitizeRelationDisplays } from './platform-relation-evidence-display-t
 import { correspondencePublishedScope, correspondenceSourceSelections, projectCorrespondenceSources, type SourceSelection } from './record-correspondence-read'
 import type { ReceiptRedactor } from './import-receipt-redaction'
 import { readPostgresCorrespondenceTargetSources } from './record-correspondence-target-postgres'
-import { projectObservedCorrespondence, type CorrespondenceFilter, type CorrespondencePaging, type CorrespondenceRead, type ReadSources, type StoredCorrespondence } from './record-correspondence'
+import { projectObservedCorrespondence, type CorrespondenceFilter, type CorrespondencePaging, type CorrespondenceRead, type ReadSources, type SourceReference, type StoredCorrespondence } from './record-correspondence'
 
 type Db = Pick<NodePgDatabase, 'execute'>
 type Evidence = ReadSources['evidence'] extends Map<number, (infer T)[]> ? T : never
@@ -40,7 +40,11 @@ async function readExports(db: Db, rowIds: number[]) {
   return exports
 }
 
-export async function observePostgresCorrespondences(db: Db, references: StoredCorrespondence[]) {
+type ProofPair = { relationId: number; exportRowId: number; ids: number[] }
+
+export async function observePostgresCorrespondences(db: Db,
+  references: (SourceReference & Partial<Pick<StoredCorrespondence, 'type' | 'role' | 'provenance'>>)[], requestedProofs: ProofPair[] = [],
+) {
   const scoped = references.filter(row => row.status === 'confirmed' || row.status === 'candidate')
   const { events, evidence } = await readEventsAndEvidence(db, present(scoped.flatMap(row => [row.eventId, row.predecessorEventId])))
   const relations = await readPostgresCorrespondenceTargetSources(db, present(scoped.map(row => row.relationId)))
@@ -51,11 +55,14 @@ export async function observePostgresCorrespondences(db: Db, references: StoredC
     SELECT code FROM title WHERE code=ANY(${sql.param([...new Set(scoped.map(row => row.titleCode))])}::text[])`)
   const exportMap = new Map(exports.map(row => [row.exportRow.id, row]))
   const relationMap = new Map(relations.map(row => [row.relation.id, row]))
-  const coverage = await readPostgresCurrentProofCoverage(db, scoped.flatMap(ref => {
+  const savedProofs = scoped.flatMap(ref => {
     if (ref.type !== 'recognized_export' || ref.role !== 'same_current_row' || ref.status !== 'confirmed') return []
-    const queryId = relationMap.get(ref.relationId!)?.query.id
-    const batchId = exportMap.get(ref.exportRowId!)?.exportBatch.id
-    return queryId === undefined || batchId === undefined ? [] : [{ ids: ref.provenance.comparisonProofIds as number[] ?? [], queryId, batchId }]
+    return [{ relationId: ref.relationId!, exportRowId: ref.exportRowId!, ids: ref.provenance?.comparisonProofIds as number[] ?? [] }]
+  })
+  const coverage = await readPostgresCurrentProofCoverage(db, [...savedProofs, ...requestedProofs].flatMap(ref => {
+    const queryId = relationMap.get(ref.relationId)?.query.id
+    const batchId = exportMap.get(ref.exportRowId)?.exportBatch.id
+    return queryId === undefined || batchId === undefined ? [] : [{ ids: ref.ids, queryId, batchId }]
   }))
   const observed: ReadSources = {
     coversCurrentProof: (ids, queryId, batchId) => coverage({ ids, queryId, batchId }),

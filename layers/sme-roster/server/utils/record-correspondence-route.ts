@@ -1,7 +1,7 @@
 import { semanticRouteHandler } from '../../../core/server/utils/core-route'
 import { getHeader, getMethod, getQuery, getRouterParam, readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { useDb } from '@db'
-import { handleRecordCorrespondenceRequest, readPostgresCorrespondenceRequest, type CorrespondenceAction, type CorrespondenceApiInput } from './record-correspondence-api'
+import { handleRecordCorrespondenceRequest, handlePostgresCorrespondenceRequest, type CorrespondenceAction, type CorrespondenceApiInput } from './record-correspondence-api'
 export function correspondenceRoute(action: CorrespondenceAction, options: { id?: boolean; kind?: 'event' | 'relation' | 'export_row'; key?: boolean } = {}) {
   return semanticRouteHandler(`maintenance.correspondence.${action}`, async (event: H3Event) => {
     setHeader(event, 'cache-control', 'no-store')
@@ -15,7 +15,7 @@ export function correspondenceRoute(action: CorrespondenceAction, options: { id?
     }
     const input: CorrespondenceApiInput = { action, method: getMethod(event), query: getQuery(event), body, id: options.id ? getRouterParam(event, 'id') : undefined, kind: options.kind, key: options.key ? getRouterParam(event, 'idempotencyKey') : undefined, headers: { authorization: getHeader(event, 'authorization'), 'x-api-token': getHeader(event, 'x-api-token') } }
     const apiToken = useRuntimeConfig().apiToken
-    const output = await readPostgresCorrespondenceRequest(input, apiToken)
+    const output = await handlePostgresCorrespondenceRequest(input, apiToken)
       ?? handleRecordCorrespondenceRequest(input, { db: useDb(), apiToken })
     setResponseStatus(event, output.status)
     for (const [name, value] of Object.entries(output.headers)) setHeader(event, name, value)

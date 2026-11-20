@@ -1,5 +1,6 @@
 import { eq, sql } from 'drizzle-orm'
 import { listPostgresCorrespondences, pagePostgresCorrespondences, readPostgresCorrespondenceSources } from './record-correspondence-postgres'
+import { commitPostgresCorrespondences, preflightPostgresCorrespondences } from './record-correspondence-write-postgres'
 import { readPostgresRosterPage } from '../../lib/roster/postgres-rows'
 import { z } from 'zod'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -33,6 +34,7 @@ const operation = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('correct'), correspondenceId: positive, expectedRevision: positive, edge }),
 ])
 const decision = z.strictObject({ idempotencyKey: z.string().trim().min(1), sourceIdentity: z.string().trim().min(1), actor: z.strictObject({ type: z.enum(['user', 'agent']), id: z.string().trim().min(1) }), basis: z.string().trim().min(1), ruleId: z.string().trim().min(1), ruleVersion: z.string().trim().min(1), proofIds: z.array(positive).max(100).optional(), operations: z.array(operation).min(1) })
+const commitDecision = z.strictObject({ request: decision, planHash: z.string().regex(/^[0-9a-f]{64}$/) })
 const candidate = z.strictObject({ eventId: positive.optional(), enterpriseId: positive.optional(), titleCode: z.string().min(1).optional(), queryIds: z.array(positive).default([]), exportBatchIds: z.array(positive).default([]), ruleVersion: z.string().trim().min(1), page: positive.default(1), pageSize: positive.max(200).default(50) }).refine(v => v.eventId ? !v.enterpriseId && !v.titleCode : !!v.enterpriseId && !!v.titleCode, 'Provide eventId or enterpriseId and titleCode').refine(v => v.queryIds.length + v.exportBatchIds.length > 0, 'Specify archived query or export batch IDs')
 const sourceKinds = ['event', 'relation', 'export_row'] as const
 function fail(status: number, code: string, message: string): CorrespondenceApiOutput { return { status, headers, body: { error: { code, message } } } }
@@ -123,11 +125,30 @@ function parseListQuery(query: Record<string, unknown>) {
   return { filter: filter as CorrespondenceFilter, paging, view: query.view }
 }
 
-export async function readPostgresCorrespondenceRequest(input: CorrespondenceApiInput, apiToken?: string | null): Promise<CorrespondenceApiOutput | undefined> {
-  if (!['list', 'get', 'source', 'audit', 'batch'].includes(input.action)) return
+export async function handlePostgresCorrespondenceRequest(input: CorrespondenceApiInput, apiToken?: string | null, browserAuthorized = false): Promise<CorrespondenceApiOutput | undefined> {
+  const write = input.action === 'preflight' || input.action === 'commit'
+  if (!write && !['list', 'get', 'source', 'audit', 'batch'].includes(input.action)) return
   const db = usePostgresRosterDb()
   if (!db) return
-  if (input.action === 'batch' && !auth(input, apiToken)) return fail(401, 'unauthorized', 'Configured API token required')
+  if ((write || input.action === 'batch') && !browserAuthorized && !auth(input, apiToken)) return fail(401, 'unauthorized', 'Configured API token required')
+  if (write) {
+    if (input.method !== 'POST') return fail(405, 'method_not_allowed', 'POST required')
+    const writable = usePostgresRosterDb(true)!
+    try {
+      const { knownRedactors } = await importPostgresReceiptRedactor(db, { additionalSecrets: [apiToken] })
+      if (input.action === 'preflight') {
+        const parsed = decision.safeParse(input.body)
+        return parsed.success ? ok(await preflightPostgresCorrespondences(writable, parsed.data), knownRedactors)
+          : fail(400, 'invalid_request', z.prettifyError(parsed.error))
+      }
+      const parsed = commitDecision.safeParse(input.body)
+      return parsed.success ? ok(await commitPostgresCorrespondences(writable, parsed.data.request, parsed.data.planHash), knownRedactors)
+        : fail(400, 'invalid_request', z.prettifyError(parsed.error))
+    } catch (error) {
+      if (error instanceof CorrespondenceError) return fail(error.status, error.code, error.message)
+      throw error
+    }
+  }
   if (input.method !== 'GET') return fail(405, 'method_not_allowed', 'GET required')
   return db.transaction(async tx => {
     const redact = await importPostgresReceiptRedactor(tx, { additionalSecrets: [apiToken] })
@@ -216,7 +237,7 @@ function correspondenceSnapshot(input: CorrespondenceApiInput, context: { db: Db
       return parsed.success ? ok(preflightRecordCorrespondences(db, parsed.data), redactors) : fail(400, 'invalid_request', z.prettifyError(parsed.error))
     }
     if (input.action === 'commit') {
-      const parsed = z.strictObject({ request: decision, planHash: z.string().regex(/^[0-9a-f]{64}$/) }).safeParse(input.body)
+      const parsed = commitDecision.safeParse(input.body)
       return parsed.success ? ok(commitRecordCorrespondences(db, parsed.data.request, parsed.data.planHash), redactors) : fail(400, 'invalid_request', z.prettifyError(parsed.error))
     }
     if (input.action === 'batch') {

@@ -358,10 +358,41 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
       expect(persisted.rows.map((row: { resultingRevision: number }) => row.resultingRevision)).toEqual([1, 2])
       expect(native.db.$client.prepare('SELECT count(*) AS n FROM comparison_scope_proof').get()).toEqual({ n: 0 })
 
+      const submitCorrespondence = (action: 'preflight' | 'commit', body: object) =>
+        native.request('/api/roster/correspondences/' + action, { method: 'POST', body: JSON.stringify(body) })
+      const draft = { ...baseDecision('postgres-edge'), operations: [{ action: 'create', status: 'candidate', edge: {
+        type: 'event_process', eventId: event.id, relationId: historicalRelationId, role: 'supports_award',
+      } }] }
+      const reference = await json(await post('correspondences/preflight', draft))
+      const draftPlan = await nativeCall('preflight_record_correspondences', draft)
+      expect(draftPlan.planHash).toBe(reference.planHash)
+      expect(draftPlan.targets).toEqual(reference.targets)
+      const draftReceipt = await nativeCall('save_record_correspondences', { request: draft, planHash: draftPlan.planHash })
+      const correspondenceId = draftReceipt.correspondenceIds[0]
+      const decisionsFor = ['confirmed', 'rejected'].map(status => ({ ...baseDecision('postgres-edge-' + status), operations: [
+        { action: 'decide', correspondenceId, expectedRevision: 1, status },
+      ] }))
+      const edgePlans = await Promise.all(decisionsFor.map(async decision => {
+        const response = await submitCorrespondence('preflight', decision)
+        const body = await json(response)
+        expect(response.status, JSON.stringify(body)).toBe(200)
+        return { request: decision, planHash: body.planHash }
+      }))
+      const confirmResponses = await Promise.all(edgePlans.map(plan => submitCorrespondence('commit', plan)))
+      expect(confirmResponses.map(response => response.status).sort()).toEqual([200, 409])
+      const winner = confirmResponses.findIndex(response => response.status === 200)
+      const winningReceipt = await json(confirmResponses[winner]!)
+      expect(await json(await submitCorrespondence('commit', edgePlans[winner]!))).toEqual(winningReceipt)
+      const audit = await nativeCall('get_record_correspondence_audit', { id: correspondenceId })
+      expect(audit.rows.map((row: { resultingRevision: number }) => row.resultingRevision)).toEqual([1, 2])
+      expect(native.db.$client.prepare('SELECT count(*) AS n FROM record_correspondence').get()).toEqual({ n: 0 })
+
       run('psql', ['-X', '-w', '-c', `UPDATE business.platform_export_row SET name_raw='changed after confirmation' WHERE id=${matchedExport.id}`])
-      expect(await readPostgresCorrespondenceRefs(postgres, [enterprise.id])).toEqual(
-        expectedRefs.map(ref => ({ ...ref, requiresRevalidation: true })),
-      )
+      const refsAfterDrift = await readPostgresCorrespondenceRefs(postgres, [enterprise.id])
+      expect(refsAfterDrift).toEqual([
+        ...expectedRefs.map(ref => ({ ...ref, requiresRevalidation: true })),
+        expect.objectContaining({ id: correspondenceId, status: decisionsFor[winner]!.operations[0]!.status, requiresRevalidation: false }),
+      ])
       const summary = await native.request('/api/roster/correspondences?view=summary&relationId=' + matchedRelation!.id)
       expect(await summary.json()).toMatchObject({ total: 1, rows: [{ requiresRevalidation: true }] })
       const drift = await native.request('/api/roster/' + path + '/' + currentProofId)
