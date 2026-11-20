@@ -3,7 +3,7 @@ import { getHeader, getQuery, getRouterParam, readBody, setHeader, setResponseSt
 import { useDb } from '@db'
 import { z } from 'zod'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
-import { legacyPreviewInput102, previewLegacyDecision102 } from './decision-legacy-preview-102'
+import { legacyPreviewInput102, previewLegacyDecision102, previewPostgresLegacyDecision102 } from './decision-legacy-preview-102'
 import { preflightQualification102, commitQualification102, historyDecision102, decisionHistory102, currentDecision102, decisionCommand102, decisionScope102, DecisionError102, parse102, readDecision102, saveDecision102 } from './decision-lifecycle-102'
 import { currentPostgresDecisions102, historyPostgresDecision102, readPostgresDecision102 } from './decision-lifecycle-102/postgres-reads'
 import { savePostgresDecision102, preflightPostgresQualification102, commitPostgresQualification102 } from './decision-lifecycle-102/postgres-writes'
@@ -19,12 +19,13 @@ export function decisionRoute102(action: 'commands' | 'get' | 'current' | 'histo
   return semanticRouteHandler(`maintenance.decision.${action}`, async (event: H3Event) => {
     setHeader(event, 'cache-control', 'no-store')
     try {
-      if (action === 'get' || action === 'current' || action === 'history') {
+      if (action === 'get' || action === 'current' || action === 'history' || action === 'legacy-preview') {
         const postgres = usePostgresRosterDb()
         if (postgres) {
           const query = numericQuery(getQuery(event))
           return await postgres.transaction(async tx => {
             const output = await postgresDecisionOutput102(tx)
+            if (action==='legacy-preview') return output(await previewPostgresLegacyDecision102(tx,useRuntimeConfig().curatedPath,parse102(legacyPreviewInput102,query)))
             if (action === 'history') return output(await historyPostgresDecision102(tx, parse102(decisionHistory102, query)))
             if (action === 'get') {
               const id = parse102(z.number().int().positive().max(Number.MAX_SAFE_INTEGER), numericQuery({ id: getRouterParam(event, 'id') }).id)

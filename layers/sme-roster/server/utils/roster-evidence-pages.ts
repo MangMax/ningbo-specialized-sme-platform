@@ -24,8 +24,9 @@
  * 定得下来的写,定不下来的**一行不改**并在响应里逐条报原因。绝不会出现「猜一个填上」。
  */
 
-import { eq, inArray } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/schema'
 import {
   isPageCapable,
@@ -37,6 +38,7 @@ import {
 import { authorizeRosterWrite } from './roster-import-http'
 import { readPdfPageCount } from '../../../core/server/utils/pdf-pages'
 import { createLegacyEvidencePageAdapter, EvidenceCorrectionError } from './roster-evidence-correction'
+import { createPostgresLegacyEvidencePageAdapter } from './roster-evidence-correction-postgres'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -85,6 +87,20 @@ export function readEvidencePageCandidates(db: Db, sourceFiles: readonly string[
     .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
     .where(inArray(schema.recordEvidence.sourceFile, wanted))
     .all()
+}
+
+async function readPostgresEvidencePageCandidates(db: NodePgDatabase, sourceFiles: string[]) {
+  const wanted = sourceFiles.filter(path => !path.includes('\0') && path.isWellFormed())
+  if (wanted.length === 0) return []
+  const { rows } = await db.execute<{ [K in keyof EvidencePageCandidate]: EvidencePageCandidate[K] }>(sql`
+    SELECT v.id::float8 AS "evidenceId", v.source_file AS "sourceFile", v.list_no::float8 AS "listNo",
+      v.page::float8 AS page, ent.id::float8 AS "enterpriseId", ent.name AS "enterpriseName",
+      r.district, ent.district AS "enterpriseDistrict"
+    FROM record_evidence v JOIN record_event e ON e.id=v.record_event_id
+    JOIN record r ON r.id=e.record_id JOIN enterprise ent ON ent.id=r.enterprise_id
+    WHERE v.source_file=ANY(${sql.param(wanted)}::text[])
+    ORDER BY v.source_file, v.id`)
+  return rows
 }
 
 /** 入参里那些**来源文件**。用于把候选读窄,顺带做输入校验(非字符串/空的丢掉)。 */
@@ -138,7 +154,7 @@ function summarize(plan: EvidencePagePlan, written: number, requested: number) {
  */
 export async function handleEvidencePagesRequest(
   request: EvidencePagesHttpRequest,
-  ctx: { db: Db; apiToken: string | null | undefined; filesDir?: string },
+  ctx: { db: Db; postgres?: (write: boolean) => NodePgDatabase | undefined; apiToken: string | null | undefined; filesDir?: string },
 ): Promise<EvidencePagesHttpResponse> {
   if (request.method !== 'POST') {
     return { status: 405, headers: { ...JSON_HEADERS, allow: 'POST' }, body: { message: '只接受 POST。' } }
@@ -152,8 +168,10 @@ export async function handleEvidencePagesRequest(
     return { status: 400, headers: JSON_HEADERS, body: { message: parsed.error } }
   }
 
-  const candidates = readEvidencePageCandidates(ctx.db, sourceFilesOf(parsed.entries))
-  const sourceFiles = sourceFilesOf(parsed.entries).filter(isPageCapable)
+  const postgres = ctx.postgres?.(!parsed.dryRun)
+  const paths = sourceFilesOf(parsed.entries)
+  const candidates = postgres ? await readPostgresEvidencePageCandidates(postgres, paths) : readEvidencePageCandidates(ctx.db, paths)
+  const sourceFiles = paths.filter(isPageCapable)
   const pageCounts = new Map<string, number | null>(
     await Promise.all(
       sourceFiles.map(async (sourceFile) => [
@@ -166,12 +184,16 @@ export async function handleEvidencePagesRequest(
 
   let written = 0
   const failed = new Set<number>()
-  const applyPage = createLegacyEvidencePageAdapter(ctx.db, ctx.filesDir)
+  const applyPage = postgres ? createPostgresLegacyEvidencePageAdapter(postgres, ctx.filesDir) : createLegacyEvidencePageAdapter(ctx.db, ctx.filesDir)
+  const candidatesById = new Map(candidates.map(candidate => [candidate.evidenceId, candidate]))
   const writtenEvidence = new Set<number>()
   for (const a of plan.assignments) {
     if (a.previous === a.page || writtenEvidence.has(a.evidenceId)) continue
     try {
-      const changed = await applyPage({ evidenceId: a.evidenceId, previous: a.previous, page: a.page, basis: a.entry.basis, dryRun: parsed.dryRun })
+      const changed = await applyPage({
+        evidenceId: a.evidenceId, previous: a.previous, page: a.page, basis: a.entry.basis, dryRun: parsed.dryRun,
+        candidate: candidatesById.get(a.evidenceId)!,
+      })
       writtenEvidence.add(a.evidenceId)
       if (changed) written += 1
     } catch (error) {

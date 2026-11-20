@@ -22,10 +22,7 @@ import {
 } from './roster-import'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { stageAnnouncement } from './announcement-intake'
-import { stagePostgresAnnouncement } from './announcement-intake-postgres'
-import { runPostgresExportImport } from './roster-export-import-postgres'
-import { runPostgresPlatformImport } from './collection-import-postgres'
-import { runPostgresUsccBackfill } from './uscc-backfill-postgres'
+import { runPostgresMixedImport } from './roster-mixed-import-postgres'
 import { hasAnnouncementRows } from '../../lib/roster-import-client'
 import * as schema from '../../../../db/schema'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
@@ -105,12 +102,8 @@ export async function handleRosterImportRequest(
   if (action === 'replay' && validated.value.payload.platformLegacyProvenance) return json(400, { message: 'Legacy provenance uses preflight/commit with its original idempotency key' })
 
   try {
-    const nativeExport = await runPostgresExportImport(action, validated.value)
-    if (nativeExport !== undefined) return json(200, nativeExport)
-    const nativePlatform = await runPostgresPlatformImport(action, validated.value)
-    if (nativePlatform !== undefined) return json(200, nativePlatform)
-    const nativeBackfill = await runPostgresUsccBackfill(action, validated.value)
-    if (nativeBackfill !== undefined) return json(200, nativeBackfill)
+    const nativeMixed = await runPostgresMixedImport(action,validated.value,deps.filesDir)
+    if (nativeMixed !== undefined) return json(200,nativeMixed)
     const pageCountErrors =
       (action === 'preflight' || action === 'commit') && deps.filesDir
         ? await validateRosterImportPageCounts(validated.value, deps.filesDir)
@@ -125,8 +118,6 @@ export async function handleRosterImportRequest(
       return json(200, result)
     }
     if (hasAnnouncementRows(validated.value)) {
-      const nativeIntake = await stagePostgresAnnouncement(validated.value, pageCountErrors)
-      if (nativeIntake !== undefined) return json(200, nativeIntake)
       const staged = deps.executeImport
         ? stageAnnouncement(deps.db as Parameters<typeof stageAnnouncement>[0], validated.value, pageCountErrors)
         : await importExecutor.stage(deps.db, validated.value, pageCountErrors, deps.logContext)

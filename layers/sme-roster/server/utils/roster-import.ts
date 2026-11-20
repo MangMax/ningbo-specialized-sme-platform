@@ -220,7 +220,7 @@ export function validateImportRequest(raw: unknown): ValidateResult {
 }
 
 /** Strict additive field validation: malformed/empty projection commands cannot silently succeed. */
-function validatePlatformProjectionPayload(payload: Record<string, unknown>, sourceKind: string): string | null {
+export function validatePlatformProjectionPayload(payload: Record<string, unknown>, sourceKind: string): string | null {
   if (Object.hasOwn(payload, 'platformLegacyProvenance')) {
     if (sourceKind !== 'platform_archive') return 'platformLegacyProvenance requires sourceKind=platform_archive'
     const parsed = legacyPlatformProvenanceItemsSchema.safeParse(payload.platformLegacyProvenance)
@@ -696,7 +696,7 @@ function collectPendingPlatformRefs(payload: RosterImportPayload): PendingPlatfo
 }
 
 /** 归一后的自然键（`queriedAt` 可空 = 要求 `(interface, queryKey, rdjb)` 唯一）。 */
-interface NormalizedRef {
+export interface NormalizedRef {
   interface: string
   queryKey: string
   rdjb: string
@@ -715,7 +715,7 @@ interface NormalizedRef {
 type RefError = { code: string; field: string; message: string }
 
 /** 校验自然键的形状（不查库）。 */
-function normalizeRef(ref: unknown, field: string): { ok: true; value: NormalizedRef } | { ok: false; error: RefError } {
+export function normalizeRef(ref: unknown, field: string): { ok: true; value: NormalizedRef } | { ok: false; error: RefError } {
   if (!isObject(ref)) {
     return { ok: false, error: { code: 'ref_shape_invalid', field, message: `引用必须是对象 { interface, queryKey, rdjb?, queriedAt?, sequenceNo? }` } }
   }
@@ -865,7 +865,7 @@ function resolveRelationRefPlan(source: Executor, pending: PendingPlatformRefs, 
   return { ok: true }
 }
 
-function describeRef(ref: NormalizedRef): string {
+export function describeRef(ref: NormalizedRef): string {
   const parts = [`interface=${ref.interface}`, `queryKey=${ref.queryKey}`, `rdjb=${ref.rdjb || "''"}`]
   if (ref.queriedAt) parts.push(`queriedAt=${ref.queriedAt}`)
   if (ref.sequenceNo != null) parts.push(`sequenceNo=${ref.sequenceNo}`)
@@ -4566,7 +4566,7 @@ export function replayBatchKey(idempotencyKey: string): string {
 }
 
 /** 从原提交批次读取目标快照；旧批次没有快照时返回 undefined，保留兼容重算路径。 */
-function evidenceRepointPlanFromItems(items: unknown, fingerprint: string): EvidenceRepointTarget[] | undefined {
+export function evidenceRepointPlanFromItems(items: unknown, fingerprint: string): EvidenceRepointTarget[] | undefined {
   if (!Array.isArray(items)) return undefined
   let hasPlan = false
   let samePayload = true

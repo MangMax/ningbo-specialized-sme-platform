@@ -1,6 +1,8 @@
 import * as s from '../../../../db/schema'
 import { closeSync, existsSync, openSync, readSync } from 'node:fs'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { readPostgresDecisionHead102 } from './decision-lifecycle-102/postgres-reads'
 import { z } from 'zod'
 import { latestDecisionHead102, decisionScope102, DecisionError102, type DecisionDb } from './decision-lifecycle-102'
 
@@ -25,32 +27,73 @@ function legacyFile(path: string): Record<string, unknown> {
   if (Object.keys(parsed).length > 10000) throw new DecisionError102(413, 'legacy_file_too_large', 'Legacy preview supports at most 10000 keys')
   return parsed as Record<string, unknown>
 }
-export function previewLegacyDecision102(db: DecisionDb, path: string, input: z.infer<typeof legacyPreviewInput102>) {
+type PreviewInput = z.infer<typeof legacyPreviewInput102>
+type Candidate = { id:number; name:string; uscc:string | null }
+type Head = Pick<NonNullable<ReturnType<typeof latestDecisionHead102>>, 'id'|'status'|'lifecycleAction'>
+
+function legacyPage(path: string,input: PreviewInput) {
   const annotations = legacyFile(path)
-  const keys = input.legacyKey ? Object.hasOwn(annotations, input.legacyKey) ? [input.legacyKey] : [] : Object.keys(annotations).sort()
-  const rows = keys.slice((input.page - 1) * input.pageSize, input.page * input.pageSize).map(legacyKey => {
+  const keys = input.legacyKey ? Object.hasOwn(annotations,input.legacyKey) ? [input.legacyKey] : [] : Object.keys(annotations).sort()
+  const rows = keys.slice((input.page-1)*input.pageSize,input.page*input.pageSize).map(legacyKey=>{
     const conflicts = ['legacy_not_equivalent']
     const annotation = annotations[legacyKey]
-    const note = annotation && typeof annotation === 'object' && !Array.isArray(annotation) ? annotation as Record<string, unknown> : null
-    const text = (key: string) => typeof note?.[key] === 'string' ? (note[key] as string).slice(0,4000) : null
+    const note = annotation && typeof annotation==='object' && !Array.isArray(annotation) ? annotation as Record<string,unknown> : null
+    const text = (key:string) => typeof note?.[key]==='string' ? (note[key] as string).slice(0,4000) : null
     if (!note) conflicts.push('invalid_legacy_annotation')
-    if (['note','by','at'].some(key => typeof note?.[key] === 'string' && (note[key] as string).length > 4000)) conflicts.push('legacy_summary_truncated')
-    let key: unknown
+    if (['note','by','at'].some(key=>typeof note?.[key]==='string' && (note[key] as string).length>4000)) conflicts.push('legacy_summary_truncated')
+    let key:unknown
     try { key = JSON.parse(legacyKey) } catch { /* Invalid keys are evidence for manual review. */ }
-    const tuple = z.tuple([z.string().min(1), decisionScope102.shape.titleCode, decisionScope102.shape.direction]).safeParse(key)
-    if (!tuple.success) return { legacyKey, legacy: { note: text('note'), by: text('by'), at: text('at') }, enterpriseId: null, equivalentToConfirmedNoDiff: false, conflicts: [...conflicts, 'invalid_legacy_key'], candidates: [] }
-    const [identity,titleCode,direction] = tuple.data
-    const fields = { id: s.enterprise.id, name: s.enterprise.name, uscc: s.enterprise.usccNorm }
-    const candidates = db.select(fields).from(s.enterprise).where(identity.startsWith('name:') ? eq(s.enterprise.nameNorm, identity.slice(5)) : eq(s.enterprise.usccNorm, identity)).orderBy(s.enterprise.id).limit(2).all()
-    const enterpriseId = candidates.length === 1 ? candidates[0]!.id : null
-    if (!candidates.length) conflicts.push('enterprise_not_found')
-    if (candidates.length > 1) conflicts.push('ambiguous_enterprise')
-    const current = enterpriseId ? latestDecisionHead102(db, { enterpriseId,titleCode,direction }) : null
-    if (current && current.lifecycleAction !== 'withdraw') conflicts.push('formal_decision_exists')
-    else if (current?.id) conflicts.push('formal_withdrawal_exists')
-    return { legacyKey, legacy: { note: text('note'), by: text('by'), at: text('at') }, enterpriseId, titleCode, direction, candidates, currentVersionId: current?.id ?? null, currentStatus: current?.lifecycleAction === 'withdraw' ? null : current?.status ?? null, equivalentToConfirmedNoDiff: false, conflicts }
+    const tuple = z.tuple([z.string().min(1),decisionScope102.shape.titleCode,decisionScope102.shape.direction]).safeParse(key)
+    return { legacyKey,legacy:{note:text('note'),by:text('by'),at:text('at')},conflicts,tuple:tuple.success ? tuple.data : null }
   })
-  const preview = { rows, total: keys.length, page: input.page, pageSize: input.pageSize, migrationApplied: false }
-  if (Buffer.byteLength(JSON.stringify(preview)) > 256 * 1024) throw new DecisionError102(413, 'preview_response_too_large', 'Preview exceeds 256 KiB; request a smaller page or an exact legacyKey')
+  return { rows,total:keys.length }
+}
+
+type LegacyRow = ReturnType<typeof legacyPage>['rows'][number]
+function projectRow({legacyKey,legacy,conflicts,tuple}: LegacyRow, candidates: Candidate[], current?: Head | null) {
+  if (!tuple) return {legacyKey,legacy,enterpriseId:null,equivalentToConfirmedNoDiff:false,conflicts:[...conflicts,'invalid_legacy_key'],candidates:[]}
+  const [,titleCode,direction] = tuple
+  const enterpriseId = candidates.length===1 ? candidates[0]!.id : null
+  if (!candidates.length) conflicts.push('enterprise_not_found')
+  if (candidates.length>1) conflicts.push('ambiguous_enterprise')
+  if (current && current.lifecycleAction!=='withdraw') conflicts.push('formal_decision_exists')
+  else if (current?.id) conflicts.push('formal_withdrawal_exists')
+  return { legacyKey,legacy,enterpriseId,titleCode,direction,candidates,currentVersionId:current?.id ?? null,
+    currentStatus:current?.lifecycleAction==='withdraw' ? null : current?.status ?? null,equivalentToConfirmedNoDiff:false,conflicts }
+}
+
+function boundedPreview(rows: ReturnType<typeof projectRow>[],total:number,input:PreviewInput) {
+  const preview = { rows,total,page:input.page,pageSize:input.pageSize,migrationApplied:false }
+  if (Buffer.byteLength(JSON.stringify(preview))>256*1024) throw new DecisionError102(413,'preview_response_too_large','Preview exceeds 256 KiB; request a smaller page or an exact legacyKey')
   return preview
+}
+
+export function previewLegacyDecision102(db: DecisionDb,path:string,input:PreviewInput) {
+  const page = legacyPage(path,input)
+  const rows = page.rows.map(row=>{
+    if (!row.tuple) return projectRow(row,[])
+    const [identity,titleCode,direction] = row.tuple
+    const fields = { id:s.enterprise.id,name:s.enterprise.name,uscc:s.enterprise.usccNorm }
+    const candidates = db.select(fields).from(s.enterprise)
+      .where(identity.startsWith('name:') ? eq(s.enterprise.nameNorm,identity.slice(5)) : eq(s.enterprise.usccNorm,identity))
+      .orderBy(s.enterprise.id).limit(2).all()
+    const current = candidates.length===1 ? latestDecisionHead102(db,{enterpriseId:candidates[0]!.id,titleCode,direction}) : null
+    return projectRow(row,candidates,current)
+  })
+  return boundedPreview(rows,page.total,input)
+}
+
+export async function previewPostgresLegacyDecision102(db: Pick<NodePgDatabase,'execute'>,path:string,input:PreviewInput) {
+  const page = legacyPage(path,input)
+  const rows = []
+  for (const row of page.rows) {
+    if (!row.tuple) { rows.push(projectRow(row,[])); continue }
+    const [identity,titleCode,direction] = row.tuple
+    const { rows:candidates } = await db.execute<Candidate>(sql`SELECT id::float8 AS id,name,uscc_norm AS uscc
+      FROM enterprise WHERE ${identity.startsWith('name:') ? sql`name_norm=${identity.slice(5)}` : sql`uscc_norm=${identity}`}
+      ORDER BY id LIMIT 2`)
+    const current = candidates.length===1 ? await readPostgresDecisionHead102(db,{enterpriseId:candidates[0]!.id,titleCode,direction}) : null
+    rows.push(projectRow(row,candidates,current))
+  }
+  return boundedPreview(rows,page.total,input)
 }

@@ -13,10 +13,12 @@ import { reviewPostgresAnnouncementSubjects } from './announcement-subjects-post
 import { planPostgresAnnouncement } from './announcement-plan-postgres'
 import { attachPostgresAnnouncementSources, writePostgresAnnouncement } from './announcement-write-postgres'
 import { ImportReceiptError } from './import-receipts'
+import { applyPostgresOfficialImport, createPostgresOfficialImportState, finishPostgresOfficialImport } from './official-evidence-import-postgres'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
 import { runPostgresCorrespondenceTransaction } from './record-correspondence-write-postgres'
 import { importPostgresReceiptRedactor } from './import-receipt-redaction'
 import { publicRosterImportItems } from './roster-import'
+import { createPostgresImportSteps, executePostgresImportSteps } from './roster-mixed-import-postgres'
 import { eventCorrectionCapture, eventCorrectionReadbackScope } from './roster-event-correction'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -75,51 +77,68 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
     const raw = request.payload.announcement!.records
     if (raw.length !== input.rows.length) throw new ImportReceiptError(422, 'unreviewed_rows', 'Supply a decision for each original row')
     if (pageErrors.length) throw new ImportReceiptError(409, 'source_changed', 'Source page cannot be revalidated')
-    if (Object.keys(request.payload).some(key => key !== 'announcement' && key !== 'officialEvidencePlanHash')) {
-      throw new ImportReceiptError(503, 'native_import_unavailable', 'Mixed announcement imports require the remaining PostgreSQL import handlers')
-    }
-
     const previous = await lockPostgresRosterImportBatch(tx, request.idempotencyKey)
     if (previous && (previous.kind !== request.sourceKind || previous.identity !== request.sourceIdentity ||
       previous.sha256 !== (request.sourceSha256 ?? null) || previous.status === 'committed')) {
       throw new ImportReceiptError(409, 'idempotency_conflict', 'Idempotency key belongs to a different source')
     }
     const startedAt = new Date().toISOString()
-    const batchId = preflight ? null : previous?.id ?? (await tx.execute<{ id: number }>(sql`
+    const operation = preflight ? 'preflight' : 'commit'
+    const steps = createPostgresImportSteps(operation,request,filesDir,true)
+    const createBatch = async (connection: Tx) => (await connection.execute<{ id: number }>(sql`
       INSERT INTO import_batch(idempotency_key,source_kind,source_identity,source_sha256,status,created_at)
       VALUES(${request.idempotencyKey},${request.sourceKind},${request.sourceIdentity},${request.sourceSha256 ?? null},'preflight',${startedAt})
       RETURNING id::float8 AS id`)).rows[0]!.id
+    const batchId = preflight ? null : previous?.id ?? await createBatch(tx)
     try {
       return await tx.transaction(async nested => {
         const { owners, created } = await reviewPostgresAnnouncementSubjects(nested, id, decision, raw, input)
         const plan = await planPostgresAnnouncement(nested, request, owners, created, decision, filesDir)
-        if (preflight) throw new Preview({ status: 'preflighted', conflicts: plan.errors,
+        if (preflight && (!steps.length || plan.errors.length)) throw new Preview({ status: 'preflighted', conflicts: plan.errors,
           ...(plan.official ? { officialEvidencePlanHash: plan.official } : {}) })
-        if (plan.official && plan.official !== officialEvidencePlanHash) plan.errors.push({
+        if (!preflight && plan.official && plan.official !== officialEvidencePlanHash) plan.errors.push({
           ok: false, kind: 'official_evidence', ref: 'payload', error: {
             code: 'plan_mismatch', message: 'Matching opt-in preflight planHash required; sources or final plan changed',
           },
         })
         if (plan.errors.length) throw new Conflicts(plan.errors)
-        const items = await writePostgresAnnouncement(nested, request, batchId!, plan)
-        const readback = await qualification(nested, owners)
-        const sourceIds = await attachPostgresAnnouncementSources(nested, id, batchId!, request, owners, filesDir)
+        const activeBatchId = batchId ?? previous?.id ?? await createBatch(nested)
+        const evidence = createPostgresOfficialImportState()
+        const items = await writePostgresAnnouncement(nested, request, activeBatchId, plan, evidence)
+        if (plan.officialPlan) items.push(await applyPostgresOfficialImport(nested, plan.officialPlan, activeBatchId,
+          preflight ? plan.official! : officialEvidencePlanHash, evidence))
+        await finishPostgresOfficialImport(nested, evidence)
+        const sourceIds = await attachPostgresAnnouncementSources(nested, id, activeBatchId, request, owners, filesDir)
         await nested.execute(sql`INSERT INTO roster_announcement_member(enterprise_id,intake_id)
           SELECT owner,${id} FROM unnest(${sql.param([...new Set(owners.values())])}::bigint[]) AS input(owner) ON CONFLICT DO NOTHING`)
+        const extra = steps.length ? await executePostgresImportSteps(nested, {
+          id: activeBatchId, status: previous?.status ?? 'preflight', kind: request.sourceKind, identity: request.sourceIdentity,
+          sha256: request.sourceSha256 ?? null, items: null, preflight: previous?.preflight ?? null, summary: null,
+        }, operation, steps) : undefined
+        if (preflight) throw new Preview({ status: 'preflighted', conflicts: extra?.preflight.conflicts ?? [],
+          ...(plan.official ? { officialEvidencePlanHash: plan.official } : {}) })
+        if (extra?.error) throw new Conflicts([
+          ...items.map(item=>({ ...item,ok:false,error:{code:'commit_rolled_back',message:'整批回滚，本项未写入'} })),
+          ...extra.items,
+        ])
+        const readback = await qualification(nested, owners)
         const summary = {
-          ...emptySummary,
-          written: items.reduce((count,item) => count + Number(item.detail?.rowsWritten ?? 0),0),
-          skipped: items.reduce((count,item) => count + Number(item.detail?.skipped ?? 0),0) + plan.rows.filter(row => row.operation === 'skip').length,
-          evidenceRepointed: items.reduce((count,item) => count + Number(item.detail?.evidenceRepointed ?? 0),0),
+          ...emptySummary, ...extra?.summary,
+          written: (extra?.summary?.written ?? 0) + items.reduce((count,item) => count + Number(item.detail?.rowsWritten ?? 0),0),
+          skipped: (extra?.summary?.skipped ?? 0) + items.reduce((count,item) => count + Number(item.detail?.skipped ?? 0),0) + plan.rows.filter(row => row.operation === 'skip').length,
+          evidenceRepointed: (extra?.summary?.evidenceRepointed ?? 0) + items.reduce((count,item) => count + Number(item.detail?.evidenceRepointed ?? 0),0),
         }
+        items.push(...extra?.items ?? [])
         const completedAt = new Date().toISOString()
         await nested.execute(sql`UPDATE import_batch SET status='committed',item_results=${JSON.stringify(items)},
           summary=${JSON.stringify({ ...summary, qualificationReadback: readback })},error=NULL,committed_at=${completedAt} WHERE id=${batchId}`)
         const publicItems = publicRosterImportItems(items, batchId!)
         await recordSupplementReceipt(nested, { batchId: batchId!, requestHash, requestBody, status: 'committed',
           summary, items: redactor(publicItems), startedAt, completedAt })
+        const candidateTaskIds = extra?.summary ? extra.candidateTaskIds : undefined
         const receipt: SupplementAnnouncementResponse = { batchId: batchId!, status: 'supplemented', summary, items: publicItems, error: null,
-          qualificationReadback: readback, intakeId: id, sourceIds, owners: [...owners.values()] }
+          qualificationReadback: readback, intakeId: id, sourceIds, owners: [...owners.values()],
+          ...(candidateTaskIds?.length ? { candidateTaskIds } : {}) }
         await nested.execute(sql`UPDATE roster_announcement_intake SET supplement_digest=${decision},reviewed_request=${JSON.stringify(input)},
           receipt=${JSON.stringify(receipt)} WHERE id=${id}`)
         return receipt

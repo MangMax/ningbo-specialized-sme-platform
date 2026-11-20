@@ -7,10 +7,7 @@ import { importExecutor } from './import-execution'
 import { asyncImportReceiptMcpResult } from './import-receipts'
 import { validateImportRequest } from './roster-import'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
-import { stagePostgresAnnouncement } from './announcement-intake-postgres'
-import { runPostgresExportImport } from './roster-export-import-postgres'
-import { runPostgresPlatformImport } from './collection-import-postgres'
-import { runPostgresUsccBackfill } from './uscc-backfill-postgres'
+import { runPostgresMixedImport } from './roster-mixed-import-postgres'
 
 /** The two import tools share only submission. Schemas and authorization stay on the tools. */
 export function submitRosterImportMcp(action: 'preflight' | 'commit', input: {
@@ -31,16 +28,10 @@ export function submitRosterImportMcp(action: 'preflight' | 'commit', input: {
       throw createError({ statusCode: validated.status, message: validated.message })
     }
     try {
-      const nativeExport = await runPostgresExportImport(action, validated.value)
-      if (nativeExport !== undefined) return nativeExport
-      const nativePlatform = await runPostgresPlatformImport(action, validated.value)
-      if (nativePlatform !== undefined) return nativePlatform
-      const nativeBackfill = await runPostgresUsccBackfill(action, validated.value)
-      if (nativeBackfill !== undefined) return nativeBackfill
+      const nativeMixed = await runPostgresMixedImport(action,validated.value,useRuntimeConfig().filesDir)
+      if (nativeMixed !== undefined) return nativeMixed
       const pageCountErrors = await validateRosterImportPageCounts(validated.value, useRuntimeConfig().filesDir)
       if (action === 'commit' && hasAnnouncementRows(validated.value)) {
-        const nativeIntake = await stagePostgresAnnouncement(validated.value, pageCountErrors)
-        if (nativeIntake !== undefined) return nativeIntake
         const staged = await importExecutor.stage(useDb(), validated.value, pageCountErrors, context)
         if (staged) return staged
       }
