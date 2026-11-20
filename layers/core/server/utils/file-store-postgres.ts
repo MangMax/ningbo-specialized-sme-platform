@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm'
+import { sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { createError } from 'h3'
 import { usePostgresDirectoryDb } from '../../../../db/postgresql/client'
@@ -6,7 +6,7 @@ import { libraryUploadCategory } from '../../lib/core/library-uploads'
 import { checkAdmission, resolveFileRegistration, serverFileCategories } from '../../../../server/file-store'
 import type { LogContext } from '../../lib/logging'
 import { compareFileContentIdentity } from './file-content-identity'
-import { FileMaintenanceError, MAX_PAGE_SIZE, registerLandedFile, selectedFileFilters, UploadRegistrationError, type FileQuery, type FileRow } from './file-store'
+import { FileMaintenanceError, MAX_PAGE_SIZE, registerLandedFile, selectedFileFilters, UploadRegistrationError, type FileCategoryServer, type FileQuery, type FileRow } from './file-store'
 import { libraryFileFacts, validateLibraryRegistration } from './library-file-category'
 
 export type PostgresFileDb = NodePgDatabase
@@ -65,11 +65,11 @@ export async function readPostgresFile(db: PostgresFileDb, id: number) {
   return (await withFileReferences(db, [withIdentity(baseFile(file))]))[0]!
 }
 
-async function withFileReferences(db: PostgresFileDb, files: FileRow[]) {
+async function withFileReferences(db: PostgresFileDb, files: FileRow[], categories: readonly FileCategoryServer[] = serverFileCategories) {
   if (!files.length) return files
   const ids = files.map(file => file.id)
   const counts = new Map<number, number>()
-  for (const category of serverFileCategories) {
+  for (const category of categories) {
     const addReferences = category.postgres?.countReferences
     if (!addReferences) continue
     for (const [id, count] of await addReferences(db, ids)) {
@@ -79,7 +79,11 @@ async function withFileReferences(db: PostgresFileDb, files: FileRow[]) {
   return files.map(file => ({ ...file, referenceCount: counts.get(file.id) ?? 0 }))
 }
 
-export function listPostgresFiles(db: PostgresFileDb, params: FileQuery & Record<string, unknown>, withReferences = false) {
+export function listPostgresFiles(
+  db: PostgresFileDb,
+  params: FileQuery & Record<string, unknown>,
+  view?: { categories: readonly FileCategoryServer[]; membership?: SQL },
+) {
   const page = params.page ?? 1
   const pageSize = Math.min(MAX_PAGE_SIZE, params.pageSize ?? 50)
   const offset = (BigInt(page) - BigInt(1)) * BigInt(pageSize)
@@ -89,8 +93,9 @@ export function listPostgresFiles(db: PostgresFileDb, params: FileQuery & Record
   const search = pattern === undefined ? sql`TRUE` : pattern.includes('\0') ? sql`FALSE` : sql`
     (${asciiLower(sql`stored_file.display_name`)} LIKE ${pattern} ESCAPE '' OR ${asciiLower(sql`stored_file.filename`)} LIKE ${pattern} ESCAPE '')`
   const conditions = [params.includeRemoved ? sql`TRUE` : sql`stored_file.removed_at IS NULL`, search]
-  if (withReferences) {
-    for (const category of serverFileCategories) {
+  if (view) {
+    if (view.membership) conditions.push(view.membership)
+    for (const category of view.categories) {
       const filters = selectedFileFilters(category.filters ?? [], params)
       if (!Object.keys(filters).length) continue
       const constraint = category.postgres?.constraint
@@ -100,14 +105,28 @@ export function listPostgresFiles(db: PostgresFileDb, params: FileQuery & Record
     }
   }
   const where = sql`WHERE ${sql.join(conditions, sql` AND `)}`
+  const order = [
+    ...(view?.categories.flatMap(category => category.postgres?.orderBy ?? []) ?? []),
+    sql`stored_file.filename COLLATE "C"`, sql`stored_file.id`,
+  ]
 
   return db.transaction(async tx => {
     const { rows: [total] } = await tx.execute<{ total: string }>(sql`SELECT count(*) AS total FROM stored_file ${where}`)
     if (offset >= BigInt(total!.total)) return { rows: [], total: Number(total!.total) }
     const { rows } = await tx.execute<PgFile>(sql`SELECT ${columns} FROM stored_file ${where}
-      ORDER BY stored_file.filename COLLATE "C", stored_file.id LIMIT ${pageSize} OFFSET ${String(offset)}`)
+      ORDER BY ${sql.join(order, sql`, `)} LIMIT ${pageSize} OFFSET ${String(offset)}`)
     const files = rows.map(row => withIdentity(baseFile(row)))
-    return { rows: withReferences ? await withFileReferences(tx, files) : files, total: Number(total!.total) }
+    if (!view) return { rows: files, total: Number(total!.total) }
+    const ids = files.map(file => file.id)
+    const fields: ReadonlyMap<number, object>[] = []
+    for (const category of view.categories) {
+      if (category.postgres?.readFields) fields.push(await category.postgres.readFields(tx, ids))
+    }
+    const referenced = await withFileReferences(tx, files, view.categories)
+    return {
+      rows: referenced.map(file => Object.assign({}, file, ...fields.map(byId => byId.get(file.id)))),
+      total: Number(total!.total),
+    }
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }
 

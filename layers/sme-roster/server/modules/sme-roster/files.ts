@@ -10,6 +10,7 @@ import { listRegisteredDeclarations681, registeredSummary681 } from '../../utils
 import { type FileStoreDb as Db, type FileCategoryServer, type FileRow } from '../../../../core/server/utils/file-store'
 import manifest from '../../../manifest'
 import { rosterFileOpenApi } from './file-openapi'
+import { readPostgresRosterFileFields, rosterFilePostgresConstraint, rosterFilePostgresOrder } from '../../utils/roster-file-postgres'
 
 const KINDS: readonly FileKind[] = KIND_ORDER as FileKind[]
 export const PARSE_STATES: readonly ParseState[] = PARSE_STATE_ORDER as ParseState[]
@@ -86,6 +87,9 @@ export const rosterFileServerCategory = {
   ...manifest.fileCategories,
   readFields,
   postgres: {
+    readFields: readPostgresRosterFileFields,
+    constraint: rosterFilePostgresConstraint,
+    orderBy: rosterFilePostgresOrder,
     async countReferences(db, ids) {
       const { rows } = await db.execute<{ id: string; count: string }>(sql`
         SELECT f.id, count(*) FROM stored_file f

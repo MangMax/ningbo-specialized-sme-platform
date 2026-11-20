@@ -68,6 +68,8 @@ export interface FileCategoryServer {
   readonly postgres?: {
     readonly constraint?: (filters: FileQueryFilters) => SQL | undefined
     readonly countReferences?: (db: NodePgDatabase, ids: readonly number[]) => Promise<ReadonlyMap<number, number>>
+    readonly readFields?: (db: NodePgDatabase, ids: readonly number[]) => Promise<ReadonlyMap<number, object>>
+    readonly orderBy?: readonly SQL[]
   }
   /** Return null to leave the path to another registered category. */
   readonly prepareBackfill?: (path: string) => ((db: FileStoreDb, fileId: number) => void) | null

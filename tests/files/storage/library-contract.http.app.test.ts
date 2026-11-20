@@ -69,6 +69,22 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     const evidence = db.prepare('INSERT INTO record_evidence (record_event_id, source_file) VALUES (1, ?)')
     evidence.run(migratedPath)
     evidence.run('uploads/late-evidence.txt')
+    db.exec(`
+      INSERT INTO roster_file_classification (file_id, source, kind, year, batch, title_code, category_state, parse_state)
+      VALUES (41, 'jxj', 'announcement', 2025, 2, 'specialized_sme', 'set', 'parsed');
+      INSERT INTO stored_file_part (file_id, title_code, event_kind, year, batch, attachment, row_count, origin, has_conflict)
+      VALUES (41, 'specialized_sme', 'award', 2024, 1, '附件一', 5, 'derived', 1);
+    `)
+    const declaration = db.prepare(`INSERT INTO file_declaration_669 (declaration_id, file_id, revision, active, sha256, part, page_ranges)
+      VALUES (?, 41, 1, ?, ?, ?, ?)`)
+    for (const [id, active] of [['active-declaration', 1], ['inactive-declaration', 0]] as const) {
+      declaration.run(id, active, sha256, JSON.stringify({ titleCode: 'specialized_sme', eventKind: 'award', year: 2024,
+        batch: 1, attachment: '附件一', rowCount: 5 }), JSON.stringify([{ start: 1, end: 2 }]))
+    }
+    db.prepare(`INSERT INTO file_parse_audit_105
+      (file_id,idempotency_key,request_hash,operation,actor,reason,before,after,created_at)
+      VALUES (41, 'fixture-lineage', 'fixture-hash', 'replace', ?, 'test', '{}', ?, '2026-01-01T00:00:00Z')`)
+      .run(JSON.stringify({ type: 'agent', id: 'fixture' }), JSON.stringify({ inputLineage: { status: 'bound', inputRef: { sha256 } } }))
     db.prepare(`INSERT INTO file_maintenance_audit
       (id, file_id, revision, action, request_hash, mode, before_json, after_json, created_at)
       VALUES (23, 41, 1, 'update', ?, 'legacy', ?, ?, '2026-01-01T00:01:00.000Z')`).run(
@@ -111,6 +127,23 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     expect(response.status, JSON.stringify(value)).toBe(status)
     return value
   }
+  it.skipIf(!enabled)('reads scoped roster metadata and keeps global file rows free of roster fields', async () => {
+    const filtered = await json('sme-roster/files?source=jxj&parseState=parsed&pageSize=1', 200)
+    expect(filtered).toMatchObject({ total: 1, rows: [{
+      id: 41, source: 'jxj', kind: 'announcement', year: 2025, batch: 2, titleCode: 'specialized_sme',
+      categoryState: 'set', parseState: 'parsed', referenceCount: 1,
+      parts: [{ titleCode: 'specialized_sme', eventKind: 'award', year: 2024, batch: 1, attachment: '附件一', rowCount: 5, origin: 'derived', hasConflict: true }],
+      registeredSummary: { count: 1, declarations: [{ declarationId: 'active-declaration', active: true, sha256, pageRanges: [{ start: 1, end: 2 }] }] },
+      partsBinding: { historical: 'unknown', inputLineage: { status: 'bound', inputRef: { sha256 } } },
+    }] })
+    expect(await json('sme-roster/files?source=miit', 200)).toEqual({ rows: [], total: 0 })
+    expect(await json('sme-roster/files?page=2&pageSize=1', 200)).toEqual({ rows: [], total: 1 })
+    expect(await json('files?source=jxj&parseState=parsed', 200)).toEqual(filtered)
+    const global = await json('file-library', 200)
+    expect(global.total).toBe(1)
+    expect(global.rows[0]).not.toHaveProperty('categoryState')
+    expect(global.rows[0]).not.toHaveProperty('parts')
+  })
 
   it.skipIf(!enabled)('preserves migrated file identity and serves original, HEAD and range bytes', async () => {
     const file = { id: 41, relPath: migratedPath, displayName: '历史附件', filename: '原始.TXT', bytes: original.length, sha256 }

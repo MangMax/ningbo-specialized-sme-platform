@@ -2,6 +2,7 @@ import { listPostgresFiles, usePostgresFileDb } from '../../utils/file-store-pos
 import { useDb } from '@db'
 import { listStoredFiles } from '../../utils/stored-files'
 import { fileListQuery } from '../../utils/file-list-query'
+import { serverFileCategories } from '../../../../../server/file-store'
 
 defineRouteMeta({
   openAPI: {
@@ -69,7 +70,7 @@ defineRouteMeta({
 export default defineEventHandler(async (event) => {
   const q = getQuery(event)
   const pg = usePostgresFileDb()
-  if (pg) return listPostgresFiles(pg, { ...q, includeRemoved: false, ...fileListQuery(q) }, true)
+  if (pg) return listPostgresFiles(pg, { ...q, includeRemoved: false, ...fileListQuery(q) }, { categories: serverFileCategories })
   const db = useDb()
 
   const result = listStoredFiles(db, {
