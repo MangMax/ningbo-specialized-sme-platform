@@ -11,7 +11,7 @@ import { projectDifferences } from './current-difference'
 import { readPostgresRosterDetailQualification } from './current-qualification-postgres'
 import { isPageCapable } from './evidence-page'
 import { qualificationUsccCandidate } from './platform-qualification-postgres'
-import { postgresRosterRow, readPostgresRosterRowsById } from './postgres-rows'
+import { readPostgresRosterRowsById } from './postgres-rows'
 import { readPostgresQueryAssessments } from './query-assessment-postgres'
 import { projectEnterpriseDifferenceUniverse, projectRosterDetailHistory, projectRosterDetailRelations,
   projectRosterDetailTimeline, selectRosterDetailArchive, type RosterDetailArchive, type RosterEnterpriseDetail } from './enterprise-roster'

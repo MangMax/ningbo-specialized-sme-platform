@@ -31,13 +31,9 @@ export function createPostgresPublishedPresentationReader(db: NodePgDatabase, re
   }
 }
 
-export function readPostgresOfficialPublishedPresentation(db: NodePgDatabase, scope: readonly OfficialPublishedScope[], redact: ReceiptRedactor) {
-  return createPostgresPublishedPresentationReader(db, redact)(scope)
-}
-
 export async function readPostgresPublishedNames(db: NodePgDatabase, scope: readonly OfficialPublishedScope[], redact: ReceiptRedactor, copies = scope, envelopeCount = 1): Promise<PublishedPresentation> {
   try {
-    const facts = await readPostgresOfficialPublishedPresentation(db, scope, redact)
+    const facts = await createPostgresPublishedPresentationReader(db, redact)(scope)
     return projectOfficialPublishedNames([...facts.values()], copies, envelopeCount)
   } catch (error) {
     return { availability: 'unavailable' as const, error: officialPublishedError(error).code, facts: [] }

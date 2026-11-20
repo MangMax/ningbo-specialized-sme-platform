@@ -21,7 +21,7 @@ import { reuseCollectedPlatformResult, reusePostgresCollectedPlatformResult } fr
 import { platformResultToImport } from '../../lib/platform/recognized-evidence'
 import { preflightRosterImport, commitRosterImport } from './roster-import'
 
-import { runPostgresPlatformImport } from './collection-import-postgres'
+import { commitPostgresPlatformCollection } from './collection-import-postgres'
 import { resolvePostgresCredential } from '../../../core/server/utils/credential-state-postgres'
 import { requirePostgresJobsWritable, startPostgresJobs, usePostgresJobsDb } from '../../../core/server/utils/postgres-jobs'
 import { createPostgresJob, findPostgresJobRequest, getPostgresJob, lockPostgresJobAdmission, reopenPostgresJob, setPostgresJobResult } from '../../../core/server/utils/job-store-postgres'
@@ -157,10 +157,8 @@ export const differenceSnapshotSpec: JobSpec = {
           return true
         })
         if (reused) return
-        const saved = await runPostgresPlatformImport('commit',request,{
-          db:ctx.db,checkpoint:tx=>ctx.checkpoint(result,tx),
-        })
-        if (saved?.status!=='committed') fail(409,'Business collection commit failed')
+        const saved = await commitPostgresPlatformCollection(ctx.db, request, tx => ctx.checkpoint(result, tx))
+        if (saved.status!=='committed') fail(409,'Business collection commit failed')
       } },job.result as Receipt,cookie)
     },
   },

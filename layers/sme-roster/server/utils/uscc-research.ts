@@ -34,7 +34,6 @@ import {
   isByteEqualName,
   judgeUsccClaim,
   nameMatchLevel,
-  missingUsccSourceFields,
   PLATFORM_INTERFACE_URLS,
   usccFormatVerdict,
   type NameMatchLevel,
@@ -866,7 +865,7 @@ export function* projectUsccResearch(
       continue
     }
     const correctionMatch = claim.correction
-      ? (a: unknown, b: unknown) => (!isByteEqualName(a, claim.correction!.platformName) ? null : ('byte' as const))
+      ? (a: unknown) => (!isByteEqualName(a, claim.correction!.platformName) ? null : ('byte' as const))
       : null
     const evidenceName = claim.correction ? claim.correction.platformName : target.name
     const stored = findIndexedUsccEvidence(

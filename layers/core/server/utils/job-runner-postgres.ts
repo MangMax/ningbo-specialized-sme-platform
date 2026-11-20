@@ -15,7 +15,7 @@ import type { TaskSummary } from '../../lib/task-center'
 
 export type PostgresJobDb = NodePgDatabase & { $client: Pool }
 export type PostgresJobTransaction = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
-export type SubmitPostgresJobInput = Omit<SubmitInput, 'filesDir'>
+type SubmitPostgresJobInput = Omit<SubmitInput, 'filesDir'>
 
 export interface PostgresJobContext {
   /** The execution connection. Await all its work before returning. */

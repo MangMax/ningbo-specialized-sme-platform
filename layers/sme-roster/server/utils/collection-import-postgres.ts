@@ -11,7 +11,6 @@ import { writePostgresCollectionHeader } from '../../lib/platform/postgres-colle
 import { writePostgresObservation } from '../../lib/platform/postgres-observation-write'
 import { readPostgresFingerprintQueries, readPostgresRelationFingerprints } from './postgres-platform-fingerprint'
 import { executePostgresRosterImport, type NativeImportExecution, type PostgresImportAction, type PostgresImportBatch } from './roster-export-import-postgres'
-import { usePostgresRosterDb } from './postgres-roster-db'
 import { projectQueryEvidenceRevisions, evidenceDigest113 } from './evidence-impact-113'
 import { appendPostgresEvidenceRevision } from './evidence-revision-postgres'
 import { stagePostgresJob } from '../../../core/server/utils/job-runner-postgres'
@@ -198,12 +197,9 @@ export async function planPostgresPlatformQueries(tx: Tx, queries: readonly Rost
   return { plans, conflicts }
 }
 
-export function runPostgresPlatformImport(action: PostgresImportAction, request: RosterImportRequest,
-  collectionJob?: { db: NodePgDatabase; checkpoint(tx: Tx): Promise<void> }) {
-  const db = collectionJob?.db ?? usePostgresRosterDb(true)
-  if (!db) return
-  return executePostgresRosterImport(db,action,request,(tx,batch)=>
-    executePostgresPlatformItems(tx,batch,action,request,collectionJob?.checkpoint))
+export function commitPostgresPlatformCollection(db: NodePgDatabase, request: RosterImportRequest, checkpoint: (tx: Tx) => Promise<void>) {
+  return executePostgresRosterImport(db, 'commit', request, (tx, batch) =>
+    executePostgresPlatformItems(tx, batch, 'commit', request, checkpoint))
 }
 
 export async function executePostgresPlatformItems(tx: Tx,batch: PostgresImportBatch,action: PostgresImportAction,

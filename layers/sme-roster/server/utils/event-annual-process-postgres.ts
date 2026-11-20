@@ -112,7 +112,7 @@ export async function readPostgresAnnualProcessEntry(db: Reader, eventId: number
   return projectAnnualProcess(prepared, groups, evidence)
 }
 
-export async function readPostgresAnnualProcess(db: Reader, eventId: number) {
+async function readPostgresAnnualProcess(db: Reader, eventId: number) {
   return (await readPostgresAnnualProcessEntry(db, eventId))?.read ?? null
 }
 

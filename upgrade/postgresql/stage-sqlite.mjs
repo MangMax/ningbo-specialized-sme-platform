@@ -1,4 +1,6 @@
 import { spawn, execFileSync } from 'node:child_process'
+import { statSync } from 'node:fs'
+import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -16,7 +18,8 @@ const ordinal = '_sqlite_copy_order'
 const sqlName = name => '"' + name.replaceAll('"', '""') + '"'
 const sqlText = value => "'" + value.replaceAll("'", "''") + "'"
 const schema = sqlName(schemaName)
-const psql = process.env.PGSQL_BIN ?? 'psql'
+const bin = process.env.PGSQL_BIN
+const psql = bin && statSync(bin, { throwIfNoEntry: false })?.isDirectory() ? join(bin, 'psql') : bin ?? 'psql'
 const psqlArgs = ['-X', '-w', '-q', '-v', 'ON_ERROR_STOP=1', '-v', 'VERBOSITY=terse']
 const copyHeader = Buffer.from('5047434f50590aff0d0a000000000000000000', 'hex')
 const copyEnd = Buffer.from([255, 255])
@@ -157,15 +160,14 @@ async function copyTable(db, table) {
     }
   })()
   const existing = verifyOnly || (resume && query(`SELECT to_regclass(${sqlText(target)}) IS NOT NULL`) === 't')
-  if (!existing) {
-    query(`CREATE TABLE ${target} (${fields.map(([name, type]) => `${sqlName(name)} ${type}`).join(', ')})`)
-  }
+  const createTable = `CREATE TABLE ${target} (${fields.map(([name, type]) => `${sqlName(name)} ${type}`).join(', ')})`
+  let copied = false
 
   try {
     if (existing) {
       for (const _chunk of sourceChunks) { /* Hash the snapshot without loading it. */ }
     } else {
-      const copyIn = spawn(psql, [...psqlArgs, '-c', `COPY ${target} (${names.join(', ')}) FROM STDIN (FORMAT binary)`],
+      const copyIn = spawn(psql, [...psqlArgs, '--single-transaction', '-c', createTable, '-c', `COPY ${target} (${names.join(', ')}) FROM STDIN (FORMAT binary)`],
         { stdio: ['pipe', 'ignore', 'inherit'] })
       const transfer = pipeline(Readable.from(sourceChunks), copyIn.stdin).catch(error => {
         copyIn.kill()
@@ -174,6 +176,7 @@ async function copyTable(db, table) {
       const results = await Promise.allSettled([transfer, waitForProcess(copyIn)])
       const failure = results.find(result => result.status === 'rejected')
       if (failure) throw failure.reason
+      copied = true
     }
 
     const copyOut = spawn(psql, [...psqlArgs, '-c',
@@ -186,7 +189,7 @@ async function copyTable(db, table) {
     if (digest !== targetHash.digest('hex')) throw new Error(`Copy verification failed for ${table}`)
     return { table, rows: metrics.rows.toString(), sha256: digest }
   } catch (error) {
-    if (!existing) query(`DROP TABLE ${target}`)
+    if (copied) query(`DROP TABLE ${target}`)
     throw error
   }
 }

@@ -40,7 +40,7 @@ export function reviewRoute114(action:'list'|'get'|'sources'|'events'|'preview'|
         }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
       }
       const db = useDb(), output = decisionOutput102(db)
-      return db.transaction(tx=>{
+      return db.transaction(()=>{
         if(action==='get')return output(getImpact114(db,parse102(impactGet114,q).id))
         if(action==='sources')return output(listSources114(db,parse102(impactSources114,q)))
         if(action==='events')return output(listEvents114(db,parse102(impactEvents114,q)))

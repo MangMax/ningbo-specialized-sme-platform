@@ -6,7 +6,7 @@ import type { fileParseAudit105 } from '../../../../db/schema'
 import { appLog, type LogContext } from '../../../core/lib/logging'
 import { activePostgresPhysicalIntent, readPostgresFile, requirePostgresFileWrite } from '../../../core/server/utils/file-store-postgres'
 import { readPdfPageCount } from '../../../core/server/utils/pdf-pages'
-import { mergeParseParts, normalizeParseParts } from './parse-result'
+import { mergeParseParts } from './parse-result'
 import { derivedPostgresFileParts, readPostgresRosterFileFields } from './roster-file-postgres'
 import {
   equalParseInput, lineage310, modernEnvelope105, parseFrozenCommit310, parseHistory105, parsePreflight310,

@@ -10,7 +10,11 @@ if [[ ${PGHOST:-} != /* || ! -d ${PGHOST:-} || -n ${PGHOSTADDR:-} || -n ${PGSERV
 fi
 
 if [[ -n ${PGSQL_BIN:-} ]]; then
-  export PATH="$PGSQL_BIN:$PATH"
+  if [[ -f "$PGSQL_BIN" ]]; then
+    export PATH="$(dirname "$PGSQL_BIN"):$PATH"
+  else
+    export PATH="$PGSQL_BIN:$PATH"
+  fi
 fi
 for tool in psql pg_dump pg_restore dropdb; do
   if [[ $("$tool" --version) != *' (PostgreSQL) 19.'* ]]; then

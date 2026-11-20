@@ -9,7 +9,6 @@ import {
   eventCorrectionResult, projectEventCorrectionPlan, validateEventCorrectionTargets, type EventCorrectionInputs,
   type EventCorrectionRequest, type CorrectionQualificationSafety,
 } from './roster-event-correction'
-import { runPostgresCorrespondenceTransaction } from './record-correspondence-write-postgres'
 import { lockPostgresRosterImportKey } from './roster-export-import-postgres'
 import { advancePostgresOfficialEventRevision } from './evidence-revision-postgres'
 import { lockPostgresFilePaths, refreshPostgresDerivedFileParts } from './file-parts-postgres'
@@ -88,54 +87,50 @@ async function readQualification(tx: Tx, plan: Plan, stage: 'before' | 'after', 
   } catch { return eventCorrectionCapture(null, stage, scope.target, safety) }
 }
 
-export function preflightPostgresEventCorrections(db: NodePgDatabase, request: EventCorrectionRequest, safety?: CorrectionQualificationSafety) {
-  return runPostgresCorrespondenceTransaction(db, async tx => {
-    await lockPostgresRosterImportKey(tx, request.idempotencyKey)
-    const old = await readBatch(tx, request)
-    const replay = eventCorrectionPreflightReplay(old, safety)
-    if (replay) return replay
-    const plan = await buildPostgresEventPlan(tx, request)
-    const { rows: [batch] } = await tx.execute<{ id: number }>(sql`
-      INSERT INTO import_batch(idempotency_key,source_kind,source_identity,status,created_at)
-      VALUES(${request.idempotencyKey},'event_correction',${request.sourceIdentity},'preflight',${new Date().toISOString()})
-      ON CONFLICT(idempotency_key) DO NOTHING RETURNING id::float8 AS id`)
-    if (!batch) return eventCorrectionFailure(409, 'idempotency_conflict', 'Idempotency key belongs to another request')
-    const result = eventCorrectionResult(eventCorrectionPreflightResult(batch.id, plan), await readQualification(tx, plan, 'before', safety), safety)
-    await tx.execute(sql`UPDATE import_batch SET preflight_result=${JSON.stringify(result.stored)} WHERE id=${batch.id}`)
-    return result.response
-  })
+export async function preflightPostgresEventCorrections(tx: Tx, request: EventCorrectionRequest, safety?: CorrectionQualificationSafety) {
+  await lockPostgresRosterImportKey(tx, request.idempotencyKey)
+  const old = await readBatch(tx, request)
+  const replay = eventCorrectionPreflightReplay(old, safety)
+  if (replay) return replay
+  const plan = await buildPostgresEventPlan(tx, request)
+  const { rows: [batch] } = await tx.execute<{ id: number }>(sql`
+    INSERT INTO import_batch(idempotency_key,source_kind,source_identity,status,created_at)
+    VALUES(${request.idempotencyKey},'event_correction',${request.sourceIdentity},'preflight',${new Date().toISOString()})
+    ON CONFLICT(idempotency_key) DO NOTHING RETURNING id::float8 AS id`)
+  if (!batch) return eventCorrectionFailure(409, 'idempotency_conflict', 'Idempotency key belongs to another request')
+  const result = eventCorrectionResult(eventCorrectionPreflightResult(batch.id, plan), await readQualification(tx, plan, 'before', safety), safety)
+  await tx.execute(sql`UPDATE import_batch SET preflight_result=${JSON.stringify(result.stored)} WHERE id=${batch.id}`)
+  return result.response
 }
 
-export function commitPostgresEventCorrections(db: NodePgDatabase, request: EventCorrectionRequest, planHash: string, safety?: CorrectionQualificationSafety) {
-  return runPostgresCorrespondenceTransaction(db, async tx => {
-    await lockPostgresRosterImportKey(tx, request.idempotencyKey)
-    const batch = eventCorrectionCommitBatch(await readBatch(tx, request), planHash)
-    if (batch.status === 'committed') return eventCorrectionCommitReplay(batch, safety)
-    const eventIds = request.operations.map(op => op.eventId)
-    const { rows } = await tx.execute<{ path: string }>(sql`SELECT source_file AS path FROM record_evidence WHERE record_event_id=ANY(${ids(eventIds)})`)
-    const paths = new Set(rows.map(row => row.path))
-    await lockPostgresFilePaths(tx, paths)
-    await tx.execute(sql`SELECT id FROM record_event WHERE id=ANY(${ids(eventIds)}) ORDER BY id FOR UPDATE`)
-    const plan = await buildPostgresEventPlan(tx, request)
-    if (plan.planHash !== planHash) return eventCorrectionFailure(409, 'plan_mismatch', 'Event/source/impact changed after preflight')
-    const correctedAt = new Date().toISOString()
-    for (const target of plan.targets) {
-      const { after, before, evidence, enterpriseId } = target
-      await advancePostgresOfficialEventRevision(tx, after.id, before.revision)
-      await tx.execute(sql`UPDATE record_event SET event_type=${after.eventType},year=${after.year},batch_seq=${after.batchSeq},
-        sort_key=${after.sortKey},review_outcome=${after.reviewOutcome},decided_year=${after.decidedYear},
-        formal_validity=${after.formalValidity === null ? null : JSON.stringify(after.formalValidity)} WHERE id=${after.id}`)
-      await tx.execute(sql`INSERT INTO event_correction_audit(event_id,batch_id,record_id,enterprise_id,before,after,evidence,
-        source_identity,actor_type,actor_id,basis,corrected_at)
-        VALUES(${after.id},${batch.id},${after.recordId},${enterpriseId},${JSON.stringify(before)},${JSON.stringify(after)},${JSON.stringify(evidence)},
-          ${request.sourceIdentity},${request.actor.type},${request.actor.id},${request.basis},${correctedAt})`)
-    }
-    await refreshPostgresDerivedFileParts(tx, paths)
-    const receipt = { batchId: batch.id, planHash, eventIds, impact: plan.impact, committedAt: correctedAt }
-    const result = eventCorrectionResult(receipt, await readQualification(tx, plan, 'after', safety), safety)
-    const itemResults = plan.targets.map(target => ({ eventId: target.eventId, revision: target.after.revision }))
-    await tx.execute(sql`UPDATE import_batch SET status='committed',summary=${JSON.stringify(result.stored)},item_results=${JSON.stringify(itemResults)},
-      committed_at=${correctedAt},error=NULL WHERE id=${batch.id}`)
-    return result.response
-  })
+export async function commitPostgresEventCorrections(tx: Tx, request: EventCorrectionRequest, planHash: string, safety?: CorrectionQualificationSafety) {
+  await lockPostgresRosterImportKey(tx, request.idempotencyKey)
+  const batch = eventCorrectionCommitBatch(await readBatch(tx, request), planHash)
+  if (batch.status === 'committed') return eventCorrectionCommitReplay(batch, safety)
+  const eventIds = request.operations.map(op => op.eventId)
+  const { rows } = await tx.execute<{ path: string }>(sql`SELECT source_file AS path FROM record_evidence WHERE record_event_id=ANY(${ids(eventIds)})`)
+  const paths = new Set(rows.map(row => row.path))
+  await lockPostgresFilePaths(tx, paths)
+  await tx.execute(sql`SELECT id FROM record_event WHERE id=ANY(${ids(eventIds)}) ORDER BY id FOR UPDATE`)
+  const plan = await buildPostgresEventPlan(tx, request)
+  if (plan.planHash !== planHash) return eventCorrectionFailure(409, 'plan_mismatch', 'Event/source/impact changed after preflight')
+  const correctedAt = new Date().toISOString()
+  for (const target of plan.targets) {
+    const { after, before, evidence, enterpriseId } = target
+    await advancePostgresOfficialEventRevision(tx, after.id, before.revision)
+    await tx.execute(sql`UPDATE record_event SET event_type=${after.eventType},year=${after.year},batch_seq=${after.batchSeq},
+      sort_key=${after.sortKey},review_outcome=${after.reviewOutcome},decided_year=${after.decidedYear},
+      formal_validity=${after.formalValidity === null ? null : JSON.stringify(after.formalValidity)} WHERE id=${after.id}`)
+    await tx.execute(sql`INSERT INTO event_correction_audit(event_id,batch_id,record_id,enterprise_id,before,after,evidence,
+      source_identity,actor_type,actor_id,basis,corrected_at)
+      VALUES(${after.id},${batch.id},${after.recordId},${enterpriseId},${JSON.stringify(before)},${JSON.stringify(after)},${JSON.stringify(evidence)},
+        ${request.sourceIdentity},${request.actor.type},${request.actor.id},${request.basis},${correctedAt})`)
+  }
+  await refreshPostgresDerivedFileParts(tx, paths)
+  const receipt = { batchId: batch.id, planHash, eventIds, impact: plan.impact, committedAt: correctedAt }
+  const result = eventCorrectionResult(receipt, await readQualification(tx, plan, 'after', safety), safety)
+  const itemResults = plan.targets.map(target => ({ eventId: target.eventId, revision: target.after.revision }))
+  await tx.execute(sql`UPDATE import_batch SET status='committed',summary=${JSON.stringify(result.stored)},item_results=${JSON.stringify(itemResults)},
+    committed_at=${correctedAt},error=NULL WHERE id=${batch.id}`)
+  return result.response
 }

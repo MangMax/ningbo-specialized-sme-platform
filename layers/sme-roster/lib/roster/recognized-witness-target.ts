@@ -1,6 +1,5 @@
 import Database from 'better-sqlite3'
-/** Reads captured native witness facts without decoding source archives. */
-import { and,eq,inArray,max,sql } from 'drizzle-orm'
+import { and,eq,inArray,max } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { targetSchema as s } from '../platform/target-schema'

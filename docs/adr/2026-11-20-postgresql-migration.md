@@ -18,7 +18,7 @@
 
 ## 离线数据工具
 
-[stage-sqlite.mjs](../../upgrade/postgresql/stage-sqlite.mjs) 使用当前仓库的 better-sqlite3，从只读事务读取源快照。用环境变量 `PGHOST`、`PGDATABASE` 和所需连接选项指定隔离目标，`PGSQL_BIN` 可指定 PostgreSQL 19 的 psql 路径。
+[stage-sqlite.mjs](../../upgrade/postgresql/stage-sqlite.mjs) 使用当前仓库的 better-sqlite3，从只读事务读取源快照。用环境变量 `PGHOST`、`PGDATABASE` 和所需连接选项指定隔离目标，`PGSQL_BIN` 可指定 PostgreSQL 19 的客户端目录或 psql 可执行文件路径。
 
 ```sh
 node upgrade/postgresql/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA
@@ -62,6 +62,8 @@ psql -X -w -v staging=staged_business -f upgrade/postgresql/materialize-file-and
 psql -X -w -v staging=staged_business -f upgrade/postgresql/materialize-roster.sql
 psql -X -w -v staging=staged_logs -f upgrade/postgresql/materialize-runtime-logs.sql
 ```
+
+早期隔离副本若已物化 `business.job` 但缺少任务运行字段，可单独执行 [install-job-runtime.sql](../../upgrade/postgresql/install-job-runtime.sql)。
 
 恢复演练比较 `business` 与 `runtime_logs` 的主键顺序二进制内容及序列高水位。恢复目标需预装 `pg_trgm`。
 

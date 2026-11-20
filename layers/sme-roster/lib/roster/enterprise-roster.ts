@@ -592,45 +592,6 @@ export function allRosterEnterprises(
   return db.transaction(() => selectRosterEnterprises(db, filter))
 }
 
-/** 读模型的三样公共前置:**快照 / 快照索引 / 已确认别名**,外加一个**按需**建画像的入口。 */
-interface RosterContext {
-  snap: Snapshot
-  index: SnapshotIndex
-  confirmedAliases: Map<number, string[]>
-  /** 取某家企业的画像(同一次请求里重复问只建一次)。 */
-  profileOf: (enterprise: Snapshot['enterprises'][number]) => Profile
-}
-
-/**
- * 快照 + 索引 + 按需建画像。总表 / 首次认定清单要**全部**企业,**企业详情只要一家** ——
- * 详情为了开一行去把 7352 家全建一遍,一次请求就是几千倍的无用功
- * (实测:整表建画像 ≈ 3s,只建一家 ≈ 0.2s)。
- * 两条路共用同一份索引与同一个 `buildProfile`,只是**建几家的差别**。
- */
-function readRosterContext(snap: Snapshot): RosterContext {
-  const evidence = indexEvidence(snap)
-  const confirmedAliases = new Map<number, string[]>()
-  for (const alias of snap.aliases) {
-    if (alias.verificationStatus !== 'confirmed') continue
-    const list = confirmedAliases.get(alias.enterpriseId) ?? []
-    if (!list.includes(alias.name)) list.push(alias.name)
-    confirmedAliases.set(alias.enterpriseId, list)
-  }
-  const built = new Map<number, Profile>()
-  return {
-    snap,
-    index: indexSnapshots(snap),
-    confirmedAliases,
-    profileOf: (enterprise) => {
-      const cached = built.get(enterprise.id)
-      if (cached) return cached
-      const profile = buildProfile(enterprise, snap, evidence)
-      built.set(enterprise.id, profile)
-      return profile
-    },
-  }
-}
-
 function selectRosterEnterprises(
   db: Db,
   filter: RosterEnterpriseFilter,

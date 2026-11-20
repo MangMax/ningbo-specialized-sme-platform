@@ -50,14 +50,14 @@ export async function cleanupExportArtifacts(dbPath: string, readJob: (id: strin
   for (const name of await readdir(dir).catch(() => [] as string[])) {
     if (!/^[0-9A-HJKMNP-TV-Z]{26}\.(part|xlsx)$/.test(name)) continue
     const row=await readJob(name.slice(0,26))
-    if (row && ['queued','running'].includes(row.state)) continue
-    const artifact=row?.state === 'done' ? await currentArtifact(row,dbPath) : null
+    if (row?.kind !== 'current-roster-export' || ['queued','running'].includes(row.state)) continue
+    const artifact=row.state === 'done' ? await currentArtifact(row,dbPath) : null
     if (name.endsWith('.part') || !artifact || artifact.availability !== 'available') {
       const resourceId = name.slice(0,26)
       await unlink(join(dir,name)).then(() => {
-        appLog({ module: 'sme-roster', source: 'export', operation: 'export.artifact.cleanup', outcome: 'success', resourceType: 'export_artifact', resourceId, ...(row ? { taskId: row.id } : {}) }, logContext)
+        appLog({ module: 'sme-roster', source: 'export', operation: 'export.artifact.cleanup', outcome: 'success', resourceType: 'export_artifact', resourceId, taskId: row.id }, logContext)
       }).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== 'ENOENT') appLog({ module: 'sme-roster', source: 'export', operation: 'export.artifact.cleanup', outcome: 'failure', level: 'error', errorCode: 'artifact_cleanup_failed', resourceType: 'export_artifact', resourceId, ...(row ? { taskId: row.id } : {}) }, logContext)
+        if (error.code !== 'ENOENT') appLog({ module: 'sme-roster', source: 'export', operation: 'export.artifact.cleanup', outcome: 'failure', level: 'error', errorCode: 'artifact_cleanup_failed', resourceType: 'export_artifact', resourceId, taskId: row.id }, logContext)
       })
     }
   }

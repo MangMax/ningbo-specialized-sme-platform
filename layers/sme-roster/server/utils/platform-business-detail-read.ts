@@ -42,7 +42,7 @@ export function readPlatformDetailFacts(db: Db, queries: RosterPlatformQueryRow[
   }
   const result = new Map<number, PlatformObservationFact>()
   for (const [interfaceName, ids] of byInterface) {
-    const facts = interfaceName === 'apply_list' ? readTargetDeclarationFacts(db, ids, { scope: 'selected' })
+    const facts = interfaceName === 'apply_list' ? readTargetDeclarationFacts(db, ids)
       : interfaceName === 'business_list' ? readTargetBusinessProcessFacts(db, ids, { scope: 'selected' })
       : readTargetRecognizedFacts(db, ids)
     for (const [relationId, fact] of facts) {

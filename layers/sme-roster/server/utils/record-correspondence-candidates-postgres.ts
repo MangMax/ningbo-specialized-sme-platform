@@ -2,7 +2,6 @@ import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
-import type { ScopedPlatformObservation } from '../../lib/platform/business-record'
 import { postgresRosterRow, readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
 import { EVENT_ARCHIVE_RULE_VERSION, normalizedUscc, type EventArchiveInput } from './event-archive-discovery'
 import { readPostgresCorrespondenceSources } from './record-correspondence-postgres'
@@ -53,7 +52,7 @@ async function pageCandidateGroups(db: Reader, input: CandidateInput, enterprise
   return result!
 }
 
-export async function readPostgresCandidateQueries(db: Reader, queryIds: readonly number[]): Promise<Sources['queries']> {
+async function readPostgresCandidateQueries(db: Reader, queryIds: readonly number[]): Promise<Sources['queries']> {
   const { rows } = await db.execute<Sources['queries'][number]>(sql`
     SELECT q.old_id::float8 AS id,c.interface,c.query_key AS "queryKey",c.rdjb,c.title_code AS "titleCode",c.queried_at AS "queriedAt",
       c.last_collected_at AS "lastCollectedAt",c.status,c.failure_reason AS "failureReason",c.created_at AS "createdAt",

@@ -12,7 +12,7 @@ import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-c
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { createHash } from 'node:crypto'
 import { createDrizzleLogger } from '../../../core/lib/logging/drizzle'
-import { eq, sql } from 'drizzle-orm'
+import { sql } from 'drizzle-orm'
 import type { SelectResultFields } from 'drizzle-orm/query-builders/select.types'
 import * as schema from '../../../../db/schema'
 import { currentQualification102 } from '../../server/utils/decision-lifecycle-102'

@@ -9,7 +9,7 @@ type Executor = Pick<NodePgDatabase, 'execute'>
 type TerminalState = Extract<JobState, 'done' | 'failed' | 'cancelled'>
 type ActiveState = Exclude<JobState, TerminalState>
 
-export interface PostgresJobExpectation<State extends JobState = JobState> {
+interface PostgresJobExpectation<State extends JobState = JobState> {
   state: State
   claimToken: string | null
 }
@@ -125,13 +125,6 @@ export async function createPostgresJob(db: Executor, input: {
   return decodeJob(rows[0]!)
 }
 
-export function claimPostgresJob(db: Executor, id: string) {
-  return readJob(db, sql`UPDATE business.job
-    SET state = 'running', started_at = ${new Date().toISOString()}, claim_token = gen_random_uuid()
-    WHERE id = ${id} AND state = 'queued'
-    RETURNING ${jobColumns}`)
-}
-
 function compareJob(id: string, expected: PostgresJobExpectation) {
   return sql`id = ${id} AND state = ${expected.state}
     AND claim_token IS NOT DISTINCT FROM ${expected.claimToken}::uuid`
@@ -163,19 +156,6 @@ function encodeResult(result: unknown) {
   return encoded
 }
 
-export function finishPostgresJob(db: Executor, id: string, expected: PostgresJobExpectation<ActiveState>, outcome: {
-  state: TerminalState
-  result?: unknown
-  error?: string | null
-}) {
-  if (!isTerminalJobState(outcome.state) || expected.state === 'queued' && outcome.state === 'done') return Promise.resolve(null)
-  const result = outcome.result === undefined ? sql`` : sql`, result = ${encodeResult(outcome.result)}`
-  return readJob(db, sql`UPDATE business.job
-    SET state = ${outcome.state}, error = ${outcome.error ?? null}, finished_at = ${new Date().toISOString()}${result}
-    WHERE ${compareJob(id, expected)} AND state IN ('queued', 'running')
-    RETURNING ${jobColumns}`)
-}
-
 /** Keep the prior checkpoint when reopening a job. */
 export function reopenPostgresJob(
   db: Executor, id: string, kind: string, expected: PostgresJobExpectation<TerminalState>, params: Record<string, unknown>,
@@ -189,7 +169,6 @@ export function reopenPostgresJob(
     RETURNING ${jobColumns}`)
 }
 
-/** Claim the oldest runnable row, skipping rows locked by another transaction. */
 export function claimNextPostgresJob(db: Executor, kinds: string[]) {
   if (!kinds.length) return Promise.resolve(null)
   return readJob(db, sql`WITH candidate AS (
@@ -221,7 +200,6 @@ export async function postgresJobCancellationRequested(db: Executor, id: string,
   return rows[0]?.requested ?? true
 }
 
-/** Serialize the cancellation decision with claim and completion. */
 export async function cancelPostgresJob(db: NodePgDatabase, id: string, logContext?: LogContext) {
   const outcome = await db.transaction(async tx => {
     const { rows } = await tx.execute<{ state: JobState; kind: string }>(sql`SELECT state, kind FROM business.job WHERE id = ${id} FOR UPDATE`)
@@ -248,7 +226,6 @@ export async function cancelPostgresJob(db: NodePgDatabase, id: string, logConte
   return response
 }
 
-/** Atomically publish the result, progress and terminal state for this claim. */
 export function completePostgresJob(db: Executor, job: PostgresJobSnapshot, outcome: {
   state: TerminalState
   error?: string | null

@@ -162,18 +162,14 @@ export async function planPostgresOfficialImport(tx: Tx, request: RosterImportRe
   return { planHash, operations: changes.length, appendTargets, correction, correctionTargets }
 }
 
-export type PostgresOfficialImportPlan = NonNullable<Awaited<ReturnType<typeof planPostgresOfficialImport>>>
-
-export function assertPostgresOfficialImportPlanHash(plan: PostgresOfficialImportPlan | null, submittedPlanHash: string | undefined) {
-  if (plan && submittedPlanHash !== plan.planHash) {
-    return officialFactFailure('plan_mismatch', 'Matching opt-in preflight planHash required; sources or final plan changed', 409)
-  }
-}
+type PostgresOfficialImportPlan = NonNullable<Awaited<ReturnType<typeof planPostgresOfficialImport>>>
 
 /** Apply a plan rebuilt in this transaction. The coordinator finalizes shared effects before merges. */
 export async function applyPostgresOfficialImport(tx: Tx, plan: PostgresOfficialImportPlan, batchId: number,
   submittedPlanHash: string | undefined, sharedState?: PostgresOfficialImportState): Promise<RosterImportItemResult> {
-  assertPostgresOfficialImportPlanHash(plan, submittedPlanHash)
+  if (submittedPlanHash !== plan.planHash) {
+    officialFactFailure('plan_mismatch', 'Matching opt-in preflight planHash required; sources or final plan changed', 409)
+  }
   const state = sharedState ?? createPostgresOfficialImportState()
   const declarationsBefore = state.declarations.size
   const evidence: unknown[] = []

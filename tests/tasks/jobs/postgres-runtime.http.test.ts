@@ -280,6 +280,7 @@ it.runIf(!!bin)('uses the PostgreSQL capability catalog and keeps private task d
   })
   registerJob({
     kind: 'fixture-sqlite-only', status: 'ready', summary: 'SQLite handler fixture',
+    parse: () => ({ ok: true, params: {} }),
     async run() { return { result: null } },
   })
   const kinds = await (await request('/api/jobs/kinds')).json()

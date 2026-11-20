@@ -16,7 +16,7 @@ type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Subject = { id: number; name: string; nameNorm: string; uscc: string | null }
 const subjectColumns = sql`e.id::float8 AS id,e.name,e.name_norm AS "nameNorm",e.uscc_norm AS uscc`
 
-export interface PostgresRosterMergePlan {
+interface PostgresRosterMergePlan {
   readonly merge: RosterImportMerge
   readonly index: number
   readonly sourceEnterpriseId: number

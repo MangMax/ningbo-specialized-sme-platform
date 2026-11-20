@@ -190,7 +190,7 @@ export function createPostgresImportSteps(action: PostgresImportAction, request:
     execute: (tx,batch,operation) => executePostgresAliasItems(tx,batch,operation,aliases),
   })
   if (Array.isArray(differences) && differences.length) steps.push({
-    execute: (tx,batch,operation) => executePostgresDifferenceItems(tx,operation,differences),
+    execute: (tx,_batch,operation) => executePostgresDifferenceItems(tx,operation,differences),
   })
   if (exportSnapshot) steps.push({
     execute: (tx,batch,operation) => executePostgresExportItems(tx,batch,operation,exportSnapshot),
@@ -203,7 +203,7 @@ export function createPostgresImportSteps(action: PostgresImportAction, request:
     execute: (tx,batch,operation) => executePostgresOfficialItems(tx,batch,operation,request,filesDir),
   })
   if (Array.isArray(merges) && merges.length) steps.push({
-    execute: (tx,batch,operation) => executePostgresMergeItems(tx,operation,merges),
+    execute: (tx,_batch,operation) => executePostgresMergeItems(tx,operation,merges),
   })
   return steps
 }

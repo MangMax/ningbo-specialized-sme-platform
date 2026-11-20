@@ -1,5 +1,4 @@
 import { platformNormalizationConflict } from '../../lib/platform/normalization';
-/** Apply reader for stored capture and the completed target catalog. */
 import { getTableColumns,and,count,countDistinct,desc,eq,exists,inArray,isNull,max,min,ne,or,sql,type SQL } from 'drizzle-orm';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { alias } from 'drizzle-orm/sqlite-core';
@@ -23,9 +22,6 @@ export type TargetDeclarationListResult = Omit<DeclarationListResult, 'rows'> & 
 export type TargetDeclarationOptions = Omit<PlatformFilterOptions, 'titles' | 'declareKinds' | 'statuses'> & {
     titles: unknown[]; declareKinds: unknown[]; statuses: unknown[];
 };
-// Queries use explicit target table declarations, never relational db.query.
-// Accept the existing connection injection seam without rebuilding its session/logger.
-// The gate below owns schema compatibility; this is not a selector.
 type Db = BetterSQLite3Database<typeof targetSchema> | BetterSQLite3Database<typeof import('../../../../db/schema')>;
 const previous = alias(a, 'newer_assignment');
 const vp = alias(p, 'version_projection');
@@ -33,9 +29,7 @@ const { id: versionIdentity, ...versionProjectionFields } = getTableColumns(vp);
 const versionColumns = { id: versionIdentity, ...versionProjectionFields };
 function current(db: Db) { return and(eq(a.observationId, o.id), eq(a.revision, db.select({ revision: max(previous.revision) }).from(previous).where(eq(previous.observationId, o.id)))); }
 const isolated = or(ne(o.identityState, 'resolved'), ne(o.contentState, 'verified'), isNull(o.versionId));
-/** Gate the entire apply request domain, before any business filtering or paging.
- * PRAGMA is schema infrastructure; no archive or legacy entity is consulted. */
-function gate(db: Db, domain?: SQL, factScope?: 'annual' | 'selected') {
+function gate(db: Db, domain?: SQL) {
     const missing = db.select({ id: o.id }).from(o).innerJoin(c, eq(c.id, o.collectionId)).leftJoin(p, eq(p.observationId, o.id))
         .where(and(eq(c.interface, 'apply_list'), domain, or(isNull(p.id), ne(p.exactStoredState, 'captured'), ne(p.sqlFactTitleState, 'captured'), isNull(p.exactStoredState), isNull(p.sqlFactTitleState)))).limit(1).get();
     if (missing)
@@ -146,7 +140,7 @@ export function getTargetDeclaration(db: Db, recordId: number): DeclarationDetai
 const modeledFields = ['declareKind', 'year', 'appliedAt', 'status', 'nameRaw', 'usccRaw'] as const;
 const comparisonFields = ['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'] as const;
 /** Alias inputs retain their namespace. No unindexed legacy lookup or archive fallback. */
-export function readTargetDeclarationFacts(db: Db, relationIds: number[], options: { scope?: 'selected' } = {}): Map<number, PlatformObservationFact> {
+export function readTargetDeclarationFacts(db: Db, relationIds: number[]): Map<number, PlatformObservationFact> {
     const result = new Map<number, PlatformObservationFact>();
     if (!relationIds.length)
         return result;
@@ -154,7 +148,7 @@ export function readTargetDeclarationFacts(db: Db, relationIds: number[], option
         const original = alias(a, 'original_assignment');
         for (let start = 0; start < relationIds.length; start += 400) {
             const ids = relationIds.slice(start, start + 400);
-            gate(tx, inArray(o.id, tx.select({ id: ra.observationId }).from(ra).where(inArray(ra.oldId, ids))), options.scope ?? 'annual');
+            gate(tx, inArray(o.id, tx.select({ id: ra.observationId }).from(ra).where(inArray(ra.oldId, ids))));
             const rows = tx.select({ relationId: ra.oldId, source: p, version: versionColumns, originalName: original.nameRaw, originalUscc: original.usccRaw })
                 .from(ra).innerJoin(o, eq(o.id, ra.observationId)).innerJoin(c, eq(c.id, o.collectionId)).innerJoin(p, eq(p.observationId, o.id))
                 .leftJoin(vp, and(eq(vp.versionId, o.versionId), eq(vp.recordId, o.recordId)))

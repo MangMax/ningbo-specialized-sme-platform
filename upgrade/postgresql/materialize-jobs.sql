@@ -13,7 +13,10 @@ CREATE TABLE business.job (
   created_at text COLLATE "C" NOT NULL,
   started_at text,
   finished_at text,
-  claim_token uuid
+  claim_token uuid,
+  cancel_requested boolean NOT NULL DEFAULT false,
+  request_key text COLLATE "C",
+  input_snapshot text
 );
 
 INSERT INTO business.job (id, kind, params, state, progress, result, error, created_at, started_at, finished_at)
@@ -32,7 +35,7 @@ CREATE UNIQUE INDEX job_export_request_uq
   ON business.job (kind, (nullif(params::jsonb -> 'clientRequestId', 'null'::jsonb)))
   WHERE kind = 'current-roster-export';
 
+CREATE UNIQUE INDEX job_request_key_uq ON business.job (kind, request_key) WHERE request_key IS NOT NULL;
+
 ANALYZE business.job;
 COMMIT;
-
-\ir install-job-runtime.sql

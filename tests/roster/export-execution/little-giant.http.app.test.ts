@@ -5,7 +5,7 @@ import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { CURRENT_RULE_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { businessIdentity, expectedBusinessIdentity } from '../current-export/fixtures/specialized-export'
 import { reviewCurrentExportDecision, confirmCurrentExportExclusion } from '../fixtures/qualification-decisions'
-import { mkdtempSync, rmSync, existsSync, writeFileSync, renameSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -235,6 +235,8 @@ it('万行快照与普通请求响应', async () => {
 it('重启保留与中断清理', async () => {
   const finished=await workbook('persistent')
   await service.stop()
+  const otherDatabaseExport = join(dbPath + '.exports', newJobId() + '.xlsx')
+  writeFileSync(otherDatabaseExport, 'other database')
   const interruptedId=newJobId()
   db.insert(s.job).values({id:interruptedId,kind:'current-roster-export',params:{titleCode:'little_giant',clientRequestId:'interrupted'},state:'running',progress:{done:1,total:20}}).run()
   writeFileSync(join(dbPath+'.exports',interruptedId+'.part'),'incomplete')
@@ -245,6 +247,7 @@ it('重启保留与中断清理', async () => {
   for(let i=0;i<100 && (existsSync(join(dbPath+'.exports',interruptedId+'.part')) || existsSync(join(dbPath+'.exports',interruptedId+'.xlsx')));i++) await new Promise(r=>setTimeout(r,10))
   expect(existsSync(join(dbPath+'.exports',interruptedId+'.part'))).toBe(false)
   expect(existsSync(join(dbPath+'.exports',interruptedId+'.xlsx'))).toBe(false)
+  expect(readFileSync(otherDatabaseExport, 'utf8')).toBe('other database')
   expect((await fetch(url('/api/job-artifacts/'+interruptedId),{headers})).status).toBe(404)
   const restored=await json(await fetch(url('/api/jobs/'+finished.job.id)))
   expect(restored.state).toBe('done');expect(restored.result.artifact.availability).toBe('available')

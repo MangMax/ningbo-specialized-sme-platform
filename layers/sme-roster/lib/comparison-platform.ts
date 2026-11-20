@@ -232,7 +232,7 @@ function attachPlatformEvidenceSnapshot<T extends RowKey>(
   for (const interfaceName of ['apply_list', 'business_list', 'recognized_list'] as const) {
     const queryIds = new Set(queries.filter(q => q.interface === interfaceName).map(q => q.id))
     const ids = relationRows.filter(r => queryIds.has(r.queryId)).map(r => r.id)
-    const selected = interfaceName === 'apply_list' ? readTargetDeclarationFacts(db, ids, { scope: 'selected' })
+    const selected = interfaceName === 'apply_list' ? readTargetDeclarationFacts(db, ids)
       : interfaceName === 'business_list' ? readTargetBusinessProcessFacts(db, ids, { scope: 'selected' })
       : readTargetRecognizedFacts(db, ids)
     for (const [id, fact] of selected) facts.set(id, fact)
