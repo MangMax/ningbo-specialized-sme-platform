@@ -13,6 +13,7 @@ import { targetSchema } from '../../lib/platform/target-schema'
 import { fileNameOf } from '../../../core/lib/preview'
 import { comparisonSourceCatalogInput,groupComparisonBusinessObservations,recordComparisonInput,type ComparisonSourceCatalogInput,type HistoricalClassification,type RecordComparisonInput } from '../../lib/roster/record-comparison'
 import { registeredFileAtLocator } from '../../../core/server/utils/file-read-identity'
+import type { StoredFileContentIdentity } from '../../../core/server/utils/file-content-identity'
 import { officialSourceDirectory,readOfficialSourceDocuments } from './official-source-directory'
 import { readPlatformBusinessMetadata } from './platform-business-record-read'
 import { comparisonFormalCounts,iterateComparisonFormalEvents } from './record-comparison-formal'
@@ -42,7 +43,7 @@ function groupBy<T, K>(rows: T[], key: (row: T) => K) {
   for (const row of rows) { const k = key(row); const bucket = groups.get(k); if (bucket) bucket.push(row); else groups.set(k, [row]) }
   return groups
 }
-const before = (time: string | null, asOf?: string) => !asOf || (time !== null && (time.length === 10 ? time <= new Date(asOf).toISOString().slice(0, 10) : Date.parse(time) <= Date.parse(asOf)))
+export const comparisonBefore = (time: string | null, asOf?: string) => !asOf || (time !== null && (time.length === 10 ? time <= new Date(asOf).toISOString().slice(0, 10) : Date.parse(time) <= Date.parse(asOf)))
 const historicalEdge = (edge: Edge) => edge.type === 'event_process' || edge.type === 'event_recognized'
 function processTimingMatches(event: Event, relation: Relation) {
   if (event.year == null || relation.year == null) return false
@@ -144,14 +145,18 @@ function conclusion(event: Event, edges: Edge[], relations: Map<number, { relati
   if (fieldConflictReasons.length) return { classification: 'unresolved', reasons: fieldConflictReasons }
   return supported ? { classification: 'historical_aligned', reasons: [] } : { classification: 'unresolved', reasons: unique(reasons) }
 }
-function selected(db: Db, input: RecordComparisonInput) {
+export function validatedComparisonInput(input: RecordComparisonInput) {
   const parsed = recordComparisonInput.parse(input)
   for (const key of ['queryIds', 'exportBatchIds', 'officialSourceDocumentIds'] as const) if (unique(parsed[key]).length !== parsed[key].length) throw new Error(`duplicate_${key}`)
+  return parsed
+}
+function selected(db: Db, input: RecordComparisonInput) {
+  const parsed = validatedComparisonInput(input)
   const targetFacts = readComparisonTargetQueryFacts(db, parsed.queryIds)
-  if ((targetFacts.length !== parsed.queryIds.length || targetFacts.some(row => !before(row.collection.queriedAt, parsed.asOf)))) throw new Error('source_set_missing_or_out_of_scope')
-  const queries: Query[] = targetFacts.map(facts => ({ ...facts.collection, id: facts.id, collectionEvidence: null, rawResponse: null, comparisonFacts: facts, proofSource: () => readCorrespondenceTargetQueries(db, [facts.id], { rawResponse: false }).get(facts.id)!.query })).filter(row => before(row.queriedAt, parsed.asOf))
-  const batches = db.select().from(schema.platformExportBatch).where(inArray(schema.platformExportBatch.id, parsed.exportBatchIds)).orderBy(schema.platformExportBatch.id).all().filter(row => row.importStatus === 'imported' && before(row.collectedOn, parsed.asOf))
-  const documents = readOfficialSourceDocuments(db, parsed.officialSourceDocumentIds).filter(row => row.source === 'jxj' && (!parsed.asOf || before(row.issueDate, parsed.asOf)))
+  if ((targetFacts.length !== parsed.queryIds.length || targetFacts.some(row => !comparisonBefore(row.collection.queriedAt, parsed.asOf)))) throw new Error('source_set_missing_or_out_of_scope')
+  const queries: Query[] = targetFacts.map(facts => ({ ...facts.collection, id: facts.id, collectionEvidence: null, rawResponse: null, comparisonFacts: facts, proofSource: () => readCorrespondenceTargetQueries(db, [facts.id], { rawResponse: false }).get(facts.id)!.query })).filter(row => comparisonBefore(row.queriedAt, parsed.asOf))
+  const batches = db.select().from(schema.platformExportBatch).where(inArray(schema.platformExportBatch.id, parsed.exportBatchIds)).orderBy(schema.platformExportBatch.id).all().filter(row => row.importStatus === 'imported' && comparisonBefore(row.collectedOn, parsed.asOf))
+  const documents = readOfficialSourceDocuments(db, parsed.officialSourceDocumentIds).filter(row => row.source === 'jxj' && (!parsed.asOf || comparisonBefore(row.issueDate, parsed.asOf)))
   if (queries.length !== parsed.queryIds.length || batches.length !== parsed.exportBatchIds.length || documents.length !== parsed.officialSourceDocumentIds.length) throw new Error('source_set_missing_or_out_of_scope')
   const queryMap = new Map(queries.map(row => [row.id, row]))
   const batchMap = new Map(batches.map(row => [row.id, row]))
@@ -162,9 +167,9 @@ function selected(db: Db, input: RecordComparisonInput) {
   const exportIds = db.select({ id: schema.platformExportRow.id }).from(schema.platformExportRow).where(inArray(schema.platformExportRow.batchId, parsed.exportBatchIds))
   const edgeScope = and(or(isNull(c.observationId), inArray(c.observationId, targetObservations)), or(isNull(c.exportRowId), inArray(c.exportRowId, exportIds)))
   const scopedEdgeIds = db.select({ id: c.id }).from(c).where(edgeScope)
-  const allEdges = readScopedRecordCorrespondences(db, db.select(correspondenceColumns(db)).from(c).where(edgeScope).orderBy(c.id).all().filter(edge => before(edge.createdAt, parsed.asOf)))
-  const revisedAfterCutoff = new Set(parsed.asOf ? db.select({ correspondenceId: schema.recordCorrespondenceAudit.correspondenceId, decidedAt: schema.recordCorrespondenceAudit.decidedAt }).from(schema.recordCorrespondenceAudit).where(inArray(schema.recordCorrespondenceAudit.correspondenceId, scopedEdgeIds)).all().filter(audit => !before(audit.decidedAt, parsed.asOf)).map(audit => audit.correspondenceId) : [])
-  const unavailableEdges = allEdges.filter(edge => parsed.asOf && ((!before(edge.decidedAt, parsed.asOf) && edge.decidedAt !== null) || revisedAfterCutoff.has(edge.id)))
+  const allEdges = readScopedRecordCorrespondences(db, db.select(correspondenceColumns(db)).from(c).where(edgeScope).orderBy(c.id).all().filter(edge => comparisonBefore(edge.createdAt, parsed.asOf)))
+  const revisedAfterCutoff = new Set(parsed.asOf ? db.select({ correspondenceId: schema.recordCorrespondenceAudit.correspondenceId, decidedAt: schema.recordCorrespondenceAudit.decidedAt }).from(schema.recordCorrespondenceAudit).where(inArray(schema.recordCorrespondenceAudit.correspondenceId, scopedEdgeIds)).all().filter(audit => !comparisonBefore(audit.decidedAt, parsed.asOf)).map(audit => audit.correspondenceId) : [])
+  const unavailableEdges = allEdges.filter(edge => parsed.asOf && ((!comparisonBefore(edge.decidedAt, parsed.asOf) && edge.decidedAt !== null) || revisedAfterCutoff.has(edge.id)))
   const unavailableIds = new Set(unavailableEdges.map(edge => edge.id))
   const edges = allEdges.filter(edge => !unavailableIds.has(edge.id))
   const businessMetadata = readPlatformBusinessMetadata(db, relations.map(item => item.relation.id))
@@ -180,16 +185,44 @@ export function* iterateRecordComparison(db: Db, input: RecordComparisonInput, v
 function consumeComparison<T>(steps: Generator<void, T>) {
   while (true) { const step = steps.next(); if (step.done) return step.value }
 }
-function* compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEvidence?: VerifiedComparisonEvidence, paginate = true) {
+export type SelectedRecordComparison = ReturnType<typeof selected>
+type FormalEvent = ReturnType<typeof iterateComparisonFormalEvents> extends Generator<infer T> ? T : never
+type FormalCount = ReturnType<typeof comparisonFormalCounts> extends Generator<void, infer T> ? T : never
+type PageEvidence = { evidence: typeof schema.recordEvidence.$inferSelect; registered: StoredFileContentIdentity | null }
+export type ComparisonRead =
+  | undefined
+  | { type: 'count' }
+  | { type: 'events'; paths: string[]; laterOwners: Array<{ enterpriseId: number | null; titleCode: string }> }
+  | { type: 'evidence'; ids: number[] }
+type ReadResult = FormalCount | Iterable<FormalEvent> | PageEvidence[] | undefined
+
+function* compareRecords(db: Db, source: SelectedRecordComparison, verifiedEvidence?: VerifiedComparisonEvidence, paginate = true) {
+  const steps = compareRecordInputs(source, verifiedEvidence, paginate)
+  let step = steps.next()
+  try {
+    while (!step.done) {
+      const request: ComparisonRead = step.value
+      let data: ReadResult = undefined
+      if (request === undefined) yield
+      else if (request.type === 'count') data = yield* comparisonFormalCounts(db)
+      else if (request.type === 'events') data = iterateComparisonFormalEvents(db, request.paths, source.input, request.laterOwners)
+      else data = db.select().from(schema.recordEvidence).where(inArray(schema.recordEvidence.recordEventId, request.ids))
+        .orderBy(schema.recordEvidence.id).all().map(evidence => ({ evidence, registered: registeredFileAtLocator(db, evidence.sourceFile) }))
+      step = steps.next(data)
+    }
+    return step.value
+  } finally { steps.return(undefined as never) }
+}
+export function* compareRecordInputs(source: SelectedRecordComparison, verifiedEvidence?: VerifiedComparisonEvidence, paginate = true) {
   if (source.input.asOf && verifiedEvidence) verifiedEvidence = {
-    officialScopes: verifiedEvidence.officialScopes.filter(proof => before(proof.verifiedAt, source.input.asOf)),
-    currentScopes: verifiedEvidence.currentScopes.filter(proof => before(proof.verifiedAt, source.input.asOf)),
+    officialScopes: verifiedEvidence.officialScopes.filter(proof => comparisonBefore(proof.verifiedAt, source.input.asOf)),
+    currentScopes: verifiedEvidence.currentScopes.filter(proof => comparisonBefore(proof.verifiedAt, source.input.asOf)),
   }
   const { queries, batches, documents, relations, exports, edges } = source
   const relationMap = new Map(relations.map(item => [item.relation.id, item]))
   const exportMap = new Map(exports.map(item => [item.row.id, item]))
   const documentPaths = new Set(documents.map(row => row.path))
-  yield
+  yield undefined
   const selectedEdges = edges.filter(edge => (edge.relationId == null || relationMap.has(edge.relationId)) && (edge.exportRowId == null || exportMap.has(edge.exportRowId)))
   const unavailableEdges = source.unavailableEdges.filter(edge => (edge.relationId == null || relationMap.has(edge.relationId)) && (edge.exportRowId == null || exportMap.has(edge.exportRowId)))
   const later = selectedEdges.filter(edge => edge.type === 'later_process' && edge.status === 'confirmed' && !edge.requiresRevalidation && edge.relationId != null && relationMap.has(edge.relationId))
@@ -206,7 +239,7 @@ function* compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEv
     if (!coverageCache.has(key)) coverageCache.set(key, queries.some(query => (query.interface === 'business_list' || query.interface === 'recognized_list') && exactQueryCoverage(query, title, uscc)))
     return coverageCache.get(key)!
   }
-  const analyzeEvent = ({ event, record, uscc, inSelectedSource }: ReturnType<typeof iterateComparisonFormalEvents> extends Generator<infer T> ? T : never) => {
+  const analyzeEvent = ({ event, record, uscc, inSelectedSource }: FormalEvent) => {
     const eventEdges = (edgesByEvent.get(event.id) ?? [])
     const followups = (laterByOwner.get(`${record.enterpriseId}:${record.titleCode}`) ?? []).filter(edge => edge.predecessorEventId == null || edge.predecessorEventId === event.id)
     let decision = inSelectedSource ? conclusion(event, eventEdges, relationMap) : { classification: 'unresolved' as const, reasons: ['official_source_not_selected'] }
@@ -217,21 +250,23 @@ function* compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEv
     }
     return { event, record, eventEdges, followups, decision }
   }
-  const buildRow = ({ event, record, eventEdges, followups, decision }: ReturnType<typeof analyzeEvent>, officialEvidence: Array<typeof schema.recordEvidence.$inferSelect>) => {
+  const buildRow = ({ event, record, eventEdges, followups, decision }: ReturnType<typeof analyzeEvent>, officialEvidence: PageEvidence[]) => {
     const linked = unique(eventEdges.flatMap(edge => edge.relationId == null ? [] : [edge.relationId])).map(id => relationMap.get(id)).filter((item): item is NonNullable<typeof item> => !!item)
-    return { event: { id: event.id, recordId: event.recordId, eventType: event.eventType, year: event.year, batchSeq: event.batchSeq, decidedYear: event.decidedYear, reviewOutcome: event.reviewOutcome }, record: { id: record.id, enterpriseId: record.enterpriseId, titleCode: record.titleCode, source: record.source, usccRaw: record.usccRaw, nameRaw: record.nameRaw }, evidence: officialEvidence.map(item => ({ id: item.id, sourceFile: item.sourceFile, contentIdentity: { registered: registeredFileAtLocator(db, item.sourceFile), status: 'unknown' as const, historical: 'unknown' as const }, attachment: item.attachment, listNo: item.listNo, page: item.page, inSelectedSource: documentPaths.has(item.sourceFile) })), classification: decision.classification, reasons: decision.reasons, correspondences: eventEdges.map(publicEdge), platformRows: linked.map(item => publicRelation(item.relation, item.query)), laterProcesses: followups.map(edge => ({ correspondence: publicEdge(edge), relation: publicRelation(relationMap.get(edge.relationId!)!.relation, relationMap.get(edge.relationId!)!.query) })) }
+    return { event: { id: event.id, recordId: event.recordId, eventType: event.eventType, year: event.year, batchSeq: event.batchSeq, decidedYear: event.decidedYear, reviewOutcome: event.reviewOutcome }, record: { id: record.id, enterpriseId: record.enterpriseId, titleCode: record.titleCode, source: record.source, usccRaw: record.usccRaw, nameRaw: record.nameRaw }, evidence: officialEvidence.map(({ evidence: item, registered }) => ({ id: item.id, sourceFile: item.sourceFile, contentIdentity: { registered, status: 'unknown' as const, historical: 'unknown' as const }, attachment: item.attachment, listNo: item.listNo, page: item.page, inSelectedSource: documentPaths.has(item.sourceFile) })), classification: decision.classification, reasons: decision.reasons, correspondences: eventEdges.map(publicEdge), platformRows: linked.map(item => publicRelation(item.relation, item.query)), laterProcesses: followups.map(edge => ({ correspondence: publicEdge(edge), relation: publicRelation(relationMap.get(edge.relationId!)!.relation, relationMap.get(edge.relationId!)!.query) })) }
   }
   const pageEvents: ReturnType<typeof analyzeEvent>[] = []
-  const formalCounts = yield* comparisonFormalCounts(db)
+  const countResult: ReadResult = yield { type: 'count' } as const
+  const formalCounts = countResult as FormalCount
   const classificationCounts = { historical_aligned: 0, historical_conflict: 0, official_without_correspondence: 0, unresolved: formalCounts.events }
   let laterProcessAffectedEvents = 0
   let total = 0
   const officialEventRows = formalCounts.events
   let visited = 0
   const laterOwners = [...laterByOwner.values()].map(owners => ({ enterpriseId: owners[0]!.enterpriseId, titleCode: owners[0]!.titleCode }))
-  yield
-  for (const formal of iterateComparisonFormalEvents(db, documents.map(document => document.path), source.input, laterOwners)) {
-    if (++visited % 128 === 0) yield
+  const eventResult: ReadResult = yield { type: 'events', paths: documents.map(document => document.path), laterOwners } as const
+  const formalEvents = eventResult as Iterable<FormalEvent>
+  for (const formal of formalEvents) {
+    if (++visited % 128 === 0) yield undefined
     const row = analyzeEvent(formal)
     classificationCounts.unresolved--
     classificationCounts[row.decision.classification]++
@@ -248,10 +283,11 @@ function* compareRecords(db: Db, source: ReturnType<typeof selected>, verifiedEv
   if (!paginate) for (const row of pageEvents) rows.push(buildRow(row, []))
   else for (let offset = 0; offset < pageEvents.length; offset += 128) {
     const page = pageEvents.slice(offset, offset + 128)
-    const evidence = db.select().from(schema.recordEvidence).where(inArray(schema.recordEvidence.recordEventId, page.map(row => row.event.id))).orderBy(schema.recordEvidence.id).all()
-    const byEvent = groupBy(evidence, item => item.recordEventId)
+    const evidenceResult: ReadResult = yield { type: 'evidence', ids: page.map(row => row.event.id) } as const
+    const evidence = evidenceResult as PageEvidence[]
+    const byEvent = groupBy(evidence, item => item.evidence.recordEventId)
     for (const row of page) rows.push(buildRow(row, byEvent.get(row.event.id) ?? []))
-    yield
+    yield undefined
   }
   const recognized = relations.filter(item => item.query.interface === 'recognized_list')
   const exportsByIdentity = groupBy(exports, item => JSON.stringify([item.batch.titleCode, normalizeUscc(item.row.usccRaw)]))
@@ -334,7 +370,7 @@ const legacyCutoffClients = new WeakSet<Db['$client']>()
 function registerLegacyCutoff(db: Db) {
   if (legacyCutoffClients.has(db.$client)) return
   db.$client.function('record_comparison_before', { deterministic: true }, (time, asOf) =>
-    Number(before(time as string | null, asOf as string)))
+    Number(comparisonBefore(time as string | null, asOf as string)))
   legacyCutoffClients.add(db.$client)
 }
 export function previewRecordCorrespondenceImpact(db: Db, input: RecordComparisonInput) {
@@ -351,6 +387,19 @@ export function previewRecordCorrespondenceImpact(db: Db, input: RecordCompariso
       .from(reason).where(filtered).orderBy(reason.id).limit(input.pageSize).offset((input.page - 1) * input.pageSize).all(),
   }))
   const owners = new Map(db.selectDistinct({ id: schema.enterprise.id, uscc: schema.enterprise.usccNorm }).from(schema.enterprise).innerJoin(schema.record, eq(schema.record.enterpriseId, schema.enterprise.id)).where(and(eq(schema.record.source, 'jxj'), input.enterpriseId == null ? undefined : eq(schema.enterprise.id, input.enterpriseId), input.titleCode ? eq(schema.record.titleCode, input.titleCode) : undefined)).all().map(row => [row.id, row.uscc]))
+  return projectLegacyComparisonImpact(source, comparison, owners, { legacyRows, total, pageReasons })
+}
+
+type Reason = typeof schema.differenceReason.$inferSelect
+type LegacyImpactReason = Pick<Reason, 'id' | 'enterpriseId' | 'titleCode' | 'direction' | 'status' | 'reasonCode' | 'measureCode' | 'verificationStatus' | 'recordedAt'> & {
+  evidenceQueryId: number | null
+  evidenceRelationId: number | null
+}
+export function projectLegacyComparisonImpact(source: SelectedRecordComparison,
+  comparison: ReturnType<typeof getRecordComparison>, owners: ReadonlyMap<number, string | null>,
+  { legacyRows, total, pageReasons }: { legacyRows: number; total: number; pageReasons: LegacyImpactReason[] },
+) {
+  const { input } = source
   const relationsByOwner = groupBy(source.relations, item => `${item.relation.enterpriseId}:${relationTitle(item.relation, item.query)}`)
   const comparisonByOwner = groupBy(comparison.rows, row => `${row.record.enterpriseId}:${row.record.titleCode}`)
   const legacy = pageReasons.map(item => {
@@ -406,6 +455,11 @@ function sourceEnterpriseLinks(db: Db, queryPageIds: number[]) {
       .where(and(inArray(schema.enterpriseAlias.enterpriseId, ids), eq(schema.enterpriseAlias.verificationStatus, 'confirmed'), sql`${schema.enterpriseAlias.nameNorm} in (select value from json_each(${JSON.stringify([...nameNorms])}))`)).all()
     for (const alias of rows) aliases.set(`${alias.enterpriseId}\u0000${alias.nameNorm}`, alias)
   }
+  return projectSourceEnterpriseLinks(relationRows, aliases)
+}
+
+type CatalogIdentity = ReturnType<typeof readComparisonTargetIdentities>[number] & { relationId: number; enterpriseName: string | null }
+export function projectSourceEnterpriseLinks(relationRows: CatalogIdentity[], aliases: ReadonlyMap<string, { note: string | null }>) {
   const links = new Map<number, { confirmedEnterprises: SourceEnterpriseLink[]; recordNames: string[] }>()
   for (const row of relationRows) {
     const entry = links.get(row.queryId) ?? { confirmedEnterprises: [], recordNames: [] }
@@ -454,6 +508,18 @@ export function* iterateRecordComparisonSources(db: Db, input: ComparisonSourceC
     query: queryCount,
     export_batch: db.select({ n: sql<number>`count(*)` }).from(schema.platformExportBatch).where(bids).get()!.n,
   }
+  const { dw, qw, bw } = comparisonCatalogWindows(filter, counts)
+  const documents = dw.limit ? db.all<import('./official-source-directory').OfficialSourceDocument>(sql`select * from ${officialSourceDirectory} where ${dids} order by id limit ${dw.limit} offset ${dw.offset}`).map(row => projectCatalogDocument(row, registeredFileAtLocator(db, row.path))) : []
+  const pageQueryIds = (qw.limit ? db.select({ id: qa.oldId }).from(qa).where(qids).orderBy(qa.oldId).limit(qw.limit).offset(qw.offset).all().map(r => r.id) : [])
+  const enterpriseLinks = sourceEnterpriseLinks(db, pageQueryIds)
+  const targetPage = readComparisonTargetQueryFacts(db, pageQueryIds).map(({ id, collection: c, conditions, evidencePresent }) => ({ ...c, id, completeness: evidencePresent ? c.completeness : 'unknown', fullRange: evidencePresent ? c.fullRange : null, conditions }))
+  const batches = bw.limit ? db.select().from(schema.platformExportBatch).where(bids).orderBy(schema.platformExportBatch.id).limit(bw.limit).offset(bw.offset).all().map(projectCatalogExport) : []
+  const queries = targetPage.map(row => projectCatalogQuery(row, enterpriseLinks))
+  return { rows: [...documents, ...queries, ...batches], total: filter.kind ? counts[filter.kind] : counts.official_document + counts.query + counts.export_batch, page: filter.page, pageSize: filter.pageSize, counts, selection: 'explicit', completeness: 'not_implied_by_catalog' }
+}
+
+type CatalogCounts = { official_document: number; query: number; export_batch: number }
+export function comparisonCatalogWindows(filter: ComparisonSourceCatalogInput, counts: CatalogCounts) {
   // The unfiltered catalog keeps its original document/query/export concatenation.
   // Intersect the requested page with each kind before touching its rows.
   let offset = (filter.page - 1) * filter.pageSize
@@ -464,13 +530,17 @@ export function* iterateRecordComparisonSources(db: Db, input: ComparisonSourceC
     const limit = Math.min(remaining, counts[kind] - skip); remaining -= limit
     return { offset: skip, limit }
   }
-  const dw = window('official_document'), qw = window('query'), bw = window('export_batch')
-  const documents = dw.limit ? db.all<import('./official-source-directory').OfficialSourceDocument>(sql`select * from ${officialSourceDirectory} where ${dids} order by id limit ${dw.limit} offset ${dw.offset}`).map(row => ({ kind: 'official_document' as const, id: row.id, label: row.title ?? fileNameOf(row.path), subtitle: row.docNumber, titleCode: null, titleName: null, observedAt: row.issueDate, status: 'available', selectable: true, path: row.path, contentIdentity: { registered: registeredFileAtLocator(db, row.path), status: 'unknown' as const, historical: 'unknown' as const } })) : []
-  const pageQueryIds = (qw.limit ? db.select({ id: qa.oldId }).from(qa).where(qids).orderBy(qa.oldId).limit(qw.limit).offset(qw.offset).all().map(r => r.id) : [])
-  const enterpriseLinks = sourceEnterpriseLinks(db, pageQueryIds)
-  const targetPage = readComparisonTargetQueryFacts(db, pageQueryIds).map(({ id, collection: c, conditions, evidencePresent }) => ({ ...c, id, completeness: evidencePresent ? c.completeness : 'unknown', fullRange: evidencePresent ? c.fullRange : null, conditions }))
-  const queryRows = targetPage
-  const queries = queryRows.map(row => ({ kind: 'query' as const, id: row.id, label: `${row.interface === 'business_list' ? '业务关联' : row.interface === 'apply_list' ? '申报流程' : '已认定名单'} · ${row.titleCode ? TITLES[row.titleCode] : row.rdjb || '多称号'} · ${row.queryKey}`, subtitle: row.interface, titleCode: row.titleCode, titleName: row.titleCode ? TITLES[row.titleCode] : null, observedAt: row.queriedAt, status: row.status, selectable: true, rdjb: row.rdjb, completeness: row.completeness ?? 'unknown', fullRange: Boolean(row.fullRange), conditions: row.conditions, ...(enterpriseLinks.get(row.id) ?? { confirmedEnterprises: [], recordNames: [] }) }))
-  const batches = bw.limit ? db.select().from(schema.platformExportBatch).where(bids).orderBy(schema.platformExportBatch.id).limit(bw.limit).offset(bw.offset).all().map(row => ({ kind: 'export_batch' as const, id: row.id, label: `${TITLES[row.titleCode]} · ${row.year} · ${row.originalFilename}`, subtitle: row.originalFilename, titleCode: row.titleCode, titleName: TITLES[row.titleCode], observedAt: row.collectedOn, status: row.importStatus, selectable: row.importStatus === 'imported', sha256: row.sha256, rowCount: row.rowCount, replacedBatchId: row.replacedBatchId })) : []
-  return { rows: [...documents, ...queries, ...batches], total: filter.kind ? counts[filter.kind] : counts.official_document + counts.query + counts.export_batch, page: filter.page, pageSize: filter.pageSize, counts, selection: 'explicit', completeness: 'not_implied_by_catalog' }
+  return { dw: window('official_document'), qw: window('query'), bw: window('export_batch') }
+}
+
+export function projectCatalogDocument(row: import('./official-source-directory').OfficialSourceDocument, registered: ReturnType<typeof registeredFileAtLocator>) {
+  return { kind: 'official_document' as const, id: row.id, label: row.title ?? fileNameOf(row.path), subtitle: row.docNumber, titleCode: null, titleName: null, observedAt: row.issueDate, status: 'available', selectable: true, path: row.path, contentIdentity: { registered, status: 'unknown' as const, historical: 'unknown' as const } }
+}
+
+export function projectCatalogQuery(row: typeof schema.platformCollection.$inferSelect & { conditions: Record<string, unknown> | null }, enterpriseLinks: ReturnType<typeof projectSourceEnterpriseLinks>) {
+  return { kind: 'query' as const, id: row.id, label: `${row.interface === 'business_list' ? '业务关联' : row.interface === 'apply_list' ? '申报流程' : '已认定名单'} · ${row.titleCode ? TITLES[row.titleCode] : row.rdjb || '多称号'} · ${row.queryKey}`, subtitle: row.interface, titleCode: row.titleCode, titleName: row.titleCode ? TITLES[row.titleCode] : null, observedAt: row.queriedAt, status: row.status, selectable: true, rdjb: row.rdjb, completeness: row.completeness ?? 'unknown', fullRange: Boolean(row.fullRange), conditions: row.conditions, ...(enterpriseLinks.get(row.id) ?? { confirmedEnterprises: [], recordNames: [] }) }
+}
+
+export function projectCatalogExport(row: typeof schema.platformExportBatch.$inferSelect) {
+  return { kind: 'export_batch' as const, id: row.id, label: `${TITLES[row.titleCode]} · ${row.year} · ${row.originalFilename}`, subtitle: row.originalFilename, titleCode: row.titleCode, titleName: TITLES[row.titleCode], observedAt: row.collectedOn, status: row.importStatus, selectable: row.importStatus === 'imported', sha256: row.sha256, rowCount: row.rowCount, replacedBatchId: row.replacedBatchId }
 }

@@ -267,6 +267,30 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
         if (name === 'get_comparison_scope_proof') expect(actual).toMatchObject({ valid: true, status: 'confirmed', sourceSummary: expect.any(Object) })
         expect(await nativeCall(name, args), name).toEqual(expected)
       }
+      for (const filter of ['', '?kind=query&pageSize=1&page=2', '?kind=official_document', `?kind=export_batch&ids=${batch.id}`, `?kind=query&ids=${query.id}`]) {
+        const suffix = 'record-comparison/sources' + filter
+        const nativeSource = await native.request('/api/roster/' + suffix)
+        const actual = await nativeSource.json()
+        expect(nativeSource.status, JSON.stringify(actual)).toBe(200)
+        expect(actual, suffix).toEqual(await json(await fetch(api(suffix))))
+      }
+      const comparisonArgs = { queryIds: [query.id, historicalCollection.queryId], exportBatchIds: [batch.id],
+        officialSourceDocumentIds: [doc.id], proofIds: [officialProofId, currentProofId], page: 1, pageSize: 1, businessPageSize: 2 }
+      const comparisonPath = `record-comparison?${sourceQuery}&proofIds=${comparisonArgs.proofIds.join(',')}&pageSize=1&businessPageSize=2`
+      for (const cutoff of ['', '&asOf=2026-10-18T23%3A59%3A59Z']) {
+        const suffix = comparisonPath + cutoff
+        const nativeComparison = await native.request('/api/roster/' + suffix)
+        const expected = await json(await fetch(api(suffix)))
+        const actual = await json(nativeComparison)
+        expect(nativeComparison.status, JSON.stringify(actual)).toBe(200)
+        expect(actual, suffix).toEqual(expected)
+        if (!cutoff) expect(await nativeCall('list_record_comparison', comparisonArgs)).toEqual(expected)
+      }
+      const legacyPath = `record-comparison/legacy-impact?${sourceQuery}&pageSize=1`
+      const legacy = await native.request('/api/roster/' + legacyPath)
+      const legacyBody = await json(legacy)
+      expect(legacy.status, JSON.stringify(legacyBody)).toBe(200)
+      expect(legacyBody).toEqual(await json(await fetch(api(legacyPath))))
       const currentFilter = { titleCode: 'specialized_sme' as const, pageSize: 1, q: enterprise.name }
       const current = await native.request('/api/roster/current-enterprises?' + new URLSearchParams({
         titleCode: currentFilter.titleCode, pageSize: String(currentFilter.pageSize), q: currentFilter.q,

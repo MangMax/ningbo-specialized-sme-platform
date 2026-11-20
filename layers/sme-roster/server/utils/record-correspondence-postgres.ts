@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm'
+import { sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/schema'
 import { postgresRosterRow, readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
@@ -90,7 +90,10 @@ function relationScope(filter: CorrespondenceFilter) {
 }
 
 export async function listPostgresCorrespondences(db: Db, filter: CorrespondenceFilter, paging?: CorrespondencePaging) {
-  const from = relationScope(filter)
+  return readPostgresCorrespondenceSelection(db, relationScope(filter), paging)
+}
+
+export async function readPostgresCorrespondenceSelection(db: Db, from: SQL, paging?: CorrespondencePaging) {
   const { rows } = await db.execute<{ row: StoredCorrespondence }>(sql`
     SELECT (jsonb_build_object('id',p.id,'edgeKey',p.edge_key,'type',p.type,'role',p.role,
       'eventId',p.event_id,'predecessorEventId',p.predecessor_event_id,'relationId',a.old_id,

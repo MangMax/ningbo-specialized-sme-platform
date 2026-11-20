@@ -7,6 +7,7 @@ import { readPostgresFingerprintQueries, readPostgresRelationFingerprints } from
 
 type Db = Pick<NodePgDatabase, 'execute'>
 type RelationSource = ReturnType<typeof readCorrespondenceTargetSources>[number]
+type ProjectionOwner = { observationId: number; interface: keyof typeof projections }
 const fields = [
   ['province', 'province'], ['status', 'status'], ['batch', 'batch'], ['declareKind', 'declare_kind'],
   ['appliedAt', 'applied_at'], ['awardBatchLabel', 'award_batch_label'], ['year', 'year'],
@@ -23,12 +24,9 @@ function fieldValue(row: Record<string, unknown>, field: string, key: string) {
   return field === 'year' && value != null ? Number(value) : value
 }
 
-export async function readPostgresCorrespondenceTargetSources(db: Db, ids: readonly number[]): Promise<RelationSource[]> {
-  if (!ids.length) return []
-  const owners = await readPostgresRelationFingerprints(db, { relationIds: ids })
-  const queries = await readPostgresFingerprintQueries(db, [...new Set(owners.map(owner => owner.relation.queryId))])
+export async function readPostgresObservationComparisonFacts(db: Db, owners: ProjectionOwner[]) {
   const facts = new Map<number, Record<string, unknown>>()
-  for (const [kind, matching] of Map.groupBy(owners, owner => queries.get(owner.relation.queryId)!.query.interface)) {
+  for (const [kind, matching] of Map.groupBy(owners, owner => owner.interface)) {
     const columns = sql.join(fields.flatMap(([, key]) => ['stored_' + key, 'parsed_' + key, 'reconciled_' + key, key + '_conflict'])
       .map(key => sql`${sql.identifier(key)}`), sql`,`)
     const { rows } = await db.execute(sql`
@@ -38,17 +36,14 @@ export async function readPostgresCorrespondenceTargetSources(db: Db, ids: reado
       WHERE observation_id=ANY(${sql.param(matching.map(row => row.observationId))}::bigint[])`)
     for (const row of rows) facts.set(Number(row.observation_id), row)
   }
-  return owners.map(({ relation, observationId, sourceRdjb, originalUscc }) => {
-    const p = facts.get(observationId)
-    if (!p) throw new Error('Missing correspondence source projection')
+  const result = new Map<number, Omit<RelationSource['facts'], 'id' | 'queryId' | 'sequenceNo' | 'enterpriseId' | 'usccRaw' | 'verificationStatus' | 'sourceRdjb'>>()
+  for (const [id, p] of facts) {
     const conflicts = fields.flatMap(([field, key]) => {
       const stored = fieldValue(p, field, 'stored_' + key), parsed = fieldValue(p, field, 'parsed_' + key)
       return String(p[key + '_conflict']) === '1' && stored != null && parsed != null ? [platformNormalizationConflict(field, stored, parsed)] : []
     })
     const value = (field: typeof fields[number][0], column: string) => fieldValue(p, field, 'reconciled_' + column)
-    const observed: RelationSource['facts'] = {
-      id: relation.id, queryId: relation.queryId, sequenceNo: relation.sequenceNo, enterpriseId: relation.enterpriseId,
-      usccRaw: originalUscc, verificationStatus: relation.verificationStatus,
+    result.set(id, {
       province: value('province','province') as string | null,
       status: value('status','status') as string | Buffer | null,
       batch: value('batch','batch') as string | null,
@@ -58,7 +53,23 @@ export async function readPostgresCorrespondenceTargetSources(db: Db, ids: reado
       year: value('year','year') as number | null,
       normalizationConflicts: conflicts,
       rawFields: { rdjb: p.source_title_kind === 'text' ? p.source_title_text as string : p.source_title_kind === 'number' ? p.source_title_number_text as string : null },
-      sourceRdjb,
+    })
+  }
+  return result
+}
+
+export async function readPostgresCorrespondenceTargetSources(db: Db, ids: readonly number[]): Promise<RelationSource[]> {
+  if (!ids.length) return []
+  const owners = await readPostgresRelationFingerprints(db, { relationIds: ids })
+  const queries = await readPostgresFingerprintQueries(db, [...new Set(owners.map(owner => owner.relation.queryId))])
+  const facts = await readPostgresObservationComparisonFacts(db, owners.map(owner => ({ observationId: owner.observationId,
+    interface: queries.get(owner.relation.queryId)!.query.interface })))
+  return owners.map(({ relation, observationId, sourceRdjb, originalUscc }) => {
+    const projection = facts.get(observationId)
+    if (!projection) throw new Error('Missing correspondence source projection')
+    const observed: RelationSource['facts'] = { ...projection,
+      id: relation.id, queryId: relation.queryId, sequenceNo: relation.sequenceNo, enterpriseId: relation.enterpriseId,
+      usccRaw: originalUscc, verificationStatus: relation.verificationStatus, sourceRdjb,
     }
     return { relation, query: queries.get(relation.queryId)!.query, facts: observed, observationId }
   })

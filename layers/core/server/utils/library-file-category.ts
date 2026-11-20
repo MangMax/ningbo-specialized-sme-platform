@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm'
-import { storedFile } from '@db/schema'
+import { storedFile } from '../../../../db/schema'
 import { isLibraryUploadPath, libraryUploadCategory, libraryUploadDirectory } from '../../lib/core/library-uploads'
 import { isFilenameSafe } from '../../lib/upload-transport'
 import { compareFileContentIdentity } from './file-content-identity'
