@@ -17,14 +17,14 @@ type Batch = {
 }
 const zeroSummary = { written: 0, skipped: 0, failed: 0, evidenceRepointed: 0 }
 
-async function lockBatch(tx: Tx, key: string) {
+export async function lockPostgresRosterImportBatch(tx: Tx, key: string) {
   const { rows: [row] } = await tx.execute<Batch>(sql`
     SELECT id::float8 AS id,status,source_kind AS kind,source_identity AS identity,source_sha256 AS sha256,
       summary::json AS summary,item_results::json AS items FROM import_batch WHERE idempotency_key=${key} FOR UPDATE`)
   return row
 }
 
-function committedResult(batch: Batch, action: Action) {
+export function committedPostgresImportResult(batch: Batch, action: Action) {
   return action === 'preflight' ? { batchId: batch.id, status: 'preflight' as const, preflight: {
     add: 0, update: 0, remove: 0, review: 0, conflicts: [], evidenceRepoints: 0, batchStatus: 'committed',
   } } : { batchId: batch.id, status: 'committed' as const, summary: readSummaryOf(batch.summary) ?? zeroSummary,
@@ -33,6 +33,10 @@ function committedResult(batch: Batch, action: Action) {
 
 function conflict(message: string): never {
   throw new ImportReceiptError(409, 'idempotency_conflict', message)
+}
+
+export async function lockPostgresRosterImportKey(tx: Tx, key: string) {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(21784,hashtext(${key}))`)
 }
 
 export async function runPostgresExportImport(action: Action | 'replay', request: RosterImportRequest) {
@@ -46,6 +50,7 @@ export async function runPostgresExportImport(action: Action | 'replay', request
   const redact = await importPostgresReceiptRedactor(db)
   const body = JSON.stringify(redact(bound))
   const attempt = await db.transaction(async tx => {
+    await lockPostgresRosterImportKey(tx, request.idempotencyKey)
     if (action === 'commit') {
       const intake = await tx.execute(sql`SELECT id FROM roster_announcement_intake WHERE idempotency_key=${request.idempotencyKey}`)
       if (intake.rows.length) conflict('Idempotency key belongs to an announcement intake')
@@ -54,7 +59,7 @@ export async function runPostgresExportImport(action: Action | 'replay', request
       INSERT INTO import_batch(idempotency_key,source_kind,source_identity,source_sha256,status,created_at)
       VALUES (${request.idempotencyKey},${request.sourceKind},${request.sourceIdentity},${bound.sourceSha256},'preflight',${new Date().toISOString()})
       ON CONFLICT (idempotency_key) DO NOTHING`)
-    const batch = (await lockBatch(tx, request.idempotencyKey))!
+    const batch = (await lockPostgresRosterImportBatch(tx, request.idempotencyKey))!
     if (batch.kind !== request.sourceKind || batch.identity !== request.sourceIdentity || batch.sha256 !== bound.sourceSha256) {
       conflict('Idempotency key belongs to a different source')
     }
@@ -73,12 +78,12 @@ export async function runPostgresExportImport(action: Action | 'replay', request
       FROM (VALUES(1)) instance(n) LEFT JOIN owner ON true RETURNING id::float8 AS id`)
     return { batch, receipt: receipt!.id }
   })
-  if (attempt.receipt === null) return committedResult(attempt.batch, action)
+  if (attempt.receipt === null) return committedPostgresImportResult(attempt.batch, action)
   try {
     return await db.transaction(async tx => {
-      const batch = (await lockBatch(tx, request.idempotencyKey))!
+      const batch = (await lockPostgresRosterImportBatch(tx, request.idempotencyKey))!
       if (batch.status === 'committed') {
-        const replay = committedResult(batch, action)
+        const replay = committedPostgresImportResult(batch, action)
         await tx.execute(sql`UPDATE import_receipt SET status=${action === 'preflight' ? 'preflight' : 'committed'},
           summary=${'summary' in replay ? JSON.stringify(replay.summary) : null},
           item_results=${JSON.stringify(redact('items' in replay ? replay.items : []))},completed_at=${new Date().toISOString()} WHERE id=${attempt.receipt}`)

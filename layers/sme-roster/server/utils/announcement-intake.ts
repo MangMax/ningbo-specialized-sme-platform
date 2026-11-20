@@ -34,7 +34,7 @@ export const supplementSchema = z.strictObject({
   ])).min(1),
 }).refine(input => !input.preflight || input.officialEvidencePlanHash === undefined, 'A supplement preflight cannot include its own plan hash')
 
-const digestOf = (value: unknown) => createHash('sha256').update(canonicalImportJson(value)).digest('hex')
+export const announcementIntakeDigest = (value: unknown) => createHash('sha256').update(canonicalImportJson(value)).digest('hex')
 export type IntakeRow = { id: number; digest: string; request: string; removed_reason: string | null; supplement_digest: string | null; reviewed_request: string | null; receipt: string | null }
 
 function loadIntake(db: Db, id: number) {
@@ -43,9 +43,9 @@ function loadIntake(db: Db, id: number) {
   return row
 }
 
-export function stageAnnouncement(db: Db, request: RosterImportRequest, pageErrors: readonly RosterImportItemResult[]) {
-  const announcement = request.payload.announcement!
-  if (!Array.isArray(announcement.records)
+export function validateAnnouncementIntakeRows(request: RosterImportRequest, pageErrors: readonly RosterImportItemResult[]) {
+  const announcement = request.payload.announcement
+  if (!Array.isArray(announcement?.records)
     || !['jxj', 'miit'].includes(announcement.sourceDocument?.source)) {
     throw new ImportReceiptError(400, 'invalid_intake', 'Provide an announcement version with its original rows')
   }
@@ -54,7 +54,17 @@ export function stageAnnouncement(db: Db, request: RosterImportRequest, pageErro
   }
   const items = [...validateAnnouncementIdentityAndEvidence(announcement), ...pageErrors]
   if (items.length) return { batchId: null, error: 'Original announcement rows failed validation', status: 'failed' as const, items, summary: { written: 0, skipped: 0, failed: items.length, evidenceRepointed: 0 } }
-  const digest = digestOf(request)
+}
+
+export function stagedAnnouncement(request: RosterImportRequest, id: number, digest: string) {
+  return { status: 'staged' as const, intakeId: id, sourceDigest: digest, rowCount: request.payload.announcement!.records.length,
+    ...(hasOfficialFactInput(request) ? { officialEvidencePreflightRequired: true as const } : {}) }
+}
+
+export function stageAnnouncement(db: Db, request: RosterImportRequest, pageErrors: readonly RosterImportItemResult[]) {
+  const invalid = validateAnnouncementIntakeRows(request, pageErrors)
+  if (invalid) return invalid
+  const digest = announcementIntakeDigest(request)
   return db.$client.transaction(() => {
     const previous = db.$client.prepare('SELECT * FROM roster_announcement_intake WHERE idempotency_key=?').get(request.idempotencyKey) as IntakeRow | undefined
     if (previous && previous.digest !== digest) throw new ImportReceiptError(409, 'idempotency_conflict', 'The key already identifies different source rows')
@@ -66,8 +76,7 @@ export function stageAnnouncement(db: Db, request: RosterImportRequest, pageErro
     if (!previous && batch?.status === 'committed') return null
     const { id } = previous ?? db.$client.prepare(`INSERT INTO roster_announcement_intake(idempotency_key,digest,request)
       VALUES (?,?,?) RETURNING id`).get(request.idempotencyKey, digest, JSON.stringify(request)) as { id: number }
-    return { status: 'staged' as const, intakeId: id, sourceDigest: digest, rowCount: announcement.records.length,
-      ...(hasOfficialFactInput(request) ? { officialEvidencePreflightRequired: true as const } : {}) }
+    return stagedAnnouncement(request, id, digest)
   }).immediate()
 }
 
@@ -209,7 +218,7 @@ export async function supplementAnnouncement(db: Db, id: number, input: z.infer<
   const supplement = db.$client.transaction((): SupplementAnnouncementResponse => {
     const row = loadIntake(db, id)
     if (row.digest !== input.sourceDigest) throw new ImportReceiptError(409, 'source_changed', 'Announcement version changed')
-    const decision = digestOf(review)
+    const decision = announcementIntakeDigest(review)
     if (row.supplement_digest !== null) {
       if (row.supplement_digest !== decision) throw new ImportReceiptError(409, 'supplement_conflict', 'Announcement already has a different reviewed supplement')
       if (preflight) throw new ImportReceiptError(409, 'already_supplemented', 'Announcement already has a reviewed supplement')

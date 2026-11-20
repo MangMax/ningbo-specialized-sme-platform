@@ -22,6 +22,7 @@ import {
 } from './roster-import'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { stageAnnouncement } from './announcement-intake'
+import { stagePostgresAnnouncement } from './announcement-intake-postgres'
 import { runPostgresExportImport } from './roster-export-import-postgres'
 import { hasAnnouncementRows } from '../../lib/roster-import-client'
 import * as schema from '../../../../db/schema'
@@ -118,6 +119,8 @@ export async function handleRosterImportRequest(
       return json(200, result)
     }
     if (hasAnnouncementRows(validated.value)) {
+      const nativeIntake = await stagePostgresAnnouncement(validated.value, pageCountErrors)
+      if (nativeIntake !== undefined) return json(200, nativeIntake)
       const staged = deps.executeImport
         ? stageAnnouncement(deps.db as Parameters<typeof stageAnnouncement>[0], validated.value, pageCountErrors)
         : await importExecutor.stage(deps.db, validated.value, pageCountErrors, deps.logContext)

@@ -427,6 +427,28 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     expect(await (await app.request(intakePath)).json()).toEqual({ ...original, status: 'removed', removedReason: result.removedReason })
     expect((await http(intakePath)).body).toEqual(sourceIntake.body)
 
+    const stagedRequest = { idempotencyKey: 'native-announcement-staged', sourceKind: 'announcement',
+      sourceIdentity: 'isolated-new-notice.xlsx', sourceSha256: null,
+      payload: { announcement: { sourceDocument: { source: 'jxj', title: '合成新名单' },
+        records: [{ enterprise: { name: '合成新企业' }, titleCode: 'specialized_sme', events: [] }] } } }
+    const stage = (request: unknown = stagedRequest) => app.request('/api/roster/import/commit', {
+      method: 'POST', body: JSON.stringify(request),
+    })
+    const sqliteStage = await http('/api/roster/import/commit', stagedRequest)
+    expect(sqliteStage.status, JSON.stringify(sqliteStage.body)).toBe(200)
+    expect(sqliteStage.body).toMatchObject({ status: 'staged', rowCount: 1 })
+    const stagedResponses = await Promise.all([stage(), stage()])
+    expect(stagedResponses.map(response => response.status)).toEqual([200, 200])
+    const staged = await Promise.all(stagedResponses.map(response => response.json()))
+    expect(staged[0]).toEqual(sqliteStage.body)
+    expect(staged[1]).toEqual(staged[0])
+    const newIntakePath = '/api/roster/import/intake/' + staged[0].intakeId
+    expect(await (await app.request(newIntakePath)).json()).toEqual((await http(newIntakePath)).body)
+    expect((await stage({ ...stagedRequest, sourceIdentity: 'another-source.xlsx' })).status).toBe(409)
+    expect((await stage({ ...snapshot, idempotencyKey: stagedRequest.idempotencyKey })).status).toBe(409)
+    const sourceRecordCount = run('psql', ['-X', '-w', '-Atc', "SELECT count(*) FROM business.enterprise WHERE name='合成新企业'"]).toString().trim()
+    expect(sourceRecordCount).toBe('0')
+
     const exportRequest = { ...snapshot, idempotencyKey: 'postgres-new-export', sourceIdentity: 'new-platform-export.xlsx',
       payload: { exportSnapshot: { ...snapshot.payload.exportSnapshot, year: 2027, sha256: 'c'.repeat(64) } } }
     const exportCommand = (action: string, request = exportRequest) => app.request(`/api/roster/import/${action}`, {
