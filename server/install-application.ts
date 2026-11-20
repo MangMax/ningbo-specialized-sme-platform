@@ -6,7 +6,7 @@ import { rosterFileServerCategory } from '../layers/sme-roster/server/modules/sm
 import { jobReadProjector } from '../layers/sme-roster/server/utils/job-read'
 import { cleanupCurrentExports } from '../layers/sme-roster/server/utils/current-export-artifact'
 import { hasImportWriter, whenImportWriterIdle } from '../layers/sme-roster/server/utils/import-write-barrier'
-import { handleTaskCenterRoute } from '../layers/sme-roster/server/utils/task-center-route'
+import { handleTaskCenterRoute, rosterPostgresTaskListOptions } from '../layers/sme-roster/server/utils/task-center-route'
 import { ensureFileStoreReady } from '../layers/sme-roster/server/utils/mcp-files'
 import { installJobRuntime } from './job-runtime'
 import { installJobSpecs, registerJobSpecs } from './utils/job-specs'
@@ -23,7 +23,7 @@ export function installApplicationServer(): void {
   installAppModules(appManifests)
   configureFileStore([libraryFileServerCategory, rosterFileServerCategory, leadListFileServerCategory])
   installMcpFilePreparation(ensureFileStoreReady)
-  installTaskCenter(handleTaskCenterRoute)
+  installTaskCenter(handleTaskCenterRoute, rosterPostgresTaskListOptions)
   installJobRuntime({
     readProjector: jobReadProjector,
     cleanupArtifacts: cleanupCurrentExports,

@@ -9,9 +9,9 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { CURRENT_RULE_VERSION, CURRENT_TITLES } from '../../../lib/roster/current-qualification'
-import { isJobId } from '../../../../core/lib/job'
+import { isJobId, isTerminalJobState } from '../../../../core/lib/job'
 import type { JobSpec } from '../../../../core/server/utils/job-runner'
-import { setJobResult } from '../../../../core/server/utils/job-store'
+import { getJob, setJobResult, type JobRow } from '../../../../core/server/utils/job-store'
 import { createCurrentExportWorker } from '../current-export-worker-location'
 import { cleanupCurrentExports, cleanupExportArtifacts, currentArtifact, currentExportDbPath, exportDirectory, EXPORT_RETENTION_MS } from '../current-export-artifact'
 import { appLog, type LogContext } from '../../../../core/lib/logging'
@@ -116,7 +116,16 @@ async function runCurrentExport(dbPath: string, options: CurrentExportExecution,
   }
 }
 
+function validateRegeneration(titleCode: unknown, prior: JobRow | null | undefined) {
+  if (prior?.kind !== 'current-roster-export' || prior.params.titleCode !== titleCode || !isTerminalJobState(prior.state)) {
+    throw Object.assign(new Error('重新生成需要同称号已结束任务'), { statusCode: 409 })
+  }
+}
+
 const postgresExport: PostgresJobSpec = {
+  async validateSubmission(tx, params) {
+    if (params.regenerateOf) validateRegeneration(params.titleCode, (await getPostgresJob(tx, String(params.regenerateOf)))?.row)
+  },
   allowBrowserCancel: true,
   taskCenter: { summaries: readPostgresExportSummaries },
   run(ctx, params) {
@@ -134,6 +143,9 @@ const postgresExport: PostgresJobSpec = {
 }
 
 export const currentRosterExportSpec: JobSpec = {
+  validateSubmission(db, params) {
+    if (params.regenerateOf) validateRegeneration(params.titleCode, getJob(db, String(params.regenerateOf)))
+  },
   openAPIParams: {
     order: 10,
     description: 'current-roster-export 使用 { titleCode: little_giant|specialized_sme|innovative_sme, clientRequestId: string, regenerateOf?: jobId }；运行/排队最多9个，独立进程生成，产物保留7天。',

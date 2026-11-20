@@ -3,11 +3,11 @@ import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { Pool } from 'pg'
 import { appLog, type LogContext } from '../../lib/logging'
 import { jobLogModule } from '../../lib/logging/module'
-import { isTerminalJobState, makeProgress, newJobId } from '../../lib/job'
+import { makeProgress, newJobId } from '../../lib/job'
 import { getJobSpec, jobSpecs, type JobCompletion, type JobSpec, type SubmitInput } from './job-runner'
 import {
   claimNextPostgresJob, completePostgresJob, createPostgresJob, postgresJobCancellationRequested, recoverPostgresJobs,
-  countActivePostgresJobs, findPostgresJobRequest, getPostgresJob, lockPostgresJobAdmission,
+  countActivePostgresJobs, findPostgresJobRequest, lockPostgresJobAdmission,
   setPostgresJobProgress, setPostgresJobResult, type PostgresJobSnapshot,
 } from './job-store-postgres'
 import type { JobDto } from './job-store'
@@ -32,6 +32,7 @@ export interface PostgresJobContext {
 export interface PostgresJobSpec {
   allowBrowserCancel?: boolean
   parse?: JobSpec['parse']
+  validateSubmission?(tx: PostgresJobTransaction, params: Record<string, unknown>): Promise<void>
   /** E.g. refresh a download receipt against the module’s current artifact state. */
   projectResult?(db: NodePgDatabase, job: JobDto): Promise<unknown>
   taskCenter?: {
@@ -72,13 +73,8 @@ export async function stagePostgresJob(tx: PostgresJobTransaction, input: Submit
       if (!isDeepStrictEqual(existing.row.params, params)) throw admissionError(409, '请求标识已用于不同参数')
       return { row: existing.row, inserted: false }
     }
-    if (params.regenerateOf) {
-      const previous = await getPostgresJob(tx, String(params.regenerateOf))
-      if (!previous || previous.row.kind !== input.kind || previous.row.params.titleCode !== params.titleCode || !isTerminalJobState(previous.row.state)) {
-        throw admissionError(409, '重新生成需要同称号已结束任务')
-      }
-    }
   }
+  await handler.validateSubmission?.(tx, params)
   if (spec.maxPending && await countActivePostgresJobs(tx, input.kind) >= spec.maxPending) {
     throw admissionError(429, '导出执行/排队容量已满，请稍后重试')
   }

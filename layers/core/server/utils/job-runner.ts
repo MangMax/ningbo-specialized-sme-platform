@@ -137,6 +137,7 @@ export interface JobSpec {
   paramsHint?: string
   /** Development OpenAPI contribution; order preserves the published parameter guide. */
   openAPIParams?: { description: string; order?: number }
+  validateSubmission?(db: Db, params: Record<string, unknown>): void
   parse: (raw: Record<string, unknown>) => JobParseResult
   /** 提交时就能算出的**分母**(进度条的 total)。默认 1。 */
   total?: (params: Record<string, unknown>) => number
@@ -259,11 +260,8 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
       if (JSON.stringify(existing.params) !== JSON.stringify(input.params)) throw Object.assign(new Error('请求标识已用于不同参数'),{statusCode:409})
       return existing
     }
-    if (input.params.regenerateOf) {
-      const previous = getJob(db,String(input.params.regenerateOf))
-      if (!previous || previous.kind !== input.kind || previous.params.titleCode !== input.params.titleCode || !isTerminalJobState(previous.state)) throw Object.assign(new Error('重新生成需要同称号已结束任务'),{statusCode:409})
-    }
   }
+  spec.validateSubmission?.(db, input.params)
   if (spec.maxPending) {
     const n = db.select({n:sql<number>`count(*)`}).from(schema.job).where(and(eq(schema.job.kind,input.kind),sql`${schema.job.state} in ('queued','running')`)).get()!.n
     if (n >= spec.maxPending) throw Object.assign(new Error('导出执行/排队容量已满，请稍后重试'),{statusCode:429})

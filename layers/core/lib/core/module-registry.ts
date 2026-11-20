@@ -19,6 +19,8 @@ export type AppJobKind = {
   readonly kind: string
   readonly label: string
   readonly group: { readonly id: string; readonly label: string }
+  /** Percentage becomes meaningful when the running job reports this phase. */
+  readonly progressPhase?: string
   /** Export name in the owning module's server JobSpec adapter. */
   readonly spec: string
 }

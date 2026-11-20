@@ -169,6 +169,6 @@ export default defineAppModule({
     { kind: 'reconcile', label: '平台核查', group: platform, spec: 'reconcileSpec' },
     { kind: 'event-archive-candidates', label: '公布事件候选发现', group: platform, spec: 'candidateDiscoverySpec' },
     { kind: 'event-annual-correspondence', label: '年度过程对应', group: platform, spec: 'annualSpec' },
-    { kind: 'current-roster-export', label: '当前名录导出', group: rosterExport, spec: 'currentRosterExportSpec' },
+    { kind: 'current-roster-export', label: '当前名录导出', group: rosterExport, spec: 'currentRosterExportSpec', progressPhase: 'workbook' },
   ],
 })

@@ -3,7 +3,7 @@ import { jobLogModule } from '../../lib/logging/module'
 import { sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { isTerminalJobState, makeProgress, type JobProgress, type JobState } from '../../lib/job'
-import { DEFAULT_JOB_LIMIT, MAX_JOB_LIMIT, toJobDto, toJobSummary, type JobQuery, type JobRow } from './job-store'
+import { DEFAULT_JOB_LIMIT, MAX_JOB_LIMIT, progressPhaseMatch, toJobDto, toJobSummary, type JobQuery, type JobRow } from './job-store'
 
 type Executor = Pick<NodePgDatabase, 'execute'>
 type TerminalState = Extract<JobState, 'done' | 'failed' | 'cancelled'>
@@ -19,7 +19,7 @@ type JobColumns = Pick<JobRow, 'id' | 'kind' | 'state' | 'createdAt' | 'startedA
 }
 
 type StoredJob = JobColumns & { params: string; result: string | null; error: string | null; claimToken: string | null; inputSnapshot: string | null }
-type StoredJobSummary = JobColumns & { hasResult: boolean; hasError: boolean; exportWorkbook: boolean | null }
+type StoredJobSummary = JobColumns & { hasResult: boolean; hasError: boolean; phaseAvailable: boolean | null }
 
 export interface PostgresJobSnapshot {
   row: JobRow
@@ -38,12 +38,10 @@ export async function checkPostgresJobStorage(db: Executor) {
 // extracting JSON text. Replace those escapes only for this ASCII phase check.
 const jsonTextEscapes = String.raw`\\u(?:0000|d[89a-f][0-9a-f]{2})`
 const replacementEscape = String.raw`\\uFFFD`
-const summaryColumns = sql`${commonColumns},
+const summaryColumns = () => sql`${commonColumns},
   result IS NOT NULL AND result <> 'null' AS "hasResult",
   error IS NOT NULL AS "hasError",
-  CASE WHEN kind = 'current-roster-export' AND state = 'running'
-    THEN regexp_replace(result, ${jsonTextEscapes}, ${replacementEscape}, 'gi')::json ->> 'phase' = 'workbook'
-    ELSE false END AS "exportWorkbook"`
+  ${progressPhaseMatch(sql`regexp_replace(result, ${jsonTextEscapes}, ${replacementEscape}, 'gi')::json ->> 'phase'`)} AS "phaseAvailable"`
 
 function decodeJob({ claimToken, params, progress, result, inputSnapshot, ...columns }: StoredJob): PostgresJobSnapshot {
   return {
@@ -77,7 +75,7 @@ export async function getPostgresJobDetail(db: Executor, id: string) {
 }
 
 export async function getPostgresJobSummary(db: Executor, id: string) {
-  const { rows } = await db.execute<StoredJobSummary>(sql`SELECT ${summaryColumns} FROM business.job WHERE id = ${id}`)
+  const { rows } = await db.execute<StoredJobSummary>(sql`SELECT ${summaryColumns()} FROM business.job WHERE id = ${id}`)
   return rows[0] ? decodeSummary(rows[0]) : null
 }
 
@@ -105,7 +103,7 @@ export function listPostgresJobs(db: NodePgDatabase, query: JobQuery = {}) {
 }
 
 export function listPostgresJobSummaries(db: NodePgDatabase, query: JobQuery = {}) {
-  return listJobs(db, query, summaryColumns, decodeSummary)
+  return listJobs(db, query, summaryColumns(), decodeSummary)
 }
 
 export async function createPostgresJob(db: Executor, input: {
@@ -246,21 +244,20 @@ export function completePostgresJob(db: Executor, job: PostgresJobSnapshot, outc
 
 export async function listPostgresTaskCenter(db: Executor, query: {
   kinds?: string[]
-  titleCode?: string
+  filter?: SQL
   state?: JobState
   page: number
   pageSize: number
 }) {
   const state = sql`(${query.state ? sql`state = ${query.state}` : sql`true`})
-    ${query.titleCode === undefined ? sql.empty() : sql`AND kind = 'current-roster-export'
-      AND params::json ->> 'titleCode' = ${query.titleCode}`}`
+    ${query.filter ? sql`AND (${query.filter})` : sql.empty()}`
   const kinds = query.kinds?.length
     ? sql`kind IN (${sql.join(query.kinds.map(kind => sql`${kind}`), sql`, `)})`
     : sql`${query.kinds === undefined}`
   const { rows: counts } = await db.execute<{ kind: string; n: string }>(sql`
       SELECT kind, count(*) AS n FROM business.job WHERE ${state} GROUP BY kind`)
   const total = counts.reduce((sum, row) => sum + (!query.kinds || query.kinds.includes(row.kind) ? Number(row.n) : 0), 0)
-  const { rows } = await db.execute<StoredJobSummary>(sql`SELECT ${summaryColumns} FROM business.job
+  const { rows } = await db.execute<StoredJobSummary>(sql`SELECT ${summaryColumns()} FROM business.job
       WHERE ${state} AND ${kinds} ORDER BY created_at DESC, id DESC
       LIMIT ${query.pageSize} OFFSET ${(query.page - 1) * query.pageSize}`)
   return { rows: rows.map(decodeSummary), total, counts }

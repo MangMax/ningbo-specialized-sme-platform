@@ -447,3 +447,33 @@ it.runIf(!!bin)('skips a row locked by a transaction and picks it up after the l
   await expect.poll(async () => (await read(first)).state).toBe('done')
   expect(await read(first)).toMatchObject({ result: { label: 'first' } })
 })
+
+it.runIf(!!bin)('filters roster exports by title before counting and reports progress only in the workbook phase', async () => {
+  vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
+  const { newJobId } = await import('../../../layers/core/lib/job')
+  const kind = 'current-roster-export'
+  const growing = newJobId(), preparing = newJobId(), otherTitle = newJobId(), otherKind = newJobId()
+  for (const [id, jobKind, title, phase] of [
+    [growing, kind, 'little_giant', 'workbook'],
+    [preparing, kind, 'little_giant', 'snapshot'],
+    [otherTitle, kind, 'innovative_sme', 'workbook'],
+    [otherKind, 'other-kind', 'little_giant', 'snapshot'],
+  ]) {
+    await pool.query(`INSERT INTO business.job (id, kind, state, params, progress, result, created_at)
+      VALUES ($1, $2, 'running', $3, '{"done":1,"total":4}', $4, $5)`,
+    [id, jobKind, JSON.stringify({ titleCode: title }), JSON.stringify({ phase }), '2026-01-01T00:00:00Z'])
+  }
+  const response = await request('/api/task-center?tab=sme-roster&group=export&titleCode=little_giant&state=running&pageSize=1')
+  expect(response.status).toBe(200)
+  const page = await response.json()
+  expect(page).toMatchObject({ total: 2, counts: { all: 2, 'sme-roster': 2 }, exportReady: true })
+  expect(page.rows).toHaveLength(1)
+  expect([growing, preparing]).toContain(page.rows[0].id)
+  const summary = await (await request('/api/jobs?view=summary&kind=current-roster-export')).json()
+  expect(summary.rows).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: growing, percent: 25 }),
+    expect.objectContaining({ id: preparing, percent: null }),
+  ]))
+  expect((await (await request('/api/jobs/' + otherKind)).json()).percent).toBe(25)
+  expect((await submit(kind, { clientRequestId: 'regenerate-running', titleCode: 'little_giant', regenerateOf: growing })).status).toBe(409)
+})

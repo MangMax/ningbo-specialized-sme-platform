@@ -1,9 +1,9 @@
-import { TITLE_SEED } from '../../../../db/titles'
+import type { SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { createError, getHeader, getQuery, getRouterParam, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { requestLogContext } from '../../lib/logging'
-import type { TaskCenterAction } from '../../../../server/task-center'
 import { registerJobSpecs } from '../../../../server/utils/job-specs'
+import type { TaskCenterAction } from '../../../../server/task-center'
 import { isJobId, JOB_STATES, type JobState, type JobSummaryDto } from '../../lib/job'
 import { getTaskFilterKinds, getTaskKind, getTaskTabs, resolveTaskFilters } from '../../lib/task-catalog'
 import type { TaskList, TaskSummary } from '../../lib/task-center'
@@ -67,7 +67,9 @@ function summarize(row: JobSummaryDto, authorized: boolean): TaskSummary {
   }
 }
 
-export async function handlePostgresTaskCenter(action: TaskCenterAction, event: H3Event) {
+export type PostgresTaskListOptions = (query: Record<string, unknown>) => { filter?: SQL; exportReady: boolean }
+
+export async function handlePostgresTaskCenter(action: TaskCenterAction, event: H3Event, listOptions?: PostgresTaskListOptions) {
   setHeader(event, 'cache-control', 'no-store')
   registerJobSpecs()
   const config = useRuntimeConfig(event)
@@ -86,10 +88,10 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
     const state = JOB_STATES.includes(q.state as JobState) ? q.state as JobState : undefined
     const page = positive(q.page, 1, 1_000_000)
     const pageSize = positive(q.pageSize, 25, 200)
-    const titleCode = TITLE_SEED.find(title => title.code === q.titleCode)?.code
+    const { filter, exportReady } = listOptions?.(q) ?? { exportReady: false }
     const kinds = tab.id === 'all' ? undefined : getTaskFilterKinds(tab.id, group?.id)
     const { data, rows } = await db.transaction(async tx => {
-      const data = await listPostgresTaskCenter(tx, { page, pageSize, state, kinds, titleCode })
+      const data = await listPostgresTaskCenter(tx, { page, pageSize, state, kinds, filter })
       return { data, rows: await projectSummaries(tx, data.rows, authorizedFor) }
     }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
     const counts: TaskList['counts'] = { ...Object.fromEntries(getTaskTabs().map(({ id }) => [id, 0])), all: 0 }
@@ -101,7 +103,7 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
     return {
       total: data.total, rows: writable ? rows : rows.map(readonlySummary),
       page, pageSize, counts,
-      exportReady: writable && Boolean(postgresJobHandler('current-roster-export')),
+      exportReady: writable && exportReady,
       authorized: writable && (apiAuthorized || browserAuthorized),
     } satisfies TaskList
   }

@@ -1,3 +1,6 @@
+import { sql } from 'drizzle-orm'
+import { postgresJobHandler } from '../../../core/server/utils/job-runner-postgres'
+import { TASK_EXPORTS } from '../../lib/sme-roster/task-exports'
 import type { H3Event } from 'h3'
 import type { TaskCenterAction } from '../../../../server/task-center'
 import { taskCenterBrowserAccess } from '../../../core/server/utils/task-center-access'
@@ -6,7 +9,14 @@ import { useDb } from '@db'
 import { handleTaskCenterRequest } from './task-center-http'
 import { ensureJobRunnerReady } from '../../../core/server/utils/job-runner'
 import { registerJobSpecs } from '../../../../server/utils/job-specs'
-/** Thin Nitro binding; HTTP fixtures exercise the same core. */
+export function rosterPostgresTaskListOptions(query: Record<string, unknown>) {
+  const title = TASK_EXPORTS.find(item => item.titleCode === query.titleCode)
+  return {
+    filter: title ? sql`kind = 'current-roster-export' AND params::json ->> 'titleCode' = ${title.titleCode}` : undefined,
+    exportReady: Boolean(postgresJobHandler('current-roster-export')),
+  }
+}
+
 export async function handleTaskCenterRoute(action: TaskCenterAction, event: H3Event) {
   registerJobSpecs()
   const db = useDb()
