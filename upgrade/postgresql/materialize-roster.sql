@@ -195,6 +195,8 @@ SELECT evidence_id, revision, format_version, event_id, captured_record_id, capt
 FROM :"staging".official_evidence_row_revision;
 
 INSERT INTO platform_apply_projection (
+  exact_status_sqlite_storage, exact_declare_kind_sqlite_storage, exact_applied_at_sqlite_storage,
+  exact_year_sqlite_storage, exact_title_raw_sqlite_storage,
   exact_status, exact_declare_kind, exact_applied_at, exact_year, exact_title_raw, exact_stored_state,
   exact_stored_rule, exact_stored_origin, exact_stored_reason, sql_fact_title, sql_fact_title_state,
   sql_fact_title_rule, sql_fact_title_reason, id, observation_id, basis, version_id, record_id,
@@ -211,7 +213,9 @@ INSERT INTO platform_apply_projection (
   reconciled_award_batch_label, award_batch_label_conflict, stored_year_kind, stored_year, parsed_year_kind,
   parsed_year, reconciled_year, year_conflict, rule_version, created_at
 )
-SELECT exact_status, exact_declare_kind, exact_applied_at, exact_year, exact_title_raw, exact_stored_state,
+SELECT exact_status_sqlite_storage, exact_declare_kind_sqlite_storage, exact_applied_at_sqlite_storage,
+  exact_year_sqlite_storage, exact_title_raw_sqlite_storage,
+  exact_status, exact_declare_kind, exact_applied_at, exact_year, exact_title_raw, exact_stored_state,
   exact_stored_rule, exact_stored_origin, exact_stored_reason, sql_fact_title, sql_fact_title_state,
   sql_fact_title_rule, sql_fact_title_reason, id, observation_id, basis, version_id, record_id,
   declare_kind, declaration_year, applied_at, status, title_raw, name_raw, uscc_raw, source_title_kind,
@@ -259,6 +263,9 @@ SELECT process_exact_owner_id, process_exact_state, process_sql_fact_title_state
 FROM :"staging".platform_business_observation;
 
 INSERT INTO platform_business_projection (
+  exact_status_sqlite_storage, exact_declare_kind_sqlite_storage, exact_applied_at_sqlite_storage,
+  exact_year_sqlite_storage, exact_title_raw_sqlite_storage, exact_batch_sqlite_storage,
+  exact_award_batch_label_sqlite_storage, exact_province_sqlite_storage,
   exact_status, exact_declare_kind, exact_applied_at, exact_year, exact_title_raw, exact_batch,
   exact_award_batch_label, exact_province, exact_stored_state, exact_stored_rule, exact_stored_origin,
   exact_stored_reason, sql_fact_title, sql_fact_title_state, sql_fact_title_rule, sql_fact_title_reason, id,
@@ -276,7 +283,10 @@ INSERT INTO platform_business_projection (
   reconciled_award_batch_label, award_batch_label_conflict, stored_year_kind, stored_year, parsed_year_kind,
   parsed_year, reconciled_year, year_conflict, rule_version, created_at
 )
-SELECT exact_status, exact_declare_kind, exact_applied_at, exact_year, exact_title_raw, exact_batch,
+SELECT exact_status_sqlite_storage, exact_declare_kind_sqlite_storage, exact_applied_at_sqlite_storage,
+  exact_year_sqlite_storage, exact_title_raw_sqlite_storage, exact_batch_sqlite_storage,
+  exact_award_batch_label_sqlite_storage, exact_province_sqlite_storage,
+  exact_status, exact_declare_kind, exact_applied_at, exact_year, exact_title_raw, exact_batch,
   exact_award_batch_label, exact_province, exact_stored_state, exact_stored_rule, exact_stored_origin,
   exact_stored_reason, sql_fact_title, sql_fact_title_state, sql_fact_title_rule, sql_fact_title_reason, id,
   observation_id, basis, version_id, record_id, declare_kind, business_year, applied_at, status, batch,

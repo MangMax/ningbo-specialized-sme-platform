@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { expect, test } from 'vitest'
 import { createRuntimeSchema } from '../../../db/create-runtime'
+import { nativeCatalogFixture } from '../../platform/fixtures/native-catalog'
 
 const connection = process.env.TEST_ROSTER_PG19_DATABASE
 
@@ -110,6 +111,58 @@ test.runIf(Boolean(connection))('loads linked roster and platform evidence with 
       query(`SET client_min_messages TO warning; DROP SCHEMA IF EXISTS ${target} CASCADE; DROP SCHEMA IF EXISTS ${failedTarget} CASCADE; DROP SCHEMA IF EXISTS ${staging} CASCADE`)
     } finally {
       rmSync(workspace, { recursive: true, force: true })
+    }
+  }
+}, 45_000)
+
+test.runIf(Boolean(connection))('retains the SQLite type and bytes of declaration and process evidence', async () => {
+  const fixture = nativeCatalogFixture()
+  const suffix = randomUUID().replaceAll('-', '')
+  const staging = 'platform_exact_stage_' + suffix
+  const target = 'platform_exact_' + suffix
+  const psql = process.env.PGSQL_BIN ?? 'psql'
+  const env = { ...process.env, PGDATABASE: connection }
+  const args = ['-X', '-w', '-Atq', '-v', 'ON_ERROR_STOP=1']
+  const query = (sql: string) => execFileSync(psql, [...args, '-c', sql], { env, encoding: 'utf8' }).trim()
+  const snapshot = join(fixture.dir, 'offline.sqlite')
+
+  try {
+    const raw = fixture.raw('EXACT-1', { year: 2024, sblx: '申请', cszt: '通过' })
+    const declaration = fixture.seed('apply_list', raw).observations[0]!.observationId
+    const business = fixture.seed('business_list', raw).observations[0]!.observationId
+    const sqlite = fixture.db.$client
+    sqlite.exec('DROP TRIGGER platform_apply_stored_no_update; DROP TRIGGER platform_process_stored_no_update')
+    sqlite.prepare(`UPDATE platform_apply_projection
+      SET exact_title_raw = ?, exact_year = 2024.5, exact_status = ' 通过 ', exact_applied_at = NULL
+      WHERE observation_id = ?`).run(Buffer.from([0, 255, 32]), declaration)
+    sqlite.prepare(`UPDATE platform_business_projection
+      SET exact_title_raw = ' 2 ', exact_year = 2024, exact_batch = ?, exact_province = NULL
+      WHERE observation_id = ?`).run(Buffer.from([255, 0]), business)
+    await sqlite.backup(snapshot)
+    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', snapshot, staging], { env })
+    query(`CREATE SCHEMA ${target};
+      CREATE TABLE ${target}.enterprise(id bigint PRIMARY KEY);
+      CREATE TABLE ${target}.enterprise_merge(from_enterprise_id bigint, into_enterprise_id bigint);
+      CREATE TABLE ${target}.stored_file(id bigint PRIMARY KEY);
+      INSERT INTO ${target}.enterprise VALUES (${fixture.enterprise.id});`)
+    execFileSync(psql, [...args, '-v', `staging=${staging}`, '-v', `target=${target}`,
+      '-f', 'upgrade/postgresql/materialize-roster.sql'], { env })
+
+    expect(query(`SELECT exact_title_raw_sqlite_storage,encode(exact_title_raw,'hex'),
+      exact_year_sqlite_storage,encode(exact_year,'hex'),exact_status_sqlite_storage,convert_from(exact_status,'UTF8'),
+      exact_applied_at_sqlite_storage,exact_applied_at IS NULL
+      FROM ${target}.platform_apply_projection WHERE observation_id=${declaration}`))
+      .toBe('blob|00ff20|real|409fa20000000000|text| 通过 |null|t')
+    expect(query(`SELECT exact_title_raw_sqlite_storage,convert_from(exact_title_raw,'UTF8'),
+      exact_year_sqlite_storage,encode(exact_year,'hex'),exact_batch_sqlite_storage,encode(exact_batch,'hex'),
+      exact_province_sqlite_storage,exact_province IS NULL
+      FROM ${target}.platform_business_projection WHERE observation_id=${business}`))
+      .toBe('text| 2 |integer|00000000000007e8|blob|ff00|null|t')
+  } finally {
+    try {
+      query(`SET client_min_messages TO warning; DROP SCHEMA IF EXISTS ${target} CASCADE; DROP SCHEMA IF EXISTS ${staging} CASCADE`)
+    } finally {
+      fixture.close()
     }
   }
 }, 45_000)

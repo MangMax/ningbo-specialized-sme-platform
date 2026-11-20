@@ -367,11 +367,31 @@ CREATE TABLE platform_legacy_relation_alias (
 );
 
 CREATE TABLE platform_apply_projection (
-  exact_status text,
-  exact_declare_kind text,
-  exact_applied_at text,
-  exact_year bigint,
-  exact_title_raw text,
+  exact_status bytea,
+  exact_status_sqlite_storage text NOT NULL DEFAULT 'null'
+    CHECK ((exact_status_sqlite_storage = 'null' AND exact_status IS NULL)
+      OR (exact_status_sqlite_storage IN ('text', 'blob') AND exact_status IS NOT NULL)
+      OR (exact_status_sqlite_storage IN ('integer', 'real') AND octet_length(exact_status) IS NOT DISTINCT FROM 8)),
+  exact_declare_kind bytea,
+  exact_declare_kind_sqlite_storage text NOT NULL DEFAULT 'null'
+    CHECK ((exact_declare_kind_sqlite_storage = 'null' AND exact_declare_kind IS NULL)
+      OR (exact_declare_kind_sqlite_storage IN ('text', 'blob') AND exact_declare_kind IS NOT NULL)
+      OR (exact_declare_kind_sqlite_storage IN ('integer', 'real') AND octet_length(exact_declare_kind) IS NOT DISTINCT FROM 8)),
+  exact_applied_at bytea,
+  exact_applied_at_sqlite_storage text NOT NULL DEFAULT 'null'
+    CHECK ((exact_applied_at_sqlite_storage = 'null' AND exact_applied_at IS NULL)
+      OR (exact_applied_at_sqlite_storage IN ('text', 'blob') AND exact_applied_at IS NOT NULL)
+      OR (exact_applied_at_sqlite_storage IN ('integer', 'real') AND octet_length(exact_applied_at) IS NOT DISTINCT FROM 8)),
+  exact_year bytea,
+  exact_year_sqlite_storage text NOT NULL DEFAULT 'null'
+    CHECK ((exact_year_sqlite_storage = 'null' AND exact_year IS NULL)
+      OR (exact_year_sqlite_storage IN ('text', 'blob') AND exact_year IS NOT NULL)
+      OR (exact_year_sqlite_storage IN ('integer', 'real') AND octet_length(exact_year) IS NOT DISTINCT FROM 8)),
+  exact_title_raw bytea,
+  exact_title_raw_sqlite_storage text NOT NULL DEFAULT 'null'
+    CHECK ((exact_title_raw_sqlite_storage = 'null' AND exact_title_raw IS NULL)
+      OR (exact_title_raw_sqlite_storage IN ('text', 'blob') AND exact_title_raw IS NOT NULL)
+      OR (exact_title_raw_sqlite_storage IN ('integer', 'real') AND octet_length(exact_title_raw) IS NOT DISTINCT FROM 8)),
   exact_stored_state text,
   exact_stored_rule text,
   exact_stored_origin text,
@@ -587,14 +607,46 @@ CREATE TABLE platform_apply_projection (
 );
 
 CREATE TABLE platform_business_projection (
-  exact_status text,
-  exact_declare_kind text,
-  exact_applied_at text,
-  exact_year bigint,
-  exact_title_raw text,
-  exact_batch text,
-  exact_award_batch_label text,
-  exact_province text,
+  exact_status bytea,
+  exact_status_sqlite_storage text NOT NULL DEFAULT 'null'
+    CHECK ((exact_status_sqlite_storage = 'null' AND exact_status IS NULL)
+      OR (exact_status_sqlite_storage IN ('text', 'blob') AND exact_status IS NOT NULL)
+      OR (exact_status_sqlite_storage IN ('integer', 'real') AND octet_length(exact_status) IS NOT DISTINCT FROM 8)),
+  exact_declare_kind bytea,
+  exact_declare_kind_sqlite_storage text NOT NULL DEFAULT 'null'
+    CHECK ((exact_declare_kind_sqlite_storage = 'null' AND exact_declare_kind IS NULL)
+      OR (exact_declare_kind_sqlite_storage IN ('text', 'blob') AND exact_declare_kind IS NOT NULL)
+      OR (exact_declare_kind_sqlite_storage IN ('integer', 'real') AND octet_length(exact_declare_kind) IS NOT DISTINCT FROM 8)),
+  exact_applied_at bytea,
+  exact_applied_at_sqlite_storage text NOT NULL DEFAULT 'null'
+    CHECK ((exact_applied_at_sqlite_storage = 'null' AND exact_applied_at IS NULL)
+      OR (exact_applied_at_sqlite_storage IN ('text', 'blob') AND exact_applied_at IS NOT NULL)
+      OR (exact_applied_at_sqlite_storage IN ('integer', 'real') AND octet_length(exact_applied_at) IS NOT DISTINCT FROM 8)),
+  exact_year bytea,
+  exact_year_sqlite_storage text NOT NULL DEFAULT 'null'
+    CHECK ((exact_year_sqlite_storage = 'null' AND exact_year IS NULL)
+      OR (exact_year_sqlite_storage IN ('text', 'blob') AND exact_year IS NOT NULL)
+      OR (exact_year_sqlite_storage IN ('integer', 'real') AND octet_length(exact_year) IS NOT DISTINCT FROM 8)),
+  exact_title_raw bytea,
+  exact_title_raw_sqlite_storage text NOT NULL DEFAULT 'null'
+    CHECK ((exact_title_raw_sqlite_storage = 'null' AND exact_title_raw IS NULL)
+      OR (exact_title_raw_sqlite_storage IN ('text', 'blob') AND exact_title_raw IS NOT NULL)
+      OR (exact_title_raw_sqlite_storage IN ('integer', 'real') AND octet_length(exact_title_raw) IS NOT DISTINCT FROM 8)),
+  exact_batch bytea,
+  exact_batch_sqlite_storage text NOT NULL DEFAULT 'null'
+    CHECK ((exact_batch_sqlite_storage = 'null' AND exact_batch IS NULL)
+      OR (exact_batch_sqlite_storage IN ('text', 'blob') AND exact_batch IS NOT NULL)
+      OR (exact_batch_sqlite_storage IN ('integer', 'real') AND octet_length(exact_batch) IS NOT DISTINCT FROM 8)),
+  exact_award_batch_label bytea,
+  exact_award_batch_label_sqlite_storage text NOT NULL DEFAULT 'null'
+    CHECK ((exact_award_batch_label_sqlite_storage = 'null' AND exact_award_batch_label IS NULL)
+      OR (exact_award_batch_label_sqlite_storage IN ('text', 'blob') AND exact_award_batch_label IS NOT NULL)
+      OR (exact_award_batch_label_sqlite_storage IN ('integer', 'real') AND octet_length(exact_award_batch_label) IS NOT DISTINCT FROM 8)),
+  exact_province bytea,
+  exact_province_sqlite_storage text NOT NULL DEFAULT 'null'
+    CHECK ((exact_province_sqlite_storage = 'null' AND exact_province IS NULL)
+      OR (exact_province_sqlite_storage IN ('text', 'blob') AND exact_province IS NOT NULL)
+      OR (exact_province_sqlite_storage IN ('integer', 'real') AND octet_length(exact_province) IS NOT DISTINCT FROM 8)),
   exact_stored_state text,
   exact_stored_rule text,
   exact_stored_origin text,
