@@ -3,6 +3,8 @@ import { applyReviewedEnterprise, type ReviewedSubject } from '../core/server/pu
 import { readCurrentQualificationAssessment, type CurrentTitle } from './lib/roster/current-qualification'
 import { captureIdentityRevision113, identityMaterial113 } from './server/utils/evidence-impact-113'
 
+export { applyPostgresReviewedRosterIdentity } from './server/utils/postgres-identity-evidence'
+
 export function applyReviewedRosterIdentity(db: Parameters<typeof applyReviewedEnterprise>[0], subject: Extract<ReviewedSubject, { action: 'attach' }>) {
   const owner = subject.enterpriseId
   const before = subject.fields?.name === undefined && subject.fields?.uscc === undefined
