@@ -278,13 +278,18 @@ it.runIf(!!bin)('uses the PostgreSQL capability catalog and keeps private task d
       },
     },
   })
+  registerJob({
+    kind: 'fixture-sqlite-only', status: 'ready', summary: 'SQLite handler fixture',
+    async run() { return { result: null } },
+  })
   const kinds = await (await request('/api/jobs/kinds')).json()
   expect(kinds.kinds).toEqual(expect.arrayContaining([
     expect.objectContaining({ kind: 'render-pages', status: 'ready' }),
-    expect.objectContaining({ kind: 'reconcile', status: 'todo' }),
+    expect.objectContaining({ kind: 'reconcile', status: 'ready' }),
+    expect.objectContaining({ kind: 'fixture-sqlite-only', status: 'todo' }),
     expect.objectContaining({ kind: 'fixture-private', status: 'ready' }),
   ]))
-  expect((await submit('reconcile', {})).status).toBe(501)
+  expect((await submit('fixture-sqlite-only')).status).toBe(501)
   const response = await submit('fixture-private')
   expect(response.status).toBe(202)
   const { jobId } = await response.json()

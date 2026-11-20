@@ -45,7 +45,7 @@ export async function decisionReadMcp102(db: () => DecisionDb, legacy: (tx: Deci
     const native = usePostgresRosterDb()
     if (!native) {
       const sqlite = db()
-      return decisionMcp102(sqlite, () => sqlite.transaction(tx => legacy(tx)))
+      return decisionMcp102(sqlite, () => sqlite.transaction(() => legacy(sqlite)))
     }
     if (!pinned) return (await postgresDecisionOutput102(native))(await postgres(native))
     return await native.transaction(async tx => (await postgresDecisionOutput102(tx))(await postgres(tx)), {

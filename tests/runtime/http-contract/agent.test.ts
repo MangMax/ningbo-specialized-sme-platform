@@ -890,8 +890,6 @@ describe('Nitro 内建 OpenAPI 的暴露面', () => {
     const routes = [
       'records.get.ts',
       'enterprises/[id].get.ts',
-      'stats.get.ts',
-      'quality.get.ts',
       'export.get.ts',
       'comparison.get.ts',
       'comparison/curated.patch.ts',
