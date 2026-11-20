@@ -10,6 +10,7 @@ export { canonicalEnterpriseId, currentEnterpriseIdentity, hasEnterpriseMergeIde
 export type { LogContext } from '../lib/logging'
 export { createPostgresReviewedEnterprise, attachPostgresReviewedEnterprise, lockPostgresReviewedEnterpriseBatch, registerPostgresEnterpriseSource } from './utils/enterprise-directory-postgres-write'
 export { applyPostgresEnterpriseProfileChange, postgresEnterpriseProfileState } from './utils/enterprise-directory-postgres-write'
+export { applyPostgresEnterpriseMerge, findPostgresEnterpriseMergeAliasConflict } from './utils/enterprise-merge-postgres'
 export { verifyRegisteredFileRead } from './utils/file-read-identity'
 export { postgresJobsEnabled, usePostgresJobsDb, startPostgresJobs, stopPostgresJobs } from './utils/postgres-jobs'
 export { stagePostgresJob, type PostgresJobContext, type PostgresJobSpec, type PostgresJobTransaction } from './utils/job-runner-postgres'
