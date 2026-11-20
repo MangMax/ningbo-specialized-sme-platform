@@ -39,7 +39,7 @@ export function decisionMcp102(db: DecisionDb, operation: () => Record<string, u
 }
 
 export async function decisionReadMcp102(db: () => DecisionDb, legacy: (tx: DecisionDb) => Record<string, unknown>,
-  postgres: (tx: NodePgDatabase) => Promise<Record<string, unknown>>,
+  postgres: (tx: NodePgDatabase) => Promise<Record<string, unknown>>, pinned = true,
 ) {
   try {
     const native = usePostgresRosterDb()
@@ -47,9 +47,26 @@ export async function decisionReadMcp102(db: () => DecisionDb, legacy: (tx: Deci
       const sqlite = db()
       return decisionMcp102(sqlite, () => sqlite.transaction(tx => legacy(tx)))
     }
+    if (!pinned) return (await postgresDecisionOutput102(native))(await postgres(native))
     return await native.transaction(async tx => (await postgresDecisionOutput102(tx))(await postgres(tx)), {
       isolationLevel: 'repeatable read', accessMode: 'read only',
     })
+  } catch (error) {
+    return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify(decisionFailure102(error).body) }] }
+  }
+}
+
+export async function decisionWriteMcp102(db: () => DecisionDb, legacy: (db: DecisionDb) => Record<string, unknown>,
+  postgres: (db: NodePgDatabase) => Promise<Record<string, unknown>>, write = true,
+) {
+  try {
+    const native = usePostgresRosterDb(write)
+    if (!native) {
+      const sqlite = db()
+      return decisionMcp102(sqlite, () => legacy(sqlite))
+    }
+    const output = await postgresDecisionOutput102(native)
+    return output(await postgres(native))
   } catch (error) {
     return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify(decisionFailure102(error).body) }] }
   }

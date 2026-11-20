@@ -24,7 +24,7 @@ function bound(value: number | undefined) {
   if (!Number.isInteger(n) || n < 1 || n > 100) throw new Error('Evidence work limit must be 1..100')
   return n
 }
-const scopeKey113 = (enterpriseId: number | null, titleCode: string | null, direction: string | null) => JSON.stringify([enterpriseId, titleCode, direction])
+export const scopeKey113 = (enterpriseId: number | null, titleCode: string | null, direction: string | null) => JSON.stringify([enterpriseId, titleCode, direction])
 interface RevisionInput {
   sourceKind: string; sourceKey: string; sourceVersion: string
   enterpriseId?: number | null; titleCode?: string | null; direction?: string | null; eventId?: number | null
@@ -229,7 +229,7 @@ export function identityMaterial113(db: EvidenceExecutor113, enterpriseId: numbe
   return evidenceDigest113({ enterprise: enterprise ?? null, aliases: [...hashes].sort() })
 }
 
-type Snapshot113 = { id: number; year: number; collectedOn: string | null; maxRowId: number }
+export type Snapshot113 = { id: number; year: number; collectedOn: string | null; maxRowId: number }
 /** Matches the actual roster selector: highest year, then highest ID within a title. */
 export function selectedSnapshot113(db: EvidenceExecutor113, titleCode: string): Snapshot113 | null {
   return db.get<Snapshot113>(sql`select b.id,b.year,b.collected_on collectedOn,coalesce((select max(id) from platform_export_row where batch_id=b.id),0) maxRowId from platform_export_batch b where b.title_code=${titleCode} order by b.year desc,b.id desc limit 1`) ?? null
@@ -313,18 +313,23 @@ function queryChangeRelevant113(db: EvidenceExecutor113, revision: typeof s.evid
   if (!decision.evidenceQueryId || decision.status === 'not_queried') return true
   const source = readDifferenceCollection(db, decision.evidenceQueryId)
   const scope = source ? readDifferenceCollectionScope(db, source.collection.id) : null
-  const old = source && scope ? {
-    interface: source.collection.interface, conditions: JSON.stringify(scope.conditions),
-    pages: JSON.stringify(scope.pages.map(p => ({ rdjb: p.rdjb, page: p.pageNo }))), fullRange: source.collection.fullRange,
-  } : null
-  if (!old || old.interface !== revision.metadata.interface) return true
-  const before = JSON.parse(old.conditions ?? '{}') as Record<string, unknown>, after = revision.metadata.conditions as Record<string, unknown>
+  return queryImpactRelevant113(revision.metadata, decision.titleCode, source && scope ? {
+    interface: source.collection.interface, conditions: scope.conditions,
+    pages: scope.pages.map(p => ({ rdjb: p.rdjb, page: p.pageNo })), fullRange: source.collection.fullRange,
+  } : null)
+}
+
+export function queryImpactRelevant113(metadata: Record<string, unknown>, titleCode: string, old: {
+  interface: string; conditions: Record<string, unknown>; pages: Array<{ rdjb: string | null; page: number | null }>; fullRange: number | null
+} | null) {
+  if (!old || old.interface !== metadata.interface) return true
+  const before = old.conditions, after = metadata.conditions as Record<string, unknown>
   for (const field of ['whpcyear','whpc','szq','sqsj','rddqrq']) if (before[field] != null && after[field] != null && before[field] !== after[field]) return false
-  if (old.fullRange === 0 && revision.metadata.fullRange === 0) {
-    const rdjb = ({ innovative_sme: '1', specialized_sme: '2', little_giant: '3' } as Record<string, string>)[decision.titleCode]
-    const pages = (JSON.parse(old.pages ?? '[]') as Array<{ rdjb: string | null; page: number }>).filter(p => p.rdjb === rdjb || p.rdjb == null)
-    const positions = revision.metadata.pagePositions as number[]
-    if (pages.length && positions.length && !pages.some(p => positions.includes(p.page))) return false
+  if (old.fullRange === 0 && metadata.fullRange === 0) {
+    const rdjb = ({ innovative_sme: '1', specialized_sme: '2', little_giant: '3' } as Record<string, string>)[titleCode]
+    const pages = old.pages.filter(p => p.rdjb === rdjb || p.rdjb == null)
+    const positions = metadata.pagePositions as number[]
+    if (pages.length && positions.length && !pages.some(p => p.page !== null && positions.includes(p.page))) return false
   }
   return true
 }

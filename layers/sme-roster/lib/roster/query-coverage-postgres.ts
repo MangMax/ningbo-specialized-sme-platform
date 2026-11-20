@@ -80,7 +80,7 @@ export async function readPostgresQueryCoverage(db: Reader, subjects: readonly C
   return coverages
 }
 
-async function readPostgresCollectionScopes(db: Reader, collections: DifferenceCollectionScopeRows['collection'][]) {
+export async function readPostgresCollectionScopes(db: Reader, collections: DifferenceCollectionScopeRows['collection'][]) {
   const ids = collections.map(collection => collection.id)
   if (!ids.length) return new Map<number, ReturnType<typeof projectDifferenceCollectionScope>>()
   const coordinates = sql`${sql.param(ids)}::bigint[]`

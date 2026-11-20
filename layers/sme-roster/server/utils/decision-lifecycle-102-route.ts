@@ -6,6 +6,7 @@ import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-aut
 import { legacyPreviewInput102, previewLegacyDecision102 } from './decision-legacy-preview-102'
 import { preflightQualification102, commitQualification102, historyDecision102, decisionHistory102, currentDecision102, decisionCommand102, decisionScope102, DecisionError102, parse102, readDecision102, saveDecision102 } from './decision-lifecycle-102'
 import { currentPostgresDecisions102, historyPostgresDecision102, readPostgresDecision102 } from './decision-lifecycle-102/postgres-reads'
+import { savePostgresDecision102, preflightPostgresQualification102, commitPostgresQualification102 } from './decision-lifecycle-102/postgres-writes'
 import { usePostgresRosterDb } from './postgres-roster-db'
 import { decisionOutput102, decisionFailure102, postgresDecisionOutput102 } from './decision-lifecycle-102-output'
 
@@ -33,16 +34,24 @@ export function decisionRoute102(action: 'commands' | 'get' | 'current' | 'histo
           }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
         }
       }
-      const db = useDb()
       if (action === 'commands' || action === 'qualification-preflight' || action === 'qualification-commit') {
         if (!resolveApiAuth({ given: readApiToken({ authorization: getHeader(event, 'authorization'), 'x-api-token': getHeader(event, 'x-api-token') }), configured: useRuntimeConfig().apiToken }).writeAuthorized) throw new DecisionError102(401, 'unauthorized', 'Configured API token required')
         let body: unknown
         try { body = await readBody(event) } catch { throw new DecisionError102(400, 'invalid_request', 'Malformed JSON request body') }
+        const postgres = usePostgresRosterDb(action !== 'qualification-preflight')
+        if (postgres) {
+          const output = await postgresDecisionOutput102(postgres)
+          if (action === 'qualification-preflight') return output(await preflightPostgresQualification102(postgres, body))
+          if (action === 'qualification-commit') return output(await commitPostgresQualification102(postgres, body))
+          return output(await savePostgresDecision102(postgres, parse102(decisionCommand102, body)))
+        }
+        const db = useDb()
         const output = decisionOutput102(db)
         if (action === 'qualification-preflight') return output(preflightQualification102(db, body))
         if (action === 'qualification-commit') return output(commitQualification102(db, body))
         return output(saveDecision102(db, parse102(decisionCommand102, body)))
       }
+      const db = useDb()
       const output = decisionOutput102(db)
       const query = numericQuery(getQuery(event))
       return db.transaction(() => {

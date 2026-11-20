@@ -7,7 +7,7 @@ import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { createHash } from 'node:crypto'
 import ExcelJS from 'exceljs'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
@@ -342,6 +342,30 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     })
     expect(withdrawal.status, JSON.stringify(withdrawal.body)).toBe(200)
 
+    const activeScope = { ...scope, direction: 'extra_in_miit' }
+    const active = await http('/api/roster/decision-lifecycle/commands', { ...legacyDecision, ...activeScope, idempotencyKey: 'native-impact-decision' })
+    expect(active.status, JSON.stringify(active.body)).toBe(200)
+    const activeDecisionId = z.object({ versionId: z.number() }).parse(active.body).versionId
+
+    const secondScope = { ...activeScope, titleCode: 'little_giant' }
+    const second = await http('/api/roster/decision-lifecycle/commands', { ...legacyDecision, ...secondScope, idempotencyKey: 'native-second-impact' })
+    expect(second.status, JSON.stringify(second.body)).toBe(200)
+    const secondDecisionId = z.object({ versionId: z.number() }).parse(second.body).versionId
+    const archivedAt = '2026-10-09T01:08:28Z'
+    const archived = await http('/api/roster/import/commit', {
+      idempotencyKey: 'native-qualification-source', sourceKind: 'alias_evidence', sourceIdentity: '合成工信部来源',
+      payload: { platformQueries: [{ interface: 'business_list', queryKey: event.uscc, titleCode: scope.titleCode, rdjb: '2',
+        queriedAt: archivedAt, status: 'success', rawResponse: '{}', relations: [{ sequenceNo: 1, enterpriseId: firstOwner.id, usccRaw: event.uscc,
+          nameRaw: '合成迁入核验', matchBasis: 'uscc', verificationStatus: 'confirmed' }] }] },
+    })
+    expect(archived.status, JSON.stringify(archived.body)).toBe(200)
+    expect(archived.body).toMatchObject({ status: 'committed' })
+    const archiveCoordinates = sqlite.prepare(`SELECT q.old_id AS queryId,r.old_id AS relationId FROM platform_legacy_query_alias q
+      JOIN platform_collection c ON c.id=q.collection_id JOIN platform_business_observation o ON o.collection_id=c.id
+      JOIN platform_legacy_relation_alias r ON r.observation_id=o.id WHERE c.query_key=? AND c.queried_at=?`)
+      .get(event.uscc, archivedAt) as { queryId: number; relationId: number }
+    expect(archiveCoordinates).toMatchObject({ queryId: expect.any(Number), relationId: expect.any(Number) })
+
     installLeadListSchema(sqlite)
     run('initdb', ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', 'receipt_fixture', '-D', join(pgDir, 'pg')])
     run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-l', join(pgDir, 'pg.log'), '-o', "-c listen_addresses='' -k " + pgDir, 'start'])
@@ -602,6 +626,107 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     expect(corrected.evidence).toEqual(priorNative.evidence)
     const eventAudit = await (await app.request(eventPath + '/audit')).json()
     expect(eventAudit.rows).toEqual([expect.objectContaining({ eventId: event.id, before: priorNative.event, after: corrected.event })])
+
+
+    const workPath = '/api/roster/evidence-impacts/commands'
+    const evidenceWork = (body: unknown) => app.request(workPath, { method: 'POST', body: JSON.stringify(body) })
+    const rule = { action: 'release_rule', idempotencyKey: 'native-impact-release', actor, basis, ruleId: 'fixture-source-rule', version: '2',
+      scopes: [activeScope, secondScope].map(target => ({ ...target, previousEvaluationDigest: 'a'.repeat(64), evaluationDigest: 'b'.repeat(64) })) }
+    const releaseResponses = await Promise.all([evidenceWork(rule), evidenceWork(rule)])
+    const releases = await Promise.all(releaseResponses.map(response => response.json()))
+    expect(releaseResponses.map(response => response.status), JSON.stringify(releases)).toEqual([200, 200])
+    expect(releases[0]).toEqual(releases[1])
+    expect(releases[0]).toMatchObject({ unchanged: 0, revisionIds: [expect.any(Number), expect.any(Number)] })
+    expect(await nativeTool('release_evidence_rule', rule)).toEqual({ body: releases[0], isError: false })
+    expect((await evidenceWork({ ...rule, idempotencyKey: 'different-rule-request', scopes: [{ ...rule.scopes[0], evaluationDigest: 'c'.repeat(64) }] })).status).toBe(409)
+    const processCommand = { action: 'process', idempotencyKey: 'native-impact-process', limit: 100, actor, basis }
+    const applied = await evidenceWork(processCommand)
+    const workReceipt = await applied.json()
+    expect(applied.status, JSON.stringify(workReceipt)).toBe(200)
+    expect(workReceipt).toMatchObject({ processed: expect.any(Number), unfinished: false })
+    expect(workReceipt.processed).toBeGreaterThan(0)
+    expect(workReceipt.watermark).toBeGreaterThanOrEqual(releases[0].revisionIds[0])
+    expect(await nativeTool('process_evidence_impacts', processCommand)).toEqual({ body: workReceipt, isError: false })
+    const link = run('psql', ['-X', '-w', '-Atc', `SELECT l.classification,i.decision_id FROM business.evidence_impact_link_113 l
+      JOIN business.explanation_impact_113 i ON i.id=l.impact_id WHERE l.revision_id=${releases[0].revisionIds[0]}`]).toString().trim()
+    expect(link).toEqual('evidence_changed|' + activeDecisionId)
+    const pending = run('psql', ['-X', '-w', '-Atc', 'SELECT sum(pending_count) FROM business.evidence_scope_version_113']).toString().trim()
+    expect(pending).toBe('0')
+
+
+    const impactsPath = '/api/roster/evidence-impacts'
+    const impacted = await app.request(impactsPath + '?limit=1&enterpriseId=' + firstOwner.id)
+    const firstImpact = await impacted.json()
+    expect(impacted.status, JSON.stringify(firstImpact)).toBe(200)
+    expect(firstImpact).toMatchObject({ rows: [expect.objectContaining({ decisionId: activeDecisionId, pending: true })],
+      nextCursor: expect.any(String), projectionReady: true })
+    const impactId = firstImpact.rows[0].id
+    const impactRead = await app.request(impactsPath + '/' + impactId)
+    const impactDetail = await impactRead.json()
+    expect(impactRead.status, JSON.stringify(impactDetail)).toBe(200)
+    expect(impactDetail).toMatchObject({ decisionId: activeDecisionId, oldDecision: { id: activeDecisionId },
+      evidenceToken: { latestRevisionId: releases[0].revisionIds[0], projectionReady: true } })
+    expect(await nativeTool('get_evidence_impact', { id: impactId })).toEqual({ body: impactDetail, isError: false })
+    const sources = await app.request(impactsPath + '/' + impactId + '/sources')
+    expect(sources.status).toBe(200)
+    expect(await sources.json()).toMatchObject({ rows: expect.arrayContaining([expect.objectContaining({
+      revisionId: releases[0].revisionIds[0], sourceKind: 'rule_release', classification: 'evidence_changed',
+    })]) })
+    const impactPreview = await nativeTool('preview_evidence_impacts', { revisionId: releases[0].revisionIds[1] })
+    expect(impactPreview).toMatchObject({ isError: false, body: { rows: [expect.objectContaining({ id: secondDecisionId, classification: 'evidence_changed' })] } })
+    const eventRevision = Number(run('psql', ['-X', '-w', '-Atc',
+      'SELECT max(id) FROM business.evidence_revision_113 WHERE event_id=' + event.id]).toString().trim())
+    expect(await nativeTool('list_evidence_revision_events', { revisionId: eventRevision })).toMatchObject({
+      isError: false, body: { rows: [expect.objectContaining({ eventId: event.id, enterpriseId: firstOwner.id })] },
+    })
+
+    const decisionRoot = '/api/roster/decision-lifecycle/'
+    const decide = (action: string, body: unknown) => app.request(decisionRoot + action, { method: 'POST', body: JSON.stringify(body) })
+    const maintain = { ...activeScope, action: 'maintain', expectedCurrentId: activeDecisionId,
+      idempotencyKey: 'native-scope-review', basis, effectiveAt: '2026-10-18T00:00:00Z',
+      reviewedEvidence: { latestRevisionId: releases[0].revisionIds[0], projectionReady: true } }
+    const reviewPath = '/api/roster/evidence-review/browser-commands'
+    const reviewResponse = await app.request(reviewPath, {
+      method: 'POST', headers: { origin: new URL(app.url(reviewPath)).origin, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
+      body: JSON.stringify(maintain),
+    })
+    const reviewed = await reviewResponse.json()
+    expect(reviewResponse.status, JSON.stringify(reviewed)).toBe(200)
+    expect(reviewed).toMatchObject({ action: 'maintain', versionId: activeDecisionId, reviewedRevisionId: releases[0].revisionIds[0] })
+    const secondPage = await app.request(impactsPath + '?limit=1&enterpriseId=' + firstOwner.id + '&cursor=' + encodeURIComponent(firstImpact.nextCursor))
+    expect(secondPage.status).toBe(200)
+    expect(await secondPage.json()).toMatchObject({ asOf: firstImpact.asOf,
+      rows: [expect.objectContaining({ decisionId: secondDecisionId, pending: true })] })
+    const nowReviewed = await app.request(impactsPath + '/' + impactId)
+    expect(await nowReviewed.json()).toMatchObject({ pending: false, reviewedBaseline: { actor: null, ruleVersion: null } })
+    const migration = { ...legacyDecision, ...activeScope, expectedCurrentId: activeDecisionId, idempotencyKey: 'native-qualification-decision',
+      decision: { status: 'confirmed_reason', reasonCode: 'moved_in', measureCode: 'record_moved_in', verificationStatus: 'confirmed',
+        evidenceQueryId: archiveCoordinates.queryId, evidenceRelationId: archiveCoordinates.relationId, movedIn: { city: '南通' },
+        currentQualification: { titleCode: scope.titleCode, validFrom: '2025-07-22T00:00:00Z', validUntil: '2028-07-22T00:00:00Z',
+          basis: '合成独立资格', publicationCheck: { status: 'not_found', scope: '合成公布范围' } } } }
+    const legacyPlan = await http(decisionRoot + 'qualification-preflight', migration)
+    expect(legacyPlan.status, JSON.stringify(legacyPlan.body)).toBe(200)
+    const pgPreview = await decide('qualification-preflight', migration)
+    const pgPlan = await pgPreview.json()
+    expect(pgPreview.status, JSON.stringify(pgPlan)).toBe(200)
+    expect(pgPlan).toEqual(legacyPlan.body)
+    const qualifiedCommand = { command: migration, planHash: pgPlan.planHash }
+    expect((await decide('qualification-commit', { ...qualifiedCommand, planHash: '0'.repeat(64) })).status).toBe(409)
+    const decided = await decide('qualification-commit', qualifiedCommand)
+    const qualificationReceipt = await decided.json()
+    const commitDiagnostic = decided.ok ? undefined : JSON.stringify(qualificationReceipt) + '\n' + readFileSync(join(pgDir, 'pg.log'), 'utf8').slice(-4000)
+    expect(decided.status, commitDiagnostic).toBe(200)
+    expect(await nativeTool('commit_qualification_decision', qualifiedCommand)).toEqual({ body: qualificationReceipt, isError: false })
+    const decisionsPath = decisionRoot + 'current?' + new URLSearchParams(Object.entries(activeScope).map(([key,value]) => [key,String(value)]))
+    const qualificationDecision = await (await app.request(decisionsPath)).json()
+    expect(qualificationDecision).toMatchObject({ versionId: qualificationReceipt.versionId,
+      current: { ...activeScope, evidenceQueryId: archiveCoordinates.queryId,
+        evidenceRelationId: archiveCoordinates.relationId, currentQualification: migration.decision.currentQualification } })
+    const withdrawalCommand = { ...activeScope, action: 'withdraw', expectedCurrentId: qualificationReceipt.versionId,
+      idempotencyKey: 'native-qualification-withdraw', actor, basis, ruleVersion: legacyDecision.ruleVersion, effectiveAt: legacyDecision.effectiveAt }
+    const cancelledDecision = await nativeTool('save_difference_decision', withdrawalCommand)
+    expect(cancelledDecision).toMatchObject({ isError: false, body: { action: 'withdraw', previousId: qualificationReceipt.versionId, currentId: null } })
+    expect(await (await app.request(decisionsPath)).json()).toMatchObject({ current: null })
 
   } finally {
     await app.close()
