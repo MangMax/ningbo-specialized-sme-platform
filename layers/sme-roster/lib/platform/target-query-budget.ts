@@ -2,7 +2,7 @@
 import { sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { targetSchema as s } from './target-schema'
-import { MAX_FULL_QUERY_BYTES, MAX_FULL_PAGE_BYTES } from './evidence-contract'
+import { assertPlatformFullReadBudget } from './evidence-contract'
 import type { SelectedLegacyProvenance, SelectedProvenanceOwner } from './target-legacy-provenance'
 
 export function assertTargetDisplayBudget<S extends Record<string, unknown>>(
@@ -30,8 +30,5 @@ export function assertTargetDisplayBudget<S extends Record<string, unknown>>(
         left join enterprise e on e.id=ca.enterprise_id where ob.collection_id=${row.collection.id}),0) as n`)!.n
     return bytes
   })
-  if (budget.some(n => n > MAX_FULL_QUERY_BYTES) || budget.reduce((n, b) => n + b, 0) > MAX_FULL_PAGE_BYTES) {
-    const message = 'Platform evidence exceeds full-read budget; use view=summary and /api/platform/queries/{queryId}/evidence (get_platform_query_evidence)'
-    throw Object.assign(new Error(message), { statusCode: 413, statusMessage: message })
-  }
+  assertPlatformFullReadBudget(budget)
 }

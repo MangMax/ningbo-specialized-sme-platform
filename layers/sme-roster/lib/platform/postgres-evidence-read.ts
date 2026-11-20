@@ -7,12 +7,13 @@ import { relationEvidenceColumns } from './relation-evidence-snapshot'
 import { snapshotSchema } from './target-evidence-read'
 
 type Reader = Pick<NodePgDatabase, 'execute'>
-type Archive = { id: string; byteLength: string | null; storageClass: string; sealed: boolean }
+export type PostgresPlatformArchive = { id: string; byteLength: string | null; storageClass: string; sealed: boolean }
+type Archive = PostgresPlatformArchive
 type Cell = ReturnType<typeof snapshotSchema.parse>['fields'][number]
 const empty = Buffer.alloc(0)
 const envelopeHeader = Buffer.from('T04-PROVENANCE\n')
 
-async function archiveBytes(db: Reader, archiveId: string, offset: number, length: number): Promise<Buffer> {
+export async function readPlatformArchiveBytes(db: Reader, archiveId: string, offset: number, length: number): Promise<Buffer> {
   if (length === 0) return empty
   const { rows: [archive] } = await db.execute<{ bytes: Buffer }>(sql`
     SELECT substring(bytes FROM ${offset + 1} FOR ${length}) AS bytes FROM platform_archive_value WHERE id = ${archiveId}`)
@@ -31,27 +32,27 @@ function byteResult(input: PlatformEvidenceInput, offset: number, total: number 
 async function archiveResult(db: Reader, archive: Archive, input: PlatformEvidenceInput, start = 0, size = archive.byteLength === null ? null : Number(archive.byteLength)) {
   const offset = input.offset ?? 0
   const length = size === null ? 0 : Math.min(input.length ?? MAX_EVIDENCE_CHUNK_BYTES, Math.max(size - offset, 0))
-  const bytes = await archiveBytes(db, archive.id, start + offset, length)
+  const bytes = await readPlatformArchiveBytes(db, archive.id, start + offset, length)
   return byteResult(input, offset, size, bytes)
 }
 
-async function legacyEnvelopeCollection(db: Reader, archive: Archive, queryId: number) {
+export async function legacyEnvelopeCollection(db: Reader, archive: Archive, queryId: number) {
   const archiveSize = Number(archive.byteLength)
-  const prefix = await archiveBytes(db, archive.id, 0, envelopeHeader.length)
+  const prefix = await readPlatformArchiveBytes(db, archive.id, 0, envelopeHeader.length)
   if (!prefix.equals(envelopeHeader)) throw new Error('Invalid original provenance envelope')
   let cursor = prefix.length
   let collection: { start: number; size: number | null } | undefined
   for (const field of PROVENANCE_CELL_NAMES) {
-    const header = await archiveBytes(db, archive.id, cursor, 128)
+    const header = await readPlatformArchiveBytes(db, archive.id, cursor, 128)
     const match = /^(\w+) (null|text|blob|integer|real) (\d+)\n/.exec(header.toString('utf8'))
     if (!match || match[1] !== field) throw new Error('Invalid original provenance cell')
     const bytes = Number(match[3])
     const start = cursor + Buffer.byteLength(match[0])
     const tail = start + bytes
     if (!Number.isSafeInteger(bytes) || tail >= archiveSize || (match[2] === 'null' && bytes !== 0)
-      || (await archiveBytes(db, archive.id, tail, 1))[0] !== 10) throw new Error('Truncated original provenance cell')
+      || (await readPlatformArchiveBytes(db, archive.id, tail, 1))[0] !== 10) throw new Error('Truncated original provenance cell')
     if (field === 'query_id') {
-      if (match[2] !== 'integer' || bytes > 16 || (await archiveBytes(db, archive.id, start, bytes)).toString() !== String(queryId))
+      if (match[2] !== 'integer' || bytes > 16 || (await readPlatformArchiveBytes(db, archive.id, start, bytes)).toString() !== String(queryId))
         throw new Error('Original provenance query alias conflict')
     }
     if (field === 'collection') collection = { start, size: match[2] === 'null' ? null : bytes }

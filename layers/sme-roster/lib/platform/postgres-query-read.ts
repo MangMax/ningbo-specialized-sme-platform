@@ -4,6 +4,7 @@ import { createError } from 'h3'
 import { MAX_PAGE_SIZE } from '../query'
 import type { PlatformQueriesResult, PlatformQueryFilter, PlatformQueryRow } from './read'
 import { RDJB_TITLE_CODES } from './recognized-evidence'
+import { readPostgresQueryDisplays } from './postgres-query-display'
 
 const fromCollections = sql`
   FROM platform_collection c
@@ -35,12 +36,15 @@ function conditionsOf(filter: PlatformQueryFilter) {
 
 type Query = Omit<PlatformQueryRow['query'], 'id' | 'relationCount'> & {
   id: string
+  collectionId: string
+  provenanceState: string
   lastCollectedAt: string | null
   relationCount: string
 }
 
-export function readPostgresPlatformQuerySummary(db: NodePgDatabase, filter: PlatformQueryFilter): Promise<PlatformQueriesResult> {
-  if (filter.includeRawResponse) throw createError({ statusCode: 400, statusMessage: 'Invalid view or includeRawResponse combination' })
+export function readPostgresPlatformQueries(db: NodePgDatabase, filter: PlatformQueryFilter): Promise<PlatformQueriesResult> {
+  const summary = filter.view === 'summary'
+  if (summary && filter.includeRawResponse) throw createError({ statusCode: 400, statusMessage: 'Invalid view or includeRawResponse combination' })
   const page = Math.min(filter.page ?? 1, Number.MAX_SAFE_INTEGER)
   const pageSize = Math.min(filter.pageSize ?? 25, MAX_PAGE_SIZE)
   const offset = (BigInt(page) - BigInt(1)) * BigInt(pageSize)
@@ -69,16 +73,17 @@ export function readPostgresPlatformQuerySummary(db: NodePgDatabase, filter: Pla
     const counts = Object.fromEntries(countRows.map(row => [row.status, Number(row.count)]))
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0)
     const rows = offset >= BigInt(total) ? [] : (await tx.execute<Query>(sql`
-      SELECT q.old_id AS id, c.interface, c.query_key AS "queryKey", c.rdjb, c.title_code AS "titleCode",
+      SELECT q.old_id AS id, c.id AS "collectionId", c.provenance_state AS "provenanceState",
+        c.interface, c.query_key AS "queryKey", c.rdjb, c.title_code AS "titleCode",
         c.queried_at AS "queriedAt", c.status, c.failure_reason AS "failureReason",
         c.created_at AS "createdAt", c.last_collected_at AS "lastCollectedAt",
         (SELECT count(*) FROM platform_business_observation o WHERE o.collection_id = c.id) AS "relationCount"
       ${fromCollections} ${predicate}
       ORDER BY c.queried_at COLLATE "C" DESC, q.old_id DESC LIMIT ${pageSize} OFFSET ${String(offset)}`)).rows
-    return { rows: rows.map(row => ({
-      relationsIncluded: false,
-      query: { ...row, id: Number(row.id), relationCount: Number(row.relationCount) },
-      relations: [],
-    })), total, page, pageSize, counts }
+    const owners = rows.map(({ collectionId, provenanceState, ...query }) => ({
+      collectionId, provenanceState, query: { ...query, id: Number(query.id), relationCount: Number(query.relationCount) },
+    }))
+    return { rows: summary ? owners.map(({ query }) => ({ relationsIncluded: false, query, relations: [] }))
+      : await readPostgresQueryDisplays(tx, owners, filter.includeRawResponse === true), total, page, pageSize, counts }
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }

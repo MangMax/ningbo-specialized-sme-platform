@@ -4,7 +4,7 @@ import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER } from '#sme-roster/lib/labels'
 import { getHeader, getQuery, getResponseHeader } from 'h3'
 import { platformSummaryCache } from '../../utils/platform-summary-cache'
 import { usePostgresDirectoryDb } from '../../../../../db/postgresql/client'
-import { readPostgresPlatformQuerySummary } from '../../../lib/platform/postgres-query-summary'
+import { readPostgresPlatformQueries } from '../../../lib/platform/postgres-query-read'
 import type { PlatformQueryFilter } from '../../../lib/platform/read'
 
 /**
@@ -97,8 +97,8 @@ export default defineEventHandler((event) => {
     pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25)))),
     includeRawResponse: q.includeRawResponse === 'true',
   }
-  const postgres = view === 'summary' ? usePostgresDirectoryDb() : undefined
-  if (postgres) return readPostgresPlatformQuerySummary(postgres, filter)
+  const postgres = usePostgresDirectoryDb()
+  if (postgres) return readPostgresPlatformQueries(postgres, filter)
   return platformSummaryCache.read(useDb(), filter, { allowStore: view === 'summary' && process.env.NUXT_PLATFORM_SUMMARY_CACHE !== '0'
     && getHeader(event, 'authorization') == null && getHeader(event, 'cookie') == null
     && !/no-store|no-cache/i.test(String(getHeader(event, 'cache-control') ?? ''))
