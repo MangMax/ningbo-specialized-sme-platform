@@ -5,12 +5,11 @@ import { normalizeUscc } from '../../lib/domain'
 import type { RosterImportRequest, RosterImportEvent, RosterImportItemResult } from '../../lib/roster-import-client'
 import { readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
 import {
-  ambiguousAnnouncementRepoints, announcementEvidenceCoordinate, eventCoordinates, groupNewAnnouncementEvidence, indexedEvidenceHashes,
+  ambiguousAnnouncementRepoints, announcementEvidenceCoordinate, eventCoordinates, groupNewAnnouncementEvidence, hasOfficialFactInput, indexedEvidenceHashes,
   matchesEventCoordinates, projectAnnouncementRepoints, validateAnnouncementRecord,
 } from './roster-import'
 import { checkOfficialOuterDocument, officialPublishedRowSchema, officialFactFailure, officialPlanDigest, projectOfficialDeclaration, type OfficialClaimChange, type OfficialCoordinate } from './official-evidence-plan'
-import { planPostgresOfficialEvidenceChanges } from './official-evidence-plan-postgres'
-import { lockPostgresFilePaths } from './file-parts-postgres'
+import { lockPostgresOfficialImportTargets, planPostgresOfficialImport } from './official-evidence-import-postgres'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type ExistingRecord = typeof schema.record.$inferSelect
@@ -18,11 +17,17 @@ const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
 const key = (owner: number, titleCode: string, source: string) => [owner,titleCode,source].join(':')
 
 export async function planPostgresAnnouncement(tx: Tx, request: RosterImportRequest, owners: ReadonlyMap<number, number>,
-  created: ReadonlySet<number>, decision: string, filesDir?: string) {
+  created: ReadonlySet<number>, decision: string | undefined, filesDir?: string, ownerMap?: ReadonlyMap<string, string>) {
   const announcement = request.payload.announcement!
   const checked = announcement.records.map((record, index) => validateAnnouncementRecord(announcement, record, index))
   const errors = checked.flatMap(row => row.error ? [row.error] : [])
-  if (errors.length) return { errors, rows: [] as never[], official: null }
+  const noOfficial = { official: null, officialPlan: null }
+  if (errors.length) return { errors, rows: [] as never[], ...noOfficial }
+  const addOfficialError = (error: unknown) => {
+    const issue = error as { code?: string; message?: string; statusCode?: number }
+    if (!issue.statusCode || !issue.code) throw error
+    errors.push({ ok: false, kind: 'official_evidence', ref: 'payload', error: { code: issue.code, message: issue.message ?? issue.code } } satisfies RosterImportItemResult)
+  }
 
   const records = await readPostgresRosterRowsById(tx, schema.record, sql`
     FROM record p WHERE enterprise_id=ANY(${ids([...new Set(owners.values())])})`)
@@ -38,8 +43,12 @@ export async function planPostgresAnnouncement(tx: Tx, request: RosterImportRequ
       for (const link of event.evidence ?? []) paths.add(announcementEvidenceCoordinate(link).sourceFile)
     }
   }
-  await lockPostgresFilePaths(tx, paths)
-  if (events.length) await tx.execute(sql`SELECT id FROM record_event WHERE id=ANY(${ids(events.map(row => row.id))}) ORDER BY id FOR UPDATE`)
+  try {
+    await lockPostgresOfficialImportTargets(tx, request, paths, events.map(row => row.id))
+  } catch (error) {
+    addOfficialError(error)
+    return { errors, rows: [] as never[], ...noOfficial }
+  }
   const { rows: evidenceHashes } = await tx.execute<{ path: string; sha256: string | null }>(sql`
     SELECT rel_path AS path,sha256 FROM stored_file WHERE rel_path=ANY(${sql.param([...paths])}::text[])
     UNION ALL
@@ -81,13 +90,15 @@ export async function planPostgresAnnouncement(tx: Tx, request: RosterImportRequ
 
   const changes: OfficialClaimChange[] = []
   const unknownClaims: { ref: string; coordinate: OfficialCoordinate }[] = []
+  if (errors.length || !hasOfficialFactInput(request)) return { errors, rows, ...noOfficial }
   const typedCount = announcement.records.reduce((count, record) => count + (record.events ?? []).reduce((n,event) =>
     n + (event.evidence ?? []).filter(link => link.publishedRow !== undefined).length, 0), 0)
-  if (errors.length || !typedCount) return { errors, rows, official: null }
   const declarations = new Map<number, typeof schema.sourceDocument.$inferSelect>()
   const batchCoordinates = new Map<string, boolean>()
   try {
-    if (typedCount > 100) return officialFactFailure('input_limit', 'At most 100 new official fact operations', 400)
+    if (typedCount + (request.payload.officialEvidenceAppends?.length ?? 0) + (request.payload.officialEvidenceCorrections?.operations?.length ?? 0) > 100) {
+      return officialFactFailure('input_limit', 'At most 100 new official fact operations', 400)
+    }
     for (const row of rows) {
       for (const event of row.events) if (event.evidence?.some(link => link.publishedRow !== undefined) && event.evidence.length > 300) {
         return officialFactFailure('source_limit', 'Final new event evidence exceeds 300', 413)
@@ -105,6 +116,7 @@ export async function planPostgresAnnouncement(tx: Tx, request: RosterImportRequ
           batchCoordinates.set(key, typed)
           if (!typed) continue
           if (row.source !== 'jxj') return officialFactFailure('target_mismatch', 'Published facts belong to official jxj events', 409)
+          if (event.evidence!.length > 300) return officialFactFailure('source_limit', 'Event evidence exceeds 300', 413)
           if (findStoredEvent(row.existing, event)) return officialFactFailure('explicit_append_required', 'Existing event requires exact officialEvidenceAppends; ordinary duplicate import adds no facts', 409)
           const check = officialPublishedRowSchema.safeParse(link.publishedRow)
           if (!check.success) return officialFactFailure('invalid_input','Full explicit publishedRow required',409)
@@ -128,14 +140,12 @@ export async function planPostgresAnnouncement(tx: Tx, request: RosterImportRequ
         }
       }
     }
-    const facts = await planPostgresOfficialEvidenceChanges(tx, changes, filesDir, undefined, unknownClaims, rows.flatMap(row => row.repoints))
-    const { officialEvidencePlanHash: _provided, ...payload } = request.payload
-    const hash = officialPlanDigest({ request: { ...request, sourceSha256: request.sourceSha256 ?? null, payload }, facts: facts.planHash, originalVersions: [], ownerMap: [] })
-    return { errors, rows, official: officialPlanDigest({ review: decision, plan: hash }) }
+    const officialPlan = await planPostgresOfficialImport(tx, request, {
+      filesDir, captures: changes, unknownClaims, locatorMoves: rows.flatMap(row => row.repoints), ownerMap, reviewDecision: decision,
+    })
+    return { errors, rows, official: officialPlan?.planHash ?? null, officialPlan }
   } catch (error) {
-    const issue = error as { code?: string; message?: string; statusCode?: number }
-    if (!issue.statusCode || !issue.code) throw error
-    errors.push({ ok: false, kind: 'official_evidence', ref: 'payload', error: { code: issue.code, message: issue.message ?? issue.code } } satisfies RosterImportItemResult)
-    return { errors, rows, official: null }
+    addOfficialError(error)
+    return { errors, rows, ...noOfficial }
   }
 }
