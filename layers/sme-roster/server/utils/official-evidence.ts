@@ -162,7 +162,7 @@ function fieldGuard(candidate: boolean) {
   return sql.join((candidate ? rawSqlFields : allSqlFields).map(field => sql`(${sql.raw(field)} IS NULL OR (typeof(${sql.raw(field)})='text' AND length(${sql.raw(field)})<=4000 AND length(CAST(${sql.raw(field)} AS BLOB))<=16000))`), sql` AND `)
 }
 interface GuardedProjection { count: number; fieldLimit: number; requiredBytes: number; projection: string | null; scopeCount: number }
-function checkProjectedRows(rows: readonly Partial<OfficialEvidenceRow>[]) {
+export function checkOfficialEvidenceFields(rows: readonly Partial<OfficialEvidenceRow>[]) {
   for (const row of rows) {
     for (const field of textFields) if (field in row) text(row[field], field, field !== 'basis', 413)
     if (row.actor) text(row.actor.id, 'actor.id', false, 413)
@@ -177,7 +177,7 @@ function project<T>(db: OfficialEvidenceExecutor, query: SQL, maxBytes: number, 
   if (result.requiredBytes > maxBytes || result.projection === null) throw new OfficialEvidenceError(413, 'response_limit', 'Projection exceeds maxBytes')
   const parsed = JSON.parse(result.projection)
   const rows = parsed.row ? [parsed.row] : parsed.rows ?? parsed.candidates ?? []
-  checkProjectedRows(rows)
+  checkOfficialEvidenceFields(rows)
   return parsed as T
 }
 function guardedQuery(selection: SQL, shape: SQL, envelope: SQL, maxBytes: number, candidate = false, pageSize = 101, scopeCount: SQL = sql`0`) {
@@ -289,7 +289,7 @@ export function listEventsOfficialEvidencePages(db: OfficialEvidenceExecutor, re
     if (gate.scopeCount > 300 || gate.count > pageSize + 1) return { eventId, error: 'source_limit' }
     if (gate.fieldLimit) return { eventId, error: 'field_limit' }
     if (gate.requiredBytes > maxBytes || gate.projection === null) return { eventId, error: 'response_limit' }
-    try { checkProjectedRows(gate.projection.rows) }
+    try { checkOfficialEvidenceFields(gate.projection.rows) }
     catch (error) {
       if (error instanceof OfficialEvidenceError && error.code === 'field_limit') return { eventId, error: 'field_limit' }
       throw error

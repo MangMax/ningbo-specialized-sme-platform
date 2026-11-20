@@ -2,6 +2,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { registeredCredentials } from '../../../../lib/app-modules'
 import { postgresJobHandler } from './job-runner-postgres'
 import type { JobDto } from './job-store'
+import { readPostgresCredentialState } from './credential-state-postgres'
 
 const sensitiveKey = /cookie|password|passwd|token|secret|credential|authorization|authentication|api.?key|session|raw.?response/i
 const credential = String.raw`(?:cookie|password|passwd|(?:access|refresh|id)[-_]?token|token|secret|credential|authorization|authentication|api[-_]?key|session(?:id)?)`
@@ -10,9 +11,11 @@ const hostPath = /https?:\/\/[^\s"'<>;,)}\]]+|\b(?:file|postgres(?:ql)?):\/\/[^\
 const mask = '[REDACTED]'
 
 /** Project public copies only. Historical bytes and private claim data stay in storage. */
-export function postgresJobReadProjector(db: NodePgDatabase, config: { apiToken?: string; mcpToken?: string; ocrToken?: string }) {
+export async function postgresJobReadProjector(db: NodePgDatabase, config: { apiToken?: string; mcpToken?: string; ocrToken?: string }) {
+  const saved = await readPostgresCredentialState(db)
   const secrets = [
     config.apiToken, config.mcpToken, config.ocrToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN,
+    ...Object.values(saved).map(entry => entry?.value),
     ...Array.from(registeredCredentials.values()).flatMap(credential => (credential.environment ?? []).map(key => process.env[key])),
   ].filter((value): value is string => !!value)
   const forms = [...new Set(secrets.flatMap(value => [value, ...value.split(';').flatMap(part => {

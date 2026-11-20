@@ -11,6 +11,7 @@ import {
   setPostgresJobProgress, setPostgresJobResult, type PostgresJobSnapshot,
 } from './job-store-postgres'
 import type { JobDto } from './job-store'
+import type { TaskSummary } from '../../lib/task-center'
 
 export type PostgresJobDb = NodePgDatabase & { $client: Pool }
 export type PostgresJobTransaction = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -24,7 +25,7 @@ export interface PostgresJobContext {
   readonly signal: AbortSignal
   readonly logContext: Readonly<LogContext>
   progress(done: number, total: number): Promise<void>
-  checkpoint(result: unknown): Promise<void>
+  checkpoint(result: unknown, transaction?: NodePgDatabase): Promise<void>
   cancelled(): Promise<boolean>
 }
 
@@ -33,6 +34,10 @@ export interface PostgresJobSpec {
   parse?: JobSpec['parse']
   /** E.g. refresh a download receipt against the module’s current artifact state. */
   projectResult?(db: NodePgDatabase, job: JobDto): Promise<unknown>
+  taskCenter?: {
+    summaries(db: NodePgDatabase, ids: string[], detail: boolean): Promise<Map<string, Partial<Pick<TaskSummary, 'outcome' | 'items' | 'links' | 'capabilities' | 'error'>>>>
+    retry?(db: NodePgDatabase, task: TaskSummary, context: LogContext): Promise<unknown>
+  }
   /** Validate admission and optionally capture non-secret execution inputs. */
   prepare?(tx: PostgresJobTransaction, params: Record<string, unknown>): Promise<unknown>
   /** Resolve dependencies when claimed. Persist only non-secret, replayable parameters. */
@@ -112,8 +117,8 @@ export function createPostgresJobRunner(db: PostgresJobDb, filesDir: string) {
             counts: done === 0 && total === 0 ? { done, total } : makeProgress(done, total) }, logContext)
         }
       },
-      async checkpoint(result) {
-        if (!await setPostgresJobResult(connection, id, expected, result)) throw new Error('任务领取已失效')
+      async checkpoint(result, transaction = connection) {
+        if (!await setPostgresJobResult(transaction, id, expected, result)) throw new Error('任务领取已失效')
       },
       async cancelled() { return signal.aborted || postgresJobCancellationRequested(connection, id, claimToken) },
     }

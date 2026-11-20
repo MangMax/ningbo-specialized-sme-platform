@@ -63,8 +63,8 @@ async function readJob(db: Executor, query: SQL) {
   return rows[0] ? decodeJob(rows[0]) : null
 }
 
-export function getPostgresJob(db: Executor, id: string) {
-  return readJob(db, sql`SELECT ${jobColumns} FROM business.job WHERE id = ${id}`)
+export function getPostgresJob(db: Executor, id: string, lock = false) {
+  return readJob(db, sql`SELECT ${jobColumns} FROM business.job WHERE id = ${id} ${lock ? sql`FOR UPDATE` : sql.empty()}`)
 }
 
 export async function getPostgresJobDetail(db: Executor, id: string) {
@@ -175,10 +175,12 @@ export function finishPostgresJob(db: Executor, id: string, expected: PostgresJo
 /** Keep the prior checkpoint when reopening a job. */
 export function reopenPostgresJob(
   db: Executor, id: string, kind: string, expected: PostgresJobExpectation<TerminalState>, params: Record<string, unknown>,
+  inputSnapshot?: unknown,
 ) {
+  const snapshot = inputSnapshot === undefined ? sql.empty() : sql`, input_snapshot = ${JSON.stringify(inputSnapshot)}`
   return readJob(db, sql`UPDATE business.job
     SET state = 'queued', cancel_requested = false, params = ${JSON.stringify(params)}, error = NULL, started_at = NULL, finished_at = NULL,
-      claim_token = gen_random_uuid()
+      claim_token = gen_random_uuid()${snapshot}
     WHERE ${compareJob(id, expected)} AND kind = ${kind} AND state IN ('done', 'failed', 'cancelled')
     RETURNING ${jobColumns}`)
 }
@@ -261,7 +263,7 @@ export function completePostgresJob(db: Executor, job: PostgresJobSnapshot, outc
     RETURNING ${jobColumns}`)
 }
 
-export function listPostgresTaskCenter(db: NodePgDatabase, query: {
+export async function listPostgresTaskCenter(db: Executor, query: {
   kinds?: string[]
   state?: JobState
   page: number
@@ -271,15 +273,13 @@ export function listPostgresTaskCenter(db: NodePgDatabase, query: {
   const kinds = query.kinds?.length
     ? sql`kind IN (${sql.join(query.kinds.map(kind => sql`${kind}`), sql`, `)})`
     : sql`${query.kinds === undefined}`
-  return db.transaction(async tx => {
-    const { rows: counts } = await tx.execute<{ kind: string; n: string }>(sql`
+  const { rows: counts } = await db.execute<{ kind: string; n: string }>(sql`
       SELECT kind, count(*) AS n FROM business.job WHERE ${state} GROUP BY kind`)
-    const total = counts.reduce((sum, row) => sum + (!query.kinds || query.kinds.includes(row.kind) ? Number(row.n) : 0), 0)
-    const { rows } = await tx.execute<StoredJobSummary>(sql`SELECT ${summaryColumns} FROM business.job
+  const total = counts.reduce((sum, row) => sum + (!query.kinds || query.kinds.includes(row.kind) ? Number(row.n) : 0), 0)
+  const { rows } = await db.execute<StoredJobSummary>(sql`SELECT ${summaryColumns} FROM business.job
       WHERE ${state} AND ${kinds} ORDER BY created_at DESC, id DESC
       LIMIT ${query.pageSize} OFFSET ${(query.page - 1) * query.pageSize}`)
-    return { rows: rows.map(decodeSummary), total, counts }
-  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
+  return { rows: rows.map(decodeSummary), total, counts }
 }
 
 export async function lockPostgresJobAdmission(db: Executor, kind: string) {

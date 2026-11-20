@@ -99,7 +99,7 @@ export default defineEventHandler(async (event) => {
     }
     const job = await getPostgresJobDetail(db, id)
     if (!job) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
-    return postgresJobReadProjector(db, config)(job)
+    return (await postgresJobReadProjector(db, config))(job)
   }
 
   const db = useDb()

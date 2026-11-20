@@ -32,12 +32,12 @@ it('resolves database Cookie before environment, preserves controlled overrides 
   ctx.env.MIIT_COOKIE = ''
   expect(credentialStatus(ctx)['sme-roster.miitCookie']).toMatchObject({ configured: false, source: 'none' })
 })
-it('rejects invalid Cookie and mixed invalid requests without changing either saved credential', () => {
+it('rejects invalid Cookie and mixed invalid requests without changing either saved credential', async () => {
   const ctx = context()
   updateCredential('sme-roster.miitCookie', 'session=synthetic-kept', ctx)
   updateCredential('core.ocrToken', 'synthetic-ocr-kept', ctx)
   for (const miitCookie of [' ', '\r\nsession=bad', null, 42, 'x'.repeat(65537)]) {
-    const response = handleCredentialsRequest('state', { method: 'PATCH', headers: {}, body: { 'core.ocrToken': 'synthetic-not-written', 'sme-roster.miitCookie': miitCookie } }, ctx)
+    const response = await handleCredentialsRequest('state', { method: 'PATCH', headers: {}, body: { 'core.ocrToken': 'synthetic-not-written', 'sme-roster.miitCookie': miitCookie } }, ctx)
     expect(response.status).toBe(400)
     expect(resolvePlatformCookie(undefined, ctx)).toBe('session=synthetic-kept')
     expect(credentialStatus(ctx)['core.ocrToken']?.masked).toBe('syn********ept')

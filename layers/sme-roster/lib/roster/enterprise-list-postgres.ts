@@ -1,5 +1,6 @@
-import { getTableColumns, sql, type SQL, type Table } from 'drizzle-orm'
+import { sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { readPostgresRosterRowsById } from './postgres-rows'
 import * as schema from '../../../../db/schema'
 import { normalizeName, normalizeUscc } from '../domain'
 import { DIFFERENCE_STATUS_ORDER, TITLE_ORDER } from '../labels'
@@ -158,18 +159,6 @@ async function readCandidates(db: Reader, filter: RosterEnterpriseFilter) {
   return rows.map(row => row.coordinate)
 }
 
-// Map the same stored columns the SQLite hydration projects. JSON text is
-// decoded by PostgreSQL so both readers feed identical values to the mapper.
-async function pageRows<T extends Table>(db: Reader, table: T, from: SQL) {
-  const fields = Object.entries(getTableColumns(table)).map(([key, column]) => {
-    const value = sql`p.${sql.identifier(column.name)}`
-    return sql`${key}::text,${column.dataType === 'json' ? sql`${value}::json` : value}`
-  })
-  const { rows } = await db.execute<{ row: T['$inferSelect'] }>(sql`
-    SELECT json_build_object(${sql.join(fields, sql`,`)}) AS row ${from} ORDER BY p.id`)
-  return rows.map(value => value.row)
-}
-
 export async function listPostgresRosterEnterprises(db: NodePgDatabase, filter: RosterEnterpriseFilter): Promise<RosterEnterprisesResult> {
   const paging = rosterPageOf(filter)
   return { ...await readPostgresRosterRows(db, filter, paging), ...paging }
@@ -202,14 +191,14 @@ function readPostgresRosterRows(db: NodePgDatabase, filter: RosterEnterpriseFilt
     const current = paging ? selected.slice((paging.page - 1) * paging.pageSize, paging.page * paging.pageSize) : selected
     if (!current.length) return { rows: [], counts }
     const ids = idsOf(current.map(row => row.id))
-    const enterprises = await pageRows(tx, schema.enterprise, sql`FROM enterprise p WHERE p.id=ANY(${ids})`)
-    const records = await pageRows(tx, schema.record, sql`FROM record p WHERE p.enterprise_id=ANY(${ids})`)
+    const enterprises = await readPostgresRosterRowsById(tx, schema.enterprise, sql`FROM enterprise p WHERE p.id=ANY(${ids})`)
+    const records = await readPostgresRosterRowsById(tx, schema.record, sql`FROM record p WHERE p.enterprise_id=ANY(${ids})`)
     const recordIds = idsOf(records.map(row => row.id))
-    const events = await pageRows(tx, schema.recordEvent, sql`FROM record_event p WHERE p.record_id=ANY(${recordIds})`)
+    const events = await readPostgresRosterRowsById(tx, schema.recordEvent, sql`FROM record_event p WHERE p.record_id=ANY(${recordIds})`)
     const eventIds = idsOf(events.map(row => row.id))
-    const rawEvidence = await pageRows(tx, schema.recordEvidence, sql`FROM record_evidence p WHERE p.record_event_id=ANY(${eventIds})`)
+    const rawEvidence = await readPostgresRosterRowsById(tx, schema.recordEvidence, sql`FROM record_evidence p WHERE p.record_event_id=ANY(${eventIds})`)
     const evidence = rawEvidence.map(row => isPageCapable(row.sourceFile) ? row : { ...row, page: null })
-    const aliases = await pageRows(tx, schema.enterpriseAlias, sql`FROM enterprise_alias p WHERE p.enterprise_id=ANY(${ids}) AND p.verification_status='confirmed'`)
+    const aliases = await readPostgresRosterRowsById(tx, schema.enterpriseAlias, sql`FROM enterprise_alias p WHERE p.enterprise_id=ANY(${ids}) AND p.verification_status='confirmed'`)
     const rows = projectRosterEnterprisePage({ enterprises, evidence, aliases, recordsByEnterprise: Map.groupBy(records, row => row.enterpriseId),
       eventsByRecord: Map.groupBy(events, row => row.recordId) }, current, new Set())
     return { rows, counts }

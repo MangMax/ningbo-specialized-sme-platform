@@ -1,6 +1,8 @@
 import { semanticRouteHandler } from '../../../core/server/utils/core-route'
 import { getHeader, getMethod, getQuery, getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
 import { useDb } from '@db'
+import { handlePostgresOfficialEvidenceRead } from './official-evidence-read-postgres'
+import { usePostgresRosterDb } from './postgres-roster-db'
 import { handleEvidenceCorrectionRequest, type EvidenceCorrectionAction } from './roster-evidence-correction-api'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
 export function evidenceCorrectionRoute(action: EvidenceCorrectionAction) {
@@ -21,7 +23,10 @@ export function evidenceCorrectionRoute(action: EvidenceCorrectionAction) {
       setHeader(event, 'content-type', 'application/json; charset=utf-8')
       return { error: { code: 'unauthorized', message: 'Configured token required' } }
     }
-    const output = await handleEvidenceCorrectionRequest({ action, method: getMethod(event), headers, body, query, id: getRouterParam(event, 'id'), key: getRouterParam(event, 'key') }, { db: useDb(), apiToken: config.apiToken, filesDir: config.filesDir })
+    const native = action === 'get' || action === 'audit' || action === 'batch' ? usePostgresRosterDb() : undefined
+    const output = native && action !== 'preflight' && action !== 'commit'
+      ? await handlePostgresOfficialEvidenceRead({ kind: 'evidence', action, method: getMethod(event), headers, query, id: getRouterParam(event, 'id'), key: getRouterParam(event, 'key') }, { db: native, apiToken: config.apiToken })
+      : await handleEvidenceCorrectionRequest({ action, method: getMethod(event), headers, body, query, id: getRouterParam(event, 'id'), key: getRouterParam(event, 'key') }, { db: useDb(), apiToken: config.apiToken, filesDir: config.filesDir })
     setResponseStatus(event, output.status)
     for (const [name, value] of Object.entries(output.headers)) setHeader(event, name, value)
     return output.body

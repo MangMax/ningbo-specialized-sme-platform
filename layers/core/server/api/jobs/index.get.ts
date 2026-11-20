@@ -134,7 +134,7 @@ export default defineEventHandler(async (event) => {
     const { db } = startPostgresJobs(config.filesDir)!
     if (q.view === 'summary') return listPostgresJobSummaries(db, query)
     const { rows, total } = await listPostgresJobs(db, query)
-    const project = postgresJobReadProjector(db, config)
+    const project = await postgresJobReadProjector(db, config)
     return { rows: await Promise.all(rows.map(row => project(row))), total }
   }
 

@@ -1,6 +1,8 @@
 import { semanticRouteHandler } from '../../../core/server/utils/core-route'
 import { getHeader, getMethod, getQuery, getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
 import { useDb } from '@db'
+import { handlePostgresOfficialEvidenceRead } from './official-evidence-read-postgres'
+import { usePostgresRosterDb } from './postgres-roster-db'
 import { handleEventCorrectionRequest, type EventCorrectionAction } from './roster-event-correction-api'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
 export function eventCorrectionRoute(action: EventCorrectionAction) {
@@ -17,7 +19,10 @@ export function eventCorrectionRoute(action: EventCorrectionAction) {
       setResponseStatus(event, 401)
       return { error: { code: 'unauthorized', message: 'Configured API token required' } }
     }
-    const output = handleEventCorrectionRequest({ action, method: getMethod(event), id: getRouterParam(event, 'id'), query, body, headers }, { db: useDb(), apiToken: config.apiToken })
+    const native = action === 'get' || action === 'audit' ? usePostgresRosterDb() : undefined
+    const output = native && action !== 'preflight' && action !== 'commit'
+      ? await handlePostgresOfficialEvidenceRead({ kind: 'event', action, method: getMethod(event), headers, query, id: getRouterParam(event, 'id') }, { db: native, apiToken: config.apiToken })
+      : handleEventCorrectionRequest({ action, method: getMethod(event), id: getRouterParam(event, 'id'), query, body, headers }, { db: useDb(), apiToken: config.apiToken })
     setResponseStatus(event, output.status)
     return output.body
   })

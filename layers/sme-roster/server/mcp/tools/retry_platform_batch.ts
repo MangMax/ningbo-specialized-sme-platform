@@ -1,7 +1,6 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
 import { platformBatchRetryShape, platformBatchReceiptShape } from '../../../lib/platform/batch-query'
-import { retryPlatformBatch } from '../../utils/platform-batch-query'
+import { platformBatchRuntime } from '../../utils/platform-batch-runtime'
 import { writeGuard } from '../../../../core/server/utils/mcp-guard'
 import { platformMcpLogContext } from '../../utils/mcp-platform-query'
 export default defineMcpTool({
@@ -11,7 +10,7 @@ export default defineMcpTool({
   enabled: writeGuard,
   inputSchema: platformBatchRetryShape, outputSchema: platformBatchReceiptShape,
   handler: async (input, extra) => {
-    const result = retryPlatformBatch(useDb(), input, useRuntimeConfig().filesDir, platformMcpLogContext(extra))
+    const result = await platformBatchRuntime(useRuntimeConfig().filesDir).retry(input, platformMcpLogContext(extra))
     return { structuredContent: { ...result }, content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
   },
 })

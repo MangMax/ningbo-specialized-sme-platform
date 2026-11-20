@@ -6,6 +6,8 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { nativeAppAdapter } from '../../support/native-app'
 import { minimalPdf } from '../../support/minimal-pdf'
+import { startMiniOcrApi, type MiniOcrApi } from '../ocr/fixtures/provider-api'
+import { readExactEvidence } from '../../../layers/sme-roster/server/utils/roster-evidence-correction'
 import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 
@@ -25,6 +27,8 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
   let dir: string
   let root: string
   let app: ReturnType<typeof nativeAppAdapter>
+  let provider: MiniOcrApi
+  let originalEvidence: ReturnType<typeof readExactEvidence>
   let pgStarted = false
   let pgUrl: string
   let pgEnv: NodeJS.ProcessEnv
@@ -39,6 +43,7 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     root = join(dir, 'files')
     mkdirSync(join(root, 'uploads'), { recursive: true })
     writeFileSync(join(root, migratedPath), original)
+    provider = await startMiniOcrApi({ pages: ['识别出的业务名单'], submitStatuses: [400] })
     app = nativeAppAdapter({ dir, token, launch: ({ cwd, port }) => {
       if (port === 3482) throw new Error('Reserved production port')
       return { args: [join(cwd, '.output/server/index.mjs')], env: {
@@ -51,8 +56,11 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
         NUXT_POSTGRES_DIRECTORY_WRITE: postgres ? '1' : '0',
         NUXT_POSTGRES_FILE_LIBRARY: postgres ? '1' : '0',
         NUXT_POSTGRES_JOBS: postgres ? '1' : '0',
+        NUXT_POSTGRES_ROSTER_READ: postgres ? '1' : '0',
         NUXT_POSTGRES_LEAD_REGISTRATION: postgres ? '1' : '0',
         NUXT_MCP_TOKEN: token,
+        NUXT_OCR_TOKEN: 'local-ocr-fixture-token',
+        NUXT_OCR_BASE_URL: provider.origin,
       } }
     } })
     const discovery = await readDevelopmentDiscovery()
@@ -77,6 +85,18 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     evidence.run(migratedPath)
     evidence.run('uploads/late-evidence.txt')
     db.exec(`
+      INSERT INTO evidence_correction_batch (idempotency_key,request_hash,plan_hash,receipt,created_at)
+      VALUES ('fixture-correction','fixture-request','fixture-plan','{"status":"committed"}','2026-01-01T00:01:00Z');
+      INSERT INTO evidence_correction_audit (id,evidence_id,event_id,batch_key,entry_point,actor,basis,before,after,created_at)
+      VALUES (33,1,1,'fixture-correction','correction','{"type":"agent","id":"reviewer"}','review','{}','{}','2026-01-01T00:01:00Z');
+    `)
+    const capture = db.prepare(`INSERT INTO official_evidence_row_revision
+      (evidence_id,revision,event_id,captured_record_id,captured_enterprise_id,name_raw,path,stored_file_id,sha256,
+       source_binding_known,actor,basis,command_kind,correction_batch_key,created_at)
+      VALUES (1,?,1,1,27,?,?,41,?,0,'{"type":"agent","id":"reviewer"}',?,'evidence_correction','fixture-correction','2026-01-01T00:01:00Z')`)
+    capture.run(1, '原公布名称', migratedPath, sha256, '现场核对')
+    capture.run(2, '  公布名称保留空格  ', migratedPath, sha256, 'fixture-secret ' + token)
+    db.exec(`
       INSERT INTO roster_file_classification (file_id, source, kind, year, batch, title_code, category_state, parse_state)
       VALUES (41, 'jxj', 'announcement', 2025, 2, 'specialized_sme', 'set', 'parsed');
       INSERT INTO stored_file_part (file_id, title_code, event_kind, year, batch, attachment, row_count, origin, has_conflict)
@@ -98,6 +118,7 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
       'historical-hash', '{ "displayName": "原始.TXT" }', '{ "displayName": "历史附件" }',
     )
     db.exec("UPDATE sqlite_sequence SET seq = 90 WHERE name = 'file_maintenance_audit'")
+    originalEvidence = readExactEvidence(app.db, 1)
     if (postgres) {
       pgEnv = {
         PATH: process.env.PATH, LANG: 'C', PGHOST: dir, PGPORT: '5432',
@@ -121,6 +142,7 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
   afterAll(async () => {
     try { await app?.close() } finally {
       try {
+        await provider?.close()
         if (pgStarted) runPg('pg_ctl', ['-w', '-m', 'fast', '-D', join(dir, 'pg'), 'stop'])
       } finally {
         if (dir) rmSync(dir, { recursive: true, force: true })
@@ -164,6 +186,37 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     expect(global.total).toBe(1)
     expect(global.rows[0]).not.toHaveProperty('categoryState')
     expect(global.rows[0]).not.toHaveProperty('parts')
+  })
+
+  it.skipIf(!enabled)('preserves published evidence coordinates, revisions and read limits across HTTP and MCP', async () => {
+    const path = 'roster/evidence/1'
+    expect(await json(path, 200)).toEqual(originalEvidence)
+    expect((await app.request('/api/' + path + '?official=latest', { headers: {} })).status).toBe(401)
+    const history = await json(path + '?official=history&pageSize=1', 200)
+    expect(history.official).toMatchObject({
+      availability: 'available', nextBeforeRevision: 2, rows: [{
+        nameRaw: '  公布名称保留空格  ', revision: 2, capturedEnterpriseId: 27, currentOwner: { enterpriseId: 1, recordId: 1 },
+        command: { kind: 'evidence_correction', batchKey: 'fixture-correction' },
+      }],
+    })
+    expect(JSON.stringify(history.official)).not.toContain(token)
+    expect(await tool('get_roster_evidence', { id: 1, official: 'history', pageSize: 1 })).toEqual(history)
+    expect((await json(path + '?official=history&beforeRevision=2', 200)).official).toMatchObject({
+      nextBeforeRevision: null, rows: [{ nameRaw: '原公布名称', revision: 1 }],
+    })
+    expect((await json('roster/evidence/2?official=latest', 200)).official).toMatchObject({ row: null, availability: 'unknown_legacy' })
+    await json(path + '?official=latest&maxBytes=256', 413)
+    expect(await tool('get_roster_evidence_audit', { id: 1 })).toEqual(await json(path + '/audit', 200))
+    const receipt = await json('roster/evidence/corrections/batches/fixture-correction', 200)
+    expect(receipt).toEqual({ status: 'committed' })
+    expect(await tool('get_roster_evidence_correction_batch', { idempotencyKey: 'fixture-correction' })).toEqual(receipt)
+
+    const event = await json('roster/events/1?official=latest', 200)
+    expect(event).toMatchObject({ event: { eventType: 'award' }, files: [{ id: 41 }], official: {
+      rows: [{ evidenceId: 1, revision: 2 }], nextAfterEvidenceId: null,
+    } })
+    expect(await tool('get_official_event', { eventId: 1, official: 'latest' })).toEqual(event)
+    expect(await tool('get_event_correction_audit', { eventId: 1 })).toEqual(await json('roster/events/1/audit', 200))
   })
 
   it.skipIf(!enabled)('preserves migrated file identity and serves original, HEAD and range bytes', async () => {
@@ -355,6 +408,39 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     expect(pages).toMatchObject({ pageCount: 2, rendered: 2, pages: [{ page: 1 }, { page: 2 }] })
     expect(readFileSync(join(root, relPath))).toEqual(pdf)
   })
+
+  it.skipIf(!enabled)('publishes online OCR once and replays the published result after a rejected submission', async () => {
+    const relPath = 'uploads/online-ocr.pdf'
+    writeFileSync(join(root, relPath), minimalPdf({ pages: 1 }))
+    const { id, sha256 } = await json('files/register', 201, 'POST', { relPath })
+    const params = { files: [relPath] }
+    async function run(kind: string, input: object, state: string) {
+      const { jobId } = await json('jobs', 202, 'POST', { kind, params: input })
+      const get = () => json('jobs/' + jobId, 200)
+      await expect.poll(async () => (await get()).state, { timeout: 20_000 }).toBe(state)
+      return { jobId, job: await get() }
+    }
+
+    await run('render-pages', { ...params, dpi: 300 }, 'done')
+    const failed = await run('ocr', params, 'failed')
+    expect(failed.job.result.files).toMatchObject([{ file: relPath, ok: false }])
+    expect(provider.stats.submits).toBe(1)
+    const page = 'files/' + id + '/ocr-pages/1'
+    await json(page, 404)
+
+    const published = await run('ocr', { ...params, resumeJobId: failed.jobId }, 'done')
+    expect(published.job.result.files).toMatchObject([{ file: relPath, ok: true, pages: 1, apiJobIds: ['JOB-2'] }])
+    const first = await json(page, 200)
+    expect(first.markdown).toContain('识别出的业务名单')
+    expect(first.results[0].historicalBinding).toMatchObject({ status: 'captured', input: { jobId: 'JOB-2', sourceSha256: sha256 } })
+
+    await json(page, 200, 'PUT', { markdown: '人工核对后的名单', expectedVersion: first.results[0].version })
+    const edited = await json(page, 200)
+    const replay = await run('ocr', { ...params, resumeJobId: published.jobId }, 'done')
+    expect(replay.job.result.files).toMatchObject([{ file: relPath, replayed: true, writtenPages: 0 }])
+    expect(await json(page, 200)).toEqual(edited)
+    expect(provider.stats.submits).toBe(2)
+  }, 75_000)
 
   it.skipIf(!enabled)('registers a landed roster notice and audits factual refreshes without replacing its bytes', async () => {
     const relPath = 'jxj/announcement/2025/2/notice.txt'

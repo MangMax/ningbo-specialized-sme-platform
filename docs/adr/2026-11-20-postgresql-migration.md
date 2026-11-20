@@ -38,9 +38,9 @@ node upgrade/postgresql/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA 
 
 物理命令先在 `stored_file` 行锁内提交意图，再获取同一个行锁核对内容身份、修订与实时引用，移动原字节并提交维护记录与完成回执。线索登记使用同一行锁，名录按原路径读取引用。新增名录出处的命令也须使用这一行锁。事务失败后，使用原幂等键重试或显式恢复未完成意图。
 
-名录文件列表读取分类、文件分段、有效登记和引用，兼容文件列表支持相同业务筛选。HTTP 与 MCP 共用文件列表、分类编辑、维护、页图读取与隔离恢复。上传登记、分类编辑、文件解析和 OCR 结果写入共用文件行锁。文件解析提交核对原件和实际使用的 OCR 页版本，在同一事务内提交段、声明、状态和回执。OCR 历史结果保留原页 ID、版本、原文和采集状态，在线 OCR 执行仍使用 SQLite。可使用 `TEST_FILE_LIBRARY_PG_BIN=/path/to/pgsql/bin pnpm test:app tests/files/storage/library-contract.http.app.test.ts --maxWorkers=1` 对照 SQLite 和独立 PostgreSQL 实例。
+名录文件列表读取分类、文件分段、有效登记和引用，兼容文件列表支持相同业务筛选。HTTP 与 MCP 共用文件列表、分类编辑、维护、页图读取与隔离恢复。上传登记、分类编辑、文件解析和 OCR 结果写入共用文件行锁。文件解析提交核对原件和实际使用的 OCR 页版本，在同一事务内提交段、声明、状态和回执。OCR 历史结果保留原页 ID、版本、原文和采集状态，在线 OCR 使用同一 PostgreSQL 任务连接记录远端回执、恢复认领和页版本，并在同一事务发布页结果和完成回执。恢复复用已采集结果。可使用 `TEST_FILE_LIBRARY_PG_BIN=/path/to/pgsql/bin pnpm test:app tests/files/storage/library-contract.http.app.test.ts --maxWorkers=1` 对照 SQLite 和独立 PostgreSQL 实例。
 
-设置 `NUXT_POSTGRES_ROSTER_READ=1` 后，历年企业列表、企业总表工作簿、企业与称号台账查询、首次认定和台账年份使用名录原生表。企业资料与曾用名维护保留版本、历史和名录身份依据。设置 `NUXT_POSTGRES_DIRECTORY_URL` 时，工信部平台的申报、关联办理和认定目录列表、详情、筛选、完整查询历史、原始凭证和导出快照比较读取原生表。完整查询历史在同一读快照内分页并读取原始证据，保留单查询和整页预算。申报与办理的精确原值使用带 SQLite 类型的字节列，早期生成的暂存 schema 需要从原始快照重导。
+设置 `NUXT_POSTGRES_ROSTER_READ=1` 后，历年企业列表、企业总表工作簿、企业与称号台账查询、首次认定和台账年份使用名录原生表。企业资料与曾用名维护保留版本、历史和名录身份依据。正式事件与出处的精确读取、更正审计和回执恢复共用 PostgreSQL 读快照。设置 `NUXT_POSTGRES_DIRECTORY_URL` 时，工信部平台的申报、关联办理和认定目录列表、详情、筛选、完整查询历史、原始凭证和导出快照比较读取原生表。完整查询历史在同一读快照内分页并读取原始证据，保留单查询和整页预算。申报与办理的精确原值使用带 SQLite 类型的字节列，早期生成的暂存 schema 需要从原始快照重导。
 
 设置 `NUXT_POSTGRES_JOBS=1` 与可写业务连接后，任务中心在应用启动时领取任务，并在关闭连接前等待当前任务退出。线索 CSV 使用任务执行时点的统一读快照读取名单和有效称号。批量 PDF 转图在任务入队时保存文件身份，执行前后复核原件与页图清单。任务领取令牌保护进度和终态，恢复保留已提交进度与检查点。
 

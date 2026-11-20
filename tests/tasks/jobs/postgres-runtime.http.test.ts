@@ -8,6 +8,7 @@ import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { registerJob } from '../../../layers/core/server/utils/job-runner'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { initializeDb } from '../../../db/client'
 
 const bin = process.env.TEST_POSTGRES_JOBS_BIN
 let dir: string, base: string, server: ReturnType<typeof createServer>, pool: pg.Pool
@@ -27,17 +28,17 @@ beforeAll(async () => {
   pgCommand('pg_ctl', ['-D', join(dir, 'data'), '-l', join(dir, 'postgres.log'), '-o', `-h '' -k ${dir}`, '-w', 'start'])
   started = true
   const url = 'postgresql://fixture@localhost/postgres?host=' + encodeURIComponent(dir)
-  pgCommand('psql', ['-X', '-v', 'ON_ERROR_STOP=1', url], `
-    CREATE SCHEMA business;
-    CREATE SCHEMA staged;
-    CREATE TABLE staged.job (
-      id text, kind text, params text, state text, progress text,
-      result text, error text, created_at text, started_at text, finished_at text
-    );
-    \\set staging staged
-    \\i upgrade/postgresql/materialize-jobs.sql
-    \\i upgrade/postgresql/install-job-runtime.sql
-  `)
+  const dbPath = join(dir, 'fixture.sqlite')
+  const source = initializeDb({ create: true, dbPath })
+  source.$client.prepare('INSERT INTO service_credential (key,value,updated_at) VALUES (?,?,?)')
+    .run('core.ocrToken', 'fixture-saved-ocr-secret', '2026-11-20T00:00:00Z')
+  source.$client.close()
+  execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', dbPath, 'staged'], {
+    env: { ...process.env, PGHOST: dir, PGPORT: '5432', PGDATABASE: 'postgres', PGUSER: 'fixture', PGSQL_BIN: join(bin, 'psql') },
+  })
+  for (const part of ['enterprise-directory', 'jobs']) {
+    pgCommand('psql', ['-Xqw', '-v', 'staging=staged', url, '-f', `upgrade/postgresql/materialize-${part}.sql`])
+  }
   pool = new pg.Pool({ connectionString: url })
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'must-not-open.sqlite'))
   vi.stubEnv('NUXT_DB_READONLY', '1')
@@ -48,7 +49,18 @@ beforeAll(async () => {
   for (const name of ['defineEventHandler', 'getQuery', 'getRouterParam', 'createError', 'readBody', 'setResponseStatus', 'setHeader', 'getRequestURL', 'getHeader'] as const) {
     vi.stubGlobal(name, h3[name])
   }
+  const { createCredentialsHandler, credentialRevealHandler } = await import('../../../layers/core/server/utils/credentials-route')
+  const { createPlatformBatchRoute } = await import('../../../layers/sme-roster/server/utils/platform-batch-route')
+  const settings = createCredentialsHandler()
   const router = h3.createRouter()
+    .get('/api/settings/credentials', settings)
+    .patch('/api/settings/credentials', settings)
+    .delete('/api/settings/credentials', settings)
+    .post('/api/settings/credentials/:key/reveal', credentialRevealHandler)
+    .post('/api/platform/batches', createPlatformBatchRoute('submit'))
+    .get('/api/platform/batches/:batchId', createPlatformBatchRoute('status'))
+    .get('/api/platform/batches/:batchId/items/:itemId', createPlatformBatchRoute('item'))
+    .post('/api/platform/batches/:batchId/retry', createPlatformBatchRoute('retry'))
     .get('/api/jobs', (await import('../../../layers/core/server/api/jobs/index.get')).default)
     .get('/api/jobs/kinds', (await import('../../../layers/core/server/api/jobs/kinds.get')).default)
     .get('/api/jobs/:id', (await import('../../../layers/core/server/api/jobs/[id].get')).default)
@@ -261,6 +273,7 @@ it.runIf(!!bin)('uses the PostgreSQL capability catalog and keeps private task d
         return { result: {
           label: 'safe value', apiToken: token, pathname: '/private/example.xlsx',
           observation: 'Bearer ' + token, nested: '{"password":"embedded-secret"}',
+          note: 'Saved credential fixture-saved-ocr-secret',
         } }
       },
     },
@@ -268,10 +281,10 @@ it.runIf(!!bin)('uses the PostgreSQL capability catalog and keeps private task d
   const kinds = await (await request('/api/jobs/kinds')).json()
   expect(kinds.kinds).toEqual(expect.arrayContaining([
     expect.objectContaining({ kind: 'render-pages', status: 'ready' }),
-    expect.objectContaining({ kind: 'ocr', status: 'todo' }),
+    expect.objectContaining({ kind: 'reconcile', status: 'todo' }),
     expect.objectContaining({ kind: 'fixture-private', status: 'ready' }),
   ]))
-  expect((await submit('ocr', { files: ['placeholder.pdf'] })).status).toBe(501)
+  expect((await submit('reconcile', {})).status).toBe(501)
   const response = await submit('fixture-private')
   expect(response.status).toBe(202)
   const { jobId } = await response.json()
@@ -288,7 +301,99 @@ it.runIf(!!bin)('uses the PostgreSQL capability catalog and keeps private task d
   for (const path of ['/api/jobs/' + jobId, '/api/jobs?kind=fixture-private']) {
     const text = await (await request(path)).text()
     expect(text).toContain('safe value')
-    expect(text).not.toMatch(/fixture-job-api-secret|\/private\/example.xlsx|embedded-secret/)
+    expect(text).not.toMatch(/fixture-job-api-secret|\/private\/example.xlsx|embedded-secret|fixture-saved-ocr-secret/)
+  }
+})
+
+it.runIf(!!bin)('reads migrated settings and rolls back a failed mixed credential update', async () => {
+  const route = '/api/settings/credentials'
+  const payload = (method: string, body: unknown) => ({
+    method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  })
+  const initial = await request(route)
+  expect(initial.status).toBe(200)
+  expect(initial.headers.get('cache-control')).toBe('no-store')
+  expect(await initial.json()).toMatchObject({
+    'core.ocrToken': { configured: true, hasSaved: true, source: 'saved', masked: 'fix********ret', updatedAt: '2026-11-20T00:00:00Z' },
+  })
+  const reveal = async (key: string) => (await request(route + '/' + key + '/reveal', { method: 'POST' })).json()
+  expect(await reveal('core.ocrToken')).toEqual({ value: 'fixture-saved-ocr-secret' })
+  await pool.query("ALTER TABLE business.service_credential ADD CHECK (value <> 'session=fixture-rejected')")
+  const failed = await request(route, payload('PATCH', {
+    'core.ocrToken': 'fixture-rolled-back', 'sme-roster.miitCookie': 'session=fixture-rejected',
+  }))
+  expect(failed.status).toBe(503)
+  expect(await failed.text()).not.toMatch(/fixture-|service_credential/)
+  expect(await reveal('core.ocrToken')).toEqual({ value: 'fixture-saved-ocr-secret' })
+  const saved = await request(route, payload('PATCH', { 'sme-roster.miitCookie': 'session=fixture-metadata-cookie' }))
+  expect(saved.status).toBe(200)
+  const { resolveRuntimeCredential } = await import('../../../layers/core/server/utils/credential-state-postgres')
+  expect((await resolveRuntimeCredential('sme-roster.miitCookie')).value).toBe('session=fixture-metadata-cookie')
+  expect(await reveal('core.ocrToken')).toEqual({ value: 'fixture-saved-ocr-secret' })
+  vi.stubEnv('MIIT_COOKIE', 'session=fixture-env-cookie')
+  try {
+    const removed = await request(route, payload('DELETE', { key: 'sme-roster.miitCookie' }))
+    expect(removed.status).toBe(200)
+    expect(await removed.json()).toMatchObject({ 'sme-roster.miitCookie': { source: 'MIIT_COOKIE', hasSaved: false } })
+    expect((await resolveRuntimeCredential('sme-roster.miitCookie')).value).toBe('session=fixture-env-cookie')
+  } finally { vi.stubEnv('MIIT_COOKIE', undefined) }
+})
+
+it.runIf(!!bin)('retries only an unfinished platform page in PostgreSQL and preserves prior observations', async () => {
+  const credential = 'session=fixture-platform-cookie'
+  await pool.query(`INSERT INTO business.service_credential (key,value,updated_at)
+    VALUES ('sme-roster.miitCookie',$1,'2026-11-20T00:00:00Z')`, [credential])
+  const networkFetch = globalThis.fetch
+  const pages: number[] = []
+  let rejectPageTwo = true
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    if (url.startsWith(base)) return networkFetch(url, init)
+    expect(url).toMatch(/^https:\/\/zjtx\.miit\.gov\.cn\/zxqy\//)
+    expect(new Headers(init?.headers).get('cookie')).toBe(credential)
+    const page = Number(new URLSearchParams(init?.body as string).get('pageNum'))
+    pages.push(page)
+    if (page === 2 && rejectPageTwo) return new Response('', { status: 503 })
+    return Response.json({ zrarData: { grid: { applyGrid: { pageSet: [{ qymc: '合成企业', relation: String(page) }], page, maxCount: 2 } } } })
+  })
+  const post = (path: string, body: unknown) => request(path, { method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify(body) })
+  try {
+    const response = await post('/api/platform/batches', { items: [{ query: { source: 'queryList', name: '合成', pageSize: 1 } }] })
+    expect(response.status).toBe(202)
+    const { batchId, itemIds } = await response.json()
+    const path = '/api/platform/batches/' + batchId
+    const status = async () => (await request(path)).json()
+    await expect.poll(async () => (await status()).state).toBe('failed')
+    const prior = await status()
+    expect(prior).toMatchObject({ attempt: 1, items: [{ itemId: itemIds[0], unfinished: [{ page: 2 }] }] })
+    expect(prior.items[0].segments[0].rows).toEqual([{ qymc: '合成企业', relation: '1' }])
+    expect(pages).toEqual([1, 2])
+    const taskPath = '/api/task-center/' + batchId
+    const task = await (await request(taskPath)).json()
+    expect(task).toMatchObject({
+      state: 'failed', outcome: { attempt: 1, unfinished: 1 },
+      items: [{ id: itemIds[0], positions: [{ source: 'queryList', page: 2 }] }],
+    })
+    expect(JSON.stringify(task)).not.toContain('合成企业')
+    const list = await (await request('/api/task-center?tab=sme-roster&group=platform&state=failed')).json()
+    expect(list.rows).toContainEqual(expect.objectContaining({ id: batchId, outcome: task.outcome }))
+    expect((await request(taskPath + '/retry', { method: 'POST' })).status).toBe(401)
+    rejectPageTwo = false
+    const retry = await post(taskPath + '/retry', {})
+    expect(retry.status).toBe(202)
+    expect(await retry.json()).toMatchObject({ batchId, itemIds })
+    await expect.poll(async () => (await status()).state).toBe('done')
+    expect(pages).toEqual([1, 2, 2])
+    const item = await (await request(path + '/items/' + itemIds[0])).json()
+    expect(item.segments[0]).toEqual(prior.items[0].segments[0])
+    expect(item.segments[1].rows).toEqual([{ qymc: '合成企业', relation: '2' }])
+    expect(item.unfinished).toEqual([])
+    const persisted = await pool.query('SELECT params,result,input_snapshot FROM business.job WHERE id=$1', [batchId])
+    expect(JSON.stringify(persisted.rows[0])).not.toContain(credential)
+    expect((await post(path + '/retry', { itemIds })).status).toBe(409)
+  } finally {
+    vi.stubGlobal('fetch', networkFetch)
+    await pool.query("DELETE FROM business.service_credential WHERE key='sme-roster.miitCookie'")
   }
 })
 

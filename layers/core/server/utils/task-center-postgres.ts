@@ -1,3 +1,4 @@
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { createError, getHeader, getQuery, getRouterParam, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { requestLogContext } from '../../lib/logging'
 import type { TaskCenterAction } from '../../../../server/task-center'
@@ -11,6 +12,24 @@ import { cancelPostgresJob, getPostgresJobSummary, listPostgresTaskCenter } from
 import { startPostgresJobs } from './postgres-jobs'
 import { taskCenterBrowserAccess } from './task-center-access'
 
+async function projectSummaries(db: NodePgDatabase, rows: JobSummaryDto[], authorizedFor: (kind: string) => boolean, detail = false) {
+  const projections = new Map<string, Partial<TaskSummary>>()
+  for (const [kind, tasks] of Map.groupBy(rows, row => row.kind)) {
+    const handler = postgresJobHandler(kind)?.taskCenter
+    if (!handler) continue
+    for (const [id, fields] of await handler.summaries(db, tasks.map(row => row.id), detail)) projections.set(id, fields)
+  }
+  return rows.map(row => {
+    const authorized = authorizedFor(row.kind)
+    const base = summarize(row, authorized)
+    const fields = projections.get(row.id)
+    if (!fields) return base
+    const capabilities = fields.capabilities ?? base.capabilities
+    return { ...base, ...fields, capabilities: { ...capabilities, cancel: base.capabilities.cancel, retry: authorized && capabilities.retry,
+      reason: !authorized ? '当前请求仅可查看任务。' : base.capabilities.cancel ? base.capabilities.reason : capabilities.reason } }
+  })
+}
+
 function positive(raw: unknown, fallback: number, max: number) {
   return typeof raw !== 'object' && Number.isInteger(Number(raw)) && Number(raw) > 0 ? Math.min(Number(raw), max) : fallback
 }
@@ -18,12 +37,13 @@ function positive(raw: unknown, fallback: number, max: number) {
 function summarize(row: JobSummaryDto, authorized: boolean): TaskSummary {
   const kind = getTaskKind(row.kind)
   const active = row.state === 'queued' || row.state === 'running'
+  const unit = kind?.module === 'core' && kind.group.id === 'ocr' ? '份文件' : '项'
   return {
     id: row.id, kind: row.kind.slice(0, 100), label: kind?.label ?? row.kind.slice(0, 100),
     module: kind?.module ?? null, group: kind?.group.id ?? 'all', state: row.state,
     createdAt: row.createdAt, startedAt: row.startedAt, finishedAt: row.finishedAt,
     progress: { done: row.progress.done, total: row.percent === null || row.progress.total <= 0 ? null : row.progress.total,
-      unit: '项', stage: row.state === 'queued' ? '等待执行' : active ? '执行中' : '执行结束' },
+      unit, stage: row.state === 'queued' ? '等待执行' : active ? '执行中' : '执行结束' },
     error: row.state === 'failed' ? row.error : null, outcome: null,
     capabilities: { cancel: active && authorized, retry: false, retryItemIds: [],
       reason: active && authorized ? '可请求取消；实际状态以服务端终态为准。' : '请通过业务入口核对任务。' },
@@ -49,7 +69,10 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
     const page = positive(q.page, 1, 1_000_000)
     const pageSize = positive(q.pageSize, 25, 200)
     const kinds = tab.id === 'all' ? undefined : getTaskFilterKinds(tab.id, group?.id)
-    const data = await listPostgresTaskCenter(db, { page, pageSize, state, kinds })
+    const { data, rows } = await db.transaction(async tx => {
+      const data = await listPostgresTaskCenter(tx, { page, pageSize, state, kinds })
+      return { data, rows: await projectSummaries(tx, data.rows, authorizedFor) }
+    }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
     const counts: TaskList['counts'] = { ...Object.fromEntries(getTaskTabs().map(({ id }) => [id, 0])), all: 0 }
     for (const { kind, n } of data.counts) {
       const module = getTaskKind(kind)?.module
@@ -57,7 +80,7 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
       if (module) counts[module] = (counts[module] ?? 0) + Number(n)
     }
     return {
-      total: data.total, rows: data.rows.map(row => summarize(row, authorizedFor(row.kind))),
+      total: data.total, rows,
       page, pageSize, counts, exportReady: false, authorized: apiAuthorized || browserAuthorized,
     } satisfies TaskList
   }
@@ -67,14 +90,32 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
   const row = await getPostgresJobSummary(db, id)
   if (!row) throw createError({ statusCode: 404, message: '任务不存在' })
   const authorized = authorizedFor(row.kind)
-  if (action === 'detail') return summarize(row, authorized)
+  if (action === 'detail') return db.transaction(async tx => {
+    const current = await getPostgresJobSummary(tx, id)
+    if (!current) throw createError({ statusCode: 404, message: '任务不存在' })
+    return (await projectSummaries(tx, [current], authorizedFor, true))[0]
+  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
   if (!authorized) throw createError({ statusCode: 401, message: '管理操作需要 API 授权' })
-  if (action === 'retry') throw createError({ statusCode: 409, message: '此任务当前不支持安全重试' })
+  if (action === 'retry') {
+    const retry = postgresJobHandler(row.kind)?.taskCenter?.retry
+    const [task] = await projectSummaries(db, [row], authorizedFor)
+    if (!retry || !task?.capabilities.retry) throw createError({ statusCode: 409, message: '此任务当前不支持安全重试' })
+    try {
+      const result = await retry(db, task, requestLogContext(event))
+      setResponseStatus(event, 202)
+      return result
+    } catch (cause) {
+      const status = (cause as { statusCode?: number }).statusCode
+      throw createError(status && status < 500
+        ? { statusCode: status, message: '重试未受理，原结果保留，请刷新任务状态后再试。' }
+        : { statusCode: 503, message: '重试未受理，原结果保留，请稍后再试。' })
+    }
+  }
 
   const result = await cancelPostgresJob(db, id, requestLogContext(event))
   if (!result) throw createError({ statusCode: 404, message: '任务不存在' })
   if (result.cancelRequested) setResponseStatus(event, 202)
   const task = await getPostgresJobSummary(db, id)
   if (!task) throw createError({ statusCode: 404, message: '任务不存在' })
-  return { task: summarize(task, authorized), cancelRequested: result.cancelRequested }
+  return { task: (await projectSummaries(db, [task], authorizedFor))[0], cancelRequested: result.cancelRequested }
 }

@@ -45,6 +45,14 @@ export function readExactEvidence(db: Executor, evidenceId: number) {
   if (!row) fail('not_found', 'Evidence not found', 404)
   const file = fileIdentity(db, row.evidence.sourceFile)
   const revision = db.select({ id: schema.evidenceCorrectionAudit.id }).from(schema.evidenceCorrectionAudit).where(eq(schema.evidenceCorrectionAudit.evidenceId, evidenceId)).orderBy(desc(schema.evidenceCorrectionAudit.id)).limit(1).get()?.id ?? 0
+  return projectExactEvidence(row, file, revision)
+}
+
+export function projectExactEvidence(row: {
+  evidence: typeof schema.recordEvidence.$inferSelect; event: typeof schema.recordEvent.$inferSelect
+  recordId: number; enterpriseId: number; titleCode: string; source: 'jxj' | 'miit'
+}, file: ReturnType<typeof fileIdentity>, revision: number) {
+  const evidenceId = row.evidence.id
   const coordinate = coordinateOf(row.evidence)
   return { evidenceId, eventId: row.event.id, recordId: row.recordId, enterpriseId: row.enterpriseId, source: row.source, titleCode: row.titleCode, event: row.event, coordinate, file, revision, version: hash({ row, file, revision }), sourceHref: evidencePreviewHref(coordinate) }
 }
