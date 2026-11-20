@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import type { RosterImportItemResult, RosterImportRequest } from '../../lib/roster-import-client'
+import type { RosterImportItemResult, RosterImportRequest, RosterImportPreflight, RosterImportSummary } from '../../lib/roster-import-client'
 import { canonicalImportJson } from './import-receipt-ledger'
 import { importPostgresReceiptRedactor } from './import-receipt-redaction'
 import { ImportReceiptError } from './import-receipts'
@@ -12,7 +12,7 @@ import { usePostgresRosterDb } from './postgres-roster-db'
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Action = 'preflight' | 'commit'
 type Batch = {
-  id: number; status: string; kind: string; identity: string; sha256: string | null
+  id: number; status: NonNullable<RosterImportPreflight['batchStatus']>; kind: string; identity: string; sha256: string | null
   summary: unknown; items: RosterImportItemResult[] | null
 }
 const zeroSummary = { written: 0, skipped: 0, failed: 0, evidenceRepointed: 0 }
@@ -45,6 +45,23 @@ export async function runPostgresExportImport(action: Action | 'replay', request
   const db = usePostgresRosterDb(true)
   if (!db) return undefined
   const snapshot = request.payload.exportSnapshot
+  return executePostgresRosterImport(db, action, request, async (tx, batch) => {
+    if (action === 'commit') await tx.execute(sql`SELECT pg_advisory_xact_lock(21783,hashtext(${String(snapshot.titleCode)}))`)
+    const plan = await planPostgresExportSnapshot(tx, snapshot)
+    if (action === 'preflight') return { preflight: { ...plan.preflight, batchStatus: batch.status } }
+    const item = await writePostgresExportSnapshot(tx, snapshot, batch.id, plan)
+    const summary = item.ok ? { ...zeroSummary, written: Number(item.detail!.rowsWritten), skipped: Number(item.detail!.skipped) }
+      : { ...zeroSummary, failed: 1 }
+    return { preflight: plan.preflight, items: [item], summary,
+      error: item.ok ? null : '批次校验未通过：1 项有误，未写入任何数据' }
+  })
+}
+
+type NativeExecution = { preflight: RosterImportPreflight; summary?: never; items?: never; error?: never }
+  | { preflight: RosterImportPreflight; summary: RosterImportSummary; items: RosterImportItemResult[]; error: string | null; candidateTaskIds?: string[] }
+
+export async function executePostgresRosterImport(db: NodePgDatabase, action: Action, request: RosterImportRequest,
+  execute: (tx: Tx,batch: Batch) => Promise<NativeExecution>) {
   const bound = { ...request, sourceSha256: request.sourceSha256 ?? null }
   const hash = createHash('sha256').update(canonicalImportJson(bound)).digest('hex')
   const redact = await importPostgresReceiptRedactor(db)
@@ -89,28 +106,22 @@ export async function runPostgresExportImport(action: Action | 'replay', request
           item_results=${JSON.stringify(redact('items' in replay ? replay.items : []))},completed_at=${new Date().toISOString()} WHERE id=${attempt.receipt}`)
         return replay
       }
-      // The selected comparison snapshot is shared by every year of a title.
-      if (action === 'commit') await tx.execute(sql`SELECT pg_advisory_xact_lock(21783,hashtext(${String(snapshot.titleCode)}))`)
-      const plan = await planPostgresExportSnapshot(tx, snapshot)
-      if (action === 'preflight') {
-        const preflight = { ...plan.preflight, batchStatus: batch.status }
+      const result = await execute(tx,batch)
+      const at = new Date().toISOString()
+      if (result.summary === undefined) {
+        const { preflight } = result
         await tx.execute(sql`UPDATE import_batch SET preflight_result=${JSON.stringify(preflight)} WHERE id=${batch.id}`)
         await tx.execute(sql`UPDATE import_receipt SET status='preflight',item_results=${JSON.stringify(redact(preflight.conflicts))},
-          completed_at=${new Date().toISOString()} WHERE id=${attempt.receipt}`)
+          completed_at=${at} WHERE id=${attempt.receipt}`)
         return { batchId: batch.id, status: 'preflight' as const, preflight }
       }
-      const item = await writePostgresExportSnapshot(tx, snapshot, batch.id, plan)
-      const items = [item]
-      const status = item.ok ? 'committed' as const : 'failed' as const
-      const summary = item.ok ? { ...zeroSummary, written: Number(item.detail!.rowsWritten), skipped: Number(item.detail!.skipped) }
-        : { ...zeroSummary, failed: 1 }
-      const error = item.ok ? null : '批次校验未通过：1 项有误，未写入任何数据'
-      const at = new Date().toISOString()
+      const { items, summary, error } = result
+      const status = error === null ? 'committed' as const : 'failed' as const
       await tx.execute(sql`UPDATE import_batch SET status=${status},item_results=${JSON.stringify(items)},summary=${JSON.stringify(summary)},
-        error=${error},committed_at=${item.ok ? at : null},preflight_result=${JSON.stringify(plan.preflight)} WHERE id=${batch.id}`)
+        error=${error},committed_at=${status === 'committed' ? at : null},preflight_result=${JSON.stringify(result.preflight)} WHERE id=${batch.id}`)
       await tx.execute(sql`UPDATE import_receipt SET status=${status},summary=${JSON.stringify(summary)},
         item_results=${JSON.stringify(redact(items))},completed_at=${at} WHERE id=${attempt.receipt}`)
-      return { batchId: batch.id, status, summary, items, error }
+      return { batchId: batch.id, status, summary, items, error, ...(result.candidateTaskIds?.length ? { candidateTaskIds: result.candidateTaskIds } : {}) }
     })
   } catch (error) {
     await db.execute(sql`UPDATE import_receipt SET status='failed',completed_at=${new Date().toISOString()} WHERE id=${attempt.receipt}`)

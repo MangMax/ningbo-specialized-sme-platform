@@ -12,9 +12,9 @@ export async function readPostgresRosterRowsById<T extends Table>(db: Pick<NodeP
 export function postgresRosterRow(table: Table, alias: string) {
   const fields = Object.entries(getTableColumns(table)).map(([key, column]) => {
     const value = sql`${sql.identifier(alias)}.${sql.identifier(column.name)}`
-    return sql`${key}::text,${column.dataType === 'json' ? sql`${value}::json` : value}`
+    return sql`${column.dataType === 'json' ? sql`${value}::json` : value} AS ${sql.identifier(key)}`
   })
-  return sql`json_build_object(${sql.join(fields, sql`,`)})`
+  return sql`(SELECT row_to_json(projected) FROM (SELECT ${sql.join(fields, sql`,`)}) projected)`
 }
 
 export async function readPostgresRosterPage<T extends Table>(

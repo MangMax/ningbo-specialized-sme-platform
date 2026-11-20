@@ -24,6 +24,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { stageAnnouncement } from './announcement-intake'
 import { stagePostgresAnnouncement } from './announcement-intake-postgres'
 import { runPostgresExportImport } from './roster-export-import-postgres'
+import { runPostgresPlatformImport } from './collection-import-postgres'
 import { hasAnnouncementRows } from '../../lib/roster-import-client'
 import * as schema from '../../../../db/schema'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
@@ -105,6 +106,8 @@ export async function handleRosterImportRequest(
   try {
     const nativeExport = await runPostgresExportImport(action, validated.value)
     if (nativeExport !== undefined) return json(200, nativeExport)
+    const nativePlatform = await runPostgresPlatformImport(action, validated.value)
+    if (nativePlatform !== undefined) return json(200, nativePlatform)
     const pageCountErrors =
       (action === 'preflight' || action === 'commit') && deps.filesDir
         ? await validateRosterImportPageCounts(validated.value, deps.filesDir)

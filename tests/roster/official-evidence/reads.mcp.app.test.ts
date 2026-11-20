@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process'
+import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
+import { recognizedResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 import { readLatestOfficialEvidence } from '../../../layers/sme-roster/server/utils/official-evidence'
 import { nativeAppAdapter } from '../../support/native-app'
 import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
@@ -378,6 +380,11 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
       run('psql', ['-X', '-w', '-q', '-v', 'staging=staged', '-f', 'upgrade/postgresql/materialize-' + name + '.sql'])
     }
     await app.start()
+    const ledgerDetailPath = '/api/enterprises/' + firstOwner.id
+    const nativeLedgerDetail = await app.request(ledgerDetailPath)
+    expect(nativeLedgerDetail.status).toBe(200)
+    expect(await nativeLedgerDetail.json()).toEqual((await http(ledgerDetailPath)).body)
+    expect((await app.request('/api/enterprises/99999999')).status).toBe(404)
     const entries = new URLSearchParams(Object.entries(scope).map(([key, value]) => [key, String(value)]))
     const decisionReads = [
       ['/api/roster/decision-lifecycle/current?' + entries, 'get_current_difference_decision', scope],
@@ -800,6 +807,49 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     const cancelledDecision = await nativeTool('save_difference_decision', withdrawalCommand)
     expect(cancelledDecision).toMatchObject({ isError: false, body: { action: 'withdraw', previousId: qualificationReceipt.versionId, currentId: null } })
     expect(await (await app.request(decisionsPath)).json()).toMatchObject({ current: null })
+
+
+    const recognizedSource = { id: 'pg-new-recognized', qymc: '合成原始认定', whpcyear: '2026', rdjb: '2', fieldType: 2, fieldNull: null }
+    const live = await runPlatformLiveQuery({ source: 'queryBusList', name: recognizedSource.qymc, rdjb: ['2'], rawDataVersion: 1, pageSize: 1 }, {
+      cookie: 'sid=synthetic', transport: { fetchImpl: async () => ({ ok: true, status: 200, text: async () => JSON.stringify({
+        zrarData: { grid: { businessGrid: { pageSet: [recognizedSource], page: 1, pageSize: 1, maxCount: 1, maxPage: 1 } } },
+      }) }) },
+    })
+    expect(live.status).toBe('success')
+    const recognized = recognizedResultToImport(live)
+    const archiveQuery = (kind: 'business_list' | 'apply_list') => ({
+      interface: kind, titleCode: 'specialized_sme', rdjb: '2', queryKey: event.uscc, queriedAt: '2026-10-10T01:00:00Z', status: 'success',
+      rawResponse: JSON.stringify({ original: kind, flag: true, n: 1, blank: null }),
+      relations: [{ sequenceNo: 1, relationKey: 'pg-new-' + kind, nameRaw: '合成原值', usccRaw: event.uscc, status: '有效',
+        rawFields: { id: 'pg-new-' + kind, qymc: '合成原值', tyshxydm: event.uscc, rdjb: '2', cszt: '有效', other: { n: 1, flag: true, nil: null } } }],
+    })
+    const archiveRequest = { idempotencyKey: 'native-platform-all-sources', sourceKind: 'platform_archive', sourceIdentity: 'isolated-platform-archive',
+      payload: { platformQueries: [archiveQuery('business_list'), archiveQuery('apply_list'), recognized] } }
+    const plannedArchive = await app.request('/api/roster/import/preflight', { method: 'POST', body: JSON.stringify(archiveRequest) })
+    expect(plannedArchive.status).toBe(200)
+    expect(await plannedArchive.json()).toMatchObject({ status: 'preflight', preflight: { add: 3, conflicts: [] } })
+    const savedArchive = await stage(archiveRequest)
+    const archiveReceipt = await savedArchive.json()
+    expect(savedArchive.status, JSON.stringify(archiveReceipt) + (savedArchive.ok ? '' : readFileSync(join(pgDir, 'pg.log'), 'utf8').slice(-5000))).toBe(200)
+    expect(archiveReceipt).toMatchObject({ status: 'committed', summary: { written: 6,
+      platformFields: { status: 'ready', eligibleVersions: 3, observationsChecked: 3 } } })
+    const sqliteArchive = await http('/api/roster/import/commit', archiveRequest)
+    expect(sqliteArchive.status, JSON.stringify(sqliteArchive.body)).toBe(200)
+    expect(sqliteArchive.body).toMatchObject({ status: 'committed', summary: archiveReceipt.summary })
+    const originalRows = run('psql', ['-X','-w','-Atc', `SELECT c.interface, q.old_id, a.old_id, octet_length(v.bytes)
+      FROM business.platform_collection c JOIN business.platform_legacy_query_alias q ON q.collection_id=c.id
+      JOIN business.platform_business_observation o ON o.collection_id=c.id JOIN business.platform_legacy_relation_alias a ON a.observation_id=o.id
+      JOIN business.platform_observation_archive_ref r ON r.owner_id=o.id AND r.field='rawFields' AND r.sealed=1
+      JOIN business.platform_archive_value v ON v.id=r.archive_id WHERE o.source_relation_key LIKE 'pg-new-%' ORDER BY c.interface`]).toString().trim().split('\n')
+    expect(originalRows.map(row => row.split('|')[0])).toEqual(['apply_list', 'business_list', 'recognized_list'])
+    const conflict = structuredClone(archiveRequest)
+    conflict.idempotencyKey = 'native-conflicting-archive'
+    conflict.payload.platformQueries[0]!.rawResponse = '{"replacement":true}'
+    const rejectedArchive = await stage(conflict)
+    expect(await rejectedArchive.json()).toMatchObject({ status: 'failed', items: [expect.objectContaining({
+      error: expect.objectContaining({ code: 'query_payload_conflict' }),
+    })] })
+    expect(await nativeTool('save_roster_batch', archiveRequest)).toMatchObject({ isError: false, body: { status:'committed', batchId: archiveReceipt.batchId } })
 
   } finally {
     await app.close()

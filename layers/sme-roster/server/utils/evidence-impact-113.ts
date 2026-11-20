@@ -156,14 +156,42 @@ export function captureQueryRevision113(db: EvidenceExecutor113, queryId: number
     completeness: source.collection.completeness === 'unknown' ? null : source.collection.completeness,
     unfinished: JSON.stringify(scope.unfinished.map(p => ({ rdjb: p.rdjb, page: p.pageNo }))),
   }
+  const owners = db.select({ id: s.enterprise.id }).from(s.enterprise).where(q.queryKey.startsWith('name:') ? eq(s.enterprise.nameNorm, q.queryKey.slice(5)) : eq(s.enterprise.usccNorm, q.queryKey)).limit(2).all()
+  const exactOwner = owners.length === 1 ? owners[0]!.id : null
+  const collectionId = source.collection.id
+  function* originalRelations() {
+    let cursor = 0
+    for (;;) {
+      const observations = readDifferenceObservations(db, collectionId, cursor)
+      const materials = readDifferenceRevisionMaterials(db, observations.map(row => row.observationId))
+      for (const row of observations) yield { ...row, material: materials.get(row.observationId)! }
+      if (observations.length < 200) break
+      cursor = observations.at(-1)!.id
+    }
+  }
+  for (const input of projectQueryEvidenceRevisions(q, exactOwner, originalRelations())) {
+    const revisionId = register(db, input)
+    // A new archive has new relation IDs. Existing confirmed event dependencies stay
+    // relevant at this exact owner/title even when they point to an older occurrence.
+    if (revisionId != null) db.run(sql`insert or ignore into evidence_revision_event_113(revision_id,event_id,enterprise_id,title_code)
+      select ${revisionId},e.id,rec.enterprise_id,rec.title_code from record rec join record_event e on e.record_id=rec.id
+      where rec.enterprise_id=${input.enterpriseId} and (${input.titleCode} is null or rec.title_code=${input.titleCode})
+      and exists(select 1 from record_correspondence c where c.status='confirmed' and (c.event_id=e.id or c.predecessor_event_id=e.id))`)
+  }
+}
+
+type QueryRevision = Pick<typeof s.platformCollection.$inferSelect, 'interface' | 'queryKey' | 'titleCode' | 'rdjb' | 'status' | 'pageSize' | 'fullRange'>
+  & { id: number; conditions: string; pages: string; completeness: string | null; unfinished: string }
+
+export function projectQueryEvidenceRevisions(q: QueryRevision, exactOwner: number | null,
+  originalRelations: Iterable<{ id: number; enterpriseId: number | null; sequenceNo: number; material: unknown[] }>): RevisionInput[] {
+  const queryId = q.id
   const titleFor: Record<string, string> = { '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' }
   type Page = { rdjb: string | null; page: number; status: string; fetchedCount: number; declaredTotal: number | null; maxPage?: number | null }
   const pages: Page[] = JSON.parse(q.pages ?? '[]'), conditions = JSON.parse(q.conditions ?? '{}')
   const titles = [...new Set([...(q.titleCode ? [q.titleCode] : []), ...q.rdjb.split(',').flatMap(r => titleFor[r] ? [titleFor[r]!] : []), ...pages.flatMap(p => p.rdjb && titleFor[p.rdjb] ? [titleFor[p.rdjb]!] : [])])]
   // queryList has no title partition. Preserve unknown scope without claiming title coverage.
   const partitions: Array<string | null> = q.interface === 'apply_list' ? [null] : titles.length ? titles : [null]
-  const owners = db.select({ id: s.enterprise.id }).from(s.enterprise).where(q.queryKey.startsWith('name:') ? eq(s.enterprise.nameNorm, q.queryKey.slice(5)) : eq(s.enterprise.usccNorm, q.queryKey)).limit(2).all()
-  const exactOwner = owners.length === 1 ? owners[0]!.id : null
   const facts = new Map<string, { enterpriseId: number; titleCode: string | null; hashes: string[] }>()
   const get = (enterpriseId: number, titleCode: string | null) => {
     const key = `${enterpriseId}:${titleCode ?? '*'}`
@@ -171,27 +199,20 @@ export function captureQueryRevision113(db: EvidenceExecutor113, queryId: number
     return facts.get(key)!
   }
   if (exactOwner) for (const title of partitions) get(exactOwner, title)
-  let cursor = 0, lastRelationId = 0
-  for (;;) {
-    const observations = readDifferenceObservations(db, source.collection.id, cursor)
-    const materials = readDifferenceRevisionMaterials(db, observations.map(r => r.observationId))
-    const rows = observations.map(row => ({ ...row, material: JSON.stringify(materials!.get(row.observationId)) }))
-    for (const row of rows) {
-      lastRelationId = row.id
-      if (row.enterpriseId == null) continue
-      let title: string | null = partitions.length === 1 ? partitions[0]! : null
-      if (pages.length) {
-        let offset = 0
-        for (const page of pages) { if (page.status !== 'success') continue; offset += page.fetchedCount; if (row.sequenceNo <= offset) { title = page.rdjb ? titleFor[page.rdjb] ?? null : null; break } }
-      }
-      // An unpartitioned multi-title relation is not attributed to every requested title.
-      if (partitions.length > 1 && title === null) continue
-      get(row.enterpriseId, title).hashes.push(evidenceDigest113(JSON.parse(row.material)))
+  let lastRelationId = 0
+  for (const row of originalRelations) {
+    lastRelationId = row.id
+    if (row.enterpriseId == null) continue
+    let title: string | null = partitions.length === 1 ? partitions[0]! : null
+    if (pages.length) {
+      let offset = 0
+      for (const page of pages) { if (page.status !== 'success') continue; offset += page.fetchedCount; if (row.sequenceNo <= offset) { title = page.rdjb ? titleFor[page.rdjb] ?? null : null; break } }
     }
-    if (rows.length < 200) break
-    cursor = rows.at(-1)!.id
+    // An unpartitioned multi-title relation is not attributed to every requested title.
+    if (partitions.length > 1 && title === null) continue
+    get(row.enterpriseId, title).hashes.push(evidenceDigest113(row.material))
   }
-  for (const group of facts.values()) {
+  return [...facts.values()].map(group => {
     const rdjb = Object.keys(titleFor).find(r => titleFor[r] === group.titleCode)
     const ownPages = pages.filter(p => p.rdjb == null || p.rdjb === rdjb).map(p => ({ rdjb: p.rdjb, page: p.page, status: p.status, fetchedCount: p.fetchedCount, declaredTotal: p.declaredTotal, maxPage: p.maxPage ?? null }))
     const unfinished = (JSON.parse(q.unfinished ?? '[]') as Array<{ rdjb: string | null; page: number }>).filter(p => p.rdjb == null || p.rdjb === rdjb)
@@ -200,18 +221,12 @@ export function captureQueryRevision113(db: EvidenceExecutor113, queryId: number
     const ownStatus = ownPages.length ? ownPages.some(p => p.status === 'success') ? 'executed' : 'failed' : q.status
     const coverage = { status: ownStatus, queryStatus: q.status, pages: ownPages, completeness: q.completeness, fullRange: q.fullRange, unfinished }
     const completeEmpty = q.completeness === 'complete' && q.fullRange === 1 && ownPages.length > 0 && ownPages.every(p => p.status === 'success' && p.fetchedCount === 0 && (p.declaredTotal ?? 0) === 0)
-    const revisionId = register(db, { sourceKind: 'query_archive', sourceKey: `${group.enterpriseId}:${evidenceDigest113(partition)}`, sourceVersion: `${queryId}:${lastRelationId}`, enterpriseId: group.enterpriseId, titleCode: group.titleCode,
+    return { sourceKind: 'query_archive', sourceKey: `${group.enterpriseId}:${evidenceDigest113(partition)}`, sourceVersion: `${queryId}:${lastRelationId}`, enterpriseId: group.enterpriseId, titleCode: group.titleCode,
       factDigest: evidenceDigest113(group.hashes.length ? [...new Set(group.hashes)].sort() : completeEmpty ? ['complete_no_record'] : []), preserveFacts: group.hashes.length === 0 && !completeEmpty, coverageDigest: evidenceDigest113(coverage),
       queryExecuted: group.titleCode != null && q.status !== 'not_queried' && (group.hashes.length > 0 || !q.queryKey.startsWith('name:') && group.enterpriseId === exactOwner),
       metadata: { queryId, interface: q.interface, titleCode: group.titleCode, conditions, pagePositions: ownPages.map(p => p.page), fullRange: q.fullRange, coverageOnly: group.hashes.length === 0 },
-    })
-    // A new archive has new relation IDs. Existing confirmed event dependencies stay
-    // relevant at this exact owner/title even when they point to an older occurrence.
-    if (revisionId != null) db.run(sql`insert or ignore into evidence_revision_event_113(revision_id,event_id,enterprise_id,title_code)
-      select ${revisionId},e.id,rec.enterprise_id,rec.title_code from record rec join record_event e on e.record_id=rec.id
-      where rec.enterprise_id=${group.enterpriseId} and (${group.titleCode} is null or rec.title_code=${group.titleCode})
-      and exists(select 1 from record_correspondence c where c.status='confirmed' and (c.event_id=e.id or c.predecessor_event_id=e.id))`)
-  }
+    }
+  })
 }
 
 /** Identity material includes only exact stable identity and effective confirmed aliases. */

@@ -566,17 +566,26 @@ function enterpriseDetailSnapshot(db: Db, id: number): EnterpriseDetail | null {
         .all()
     : []
 
+  const publishedPresentation = readPublicPublishedNames(db, evidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
+  return projectEnterpriseDetail(ent, anyRecord?.district ?? null, records, events, evidence, publishedPresentation)
+}
+
+export function projectEnterpriseDetail(
+  ent: Pick<EnterpriseDetail, 'id' | 'name' | 'uscc' | 'district'> & { qualityFlags: string[] | null },
+  recordDistrict: string | null,
+  records: Omit<DetailRecord, 'events'>[],
+  events: Omit<DetailEvent, 'evidence'>[],
+  evidence: (DetailEvent['evidence'][number] & { recordEventId: number })[],
+  publishedPresentation: PublishedPresentation,
+): EnterpriseDetail {
   const evByEvent = groupBy(evidence, (v) => v.recordEventId)
   const evByRecord = groupBy(events, (e) => e.recordId)
-
-  const publishedPresentation = readPublicPublishedNames(db, evidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
-
   return {
-    ...(publishedPresentation ? { publishedPresentation } : {}),
+    publishedPresentation,
     id: ent.id,
     name: ent.name,
     uscc: ent.uscc,
-    district: ent.district ?? anyRecord?.district ?? null,
+    district: ent.district ?? recordDistrict,
     qualityFlags: ent.qualityFlags ?? [],
     records: records.map((r) => ({
       id: r.id,

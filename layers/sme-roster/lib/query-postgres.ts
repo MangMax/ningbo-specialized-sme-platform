@@ -6,9 +6,38 @@ import type { OfficialPublishedFact } from './roster/official-published-presenta
 import { normalizeName } from './domain'
 import { TITLE_ORDER } from './labels'
 import { MAX_PAGE_SIZE, matchesLedgerDerivedFilters, projectLedgerRows,
-  prepareLedgerExportProjection, type LedgerExportEvent, type LedgerExportEvidence, type LedgerExportSource, type LedgerEvidence, type LedgerEvent, type LedgerGroup, type LedgerSource, type RecordQuery, type RecordFilterQuery } from './query'
+  prepareLedgerExportProjection, projectEnterpriseDetail, type DetailEvent, type DetailRecord, type EnterpriseDetail,
+  type LedgerExportEvent, type LedgerExportEvidence, type LedgerExportSource, type LedgerEvidence, type LedgerEvent, type LedgerGroup, type LedgerSource, type RecordQuery, type RecordFilterQuery } from './query'
 
 const array = (values: readonly (number | string)[]) => sql`${sql.param(values)}`
+
+export function readPostgresLedgerEnterpriseDetail(db: NodePgDatabase, id: number) {
+  if (!Number.isSafeInteger(id)) return null
+  return db.transaction(async tx => {
+    const { rows: [enterprise] } = await tx.execute<{
+      data: Pick<EnterpriseDetail, 'id' | 'name' | 'uscc' | 'district' | 'qualityFlags'>
+    }>(sql`SELECT json_build_object('id',id,'name',name,'uscc',uscc_norm,'district',district,
+          'qualityFlags',quality_flags::json) AS data FROM enterprise WHERE id=${id}`)
+    if (!enterprise) return null
+    const { rows: records } = await tx.execute<{ data: Omit<DetailRecord, 'events'> }>(sql`
+      SELECT json_build_object('id',id,'titleCode',title_code,'source',source,'district',district) AS data
+      FROM record WHERE enterprise_id=${id} ORDER BY title_code COLLATE "C",source COLLATE "C"`)
+    const { rows: [first] } = enterprise.data.district == null ? await tx.execute<{ district: string | null }>(sql`
+      SELECT district FROM record WHERE enterprise_id=${id} ORDER BY id LIMIT 1`) : { rows: [] }
+    const { rows: events } = await tx.execute<{ data: Omit<DetailEvent, 'evidence'> }>(sql`
+      SELECT json_build_object('id',id,'recordId',record_id,'type',event_type,'year',year,'seq',batch_seq) AS data
+      FROM record_event WHERE record_id=ANY(${array(records.map(row=>row.data.id))}::bigint[])
+      ORDER BY sort_key,id`)
+    const { rows: evidence } = await tx.execute<{ data: DetailEvent['evidence'][number] & { recordEventId: number } }>(sql`
+      SELECT json_build_object('id',id,'recordEventId',record_event_id,'sourceFile',source_file,
+        'attachment',attachment,'listNo',list_no,'page',page) AS data FROM record_evidence
+      WHERE record_event_id=ANY(${array(events.map(row=>row.data.id))}::bigint[]) ORDER BY id`)
+    const published = await readPostgresPublishedNames(tx,
+      evidence.map(({ data })=>({ evidenceId:data.id,eventId:data.recordEventId })),await importPostgresReceiptRedactor(tx))
+    return projectEnterpriseDetail(enterprise.data, first?.district ?? null,
+      records.map(row=>row.data),events.map(row=>row.data),evidence.map(row=>row.data),published)
+  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
+}
 
 // SQLite LIKE ignores case in ASCII only and does not use a default escape character.
 function contains(column: SQL, needle: string) {
