@@ -328,6 +328,20 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     expect(saved.status).toBe(200)
     const { correspondenceIds: [correspondenceId] } = z.object({ correspondenceIds: z.array(z.number()).length(1) }).parse(saved.body)
 
+    const firstOwner = sqlite.prepare('SELECT r.enterprise_id AS id FROM record_event e JOIN record r ON r.id=e.record_id WHERE e.id=?').get(event.id) as { id: number }
+    const scope = { enterpriseId: firstOwner.id, titleCode: 'specialized_sme', direction: 'missing_in_miit' }
+    const legacyDecision = { ...scope, action: 'replace', expectedCurrentId: null, idempotencyKey: 'native-decision-read',
+      actor: { type: 'agent', id: 'decision-fixture' }, basis: 'Synthetic source decision', ruleVersion: 'fixture', effectiveAt: '2026-10-18T00:00:00Z',
+      decision: { status: 'confirmed_no_diff', measureCode: 'none', verificationStatus: 'confirmed' } }
+    const savedDecision = await http('/api/roster/decision-lifecycle/commands', legacyDecision)
+    expect(savedDecision.status, JSON.stringify(savedDecision.body)).toBe(200)
+    const decisionVersionId = z.object({ versionId: z.number() }).parse(savedDecision.body).versionId
+    const withdrawal = await http('/api/roster/decision-lifecycle/commands', {
+      ...scope, action: 'withdraw', expectedCurrentId: decisionVersionId, idempotencyKey: 'native-decision-withdraw',
+      actor: legacyDecision.actor, basis: legacyDecision.basis, ruleVersion: legacyDecision.ruleVersion, effectiveAt: legacyDecision.effectiveAt,
+    })
+    expect(withdrawal.status, JSON.stringify(withdrawal.body)).toBe(200)
+
     installLeadListSchema(sqlite)
     run('initdb', ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', 'receipt_fixture', '-D', join(pgDir, 'pg')])
     run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-l', join(pgDir, 'pg.log'), '-o', "-c listen_addresses='' -k " + pgDir, 'start'])
@@ -337,6 +351,40 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
       run('psql', ['-X', '-w', '-q', '-v', 'staging=staged', '-f', 'upgrade/postgresql/materialize-' + name + '.sql'])
     }
     await app.start()
+    const entries = new URLSearchParams(Object.entries(scope).map(([key, value]) => [key, String(value)]))
+    const decisionReads = [
+      ['/api/roster/decision-lifecycle/current?' + entries, 'get_current_difference_decision', scope],
+      ['/api/roster/decision-lifecycle/' + decisionVersionId, 'get_difference_decision', { id: decisionVersionId }],
+      ['/api/roster/decision-lifecycle/history?' + entries + '&pageSize=1&page=2', 'list_difference_decision_history', { ...scope, page: 2, pageSize: 1 }],
+    ] as const
+    const nativeTool = async (name: string, args: Record<string, unknown>) => {
+      const response = await app.request('/mcp', {
+        method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream',
+          'mcp-protocol-version': '2025-06-18', authorization: 'Bearer ' + mcpToken },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name, arguments: args } }),
+      })
+      const raw = await response.text()
+      const content = JSON.parse(raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : raw)
+      return rpcValue({ status: response.status, body: content })
+    }
+    for (const [path, name, args] of decisionReads) {
+      const source = await http(path), native = await app.request(path)
+      expect(source.status, JSON.stringify(source.body)).toBe(200)
+      expect(native.status, await native.clone().text()).toBe(200)
+      expect(await native.json()).toEqual(source.body)
+      expect(await nativeTool(name, args)).toEqual({ body: source.body, isError: false })
+    }
+    const listScope = { title: scope.titleCode, direction: scope.direction, pageSize: 1 }
+    expect(await nativeTool('list_differences', listScope)).toEqual(rpcValue(await rpc('list_differences', listScope)))
+    for (const query of ['pageSize=4', 'pageSize=1&page=2&q=source', 'pageSize=6&title=specialized_sme&direction=missing_in_miit']) {
+      const path = '/api/roster/differences?' + query
+      const legacy = await http(path)
+      const response = await app.request(path)
+      expect(legacy.status, JSON.stringify(legacy.body)).toBe(200)
+      expect(response.status, await response.clone().text()).toBe(200)
+      expect(await response.json()).toEqual(legacy.body)
+    }
+
     const batch = sqlite.prepare("SELECT id,item_results FROM import_batch WHERE idempotency_key LIKE '%-merge' AND status='committed' ORDER BY id LIMIT 1").get() as { id: number; item_results: string }
     const items = JSON.parse(batch.item_results)
     const itemIndex = items.findIndex((item: { kind: string }) => item.kind === 'merge')

@@ -1,4 +1,5 @@
-import { sql } from 'drizzle-orm'
+import { sql, type SQL } from 'drizzle-orm'
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { orderBy } from 'es-toolkit'
 import * as schema from '../../../db/schema'
@@ -45,22 +46,28 @@ export function getComparison(
   db: BetterSQLite3Database<typeof schema>,
   opts: ComparisonQuery = {},
 ): ComparisonResult {
-  // Matched source rows stay inside SQLite. Keep the legacy jxj / everything-else
+  // Matched source rows stay inside the database. Keep the legacy jxj / everything-else
   // partition and binary equality of stored USCC (including an empty string).
   // The legacy record table scan kept its first row; MIN(id) retains that
   // representative district for historical non-jxj sources sharing a side.
   // A non-null USCC always matches itself: try the same enterprise's records
   // before the legacy cross-enterprise binary-USCC lookup.
-  const records = db.all<{
-    enterpriseId: number
-    name: string
-    uscc: string | null
-    district: string | null
-    titleCode: TitleCode
-    direction: ComparisonDirection
-    currentCity: string | null
-    regStatus: string | null
-  }>(sql`
+  return projectComparison(db.all<ComparisonInputRow>(comparisonInput(sql`binary`, sql`e.id`)), opts)
+}
+
+type ComparisonInputRow = {
+  enterpriseId: number
+  name: string
+  uscc: string | null
+  district: string | null
+  titleCode: TitleCode
+  direction: ComparisonDirection
+  currentCity: string | null
+  regStatus: string | null
+}
+
+function comparisonInput(collation: SQL, enterpriseId: SQL) {
+  return sql`
     with differences as (
       select min(r.id) as recordId
       from record r
@@ -76,34 +83,34 @@ export function getComparison(
             select 1 from enterprise other
             join record opposite on opposite.enterprise_id = other.id
             where other.id <> r.enterprise_id
-              and other.uscc_norm = e.uscc_norm collate binary
+              and other.uscc_norm = e.uscc_norm collate ${collation}
               and opposite.title_code = r.title_code
               and (opposite.source = 'jxj') <> (r.source = 'jxj')
           )
         ))
       group by r.enterprise_id, r.title_code, (r.source = 'jxj')
     )
-    select e.id as enterpriseId, e.name, e.uscc_norm as uscc,
-      r.district, r.title_code as titleCode,
+    select ${enterpriseId} as "enterpriseId", e.name, e.uscc_norm as uscc,
+      r.district, r.title_code as "titleCode",
       case when r.source = 'jxj' then 'missing_in_miit' else 'extra_in_miit' end as direction,
-      e.city as currentCity, e.reg_status as regStatus
+      e.city as "currentCity", e.reg_status as "regStatus"
     from differences d
     join record r on r.id = d.recordId
     join enterprise e on e.id = r.enterprise_id
-  `)
+  `
+}
+
+export async function getPostgresComparison(db: Pick<NodePgDatabase,'execute'>, opts: ComparisonQuery = {}) {
+  const { rows } = await db.execute<ComparisonInputRow>(comparisonInput(sql`"C"`, sql`e.id::float8`))
+  return projectComparison(rows, opts)
+}
+
+function projectComparison(records: ComparisonInputRow[], opts: ComparisonQuery) {
   const counts = Object.fromEntries(
     TITLE_ORDER.map((code) => [code, { missing_in_miit: 0, extra_in_miit: 0 }]),
   ) as ComparisonCounts
 
   const differences = records.map((r): ComparisonRow => {
-    // **小巨人双向对比已启用**(用户 2026-10-16 裁决,RL-04 落地)。
-    //
-    // 两侧 = 经信局**历年小巨人名单**(RL-02 导入,历史批次 2019–2025 的**权威来源**)
-    // vs 工信部**导出表**(**采集时点现状**)。旧代码在这里硬排除小巨人,
-    // 依据是「经信局不发布小巨人」—— 该说法已被 RL-02 的历年名单**证伪**,
-    // 故排除一并去掉(`tests/comparison.test.ts` 的旧期望随之更新,是有意变更)。
-    //
-    // 硬边界不变:平台导出**永不改写**公布历史;未匹配平台的公布条目**仍须保留**。
     counts[r.titleCode][r.direction]++
     return {
       enterpriseId: r.enterpriseId,

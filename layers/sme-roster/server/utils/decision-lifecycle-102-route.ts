@@ -5,7 +5,9 @@ import { z } from 'zod'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
 import { legacyPreviewInput102, previewLegacyDecision102 } from './decision-legacy-preview-102'
 import { preflightQualification102, commitQualification102, historyDecision102, decisionHistory102, currentDecision102, decisionCommand102, decisionScope102, DecisionError102, parse102, readDecision102, saveDecision102 } from './decision-lifecycle-102'
-import { decisionOutput102, decisionFailure102 } from './decision-lifecycle-102-output'
+import { currentPostgresDecisions102, historyPostgresDecision102, readPostgresDecision102 } from './decision-lifecycle-102/postgres-reads'
+import { usePostgresRosterDb } from './postgres-roster-db'
+import { decisionOutput102, decisionFailure102, postgresDecisionOutput102 } from './decision-lifecycle-102-output'
 
 function numericQuery(query: Record<string, unknown>) {
   return Object.fromEntries(Object.entries(query).map(([key,value]) => [key,
@@ -16,6 +18,21 @@ export function decisionRoute102(action: 'commands' | 'get' | 'current' | 'histo
   return semanticRouteHandler(`maintenance.decision.${action}`, async (event: H3Event) => {
     setHeader(event, 'cache-control', 'no-store')
     try {
+      if (action === 'get' || action === 'current' || action === 'history') {
+        const postgres = usePostgresRosterDb()
+        if (postgres) {
+          const query = numericQuery(getQuery(event))
+          return await postgres.transaction(async tx => {
+            const output = await postgresDecisionOutput102(tx)
+            if (action === 'history') return output(await historyPostgresDecision102(tx, parse102(decisionHistory102, query)))
+            if (action === 'get') {
+              const id = parse102(z.number().int().positive().max(Number.MAX_SAFE_INTEGER), numericQuery({ id: getRouterParam(event, 'id') }).id)
+              return output(await readPostgresDecision102(tx, id))
+            }
+            return output((await currentPostgresDecisions102(tx, [parse102(decisionScope102, query)]))[0]!)
+          }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
+        }
+      }
       const db = useDb()
       if (action === 'commands' || action === 'qualification-preflight' || action === 'qualification-commit') {
         if (!resolveApiAuth({ given: readApiToken({ authorization: getHeader(event, 'authorization'), 'x-api-token': getHeader(event, 'x-api-token') }), configured: useRuntimeConfig().apiToken }).writeAuthorized) throw new DecisionError102(401, 'unauthorized', 'Configured API token required')

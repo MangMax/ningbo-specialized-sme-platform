@@ -181,6 +181,10 @@ function assessmentStatuses(scope: AssessmentScope, queryCoverage: ReturnType<ty
 function assessmentOf(db: DecisionDb, scope: AssessmentScope, queryCoverage: ReturnType<typeof readQueryCoverage>, currentDecision = currentDecision102(db, scope), ownedImpact?: ReturnType<typeof readEvidenceImpact113>) {
   const current = currentDecision.current
   const impact = ownedImpact ?? readEvidenceImpact113(db, scope, current?.id ?? null)
+  return projectQueryAssessment(scope, queryCoverage, currentDecision, impact)
+}
+export function projectQueryAssessment(scope: AssessmentScope, queryCoverage: ReturnType<typeof readQueryCoverage>, currentDecision: ReturnType<typeof currentDecision102>, impact: ReturnType<typeof readEvidenceImpact113>) {
+  const current = currentDecision.current
   const { validity, invalid, executed, assessment } = assessmentStatuses(scope, queryCoverage, currentDecision, impact)
   const reasons = validity === 'premise_invalid' ? ['query_executed'] : validity === 'evidence_changed' ? ['committed_evidence_changed'] : validity === 'unknown' ? ['no_evidence_baseline'] : []
   return {

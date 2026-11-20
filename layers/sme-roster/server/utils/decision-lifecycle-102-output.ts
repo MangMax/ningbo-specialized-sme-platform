@@ -1,3 +1,6 @@
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { importPostgresReceiptRedactor } from './import-receipt-redaction'
+import { usePostgresRosterDb } from './postgres-roster-db'
 import { cookieRedactor } from '../../lib/platform/client'
 import { credentialContext, resolveCredential } from '../../../core/server/utils/credential-state'
 import { sanitizeEvidence } from './record-correspondence-read'
@@ -9,6 +12,15 @@ export function decisionOutput102(db: DecisionDb) {
   const credentials = { ...credentialContext(), db }
   const values = [runtime.apiToken, runtime.mcpToken, resolveCredential('sme-roster.miitCookie', credentials).value, resolveCredential('core.ocrToken', credentials).value]
   const redactors = [...new Set(values.filter((v): v is string => typeof v === 'string' && !!v))].map(cookieRedactor)
+  return projectDecisionOutput(redactors)
+}
+
+export async function postgresDecisionOutput102(db: NodePgDatabase) {
+  const { knownRedactors } = await importPostgresReceiptRedactor(db)
+  return projectDecisionOutput(knownRedactors)
+}
+
+function projectDecisionOutput(redactors: Parameters<typeof sanitizeEvidence>[1]) {
   return (value: Record<string, unknown>) => {
     const safe = sanitizeEvidence(value, redactors)
     // Only this strict numeric/domain version object may pass a token-named key.
@@ -24,4 +36,21 @@ export function decisionFailure102(error: unknown) {
 export function decisionMcp102(db: DecisionDb, operation: () => Record<string, unknown>) {
   try { const output = decisionOutput102(db); return output(operation()) }
   catch (error) { return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify(decisionFailure102(error).body) }] } }
+}
+
+export async function decisionReadMcp102(db: () => DecisionDb, legacy: (tx: DecisionDb) => Record<string, unknown>,
+  postgres: (tx: NodePgDatabase) => Promise<Record<string, unknown>>,
+) {
+  try {
+    const native = usePostgresRosterDb()
+    if (!native) {
+      const sqlite = db()
+      return decisionMcp102(sqlite, () => sqlite.transaction(tx => legacy(tx)))
+    }
+    return await native.transaction(async tx => (await postgresDecisionOutput102(tx))(await postgres(tx)), {
+      isolationLevel: 'repeatable read', accessMode: 'read only',
+    })
+  } catch (error) {
+    return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify(decisionFailure102(error).body) }] }
+  }
 }

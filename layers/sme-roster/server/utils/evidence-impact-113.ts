@@ -114,10 +114,10 @@ export function listEvidenceImpacts113(db: EvidenceExecutor113, input: { enterpr
   const t = s.explanationImpact113
   return db.select().from(t).where(and(input.enterpriseId == null ? undefined : eq(t.enterpriseId, input.enterpriseId), gt(t.id, input.afterId ?? 0))).orderBy(asc(t.id)).limit(bound(input.limit)).all()
 }
-function evidenceKeys113(scope: EvidenceScope113) {
+export function evidenceKeys113(scope: EvidenceScope113) {
   return [scope.enterpriseId, null].flatMap(e => [scope.titleCode, null].flatMap(t => [scope.direction, null].map(d => scopeKey113(e, t, d))))
 }
-function evidenceToken113(scope: EvidenceScope113, decisionId: number | null, versions: Array<typeof s.evidenceScopeVersion113.$inferSelect>) {
+export function evidenceToken113(scope: EvidenceScope113, decisionId: number | null, versions: Array<typeof s.evidenceScopeVersion113.$inferSelect>) {
   return { ...scope, decisionId, latestRevisionId: Math.max(0, ...versions.map(v => v.latestRevisionId)), projectionReady: versions.every(v => v.pendingCount === 0) }
 }
 /** Trusted lifecycle heads from the same transaction; latest includes withdrawal. */

@@ -112,7 +112,7 @@ export function managedDecision102(id: AnyColumn | SQL = s.differenceReason.id, 
 export function latestDecision102(db: DecisionDb, scope: Scope) {
   return db.select().from(s.differenceReason).where(whereScope(scope)).orderBy(desc(s.differenceReason.recordedAt), desc(s.differenceReason.id)).limit(1).get()
 }
-function publicVersion(row: Omit<typeof s.differenceReason.$inferSelect, 'evidenceCollectionId' | 'evidenceObservationId'> & { evidenceQueryId: number | null; evidenceRelationId: number | null }, currentId: number | null) {
+export function publicVersion102(row: Omit<typeof s.differenceReason.$inferSelect, 'evidenceCollectionId' | 'evidenceObservationId'> & { evidenceQueryId: number | null; evidenceRelationId: number | null }, currentId: number | null) {
   const { requestHash, idempotencyKey, ...version } = row
   return { ...version, origin: row.lifecycleAction ? 'lifecycle' : 'legacy_import', isCurrent: row.id === currentId }
 }
@@ -127,12 +127,12 @@ function requireEnterprise(db: DecisionDb, enterpriseId: number) {
 export function readDecision102(db: DecisionDb, id: number) {
   const row = db.select(differencePublicColumns(db)).from(s.differenceReason).where(eq(s.differenceReason.id, id)).get()
   if (!row) throw new DecisionError102(404, 'not_found', 'Decision version not found')
-  return publicVersion(row, latestDecisionHead102(db, row)?.id ?? null)
+  return publicVersion102(row, latestDecisionHead102(db, row)?.id ?? null)
 }
 export function currentDecision102(db: DecisionDb, scope: Scope) {
   requireEnterprise(db, scope.enterpriseId)
   const state = decisionState102(db.select(differencePublicColumns(db)).from(s.differenceReason).where(whereScope(scope)).orderBy(desc(s.differenceReason.recordedAt), desc(s.differenceReason.id)).limit(1).get())
-  return { ...scope, versionId: state.versionId, current: state.current ? publicVersion(state.current, state.current.id) : null }
+  return { ...scope, versionId: state.versionId, current: state.current ? publicVersion102(state.current, state.current.id) : null }
 }
 function decisionState102<T extends { id: number; lifecycleAction: string | null }>(row: T | undefined) {
   return { versionId: row?.id ?? null, current: row && row.lifecycleAction !== 'withdraw' ? row : null }
@@ -172,7 +172,7 @@ export function currentDecisions102(db: DecisionDb, scopes: readonly Scope[]) {
   const rows = ids.length ? db.select(differencePublicColumns(db)).from(s.differenceReason).where(inArray(s.differenceReason.id, ids)).all() : []
   const bodies = new Map(rows.map(row => [row.id, row]))
   return states.map((state, index) => ({ ...scopes[index]!, versionId: state.versionId,
-    current: state.current ? publicVersion(bodies.get(state.current.id)!, state.current.id) : null }))
+    current: state.current ? publicVersion102(bodies.get(state.current.id)!, state.current.id) : null }))
 }
 /** Shared read-only admission; optional pins bind the qualification confirmation plan. */
 function prepareDecision102(db: DecisionDb, command: DecisionCommand102, capturePins = false) {

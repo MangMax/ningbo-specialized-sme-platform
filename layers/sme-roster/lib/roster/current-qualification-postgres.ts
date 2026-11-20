@@ -239,22 +239,19 @@ export async function readPostgresCurrentStatusBatch(tx: PostgresQualificationTr
   return new Map(loaded.map(([id, inputs]) => [id, evaluateLoadedCurrentQualification(asOf, inputs, undefined, 'scan').get(title)!.effectiveStatus]))
 }
 
-async function readPostgresDetailedAssessments(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, mode: 'detail' | 'workbook', readPlatform?: PostgresPlatformQualificationReader) {
-  const hydrated: [number, { rows: import('./current-qualification').CurrentRow[];
-    snapshot: ReturnType<typeof currentQualificationSnapshot>; publishedPresentation?: PublishedPresentation;
-    workbookPublished: Map<number, OfficialPublishedFact> }][] = []
-  if (!ids.length) return new Map(hydrated)
-  const loaded = await readQualificationInputs(tx, ids, asOf, { mode, title }, readPlatform)
-  const coverageOwners = await tx.execute<{ id: number; name_norm: string; uscc_norm: string | null }>(sql`
-    SELECT id::float8 AS id, name_norm, uscc_norm FROM enterprise WHERE id=ANY(${pgIds(ids)})`)
-  const titles = mode === 'workbook' ? CURRENT_TITLES.slice(0, CURRENT_TITLES.indexOf(title) + 1) : CURRENT_TITLES
-  const coverage = await readPostgresQueryCoverage(tx, coverageOwners.rows, titles)
+async function prepareDetailedQualificationSources(tx: PostgresQualificationTransaction,
+  loaded: Awaited<ReturnType<typeof readQualificationInputs>>, titles: readonly CurrentTitle[]) {
+  const owners = [...new Map(loaded.map(([, inputs]) => {
+    const subject = inputs.get(titles[0]!)!.enterprise
+    return [subject.id, subject] as const
+  })).values()]
+  const coverage = await readPostgresQueryCoverage(tx, owners, titles)
   const redact = await importPostgresReceiptRedactor(tx)
-  const eventIds = [...new Set(loaded.flatMap(([, inputs]) => titles.flatMap(target => inputs.get(target)!.evidence.map(row => row.eventId))))]
+  const eventIds = [...new Set(loaded.flatMap(([, inputs]) => titles.flatMap(title => inputs.get(title)!.evidence.map(row => row.eventId))))]
   const readPublished = createPostgresPublishedPresentationReader(tx, redact, eventIds)
-  for (const [id, inputs] of loaded) {
-    for (const target of titles) {
-      const input = inputs.get(target)!
+  for (const [, inputs] of loaded) {
+    for (const title of titles) {
+      const input = inputs.get(title)!
       const scope = input.evidence.map(row => ({ evidenceId: row.id, eventId: row.eventId }))
       try {
         const facts = await readPublished(scope)
@@ -262,8 +259,21 @@ async function readPostgresDetailedAssessments(tx: PostgresQualificationTransact
       } catch (error) {
         input.readPublishedNames = () => { throw officialPublishedError(error) }
       }
-      input.readCoverage = () => coverage.get(id)!.get(target)!
+      input.readCoverage = () => coverage.get(input.enterprise.id)!.get(title)!
     }
+  }
+  return { coverage, readPublished }
+}
+
+async function readPostgresDetailedAssessments(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, mode: 'detail' | 'workbook', readPlatform?: PostgresPlatformQualificationReader) {
+  const hydrated: [number, { rows: import('./current-qualification').CurrentRow[];
+    snapshot: ReturnType<typeof currentQualificationSnapshot>; publishedPresentation?: PublishedPresentation;
+    workbookPublished: Map<number, OfficialPublishedFact> }][] = []
+  if (!ids.length) return new Map(hydrated)
+  const loaded = await readQualificationInputs(tx, ids, asOf, { mode, title }, readPlatform)
+  const titles = mode === 'workbook' ? CURRENT_TITLES.slice(0, CURRENT_TITLES.indexOf(title) + 1) : CURRENT_TITLES
+  const { readPublished } = await prepareDetailedQualificationSources(tx, loaded, titles)
+  for (const [id, inputs] of loaded) {
     let presentationScope: readonly OfficialPublishedScope[] | undefined
     let presentationFacts: readonly OfficialPublishedFact[] | undefined
     let presentationError: unknown
@@ -325,4 +335,14 @@ export async function readPostgresCurrentQualification(tx: PostgresQualification
 export async function readPostgresEffectiveQualifications(tx: PostgresQualificationTransaction, enterpriseId: number, asOf: number): Promise<EffectiveQualification[] | null> {
   const read = await readPostgresCurrentQualification(tx, enterpriseId, asOf)
   return read === null ? null : projectEffectiveQualifications(read.titles)
+}
+
+export async function readPostgresDifferenceQualifications(tx: PostgresQualificationTransaction, ids: readonly number[], asOf: number) {
+  const loaded = await readQualificationInputs(tx, ids, asOf, { mode: 'detail', title: 'specialized_sme' })
+  await prepareDetailedQualificationSources(tx, loaded, CURRENT_TITLES)
+  return {
+    assessed: loaded.flatMap(([enterpriseId, inputs]) =>
+      [...evaluateLoadedCurrentQualification(asOf, inputs).values()].map(result => ({ enterpriseId, assessment: result.row.assessment! }))),
+    facts: loaded.flatMap(([, inputs]) => inputs.get('specialized_sme')!.readPlatformFacts()),
+  }
 }
