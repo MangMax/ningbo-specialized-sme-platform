@@ -624,4 +624,35 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     expect(readFileSync(join(root, relPath))).toEqual(original)
   })
 
+  it.skipIf(!enabled)('fills only missing official event dates from verified PDF ranges and replays the chunk', async () => {
+    const relPath = 'jxj/announcement/2025/4/sync.pdf'
+    mkdirSync(join(root,'jxj/announcement/2025/4'),{recursive:true})
+    const pdf = minimalPdf({ pages:1 })
+    writeFileSync(join(root,relPath),pdf)
+    const { id } = await json('files/register',201,'POST',{relPath,source:'jxj',kind:'announcement',year:2025,batch:4})
+    const fixture = `
+      INSERT INTO enterprise(id,name,name_norm) VALUES(900001,'合成同步主体','合成同步主体');
+      INSERT INTO record(id,enterprise_id,title_code,source) VALUES(900001,900001,'specialized_sme','jxj');
+      INSERT INTO record_event(id,record_id,event_type) VALUES(900001,900001,'award');
+      INSERT INTO record_evidence(id,record_event_id,source_file,page,attachment) VALUES(900001,900001,'${relPath}',1,'附件1');`
+    if (postgres) runPg('psql',['-X','-w','-q','-v','ON_ERROR_STOP=1','-c','SET search_path TO business; '+fixture])
+    else app.db.$client.exec(fixture)
+    const path = 'files/'+id
+    const source = await json(path+'/parse-result/preflight',200,'POST',{ kind:'file',verifyPhysicalPages:true })
+    const actor = { type:'agent',id:'fixture' }
+    const declaration = { idempotencyKey:'pdf-event-sync-declaration',actor,reason:'核对合成文件的第一物理页',
+      parts:[{titleCode:'specialized_sme',eventKind:'award',year:2025,batch:4,attachment:'附件1',rowCount:1,pageRanges:[{start:1,end:1}]}],...source }
+    await json(path+'/parse-result/commit',200,'POST',declaration)
+    const request = { idempotencyKey:'pdf-event-sync',actor,basis:'根据已保存的合成分段补齐年月' }
+    const plan = await json(path+'/event-sync/preflight',200,'POST',request)
+    expect(plan).toMatchObject({ chunks:1,counts:{updated:0,conflicts:0,unexecuted:1},
+      rows:[{eventId:900001,status:'update',before:{year:null,batchSeq:null},after:{year:2025,batchSeq:4}}] })
+    const command = { request,planHash:plan.planHash,chunk:0 }
+    const [first,second] = await Promise.all([json(path+'/event-sync/commit',200,'POST',command),json(path+'/event-sync/commit',200,'POST',command)])
+    expect(second).toEqual(first)
+    expect(first).toMatchObject({ completed:[0],counts:{updated:1,conflicts:0,unexecuted:0} })
+    expect(await json('roster/events/900001',200)).toMatchObject({ event: { id:900001,year:2025,batchSeq:4,revision:2 } })
+    expect(readFileSync(join(root,relPath))).toEqual(pdf)
+  })
+
 })

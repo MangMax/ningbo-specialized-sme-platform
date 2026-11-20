@@ -20,9 +20,7 @@ type EventSnapshot = ReturnType<EventCorrectionInputs['snapshot']>
 type Plan = ReturnType<typeof projectEventCorrectionPlan>
 const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
 
-async function buildPostgresEventPlan(tx: Reader, request: EventCorrectionRequest) {
-  validateEventCorrectionTargets(request)
-  const eventIds = request.operations.map(op => op.eventId)
+export async function loadPostgresEventCorrectionInputs(tx: Reader, eventIds: number[]): Promise<EventCorrectionInputs> {
   const { rows: targets } = await tx.execute<Pick<EventSnapshot, 'event' | 'record'>>(sql`
     SELECT ${postgresRosterRow(schema.recordEvent,'e')} AS event,${postgresRosterRow(schema.record,'r')} AS record
     FROM record_event e JOIN record r ON r.id=e.record_id WHERE e.id=ANY(${ids(eventIds)}) AND r.source='jxj'`)
@@ -51,7 +49,7 @@ async function buildPostgresEventPlan(tx: Reader, request: EventCorrectionReques
   const events = related.map(row => row.event)
   const siblings = Map.groupBy(events, row => row.recordId)
   const origins = new Map(events.map(row => [row.id, row]))
-  return projectEventCorrectionPlan(request, {
+  return {
     snapshot: id => {
       const target = byId.get(id)
       if (!target) return eventCorrectionFailure(404,'not_found','Official jxj event not found')
@@ -64,7 +62,13 @@ async function buildPostgresEventPlan(tx: Reader, request: EventCorrectionReques
     titleEvents: record => titles.get(record.enterpriseId + ':' + record.titleCode)?.map(row => row.event) ?? [],
     siblings: id => siblings.get(id) ?? [],
     origin: id => origins.get(id) ?? null,
-  })
+  }
+}
+
+async function buildPostgresEventPlan(tx: Reader, request: EventCorrectionRequest) {
+  validateEventCorrectionTargets(request)
+  const inputs = await loadPostgresEventCorrectionInputs(tx,request.operations.map(op=>op.eventId))
+  return projectEventCorrectionPlan(request,inputs)
 }
 
 async function readBatch(tx: Tx, request: EventCorrectionRequest) {
@@ -75,7 +79,7 @@ async function readBatch(tx: Tx, request: EventCorrectionRequest) {
   return assertEventCorrectionBatch(row, request)
 }
 
-async function readQualification(tx: Tx, plan: Plan, stage: 'before' | 'after', safety: CorrectionQualificationSafety) {
+async function readQualification(tx: Tx, plan: Plan, stage: 'before' | 'after', safety?: CorrectionQualificationSafety) {
   const scope = eventCorrectionReadbackScope(plan.targets, stage)
   if (scope.readback) return scope.readback
   try {
@@ -84,7 +88,7 @@ async function readQualification(tx: Tx, plan: Plan, stage: 'before' | 'after', 
   } catch { return eventCorrectionCapture(null, stage, scope.target, safety) }
 }
 
-export function preflightPostgresEventCorrections(db: NodePgDatabase, request: EventCorrectionRequest, safety: CorrectionQualificationSafety) {
+export function preflightPostgresEventCorrections(db: NodePgDatabase, request: EventCorrectionRequest, safety?: CorrectionQualificationSafety) {
   return runPostgresCorrespondenceTransaction(db, async tx => {
     await lockPostgresRosterImportKey(tx, request.idempotencyKey)
     const old = await readBatch(tx, request)
@@ -102,7 +106,7 @@ export function preflightPostgresEventCorrections(db: NodePgDatabase, request: E
   })
 }
 
-export function commitPostgresEventCorrections(db: NodePgDatabase, request: EventCorrectionRequest, planHash: string, safety: CorrectionQualificationSafety) {
+export function commitPostgresEventCorrections(db: NodePgDatabase, request: EventCorrectionRequest, planHash: string, safety?: CorrectionQualificationSafety) {
   return runPostgresCorrespondenceTransaction(db, async tx => {
     await lockPostgresRosterImportKey(tx, request.idempotencyKey)
     const batch = eventCorrectionCommitBatch(await readBatch(tx, request), planHash)
