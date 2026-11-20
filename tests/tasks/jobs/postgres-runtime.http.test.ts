@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -501,4 +502,49 @@ it.runIf(!!bin)('filters roster exports by title before counting and reports pro
   ]))
   expect((await (await request('/api/jobs/' + otherKind)).json()).percent).toBe(25)
   expect((await submit(kind, { clientRequestId: 'regenerate-running', titleCode: 'little_giant', regenerateOf: growing })).status).toBe(409)
+})
+
+it.runIf(!!bin)('keeps authorized export downloads available in readonly task summaries and disables mutations', async () => {
+  const { newJobId } = await import('../../../layers/core/lib/job')
+  const id = newJobId()
+  const bytes = Buffer.from('fixture workbook')
+  const artifact = {
+    id,
+    size: bytes.length,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    generatedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  }
+  const artifactDir = join(dir, 'must-not-open.sqlite.exports')
+  mkdirSync(artifactDir, { recursive: true })
+  writeFileSync(join(artifactDir, id + '.xlsx'), bytes)
+  await pool.query(`INSERT INTO business.job (id, kind, state, params, result, created_at, finished_at)
+    VALUES ($1, 'current-roster-export', 'done', '{"titleCode":"little_giant"}', $2, $3, $3)`,
+  [id, JSON.stringify({ artifact }), artifact.generatedAt])
+
+  const auth = { authorization: 'Bearer ' + token }
+  const detail = '/api/task-center/' + id
+  const list = '/api/task-center?tab=sme-roster&group=export&state=done'
+  expect(await (await request(detail, { headers: auth })).json()).toMatchObject({
+    id, export: { canDownload: true, canRegenerate: true },
+  })
+
+  vi.stubEnv('NUXT_DB_MODE', 'postgresql')
+  vi.stubEnv('NUXT_POSTGRES_JOBS', '0')
+  try {
+    const expected = {
+      id, export: { canDownload: true, canRegenerate: false, artifact: { availability: 'available' } },
+      capabilities: { cancel: false, retry: false, retryItemIds: [] },
+    }
+    expect(await (await request(detail, { headers: auth })).json()).toMatchObject(expected)
+    const page = await (await request(list, { headers: auth })).json()
+    expect(page).toMatchObject({ authorized: false, exportReady: false, total: 1 })
+    expect(page.rows[0]).toMatchObject(expected)
+    expect(await (await request(detail)).json()).toMatchObject({
+      id, export: { canDownload: false, canRegenerate: false },
+    })
+  } finally {
+    vi.stubEnv('NUXT_POSTGRES_JOBS', '1')
+    vi.stubEnv('NUXT_DB_MODE', undefined)
+  }
 })

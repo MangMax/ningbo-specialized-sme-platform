@@ -1,7 +1,8 @@
+import type { TaskSummaryAccess } from '../../../../core/server/utils/job-runner-postgres'
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { useApplicationDb } from '../../../../../db/client'
-import type { TaskSummary } from '../../../../core/lib/task-center'
+import type { TaskSummary } from '../../../lib/sme-roster/task-summary'
 
 /** Project scalars in SQLite: never hydrate archives, conditions or backup paths. */
 export function readSnapshotSummary(db: ReturnType<typeof useApplicationDb>, id: string): NonNullable<TaskSummary['snapshot']> {
@@ -45,7 +46,7 @@ function formatSnapshotSummary(counts: Record<string,unknown>, sources: Record<s
   }
 }
 
-export async function summarizePostgresSnapshots(db: NodePgDatabase, ids: string[], detail: boolean, authorized: boolean) {
+export async function summarizePostgresSnapshots(db: NodePgDatabase, ids: string[], detail: boolean, { authorized }: TaskSummaryAccess) {
   const links = (id:string) => [{ label:'快照范围、计数与未完成位置',to:`/tasks?tab=sme-roster&group=platform&job=${id}#snapshot-result` }]
   if (!detail || !authorized) return new Map(ids.map(id=>[id,{ links:links(id) }]))
   const { rows } = await db.execute<{ id:string; counts:Record<string,unknown> & { bySource?:Record<string,Record<string,unknown>> } | null;

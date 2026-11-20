@@ -6,43 +6,54 @@ import { registerJobSpecs } from '../../../../server/utils/job-specs'
 import type { TaskCenterAction } from '../../../../server/task-center'
 import { isJobId, JOB_STATES, type JobState, type JobSummaryDto } from '../../lib/job'
 import { getTaskFilterKinds, getTaskKind, getTaskTabs, resolveTaskFilters } from '../../lib/task-catalog'
-import type { TaskList, TaskSummary } from '../../lib/task-center'
+import type { TaskList, TaskSummary, TaskSummaryProjection } from '../../lib/task-center'
 import { readApiToken, resolveApiAuth } from './api-auth'
 import { postgresJobHandler } from './job-runner-postgres'
 import { cancelPostgresJob, getPostgresJobSummary, listPostgresTaskCenter } from './job-store-postgres'
 import { postgresJobsEnabled, requirePostgresJobsWritable, usePostgresJobsDb } from './postgres-jobs'
 import { taskCenterBrowserAccess } from './task-center-access'
 
-async function projectSummaries(db: NodePgDatabase, rows: JobSummaryDto[], authorizedFor: (kind: string) => boolean, detail = false) {
-  const projections = new Map<string, Partial<TaskSummary>>()
+async function projectSummaries(
+  db: NodePgDatabase, rows: JobSummaryDto[], authorizedFor: (kind: string) => boolean, detail = false, writable = true,
+) {
+  const projections = new Map<string, TaskSummaryProjection>()
   for (const [kind, tasks] of Map.groupBy(rows, row => row.kind)) {
     const handler = postgresJobHandler(kind)?.taskCenter
     if (!handler) continue
-    for (const [id, fields] of await handler.summaries(db, tasks.map(row => row.id), detail, authorizedFor(kind))) projections.set(id, fields)
+    const ids = tasks.map(row => row.id)
+    const fields = await handler.summaries(db, ids, detail, { authorized: authorizedFor(kind), writable })
+    for (const id of ids) {
+      const projection = fields.get(id)
+      if (projection) projections.set(id, projection)
+    }
   }
   return rows.map(row => {
     const authorized = authorizedFor(row.kind)
     const base = summarize(row, authorized)
     const fields = projections.get(row.id)
-    if (!fields) return base
-    const capabilities = fields.capabilities ?? base.capabilities
-    return { ...base, ...fields, capabilities: { ...capabilities, cancel: base.capabilities.cancel, retry: authorized && capabilities.retry,
-      reason: !authorized ? '当前请求仅可查看任务。' : base.capabilities.cancel ? base.capabilities.reason : capabilities.reason } }
+    const capabilities = fields?.capabilities ?? base.capabilities
+    return {
+      // Core identity and progress take precedence even if a projection has extra keys.
+      ...fields,
+      ...base,
+      outcome: fields?.outcome ?? base.outcome,
+      links: fields?.links ?? base.links,
+      error: fields?.error === undefined ? base.error : fields.error,
+      capabilities: writable ? {
+        cancel: base.capabilities.cancel,
+        retry: authorized && capabilities.retry,
+        retryItemIds: capabilities.retryItemIds,
+        reason: !fields ? base.capabilities.reason : !authorized ? '当前请求仅可查看任务。'
+          : base.capabilities.cancel ? base.capabilities.reason : capabilities.reason,
+      } : { cancel: false, retry: false, retryItemIds: [], reason: '当前任务中心只读。' },
+    }
   })
 }
 
-function readonlySummary(task: TaskSummary): TaskSummary {
-  return {
-    ...task,
-    capabilities: { cancel: false, retry: false, retryItemIds: [], reason: '当前任务中心只读。' },
-    ...(task.export ? { export: { ...task.export, canRegenerate: false } } : {}),
-  }
-}
-
-export async function readPostgresTaskCenterEntry(db: NodePgDatabase, id: string, authorizedFor: (kind: string) => boolean) {
+export async function readPostgresTaskCenterEntry(db: NodePgDatabase, id: string, authorizedFor: (kind: string) => boolean, writable = true) {
   return db.transaction(async tx => {
     const current = await getPostgresJobSummary(tx, id)
-    return current ? (await projectSummaries(tx, [current], authorizedFor, true))[0]! : null
+    return current ? (await projectSummaries(tx, [current], authorizedFor, true, writable))[0]! : null
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }
 
@@ -92,7 +103,7 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
     const kinds = tab.id === 'all' ? undefined : getTaskFilterKinds(tab.id, group?.id)
     const { data, rows } = await db.transaction(async tx => {
       const data = await listPostgresTaskCenter(tx, { page, pageSize, state, kinds, filter })
-      return { data, rows: await projectSummaries(tx, data.rows, authorizedFor) }
+      return { data, rows: await projectSummaries(tx, data.rows, authorizedFor, false, writable) }
     }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
     const counts: TaskList['counts'] = { ...Object.fromEntries(getTaskTabs().map(({ id }) => [id, 0])), all: 0 }
     for (const { kind, n } of data.counts) {
@@ -101,7 +112,7 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
       if (module) counts[module] = (counts[module] ?? 0) + Number(n)
     }
     return {
-      total: data.total, rows: writable ? rows : rows.map(readonlySummary),
+      total: data.total, rows,
       page, pageSize, counts,
       exportReady: writable && exportReady,
       authorized: writable && (apiAuthorized || browserAuthorized),
@@ -111,9 +122,9 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
   const id = getRouterParam(event, 'id')
   if (!isJobId(id)) throw createError({ statusCode: 400, message: 'Invalid task ID' })
   if (action === 'detail') {
-    const task = await readPostgresTaskCenterEntry(db, id, authorizedFor)
+    const task = await readPostgresTaskCenterEntry(db, id, authorizedFor, writable)
     if (!task) throw createError({ statusCode: 404, message: '任务不存在' })
-    return writable ? task : readonlySummary(task)
+    return task
   }
   const row = await getPostgresJobSummary(db, id)
   if (!row) throw createError({ statusCode: 404, message: '任务不存在' })

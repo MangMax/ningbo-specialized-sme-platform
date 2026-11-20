@@ -1,6 +1,6 @@
 import { isJobId } from '../../../../core/lib/job'
 import { MAX_BATCH_ATTEMPTS, type PlatformBatchItem } from '../../../lib/platform/batch-query'
-import type { TaskSummary } from '../../../../core/lib/task-center'
+import type { TaskSummary } from '../../../lib/sme-roster/task-summary'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { JobState } from '../../../../core/lib/job'
 import { sql } from 'drizzle-orm'

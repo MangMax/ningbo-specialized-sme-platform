@@ -1,6 +1,7 @@
+import type { TaskSummaryAccess } from '../../../../core/server/utils/job-runner-postgres'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { resolveDbPath } from '../../../../../db/client'
-import type { TaskSummary } from '../../../../core/lib/task-center'
+import type { TaskSummary } from '../../../lib/sme-roster/task-summary'
 import { TASK_EXPORTS } from '../../../lib/sme-roster/task-exports'
 import { isJobId } from '../../../../core/lib/job'
 import type { useApplicationDb } from '../../../../../db/client'
@@ -25,10 +26,10 @@ export const exportTitleFilter = (title: string) => sql`json_extract(${j.params}
 type ExportSummaryRow = Pick<ProjectedTask, 'id' | 'kind' | 'state' | 'exportTitle' | 'exportMeta'>
 
 export function readExportSummary(row: ProjectedTask, authorized: boolean, db: ReturnType<typeof useApplicationDb>) {
-  return projectExportSummary(row, authorized, row.kind === 'current-roster-export' ? currentExportDbPath(db) : '')
+  return projectExportSummary(row, authorized, row.kind === 'current-roster-export' ? currentExportDbPath(db) : '', true)
 }
 
-async function projectExportSummary(row: ExportSummaryRow, authorized: boolean, dbPath: string) {
+async function projectExportSummary(row: ExportSummaryRow, authorized: boolean, dbPath: string, writable: boolean) {
   const active = row.state === 'queued' || row.state === 'running'
   let exported: TaskSummary['export']
   if (row.kind === 'current-roster-export') {
@@ -51,13 +52,13 @@ async function projectExportSummary(row: ExportSummaryRow, authorized: boolean, 
       ruleVersion: /^current-roster-116-v[1-9]\d*$/.test(meta.ruleVersion) ? meta.ruleVersion : null,
       dataVersion: /^sha256:[a-f0-9]{64}$/.test(meta.dataVersion) ? meta.dataVersion : null,
       counts: meta.counts && Object.values(meta.counts).every(n => Number.isSafeInteger(n) && Number(n) >= 0) ? meta.counts : null,
-      artifact, canDownload: authorized && artifact?.availability === 'available', canRegenerate: authorized && !active && !!title,
+      artifact, canDownload: authorized && artifact?.availability === 'available', canRegenerate: writable && authorized && !active && !!title,
     }
   }
   return exported
 }
 
-export async function readPostgresExportSummaries(db: NodePgDatabase, ids: string[], _detail: boolean, authorized: boolean) {
+export async function readPostgresExportSummaries(db: NodePgDatabase, ids: string[], _detail: boolean, { authorized, writable }: TaskSummaryAccess) {
   const { rows } = await db.execute<ExportSummaryRow>(sql`
     SELECT id, kind, state, left(params::json->>'titleCode',40) AS "exportTitle",
       json_build_object(
@@ -74,6 +75,6 @@ export async function readPostgresExportSummaries(db: NodePgDatabase, ids: strin
     FROM business.job WHERE id=ANY(${sql.param(ids)}::text[]) AND kind='current-roster-export'`)
   const dbPath = resolveDbPath()
   const result = new Map<string, Pick<TaskSummary, 'export'>>()
-  for (const row of rows) result.set(row.id, { export: await projectExportSummary(row, authorized, dbPath) })
+  for (const row of rows) result.set(row.id, { export: await projectExportSummary(row, authorized, dbPath, writable) })
   return result
 }

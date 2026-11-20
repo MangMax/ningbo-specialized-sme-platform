@@ -11,7 +11,7 @@ import {
   setPostgresJobProgress, setPostgresJobResult, type PostgresJobSnapshot,
 } from './job-store-postgres'
 import type { JobDto } from './job-store'
-import type { TaskSummary } from '../../lib/task-center'
+import type { TaskSummary, TaskSummaryProjection } from '../../lib/task-center'
 
 export type PostgresJobDb = NodePgDatabase & { $client: Pool }
 export type PostgresJobTransaction = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -29,6 +29,13 @@ export interface PostgresJobContext {
   cancelled(): Promise<boolean>
 }
 
+export interface TaskSummaryAccess {
+  /** The request may see protected information and use permitted actions. */
+  authorized: boolean
+  /** The task runtime accepts mutations. Authorized reads can still work when false. */
+  writable: boolean
+}
+
 export interface PostgresJobSpec {
   allowBrowserCancel?: boolean
   parse?: JobSpec['parse']
@@ -36,7 +43,7 @@ export interface PostgresJobSpec {
   /** E.g. refresh a download receipt against the module’s current artifact state. */
   projectResult?(db: NodePgDatabase, job: JobDto): Promise<unknown>
   taskCenter?: {
-    summaries(db: NodePgDatabase, ids: string[], detail: boolean, authorized: boolean): Promise<Map<string, Partial<Pick<TaskSummary, 'outcome' | 'items' | 'links' | 'capabilities' | 'error' | 'export' | 'discovery' | 'annual' | 'snapshot'>>>>
+    summaries(db: NodePgDatabase, ids: string[], detail: boolean, access: TaskSummaryAccess): Promise<Map<string, TaskSummaryProjection>>
     retry?(db: NodePgDatabase, task: TaskSummary, context: LogContext): Promise<unknown>
   }
   /** Validate admission and optionally capture non-secret execution inputs. */

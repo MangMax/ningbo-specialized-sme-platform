@@ -1,7 +1,8 @@
+import type { TaskSummaryAccess } from '../../../../core/server/utils/job-runner-postgres'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { isJobId, type JobState } from '../../../../core/lib/job'
 import { TASK_EXPORTS } from '../../../lib/sme-roster/task-exports'
-import { type TaskSummary } from '../../../../core/lib/task-center'
+import { type TaskSummary } from '../../../lib/sme-roster/task-summary'
 import { CANDIDATE_JOB_KIND, type CandidateJobResult } from './candidate-discovery'
 import { EVENT_ARCHIVE_RULE_VERSION } from '../event-archive-discovery'
 import type { ProjectedTask } from './task-summary'
@@ -33,7 +34,7 @@ function projectCandidateSummary(state: JobState, discovery: CandidateRead | nul
   return { discovery, discoveryRetry, discoveryItems, summary }
 }
 
-export async function summarizePostgresCandidateJobs(db: NodePgDatabase, ids: string[], detail: boolean, authorized: boolean) {
+export async function summarizePostgresCandidateJobs(db: NodePgDatabase, ids: string[], detail: boolean, { authorized }: TaskSummaryAccess) {
   const { rows } = await db.execute<{ id: string; state: JobState; meta: CandidateRead; hasError: boolean; restarted: boolean }>(sql`
     SELECT id,state,coalesce(result::jsonb,'{}'::jsonb) || jsonb_build_object('titleCode',params::json->>'titleCode',
       'queryId',params::json->'queryId','eventCount',json_array_length(params::json->'eventIds')) AS meta,

@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import type { TaskSummary } from '../../../../core/lib/task-center'
+import type { TaskSummary } from '../../../lib/sme-roster/task-summary'
 import { sql } from 'drizzle-orm'
 import { schema } from '../../../../../db/client'
 import { ANNUAL_CORRESPONDENCE_KIND } from '../../../lib/roster/annual-correspondence'

@@ -1,4 +1,4 @@
-import type { TaskSummary } from '../../../core/lib/task-center'
+import type { TaskSummary } from './task-summary'
 
 export const TASK_EXPORTS = [
   { titleCode: 'little_giant', label: '专精特新“小巨人”', path: '/api/roster/exports/current/little-giant' },
