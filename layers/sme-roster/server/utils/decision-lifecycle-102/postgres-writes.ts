@@ -19,6 +19,10 @@ type ReceiptRow = Parameters<typeof decisionReceipt102>[0]
 type Observation = typeof schema.platformBusinessObservation.$inferSelect
 type Fact = typeof schema.enterpriseFactRevision.$inferSelect
 
+export function lockPostgresDecisionOwnership102(tx: Tx) {
+  return tx.execute(sql`SELECT pg_advisory_xact_lock(42458,114)`)
+}
+
 async function readObservationPin(tx: Tx, id: number) {
   const { rows: [stored] } = await tx.execute<{ observation: Observation;
     rdjb: Buffer | null; rdjbType: string | null; page: Buffer | null; pageType: string | null }>(sql`
@@ -111,7 +115,7 @@ export function savePostgresDecision102(db: NodePgDatabase, input: DecisionComma
   const command = parse102(internalDecisionCommand102, input)
   const hash = decisionRequestHash102(command, planHash)
   return db.transaction(async tx => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(42458,114)`)
+    await lockPostgresDecisionOwnership102(tx)
     const { rows: [review] } = await tx.execute<{ hash: string; response: Record<string, unknown> }>(sql`
       SELECT request_hash AS hash,response::json AS response FROM evidence_review_receipt_114 WHERE idempotency_key=${command.idempotencyKey}`)
     if (review) {
