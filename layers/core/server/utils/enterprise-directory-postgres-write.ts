@@ -150,39 +150,70 @@ async function retainPostgresPreviousName(tx: Transaction, profile: EnterprisePr
 
 type ReviewedAttachment = Extract<ReviewedSubject, { action: 'attach' }>
 
-async function revisePostgresReviewedProfile(tx: Transaction, before: NonNullable<Awaited<ReturnType<typeof readPostgresEnterpriseDetails>>>,
-  next: typeof before, audit: ReviewedAttachment['audit']) {
-  const renamed = next.name !== before.name
-  const usccChanged = next.uscc !== before.uscc
-  if (!renamed && !usccChanged) return null
-  const { id, name, city, district, uscc } = before
-  const { rows: [state] } = await tx.execute<{ nameNorm: string; qualityFlags: string | null; lastWrite: string | null }>(sql`
-    SELECT name_norm AS "nameNorm", quality_flags AS "qualityFlags",
-      (SELECT idempotency_key FROM enterprise_profile_audit WHERE enterprise_id = ${id} ORDER BY id DESC LIMIT 1) AS "lastWrite"
+export async function postgresEnterpriseProfileState(tx: Transaction, id: number) {
+  const { rows: [state] } = await tx.execute<{ name: string; city: string | null; district: string | null;
+    usccNorm: string | null; nameNorm: string; qualityFlags: string | null; key: string | null }>(sql`
+    SELECT name, city, district, uscc_norm AS "usccNorm", name_norm AS "nameNorm", quality_flags AS "qualityFlags",
+      (SELECT idempotency_key FROM enterprise_profile_audit WHERE enterprise_id = ${id} ORDER BY id DESC LIMIT 1) AS key
     FROM enterprise WHERE id = ${id}`)
-  const profile = { enterpriseId: id, name, city, district }
-  const after = { ...profile, name: next.name }
-  const nameNorm = renamed ? normalizeEnterpriseName(next.name) : state!.nameNorm
+  if (!state) throw new EnterpriseKernelError(404, 'not_found', 'Enterprise not found')
+  const { name, city, district, key, ...row } = state
+  return { profile: { enterpriseId: id, name, city, district }, row, key }
+}
+
+export async function applyPostgresEnterpriseProfileChange(
+  tx: Transaction, current: Awaited<ReturnType<typeof postgresEnterpriseProfileState>>,
+  changes: Partial<Pick<EnterpriseProfile, 'name' | 'city' | 'district'>> & { uscc?: string | null },
+  audit: ReviewedAttachment['audit'] & { previousName?: string },
+) {
+  const { profile, row } = current
+  const { enterpriseId: id } = profile
+  const { uscc, ...profileChanges } = changes
+  const after = { ...profile, ...profileChanges }
+  const renamed = after.name !== profile.name
+  const usccChanged = uscc !== undefined && uscc !== row.usccNorm
+  if (renamed && audit.previousName !== profile.name) {
+    throw new EnterpriseKernelError(422, 'previous_name_confirmation_required', 'Confirm the exact previous name belongs to this enterprise')
+  }
+  if (!renamed && audit.previousName !== undefined) {
+    throw new EnterpriseKernelError(422, 'unexpected_previous_name', 'Previous-name confirmation is only valid for a name change')
+  }
+  const nameNorm = renamed ? normalizeEnterpriseName(after.name) : row.nameNorm
   const alias = renamed ? await retainPostgresPreviousName(tx, profile, nameNorm, audit.idempotencyKey) : { id: null, created: 0 }
   const updates = []
-  if (renamed) updates.push(sql`name = ${next.name}, name_norm = ${nameNorm}`)
+  if (renamed) updates.push(sql`name = ${after.name}, name_norm = ${nameNorm}`)
+  if (changes.city !== undefined) updates.push(sql`city = ${after.city}`)
+  if (changes.district !== undefined) updates.push(sql`district = ${after.district}`)
   if (usccChanged) {
-    const previousFlags = JSON.parse(state!.qualityFlags ?? 'null') as string[] | null
+    const previousFlags = JSON.parse(row.qualityFlags ?? 'null') as string[] | null
     const flags = (previousFlags ?? []).filter(flag => flag !== 'uscc_missing')
-    if (next.uscc === null) flags.push('uscc_missing')
-    updates.push(sql`uscc_norm = ${next.uscc}, quality_flags = ${JSON.stringify(flags)}`)
+    if (uscc === null) flags.push('uscc_missing')
+    updates.push(sql`uscc_norm = ${uscc}, quality_flags = ${JSON.stringify(flags)}`)
   }
-  await tx.execute(sql`UPDATE enterprise SET ${sql.join(updates, sql`, `)} WHERE id = ${id}`)
-  const beforeVersion = enterpriseProfileVersion({ profile, row: { nameNorm: state!.nameNorm, usccNorm: uscc }, key: state!.lastWrite })
-  const afterVersion = enterpriseProfileVersion({ profile: after, row: { nameNorm, usccNorm: next.uscc }, key: audit.idempotencyKey })
+  if (updates.length) await tx.execute(sql`UPDATE enterprise SET ${sql.join(updates, sql`, `)} WHERE id = ${id}`)
+  const beforeVersion = enterpriseProfileVersion(current)
+  const afterVersion = enterpriseProfileVersion({ profile: after, row: { nameNorm, usccNorm: usccChanged ? uscc : row.usccNorm }, key: audit.idempotencyKey })
+  const committedAt = new Date().toISOString()
   const inserted = await tx.execute<{ id: string }>(sql`INSERT INTO enterprise_profile_audit
     (enterprise_id, idempotency_key, request_hash, before_version, after_version, before, after, actor, basis,
       retained_alias_id, alias_created, created_at)
     VALUES (${id}, ${audit.idempotencyKey}, ${audit.requestHash}, ${beforeVersion}, ${afterVersion},
-      ${JSON.stringify(usccChanged ? { ...profile, uscc } : profile)},
-      ${JSON.stringify(usccChanged ? { ...after, uscc: next.uscc } : after)}, ${JSON.stringify(audit.actor)},
-      ${audit.basis}, ${alias.id}, ${alias.created}, ${new Date().toISOString()}) RETURNING id`)
-  return Number(inserted.rows[0]!.id)
+      ${JSON.stringify(usccChanged ? { ...profile, uscc: row.usccNorm } : profile)},
+      ${JSON.stringify(usccChanged ? { ...after, uscc } : after)}, ${JSON.stringify(audit.actor)},
+      ${audit.basis}, ${alias.id}, ${alias.created}, ${committedAt}) RETURNING id`)
+  return { auditId: Number(inserted.rows[0]!.id), profile: after, version: afterVersion,
+    retainedAlias: alias.id === null ? null : { id: Number(alias.id), name: profile.name, created: !!alias.created },
+    committedAt }
+}
+
+async function revisePostgresReviewedProfile(tx: Transaction, before: NonNullable<Awaited<ReturnType<typeof readPostgresEnterpriseDetails>>>,
+  next: typeof before, audit: ReviewedAttachment['audit']) {
+  const renamed = next.name !== before.name
+  if (!renamed && next.uscc === before.uscc) return null
+  const current = await postgresEnterpriseProfileState(tx, before.id)
+  return (await applyPostgresEnterpriseProfileChange(tx, current, {
+    name: next.name, uscc: next.uscc,
+  }, { ...audit, previousName: renamed ? before.name : undefined })).auditId
 }
 
 /** Update only explicitly reviewed fields and retain their audit inside the caller's transaction. */

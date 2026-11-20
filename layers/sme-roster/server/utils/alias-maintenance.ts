@@ -38,6 +38,8 @@ export const aliasDecisionInput = {
   idempotencyKey: z.string().trim().min(1).max(200),
 }
 export const aliasListInput = { ...aliasPageInput, status: z.enum(['all', 'pending', 'confirmed', 'withdrawn']).default('all') }
+export const aliasDecisionSchema = z.strictObject(aliasDecisionInput)
+export { fail as failAlias, parse as parseAliasInput, positiveId as positiveAliasId }
 function enterprise(db: Db, value: unknown) {
   const selectedId = parse(positiveId, value)
   const id = canonicalEnterpriseId(db, selectedId) ?? selectedId
@@ -54,7 +56,7 @@ export function getEnterpriseAlias(db: Db, enterpriseId: unknown, aliasId: unkno
   return view(row)
 }
 /** A page never silently truncates persisted notes or history snapshots. */
-function boundedPage<T>(result: T): T {
+export function boundedAliasPage<T>(result: T): T {
   if (Buffer.byteLength(JSON.stringify(result), 'utf8') > 256 * 1024) fail(413, 'alias_page_response_too_large', '别名页面超过256KiB，请减小pageSize后完整分页读取')
   return result
 }
@@ -62,7 +64,7 @@ export function listEnterpriseAliases(db: Db, enterpriseId: unknown, input: unkn
   const owner = enterprise(db, enterpriseId)
   const { page, pageSize, status } = parse(z.object(aliasListInput).strict(), input)
   const where = and(eq(schema.enterpriseAlias.enterpriseId, owner.id), status === 'all' ? undefined : eq(schema.enterpriseAlias.verificationStatus, status))
-  return boundedPage(db.transaction(tx => ({ page, pageSize, total: tx.select({ n: count() }).from(schema.enterpriseAlias).where(where).get()!.n,
+  return boundedAliasPage(db.transaction(tx => ({ page, pageSize, total: tx.select({ n: count() }).from(schema.enterpriseAlias).where(where).get()!.n,
     rows: tx.select().from(schema.enterpriseAlias).where(where).orderBy(asc(schema.enterpriseAlias.id)).limit(pageSize).offset((page - 1) * pageSize).all().map(view),
   })))
 }
@@ -70,12 +72,24 @@ export function getEnterpriseAliasHistory(db: Db, enterpriseId: unknown, aliasId
   const alias = getEnterpriseAlias(db, enterpriseId, aliasId)
   const { page, pageSize } = parse(z.object(aliasPageInput).strict(), input)
   const where = eq(schema.enterpriseAliasAudit.aliasId, alias.id)
-  return boundedPage(db.transaction(tx => ({ page, pageSize, total: tx.select({ n: count() }).from(schema.enterpriseAliasAudit).where(where).get()!.n,
+  return boundedAliasPage(db.transaction(tx => ({ page, pageSize, total: tx.select({ n: count() }).from(schema.enterpriseAliasAudit).where(where).get()!.n,
     rows: tx.select().from(schema.enterpriseAliasAudit).where(where).orderBy(asc(schema.enterpriseAliasAudit.id)).limit(pageSize).offset((page - 1) * pageSize).all(),
   })))
 }
+export function decideEnterpriseAlias(before: ReturnType<typeof view>, request: z.infer<typeof aliasDecisionSchema>) {
+  if (before.version !== request.expectedVersion) fail(409, 'alias_version_conflict', '别名版本已改变，请重新读取')
+  if (request.action !== 'correct' && request.changes != null) fail(400, 'alias_input_invalid', '仅更正操作接收changes')
+  if (request.action === 'confirm' && before.verificationStatus === 'confirmed') fail(409, 'alias_transition_invalid', '该别名已经确认')
+  if (request.action === 'withdraw' && before.verificationStatus === 'withdrawn') fail(409, 'alias_transition_invalid', '该别名已经撤回')
+  const changes = request.changes ?? {}
+  if (request.action === 'correct' && !Object.entries(changes).some(([key, value]) => before[key as keyof typeof before] !== value)) fail(400, 'alias_correction_empty', '更正必须明确改变字段')
+  const next = { ...before, ...changes, nameNorm: changes.name == null ? before.nameNorm : normalizeName(changes.name),
+    verificationStatus: request.action === 'confirm' ? 'confirmed' as const : request.action === 'withdraw' ? 'withdrawn' as const : before.verificationStatus }
+  if (!next.nameNorm) fail(400, 'alias_input_invalid', '归一化名称不能为空')
+  return next
+}
 export function maintainEnterpriseAlias(db: Db, enterpriseId: unknown, aliasId: unknown, input: unknown) {
-  const request = parse(z.object(aliasDecisionInput).strict(), input)
+  const request = parse(aliasDecisionSchema, input)
   const requestHash = createHash('sha256').update(JSON.stringify(request)).digest('hex')
   return db.transaction(tx => {
     const before = getEnterpriseAlias(tx, enterpriseId, aliasId)
@@ -84,15 +98,8 @@ export function maintainEnterpriseAlias(db: Db, enterpriseId: unknown, aliasId: 
       if (previous.requestHash !== requestHash) fail(409, 'alias_idempotency_conflict', '同一幂等键载荷不同')
       return { alias: previous.after, replayed: true }
     }
-    if (before.version !== request.expectedVersion) fail(409, 'alias_version_conflict', '别名版本已改变，请重新读取')
-    if (request.action !== 'correct' && request.changes != null) fail(400, 'alias_input_invalid', '仅更正操作接收changes')
-    if (request.action === 'confirm' && before.verificationStatus === 'confirmed') fail(409, 'alias_transition_invalid', '该别名已经确认')
-    if (request.action === 'withdraw' && before.verificationStatus === 'withdrawn') fail(409, 'alias_transition_invalid', '该别名已经撤回')
+    const next = decideEnterpriseAlias(before, request)
     const changes = request.changes ?? {}
-    if (request.action === 'correct' && !Object.entries(changes).some(([key, value]) => before[key as keyof typeof before] !== value)) fail(400, 'alias_correction_empty', '更正必须明确改变字段')
-    const next = { ...before, ...changes, nameNorm: changes.name == null ? before.nameNorm : normalizeName(changes.name),
-      verificationStatus: request.action === 'confirm' ? 'confirmed' as const : request.action === 'withdraw' ? 'withdrawn' as const : before.verificationStatus }
-    if (!next.nameNorm) fail(400, 'alias_input_invalid', '归一化名称不能为空')
     const target = enterprise(tx, enterpriseId)
     if (request.action !== 'withdraw') {
       if (next.sourceKind === 'platform_business' || next.sourceKind === 'platform_apply') {

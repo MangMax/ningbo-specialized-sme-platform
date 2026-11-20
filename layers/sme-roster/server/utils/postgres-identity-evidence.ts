@@ -5,7 +5,7 @@ import { evidenceDigest113 } from './evidence-impact-113'
 
 type Transaction = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 
-async function identityMaterial(tx: Transaction, enterpriseId: number) {
+export async function readPostgresIdentityMaterial(tx: Transaction, enterpriseId: number) {
   const { rows: [enterprise] } = await tx.execute<{ uscc: string | null; name: string }>(sql`
     SELECT uscc_norm AS uscc, name_norm AS name FROM enterprise WHERE id = ${enterpriseId}`)
   const { rows } = await tx.execute<{ name: string; from: string | null; to: string | null }>(sql`
@@ -14,13 +14,16 @@ async function identityMaterial(tx: Transaction, enterpriseId: number) {
   return evidenceDigest113({ enterprise: enterprise ?? null, aliases: rows.map(evidenceDigest113).sort() })
 }
 
-async function captureIdentityRevision(tx: Transaction, enterpriseId: number, auditId: number, factDigest: string) {
+export async function capturePostgresIdentityChange(tx: Transaction, enterpriseId: number, sourceVersion: string, before: string) {
+  const after = await readPostgresIdentityMaterial(tx, enterpriseId)
+  if (before === after) return
+  const factDigest = evidenceDigest113(after)
   const sourceKey = `identity:enterprise:${enterpriseId}`
   const empty = evidenceDigest113([])
   const { rows: [revision] } = await tx.execute<{ id: string }>(sql`
     INSERT INTO evidence_revision_113 (source_kind, source_key, source_version, enterprise_id,
       coverage_digest, fact_digest, coverage_changed, fact_changed, query_executed, metadata, max_decision_id, created_at)
-    SELECT 'identity', ${sourceKey}, ${`profile:${auditId}`}, ${enterpriseId}, ${empty}, ${factDigest},
+    SELECT 'identity', ${sourceKey}, ${sourceVersion}, ${enterpriseId}, ${empty}, ${factDigest},
       CASE WHEN coalesce((SELECT coverage_digest FROM evidence_semantic_head_113 WHERE source_key = ${sourceKey}), ${empty}) = ${empty}
            THEN '0' ELSE '1' END::bigint,
       '1', '0', ${JSON.stringify({ fromEnterpriseId: null })}, coalesce((SELECT max(id) FROM difference_reason), 0),
@@ -51,11 +54,9 @@ export async function applyPostgresReviewedRosterIdentity(tx: Transaction, subje
   }
   // Capture the previous material after any earlier writer has released the enterprise row.
   await tx.execute(sql`SELECT id FROM enterprise WHERE id = ${subject.enterpriseId} FOR UPDATE`)
-  const before = await identityMaterial(tx, subject.enterpriseId)
+  const before = await readPostgresIdentityMaterial(tx, subject.enterpriseId)
   const applied = await attachPostgresReviewedEnterprise(tx, subject)
   if (applied.auditId === null) return applied
-  const after = await identityMaterial(tx, subject.enterpriseId)
-  if (before === after) return applied
-  await captureIdentityRevision(tx, subject.enterpriseId, applied.auditId, evidenceDigest113(after))
+  await capturePostgresIdentityChange(tx, subject.enterpriseId, `profile:${applied.auditId}`, before)
   return applied
 }

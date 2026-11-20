@@ -1,3 +1,5 @@
+import { usePostgresDirectoryDb } from '../../../../../../../../db/postgresql/client'
+import { maintainPostgresEnterpriseAlias } from '../../../../../utils/alias-maintenance-postgres'
 import { semanticRouteHandler } from '../../../../../../../core/server/utils/core-route'
 import { useDb } from '@db'
 import { maintainEnterpriseAlias } from '../../../../../utils/alias-maintenance'
@@ -39,5 +41,6 @@ defineRouteMeta({ openAPI: {
 export default semanticRouteHandler('maintenance.alias.patch', async event => {
   setHeader(event, 'cache-control', 'no-store')
   requireApiToken(event)
-  return maintainEnterpriseAlias(useDb(), getRouterParam(event, 'id'), getRouterParam(event, 'aliasId'), await readBody(event))
+  const pg = usePostgresDirectoryDb()
+  return pg ? maintainPostgresEnterpriseAlias(pg, getRouterParam(event, 'id'), getRouterParam(event, 'aliasId'), await readBody(event)) : maintainEnterpriseAlias(useDb(), getRouterParam(event, 'id'), getRouterParam(event, 'aliasId'), await readBody(event))
 })
