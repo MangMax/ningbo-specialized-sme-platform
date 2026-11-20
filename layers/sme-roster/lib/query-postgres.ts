@@ -1,9 +1,12 @@
 import { sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { importPostgresReceiptRedactor } from '../server/utils/import-receipt-redaction'
+import { readPostgresPublishedNames } from './roster/official-published-presentation-postgres'
+import type { OfficialPublishedFact } from './roster/official-published-presentation'
 import { normalizeName } from './domain'
 import { TITLE_ORDER } from './labels'
 import { MAX_PAGE_SIZE, matchesLedgerDerivedFilters, projectLedgerRows,
-  type LedgerEvidence, type LedgerEvent, type LedgerGroup, type LedgerSource, type RecordQuery } from './query'
+  prepareLedgerExportProjection, type LedgerExportEvent, type LedgerExportEvidence, type LedgerExportSource, type LedgerEvidence, type LedgerEvent, type LedgerGroup, type LedgerSource, type RecordQuery, type RecordFilterQuery } from './query'
 
 const array = (values: readonly (number | string)[]) => sql`${sql.param(values)}`
 
@@ -78,5 +81,40 @@ export function listPostgresLedgerRecords(db: NodePgDatabase, params: RecordQuer
     if (!derived) return { rows: projected, total }
     const filtered = projected.filter(row => matchesLedgerDerivedFilters(row, params))
     return { rows: filtered.slice(offset, offset + pageSize), total: filtered.length }
+  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
+}
+
+export function allPostgresLedgerRecords(db: NodePgDatabase, params: RecordFilterQuery) {
+  return db.transaction(async tx => {
+    const { rows: sources } = await tx.execute<{ data: LedgerExportSource }>(sql`
+      WITH groups AS (SELECT DISTINCT r.enterprise_id, r.title_code ${ledgerScope(params)})
+      SELECT json_build_object('recordId',r.id,'enterpriseId',e.id,'name',e.name,'uscc',e.uscc_norm,
+        'district',r.district,'titleCode',r.title_code,'source',r.source) AS data
+      FROM groups JOIN record r USING (enterprise_id,title_code) JOIN enterprise e ON e.id=r.enterprise_id
+      ORDER BY r.title_code COLLATE "C", e.name COLLATE "C", r.id`)
+    if (!sources.length) return []
+    const { rows: events } = await tx.execute<{ data: LedgerExportEvent }>(sql`
+      SELECT json_build_object('id',id,'recordId',record_id,'type',event_type,'year',year,'seq',batch_seq,'sortKey',sort_key) AS data
+      FROM record_event WHERE record_id = ANY(${array(sources.map(row => row.data.recordId))}::bigint[])`)
+    const { rows: evidence } = await tx.execute<{ data: LedgerExportEvidence }>(sql`
+      SELECT json_build_object('id',id,'recordEventId',record_event_id,'sourceFile',source_file,
+        'attachment',attachment,'listNo',list_no,'page',page) AS data
+      FROM record_evidence WHERE record_event_id = ANY(${array(events.map(row => row.data.id))}::bigint[]) ORDER BY id`)
+    const projection = prepareLedgerExportProjection(sources.map(row => row.data), events.map(row => row.data), evidence.map(row => row.data))
+    const published = new Map<number, OfficialPublishedFact>()
+    const redact = await importPostgresReceiptRedactor(tx)
+    for (let start = 0; start < projection.scopes.length; start += 40) {
+      const scopes = projection.scopes.slice(start, start + 40)
+      const batch = await readPostgresPublishedNames(tx, scopes.flat(), redact)
+      if (batch.availability === 'available') {
+        for (const fact of batch.facts) published.set(fact.evidenceId, fact)
+      } else {
+        for (const scope of scopes) {
+          const group = await readPostgresPublishedNames(tx, scope, redact)
+          for (const fact of group.facts) published.set(fact.evidenceId, fact)
+        }
+      }
+    }
+    return projection.rows(published)
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }

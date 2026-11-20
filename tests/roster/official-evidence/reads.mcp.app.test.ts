@@ -5,6 +5,7 @@ import { reviewFixtureRows } from '../imports/fixtures/reviewed-announcement'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { createHash } from 'node:crypto'
+import ExcelJS from 'exceljs'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
@@ -345,6 +346,19 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     const response = await app.request(bounded)
     expect(response.status).toBe(413)
     expect(await response.json()).toEqual(expected.body)
+
+    const exportPath = '/api/export?title=specialized_sme&q=source-1'
+    const workbookRows = async (response: Response) => {
+      expect(response.status).toBe(200)
+      const workbook = new ExcelJS.Workbook()
+      await workbook.xlsx.load(await response.arrayBuffer())
+      return workbook.getWorksheet('台账')!.getSheetValues()
+    }
+    const [legacyRows, nativeRows] = await Promise.all([
+      workbookRows(await fetch(base + exportPath)), workbookRows(await app.request(exportPath)),
+    ])
+    expect(nativeRows).toEqual(legacyRows)
+    expect(JSON.stringify(nativeRows)).toContain('2021旧名')
   } finally {
     await app.close()
     if (started) run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-m', 'fast', 'stop'])

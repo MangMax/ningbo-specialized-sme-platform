@@ -4,7 +4,7 @@ import * as schema from '../../../../db/schema'
 import { computeTitleLifecycle } from '../../lib/roster/lifecycle'
 import { postgresRosterRow, readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
 import { projectExactEvidence } from './roster-evidence-correction'
-import { checkOfficialEvidenceFields, OfficialEvidenceError, type OfficialEvidenceRow } from './official-evidence'
+import { checkOfficialEvidenceFields, OfficialEvidenceError, type OfficialEvidenceRow, type OfficialEvidencePageRequest, type OfficialEvidencePageResult } from './official-evidence'
 import { officialProjectionBudget, officialProjectionResponse, type EvidenceRead, type EventRead } from './official-evidence-read'
 import { importPostgresReceiptRedactor } from './import-receipt-redaction'
 
@@ -66,6 +66,10 @@ const capturedShape = sql`json_build_object('formatVersion', r.format_version, '
   'createdAt', r.created_at, 'currentOwner', CASE WHEN owner.id IS NOT NULL THEN
     json_build_object('recordId', rec.id, 'enterpriseId', owner.id) END)`
 
+const oversizedField = sql`greatest(length(r.name_raw),length(r.uscc_raw),length(r.district_raw),length(r.path),length(r.sha256),
+  length(r.attachment),length(r.section_key),length(r.basis),length(r.actor::json ->> 'id'),
+  length(r.correction_batch_key),length(r.created_at)) > 4000`
+
 export async function readPostgresPublicOfficialEvidence(db: NodePgDatabase, kind: 'event' | 'evidence', args: EventRead | EvidenceRead) {
   const pageSize = args.official === 'history' || kind === 'event' ? args.pageSize ?? 20 : 1
   const { maxBytes, budget } = officialProjectionBudget(args)
@@ -81,9 +85,7 @@ export async function readPostgresPublicOfficialEvidence(db: NodePgDatabase, kin
       LIMIT ${pageSize + (event || args.official === 'history' ? 1 : 0)}
     ), projected AS (
       SELECT ${capturedShape} AS body,
-        greatest(length(r.name_raw),length(r.uscc_raw),length(r.district_raw),length(r.path),length(r.sha256),
-          length(r.attachment),length(r.section_key),length(r.basis),length(r.actor::json ->> 'id'),
-          length(r.correction_batch_key),length(r.created_at)) > 4000 AS field_limit
+        ${oversizedField} AS field_limit
       FROM (SELECT * FROM selected ORDER BY ${order} LIMIT ${pageSize}) r
       LEFT JOIN record_event e ON e.id = r.event_id LEFT JOIN record rec ON rec.id = e.record_id
       LEFT JOIN enterprise owner ON owner.id = rec.enterprise_id
@@ -116,4 +118,46 @@ export async function readPostgresCorrectionAudit<T extends Table>(
   const { rows } = await db.execute<{ row: T['$inferSelect'] }>(sql`
     SELECT ${postgresRosterRow(table, 'p')} AS row ${from} ORDER BY p.id LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`)
   return { rows: rows.map(row => row.row), total: Number(total?.count), page, pageSize }
+}
+
+/** The publication reader requests at most 40 events per wave. */
+export async function readPostgresOfficialEvidencePages(db: Db, requests: readonly OfficialEvidencePageRequest[]): Promise<OfficialEvidencePageResult[]> {
+  const { rows } = await db.execute<{
+    eventId: number; scopeSize: number; fieldLimit: boolean; extra: boolean; rows: OfficialEvidenceRow[] | null
+  }>(sql`
+    SELECT q.event_id::float8 AS "eventId", s.count::integer AS "scopeSize", p.*
+    FROM unnest(${sql.param(requests.map(p => p.eventId))}::bigint[],
+      ${sql.param(requests.map(p => p.afterEvidenceId ?? 0))}::bigint[]) WITH ORDINALITY q(event_id, after_id, ordinal)
+    CROSS JOIN LATERAL (SELECT count(*) FROM (SELECT id FROM record_evidence WHERE record_event_id=q.event_id LIMIT 301) relevant) s
+    CROSS JOIN LATERAL (
+      WITH selected AS (
+        SELECT r.* FROM official_evidence_row_revision r
+        WHERE s.count <= 300 AND r.event_id = q.event_id AND r.evidence_id > q.after_id
+          AND NOT EXISTS (SELECT 1 FROM official_evidence_row_revision newer WHERE newer.evidence_id=r.evidence_id AND newer.revision>r.revision)
+        ORDER BY r.evidence_id LIMIT 51
+      ), projected AS (
+        SELECT r.evidence_id, ${capturedShape} AS body, ${oversizedField} AS field_limit
+        FROM (SELECT * FROM selected ORDER BY evidence_id LIMIT 50) r
+        LEFT JOIN record_event e ON e.id=r.event_id LEFT JOIN record rec ON rec.id=e.record_id
+        LEFT JOIN enterprise owner ON owner.id=rec.enterprise_id
+      )
+      SELECT (SELECT count(*) FROM selected)>50 AS extra, coalesce(bool_or(field_limit),false) AS "fieldLimit",
+        CASE WHEN NOT coalesce(bool_or(field_limit), false) AND coalesce(sum(octet_length(body::text)),0) <= 73536
+          THEN coalesce(json_agg(body ORDER BY evidence_id),'[]'::json) END AS rows
+      FROM projected
+    ) p ORDER BY q.ordinal`)
+  return rows.map(row => {
+    const { eventId } = row
+    if (row.scopeSize > 300) return { eventId, error: 'source_limit' }
+    if (row.fieldLimit) return { eventId, error: 'field_limit' }
+    if (!row.rows) return { eventId, error: 'response_limit' }
+    const page = { formatVersion: 1 as const, eventId, rows: row.rows, nextAfterEvidenceId: row.extra ? row.rows.at(-1)!.evidenceId : null }
+    if (Buffer.byteLength(JSON.stringify(page)) > 65536) return { eventId, error: 'response_limit' }
+    try { checkOfficialEvidenceFields(row.rows) }
+    catch (error) {
+      if (error instanceof OfficialEvidenceError && error.code === 'field_limit') return { eventId, error: 'field_limit' }
+      throw error
+    }
+    return { eventId, page }
+  })
 }

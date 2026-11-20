@@ -1,5 +1,5 @@
 import { MAX_PAGE_SIZE } from './query-limits'
-import { readPublicPublishedNames,type OfficialPublishedFact } from './roster/official-published-presentation'
+import { readPublicPublishedNames,type OfficialPublishedFact, type OfficialPublishedScope } from './roster/official-published-presentation'
 import { publishedNameText,type PublishedPresentation } from './roster/correspondence-view'
 import { and,desc,eq,exists,inArray,isNull,like,or,sql,type SQL } from 'drizzle-orm'
 import { compact,groupBy,minBy,orderBy } from 'es-toolkit'
@@ -710,6 +710,23 @@ function ledgerRecordsSnapshot(db: Db, params: RecordFilterQuery): ExportRow[] {
         .where(inArray(schema.recordEvidence.recordEventId, eventIds))
         .all()
     : []
+  const projection = prepareLedgerExportProjection(matched, events, evidence)
+  const publishedByEvidence = new Map<number, OfficialPublishedFact>()
+  for (let start = 0; start < projection.scopes.length; start += 40) {
+    const scopes = projection.scopes.slice(start, start + 40)
+    const batch = readPublicPublishedNames(db, scopes.flat())
+    // If the batch exceeds its budget, each group retains its own display boundary.
+    const results = batch.availability === 'available' ? [batch] : scopes.map(scope => readPublicPublishedNames(db, scope))
+    for (const result of results) for (const fact of result.facts) publishedByEvidence.set(fact.evidenceId, fact)
+  }
+  return projection.rows(publishedByEvidence)
+}
+
+export type LedgerExportSource = Omit<LedgerSource, 'flags'>
+export type LedgerExportEvent = Pick<LedgerEvent, 'id' | 'recordId' | 'type' | 'year' | 'seq' | 'sortKey'>
+export type LedgerExportEvidence = LedgerEvidence & { id: number }
+
+export function prepareLedgerExportProjection(matched: LedgerExportSource[], events: LedgerExportEvent[], evidence: LedgerExportEvidence[]) {
   const evByRecord = groupBy(events, (e) => e.recordId)
   const evByEvent = groupBy(evidence, (v) => v.recordEventId)
 
@@ -717,55 +734,50 @@ function ledgerRecordsSnapshot(db: Db, params: RecordFilterQuery): ExportRow[] {
   const byKey = groupBy(matched, (r) => groupKey(r.enterpriseId, r.titleCode))
 
   const recordGroups = Object.values(byKey)
-  const publishedByEvidence = new Map<number, OfficialPublishedFact>()
-  for (let start = 0; start < recordGroups.length; start += 40) {
-    const scopes = recordGroups.slice(start, start + 40).map(recs => recs.flatMap(r =>
-      (evByRecord[r.recordId] ?? []).flatMap(e => (evByEvent[e.id] ?? []).map(v => ({ evidenceId: v.id, eventId: e.id }))),
-    ))
-    const batch = readPublicPublishedNames(db, scopes.flat())
-    // Keep the existing per-group budget/error boundary if a batch cannot be projected.
-    const results = batch.availability === 'available' ? [batch] : scopes.map(scope => readPublicPublishedNames(db, scope))
-    for (const result of results) for (const fact of result.facts) publishedByEvidence.set(fact.evidenceId, fact)
+  const scopes: OfficialPublishedScope[][] = recordGroups.map(recs => recs.flatMap(r =>
+    (evByRecord[r.recordId] ?? []).flatMap(e => (evByEvent[e.id] ?? []).map(v => ({ evidenceId: v.id, eventId: e.id }))),
+  ))
+  function rows(publishedByEvidence: ReadonlyMap<number, OfficialPublishedFact>): ExportRow[] {
+    return recordGroups.map((recs) => {
+      const head = minBy(recs, (r) => r.recordId)!
+      // 组内 enterpriseId 恒定(分组键就是它),取 head 的即可。
+      const enterpriseId = head.enterpriseId
+      // 区县取组内 record.id 最小且有值者(与列表同一规则)。
+      const district = minBy(recs.filter((r) => r.district), (r) => r.recordId)?.district ?? null
+      // 该组合下全部事件(保留每条事件所属来源),按 sortKey 排序。
+      const evRows = orderBy(
+        recs.flatMap((r) =>
+          (evByRecord[r.recordId] ?? []).map((e) => ({
+            type: e.type,
+            year: e.year,
+            seq: e.seq,
+            sortKey: e.sortKey,
+            id: e.id,
+            recordId: r.recordId,
+          })),
+        ),
+        [(e) => e.sortKey, (e) => e.id],
+        ['asc', 'asc'],
+      )
+      const selectedEvidence = evRows.flatMap(e => evByEvent[e.id] ?? [])
+      const evidenceText = selectedEvidence.map(v => {
+        const locator = formatEvidence(v)
+        const fact = publishedByEvidence.get(v.id)
+        return locator + ' / ' + (fact ? publishedNameText(fact) : '公布名称暂不可用')
+      }).join('; ')
+      return {
+        enterpriseId,
+        name: head.name,
+        uscc: head.uscc,
+        district,
+        titleCode: head.titleCode,
+        sources: orderSources(recs.map((r) => r.source)),
+        events: evRows
+          .map((e) => `${EVENTS[e.type] ?? e.type} ${e.year ?? ''}${e.seq ? '-' + e.seq : ''}`.trim())
+          .join('; '),
+        evidence: evidenceText,
+      }
+    })
   }
-
-  return recordGroups.map((recs) => {
-    const head = minBy(recs, (r) => r.recordId)!
-    // 组内 enterpriseId 恒定(分组键就是它),取 head 的即可。
-    const enterpriseId = head.enterpriseId
-    // 区县取组内 record.id 最小且有值者(与列表同一规则)。
-    const district = minBy(recs.filter((r) => r.district), (r) => r.recordId)?.district ?? null
-    // 该组合下全部事件(保留每条事件所属来源),按 sortKey 排序。
-    const evRows = orderBy(
-      recs.flatMap((r) =>
-        (evByRecord[r.recordId] ?? []).map((e) => ({
-          type: e.type,
-          year: e.year,
-          seq: e.seq,
-          sortKey: e.sortKey,
-          id: e.id,
-          recordId: r.recordId,
-        })),
-      ),
-      [(e) => e.sortKey, (e) => e.id],
-      ['asc', 'asc'],
-    )
-    const selectedEvidence = evRows.flatMap(e => evByEvent[e.id] ?? [])
-    const evidenceText = selectedEvidence.map(v => {
-      const locator = formatEvidence(v)
-      const fact = publishedByEvidence.get(v.id)
-      return locator + ' / ' + (fact ? publishedNameText(fact) : '公布名称暂不可用')
-    }).join('; ')
-    return {
-      enterpriseId,
-      name: head.name,
-      uscc: head.uscc,
-      district,
-      titleCode: head.titleCode,
-      sources: orderSources(recs.map((r) => r.source)),
-      events: evRows
-        .map((e) => `${EVENTS[e.type] ?? e.type} ${e.year ?? ''}${e.seq ? '-' + e.seq : ''}`.trim())
-        .join('; '),
-      evidence: evidenceText,
-    }
-  })
+  return { scopes, rows }
 }
