@@ -36,10 +36,3 @@ export interface TaskSummary {
   links: { label: string; to: string }[]
 }
 export interface TaskList { rows: TaskSummary[]; total: number; page: number; pageSize: number; counts: { all: number } & Record<string, number>; exportReady: boolean; authorized: boolean }
-
-export function taskArtifactExpiry(task: TaskSummary): number {
-  const artifact = task.export?.artifact
-  if (artifact?.availability !== 'available') return Infinity
-  const expiry = Date.parse(artifact.expiresAt)
-  return Number.isFinite(expiry) ? expiry : Infinity
-}
