@@ -253,27 +253,37 @@ export function runPostgresPlatformImport(action: 'preflight' | 'commit' | 'repl
     if (action === 'preflight') return {preflight}
     if (conflicts.length) return {preflight,items:conflicts,summary:{...emptySummary,failed:conflicts.length},
       error:'批次校验未通过：'+conflicts.length+' 项有误，未写入任何数据'}
-    let items: RosterImportItemResult[]
-    try {
-      items = await tx.transaction(async nested=>{
-        const results: RosterImportItemResult[] = []
-        for (const plan of plans) results.push(await writeQuery(nested,plan,batch.id))
-        for (const { relationId,inputFingerprint } of observationSources) {
+    const writes: { kind: string; ref: string; run(tx: Tx): Promise<RosterImportItemResult> }[] = [
+      ...plans.map((plan,index)=>({kind:'platform_query',ref:plan.same?.source.ref ?? 'query:'+index,
+        run:(nested: Tx)=>writeQuery(nested,plan,batch.id)})),
+      ...observationSources.map(({ relationId,inputFingerprint })=>{
+        const item = { kind:'platform_observation',ref:'relation:'+relationId }
+        return { ...item,async run(nested: Tx) {
           const projection = await writePostgresArchivedObservation(nested,relationId,{ kind:'historical',batchId:batch.id,expected:inputFingerprint })
-          results.push({ ok:true,kind:'platform_observation',ref:'relation:'+relationId,
-            detail:{ canonicalProjection:[projection!],rowsWritten:0 } })
-        }
-        for (const plan of legacy) {
-          results.push({ ok:true,kind:'platform_legacy_provenance',ref:'query:'+plan.input.queryId,
-            detail:await writePostgresLegacyProvenance(nested,plan,batch.id) })
-        }
-        return results
+          return { ...item,ok:true,detail:{ canonicalProjection:[projection!],rowsWritten:0 } }
+        } }
+      }),
+      ...legacy.map(plan=>{
+        const item = { kind:'platform_legacy_provenance',ref:'query:'+plan.input.queryId }
+        return { ...item,async run(nested: Tx) {
+          return { ...item,ok:true,detail:await writePostgresLegacyProvenance(nested,plan,batch.id) }
+        } }
+      }),
+    ]
+    const items: RosterImportItemResult[] = []
+    try {
+      await tx.transaction(async nested=>{
+        for (const write of writes) items.push(await write.run(nested))
       })
     } catch (error) {
       if (!(error instanceof ArchivedObservationWriteError)) throw error
       const failed: RosterImportItemResult = { ok:false,kind:error.kind,ref:'relation:'+error.relationId,
         error:{code:error.code,message:error.message,...(error.kind==='platform_relation' ? {field:'relations'} : {})} }
-      return {preflight,items:[failed],summary:{...emptySummary,failed:1},
+      const rolledBack = items.map(item=>({ ...item,ok:false,error:{code:'commit_rolled_back',message:'整批回滚，本项未写入'} }))
+      const notExecuted = writes.slice(items.length+1).map(({kind,ref})=>({
+        kind,ref,ok:false,error:{code:'not_executed',message:'整批回滚，本项未执行'},
+      }))
+      return {preflight,items:[...rolledBack,failed,...notExecuted],summary:{...emptySummary,failed:writes.length},
         error:'批次执行阶段有项失败（已整批回滚，未写入任何数据）'}
     }
     const summary = archiveSummary(items,plans.some(plan=>(plan.same || plan.plannedReuse) &&

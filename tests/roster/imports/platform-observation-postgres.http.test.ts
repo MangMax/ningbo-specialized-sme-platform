@@ -79,14 +79,18 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
     }
   })
 
-  async function seedLegacyObservation(original: typeof historical[number]) {
-    const { queryId, relationId, key, raw, result, interface: source } = original
+  async function seedLegacyObservation(original: {
+    queryId: number; relationId: number; key: string; raw: string
+    result: typeof historical[number]['result']; interface: typeof historical[number]['interface']
+    time?: string; status?: Buffer
+  }) {
+    const { queryId, relationId, key, raw, result, interface: source, time = queriedAt, status = null } = original
     const id = relationId - 90
     await client.query('BEGIN')
     await client.query(`
       INSERT INTO platform_collection(id,interface,query_key,rdjb,queried_at,created_at,status,completeness,provenance_state,parse_state,rule_version)
       VALUES ($1,$2,$3,'2',$4,$4,'success','unknown','unknown','absent','fixture')
-    `, [id, source, queryKey, queriedAt])
+    `, [id, source, queryKey, time])
     await client.query('INSERT INTO platform_legacy_query_alias(old_id,collection_id) VALUES ($1,$2)', [queryId, id])
     await client.query(`
       INSERT INTO platform_business_observation(id,collection_id,sequence_no,source_relation_key,identity_state,content_state,position_state,
@@ -103,12 +107,12 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
     const values = {
       id: relationId, query_id: queryId, sequence_no: 1, relation_key: key, enterprise_id: null, raw_fields: raw,
       source_text: originalSource, title_raw: null, uscc_raw: null, name_raw: null, alias_name_raw: null, province: null,
-      status: null, batch: null, declare_kind: null, applied_at: null, award_batch_label: null, year: null,
-      match_basis: 'none', verification_status: 'pending', created_at: queriedAt,
+      status, batch: null, declare_kind: null, applied_at: null, award_batch_label: null, year: null,
+      match_basis: 'none', verification_status: 'pending', created_at: time,
     }
     const fields = Object.entries(values).map(([name, value]) => ({
-      name, storageClass: value === null ? 'null' : typeof value === 'number' ? 'integer' : 'text',
-      hex: value === null ? '' : Buffer.from(String(value)).toString('hex'),
+      name, storageClass: value === null ? 'null' : Buffer.isBuffer(value) ? 'blob' : typeof value === 'number' ? 'integer' : 'text',
+      hex: value === null ? '' : (Buffer.isBuffer(value) ? value : Buffer.from(String(value))).toString('hex'),
     }))
     const snapshot = Buffer.from(JSON.stringify({ encoding: 't05a-sqlite-cells-v1', fields }))
     const archiveFields = [
@@ -131,18 +135,20 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
     await client.query('UPDATE platform_observation_archive_ref SET sealed=1 WHERE owner_id=$1', [id])
     const kindColumns = ['province', 'status', 'batch', 'declare_kind', 'applied_at', 'award_batch_label', 'year']
       .flatMap(field => ['stored_' + field + '_kind', 'parsed_' + field + '_kind', field + '_conflict'])
-    const kindValues = kindColumns.map(col => col.endsWith('_kind') ? "'absent'" : '0')
+    const kindValues = kindColumns.map(col => col === 'stored_status_kind' && status ? "'blob'" : col.endsWith('_kind') ? "'absent'" : '0')
     const yearColumn = { apply: 'declaration_year', business: 'business_year', recognized: 'maintenance_year' }[result]
     const storedPrefix = result === 'business' ? 'process' : result
     const exact = result === 'recognized' ? '' :
       `, exact_stored_state, exact_stored_rule, exact_stored_origin, sql_fact_title_state, sql_fact_title_rule`
     const exactValues = result === 'recognized' ? '' :
       `, 'captured', '${storedPrefix}-stored-cells-v1', 'legacy_source', 'captured', '${storedPrefix}-legacy-sql-fact-title-v1'`
+    const blobColumns = status ? ', exact_status, exact_status_sqlite_storage, stored_status, stored_status_sqlite_storage, reconciled_status, reconciled_status_sqlite_storage' : ''
+    const blobValues = status ? ", $5, 'blob', $5, 'blob', $5, 'blob'" : ''
     await client.query(`
       INSERT INTO platform_${result}_projection(observation_id,basis,source_title_kind,source_title_rule_version,
-        source_archive_id,parse_state,rule_version,created_at,${yearColumn},${kindColumns.join(',')}${exact})
-      VALUES ($1,'observation_reconciliation','absent','fixture',$2,'valid',$3,$4,2024,${kindValues.join(',')}${exactValues})
-    `, [id, rawArchiveId, 'platform-' + result + '-v1', queriedAt])
+        source_archive_id,parse_state,rule_version,created_at,${yearColumn},${kindColumns.join(',')}${exact}${blobColumns})
+      VALUES ($1,'observation_reconciliation','absent','fixture',$2,'valid',$3,$4,2024,${kindValues.join(',')}${exactValues}${blobValues})
+    `, [id, rawArchiveId, 'platform-' + result + '-v1', time, ...(status ? [status] : [])])
     await client.query('COMMIT')
   }
 
@@ -183,9 +189,19 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
       VALUES ('business_list','history-B','prior-rule',$1) RETURNING id
     `, [queriedAt])
     try {
-      expect(await mcp('commit', request('archive-with-incompatible-rule', { platformRecordObservations: ids }))).toMatchObject({
-        status: 'failed', summary: { written: 0, failed: 1 }, items: [{ ref: 'relation:102', error: { code: 'projection_rule_conflict' } }],
-      })
+      const failure = {
+        status: 'failed', summary: { written: 0, skipped: 0, failed: 3, evidenceRepointed: 0 }, items: [
+          { kind: 'platform_observation', ref: 'relation:101', ok: false, error: { code: 'commit_rolled_back' } },
+          { kind: 'platform_observation', ref: 'relation:102', ok: false, error: { code: 'projection_rule_conflict' } },
+          { kind: 'platform_observation', ref: 'relation:103', ok: false, error: { code: 'not_executed' } },
+        ],
+      }
+      expect(await mcp('commit', request('archive-with-incompatible-rule', { platformRecordObservations: ids }))).toMatchObject(failure)
+      expect((await client.query(`
+        SELECT r.status,r.summary::json AS summary,r.item_results::json AS items
+        FROM import_receipt r JOIN import_batch b ON b.id=r.batch_id
+        WHERE b.idempotency_key='archive-with-incompatible-rule'
+      `)).rows).toMatchObject([failure])
       expect((await client.query('SELECT count(*)::int AS n FROM platform_observation_fingerprint_basis')).rows).toEqual([{ n: 0 }])
       expect((await client.query('SELECT count(*)::int AS n FROM platform_business_record_version')).rows).toEqual([{ n: 0 }])
       expect(await readOriginals()).toEqual(originals)
@@ -307,5 +323,57 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
     expect(await http('commit', body)).toMatchObject({ status: 200, body: { status: 'failed', summary: { written: 0, failed: 1 } } })
     expect(await http('replay', body)).toMatchObject({ status: 400 })
     expect(await readOriginals()).toEqual(originals)
+  })
+
+  it('verifies an unindexed business status BLOB by reference and rejects ordinary first indexing', async () => {
+    const time = '2026-11-13T00:00:00Z'
+    const rawFields = { id: 'blob-status', year: 2024 }
+    const status = Buffer.from([0x00, 0xff])
+    await seedLegacyObservation({ interface: 'business_list', result: 'business', queryId: 94, relationId: 104,
+      key: rawFields.id, raw: JSON.stringify(rawFields), time, status })
+    const query = { interface: 'business_list', queryKey, rdjb: '2', queriedAt: time } as const
+    const reference = request('blob-status-reference', { platformQueries: [{
+      ...query, reuseExisting: true, relations: [{ sequenceNo: 1 }],
+    }] })
+    expect(await http('preflight', reference)).toMatchObject({ status: 200, body: { status: 'preflight', preflight: {
+      conflicts: [], canonicalProjection: [{ relationId: 104, businessProjection: { businessYear: 2024 } }],
+    } } })
+    expect(await http('commit', reference)).toMatchObject({ status: 200, body: { status: 'committed', items: [{
+      ref: 'query:94', detail: { rowsWritten: 0, canonicalProjection: [] },
+    }] } })
+
+    const historicalIndex = request('blob-status-index', { platformRecordObservations: [{ relationId: 104 }] })
+    expect(await mcp('preflight', historicalIndex)).toMatchObject({ status: 'preflight', preflight: {
+      conflicts: [], platformObservationSources: [{ relationId: 104, inputFingerprint: expect.any(String) }],
+    } })
+    const drift = { code: 'projection_source_drift', message: 'Legacy text class conflict' }
+    expect(await mcp('commit', historicalIndex)).toMatchObject({ status: 'failed', summary: { written: 0, failed: 1 }, items: [{
+      ok: false, kind: 'platform_observation', ref: 'relation:104', error: drift,
+    }] })
+
+    const ordinaryReplay = request('blob-status-replay', {
+      platformQueries: [
+        { interface: 'apply_list', queryKey, rdjb: '2', queriedAt, reuseExisting: true },
+        { ...query, rawResponse: 'original response', relations: [{ sequenceNo: 1, rawFields }] },
+      ],
+      platformRecordObservations: [{ relationId: 103 }],
+    })
+    expect(await http('commit', ordinaryReplay)).toMatchObject({ status: 200, body: {
+      status: 'failed', summary: { written: 0, failed: 3 }, items: [
+        { ok: false, kind: 'platform_query', ref: 'query:91', error: { code: 'commit_rolled_back' } },
+        { ok: false, kind: 'platform_relation', ref: 'relation:104', error: { ...drift, field: 'relations' } },
+        { ok: false, kind: 'platform_observation', ref: 'relation:103', error: { code: 'not_executed' } },
+      ],
+    } })
+    expect((await client.query(`
+      SELECT o.identity_state,o.content_state,o.record_id,o.version_id,o.input_fingerprint,o.batch_id,b.scheme,
+        p.exact_status,p.exact_status_sqlite_storage
+      FROM platform_legacy_relation_alias a JOIN platform_business_observation o ON o.id=a.observation_id
+      JOIN platform_business_projection p ON p.observation_id=o.id
+      LEFT JOIN platform_observation_fingerprint_basis b ON b.observation_id=o.id
+      WHERE a.old_id=104
+    `)).rows).toEqual([{ identity_state: 'not_indexed', content_state: 'not_indexed', record_id: null, version_id: null,
+      input_fingerprint: null, batch_id: null, scheme: null, exact_status: status, exact_status_sqlite_storage: 'blob' }])
+    expect((await client.query("SELECT id FROM platform_business_record WHERE platform_key='blob-status'")).rows).toEqual([])
   })
 })

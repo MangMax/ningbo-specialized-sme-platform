@@ -96,7 +96,7 @@ async function inspectObservation(tx: Tx, relationId: number, options: { expecte
   const raw = checkedArchive(originals.get('rawFields'))
   const sourceText = checkedArchive(originals.get('sourceText'))
   const snapshot = checkedArchive(originals.get('legacyRowSnapshot'), 'blob')
-  const { rawFields, bytes } = (() => {
+  const { rawFields, bytes, legacyStatusBlob } = (() => {
     try {
       const cells = snapshotSchema.parse(JSON.parse(decode(snapshot.bytes!))).fields
       const byName = new Map(cells.map(cell => [cell.name, cell]))
@@ -133,7 +133,8 @@ async function inspectObservation(tx: Tx, relationId: number, options: { expecte
           queryKey: row.queryKey, rdjb: row.rdjb, queriedAt: row.queriedAt, ...legacy,
         }))
         if (indexed && !checkedArchive(originals.get('basis'), 'blob').bytes!.equals(bytes)) return drift('Original legacy fingerprint input differs')
-        return { rawFields: legacy.rawFields, bytes }
+        return { rawFields: legacy.rawFields, bytes,
+          legacyStatusBlob: !indexed && row.source === 'business_list' && cell('status').storageClass === 'blob' }
       }
       if (row.scheme !== 'target-command-v1') return drift('Original fingerprint input was never captured')
       const bytes = checkedArchive(originals.get('basis'), 'blob').bytes!
@@ -147,7 +148,7 @@ async function inspectObservation(tx: Tx, relationId: number, options: { expecte
         (command.row.sourceText ?? null) !== (sourceText.bytes?.toString('utf8') ?? null)) {
         return drift('Original command fingerprint input differs')
       }
-      return { rawFields: legacy.rawFields, bytes }
+      return { rawFields: legacy.rawFields, bytes, legacyStatusBlob: false }
     } catch (error) {
       if (error instanceof PlatformProjectionError) throw error
       return drift('Invalid original relation or fingerprint bytes')
@@ -206,7 +207,7 @@ async function inspectObservation(tx: Tx, relationId: number, options: { expecte
   const historicalPreview = { ...fingerprint, ...fields }
   const observationPreview = { relationId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource,
     [projectionNames[row.source]]: Object.fromEntries(previewKeys[row.source].map(key => [key, observed.value[key]])) }
-  return { row, indexed, plan, fingerprint, bytes, historicalPreview, observationPreview, versionProjectionMissing }
+  return { row, indexed, plan, fingerprint, bytes, historicalPreview, observationPreview, versionProjectionMissing, legacyStatusBlob }
 }
 
 export async function planPostgresHistoricalObservation(tx: Tx, relationId: number, expected?: string) {
@@ -228,9 +229,11 @@ export class ArchivedObservationWriteError extends PlatformProjectionError {
 export async function writePostgresArchivedObservation(tx: Tx, relationId: number, mode: ImportMode): Promise<PlatformProjectionResult | null> {
   const sync = mode.kind !== 'reference'
   try {
-    const { row, indexed, plan, fingerprint, bytes, versionProjectionMissing } = await inspectObservation(tx, relationId,
+    const { row, indexed, plan, fingerprint, bytes, versionProjectionMissing, legacyStatusBlob } = await inspectObservation(tx, relationId,
       mode.kind === 'historical' ? { expected: mode.expected } : { allowMissingVersionProjection: true })
     if (!indexed && !sync) return null
+    // The SQLite bootstrap's ordinary writer only admits a text or null legacy status.
+    if (legacyStatusBlob) throw new PlatformProjectionError('projection_source_drift', 'Legacy text class conflict')
 
     const now = new Date().toISOString()
     const content = !indexed || (sync && versionProjectionMissing)
