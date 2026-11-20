@@ -5,7 +5,8 @@ import {
   parseFileMaintenanceOptions, validateFileMaintenancePage, type FileMaintenanceAction, type FileMaintenanceOptions,
 } from './file-maintenance'
 import { FileMaintenanceError, verifyFileRestorationBytes, type FileRow } from './file-store'
-import { parseMetadataPatch } from './stored-files'
+import { updatePostgresFileMetadata } from '../../../../server/file-store'
+import { extensionSnapshot, parseMetadataPatch } from './stored-files'
 import {
   activePostgresPhysicalIntent, lockPostgresFile, readPostgresFile, requirePostgresFileWrite, type PostgresFileDb,
 } from './file-store-postgres'
@@ -85,22 +86,21 @@ export async function applyPostgresFileMaintenance(
     await db.execute(sql`INSERT INTO stored_file_audit (stored_file_id, old_display_name, new_display_name, created_at)
       VALUES (${id}, ${current.displayName}, ${displayName}, ${now})`)
     after = { ...current, displayName }
+  } else if (action === 'update' && !('displayName' in patch) && Object.keys(patch).length) {
+    await updatePostgresFileMetadata(db, current, patch)
+    after = await readPostgresFile(db, id)
   }
 
-  if (options.idempotencyKey || after !== current) {
+  const beforeJson = JSON.stringify(fileMaintenanceSnapshot(current, extensionSnapshot(current)))
+  const afterJson = JSON.stringify(fileMaintenanceSnapshot(after, extensionSnapshot(after)))
+  if (options.idempotencyKey || beforeJson !== afterJson) {
     await db.execute(sql`INSERT INTO file_maintenance_audit
       (file_id, revision, action, idempotency_key, request_hash, mode, actor, basis, before_json, after_json, created_at)
       VALUES (${id}, ${revision + 1}, ${action}, ${options.idempotencyKey ?? null}, ${hash},
         ${options.expectedRevision === undefined ? 'legacy' : 'versioned'}, ${options.actor ?? null}, ${options.basis ?? null},
-        ${JSON.stringify(fileMaintenanceSnapshot(current))}, ${JSON.stringify(fileMaintenanceSnapshot(after))}, ${now})`)
+        ${beforeJson}, ${afterJson}, ${now})`)
   }
   return after
-}
-
-function coreMetadataPatch(input: unknown) {
-  const patch = parseMetadataPatch(input)
-  if (Object.keys(patch).length) throw new FileMaintenanceError(503, '业务分类元数据尚未接入 PostgreSQL 文件库')
-  return patch
 }
 
 export function maintainPostgresFile(
@@ -110,7 +110,7 @@ export function maintainPostgresFile(
   const run = async () => {
     requirePostgresFileWrite()
     const options = parseFileMaintenanceOptions(rawOptions)
-    const patch = normalizeFileMaintenancePatch(action, rawPatch, options, coreMetadataPatch)
+    const patch = normalizeFileMaintenancePatch(action, rawPatch, options, parseMetadataPatch)
     const hash = fileMaintenanceRequestHash(id, action, patch, options)
     const key = options.idempotencyKey
     if (key?.includes('\0') || options.actor?.includes('\0') || options.basis?.includes('\0')) {

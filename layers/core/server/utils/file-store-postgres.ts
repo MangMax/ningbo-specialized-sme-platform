@@ -62,7 +62,7 @@ export async function readPostgresFile(db: PostgresFileDb, id: number) {
   const { rows: [file] } = await db.execute<PgFile>(sql`
     SELECT ${columns} FROM stored_file WHERE id = ${id}`)
   if (!file) throw new FileMaintenanceError(404, '文件不存在')
-  return (await withFileReferences(db, [withIdentity(baseFile(file))]))[0]!
+  return (await withFileFields(db, [withIdentity(baseFile(file))], serverFileCategories))[0]!
 }
 
 async function withFileReferences(db: PostgresFileDb, files: FileRow[], categories: readonly FileCategoryServer[] = serverFileCategories) {
@@ -77,6 +77,16 @@ async function withFileReferences(db: PostgresFileDb, files: FileRow[], categori
     }
   }
   return files.map(file => ({ ...file, referenceCount: counts.get(file.id) ?? 0 }))
+}
+
+async function withFileFields(db: PostgresFileDb, files: FileRow[], categories: readonly FileCategoryServer[]) {
+  const ids = files.map(file => file.id)
+  const fields: ReadonlyMap<number, object>[] = []
+  for (const category of categories) {
+    if (category.postgres?.readFields) fields.push(await category.postgres.readFields(db, ids))
+  }
+  const referenced = await withFileReferences(db, files, categories)
+  return referenced.map(file => Object.assign({}, file, ...fields.map(byId => byId.get(file.id))))
 }
 
 export function listPostgresFiles(
@@ -117,16 +127,7 @@ export function listPostgresFiles(
       ORDER BY ${sql.join(order, sql`, `)} LIMIT ${pageSize} OFFSET ${String(offset)}`)
     const files = rows.map(row => withIdentity(baseFile(row)))
     if (!view) return { rows: files, total: Number(total!.total) }
-    const ids = files.map(file => file.id)
-    const fields: ReadonlyMap<number, object>[] = []
-    for (const category of view.categories) {
-      if (category.postgres?.readFields) fields.push(await category.postgres.readFields(tx, ids))
-    }
-    const referenced = await withFileReferences(tx, files, view.categories)
-    return {
-      rows: referenced.map(file => Object.assign({}, file, ...fields.map(byId => byId.get(file.id)))),
-      total: Number(total!.total),
-    }
+    return { rows: await withFileFields(tx, files, view.categories), total: Number(total!.total) }
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }
 

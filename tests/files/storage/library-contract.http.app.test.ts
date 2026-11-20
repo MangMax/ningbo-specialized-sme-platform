@@ -174,6 +174,31 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     expect(await json('files/41/maintenance', 200)).toMatchObject({ rows: [{ id: 23 }, { id: 91 }, { id: 92 }] })
   })
 
+  it.skipIf(!enabled)('edits roster classification, preserves source bytes and keeps one audit per revision', async () => {
+    const { revision } = await json('files/41/maintenance', 200)
+    const patch = { ...controls(revision, 'clear-publication-year'), year: null }
+    const cleared = await json('files/41', 200, 'PATCH', patch)
+    expect(cleared).toMatchObject({
+      id: 41, relPath: migratedPath, sha256, source: 'jxj', kind: 'announcement', year: null,
+      batch: 2, categoryState: 'unset', parseState: 'parsed', referenceCount: 1,
+    })
+    expect(await json('files/41', 200, 'PATCH', patch)).toEqual(cleared)
+    await json('files/41', 409, 'PATCH', { ...controls(revision, 'stale-classification'), year: 2026 })
+    const history = await json('files/41/maintenance', 200)
+    expect(history.revision).toBe(revision + 1)
+    expect(history.rows.at(-1)).toMatchObject({
+      revision: revision + 1, before: { year: 2025, categoryState: 'set' },
+      after: { year: null, categoryState: 'unset' },
+    })
+    expect(await json('sme-roster/files?categoryState=unset', 200)).toMatchObject({
+      total: 1, rows: [{ id: 41, year: null }],
+    })
+    expect(await json('files/41', 200, 'PATCH', { year: 2025 })).toMatchObject({ categoryState: 'set', year: 2025 })
+    expect(await json('files/41', 200, 'PATCH', { year: 2025 })).toMatchObject({ categoryState: 'set', year: 2025 })
+    expect(await json('files/41/maintenance', 200)).toMatchObject({ revision: revision + 2 })
+    expect(Buffer.from(await (await app.request('/api/files/41')).arrayBuffer())).toEqual(original)
+  })
+
   it.skipIf(!enabled)('registers a landed upload once and preserves identity through maintenance and recovery', async () => {
     const filename = '新附件.txt'
     const create = await app.request('/api/uploads', { method: 'POST', headers: {

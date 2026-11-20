@@ -38,9 +38,9 @@ node upgrade/postgresql/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA 
 
 物理命令先在 `stored_file` 行锁内提交意图，再获取同一个行锁核对内容身份、修订与实时引用，移动原字节并提交维护记录与完成回执。线索登记使用同一行锁，名录按原路径读取引用。新增名录出处的命令也须使用这一行锁。事务失败后，使用原幂等键重试或显式恢复未完成意图。
 
-名录文件列表读取分类、文件分段、有效登记和引用，兼容文件列表支持相同业务筛选。名录文件维护、文件 MCP 和 OCR 继续按各模块迁移。可使用 `TEST_FILE_LIBRARY_PG_BIN=/path/to/pgsql/bin pnpm test:app tests/files/storage/library-contract.http.app.test.ts --maxWorkers=1` 对照 SQLite 和独立 PostgreSQL 实例。
+名录文件列表读取分类、文件分段、有效登记和引用，兼容文件列表支持相同业务筛选。HTTP 分类编辑与维护快照在同一事务提交，保留原件、分段与出处。文件解析、文件 MCP 和 OCR 继续按各模块迁移。可使用 `TEST_FILE_LIBRARY_PG_BIN=/path/to/pgsql/bin pnpm test:app tests/files/storage/library-contract.http.app.test.ts --maxWorkers=1` 对照 SQLite 和独立 PostgreSQL 实例。
 
-设置 `NUXT_POSTGRES_ROSTER_READ=1` 后，首次认定和台账年份使用名录原生表。设置 `NUXT_POSTGRES_DIRECTORY_URL` 时，工信部平台的申报、关联办理和认定目录列表、详情与筛选读取原生表。申报与办理的精确原值使用带 SQLite 类型的字节列，早期生成的暂存 schema 需要从原始快照重导。
+设置 `NUXT_POSTGRES_ROSTER_READ=1` 后，首次认定和台账年份使用名录原生表。设置 `NUXT_POSTGRES_DIRECTORY_URL` 时，工信部平台的申报、关联办理和认定目录列表、详情、筛选和原始凭证读取原生表。申报与办理的精确原值使用带 SQLite 类型的字节列，早期生成的暂存 schema 需要从原始快照重导。
 
 设置 `NUXT_POSTGRES_JOBS=1` 与可写业务连接后，任务中心在应用启动时领取任务，并在关闭连接前等待当前任务退出。线索 CSV 使用任务执行时点的统一读快照读取名单和有效称号。任务领取令牌保护进度和终态，恢复保留已提交进度与检查点。
 

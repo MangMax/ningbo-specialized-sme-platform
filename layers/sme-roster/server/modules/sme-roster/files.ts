@@ -135,6 +135,17 @@ export const rosterFileServerCategory = {
     properties: rosterFileOpenApi.patchProperties,
     parse: parseMetadataPatch,
     write: writeFileClassification,
+    async writePostgres(db, file: FileRow & Partial<RosterFileFields>, patch: FileMetadataPatch) {
+      if (file.categoryState === undefined) return false
+      const current = file as FileRow & RosterFileFields
+      const next = { ...current, ...classificationChanges(current, patch) }
+      await db.execute(sql`
+        UPDATE roster_file_classification
+        SET source = ${next.source}, kind = ${next.kind}, year = ${next.year}, batch = ${next.batch},
+          title_code = ${next.titleCode}, category_state = ${next.categoryState}
+        WHERE file_id = ${file.id}`)
+      return true
+    },
   },
   openAPI: {
     listDescription: rosterFileOpenApi.listDescription,
@@ -249,41 +260,21 @@ function writeFileClassification(
     .where(eq(schema.rosterFileClassification.fileId, id)).get()
   if (!current) return false
 
-  const next = {
-    source: patch.source !== undefined ? patch.source : current.source,
-    kind: patch.kind !== undefined ? patch.kind : current.kind,
-    year: patch.year !== undefined ? patch.year : current.year,
-    batch: patch.batch !== undefined ? patch.batch : current.batch,
+  const changes = classificationChanges(current, patch)
+  if (Object.keys(changes).length) {
+    db.update(classification).set(changes).where(eq(classification.fileId, id)).run()
   }
-
-  const set: Record<string, unknown> = {}
-  if (patch.source !== undefined) set.source = patch.source
-  if (patch.kind !== undefined) set.kind = patch.kind
-  if (patch.year !== undefined) set.year = patch.year
-  if (patch.batch !== undefined) set.batch = patch.batch
-  if (patch.titleCode !== undefined) set.titleCode = patch.titleCode
-
-  // 分类状态由分类是否补齐**自动维持**(人只改分类,不该手工去填一个状态):
-  // 分类补齐 → 提升为 `set`;分类被清空 → 退回 `unset`。改分类时才算,只改称号/批次不算。
-  if (patch.source !== undefined || patch.kind !== undefined || patch.year !== undefined) {
-    if (next.source && next.kind) {
-      const derived = categoryStateOf({
-        source: next.source,
-        kind: next.kind,
-        year: next.year,
-        batch: next.batch,
-      })
-      if (derived === 'set' && current.categoryState === 'unset') set.categoryState = 'set'
-      if (derived === 'unset') set.categoryState = 'unset'
-    } else {
-      set.categoryState = 'unset'
-    }
-  }
-
-  if (Object.keys(set).length) {
-    db.update(schema.rosterFileClassification).set(set)
-      .where(eq(schema.rosterFileClassification.fileId, id)).run()
-  }
-
   return true
+}
+
+function classificationChanges(
+  current: Pick<RosterFileFields, 'source' | 'kind' | 'year' | 'batch' | 'categoryState'>,
+  patch: FileMetadataPatch,
+): FileMetadataPatch & { categoryState?: CategoryState } {
+  if (patch.source === undefined && patch.kind === undefined && patch.year === undefined) return patch
+  const next = { ...current, ...patch }
+  const derived = next.source && next.kind
+    ? categoryStateOf({ source: next.source, kind: next.kind, year: next.year, batch: next.batch })
+    : 'unset'
+  return derived === 'unset' || current.categoryState === 'unset' ? { ...patch, categoryState: derived } : patch
 }

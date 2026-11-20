@@ -77,6 +77,7 @@ export interface FileCategoryServer {
     readonly properties: Record<string, object>
     parse(input: Record<string, unknown>): object
     write(db: FileStoreDb, id: number, patch: Record<string, unknown>): boolean
+    writePostgres?(db: NodePgDatabase, file: FileRow, patch: Record<string, unknown>): Promise<boolean>
   }
   readonly landing?: FileLanding
   /** Handles unqualified uploads and registration paths unclaimed by other contributions. */
@@ -600,8 +601,15 @@ export function createFileStore<const Categories extends readonly FileCategorySe
     }
   }
 
+  async function updatePostgresFileMetadata(db: NodePgDatabase, file: FileRow, patch: object) {
+    for (const [owner, fields] of divideMetadata(patch)) {
+      if (!owner.writePostgres) throw new FileMaintenanceError(503, '业务分类元数据尚未接入 PostgreSQL 文件库')
+      if (!await owner.writePostgres(db, file, fields)) throw new FileMaintenanceError(404, '未找到可更新的文件分类')
+    }
+  }
+
   return {
-    parseMetadataPatch, updateStoredFile, resolveUploadPlacement, resolveFileRegistration, registerUploadedFile,
+    parseMetadataPatch, updateStoredFile, updatePostgresFileMetadata, resolveUploadPlacement, resolveFileRegistration, registerUploadedFile,
     checkAdmission, listStoredFiles, getStoredFile, extensionSnapshot,
     renameStoredFileDisplayName, verifyStoredFileRestoration, restoreVerifiedStoredFile,
     softRemoveStoredFile, backfillStoredFiles, backfillFromDisk,
