@@ -98,7 +98,9 @@ export function enterpriseProfileState(db: Pick<Db, 'select'>, enterpriseId: num
   const profile: EnterpriseProfile = { enterpriseId, name: row.name, city: row.city, district: row.district }
   return { profile, row, key: last?.key ?? null }
 }
-export function enterpriseProfileVersion({ profile, row, key }: ReturnType<typeof enterpriseProfileState>) {
+export function enterpriseProfileVersion({ profile, row, key }: {
+  profile: EnterpriseProfile; row: { usccNorm: string | null; nameNorm: string }; key: string | null
+}) {
   return createHash('sha256').update(JSON.stringify({ profile, uscc: row.usccNorm, nameNorm: row.nameNorm, lastWrite: key })).digest('hex')
 }
 

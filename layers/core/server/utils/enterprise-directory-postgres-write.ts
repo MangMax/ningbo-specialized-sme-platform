@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { normalizeEnterpriseName } from '../../lib/enterprise-name'
 import { normalizeReviewedUscc } from '../../lib/enterprise-uscc'
-import { EnterpriseKernelError, type EnterpriseFields, type EnterpriseSource, type enterpriseDetailsSchema } from './enterprise-kernel'
+import { EnterpriseKernelError, enterpriseProfileVersion, type EnterpriseFields, type EnterpriseProfile, type EnterpriseSource, type ReviewedSubject, type enterpriseDetailsSchema } from './enterprise-kernel'
 import { readPostgresEnterpriseDetails } from './enterprise-directory-postgres'
 import type { z } from 'zod'
 
@@ -47,14 +47,14 @@ async function saveCodes(tx: Transaction, id: number, revision: number, fields: 
       industry_code = excluded.industry_code, revision = excluded.revision`)
 }
 
-async function matchingIdentityExists(tx: Transaction, name: string, uscc: string | null) {
-  if (uscc === null) {
-    const result = await tx.execute(sql`SELECT id FROM enterprise WHERE name_norm = ${name} LIMIT 1`)
-    return result.rows.length > 0
-  }
+async function matchingUsccExists(tx: Transaction, uscc: string, exceptId: number | null = null) {
   const { rows } = await tx.execute<{ uscc: string }>(sql`SELECT uscc_norm AS uscc FROM enterprise
-    WHERE uscc_norm = ${uscc} OR uscc_norm COLLATE "C" ~ '[^A-Z0-9]'`)
+    WHERE id IS DISTINCT FROM ${exceptId} AND (uscc_norm = ${uscc} OR uscc_norm COLLATE "C" ~ '[^A-Z0-9]')`)
   return rows.some(row => normalizeReviewedUscc(row.uscc) === uscc)
+}
+
+function lockIdentity(tx: Transaction, kind: 'name' | 'uscc', value: string) {
+  return tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`enterprise:${kind}:${value}`}, 0))`)
 }
 
 export async function registerPostgresEnterpriseSource(tx: Transaction, input: EnterpriseSource, enterpriseIds: readonly number[]) {
@@ -84,23 +84,113 @@ export async function registerPostgresEnterpriseSource(tx: Transaction, input: E
   return Number(id)
 }
 
+/** Create a reviewed subject inside the caller's transaction, with provenance supplied by the caller. */
+export async function createPostgresReviewedEnterprise(tx: Transaction, fields: EnterpriseFields & { name: string }) {
+  await validateCodes(tx, fields)
+  const name = normalizeEnterpriseName(fields.name)
+  const uscc = fields.uscc ?? null
+  // Serialize matching submissions, including legacy rows whose stored codes are not normalized.
+  await lockIdentity(tx, 'name', name)
+  if (uscc) await lockIdentity(tx, 'uscc', uscc)
+  const exists = uscc
+    ? await matchingUsccExists(tx, uscc)
+    : (await tx.execute(sql`SELECT id FROM enterprise WHERE name_norm = ${name} LIMIT 1`)).rows.length > 0
+  if (exists) {
+    conflict('existing_subject', 'A matching identity already exists; confirm an enterprise ID')
+  }
+  const inserted = await tx.execute<{ id: string }>(sql`INSERT INTO enterprise (name, name_norm, uscc_norm, quality_flags)
+    VALUES (${fields.name}, ${name}, ${uscc}, ${JSON.stringify(uscc ? [] : ['uscc_missing'])}) RETURNING id`)
+  const id = Number(inserted.rows[0]!.id)
+  await saveCodes(tx, id, 1, fields)
+  return id
+}
+
+async function retainPostgresPreviousName(tx: Transaction, profile: EnterpriseProfile, nameNorm: string, idempotencyKey: string) {
+  const { enterpriseId: id, name } = profile
+  const oldNorm = normalizeEnterpriseName(name)
+  if (!nameNorm || !oldNorm) throw new EnterpriseKernelError(422, 'invalid_name', 'Normalized enterprise name must not be empty')
+  const owner = await tx.execute(sql`
+    SELECT e.id FROM enterprise e WHERE e.id <> ${id} AND e.name_norm IN (${oldNorm}, ${nameNorm})
+      AND NOT EXISTS (SELECT 1 FROM enterprise_merge m WHERE m.from_enterprise_id = e.id)
+    UNION ALL
+    SELECT id FROM enterprise_alias WHERE enterprise_id <> ${id} AND name_norm IN (${oldNorm}, ${nameNorm})
+      AND verification_status = 'confirmed'
+    LIMIT 1`)
+  if (owner.rows.length) conflict('identity_conflict', 'Name belongs to another enterprise; use the identity operation')
+  const { rows } = await tx.execute<{ id: string; status: string }>(sql`
+    SELECT id, verification_status AS status FROM enterprise_alias WHERE enterprise_id = ${id} AND name_norm = ${oldNorm}
+      AND (verification_status = 'confirmed' OR (source_kind = 'manual' AND source_ref_id = 0))
+    ORDER BY (verification_status = 'confirmed') DESC, id LIMIT 1`)
+  const existing = rows[0]
+  if (existing?.status === 'confirmed') return { id: existing.id, created: 0 }
+  if (existing) conflict('alias_lifecycle_required', 'Previous-name record is not confirmed; confirm or restore it through alias lifecycle first')
+  const alias = await tx.execute<{ id: string }>(sql`INSERT INTO enterprise_alias
+    (enterprise_id, name, name_norm, source_kind, source_ref_id, verification_status, note, created_at)
+    VALUES (${id}, ${name}, ${oldNorm}, 'manual', 0, 'confirmed', ${`Enterprise profile rename: ${idempotencyKey}`},
+      ${new Date().toISOString()}) RETURNING id`)
+  return { id: alias.rows[0]!.id, created: 1 }
+}
+
+type ReviewedAttachment = Extract<ReviewedSubject, { action: 'attach' }>
+
+async function revisePostgresReviewedProfile(tx: Transaction, before: NonNullable<Awaited<ReturnType<typeof readPostgresEnterpriseDetails>>>,
+  next: typeof before, audit: ReviewedAttachment['audit']) {
+  const renamed = next.name !== before.name
+  const usccChanged = next.uscc !== before.uscc
+  if (!renamed && !usccChanged) return null
+  const { id, name, city, district, uscc } = before
+  const { rows: [state] } = await tx.execute<{ nameNorm: string; qualityFlags: string | null; lastWrite: string | null }>(sql`
+    SELECT name_norm AS "nameNorm", quality_flags AS "qualityFlags",
+      (SELECT idempotency_key FROM enterprise_profile_audit WHERE enterprise_id = ${id} ORDER BY id DESC LIMIT 1) AS "lastWrite"
+    FROM enterprise WHERE id = ${id}`)
+  const profile = { enterpriseId: id, name, city, district }
+  const after = { ...profile, name: next.name }
+  const nameNorm = renamed ? normalizeEnterpriseName(next.name) : state!.nameNorm
+  const alias = renamed ? await retainPostgresPreviousName(tx, profile, nameNorm, audit.idempotencyKey) : { id: null, created: 0 }
+  const updates = []
+  if (renamed) updates.push(sql`name = ${next.name}, name_norm = ${nameNorm}`)
+  if (usccChanged) {
+    const previousFlags = JSON.parse(state!.qualityFlags ?? 'null') as string[] | null
+    const flags = (previousFlags ?? []).filter(flag => flag !== 'uscc_missing')
+    if (next.uscc === null) flags.push('uscc_missing')
+    updates.push(sql`uscc_norm = ${next.uscc}, quality_flags = ${JSON.stringify(flags)}`)
+  }
+  await tx.execute(sql`UPDATE enterprise SET ${sql.join(updates, sql`, `)} WHERE id = ${id}`)
+  const beforeVersion = enterpriseProfileVersion({ profile, row: { nameNorm: state!.nameNorm, usccNorm: uscc }, key: state!.lastWrite })
+  const afterVersion = enterpriseProfileVersion({ profile: after, row: { nameNorm, usccNorm: next.uscc }, key: audit.idempotencyKey })
+  const inserted = await tx.execute<{ id: string }>(sql`INSERT INTO enterprise_profile_audit
+    (enterprise_id, idempotency_key, request_hash, before_version, after_version, before, after, actor, basis,
+      retained_alias_id, alias_created, created_at)
+    VALUES (${id}, ${audit.idempotencyKey}, ${audit.requestHash}, ${beforeVersion}, ${afterVersion},
+      ${JSON.stringify(usccChanged ? { ...profile, uscc } : profile)},
+      ${JSON.stringify(usccChanged ? { ...after, uscc: next.uscc } : after)}, ${JSON.stringify(audit.actor)},
+      ${audit.basis}, ${alias.id}, ${alias.created}, ${new Date().toISOString()}) RETURNING id`)
+  return Number(inserted.rows[0]!.id)
+}
+
+/** Update only explicitly reviewed fields and retain their audit inside the caller's transaction. */
+export async function attachPostgresReviewedEnterprise(tx: Transaction, subject: ReviewedAttachment) {
+  const before = await checkedEnterprise(tx, subject.enterpriseId, subject.expectedRevision, 'membership')
+  const fields = subject.fields ?? {}
+  if (Object.keys(fields).length === 0) return { id: before.id, auditId: null }
+  if (fields.name !== undefined && fields.name !== before.name) {
+    const names = new Set([normalizeEnterpriseName(before.name), normalizeEnterpriseName(fields.name)].sort())
+    for (const name of names) await lockIdentity(tx, 'name', name)
+  }
+  if (fields.uscc) {
+    await lockIdentity(tx, 'uscc', fields.uscc)
+    if (await matchingUsccExists(tx, fields.uscc, before.id)) conflict('uscc_taken', 'USCC belongs to another enterprise')
+  }
+  const next = { ...before, ...fields }
+  await validateCodes(tx, next)
+  const auditId = await revisePostgresReviewedProfile(tx, before, next, subject.audit)
+  await saveCodes(tx, before.id, before.revision + 1, next)
+  return { id: before.id, auditId }
+}
+
 export function addPostgresEnterprise(db: NodePgDatabase, fields: EnterpriseFields & { name: string }) {
   return db.transaction(async tx => {
-    await validateCodes(tx, fields)
-    const name = normalizeEnterpriseName(fields.name)
-    const uscc = fields.uscc ?? null
-    // Serialize matching submissions, including legacy rows whose stored codes are not normalized.
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('enterprise:name:' || ${name}, 0))`)
-    if (uscc) {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('enterprise:uscc:' || ${uscc}, 0))`)
-    }
-    if (await matchingIdentityExists(tx, name, uscc)) {
-      conflict('existing_subject', 'A matching identity already exists; confirm an enterprise ID')
-    }
-    const inserted = await tx.execute<{ id: string }>(sql`INSERT INTO enterprise (name, name_norm, uscc_norm, quality_flags)
-      VALUES (${fields.name}, ${name}, ${uscc}, ${JSON.stringify(uscc ? [] : ['uscc_missing'])}) RETURNING id`)
-    const id = Number(inserted.rows[0]!.id)
-    await saveCodes(tx, id, 1, fields)
+    const id = await createPostgresReviewedEnterprise(tx, fields)
     await registerPostgresEnterpriseSource(tx, {
       module: 'core', businessTable: 'enterprise', versionKey: String(id), channel: 'direct', listType: 'direct',
       acquiredOn: new Date().toISOString().slice(0, 10), series: '直接添加', fileId: null, sha256: null,

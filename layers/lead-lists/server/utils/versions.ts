@@ -140,7 +140,18 @@ export const supplementInput = browserSupplementInput.extend({
   basis: z.string().trim().min(1).max(500),
 })
 
-export function supplementLeadVersion(db: Db, id: number, input: z.infer<typeof supplementInput>) {
+export type LeadSupplementInput = z.infer<typeof supplementInput>
+
+export function leadReviewHash(decision: LeadSupplementInput['decisions'][number], { actor, basis }: LeadSupplementInput) {
+  return hash({ decision, actor, basis })
+}
+
+export function leadSupplementError(error: unknown): never {
+  if (error instanceof EnterpriseKernelError) throw createError({ statusCode: error.statusCode, message: error.message, data: { code: error.code } })
+  throw error
+}
+
+export function supplementLeadVersion(db: Db, id: number, input: LeadSupplementInput) {
   checkSchema(db)
   try {
     return db.$client.transaction(() => {
@@ -149,7 +160,7 @@ export function supplementLeadVersion(db: Db, id: number, input: z.infer<typeof 
       const resolved = input.decisions.map(item => {
         const row = db.select().from(leadListRow).where(and(eq(leadListRow.id, item.rowId), eq(leadListRow.versionId, id))).get()
         if (!row) throw createError({ statusCode: 404, message: '所选行不在此名单版本中' })
-        const auditHash = hash({ decision: item, actor: input.actor, basis: input.basis })
+        const auditHash = leadReviewHash(item, input)
         if (row.enterpriseId !== null) {
           if (row.reviewHash !== auditHash) throw createError({ statusCode: 409, message: '该行已有核对结果' })
           return { rowId: item.rowId, enterpriseId: row.enterpriseId }
@@ -167,7 +178,6 @@ export function supplementLeadVersion(db: Db, id: number, input: z.infer<typeof 
       return { sourceId, rows: resolved }
     }).immediate()
   } catch (error) {
-    if (error instanceof EnterpriseKernelError) throw createError({ statusCode: error.statusCode, message: error.message, data: { code: error.code } })
-    throw error
+    leadSupplementError(error)
   }
 }

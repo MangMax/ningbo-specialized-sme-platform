@@ -1,4 +1,5 @@
-import { requireSqliteLeadOperation } from '../../../../utils/postgres-versions'
+import { usePostgresLeadDb } from '../../../../utils/postgres-versions'
+import { supplementPostgresLeadVersion } from '../../../../utils/postgres-supplement'
 import { useDb } from '@db'
 import { requireApiToken } from '../../../../../../core/server/utils/api-guard'
 import { sameOriginBrowserAccess } from '#core/server/utils/browser-page-access'
@@ -32,6 +33,11 @@ export default defineEventHandler(async event => {
   const body = await readBody(event)
   const parsed = (browser ? pageInput : supplementInput).safeParse(body)
   if (!id.success || !parsed.success) throw createError({ statusCode: 400, message: '补充资料有误', data: parsed.error?.issues })
-  requireSqliteLeadOperation()
-  return supplementLeadVersion(useDb(), id.data, parsed.data)
+  const postgres = usePostgresLeadDb()
+  if (postgres && process.env.NUXT_POSTGRES_DIRECTORY_WRITE !== '1') {
+    throw createError({ statusCode: 503, message: '线索名单处于只读验收模式。' })
+  }
+  return postgres
+    ? supplementPostgresLeadVersion(postgres, id.data, parsed.data)
+    : supplementLeadVersion(useDb(), id.data, parsed.data)
 })
