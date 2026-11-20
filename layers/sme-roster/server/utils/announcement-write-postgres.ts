@@ -5,13 +5,13 @@ import { isPageCapable } from '../../lib/roster/evidence-page'
 import { registerPostgresEnterpriseSource } from '../../../core/server/public'
 import type { RosterImportRequest, RosterImportItemResult } from '../../lib/roster-import-client'
 import { readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
-import { advancePostgresOfficialEventRevision, capturePostgresOfficialEventRevision } from './evidence-revision-postgres'
+import { capturePostgresOfficialEventRevision } from './evidence-revision-postgres'
 import { announcementEvidenceCoordinate, evidenceRepointPlanFingerprint, eventCoordinates, matchesEventCoordinates } from './roster-import'
-import { readOfficialFile } from './official-evidence-plan'
+import { officialFactFailure, readOfficialFile } from './official-evidence-plan'
 import { resolvePostgresOfficialDeclaration, writePostgresOfficialPublishedRow } from './official-evidence-write-postgres'
 import type { planPostgresAnnouncement } from './announcement-plan-postgres'
 import { ImportReceiptError } from './import-receipts'
-import { refreshPostgresDerivedFileParts } from './file-parts-postgres'
+import { createPostgresOfficialImportState, finishPostgresOfficialImport, type PostgresOfficialImportState } from './official-evidence-import-postgres'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Plan = Awaited<ReturnType<typeof planPostgresAnnouncement>>
@@ -51,9 +51,12 @@ async function repointEvidence(tx: Tx, row: Row, changedEvents: Map<number, numb
   return count
 }
 
-export async function writePostgresAnnouncement(tx: Tx, request: RosterImportRequest, batchId: number, plan: Plan) {
-  const declarations = new Map<string, number>()
-  const changedEvents = new Map<number,number>(), files = new Set<string>()
+export async function writePostgresAnnouncement(tx: Tx, request: RosterImportRequest, batchId: number, plan: Plan, sharedState?: PostgresOfficialImportState) {
+  if (!sharedState && (plan.officialPlan?.appendTargets.length || plan.officialPlan?.correctionTargets.length)) {
+    return officialFactFailure('invalid_input', 'Explicit official evidence operations require the shared import state')
+  }
+  const state = sharedState ?? createPostgresOfficialImportState()
+  const { declarations, changedEvents, files } = state
   const fingerprint = evidenceRepointPlanFingerprint(request)
   const records = new Map(plan.rows.flatMap(row => row.existing ? [[row.owner+':'+row.titleCode+':'+row.source,row.existing.id] as const] : []))
   const items: RosterImportItemResult[] = []
@@ -107,9 +110,10 @@ export async function writePostgresAnnouncement(tx: Tx, request: RosterImportReq
       evidenceRepointed, evidenceRepointTargets: row.repoints, evidenceRepointPlanFingerprint: fingerprint, rowsWritten,
     } })
   }
-  for (const [eventId, revision] of changedEvents) await advancePostgresOfficialEventRevision(tx, eventId, revision)
-  await refreshPostgresDerivedFileParts(tx, files)
-  if (plan.official !== null) items.push({ ok: true, kind: 'official_evidence', ref: 'official_evidence', detail: { evidence: [], rowsWritten: 0 } })
+  if (!sharedState) {
+    await finishPostgresOfficialImport(tx, state)
+    if (plan.official !== null) items.push({ ok: true, kind: 'official_evidence', ref: 'official_evidence', detail: { evidence: [], rowsWritten: 0 } })
+  }
   return items
 }
 
