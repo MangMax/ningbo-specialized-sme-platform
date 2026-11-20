@@ -1,5 +1,5 @@
 import { postgresJobReadProjector } from '../../utils/job-read-postgres'
-import { postgresJobsEnabled, startPostgresJobs } from '../../utils/postgres-jobs'
+import { requirePostgresJobsWritable, usePostgresJobsDb } from '../../utils/postgres-jobs'
 import { cancelPostgresJob, getPostgresJobDetail } from '../../utils/job-store-postgres'
 import { requestLogContext } from '../../../lib/logging'
 import { useDb } from '@db'
@@ -53,9 +53,11 @@ export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
   if (!isJobId(id)) throw createError({ statusCode: 400, message: `任务 id 非法(应为 26 位 ULID):${id}` })
 
-  if (postgresJobsEnabled()) {
+  const postgres = usePostgresJobsDb()
+  if (postgres) {
+    requirePostgresJobsWritable()
     const config = useRuntimeConfig(event)
-    const { db } = startPostgresJobs(config.filesDir)!
+    const db = postgres
     const project = await postgresJobReadProjector(db, config)
     const cancelled = await cancelPostgresJob(db, id, requestLogContext(event))
     if (!cancelled) throw createError({ statusCode: 404, message: `任务不存在:${id}` })

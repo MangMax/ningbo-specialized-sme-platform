@@ -34,7 +34,7 @@ node upgrade/postgresql/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA 
 
 隔离应用设置 `NUXT_POSTGRES_DIRECTORY_WRITE=1` 后，企业新增、资料编辑、移出、恢复和字典编辑使用 PostgreSQL。设置 `NUXT_POSTGRES_LEAD_REGISTRATION=1` 后，线索名单登记、目录、详情、原件和企业补充使用同一业务库。名单登记与文件维护共用文件行锁。企业补充在一笔事务内保留名单关联、资料审计与名录身份依据。
 
-隔离应用同时设置 `NUXT_POSTGRES_FILE_LIBRARY=1` 后，核心文件 HTTP 列表、上传登记、原件与页图身份核验、显示名和维护历史、软移出、恢复、物理隔离与恢复使用 PostgreSQL 文件身份和维护账本。继续由独立的 `NUXT_FILES_DIR` 和 `NUXT_INCOMING_DIR` 保存原件和上传分片。文件写入口另需 `NUXT_POSTGRES_DIRECTORY_WRITE=1`。保留 SQLite 只读实例供尚未迁移的模块查询。
+隔离应用同时设置 `NUXT_POSTGRES_FILE_LIBRARY=1` 后，核心文件 HTTP 列表、上传登记、原件与页图身份核验、显示名和维护历史、软移出、恢复、物理隔离与恢复使用 PostgreSQL 文件身份和维护账本。继续由独立的 `NUXT_FILES_DIR` 和 `NUXT_INCOMING_DIR` 保存原件和上传分片。文件写入口另需 `NUXT_POSTGRES_DIRECTORY_WRITE=1`。同一份 SQLite 快照可启动只读实例用于结果对照。
 
 物理命令先在 `stored_file` 行锁内提交意图，再获取同一个行锁核对内容身份、修订与实时引用，移动原字节并提交维护记录与完成回执。线索登记使用同一行锁，名录按原路径读取引用。新增名录出处的命令也须使用这一行锁。事务失败后，使用原幂等键重试或显式恢复未完成意图。
 
@@ -46,7 +46,7 @@ node upgrade/postgresql/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA 
 
 单独导入工信部导出快照时，按称号协调提交，批次、原行、差异证据版本及回执在同一事务内完成。公布名单原行登记、已核对主体补充与出处入库在 PostgreSQL 运行。补充预检回滚临时写入，提交原子保存企业和名录来源。移出仅更新录入状态。差异决定、迁入资格确认、证据影响投影与人工复核写入同一业务库。
 
-单独提交新的工信部采集归档时，申报、办理和认定原件、行位置、业务投影、来源证据版本和回执写入 PostgreSQL。旧采集坐标拒绝替换原值。历史分页补录单独保存原始分页凭证，保留旧归档的覆盖状态。别名导入按原始关系核对企业与名称。混合导入仍需迁移。
+单独提交新的工信部采集归档时，申报、办理和认定原件、行位置、业务投影、来源证据版本和回执写入 PostgreSQL。旧采集坐标拒绝替换原值。历史分页补录单独保存原始分页凭证，保留旧归档的覆盖状态。别名导入按原始关系核对企业与名称。同一批次可以合并平台采集、公告登记、正式出处更正、差异判断与企业归并，按依赖顺序提交并保留原子回执。
 
 企业详情的正式证据、业务时间线、差异解释和平台归档共用一个 PostgreSQL 读快照。公布企业业务采集提交前，在同一快照冻结范围并导出、读取校验业务备份。运行环境需提供匹配主版本的 `pg_dump` 和 `pg_restore`，可通过 `NUXT_POSTGRES_BIN` 指定目录。采集原件入库与任务检查点在同一事务提交。
 
@@ -66,3 +66,16 @@ psql -X -w -v staging=staged_logs -f upgrade/postgresql/materialize-runtime-logs
 恢复演练比较 `business` 与 `runtime_logs` 的主键顺序二进制内容及序列高水位。恢复目标需预装 `pg_trgm`。
 
 运行日志可在隔离应用设置 `NUXT_POSTGRES_LOG_URL`，连接同一数据库内的 `runtime_logs`，使用独立连接池。容量以已存摘要与详情 JSON 的 UTF-8 字节数计，排除索引、副本筛选列、数据库物理开销和 stdout。写入、保留清理与策略修改通过固定策略行协调，事务内同时维护容量计数；旧日志的原始 JSON 与模块空值保留。
+
+## PostgreSQL 单库启动与恢复演练
+
+先依照前述顺序离线物化 `business` 和 `runtime_logs`。设置 `NUXT_DB_MODE=postgresql` 与 `NUXT_POSTGRES_DIRECTORY_URL` 后，应用启用已迁移的 PostgreSQL 业务入口。日志使用独立连接池，默认复用业务连接 URL。可通过 `NUXT_POSTGRES_LOG_URL` 设置日志角色，主机（或 Unix socket）、端口和数据库须与业务连接一致。默认启动任务执行。设置 `NUXT_DB_READONLY=1` 时，业务池默认使用只读事务，任务列表与详情仍读取 PostgreSQL，提交、取消和重试关闭。仍依赖 SQLite 的入口在连接边界返回 HTTP 503，错误码为 `postgresql_migration_required`。健康检查读取称号和记录数，并检查原生任务表字段和日志策略可读。
+
+容器固定使用官方 `postgres:19.0-bookworm` 镜像摘要提供 `pg_dump` 和 `pg_restore`。Compose 默认让应用连接 `ROSTER_ENV_FILE` 内配置的 PostgreSQL。隔离环境可启用 `postgres-local` profile，先启动 `postgres`，再物化 schema 并启动 `app`。在独立的 `ROSTER_POSTGRES_ENV_FILE` 设置数据库初始化凭据，应用连接地址使用 Compose 服务名 `postgres`。旧版对照 Compose 设置 `ROSTER_DB_MODE=sqlite`。直接启动时，`NUXT_DB_MODE` 未设置则沿用 SQLite，数据库路径默认 `data/roster.db`。
+
+冻结隔离源库的业务和日志写入后，使用 PostgreSQL 19 客户端和本机 Unix socket 运行以下演练。源库表的二进制 COPY 校验与 `pg_dump` 使用同一个导出快照，按主键或完整唯一键顺序计算 SHA-256，并比较序列的 `last_value` 和 `is_called`。序列状态不受事务快照保护，演练期间须保持源库冻结。临时恢复库沿用源库编码及 locale，退出时清理该库及归档。文件库原件与应用恢复后的业务请求另行验收。
+
+```sh
+PGHOST=/path/to/isolated/socket PGDATABASE=roster PGUSER=fixture \
+  PGSQL_BIN=/path/to/postgresql19/bin bash upgrade/postgresql/rehearse-restore.sh
+```

@@ -1,15 +1,26 @@
 import { usePostgresDirectoryDb } from '../../../../db/postgresql/client'
+import { postgresOnlyRuntime } from '../../../../db/runtime-mode'
 import { createPostgresJobRunner, type PostgresJobDb } from './job-runner-postgres'
 
 export function postgresJobsEnabled() {
   return process.env.NUXT_POSTGRES_JOBS === '1'
 }
 
+export function postgresJobStorageEnabled() {
+  return postgresOnlyRuntime() || postgresJobsEnabled()
+}
+
+export function requirePostgresJobsWritable() {
+  if (!postgresJobsEnabled()) {
+    throw Object.assign(new Error('当前任务中心只读'), { statusCode: 403 })
+  }
+}
+
 export function usePostgresJobsDb() {
-  if (!postgresJobsEnabled()) return
+  if (!postgresJobStorageEnabled()) return
   const db = usePostgresDirectoryDb()
-  if (!db || process.env.NUXT_POSTGRES_DIRECTORY_WRITE !== '1') {
-    throw Object.assign(new Error('PostgreSQL 任务中心需要可写的 PostgreSQL 业务连接'), { statusCode: 503 })
+  if (!db || (postgresJobsEnabled() && process.env.NUXT_POSTGRES_DIRECTORY_WRITE !== '1')) {
+    throw Object.assign(new Error('PostgreSQL 任务中心的业务连接不可用'), { statusCode: 503 })
   }
   return db
 }
@@ -18,6 +29,7 @@ let runtime: { db: PostgresJobDb; runner: ReturnType<typeof createPostgresJobRun
 
 /** The application starts this after registering job specs and supplying the files root. */
 export function startPostgresJobs(filesDir: string) {
+  if (!postgresJobsEnabled()) return
   const db = usePostgresJobsDb()
   if (!db) return
   if (runtime?.db !== db) runtime = { db, runner: createPostgresJobRunner(db, filesDir) }

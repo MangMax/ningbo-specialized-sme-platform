@@ -6,6 +6,7 @@ import { createLogService, type LogService } from './service'
 import { applicationLogRedaction, projectEvlog, safeLogEvent } from './privacy'
 import { LOG_DEFAULTS, type LogContext, type LogInput } from './contract'
 import { httpLogModule, mcpLogModule } from './module'
+import { postgresOnlyRuntime } from '../../../../db/runtime-mode'
 export * from './contract'
 export { createLogService } from './service'
 let service: LogService | undefined
@@ -15,9 +16,12 @@ const numberEnv = (name: string, fallback: number) => {
 }
 /** Server and each worker own a bounded drain to the shared runtime log store. */
 export function applicationLogs(): LogService {
+  const postgresUrl = process.env.NUXT_POSTGRES_LOG_URL
+    ?? (postgresOnlyRuntime() ? process.env.NUXT_POSTGRES_DIRECTORY_URL : undefined)
+  if (postgresOnlyRuntime() && !postgresUrl) throw new Error('PostgreSQL logging connection is required')
   return service ??= createLogService({
     directory: resolve(process.env.NUXT_LOG_DIR || './.runtime-logs'),
-    postgresUrl: process.env.NUXT_POSTGRES_LOG_URL,
+    postgresUrl,
     retentionDays: Math.min(365, numberEnv('NUXT_LOG_RETENTION_DAYS', LOG_DEFAULTS.retentionDays)),
     maxBytes: Math.max(1048576, Math.min(4294967296, numberEnv('NUXT_LOG_MAX_BYTES', LOG_DEFAULTS.maxBytes))),
     stdout: true,

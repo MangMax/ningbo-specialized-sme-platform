@@ -1,5 +1,5 @@
 import { postgresJobReadProjector } from '../../utils/job-read-postgres'
-import { startPostgresJobs, postgresJobsEnabled } from '../../utils/postgres-jobs'
+import { usePostgresJobsDb } from '../../utils/postgres-jobs'
 import { listPostgresJobs, listPostgresJobSummaries } from '../../utils/job-store-postgres'
 import { useDb } from '@db'
 import { parseCsvQuery } from '#core/lib/csv'
@@ -129,19 +129,19 @@ export default defineEventHandler(async (event) => {
     limit,
   }
 
-  if (postgresJobsEnabled()) {
+  const db = usePostgresJobsDb()
+  if (db) {
     const config = useRuntimeConfig(event)
-    const { db } = startPostgresJobs(config.filesDir)!
     if (q.view === 'summary') return listPostgresJobSummaries(db, query)
     const { rows, total } = await listPostgresJobs(db, query)
     const project = await postgresJobReadProjector(db, config)
     return { rows: await Promise.all(rows.map(row => project(row))), total }
   }
 
-  const db = useDb()
-  ensureJobRunnerReady(db)
-  if (q.view === 'summary') return listJobSummaries(db, query)
-  const { rows, total } = listJobs(db, query)
+  const sqlite = useDb()
+  ensureJobRunnerReady(sqlite)
+  if (q.view === 'summary') return listJobSummaries(sqlite, query)
+  const { rows, total } = listJobs(sqlite, query)
 
-  return { rows: await Promise.all(rows.map(jobRuntime.readProjector(db))), total }
+  return { rows: await Promise.all(rows.map(jobRuntime.readProjector(sqlite))), total }
 })

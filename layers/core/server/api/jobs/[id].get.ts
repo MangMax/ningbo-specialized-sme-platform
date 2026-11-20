@@ -1,5 +1,5 @@
 import { postgresJobReadProjector } from '../../utils/job-read-postgres'
-import { startPostgresJobs, postgresJobsEnabled } from '../../utils/postgres-jobs'
+import { usePostgresJobsDb } from '../../utils/postgres-jobs'
 import { getPostgresJobDetail, getPostgresJobSummary } from '../../utils/job-store-postgres'
 import { useDb } from '@db'
 import { isJobId } from '#core/lib/job'
@@ -89,9 +89,10 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: 'view 必须是 full 或 summary' })
   }
 
-  if (postgresJobsEnabled()) {
+  const postgres = usePostgresJobsDb()
+  if (postgres) {
     const config = useRuntimeConfig(event)
-    const { db } = startPostgresJobs(config.filesDir)!
+    const db = postgres
     if (q.view === 'summary') {
       const summary = await getPostgresJobSummary(db, id)
       if (!summary) throw createError({ statusCode: 404, message: `任务不存在:${id}` })

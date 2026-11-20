@@ -23,7 +23,7 @@ import { preflightRosterImport, commitRosterImport } from './roster-import'
 
 import { runPostgresPlatformImport } from './collection-import-postgres'
 import { resolvePostgresCredential } from '../../../core/server/utils/credential-state-postgres'
-import { startPostgresJobs } from '../../../core/server/utils/postgres-jobs'
+import { requirePostgresJobsWritable, startPostgresJobs, usePostgresJobsDb } from '../../../core/server/utils/postgres-jobs'
 import { createPostgresJob, findPostgresJobRequest, getPostgresJob, lockPostgresJobAdmission, reopenPostgresJob, setPostgresJobResult } from '../../../core/server/utils/job-store-postgres'
 import { summarizePostgresSnapshots } from './jobs/snapshot-summary'
 
@@ -273,6 +273,10 @@ async function postgresSnapshotOperation(db: NodePgDatabase, filesDir: string, r
   if (!parsed.success) return fail(400,'Invalid snapshot action or parameters')
   const input = parsed.data
   if (!getJobSpec(SNAPSHOT_KIND)) registerJob(differenceSnapshotSpec)
+  if (input.action !== 'read') {
+    requirePostgresJobsWritable()
+    startPostgresJobs(filesDir)
+  }
   if (input.action!=='create') {
     const snapshot = await getPostgresJob(db,input.jobId)
     if (!snapshot || snapshot.row.kind!==SNAPSHOT_KIND) return fail(404,'Snapshot not found')
@@ -308,6 +312,6 @@ async function postgresSnapshotOperation(db: NodePgDatabase, filesDir: string, r
 }
 
 export function snapshotRuntimeOperation(sqlite: () => Db, filesDir: string, raw: unknown) {
-  const pg = startPostgresJobs(filesDir)
-  return pg ? postgresSnapshotOperation(pg.db,filesDir,raw) : snapshotOperation(sqlite(),filesDir,raw)
+  const pg = usePostgresJobsDb()
+  return pg ? postgresSnapshotOperation(pg,filesDir,raw) : snapshotOperation(sqlite(),filesDir,raw)
 }

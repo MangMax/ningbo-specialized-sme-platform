@@ -10,7 +10,7 @@ import type { TaskList, TaskSummary } from '../../lib/task-center'
 import { readApiToken, resolveApiAuth } from './api-auth'
 import { postgresJobHandler } from './job-runner-postgres'
 import { cancelPostgresJob, getPostgresJobSummary, listPostgresTaskCenter } from './job-store-postgres'
-import { startPostgresJobs } from './postgres-jobs'
+import { postgresJobsEnabled, requirePostgresJobsWritable, usePostgresJobsDb } from './postgres-jobs'
 import { taskCenterBrowserAccess } from './task-center-access'
 
 async function projectSummaries(db: NodePgDatabase, rows: JobSummaryDto[], authorizedFor: (kind: string) => boolean, detail = false) {
@@ -29,6 +29,14 @@ async function projectSummaries(db: NodePgDatabase, rows: JobSummaryDto[], autho
     return { ...base, ...fields, capabilities: { ...capabilities, cancel: base.capabilities.cancel, retry: authorized && capabilities.retry,
       reason: !authorized ? '当前请求仅可查看任务。' : base.capabilities.cancel ? base.capabilities.reason : capabilities.reason } }
   })
+}
+
+function readonlySummary(task: TaskSummary): TaskSummary {
+  return {
+    ...task,
+    capabilities: { cancel: false, retry: false, retryItemIds: [], reason: '当前任务中心只读。' },
+    ...(task.export ? { export: { ...task.export, canRegenerate: false } } : {}),
+  }
 }
 
 export async function readPostgresTaskCenterEntry(db: NodePgDatabase, id: string, authorizedFor: (kind: string) => boolean) {
@@ -63,7 +71,9 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
   setHeader(event, 'cache-control', 'no-store')
   registerJobSpecs()
   const config = useRuntimeConfig(event)
-  const { db } = startPostgresJobs(config.filesDir)!
+  const db = usePostgresJobsDb()!
+  const writable = postgresJobsEnabled()
+  if (action === 'cancel' || action === 'retry') requirePostgresJobsWritable()
   const apiAuthorized = resolveApiAuth({ given: readApiToken({
     authorization: getHeader(event, 'authorization'), 'x-api-token': getHeader(event, 'x-api-token'),
   }), configured: config.apiToken }).writeAuthorized
@@ -89,8 +99,10 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
       if (module) counts[module] = (counts[module] ?? 0) + Number(n)
     }
     return {
-      total: data.total, rows,
-      page, pageSize, counts, exportReady: Boolean(postgresJobHandler('current-roster-export')), authorized: apiAuthorized || browserAuthorized,
+      total: data.total, rows: writable ? rows : rows.map(readonlySummary),
+      page, pageSize, counts,
+      exportReady: writable && Boolean(postgresJobHandler('current-roster-export')),
+      authorized: writable && (apiAuthorized || browserAuthorized),
     } satisfies TaskList
   }
 
@@ -102,7 +114,7 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
   if (action === 'detail') {
     const task = await readPostgresTaskCenterEntry(db, id, authorizedFor)
     if (!task) throw createError({ statusCode: 404, message: '任务不存在' })
-    return task
+    return writable ? task : readonlySummary(task)
   }
   if (!authorized) throw createError({ statusCode: 401, message: '管理操作需要 API 授权' })
   if (action === 'retry') {

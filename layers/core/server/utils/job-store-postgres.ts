@@ -30,6 +30,10 @@ export interface PostgresJobSnapshot {
 const commonColumns = sql`id, kind, state, progress, created_at AS "createdAt",
   started_at AS "startedAt", finished_at AS "finishedAt"`
 const jobColumns = sql`${commonColumns}, params, result, error, claim_token AS "claimToken", input_snapshot AS "inputSnapshot"`
+
+export async function checkPostgresJobStorage(db: Executor) {
+  await db.execute(sql`SELECT ${jobColumns}, cancel_requested, request_key FROM business.job LIMIT 0`)
+}
 // PostgreSQL rejects escaped NULs and isolated surrogate code units when
 // extracting JSON text. Replace those escapes only for this ASCII phase check.
 const jsonTextEscapes = String.raw`\\u(?:0000|d[89a-f][0-9a-f]{2})`
