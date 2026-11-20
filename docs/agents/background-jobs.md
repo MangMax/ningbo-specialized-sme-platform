@@ -19,7 +19,7 @@
 
 ## SSE 契约
 
-页面通过 `GET /api/task-center/events` 订阅。收到 `ready` 时读取当前快照，收到 `changed` 时合并刷新。首连、断线重连和漏过多次变化都可以用一次快照恢复。任务中心读取 `/api/task-center` 或 `/api/task-center/{id}`，业务页面也可按原契约读取自己的结果。取消和重试沿用现有 HTTP 命令。
+业务页面使用 [useTaskSnapshot](../../layers/core/app/composables/useTaskSnapshot.ts)，传入查询条件和读取函数。同一页面的列表、详情和业务面板共用一条 `GET /api/task-center/events` 连接。收到 `ready` 时读取当前快照，收到 `changed` 时合并刷新。首连、断线重连和漏过多次变化都可以用一次快照恢复。任务中心读取 `/api/task-center` 或 `/api/task-center/{id}`，业务页面也可按原契约读取自己的结果。取消和重试沿用现有 HTTP 命令。
 
 PostgreSQL 在事务提交后向应用的共享监听连接发信号，回滚不产生通知。一次事务可以合并多个变化，客户端按最新状态渲染。SQLite 兼容模式返回 HTTP 204，页面继续定时读取；PostgreSQL 的事件流不可用期间也保留刷新能力。已有 PostgreSQL 任务库先用 psql 执行可重复运行的 [install-job-runtime.sql](../../upgrade/postgresql/install-job-runtime.sql)，再上线应用。代理转发本路由时须支持流式响应并关闭响应缓冲。
 
