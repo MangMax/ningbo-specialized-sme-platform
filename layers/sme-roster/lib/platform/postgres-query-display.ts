@@ -3,11 +3,12 @@ import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { BUSINESS_STATUS_V1, BUSINESS_STATUS_V2 } from '../../../../db/business-status'
 import { MAX_FULL_QUERY_BYTES, assertPlatformFullReadBudget } from './evidence-contract'
-import type { LegacyProvenanceDisplay } from './legacy-provenance'
+import { legacySourcePositionForSequence, type LegacyProvenanceDisplay } from './legacy-provenance'
 import { legacyEnvelopeCollection, readPlatformArchiveBytes, type PostgresPlatformArchive } from './postgres-evidence-read'
 import type { PlatformQueryRow } from './read'
 import { sourcePositionForSequence } from './recognized-evidence'
 import { snapshotSchema } from './target-evidence-read'
+import type { RelationEvidenceDisplay } from './target-relation-display'
 import { parsePlatformRelationDisplay } from './target-query-read'
 
 type Reader = Pick<NodePgDatabase, 'execute'>
@@ -80,7 +81,7 @@ async function legacyDisplay(db: Reader, owner: Owner) {
     bytes: metadataBytes }
 }
 
-export async function readPostgresQueryDisplays(db: Reader, owners: Owner[], includeRaw: boolean): Promise<PlatformQueryRow[]> {
+async function readDisplayRows(db: Reader, owners: Owner[], includeRaw: boolean, selection?: readonly number[]) {
   if (!owners.length) return []
   const ids = sql`${sql.param(owners.map(owner => owner.collectionId))}::bigint[]`
   const { rows: archiveRows } = await db.execute<CollectionArchive>(sql`
@@ -141,7 +142,9 @@ export async function readPostgresQueryDisplays(db: Reader, owners: Owner[], inc
     LEFT JOIN LATERAL (SELECT enterprise_id,match_basis,verification_status FROM platform_observation_assignment
       WHERE observation_id = o.id ORDER BY revision DESC LIMIT 1) a ON TRUE
     LEFT JOIN enterprise e ON e.id = a.enterprise_id
-    WHERE o.collection_id = ANY(${ids}) ORDER BY o.collection_id,o.sequence_no`)
+    WHERE o.collection_id = ANY(${ids})
+      ${selection === undefined ? sql.empty() : sql`AND r.old_id=ANY(${sql.param(selection)}::bigint[])`}
+    ORDER BY o.collection_id,o.sequence_no`)
   const observationIds = sql`${sql.param(observations.map(row => row.observationId))}::bigint[]`
   const { rows: relationArchives } = await db.execute<RelationArchive>(sql`
     SELECT r.owner_id AS owner,r.field,r.sealed=1 AS sealed,
@@ -161,6 +164,7 @@ export async function readPostgresQueryDisplays(db: Reader, owners: Owner[], inc
     const statusTags = source === 'business_list' ? sql`, stored_status_sqlite_storage,reconciled_status_sqlite_storage` : sql.empty()
     const { rows } = await db.execute(sql`
       SELECT observation_id, ${state} AS capture_state, source_title_rule_version,${columns}${statusTags}
+        ${selection === undefined ? sql.empty() : sql`,exact_title_raw,exact_title_raw_sqlite_storage`}
       FROM ${sql.identifier(name)} WHERE observation_id = ANY(${sql.param(typed.map(row => row.observationId))}::bigint[])`)
     for (const row of rows) projectionRows.set(String(row.observation_id), row)
   }
@@ -179,11 +183,17 @@ export async function readPostgresQueryDisplays(db: Reader, owners: Owner[], inc
         throw new Error('Missing required source display capture')
       }
       const original = new Map(snapshotSchema.parse(JSON.parse(snapshot.bytes.toString('utf8'))).fields.map(cell => [cell.name, cell]))
-      const text = (name: string) => {
+      const originalValue = (name: string) => {
         const cell = original.get(name)
-        if (cell?.storageClass === 'null') return null
-        if (cell?.storageClass !== 'text') throw new Error('Invalid original relation cell ' + name)
-        return Buffer.from(cell.hex, 'hex').toString('utf8')
+        if (!cell) throw new Error('Missing original relation cell ' + name)
+        const bytes = Buffer.from(cell.hex, 'hex')
+        switch (cell.storageClass) {
+          case 'null': return null
+          case 'text': return bytes.toString('utf8')
+          case 'blob': return bytes
+          case 'integer': return Number(bytes.toString('utf8'))
+          case 'real': return Buffer.from(cell.real64be!, 'hex').readDoubleBE()
+        }
       }
       const sequenceNo = Number(row.sequenceNo)
       const normalizationConflicts = facts.flatMap(([field, column]) => {
@@ -192,15 +202,44 @@ export async function readPostgresQueryDisplays(db: Reader, owners: Owner[], inc
         return String(projection[column + '_conflict']) === '1' && storedValue != null && rawValue != null
           ? [{ field, storedValue, rawValue }] : []
       })
-      return { ...parsePlatformRelationDisplay(query.interface, {
+      const relation = {
         id: Number(row.id), queryId: query.id, sequenceNo, relationKey: row.relationKey,
         enterpriseId: row.enterpriseId === null ? null : Number(row.enterpriseId),
-        usccRaw: row.usccRaw, nameRaw: row.nameRaw, aliasNameRaw: text('alias_name_raw'), sourceText: text('source_text'),
+        usccRaw: row.usccRaw, nameRaw: row.nameRaw, aliasNameRaw: originalValue('alias_name_raw'), sourceText: originalValue('source_text'),
         rawFields: raw.bytes === null ? null : JSON.parse(raw.bytes.toString('utf8')),
         ...Object.fromEntries(facts.map(([field, column]) => [field, factValue(projection, field, 'reconciled_' + column)])),
         matchBasis: row.matchBasis, verificationStatus: row.verificationStatus, normalizationConflicts,
-        ...sourcePositionForSequence(query.legacyProvenance ? query.legacyProvenance.collection : query.collectionEvidence, sequenceNo),
-      }), matchedName: row.matchedName }
+      }
+      if (selection !== undefined) return { relation: { ...relation,
+        titleRaw: decodePostgresExactCell(projection.exact_title_raw as Buffer | null, projection.exact_title_raw_sqlite_storage as string | null),
+        createdAt: originalValue('created_at'),
+        ...(query.legacyProvenance ? legacySourcePositionForSequence(query.legacyProvenance.collection, sequenceNo)
+          : sourcePositionForSequence(query.collectionEvidence, sequenceNo)),
+      }, matchedName: row.matchedName }
+      return { relation: { ...relation, ...sourcePositionForSequence(query.legacyProvenance ? query.legacyProvenance.collection : query.collectionEvidence, sequenceNo) }, matchedName: row.matchedName }
     }) }
   })
+}
+
+export async function readPostgresQueryDisplays(db: Reader, owners: Owner[], includeRaw: boolean): Promise<PlatformQueryRow[]> {
+  return (await readDisplayRows(db, owners, includeRaw)).map(({ query, relations }) => ({ query,
+    relations: relations.map(({ relation, matchedName }) => ({ ...parsePlatformRelationDisplay(query.interface, relation), matchedName })),
+  }))
+}
+
+export async function readPostgresRelationDisplays(db: Reader, selection: readonly number[]) {
+  const result = new Map<number, RelationEvidenceDisplay>(selection.map(id => [id, null]))
+  if (!selection.length) return result
+  const { rows: owners } = await db.execute<Owner>(sql`
+    SELECT DISTINCT c.id AS "collectionId", c.provenance_state AS "provenanceState",
+      jsonb_build_object('id',q.old_id,'interface',c.interface,'queryKey',c.query_key,
+        'rdjb',c.rdjb,'titleCode',c.title_code,'queriedAt',c.queried_at,'lastCollectedAt',c.last_collected_at,
+        'status',c.status,'failureReason',c.failure_reason,'createdAt',c.created_at) AS query
+    FROM platform_legacy_relation_alias a JOIN platform_business_observation o ON o.id=a.observation_id
+    JOIN platform_collection c ON c.id=o.collection_id JOIN platform_legacy_query_alias q ON q.collection_id=c.id
+    WHERE a.old_id=ANY(${sql.param(selection)}::bigint[])`)
+  for (const { query, relations } of await readDisplayRows(db, owners, false, selection)) {
+    for (const { relation } of relations) result.set(relation.id, { ...relation, query } as RelationEvidenceDisplay)
+  }
+  return result
 }

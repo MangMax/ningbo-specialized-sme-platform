@@ -234,6 +234,12 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
       const path = 'comparison-scope-proofs'
       const calls = [
         ['correspondences?view=summary&type=recognized_export&pageSize=2', 'list_record_correspondences', { view: 'summary', type: 'recognized_export', pageSize: 2 }],
+        ['correspondences?type=recognized_export&pageSize=2', 'list_record_correspondences', { type: 'recognized_export', pageSize: 2 }],
+        [`correspondences/${expectedRefs[0]!.id}`, 'get_record_correspondence', { id: expectedRefs[0]!.id }],
+        [`correspondences/events/${event.id}`, 'get_record_correspondence_source', { kind: 'event', id: event.id }],
+        [`correspondences/relations/${matchedRelation!.id}`, 'get_record_correspondence_source', { kind: 'relation', id: matchedRelation!.id }],
+        [`correspondences/relations/${historicalRelationId}`, 'get_record_correspondence_source', { kind: 'relation', id: historicalRelationId }],
+        [`correspondences/export-rows/${matchedExport.id}`, 'get_record_correspondence_source', { kind: 'export_row', id: matchedExport.id }],
         [`${path}/${officialProofId}`, 'get_comparison_scope_proof', { id: officialProofId }],
         [`${path}/${currentProofId}`, 'get_comparison_scope_proof', { id: currentProofId }],
         [`${path}?status=confirmed&page=2&pageSize=1`, 'list_comparison_scope_proofs', { status: 'confirmed', page: 2, pageSize: 1 }],

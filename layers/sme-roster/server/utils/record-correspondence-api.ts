@@ -1,5 +1,5 @@
 import { eq, sql } from 'drizzle-orm'
-import { pagePostgresCorrespondenceSummaries } from './record-correspondence-postgres'
+import { listPostgresCorrespondences, pagePostgresCorrespondences, readPostgresCorrespondenceSources } from './record-correspondence-postgres'
 import { readPostgresRosterPage } from '../../lib/roster/postgres-rows'
 import { z } from 'zod'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -7,7 +7,7 @@ import * as schema from '../../../../db/schema'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
 import { importPostgresReceiptRedactor, importReceiptRedactor } from './import-receipt-redaction'
 import { usePostgresRosterDb } from './postgres-roster-db'
-import { commitRecordCorrespondences, CorrespondenceError, getRecordCorrespondence, listRecordCorrespondences, pageRecordCorrespondences, pageRecordCorrespondenceAudit, preflightRecordCorrespondences, readRecordCorrespondenceBatch, type CorrespondenceFilter } from './record-correspondence'
+import { commitRecordCorrespondences, CorrespondenceError, getRecordCorrespondence, listRecordCorrespondences, pageRecordCorrespondences, pageRecordCorrespondenceAudit, preflightRecordCorrespondences, readRecordCorrespondenceBatch, type CorrespondenceFilter, type CorrespondenceRead } from './record-correspondence'
 import { detail, details, sourceReader, sanitizeEvidence, summaries, type SourceKind } from './record-correspondence-read'
 import { discoverEventArchives } from './event-archive-discovery'
 import { generateCandidates } from './record-correspondence-candidates'
@@ -90,6 +90,24 @@ function auditResponse<T extends { rows: { evidence: unknown }[] }>(result: T, r
 function batchResponse(receipt: object | null | undefined, redactors: ReadonlyArray<(text: string) => string>) {
   return receipt ? ok(receipt, redactors) : fail(404, 'not_found', 'Committed receipt not found')
 }
+function detailPageResponse(page: object, rows: ReturnType<typeof details>, redactors: ReadonlyArray<(text: string) => string>) {
+  const body = { ...page, rows }
+  return success(sanitizePublishedObject(body, redactors, (key, value) => key === 'rows'
+    ? rows.map(row => sanitizePublishedDetail(row, redactors)) : sanitizeEvidence(value, redactors)))
+}
+function sourceFilter(kind: SourceKind, id: number): CorrespondenceFilter {
+  return kind === 'event' ? { anyEventId: id } : kind === 'relation' ? { relationId: id } : { exportRowId: id }
+}
+function sourceResponse(reader: ReturnType<typeof sourceReader>, kind: SourceKind, id: number, rows: CorrespondenceRead[], redactors: ReadonlyArray<(text: string) => string>) {
+  const source = reader.read(kind, id)
+  if (!source) return fail(404, 'not_found', 'Source row not found')
+  const body = { source, correspondences: rows.map(reader.detail) }
+  return success(sanitizePublishedObject(body, redactors, (key, value) => {
+    if (key === 'source' && kind === 'event') return sanitizePublishedEvent(source as PublishedEvent, redactors)
+    if (key === 'correspondences') return body.correspondences.map(row => sanitizePublishedDetail(row, redactors))
+    return sanitizeEvidence(value, redactors)
+  }))
+}
 
 function parseListQuery(query: Record<string, unknown>) {
   const paging = page(query)
@@ -106,19 +124,21 @@ function parseListQuery(query: Record<string, unknown>) {
 }
 
 export async function readPostgresCorrespondenceRequest(input: CorrespondenceApiInput, apiToken?: string | null): Promise<CorrespondenceApiOutput | undefined> {
-  const summary = input.action === 'list' && input.query?.view === 'summary'
-  if (!summary && input.action !== 'audit' && input.action !== 'batch') return
+  if (!['list', 'get', 'source', 'audit', 'batch'].includes(input.action)) return
   const db = usePostgresRosterDb()
   if (!db) return
   if (input.action === 'batch' && !auth(input, apiToken)) return fail(401, 'unauthorized', 'Configured API token required')
   if (input.method !== 'GET') return fail(405, 'method_not_allowed', 'GET required')
   return db.transaction(async tx => {
-    const { knownRedactors } = await importPostgresReceiptRedactor(tx, { additionalSecrets: [apiToken] })
-    if (summary) {
+    const redact = await importPostgresReceiptRedactor(tx, { additionalSecrets: [apiToken] })
+    const { knownRedactors } = redact
+    if (input.action === 'list') {
       const parsed = parseListQuery(input.query ?? {})
       if ('status' in parsed) return parsed
-      const result = await pagePostgresCorrespondenceSummaries(tx, parsed.filter, parsed.paging)
-      return ok({ ...result, rows: summaries(result.rows) }, knownRedactors)
+      const result = await pagePostgresCorrespondences(tx, parsed.filter, parsed.paging)
+      if (parsed.view === 'summary') return ok({ ...result, rows: summaries(result.rows) }, knownRedactors)
+      const reader = await readPostgresCorrespondenceSources(tx, result.rows, redact)
+      return detailPageResponse(result, result.rows.map(reader.detail), knownRedactors)
     }
     if (input.action === 'batch') {
       const key = scalar(input.key)
@@ -130,6 +150,19 @@ export async function readPostgresCorrespondenceRequest(input: CorrespondenceApi
     }
     const id = int(input.id)
     if (!id) return fail(400, 'invalid_request', 'Positive ID required')
+    if (input.action === 'source') {
+      const kind = input.kind as SourceKind
+      if (!sourceKinds.includes(kind)) return fail(400, 'invalid_request', 'Invalid source kind')
+      const rows = await listPostgresCorrespondences(tx, sourceFilter(kind, id))
+      const reader = await readPostgresCorrespondenceSources(tx, rows, redact, { kind, id })
+      return sourceResponse(reader, kind, id, rows, knownRedactors)
+    }
+    if (input.action === 'get') {
+      const rows = await listPostgresCorrespondences(tx, { id })
+      if (!rows.length) return fail(404, 'not_found', 'Correspondence not found')
+      const reader = await readPostgresCorrespondenceSources(tx, rows, redact)
+      return success(sanitizePublishedDetail(reader.detail(rows[0]!), knownRedactors))
+    }
     const { rows: [match] } = await tx.execute(sql`SELECT 1 FROM record_correspondence WHERE id = ${id}`)
     if (!match) return fail(404, 'not_found', 'Correspondence not found')
     const paging = auditPaging(input.query ?? {})
@@ -162,9 +195,7 @@ function correspondenceSnapshot(input: CorrespondenceApiInput, context: { db: Db
       const { filter, paging, view } = parsed
       const result = pageRecordCorrespondences(db, filter, paging)
       if (view === 'summary') return ok({ ...result, rows: summaries(result.rows) }, redactors)
-      const body = { ...result, rows: details(db, result.rows, redact) }
-      return success(sanitizePublishedObject(body, redactors, (key, value) => key === 'rows'
-        ? body.rows.map(row => sanitizePublishedDetail(row, redactors)) : sanitizeEvidence(value, redactors)))
+      return detailPageResponse(result, details(db, result.rows, redact), redactors)
     }
     if (input.action === 'discover') {
       const parsed = z.strictObject({ eventId: positive, page: positive.default(1), pageSize: positive.max(200).default(50), queryPage: positive.default(1), queryPageSize: positive.max(200).default(25) }).safeParse(input.body)
@@ -194,17 +225,10 @@ function correspondenceSnapshot(input: CorrespondenceApiInput, context: { db: Db
     }
     const id = int(input.id); if (!id) return fail(400, 'invalid_request', 'Positive ID required')
     if (input.action === 'source') {
-      if (!sourceKinds.includes(input.kind as SourceKind)) return fail(400, 'invalid_request', 'Invalid source kind')
-      const rows = listRecordCorrespondences(db, input.kind === 'event' ? { anyEventId: id } : input.kind === 'relation' ? { relationId: id } : { exportRowId: id })
-      const reader = sourceReader(db, rows, { kind: input.kind as SourceKind, id }, redact)
-      const source = reader.read(input.kind as SourceKind, id)
-      if (!source) return fail(404, 'not_found', 'Source row not found')
-      const body = { source, correspondences: rows.map(reader.detail) }
-      return success(sanitizePublishedObject(body, redactors, (key, value) => {
-        if (key === 'source' && input.kind === 'event') return sanitizePublishedEvent(source as PublishedEvent, redactors)
-        if (key === 'correspondences') return body.correspondences.map(row => sanitizePublishedDetail(row, redactors))
-        return sanitizeEvidence(value, redactors)
-      }))
+      const kind = input.kind as SourceKind
+      if (!sourceKinds.includes(kind)) return fail(400, 'invalid_request', 'Invalid source kind')
+      const rows = listRecordCorrespondences(db, sourceFilter(kind, id))
+      return sourceResponse(sourceReader(db, rows, { kind, id }, redact), kind, id, rows, redactors)
     }
     if (input.action === 'get') {
       const row = getRecordCorrespondence(db, id)
