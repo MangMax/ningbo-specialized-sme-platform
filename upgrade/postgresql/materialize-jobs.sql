@@ -38,4 +38,6 @@ CREATE UNIQUE INDEX job_export_request_uq
 CREATE UNIQUE INDEX job_request_key_uq ON business.job (kind, request_key) WHERE request_key IS NOT NULL;
 
 ANALYZE business.job;
+\ir job-notifications.sql
+
 COMMIT;

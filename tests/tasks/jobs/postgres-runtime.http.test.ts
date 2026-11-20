@@ -67,6 +67,7 @@ beforeAll(async () => {
     .delete('/api/jobs/:id', (await import('../../../layers/core/server/api/jobs/[id].delete')).default)
     .post('/api/jobs', (await import('../../../layers/core/server/api/jobs/index.post')).default)
     .get('/api/task-center', (await import('../../../layers/core/server/api/task-center/index.get')).default)
+    .get('/api/task-center/events', (await import('../../../layers/core/server/api/task-center/events.get')).default)
     .get('/api/task-center/:id', (await import('../../../layers/core/server/api/task-center/[id].get')).default)
     .post('/api/task-center/:id/cancel', (await import('../../../layers/core/server/api/task-center/[id]/cancel.post')).default)
     .post('/api/task-center/:id/retry', (await import('../../../layers/core/server/api/task-center/[id]/retry.post')).default)
@@ -86,6 +87,30 @@ afterAll(async () => {
     vi.unstubAllEnvs()
     if (started) execFileSync(join(bin!, 'pg_ctl'), ['-D', join(dir, 'data'), '-m', 'immediate', '-w', 'stop'])
     if (dir) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+it.runIf(!!bin)('uses task storage to enable streaming and signals SQLite clients to keep polling', async () => {
+  const events = await request('/api/task-center/events', { signal: AbortSignal.timeout(5_000) })
+  expect(events.status).toBe(200)
+  const reader = events.body!.pipeThrough(new TextDecoderStream()).getReader()
+  try {
+    let frames = ''
+    while (!frames.includes('event: ready\ndata:\n\n')) {
+      const chunk = await reader.read()
+      expect(chunk.done).toBe(false)
+      frames += chunk.value
+    }
+  } finally {
+    await reader.cancel()
+  }
+  vi.stubEnv('NUXT_POSTGRES_JOBS', '0')
+  try {
+    const sqlite = await request('/api/task-center/events')
+    expect(sqlite.status).toBe(204)
+    expect(await sqlite.text()).toBe('')
+  } finally {
+    vi.stubEnv('NUXT_POSTGRES_JOBS', '1')
   }
 })
 

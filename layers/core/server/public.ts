@@ -17,5 +17,6 @@ export { applyPostgresEnterpriseMerge, findPostgresEnterpriseMergeAliasConflict 
 export { verifyRegisteredFileRead } from './utils/file-read-identity'
 export { postgresJobsEnabled, usePostgresJobsDb, startPostgresJobs, stopPostgresJobs } from './utils/postgres-jobs'
 export type { JobCompletion, JobContext, JobParseResult, JobSpec } from './utils/job-runner'
+export { closeTaskCenterEvents } from './utils/task-center-events'
 export { stagePostgresJob, type PostgresJobContext, type PostgresJobSpec, type PostgresJobTransaction } from './utils/job-runner-postgres'
 export { getPostgresJob, reopenPostgresJob, type PostgresJobSnapshot } from './utils/job-store-postgres'

@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
+import pg from 'pg'
 import { expect, it, vi } from 'vitest'
 import { reserveLoopbackPort, spawnCompiledApp, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
 import { defaultLogCollection } from '../../../layers/core/lib/logging/policy'
@@ -11,7 +13,32 @@ const bin = process.env.TEST_POSTGRES_STARTUP_BIN
 // setup's second copy of the server module graph.
 vi.mock('../../../server/install-application', () => ({ installApplicationServer() {} }))
 
-it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks and two-schema restore', async () => {
+async function openTaskEvents(base: string) {
+  const controller = new AbortController()
+  const response = await fetch(`${base}/api/task-center/events`, {
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(25_000)]),
+  })
+  expect(response.status).toBe(200)
+  expect(response.headers.get('content-type')).toContain('text/event-stream')
+  expect(response.headers.get('cache-control')).toContain('no-store')
+  const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader()
+  let buffer = ''
+  async function nextFrame(): Promise<string | null> {
+    while (!buffer.includes('\n\n')) {
+      const chunk = await reader.read()
+      if (chunk.done) return null
+      buffer += chunk.value
+    }
+    const end = buffer.indexOf('\n\n')
+    const frame = buffer.slice(0, end)
+    buffer = buffer.slice(end + 2)
+    return frame
+  }
+  expect(await nextFrame()).toBe('retry: 3000')
+  return { nextFrame, close: () => controller.abort() }
+}
+
+it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, committed SSE and two-schema restore', async () => {
   const dir = mkdtempSync('/tmp/pg-startup-')
   const data = join(dir, 'cluster')
   const dbPath = join(dir, 'legacy', 'roster.db')
@@ -98,6 +125,7 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks and t
       } finally {
         await stopOwnedChild(child)
       }
+      expect(child.exitCode).toBe(0)
     }
 
     await withApp(false, async base => {
@@ -167,6 +195,82 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks and t
         body: JSON.stringify({ kind: 'render-pages', params: { files: ['fixture.pdf'] } }),
       })).status).toBe(403)
     })
+    const listeners = () => query(`SELECT pid FROM pg_stat_activity
+      WHERE application_name = 'task-center-events' ORDER BY pid`).split('\n').filter(Boolean)
+    const ready = 'event: ready\ndata:'
+    const changed = 'event: changed\ndata:'
+    const update = `UPDATE business.job SET progress = '{"done":4,"total":8}' WHERE id = '${id}'`
+    await withApp(true, async base => {
+      const first = await openTaskEvents(base)
+      const second = await openTaskEvents(base)
+      try {
+        expect(await first.nextFrame()).toBe(ready)
+        expect(await second.nextFrame()).toBe(ready)
+        expect(listeners()).toHaveLength(1)
+        first.close()
+        await withApp(true, async otherBase => {
+          const other = await openTaskEvents(otherBase)
+          try {
+            expect(await other.nextFrame()).toBe(ready)
+            expect(listeners()).toHaveLength(2)
+            const next = second.nextFrame()
+            const writer = new pg.Client({ host: dir, port: 5432, user: 'fixture', database: 'roster' })
+            await writer.connect()
+            try {
+              await writer.query('BEGIN')
+              await writer.query(update)
+              expect(await Promise.race([next, delay(200, 'quiet')])).toBe('quiet')
+              await writer.query('ROLLBACK')
+              expect(await Promise.race([next, delay(200, 'quiet')])).toBe('quiet')
+              await writer.query(`BEGIN; ${update}; COMMIT`)
+            } finally {
+              await writer.end()
+            }
+            expect(await next).toBe(changed)
+            expect(await other.nextFrame()).toBe(changed)
+            for (const endpoint of [base, otherBase]) {
+              const response = await fetch(`${endpoint}/api/task-center/${id}`)
+              expect(await response.json()).toMatchObject({ progress: { done: 4, total: 8 } })
+            }
+
+            expect(query(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+              WHERE application_name = 'task-center-events'`)).toBe('t\nt')
+            expect(await second.nextFrame()).toBeNull()
+            expect(await other.nextFrame()).toBeNull()
+          } finally {
+            other.close()
+          }
+        })
+      } finally {
+        first.close()
+        second.close()
+      }
+
+      query('DROP TRIGGER task_center_changed ON business.job')
+      const unavailable = await openTaskEvents(base)
+      try {
+        expect(await unavailable.nextFrame()).toBeNull()
+      } finally {
+        unavailable.close()
+      }
+
+      for (let run = 0; run < 2; run++) {
+        command('psql', ['-Xqw', '-f', 'upgrade/postgresql/install-job-runtime.sql'])
+      }
+      query(`UPDATE business.job SET progress = '{"done":5,"total":8}' WHERE id = '${id}'`)
+      const reconnected = await openTaskEvents(base)
+      expect(await reconnected.nextFrame()).toBe(ready)
+      const snapshot = await fetch(`${base}/api/task-center/${id}`)
+      expect(await snapshot.json()).toMatchObject({ progress: { done: 5, total: 8 } })
+      expect(await reconnected.nextFrame()).toBe(': heartbeat')
+      reconnected.close()
+      await expect.poll(listeners).toEqual([])
+
+      const openAtShutdown = await openTaskEvents(base)
+      expect(await openAtShutdown.nextFrame()).toBe(ready)
+      // Keep the client connected until the app's shutdown hook closes the stream.
+    })
+    await expect.poll(listeners).toEqual([])
     expect(query(`SELECT state FROM business.job WHERE id = '${id}'`)).toBe('queued')
     expect(existsSync(join(dbPath, '..'))).toBe(false)
     expect(existsSync(logsPath)).toBe(false)
