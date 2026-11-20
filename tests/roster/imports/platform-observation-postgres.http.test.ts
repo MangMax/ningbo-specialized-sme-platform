@@ -57,6 +57,7 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
         .flatMap(file => ['-f', 'db/postgresql/' + file + '.sql'])])
     await client.query("INSERT INTO platform_legacy_alias_sequence VALUES ('query', 93), ('relation', 103)")
     for (const original of historical) await seedLegacyObservation(original)
+    vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: root }))
     vi.stubEnv('NUXT_DB_READONLY', '1')
     vi.stubEnv('NUXT_POSTGRES_DIRECTORY_WRITE', '1')
     vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
@@ -74,6 +75,7 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
         if (started) command('pg_ctl', ['-D', data, '-w', '-m', 'fast', 'stop'])
       } finally {
         if (root) rmSync(root, { recursive: true, force: true })
+        vi.unstubAllGlobals()
         vi.unstubAllEnvs()
       }
     }
