@@ -18,7 +18,7 @@ type Observation = {
   enterpriseId: string | null; matchedName: string | null; usccRaw: string | null; nameRaw: string | null;
   matchBasis: string | null; verificationStatus: string | null; hasOriginal: boolean;
 }
-type Owner = { collectionId: string; provenanceState: string; query: Query }
+export type PostgresDisplayOwner = { collectionId: string; provenanceState: string; query: Query }
 type CollectionArchive = PostgresPlatformArchive & { owner: string; field: string }
 type RelationArchive = { owner: string; field: string; bytes: Buffer | null; sealed: boolean }
 const projectionTables = {
@@ -40,7 +40,7 @@ function factValue(row: Record<string, unknown>, field: string, key: string) {
   return data
 }
 
-async function legacyDisplay(db: Reader, owner: Owner) {
+async function legacyDisplay(db: Reader, owner: PostgresDisplayOwner) {
   const { rows: [archive] } = await db.execute<PostgresPlatformArchive & Omit<LegacyProvenanceDisplay, 'kind' | 'collection' | 'queryId'> & {
     origin: 't04_envelope' | 'supplement'
   }>(sql`
@@ -81,7 +81,7 @@ async function legacyDisplay(db: Reader, owner: Owner) {
     bytes: metadataBytes }
 }
 
-async function readDisplayRows(db: Reader, owners: Owner[], includeRaw: boolean, selection?: readonly number[]) {
+export async function readPostgresDisplayRows(db: Reader, owners: PostgresDisplayOwner[], includeRaw: boolean, selection?: readonly number[]) {
   if (!owners.length) return []
   const ids = sql`${sql.param(owners.map(owner => owner.collectionId))}::bigint[]`
   const { rows: archiveRows } = await db.execute<CollectionArchive>(sql`
@@ -221,8 +221,8 @@ async function readDisplayRows(db: Reader, owners: Owner[], includeRaw: boolean,
   })
 }
 
-export async function readPostgresQueryDisplays(db: Reader, owners: Owner[], includeRaw: boolean): Promise<PlatformQueryRow[]> {
-  return (await readDisplayRows(db, owners, includeRaw)).map(({ query, relations }) => ({ query,
+export async function readPostgresQueryDisplays(db: Reader, owners: PostgresDisplayOwner[], includeRaw: boolean): Promise<PlatformQueryRow[]> {
+  return (await readPostgresDisplayRows(db, owners, includeRaw)).map(({ query, relations }) => ({ query,
     relations: relations.map(({ relation, matchedName }) => ({ ...parsePlatformRelationDisplay(query.interface, relation), matchedName })),
   }))
 }
@@ -230,7 +230,7 @@ export async function readPostgresQueryDisplays(db: Reader, owners: Owner[], inc
 export async function readPostgresRelationDisplays(db: Reader, selection: readonly number[]) {
   const result = new Map<number, RelationEvidenceDisplay>(selection.map(id => [id, null]))
   if (!selection.length) return result
-  const { rows: owners } = await db.execute<Owner>(sql`
+  const { rows: owners } = await db.execute<PostgresDisplayOwner>(sql`
     SELECT DISTINCT c.id AS "collectionId", c.provenance_state AS "provenanceState",
       jsonb_build_object('id',q.old_id,'interface',c.interface,'queryKey',c.query_key,
         'rdjb',c.rdjb,'titleCode',c.title_code,'queriedAt',c.queried_at,'lastCollectedAt',c.last_collected_at,
@@ -238,7 +238,7 @@ export async function readPostgresRelationDisplays(db: Reader, selection: readon
     FROM platform_legacy_relation_alias a JOIN platform_business_observation o ON o.id=a.observation_id
     JOIN platform_collection c ON c.id=o.collection_id JOIN platform_legacy_query_alias q ON q.collection_id=c.id
     WHERE a.old_id=ANY(${sql.param(selection)}::bigint[])`)
-  for (const { query, relations } of await readDisplayRows(db, owners, false, selection)) {
+  for (const { query, relations } of await readPostgresDisplayRows(db, owners, false, selection)) {
     for (const { relation } of relations) result.set(relation.id, { ...relation, query } as RelationEvidenceDisplay)
   }
   return result

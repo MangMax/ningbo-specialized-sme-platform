@@ -3,6 +3,8 @@ import { admitEnterpriseResponse } from '../../../utils/enterprise-read-response
 import { useDb } from '@db'
 import { enterpriseReads } from '../../../utils/enterprise-read'
 import { withEnterpriseReadSignal } from '../../../../../core/server/utils/enterprise-read-signal'
+import { usePostgresRosterDb } from '../../../utils/postgres-roster-db'
+import { readPostgresRosterEnterpriseDetail } from '../../../../lib/roster/enterprise-detail-postgres'
 
 /**
  * **企业详情**(契约 §7.2,RL-04):一家企业的全部称号历史与证据。
@@ -40,6 +42,12 @@ export default defineEventHandler((event) => {
   setHeader(event, 'cache-control', 'no-store')
   admitEnterpriseResponse(event)
   return withEnterpriseReadSignal(event, async signal => {
+    const pg = usePostgresRosterDb()
+    if (pg) {
+      const detail = await readPostgresRosterEnterpriseDetail(pg,id)
+      if (!detail) throw createError({ statusCode: 404, statusMessage: 'not found' })
+      return detail
+    }
     const detail = await enterpriseReads.json(useDb().$client.name, { operation: 'detail',enterpriseId: id }, signal, requestLogContext(event))
     if (!detail.found) throw createError({ statusCode: 404, statusMessage: 'not found' })
     setHeader(event, 'content-type', 'application/json; charset=utf-8')

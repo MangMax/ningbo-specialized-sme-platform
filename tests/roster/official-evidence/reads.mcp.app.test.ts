@@ -9,7 +9,7 @@ import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { createHash } from 'node:crypto'
 import ExcelJS from 'exceljs'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
@@ -385,6 +385,23 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     expect(nativeLedgerDetail.status).toBe(200)
     expect(await nativeLedgerDetail.json()).toEqual((await http(ledgerDetailPath)).body)
     expect((await app.request('/api/enterprises/99999999')).status).toBe(404)
+    const rosterDetailPath = '/api/roster/enterprises/' + firstOwner.id
+    const rosterResponse = await app.request(rosterDetailPath)
+    const rosterNative = await rosterResponse.json()
+    expect(rosterResponse.status, JSON.stringify(rosterNative)).toBe(200)
+    const rosterSqlite = await http(rosterDetailPath)
+    expect(rosterSqlite.status).toBe(200)
+    const detailShape = z.object({
+      businessTimeline: z.object({ asOf: z.string() }).passthrough(),
+      qualificationAssessment: z.object({ asOf: z.string(), snapshotId: z.string() }).passthrough(),
+    }).passthrough()
+    const comparable = (value: unknown) => {
+      const same = detailShape.parse(value)
+      const { asOf: _timestamp, snapshotId: _snapshot, ...assessment } = same.qualificationAssessment
+      const { asOf: _timelineTimestamp, ...timeline } = same.businessTimeline
+      return { ...same,qualificationAssessment:assessment,businessTimeline:timeline }
+    }
+    expect(comparable(rosterNative)).toEqual(comparable(rosterSqlite.body))
     const entries = new URLSearchParams(Object.entries(scope).map(([key, value]) => [key, String(value)]))
     const decisionReads = [
       ['/api/roster/decision-lifecycle/current?' + entries, 'get_current_difference_decision', scope],
@@ -851,9 +868,73 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     })] })
     expect(await nativeTool('save_roster_batch', archiveRequest)).toMatchObject({ isError: false, body: { status:'committed', batchId: archiveReceipt.batchId } })
 
+    const updatedDetail = await app.request(rosterDetailPath)
+    const typedDetail = await updatedDetail.json()
+    expect(updatedDetail.status, JSON.stringify(typedDetail)).toBe(200)
+    expect(typedDetail).toMatchObject({ platform: {
+      queries: expect.arrayContaining([expect.objectContaining({ interface:'apply_list',relationCount:1 }),
+        expect.objectContaining({ interface:'business_list',relationCount:1 })]),
+      relations: expect.arrayContaining([expect.objectContaining({ nameRaw:'合成原值', status:'有效', verificationStatus:'confirmed' })]),
+    } })
+
+    const snapshotFiles = join(pgDir,'snapshot-files')
+    mkdirSync(snapshotFiles)
+    const provider = join(pgDir,'snapshot-provider.mjs')
+    writeFileSync(provider,`
+      const native = globalThis.fetch
+      globalThis.fetch = (input, init) => {
+        const url = new URL(String(input))
+        if (url.hostname !== 'zjtx.miit.gov.cn') return native(input,init)
+        const grid = url.pathname.endsWith('/queryList') ? 'applyGrid'
+          : url.pathname.endsWith('/queryBusList') ? 'businessGrid' : 'businessListGrid'
+        return Promise.resolve(Response.json({zrarData:{grid:{[grid]:{pageSet:[],page:1,pageSize:50,maxCount:0,maxPage:1}}}}))
+      }
+    `)
+    const snapshotApp = nativeAppAdapter({ dir:pgDir,token:apiToken,launch:({cwd,port})=>({
+      args:['--import',provider,join(cwd,'.output/server/index.mjs')],
+      env:{ NODE_ENV:'production',HOST:'127.0.0.1',PORT:String(port),MIIT_COOKIE:'sid=synthetic-snapshot-cookie',
+        NUXT_DB_READONLY:'1',NUXT_POSTGRES_ROSTER_READ:'1',NUXT_POSTGRES_DIRECTORY_URL:url,
+        NUXT_POSTGRES_DIRECTORY_WRITE:'1',NUXT_POSTGRES_JOBS:'1',NUXT_POSTGRES_BIN:pgBin,
+        NUXT_FILES_DIR:snapshotFiles,NUXT_INCOMING_DIR:join(pgDir,'incoming') },
+    }) })
+    try {
+      await snapshotApp.start()
+      const send = (request:unknown) => snapshotApp.request('/api/roster/difference-snapshots',{
+        method:'POST',body:JSON.stringify(request),
+      })
+      const create = { action:'create',clientRequestId:'native-verified-snapshot',enterpriseIds:[firstOwner.id] }
+      const [first,duplicate] = await Promise.all([send(create),send(create)])
+      const metadata = await first.json()
+      expect(first.status,JSON.stringify(metadata)).toBe(202)
+      expect(duplicate.status).toBe(202)
+      expect(await duplicate.json()).toMatchObject({ id:metadata.id })
+      expect((await send({...create,enterpriseIds:[999999]})).status).toBe(409)
+      const backup = metadata.params.backup
+      expect(createHash('sha256').update(readFileSync(backup.path)).digest('hex')).toBe(backup.sha256)
+      const jobs = run('pg_restore',['--data-only','--schema=business','--table=job','--file=-',backup.path]).toString()
+      expect(jobs).toContain('COPY business.job')
+      expect(jobs).not.toContain(metadata.id)
+      const settled = await snapshotApp.terminal(metadata.id)
+      expect(settled).toMatchObject({ state:'done',result:{ completeness:'complete',
+        counts:{ enterprises:1,requests:7,rows:0,unfinished:0 },
+      } })
+      const task = await snapshotApp.request('/api/task-center/'+metadata.id)
+      expect(task.status).toBe(200)
+      expect(await task.json()).toMatchObject({ snapshot:{ enterprises:1,requests:7,rows:0,unfinished:0,positions:[] } })
+      const nativeRows = () => run('psql',['-X','-w','-Atc',`SELECT count(*) FROM business.import_batch
+        WHERE source_identity='collection:${metadata.id}' AND status='committed'`]).toString().trim()
+      expect(nativeRows()).toBe('7')
+      const retried = await send({action:'retry',jobId:metadata.id})
+      expect(retried.status).toBe(202)
+      expect(await snapshotApp.terminal(metadata.id)).toMatchObject({ state:'done',result:{ attempt:2,counts:{ requests:7 } } })
+      expect(nativeRows()).toBe('7')
+      appendFileSync(backup.path,'altered isolated backup')
+      expect((await send({action:'retry',jobId:metadata.id})).status).toBe(409)
+    } finally { await snapshotApp.close() }
+
   } finally {
     await app.close()
     if (started) run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-m', 'fast', 'stop'])
     rmSync(pgDir, { recursive: true, force: true })
   }
-}, 90_000)
+}, 120_000)

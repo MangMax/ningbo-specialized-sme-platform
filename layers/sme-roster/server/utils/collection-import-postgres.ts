@@ -163,9 +163,10 @@ function archiveSummary(results: RosterImportItemResult[], reference: boolean, f
       projectionsChecked:versions.size,observationsChecked:synced.length,quarantinedObservations:quarantined }} : {}) }
 }
 
-export function runPostgresPlatformImport(action: 'preflight' | 'commit' | 'replay', request: RosterImportRequest) {
+export function runPostgresPlatformImport(action: 'preflight' | 'commit' | 'replay', request: RosterImportRequest,
+  collectionJob?: { db: NodePgDatabase; checkpoint(tx: Tx): Promise<void> }) {
   if (action === 'replay' || !request.payload.platformQueries?.length || Object.keys(request.payload).some(key=>key!=='platformQueries')) return
-  const db = usePostgresRosterDb(true)
+  const db = collectionJob?.db ?? usePostgresRosterDb(true)
   if (!db) return
   return executePostgresRosterImport(db,action,request,async (tx,batch)=>{
     if (action === 'commit') await tx.execute(sql`SELECT pg_advisory_xact_lock(21785,0)`)
@@ -194,7 +195,8 @@ export function runPostgresPlatformImport(action: 'preflight' | 'commit' | 'repl
     })
     const summary = archiveSummary(items,plans.some(plan=>!!plan.same || plan.plannedReuse),request.sourceKind==='platform_archive')
     const candidateTaskIds = []
-    if (process.env.NUXT_POSTGRES_JOBS === '1') {
+    if (collectionJob) await collectionJob.checkpoint(tx)
+    else if (process.env.NUXT_POSTGRES_JOBS === '1') {
       for (const item of items) {
         const queryId = Number(item.ref.slice('query:'.length))
         const { rows: [row] } = await tx.execute<{ last: number }>(sql`

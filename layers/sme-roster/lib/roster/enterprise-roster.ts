@@ -533,7 +533,7 @@ interface SnapshotIndex {
   latestBatchIds: Set<number>
 }
 
-function indexSnapshots(snap: Snapshot): SnapshotIndex {
+function indexSnapshots(snap: Pick<Snapshot, 'enterprises' | 'exportRows' | 'exportBatches'>): SnapshotIndex {
   const usccToEnterprise = new Map<string, number>()
   const nameToEnterprise = new Map<string, number>()
   for (const e of snap.enterprises) {
@@ -837,7 +837,7 @@ function movedInOf(row: Snapshot['differences'][number]): MovedIn | null {
 }
 
 /** 每 (企业 × 称号 × 方向) 的**当前**解释 = `recordedAt` 最新那条(旧解释不丢,只是不在这里)。 */
-function currentExplanations(snap: Snapshot): Map<string, Snapshot['differences'][number]> {
+function currentExplanations(snap: Pick<Snapshot, 'differences'>): Map<string, Snapshot['differences'][number]> {
   const current = new Map<string, Snapshot['differences'][number]>()
   for (const row of snap.differences) {
     const key = differenceKey(row.enterpriseId, row.titleCode, row.direction)
@@ -858,7 +858,8 @@ function differenceKey(enterpriseId: number, titleCode: string, direction: strin
  * (例如两侧后来对齐了)。`confirmed_no_diff` 这类状态必须看得见(否则按 `status` 筛
  * 永远筛不到它)。两边的来源由 `explanationId` 与 `inCurrentDifference` 分别说清。
  */
-function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseId: number; titleCode: string; direction: ComparisonDirection }> = getComparison(db).rows, asOf = Date.now()): LegacyRosterDifferenceRow[] {
+export function projectEnterpriseDifferenceUniverse(snap: Pick<Snapshot, 'differences' | 'enterprises' | 'records' | 'queries'> &
+  { relations: Pick<PlatformStoredRelation, 'id' | 'queryId'>[] }, derived: Array<{ enterpriseId: number; titleCode: string; direction: ComparisonDirection }>): LegacyRosterDifferenceRow[] {
   const current = currentExplanations(snap)
   const names = new Map(snap.enterprises.map((e) => [e.id, e]))
   const recordDistrict = new Map<number, string | null>()
@@ -889,7 +890,7 @@ function differenceUniverse(db: Db, snap: Snapshot, derived: Array<{ enterpriseI
   }
 
   const queriesById = new Map(snap.queries.map((q) => [q.id, q]))
-  const relationsByQuery = new Map<number, Snapshot['relations']>()
+  const relationsByQuery = new Map<number, typeof snap.relations>()
   for (const relation of snap.relations) {
     const list = relationsByQuery.get(relation.queryId) ?? []
     list.push(relation)
@@ -946,24 +947,12 @@ export function getRosterEnterpriseDetail(db: Db, id: number, asOf = Date.now())
   })
 }
 
-function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDetail | null {
-  // 只建**这一家**的画像:详情页开一行,不该把整库 7352 家全算一遍。
-  const enterpriseSnapshot = readEnterpriseSnapshot(db, id)
-  const { snap, index, profileOf } = readRosterContext(enterpriseSnapshot)
-  const enterprise = snap.enterprises.find((e) => e.id === id)
-  if (!enterprise) return null
+export type RosterDetailArchive = Pick<Snapshot, 'queries' | 'relations'> & Pick<ReturnType<typeof readEnterpriseSnapshot>, 'platformLegacyById' | 'platformPositionsById'>
+export type RosterDetailHistory = Pick<Snapshot, 'enterprises' | 'aliases' | 'records' | 'eventsByRecord' | 'recordsByEnterprise' | 'evidence' | 'exportRows' | 'exportBatches'>
 
-  const profile = profileOf(enterprise)
-  const aliasNames = snap.aliases
-    .filter((a) => a.enterpriseId === id && a.verificationStatus === 'confirmed')
-    .map((a) => a.name)
-    .filter((name, index, list) => list.indexOf(name) === index)
-    .sort()
-
-  const events = profile.records.flatMap((r) => profile.eventsByRecord.get(r.id) ?? [])
-  const eventIds = new Set(events.map((e) => e.id))
-
-  const ownedRelations = snap.relations
+export function selectRosterDetailArchive(enterprise: Snapshot['enterprises'][number], archive: RosterDetailArchive) {
+  const id = enterprise.id
+  const ownedRelations = archive.relations
     .filter((r) => r.enterpriseId === id)
   // 该企业的平台查询 = 「有关系归到它」**∪**「查询键就是它」。
   // 后者是必须的:`no_record` / `failed` 这类查询**一条关系都不返回**,
@@ -973,17 +962,17 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
   if (uscc) ownKeys.add(uscc)
   ownKeys.add(`name:${enterprise.nameNorm}`)
   const ownedQueryIds = new Set(ownedRelations.map(r => r.queryId))
-  const includedQueries = snap.queries
+  const includedQueries = archive.queries
     .filter((q) => ownKeys.has(q.queryKey) || ownKeys.has(normUscc(q.queryKey) ?? q.queryKey) || ownedQueryIds.has(q.id))
   // Query coverage is evidence, not ownership: retain the original recognized rows without rematching them.
   const recognizedQueryIds = new Set(includedQueries.filter(q => q.interface === 'recognized_list').map(q => q.id))
-  const relations = snap.relations
+  const relations = archive.relations
     .filter(r => r.enterpriseId === id || recognizedQueryIds.has(r.queryId))
     .sort((a, b) => a.queryId - b.queryId || a.sequenceNo - b.sequenceNo)
   const relationCounts = new Map<number, number>()
   for (const relation of relations) relationCounts.set(relation.queryId, (relationCounts.get(relation.queryId) ?? 0) + 1)
   const queriesById = new Map(includedQueries.map(q => [q.id, q]))
-  const legacyById = enterpriseSnapshot.platformLegacyById ?? new Map()
+  const legacyById = archive.platformLegacyById ?? new Map()
   const queries = includedQueries
     .sort((a, b) => (a.queriedAt < b.queriedAt ? -1 : a.queriedAt > b.queriedAt ? 1 : 0) || a.id - b.id)
     .map((q): RosterPlatformQueryRow => ({
@@ -999,34 +988,36 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
       failureReason: q.failureReason,
       relationCount: relationCounts.get(q.id) ?? 0,
     }))
-  // Both directions use the same coverage for a title. Its IDs came from this
-  // enterprise's snapshot, so coverage need not rescan global query keys.
-  const coverageByTitle = new Map<string, ReturnType<typeof readQueryCoverage>>()
-  const coverageForTitle = (titleCode: Parameters<typeof readQueryAssessment>[1]['titleCode']) => {
-    let coverage = coverageByTitle.get(titleCode)
-    if (!coverage) {
-      coverage = readQueryCoverage(db, {enterpriseId:id,titleCode,direction:'missing_in_miit'}, undefined, enterpriseSnapshot.ownQueryIds)
-      coverageByTitle.set(titleCode, coverage)
-    }
-    return coverage
-  }
-  const assessmentFor = (scope: Parameters<typeof readQueryAssessment>[1]) =>
-    readQueryAssessment(db, scope, undefined, coverageForTitle(scope.titleCode))
+  return { queries, relations, queriesById, legacyById, recognizedQueryIds, platformPositionsById: archive.platformPositionsById }
+}
 
-  const selectedEvidence = snap.evidence.filter(v => eventIds.has(v.recordEventId))
-  const detailRead = createCurrentQualificationAssessmentReader((db as Db & { $client: import('better-sqlite3').Database }).$client)
-    .readDetail(id, asOf, selectedEvidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })), { ownQueryIds: enterpriseSnapshot.ownQueryIds, coverageForTitle })
-  const { snapshot: qualificationAssessment, publishedPresentation } = detailRead
-  const differenceRows = explainCurrentDifferences(db, differenceUniverse(db, snap, enterpriseComparisonCoordinates(db, id), asOf), asOf, detailRead)
-  const difference = enterpriseDifferenceSummaries(differenceRows).get(id) ?? NO_DIFFERENCE
-  const row = toRow(profile, aliasNames, deriveRosterState(profile, index), difference)
-  const platformFacts = readPlatformDetailFacts(db, queries, relations)
-  const businessTimeline = enterpriseBusinessTimeline(id, profile.records, events.filter(e => profile.records.some(r => r.id === e.recordId && r.source === 'jxj')), detailRead.platformFacts, queries)
+export function projectRosterDetailRelations(archive: ReturnType<typeof selectRosterDetailArchive>,
+  platformFacts: ReturnType<typeof readPlatformDetailFacts>) {
+  const { queriesById, legacyById, recognizedQueryIds, relations, platformPositionsById } = archive
+  return relations.map((r): RosterPlatformRelationRow => {
+    const fact = platformFacts.get(r.id)
+    if (!fact?.archiveProcessFacts) throw new Error(`missing_archive_process_facts:${r.id}`)
+    return {
+      normalizationConflicts: fact.normalizationConflicts,
+      ...(recognizedQueryIds.has(r.queryId) ? { enterpriseId:r.enterpriseId } : {}),
+      id:r.id, queryId:r.queryId, sequenceNo:r.sequenceNo, relationKey:r.relationKey, rawFields:r.rawFields,
+      ...(platformPositionsById?.get(r.id) ?? (legacyById.has(r.queryId)
+        ? legacySourcePositionForSequence(legacyById.get(r.queryId)!.collection,r.sequenceNo)
+        : sourcePositionForSequence(queriesById.get(r.queryId)?.collectionEvidence,r.sequenceNo))),
+      usccRaw:r.usccRaw, nameRaw:r.nameRaw, ...fact.archiveProcessFacts,
+      matchBasis:r.matchBasis, verificationStatus:r.verificationStatus,
+    }
+  })
+}
+
+export function projectRosterDetailHistory(snap: RosterDetailHistory, id: number, differenceRows: DifferenceSummaryInput[]) {
+  const enterprise = snap.enterprises.find(e => e.id === id)!
+  const profile = buildProfile(enterprise, snap, indexEvidence(snap))
+  const aliasNames = [...new Set(snap.aliases.filter(a => a.enterpriseId === id && a.verificationStatus === 'confirmed').map(a => a.name))].sort()
+  const events = profile.records.flatMap(record => snap.eventsByRecord.get(record.id) ?? [])
+  const eventIds = new Set(events.map(event => event.id))
   return {
-    businessTimeline: { ...businessTimeline, asOf: qualificationAssessment.asOf },
-    qualificationAssessment,
-    publishedPresentation,
-    enterprise: row,
+    enterprise: toRow(profile, aliasNames, deriveRosterState(profile, indexSnapshots(snap)), enterpriseDifferenceSummaries(differenceRows).get(id) ?? NO_DIFFERENCE),
     aliases: snap.aliases
       .filter((a) => a.enterpriseId === id)
       .sort((a, b) => a.nameNorm.localeCompare(b.nameNorm) || a.id - b.id)
@@ -1073,6 +1064,40 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
         page: v.page,
       })),
     recognitions: profile.recognitions,
+  }
+}
+
+function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDetail | null {
+  const snap = readEnterpriseSnapshot(db, id)
+  const enterprise = snap.enterprises.find(e => e.id === id)
+  if (!enterprise) return null
+  const archive = selectRosterDetailArchive(enterprise, snap)
+  const { queries, relations } = archive
+  // Both directions use the same coverage for a title. Its IDs came from this
+  // enterprise's snapshot, so coverage need not rescan global query keys.
+  const coverageByTitle = new Map<string, ReturnType<typeof readQueryCoverage>>()
+  const coverageForTitle = (titleCode: Parameters<typeof readQueryAssessment>[1]['titleCode']) => {
+    let coverage = coverageByTitle.get(titleCode)
+    if (!coverage) {
+      coverage = readQueryCoverage(db, {enterpriseId:id,titleCode,direction:'missing_in_miit'}, undefined, snap.ownQueryIds)
+      coverageByTitle.set(titleCode, coverage)
+    }
+    return coverage
+  }
+  const assessmentFor = (scope: Parameters<typeof readQueryAssessment>[1]) =>
+    readQueryAssessment(db, scope, undefined, coverageForTitle(scope.titleCode))
+
+  const publishedScope = snap.evidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId }))
+  const detailRead = createCurrentQualificationAssessmentReader((db as Db & { $client: import('better-sqlite3').Database }).$client)
+    .readDetail(id, asOf, publishedScope, { ownQueryIds: snap.ownQueryIds, coverageForTitle })
+  const { snapshot: qualificationAssessment, publishedPresentation } = detailRead
+  const differenceRows = explainCurrentDifferences(db, projectEnterpriseDifferenceUniverse(snap, enterpriseComparisonCoordinates(db, id)), asOf, detailRead)
+  const facts = readPlatformDetailFacts(db,queries,relations)
+  return {
+    businessTimeline: projectRosterDetailTimeline(id, snap, detailRead.platformFacts, queries, qualificationAssessment.asOf),
+    qualificationAssessment,
+    publishedPresentation,
+    ...projectRosterDetailHistory(snap, id, differenceRows),
     differences: differenceRows
       .filter((r) => r.enterpriseId === id)
       .sort((a, b) => titleRank(a.titleCode) - titleRank(b.titleCode) || a.direction.localeCompare(b.direction))
@@ -1082,35 +1107,17 @@ function enterpriseDetail(db: Db, id: number, asOf: number): RosterEnterpriseDet
     })),
     platform: {
       queries,
-      businessRecords: readPlatformBusinessDetails(db, id, queries, relations),
-      relations: relations.map(archived => {
-        const fact = platformFacts.get(archived.id)
-        if (!fact?.archiveProcessFacts) throw new Error(`missing_archive_process_facts:${archived.id}`)
-        return { ...archived, ...fact.archiveProcessFacts, normalizationConflicts: fact.normalizationConflicts }
-      }).map((r): RosterPlatformRelationRow => ({
-        normalizationConflicts: r.normalizationConflicts,
-        ...(recognizedQueryIds.has(r.queryId) ? { enterpriseId: r.enterpriseId } : {}),
-        id: r.id,
-        queryId: r.queryId,
-        sequenceNo: r.sequenceNo,
-        relationKey: r.relationKey,
-        rawFields: r.rawFields,
-        ...(enterpriseSnapshot.platformPositionsById?.get(r.id) ?? (legacyById.has(r.queryId) ? legacySourcePositionForSequence(legacyById.get(r.queryId)!.collection, r.sequenceNo)
-          : sourcePositionForSequence(queriesById.get(r.queryId)?.collectionEvidence, r.sequenceNo))),
-        usccRaw: r.usccRaw,
-        nameRaw: r.nameRaw,
-        province: r.province,
-        status: r.status,
-        batch: r.batch,
-        declareKind: r.declareKind,
-        appliedAt: r.appliedAt,
-        awardBatchLabel: r.awardBatchLabel,
-        year: r.year,
-        matchBasis: r.matchBasis,
-        verificationStatus: r.verificationStatus,
-      })),
+      businessRecords: readPlatformBusinessDetails(db,id,queries,relations,facts),
+      relations: projectRosterDetailRelations(archive,facts),
     },
   }
+}
+
+export function projectRosterDetailTimeline(id: number, snap: RosterDetailHistory,
+  facts: Parameters<typeof enterpriseBusinessTimeline>[3], queries: RosterPlatformQueryRow[], asOf: string) {
+  const official = new Set(snap.records.filter(r => r.source === 'jxj').map(r => r.id))
+  const events = [...official].flatMap(recordId => snap.eventsByRecord.get(recordId) ?? [])
+  return { ...enterpriseBusinessTimeline(id, snap.records, events, facts, queries), asOf }
 }
 
 // ---------------------------------------------------------------------------
@@ -1156,7 +1163,7 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
 function rosterDifferences(db: Db, filter: RosterDifferenceFilter): RosterDifferencesResult {
   const asOf = Date.now()
   const snap = readDifferenceSnapshot(db)
-  const differenceRows = differenceUniverse(db, snap, undefined, asOf)
+  const differenceRows = projectEnterpriseDifferenceUniverse(snap, getComparison(db).rows)
 
   // 别名:只带 `confirmed`(契约 §1.2),与总表的搜索口径同一处规则。
   const confirmedAliases = new Map<number, string[]>()
@@ -1205,7 +1212,7 @@ function rosterDifferences(db: Db, filter: RosterDifferenceFilter): RosterDiffer
 
   const { page, pageSize } = rosterPageOf(filter)
   const selected = rows.slice((page - 1) * pageSize, page * pageSize)
-  const hydrated = new Map(differenceUniverse(db, readDifferenceSnapshot(db, [...new Set(selected.map(r => r.enterpriseId))]), selected, asOf).map(r => [differenceKey(r.enterpriseId, r.titleCode, r.direction), r]))
+  const hydrated = new Map(projectEnterpriseDifferenceUniverse(readDifferenceSnapshot(db, [...new Set(selected.map(r => r.enterpriseId))]), selected).map(r => [differenceKey(r.enterpriseId, r.titleCode, r.direction), r]))
   return {
     rows: explainCurrentDifferences(db, selected.map(row => ({ ...hydrated.get(differenceKey(row.enterpriseId, row.titleCode, row.direction))!, inCurrentDifference: row.inCurrentDifference, ...readQueryAssessment(db, row) })), asOf),
     counts,

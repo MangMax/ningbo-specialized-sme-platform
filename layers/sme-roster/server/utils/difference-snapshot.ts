@@ -1,9 +1,13 @@
 import { createHash } from 'node:crypto'
-import { mkdirSync, readFileSync } from 'node:fs'
+import { createReadStream, mkdirSync, readFileSync } from 'node:fs'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { eq, and, sql } from 'drizzle-orm'
 import { z } from 'zod'
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { useApplicationDb } from '../../../../db/client'
 import * as s from '../../../../db/schema'
 import { newJobId } from '../../../core/lib/job'
@@ -11,11 +15,17 @@ import type { PlatformLiveQueryResult } from '../../lib/platform/live-query'
 import { runPlatformLiveQuery } from './platform-live-query'
 import { resolvePlatformCookie } from './platform-credential'
 import { createJob, getJob, setJobResult } from '../../../core/server/utils/job-store'
-import { enqueuePersistedJob, ensureJobRunnerReady, getJobSpec, registerJob, requeueFinishedJob, type JobSpec } from '../../../core/server/utils/job-runner'
+import { enqueuePersistedJob, ensureJobRunnerReady, getJobSpec, registerJob, requeueFinishedJob, type JobContext, type JobSpec } from '../../../core/server/utils/job-runner'
 
-import { reuseCollectedPlatformResult } from './platform-collection-reuse'
+import { reuseCollectedPlatformResult, reusePostgresCollectedPlatformResult } from './platform-collection-reuse'
 import { platformResultToImport } from '../../lib/platform/recognized-evidence'
 import { preflightRosterImport, commitRosterImport } from './roster-import'
+
+import { runPostgresPlatformImport } from './collection-import-postgres'
+import { resolvePostgresCredential } from '../../../core/server/utils/credential-state-postgres'
+import { startPostgresJobs } from '../../../core/server/utils/postgres-jobs'
+import { createPostgresJob, findPostgresJobRequest, getPostgresJob, lockPostgresJobAdmission, reopenPostgresJob, setPostgresJobResult } from '../../../core/server/utils/job-store-postgres'
+import { summarizePostgresSnapshots } from './jobs/snapshot-summary'
 
 type Db = ReturnType<typeof useApplicationDb>
 export const SNAPSHOT_KIND = 'difference-snapshot'
@@ -59,64 +69,100 @@ function refresh(result: Receipt) {
   result.counts.rows=result.items.reduce((n,i)=>n+(i.rows??0),0)
   result.counts.unfinished=result.items.filter(i=>!i.complete).length
 }
+type SnapshotContext = Pick<JobContext, 'jobId' | 'logContext'> & {
+  cancelled(): boolean | Promise<boolean>
+  progress(done:number,total:number): void | Promise<void>
+  checkpoint(result:Receipt): void | Promise<void>
+  admit(stored:PlatformLiveQueryResult,owner:number,request:Parameters<typeof commitRosterImport>[1] | null,result:Receipt): void | Promise<void>
+}
+
+async function runSnapshot(ctx: SnapshotContext, base: Receipt, cookie: string) {
+  const result = structuredClone(base)
+  result.attempt++
+  for (const item of result.items) {
+    if (await ctx.cancelled()) return { result, cancelled: true }
+    if (item.complete) continue
+    const scope = result.scope.find(e => e.enterpriseId === item.enterpriseId)!
+    if (scope.uscc || item.source !== 'businessList' && scope.name && scope.name.length <= 200) {
+      const pages = new Map<number, import('../../lib/platform/live-query').PlatformQueryPage>()
+      for (const segment of item.segments) for (const page of segment.pages) if (page.rdjb === item.rdjb && page.status === 'success') pages.set(page.page,page)
+      let startPage = 1
+      while (pages.has(startPage)) startPage++
+      const declaredTotals = new Map<string | null, number>()
+      for (const segment of item.segments) for (const page of segment.pages) {
+        if (page.rdjb === item.rdjb && page.status === 'success' && page.declaredTotal !== null) declaredTotals.set(item.rdjb,page.declaredTotal)
+      }
+      const priorFetchedCounts = new Map([[item.rdjb,[...pages.values()].reduce((n,p)=>n+p.fetchedCount,0)]])
+      const index = item.segments.length
+      const admit = async (segment: PlatformLiveQueryResult) => {
+        const { rawData, ...metadata } = segment
+        const stored: PlatformLiveQueryResult = { ...metadata, ...(rawData ? { dataRows: rawData.rows } : {}) }
+        const { rows: _rows, dataRows: _dataRows, rawData: _rawData, ...coverage } = stored
+        item.segments[index] = structuredClone(coverage)
+        refresh(result)
+        const request = stored.pages.some(page => page.status === 'success') ?
+          { idempotencyKey: `collection:${ctx.jobId}:${item.itemId}:${index}:${stored.pages.length}:${stored.fetchedCount}`,
+            sourceKind: 'platform_archive' as const, sourceIdentity: `collection:${ctx.jobId}`,
+            payload: { platformQueries: [platformResultToImport(stored)] } } : null
+        await ctx.admit(stored,item.enterpriseId,request,result)
+      }
+      const alreadyComplete = provenPages([...pages.values()],item.segments[0]?.limits.pageSize ?? 50) && item.segments.at(-1)?.completeness === 'complete'
+      const segment = alreadyComplete ? item.segments.at(-1)! : await runPlatformLiveQuery({ source: item.source, ...(scope.uscc ? { uscc: scope.uscc } : { name: scope.name }), ...(item.rdjb ? { rdjb: item.source === 'queryBusList' ? [item.rdjb] : item.rdjb } : {}), startPage, pageSize: item.segments[0]?.limits.pageSize ?? 50, rawDataVersion: 1 }, { cookie, declaredTotals, priorFetchedCounts, logContext: ctx.logContext })
+      if (!alreadyComplete) await admit(segment as PlatformLiveQueryResult)
+      for (const page of segment.pages) if (page.rdjb === item.rdjb && page.status === 'success') pages.set(page.page,page)
+      item.complete = provenPages([...pages.values()],segment.limits.pageSize) && segment.completeness === 'complete'
+      item.rows = item.complete ? [...pages.values()].reduce((n,p)=>n+p.fetchedCount,0) : null
+    }
+    item.reason = item.complete ? null : item.source === 'businessList' && !scope.uscc ? 'missing_uscc' : item.segments.length ? 'provider_failed_or_partial_pagination' : 'not_queried'
+    refresh(result)
+    await ctx.checkpoint(result)
+    await ctx.progress(result.items.length-result.counts.unfinished, result.items.length)
+  }
+  result.completeness = result.counts.unfinished ? 'unfinished' : 'complete'
+  return { result, progress: { done: result.items.length-result.counts.unfinished, total: result.items.length }, ...(result.counts.unfinished ? { error: 'Snapshot unfinished: identity, provider failure or pagination coverage gaps' } : {}) }
+}
+
 export const differenceSnapshotSpec: JobSpec = {
   kind: SNAPSHOT_KIND, status: 'ready', summary: '公布企业平台业务采集',
   paramsHint: 'Use POST /api/roster/difference-snapshots; backup must precede task writes',
   parse: () => ({ ok: false, message: 'Use dedicated difference-snapshots endpoint for verified prestart backup' }),
-  run: async ctx => {
-    const row = getJob(ctx.db, ctx.jobId)!
-    const result = structuredClone(row.result) as Receipt
-    result.attempt++
+  async run(ctx) {
+    const row = getJob(ctx.db,ctx.jobId)!
     let cookie = ''
-    try { cookie = resolvePlatformCookie(undefined, { db: ctx.db }) } catch { /* provider reports credential failure */ }
-    for (const item of result.items) {
-      if (ctx.cancelled()) return { result, cancelled: true }
-      if (item.complete) continue
-      const scope = result.scope.find(e => e.enterpriseId === item.enterpriseId)!
-      if (scope.uscc || item.source !== 'businessList' && scope.name && scope.name.length <= 200) {
-        const pages = new Map<number, import('../../lib/platform/live-query').PlatformQueryPage>()
-        for (const segment of item.segments) for (const page of segment.pages) if (page.rdjb === item.rdjb && page.status === 'success') pages.set(page.page,page)
-        let startPage = 1
-        while (pages.has(startPage)) startPage++
-        const declaredTotals = new Map<string | null, number>()
-        for (const segment of item.segments) for (const page of segment.pages) {
-          if (page.rdjb === item.rdjb && page.status === 'success' && page.declaredTotal !== null) declaredTotals.set(item.rdjb,page.declaredTotal)
+    try { cookie = resolvePlatformCookie(undefined,{ db:ctx.db }) } catch { /* provider reports credential failure */ }
+    const checkpoint = (result:Receipt) => { setJobResult(ctx.db,ctx.jobId,result) }
+    return runSnapshot({ ...ctx,checkpoint,admit(stored,owner,request,result) {
+      ctx.db.transaction(() => {
+        if (request && !reuseCollectedPlatformResult(ctx.db,stored,owner)) {
+          const preflight = preflightRosterImport(ctx.db,request)
+          if (preflight.status !== 'preflight') fail(409,'Business collection preflight failed')
+          const committed = commitRosterImport(ctx.db,request,[],{ deferCandidateTasks:true })
+          if (committed.status !== 'committed') fail(409,'Business collection commit failed')
         }
-        const priorFetchedCounts = new Map([[item.rdjb,[...pages.values()].reduce((n,p)=>n+p.fetchedCount,0)]])
-        const index = item.segments.length
-        const admit = (segment: PlatformLiveQueryResult) => {
-          // Business archival commits before checkpoint advancement. A replay
-          // restores the original import receipt before advancing this segment.
-          const { rawData, ...metadata } = segment
-          const stored: PlatformLiveQueryResult = { ...metadata, ...(rawData ? { dataRows: rawData.rows } : {}) }
-          ctx.db.transaction(() => {
-          if (stored.pages.some(page => page.status === 'success') && !reuseCollectedPlatformResult(ctx.db, stored, item.enterpriseId)) {
-            const request = { idempotencyKey: `collection:${ctx.jobId}:${item.itemId}:${index}:${stored.pages.length}:${stored.fetchedCount}`, sourceKind: 'platform_archive' as const, sourceIdentity: `collection:${ctx.jobId}`, payload: { platformQueries: [platformResultToImport(stored)] } }
-            const preflight = preflightRosterImport(ctx.db, request)
-            if (preflight.status !== 'preflight') fail(409, 'Business collection preflight failed')
-            const committed = commitRosterImport(ctx.db, request, [], { deferCandidateTasks: true })
-            if (committed.status !== 'committed') fail(409, 'Business collection commit failed')
-          }
-          const { rows: _rows, dataRows: _dataRows, rawData: _rawData, ...coverage } = stored
-          item.segments[index] = structuredClone(coverage)
-          refresh(result)
-          setJobResult(ctx.db,ctx.jobId,result)
-          })
-        }
-        const alreadyComplete = provenPages([...pages.values()],item.segments[0]?.limits.pageSize ?? 50) && item.segments.at(-1)?.completeness === 'complete'
-        const segment = alreadyComplete ? item.segments.at(-1)! : await runPlatformLiveQuery({ source: item.source, ...(scope.uscc ? { uscc: scope.uscc } : { name: scope.name }), ...(item.rdjb ? { rdjb: item.source === 'queryBusList' ? [item.rdjb] : item.rdjb } : {}), startPage, pageSize: item.segments[0]?.limits.pageSize ?? 50, rawDataVersion: 1 }, { cookie, declaredTotals, priorFetchedCounts, logContext: ctx.logContext })
-        if (!alreadyComplete) admit(segment as PlatformLiveQueryResult)
-        for (const page of segment.pages) if (page.rdjb === item.rdjb && page.status === 'success') pages.set(page.page,page)
-        item.complete = provenPages([...pages.values()],segment.limits.pageSize) && segment.completeness === 'complete'
-        item.rows = item.complete ? [...pages.values()].reduce((n,p)=>n+p.fetchedCount,0) : null
-      }
-      item.reason = item.complete ? null : item.source === 'businessList' && !scope.uscc ? 'missing_uscc' : item.segments.length ? 'provider_failed_or_partial_pagination' : 'not_queried'
-      refresh(result)
-      setJobResult(ctx.db, ctx.jobId, result)
-      ctx.progress(result.items.length-result.counts.unfinished, result.items.length)
-    }
-    result.completeness = result.counts.unfinished ? 'unfinished' : 'complete'
-    return { result, progress: { done: result.items.length-result.counts.unfinished, total: result.items.length }, ...(result.counts.unfinished ? { error: 'Snapshot unfinished: identity, provider failure or pagination coverage gaps' } : {}) }
+        checkpoint(result)
+      })
+    } },row.result as Receipt,cookie)
+  },
+  postgres: {
+    taskCenter: { summaries:summarizePostgresSnapshots },
+    async run(ctx) {
+      const job = (await getPostgresJob(ctx.db,ctx.jobId))!.row
+      const cookie = (await resolvePostgresCredential(ctx.db,'sme-roster.miitCookie')).value
+      return runSnapshot({ ...ctx, async admit(stored,owner,request,result) {
+        if (!request) return ctx.checkpoint(result)
+        const reused = await ctx.db.transaction(async tx => {
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(21785,0)`)
+          if (!await reusePostgresCollectedPlatformResult(tx,stored,owner)) return false
+          await ctx.checkpoint(result,tx)
+          return true
+        })
+        if (reused) return
+        const saved = await runPostgresPlatformImport('commit',request,{
+          db:ctx.db,checkpoint:tx=>ctx.checkpoint(result,tx),
+        })
+        if (saved?.status!=='committed') fail(409,'Business collection commit failed')
+      } },job.result as Receipt,cookie)
+    },
   },
 }
 // Serialize backup + freeze + create inside this process, including duplicate concurrent requests.
@@ -160,8 +206,8 @@ export async function snapshotOperation(db: Db, filesDir: string, raw: unknown) 
         scope = scope.filter(e => input.enterpriseIds!.includes(e.enterpriseId))
       }
     } finally { backup.close() }
-    const items: Item[] = scope.flatMap(e => ['queryList', 'businessList', 'queryBusList'].flatMap(source => (source === 'queryList' ? [null] : ['1','2','3']).map(rdjb => ({ itemId: newJobId(), batchId: id, enterpriseId: e.enterpriseId, source, rdjb, complete: false, rows: null, segments: [], reason: 'not_processed' }))))
-    const result: Receipt = { scope, items, attempt: 0, completeness: 'unfinished', counts: { enterprises: scope.length, requests: 0, rows: 0, unfinished: items.length }, collectionPolicy: 'per_enterprise_fresh_same_job_resume' }
+    const result = initialSnapshot(id,scope)
+    const { items } = result
     ensureJobRunnerReady(db)
     db.$client.transaction(() => {
       createJob(db, { id, kind: SNAPSHOT_KIND, params: { clientRequestId: input.clientRequestId, ...(input.enterpriseIds ? { enterpriseIds: input.enterpriseIds } : {}), snapshotAt: startedAt, backup: { path, sha256, verifiedAt: new Date().toISOString() } }, progress: { done: 0, total: items.length } })
@@ -172,4 +218,96 @@ export async function snapshotOperation(db: Db, filesDir: string, raw: unknown) 
   })
   submission = operation
   return operation
+}
+
+function initialSnapshot(id:string,scope:Scope[]):Receipt {
+  const items: Item[] = scope.flatMap(e => ['queryList', 'businessList', 'queryBusList'].flatMap(source => (source === 'queryList' ? [null] : ['1','2','3']).map(rdjb => ({ itemId: newJobId(), batchId: id, enterpriseId: e.enterpriseId, source, rdjb, complete: false, rows: null, segments: [], reason: 'not_processed' }))))
+  return { scope, items, attempt: 0, completeness: 'unfinished', counts: { enterprises: scope.length, requests: 0, rows: 0, unfinished: items.length }, collectionPolicy: 'per_enterprise_fresh_same_job_resume' }
+}
+
+async function fileDigest(path: string) {
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(path)) hash.update(chunk)
+  return hash.digest('hex')
+}
+
+const executeBackupTool = promisify(execFile)
+
+async function backupPostgresSnapshot(db: NodePgDatabase, filesDir: string, id: string, enterpriseIds?: number[]) {
+  return db.transaction(async tx => {
+    const { rows: scope } = await tx.execute<Scope>(sql`
+      SELECT e.id::float8 AS "enterpriseId",e.name,
+        CASE WHEN e.uscc_norm COLLATE "C"~'^[0-9A-Z]{18}$' THEN e.uscc_norm END AS uscc,
+        json_agg(r.id ORDER BY r.id) AS "recordIds"
+      FROM record r JOIN enterprise e ON e.id=r.enterprise_id WHERE r.source='jxj'
+        ${enterpriseIds ? sql`AND e.id=ANY(${sql.param(enterpriseIds)}::bigint[])` : sql.empty()}
+      GROUP BY e.id ORDER BY e.id`)
+    if (enterpriseIds && scope.length!==enterpriseIds.length) fail(400,'Selected enterprise IDs must identify published enterprises')
+    const { rows: [exported] } = await tx.execute<{ snapshot:string }>(sql`SELECT pg_export_snapshot() AS snapshot`)
+    const destination = resolve(filesDir,'..','snapshot-backups')
+    await mkdir(destination,{ recursive:true,mode:0o700 })
+    const directory = await mkdtemp(join(destination,id+'-'))
+    const path = join(directory,'business.dump')
+    const binary = (name:string) => process.env.NUXT_POSTGRES_BIN ? join(process.env.NUXT_POSTGRES_BIN,name) : name
+    const connection = new URL(process.env.NUXT_POSTGRES_DIRECTORY_URL!)
+    connection.searchParams.delete('options')
+    const password = connection.searchParams.get('password') ?? decodeURIComponent(connection.password)
+    connection.password = ''
+    connection.searchParams.delete('password')
+    try {
+      await executeBackupTool(binary('pg_dump'),['--no-password','--format=custom','--schema=business',
+        '--dbname='+connection.href,'--snapshot='+exported!.snapshot,'--file='+path],{
+        env:{ ...process.env,PGPASSWORD:password,PGOPTIONS:'-c default_transaction_read_only=on' },
+      })
+      await executeBackupTool(binary('pg_restore'),['--file=/dev/null',path])
+      return { scope,backup:{ path,sha256:await fileDigest(path),verifiedAt:new Date().toISOString() } }
+    } catch {
+      await rm(directory,{ recursive:true,force:true })
+      return fail(503,'Unable to verify PostgreSQL snapshot backup')
+    }
+  },{ isolationLevel:'repeatable read',accessMode:'read only' })
+}
+
+async function postgresSnapshotOperation(db: NodePgDatabase, filesDir: string, raw: unknown) {
+  const parsed = snapshotInput.safeParse(raw)
+  if (!parsed.success) return fail(400,'Invalid snapshot action or parameters')
+  const input = parsed.data
+  if (!getJobSpec(SNAPSHOT_KIND)) registerJob(differenceSnapshotSpec)
+  if (input.action!=='create') {
+    const snapshot = await getPostgresJob(db,input.jobId)
+    if (!snapshot || snapshot.row.kind!==SNAPSHOT_KIND) return fail(404,'Snapshot not found')
+    const row = snapshot.row
+    if (input.action==='read') return row
+    const receipt = row.params.backup as { path:string; sha256:string }
+    const actual = await fileDigest(receipt.path).catch(()=>null)
+    if (actual!==receipt.sha256) return fail(409,'Backup checksum mismatch')
+    if (row.state!=='done' && row.state!=='failed' && row.state!=='cancelled') return fail(409,'Snapshot is active')
+    const reopened = await reopenPostgresJob(db,row.id,row.kind,{ state:row.state,claimToken:snapshot.claimToken },row.params)
+    return reopened?.row ?? fail(409,'Snapshot is active')
+  }
+  return db.transaction(async tx => {
+    await lockPostgresJobAdmission(tx,SNAPSHOT_KIND)
+    const existing = (await findPostgresJobRequest(tx,SNAPSHOT_KIND,input.clientRequestId))?.row
+    if (existing) {
+      if (JSON.stringify(existing.params.enterpriseIds ?? null)!==JSON.stringify(input.enterpriseIds ?? null)) {
+        return fail(409,'clientRequestId already belongs to a different enterprise scope')
+      }
+      return existing
+    }
+    const id = newJobId()
+    const snapshotAt = new Date().toISOString()
+    const { scope,backup } = await backupPostgresSnapshot(db,filesDir,id,input.enterpriseIds)
+    const result = initialSnapshot(id,scope)
+    const params = { clientRequestId:input.clientRequestId,snapshotAt,backup,
+      ...(input.enterpriseIds ? {enterpriseIds:input.enterpriseIds} : {}) }
+    const { row,claimToken } = await createPostgresJob(tx,{ id,kind:SNAPSHOT_KIND,params,
+      requestKey:input.clientRequestId,progress:{done:0,total:result.items.length} })
+    if (!await setPostgresJobResult(tx,id,{state:'queued',claimToken},result)) throw new Error('Snapshot task was not admitted')
+    return { ...row,result }
+  })
+}
+
+export function snapshotRuntimeOperation(sqlite: () => Db, filesDir: string, raw: unknown) {
+  const pg = startPostgresJobs(filesDir)
+  return pg ? postgresSnapshotOperation(pg.db,filesDir,raw) : snapshotOperation(sqlite(),filesDir,raw)
 }

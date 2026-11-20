@@ -351,6 +351,39 @@ export async function readPostgresDifferenceQualifications(tx: PostgresQualifica
   }
 }
 
+export async function readPostgresRosterDetailQualification(tx: PostgresQualificationTransaction,
+  requestedId: number, asOf: number, copies: (enterpriseId:number)=>Promise<OfficialPublishedScope[]>) {
+  const loaded = await readQualificationInputs(tx, [requestedId], asOf, { mode: 'detail',title: 'specialized_sme' })
+  const inputs = loaded[0]?.[1]
+  if (!inputs) return null
+  const input = inputs.get('specialized_sme')!
+  const owner = input.enterprise.id
+  const displayScope = await copies(owner)
+  const coverage = await readPostgresQueryCoverage(tx, [input.enterprise], CURRENT_TITLES)
+  const redact = await importPostgresReceiptRedactor(tx)
+  const readPublished = createPostgresPublishedPresentationReader(tx,redact)
+  const scope = [...inputs.values()].flatMap(facts=>facts.evidence).sort((a,b)=>a.id-b.id)
+    .map(row=>({ evidenceId:row.id,eventId:row.eventId }))
+  let publishedPresentation: PublishedPresentation
+  let facts: OfficialPublishedFact[] | undefined
+  let failure: unknown
+  try { facts = [...(await readPublished(scope)).values()] }
+  catch (error) { failure = officialPublishedError(error) }
+  for (const [title, source] of inputs) {
+    source.readPublishedNames = () => { if (failure) throw failure; return facts! }
+    source.readCoverage = () => coverage.get(owner)!.get(title)!
+  }
+  const assessed = [...evaluateLoadedCurrentQualification(asOf,inputs).values()].map(result=>result.row.assessment!)
+  try {
+    if (failure) throw failure
+    publishedPresentation = projectOfficialPublishedNames(facts!,displayScope)
+  } catch (error) {
+    publishedPresentation = { availability:'unavailable',error:officialPublishedError(error).code,facts:[] }
+  }
+  return { snapshot:currentQualificationSnapshot(owner,asOf,assessed),coverage,
+    platformFacts:input.readPlatformFacts(),publishedPresentation }
+}
+
 export async function readPostgresLegacyQualification(tx: PostgresQualificationTransaction, enterpriseId: number, asOf: number) {
   const loaded = await readQualificationInputs(tx, [enterpriseId], asOf, { mode: 'detail', title: 'specialized_sme' })
   const inputs = loaded[0]?.[1]
