@@ -158,16 +158,5 @@ INSERT INTO lead_list_export (job_id, version_id, content)
 SELECT job_id, version_id, content FROM :"staging".lead_list_export;
 \endif
 
--- The roster module remains read-only during file-library acceptance. Its
--- staged source references must still prevent moving official evidence bytes.
-CREATE TABLE file_roster_reference_baseline (
-  rel_path text COLLATE "C" PRIMARY KEY,
-  reference_count bigint NOT NULL CHECK (reference_count > 0)
-);
-INSERT INTO file_roster_reference_baseline (rel_path, reference_count)
-SELECT source_file COLLATE "C", count(*) FROM :"staging".record_evidence
-GROUP BY source_file COLLATE "C";
-
-ANALYZE file_roster_reference_baseline;
 ANALYZE stored_file_audit, file_maintenance_audit, file_physical_intent, lead_list_version, lead_list_row, lead_list_export;
 COMMIT;

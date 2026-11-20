@@ -85,7 +85,7 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
       pgStarted = true
       pgUrl = `postgresql://file_contract@localhost/postgres?host=${encodeURIComponent(dir)}`
       execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', app.dbPath, 'staged'], { cwd, env: pgEnv, stdio: 'pipe' })
-      for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists']) {
+      for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
         runPg('psql', ['-X', '-w', '-q', '-v', 'staging=staged', '-f', `upgrade/postgresql/materialize-${name}.sql`])
       }
       // The companion SQLite stays a valid but empty app database. A SQLite
@@ -191,6 +191,22 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     const { id } = await json('files/register', 201, 'POST', { relPath })
     expect(await json(`files/${id}/maintenance`, 200)).toMatchObject({ file: { referenceCount: 1 } })
     await json(`files/${id}?deleteDisk=1`, 409, 'DELETE', controls(0, 'protect-late-evidence'))
+    expect(readFileSync(join(root, relPath))).toEqual(original)
+  })
+
+  it.skipIf(!enabled)('protects current roster references added after file registration', async () => {
+    const relPath = 'uploads/current-roster-evidence.txt'
+    writeFileSync(join(root, relPath), original)
+    const { id } = await json('files/register', 201, 'POST', { relPath })
+    expect(await json(`files/${id}/maintenance`, 200)).toMatchObject({ file: { referenceCount: 0 } })
+    if (postgres) {
+      runPg('psql', ['-X', '-w', '-q', '-v', 'ON_ERROR_STOP=1', '-c',
+        "INSERT INTO business.record_evidence (record_event_id, source_file) VALUES (1, 'uploads/current-roster-evidence.txt')"])
+    } else {
+      app.db.$client.prepare('INSERT INTO record_evidence (record_event_id, source_file) VALUES (1, ?)').run(relPath)
+    }
+    expect(await json(`files/${id}/maintenance`, 200)).toMatchObject({ file: { referenceCount: 1 } })
+    await json(`files/${id}?deleteDisk=1`, 409, 'DELETE', controls(0, 'protect-current-roster-evidence'))
     expect(readFileSync(join(root, relPath))).toEqual(original)
   })
 

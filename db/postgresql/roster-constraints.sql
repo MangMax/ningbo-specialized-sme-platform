@@ -99,7 +99,7 @@ CREATE INDEX record_correspondence_observation_idx ON record_correspondence (obs
 CREATE INDEX record_correspondence_predecessor_idx ON record_correspondence (predecessor_event_id);
 CREATE INDEX record_district_idx ON record (district);
 CREATE INDEX record_event_record_idx ON record_event (record_id,sort_key,id);
-CREATE INDEX record_evidence_coordinate_idx ON record_evidence (source_file, list_no, attachment);
+CREATE INDEX record_evidence_coordinate_idx ON record_evidence (source_file COLLATE "C", list_no, attachment);
 CREATE INDEX record_evidence_event_idx ON record_evidence (record_event_id);
 CREATE UNIQUE INDEX record_identity_uq ON record (enterprise_id,title_code,source);
 CREATE INDEX record_source_idx ON record (source);

@@ -68,11 +68,7 @@ export async function readPostgresFile(db: PostgresFileDb, id: number) {
 async function withFileReferences(db: PostgresFileDb, files: FileRow[]) {
   if (!files.length) return files
   const ids = files.map(file => file.id)
-  const { rows } = await db.execute<{ rel_path: string; reference_count: string }>(sql`
-    SELECT rel_path, reference_count FROM file_roster_reference_baseline
-    WHERE rel_path IN (${sql.join(files.map(file => sql`${file.relPath}`), sql`, `)})`)
-  const legacy = new Map(rows.map(row => [row.rel_path, Number(row.reference_count)]))
-  const counts = new Map(files.map(file => [file.id, legacy.get(file.relPath) ?? 0]))
+  const counts = new Map<number, number>()
   for (const category of serverFileCategories) {
     const addReferences = category.postgres?.countReferences
     if (!addReferences) continue

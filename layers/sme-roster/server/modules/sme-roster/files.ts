@@ -85,6 +85,15 @@ export const rosterFileServerCategory = {
   id: manifest.id,
   ...manifest.fileCategories,
   readFields,
+  postgres: {
+    async countReferences(db, ids) {
+      const { rows } = await db.execute<{ id: string; count: string }>(sql`
+        SELECT f.id, count(*) FROM stored_file f
+        JOIN record_evidence e ON e.source_file COLLATE "C" = f.rel_path
+        WHERE f.id = ANY(${sql.param(ids)}::bigint[]) GROUP BY f.id`)
+      return new Map(rows.map(row => [Number(row.id), Number(row.count)]))
+    },
+  },
   constraint(db, filters) {
     const selected = and(
       filters.source?.length ? inArray(sql`${classification.source}`, filters.source) : undefined,

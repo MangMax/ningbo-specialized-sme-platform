@@ -36,7 +36,7 @@ node upgrade/postgresql/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA 
 
 隔离应用同时设置 `NUXT_POSTGRES_FILE_LIBRARY=1` 后，核心文件 HTTP 列表、上传登记、原件与页图身份核验、显示名和维护历史、软移出、恢复、物理隔离与恢复使用 PostgreSQL 文件身份和维护账本。继续由独立的 `NUXT_FILES_DIR` 和 `NUXT_INCOMING_DIR` 保存原件和上传分片。文件写入口另需 `NUXT_POSTGRES_DIRECTORY_WRITE=1`。保留 SQLite 只读实例供尚未迁移的模块查询。
 
-物理命令先在 `stored_file` 行锁内提交意图，再获取同一个行锁核对内容身份、修订与引用，移动原字节并提交维护记录与完成回执。线索登记使用同一行锁，引用数在 PostgreSQL 实时读取。事务失败后，使用原幂等键重试或显式恢复未完成意图。文件表从已核验暂存数据生成按原路径计数的名录引用基线，包含尚未登记的出处路径。名录开始在 PostgreSQL 写入前，须将这份静态基线替换为名录模块提供的实时引用查询，并让新增引用与物理命令协调同一文件行锁。
+物理命令先在 `stored_file` 行锁内提交意图，再获取同一个行锁核对内容身份、修订与实时引用，移动原字节并提交维护记录与完成回执。线索登记使用同一行锁，名录按原路径读取引用。新增名录出处的命令也须使用这一行锁。事务失败后，使用原幂等键重试或显式恢复未完成意图。
 
 当前兼容文件列表保留线索引用筛选。名录文件维护、文件 MCP 和 OCR 继续按各模块迁移。可使用 `TEST_FILE_LIBRARY_PG_BIN=/path/to/pgsql/bin pnpm test:app tests/files/storage/library-contract.http.app.test.ts --maxWorkers=1` 对同一合成快照验证 SQLite 和独立 PostgreSQL 实例。
 
