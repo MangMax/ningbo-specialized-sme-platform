@@ -111,3 +111,7 @@ core 提供 `defineAppModule()`，每个模块（包括 core 自己）调用它�
 - 接入或下线一个业务模块不需要改 core；如果接入第二个模块时仍需改 core，应修正本契约，而不是给 core 加业务特例（#873 子票 14 负责验证）。
 - 看目录即可判断一段代码的归属；跨模块耦合只能通过 public 出口、事件、插槽和共享内核发生，并可被 CI 发现。
 - 本文不推翻既有 ADR 的任何不变量：来源身份与观察分离、文件内容身份、入库范围判据、日志与审计分离、单 SQLite 均继续适用。[文件库入库范围](2026-10-16-file-store-scope.md)的判据不变，但从文件库的通用规则改为名录模块的入库策略。
+
+## 后台任务通知（2026-11-21）
+
+业务与执行器继续通过 HTTP 提交命令，任务状态和结果持久化。页面只需要从服务端接收变化信号，采用 SSE。浏览器可以用 EventSource 重连，并从任务接口补读最新状态；WebSocket 的双向消息协议在当前流程中没有对应的客户端命令。PostgreSQL 的 `LISTEN/NOTIFY` 将提交后的变化送到应用实例，SSE 连接只传刷新信号。业务模块通过清单和摘要提供业务名称、结果和操作权限。具体接入步骤见[后台任务接入与通知](../agents/background-jobs.md)。传输与提交语义见 [H3 v1](https://v1.h3.dev/guide/websocket) 和 [PostgreSQL NOTIFY](https://www.postgresql.org/docs/19/sql-notify.html)。

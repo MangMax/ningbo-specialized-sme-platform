@@ -4,7 +4,7 @@ import type { ComparisonDirection } from '../../../lib/comparison'
 import { TITLE_ORDER } from '../../../lib/labels'
 import { runPlatformReconcile, type ReconcileReport } from '../platform-reconcile'
 import { runPostgresPlatformReconcile } from '../platform-reconcile-postgres'
-import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../../../../core/server/utils/job-runner'
+import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../../../../core/server/public'
 
 const TITLE_CODES = new Set(TITLE_ORDER)
 const DIRECTIONS = new Set<ComparisonDirection>(['missing_in_miit', 'extra_in_miit'])
