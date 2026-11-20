@@ -31,6 +31,13 @@ async function projectSummaries(db: NodePgDatabase, rows: JobSummaryDto[], autho
   })
 }
 
+export async function readPostgresTaskCenterEntry(db: NodePgDatabase, id: string, authorizedFor: (kind: string) => boolean) {
+  return db.transaction(async tx => {
+    const current = await getPostgresJobSummary(tx, id)
+    return current ? (await projectSummaries(tx, [current], authorizedFor, true))[0]! : null
+  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
+}
+
 function positive(raw: unknown, fallback: number, max: number) {
   return typeof raw !== 'object' && Number.isInteger(Number(raw)) && Number(raw) > 0 ? Math.min(Number(raw), max) : fallback
 }
@@ -92,11 +99,11 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
   const row = await getPostgresJobSummary(db, id)
   if (!row) throw createError({ statusCode: 404, message: '任务不存在' })
   const authorized = authorizedFor(row.kind)
-  if (action === 'detail') return db.transaction(async tx => {
-    const current = await getPostgresJobSummary(tx, id)
-    if (!current) throw createError({ statusCode: 404, message: '任务不存在' })
-    return (await projectSummaries(tx, [current], authorizedFor, true))[0]
-  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
+  if (action === 'detail') {
+    const task = await readPostgresTaskCenterEntry(db, id, authorizedFor)
+    if (!task) throw createError({ statusCode: 404, message: '任务不存在' })
+    return task
+  }
   if (!authorized) throw createError({ statusCode: 401, message: '管理操作需要 API 授权' })
   if (action === 'retry') {
     const retry = postgresJobHandler(row.kind)?.taskCenter?.retry

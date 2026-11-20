@@ -28,7 +28,7 @@ export function candidateJobRoute(action: CandidateJobAction) {
         },
       },
       {
-        db: useDb(),
+        get db() { return useDb() },
         filesDir: config.filesDir,
         apiToken: config.apiToken,
         browserAuthorized: taskCenterBrowserAccess(event),

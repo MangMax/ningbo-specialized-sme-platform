@@ -11,6 +11,7 @@ import {
   type AnnualTaskDto, type AnnualTaskResult,
 } from '../../../lib/roster/annual-correspondence'
 import { annualFail, annualHash, planAnnualStep, projectAnnualFinalQualification, type AnnualWriteScope } from '../annual-correspondence'
+import { readPostgresCandidateSourceBytes } from '../candidate-target-sources'
 import { readPostgresAnnualDecisionRefs, readPostgresAnnualWriteScope } from '../event-annual-process-postgres'
 import { commitPostgresCorrespondenceDecision, runPostgresCorrespondenceTransaction } from '../record-correspondence-write-postgres'
 import { annualErrorCode, annualTaskInput, annualTaskReceipt, initialAnnualResult, type AnnualTaskParams } from './annual-correspondence'
@@ -120,13 +121,8 @@ async function reconcile(tx: Tx, eventId: number, generation: string, stepId: st
   const refs = await readPostgresAnnualDecisionRefs(tx, scope, step)
   const plan = planAnnualStep(scope, step, refs)
   if ('outcome' in plan) return plan.outcome
-  const { rows: [source] } = await tx.execute<{ bytes: string }>(sql`
-    SELECT (coalesce((SELECT sum(v.byte_length) FROM platform_collection_archive_ref r JOIN platform_archive_value v ON v.id=r.archive_id
-      WHERE r.owner_id=o.collection_id AND r.field IN ('rawResponse','collectionEvidence')),0)
-      + coalesce((SELECT sum(v.byte_length) FROM platform_observation_archive_ref r JOIN platform_archive_value v ON v.id=r.archive_id
-      WHERE r.owner_id=o.id AND r.field='rawFields'),0)) AS bytes
-    FROM platform_legacy_relation_alias a JOIN platform_business_observation o ON o.id=a.observation_id WHERE a.old_id=${plan.relationId}`)
-  if (!source || Number(source.bytes) > 4 * 1024 * 1024) annualFail('source_materialization_limit', 422)
+  const bytes = await readPostgresCandidateSourceBytes(tx, plan.relationId)
+  if (bytes === undefined || bytes > 4 * 1024 * 1024) annualFail('source_materialization_limit', 422)
   const committed = await commitPostgresCorrespondenceDecision(tx, plan.request)
   const resultingRefs = await readPostgresAnnualDecisionRefs(tx, scope, step)
   return plan.created(resultingRefs.filter(ref => committed.correspondenceIds.includes(ref.id)))

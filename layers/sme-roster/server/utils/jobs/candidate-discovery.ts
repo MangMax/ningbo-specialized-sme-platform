@@ -21,6 +21,8 @@ import {
 import { createJob, getJob, setJobResult } from '../../../../core/server/utils/job-store'
 import { JOB_ID_RE, newJobId } from '../../../../core/lib/job'
 import { stageAnnualCorrespondence, activateAnnualCorrespondence } from './annual-correspondence'
+import { runPostgresCandidateDiscovery, retryPostgresCandidateDiscovery } from './candidate-discovery-postgres'
+import { summarizePostgresCandidateJobs } from './candidate-summary'
 import {
   ensureJobRunnerReady,
   enqueuePersistedJob,
@@ -52,10 +54,10 @@ export const candidateJobInput = z
   )
 // Internal continuation metadata; public submission keeps its existing shape.
 // The originating task identifies one archive generation and survives retries.
-const candidateJobParams = candidateJobInput.safeExtend({
+export const candidateJobParams = candidateJobInput.safeExtend({
   archiveGeneration: z.string().regex(JOB_ID_RE).optional(),
 })
-type Params = z.infer<typeof candidateJobParams>
+export type CandidateJobParams = z.infer<typeof candidateJobParams>
 export interface CandidateJobItem {
   eventId: number
   enterpriseId: number | null
@@ -98,7 +100,7 @@ function affectedWhere(db: Db, queryId: number) {
       or exists (select 1 from ${p} where ${p.queryId} = ${q.id} and (${p.enterpriseId} is null or ${p.enterpriseId} = ${e.id}) and
         ((${normalizedUscc(p.usccRaw)} != '' and ${normalizedUscc(p.usccRaw)} = ${normalizedUscc(sql`coalesce(${r.usccRaw},${e.usccNorm})`)}) or (${p.enterpriseId} = ${e.id} and ${p.verificationStatus} = 'confirmed' and ${normalizedUscc(p.usccRaw)} = '')))))`
 }
-function initialize(db: Db, params: Params): CandidateJobResult {
+function initialize(db: Db, params: CandidateJobParams): CandidateJobResult {
   const v = schema.recordEvent,
     r = schema.record,
     e = schema.enterprise
@@ -127,11 +129,14 @@ function initialize(db: Db, params: Params): CandidateJobResult {
     .orderBy(asc(v.id))
     .limit(201)
     .all()
+  return candidateResult(rows, high, params.eventIds)
+}
+export function candidateResult(rows: { eventId: number; enterpriseId: number }[], high: number, explicitEventIds?: number[]): CandidateJobResult {
   const selected: { eventId: number; enterpriseId: number | null }[] =
     rows.slice(0, 200)
   // Explicit event IDs must not disappear as a successful empty task.
-  if (params.eventIds)
-    for (const id of params.eventIds)
+  if (explicitEventIds)
+    for (const id of explicitEventIds)
       if (!selected.some((r) => r.eventId === id))
         selected.push({ eventId: id, enterpriseId: null })
   return {
@@ -157,7 +162,7 @@ function initialize(db: Db, params: Params): CandidateJobResult {
     },
   }
 }
-function updateCounts(result: CandidateJobResult) {
+export function updateCounts(result: CandidateJobResult) {
   result.counts = {
     succeeded: result.items.filter((i) => i.status === 'done').length,
     needsReview: result.items.filter(
@@ -172,10 +177,13 @@ function updateCounts(result: CandidateJobResult) {
 const MAX_SOURCE_BYTES = 4 * 1024 * 1024
 /** The existing domain hydrates one selected source for its fingerprint and
  * audit. Bound that work before hydration; discovery never loads the corpus. */
+export function candidateSourceLimitError() {
+  return Object.assign(new Error('source_materialization_limit'), { statusCode: 422 })
+}
 function checkSourceBudget(db: Db, relationId: number) {
   const bytes = candidateTargetSourceBytes(db, relationId)
   if (bytes == null || bytes > MAX_SOURCE_BYTES)
-    fail('source_materialization_limit', 422)
+    throw candidateSourceLimitError()
 }
 async function run(ctx: JobContext, raw: Record<string, unknown>) {
   // submitJob can begin executing before returning. Never discover in archive transactions.
@@ -230,10 +238,8 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
         while (item.rowIndex < page.rows.length) {
           if (ctx.cancelled()) return { result, cancelled: true }
           const candidate = page.rows[item.rowIndex]!
-          const edge = candidate.edge as CorrespondenceEdge & {
-            eventId: number
-            relationId: number
-          }
+          const request = candidateRequest(ctx.jobId, item.eventId, candidate)
+          const edge = request.operations[0].edge
           const beforeRow = { ...item }
           try {
             ctx.db.transaction(
@@ -260,25 +266,6 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
                   if (prior?.status === 'candidate') item.needsReview = true
                 } else {
                   checkSourceBudget(ctx.db, edge.relationId)
-                  const request = {
-                    idempotencyKey: `candidate-job:${ctx.jobId}:${item.eventId}:${edge.relationId}`,
-                    sourceIdentity: `candidate-job/${ctx.jobId}`,
-                    actor: {
-                      type: 'agent' as const,
-                      id: 'candidate-discovery-job',
-                    },
-                    basis:
-                      '归档原行精确身份与称号匹配；仅生成待核候选，人工核对后决定。',
-                    ruleId: String(candidate.ruleId),
-                    ruleVersion: EVENT_ARCHIVE_RULE_VERSION,
-                    operations: [
-                      {
-                        action: 'create' as const,
-                        status: 'candidate' as const,
-                        edge,
-                      },
-                    ],
-                  }
                   const plan = preflightRecordCorrespondences(ctx.db, request)
                   commitRecordCorrespondences(ctx.db, request, plan.planHash)
                   item.created++
@@ -370,6 +357,9 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
     result.continuationJobId = next.jobId
     persist()
   }
+  return candidateCompletion(result, ctx.cancelled())
+}
+export function candidateCompletion(result: CandidateJobResult, cancelled: boolean) {
   return {
     result,
     ...(result.counts.failed
@@ -383,7 +373,19 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
       done: result.counts.succeeded + result.counts.failed,
       total: result.items.length,
     },
-    ...(ctx.cancelled() ? { cancelled: true } : {}),
+    ...(cancelled ? { cancelled: true } : {}),
+  }
+}
+export function candidateRequest(jobId: string, eventId: number, candidate: Record<string, unknown>) {
+  const edge = candidate.edge as CorrespondenceEdge & { eventId: number; relationId: number }
+  return {
+    idempotencyKey: `candidate-job:${jobId}:${eventId}:${edge.relationId}`,
+    sourceIdentity: `candidate-job/${jobId}`,
+    actor: { type: 'agent' as const, id: 'candidate-discovery-job' },
+    basis: '归档原行精确身份与称号匹配；仅生成待核候选，人工核对后决定。',
+    ruleId: String(candidate.ruleId),
+    ruleVersion: EVENT_ARCHIVE_RULE_VERSION,
+    operations: [{ action: 'create' as const, status: 'candidate' as const, edge }] as [{ action: 'create'; status: 'candidate'; edge: typeof edge }],
   }
 }
 export const candidateDiscoverySpec: JobSpec = {
@@ -408,6 +410,11 @@ export const candidateDiscoverySpec: JobSpec = {
       : { ok: false, message: '候选任务范围或请求标识无效' }
   },
   run,
+  postgres: {
+    run: runPostgresCandidateDiscovery,
+    allowBrowserCancel: true,
+    taskCenter: { summaries: summarizePostgresCandidateJobs, retry: (db, task) => retryPostgresCandidateDiscovery(db, task.id) },
+  },
 }
 export function submitCandidateDiscovery(
   db: Db,

@@ -7,6 +7,11 @@ import {
   CANDIDATE_JOB_KIND,
   submitCandidateDiscovery,
 } from './jobs/candidate-discovery'
+import { submitPostgresCandidateDiscovery, retryPostgresCandidateDiscovery } from './jobs/candidate-discovery-postgres'
+import { usePostgresRosterDb } from './postgres-roster-db'
+import { cancelPostgresJob, getPostgresJobSummary } from '../../../core/server/utils/job-store-postgres'
+import { postgresJobsEnabled } from '../../../core/server/utils/postgres-jobs'
+import { readPostgresTaskCenterEntry } from '../../../core/server/utils/task-center-postgres'
 import { getJobSummary } from '../../../core/server/utils/job-store'
 import { handleTaskCenterRequest } from './task-center-http'
 import { ensureJobRunnerReady } from '../../../core/server/utils/job-runner'
@@ -48,6 +53,27 @@ export async function handleCandidateJobRequest(
   if (action !== 'detail' && !authorized) return error(401, '任务操作需要授权')
   try {
     registerJobSpecs()
+    const postgres = usePostgresRosterDb()
+    if (postgres) {
+      const writable = postgresJobsEnabled() && process.env.NUXT_POSTGRES_DIRECTORY_WRITE === '1'
+      if (action !== 'detail' && !writable) return error(403, '当前数据库只读')
+      if (action === 'submit') {
+        const receipt = await submitPostgresCandidateDiscovery(req.body, ctx.filesDir, ctx.logContext)
+        return { status: 202, headers: { ...headers, location: `/api/task-center/${receipt.jobId}` }, body: receipt }
+      }
+      const id = req.id
+      if (!isJobId(id)) return error(400, '无效任务编号')
+      if ((await getPostgresJobSummary(postgres, id))?.kind !== CANDIDATE_JOB_KIND) return error(404, '候选任务不存在')
+      if (action === 'detail') {
+        const body = await readPostgresTaskCenterEntry(postgres, id, () => authorized && writable)
+        return body ? { status: 200, headers, body } : error(404, '候选任务不存在')
+      }
+      if (action === 'retry') return { status: 202, headers, body: await retryPostgresCandidateDiscovery(postgres, id) }
+      const cancelled = await cancelPostgresJob(postgres, id, ctx.logContext)
+      const task = await readPostgresTaskCenterEntry(postgres, id, () => authorized && writable)
+      if (!cancelled || !task) return error(404, '候选任务不存在')
+      return { status: cancelled.cancelRequested ? 202 : 200, headers, body: { task, cancelRequested: cancelled.cancelRequested } }
+    }
     ensureJobRunnerReady(ctx.db)
     if (action === 'submit') {
       const receipt = submitCandidateDiscovery(ctx.db, req.body, ctx.filesDir, ctx.logContext)
@@ -100,7 +126,7 @@ export async function dispatchCandidateJobMcp(
           ? { authorization: 'Bearer internal-task-authorized' }
           : undefined,
       },
-      { ...ctx, apiToken: 'internal-task-authorized', logContext: ctx.logContext ?? operationLogContext.getStore() },
+      { get db() { return ctx.db }, filesDir: ctx.filesDir, apiToken: 'internal-task-authorized', logContext: ctx.logContext ?? operationLogContext.getStore() },
     )
     return result.status < 300
       ? { ...result.body }

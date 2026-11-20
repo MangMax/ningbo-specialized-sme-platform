@@ -4,6 +4,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import * as s from '../../../../../db/schema'
 import { runPostgresAnnualCorrespondence } from './annual-correspondence-postgres'
+import { summarizePostgresAnnualJobs } from './annual-summary'
 import { newJobId } from '../../../../core/lib/job'
 import { ANNUAL_CORRESPONDENCE_KIND as KIND, ANNUAL_CORRESPONDENCE_VERSION as VERSION, type AnnualTaskReceipt, type AnnualTaskResult } from '../../../lib/roster/annual-correspondence'
 import { annualDbReadonly, annualFail, annualHash, qualifyAnnualFinal, readAnnualScopes, reconcileAnnualStep, type AnnualDb, type AnnualScopeReader } from '../annual-correspondence'
@@ -58,7 +59,7 @@ export function annualCorrespondenceSpec(read: AnnualScopeReader): JobSpec {
     kind: KIND, status: 'ready', summary: '完整年度过程对应与最终资格核对',
     paramsHint: '请使用年度专属入口；显式eventIds 1..200，来源代次由服务器计算。',
     parse: () => ({ ok: false, message: '请使用年度对应任务入口' }),
-    postgres: { run: runPostgresAnnualCorrespondence },
+    postgres: { run: runPostgresAnnualCorrespondence, taskCenter: { summaries: summarizePostgresAnnualJobs } },
     run: async (ctx: JobContext, raw) => {
       await yieldTurn()
       const row = getJob(ctx.db,ctx.jobId)

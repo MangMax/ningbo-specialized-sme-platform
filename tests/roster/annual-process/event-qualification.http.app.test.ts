@@ -19,10 +19,11 @@ const enterprise = db.insert(s.enterprise).values({ name: '合成实际资格协
 const record = db.insert(s.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: enterprise.usccNorm }).returning().get()
 const cases = [2024, 2023, 2022].map((year, n) => ({ status: ['confirmed', 'blocked', 'none'][n]!, event: db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year }).returning().get() }))
 const eligibleEvent = db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2021 }).returning().get()
-const rows = [2024, 2024, 2023, 2021].map((year, n) => {
+const candidateEvent = db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2020 }).returning().get()
+const rows = [2024, 2024, 2023, 2021, 2020].map((year, n) => {
   const key = `SQ258-${n}`, appliedAt = n === 1 ? '2024-12-13 10:00:00' : `${year}-03-01 09:00:00`
   const seeded = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: `2026-10-01T00:00:0${n}Z`, status: 'success', rawResponse: 'Synthetic annual HTTP source', relations: [{ sequenceNo: 1, relationKey: key, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { id: key, year, sblx: '申请', sqsj: appliedAt, cszt: n === 0 ? '终审不通过' : '终审通过' } }] })
-  return { id: seeded.relationIds[0]! }
+  return { id: seeded.relationIds[0]!, queryId: seeded.queryId }
 })
 let service: { baseUrl: string; stop: () => Promise<void> }
 const state = () => ({ jobs: db.select().from(s.job).all(), ledger: db.select().from(s.importBatch).all(), receipts: db.select().from(s.importReceipt).all(), audit: db.select().from(s.recordCorrespondenceAudit).all(), decisions: db.select().from(s.recordCorrespondence).all() })
@@ -67,7 +68,7 @@ it.each(cases)('real query-only GET and MCP return current $status qualification
 })
 
 const pgBin = process.env.TEST_IMPORT_RECEIPTS_PG_BIN
-it.runIf(!!pgBin)('returns the same source generation, annual reads and runs a deduplicated native PostgreSQL task', async () => {
+it.runIf(!!pgBin)('preserves annual reads and runs deduplicated annual and archive tasks on PostgreSQL', async () => {
   const pgDir = mkdtempSync(join(tmpdir(), 'annual-pg-'))
   const pgData = join(pgDir, 'db')
   const env = { ...process.env, PGHOST: pgDir, PGPORT: '5432', PGDATABASE: 'postgres', PGUSER: 'annual_fixture', PGSQL_BIN: join(pgBin!, 'psql') }
@@ -134,6 +135,43 @@ it.runIf(!!pgBin)('returns the same source generation, annual reads and runs a d
     const cancel = await fetch(tasks + '/' + first.jobId + '/cancel', { method: 'POST', headers })
     expect(cancel.status).toBe(200)
     expect(await cancel.json()).toMatchObject({ jobId: first.jobId, state: 'done', cancelled: false, alreadyFinished: true })
+
+    const details = baseUrl + '/api/task-center/'
+    const annualSummary = await fetch(details + first.jobId, { headers })
+    expect(annualSummary.status).toBe(200)
+    expect(await annualSummary.json()).toMatchObject({ annual: { total: 2, done: 2, failed: 0, unfinished: 0, attempt: 1 } })
+
+    const candidateTasks = baseUrl + '/api/roster/correspondences/tasks'
+    const explicit = { clientRequestId: 'archive-explicit-1', eventIds: [candidateEvent.id] }
+    const response = await fetch(candidateTasks, { method: 'POST', headers, body: JSON.stringify(explicit) })
+    expect(response.status, await response.clone().text()).toBe(202)
+    const candidateJob = await response.json()
+    let candidateTask
+    for (let attempt = 0; attempt < 120; attempt++) {
+      const detail = await fetch(details + candidateJob.jobId, { headers })
+      expect(detail.status, await detail.clone().text()).toBe(200)
+      candidateTask = await detail.json()
+      if (['done', 'failed'].includes(candidateTask.state)) break
+      await delay(100)
+    }
+    expect(candidateTask).toMatchObject({ state: 'done', discovery: { counts: { succeeded: 1, failed: 0 }, attempt: 1,
+      items: [{ eventId: candidateEvent.id, status: 'done' }] } })
+    expect(candidateTask.discovery.counts.created).toBeGreaterThan(0)
+    const path = '/api/roster/events/' + candidateEvent.id + '/annual-process'
+    const before = await (await fetch(baseUrl + path)).json()
+    expect(before.process.finalQualification.status).toBe('eligible')
+
+    const auto = { clientRequestId: 'archive-trigger-1', queryId: rows[4]!.queryId }
+    const automatic = await fetch(candidateTasks, { method: 'POST', headers, body: JSON.stringify(auto) })
+    expect(automatic.status, await automatic.clone().text()).toBe(202)
+    let after
+    for (let attempt = 0; attempt < 120; attempt++) {
+      after = await (await fetch(baseUrl + path)).json()
+      if (after.process.finalQualification.status === 'confirmed') break
+      await delay(100)
+    }
+    expect(after.sourceGeneration).toBe(before.sourceGeneration)
+    expect(after.process.finalQualification).toMatchObject({ status: 'confirmed', decisionRefs: [{ status: 'confirmed', relationId: rows[4]!.id }] })
   } finally {
     if (child) await stopOwnedChild(child)
     if (clusterStarted) run('pg_ctl', ['-w', '-m', 'fast', '-D', pgData, 'stop'])
