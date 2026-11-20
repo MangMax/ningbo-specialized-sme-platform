@@ -2,12 +2,9 @@ import { sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { createError } from 'h3'
 import { usePostgresDirectoryDb } from '../../../../db/postgresql/client'
-import { libraryUploadCategory } from '../../lib/core/library-uploads'
 import { checkAdmission, resolveFileRegistration, serverFileCategories } from '../../../../server/file-store'
 import type { LogContext } from '../../lib/logging'
-import { compareFileContentIdentity } from './file-content-identity'
-import { FileMaintenanceError, MAX_PAGE_SIZE, registerLandedFile, selectedFileFilters, UploadRegistrationError, type FileCategoryServer, type FileQuery, type FileRow } from './file-store'
-import { libraryFileFacts, validateLibraryRegistration } from './library-file-category'
+import { FileMaintenanceError, MAX_PAGE_SIZE, registerLandedFile, selectedFileFilters, UploadRegistrationError, type FileCategoryServer, type FileQuery, type FileRow, type ScannedFile } from './file-store'
 
 export type PostgresFileDb = NodePgDatabase
 
@@ -138,33 +135,27 @@ export async function activePostgresPhysicalIntent(db: PostgresFileDb, id: numbe
   return intent?.state
 }
 
-export async function registerPostgresLibraryFile(db: PostgresFileDb, root: string, body: unknown, context: LogContext) {
+export async function lockOrRegisterPostgresFile(db: PostgresFileDb, facts: ScannedFile) {
+  const { relPath, filename, ext, bytes, sha256 } = facts
+  const find = () => db.execute<PgFile>(sql`SELECT ${columns} FROM stored_file WHERE rel_path = ${relPath} FOR UPDATE`)
+  const { rows: [existing] } = await find()
+  if (existing) return { row: baseFile(existing), created: false }
+
+  const { rows: [created] } = await db.execute<PgFile>(sql`
+    INSERT INTO stored_file (rel_path, filename, ext, bytes, sha256, created_at)
+    VALUES (${relPath}, ${filename}, ${ext}, ${bytes}, ${sha256}, ${new Date().toISOString()})
+    ON CONFLICT (rel_path) DO NOTHING RETURNING ${columns}`)
+  return created ? { row: baseFile(created), created: true } : { row: baseFile((await find()).rows[0]!), created: false }
+}
+
+export async function registerPostgresFile(db: PostgresFileDb, root: string, body: unknown, context: LogContext) {
   requirePostgresFileWrite()
-  const { category, relPath, input } = resolveFileRegistration(body)
-  if (category !== libraryUploadCategory) {
+  const { registration: { preparePostgres }, relPath, input } = resolveFileRegistration(body)
+  if (!preparePostgres) {
     throw new UploadRegistrationError('此文件分类尚未接入 PostgreSQL 文件库', 503)
   }
   return registerLandedFile(root, relPath, async () => {
-    validateLibraryRegistration(input)
-    return async file => {
-      const facts = await libraryFileFacts(file)
-      return db.transaction(async tx => {
-        const find = () => tx.execute<PgFile>(sql`SELECT ${columns} FROM stored_file WHERE rel_path = ${relPath} FOR UPDATE`)
-        let { rows: [existing] } = await find()
-        if (!existing) {
-          const { rows: [created] } = await tx.execute<PgFile>(sql`
-            INSERT INTO stored_file (rel_path, filename, ext, bytes, sha256, created_at)
-            VALUES (${relPath}, ${facts.filename}, ${facts.ext}, ${facts.bytes}, ${facts.sha256}, ${new Date().toISOString()})
-            ON CONFLICT (rel_path) DO NOTHING RETURNING ${columns}`)
-          if (created) return { row: baseFile(created), created: true }
-          existing = (await find()).rows[0]
-        }
-        const row = baseFile(existing!)
-        const conflict = compareFileContentIdentity(postgresFileIdentity(row), facts)
-        if (conflict) throw new UploadRegistrationError('当前内容与已登记文件不一致。', 409, conflict)
-        if (row.removedAt || await activePostgresPhysicalIntent(tx, row.id)) throw new UploadRegistrationError('文件已移出文件库。', 409)
-        return { row, created: false }
-      })
-    }
+    const writer = await preparePostgres(input)
+    return file => writer(db, file)
   }, checkAdmission, context)
 }

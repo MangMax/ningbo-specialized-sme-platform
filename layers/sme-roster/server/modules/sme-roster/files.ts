@@ -130,6 +130,10 @@ export const rosterFileServerCategory = {
       const { prepareRosterRegistration } = await import('./file-upload')
       return prepareRosterRegistration(input)
     },
+    async preparePostgres(input) {
+      const { preparePostgresRosterRegistration } = await import('./file-upload')
+      return preparePostgresRosterRegistration(input)
+    },
   },
   metadata: {
     properties: rosterFileOpenApi.patchProperties,

@@ -1,4 +1,4 @@
-import { registerPostgresLibraryFile, usePostgresFileDb } from '../../utils/file-store-postgres'
+import { registerPostgresFile, usePostgresFileDb } from '../../utils/file-store-postgres'
 import { useDb } from '@db'
 import { requestLogContext } from '../../../lib/logging'
 import { FileMaintenanceError, UploadRegistrationError } from '../../utils/file-store'
@@ -47,7 +47,7 @@ export default defineEventHandler(async (event) => {
     const root = useRuntimeConfig().filesDir
     const context = requestLogContext(event)
     const { row, created } = pg
-      ? await registerPostgresLibraryFile(pg, root, input, context)
+      ? await registerPostgresFile(pg, root, input, context)
       : await registerUploadedFile(useDb(), root, input, context)
     if (created) setResponseStatus(event, 201)
     return row

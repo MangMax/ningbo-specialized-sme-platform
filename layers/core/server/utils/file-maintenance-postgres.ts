@@ -91,16 +91,32 @@ export async function applyPostgresFileMaintenance(
     after = await readPostgresFile(db, id)
   }
 
+  await recordPostgresFileMaintenance(db, current, after, { revision, action, options, hash, now })
+  return after
+}
+
+async function recordPostgresFileMaintenance(
+  db: PostgresFileDb, current: FileRow, after: FileRow,
+  { revision, action, options, hash, now }: {
+    revision: number; action: FileMaintenanceAction; options: FileMaintenanceOptions; hash?: string; now: string
+  },
+) {
   const beforeJson = JSON.stringify(fileMaintenanceSnapshot(current, extensionSnapshot(current)))
-  const afterJson = JSON.stringify(fileMaintenanceSnapshot(after, extensionSnapshot(after)))
+  const afterValues = fileMaintenanceSnapshot(after, extensionSnapshot(after))
+  const afterJson = JSON.stringify(afterValues)
   if (options.idempotencyKey || beforeJson !== afterJson) {
+    const requestHash = hash ?? fileMaintenanceRequestHash(current.id, action, afterValues, options)
     await db.execute(sql`INSERT INTO file_maintenance_audit
       (file_id, revision, action, idempotency_key, request_hash, mode, actor, basis, before_json, after_json, created_at)
-      VALUES (${id}, ${revision + 1}, ${action}, ${options.idempotencyKey ?? null}, ${hash},
+      VALUES (${current.id}, ${revision + 1}, ${action}, ${options.idempotencyKey ?? null}, ${requestHash},
         ${options.expectedRevision === undefined ? 'legacy' : 'versioned'}, ${options.actor ?? null}, ${options.basis ?? null},
         ${beforeJson}, ${afterJson}, ${now})`)
   }
-  return after
+}
+
+export async function recordLegacyPostgresFileMaintenanceWrite(db: PostgresFileDb, before: FileRow, after: FileRow) {
+  const revision = await postgresFileRevision(db, before.id)
+  await recordPostgresFileMaintenance(db, before, after, { revision, action: 'update', options: {}, now: new Date().toISOString() })
 }
 
 export function maintainPostgresFile(

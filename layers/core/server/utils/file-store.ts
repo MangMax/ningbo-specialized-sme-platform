@@ -44,7 +44,7 @@ export interface RegistrationFile {
   bytes: number
 }
 
-export type RegistrationWriter = (db: FileStoreDb, file: RegistrationFile) => Promise<FileRegistrationResult>
+export type RegistrationWriter<Database = FileStoreDb> = (db: Database, file: RegistrationFile) => Promise<FileRegistrationResult>
 
 export class UploadRegistrationError extends Error {
   constructor(
@@ -87,6 +87,7 @@ export interface FileCategoryServer {
     matchesPath(relPath: string): boolean
     /** Validates the declaration and returns a writer that runs only after admission. */
     prepare(input: Record<string, unknown>): RegistrationWriter | Promise<RegistrationWriter>
+    preparePostgres?(input: Record<string, unknown>): RegistrationWriter<NodePgDatabase> | Promise<RegistrationWriter<NodePgDatabase>>
   }
   readonly snapshot?: (fields: FileRow) => Record<string, unknown>
   readonly openAPI?: {
@@ -146,6 +147,10 @@ export function sha256Of(absPath: string): Promise<string> {
     stream.on('error', reject)
     stream.on('end', () => resolveHash(hash.digest('hex')))
   })
+}
+
+export async function fileRegistrationFacts({ relPath, filename, abs, bytes }: RegistrationFile): Promise<ScannedFile> {
+  return { relPath, filename, ext: extensionOf(filename), bytes, sha256: await sha256Of(abs) }
 }
 
 /**

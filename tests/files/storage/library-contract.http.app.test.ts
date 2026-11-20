@@ -285,6 +285,33 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     expect(readFileSync(join(root, relPath))).toEqual(original)
   })
 
+  it.skipIf(!enabled)('registers a landed roster notice and audits factual refreshes without replacing its bytes', async () => {
+    const relPath = 'jxj/announcement/2025/2/notice.txt'
+    const declared = { relPath, source: 'jxj', kind: 'announcement', year: 2025, batch: 2 }
+    mkdirSync(join(root, 'jxj/announcement/2025/2'), { recursive: true })
+    writeFileSync(join(root, relPath), original)
+    await json('files/register', 400, 'POST', { ...declared, batch: 3 })
+    const submissions = await Promise.all([1, 2].map(() => app.request('/api/files/register', { method: 'POST', body: JSON.stringify(declared) })))
+    expect(submissions.map(response => response.status).sort()).toEqual([200, 201])
+    const [registered, repeated] = await Promise.all(submissions.map(response => response.json()))
+    expect(registered).toMatchObject({
+      ...declared, sha256, categoryState: 'set', parseState: 'unparsed', parts: [],
+    })
+    const id = registered.id
+    expect(repeated).toMatchObject({ id })
+    expect(await json(`files/${id}/maintenance`, 200)).toMatchObject({ revision: 0 })
+    await json(`files/${id}`, 200, 'PATCH', { year: null, ...controls(0, 'clear-roster-notice-year') })
+    expect(await json('files/register', 200, 'POST', declared)).toMatchObject({ id, year: 2025, categoryState: 'set' })
+    const history = await json(`files/${id}/maintenance`, 200)
+    expect(history.revision).toBe(2)
+    expect(history.rows.at(-1)).toMatchObject({ mode: 'legacy', before: { year: null }, after: { year: 2025 } })
+    writeFileSync(join(root, relPath), 'changed bytes')
+    try {
+      await json('files/register', 409, 'POST', declared)
+      expect(await json(`files/${id}/maintenance`, 200)).toMatchObject({ revision: 2, file: { sha256 } })
+    } finally { writeFileSync(join(root, relPath), original) }
+  })
+
   it.skipIf(!enabled)('protects current roster references added after file registration', async () => {
     const relPath = 'uploads/current-roster-evidence.txt'
     writeFileSync(join(root, relPath), original)
