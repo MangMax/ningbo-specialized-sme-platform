@@ -8,7 +8,10 @@ export {
 } from './utils/enterprise-kernel'
 export { canonicalEnterpriseId, currentEnterpriseIdentity, hasEnterpriseMergeIdentity, postgresCanonicalEnterpriseId } from './utils/enterprise-identity'
 export type { LogContext } from '../lib/logging'
-export { createPostgresReviewedEnterprise, attachPostgresReviewedEnterprise, lockPostgresReviewedEnterpriseBatch, registerPostgresEnterpriseSource } from './utils/enterprise-directory-postgres-write'
+export {
+  createPostgresReviewedEnterprise, attachPostgresReviewedEnterprise, lockPostgresReviewedEnterpriseBatch, registerPostgresEnterpriseSource,
+  insertPostgresEnterpriseAlias, backfillPostgresEnterpriseUscc,
+} from './utils/enterprise-directory-postgres-write'
 export { applyPostgresEnterpriseProfileChange, postgresEnterpriseProfileState } from './utils/enterprise-directory-postgres-write'
 export { applyPostgresEnterpriseMerge, findPostgresEnterpriseMergeAliasConflict } from './utils/enterprise-merge-postgres'
 export { verifyRegisteredFileRead } from './utils/file-read-identity'

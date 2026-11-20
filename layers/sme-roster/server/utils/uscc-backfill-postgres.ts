@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
+import { backfillPostgresEnterpriseUscc, lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { missingUsccSourceFields, usccFormatVerdict } from '../../lib/roster/uscc-research'
 import type { RosterImportItemResult, RosterImportUsccBackfill } from '../../lib/roster-import-client'
@@ -82,8 +82,7 @@ export async function executePostgresUsccBackfillItems(tx: Tx,batch:PostgresImpo
           failure(plan.ref,'enterprise_selector_conflict','补录归属企业已变更，请重新核对','enterpriseId')])
         const { target,uscc,backfill } = plan
         const before = await readPostgresIdentityMaterial(nested,target.id)
-        const flags = (target.flags ?? []).filter(flag=>flag!=='uscc_missing')
-        await nested.execute(sql`UPDATE enterprise SET uscc_norm=${uscc},quality_flags=${JSON.stringify(flags)} WHERE id=${target.id}`)
+        await backfillPostgresEnterpriseUscc(nested,target.id,uscc,target.flags ?? [])
         await capturePostgresIdentityChange(nested,target.id,'uscc:'+uscc,before)
         results.push({ ok:true,kind:'uscc_backfill',ref:item(plan).ref,detail:{ enterpriseId:target.id,uscc,rowsWritten:1,
           lineage:{ enterpriseId:target.id,enterpriseName:target.name,uscc,previousUscc:null,source:backfill.source,note:optionalText(backfill.note) } } })

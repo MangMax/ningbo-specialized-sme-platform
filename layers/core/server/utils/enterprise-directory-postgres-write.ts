@@ -148,6 +148,27 @@ async function retainPostgresPreviousName(tx: Transaction, profile: EnterprisePr
   return { id: alias.rows[0]!.id, created: 1 }
 }
 
+export async function insertPostgresEnterpriseAlias(tx: Transaction, values: {
+  enterpriseId: number; name: string; nameNorm: string; sourceKind: string; sourceRefId: number
+  validFrom: string | null; validTo: string | null; verificationStatus: string; note: string | null
+}) {
+  const { enterpriseId,name,nameNorm,sourceKind,sourceRefId,validFrom,validTo,verificationStatus,note } = values
+  const { rows: [inserted] } = await tx.execute<{ id: number }>(sql`INSERT INTO enterprise_alias
+    (enterprise_id,name,name_norm,source_kind,source_ref_id,valid_from,valid_to,verification_status,note,created_at)
+    VALUES(${enterpriseId},${name},${nameNorm},${sourceKind},${sourceRefId},${validFrom},${validTo},
+      ${verificationStatus},${note},${new Date().toISOString()})
+    ON CONFLICT(enterprise_id,name_norm,source_kind,source_ref_id) DO NOTHING RETURNING id::float8 AS id`)
+  if (inserted) return { id: inserted.id, created: true }
+  const { rows: [existing] } = await tx.execute<{ id: number }>(sql`SELECT id::float8 AS id FROM enterprise_alias
+    WHERE enterprise_id=${enterpriseId} AND name_norm=${nameNorm} AND source_kind=${sourceKind} AND source_ref_id=${sourceRefId}`)
+  return { id: existing!.id, created: false }
+}
+
+export async function backfillPostgresEnterpriseUscc(tx: Transaction, id: number, uscc: string, qualityFlags: readonly string[]) {
+  const flags = qualityFlags.filter(flag=>flag!=='uscc_missing')
+  await tx.execute(sql`UPDATE enterprise SET uscc_norm=${uscc},quality_flags=${JSON.stringify(flags)} WHERE id=${id}`)
+}
+
 type ReviewedAttachment = Extract<ReviewedSubject, { action: 'attach' }>
 
 export async function postgresEnterpriseProfileState(tx: Transaction, id: number) {

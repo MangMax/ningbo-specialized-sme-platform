@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
+import { insertPostgresEnterpriseAlias, lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import type { RosterImportAlias, RosterImportItemResult } from '../../lib/roster-import-client'
 import { replayOptionalString as text } from '../../lib/platform/query-replay'
@@ -105,18 +105,15 @@ export async function executePostgresAliasItems(tx: Tx,batch:PostgresImportBatch
   const items: RosterImportItemResult[] = []
   for (const {enterpriseId,name,nameNorm,sourceRefId,input} of ready) {
     const before = await readPostgresIdentityMaterial(tx,enterpriseId)
-    const { rows:[newAlias] } = await tx.execute<{id:number}>(sql`INSERT INTO enterprise_alias
-      (enterprise_id,name,name_norm,source_kind,source_ref_id,valid_from,valid_to,verification_status,note,created_at)
-      VALUES(${enterpriseId},${name},${nameNorm},${input.sourceKind},${sourceRefId},${text(input.validFrom)},${text(input.validTo)},
-        ${input.verificationStatus ?? 'pending'},${text(input.note)},${new Date().toISOString()})
-      ON CONFLICT(enterprise_id,name_norm,source_kind,source_ref_id) DO NOTHING RETURNING id::float8 AS id`)
-    if (newAlias) {
-      await capturePostgresIdentityChange(tx,enterpriseId,'alias-import:'+newAlias.id,before)
+    const { id,created } = await insertPostgresEnterpriseAlias(tx,{
+      enterpriseId,name,nameNorm,sourceKind:input.sourceKind,sourceRefId,
+      validFrom:text(input.validFrom),validTo:text(input.validTo),verificationStatus:input.verificationStatus ?? 'pending',note:text(input.note),
+    })
+    if (created) {
+      await capturePostgresIdentityChange(tx,enterpriseId,'alias-import:'+id,before)
       written++
     }
-    const id = newAlias?.id ?? (await tx.execute<{id:number}>(sql`SELECT id::float8 AS id FROM enterprise_alias
-      WHERE enterprise_id=${enterpriseId} AND name_norm=${nameNorm} AND source_kind=${input.sourceKind} AND source_ref_id=${sourceRefId}`)).rows[0]!.id
-    items.push({ok:true,kind:'alias',ref:'alias:'+id,detail:{enterpriseId,rowsWritten:Number(!!newAlias),...(newAlias ? {sourceRefId} : {})}})
+    items.push({ok:true,kind:'alias',ref:'alias:'+id,detail:{enterpriseId,rowsWritten:Number(created),...(created ? {sourceRefId} : {})}})
   }
   return {preflight,items,summary:{...summary,written,skipped:items.length-written},error:null}
 }
