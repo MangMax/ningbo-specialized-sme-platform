@@ -136,6 +136,7 @@ beforeAll(async () => {
     .get('/api/platform/recognized-directory', (await import('../../../layers/sme-roster/server/api/platform/recognized-directory.get')).default)
     .get('/api/platform/recognized-directory/:recordId', (await import('../../../layers/sme-roster/server/api/platform/recognized-directory/[recordId].get')).default)
     .get('/api/platform/filter-options', (await import('../../../layers/sme-roster/server/api/platform/filter-options.get')).default)
+    .get('/api/platform/queries', (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default)
     .get('/api/platform/queries/:queryId/evidence', (await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default)
   request = toWebHandler(createApp().use(router))
 }, 30_000)
@@ -147,6 +148,41 @@ afterAll(async () => {
   vi.doUnmock('@db')
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
+})
+
+it.skipIf(!url)('reads historical query summaries with stable pages, title scope and the latest owner', async () => {
+  const filter = { view: 'summary', pageSize: 2 }
+  const first = await read('postgres', 'queries', filter)
+  const second = await read('postgres', 'queries', { ...filter, page: 2 })
+  expect(first.status).toBe(200)
+  expect(first).toEqual(await read('sqlite', 'queries', filter))
+  expect(second).toEqual(await read('sqlite', 'queries', { ...filter, page: 2 }))
+  expect(first.body.rows).toHaveLength(2)
+  expect(first.body.rows[0]).toMatchObject({
+    relations: [], relationsIncluded: false, query: { relationCount: 1 },
+  })
+  expect(first.body.rows[0].query).not.toHaveProperty('collectionEvidence')
+  const scopes: Record<string, string | number>[] = [
+    { titleCode: 'specialized_sme', interface: 'apply_list' },
+    { status: 'success', uscc: fixture.enterprise.usccNorm! },
+    { enterpriseId: reassignedCoordinates.enterpriseId },
+    { enterpriseId: fixture.enterprise.id, queryId: reassignedCoordinates.queryId },
+    { enterpriseId: 1.5 },
+    { page: Number.MAX_SAFE_INTEGER },
+  ]
+  for (const scope of scopes) {
+    const params = { ...filter, ...scope }
+    expect(await read('postgres', 'queries', params)).toEqual(await read('sqlite', 'queries', params))
+  }
+  const owned = await read('postgres', 'queries', {
+    view: 'summary', enterpriseId: reassignedCoordinates.enterpriseId, queryId: reassignedCoordinates.queryId,
+  })
+  expect(owned.body).toMatchObject({ total: 1, rows: [{ query: { id: reassignedCoordinates.queryId, relationCount: 1 } }] })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
+  const tool = (await import('../../../layers/sme-roster/server/mcp/tools/list_platform_queries')).default as unknown as {
+    handler(input: { view: 'summary'; pageSize: number }): Promise<unknown>
+  }
+  expect(await tool.handler({ view: 'summary', pageSize: 2 })).toEqual(first.body)
 })
 
 it.skipIf(!url)('reads original bytes and persisted relation evidence through HTTP and MCP', async () => {

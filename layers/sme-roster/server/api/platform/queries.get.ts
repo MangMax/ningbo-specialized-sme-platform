@@ -1,8 +1,11 @@
 import { useDb } from '@db'
 import { MAX_PAGE_SIZE } from '#sme-roster/lib/query'
 import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER } from '#sme-roster/lib/labels'
-import { getHeader, getResponseHeader } from 'h3'
+import { getHeader, getQuery, getResponseHeader } from 'h3'
 import { platformSummaryCache } from '../../utils/platform-summary-cache'
+import { usePostgresDirectoryDb } from '../../../../../db/postgresql/client'
+import { readPostgresPlatformQuerySummary } from '../../../lib/platform/postgres-query-summary'
+import type { PlatformQueryFilter } from '../../../lib/platform/read'
 
 /**
  * 平台查询证据(契约 §7.6):工信部三个来源取回的**原始关系**,逐条可查。
@@ -81,7 +84,7 @@ export default defineEventHandler((event) => {
   const view = str(q.view)
   if ((view && view !== 'full' && view !== 'summary') || (view === 'summary' && q.includeRawResponse === 'true')) throw createError({ statusCode: 400, statusMessage: 'Invalid view or includeRawResponse combination' })
 
-  return platformSummaryCache.read(useDb(), {
+  const filter: PlatformQueryFilter = {
     queryId,
     view: view as 'full' | 'summary' | undefined,
     interface: iface as (typeof INTERFACES)[number] | undefined,
@@ -93,7 +96,10 @@ export default defineEventHandler((event) => {
     page: Math.max(1, Math.floor(num(q.page, 1))),
     pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25)))),
     includeRawResponse: q.includeRawResponse === 'true',
-  }, { allowStore: view === 'summary' && process.env.NUXT_PLATFORM_SUMMARY_CACHE !== '0'
+  }
+  const postgres = view === 'summary' ? usePostgresDirectoryDb() : undefined
+  if (postgres) return readPostgresPlatformQuerySummary(postgres, filter)
+  return platformSummaryCache.read(useDb(), filter, { allowStore: view === 'summary' && process.env.NUXT_PLATFORM_SUMMARY_CACHE !== '0'
     && getHeader(event, 'authorization') == null && getHeader(event, 'cookie') == null
     && !/no-store|no-cache/i.test(String(getHeader(event, 'cache-control') ?? ''))
     && !/no-store|no-cache/i.test(String(getResponseHeader(event, 'cache-control') ?? '')) })

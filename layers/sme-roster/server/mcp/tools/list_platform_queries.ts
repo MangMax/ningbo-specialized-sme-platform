@@ -3,6 +3,8 @@ import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER } from '../../../lib/labels'
 import { listPlatformQueries } from '../../../lib/platform/read'
+import { readPostgresPlatformQuerySummary } from '../../../lib/platform/postgres-query-summary'
+import { usePostgresDirectoryDb } from '../../../../../db/postgresql/client'
 
 export default defineMcpTool({
   name: 'list_platform_queries', title: '读取已存平台证据历史',
@@ -15,5 +17,8 @@ export default defineMcpTool({
     status: z.enum(['success', 'failed', 'no_record', 'not_queried', 'partial']).optional(),
     page: z.number().int().positive().optional(), pageSize: z.number().int().min(1).max(200).optional(), includeRawResponse: z.boolean().optional(),
   },
-  handler: async input => ({ ...listPlatformQueries(useDb(), input) }),
+  handler: async input => {
+    const postgres = input.view === 'summary' ? usePostgresDirectoryDb() : undefined
+    return { ...(postgres ? await readPostgresPlatformQuerySummary(postgres, input) : listPlatformQueries(useDb(), input)) }
+  },
 })
