@@ -106,6 +106,7 @@ export async function applyPostgresFileMaintenance(
 export function maintainPostgresFile(
   db: PostgresFileDb, root: string, id: number, action: FileMaintenanceAction,
   rawPatch: unknown, rawOptions: FileMaintenanceOptions, context?: LogContext,
+  { requireActive = false } = {},
 ) {
   const run = async () => {
     requirePostgresFileWrite()
@@ -133,6 +134,7 @@ export function maintainPostgresFile(
       rejectNewPhysicalInternalKey(key)
       if (key && await postgresPhysicalRequestKeyExists(tx, key)) throw new FileMaintenanceError(409, '幂等键已用于其他物理命令')
       const current = await readPostgresFile(tx, id)
+      if (requireActive && current.removedAt) throw new FileMaintenanceError(404, '文件已移出库')
       const revision = await postgresFileRevision(tx, id)
       const state = await activePostgresPhysicalIntent(tx, id)
       if (state === 'pending' || state === 'recovering' || (state && action === 'restore')) {

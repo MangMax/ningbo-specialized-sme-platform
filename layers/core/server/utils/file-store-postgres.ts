@@ -58,9 +58,10 @@ export async function lockPostgresFile(db: PostgresFileDb, id: number) {
   if (!rows.length) throw new FileMaintenanceError(404, '文件不存在')
 }
 
-export async function readPostgresFile(db: PostgresFileDb, id: number) {
+export async function readPostgresFile(db: PostgresFileDb, locator: number | string) {
+  const where = typeof locator === 'number' ? sql`id = ${locator}` : sql`rel_path = ${locator}`
   const { rows: [file] } = await db.execute<PgFile>(sql`
-    SELECT ${columns} FROM stored_file WHERE id = ${id}`)
+    SELECT ${columns} FROM stored_file WHERE ${where}`)
   if (!file) throw new FileMaintenanceError(404, '文件不存在')
   return (await withFileFields(db, [withIdentity(baseFile(file))], serverFileCategories))[0]!
 }

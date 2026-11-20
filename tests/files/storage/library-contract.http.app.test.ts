@@ -50,6 +50,7 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
         NUXT_POSTGRES_DIRECTORY_WRITE: postgres ? '1' : '0',
         NUXT_POSTGRES_FILE_LIBRARY: postgres ? '1' : '0',
         NUXT_POSTGRES_LEAD_REGISTRATION: postgres ? '1' : '0',
+        NUXT_MCP_TOKEN: token,
       } }
     } })
     const discovery = await readDevelopmentDiscovery()
@@ -127,6 +128,20 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     expect(response.status, JSON.stringify(value)).toBe(status)
     return value
   }
+
+  async function tool(name: string, args: object) {
+    const response = await app.request('/mcp', {
+      method: 'POST',
+      headers: { ...app.headers, accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+    })
+    const body = await response.text()
+    expect(response.status, body).toBe(200)
+    const data = body.startsWith('event:') ? body.split('\n').find(line => line.startsWith('data: '))!.slice(6) : body
+    const { result } = JSON.parse(data)
+    expect(result?.isError, data).not.toBe(true)
+    return JSON.parse(result.content[0].text)
+  }
   it.skipIf(!enabled)('reads scoped roster metadata and keeps global file rows free of roster fields', async () => {
     const filtered = await json('sme-roster/files?source=jxj&parseState=parsed&pageSize=1', 200)
     expect(filtered).toMatchObject({ total: 1, rows: [{
@@ -199,6 +214,20 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     expect(Buffer.from(await (await app.request('/api/files/41')).arrayBuffer())).toEqual(original)
   })
 
+  it.skipIf(!enabled)('shares file classification and maintenance receipts across MCP and HTTP', async () => {
+    const ref = { relPath: migratedPath }
+    expect(await tool('list_files', { source: 'jxj', pageSize: 1 })).toMatchObject({ total: 1, rows: [{ id: 41 }] })
+    expect(await tool('get_file', ref)).toMatchObject({ id: 41, referenceCount: 1, contentIdentity: { status: 'verified' } })
+    const { revision } = await json('files/41/maintenance', 200)
+    const command = controls(revision, 'classify-across-transports')
+    const { file } = await tool('set_file_category', { ...ref, ...command, year: 2026 })
+    expect(file).toMatchObject({ id: 41, year: 2026, relPath: migratedPath, sha256 })
+    expect(await json('files/41', 200, 'PATCH', { ...command, year: 2026 })).toEqual(file)
+    expect(await tool('get_file_maintenance', { fileId: 41 })).toEqual(await json('files/41/maintenance', 200))
+    expect(await tool('update_file', { fileId: 41, ...controls(revision + 1, 'correct-publication-year'), patch: { year: 2025 } }))
+      .toMatchObject({ file: { id: 41, year: 2025 } })
+  })
+
   it.skipIf(!enabled)('registers a landed upload once and preserves identity through maintenance and recovery', async () => {
     const filename = '新附件.txt'
     const create = await app.request('/api/uploads', { method: 'POST', headers: {
@@ -224,9 +253,11 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     await json('files/81', 409, 'PATCH', { ...controls(0, 'stale'), displayName: '旧版本' })
 
     expect(await json('files/81', 200, 'DELETE', controls(1, 'remove'))).toMatchObject({ removed: true, diskDeleted: false, referenceCount: 0 })
+    expect(await tool('remove_file', { fileId: 81, ...controls(1, 'remove') })).toMatchObject({ removed: true, diskDeleted: false })
     expect(await json('file-library?q=改名附件', 200)).toEqual({ rows: [], total: 0 })
     expect(readFileSync(join(root, relPath))).toEqual(original)
     expect(await json('files/81/restore', 200, 'POST', controls(2, 'restore'))).toMatchObject({ id: 81, removedAt: null })
+    expect(await tool('restore_file', { fileId: 81, ...controls(2, 'restore') })).toMatchObject({ file: { id: 81, removedAt: null } })
 
     const deleted = await json('files/81?deleteDisk=1', 200, 'DELETE', controls(3, 'quarantine'))
     expect(deleted).toMatchObject({ removed: true, diskDeleted: false, diskQuarantined: true, intent: { fileId: 81, state: 'quarantined' } })
@@ -235,8 +266,10 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     const recovered = await json('files/81/physical-recovery', 200, 'POST', recovery)
     expect(recovered).toMatchObject({ removed: false, diskQuarantined: false, intent: { id: deleted.intent.id, state: 'recovered' } })
     expect(await json('files/81/physical-recovery', 200, 'POST', recovery)).toEqual(recovered)
-    expect(await json('files/81?deleteDisk=1', 200, 'DELETE', controls(3, 'quarantine'))).toEqual(deleted)
+    expect(await tool('recover_file', { fileId: 81, ...recovery })).toEqual(recovered)
+    expect(await tool('quarantine_file', { fileId: 81, ...controls(3, 'quarantine') })).toEqual(deleted)
     expect(await json('files/81/physical-recovery', 200)).toMatchObject({ deleteReceipt: deleted, recoverReceipt: recovered })
+    expect(await tool('get_file_physical_intent', { fileId: 81 })).toMatchObject({ deleteReceipt: deleted, recoverReceipt: recovered })
     expect(await json('files/81/maintenance?page=2&pageSize=2', 200)).toMatchObject({
       file: { id: 81, relPath, sha256, removedAt: null }, revision: 5, total: 5,
       rows: [{ revision: 3, action: 'restore' }, { revision: 4, action: 'remove' }],

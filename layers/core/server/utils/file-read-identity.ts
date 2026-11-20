@@ -99,8 +99,14 @@ export async function verifyRenderedPageRead(root: string, source: string, ident
 }
 
 /** Historical readers keep their text even when the mutable current locator conflicts. */
-export async function describeFileRead(db: Db, root: string, locator: string) {
-  try { return await verifyFileRead(db, root, locator) } catch (error) {
+export function describeFileRead(db: Db, root: string, locator: string) {
+  return describeFileReadAtLocator(root, locator, path => registeredFileAtLocator(db, path))
+}
+
+export async function describeFileReadAtLocator(
+  root: string, locator: string, lookup: Parameters<typeof verifyFileReadAtLocator>[2],
+) {
+  try { return await verifyFileReadAtLocator(root, locator, lookup) } catch (error) {
     const failure = error as { statusCode?: number; code?: string; data?: unknown }
     if (failure.statusCode === 403) throw error
     let status: 'file_content_conflict' | 'missing' | 'unavailable'
@@ -108,6 +114,6 @@ export async function describeFileRead(db: Db, root: string, locator: string) {
     else if (failure.statusCode === 404 || failure.code === 'ENOENT' || failure.code === 'ENOTDIR') status = 'missing'
     else if (failure.code === 'EACCES' || failure.code === 'EPERM') status = 'unavailable'
     else throw error
-    return { registered: registeredFileAtLocator(db, locator), status, historical: 'unknown' as const, conflict: failure.data ?? null }
+    return { registered: await lookup(locator), status, historical: 'unknown' as const, conflict: failure.data ?? null }
   }
 }

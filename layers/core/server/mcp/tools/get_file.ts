@@ -1,7 +1,8 @@
-import { describeFileRead } from '../../utils/file-read-identity'
+import { describeFileRead, describeFileReadAtLocator } from '../../utils/file-read-identity'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { fileRefShape, requireFileRef } from '../../utils/file-agent-reference'
+import { fileRefShape, requireFileRef, requirePostgresFileRef } from '../../utils/file-agent-reference'
 import { openFileStore } from '../../../../../server/mcp-file-store'
+import { readPostgresFileIdentity, usePostgresFileDb } from '../../utils/file-store-postgres'
 
 /**
  * `get_file` —— 一个文件的完整元数据(票 18,只读)。
@@ -21,6 +22,13 @@ export default defineMcpTool({
   ].join('\n'),
   inputSchema: fileRefShape,
   handler: async (input) => {
+    const pg = usePostgresFileDb()
+    if (pg) {
+      const row = await pg.transaction(tx => requirePostgresFileRef(tx, input, { allowRemoved: true }),
+        { isolationLevel: 'repeatable read', accessMode: 'read only' })
+      const contentIdentity = await describeFileReadAtLocator(useRuntimeConfig().filesDir, row.relPath, path => readPostgresFileIdentity(pg, path))
+      return { ...row, contentIdentity }
+    }
     const { db, root } = await openFileStore()
     // 读 tool:已移出库的文件也认(见上)。
     const row = requireFileRef(db, input, { allowRemoved: true })

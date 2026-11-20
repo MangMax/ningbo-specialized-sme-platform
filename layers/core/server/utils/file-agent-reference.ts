@@ -6,6 +6,8 @@ import { getStoredFile, type StoredFileRow } from './stored-files'
 import { DEFAULT_DPI, isPdfPath, normalizeDpi } from '../../lib/pdf-page'
 import { verifyFileRead, verifyPageRead, type FileReadIdentity } from './file-read-identity'
 import { listPdfPages, resolveWithinRoot, type PdfPagesState } from './pdf-pages'
+import { FileMaintenanceError } from './file-store'
+import { readPostgresFile, type PostgresFileDb } from './file-store-postgres'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -53,17 +55,7 @@ export function findFileIdByRelPath(db: Db, relPath: string): number | null {
   )
 }
 
-/**
- * 把 `{ fileId?, relPath? }` 解析成库里的整行。
- *
- * 返回结果对象而不是抛错:这一层的职责是「翻译用户输入」,抛什么 HTTP/MCP 错误
- * 是调用方(tool)的事 —— 顺带也让它不必起服务就能单测。
- */
-export function resolveFileRef(
-  db: Db,
-  ref: FileRefInput,
-  options: FileRefOptions = {},
-): FileRefResult {
+function fileLocator(ref: FileRefInput): { ok: true; locator: number | string } | { ok: false; message: string } {
   const id = ref.fileId ?? null
   const relPath = typeof ref.relPath === 'string' ? ref.relPath.trim() : ''
 
@@ -74,20 +66,17 @@ export function resolveFileRef(
     return { ok: false, message: '必须给 `fileId` 或 `relPath` 之一' }
   }
 
-  let row: StoredFileRow | null
-  if (id !== null) {
-    if (!Number.isInteger(id) || id <= 0) {
-      return { ok: false, message: `文件 id 必须是正整数:${id}` }
-    }
-    row = getStoredFile(db, id)
-    if (!row) return { ok: false, message: `文件不存在:id=${id}` }
-  } else {
-    const found = findFileIdByRelPath(db, relPath)
-    if (found === null) return { ok: false, message: `文件不存在:relPath=${relPath}` }
-    row = getStoredFile(db, found)
-    if (!row) return { ok: false, message: `文件不存在:relPath=${relPath}` }
+  if (id !== null && (!Number.isInteger(id) || id <= 0)) {
+    return { ok: false, message: `文件 id 必须是正整数:${id}` }
   }
+  return { ok: true, locator: id ?? relPath }
+}
 
+function missingFileRef(locator: number | string) {
+  return `文件不存在:${typeof locator === 'number' ? 'id' : 'relPath'}=${locator}`
+}
+
+function visibleFileRef(row: StoredFileRow, options: FileRefOptions): FileRefResult {
   if (row.removedAt && !options.allowRemoved) {
     return {
       ok: false,
@@ -95,6 +84,29 @@ export function resolveFileRef(
     }
   }
   return { ok: true, row }
+}
+
+export function resolveFileRef(db: Db, ref: FileRefInput, options: FileRefOptions = {}): FileRefResult {
+  const result = fileLocator(ref)
+  if (!result.ok) return result
+  const { locator } = result
+  const id = typeof locator === 'number' ? locator : findFileIdByRelPath(db, locator)
+  const row = id === null ? null : getStoredFile(db, id)
+  return row ? visibleFileRef(row, options) : { ok: false, message: missingFileRef(locator) }
+}
+
+export async function requirePostgresFileRef(db: PostgresFileDb, ref: FileRefInput, options: FileRefOptions = {}) {
+  const result = fileLocator(ref)
+  if (!result.ok) throw createError({ statusCode: 404, message: result.message })
+  const { locator } = result
+  if (typeof locator === 'string' && locator.includes('\0')) throw createError({ statusCode: 404, message: missingFileRef(locator) })
+  const row = await readPostgresFile(db, locator).catch(error => {
+    if (!(error instanceof FileMaintenanceError) || error.statusCode !== 404) throw error
+    throw createError({ statusCode: 404, message: missingFileRef(locator) })
+  })
+  const visible = visibleFileRef(row, options)
+  if (!visible.ok) throw createError({ statusCode: 404, message: visible.message })
+  return visible.row
 }
 
 /**
