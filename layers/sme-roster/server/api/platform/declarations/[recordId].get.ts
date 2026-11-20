@@ -1,6 +1,5 @@
 import { getRouterParam, setHeader } from 'h3'
-import { useDb } from '@db'
-import { getTargetDeclaration } from '../../../utils/platform-declarations-target'
+import { readPlatformArchiveDetail } from '../../../utils/platform-archive-read'
 
 defineRouteMeta({
   openAPI: {
@@ -17,12 +16,12 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler(event => {
+export default defineEventHandler(async event => {
   setHeader(event, 'cache-control', 'no-store')
   const raw = getRouterParam(event, 'recordId')
   const recordId = Number(raw)
   try {
-    return getTargetDeclaration(useDb(), recordId)
+    return await readPlatformArchiveDetail('declarations', recordId)
   } catch (error) {
     const failure = error as { statusCode?: number; code?: string; message?: string }
     throw createError({ statusCode: failure.statusCode ?? 500, statusMessage: failure.message ?? 'declaration read failed' })

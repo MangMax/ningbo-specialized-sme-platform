@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
-import { getTargetDeclaration } from '../../utils/platform-declarations-target'
+import { readPlatformArchiveDetail } from '../../utils/platform-archive-read'
 
 export default defineMcpTool({
   name: 'get_platform_declaration',
@@ -11,7 +10,7 @@ export default defineMcpTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   inputSchema: { recordId: z.number().int().positive() },
   handler: async input => {
-    const result = getTargetDeclaration(useDb(), input.recordId)
+    const result = await readPlatformArchiveDetail('declarations', input.recordId)
     return { structuredContent: { ...result }, content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
   },
 })

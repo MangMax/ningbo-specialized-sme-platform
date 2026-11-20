@@ -1,7 +1,6 @@
 import { getQuery, setHeader } from 'h3'
-import { useDb } from '@db'
 import { recognizedDirectoryFilterFromQuery } from '../../../lib/platform/recognized-directory'
-import { listTargetRecognizedDirectory } from '../../utils/platform-recognized-target'
+import { listPlatformArchive } from '../../utils/platform-archive-read'
 
 defineRouteMeta({
   openAPI: {
@@ -30,10 +29,10 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler(event => {
+export default defineEventHandler(async event => {
   setHeader(event, 'cache-control', 'no-store')
   try {
-    return listTargetRecognizedDirectory(recognizedDirectoryFilterFromQuery(getQuery(event)), useDb())
+    return await listPlatformArchive('recognized-directory', recognizedDirectoryFilterFromQuery(getQuery(event)))
   } catch (error) {
     const failure = error as { statusCode?: number; code?: string; message?: string }
     throw createError({ statusCode: failure.statusCode ?? 500, statusMessage: failure.message ?? 'recognized directory query failed' })
