@@ -16,6 +16,8 @@ import {
   type JobRow,
 } from './job-store'
 
+import type { PostgresJobSpec } from './job-runner-postgres'
+
 type Db = BetterSQLite3Database<typeof schema>
 
 /**
@@ -141,6 +143,7 @@ export interface JobSpec {
   /** Capture submission-time dependencies in a closure, retained only in the process queue.
    * Never put credentials in params, progress or the business database. */
   prepare?: (params: Record<string, unknown>, db: Db) => NonNullable<JobSpec['run']>
+  postgres?: PostgresJobSpec
   run?: (ctx: JobContext, params: Record<string, unknown>) => Promise<JobCompletion>
 }
 

@@ -34,3 +34,5 @@ CREATE UNIQUE INDEX job_export_request_uq
 
 ANALYZE business.job;
 COMMIT;
+
+\ir install-job-runtime.sql
