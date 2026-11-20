@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { attachPostgresReviewedEnterprise, type ReviewedSubject } from '../../../core/server/public'
 import { evidenceDigest113 } from './evidence-impact-113'
+import { appendPostgresEvidenceRevision } from './evidence-revision-postgres'
 
 type Transaction = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 
@@ -17,31 +18,11 @@ export async function readPostgresIdentityMaterial(tx: Transaction, enterpriseId
 export async function capturePostgresIdentityChange(tx: Transaction, enterpriseId: number, sourceVersion: string, before: string) {
   const after = await readPostgresIdentityMaterial(tx, enterpriseId)
   if (before === after) return
-  const factDigest = evidenceDigest113(after)
-  const sourceKey = `identity:enterprise:${enterpriseId}`
-  const empty = evidenceDigest113([])
-  const { rows: [revision] } = await tx.execute<{ id: string }>(sql`
-    INSERT INTO evidence_revision_113 (source_kind, source_key, source_version, enterprise_id,
-      coverage_digest, fact_digest, coverage_changed, fact_changed, query_executed, metadata, max_decision_id, created_at)
-    SELECT 'identity', ${sourceKey}, ${sourceVersion}, ${enterpriseId}, ${empty}, ${factDigest},
-      CASE WHEN coalesce((SELECT coverage_digest FROM evidence_semantic_head_113 WHERE source_key = ${sourceKey}), ${empty}) = ${empty}
-           THEN '0' ELSE '1' END::bigint,
-      '1', '0', ${JSON.stringify({ fromEnterpriseId: null })}, coalesce((SELECT max(id) FROM difference_reason), 0),
-      ${new Date().toISOString()}
-    ON CONFLICT (source_kind, source_key, source_version) DO NOTHING RETURNING id`)
-  if (!revision) return
-  const revisionId = revision.id
-  await tx.execute(sql`
-    INSERT INTO evidence_semantic_head_113 (source_key, coverage_digest, fact_digest, latest_revision_id)
-    VALUES (${sourceKey}, ${empty}, ${factDigest}, ${revisionId})
-    ON CONFLICT (source_key) DO UPDATE SET coverage_digest = excluded.coverage_digest,
-      fact_digest = excluded.fact_digest, latest_revision_id = excluded.latest_revision_id`)
-  await tx.execute(sql`INSERT INTO evidence_impact_progress_113 (revision_id) VALUES (${revisionId})`)
-  await tx.execute(sql`
-    INSERT INTO evidence_scope_version_113 (scope_key, latest_revision_id, pending_count)
-    VALUES (${JSON.stringify([enterpriseId, null, null])}, ${revisionId}, 1)
-    ON CONFLICT (scope_key) DO UPDATE SET latest_revision_id = excluded.latest_revision_id,
-      pending_count = evidence_scope_version_113.pending_count + 1`)
+  const revisionId = await appendPostgresEvidenceRevision(tx, {
+    sourceKind: 'identity', sourceKey: `enterprise:${enterpriseId}`, sourceVersion, enterpriseId,
+    beforeFactDigest: evidenceDigest113(before), factDigest: evidenceDigest113(after), metadata: { fromEnterpriseId: null },
+  })
+  if (revisionId === null) return
   await tx.execute(sql`
     INSERT INTO evidence_revision_event_113 (revision_id, event_id, enterprise_id, title_code)
     SELECT ${revisionId}, e.id, r.enterprise_id, r.title_code FROM record r JOIN record_event e ON e.record_id = r.id

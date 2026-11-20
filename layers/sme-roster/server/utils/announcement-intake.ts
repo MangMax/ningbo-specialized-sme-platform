@@ -35,7 +35,7 @@ export const supplementSchema = z.strictObject({
 }).refine(input => !input.preflight || input.officialEvidencePlanHash === undefined, 'A supplement preflight cannot include its own plan hash')
 
 const digestOf = (value: unknown) => createHash('sha256').update(canonicalImportJson(value)).digest('hex')
-type IntakeRow = { id: number; digest: string; request: string; removed_reason: string | null; supplement_digest: string | null; reviewed_request: string | null; receipt: string | null }
+export type IntakeRow = { id: number; digest: string; request: string; removed_reason: string | null; supplement_digest: string | null; reviewed_request: string | null; receipt: string | null }
 
 function loadIntake(db: Db, id: number) {
   const row = db.$client.prepare('SELECT * FROM roster_announcement_intake WHERE id=?').get(id) as IntakeRow | undefined
@@ -72,22 +72,30 @@ export function stageAnnouncement(db: Db, request: RosterImportRequest, pageErro
 }
 
 export function readAnnouncementIntake(db: Db, id: number): RosterAnnouncementIntake {
-  const row = loadIntake(db, id)
+  return projectAnnouncementIntake(loadIntake(db, id))
+}
+
+export function projectAnnouncementIntake(row: IntakeRow): RosterAnnouncementIntake {
   const request = JSON.parse(row.request) as RosterImportRequest
-  return { intakeId: id, sourceDigest: row.digest, status: row.removed_reason ? 'removed' : row.receipt ? 'supplemented' : 'staged',
+  return { intakeId: row.id, sourceDigest: row.digest, status: row.removed_reason ? 'removed' : row.receipt ? 'supplemented' : 'staged',
     removedReason: row.removed_reason, sourceIdentity: request.sourceIdentity, sourceSha256: request.sourceSha256,
     announcement: request.payload.announcement!, ...(hasOfficialFactInput(request) ? { officialEvidencePreflightRequired: true as const } : {}),
     review: row.reviewed_request ? JSON.parse(row.reviewed_request) : null,
     receipt: row.receipt ? JSON.parse(row.receipt) : null }
 }
 
+export function checkAnnouncementRemoval(row: IntakeRow, sourceDigest: string, reason: string) {
+  if (row.digest !== sourceDigest) throw new ImportReceiptError(409, 'source_changed', 'Announcement version changed')
+  if (row.removed_reason !== null && row.removed_reason !== reason) throw new ImportReceiptError(409, 'already_removed', 'Announcement intake was already removed')
+  return { intakeId: row.id, status: 'removed', removedReason: reason }
+}
+
 export function removeAnnouncementIntake(db: Db, id: number, sourceDigest: string, reason: string) {
   return db.$client.transaction(() => {
     const row = loadIntake(db, id)
-    if (row.digest !== sourceDigest) throw new ImportReceiptError(409, 'source_changed', 'Announcement version changed')
-    if (row.removed_reason !== null && row.removed_reason !== reason) throw new ImportReceiptError(409, 'already_removed', 'Announcement intake was already removed')
+    const removed = checkAnnouncementRemoval(row, sourceDigest, reason)
     db.$client.prepare('UPDATE roster_announcement_intake SET removed_reason=? WHERE id=?').run(reason, id)
-    return { intakeId: id, status: 'removed', removedReason: reason }
+    return removed
   }).immediate()
 }
 

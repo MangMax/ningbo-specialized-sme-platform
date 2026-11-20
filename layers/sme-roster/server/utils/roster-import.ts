@@ -3141,17 +3141,38 @@ function exportReplayConflict(db: Executor, snapshot: RosterImportExportSnapshot
   for (let start = 0; start < rows.length; start += 200) {
     const chunk = rows.slice(start, start + 200)
     const stored = new Map(db.select().from(schema.platformExportRow).where(and(eq(schema.platformExportRow.batchId, batchId), inArray(schema.platformExportRow.sourceRowNo, chunk.map(row => row.sourceRowNo)))).all().map(row => [row.sourceRowNo, row]))
-    for (const row of chunk) {
-      const original = stored.get(row.sourceRowNo)
-      if (!original) return failure('export_row', `export:row:${row.sourceRowNo}`, 'export_row_set_conflict', 'Existing file cannot acquire new source rows', 'rows')
-      for (const field of ['nameRaw', 'usccRaw', 'district', 'province', 'city', 'regStatus', 'rawFields'] as const) {
-        if (!Object.hasOwn(row, field)) continue
-        const value = field === 'rawFields' ? row[field] ?? null : optionalString(row[field])
-        if (!isDeepStrictEqual(original[field], value)) return failure('export_row', `export:row:${row.sourceRowNo}`, 'export_row_payload_conflict', `Existing file row has different ${field}`, `rows.${field}`)
-      }
+    const issue = exportSnapshotRowConflict(chunk, stored)
+    if (issue) return issue
+  }
+  return null
+}
+
+export function exportSnapshotRowConflict(rows: NonNullable<RosterImportExportSnapshot['rows']>, stored: ReadonlyMap<number, typeof schema.platformExportRow.$inferSelect>) {
+  for (const row of rows) {
+    const original = stored.get(row.sourceRowNo)
+    if (!original) return failure('export_row', `export:row:${row.sourceRowNo}`, 'export_row_set_conflict', 'Existing file cannot acquire new source rows', 'rows')
+    for (const field of ['nameRaw', 'usccRaw', 'district', 'province', 'city', 'regStatus', 'rawFields'] as const) {
+      if (!Object.hasOwn(row, field)) continue
+      const value = field === 'rawFields' ? row[field] ?? null : optionalString(row[field])
+      if (!isDeepStrictEqual(original[field], value)) return failure('export_row', `export:row:${row.sourceRowNo}`, 'export_row_payload_conflict', `Existing file row has different ${field}`, `rows.${field}`)
     }
   }
   return null
+}
+
+export function projectExportSnapshotRow(batchId: number, row: NonNullable<RosterImportExportSnapshot['rows']>[number]) {
+  return {
+    batchId,
+    sourceRowNo: optionalInt(row.sourceRowNo)!,
+    usccRaw: optionalString(row.usccRaw),
+    nameRaw: optionalString(row.nameRaw),
+    district: optionalString(row.district),
+    province: optionalString(row.province),
+    city: optionalString(row.city),
+    regStatus: optionalString(row.regStatus),
+    rawFields: row.rawFields == null ? null : JSON.stringify(row.rawFields),
+    createdAt: new Date().toISOString(),
+  }
 }
 
 function findExportBatch(db: Executor, snapshot: RosterImportExportSnapshot) {
@@ -3166,36 +3187,40 @@ function latestExportBatch(db: Executor, snapshot: RosterImportExportSnapshot, e
     .orderBy(desc(schema.platformExportBatch.id)).limit(1).get()
 }
 
-function planExportSnapshot(
-  db: Executor,
-  snapshot: RosterImportExportSnapshot,
-  context: { batchId?: number },
-  push: (item: PlannedItem) => void,
-): void {
+export function validateExportSnapshot(snapshot: RosterImportExportSnapshot): RosterImportItemResult | null {
   const ref = 'export:snapshot'
   if (!TITLE_CODES.has(String(snapshot?.titleCode))) {
-    push({ item: failure('export_batch', ref, 'title_unknown', `称号不在字典内：${String(snapshot?.titleCode)}`, 'titleCode'), action: 'skip', review: false })
-    return
+    return failure('export_batch', ref, 'title_unknown', `称号不在字典内：${String(snapshot?.titleCode)}`, 'titleCode')
   }
   if (!optionalInt(snapshot.year) || !optionalString(snapshot.collectedOn) || !optionalString(snapshot.originalFilename) || !optionalString(snapshot.sha256)) {
-    push({ item: failure('export_batch', ref, 'export_identity_incomplete', '快照缺少 year / collectedOn / originalFilename / sha256', 'exportSnapshot'), action: 'skip', review: false })
-    return
+    return failure('export_batch', ref, 'export_identity_incomplete', '快照缺少 year / collectedOn / originalFilename / sha256', 'exportSnapshot')
   }
   const rows = Array.isArray(snapshot.rows) ? snapshot.rows : []
   const seen = new Set<number>()
   for (let i = 0; i < rows.length; i += 1) {
     const rowNo = optionalInt(rows[i]?.sourceRowNo)
     if (rowNo == null) {
-      push({ item: failure('export_row', `export:row:${i}`, 'source_row_no_required', '快照行缺少 sourceRowNo', 'rows[].sourceRowNo'), action: 'skip', review: false })
-      return
+      return failure('export_row', `export:row:${i}`, 'source_row_no_required', '快照行缺少 sourceRowNo', 'rows[].sourceRowNo')
     }
     if (seen.has(rowNo)) {
-      push({ item: failure('export_row', `export:row:${rowNo}`, 'source_row_no_duplicate', `快照行号重复：${rowNo}`, 'rows[].sourceRowNo'), action: 'skip', review: false })
-      return
+      return failure('export_row', `export:row:${rowNo}`, 'source_row_no_duplicate', `快照行号重复：${rowNo}`, 'rows[].sourceRowNo')
     }
     seen.add(rowNo)
   }
 
+  return null
+}
+
+function planExportSnapshot(
+  db: Executor,
+  snapshot: RosterImportExportSnapshot,
+  context: { batchId?: number },
+  push: (item: PlannedItem) => void,
+): void {
+  const issue = validateExportSnapshot(snapshot)
+  if (issue) { push({ item: issue, action: 'skip', review: false }); return }
+  const ref = 'export:snapshot'
+  const rows = Array.isArray(snapshot.rows) ? snapshot.rows : []
   const existing = findExportBatch(db, snapshot)
   // `replaced_batch_id` 的方向（父代理 2026-10-16 裁决 / 契约 §1.6「本批**替换**了哪一批」）：
   // **新批**记下它替换掉的那一批 = 同 (称号, 年度) 现有的**最新**批（不同 sha256）；
@@ -3267,19 +3292,8 @@ function writeExportSnapshot(
     if (chunk.length === INSERT_CHUNK) flush()
     // Encode once and bind the JSON text directly: the JSON column encoder must not
     // stringify it again. Only this chunk plus the next single row is retained.
-    const raw = row.rawFields == null ? null : JSON.stringify(row.rawFields)
-    const values = {
-      batchId: batch.id,
-      sourceRowNo: optionalInt(row.sourceRowNo)!,
-      usccRaw: optionalString(row.usccRaw),
-      nameRaw: optionalString(row.nameRaw),
-      district: optionalString(row.district),
-      province: optionalString(row.province),
-      city: optionalString(row.city),
-      regStatus: optionalString(row.regStatus),
-      rawFields: raw,
-      createdAt: new Date().toISOString(),
-    }
+    const values = projectExportSnapshotRow(batch.id, row)
+    const raw = values.rawFields
     const bytes = Object.values(values).reduce<number>((total, value) => total + Buffer.byteLength(String(value ?? '')), 0)
     if (chunk.length && chunkBytes + bytes > INSERT_BYTES) flush()
     chunk.push({ ...values, rawFields: raw == null ? null : sql`${raw}` })
@@ -4732,7 +4746,7 @@ function rowsRepointed(item: RosterImportItemResult): number {
  * 「那一批没收敛过任何出处行」，所以补 0 是**事实**，不是猜测。没有摘要则返回 `null`
  * （预检批还没提交过，与既有口径一致）。
  */
-function readSummaryOf(raw: unknown): RosterImportSummary | null {
+export function readSummaryOf(raw: unknown): RosterImportSummary | null {
   if (!isObject(raw)) return null
   const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
   return {

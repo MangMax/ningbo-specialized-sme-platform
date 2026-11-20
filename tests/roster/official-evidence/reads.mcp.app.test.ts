@@ -288,7 +288,8 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
   const app = nativeAppAdapter({ dir: pgDir, token: apiToken, launch: ({ cwd, port }) => ({
     args: [join(cwd, '.output/server/index.mjs')],
     env: { NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_MCP_TOKEN: mcpToken,
-      NUXT_DB_READONLY: '1', NUXT_POSTGRES_ROSTER_READ: '1', NUXT_POSTGRES_DIRECTORY_URL: url },
+      NUXT_DB_READONLY: '1', NUXT_POSTGRES_ROSTER_READ: '1', NUXT_POSTGRES_DIRECTORY_URL: url,
+      NUXT_POSTGRES_DIRECTORY_WRITE: '1' },
   }) })
   const env = {
     PATH: process.env.PATH, LANG: 'C', PGHOST: pgDir, PGPORT: '5432', PGDATABASE: 'postgres',
@@ -406,6 +407,55 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     ])
     expect(nativeRows).toEqual(legacyRows)
     expect(JSON.stringify(nativeRows)).toContain('2021旧名')
+
+    const intake = sqlite.prepare('SELECT id,digest FROM roster_announcement_intake WHERE removed_reason IS NULL AND receipt IS NOT NULL ORDER BY id LIMIT 1').get() as { id: number; digest: string }
+    const intakePath = `/api/roster/import/intake/${intake.id}`
+    const sourceIntake = await http(intakePath)
+    expect(sourceIntake.status).toBe(200)
+    const originalIntake = await app.request(intakePath)
+    expect(originalIntake.status).toBe(200)
+    expect(await originalIntake.json()).toEqual(sourceIntake.body)
+    const remove = (sourceDigest: string, reason: string) => app.request(intakePath + '/remove', {
+      method: 'POST', body: JSON.stringify({ sourceDigest, reason }),
+    })
+    expect((await remove('a'.repeat(64), '旧摘要')).status).toBe(409)
+    const removals = await Promise.all([remove(intake.digest, '撤下一版'), remove(intake.digest, '撤下另一版')])
+    expect(removals.map(response => response.status).sort()).toEqual([200, 409])
+    const result = await removals.find(response => response.ok)!.json()
+    expect(await (await remove(intake.digest, result.removedReason)).json()).toEqual(result)
+    const original = z.looseObject({ status: z.literal('supplemented') }).parse(sourceIntake.body)
+    expect(await (await app.request(intakePath)).json()).toEqual({ ...original, status: 'removed', removedReason: result.removedReason })
+    expect((await http(intakePath)).body).toEqual(sourceIntake.body)
+
+    const exportRequest = { ...snapshot, idempotencyKey: 'postgres-new-export', sourceIdentity: 'new-platform-export.xlsx',
+      payload: { exportSnapshot: { ...snapshot.payload.exportSnapshot, year: 2027, sha256: 'c'.repeat(64) } } }
+    const exportCommand = (action: string, request = exportRequest) => app.request(`/api/roster/import/${action}`, {
+      method: 'POST', body: JSON.stringify(request),
+    })
+    const expectedPreview = await http('/api/roster/import/preflight', exportRequest)
+    const nativePreview = await exportCommand('preflight')
+    const nativePlan = await nativePreview.json()
+    expect(nativePreview.status, JSON.stringify(nativePlan)).toBe(200)
+    expect(nativePlan.preflight).toEqual(z.object({ preflight: z.unknown() }).parse(expectedPreview.body).preflight)
+    expect(nativePlan.preflight.add).toBe(1)
+    const attempts = await Promise.all([exportCommand('commit'), exportCommand('commit')])
+    const committed = await Promise.all(attempts.map(response => response.json()))
+    expect(attempts.map(response => response.status), JSON.stringify(committed)).toEqual([200, 200])
+    expect(committed[0]).toEqual(committed[1])
+    expect(committed[0]).toMatchObject({ status: 'committed', summary: { written: 2, skipped: 0, failed: 0 }, items: [{ detail: { rows: [expect.any(Number)] } }] })
+    expect(JSON.parse(run('psql', ['-X', '-w', '-Atc', `SELECT json_build_object('count',(SELECT count(*) FROM business.platform_export_batch WHERE year=2027),
+      'revision',(SELECT count(*) FROM business.evidence_revision_113 WHERE source_kind='selected_snapshot' AND metadata::json#>>'{after,year}'='2027'))`]).toString())).toEqual({ count: 1, revision: 1 })
+    const receipt = await app.request(`/api/roster/import/receipts/history?batchId=${committed[0].batchId}`)
+    expect(receipt.status).toBe(200)
+    expect(await receipt.json()).toMatchObject({ rows: expect.arrayContaining([expect.objectContaining({ status: 'committed' })]) })
+    const replay = await app.request('/mcp', {
+      method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream',
+        'mcp-protocol-version': '2025-06-18', authorization: 'Bearer ' + mcpToken },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'save_roster_batch', arguments: exportRequest } }),
+    })
+    const replayBody = await replay.text()
+    const replayEvent = replayBody.startsWith('event:') ? replayBody.split('\n').find(line => line.startsWith('data: '))!.slice(6) : replayBody
+    expect(JSON.parse(JSON.parse(replayEvent).result.content[0].text)).toEqual(committed[0])
   } finally {
     await app.close()
     if (started) run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-m', 'fast', 'stop'])
