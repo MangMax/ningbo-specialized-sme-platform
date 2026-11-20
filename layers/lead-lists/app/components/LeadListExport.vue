@@ -3,7 +3,7 @@ import { FileDown } from '@lucide/vue'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import { Button } from '#core/app/components/ui/button'
-import { useTaskPolling } from '#core/app/composables/useTaskPolling'
+import { useTaskSnapshot } from '#core/app/composables/useTaskSnapshot'
 import { isJobId, type JobState } from '#core/lib/job'
 import { TASK_STATES } from '#core/lib/task-center'
 import { describeFetchError } from '#core/lib/file-content-status'
@@ -15,7 +15,7 @@ const router = useRouter()
 const id = computed(() => isJobId(route.query.exportJob) ? route.query.exportJob : '')
 const headers = { 'x-task-center-browser': '1' }
 type Job = { id: string; state: JobState; kind: string; params: { versionId: number }; error: string | null }
-const { data, failed, loading, refresh } = useTaskPolling<Job>(id, signal => $fetch<Job>(`/api/jobs/${id.value}`, { signal, retry: 0 }))
+const { data, failed, loading, refresh } = useTaskSnapshot<Job>(id, signal => $fetch<Job>(`/api/jobs/${id.value}`, { signal, retry: 0 }))
 const task = computed(() => data.value?.id === id.value && data.value.kind === LEAD_LIST_EXPORT && data.value.params.versionId === props.versionId ? data.value : undefined)
 const mismatch = computed(() => data.value?.id === id.value && !task.value)
 const busy = ref(false), downloading = ref(false), error = ref('')

@@ -2,7 +2,7 @@
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useTaskPolling } from '#core/app/composables/useTaskPolling'
+import { useTaskSnapshot } from '#core/app/composables/useTaskSnapshot'
 
 class TaskEvents extends EventTarget {
   static connections: TaskEvents[] = []
@@ -25,7 +25,7 @@ function view(load: (signal: AbortSignal) => Promise<Snapshot>, initialKey = 'cu
   const key = ref(initialKey)
   const wrapper = mount(defineComponent({
     setup() {
-      const { data, failed, refresh } = useTaskPolling(key, load, result => result.expiresAt ?? Infinity)
+      const { data, failed, refresh } = useTaskSnapshot(key, load, result => result.expiresAt ?? Infinity)
       return () => h('div', [
         h('output', data.value?.status),
         failed.value ? h('button', { onClick: refresh }, '重新读取') : null,

@@ -7,7 +7,7 @@ import { TASK_EXPORTS, taskArtifactExpiry, type TaskExportTitle } from '../../li
 import { TASK_STATES, type TaskList, type TaskSummary } from '#core/lib/task-center'
 import { getTaskGroups, resolveTaskFilters, getTaskTabs } from '#core/lib/task-catalog'
 import { JOB_STATES, type JobState } from '#core/lib/job'
-import { useTaskPolling } from '#core/app/composables/useTaskPolling'
+import { useTaskSnapshot } from '#core/app/composables/useTaskSnapshot'
 import { useRosterCurrentExport, rosterTaskBrowserHeaders } from '#sme-roster/app/composables/useRosterCurrentExport'
 import { Button } from '#core/app/components/ui/button'
 import FilterChip from '#core/app/components/FilterChip.vue'
@@ -40,7 +40,7 @@ const selectedState = computed(() => state.value === 'all' ? undefined : TASK_ST
 const browserHeaders = rosterTaskBrowserHeaders
 const params = computed(() => ({ tab: tab.value, group: group.value, state: state.value === 'all' ? undefined : state.value, titleCode: titleCode.value === 'all' ? undefined : titleCode.value, page: page.value, pageSize: pageSize.value }))
 const key = computed(() => JSON.stringify([params.value]))
-const { data, sourceKey, loading, failed, retryIn, refresh } = useTaskPolling<TaskList>(
+const { data, sourceKey, loading, failed, retryIn, refresh } = useTaskSnapshot<TaskList>(
   key,
   signal => $fetch<TaskList>('/api/task-center', { query: params.value, headers: browserHeaders, signal }),
   list => Array.isArray(list.rows) ? Math.min(...list.rows.map(taskArtifactExpiry)) : Infinity,

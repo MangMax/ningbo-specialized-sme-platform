@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router'
 import { taskArtifactExpiry } from '../../../lib/sme-roster/task-exports'
 import { TASK_STATES, type TaskSummary } from '#core/lib/task-center'
 import { getTaskKind } from '#core/lib/task-catalog'
-import { useTaskPolling } from '#core/app/composables/useTaskPolling'
+import { useTaskSnapshot } from '#core/app/composables/useTaskSnapshot'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import { Button } from '#core/app/components/ui/button'
 import { Badge } from '#core/app/components/ui/badge'
@@ -34,7 +34,7 @@ const emit = defineEmits<{ close: []; changed: [] }>()
 const { $clientErrors } = useNuxtApp()
 const key = computed(() => props.id)
 const headers = { 'x-task-center-browser': '1' }
-const { data, sourceKey, loading, failed, refresh: reload } = useTaskPolling(
+const { data, sourceKey, loading, failed, refresh: reload } = useTaskSnapshot(
   key,
   signal => $fetch<TaskSummary>(`/api/task-center/${encodeURIComponent(props.id)}`, { headers, signal }),
   taskArtifactExpiry,

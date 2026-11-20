@@ -36,7 +36,7 @@ function subscribe(listener: (event: TaskSignal) => void) {
 }
 
 /** Reads task snapshots from REST. The stream only invalidates them. */
-export function useTaskPolling<T>(
+export function useTaskSnapshot<T>(
   key: Readonly<Ref<string>>,
   load: (signal: AbortSignal) => Promise<T>,
   nextExpiry?: (result: T) => number,
