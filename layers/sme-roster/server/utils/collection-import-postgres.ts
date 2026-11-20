@@ -19,7 +19,7 @@ import { EVENT_ARCHIVE_RULE_VERSION } from './event-archive-discovery'
 import { CANDIDATE_JOB_KIND, candidateJobParams } from './jobs/candidate-discovery'
 import type { PlatformProjectionResult } from '../../lib/platform/business-record'
 import { PlatformProjectionError } from '../../lib/platform/projection-error'
-import { planPostgresHistoricalObservation, previewPostgresArchivedObservation, writePostgresArchivedObservation } from './platform-observation-import-postgres'
+import { ArchivedObservationWriteError, planPostgresHistoricalObservation, previewPostgresArchivedObservation, writePostgresArchivedObservation } from './platform-observation-import-postgres'
 import { LegacyProvenanceError } from '../../lib/platform/legacy-provenance-command'
 import { inspectPostgresLegacyProvenance, writePostgresLegacyProvenance } from './platform-legacy-provenance-postgres'
 
@@ -38,7 +38,7 @@ async function archivedSource(tx: Tx, query: RosterImportPlatformQuery): Promise
       AND c.queried_at=${query.queriedAt.trim()}`)
   if (!entry) return null
   const { query: stored } = (await readPostgresFingerprintQueries(tx,[entry.id])).get(entry.id)!
-  const originals = await readPostgresRelationFingerprints(tx,{queryId:entry.id})
+  const originals = await readPostgresRelationFingerprints(tx,{queryId:entry.id,archiveReplay:true})
   const ref = 'query:' + entry.id
   const bySequence = new Map(originals.map(({ relation }) => [relation.sequenceNo,
     { values:relation as unknown as NonNullable<RosterImportPlatformQuery['relations']>[number],ref:'relation:'+relation.id,id:relation.id }]))
@@ -117,7 +117,7 @@ async function writeQuery(tx: Tx, plan: QueryPlan, batchId: number): Promise<Ros
     for (const relation of query.relations ?? []) {
       const relationId = same.source.relationAt(relation.sequenceNo)!.id!
       const sync = query.reuseExisting !== true && relation.rawFields != null
-      const result = await writePostgresArchivedObservation(tx,relationId,sync,null)
+      const result = await writePostgresArchivedObservation(tx,relationId,{ kind:sync ? 'replay' : 'reference' })
       if (result) canonicalProjection.push(result)
     }
     return { ok:true,kind:'platform_query',ref:'query:'+same.id,detail:{
@@ -253,20 +253,29 @@ export function runPostgresPlatformImport(action: 'preflight' | 'commit' | 'repl
     if (action === 'preflight') return {preflight}
     if (conflicts.length) return {preflight,items:conflicts,summary:{...emptySummary,failed:conflicts.length},
       error:'批次校验未通过：'+conflicts.length+' 项有误，未写入任何数据'}
-    const items = await tx.transaction(async nested=>{
-      const results: RosterImportItemResult[] = []
-      for (const plan of plans) results.push(await writeQuery(nested,plan,batch.id))
-      for (const { relationId,inputFingerprint } of observationSources) {
-        const projection = await writePostgresArchivedObservation(nested,relationId,true,batch.id,inputFingerprint)
-        results.push({ ok:true,kind:'platform_observation',ref:'relation:'+relationId,
-          detail:{ canonicalProjection:[projection!],rowsWritten:0 } })
-      }
-      for (const plan of legacy) {
-        results.push({ ok:true,kind:'platform_legacy_provenance',ref:'query:'+plan.input.queryId,
-          detail:await writePostgresLegacyProvenance(nested,plan,batch.id) })
-      }
-      return results
-    })
+    let items: RosterImportItemResult[]
+    try {
+      items = await tx.transaction(async nested=>{
+        const results: RosterImportItemResult[] = []
+        for (const plan of plans) results.push(await writeQuery(nested,plan,batch.id))
+        for (const { relationId,inputFingerprint } of observationSources) {
+          const projection = await writePostgresArchivedObservation(nested,relationId,{ kind:'historical',batchId:batch.id,expected:inputFingerprint })
+          results.push({ ok:true,kind:'platform_observation',ref:'relation:'+relationId,
+            detail:{ canonicalProjection:[projection!],rowsWritten:0 } })
+        }
+        for (const plan of legacy) {
+          results.push({ ok:true,kind:'platform_legacy_provenance',ref:'query:'+plan.input.queryId,
+            detail:await writePostgresLegacyProvenance(nested,plan,batch.id) })
+        }
+        return results
+      })
+    } catch (error) {
+      if (!(error instanceof ArchivedObservationWriteError)) throw error
+      const failed: RosterImportItemResult = { ok:false,kind:error.kind,ref:'relation:'+error.relationId,
+        error:{code:error.code,message:error.message,...(error.kind==='platform_relation' ? {field:'relations'} : {})} }
+      return {preflight,items:[failed],summary:{...emptySummary,failed:1},
+        error:'批次执行阶段有项失败（已整批回滚，未写入任何数据）'}
+    }
     const summary = archiveSummary(items,plans.some(plan=>(plan.same || plan.plannedReuse) &&
       (plan.query.reuseExisting === true || (!plan.query.relations?.length && plan.source.relationCount > 0) ||
         plan.query.relations?.some(row=>row.rawFields == null))),request.sourceKind==='platform_archive')
