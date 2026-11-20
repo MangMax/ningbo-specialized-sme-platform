@@ -290,7 +290,8 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     args: [join(cwd, '.output/server/index.mjs')],
     env: { NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_MCP_TOKEN: mcpToken,
       NUXT_DB_READONLY: '1', NUXT_POSTGRES_ROSTER_READ: '1', NUXT_POSTGRES_DIRECTORY_URL: url,
-      NUXT_POSTGRES_DIRECTORY_WRITE: '1', NUXT_FILES_DIR: filesDir },
+      NUXT_POSTGRES_DIRECTORY_WRITE: '1', NUXT_FILES_DIR: filesDir,
+      NUXT_CURATED_PATH: join(pgDir, 'curated.json'), NUXT_RECONCILE_PATH: join(pgDir, 'reconcile.json') },
   }) })
   const env = {
     PATH: process.env.PATH, LANG: 'C', PGHOST: pgDir, PGPORT: '5432', PGDATABASE: 'postgres',
@@ -366,6 +367,8 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
       .get(event.uscc, archivedAt) as { queryId: number; relationId: number }
     expect(archiveCoordinates).toMatchObject({ queryId: expect.any(Number), relationId: expect.any(Number) })
 
+    const refresh = await http('/api/roster/differences/refresh', { enterpriseIds: [firstOwner.id] })
+    expect(refresh.status, JSON.stringify(refresh.body)).toBe(200)
     installLeadListSchema(sqlite)
     run('initdb', ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', 'receipt_fixture', '-D', join(pgDir, 'pg')])
     run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-l', join(pgDir, 'pg.log'), '-o', "-c listen_addresses='' -k " + pgDir, 'start'])
@@ -408,6 +411,22 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
       expect(response.status, await response.clone().text()).toBe(200)
       expect(await response.json()).toEqual(legacy.body)
     }
+
+    for (const query of ['view=summary&pageSize=2', 'view=full&showCurated=true&pageSize=4', 'view=summary&enterpriseId=' + firstOwner.id]) {
+      const path = '/api/comparison?' + query
+      const original = await http(path)
+      const native = await app.request(path)
+      expect(original.status, JSON.stringify(original.body)).toBe(200)
+      expect(native.status, await native.clone().text()).toBe(200)
+      expect(await native.json()).toEqual(original.body)
+    }
+    const refreshPath = '/api/roster/differences/refresh?enterpriseIds=' + firstOwner.id
+    const refreshState = await http(refreshPath)
+    const nativeRefresh = await app.request(refreshPath)
+    expect(refreshState.status, JSON.stringify(refreshState.body)).toBe(200)
+    expect(nativeRefresh.status, await nativeRefresh.clone().text()).toBe(200)
+    expect(await nativeRefresh.json()).toEqual(refreshState.body)
+    expect(await nativeTool('list_enterprise_difference_comparisons', { enterpriseIds: [firstOwner.id] })).toEqual({ body: refreshState.body, isError: false })
 
     const batch = sqlite.prepare("SELECT id,item_results FROM import_batch WHERE idempotency_key LIKE '%-merge' AND status='committed' ORDER BY id LIMIT 1").get() as { id: number; item_results: string }
     const items = JSON.parse(batch.item_results)

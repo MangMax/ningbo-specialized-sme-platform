@@ -22,7 +22,7 @@ function originalValue(cell: Cell) {
   }
 }
 
-export async function readPostgresFingerprintQueries(db: Db, ids: readonly number[]) {
+export async function readPostgresFingerprintQueries(db: Db, ids: readonly number[], includeRaw = true) {
   if (!ids.length) return new Map<number, { query: PlatformStoredQuery; collection: typeof schema.platformCollection.$inferSelect }>()
   const { rows } = await db.execute<{
     id: number; collection: typeof schema.platformCollection.$inferSelect
@@ -30,8 +30,8 @@ export async function readPostgresFingerprintQueries(db: Db, ids: readonly numbe
     coverage: Buffer | null
   }>(sql`
     SELECT q.old_id::float8 AS id, ${postgresRosterRow(schema.platformCollection, 'c')} AS collection,
-      (SELECT v.bytes FROM platform_collection_archive_ref r JOIN platform_archive_value v ON v.id=r.archive_id
-        WHERE r.owner_id=c.id AND r.field='rawResponse') AS raw,
+      ${includeRaw ? sql`(SELECT v.bytes FROM platform_collection_archive_ref r JOIN platform_archive_value v ON v.id=r.archive_id
+        WHERE r.owner_id=c.id AND r.field='rawResponse')` : sql`NULL::bytea`} AS raw,
       (SELECT v.bytes FROM platform_collection_archive_ref r JOIN platform_archive_value v ON v.id=r.archive_id
         WHERE r.owner_id=c.id AND r.field='collectionEvidence') AS coverage
     FROM platform_legacy_query_alias q JOIN platform_collection c ON c.id=q.collection_id

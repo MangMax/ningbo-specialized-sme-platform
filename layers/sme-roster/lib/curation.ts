@@ -3,7 +3,7 @@ import { dirname } from 'node:path'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../db/schema'
 import type { TitleCode } from '../../../db/titles'
-import { COMPARISON_DIRECTIONS, getComparison, type ComparisonDirection, type ComparisonRow } from './comparison'
+import { COMPARISON_DIRECTIONS, getComparison, type ComparisonDirection, type ComparisonRow, type ComparisonResult } from './comparison'
 import { TITLE_ORDER } from './labels'
 
 export interface CuratedRow extends ComparisonRow { nameNorm: string; note?: string }
@@ -69,6 +69,10 @@ export function getCuratedComparison(db: BetterSQLite3Database<typeof schema>, p
   const result = getComparison(db)
   const annotations = readCuration(path)
   const names = new Map(db.select({ id: schema.enterprise.id, nameNorm: schema.enterprise.nameNorm }).from(schema.enterprise).all().map(e => [e.id, e.nameNorm]))
+  return projectCuratedComparison(result, annotations, names)
+}
+
+export function projectCuratedComparison(result: ComparisonResult, annotations: Annotations, names: ReadonlyMap<number, string>) {
   const curatedCounts = Object.fromEntries(TITLE_ORDER.map(code => [code, { missing_in_miit: 0, extra_in_miit: 0 }])) as typeof result.counts
   const rows: CuratedRow[] = result.rows.map(row => {
     const nameNorm = names.get(row.enterpriseId)!
