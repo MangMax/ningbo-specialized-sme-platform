@@ -18,6 +18,7 @@ import { planPostgresRawAnnouncementPreflight } from './announcement-preflight-p
 import { planPostgresAnnouncementReplay, writePostgresAnnouncementReplay } from './announcement-replay-postgres'
 import { planPostgresImportDifference, writePostgresImportDifference } from './difference-import-postgres'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
+import { applyPostgresRosterMerge, planPostgresRosterMerge } from './roster-merge-postgres'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type ImportStep = {
@@ -123,6 +124,31 @@ async function executePostgresDifferenceItems(tx: Tx, action: PostgresImportActi
   return { preflight, items, summary: { ...emptySummary, written, skipped: items.length-written }, error: null }
 }
 
+async function executePostgresMergeItems(tx: Tx, action: PostgresImportAction,
+  merges: NonNullable<RosterImportRequest['payload']['merges']>): Promise<NativeImportExecution> {
+  const preflight: RosterImportPreflight = { add: 0, update: 0, remove: 0, review: 0, conflicts: [], evidenceRepoints: 0 }
+  const items: RosterImportItemResult[] = []
+  for (const [index,merge] of merges.entries()) {
+    const { item, plan } = await planPostgresRosterMerge(tx,merge,index)
+    if (plan) {
+      preflight.update++
+      preflight.remove++
+    } else preflight.conflicts.push(item)
+    if (action === 'preflight') continue
+    const result = plan ? await applyPostgresRosterMerge(tx,plan) : item
+    if (!result.ok) return { preflight, items: [
+      ...items.map(row=>({ ...row,ok:false,error:{code:'commit_rolled_back',message:'整批回滚，本项未写入'} })),
+      result,
+      ...merges.slice(index+1).map((_,offset)=>({ kind:'merge',ref:'merge:'+(index+offset+1),ok:false,
+        error:{code:'not_executed',message:'整批回滚，本项未执行'} })),
+    ], summary: { ...emptySummary, failed: merges.length }, error:'批次执行失败，未写入任何数据' }
+    items.push(result)
+  }
+  if (action === 'preflight') return { preflight }
+  return { preflight, items, summary: { ...emptySummary, written: items.reduce((n,item)=>n+Number(item.detail?.rowsWritten ?? 0),0) },
+    error: null }
+}
+
 export function runPostgresMixedImport(action: 'preflight' | 'commit' | 'replay', request: RosterImportRequest, filesDir?: string) {
   const announcement = hasAnnouncementRows(request)
   const db = usePostgresRosterDb(true)
@@ -146,7 +172,7 @@ export function runPostgresMixedImport(action: 'preflight' | 'commit' | 'replay'
 export function createPostgresImportSteps(action: PostgresImportAction, request: RosterImportRequest,
   filesDir?: string, afterAnnouncement = false): ImportStep[] {
   const { aliases, exportSnapshot, usccBackfills, platformQueries, platformLegacyProvenance,
-    platformRecordObservations, differences } = request.payload
+    platformRecordObservations, differences, merges } = request.payload
   const announcement = hasAnnouncementRows(request)
   const steps: ImportStep[] = []
   if (announcement && !afterAnnouncement) steps.push({
@@ -157,7 +183,7 @@ export function createPostgresImportSteps(action: PostgresImportAction, request:
   })
   if (platformQueries?.length || platformLegacyProvenance?.length || platformRecordObservations?.length) steps.push({
     // Later items may refer to this command's natural query coordinates.
-    writeForPreflight: Boolean(platformQueries?.length && (aliases?.length || differences?.length)),
+    writeForPreflight: Boolean(platformQueries?.length && (aliases?.length || differences?.length || merges?.length)),
     execute: (tx,batch,operation) => executePostgresPlatformItems(tx,batch,operation,request,undefined,action==='commit'),
   })
   if (Array.isArray(aliases) && aliases.length) steps.push({
@@ -170,10 +196,14 @@ export function createPostgresImportSteps(action: PostgresImportAction, request:
     execute: (tx,batch,operation) => executePostgresExportItems(tx,batch,operation,exportSnapshot),
   })
   if (Array.isArray(usccBackfills) && usccBackfills.length) steps.push({
+    writeForPreflight: Boolean(merges?.length),
     execute: (tx,batch,operation) => executePostgresUsccBackfillItems(tx,batch,operation,usccBackfills),
   })
   if (!announcement && !afterAnnouncement && hasOfficialFactInput(request)) steps.push({
     execute: (tx,batch,operation) => executePostgresOfficialItems(tx,batch,operation,request,filesDir),
+  })
+  if (Array.isArray(merges) && merges.length) steps.push({
+    execute: (tx,batch,operation) => executePostgresMergeItems(tx,operation,merges),
   })
   return steps
 }

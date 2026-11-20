@@ -1000,6 +1000,16 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     expect(mixedCommitted).toMatchObject({status:'committed',summary:{written:2},items:[{kind:'alias'},{kind:'uscc_backfill'}]})
     expect(await codeOf(subjects[1].id)).toBe('91330201000207415U')
     expect(await nativeTool('save_roster_batch',mixedCommand)).toMatchObject({isError:false,body:mixedCommitted})
+    const mergeRequest = { ...repair,idempotencyKey:'native-direct-roster-merge',
+      payload:{merges:[{fromEnterpriseId:subjects[1].id,intoUscc:uscc,sourceKind:'manual'}]} }
+    const plannedMerge = await nativeTool('preflight_roster_batch',mergeRequest)
+    expect(plannedMerge.body).toMatchObject({status:'preflight',preflight:{update:1,remove:1,conflicts:[]}})
+    const merged = await (await stage(mergeRequest)).json()
+    expect(merged).toMatchObject({status:'committed',items:[{kind:'merge',detail:{lineage:{fromEnterpriseId:subjects[1].id,
+      intoEnterpriseId:subjects[0].id}}}]})
+    const mergedSource = await app.request('/api/core/enterprises/'+subjects[1].id+'/details')
+    expect(await mergedSource.json()).toMatchObject({id:subjects[1].id,mergedInto:subjects[0].id,uscc:'91330201000207415U'})
+    expect(await nativeTool('save_roster_batch',mergeRequest)).toMatchObject({isError:false,body:merged})
     const aliasSource = archiveQuery('business_list')
     const alias = { uscc:event.uscc,name:'合成原值',sourceKind:'platform_business',verificationStatus:'confirmed',
       sourceRelationRef:{ interface:aliasSource.interface,queryKey:aliasSource.queryKey,rdjb:aliasSource.rdjb,
