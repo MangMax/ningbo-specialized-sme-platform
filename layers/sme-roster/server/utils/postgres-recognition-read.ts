@@ -1,6 +1,5 @@
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { usePostgresDirectoryDb } from '../../../../db/postgresql/client'
 import { TITLE_ORDER } from '../../lib/labels'
 import { isPageCapable } from '../../lib/roster/evidence-page'
 import { matchesRecognitionQuery } from '../../lib/roster/first-recognition'
@@ -26,13 +25,6 @@ type Pointer = {
   attachment: string | null
   listNo: string | null
   page: string | null
-}
-
-export function usePostgresRecognitionDb() {
-  if (process.env.NUXT_POSTGRES_ROSTER_READ !== '1') return
-  const db = usePostgresDirectoryDb()
-  if (!db) throw new Error('PostgreSQL roster reads require NUXT_POSTGRES_DIRECTORY_URL')
-  return db
 }
 
 function nullableNumber(value: string | null) {

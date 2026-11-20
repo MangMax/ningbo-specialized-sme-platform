@@ -1,6 +1,7 @@
 import { useDb } from '@db'
 import { readLedgerYears } from '#sme-roster/lib/roster/recognitions'
-import { readPostgresLedgerYears, usePostgresRecognitionDb } from '../../utils/postgres-recognition-read'
+import { readPostgresLedgerYears } from '../../utils/postgres-recognition-read'
+import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 
 defineRouteMeta({
   openAPI: {
@@ -27,6 +28,6 @@ defineRouteMeta({
 })
 
 export default defineEventHandler(() => {
-  const pg = usePostgresRecognitionDb()
+  const pg = usePostgresRosterDb()
   return pg ? readPostgresLedgerYears(pg) : readLedgerYears(useDb())
 })

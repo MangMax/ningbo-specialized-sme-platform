@@ -229,7 +229,7 @@ export interface RosterEnterprisesResult {
 
 const DEFAULT_PAGE_SIZE = 50
 
-function pageOf(input: { page?: number; pageSize?: number }): { page: number; pageSize: number } {
+export function rosterPageOf(input: { page?: number; pageSize?: number }): { page: number; pageSize: number } {
   const page = Number.isFinite(input.page) && (input.page as number) >= 1 ? Math.floor(input.page as number) : 1
   const size = Number.isFinite(input.pageSize) && (input.pageSize as number) >= 1 ? Math.floor(input.pageSize as number) : DEFAULT_PAGE_SIZE
   return { page, pageSize: Math.min(size, MAX_PAGE_SIZE) }
@@ -308,7 +308,7 @@ function deriveRosterState(profile: Profile, index: SnapshotIndex): RosterState 
  * 放在 `buildProfile` 里逐企业重建,就是 7352 家 × 21189 条出处 —— 这是**读取路径**,
  * 一次页面请求不该做两亿次操作。
  */
-function indexEvidence(snap: Snapshot): Map<number, FirstRecognitionEvidence[]> {
+function indexEvidence(snap: Pick<Snapshot, 'evidence'>): Map<number, FirstRecognitionEvidence[]> {
   const byEvent = new Map<number, FirstRecognitionEvidence[]>()
   for (const v of snap.evidence) {
     const list = byEvent.get(v.recordEventId) ?? []
@@ -325,7 +325,7 @@ function indexEvidence(snap: Snapshot): Map<number, FirstRecognitionEvidence[]> 
 
 function buildProfile(
   enterprise: Snapshot['enterprises'][number],
-  snap: Snapshot,
+  snap: Pick<Snapshot, 'recordsByEnterprise' | 'eventsByRecord'>,
   evidenceByEvent: ReadonlyMap<number, readonly FirstRecognitionEvidence[]>,
 ): Profile {
   const records = snap.recordsByEnterprise.get(enterprise.id) ?? []
@@ -572,7 +572,7 @@ function indexSnapshots(snap: Snapshot): SnapshotIndex {
  */
 export function listRosterEnterprises(db: Db, filter: RosterEnterpriseFilter = {}): RosterEnterprisesResult {
   const { rows, counts } = db.transaction(() => selectRosterEnterprises(db, filter, true))
-  const { page, pageSize } = pageOf(filter)
+  const { page, pageSize } = rosterPageOf(filter)
   return {
     rows,
     counts,
@@ -636,26 +636,35 @@ function selectRosterEnterprises(
   filter: RosterEnterpriseFilter,
   paginate = false,
 ): { rows: RosterEnterpriseRow[]; counts: RosterCounts } {
-  const { page, pageSize } = pageOf(filter)
+  const { page, pageSize } = rosterPageOf(filter)
   const { candidates, counts } = selectEnterpriseCoordinates(db, filter, paginate ? page * pageSize : undefined)
   const selected = paginate ? candidates.slice((page - 1) * pageSize, page * pageSize) : candidates
   const ids = selected.map(row => row.id)
   const history = readEnterpriseHistories(db, ids)
   const snap: Snapshot = { ...history, enterprises: db.select().from(schema.enterprise).where(inArray(schema.enterprise.id, ids)).all(),
     exportRows: [], exportBatches: [], queries: [], relations: [] }
-  const evidence = indexEvidence(snap)
-  const byId = new Map(snap.enterprises.map(enterprise => [enterprise.id, enterprise]))
   const removed = filter.rosterState ? new Set<number>() : removedEnterpriseIds(db, ids.filter(id => {
     const records = snap.recordsByEnterprise.get(id) ?? []
     return records.length > 0 && !records.some(record => record.source === 'jxj')
   }))
+  return { counts, rows: projectRosterEnterprisePage(snap, selected, removed) }
+}
+
+export function projectRosterEnterprisePage(
+  snap: Pick<Snapshot, 'evidence' | 'recordsByEnterprise' | 'eventsByRecord' | 'enterprises' | 'aliases'>,
+  selected: readonly { id: number; state: RosterState; difference: RosterEnterpriseDifference }[],
+  removed: ReadonlySet<number>,
+): RosterEnterpriseRow[] {
+  const evidence = indexEvidence(snap)
+  const byId = new Map(snap.enterprises.map(enterprise => [enterprise.id, enterprise]))
   const aliases = new Map<number, Set<string>>()
   for (const alias of snap.aliases) {
     if (alias.verificationStatus !== 'confirmed') continue
     const names = aliases.get(alias.enterpriseId) ?? new Set<string>()
     names.add(alias.name); aliases.set(alias.enterpriseId, names)
   }
-  return { counts, rows: selected.map(row => toRow(buildProfile(byId.get(row.id)!, snap, evidence), [...(aliases.get(row.id) ?? [])].sort(), removed.has(row.id) ? 'removed_platform_only' : row.state, row.difference)) }
+  return selected.map(row => toRow(buildProfile(byId.get(row.id)!, snap, evidence), [...(aliases.get(row.id) ?? [])].sort(),
+    removed.has(row.id) ? 'removed_platform_only' : row.state, row.difference))
 }
 
 // ---------------------------------------------------------------------------
@@ -1194,7 +1203,7 @@ function rosterDifferences(db: Db, filter: RosterDifferenceFilter): RosterDiffer
     counts[row.titleCode]![row.direction] += 1
   }
 
-  const { page, pageSize } = pageOf(filter)
+  const { page, pageSize } = rosterPageOf(filter)
   const selected = rows.slice((page - 1) * pageSize, page * pageSize)
   const hydrated = new Map(differenceUniverse(db, readDifferenceSnapshot(db, [...new Set(selected.map(r => r.enterpriseId))]), selected, asOf).map(r => [differenceKey(r.enterpriseId, r.titleCode, r.direction), r]))
   return {
