@@ -104,7 +104,7 @@ describe.skipIf(!bin)('PostgreSQL roster identity discovery over HTTP', () => {
     const get = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.get')).default
     const post = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.post')).default
     const duplicate = (await import('../../../layers/sme-roster/server/api/roster/import/duplicate-candidates.get')).default
-    dispatch = toWebHandler(createApp({ silent: true }).use(createRouter()
+    dispatch = toWebHandler(createApp().use(createRouter()
       .get('/api/roster/uscc-research', get)
       .post('/api/roster/uscc-research', post)
       .get('/api/roster/import/duplicate-candidates', duplicate)))
