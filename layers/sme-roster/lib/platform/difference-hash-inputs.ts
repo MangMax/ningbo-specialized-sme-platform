@@ -30,14 +30,16 @@ export function readDifferenceRevisionMaterials(db: Db, observationIds: number[]
   if (rows.length !== observationIds.length) throw new Error('Difference original hash input missing')
   return new Map(rows.map(row => [row.id, JSON.parse(row.material) as unknown[]]))
 }
+export const refreshRelationFields = ['relation_key','uscc_raw','name_raw','alias_name_raw','province','status','batch','declare_kind','applied_at','award_batch_label','year'] as const
+export const refreshSourceKeys = ['id','rdjb','rddqrq','whpcyear','whpc','cszt','year','sqsj','sblx','personuuid','szsfmc','szq','rdxx','qymc','tyshxydm'] as const
+export const refreshMetadataKeys = ['source','status','effectiveConditions','titleScope','completeness','fullRange','pages'] as const
+
 export function readDifferenceRefreshRows(db: Db, collectionId: number) {
-  const fields = ['relation_key','uscc_raw','name_raw','alias_name_raw','province','status','batch','declare_kind','applied_at','award_batch_label','year'] as const
   const raw = cell('raw_fields')
-  const args = fields.flatMap(name => [sql`${name}`, cell(name)])
+  const args = refreshRelationFields.flatMap(name => [sql`${name}`, cell(name)])
   const base = sql`json_object(${sql.join(args, sql`,`)},'match_basis',${a.matchBasis},'verification_status',${a.verificationStatus})`
-  const sourceKeys = ['id','rdjb','rddqrq','whpcyear','whpc','cszt','year','sqsj','sblx','personuuid','szsfmc','szq','rdxx','qymc','tyshxydm']
   const business = sql`(select json_group_object(key,json(${raw} -> fullkey)) from json_each(${raw})
-    where key in (${sql.join(sourceKeys.map(k => sql`${k}`),sql`,`)}))`
+    where key in (${sql.join(refreshSourceKeys.map(k => sql`${k}`),sql`,`)}))`
   const material = sql<string>`case when ${raw} is null then ${base}
     when not json_valid(${raw}) or json_type(${raw})='null' then json_set(${base},'$.sourceBusinessMalformed',json('true'))
     else json_set(${base},'$.sourceBusiness',json(${business})) end`
@@ -52,8 +54,7 @@ export function readDifferenceRefreshMetadata(db: Db, collectionId: number) {
   const raw = sql`cast(${v.bytes} as text)`
   // Preserve JSON scalar types in the old hash input while excluding rows and
   // transport bodies before they cross the driver.
-  const fields = ['source','status','effectiveConditions','titleScope','completeness','fullRange','pages']
-  const args = fields.flatMap(key => [sql`${key}`,sql`${raw} -> ${'$.'+key}`])
+  const args = refreshMetadataKeys.flatMap(key => [sql`${key}`,sql`${raw} -> ${'$.'+key}`])
   return db.select({ text: sql<string | null>`case when ${v.storageClass}='null' then null
     when not json_valid(${raw}) then '{' when json_type(${raw})='null' then 'null'
     else json_object(${sql.join(args,sql`,`)}) end` }).from(r).innerJoin(v, eq(v.id, r.archiveId))

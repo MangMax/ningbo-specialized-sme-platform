@@ -16,7 +16,18 @@ type PostgresQueryCoverage = ReturnType<typeof projectQueryCoverage>
 /** The caller pins one snapshot for selected query coordinates and their typed metadata. */
 export async function readPostgresQueryCoverage(db: Reader, subjects: readonly CoverageSubject[], titleCodes: readonly string[]) {
   const coverages = new Map<number, Map<string, PostgresQueryCoverage>>()
-  if (!subjects.length || !titleCodes.length) return coverages
+  for (const { id, titleCode, input } of await readPostgresQueryCoverageInputs(db, subjects, titleCodes)) {
+    const titled = coverages.get(id) ?? new Map()
+    titled.set(titleCode, projectQueryCoverage(input, { titleCode }))
+    coverages.set(id, titled)
+  }
+  return coverages
+}
+
+export async function readPostgresQueryCoverageInputs(db: Reader, subjects: readonly CoverageSubject[], titleCodes: readonly string[],
+  exactStoredKey = false,
+) {
+  if (!subjects.length || !titleCodes.length) return []
   const codes = [...new Set(subjects.map(subject => normalizeUscc(subject.uscc_norm)).filter(Boolean))]
   const variants = new Map<string, string[]>()
   if (codes.length) {
@@ -33,7 +44,7 @@ export async function readPostgresQueryCoverage(db: Reader, subjects: readonly C
   const targets = subjects.flatMap(subject => titleCodes.map(titleCode => {
     const uscc = normalizeUscc(subject.uscc_norm) || null
     return { enterprise_id: subject.id, title_code: titleCode, rdjb: TITLE_RDJB_CODES[titleCode] ?? '',
-      uscc, query_keys: [`name:${subject.name_norm}`, ...(uscc ? [uscc, ...variants.get(uscc) ?? []] : [])] }
+      uscc, query_keys: [`name:${subject.name_norm}`, ...(exactStoredKey ? [subject.uscc_norm ?? ''] : []), ...(uscc ? [uscc, ...variants.get(uscc) ?? []] : [])] }
   }))
   const { rows } = await db.execute<CoverageCollection>(sql`
     WITH targets AS MATERIALIZED (
@@ -65,7 +76,7 @@ export async function readPostgresQueryCoverage(db: Reader, subjects: readonly C
   const byTarget = Map.groupBy(rows, row => row.slot)
   const retained = [...byTarget.values()].flatMap(rows => rows.slice(0, 50))
   const metadata = await readPostgresCollectionScopes(db, [...new Map(retained.map(row => [row.collection.id, row.collection])).values()])
-  for (const [slot, target] of targets.entries()) {
+  return targets.map((target, slot) => {
     const { enterprise_id: id, title_code: titleCode, uscc } = target
     const result = byTarget.get(slot) ?? []
     const sources = result.slice(0, 50).map(({ collection, id, matched }) => ({
@@ -73,11 +84,8 @@ export async function readPostgresQueryCoverage(db: Reader, subjects: readonly C
       rdjb: collection.rdjb, queriedAt: collection.queriedAt, status: collection.status,
       metadata: collection.provenanceState === 'legacy_supplement' ? null : JSON.stringify(metadata.get(collection.id)!.metadata),
     }))
-    const titled = coverages.get(id) ?? new Map()
-    titled.set(titleCode, projectQueryCoverage({ rows: sources, uscc, truncated: result.length > 50 }, { titleCode }))
-    coverages.set(id, titled)
-  }
-  return coverages
+    return { id, titleCode, input: { rows: sources, uscc, truncated: result.length > 50 } }
+  })
 }
 
 export async function readPostgresCollectionScopes(db: Reader, collections: DifferenceCollectionScopeRows['collection'][]) {
