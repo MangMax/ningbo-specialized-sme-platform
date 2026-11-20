@@ -122,13 +122,6 @@ function validateParts(row: ExactEvidence, coordinate: EvidenceCoordinate, parts
     if (matches.length !== 1 || matches[0]!.hasConflict) fail('attachment_conflict', 'Attachment must match one conflict-free declared event segment')
   }
 }
-function validateDestination(db: Executor, row: ExactEvidence, coordinate: EvidenceCoordinate, inspection: Inspection, strictFile: boolean) {
-  const file = fileIdentity(db, coordinate.sourceFile)
-  validateFile(row, file, inspection, strictFile)
-  if (strictFile && file) validateParts(row, coordinate, readEvidencePlanInput(db, { type: 'parts', fileId: file.id }) as DestinationPart[])
-  return { ...file, ...inspection }
-}
-
 export function planEvidenceCorrectionTargets(db: Executor, request: EvidenceCorrectionRequest, inspected: Map<string, Inspection>, typed = request.operations.some(op => op.publishedRow !== undefined)) {
   const query = projectEvidenceCorrectionTargets(request, inspected, typed)
   let next = query.next()
@@ -285,11 +278,11 @@ export function readEvidenceCorrectionAudit(db: Executor, evidenceId: number, pa
   return { rows: db.select().from(schema.evidenceCorrectionAudit).where(where).orderBy(asc(schema.evidenceCorrectionAudit.id)).limit(pageSize).offset((page - 1) * pageSize).all(), total: db.select({ n: count() }).from(schema.evidenceCorrectionAudit).where(where).get()!.n, page, pageSize }
 }
 
-/** Preserve the legacy per-row protocol and reuse file inspection within one request. */
-export function createLegacyEvidencePageAdapter(db: Db, filesDir?: string) {
+export type LegacyEvidencePageInput = { evidenceId: number; previous: number | null; page: number; basis?: string; dryRun?: boolean }
+
+export function createLegacyEvidencePageInspection(filesDir?: string) {
   const inspections = new Map<string, Inspection>()
-  return async (input: { evidenceId: number; previous: number | null; page: number; basis?: string; dryRun?: boolean }) => {
-    const row = readExactEvidence(db, input.evidenceId)
+  return async (row: ExactEvidence, input: LegacyEvidencePageInput) => {
     if (row.coordinate.page !== input.previous) fail('stale_version', 'Legacy candidate page changed', 409)
     const coordinate = { ...row.coordinate, page: input.page }
     const inspection = inspections.get(coordinate.sourceFile) ?? await inspectSource(filesDir, coordinate)
@@ -297,10 +290,32 @@ export function createLegacyEvidencePageAdapter(db: Db, filesDir?: string) {
     if (!isPageCapable(coordinate.sourceFile)) fail('not_page_capable', 'Source has no stable PDF pages')
     if (inspection.pageCount === null) fail('page_count_unknown', 'Cannot read original PDF page count')
     if (coordinate.page > inspection.pageCount!) fail('page_invalid', 'Page exceeds original PDF page count')
+    return { coordinate, inspection }
+  }
+}
+
+export function legacyEvidencePageFile(row: ExactEvidence, file: ExactEvidence['file'], inspection: Inspection) {
+  validateFile(row, file, inspection, false)
+  return { ...file, ...inspection }
+}
+
+export function legacyEvidencePageAudit(basis?: string) {
+  return {
+    actor: { type: 'legacy', id: 'evidence-pages-adapter' },
+    basis: basis ?? 'Legacy page entry; basis not supplied', entryPoint: 'legacy_pages', batchKey: null,
+  } as const
+}
+
+/** Preserve the legacy per-row protocol and reuse file inspection within one request. */
+export function createLegacyEvidencePageAdapter(db: Db, filesDir?: string) {
+  const inspect = createLegacyEvidencePageInspection(filesDir)
+  return async (input: LegacyEvidencePageInput) => {
+    const row = readExactEvidence(db, input.evidenceId)
+    const { coordinate, inspection } = await inspect(row, input)
     return db.transaction(tx => {
-      const file = validateDestination(tx, row, coordinate, inspection, false)
+      const file = legacyEvidencePageFile(row, fileIdentity(tx, coordinate.sourceFile), inspection)
       if (input.dryRun) return false
-      const changed = writeEvidenceCoordinate(tx, row, coordinate, { actor: { type: 'legacy', id: 'evidence-pages-adapter' }, basis: input.basis ?? 'Legacy page entry; basis not supplied', entryPoint: 'legacy_pages', batchKey: null }, file)
+      const changed = writeEvidenceCoordinate(tx, row, coordinate, legacyEvidencePageAudit(input.basis), file)
       if (changed) refreshDerivedFileParts(tx, [row.coordinate.sourceFile, coordinate.sourceFile])
       return changed
     }, { behavior: 'immediate' })

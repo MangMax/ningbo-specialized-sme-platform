@@ -2,7 +2,9 @@ import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/schema'
 import { postgresRosterRow, readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
+import type { EvidencePageCandidate } from '../../lib/roster/evidence-page'
 import {
+  createLegacyEvidencePageInspection, legacyEvidencePageAudit, legacyEvidencePageFile, type LegacyEvidencePageInput,
   evidenceCorrectionAuditValues, evidenceCorrectionDigest, evidenceCorrectionError, EvidenceCorrectionError,
   inspectEvidenceCorrectionRequest, projectEvidenceCorrectionPlan, projectEvidenceCorrectionPreview,
   projectEvidenceCorrectionTargets, type EvidenceCorrectionRequest,
@@ -15,10 +17,49 @@ import { lockPostgresFilePaths, refreshPostgresDerivedFileParts } from './file-p
 import { runPostgresCorrespondenceTransaction } from './record-correspondence-write-postgres'
 
 type Reader = Pick<NodePgDatabase,'execute'>
+type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Query = Exclude<ReturnType<ReturnType<typeof projectEvidenceCorrectionTargets>['next']>, {done: true}>['value']
 const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
 const snapshot = { isolationLevel: 'repeatable read', accessMode: 'read only' } as const
 const fail = (code: string, message: string, status = 422): never => { throw new EvidenceCorrectionError(code, message, status) }
+
+async function appendCorrectionAudit(tx: Tx, audit: ReturnType<typeof evidenceCorrectionAuditValues>) {
+  await tx.execute(sql`INSERT INTO evidence_correction_audit(evidence_id,event_id,actor,entry_point,batch_key,basis,before,after,created_at)
+    VALUES(${audit.evidenceId},${audit.eventId},${JSON.stringify(audit.actor)},${audit.entryPoint},${audit.batchKey},${audit.basis},
+      ${JSON.stringify(audit.before)},${JSON.stringify(audit.after)},${audit.createdAt})`)
+}
+
+export function createPostgresLegacyEvidencePageAdapter(db: NodePgDatabase, filesDir?: string) {
+  const inspect = createLegacyEvidencePageInspection(filesDir)
+  return async (input: LegacyEvidencePageInput & { candidate: EvidencePageCandidate }) => {
+    const row = await readPostgresExactEvidence(db, input.evidenceId)
+    const { candidate } = input
+    if (row.enterpriseId !== candidate.enterpriseId || row.coordinate.sourceFile !== candidate.sourceFile ||
+      row.coordinate.listNo !== candidate.listNo) {
+      return fail('stale_version', 'Legacy candidate identity changed', 409)
+    }
+    const { coordinate, inspection } = await inspect(row, input)
+    const verify = async (tx: Tx) => {
+      const current = await readPostgresExactEvidence(tx, row.evidenceId)
+      if (current.version !== row.version) return fail('stale_version', 'Evidence changed before write', 409)
+      return legacyEvidencePageFile(current, current.file, inspection)
+    }
+    if (input.dryRun) {
+      await db.transaction(verify, snapshot)
+      return false
+    }
+    return runPostgresCorrespondenceTransaction(db, async tx => {
+      await lockPostgresFilePaths(tx, [coordinate.sourceFile])
+      await tx.execute(sql`SELECT id FROM record_event WHERE id=${row.eventId} FOR UPDATE`)
+      const file = await verify(tx)
+      await tx.execute(sql`UPDATE record_evidence SET page=${coordinate.page} WHERE id=${row.evidenceId}`)
+      await advancePostgresOfficialEventRevision(tx, row.eventId, row.event.revision)
+      await appendCorrectionAudit(tx, evidenceCorrectionAuditValues(row, coordinate, legacyEvidencePageAudit(input.basis), file))
+      await refreshPostgresDerivedFileParts(tx, [coordinate.sourceFile])
+      return true
+    })
+  }
+}
 
 async function readTargetInput(tx: Reader, input: Query) {
   if (input.type === 'evidence') return readPostgresExactEvidence(tx, input.id)
@@ -106,9 +147,7 @@ export async function commitPostgresEvidenceCorrection(db: NodePgDatabase, reque
           rowChange.expectedRowRevision, { kind: 'evidence_correction', batchKey: request.idempotencyKey }, declarations)).revision : undefined
         const audit = evidenceCorrectionAuditValues(row, after, { actor: request.actor, basis: request.basis, entryPoint: 'correction', batchKey: request.idempotencyKey },
           target.file, rowChange, revision)
-        await tx.execute(sql`INSERT INTO evidence_correction_audit(evidence_id,event_id,actor,entry_point,batch_key,basis,before,after,created_at)
-          VALUES(${audit.evidenceId},${audit.eventId},${JSON.stringify(audit.actor)},${audit.entryPoint},${audit.batchKey},${audit.basis},
-            ${JSON.stringify(audit.before)},${JSON.stringify(audit.after)},${audit.createdAt})`)
+        await appendCorrectionAudit(tx, audit)
         changedEvents.set(row.eventId, row.event.revision)
         files.add(target.before.sourceFile)
         files.add(after.sourceFile)
