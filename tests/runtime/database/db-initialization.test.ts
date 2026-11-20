@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { useRuntimeDb as runtimeDb } from '../../../db/client'
 
@@ -123,5 +123,22 @@ it('startup plugin fails on a missing path and initializes an existing database 
     if (previousMode === undefined) delete process.env.NUXT_DB_READONLY
     else process.env.NUXT_DB_READONLY = previousMode
     globals.defineNitroPlugin = previousPlugin
+  }
+})
+
+it('PostgreSQL mode rejects SQLite runtime access even when the legacy database exists', async () => {
+  const { initializeDb, useApplicationDb } = await import('../../../db/client')
+  const dbPath = path()
+  const legacy = initializeDb({ dbPath, create: true })
+  try {
+    vi.stubEnv('NUXT_DB_PATH', dbPath)
+    vi.stubEnv('NUXT_DB_MODE', 'postgresql')
+    expect(() => useApplicationDb()).toThrow(expect.objectContaining({
+      statusCode: 503,
+      data: { code: 'postgresql_migration_required' },
+    }))
+  } finally {
+    vi.unstubAllEnvs()
+    legacy.$client.close()
   }
 })

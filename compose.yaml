@@ -1,6 +1,24 @@
 name: spztx-roster
 
 services:
+  postgres:
+    profiles: [postgres-local]
+    image: postgres:19.0-bookworm@sha256:f4859caf96de494e38efa69ed703b08a5bbd9605e152e604f2daec8841c87c41
+    env_file:
+      - ${ROSTER_POSTGRES_ENV_FILE:-/dev/null}
+    environment:
+      POSTGRES_DB: roster
+      POSTGRES_INITDB_ARGS: "--locale=C.UTF-8 --encoding=UTF8"
+    volumes:
+      - type: volume
+        source: postgres-data
+        target: /var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "roster"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
   app:
     image: spztx-roster:${CONFIG_SHA:?Set CONFIG_SHA to the deployment configuration commit SHA}
     build:
@@ -14,6 +32,7 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: "3000"
+      NUXT_DB_MODE: ${ROSTER_DB_MODE:-postgresql}
       NUXT_DB_PATH: /state/data/roster.db
       NUXT_LOG_DIR: /logs
       NUXT_FILES_DIR: /state/files
@@ -46,3 +65,4 @@ services:
 
 volumes:
   runtime-logs:
+  postgres-data:

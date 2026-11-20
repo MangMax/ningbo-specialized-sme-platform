@@ -66,3 +66,16 @@ psql -X -w -v staging=staged_logs -f upgrade/postgresql/materialize-runtime-logs
 恢复演练比较 `business` 与 `runtime_logs` 的主键顺序二进制内容及序列高水位。恢复目标需预装 `pg_trgm`。
 
 运行日志可在隔离应用设置 `NUXT_POSTGRES_LOG_URL`，连接同一数据库内的 `runtime_logs`，使用独立连接池。容量以已存摘要与详情 JSON 的 UTF-8 字节数计，排除索引、副本筛选列、数据库物理开销和 stdout。写入、保留清理与策略修改通过固定策略行协调，事务内同时维护容量计数；旧日志的原始 JSON 与模块空值保留。
+
+## PostgreSQL 单库启动与恢复演练
+
+先依照前述顺序离线物化 `business` 和 `runtime_logs`。设置 `NUXT_DB_MODE=postgresql` 与 `NUXT_POSTGRES_DIRECTORY_URL` 后，应用启用已迁移的 PostgreSQL 业务入口。日志使用独立连接池，默认复用业务连接 URL。可通过 `NUXT_POSTGRES_LOG_URL` 指向同一数据库的日志角色。默认启动任务执行。设置 `NUXT_DB_READONLY=1` 时，业务池开启只读事务默认值并停止领取任务。仍依赖 SQLite 的入口在连接边界返回 HTTP 503，错误码为 `postgresql_migration_required`。健康检查读取称号和记录数并验证日志策略可读。
+
+容器固定使用官方 `postgres:19.0-bookworm` 镜像摘要提供 `pg_dump` 和 `pg_restore`。Compose 默认让应用连接 `ROSTER_ENV_FILE` 内配置的 PostgreSQL。隔离环境可启用 `postgres-local` profile，先启动 `postgres`，再物化 schema 并启动 `app`。在独立的 `ROSTER_POSTGRES_ENV_FILE` 设置数据库初始化凭据，应用连接地址使用 Compose 服务名 `postgres`。旧版对照 Compose 设置 `ROSTER_DB_MODE=sqlite`。直接启动旧版时可用 `NUXT_DB_MODE=sqlite` 或显式设置 `NUXT_DB_PATH`。
+
+冻结隔离源库的业务和日志写入后，使用 PostgreSQL 19 客户端和本机 Unix socket 运行以下演练。工具对两套 schema 的表按主键或完整唯一键顺序计算二进制 COPY 的 SHA-256，并比较序列的 `last_value` 和 `is_called`。每次使用新建的临时恢复库，退出时清理该库及归档。文件库原件与应用恢复后的业务请求另行验收。
+
+```sh
+PGHOST=/path/to/isolated/socket PGDATABASE=roster PGUSER=fixture \
+  PGSQL_BIN=/path/to/postgresql19/bin bash upgrade/postgresql/rehearse-restore.sh
+```
