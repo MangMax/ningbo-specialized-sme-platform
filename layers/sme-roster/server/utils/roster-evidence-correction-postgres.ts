@@ -15,6 +15,7 @@ import { advancePostgresOfficialEventRevision } from './evidence-revision-postgr
 import { lockPostgresFilePaths, refreshPostgresDerivedFileParts } from './file-parts-postgres'
 import { runPostgresCorrespondenceTransaction } from './record-correspondence-write-postgres'
 
+type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Reader = Pick<NodePgDatabase,'execute'>
 type Query = Exclude<ReturnType<ReturnType<typeof projectEvidenceCorrectionTargets>['next']>, {done: true}>['value']
 const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
