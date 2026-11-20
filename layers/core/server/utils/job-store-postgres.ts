@@ -1,3 +1,5 @@
+import { appLog, type LogContext } from '../../lib/logging'
+import { jobLogModule } from '../../lib/logging/module'
 import { sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { isTerminalJobState, makeProgress, type JobProgress, type JobState } from '../../lib/job'
@@ -105,12 +107,13 @@ export async function createPostgresJob(db: Executor, input: {
   kind: string
   params: Record<string, unknown>
   progress?: JobProgress
+  requestKey?: string
 }) {
   const progress = makeProgress(input.progress?.done ?? 0, input.progress?.total ?? 1)
   const { rows } = await db.execute<StoredJob>(sql`INSERT INTO business.job
-    (id, kind, params, state, progress, created_at)
+    (id, kind, params, state, progress, created_at, request_key)
     VALUES (${input.id}, ${input.kind}, ${JSON.stringify(input.params)}, 'queued',
-      ${JSON.stringify(progress)}, ${new Date().toISOString()})
+      ${JSON.stringify(progress)}, ${new Date().toISOString()}, ${input.requestKey ?? null})
     RETURNING ${jobColumns}`)
   return decodeJob(rows[0]!)
 }
@@ -127,11 +130,14 @@ function compareJob(id: string, expected: PostgresJobExpectation) {
     AND claim_token IS NOT DISTINCT FROM ${expected.claimToken}::uuid`
 }
 
+function normalizeProgress(progress: JobProgress) {
+  return progress.done === 0 && progress.total === 0 ? { done: 0, total: 0 } : makeProgress(progress.done, progress.total)
+}
+
 export async function setPostgresJobProgress(
   db: Executor, id: string, expected: PostgresJobExpectation<ActiveState>, progress: JobProgress,
 ) {
-  const normalized = progress.done === 0 && progress.total === 0 ? { done: 0, total: 0 } : makeProgress(progress.done, progress.total)
-  const { rowCount } = await db.execute(sql`UPDATE business.job SET progress = ${JSON.stringify(normalized)}
+  const { rowCount } = await db.execute(sql`UPDATE business.job SET progress = ${JSON.stringify(normalizeProgress(progress))}
     WHERE ${compareJob(id, expected)} AND state IN ('queued', 'running')`)
   return rowCount === 1
 }
@@ -168,8 +174,126 @@ export function reopenPostgresJob(
   db: Executor, id: string, kind: string, expected: PostgresJobExpectation<TerminalState>, params: Record<string, unknown>,
 ) {
   return readJob(db, sql`UPDATE business.job
-    SET state = 'queued', params = ${JSON.stringify(params)}, error = NULL, started_at = NULL, finished_at = NULL,
+    SET state = 'queued', cancel_requested = false, params = ${JSON.stringify(params)}, error = NULL, started_at = NULL, finished_at = NULL,
       claim_token = gen_random_uuid()
     WHERE ${compareJob(id, expected)} AND kind = ${kind} AND state IN ('done', 'failed', 'cancelled')
     RETURNING ${jobColumns}`)
+}
+
+/** Claim the oldest runnable row, skipping rows locked by another transaction. */
+export function claimNextPostgresJob(db: Executor, kinds: string[]) {
+  if (!kinds.length) return Promise.resolve(null)
+  return readJob(db, sql`WITH candidate AS (
+    SELECT id FROM business.job
+    WHERE state = 'queued' AND claim_token IS NOT NULL
+      AND kind IN (${sql.join(kinds.map(kind => sql`${kind}`), sql`, `)})
+    ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED
+  )
+  UPDATE business.job SET state = 'running', started_at = ${new Date().toISOString()}, claim_token = gen_random_uuid()
+  WHERE id = (SELECT id FROM candidate) RETURNING ${jobColumns}`)
+}
+
+const interrupted = '服务重启,任务未完成(进行中的任务不跨进程恢复,请重新提交)'
+const cancelledBeforeStart = '任务在开始前被取消,未执行'
+const cancelledWhileRunning = '已按取消请求停止(尽力而为:取消在任务的下一个检查点生效),已完成的部分见 result'
+
+/** Requires exclusive scheduler ownership. Queued PostgreSQL submissions are durable. */
+export async function recoverPostgresJobs(db: Executor) {
+  const { rows } = await db.execute<{ id: string; kind: string }>(sql`UPDATE business.job
+    SET state = 'failed', error = ${interrupted}, finished_at = ${new Date().toISOString()}
+    WHERE state = 'running' OR (state = 'queued' AND claim_token IS NULL)
+    RETURNING id, kind`)
+  return rows
+}
+
+export async function postgresJobCancellationRequested(db: Executor, id: string, claimToken: string) {
+  const { rows } = await db.execute<{ requested: boolean }>(sql`SELECT cancel_requested AS requested FROM business.job
+    WHERE ${compareJob(id, { state: 'running', claimToken })}`)
+  return rows[0]?.requested ?? true
+}
+
+/** Serialize the cancellation decision with claim and completion. */
+export async function cancelPostgresJob(db: NodePgDatabase, id: string, logContext?: LogContext) {
+  const outcome = await db.transaction(async tx => {
+    const { rows } = await tx.execute<{ state: JobState; kind: string }>(sql`SELECT state, kind FROM business.job WHERE id = ${id} FOR UPDATE`)
+    const row = rows[0]
+    if (!row) return null
+    if (isTerminalJobState(row.state)) {
+      return { ...row, updated: false, cancelled: false, cancelRequested: false, alreadyFinished: true, note: `任务已结束(state=${row.state}),无法取消。` }
+    }
+    if (row.state === 'running') {
+      const { rowCount } = await tx.execute(sql`UPDATE business.job SET cancel_requested = true WHERE id = ${id} AND NOT cancel_requested`)
+      return { ...row, updated: rowCount === 1, cancelled: false, cancelRequested: true, alreadyFinished: false, note: '任务正在运行，已请求取消（尽力而为）。请查询最终状态。' }
+    }
+    await tx.execute(sql`UPDATE business.job
+      SET state = 'cancelled', error = ${cancelledBeforeStart}, finished_at = ${new Date().toISOString()} WHERE id = ${id}`)
+    return { ...row, updated: true, cancelled: true, cancelRequested: false, alreadyFinished: false, note: '任务尚在排队,已取消,未执行。' }
+  })
+  if (!outcome) return null
+  const { kind, state: _state, updated, ...response } = outcome
+  if (updated) appLog({
+    module: jobLogModule(kind), source: 'task', taskId: id,
+    operation: response.cancelled ? 'task.finished' : 'task.cancel_requested',
+    outcome: response.cancelled ? 'cancelled' : 'started',
+  }, logContext)
+  return response
+}
+
+/** Atomically publish the result, progress and terminal state for this claim. */
+export function completePostgresJob(db: Executor, job: PostgresJobSnapshot, outcome: {
+  state: TerminalState
+  error?: string | null
+  result?: unknown
+  progress?: JobProgress
+}) {
+  const progress = outcome.progress && JSON.stringify(normalizeProgress(outcome.progress))
+  const result = outcome.result === undefined ? sql`` : sql`, result = ${encodeResult(outcome.result)}`
+  return readJob(db, sql`UPDATE business.job SET
+    state = CASE WHEN cancel_requested THEN 'cancelled' ELSE ${outcome.state} END,
+    error = CASE WHEN cancel_requested OR ${outcome.state} = 'cancelled' THEN ${cancelledWhileRunning} ELSE ${outcome.error ?? null} END,
+    progress = COALESCE(${progress ?? null}, CASE WHEN NOT cancel_requested AND ${outcome.state} = 'done'
+      THEN json_build_object('done', progress::json -> 'total', 'total', progress::json -> 'total')::text END, progress),
+    finished_at = ${new Date().toISOString()}${result}
+    WHERE ${compareJob(job.row.id, { state: 'running', claimToken: job.claimToken })}
+    RETURNING ${jobColumns}`)
+}
+
+export function listPostgresTaskCenter(db: NodePgDatabase, query: {
+  kinds?: string[]
+  state?: JobState
+  page: number
+  pageSize: number
+}) {
+  const state = query.state ? sql`state = ${query.state}` : sql`true`
+  const kinds = query.kinds?.length
+    ? sql`kind IN (${sql.join(query.kinds.map(kind => sql`${kind}`), sql`, `)})`
+    : sql`${query.kinds === undefined}`
+  return db.transaction(async tx => {
+    const { rows: counts } = await tx.execute<{ kind: string; n: string }>(sql`
+      SELECT kind, count(*) AS n FROM business.job WHERE ${state} GROUP BY kind`)
+    const total = counts.reduce((sum, row) => sum + (!query.kinds || query.kinds.includes(row.kind) ? Number(row.n) : 0), 0)
+    const { rows } = await tx.execute<StoredJobSummary>(sql`SELECT ${summaryColumns} FROM business.job
+      WHERE ${state} AND ${kinds} ORDER BY created_at DESC, id DESC
+      LIMIT ${query.pageSize} OFFSET ${(query.page - 1) * query.pageSize}`)
+    return { rows: rows.map(decodeSummary), total, counts }
+  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
+}
+
+export async function lockPostgresJobAdmission(db: Executor, kind: string) {
+  await db.execute(sql`SELECT pg_advisory_xact_lock(144815, hashtext(${kind}))`)
+}
+
+export function findPostgresJobRequest(db: Executor, kind: string, key: string) {
+  // Older receipts keep their original params bytes and did not have request_key.
+  return readJob(db, sql`SELECT ${jobColumns} FROM business.job WHERE kind = ${kind} AND
+    (request_key = ${key} OR (request_key IS NULL AND
+      (CASE WHEN pg_input_is_valid(params, 'jsonb') THEN params::jsonb ->> 'clientRequestId'
+       ELSE regexp_replace(params, ${jsonTextEscapes}, ${replacementEscape}, 'gi')::json ->> 'clientRequestId' END) = ${key}))
+    ORDER BY created_at DESC, id DESC LIMIT 1`)
+}
+
+export async function countActivePostgresJobs(db: Executor, kind: string) {
+  const { rows } = await db.execute<{ n: string }>(sql`SELECT count(*) AS n FROM business.job
+    WHERE kind = ${kind} AND state IN ('queued', 'running')`)
+  return Number(rows[0]!.n)
 }
