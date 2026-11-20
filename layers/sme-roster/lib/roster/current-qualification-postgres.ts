@@ -86,7 +86,9 @@ type PlatformScopeRow = { id: string; queryId: string; interface: PlatformInterf
   processBatch: Buffer | null; batchStorage: string | null
 }
 
-async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], hydrated: boolean) {
+async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], scope: 'references' | 'roster-detail' | 'hydration') {
+  const hydrated = scope === 'hydration'
+  const readCells = scope !== 'references'
   const byUscc = Map.groupBy(subjects, owner => normalizeUscc(owner.uscc_norm))
   byUscc.delete('')
   const codes = [...byUscc.keys()]
@@ -96,7 +98,8 @@ async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], 
       c.id AS "collectionId", o.sequence_no AS "sequenceNo", c.title_code AS "titleCode", c.rdjb,
       a.enterprise_id AS owner, ${hydrated ? sql`a.uscc_raw` : sql`first.uscc_raw`} AS uscc
       ${hydrated ? sql`, o.candidate_scope_state='captured' AND o.candidate_scope_rule=${CANDIDATE_SCOPE_RULE} AS captured,
-        o.candidate_scope_mask::integer AS mask, coalesce(ap.stored_status,rp.stored_status) AS "textStatus",
+        o.candidate_scope_mask::integer AS mask` : sql.empty()}
+      ${readCells ? sql`, coalesce(ap.stored_status,rp.stored_status) AS "textStatus",
         bp.exact_status AS "processStatus", bp.exact_status_sqlite_storage AS "statusStorage",
         bp.exact_year AS "processYear", bp.exact_year_sqlite_storage AS "yearStorage",
         bp.exact_batch AS "processBatch", bp.exact_batch_sqlite_storage AS "batchStorage",
@@ -108,7 +111,7 @@ async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], 
     JOIN platform_observation_assignment first ON first.observation_id = o.id AND first.revision = 1
     JOIN platform_observation_assignment a ON a.observation_id = o.id AND a.revision = (
       SELECT max(head.revision) FROM platform_observation_assignment head WHERE head.observation_id = o.id)
-    ${hydrated ? sql`LEFT JOIN platform_business_projection bp ON bp.observation_id=o.id
+    ${readCells ? sql`LEFT JOIN platform_business_projection bp ON bp.observation_id=o.id
       LEFT JOIN platform_apply_projection ap ON ap.observation_id=o.id
       LEFT JOIN platform_recognized_projection rp ON rp.observation_id=o.id` : sql.empty()}
     WHERE a.enterprise_id = ANY(${pgIds(ids)}) OR (${codes.length > 0} AND a.enterprise_id IS NULL
@@ -141,7 +144,7 @@ async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], 
 }
 
 async function readQualificationInputs(tx: PostgresQualificationTransaction, enterpriseIds: readonly number[], asOf: number,
-  selectionScope?: { mode: 'scan' | 'detail' | 'workbook' | 'classify'; title: CurrentTitle }, readPlatform = createPostgresPlatformQualificationReader(tx)) {
+  selectionScope?: { mode: 'scan' | 'detail' | 'roster-detail' | 'workbook' | 'classify'; title: CurrentTitle }, readPlatform = createPostgresPlatformQualificationReader(tx)) {
   if (!enterpriseIds.length) return []
   const selection = await readEnterprises(tx, enterpriseIds)
   if (!selection.length) return []
@@ -180,8 +183,9 @@ async function readQualificationInputs(tx: PostgresQualificationTransaction, ent
   const platformFacts = await readPlatform(subjects)
   const scanning = selectionScope?.mode === 'scan'
   const classifying = selectionScope?.mode === 'classify'
-  const detailed = selectionScope?.mode === 'detail' || selectionScope?.mode === 'workbook'
-  const platformEffects = scanning || classifying ? undefined : await readPlatformEffects(tx, subjects, detailed)
+  const effectScope = selectionScope?.mode === 'detail' || selectionScope?.mode === 'workbook' ? 'hydration'
+    : selectionScope?.mode === 'roster-detail' ? 'roster-detail' : 'references'
+  const platformEffects = scanning || classifying ? undefined : await readPlatformEffects(tx, subjects, effectScope)
   const correspondence = classifying ? [] : await readPostgresCorrespondenceRefs(tx, ids, scanning ? selectionScope.title : undefined)
   const witnesses = selectionScope?.mode === 'detail' || scanning ? await readPostgresRecognizedWitnesses(tx, [...new Set(correspondence.flatMap(ref =>
     ref.type === 'event_recognized' && ref.role === 'recognized_corrob' && ref.status === 'confirmed' && !ref.requiresRevalidation
@@ -216,7 +220,7 @@ async function readQualificationInputs(tx: PostgresQualificationTransaction, ent
         platformReferences: effects.map(({ id, queryId, interface: kind, queriedAt }) => ({ id, queryId, interface: kind, queriedAt })),
         ...(selectionScope ? { readWitnesses: witnesses, readCorrespondences: () => refs }
           : { correspondenceReferences: () => refs.map(formatQualificationCorrespondence) }),
-        ...(detailed ? { readPlatformEffects: () => effects } : {}),
+        ...(effectScope !== 'references' ? { readPlatformEffects: () => effects } : {}),
         readFactEffects: effectiveOnly => evaluateEnterpriseFactEffects(factRows, asOf, effectiveOnly),
         readPlatformFacts: () => platformFacts.get(id) ?? [],
         readCaptureVersion: evidenceId => captures.get(evidenceId),
@@ -353,7 +357,9 @@ export async function readPostgresDifferenceQualifications(tx: PostgresQualifica
 
 export async function readPostgresRosterDetailQualification(tx: PostgresQualificationTransaction,
   requestedId: number, asOf: number, copies: (enterpriseId:number)=>Promise<OfficialPublishedScope[]>) {
-  const loaded = await readQualificationInputs(tx, [requestedId], asOf, { mode: 'detail',title: 'specialized_sme' })
+  // The enterprise detail snapshot uses archived page scope and original USCC
+  // for unassigned observations, matching the SQLite detail response.
+  const loaded = await readQualificationInputs(tx, [requestedId], asOf, { mode: 'roster-detail', title: 'specialized_sme' })
   const inputs = loaded[0]?.[1]
   if (!inputs) return null
   const input = inputs.get('specialized_sme')!
