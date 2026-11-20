@@ -215,4 +215,55 @@ describe.skipIf(!bin)('native PostgreSQL lead supplementation', () => {
     expect((await db.query('SELECT id FROM evidence_revision_113')).rowCount).toBe(1)
     expect((await db.query('SELECT id FROM enterprise_profile_audit WHERE enterprise_id=$1', [target.id])).rowCount).toBe(1)
   })
+
+  it('commits concurrent versions that attach the same companies in opposite order', async () => {
+    const create = async (name: string) => {
+      const response = await app.request('/api/core/enterprises', {
+        method: 'POST', body: JSON.stringify({ name }),
+      })
+      expect(response.status).toBe(200)
+      return (await response.json()).id
+    }
+    const a = await create('并发核对企业甲')
+    const b = await create('并发核对企业乙')
+    await db.query(`
+      INSERT INTO lead_list_version (id,series,channel_code,list_type_code,acquired_on,file_id,file_sha256,request_hash,created_at)
+        VALUES (31,'并发名单甲','research','lead','2026-11-18',91,'fixture-hash','concurrent-first','2026-11-18'),
+               (32,'并发名单乙','research','lead','2026-11-18',91,'fixture-hash','concurrent-second','2026-11-18');
+      INSERT INTO lead_list_row (id,version_id,row_number,name)
+        VALUES (311,31,2,'甲'),(312,31,3,'乙'),(321,32,2,'乙'),(322,32,3,'甲');
+      CREATE FUNCTION hold_concurrent_review() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        PERFORM pg_advisory_xact_lock_shared(730016);
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER hold_concurrent_review AFTER UPDATE ON lead_list_row
+        FOR EACH ROW WHEN (NEW.id IN (311,321)) EXECUTE FUNCTION hold_concurrent_review();
+    `)
+    const gate = await db.connect()
+    await gate.query('SELECT pg_advisory_lock(730016)')
+    const attach = (rowId: number, enterpriseId: number) => ({ action: 'attach', rowId, enterpriseId, expectedRevision: 1 })
+    const requests = Promise.allSettled([
+      submit(31, { ...agent, decisions: [attach(311, a), attach(312, b)] }),
+      submit(32, { ...agent, decisions: [attach(321, b), attach(322, a)] }),
+    ])
+    try {
+      await expect.poll(async () => {
+        const result = await db.query("SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND pid <> pg_backend_pid()")
+        return result.rows[0].waiting
+      }, { timeout: 5_000 }).toBe(2)
+    } finally {
+      await gate.query('SELECT pg_advisory_unlock(730016)')
+      gate.release()
+    }
+    const settled = await requests
+    for (const response of settled) if (response.status === 'rejected') throw response.reason
+    const responses = settled.flatMap(response => response.status === 'fulfilled' ? [response.value] : [])
+    const receipts = await Promise.all(responses.map(response => response.json()))
+    expect(responses.map(response => response.status), JSON.stringify(receipts)).toEqual([200, 200])
+    expect(receipts.map(receipt => receipt.rows)).toEqual([
+      [{ rowId: 311, enterpriseId: a }, { rowId: 312, enterpriseId: b }],
+      [{ rowId: 321, enterpriseId: b }, { rowId: 322, enterpriseId: a }],
+    ])
+  }, 10_000)
 })

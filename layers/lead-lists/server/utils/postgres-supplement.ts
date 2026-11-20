@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { createError } from 'h3'
-import { createPostgresReviewedEnterprise, registerPostgresEnterpriseSource } from '../../../core/server/public'
+import { createPostgresReviewedEnterprise, lockPostgresReviewedEnterpriseBatch, registerPostgresEnterpriseSource } from '../../../core/server/public'
 import { applyPostgresReviewedRosterIdentity } from '../../../sme-roster/public'
 import { leadReviewHash, leadSupplementError, type LeadSupplementInput } from './versions'
 
@@ -25,6 +25,11 @@ export async function supplementPostgresLeadVersion(db: NodePgDatabase, id: numb
         ORDER BY id FOR UPDATE`)
       if (rows.length !== input.decisions.length) throw createError({ statusCode: 404, message: '所选行不在此名单版本中' })
       const byId = new Map(rows.map(row => [Number(row.id), row]))
+      const pending = input.decisions.filter(item => byId.get(item.rowId)!.enterpriseId === null)
+      const enterpriseIds = new Set(rows.flatMap(row => row.enterpriseId === null ? [] : [Number(row.enterpriseId)]))
+      for (const item of pending) if (item.action === 'attach') enterpriseIds.add(item.enterpriseId)
+      // Different versions may review the same subjects in opposite order.
+      await lockPostgresReviewedEnterpriseBatch(tx, [...enterpriseIds], pending.flatMap(item => item.fields ? [item.fields] : []))
       const resolved = []
       for (const item of input.decisions) {
         const row = byId.get(item.rowId)!

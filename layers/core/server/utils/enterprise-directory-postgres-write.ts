@@ -57,6 +57,23 @@ function lockIdentity(tx: Transaction, kind: 'name' | 'uscc', value: string) {
   return tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`enterprise:${kind}:${value}`}, 0))`)
 }
 
+export async function lockPostgresReviewedEnterpriseBatch(
+  tx: Transaction,
+  enterpriseIds: readonly number[],
+  fields: readonly EnterpriseFields[],
+) {
+  const names = new Set(fields.flatMap(field => field.name === undefined ? [] : [normalizeEnterpriseName(field.name)]))
+  if (enterpriseIds.length) {
+    const { rows } = await tx.execute<{ name: string }>(sql`SELECT name FROM enterprise
+      WHERE id IN (${sql.join(enterpriseIds.map(id => sql`${id}`), sql`, `)})
+      ORDER BY id FOR UPDATE`)
+    if (names.size) for (const row of rows) names.add(normalizeEnterpriseName(row.name))
+  }
+  const codes = new Set(fields.flatMap(field => field.uscc ? [field.uscc] : []))
+  for (const name of [...names].sort()) await lockIdentity(tx, 'name', name)
+  for (const code of [...codes].sort()) await lockIdentity(tx, 'uscc', code)
+}
+
 export async function registerPostgresEnterpriseSource(tx: Transaction, input: EnterpriseSource, enterpriseIds: readonly number[]) {
   const { module, businessTable, versionKey, channel, listType, acquiredOn, series, fileId, sha256 } = input
   const { rows } = await tx.execute<{ id: string }>(sql`INSERT INTO enterprise_source
