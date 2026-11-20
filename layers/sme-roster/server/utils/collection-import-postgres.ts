@@ -178,6 +178,26 @@ function archiveSummary(results: RosterImportItemResult[], reference: boolean, f
       projectionsChecked:versions.size,observationsChecked:observations.size,quarantinedObservations:quarantined }} : {}) }
 }
 
+export async function planPostgresPlatformQueries(tx: Tx, queries: readonly RosterImportPlatformQuery[]) {
+  const plans: QueryPlan[] = []
+  const conflicts: RosterImportItemResult[] = []
+  const pending = new Map<string,PlatformQueryReplaySource>()
+  for (const [index,query] of queries.entries()) {
+    const key = JSON.stringify([query.interface,query.queryKey.trim(),query.rdjb?.trim() ?? '',query.queriedAt.trim()])
+    if (query.interface === 'recognized_list' && pending.has(key)) {
+      conflicts.push(itemError('query:'+index,'query_identity_duplicate','One original query identity may appear only once per batch','platformQueries'))
+      continue
+    }
+    const plan = await planQuery(tx,query,index,pending.get(key))
+    if ('error' in plan) conflicts.push(plan.error)
+    else {
+      plans.push(plan)
+      pending.set(key,plan.source)
+    }
+  }
+  return { plans, conflicts }
+}
+
 export function runPostgresPlatformImport(action: PostgresImportAction, request: RosterImportRequest,
   collectionJob?: { db: NodePgDatabase; checkpoint(tx: Tx): Promise<void> }) {
   const db = collectionJob?.db ?? usePostgresRosterDb(true)
@@ -192,32 +212,19 @@ export async function executePostgresPlatformItems(tx: Tx,batch: PostgresImportB
   const requestedObservations = request.payload.platformRecordObservations ?? []
   const provenance = request.payload.platformLegacyProvenance ?? []
   if (action === 'commit') await tx.execute(sql`SELECT pg_advisory_xact_lock(21785,0)`)
-  const plans: QueryPlan[] = []
+  const { plans, conflicts } = await planPostgresPlatformQueries(tx,queries)
   const canonicalProjection: NonNullable<RosterImportPreflight['canonicalProjection']> = []
-  const conflicts: RosterImportItemResult[] = []
-  const pending = new Map<string,PlatformQueryReplaySource>()
   const addObservationError = (kind: 'platform_observation' | 'platform_relation', relationId: number, error: unknown) => {
     if (!(error instanceof PlatformProjectionError)) throw error
     conflicts.push({ ok:false,kind,ref:'relation:'+relationId,
       error:{ code:error.code,message:error.message,...(kind==='platform_relation' ? {field:'relations'} : {}) } })
   }
-  for (const [index,query] of queries.entries()) {
-    const key = JSON.stringify([query.interface,query.queryKey.trim(),query.rdjb?.trim() ?? '',query.queriedAt.trim()])
-    if (query.interface === 'recognized_list' && pending.has(key)) {
-      conflicts.push(itemError('query:'+index,'query_identity_duplicate','One original query identity may appear only once per batch','platformQueries'))
-      continue
-    }
-    const plan = await planQuery(tx,query,index,pending.get(key))
-    if ('error' in plan) conflicts.push(plan.error)
-    else {
-      plans.push(plan)
-      pending.set(key,plan.source)
-      if (!plan.same) continue
-      for (const relation of query.relations ?? []) {
-        const relationId = plan.same.source.relationAt(relation.sequenceNo)!.id!
-        try { canonicalProjection.push(await previewPostgresArchivedObservation(tx,relationId)) }
-        catch (error) { addObservationError('platform_relation',relationId,error) }
-      }
+  for (const plan of plans) {
+    if (!plan.same) continue
+    for (const relation of plan.query.relations ?? []) {
+      const relationId = plan.same.source.relationAt(relation.sequenceNo)!.id!
+      try { canonicalProjection.push(await previewPostgresArchivedObservation(tx,relationId)) }
+      catch (error) { addObservationError('platform_relation',relationId,error) }
     }
   }
   const observationSources: NonNullable<RosterImportPreflight['platformObservationSources']> = []

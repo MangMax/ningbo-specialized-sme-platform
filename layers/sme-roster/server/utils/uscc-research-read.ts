@@ -1,5 +1,4 @@
-/** Request-local USCC research projections. Archive bodies stay in SQLite;
- * original evidence remains available through the existing evidence read APIs. */
+/** Request-local structured projections for USCC research. */
 import { and,asc,eq,inArray,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../../../db/schema'
@@ -15,16 +14,22 @@ import type { PlatformEvidenceIndex } from './roster-duplicate-merge'
 type Db = BetterSQLite3Database<typeof s>
 const rank = (title: string) => { const i = TITLE_ORDER.indexOf(title); return i < 0 ? TITLE_ORDER.length : i }
 
-export function readUsccTargets(db: Db, filter: Omit<UsccChecklistFilter, 'page' | 'pageSize'>) {
-  identityFunctions(db)
-  const { q, r } = targetCandidateTables(db)
-  const missing = db.select({ id: s.enterprise.id, name: s.enterprise.name, nameNorm: s.enterprise.nameNorm, district: s.enterprise.district, city: s.enterprise.city })
-    .from(s.enterprise).where(and(currentEnterpriseIdentity(db), sql`${identityUsccSql(sql`${s.enterprise.usccNorm}`)} is null`)).orderBy(s.enterprise.id).all()
-  const ids = missing.map(row => row.id)
-  const records = db.select({ id: s.record.id, enterpriseId: s.record.enterpriseId, titleCode: s.record.titleCode, source: s.record.source, district: s.record.district })
-    .from(s.record).where(inArray(s.record.enterpriseId, ids)).orderBy(s.record.id).all()
-  const aliases = db.select({ enterpriseId: s.enterpriseAlias.enterpriseId, name: s.enterpriseAlias.name })
-    .from(s.enterpriseAlias).where(and(inArray(s.enterpriseAlias.enterpriseId, ids), eq(s.enterpriseAlias.verificationStatus, 'confirmed'))).all()
+type TargetEnterprise = { id: number; name: string; nameNorm: string; district: string | null; city: string | null }
+type TargetRecord = { id: number; enterpriseId: number; titleCode: string; source: string; district: string | null }
+type TargetAlias = { enterpriseId: number; name: string }
+
+export function platformOnlyUsccTargets(records: TargetRecord[]) {
+  const official = new Set(records.filter(row => row.source === 'jxj').map(row => row.enterpriseId))
+  return new Set(records.map(row => row.enterpriseId)).difference(official)
+}
+
+export function selectUsccTargetRows(
+  missing: TargetEnterprise[],
+  records: TargetRecord[],
+  aliases: TargetAlias[],
+  removed: ReadonlySet<number>,
+  filter: Omit<UsccChecklistFilter, 'page' | 'pageSize'>,
+) {
   const byEnterprise = new Map<number, typeof records>()
   for (const record of records) {
     const bucket = byEnterprise.get(record.enterpriseId) ?? []
@@ -35,12 +40,8 @@ export function readUsccTargets(db: Db, filter: Omit<UsccChecklistFilter, 'page'
     const bucket = names.get(alias.enterpriseId) ?? new Set<string>()
     bucket.add(alias.name); names.set(alias.enterpriseId, bucket)
   }
-  const removed = removedEnterpriseIds(db, ids.filter(id => {
-    const rows = byEnterprise.get(id) ?? []
-    return rows.length > 0 && !rows.some(row => row.source === 'jxj')
-  }))
   const needle = filter.q?.trim() ? normalizeName(filter.q) : null
-  const rows = missing.filter(row => !removed.has(row.id)).map(row => {
+  return missing.filter(row => !removed.has(row.id)).map(row => {
     const records = byEnterprise.get(row.id) ?? []
     return {
       enterpriseId: row.id, name: row.name, city: row.city,
@@ -51,6 +52,20 @@ export function readUsccTargets(db: Db, filter: Omit<UsccChecklistFilter, 'page'
   }).filter(row => (!filter.title?.length || row.titles.some(title => filter.title!.includes(title))) &&
     (!filter.district || row.district === filter.district) &&
     (!needle || normalizeName(row.name).includes(needle) || row.aliasNames.some(alias => normalizeName(alias).includes(needle))))
+}
+
+export function readUsccTargets(db: Db, filter: Omit<UsccChecklistFilter, 'page' | 'pageSize'>) {
+  identityFunctions(db)
+  const { q, r } = targetCandidateTables(db)
+  const missing = db.select({ id: s.enterprise.id, name: s.enterprise.name, nameNorm: s.enterprise.nameNorm, district: s.enterprise.district, city: s.enterprise.city })
+    .from(s.enterprise).where(and(currentEnterpriseIdentity(db), sql`${identityUsccSql(sql`${s.enterprise.usccNorm}`)} is null`)).orderBy(s.enterprise.id).all()
+  const ids = missing.map(row => row.id)
+  const records = db.select({ id: s.record.id, enterpriseId: s.record.enterpriseId, titleCode: s.record.titleCode, source: s.record.source, district: s.record.district })
+    .from(s.record).where(inArray(s.record.enterpriseId, ids)).orderBy(s.record.id).all()
+  const aliases = db.select({ enterpriseId: s.enterpriseAlias.enterpriseId, name: s.enterpriseAlias.name })
+    .from(s.enterpriseAlias).where(and(inArray(s.enterpriseAlias.enterpriseId, ids), eq(s.enterpriseAlias.verificationStatus, 'confirmed'))).all()
+  const platformOnly = [...platformOnlyUsccTargets(records)]
+  const rows = selectUsccTargetRows(missing, records, aliases, removedEnterpriseIds(db, platformOnly), filter)
   const selectedIds = rows.map(row => row.enterpriseId)
   const selected = new Set(selectedIds)
   const selectedRecords = records.filter(row => selected.has(row.enterpriseId))
