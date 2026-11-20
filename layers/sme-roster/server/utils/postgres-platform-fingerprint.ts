@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/schema'
 import type { PlatformStoredQuery, PlatformStoredRelation } from '../../lib/platform/read'
+import { legacyFingerprintRaw } from '../../lib/platform/legacy-fingerprint-raw'
 import { sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
 import { snapshotSchema } from '../../lib/platform/target-evidence-read'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
@@ -57,7 +58,7 @@ export async function readPostgresFingerprintRelations(db: Db, queryId: number) 
   return (await readPostgresRelationFingerprints(db, { queryId })).map(row => row.relation)
 }
 
-export async function readPostgresRelationFingerprints(db: Db, scope: { queryId: number } | { relationIds: readonly number[] }) {
+export async function readPostgresRelationFingerprints(db: Db, scope: { queryId: number; archiveReplay?: true } | { relationIds: readonly number[] }) {
   const where = 'queryId' in scope ? sql`q.old_id=${scope.queryId}` : sql`ra.old_id=ANY(${sql.param(scope.relationIds)}::bigint[])`
   const { rows } = await db.execute<{
     id: number; enterpriseId: number | null; queryId: number; observationId: number; sourceRdjb: string | null; originalUscc: string | null
@@ -91,6 +92,11 @@ export async function readPostgresRelationFingerprints(db: Db, scope: { queryId:
       if (Object.hasOwn(latest, key)) return [key, latest[key as keyof typeof latest]]
       const cell = cells.get(column.name)
       if (!cell) throw new Error('Missing fingerprint cell ' + column.name)
+      if ('archiveReplay' in scope && scope.archiveReplay && key === 'rawFields'
+        && (cell.storageClass === 'null' || cell.storageClass === 'text' || cell.storageClass === 'blob')) {
+        const bytes = cell.storageClass === 'null' ? null : Buffer.from(cell.hex, 'hex')
+        return [key, legacyFingerprintRaw({ storageClass:cell.storageClass, bytes }).rawFields]
+      }
       const value = originalValue(cell)
       return [key, column.dataType === 'json' && value !== null ? JSON.parse(String(value)) : value]
     })) as unknown as PlatformStoredRelation
