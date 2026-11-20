@@ -10,6 +10,7 @@ import { validateRosterImportPageCounts } from './roster-import-page-validation'
 import { stagePostgresAnnouncement } from './announcement-intake-postgres'
 import { runPostgresExportImport } from './roster-export-import-postgres'
 import { runPostgresPlatformImport } from './collection-import-postgres'
+import { runPostgresUsccBackfill } from './uscc-backfill-postgres'
 
 /** The two import tools share only submission. Schemas and authorization stay on the tools. */
 export function submitRosterImportMcp(action: 'preflight' | 'commit', input: {
@@ -34,6 +35,8 @@ export function submitRosterImportMcp(action: 'preflight' | 'commit', input: {
       if (nativeExport !== undefined) return nativeExport
       const nativePlatform = await runPostgresPlatformImport(action, validated.value)
       if (nativePlatform !== undefined) return nativePlatform
+      const nativeBackfill = await runPostgresUsccBackfill(action, validated.value)
+      if (nativeBackfill !== undefined) return nativeBackfill
       const pageCountErrors = await validateRosterImportPageCounts(validated.value, useRuntimeConfig().filesDir)
       if (action === 'commit' && hasAnnouncementRows(validated.value)) {
         const nativeIntake = await stagePostgresAnnouncement(validated.value, pageCountErrors)

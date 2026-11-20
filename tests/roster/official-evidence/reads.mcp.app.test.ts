@@ -932,6 +932,34 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
       expect((await send({action:'retry',jobId:metadata.id})).status).toBe(409)
     } finally { await snapshotApp.close() }
 
+    const subjects = []
+    for (const name of ['合成查证主体一','合成查证主体二']) {
+      const created = await app.request('/api/core/enterprises',{method:'POST',body:JSON.stringify({name})})
+      expect(created.status).toBe(200)
+      subjects.push({ ...(await created.json()), name })
+    }
+    const uscc = '913302017133602847'
+    const repairs = subjects.map(subject=>({enterpriseId:subject.id,uscc,
+      source:{url:'https://registry.example.test/enterprise',checkedOn:'2026-11-20',basis:'合成公开主体证据',name:subject.name} }))
+    const repair = { idempotencyKey:'native-uscc-backfill',sourceKind:'alias_evidence',sourceIdentity:'checked registry',
+      payload:{usccBackfills:repairs} }
+    const rollback = await stage({...repair,idempotencyKey:'native-uscc-backfill-overlap'})
+    expect(rollback.status).toBe(200)
+    expect(await rollback.json()).toMatchObject({ status:'failed',summary:{written:0,failed:2},
+      items:[{error:{code:'commit_rolled_back'}},{error:{code:'uscc_taken'}}] })
+    const codeOf = async (id:number) => (await (await app.request('/api/core/enterprises/'+id+'/details')).json()).uscc
+    expect(await codeOf(subjects[0].id)).toBeNull()
+    expect(await codeOf(subjects[1].id)).toBeNull()
+    const backfillCommand = {...repair,payload:{usccBackfills:[repairs[0]]}}
+    const previewBackfill = await app.request('/api/roster/import/preflight',{method:'POST',body:JSON.stringify(backfillCommand)})
+    expect(await previewBackfill.json()).toMatchObject({status:'preflight',preflight:{update:1,conflicts:[]}})
+    const committedBackfill = await stage(backfillCommand)
+    const backfillReceipt = await committedBackfill.json()
+    expect(backfillReceipt).toMatchObject({status:'committed',summary:{written:1},items:[{detail:{lineage:{previousUscc:null,source:repairs[0]!.source}}}]})
+    expect(await codeOf(subjects[0].id)).toBe(uscc)
+    expect(await codeOf(subjects[1].id)).toBeNull()
+    expect(await nativeTool('save_roster_batch',backfillCommand)).toMatchObject({isError:false,body:backfillReceipt})
+
   } finally {
     await app.close()
     if (started) run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-m', 'fast', 'stop'])
