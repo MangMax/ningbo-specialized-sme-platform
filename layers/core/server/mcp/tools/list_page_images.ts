@@ -1,8 +1,9 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { DEFAULT_DPI } from '#core/lib/pdf-page'
-import { fileRefShape, pageImagesForAgent } from '../../utils/file-agent-reference'
+import { fileRefShape, pageImagesForAgent, postgresPageImagesForAgent } from '../../utils/file-agent-reference'
 import { openOcrFileStore } from '../../utils/ocr-files'
+import { usePostgresFileDb } from '../../utils/file-store-postgres'
 
 /**
  * `list_page_images` —— 一份 PDF 的页图(票 18,只读;产物来自票 13)。
@@ -39,8 +40,10 @@ export default defineMcpTool({
       .describe(`核对清单用的分辨率;默认 ${DEFAULT_DPI}(与渲染时一致才算 upToDate)`),
   },
   handler: async (input) => {
-    const { db, root } = await openOcrFileStore()
-    const result = await pageImagesForAgent(db, root, input)
+    const pg = usePostgresFileDb()
+    const result = pg
+      ? await postgresPageImagesForAgent(pg, useRuntimeConfig().filesDir, input)
+      : await openOcrFileStore().then(({ db, root }) => pageImagesForAgent(db, root, input))
     if (!result.ok) throw createError({ statusCode: result.statusCode, message: result.message })
     return { ...result.value, defaultDpi: DEFAULT_DPI }
   },

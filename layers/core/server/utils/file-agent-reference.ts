@@ -4,10 +4,10 @@ import { z } from 'zod'
 import * as schema from '../../../../db/schema'
 import { getStoredFile, type StoredFileRow } from './stored-files'
 import { DEFAULT_DPI, isPdfPath, normalizeDpi } from '../../lib/pdf-page'
-import { verifyFileRead, verifyPageRead, type FileReadIdentity } from './file-read-identity'
+import { verifyFileRead, verifyRegisteredFileRead, verifyRenderedPageRead, type FileReadIdentity } from './file-read-identity'
 import { listPdfPages, resolveWithinRoot, type PdfPagesState } from './pdf-pages'
 import { FileMaintenanceError } from './file-store'
-import { readPostgresFile, type PostgresFileDb } from './file-store-postgres'
+import { postgresFileIdentity, readPostgresFile, type PostgresFileDb } from './file-store-postgres'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -141,14 +141,26 @@ export async function pageImagesForAgent(
 ): Promise<{ ok: true; value: Omit<PdfPagesState, 'file'> & { file: FileRef } } | AgentFailure> {
   const found = resolveFileRef(db, input, options)
   if (!found.ok) return { ok: false, statusCode: 404, message: found.message }
+  return readPageImagesForAgent(found.row, root, input.dpi, () => verifyFileRead(db, root, found.row.relPath))
+}
 
-  const { id, relPath, filename } = found.row
+export async function postgresPageImagesForAgent(db: PostgresFileDb, root: string, input: FileRefInput & { dpi?: number | null }) {
+  const file = await requirePostgresFileRef(db, input, { allowRemoved: true })
+  return readPageImagesForAgent(file, root, input.dpi, () => verifyRegisteredFileRead(root, postgresFileIdentity(file)))
+}
+
+async function readPageImagesForAgent(
+  { id, relPath, filename }: Pick<StoredFileRow, 'id' | 'relPath' | 'filename'>,
+  root: string,
+  requestedDpi: number | null | undefined,
+  verify: () => Promise<FileReadIdentity>,
+): Promise<{ ok: true; value: Omit<PdfPagesState, 'file'> & { file: FileRef } } | AgentFailure> {
   if (!isPdfPath(relPath)) {
     return { ok: false, statusCode: 415, message: `不是 PDF,没有页图:${relPath}` }
   }
   let dpi: number
   try {
-    dpi = normalizeDpi(input.dpi)
+    dpi = normalizeDpi(requestedDpi)
   } catch (error) {
     return { ok: false, statusCode: 400, message: (error as Error).message }
   }
@@ -158,9 +170,9 @@ export async function pageImagesForAgent(
     return { ok: false, statusCode: 403, message: '路径越界' }
   }
 
-  const contentIdentity = await verifyFileRead(db, root, relPath)
+  const contentIdentity = await verify()
   const state = await listPdfPages(root, relPath, dpi)
-  if (state.pages.length) await verifyPageRead(db, root, relPath, undefined, contentIdentity)
+  if (state.pages.length) await verifyRenderedPageRead(root, relPath, contentIdentity)
   // `state.file` 本来是个字符串(相对路径);这里换成带 id 的对象,代理解析结果时
   // 不必再去 `list_files` 反查一次。
   return { ok: true, value: { ...state, file: { id, relPath, filename, contentIdentity } } }

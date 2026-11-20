@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { nativeAppAdapter } from '../../support/native-app'
+import { minimalPdf } from '../../support/minimal-pdf'
 import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 
@@ -218,6 +219,12 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     const ref = { relPath: migratedPath }
     expect(await tool('list_files', { source: 'jxj', pageSize: 1 })).toMatchObject({ total: 1, rows: [{ id: 41 }] })
     expect(await tool('get_file', ref)).toMatchObject({ id: 41, referenceCount: 1, contentIdentity: { status: 'verified' } })
+    expect(await tool('list_file_parts', ref)).toMatchObject({
+      file: { id: 41, relPath: migratedPath },
+      parts: [{ attachment: '附件一', rowCount: 5 }, { attachment: null, rowCount: 1, origin: 'derived' }],
+      partsBinding: { inputLineage: { status: 'bound', inputRef: { sha256 } } },
+      contentIdentity: { status: 'verified' },
+    })
     const { revision } = await json('files/41/maintenance', 200)
     const command = controls(revision, 'classify-across-transports')
     const { file } = await tool('set_file_category', { ...ref, ...command, year: 2026 })
@@ -283,6 +290,18 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     expect(await json(`files/${id}/maintenance`, 200)).toMatchObject({ file: { referenceCount: 1 } })
     await json(`files/${id}?deleteDisk=1`, 409, 'DELETE', controls(0, 'protect-late-evidence'))
     expect(readFileSync(join(root, relPath))).toEqual(original)
+  })
+
+  it.skipIf(!enabled)('lists page images from a registered PDF without rendering', async () => {
+    const relPath = 'uploads/pages.pdf'
+    const pdf = minimalPdf({ pages: 2 })
+    const hash = createHash('sha256').update(pdf).digest('hex')
+    writeFileSync(join(root, relPath), pdf)
+    const file = await json('files/register', 201, 'POST', { relPath })
+    expect(await tool('list_page_images', { fileId: file.id })).toMatchObject({
+      file: { id: file.id, relPath, contentIdentity: { status: 'verified', registered: { sha256: hash } } },
+      pageCount: 2, rendered: 0, pages: [], manifest: null,
+    })
   })
 
   it.skipIf(!enabled)('registers a landed roster notice and audits factual refreshes without replacing its bytes', async () => {
