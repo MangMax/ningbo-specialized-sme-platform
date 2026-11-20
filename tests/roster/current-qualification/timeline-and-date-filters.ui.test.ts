@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { chooseCalendarSelect } from '../../support/calendar-select'
+import { chooseCalendarPeriod } from '../../support/calendar-period'
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createPinia } from 'pinia'
@@ -9,7 +9,7 @@ import Page from '../../../layers/sme-roster/app/pages/current-enterprises.vue'
 import { Select } from '../../../layers/core/app/components/ui/select'
 import { Calendar } from '../../../layers/core/app/components/ui/calendar'
 import { CalendarDate } from '@internationalized/date'
-import CurrentRecognitionDatePicker from '../../../layers/sme-roster/app/components/CurrentRecognitionDatePicker.vue'
+import DatePicker from '../../../layers/core/app/components/DatePicker.vue'
 
 const mounted: ReturnType<typeof mount>[] = []
 afterEach(() => { mounted.splice(0).forEach(wrapper => wrapper.unmount()); vi.unstubAllGlobals(); vi.restoreAllMocks() })
@@ -73,12 +73,12 @@ it.each([false, true])('retains new-filter source identity and detail return par
 it('applies a complete recognition range to the URL, removes its chip, and resets dependent filters', async () => {
   const {wrapper,router,calls}=await setup({validYear:'2027',maintenanceYear:'2023',maintenanceBatch:'2'})
   expect(wrapper.find('input[type="date"]').exists()).toBe(false)
-  const pickers=wrapper.findAllComponents(CurrentRecognitionDatePicker)
+  const pickers=wrapper.findAllComponents(DatePicker)
   expect(pickers).toHaveLength(2)
   for (const [index, month, date] of [[0, '1', '2024-01-01'], [1, '12', '2024-12-31']] as const) {
     await pickers[index]!.get('button').trigger('click'); await flushPromises()
-    await chooseCalendarSelect('年份', '2024')
-    await chooseCalendarSelect('月份', month)
+    await chooseCalendarPeriod('年份', '2024')
+    await chooseCalendarPeriod('月份', month)
     await flushPromises()
     expect(router.currentRoute.value.query.recognitionFrom).toBeUndefined()
     expect(router.currentRoute.value.query.recognitionTo).toBeUndefined()
@@ -102,7 +102,7 @@ it('applies a complete recognition range to the URL, removes its chip, and reset
 })
 
 it('selects a date through the shared calendar popover and emits a date-only value', async () => {
-  const wrapper=mount(CurrentRecognitionDatePicker,{props:{id:'pick-date',label:'认定时间起',modelValue:''}})
+  const wrapper=mount(DatePicker,{props:{id:'pick-date',label:'认定时间起',modelValue:''}})
   mounted.push(wrapper)
   expect(wrapper.find('input[type="date"]').exists()).toBe(false)
   await wrapper.get('#pick-date').trigger('click')
@@ -136,7 +136,7 @@ it('discloses mobile filters, applies date and option URLs, keeps chips on colla
   expect(advanced().attributes('aria-expanded')).toBe('false')
   expect(advanced().text()).toContain('已选 0 项')
   expect(wrapper.find('[aria-label="按有效年份筛选"]').exists()).toBe(false)
-  expect(wrapper.findAllComponents(CurrentRecognitionDatePicker)).toHaveLength(0)
+  expect(wrapper.findAllComponents(DatePicker)).toHaveLength(0)
   expect(wrapper.find('input[placeholder="名称、曾用名或信用代码"]').exists()).toBe(true)
   expect(wrapper.text()).not.toContain('当前显示：专精特新中小企业；有效企业')
   expect(wrapper.text()).not.toContain('排序：稳定企业标识')
@@ -151,7 +151,7 @@ it('discloses mobile filters, applies date and option URLs, keeps chips on colla
   wrapper.findAllComponents(Select).find(select => select.find('[aria-label="按维护批次筛选"]').exists())!.vm.$emit('update:modelValue', '2')
   await flushPromises()
   wrapper.findAllComponents(Select).find(select => select.find('[aria-label="排序方式"]').exists())!.vm.$emit('update:modelValue', 'name_asc')
-  const pickers = wrapper.findAllComponents(CurrentRecognitionDatePicker)
+  const pickers = wrapper.findAllComponents(DatePicker)
   pickers[0]!.vm.$emit('update:modelValue', '2024-01-01')
   pickers[1]!.vm.$emit('update:modelValue', '2024-12-31')
   await flushPromises()
@@ -175,7 +175,7 @@ it('discloses mobile filters, applies date and option URLs, keeps chips on colla
   expect(advanced().attributes('aria-expanded')).toBe('false')
   await advanced().trigger('click'); await flushPromises()
   expect(wrapper.findAllComponents(Select).find(select => select.find('[aria-label="按有效年份筛选"]').exists())!.props('modelValue')).toBe('2027')
-  expect(wrapper.findAllComponents(CurrentRecognitionDatePicker)[0]!.props('modelValue')).toBe('2024-01-01')
+  expect(wrapper.findAllComponents(DatePicker)[0]!.props('modelValue')).toBe('2024-01-01')
   await wrapper.findAll('button').find(button => button.text() === '清除筛选')!.trigger('click')
   await flushPromises()
   expect(router.currentRoute.value.query).toEqual({ titleCode: 'specialized_sme', sort: 'name_asc' })

@@ -10,12 +10,13 @@ import type { FileDetailDraft } from '#core/lib/core/file-categories'
 const open = defineModel<boolean>('open', { default: false })
 const props = withDefaults(defineProps<{
   file: FileRow | null
+  title?: string
   panels: readonly { id: string; component: Component }[]
   pending?: boolean
   failure?: string
   namePending?: boolean
   nameFailure?: string
-}>(), { pending: false, failure: '', namePending: false, nameFailure: '' })
+}>(), { title: '文件信息', pending: false, failure: '', namePending: false, nameFailure: '' })
 
 const emit = defineEmits<{ save: [patch: Record<string, unknown>]; rename: [displayName: string] }>()
 const drafts = ref<Record<string, FileDetailDraft>>({})
@@ -31,7 +32,7 @@ function save() {
   <Dialog v-model:open="open">
     <DialogContent class="max-h-[90svh] grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-lg">
       <DialogHeader>
-        <DialogTitle>文件信息</DialogTitle>
+        <DialogTitle>{{ title }}</DialogTitle>
         <DialogDescription class="break-all">
           {{ file?.filename }}
         </DialogDescription>

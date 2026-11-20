@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { chooseCalendarSelect } from '../../support/calendar-select'
+import { chooseCalendarPeriod } from '../../support/calendar-period'
 // Component/composable seam only: these are not actual Nuxt/browser evidence.
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, ref } from 'vue'
@@ -181,6 +181,8 @@ it('filters by known IDs, pages with server cursors, fetches details on demand a
   expect(calls.filter((c) => c.url === '/api/logs').at(-1)!.options.query.cursor).toBe('26')
   const beforeRefresh = calls.filter((c) => c.url === '/api/logs').length
   const latest = wrapper.findAll('button').find((b) => b.text() === '刷新最新日志')!
+  const results = latest.element.closest('.table-toolbar')?.parentElement
+  expect(results?.contains(wrapper.get('[data-table-pagination]').element)).toBe(true)
   await latest.trigger('click')
   await flushPromises()
   expect(calls.filter((c) => c.url === '/api/logs').length - beforeRefresh).toBe(1)
@@ -1026,23 +1028,28 @@ it('describes each source with its real business object, accurate outcome and ra
   expect(unknown.operationCode).toBe(longest)
   expect(describeLogRow(makeLogRow({ operation: 'task.finished' })).operationLabel).toBe('任务结束')
   // outcome 全部各自成词，unknown/no_record/denied/partial 不并入成功或失败。
-  const outcomes: Record<string, string> = {
-    started: '已开始',
-    success: '成功',
-    failure: '失败',
-    denied: '已拒绝',
-    timeout: '超时',
-    cancelled: '已取消',
-    unknown: '结果未知',
-    no_record: '无记录',
-    partial: '部分完成',
-    skipped: '已跳过'
+  const outcomes: Record<LogSummary['outcome'], [string, string]> = {
+    started: ['已开始', 'info'],
+    success: ['成功', 'success'],
+    failure: ['失败', 'error'],
+    denied: ['已拒绝', 'warning'],
+    timeout: ['超时', 'warning'],
+    cancelled: ['已取消', 'quiet'],
+    unknown: ['结果未知', 'quiet'],
+    no_record: ['无记录', 'quiet'],
+    partial: ['部分完成', 'warning'],
+    skipped: ['已跳过', 'quiet']
   }
-  for (const [code, label] of Object.entries(outcomes)) {
+  for (const [code, [label, variant]] of Object.entries(outcomes)) {
     expect(outcomeLabel(code)).toBe(label)
-    expect(describeLogRow(makeLogRow({ outcome: code as LogSummary['outcome'] })).outcomeLabel).toBe(label)
+    expect(describeLogRow(makeLogRow({ outcome: code as LogSummary['outcome'] }))).toMatchObject({
+      outcomeLabel: label, outcomeVariant: variant,
+    })
   }
-  expect(new Set(Object.values(outcomes)).size).toBe(10)
+  expect(new Set(Object.values(outcomes).map(([label]) => label)).size).toBe(10)
+  for (const [level, variant] of [['debug', 'quiet'], ['info', 'info'], ['warn', 'warning'], ['error', 'error']] as const) {
+    expect(describeLogRow(makeLogRow({ level })).levelVariant).toBe(variant)
+  }
   // 各来源的真实对象。
   expect(describeLogRow(makeLogRow({ source: 'file', fileId: 12, page: 3 })).target).toMatchObject({
     text: '文件 12 · 第 3 页',
@@ -1288,6 +1295,8 @@ it('renders independent desktop columns and keeps long operation, route, outcome
   expect(first[4]!.html()).not.toContain(longRoute)
   expect(first[4]!.text()).not.toContain('file-9')
   expect(first[5]!.text()).toBe('无记录')
+  expect(first[1]!.get('[data-slot="badge"]').attributes('data-variant')).toBe('warning')
+  expect(first[5]!.get('[data-slot="badge"]').attributes('data-variant')).toBe('quiet')
   // 失败码是独立列：安全原码 + title，长码靠 truncate 约束，不挤进结果/耗时。
   expect(first[6]!.text()).toBe(longErrorCode)
   expect(first[6]!.get('span[title]').attributes('title')).toBe(longErrorCode)
@@ -1303,13 +1312,16 @@ it('renders independent desktop columns and keeps long operation, route, outcome
   // 真实业务对象进入目标列，不是只认 task/request/trace。
   const file = bodyRows[1]!.findAll('td')
   expect(file[4]!.text()).toBe('文件 12 · 第 3 页')
+  expect(file[5]!.get('[data-slot="badge"]').attributes('data-variant')).toBe('success')
   expect(file[6]!.text()).toBe('不适用')
   expect(file[8]!.text()).toBe('—')
   const imported = bodyRows[2]!.findAll('td')
   expect(imported[4]!.text()).toBe('批次 batch-180 · 已处理 3/5 · 失败 1')
   expect(imported[5]!.text()).toBe('部分完成')
+  expect(imported[5]!.get('[data-slot="badge"]').attributes('data-variant')).toBe('warning')
   expect(imported[6]!.text()).toBe('不适用')
   const client = bodyRows[3]!.findAll('td')
+  expect(client[5]!.get('[data-slot="badge"]').attributes('data-variant')).toBe('error')
   expect(client[4]!.text()).toContain('客户端声称 original-180')
   expect(client[4]!.text()).toContain('UNTRUSTED')
   expect(client[6]!.text()).toBe('interaction')
@@ -1372,6 +1384,8 @@ it('labels the 390px summary with a 44px detail target and lets long IDs wrap wi
     expect(first.text()).toContain(label)
   expect(first.text()).toContain('HTTP 接口')
   expect(first.text()).toContain('已拒绝')
+  expect(first.get('[title="denied"]').attributes('data-variant')).toBe('warning')
+  expect(items[1]!.get('[title="success"]').attributes('data-variant')).toBe('success')
   expect(first.text()).not.toContain(longRoute)
   expect(first.text()).not.toContain(longestId)
   // 390 的失败码是独立带标签行，长码可读且不挤进结果/耗时。
@@ -1946,7 +1960,8 @@ it('keeps the list status strip showing unknown writes and the missing-log cavea
   // 存储已恢复但仍有无法确认的记录：异常口径保留，不因 unavailable=false 消失。
   expect(text).toContain('日志缺失不代表业务未执行')
   status = { dropped: 0, writeUnknown: 0, unavailable: false }
-  await wrapper.get('button').trigger('click')
+  const refresh = wrapper.get('.table-toolbar').findAll('button').find(button => button.text() === '刷新最新日志')!
+  await refresh.trigger('click')
   await flushPromises()
   expect(wrapper.text()).not.toContain('写入结果未知')
   expect(wrapper.text()).not.toContain('日志缺失不代表业务未执行')
@@ -1966,8 +1981,8 @@ it('navigates both log time calendars without applying and submits chosen month 
   await flushPromises()
   for (const [id, year, month, day] of [['log-from', '2024', '2', '2024-02-29'], ['log-to', '2024', '4', '2024-04-30']]) {
     await wrapper.get(`#${id}`).trigger('click'); await flushPromises()
-    await chooseCalendarSelect('年份', year!)
-    await chooseCalendarSelect('月份', month!)
+    await chooseCalendarPeriod('年份', year!)
+    await chooseCalendarPeriod('月份', month!)
     expect(wrapper.emitted('apply')).toBeUndefined()
     document.querySelector<HTMLElement>(`[data-value="${day}"]`)!.click(); await flushPromises()
     ;[...document.querySelectorAll('button')].find(button => button.textContent === '完成')!.click(); await flushPromises()

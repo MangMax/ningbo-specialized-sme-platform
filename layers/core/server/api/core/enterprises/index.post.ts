@@ -1,7 +1,8 @@
+import { addPostgresEnterprise } from '../../../utils/enterprise-directory-postgres-write'
 import { useDb } from '@db'
 import { requireApiToken } from '../../../utils/api-guard'
 import { addEnterprise, enterpriseFieldsSchema } from '../../../utils/enterprise-kernel'
-import { directoryInput, directoryResult } from '../../../utils/enterprise-directory-route'
+import { directoryInput, directoryResult, usePostgresDirectoryWriteDb } from '../../../utils/enterprise-directory-route'
 
 defineRouteMeta({ openAPI: {
   tags: ['企业基础库'], summary: '直接添加企业及来源', security: [{ bearerAuth: [] }],
@@ -16,5 +17,8 @@ defineRouteMeta({ openAPI: {
 export default defineEventHandler(async event => {
   requireApiToken(event)
   const fields = directoryInput(enterpriseFieldsSchema.required({ name: true }), await readBody(event))
-  return directoryResult(() => addEnterprise(useDb(), fields))
+  return directoryResult(() => {
+    const db = usePostgresDirectoryWriteDb()
+    return db ? addPostgresEnterprise(db, fields) : addEnterprise(useDb(), fields)
+  })
 })

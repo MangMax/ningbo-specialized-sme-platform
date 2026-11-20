@@ -25,6 +25,16 @@ export async function verifyFileRead(db: Db, root: string, locator: string): Pro
   const abs = resolveInsideRoot(root, locator)
   if (!abs) throw createError({ statusCode: 403, message: '路径越界' })
   const registered = registeredFileAtLocator(db, relative(root, abs).split('\\').join('/'))
+  return verifyRegisteredBytes(abs, registered)
+}
+
+export async function verifyRegisteredFileRead(root: string, registered: StoredFileContentIdentity): Promise<FileReadIdentity> {
+  const abs = resolveInsideRoot(root, registered.relPath)
+  if (!abs) throw createError({ statusCode: 403, message: '路径越界' })
+  return verifyRegisteredBytes(abs, registered)
+}
+
+async function verifyRegisteredBytes(abs: string, registered: StoredFileContentIdentity | null): Promise<FileReadIdentity> {
   if (!registered || !/^[a-f0-9]{64}$/i.test(registered.sha256)) {
     return { registered, status: 'unknown', historical: 'unknown' }
   }

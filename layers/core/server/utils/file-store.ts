@@ -315,9 +315,10 @@ export function createFileStore<const Categories extends readonly FileCategorySe
     return evaluateFileAdmission(categories, relPath, siblings)
   }
 
-  function listStoredFiles(db: FileStoreDb, params: FileQuery & Record<string, unknown> = {}) {
+  function listStoredFiles(db: FileStoreDb, params: FileQuery & Record<string, unknown> = {}, membership?: SQL) {
     return db.transaction(tx => {
       const where = and(
+        membership,
         params.includeRemoved ? undefined : isNull(schema.storedFile.removedAt),
         params.q ? or(
           like(schema.storedFile.displayName, `%${params.q}%`),
@@ -338,7 +339,7 @@ export function createFileStore<const Categories extends readonly FileCategorySe
       const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, params.pageSize ?? 50))
       const total = tx.select({ n: sql<number>`count(*)` }).from(schema.storedFile).where(where).get()!.n
       const rows = tx.select(fileColumns).from(schema.storedFile).where(where)
-        .orderBy(...categories.flatMap(category => category.orderBy ?? []), schema.storedFile.filename)
+        .orderBy(...categories.flatMap(category => category.orderBy ?? []), schema.storedFile.filename, schema.storedFile.id)
         .limit(pageSize).offset((page - 1) * pageSize).all()
       return { rows: extendRows(tx, rows), total }
     })

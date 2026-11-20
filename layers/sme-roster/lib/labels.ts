@@ -25,7 +25,7 @@ export const TITLE_SHORT: Record<string, string> = {
   innovative_sme: '创新型',
 }
 
-/** 称号代号 → 等级(1 最高)。徽章梯度与统计排序都按它走。 */
+/** 称号代号 → 等级(1 最高)。用于徽章梯度和称号排序。 */
 export const TITLE_RANK: Record<string, number> = Object.fromEntries(
   TITLE_SEED.map((t) => [t.code, t.rank]),
 )
@@ -56,14 +56,6 @@ export const EVENTS: Record<string, string> = {
 export const EVENT_ORDER: string[] = ['award', 'review', 'maintain', 'nurture']
 
 /** 质量标记 → 中文名。 */
-export const QUALITY_FLAGS: Record<string, string> = {
-  uscc_missing: '无统一社会信用代码',
-  name_ambiguous: '重名待核',
-  non_ningbo: '非宁波',
-  deregistered: '已注销 / 吊销',
-  attachment_unparsed: '附件未解析',
-}
-
 // ---------------------------------------------------------------------------
 // 文件库(票 09)
 // ---------------------------------------------------------------------------
@@ -321,7 +313,8 @@ export const DIFFERENCE_STATUS_RAILS: Record<string, 'confirmed' | 'open' | 'fai
 export const DIFF_STATUS_NONE_LABEL = '无差异'
 
 /** 台账页名称在页头、侧边栏入口与 document.title 三处共用。 */
-export const ENTERPRISE_LIST_TITLE = '企业列表'
+export const ENTERPRISE_LIST_TITLE = '历年优质中小企业'
+export const CURRENT_ENTERPRISES_TITLE = '优质中小企业'
 
 /** 企业列表排序选项(RL-20)。 */
 export const ENTERPRISE_SORT_LABELS: Record<string, string> = {

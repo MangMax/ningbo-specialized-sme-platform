@@ -1,3 +1,4 @@
+import { requireSqliteLeadOperation } from '../../../../utils/postgres-versions'
 import { useDb } from '@db'
 import { isJobId } from '#core/lib/job'
 import { requireTaskCenterAccess } from '#core/server/utils/task-center-access'
@@ -13,6 +14,7 @@ export default defineEventHandler(event => {
   requireTaskCenterAccess(event)
   const id = getRouterParam(event, 'jobId')
   if (!isJobId(id)) throw createError({ statusCode: 400, message: '任务编号有误' })
+  requireSqliteLeadOperation()
   const db = useDb()
   const task = getJob(db, id)
   if (task?.kind !== LEAD_LIST_EXPORT) throw createError({ statusCode: 404, message: '名单导出任务不存在' })

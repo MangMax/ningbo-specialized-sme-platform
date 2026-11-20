@@ -182,8 +182,7 @@ export function collectUsccTargets(
 /**
  * **待查清单**：仍缺统一社会信用代码的企业。
  *
- * 判据是**「缺统代」**（`enterprise.uscc_norm IS NULL`，与 `GET /api/quality?kind=uscc_missing`
- * 同一口径）**且仍在当前总表里**（`rosterState === 'current'`）。「接口曾用名匹配后仍未解决」
+ * 判据是**「缺统代」**（`enterprise.uscc_norm IS NULL`）**且仍在当前总表里**（`rosterState === 'current'`）。「接口曾用名匹配后仍未解决」
  * 在数据上就落在这里：实测库里 133 家无统代企业**全部**停在 `not_queried`（平台两接口按
  * `tyshxydm` 取数，无统代直查不了），所以两者是同一集合 —— 但清单**按缺统代筛**，
  * 因为那才是「还没解决」的定义，而「未查询」只是它当前的表现。补齐/归并之后该企业自然

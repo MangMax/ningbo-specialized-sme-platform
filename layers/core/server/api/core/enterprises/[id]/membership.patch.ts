@@ -1,8 +1,9 @@
+import { setPostgresEnterpriseRemoved } from '../../../../utils/enterprise-directory-postgres-write'
 import { useDb } from '@db'
 import { z } from 'zod'
 import { requireApiToken } from '../../../../utils/api-guard'
 import { setEnterpriseRemoved } from '../../../../utils/enterprise-kernel'
-import { directoryInput, directoryResult, enterpriseId } from '../../../../utils/enterprise-directory-route'
+import { directoryInput, directoryResult, usePostgresDirectoryWriteDb, enterpriseId } from '../../../../utils/enterprise-directory-route'
 
 defineRouteMeta({ openAPI: {
   tags: ['企业基础库'], summary: '移出或恢复企业基础库在库状态', security: [{ bearerAuth: [] }],
@@ -18,5 +19,8 @@ export default defineEventHandler(async event => {
   requireApiToken(event)
   const id = directoryInput(enterpriseId, getRouterParam(event, 'id'))
   const body = directoryInput(membership, await readBody(event))
-  return directoryResult(() => setEnterpriseRemoved(useDb(), id, body.expectedRevision, body.removedReason))
+  return directoryResult(() => {
+    const db = usePostgresDirectoryWriteDb()
+    return db ? setPostgresEnterpriseRemoved(db, id, body.expectedRevision, body.removedReason) : setEnterpriseRemoved(useDb(), id, body.expectedRevision, body.removedReason)
+  })
 })

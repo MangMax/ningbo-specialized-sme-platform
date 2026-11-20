@@ -94,7 +94,7 @@ watch(
 /** 表格内联展示的事件上限,超出折叠为 +N,悬浮展开完整卡片。 */
 const MAX_VISIBLE_EVENTS = 2
 const COLUMNS = 6
-const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs font-medium'
+const TH_CLASS = 'text-muted-foreground h-9 text-xs font-medium'
 const rowKey = (r: TitleRow) => `${r.enterpriseId}-${r.titleCode}`
 
 function enterpriseDetailHref(id: number): string {
@@ -135,7 +135,7 @@ function openRow(id: number, event: MouseEvent) {
   <div
     ref="scrollRef"
     data-evidence-return-scroll-container
-    class="max-h-[max(360px,calc(100dvh-22rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible"
+    class="data-table-scroll [--table-budget:22rem]"
   >
     <Table class="min-w-[1040px]">
       <TableHeader>

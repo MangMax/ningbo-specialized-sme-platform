@@ -4,9 +4,8 @@ import { ref, watch } from 'vue'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useQuery } from '@pinia/colada'
 import { Toaster, toast } from 'vue-sonner'
-import { defineComponent, h } from 'vue'
-import * as registry from '../../../lib/app-file-category-ui'
 import FilesPage from '../../../layers/core/app/pages/files.vue'
+import RosterFilesPage from '../../../layers/sme-roster/app/pages/sme-roster/files.vue'
 
 // Happy DOM lacks WAAPI; exercise vue-sonner's JS fallback (same setup as
 // tests/ui/settings/credential-controls.ui.test.ts).
@@ -52,7 +51,7 @@ const stubs = {
   TableLoadingStatus: true, FileSegmentsEditor: true, PdfViewDialog: true,
   FilePreviewDialog: true, NuxtLink: { template: '<a><slot/></a>' },
   EditFileDialog: {
-    props: ['open'], emits: ['save', 'rename'],
+    props: ['open', 'file', 'title', 'panels', 'pending', 'failure', 'namePending', 'nameFailure'], emits: ['save', 'rename', 'update:open'],
     template: '<button data-testid="emit-save" @click="$emit(\'save\', { source: \'jxj\', kind: \'announcement\', year: 2024, batch: 1, titleCode: null })">save</button><button data-testid="emit-rename" @click="$emit(\'rename\', \'新名称.pdf\')">rename</button>',
   },
   DeleteFileDialog: {
@@ -69,6 +68,9 @@ describe('文件页写路径操作反馈', () => {
 
   beforeEach(async () => {
     toaster = mount(Toaster, { attachTo: document.body })
+    vi.stubGlobal('matchMedia', (media: string) => ({
+      media, matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    }))
     vi.stubGlobal('useRoute', () => ({ path: '/files', fullPath: '/files', query: {} }))
     vi.stubGlobal('useRouter', () => ({ replace: vi.fn(async () => {}) }))
     vi.stubGlobal('useHead', vi.fn())
@@ -96,6 +98,8 @@ describe('文件页写路径操作反馈', () => {
   afterEach(() => { view.unmount(); toast.dismiss(); toaster.unmount(); document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.clearAllMocks() })
 
   it('sets the file table minimum width to the sum of its rendered columns', () => {
+    view.unmount()
+    view = mount(RosterFilesPage, { attachTo: document.body, global: { stubs } })
     const table = view.get('table')
     const widths = table.findAll('thead th').map(header => {
       const inline = (header.element as HTMLElement).style.width.match(/^(\d+)px$/)
@@ -112,55 +116,33 @@ describe('文件页写路径操作反馈', () => {
     expect((view.get('[data-slot=table-container]').element as HTMLElement).style.minWidth).toBe(`${widths.reduce((sum, width) => sum + width, 0)}px`)
   })
 
-  it('renders added filters and detail panels alongside the existing module', async () => {
+  it('keeps platform file operations separate from roster fields and filters', async () => {
+    const headers = () => view.findAll('thead th').map(header => header.text())
+    expect(headers()).toEqual(['文件名', '大小', '操作'])
+    expect(view.findAllComponents({ name: 'MultiSelectFilter' })).toHaveLength(0)
+    expect(fetch).toHaveBeenCalledWith('/api/file-library', expect.anything())
+    expect(button(view, '上传文件')).toBeDefined()
+
     view.unmount()
-    const modules = registry.getFileCategoryUi()
-    const registration = vi.spyOn(registry, 'getFileCategoryUi').mockReturnValue([
-      ...modules,
-      {
-        id: 'catalog',
-        name: '馆藏',
-        filters: [{
-          key: 'collection', label: '馆藏', placeholder: '全部馆藏', width: 'w-28',
-          options: [{ value: 'local', label: '本地馆藏' }],
-        }],
-        detailPanel: defineComponent({
-          setup: () => () => h('p', '由模块登记的文件详情'),
-        }),
-        uploadDialog: defineComponent({
-          props: ['open'],
-          setup: props => () => props.open ? h('p', '馆藏上传窗口') : null,
-        }),
-      },
-    ])
-    try {
-      view = mount(FilesPage as never, {
-        attachTo: document.body,
-        global: { stubs: { ...stubs, EditFileDialog: false } },
-      })
-      const filters = view.findAllComponents({ name: 'MultiSelectFilter' })
-      expect(filters.map(filter => filter.props('placeholder'))).toContain('全部来源')
-      const filter = filters.find(filter => filter.props('placeholder') === '全部馆藏')!
-      filter.vm.$emit('update:modelValue', ['local'])
-      await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/files', expect.objectContaining({
-        query: expect.objectContaining({ collection: 'local' }),
-      })))
-      expect(view.text()).toContain('馆藏 · 本地馆藏')
-      await button(view, '上传 · 馆藏').trigger('click')
-      expect(view.text()).toContain('馆藏上传窗口')
-      await button(view, '文件信息').trigger('click')
-      await vi.waitFor(() => {
-        expect(document.body.textContent).toContain('由模块登记的文件详情')
-        expect(document.body.textContent).toContain('文件发布年份')
-      })
-    } finally {
-      registration.mockRestore()
-    }
+    view = mount(RosterFilesPage, { attachTo: document.body, global: { stubs } })
+    const rosterFilters = view.findAllComponents({ name: 'MultiSelectFilter' })
+    expect(rosterFilters.map(filter => filter.props('placeholder'))).toEqual(['全部来源', '全部分类状态', '全部解析状态'])
+    rosterFilters[0]!.vm.$emit('update:modelValue', ['jxj'])
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/sme-roster/files', expect.objectContaining({
+      query: expect.objectContaining({ source: 'jxj' }),
+    })))
+    expect(headers()).toEqual(expect.arrayContaining(['文件发布', '内容年份', '内容批次', '分类状态', '解析状态', '被引用']))
+    expect(view.text()).toContain('来源 · 经信局')
+    expect(button(view, '上传名单文件')).toBeDefined()
+    expect(view.findAll('button').some(button => button.text() === '移出')).toBe(false)
   })
 
   it('保存文件信息成功给出成功 toast;失败给带「重试」的失败 toast,重试重发同一 PATCH', async () => {
+    view.unmount()
+    view = mount(RosterFilesPage, { attachTo: document.body, global: { stubs } })
+    await flushPromises()
     // 打开编辑弹窗 → 由替身 emit 一次 save
-    await button(view, '文件信息').trigger('click')
+    await button(view, '名单信息').trigger('click')
     await view.get('[data-testid="emit-save"]').trigger('click')
     await flushPromises()
     expect(fetch.mock.calls.some(([, o]) => o?.method === 'PATCH')).toBe(true)

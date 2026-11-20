@@ -1,4 +1,4 @@
-import { FolderOpen, KeyRound, ListTodo, Logs, ScanText } from '@lucide/vue'
+import { BookOpen, Building2, FolderOpen, KeyRound, ListTodo, Logs, ScanText } from '@lucide/vue'
 import { defineAppModule } from './module-registry'
 
 const ocr = { id: 'ocr', label: 'OCR' }
@@ -7,15 +7,19 @@ export default defineAppModule({
   id: 'core',
   name: '平台底座',
   clientPages: [
-    { page: 'workbench', paths: ['/'], operationPage: 'roster' },
+    { page: 'enterprise-library', paths: ['/enterprise-library'] },
     { page: 'files', paths: ['/files'] },
     { page: 'preview', paths: ['/preview'], operationPage: 'other' },
     { page: 'ocr', paths: ['/ocr'], operationPage: 'other' },
     { page: 'tasks', paths: ['/tasks'] },
     { page: 'logs', paths: ['/logs'] },
+    { page: 'dictionaries', paths: ['/dictionaries'] },
     { page: 'settings', paths: ['/settings'] },
   ],
   routes: [
+    '/api/core/dictionaries',
+    '/api/core/enterprises',
+    '/api/file-library',
     '/api/files',
     '/api/health',
     '/api/jobs',
@@ -55,10 +59,12 @@ export default defineAppModule({
     environment: ['NUXT_OCR_TOKEN', 'PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN'],
   }],
   nav: [
+    { title: '企业基础库', url: '/enterprise-library', icon: Building2, placement: 'business' },
     { title: '文件管理', url: '/files', icon: FolderOpen },
     { title: '识别校对', url: '/ocr', icon: ScanText },
     { title: '后台任务', url: '/tasks', icon: ListTodo },
     { title: '运行日志', url: '/logs', icon: Logs },
+    { title: '字典管理', url: '/dictionaries', icon: BookOpen },
     { title: '密钥配置', url: '/settings', icon: KeyRound },
   ],
   jobKinds: [

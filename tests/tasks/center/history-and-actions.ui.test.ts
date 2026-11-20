@@ -600,7 +600,10 @@ describe('任务详情抽屉', () => {
     expect(scrollIntoViewCalls).toBe(0)
 
     // A refresh of the list behind the drawer is just as quiet.
-    await findButton(wrapper, /刷新列表/).trigger('click')
+    const refreshList = findButton(wrapper, /刷新列表/)
+    const results = refreshList.element.closest('.table-toolbar')?.parentElement
+    expect(results?.contains(wrapper.get('[data-table-pagination]').element)).toBe(true)
+    await refreshList.trigger('click')
     await settle()
     expect(sheetDialog()).toBe(dialog)
     expect(dialog.querySelector('section[aria-label="任务执行详情"]')).toBe(detail)

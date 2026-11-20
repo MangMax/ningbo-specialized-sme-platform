@@ -95,10 +95,6 @@ export default defineEventHandler(async (event) => {
   requireApiToken(event)
   registerJobSpecs()
 
-  const db = useDb()
-  // 进程内第一次碰任务库:把上一个进程留下的半截任务标失败(见 job-store 的对账)。
-  ensureJobRunnerReady(db)
-
   const body = await readBody(event).catch(() => null)
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     throw createError({ statusCode: 400, message: '请求体必须是 JSON 对象' })
@@ -133,6 +129,8 @@ export default defineEventHandler(async (event) => {
   const parsed = spec.parse(params.params)
   if (!parsed.ok) throw createError({ statusCode: 400, message: parsed.message })
 
+  const db = useDb()
+  ensureJobRunnerReady(db)
   const row = submitJob(db, {
     kind,
     logContext: requestLogContext(event),

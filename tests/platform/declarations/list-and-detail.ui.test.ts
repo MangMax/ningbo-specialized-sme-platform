@@ -86,7 +86,7 @@ describe('申报记录表格', () => {
 })
 
 describe('申报记录详情', () => {
-  it('renders content versions and collection times without repeated observation rows', async () => {
+  it('shows each declaration version with its business facts and without capture metadata', async () => {
     const detail = {
       record: { id: 7, platformKey: 'SQ-2024-1', interface: 'apply_list', identityRuleVersion: 'platform-observation-v1', createdAt: '2026-10-01T00:00:00Z' },
       versions: [
@@ -108,12 +108,12 @@ describe('申报记录详情', () => {
       expect(dialog.text()).toContain('申报记录 · 版本详情')
       expect(dialog.text()).not.toContain('申报编号')
       expect(dialog.text()).not.toContain('SQ-2024-1')
-      expect(dialog.text()).toContain('版本 #12')
-      expect(dialog.text()).toContain('申请')
-      expect(dialog.text()).toContain('2024')
-      expect(dialog.text()).toContain('版本 #11')
-      expect(dialog.text()).toContain('未提供')
-      expect(dialog.text()).toContain('最近 2026-10-02')
+      const cards = dialog.findAll('[data-testid="platform-declaration-version"]')
+      expect(cards).toHaveLength(2)
+      expect(cards[0]!.text()).toContain('申请')
+      expect(cards[0]!.text()).toContain('2024-03-01')
+      expect(cards[1]!.text()).toBe('该版本暂无可核对的业务内容')
+      expect(dialog.text()).not.toMatch(/版本 #|采集时间|2026-10-02|内容哈希|规则版本|apply_list/)
       expect(dialog.text()).not.toContain('行 #21 · 查询 #31')
       expect(dialog.text()).toContain('甲合成企业')
     } finally { view.unmount() }

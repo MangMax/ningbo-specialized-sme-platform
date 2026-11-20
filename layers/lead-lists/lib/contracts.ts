@@ -9,13 +9,14 @@ const sourceRow = z.strictObject({
   district: text(100).optional(),
   note: text(500).optional(),
 })
+export const leadSourceRows = z.array(sourceRow).min(1).max(2000).refine(rows => new Set(rows.map(row => row.rowNumber)).size === rows.length, '名单原行序号必须唯一')
 export const versionInput = z.strictObject({
   series: text(120),
   channel: text(64),
   listType: text(64),
   acquiredOn: z.iso.date(),
   fileId: leadListId,
-  rows: z.array(sourceRow).min(1).max(2000).refine(rows => new Set(rows.map(row => row.rowNumber)).size === rows.length, '名单原行序号必须唯一'),
+  rows: leadSourceRows,
 })
 export type VersionInput = z.infer<typeof versionInput>
 

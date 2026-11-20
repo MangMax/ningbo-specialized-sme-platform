@@ -32,7 +32,7 @@ const conflictLabel: Record<string, string> = {
 <template>
   <div class="min-w-0" data-testid="platform-declaration-table">
     <template v-if="view === 'records'">
-      <div v-if="records.length" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
+      <div v-if="records.length" class="data-table-scroll hidden sm:block">
         <Table class="data-table min-w-[980px] table-fixed 2xl:min-w-[1080px]" aria-label="申报记录">
           <TableHeader>
             <TableRow class="hover:bg-transparent">
@@ -69,7 +69,7 @@ const conflictLabel: Record<string, string> = {
           </TableBody>
         </Table>
       </div>
-      <ul v-if="records.length" class="flex flex-col divide-y sm:hidden" aria-label="申报记录列表">
+      <ul v-if="records.length" class="data-table-scroll flex flex-col divide-y sm:hidden" aria-label="申报记录列表">
         <li v-for="row in records" :key="row.record.id" class="flex min-w-0 flex-col gap-1.5 p-3" data-testid="platform-declaration-card" :data-record-id="row.record.id">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
@@ -89,7 +89,7 @@ const conflictLabel: Record<string, string> = {
     </template>
 
     <template v-else>
-      <div v-if="isolated.length" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
+      <div v-if="isolated.length" class="data-table-scroll hidden sm:block">
         <Table class="data-table min-w-[980px] table-fixed 2xl:min-w-[1080px]" aria-label="缺编号观察">
           <TableHeader>
             <TableRow class="hover:bg-transparent">
@@ -127,7 +127,7 @@ const conflictLabel: Record<string, string> = {
           </TableBody>
         </Table>
       </div>
-      <ul v-if="isolated.length" class="flex flex-col divide-y sm:hidden" aria-label="缺编号观察列表">
+      <ul v-if="isolated.length" class="data-table-scroll flex flex-col divide-y sm:hidden" aria-label="缺编号观察列表">
         <li v-for="row in isolated" :key="row.relationId" class="flex min-w-0 flex-col gap-1.5 p-3" data-testid="platform-declaration-isolated-card" :data-relation-id="row.relationId">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">

@@ -16,6 +16,7 @@ import {
   PLATFORM_INTERFACES,
   PLATFORM_QUERY_STATUSES,
   PLATFORM_RDJBS,
+  RELATION_DECLARE_KINDS,
   RELATION_MATCH_BASES,
   REVIEW_OUTCOMES,
   SOURCE_ORDER,
@@ -35,6 +36,7 @@ import { Badge, type BadgeVariants } from '#core/app/components/ui/badge'
 import { Button } from '#core/app/components/ui/button'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import { Skeleton } from '#core/app/components/ui/skeleton'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '#core/app/components/ui/table'
 
 /**
  * 企业展开面板 —— 一家企业的**全部**称号历史与证据(契约 §7.2 的落点)。
@@ -46,7 +48,6 @@ interface Alias {
   id: number
   name: string
   sourceKind: string
-  sourceRefId: number
   verificationStatus: string
   validFrom: string | null
   note: string | null
@@ -89,7 +90,6 @@ interface MovedIn {
   complete: boolean
 }
 interface Difference {
-  explanationId: number | null
   titleCode: string
   direction: string
   status: string
@@ -106,18 +106,14 @@ interface Difference {
 interface QueryRow {
   id: number
   interface: string
-  queryKey: string
   rdjb: string
   queriedAt: string
   status: string
-  failureReason: string | null
   relationCount: number
 }
 interface Relation {
   id: number
   queryId: number
-  sequenceNo: number
-  relationKey: string | null
   usccRaw: string | null
   nameRaw: string | null
   province: string | null
@@ -361,7 +357,6 @@ const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
             <span class="text-muted-foreground text-[11px]">
               {{ ALIAS_SOURCE_KINDS[a.sourceKind] ?? a.sourceKind }} ·
               {{ VERIFICATION_STATUSES[a.verificationStatus] ?? a.verificationStatus }}
-              <template v-if="a.sourceRefId"> · 证据行 #{{ a.sourceRefId }}</template>
             </span>
           </li>
         </ul>
@@ -543,12 +538,6 @@ const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
               </span>
             </template>
           </p>
-          <p v-if="d.explanationId == null" class="text-muted-foreground text-[11px]">
-            还没有针对该差异的解释记录 —— 状态即状态机的「未查询」。
-          </p>
-          <p v-else-if="d.status === 'needs_review'" class="text-muted-foreground text-[11px]">
-            证据不足 / 关系冲突 ⇒ 待核实,不自动合并、不猜填。
-          </p>
           <p v-if="d.evidence" class="text-muted-foreground text-[11px]">
             接口证据:{{ PLATFORM_INTERFACES[d.evidence.interface] ?? d.evidence.interface }} ·
             {{ PLATFORM_QUERY_STATUSES[d.evidence.status] ?? d.evidence.status }} ·
@@ -561,7 +550,7 @@ const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
       <!-- 平台证据:查询四态 + 该企业的**全部**关系(不按统代折叠) -->
       <DisclosurePanel compact content-class="flex flex-col gap-3 pt-2 pb-0" class="text-xs" :title="`平台证据(查询 ${detail.platform.queries.length} 次 · 关联 ${relationCount} 条)`">
           <div v-if="!detail.platform.queries.length" class="text-muted-foreground text-xs">
-            该企业还没有平台查询记录(未查询 ≠ 无记录)。
+            该企业尚未查询平台记录。
           </div>
           <div
             v-for="q in detail.platform.queries"
@@ -572,8 +561,8 @@ const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
               <Badge variant="quiet" class="font-normal">
                 {{ PLATFORM_INTERFACES[q.interface] ?? q.interface }}
               </Badge>
-              <span v-if="q.rdjb" class="text-muted-foreground">
-                认定级别 {{ PLATFORM_RDJBS[q.rdjb] ?? q.rdjb }}
+              <span v-if="PLATFORM_RDJBS[q.rdjb]" class="text-muted-foreground">
+                {{ PLATFORM_RDJBS[q.rdjb] }}
               </span>
               <Badge
                 :variant="q.status === 'success' ? 'secondary' : q.status === 'failed' ? 'destructive' : 'outline'"
@@ -581,48 +570,42 @@ const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
               >
                 {{ PLATFORM_QUERY_STATUSES[q.status] ?? q.status }}
               </Badge>
-              <span class="text-muted-foreground font-mono">{{ q.queryKey }}</span>
               <span class="text-muted-foreground tabular-nums">
                 {{ q.queriedAt.slice(0, 19).replace('T', ' ') }}
               </span>
               <span class="text-muted-foreground">关系 {{ q.relationCount }} 条</span>
-              <span v-if="q.failureReason" class="text-destructive">{{ q.failureReason }}</span>
             </div>
-            <div v-if="(relationsByQuery.get(q.id) ?? []).length" class="overflow-x-auto">
-              <table class="w-full text-[11px]">
-                <thead class="text-muted-foreground">
-                  <tr class="text-left">
-                    <th class="pr-3 font-medium">#</th>
-                    <th class="pr-3 font-medium">关联主键</th>
-                    <th class="pr-3 font-medium">企业名称</th>
-                    <th class="pr-3 font-medium">统一社会信用代码</th>
-                    <th class="pr-3 font-medium">申报类型</th>
-                    <th class="pr-3 font-medium">维护批次</th>
-                    <th class="pr-3 font-medium">认定批次</th>
-                    <th class="pr-3 font-medium">申报时间</th>
-                    <th class="pr-3 font-medium">匹配依据</th>
-                    <th class="font-medium">核验</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr
+            <div v-if="(relationsByQuery.get(q.id) ?? []).length" class="data-table-scroll" role="region" aria-label="平台查询关系" tabindex="0">
+              <Table class="data-table">
+                <TableHeader>
+                  <TableRow class="text-left">
+                    <TableHead scope="col" class="pr-3 font-medium">企业名称</TableHead>
+                    <TableHead scope="col" class="pr-3 font-medium">统一社会信用代码</TableHead>
+                    <TableHead scope="col" class="pr-3 font-medium">申报类型</TableHead>
+                    <TableHead scope="col" class="pr-3 font-medium">维护批次</TableHead>
+                    <TableHead scope="col" class="pr-3 font-medium">认定批次</TableHead>
+                    <TableHead scope="col" class="pr-3 font-medium">申报时间</TableHead>
+                    <TableHead scope="col" class="pr-3 font-medium">匹配依据</TableHead>
+                    <TableHead scope="col" class="font-medium">核验</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow
                     v-for="r in relationsByQuery.get(q.id) ?? []"
                     :key="r.id"
                     class="border-t"
                   >
-                    <td class="pr-3 tabular-nums">{{ r.sequenceNo }}</td>
-                    <td class="pr-3 font-mono">{{ r.relationKey ?? '—' }}</td>
-                    <td class="pr-3">{{ r.nameRaw ?? '—' }}</td>
-                    <td class="pr-3 font-mono">{{ r.usccRaw ?? '—' }}</td>
-                    <td class="pr-3">{{ r.declareKind ?? '—' }}</td>
-                    <td class="pr-3">{{ r.batch ?? '—' }}</td>
-                    <td class="pr-3">{{ r.awardBatchLabel ?? '—' }}</td>
-                    <td class="pr-3 tabular-nums">{{ r.appliedAt ?? '—' }}</td>
-                    <td class="pr-3">{{ RELATION_MATCH_BASES[r.matchBasis] ?? r.matchBasis }}</td>
-                    <td>{{ VERIFICATION_STATUSES[r.verificationStatus] ?? r.verificationStatus }}</td>
-                  </tr>
-                </tbody>
-              </table>
+                    <TableCell class="pr-3">{{ r.nameRaw ?? '—' }}</TableCell>
+                    <TableCell class="pr-3 font-mono">{{ r.usccRaw ?? '—' }}</TableCell>
+                    <TableCell class="pr-3">{{ RELATION_DECLARE_KINDS[r.declareKind ?? ''] ?? '未记录' }}</TableCell>
+                    <TableCell class="pr-3">{{ r.batch ?? '—' }}</TableCell>
+                    <TableCell class="pr-3">{{ r.awardBatchLabel ?? '—' }}</TableCell>
+                    <TableCell class="pr-3 tabular-nums">{{ r.appliedAt ?? '—' }}</TableCell>
+                    <TableCell class="pr-3">{{ RELATION_MATCH_BASES[r.matchBasis] ?? r.matchBasis }}</TableCell>
+                    <TableCell>{{ VERIFICATION_STATUSES[r.verificationStatus] ?? r.verificationStatus }}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
             </div>
           </div>
       </DisclosurePanel>

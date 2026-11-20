@@ -5,6 +5,7 @@ import { readEffectiveQualifications } from '../../../sme-roster/public'
 import type { JobSpec } from '../../../core/server/utils/job-runner'
 import { LEAD_LIST_EXPORT, leadListExportInput } from '../../lib/export-contract'
 import { readLeadVersion } from './versions'
+import { requireSqliteLeadOperation } from './postgres-versions'
 
 function cell(value: string | number | null) {
   const text = String(value ?? '')
@@ -22,10 +23,12 @@ export const leadListVersionExport = {
   deduplicateRequest: true,
   paramsHint: 'versionId 为名单版本编号，clientRequestId 为请求 UUID',
   parse(raw) {
+    requireSqliteLeadOperation()
     const result = leadListExportInput.safeParse(raw)
     return result.success ? { ok: true, params: result.data } : { ok: false, message: '需要有效的版本编号和请求 UUID' }
   },
   prepare(params, database) {
+    requireSqliteLeadOperation()
     const db = database as NativeDb
     if (!db.$client.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='lead_list_export'").get()) {
       throw createError({ statusCode: 503, message: '请先完成线索名单数据库升级' })

@@ -1,6 +1,7 @@
 import { nextTick, onMounted, onScopeDispose, watch, type Ref } from 'vue'
 import { ROSTER_LEDGER_PATH } from '../sme-roster/routes'
 import { isSafeBackPath } from '../../../core/lib/preview-query'
+import { scrollWorkspaceTo, workspaceScrollTop } from '../../../core/lib/workspace-scroll'
 
 const RETURN_STATE_KEY = 'roster:evidence-preview-return'
 const HISTORY_RETURN_PATH_KEY = '__rosterEvidencePreviewReturnPath'
@@ -141,10 +142,10 @@ function rememberHistoryReturnPath(back: string): void {
   }
 }
 
-/** Remember both ledger scroll layers when a same-tab evidence link is activated. */
+/** Remember the workspace and ledger scroll offsets when a same-tab evidence link is activated. */
 export function rememberEvidencePreviewReturn(back: unknown, source?: EventTarget | null): void {
   if (typeof window === 'undefined' || !isSafeBackPath(back)) return
-  const scrollY = window.scrollY
+  const scrollY = workspaceScrollTop()
   if (!Number.isFinite(scrollY) || scrollY < 0) return
 
   const sourceElement = typeof Element !== 'undefined' && source instanceof Element ? source : null
@@ -234,7 +235,7 @@ export function useEvidencePreviewScrollRestore(
         }
         const anchoredY = state.anchor ? resolveAnchor?.(state.anchor) : undefined
         const top = anchoredY !== undefined && Number.isFinite(anchoredY) ? Math.max(0, anchoredY) : state.scrollY
-        window.scrollTo({ top, behavior: 'instant' })
+        scrollWorkspaceTo(top)
         restored = true
         stop()
         // HEAD availability can mount the source link after the surrounding event is ready.

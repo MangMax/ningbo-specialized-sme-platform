@@ -68,6 +68,16 @@ it('registers the original file and immutable rows before explicit atomic enterp
   const linked = await post(supplement, confirmation, 200)
   expect(await post(supplement, confirmation, 200)).toEqual(linked)
   expect(linked.rows[1].enterpriseId).toBe(enterprise.id)
+  const directory = '/api/core/enterprises'
+  const firstPage = await (await app.request(directory + '?page=1&limit=1')).json()
+  const secondPage = await (await app.request(directory + '?page=2&limit=1')).json()
+  expect(firstPage).toMatchObject({ page: 1, total: 2, rows: [{ id: enterprise.id }] })
+  expect(secondPage).toMatchObject({ page: 2, total: 2, rows: [{ id: linked.rows[0].enterpriseId }] })
+  expect(await (await app.request(directory + '?page=200&limit=1')).json()).toEqual(secondPage)
+  const matched = await (await app.request(directory + '?page=2&name=' + encodeURIComponent('后来匹配'))).json()
+  expect(matched).toMatchObject({ page: 1, total: 1, rows: [{ id: enterprise.id }] })
+  expect(await (await app.request(directory + '?limit=1')).json()).toEqual({ rows: firstPage.rows, nextAfter: enterprise.id })
+  expect((await app.request(directory + '?page=2&after=1')).status).toBe(400)
   const sources = await (await app.request(`/api/core/enterprises/${enterprise.id}/sources`)).json()
   expect(sources.rows ?? sources).toEqual(expect.arrayContaining([expect.objectContaining({
     module: 'lead-lists', series: '年度走访', acquiredOn: '2026-11-18', fileId: registeredFile.id, sha256: registeredFile.sha256,
@@ -78,4 +88,104 @@ it('registers the original file and immutable rows before explicit atomic enterp
   ])
   const roster = await (await app.request('/api/roster/enterprises')).json()
   expect(roster.rows).toEqual([])
+
+  const browserPath = `${endpoint}/browser-create`
+  const browserPayload = { ...payload, series: '网页新增名单' }
+  const origin = new URL(app.url('/')).origin
+  const browserHeaders = {
+    'content-type': 'application/json',
+    'sec-fetch-site': 'same-origin',
+    'x-lead-list-browser': '1',
+    origin,
+  }
+  async function browserPost(path: string, headers: Record<string, string>, body: unknown = browserPayload) {
+    return fetch(app.url(path), { method: 'POST', headers, body: JSON.stringify(body) })
+  }
+  expect((await browserPost(endpoint, browserHeaders)).status).toBe(401)
+  const { 'x-lead-list-browser': _marker, ...withoutMarker } = browserHeaders
+  for (const headers of [
+    withoutMarker,
+    { ...withoutMarker, 'x-task-center-browser': '1' },
+    { ...browserHeaders, origin: 'http://example.invalid', 'x-forwarded-host': 'example.invalid' },
+    { ...browserHeaders, 'sec-fetch-site': 'cross-site' },
+    { ...browserHeaders, 'content-type': 'text/plain' },
+  ]) {
+    expect((await browserPost(browserPath, headers)).status).toBe(403)
+  }
+  const beforeCreate = await (await app.request(endpoint)).json()
+  expect(beforeCreate.versions.map((version: { id: number }) => version.id)).toEqual([first.id])
+  expect((await browserPost(browserPath, browserHeaders, { ...browserPayload, rows: [] })).status).toBe(400)
+  const created = await browserPost(browserPath, browserHeaders)
+  expect(created.status).toBe(201)
+  const browserVersion = await created.json()
+  expect(await post(endpoint, browserPayload, 200)).toEqual({ id: browserVersion.id, created: false })
+  const browserDetail = await (await app.request(`${endpoint}/${browserVersion.id}`)).json()
+  expect(browserDetail.rows.map(({ rowNumber, enterpriseId }: { rowNumber: number; enterpriseId: number | null }) => [rowNumber, enterpriseId])).toEqual([[4, null], [7, null]])
+  const browserSupplement = `${endpoint}/${browserVersion.id}/supplement`
+  const corrected = {
+    decisions: [
+      { action: 'create', rowId: browserDetail.rows[0].id, fields: { name: '新录入企业' } },
+      { action: 'attach', rowId: browserDetail.rows[1].id, enterpriseId: enterprise.id, expectedRevision: enterprise.revision,
+        fields: { name: '后来匹配企业新名称' } },
+    ],
+  }
+  expect((await browserPost(browserSupplement, withoutMarker, corrected)).status).toBe(401)
+  expect((await browserPost(browserSupplement, { ...browserHeaders, 'sec-fetch-site': 'cross-site' }, corrected)).status).toBe(401)
+  expect((await browserPost(browserSupplement, browserHeaders, { decisions: [] })).status).toBe(400)
+  const browserSaved = await browserPost(browserSupplement, browserHeaders, corrected)
+  expect(browserSaved.status).toBe(200)
+  const receipt = await browserSaved.json()
+  expect(await (await browserPost(browserSupplement, browserHeaders, corrected)).json()).toEqual(receipt)
+  const sourceEnterprises = await (await app.request(`${directory}?sourceId=${receipt.sourceId}`)).json()
+  expect(sourceEnterprises.rows.map(({ name }: { name: string }) => name)).toEqual(['后来匹配企业新名称', '新录入企业'])
+  const preserved = await (await app.request(`${endpoint}/${browserVersion.id}`)).json()
+  expect(preserved.rows).toMatchObject([
+    { name: '样例企业', uscc: '原表格式待核对', enterpriseId: receipt.rows[0].enterpriseId },
+    { name: '后来匹配企业', enterpriseId: enterprise.id },
+  ])
+})
+
+it('uses managed dictionary options in new lead lists and preserves references when a name changes', async () => {
+  const origin = new URL(app.url('/')).origin
+  const headers = {
+    'content-type': 'application/json',
+    'sec-fetch-site': 'same-origin',
+    'x-dictionary-browser': '1',
+    origin,
+  }
+  const sources = '/api/core/dictionaries/list-sources'
+  const types = '/api/core/dictionaries/list-types'
+  const saveEntry = (path: string, body: object, requestHeaders = headers) =>
+    fetch(app.url(path), { method: 'POST', headers: requestHeaders, body: JSON.stringify(body) })
+
+  expect((await saveEntry(sources, { name: '行业协会' }, { ...headers, origin: 'http://example.invalid' })).status).toBe(403)
+  expect((await saveEntry('/api/core/dictionaries/regions', { name: '测试' })).status).toBe(404)
+  const addSource = await saveEntry(sources, { name: '行业协会' })
+  expect(addSource.status).toBe(200)
+  const source = await addSource.json()
+  const addType = await saveEntry(types, { name: '对接清单' })
+  expect(addType.status).toBe(200)
+  const type = await addType.json()
+  expect((await saveEntry(sources, { name: ' 行业协会 ' })).status).toBe(409)
+  expect((await saveEntry(sources, { code: 'direct', previousName: '直接添加', name: '测试' })).status).toBe(403)
+
+  const dictionaryFile = 'dictionary-example.csv'
+  writeFileSync(join(dir, 'files', dictionaryFile), raw + '字典验收企业\r\n')
+  const uploaded = await post('/api/files/register', { relPath: dictionaryFile }, 201)
+  const version = await post(endpoint, {
+    ...input, series: '字典验收', fileId: uploaded.id, channel: source.code, listType: type.code,
+  }, 201)
+
+  const renamed = await saveEntry(sources, { code: source.code, previousName: source.name, name: '行业商协会' })
+  expect(renamed.status).toBe(200)
+  expect(await renamed.json()).toEqual({ code: source.code, name: '行业商协会' })
+  expect((await saveEntry(sources, { code: source.code, previousName: source.name, name: '商会' })).status).toBe(409)
+  const catalog = await (await app.request(endpoint)).json()
+  expect(catalog.channels).toContainEqual({ code: source.code, name: '行业商协会' })
+  expect(catalog.listTypes).toContainEqual(type)
+  expect(catalog.versions.find(({ id }: { id: number }) => id === version.id)).toMatchObject({
+    channel: source.code, listType: type.code,
+  })
+  const titles = await (await app.request('/api/roster/dictionaries/titles')).json()
+  expect(titles.map(({ code }: { code: string }) => code)).toContain('little_giant')
 })

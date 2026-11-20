@@ -4,7 +4,7 @@ import { createReusableTemplate, debounceFilter, useMediaQuery, watchWithFilter 
 import { useQuery } from '@pinia/colada'
 import { Search } from '@lucide/vue'
 import { CURRENT_STATUS_LABELS, type CurrentStatus } from '#sme-roster/lib/roster/current-status'
-import { TITLES } from '#sme-roster/lib/labels'
+import { CURRENT_ENTERPRISES_TITLE, TITLES } from '#sme-roster/lib/labels'
 import { CURRENT_TITLES, type CurrentTitle } from '#sme-roster/lib/roster/current-titles'
 import type { CurrentQualifiedRow as CurrentRow, CurrentQualifiedResult } from '#sme-roster/lib/roster/current-qualified-query'
 import { NINGBO_DISTRICTS, NINGBO_INDEPENDENT_ZONES } from '#sme-roster/lib/domain'
@@ -23,7 +23,7 @@ import RosterCurrentQualificationTimeline from '#sme-roster/app/components/Curre
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import FilterChip from '#core/app/components/FilterChip.vue'
 import RosterCurrentRosterExportEntry from '#sme-roster/app/components/CurrentRosterExportEntry.vue'
-import RosterCurrentRecognitionDatePicker from '#sme-roster/app/components/CurrentRecognitionDatePicker.vue'
+import DatePicker from '#core/app/components/DatePicker.vue'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import TableLoadingStatus from '#core/app/components/TableLoadingStatus.vue'
 import TablePagination from '#core/app/components/TablePagination.vue'
@@ -143,11 +143,11 @@ function clearFilters() {
   dateTo.value = ''
   update({ status: undefined, q: undefined, district: undefined, recognitionFrom: undefined, recognitionTo: undefined, validYear: undefined, maintenanceYear: undefined, maintenanceBatch: undefined, page: undefined })
 }
-useHead({ title: '优质中小企业查询' })
+useHead({ title: CURRENT_ENTERPRISES_TITLE })
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-3">
+  <div class="workspace-list flex min-w-0 flex-col gap-3">
     <DefineFilters>
       <Select v-model="districtModel">
         <SelectTrigger size="sm" class="bg-card w-32 shadow-none" aria-label="按区县筛选"><SelectValue /></SelectTrigger>
@@ -172,53 +172,54 @@ useHead({ title: '优质中小企业查询' })
     </DefineFilters>
     <DefineDates>
       <div class="flex flex-wrap items-end gap-2">
-        <div class="flex flex-col gap-1"><Label for="recognition-from">认定时间起</Label><RosterCurrentRecognitionDatePicker id="recognition-from" v-model="dateFrom" label="认定时间起" /></div>
-        <div class="flex flex-col gap-1"><Label for="recognition-to">认定时间止</Label><RosterCurrentRecognitionDatePicker id="recognition-to" v-model="dateTo" label="认定时间止" /></div>
+        <div class="flex flex-col gap-1"><Label for="recognition-from">认定时间起</Label><DatePicker id="recognition-from" v-model="dateFrom" label="认定时间起" /></div>
+        <div class="flex flex-col gap-1"><Label for="recognition-to">认定时间止</Label><DatePicker id="recognition-to" v-model="dateTo" label="认定时间止" /></div>
         <Button variant="outline" size="sm" :disabled="!canApplyDate" @click="applyDate">应用时间</Button>
         <Button v-if="recognitionFrom || recognitionTo" variant="ghost" size="sm" @click="clearDate">清除时间</Button>
         <span v-if="dateError" class="text-destructive text-sm" role="alert">{{ dateError }}</span>
       </div>
     </DefineDates>
-    <PageHeader title="优质中小企业查询">
-      <template #actions><RosterCurrentRosterExportEntry :title-code="title" /></template>
-    </PageHeader>
-    <section aria-label="名单查询条件" class="bg-card flex min-w-0 flex-col gap-4 rounded-lg border p-4">
-    <Tabs v-model="titleModel">
-      <TabsList class="h-auto max-w-full flex-wrap">
-        <TabsTrigger v-for="code in CURRENT_TITLES" :key="code" :value="code">{{ TITLES[code] }}</TabsTrigger>
-      </TabsList>
-    </Tabs>
-    <div class="flex flex-wrap items-center gap-2">
-      <div class="relative w-full sm:w-72">
-        <Search class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" aria-hidden="true" />
-        <Input v-model="search" class="bg-card h-8 pl-8 shadow-none" placeholder="名称、曾用名或信用代码" aria-label="搜索企业名称、已确认曾用名或统一社会信用代码" />
-      </div>
-      <Select v-model="statusModel">
-        <SelectTrigger size="sm" class="bg-card w-36 shadow-none" aria-label="按有效状态筛选"><SelectValue /></SelectTrigger>
-        <SelectContent><SelectGroup><SelectItem v-for="(label, code) in CURRENT_STATUS_LABELS" :key="code" :value="code">{{ code === 'effective' ? '有效' : label }}</SelectItem></SelectGroup></SelectContent>
-      </Select>
-      <ReuseFilters v-if="!isNarrow" />
-    </div>
-    <ReuseDates v-if="!isNarrow" />
-    <DisclosurePanel v-else v-model:open="advancedOpen" compact :heading-level="2" :title="`高级筛选与排序（已选 ${advancedFilterCount} 项）`">
-      <div class="flex flex-col gap-3">
-        <div class="flex flex-wrap items-center gap-2"><ReuseFilters /></div>
-        <ReuseDates />
-      </div>
-    </DisclosurePanel>
-    <div v-if="activeFilters.length" class="flex flex-wrap items-center gap-1.5" role="group" aria-label="已选筛选条件">
-      <FilterChip v-for="filter in activeFilters" :key="filter.key" :label="filter.label" @remove="filter.clear()" />
-      <Button variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
-    </div>
-    </section>
-    <p v-if="displayed?.uncertainTotal && displayed.request.params.recognitionFrom" class="text-muted-foreground text-sm">另有 {{ displayed.uncertainTotal }} 家仅有年份精度，与所选时间部分重叠或缺少日期事实，未计入确定结果。</p>
-    <Card class="gap-0 overflow-hidden py-0 shadow-none">
-      <CardContent class="relative p-0">
+    <PageHeader :title="CURRENT_ENTERPRISES_TITLE" />
+    <Card class="paginated-table-card min-w-0 gap-0 overflow-hidden py-0 shadow-none">
+      <section aria-label="名单查询条件" tabindex="0" class="table-toolbar workspace-list-filter flex min-w-0 flex-col gap-3">
+        <div class="flex min-w-0 flex-wrap items-center gap-2">
+          <Tabs v-model="titleModel" class="min-w-0">
+            <TabsList class="h-auto max-w-full flex-wrap">
+              <TabsTrigger v-for="code in CURRENT_TITLES" :key="code" :value="code" class="h-auto min-h-8">{{ TITLES[code] }}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <RosterCurrentRosterExportEntry :title-code="title" class="ml-auto justify-end" />
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="relative w-full sm:w-72">
+            <Search class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" aria-hidden="true" />
+            <Input v-model="search" class="bg-card h-8 pl-8 shadow-none" placeholder="名称、曾用名或信用代码" aria-label="搜索企业名称、已确认曾用名或统一社会信用代码" />
+          </div>
+          <Select v-model="statusModel">
+            <SelectTrigger size="sm" class="bg-card w-36 shadow-none" aria-label="按有效状态筛选"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectGroup><SelectItem v-for="(label, code) in CURRENT_STATUS_LABELS" :key="code" :value="code">{{ code === 'effective' ? '有效' : label }}</SelectItem></SelectGroup></SelectContent>
+          </Select>
+          <ReuseFilters v-if="!isNarrow" />
+        </div>
+        <ReuseDates v-if="!isNarrow" />
+        <DisclosurePanel v-else v-model:open="advancedOpen" compact :heading-level="2" :title="`高级筛选与排序（已选 ${advancedFilterCount} 项）`">
+          <div class="flex flex-col gap-3">
+            <div class="flex flex-wrap items-center gap-2"><ReuseFilters /></div>
+            <ReuseDates />
+          </div>
+        </DisclosurePanel>
+        <div v-if="activeFilters.length" class="flex flex-wrap items-center gap-1.5" role="group" aria-label="已选筛选条件">
+          <FilterChip v-for="filter in activeFilters" :key="filter.key" :label="filter.label" @remove="filter.clear()" />
+          <Button variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
+        </div>
+      </section>
+      <p v-if="displayed?.uncertainTotal && displayed.request.params.recognitionFrom" class="text-muted-foreground border-b px-3 py-2 text-sm sm:px-4">另有 {{ displayed.uncertainTotal }} 家仅有年份精度，与所选时间部分重叠或缺少日期事实，未计入确定结果。</p>
+      <CardContent class="paginated-table-body relative flex min-h-0 flex-col p-0">
         <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在查询企业资格…" />
         <TableFailureState v-if="error" class="[overflow-wrap:anywhere]" title="企业资格查询失败" :compact="Boolean(displayed)" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
-        <div v-if="!error || displayed" class="data-table-scroll hidden sm:block [&_[data-slot=table-container]]:overflow-visible">
+        <div v-if="!error || displayed" class="data-table-scroll hidden sm:block">
           <Table class="data-table min-w-[850px] table-fixed" aria-label="企业资格查询结果">
-            <TableHeader class="sticky top-0 z-10"><TableRow class="hover:bg-transparent">
+            <TableHeader><TableRow class="hover:bg-transparent">
               <TableHead class="bg-muted w-[24%]">企业名称</TableHead><TableHead class="bg-muted w-[19%]">统一社会信用代码</TableHead><TableHead class="bg-muted w-[12%]">区县</TableHead><TableHead class="bg-muted w-[31%]">认定与复核</TableHead><TableHead class="bg-muted w-[14%]">详情与出处</TableHead>
             </TableRow></TableHeader>
             <TableBody>
@@ -240,7 +241,7 @@ useHead({ title: '优质中小企业查询' })
           <Skeleton class="h-4 w-full" />
           <Skeleton class="h-4 w-3/4" />
         </div>
-        <ul v-if="rows.length" class="flex flex-col divide-y sm:hidden" aria-label="企业资格查询结果">
+        <ul v-if="rows.length" class="data-table-scroll flex flex-col divide-y sm:hidden" aria-label="企业资格查询结果">
           <li v-for="row in rows" :key="row.enterpriseId" class="flex min-w-0 flex-col gap-1.5 p-3" data-testid="current-enterprise-card">
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0"><p class="font-medium break-words">{{ row.name }}</p><p class="text-muted-foreground break-all font-mono text-xs">{{ row.uscc ?? '信用代码未记录' }}</p></div>
@@ -252,8 +253,8 @@ useHead({ title: '优质中小企业查询' })
         </ul>
         <Empty v-if="displayed && !rows.length" class="sm:hidden border-0"><EmptyHeader><EmptyTitle>没有符合条件的企业</EmptyTitle></EmptyHeader></Empty>
       </CardContent>
+      <TablePagination in-card v-if="displayed" :page="displayed.request.page" :page-size="displayed.request.pageSize" :total="displayed.total" :loading="paginationDisabled" unit="家" @update:page="updatePagination({ page: $event === 1 ? undefined : String($event) })" @update:page-size="updatePagination({ pageSize: String($event), page: undefined })" />
     </Card>
-    <TablePagination v-if="displayed" :page="displayed.request.page" :page-size="displayed.request.pageSize" :total="displayed.total" :loading="paginationDisabled" unit="家企业" @update:page="updatePagination({ page: $event === 1 ? undefined : String($event) })" @update:page-size="updatePagination({ pageSize: String($event), page: undefined })" />
     <p v-if="displayed && displayed.responseVersion !== 'current-qualified-478-v2'" class="text-muted-foreground text-sm" role="status">旧版响应未提供五类有效状态；请刷新后核对，不能据此将资料缺口认作待核。</p>
   </div>
 </template>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ReviewAssessment } from '#sme-roster/lib/roster/evidence-review-ui'
 import { coverageLabels } from '#sme-roster/lib/roster/evidence-review-ui'
-import { PLATFORM_QUERY_STATUSES } from '#sme-roster/lib/labels'
+import { PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS } from '#sme-roster/lib/labels'
 import {
   conditionSummary,
   interfaceLabel,
@@ -61,22 +61,9 @@ const pageStatus = (value: string) => PLATFORM_QUERY_STATUSES[value] ?? '状态�
         </ul>
         <ul v-if="source.unfinished.length" class="flex flex-col gap-0.5">
           <li v-for="gap in source.unfinished" :key="`${gap.rdjb}-${gap.page}`" class="text-warning">
-            未完成：{{ interfaceLabel(gap.source) }} · 称号 {{ gap.rdjb ?? '未知' }} · 下一页 {{ gap.page }}
+            未完成：{{ interfaceLabel(gap.source) }} · {{ PLATFORM_RDJBS[gap.rdjb ?? ''] ?? '称号未记录' }} · 下一页 {{ gap.page }}
           </li>
         </ul>
-        <DisclosurePanel compact keep-mounted content-class="pb-0" class="text-muted-foreground">
-          <template #trigger><span>技术详情</span></template>
-          <dl class="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5 break-words">
-            <dt>查询 ID</dt><dd>#{{ source.queryId }}</dd>
-            <dt>接口键</dt><dd>{{ source.interface }}</dd>
-            <dt>原始状态</dt><dd>{{ source.queryStatus }}</dd>
-            <dt>查询条件（原始）</dt><dd>{{ source.conditions ? JSON.stringify(source.conditions) : '未记录' }}</dd>
-            <dt>完整性</dt><dd>{{ source.completeness ?? '未记录' }}</dd>
-            <template v-for="gap in source.unfinished" :key="`tech-${gap.rdjb}-${gap.page}`">
-              <dt>未完成来源键</dt><dd>{{ gap.source }}</dd>
-            </template>
-          </dl>
-        </DisclosurePanel>
       </li>
     </ul>
   </DisclosurePanel>

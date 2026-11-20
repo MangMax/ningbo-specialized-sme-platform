@@ -13,10 +13,11 @@ let workerExecution = !isMainThread
 const numberEnv = (name: string, fallback: number) => {
   const value = Number(process.env[name]); return Number.isInteger(value) && value > 0 ? value : fallback
 }
-/** Server and each worker own one bounded drain to the SAME independent directory. SQLite serializes writes. */
+/** Server and each worker own a bounded drain to the shared runtime log store. */
 export function applicationLogs(): LogService {
   return service ??= createLogService({
     directory: resolve(process.env.NUXT_LOG_DIR || './.runtime-logs'),
+    postgresUrl: process.env.NUXT_POSTGRES_LOG_URL,
     retentionDays: Math.min(365, numberEnv('NUXT_LOG_RETENTION_DAYS', LOG_DEFAULTS.retentionDays)),
     maxBytes: Math.max(1048576, Math.min(4294967296, numberEnv('NUXT_LOG_MAX_BYTES', LOG_DEFAULTS.maxBytes))),
     stdout: true,

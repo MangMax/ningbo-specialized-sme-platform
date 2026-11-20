@@ -170,56 +170,12 @@ function restoreListFocus(event: Event) {
 watch(job, (next, previous) => { if (previous && !next) closingRow.value = previous; if (exportNotice.value && exportNotice.value.jobId && exportNotice.value.jobId !== next) exportNotice.value = null })
 </script>
 <template>
-  <div class="flex min-w-0 flex-col gap-4">
-    <PageHeader title="后台任务">
-      <template #actions>
-        <Button size="sm" variant="outline" :disabled="loading" @click="reload">刷新列表</Button>
-      </template>
-    </PageHeader>
+  <div class="workspace-list flex min-w-0 flex-col gap-4">
+    <PageHeader title="后台任务" />
     <!-- 任务列表：分类、筛选、列表与分页同属一个 h2 区块 -->
-    <section aria-labelledby="task-list-heading" class="flex min-w-0 flex-col gap-4">
+    <section aria-labelledby="task-list-heading" class="workspace-list workspace-list-body flex min-w-0 flex-col gap-4">
       <h2 id="task-list-heading" class="sr-only">任务列表</h2>
-      <Tabs :model-value="tab" @update:model-value="setTab">
-        <TabsList aria-label="任务模块" class="h-auto w-full flex-wrap justify-start">
-          <TabsTrigger v-for="entry in taskTabs" :key="entry.id" :value="entry.id" :data-task-tab="entry.id" class="min-h-11 sm:min-h-0">{{ entry.label }}<span v-if="data && !stale" class="ml-1 tabular-nums">{{ data.counts[entry.id] }}</span></TabsTrigger>
-        </TabsList>
-      </Tabs>
       <RosterCandidateTaskCreate v-if="showsRosterTools && data?.authorized && !stale" @created="id => { void navigate({job:id,tab:'sme-roster',group:'platform',page:1}); void refresh() }" />
-      <!-- 每个 Label+Select 自成一组：窄屏折行时标签不会留在上一行、控件掉到下一行 -->
-      <div data-testid="task-filters" class="flex flex-wrap items-center gap-2">
-        <div v-if="groups.length" class="flex items-center gap-2">
-          <Label for="task-group" class="sr-only">分组</Label>
-          <Select :model-value="group ?? 'all'" @update:model-value="navigate({ group: $event === 'all' ? undefined : String($event), titleCode: undefined, page: 1, job: undefined })">
-            <SelectTrigger id="task-group" size="sm" class="bg-card w-36 shadow-none" aria-label="任务分组"><SelectValue /></SelectTrigger>
-            <SelectContent class="shadow-none">
-              <SelectItem value="all">全部分组</SelectItem>
-              <SelectItem v-for="entry in groups" :key="entry.id" :value="entry.id">{{ entry.label }}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div class="flex items-center gap-2">
-          <Label for="task-state" class="sr-only">状态</Label>
-          <Select :model-value="state" @update:model-value="navigate({ state: String($event), page: 1, job: undefined })">
-            <SelectTrigger id="task-state" size="sm" class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-32 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100" :data-active="state !== 'all'" aria-label="任务状态"><SelectValue /></SelectTrigger>
-            <SelectContent class="shadow-none"><SelectGroup><SelectItem value="all">全部状态</SelectItem><SelectItem v-for="s in JOB_STATES" :key="s" :value="s">{{ TASK_STATES[s] }}</SelectItem></SelectGroup></SelectContent>
-          </Select>
-        </div>
-        <Button v-if="tab === 'core'" as-child variant="outline" size="sm" class="bg-card shadow-none"><NuxtLink to="/ocr">识别校对入口</NuxtLink></Button>
-        <Button v-if="showsRosterTools" as-child variant="outline" size="sm" class="bg-card shadow-none"><NuxtLink :to="ROSTER_LEDGER_PATH">{{ ENTERPRISE_LIST_TITLE }}</NuxtLink></Button>
-        <div v-if="showsExportFilter" class="flex min-w-0 items-center gap-2">
-          <Label for="export-title-filter" class="sr-only">导出称号</Label>
-          <Select :model-value="titleCode" @update:model-value="navigate({ titleCode: $event === 'all' ? undefined : String($event), page: 1, job: undefined })">
-            <SelectTrigger id="export-title-filter" size="sm" class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-48 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100" :data-active="titleCode !== 'all'" aria-label="导出称号"><SelectValue /></SelectTrigger>
-            <SelectContent class="shadow-none"><SelectGroup><SelectItem value="all">全部称号</SelectItem><SelectItem v-for="entry in TASK_EXPORTS" :key="entry.titleCode" :value="entry.titleCode">{{ entry.label }}</SelectItem></SelectGroup></SelectContent>
-          </Select>
-        </div>
-      </div>
-      <div v-if="filters.group || selectedState || selectedExportTitle" class="flex flex-wrap items-center gap-1.5" role="group" aria-label="已应用筛选">
-        <FilterChip v-if="filters.group" :label="`分组 · ${filters.group.label}`" @remove="navigate({ group: undefined, titleCode: undefined, page: 1, job: undefined })" />
-        <FilterChip v-if="selectedState" :label="`状态 · ${selectedState}`" @remove="navigate({ state: undefined, page: 1, job: undefined })" />
-        <FilterChip v-if="selectedExportTitle" :label="`称号 · ${selectedExportTitle}`" @remove="navigate({ titleCode: undefined, page: 1, job: undefined })" />
-      </div>
-
       <!-- 本次导出：跨分类常驻，只说“请求”状态，与服务端任务状态分开。
            这是一条常驻状态，不是错误：它用 role=region（不是 Alert 默认的
            role=alert），受理结果只由下面的 export-notice 播报一次。 -->
@@ -240,6 +196,48 @@ watch(job, (next, previous) => { if (previous && !next) closingRow.value = previ
         :loading="loading" :failed="failed" :stale="stale" :failure-description="failureDescription" :dated="dated"
         @reload="reload" @open-detail="openDetail" @page="navigate({ page: $event })" @page-size="navigate({ pageSize: $event, page: 1 })"
       >
+        <template #toolbar>
+          <Tabs :model-value="tab" @update:model-value="setTab">
+            <TabsList aria-label="任务模块" class="h-auto w-full flex-wrap justify-start">
+              <TabsTrigger v-for="entry in taskTabs" :key="entry.id" :value="entry.id" :data-task-tab="entry.id" class="h-auto min-h-11 sm:min-h-8">{{ entry.label }}<span v-if="data && !stale" class="ml-1 tabular-nums">{{ data.counts[entry.id] }}</span></TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <!-- 每个 Label+Select 自成一组：窄屏折行时标签不会留在上一行、控件掉到下一行 -->
+          <div data-testid="task-filters" class="flex flex-wrap items-center gap-2">
+            <div v-if="groups.length" class="flex items-center gap-2">
+              <Label for="task-group" class="sr-only">分组</Label>
+              <Select :model-value="group ?? 'all'" @update:model-value="navigate({ group: $event === 'all' ? undefined : String($event), titleCode: undefined, page: 1, job: undefined })">
+                <SelectTrigger id="task-group" size="sm" class="bg-card w-36 shadow-none" aria-label="任务分组"><SelectValue /></SelectTrigger>
+                <SelectContent class="shadow-none">
+                  <SelectItem value="all">全部分组</SelectItem>
+                  <SelectItem v-for="entry in groups" :key="entry.id" :value="entry.id">{{ entry.label }}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div class="flex items-center gap-2">
+              <Label for="task-state" class="sr-only">状态</Label>
+              <Select :model-value="state" @update:model-value="navigate({ state: String($event), page: 1, job: undefined })">
+                <SelectTrigger id="task-state" size="sm" class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-32 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100" :data-active="state !== 'all'" aria-label="任务状态"><SelectValue /></SelectTrigger>
+                <SelectContent class="shadow-none"><SelectGroup><SelectItem value="all">全部状态</SelectItem><SelectItem v-for="s in JOB_STATES" :key="s" :value="s">{{ TASK_STATES[s] }}</SelectItem></SelectGroup></SelectContent>
+              </Select>
+            </div>
+            <Button v-if="tab === 'core'" as-child variant="outline" size="sm" class="bg-card shadow-none"><NuxtLink to="/ocr">识别校对入口</NuxtLink></Button>
+            <Button v-if="showsRosterTools" as-child variant="outline" size="sm" class="bg-card shadow-none"><NuxtLink :to="ROSTER_LEDGER_PATH">{{ ENTERPRISE_LIST_TITLE }}</NuxtLink></Button>
+            <div v-if="showsExportFilter" class="flex min-w-0 items-center gap-2">
+              <Label for="export-title-filter" class="sr-only">导出称号</Label>
+              <Select :model-value="titleCode" @update:model-value="navigate({ titleCode: $event === 'all' ? undefined : String($event), page: 1, job: undefined })">
+                <SelectTrigger id="export-title-filter" size="sm" class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-48 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100" :data-active="titleCode !== 'all'" aria-label="导出称号"><SelectValue /></SelectTrigger>
+                <SelectContent class="shadow-none"><SelectGroup><SelectItem value="all">全部称号</SelectItem><SelectItem v-for="entry in TASK_EXPORTS" :key="entry.titleCode" :value="entry.titleCode">{{ entry.label }}</SelectItem></SelectGroup></SelectContent>
+              </Select>
+            </div>
+            <Button size="sm" variant="outline" class="ml-auto" :disabled="loading" @click="reload">刷新列表</Button>
+          </div>
+          <div v-if="filters.group || selectedState || selectedExportTitle" class="flex flex-wrap items-center gap-1.5" role="group" aria-label="已应用筛选">
+            <FilterChip v-if="filters.group" :label="`分组 · ${filters.group.label}`" @remove="navigate({ group: undefined, titleCode: undefined, page: 1, job: undefined })" />
+            <FilterChip v-if="selectedState" :label="`状态 · ${selectedState}`" @remove="navigate({ state: undefined, page: 1, job: undefined })" />
+            <FilterChip v-if="selectedExportTitle" :label="`称号 · ${selectedExportTitle}`" @remove="navigate({ titleCode: undefined, page: 1, job: undefined })" />
+          </div>
+        </template>
         <template #status="{ row }">
           <span v-if="row.export?.artifact" class="text-muted-foreground text-xs">{{ availabilityLabels[row.export.artifact.availability] }}</span>
         </template>

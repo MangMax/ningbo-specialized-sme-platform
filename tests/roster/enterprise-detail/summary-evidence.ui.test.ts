@@ -202,7 +202,7 @@ it('retains the current enterprise list filters in the return link', async () =>
   await openDetail('/enterprises/91?tab=review&currentBack=title%3Dspecialized_sme%26page%3D3')
   const breadcrumb = view!.get('nav[aria-label="当前位置"]')
   const back = breadcrumb.get('a')
-  expect(back.text()).toBe('优质中小企业查询')
+  expect(back.text()).toBe('优质中小企业')
   expect(back.attributes('href')).toBe('/current-enterprises?title=specialized_sme&page=3')
   expect(breadcrumb.get('[aria-current="page"]').text()).toBe('企业详情')
 })

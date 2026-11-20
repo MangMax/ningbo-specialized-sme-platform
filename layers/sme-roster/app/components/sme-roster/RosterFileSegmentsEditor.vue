@@ -674,24 +674,26 @@ defineExpose({ requestLeave })
       <p class="mb-3 text-muted-foreground">
         这反映企业记录的填写情况，不表示文件有几个名单段。
       </p>
-      <Table
-        ><TableHeader
-          ><TableRow
-            ><TableHead>企业记录内容分布</TableHead
-            ><TableHead>记录数</TableHead></TableRow
-          ></TableHeader
-        ><TableBody
-          ><TableRow
-            v-for="(part, i) in state.ingestionStatistics.parts"
-            :key="i"
-            ><TableCell class="whitespace-normal"
-              >{{ TITLES[part.titleCode] }} · {{ EVENTS[part.eventKind] }} ·
-              {{ part.year ?? '年份未知' }} /
-              {{ part.batch ?? '批次未知' }}</TableCell
-            ><TableCell>{{ part.rowCount }}</TableCell></TableRow
-          ></TableBody
-        ></Table
-      >
+      <div class="data-table-scroll" role="region" aria-label="企业记录内容分布" tabindex="0">
+        <Table class="data-table"
+          ><TableHeader
+            ><TableRow
+              ><TableHead>企业记录内容分布</TableHead
+              ><TableHead>记录数</TableHead></TableRow
+            ></TableHeader
+          ><TableBody
+            ><TableRow
+              v-for="(part, i) in state.ingestionStatistics.parts"
+              :key="i"
+              ><TableCell class="whitespace-normal"
+                >{{ TITLES[part.titleCode] }} · {{ EVENTS[part.eventKind] }} ·
+                {{ part.year ?? '年份未知' }} /
+                {{ part.batch ?? '批次未知' }}</TableCell
+              ><TableCell>{{ part.rowCount }}</TableCell></TableRow
+            ></TableBody
+          ></Table
+        >
+      </div>
     </DisclosurePanel>
     <footer v-if="state" class="space-y-2 border-t pt-3">
       <p class="text-muted-foreground text-sm">

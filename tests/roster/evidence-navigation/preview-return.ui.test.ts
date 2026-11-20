@@ -255,6 +255,36 @@ describe('出处预览返回滚动恢复', () => {
     })
   })
 
+  it('restores the workspace scroll position when the document itself is fixed', async () => {
+    const workspace = document.createElement('section')
+    workspace.setAttribute('data-workspace-scroll', '')
+    document.body.append(workspace)
+    const scrollTo = vi.spyOn(workspace, 'scrollTo')
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => frames.push(callback))
+
+    workspace.scrollTop = 186
+    rememberEvidencePreviewReturn(safeBack, workspace)
+    workspace.scrollTop = 0
+    history.pushState(null, '', safeBack)
+    const view = mount(defineComponent({
+      setup() {
+        useEvidencePreviewScrollRestore(ref(true))
+        return () => h('div')
+      },
+    }), { attachTo: workspace })
+    try {
+      await flushPromises()
+      expect(frames).toHaveLength(1)
+      frames[0]!(0)
+      expect(scrollTo).toHaveBeenCalledWith({ top: 186, behavior: 'instant' })
+    } finally {
+      view.unmount()
+      scrollTo.mockRestore()
+      workspace.remove()
+    }
+  })
+
   it.each([
     { label: '桌面表格滚动', width: 1440, height: 900, tableTop: 383, tableLeft: 0, windowTop: 90 },
     { label: '390×844 窄屏表格滚动', width: 390, height: 844, tableTop: 339, tableLeft: 644, windowTop: 42 },
@@ -533,7 +563,7 @@ describe('出处预览返回滚动恢复', () => {
     expect(JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!)).toEqual([
       { back: safeBack, scrollY: listWindowTop, scrollTop: listTableTop, scrollLeft: listTableLeft },
     ])
-    const ledgerLink = detailReturn.findAll('a').find((link) => link.text().includes('企业列表'))
+    const ledgerLink = detailReturn.findAll('a').find((link) => link.text().includes('历年优质中小企业'))
     expect(ledgerLink?.attributes('data-target')).toBe(
       JSON.stringify({ path: '/roster', query: { view: 'enterprise', q: '开诚', page: '2', expand: '91' } }),
     )
@@ -685,7 +715,7 @@ describe('出处预览返回滚动恢复', () => {
     expect(JSON.parse(sessionStorage.getItem('roster:evidence-preview-return')!)).toEqual([
       { back: ledgerPath, scrollY: ledgerWindowTop, scrollTop: ledgerTableTop, scrollLeft: ledgerTableLeft },
     ])
-    const ledgerLink = detailReturn.findAll('a').find((link) => link.text().includes('企业列表'))
+    const ledgerLink = detailReturn.findAll('a').find((link) => link.text().includes('历年优质中小企业'))
     expect(ledgerLink?.attributes('data-target')).toBe(
       JSON.stringify({ path: '/roster', query: { view: 'title', district: '海曙区', page: '2' } }),
     )

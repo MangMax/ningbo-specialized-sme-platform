@@ -59,7 +59,7 @@ const conflictLabel: Record<string, string> = {
                 <span v-else class="font-medium">{{ enterprise(row) }}</span>
                 <span class="text-muted-foreground mt-1 block break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.usccRaw) }}</span>
               </TableCell>
-              <TableCell class="break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.validityDateRaw) }}</TableCell>
+              <TableCell class="whitespace-normal font-mono text-xs [overflow-wrap:anywhere]">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.validityDateRaw) }}</TableCell>
               <TableCell class="whitespace-normal break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.maintenanceBatch) }}</TableCell>
               <TableCell class="whitespace-normal break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.district) }}</TableCell>
               <TableCell class="whitespace-normal text-xs leading-5">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.titleRaw, projectionTitle) }}</TableCell>
@@ -73,7 +73,7 @@ const conflictLabel: Record<string, string> = {
           </TableBody>
         </Table>
       </div>
-      <ul v-if="records.length" class="flex flex-col divide-y sm:hidden" aria-label="平台认定目录列表">
+      <ul v-if="records.length" class="data-table-scroll flex flex-col divide-y sm:hidden" aria-label="平台认定目录列表">
         <li v-for="row in records" :key="row.record.id" class="flex min-w-0 flex-col gap-1.5 p-3" data-testid="platform-recognized-directory-card" :data-record-id="row.record.id">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
@@ -124,7 +124,7 @@ const conflictLabel: Record<string, string> = {
           </TableBody>
         </Table>
       </div>
-      <ul v-if="isolated.length" class="flex flex-col divide-y sm:hidden" aria-label="隔离的目录观察列表">
+      <ul v-if="isolated.length" class="data-table-scroll flex flex-col divide-y sm:hidden" aria-label="隔离的目录观察列表">
         <li v-for="row in isolated" :key="row.relationId" class="flex min-w-0 flex-col gap-1.5 p-3" data-testid="platform-recognized-directory-isolated-card" :data-relation-id="row.relationId">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">

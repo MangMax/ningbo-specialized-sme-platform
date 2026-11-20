@@ -171,7 +171,7 @@ it("initial_failure_and_settled_empty_are_distinct", async () => {
   requests.at(-1)!.result.resolve(wire({ empty: true, total: 0 })); await flushPromises()
   expect(view.findAll('[data-slot="empty-title"]').map(title => title.text())).toEqual(['没有符合条件的企业', '没有符合条件的企业'])
   expect(view.findComponent(TablePagination).props()).toMatchObject({ page: 2, pageSize: 1, total: 0, loading: false })
-  expect(view.get('[data-testid="table-total"]').text()).toBe('共 0 家企业')
+  expect(view.get('[data-testid="table-total"]').text()).toBe('共 0 家')
 })
 
 it("effective_row_with_review_gaps_keeps_unknown_timeline_facts_without_pending_region", async () => {

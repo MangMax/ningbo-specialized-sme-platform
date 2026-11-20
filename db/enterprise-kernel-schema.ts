@@ -118,6 +118,18 @@ export function installEnterpriseKernelSchema(db: Database.Database) {
       SELECT NEW.into_enterprise_id,intake_id FROM roster_announcement_member WHERE enterprise_id=NEW.from_enterprise_id;
     END;
   `)
+  installEnterpriseAddressSchema(db)
+}
+
+export function installEnterpriseAddressSchema(db: Database.Database) {
+  db.exec(`
+    CREATE TABLE enterprise_address (
+      enterprise_id INTEGER NOT NULL REFERENCES enterprise(id),
+      kind TEXT NOT NULL CHECK (kind IN ('registered', 'operating')),
+      address TEXT NOT NULL CHECK (length(trim(address)) BETWEEN 1 AND 500),
+      PRIMARY KEY (enterprise_id, kind)
+    );
+  `)
 }
 
 export function assertEnterpriseKernelSchema(db: Database.Database, version: unknown) {
@@ -126,6 +138,7 @@ export function assertEnterpriseKernelSchema(db: Database.Database, version: unk
     || !db.prepare('SELECT 1 FROM enterprise_kernel_completion WHERE id = 1 AND version = ?').get(ENTERPRISE_KERNEL_VERSION)) {
     throw new Error('Enterprise kernel missing; run explicit offline enterprise kernel cutover')
   }
+  db.prepare('SELECT enterprise_id,kind,address FROM enterprise_address LIMIT 0').all()
   db.prepare(`SELECT e.revision, a.renamed_year, s.version_key, l.source_id, r.code, i.input_id, c.name, t.name, b.digest, b.reviewed_request,
     legacy.enterprise_id, m.enterprise_id, m.intake_id
     FROM enterprise_directory e, enterprise_former_name a, enterprise_source s, enterprise_source_link l,

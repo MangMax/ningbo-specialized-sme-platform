@@ -177,3 +177,131 @@ test('rejects reviewed identity collisions with a current name, confirmed former
   expect((await get(path)).aliases).toEqual([])
   expect(await get(staged.supplement.replace(/\/supplement$/, ''))).toMatchObject({ status: 'staged', receipt: null, review: null })
 })
+
+test('updates one registered address and one operating address with the enterprise region and industry', async () => {
+  app.db.$client.exec(`
+    INSERT INTO enterprise_region(code,name,parent_code,level) VALUES
+      ('330200','宁波市',NULL,1),('330203','海曙区','330200',2),('330203001','月湖街道','330203',3),
+      ('330206','北仑区','330200',2),('330206001','新碶街道','330206',3);
+    INSERT INTO enterprise_industry(code,input_id,name,parent_code,level) VALUES
+      ('C','address-test-C','制造业',NULL,0),('34','address-test-34','通用设备制造业','C',1),
+      ('344','address-test-344','泵阀制造','34',2),('3444','address-test-3444','液压设备制造','344',3);
+  `)
+  const enterprise = await submit(core, { name: '企业资料测试' })
+  const endpoint = core + '/' + enterprise.id + '/details'
+  expect(await get(endpoint)).toMatchObject({ registeredAddress: null, operatingAddress: null, revision: 1 })
+  const values = {
+    expectedRevision: 1, districtCode: '330203', townshipCode: '330203001', industryCode: '3444',
+    registeredAddress: '海曙区登记地址', operatingAddress: '北仑区实际经营地址',
+  }
+  await submit(endpoint, { ...values, townshipCode: '330206001' }, 409)
+  expect(await get(endpoint)).toMatchObject({ registeredAddress: null, operatingAddress: null, revision: 1 })
+
+  const saved = await submit(endpoint, values)
+  expect(saved).toMatchObject({
+    districtCode: '330203', townshipCode: '330203001', industryCode: '3444',
+    registeredAddress: '海曙区登记地址', operatingAddress: '北仑区实际经营地址', revision: 2,
+  })
+  await submit(endpoint, { ...values, operatingAddress: null }, 409)
+  expect(await get(endpoint)).toEqual(saved)
+
+  const cleared = await submit(endpoint, { expectedRevision: 2, registeredAddress: '海曙区登记地址', operatingAddress: null })
+  expect(cleared).toMatchObject({
+    townshipCode: '330203001', industryCode: '3444', registeredAddress: '海曙区登记地址', operatingAddress: null, revision: 3,
+  })
+  expect(await get(core + '/' + enterprise.id + '/sources')).toMatchObject([{ channel: '直接添加' }])
+})
+
+test('filters and sorts every enterprise column across the full directory before pagination', async () => {
+  app.db.$client.exec(`
+    INSERT INTO enterprise_region(code,name,parent_code,level) VALUES
+      ('990000','排序市',NULL,1),('990001','Z区','990000',2),('990001001','Y镇','990001',3),
+      ('990002','A区','990000',2),('990002001','B镇','990002',3);
+    INSERT INTO enterprise_industry(code,input_id,name,parent_code,level) VALUES
+      ('X','sort-X','测试门类',NULL,0),('98','sort-98','测试大类', 'X',1),
+      ('981','sort-981','测试中类','98',2),('9811','sort-9811','Z制造','981',3),('9812','sort-9812','A制造','981',3);
+  `)
+  const name = '排序核验'
+  const beta = await submit(core, { name: name + 'Beta', uscc: '91330200000000001H' })
+  const alpha = await submit(core, { name: name + 'Alpha', uscc: '91330200000000002L' })
+  const gamma = await submit(core, { name: name + 'Gamma' })
+  const profile = (id: number) => core + '/' + id + '/details'
+  await submit(profile(alpha.id), { expectedRevision: 1, districtCode: '990001', townshipCode: '990001001',
+    industryCode: '9811', registeredAddress: 'A登记地', operatingAddress: 'Y经营地' })
+  await submit(profile(beta.id), { expectedRevision: 1, districtCode: '990002', townshipCode: '990002001',
+    industryCode: '9812', registeredAddress: 'B登记地', operatingAddress: 'B经营地' })
+
+  const least = { name: alpha.id, uscc: beta.id, district: beta.id, township: beta.id, industry: beta.id,
+    registeredAddress: alpha.id, operatingAddress: beta.id }
+  for (const [sort, first] of Object.entries(least)) {
+    const second = first === alpha.id ? beta.id : alpha.id
+    const ordered = new URLSearchParams({ name, sort, limit: '1' })
+    expect(await get(core + '?' + ordered)).toMatchObject({ page: 1, total: 3, rows: [{ id: first }] })
+    ordered.set('page', '2')
+    expect(await get(core + '?' + ordered)).toMatchObject({ page: 2, total: 3, rows: [{ id: second }] })
+    ordered.set('page', '1')
+    ordered.set('direction', 'desc')
+    const descendingFirst = sort === 'name' ? gamma.id : second
+    expect(await get(core + '?' + ordered)).toMatchObject({ page: 1, total: 3, rows: [{ id: descendingFirst }] })
+    if (sort !== 'name') {
+      ordered.set('page', '3')
+      expect(await get(core + '?' + ordered)).toMatchObject({ page: 3, total: 3, rows: [{ id: gamma.id }] })
+    }
+  }
+
+  const criteria = { name, districtCode: '990001', townshipCode: '990001001', industryDivisionCode: '98',
+    industryCode: '9811', uscc: '91330200000000002L', registeredAddress: 'A登记', operatingAddress: 'Y经营', page: '1' }
+  expect(await get(core + '?' + new URLSearchParams(criteria))).toMatchObject({ total: 1, rows: [{
+    id: alpha.id, districtName: 'Z区', townshipName: 'Y镇', industryName: 'Z制造', registeredAddress: 'A登记地', operatingAddress: 'Y经营地',
+  }] })
+  for (const [field, value] of Object.entries({ districtCode: '990002', townshipCode: '990002001', industryDivisionCode: '97',
+    industryCode: '9812', uscc: '91330200000000001H', registeredAddress: 'B登记', operatingAddress: 'B经营' })) {
+    expect(await get(core + '?' + new URLSearchParams({ ...criteria, [field]: value }))).toMatchObject({ total: 0, rows: [] })
+  }
+  expect((await app.request(core + '?sort=addresses')).status).toBe(400)
+  expect((await app.request(core + '?sort=name&after=0')).status).toBe(400)
+})
+
+test('applies ordered mixed-direction sorts to the full enterprise result before paging', async () => {
+  app.db.$client.exec(`
+    INSERT INTO enterprise_region(code,name,parent_code,level) VALUES
+      ('980000','多级排序市',NULL,1),('980001','多级排序区','980000',2),
+      ('980001001','A街道','980001',3),('980001002','B街道','980001',3);
+    INSERT INTO enterprise_industry(code,input_id,name,parent_code,level) VALUES
+      ('Y','multi-Y','测试门类',NULL,0),('97','multi-97','测试大类','Y',1),
+      ('971','multi-971','测试中类','97',2),('9711','multi-9711','Z制造','971',3),('9712','multi-9712','A制造','971',3);
+  `)
+  const ids = new Map<string, number>()
+  for (const [letter, townshipCode, industryCode] of [
+    ['F', '980001001', '9711'], ['A', '980001001', '9712'], ['B', '980001002', '9711'],
+    ['D', null, '9711'], ['C', '980001001', '9711'],
+  ] as const) {
+    const enterprise = await submit(core, { name: '多级排序核验' + letter })
+    ids.set(letter, enterprise.id)
+    await submit(core + '/' + enterprise.id + '/details', { expectedRevision: 1, districtCode: '980001', townshipCode, industryCode,
+      registeredAddress: null, operatingAddress: null })
+  }
+  const query = new URLSearchParams({ name: '多级排序核验', limit: '2' })
+  for (const field of ['township', 'industry', 'name']) query.append('sort', field)
+  for (const direction of ['asc', 'desc', 'asc']) query.append('direction', direction)
+  const expected = [['C', 'F'], ['A', 'B'], ['D']]
+  for (const [index, letters] of expected.entries()) {
+    query.set('page', String(index + 1))
+    const result = await get(core + '?' + query)
+    expect(result.total).toBe(5)
+    expect(result.rows.map((row: { id: number }) => row.id)).toEqual(letters.map(letter => ids.get(letter)))
+  }
+
+  query.delete('sort')
+  query.delete('direction')
+  query.set('limit', '25')
+  query.set('page', '1')
+  for (const field of ['industry', 'township', 'name']) query.append('sort', field)
+  for (const direction of ['desc', 'asc', 'asc']) query.append('direction', direction)
+  const reordered = await get(core + '?' + query)
+  expect(reordered.rows.map((row: { id: number }) => row.id)).toEqual(['C', 'F', 'B', 'D', 'A'].map(letter => ids.get(letter)))
+
+  expect((await app.request(core + '?sort=industry&sort=industry')).status).toBe(400)
+  expect((await app.request(core + '?sort=industry&sort=name&direction=asc')).status).toBe(400)
+  expect((await app.request(core + '?sort=township&sort=name&after=0')).status).toBe(400)
+})

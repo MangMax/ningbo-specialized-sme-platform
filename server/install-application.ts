@@ -13,6 +13,7 @@ import { installJobSpecs, registerJobSpecs } from './utils/job-specs'
 import { installTaskCenter } from './task-center'
 import { installMcpFilePreparation } from './mcp-file-store'
 import { configureFileStore } from './file-store'
+import { libraryFileServerCategory } from '../layers/core/server/utils/library-file-category'
 import type { JobSpec } from '../layers/core/server/utils/job-runner'
 
 import * as leadListSpecs from '../layers/lead-lists/server/utils/export-job'
@@ -20,7 +21,7 @@ import { leadListFileServerCategory } from '../layers/lead-lists/server/utils/fi
 
 export function installApplicationServer(): void {
   installAppModules(appManifests)
-  configureFileStore([rosterFileServerCategory, leadListFileServerCategory])
+  configureFileStore([libraryFileServerCategory, rosterFileServerCategory, leadListFileServerCategory])
   installMcpFilePreparation(ensureFileStoreReady)
   installTaskCenter(handleTaskCenterRoute)
   installJobRuntime({

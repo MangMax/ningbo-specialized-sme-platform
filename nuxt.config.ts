@@ -47,7 +47,6 @@ export default defineNuxtConfig({
     '@pinia/nuxt',
     '@pinia/colada-nuxt',
     '@vueuse/nuxt',
-    'nuxt-charts',
     // MCP tool definitions are discovered in the installed layers. The
     // application handler and transport contract live in server/mcp/index.ts.
     '@nuxtjs/mcp-toolkit',
@@ -83,11 +82,6 @@ export default defineNuxtConfig({
   evlog: {
     silent: true, pretty: false, console: false, sourceLocation: false, strip: [],
     transport: { enabled: false }, stream: false,
-  },
-
-  // 统计页图表(nuxt-charts v3)。只注册用到的图表组件,缩小客户端包体。
-  nuxtCharts: {
-    include: ['LineChart', 'DonutChart'],
   },
 
   css: ['#core/app/assets/css/tailwind.css'],

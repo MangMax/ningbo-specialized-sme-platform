@@ -23,17 +23,30 @@ it('keeps four peer sources and retained directory periods without technical con
   expect(view.text()).toContain('同码原名')
   expect(view.text()).toContain('2029-03-05')
   expect(view.text()).toContain('采集失败')
-  expect(view.text()).not.toMatch(/绑定|原字段|版本|JSON|查询 #/)
+  expect(view.text()).not.toMatch(/绑定|原字段|版本|JSON|查询 #|业务详情|最近采集|资料采集时间/)
+  expect(view.text()).not.toContain('2026-11-15')
   view.unmount()
 })
 
 it('distinguishes unknown business time from collection time and keeps submission meaning', async () => {
-  const event = { ...timeline.sources[1]!.events[0]!, key: 'apply_list:2', businessTimeKind: 'submission' as const, businessTime: date(null), period: { from: date(null), until: date(null) } }
+  const event = {
+    ...timeline.sources[1]!.events[0]!,
+    key: 'apply_list:2',
+    matter: 'apply',
+    matterRaw: 'apply',
+    conclusion: 'processing' as const,
+    statusRaw: 'raw_processing_code',
+    businessTimeKind: 'submission' as const,
+    businessTime: date(null),
+    period: { from: date(null), until: date(null) },
+  }
   const view = mount(PlatformRecords, { props: { timeline: { ...timeline, sources: timeline.sources.map(s => s.source === 'apply_list' ? { ...s, events: [event] } : s) } } })
   await view.findAll('[role="tab"]')[3]!.trigger('keydown', { key: 'Enter' })
   expect(view.text()).toContain('申报时间：未知')
+  expect(view.text()).toContain('结论：办理中')
+  expect(view.text()).toContain('业务年度：2026')
   expect(view.text()).toContain('起始未知 至 结束未知')
-  expect(view.text()).not.toContain('申报时间：2026-11-15')
+  expect(view.text()).not.toMatch(/apply|raw_processing_code|2026-11-15|2026-11-14/)
   view.unmount()
 })
 

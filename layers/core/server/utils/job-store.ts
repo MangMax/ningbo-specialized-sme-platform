@@ -175,10 +175,10 @@ const jobSummaryColumns = {
   exportWorkbook: sql<number | null>`case when ${schema.job.kind}='current-roster-export' and ${schema.job.state}='running' then json_extract(${schema.job.result}, '$.phase') = 'workbook' else 0 end`,
 }
 
-function toJobSummary(row: {
+export function toJobSummary(row: {
   id: string; kind: string; state: JobState; progress: JobProgress
   createdAt: string; startedAt: string | null; finishedAt: string | null
-  hasResult: number; hasError: number; exportWorkbook: number | null
+  hasResult: number | boolean; hasError: number | boolean; exportWorkbook: number | boolean | null
 }): JobSummaryDto {
   return {
     id: row.id, kind: row.kind, state: row.state, progress: row.progress,

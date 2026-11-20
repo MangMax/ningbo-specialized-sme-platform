@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ROSTER_LEDGER_PATH } from '#sme-roster/lib/sme-roster/routes'
+import { ROSTER_FILES_PATH, ROSTER_LEDGER_PATH } from '#sme-roster/lib/sme-roster/routes'
 import { ENTERPRISE_LIST_TITLE } from '#sme-roster/lib/labels'
 import { FileDown } from '@lucide/vue'
 import { describeUnsupported, fileNameOf, fileUrl, isPreviewable, resolvePreviewKind } from '#core/lib/preview'
@@ -20,11 +20,10 @@ const backLabel = computed(() => {
   const path = new URL(backTo.value, 'http://app.invalid').pathname
   if (/^\/enterprises\/\d+\/?$/.test(path)) return '企业详情'
   const names: Record<string, string> = {
-    '/': '平台工作台',
+    '/': ENTERPRISE_LIST_TITLE,
     '/files': '文件管理',
+    [ROSTER_FILES_PATH]: '名单文件',
     [ROSTER_LEDGER_PATH]: ENTERPRISE_LIST_TITLE,
-    '/quality': '数据质量',
-    '/stats': '称号统计',
     '/comparison': ENTERPRISE_LIST_TITLE,
     '/ocr': '识别校对',
     '/platform-queries': '平台查询证据',

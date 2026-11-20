@@ -32,6 +32,8 @@ const reading = ref(false)
 const error = ref('')
 const physical = ref<Physical | null>(null)
 const revision = ref<number | null>(null)
+const latestReferenceCount = ref<number>()
+const referenceCount = computed(() => latestReferenceCount.value ?? props.referenceCount)
 const ready = ref(false)
 // Retain immutable commands across closing/reopening and failed reads. Credentials stay in memory only.
 const commands = new Map<string, Command>()
@@ -50,14 +52,17 @@ async function readLatest() {
   const turn = ++sequence, target = id.value
   reading.value = true; ready.value = false; error.value = ''
   try {
-    const maintenance = await $fetch<{ revision: number }>(`/api/files/${target}/maintenance`)
+    const maintenance = await $fetch<{ revision: number; file?: { referenceCount?: number } }>(`/api/files/${target}/maintenance`)
     let latest: Physical | null = null
     try { latest = await $fetch<Physical>(`/api/files/${target}/physical-recovery`) }
     catch (cause) {
       if ((cause as { statusCode?: number; status?: number }).statusCode !== 404 && (cause as { status?: number }).status !== 404) throw cause
     }
     if (turn !== sequence || target !== id.value || !open.value) return
-    revision.value = maintenance.revision; physical.value = latest; ready.value = true
+    revision.value = maintenance.revision
+    latestReferenceCount.value = maintenance.file?.referenceCount
+    physical.value = latest
+    ready.value = true
     command.value = commands.get(`${target}:recover`) ?? commands.get(`${target}:quarantine`) ?? null
   } catch (cause) {
     if (turn === sequence) error.value = `状态读取失败：${describeFetchError(cause)}。保留上次结果，请重新读取。`
@@ -65,6 +70,7 @@ async function readLatest() {
 }
 watch([open, id], () => {
   ++sequence; ready.value = false; reading.value = false; busy.value = false; physical.value = null; revision.value = null; error.value = ''
+  latestReferenceCount.value = undefined
   command.value = commands.get(requestKey('recover')) ?? commands.get(requestKey('quarantine')) ?? null
   if (open.value) { deleteDisk.value = false; void readLatest() }
   else credential.value = ''
@@ -74,7 +80,7 @@ async function execute(action: 'quarantine' | 'recover', retry = false) {
   if (locked.value || (!retry && !valid.value)) return
   if (!retry) {
     if (action === 'recover' && !canRecover.value) return
-    if (action === 'quarantine' && (!canQuarantine.value || props.referenceCount > 0)) return
+    if (action === 'quarantine' && (!canQuarantine.value || referenceCount.value > 0)) return
     command.value = { fileId: id.value, action, body: { expectedRevision: revision.value!, idempotencyKey: crypto.randomUUID(), actor: actor.value.trim(), basis: basis.value.trim(), ...(action === 'recover' ? { intentId: physical.value!.intent.id } : {}) } }
     commands.set(requestKey(action), command.value)
   }
@@ -119,9 +125,9 @@ async function execute(action: 'quarantine' | 'recover', retry = false) {
           <Label for="recovery-file">原文件编号</Label>
           <Input id="recovery-file" v-model="lookupId" :disabled="locked" inputmode="numeric" />
         </template>
-        <p class="text-sm">默认只移出文件库，磁盘字节和正式出处保留。隔离会移走原路径的字节，不永久擦除；恢复须核验原字节，且不能覆盖已有路径。</p>
+        <p class="text-sm">移出文件库会保留原文件。隔离会移走原路径上的文件，可申请恢复。</p>
         <p class="break-all text-sm">{{ physical?.intent.relPath || relPath }}</p>
-        <p v-if="referenceCount > 0" class="text-sm">有 {{ referenceCount }} 条正式出处引用，禁止隔离；软移出仍保留出处。</p>
+        <p v-if="referenceCount > 0" class="text-sm">文件仍在使用，不能隔离。仅移出文件库会保留原文件。</p>
         <Button variant="outline" :disabled="locked" @click="readLatest">{{ reading ? '读取中…' : '读取最新状态' }}</Button>
         <p v-if="stateText" role="status">{{ stateText }}</p>
         <p v-if="physical?.intent.state === 'pending' || physical?.intent.state === 'recovering'" class="text-sm">操作尚未完成，不能推断原路径可用。可重试保留的原请求；恢复待处理若没有原请求，请由原操作端继续处理。</p>

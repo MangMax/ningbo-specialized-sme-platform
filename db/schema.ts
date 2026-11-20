@@ -2079,6 +2079,16 @@ export const enterpriseDirectory = sqliteTable('enterprise_directory', {
   removedReason: text('removed_reason'),
   revision: integer('revision').notNull().default(1),
 })
+export const enterpriseAddress = sqliteTable('enterprise_address', {
+  enterpriseId: integer('enterprise_id').notNull().references(() => enterprise.id),
+  kind: text('kind', { enum: ['registered', 'operating'] }).notNull(),
+  address: text('address').notNull(),
+}, t => [
+  primaryKey({ columns: [t.enterpriseId, t.kind] }),
+  check('enterprise_address_kind', sql`${t.kind} IN ('registered', 'operating')`),
+  check('enterprise_address_text', sql`length(trim(${t.address})) BETWEEN 1 AND 500`),
+])
+
 export const enterpriseFormerName = sqliteTable('enterprise_former_name', {
   aliasId: integer('alias_id').primaryKey().references(() => enterpriseAlias.id, { onDelete: 'cascade' }),
   uscc: text('uscc'),

@@ -19,7 +19,6 @@ const owners = {
     "tasks/details",
     "tasks/jobs"
   ],
-  "统计 · 称号统计": ["roster/statistics"],
   [loggingBusiness]: [
     "logging/client",
     "logging/context",

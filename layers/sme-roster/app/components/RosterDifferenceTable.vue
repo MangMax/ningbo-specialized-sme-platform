@@ -80,11 +80,11 @@ const movedInText = (m: DifferenceRow['movedIn']) =>
         .join(' · ')
 
 const COLUMNS = 8
-const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs font-medium'
+const TH_CLASS = 'text-muted-foreground h-9 text-xs font-medium'
 </script>
 
 <template>
-  <div class="max-h-[max(360px,calc(100dvh-22rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible">
+  <div class="data-table-scroll [--table-budget:22rem]">
     <Empty v-if="!loading && !hasError && !rows.length" class="border-0">
       <EmptyHeader>
         <EmptyMedia variant="icon"><GitCompareArrows /></EmptyMedia>

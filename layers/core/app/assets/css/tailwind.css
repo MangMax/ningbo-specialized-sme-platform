@@ -12,7 +12,7 @@
  *   藏青 #14417E  —— 主色。导航、主操作、市级来源、称号高等级。
  *   金色 #C29A3B  —— 只做 6px 方形标记,表示「国家级」。白底对比度仅 2.6:1,
  *                    故一律不写金色文字,只做图形标记(风格包同款用法)。
- *   点睛红 #B01F24 —— 数据质量告警。只出现在真有问题的地方。
+ *   点睛红 #B01F24 —— 异常告警。只出现在真有问题的地方。
  *
  * 表面层级靠色相偏移区分,不只靠明暗:页面底色带一点蓝,卡片纯白。
  * ========================================================================= */
@@ -87,14 +87,6 @@
   /* —— 来源/等级标记:金 = 国家级,藏青 = 市级 —— */
   --mark-national: oklch(0.7059 0.1206 85.57); /* #C29A3B */
   --mark-municipal: oklch(0.3815 0.1143 257.4);
-
-  /* —— 图表系列 —— */
-  --chart-1: oklch(0.3815 0.1143 257.4);
-  --chart-2: oklch(0.5667 0.1056 258.13);
-  --chart-3: oklch(0.7059 0.1206 85.57);
-  --chart-4: oklch(0.6165 0.0307 258.37);
-  --chart-5: oklch(0.7487 0.0734 255.75);
-  --chart-6: oklch(0.4911 0.1796 25.62);
 }
 
 .dark {
@@ -151,12 +143,6 @@
   --mark-national: oklch(0.7059 0.1206 85.57);
   --mark-municipal: oklch(0.6698 0.0903 256.3);
 
-  --chart-1: oklch(0.7487 0.0734 255.75);
-  --chart-2: oklch(0.6 0.0938 257.4);
-  --chart-3: oklch(0.7486 0.1139 85.6);
-  --chart-4: oklch(0.7007 0.0327 258.7);
-  --chart-5: oklch(0.4583 0.0681 256.1);
-  --chart-6: oklch(0.6695 0.1541 23.6);
 }
 
 @theme inline {
@@ -192,7 +178,7 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  /* 称号梯度 / 等级标记 / 图表系列 */
+  /* 称号梯度 / 等级标记 */
   --color-tier-1-surface: var(--tier-1-surface);
   --color-tier-1-on: var(--tier-1-on);
   --color-tier-1-line: var(--tier-1-line);
@@ -204,12 +190,6 @@
   --color-tier-3-line: var(--tier-3-line);
   --color-mark-national: var(--mark-national);
   --color-mark-municipal: var(--mark-municipal);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
-  --color-chart-6: var(--chart-6);
 
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
@@ -263,7 +243,7 @@
     background-color: color-mix(in oklab, var(--primary) 22%, transparent);
   }
 
-  /* 手写 <button> 的兜底焦点环:与 stats-dashboard 的写法同款,作用域放到全站。
+  /* 手写 <button> 的兜底焦点环。
    * components/ui 的按钮自带 data-slot 与焦点样式,:not([data-slot]) 防止双环。
    * 只画静态 outline,不含 transition/animation,prefers-reduced-motion 下无差异。 */
   button:not([data-slot]):focus-visible {
@@ -278,11 +258,6 @@
     --table-line: var(--border);
   }
 
-  /* 识别校对工作台的顶栏只保留导航与主题;台账规模与这一页的任务无关。
-   * 用页面自身的根节点做条件，其他页面的顶栏完全不变。 */
-  body:has(.ocr-workbench) [data-global-stats] {
-    display: none;
-  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -438,6 +413,33 @@ html.theme-transition::view-transition-new(root) {
   max-height: max(320px, calc(100dvh - var(--table-budget)));
   overflow: auto;
 }
+/* The header follows the same scroll container as the rows. */
+.data-table-scroll > [data-slot='table-container'] {
+  overflow: visible;
+}
+
+/* Derive the result height from the workspace, after the controls take their space. */
+.workspace-list,
+.workspace-list-body,
+.paginated-table-card {
+  min-height: 0;
+}
+.workspace-list > :not(.workspace-list-body, .paginated-table-card) {
+  flex-shrink: 0;
+}
+.table-toolbar {
+  @apply shrink-0 space-y-0 border-b p-3 sm:px-4;
+}
+.workspace-list-filter {
+  max-height: 60%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.workspace-list :where(.data-table-scroll) {
+  min-height: 0;
+  max-height: none;
+  overscroll-behavior: contain;
+}
 
 /* Business side drawers opt in explicitly. Kept outside utilities so consumer
  * width classes cannot bypass the viewport cap. Navigation and top/bottom
@@ -445,7 +447,7 @@ html.theme-transition::view-transition-new(root) {
 [data-floating-drawer] {
   --drawer-gutter: 8px;
   --drawer-width: 448px;
-  /* 阴影随 --foreground 走(与 statistics.css 卡片阴影同源的 color-mix),
+  /* 阴影随 --foreground 走，
    * 三档宽度共用这一个变量;暗色下由下方 .dark 覆写为更深的纯黑柔影 ——
    * 浅色前景混合在 #0A1020 底上会读成光晕而非层次。 */
   --drawer-shadow: 0 8px 24px color-mix(in oklch, var(--foreground) 16%, transparent);

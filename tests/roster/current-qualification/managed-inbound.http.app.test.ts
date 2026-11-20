@@ -15,7 +15,7 @@ beforeAll(async () => {
  await f.start()
 }, 90000)
 afterAll(() => f.close())
-it('public source-bound own qualification reaches query detail statistics filters and downloaded identities without formal history', async () => {
+it('public source-bound own qualification reaches query detail filters and downloaded identities without formal history', async () => {
  const enterprise = f.db.insert(s.enterprise).values({ name:'合成迁入资格验收',nameNorm:'合成迁入资格验收',usccNorm:'91330211255994457P',city:'宁波市',district:'余姚市' }).returning().get()
  const source = submitNativePlatformQuery(f.db, { interface:'business_list',queryKey:enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:'2026-11-16T00:00:00Z',status:'success',rawResponse:'{}',relations:[{sequenceNo:1,enterpriseId:enterprise.id,usccRaw:enterprise.usccNorm!,nameRaw:enterprise.name,verificationStatus:'confirmed',matchBasis:'uscc'}] })
  const facts = (raw: Record<string, unknown> = {}) => submitSyntheticRecognizedCollection(f.db, { rdjb:'2',queriedAt:new Date(Date.now() + (++observation)*1000).toISOString(),rows:[{enterpriseId:null,raw:{id:'managed-source',qymc:'平台曾用名',tyshxydm:enterprise.usccNorm,rdjb:'2',rdtime:'2025-07-22',rddqrq:'2028-07-22',sfyx:'1',szsmc:'宁波市',...raw}}] })
@@ -52,9 +52,6 @@ it('public source-bound own qualification reaches query detail statistics filter
  }
  const detail = await fetch(f.url(`/api/roster/enterprises/${enterprise.id}`)).then(r=>r.json())
  expect(detail.qualificationAssessment.titles.find((t:any)=>t.titleCode==='specialized_sme').effectiveQualification.status).toBe('effective')
- const stats = await fetch(f.url('/api/statistics/districts?title=specialized_sme&district=余姚市')).then(r=>r.json())
- expect(stats.total).toBe(1)
- expect(stats.rows.map((r:any)=>r.enterpriseId)).toEqual([enterprise.id])
  const {bytes} = await f.workbook('synthetic-managed-inbound')
  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(bytes as any)
  const sheet = workbook.getWorksheet('有效企业')!

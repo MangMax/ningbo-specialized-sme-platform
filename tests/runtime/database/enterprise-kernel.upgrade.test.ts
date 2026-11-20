@@ -67,44 +67,64 @@ test('cold upgrade keeps legacy aliases and rejects both a merge cycle and parti
   }
 })
 
-test('cold upgrade links a legacy announcement only when its committed byte identity is unique', async () => {
+test('enterprise upgrade links existing announcement file references and repairs an earlier cutover', async () => {
   const { upgradeEnterpriseKernel } = await import('../../../upgrade/enterprise-kernel')
   const db = new Database(':memory:')
-  const registered = 'a'.repeat(64)
-  const other = 'b'.repeat(64)
+  const hash = 'a'.repeat(64)
   try {
     createPreEnterpriseKernelFixture(db)
     db.exec(`
-      INSERT INTO enterprise(id,name,name_norm) VALUES (1,'甲','甲'),(2,'乙','乙');
+      INSERT INTO enterprise(id,name,name_norm) VALUES (1,'甲','甲'),(2,'乙','乙'),(3,'丙','丙');
       INSERT INTO record(id,enterprise_id,title_code,source) VALUES
-        (1,1,'specialized_sme','jxj'),(2,2,'specialized_sme','jxj');
-      INSERT INTO record_event(id,record_id,event_type,year) VALUES (1,1,'award',2025),(2,2,'award',2025);
+        (1,1,'specialized_sme','jxj'),(2,2,'specialized_sme','jxj'),(3,3,'specialized_sme','miit');
+      INSERT INTO record_event(id,record_id,event_type,year) VALUES (1,1,'award',2025),(2,2,'review',2025),(3,3,'maintain',2025);
       INSERT INTO record_evidence(id,record_event_id,source_file,list_no) VALUES
-        (1,1,'unique.pdf',1),(2,2,'conflict.pdf',1);
-      INSERT INTO source_document(id,source,title,path) VALUES
-        (1,'jxj','唯一版本','unique.pdf'),(2,'jxj','冲突版本','conflict.pdf');
-      INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES
-        (1,'unique.pdf','unique.pdf','pdf',1,'${registered}','2025-01-01'),
-        (2,'conflict.pdf','conflict.pdf','pdf',1,'${registered}','2025-01-01');
+        (1,1,'list.pdf',1),(2,2,'list.pdf',2),(3,2,'list.pdf',3),(4,3,'export.xlsx',1),(5,2,'removed.pdf',1);
+      INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at,removed_at) VALUES
+        (11,'list.pdf','list.pdf','pdf',1,'${hash}','2025-01-01',NULL),
+        (22,'export.xlsx','export.xlsx','xlsx',1,'${hash}','2025-01-01',NULL),
+        (33,'removed.pdf','removed.pdf','pdf',1,'${hash}','2025-01-01','2025-02-01');
       INSERT INTO roster_file_classification(file_id,source,kind) VALUES
-        (1,'jxj','announcement'),(2,'jxj','announcement');
+        (11,'jxj','announcement'),(22,'miit','export'),(33,'jxj','announcement');
     `)
-    const batch = db.prepare(`INSERT INTO import_batch
-      (idempotency_key,source_kind,source_identity,source_sha256,status,created_at)
-      VALUES (?,'announcement',?,?,?,'2025-01-01')`)
-    batch.run('unique', 'unique.pdf', registered, 'committed')
-    batch.run('duplicate', 'unique.pdf', registered, 'committed')
-    batch.run('unknown-hash', 'unique.pdf', null, 'committed')
-    batch.run('uncommitted', 'unique.pdf', other, 'preflight')
-    batch.run('first', 'conflict.pdf', registered, 'committed')
-    batch.run('second', 'conflict.pdf', other, 'committed')
+    expect(upgradeEnterpriseKernel(db, syntheticEnterpriseDictionaries)).toMatchObject({ migrated: true, linked: 2 })
+    const links = db.prepare(`SELECT l.enterprise_id,s.id AS source_id,s.file_id
+      FROM enterprise_source_link l JOIN enterprise_source s ON s.id=l.source_id ORDER BY l.enterprise_id`)
+    const expected = links.all()
+    const source = db.prepare('SELECT id,file_id FROM enterprise_source').all()
+    expect(source).toEqual([{ id: 1, file_id: 11 }])
+    expect(expected).toEqual([
+      { enterprise_id: 1, source_id: 1, file_id: 11 },
+      { enterprise_id: 2, source_id: 1, file_id: 11 },
+    ])
 
-    expect(upgradeEnterpriseKernel(db, syntheticEnterpriseDictionaries)).toMatchObject({
-      migrated: true, linked: 1, unresolvedEvidenceIds: [2],
-    })
-    expect(db.prepare(`SELECT l.enterprise_id, s.file_id, s.version_key
-      FROM enterprise_source_link l JOIN enterprise_source s ON s.id=l.source_id`).all())
-      .toEqual([{ enterprise_id: 1, file_id: 1, version_key: `1:${registered}` }])
+    // Simulate the earlier cutover, with an existing source ID and a missing link.
+    db.exec(`UPDATE enterprise_source SET business_table='source_document', version_key='1:${hash}';
+      DELETE FROM enterprise_source_link WHERE enterprise_id=2;`)
+    expect(upgradeEnterpriseKernel(db, syntheticEnterpriseDictionaries)).toMatchObject({ migrated: true, linked: 1 })
+    expect(links.all()).toEqual(expected)
+    expect(upgradeEnterpriseKernel(db, syntheticEnterpriseDictionaries)).toMatchObject({ migrated: false, linked: 0 })
+    expect(db.prepare('SELECT id,file_id FROM enterprise_source').all()).toEqual(source)
+    expect(db.pragma('foreign_key_check')).toEqual([])
+  } finally {
+    db.close()
+  }
+})
+
+test('adds address storage to a completed enterprise kernel without rewriting existing profiles', async () => {
+  const { upgradeEnterpriseAddresses } = await import('../../../upgrade/enterprise-kernel')
+  const db = new Database(':memory:')
+  try {
+    db.pragma('foreign_keys = ON')
+    createRuntimeSchema(db)
+    db.exec("DROP TABLE enterprise_address; INSERT INTO enterprise(id,name,name_norm) VALUES(24,'存量企业','存量企业'); INSERT INTO enterprise_directory(enterprise_id,revision) VALUES(24,3)")
+    expect(() => assertApplicationSchema(db)).toThrow()
+    expect(upgradeEnterpriseAddresses(db)).toEqual({ migrated: true })
+    expect(upgradeEnterpriseAddresses(db)).toEqual({ migrated: false })
+    expect(() => assertApplicationSchema(db)).not.toThrow()
+    expect(db.prepare('SELECT enterprise_id,revision FROM enterprise_directory').all())
+      .toEqual([{ enterprise_id: 24, revision: 3 }])
+    expect(db.prepare('SELECT * FROM enterprise_address').all()).toEqual([])
   } finally {
     db.close()
   }

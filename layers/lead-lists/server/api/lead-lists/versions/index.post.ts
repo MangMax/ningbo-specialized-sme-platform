@@ -1,7 +1,5 @@
-import { useDb } from '@db'
 import { requireApiToken } from '../../../../../core/server/utils/api-guard'
-import { versionInput } from '../../../../lib/contracts'
-import { registerLeadVersion } from '../../../utils/versions'
+import { registerLeadVersionRequest } from '../../../utils/registration-route'
 
 defineRouteMeta({ openAPI: {
   tags: ['线索名单'], summary: '登记线索名单版本和原行', security: [{ bearerAuth: [] }],
@@ -16,9 +14,5 @@ defineRouteMeta({ openAPI: {
 
 export default defineEventHandler(async event => {
   requireApiToken(event)
-  const parsed = versionInput.safeParse(await readBody(event))
-  if (!parsed.success) throw createError({ statusCode: 400, message: '名单版本资料有误', data: parsed.error.issues })
-  const result = await registerLeadVersion(useDb(), useRuntimeConfig(event).filesDir, parsed.data)
-  if (result.created) setResponseStatus(event, 201)
-  return result
+  return registerLeadVersionRequest(event)
 })

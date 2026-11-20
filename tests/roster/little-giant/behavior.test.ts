@@ -1,17 +1,9 @@
 import { afterAll, expect, it } from 'vitest'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 import { readCurrentQualificationAssessment } from '../../../layers/sme-roster/lib/roster/current-qualification'
-import { readStatisticsEffectiveSnapshot } from '../../../layers/sme-roster/lib/roster/statistics-effective-snapshot'
 const f = qualificationExportFixture()
 const at = Date.parse('2026-06-01T00:00:00Z')
 afterAll(() => f.close())
-it('enumerates upper-only enterprises in every inherited statistics title without creating records', () => {
- const c=f.candidate('statistics upper only',[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
- const snapshot=f.db.$client.transaction(()=>readStatisticsEffectiveSnapshot(f.db.$client,at))()
- const rows=snapshot.rows.filter(row=>row.enterpriseId===c.enterprise.id && row.status==='effective')
- expect(rows.map(row=>row.titleCode).sort()).toEqual(['innovative_sme','little_giant','specialized_sme'])
- expect(readCurrentQualificationAssessment(f.db.$client,c.enterprise.id,at).titles.filter(title=>title.titleCode!=='little_giant').map(title=>title.evidence)).toEqual([[],[]])
-})
 it('inherits without lower official history and preserves original facts', () => {
   for (const [name, histories, expected] of [
     ['none', [], ['eligible','eligible']],

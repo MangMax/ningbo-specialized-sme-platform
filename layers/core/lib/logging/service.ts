@@ -9,12 +9,14 @@ import { safeLogEvent } from './privacy'
 import { SQLITE_WORKER } from './sqlite-worker'
 import { resolveLoggingSqliteModule } from './sqlite-module-location'
 import { isDrizzleQueryAttempt } from './drizzle-query'
+import { createPostgresLogStorage, PostgresLogError } from './postgres-storage'
 
 export class LogServiceError extends Error {
   constructor(public code: string, public statusCode = 503, readonly writeOutcome?: 'unknown' | 'not_written') { super(code) }
 }
 export interface LogServiceOptions {
   directory: string
+  postgresUrl?: string
   retentionDays?: number; maxBytes?: number
   /** Explicit deployment budgets; bounded above by the frozen defaults. */
   maxQueueEntries?: number; maxQueueBytes?: number; maxEventBytes?: number
@@ -83,6 +85,8 @@ export function createLogService(options: LogServiceOptions) {
   const maxBytes = budget(options.maxQueueBytes, LOG_DEFAULTS.maxQueueBytes)
   const maxEventBytes = budget(options.maxEventBytes, LOG_DEFAULTS.maxEventBytes)
   const timeoutMs = budget(options.drainTimeoutMs, LOG_DEFAULTS.drainTimeoutMs)
+  const postgres = options.postgresUrl && createPostgresLogStorage(options.postgresUrl, maxEventBytes, timeoutMs, !!options.stdout)
+  const postgresRequests = new Set<AbortController>()
   let worker: Worker | undefined, serial = 0, closed = false, closing = false
   type QueueRow = { event: LogEvent; bytes: number; queryKey?: string }
   let queue: QueueRow[] = [], queueBytes = 0
@@ -96,7 +100,7 @@ export function createLogService(options: LogServiceOptions) {
   const stderr = boundedLogOutput(process.stderr, 512, 1)
   const counters = { accepted: 0, stored: 0, filtered: 0, coalesced: 0, dropped: 0, writeUnknown: 0, overflow: 0, oversized: 0, drainFailures: 0, fallbackSkipped: 0, unavailable: false, lastError: null as string | null, since: new Date().toISOString() }
   const pending = new Map<number, { resolve(value: any): void; reject(error: unknown): void; timer: ReturnType<typeof setTimeout>; action: string; posted: boolean }>()
-  const status = () => ({ ...counters, queuedEntries: queue.length, queuedBytes: queueBytes, inFlightEntries, inFlightBytes, pending: pending.size, closed })
+  const status = () => ({ ...counters, queuedEntries: queue.length, queuedBytes: queueBytes, inFlightEntries, inFlightBytes, pending: pending.size + postgresRequests.size, closed })
   function fault(code: string) {
     counters.unavailable = true; counters.lastError = code; counters.drainFailures++
     stderr.write(JSON.stringify({ module: 'core', source: 'system', operation: 'logging.drain', outcome: 'failure', code, dropped: counters.dropped, writeUnknown: counters.writeUnknown }) + '\n')
@@ -124,7 +128,25 @@ export function createLogService(options: LogServiceOptions) {
   }
   function call<T>(action: string, data?: unknown): Promise<T> {
     if (closed) return Promise.reject(new LogServiceError('logging_closed'))
-    if (pending.size >= LOG_DEFAULTS.maxPendingQueries) return Promise.reject(new LogServiceError('logging_busy', 429))
+    if (pending.size + postgresRequests.size >= LOG_DEFAULTS.maxPendingQueries) return Promise.reject(new LogServiceError('logging_busy', 429))
+    if (postgres) {
+      const controller = new AbortController()
+      postgresRequests.add(controller)
+      return new Promise<T>((resolve, reject) => {
+        const cancel = () => reject(new LogServiceError('drain_timeout', 503, action === 'write' ? 'unknown' : 'not_written'))
+        controller.signal.addEventListener('abort', cancel, { once: true })
+        const timer = setTimeout(() => controller.abort(), timeoutMs)
+        // Keep capacity charged until the adapter releases the connection.
+        void postgres.execute(action, data, Date.now(), controller.signal)
+          .then(result => resolve(result as T), error => reject(error instanceof PostgresLogError
+            ? new LogServiceError(error.code, 503, error.writeOutcome) : new LogServiceError('storage_unavailable')))
+          .finally(() => {
+            clearTimeout(timer)
+            controller.signal.removeEventListener('abort', cancel)
+            postgresRequests.delete(controller)
+          })
+      })
+    }
     return new Promise<T>((resolve, reject) => {
       const id = ++serial
       try {
@@ -280,8 +302,20 @@ export function createLogService(options: LogServiceOptions) {
       // settles. Closing disables scheduleDrain, so explicitly drain any tail
       // accepted in that window, within the same shutdown deadline.
       try {
-        await Promise.race([(async () => { await flush(); while (queue.length && !closed) await flush(); if (worker) await call('close').catch(() => {}) })(), new Promise<void>(resolve => { deadline = setTimeout(() => { counters.dropped += queue.length; queue = []; queryRows.clear(); queueBytes = 0; stopWorker('close_timeout'); resolve() }, LOG_DEFAULTS.closeTimeoutMs) })])
-      } finally { if (deadline) clearTimeout(deadline); closed = true; stopWorker('logging_closed'); stderr.close() }
+        await Promise.race([(async () => {
+          await flush()
+          while (queue.length && !closed) await flush()
+          if (worker) await call('close').catch(() => {})
+          if (postgres) await postgres.close().catch(() => {})
+        })(), new Promise<void>(resolve => { deadline = setTimeout(() => { counters.dropped += queue.length; queue = []; queryRows.clear(); queueBytes = 0; stopWorker('close_timeout'); resolve() }, LOG_DEFAULTS.closeTimeoutMs) })])
+      } finally {
+        if (deadline) clearTimeout(deadline)
+        closed = true
+        stopWorker('logging_closed')
+        for (const request of postgresRequests) request.abort()
+        if (postgres) void postgres.close().catch(() => {})
+        stderr.close()
+      }
     },
   }
 }

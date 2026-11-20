@@ -140,7 +140,6 @@ export function parseRosterEnterpriseQuery(query: Record<string, unknown>): Rost
     title,
     district: strParam(query.district),
     rosterState: rosterState as RosterState | undefined,
-    // RL-17:合并台账后 `/stats` 的下钻会带这三项进企业粒度,缺一就静默变成不筛。
     source: knownOrThrow(parseCsvQuery(query.source), SOURCE_ORDER, 'source'),
     eventType: knownOrThrow(parseCsvQuery(query.eventType), EVENT_ORDER, 'eventType'),
     year: yearsParam(query.year),

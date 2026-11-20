@@ -54,7 +54,7 @@ function toggleGroup(title: string, open: boolean) {
           <SidebarMenuItem>
             <CollapsibleTrigger as-child>
               <SidebarMenuButton :is-active="item.items.some(child => isActive(child.url))" :tooltip="item.title">
-                <component :is="item.icon" v-if="item.icon" />
+                <component :is="item.icon" v-if="item.icon" aria-hidden="true" />
                 <span>{{ item.title }}</span>
                 <ChevronRight class="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
               </SidebarMenuButton>
@@ -74,8 +74,8 @@ function toggleGroup(title: string, open: boolean) {
         </Collapsible>
         <SidebarMenuItem v-else-if="item.url">
           <SidebarMenuButton as-child :is-active="isActive(item.url)" :tooltip="item.title">
-            <NuxtLink :to="item.url">
-              <component :is="item.icon" v-if="item.icon" />
+            <NuxtLink :to="item.url" :aria-current="isActive(item.url) ? 'page' : undefined" @click="setOpenMobile(false)">
+              <component :is="item.icon" v-if="item.icon" aria-hidden="true" />
               <span>{{ item.title }}</span>
             </NuxtLink>
           </SidebarMenuButton>

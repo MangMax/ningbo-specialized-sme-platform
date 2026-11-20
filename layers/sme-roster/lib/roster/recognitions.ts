@@ -8,10 +8,10 @@
  *
  * ── 计算只有一处 ────────────────────────────────────────────────────────
  * 与企业视图共用 `computeTitleLifecycle` / 首认判据;取数走独立的轻量读模型。
- * 全局筛选与统计只扫描 award 标量,分页后才读取所选事件的全部出处。
+ * 年份选项只读取生命周期字段，分页后才读取所选事件的全部出处。
  */
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 import * as schema from '../../../../db/schema'
 import { MAX_PAGE_SIZE } from '../query'
 import { readRecognitionPage } from './recognition-read'
@@ -59,12 +59,6 @@ export interface RosterRecognitionsResult {
   pageSize: number
 }
 
-export interface FirstRecognitionYearFilter {
-  title?: string
-  district?: string
-  source?: string
-}
-
 const DEFAULT_PAGE_SIZE = 50
 
 function pageOf(input: { page?: number; pageSize?: number }): { page: number; pageSize: number } {
@@ -89,22 +83,10 @@ export function listRosterRecognitions(
   return db.transaction(() => readRecognitionPage(db, filter, page, pageSize))
 }
 
-/**
- * 可选的首次认定年份,计数单位为企业 × 称号。
- *
- * 年份来自同一份 `RecognitionEntry`,因此采用生命周期里的 `decidedYear ?? year` 语义。
- * `title` / `district` / `source` 沿用 `/api/stats` 的记录筛选:先看企业是否有符合筛选的
- * 对应称号记录,再按该称号唯一的首次认定年份计一次。
- */
-export function getFirstRecognitionYearBuckets(
-  db: Db,
-  filter: FirstRecognitionYearFilter = {},
-): { key: string; n: number }[] {
-  const counts = new Map<number, number>()
-  // Only lifecycle scalars are required. Never load platform archives or source
-  // evidence just to populate the global header and homepage year picker.
-  // A matching record admits the pair, while its earliest award still considers
-  // every source for that same enterprise/title, as in the original profiles.
+/** 台账筛选所需的事件年份和首次正式认定年份。 */
+export function readLedgerYears(db: Db): { eventYears: number[]; firstRecognitionYears: number[] } {
+  const eventYears = new Set<number>()
+  const firstRecognitionYears = new Set<number>()
   const rows = db.select({
     enterpriseId: schema.record.enterpriseId,
     titleCode: schema.record.titleCode,
@@ -116,24 +98,16 @@ export function getFirstRecognitionYearBuckets(
   }).from(schema.record)
     .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
     .innerJoin(schema.recordEvent, eq(schema.recordEvent.recordId, schema.record.id))
-    .where(and(
-      filter.title ? eq(schema.record.titleCode, filter.title) : undefined,
-      filter.district || filter.source ? sql`exists (
-        select 1 from record matching where matching.enterprise_id=${schema.record.enterpriseId}
-        and matching.title_code=${schema.record.titleCode}
-        and ${filter.district ? sql`matching.district=${filter.district}` : sql`1`}
-        and ${filter.source ? sql`matching.source=${filter.source}` : sql`1`}
-      )` : undefined,
-    ))
     .orderBy(asc(schema.record.enterpriseId), asc(schema.record.titleCode), asc(schema.recordEvent.id))
     .all()
   let key: string | null = null
   let events: LifecycleEvent[] = []
   const finish = () => {
     const year = computeTitleLifecycle(events).firstRecognitionYear
-    if (year != null) counts.set(year, (counts.get(year) ?? 0) + 1)
+    if (year != null) firstRecognitionYears.add(year)
   }
   for (const row of rows) {
+    if (row.year != null) eventYears.add(row.year)
     const next = `${row.enterpriseId}/${row.titleCode}`
     if (key !== next) {
       if (key != null) finish()
@@ -144,7 +118,8 @@ export function getFirstRecognitionYearBuckets(
   }
   if (key != null) finish()
 
-  return [...counts]
-    .sort(([a], [b]) => a - b)
-    .map(([year, n]) => ({ key: String(year), n }))
+  return {
+    eventYears: [...eventYears].sort((a, b) => a - b),
+    firstRecognitionYears: [...firstRecognitionYears].sort((a, b) => a - b),
+  }
 }

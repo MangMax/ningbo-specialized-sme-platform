@@ -309,10 +309,9 @@ it('shares gallery selections immediately and reopens them without creating init
 
 it.each([
   ['/enterprises/91?back=q%3Dtest', '企业详情'],
-  ['/roster?q=test&page=2', '企业列表'],
-  ['//outside.example', '企业列表'],
+  ['/roster?q=test&page=2', '历年优质中小企业'],
+  ['//outside.example', '历年优质中小企业'],
   ['/files?folder=synthetic', '文件管理'],
-  ['/quality', '数据质量'],
 ])('names the validated return destination for %s', async (back, label) => {
   const { wrapper } = await open({ file, page: '3', back })
   const link = wrapper.get('[data-slot="breadcrumb-link"]')

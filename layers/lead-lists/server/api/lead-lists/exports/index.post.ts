@@ -1,3 +1,4 @@
+import { requireSqliteLeadOperation } from '../../../utils/postgres-versions'
 import { useDb } from '@db'
 import { requestLogContext } from '#core/lib/logging'
 import { requireTaskCenterAccess } from '#core/server/utils/task-center-access'
@@ -17,6 +18,7 @@ export default defineEventHandler(async event => {
   requireTaskCenterAccess(event)
   const parsed = leadListExportInput.safeParse(await readBody(event))
   if (!parsed.success) throw createError({ statusCode: 400, message: '请提交版本编号和请求 UUID' })
+  requireSqliteLeadOperation()
   const db = useDb()
   ensureJobRunnerReady(db)
   const task = submitJob(db, { kind: LEAD_LIST_EXPORT, params: parsed.data, filesDir: useRuntimeConfig(event).filesDir, logContext: requestLogContext(event) })

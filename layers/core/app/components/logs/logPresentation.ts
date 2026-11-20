@@ -8,7 +8,7 @@ export const getLogModuleOptions = () => [...getAppModules().map(({ id }) => id)
 export const logModuleLabel = (module?: string | null) =>
   module === 'core' ? '平台' : getAppModules().find(({ id }) => id === module)?.name ?? '未标注'
 
-export type LogBadgeVariant = NonNullable<BadgeVariants['variant']>
+type LogBadgeVariant = NonNullable<BadgeVariants['variant']>
 
 /** 来源原码 → 中文 label。原码仍单独展示，便于按原码筛选。 */
 export const SOURCE_LABELS: Record<string, string> = {
@@ -66,31 +66,24 @@ export function outcomeLabel(outcome: string): string {
   return OUTCOME_LABELS[outcome] ?? outcome
 }
 
-const OUTCOME_VARIANTS: Record<string, LogBadgeVariant> = {
-  started: 'secondary',
-  success: 'secondary',
-  failure: 'destructive',
-  denied: 'outline',
-  timeout: 'outline',
+const OUTCOME_VARIANTS: Record<LogSummary['outcome'], LogBadgeVariant> = {
+  started: 'info',
+  success: 'success',
+  failure: 'error',
+  denied: 'warning',
+  timeout: 'warning',
   cancelled: 'quiet',
   skipped: 'quiet',
   unknown: 'quiet',
   no_record: 'quiet',
-  partial: 'secondary'
-}
-export function outcomeVariant(outcome: string): LogBadgeVariant {
-  return OUTCOME_VARIANTS[outcome] ?? 'quiet'
-}
-/** denied/timeout 保留独立措辞，warning 描边；不据此推断请求是否已执行。 */
-export function outcomeClass(outcome: string): string {
-  return outcome === 'denied' || outcome === 'timeout' ? 'border-warning/50 text-warning' : ''
+  partial: 'warning'
 }
 
-export function levelVariant(level: string): LogBadgeVariant {
-  return level === 'error' ? 'destructive' : level === 'warn' ? 'outline' : 'secondary'
-}
-export function levelClass(level: string): string {
-  return level === 'warn' ? 'border-warning/50 text-warning' : ''
+const LEVEL_VARIANTS: Record<LogSummary['level'], LogBadgeVariant> = {
+  debug: 'quiet',
+  info: 'info',
+  warn: 'warning',
+  error: 'error'
 }
 
 /** 只收录已核对的确切原码；未知操作返回 null，只显示原码。 */
@@ -431,9 +424,7 @@ export interface LogRowView {
   outcomeLabel: string
   outcomeCode: string
   outcomeVariant: LogBadgeVariant
-  outcomeClass: string
   levelVariant: LogBadgeVariant
-  levelClass: string
   durationText: string
   durationMissing: boolean
   statusText: string
@@ -464,10 +455,8 @@ export function describeLogRow(row: LogSummary): LogRowView {
     target,
     outcomeLabel: outcomeLabel(row.outcome),
     outcomeCode: row.outcome,
-    outcomeVariant: outcomeVariant(row.outcome),
-    outcomeClass: outcomeClass(row.outcome),
-    levelVariant: levelVariant(row.level),
-    levelClass: levelClass(row.level),
+    outcomeVariant: OUTCOME_VARIANTS[row.outcome] ?? 'quiet',
+    levelVariant: LEVEL_VARIANTS[row.level] ?? 'quiet',
     durationText: durationMissing ? (durationDisabled ? '当时未启用采集' : '未记录') : `${row.durationMs} ms`,
     durationMissing,
     statusText:

@@ -3,8 +3,10 @@ import CredentialSettings from '#core/app/components/settings/CredentialSettings
 useHead({ title: '密钥配置 · 专精特新企业称号台账' })
 </script>
 <template>
-  <div class="space-y-5">
+  <div class="workspace-list flex flex-1 min-w-0 flex-col gap-4">
     <PageHeader title="密钥配置" />
-    <CredentialSettings />
+    <div class="workspace-list-body overflow-y-auto overscroll-contain" role="region" aria-label="凭据设置表单" tabindex="0">
+      <CredentialSettings />
+    </div>
   </div>
 </template>

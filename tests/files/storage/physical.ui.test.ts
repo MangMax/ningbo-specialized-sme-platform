@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import DeleteFileDialog from '../../../layers/core/app/components/files/DeleteFileDialog.vue'
 
-type DeferredRead = { revision: number } | { intent: { id: string; fileId: number; relPath: string; state: string } }
+type DeferredRead = { revision: number; file?: { referenceCount?: number } } | { intent: { id: string; fileId: number; relPath: string; state: string } }
 
 let wrapper: ReturnType<typeof mount>
 afterEach(() => { wrapper?.unmount(); document.body.innerHTML = ''; vi.unstubAllGlobals() })
@@ -12,10 +12,10 @@ const enter = async (id: string, value: string) => {
   const el = document.body.querySelector<HTMLInputElement>(`#${id}`)!
   el.value = value; el.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
 }
-async function setup(state?: string) {
-  const fetch = vi.fn(async (url: string, options?: { method?: string }) => {
+async function setup(state?: string, referenceCount?: number) {
+  const fetch = vi.fn(async (url: string, options?: { method?: string }): Promise<DeferredRead | Record<string, never>> => {
     if (options?.method) return {}
-    if (url.endsWith('/maintenance')) return { revision: 7 }
+    if (url.endsWith('/maintenance')) return { revision: 7, file: { referenceCount } }
     if (!state) throw Object.assign(new Error('none'), { statusCode: 404 })
     return { intent: { id: 'original-intent', fileId: 41, relPath: 'original.pdf', state } }
   })
@@ -29,6 +29,14 @@ it('defaults to soft removal and does not submit a physical command', async () =
   button('移出文件库').click(); await flushPromises()
   expect(wrapper.emitted('confirm')).toEqual([[false]])
   expect(fetch.mock.calls.every(call => !call[1]?.method)).toBe(true)
+})
+
+it('uses maintenance references to block quarantine without exposing a business reference count', async () => {
+  await setup(undefined, 12)
+  expect(document.body.querySelector('#delete-disk')?.hasAttribute('disabled')).toBe(true)
+  expect(document.body.textContent).toContain('文件仍在使用，不能隔离')
+  expect(document.body.textContent).not.toContain('12 条')
+  expect(button('移出文件库')).toBeDefined()
 })
 it('keeps default soft removal available after an explicitly recovered file', async () => {
   const fetch = await setup('recovered')

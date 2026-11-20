@@ -1,12 +1,16 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Badge } from '#core/app/components/ui/badge'
 import { TableCell } from '#core/app/components/ui/table'
 import RosterSourceChip from '#sme-roster/app/components/SourceChip.vue'
-import { CATEGORY_STATES, KINDS, PARSE_STATES } from '#sme-roster/lib/labels'
+import { CATEGORY_STATES, KINDS, PARSE_STATES, SOURCES } from '#sme-roster/lib/labels'
 import { joinSeries, partBatches, partYears } from '#sme-roster/lib/file-parts'
 import type { RosterFileFields } from '#sme-roster/server/modules/sme-roster/files'
 
-const { file: row } = defineProps<{ file: Partial<RosterFileFields> }>()
+const { file: row, mode = 'columns' } = defineProps<{
+  file: Partial<RosterFileFields>
+  mode?: 'columns' | 'summary' | 'details'
+}>()
 const isComplete = (file: Partial<RosterFileFields>) => file.source != null && file.kind != null
 
 /**
@@ -28,19 +32,45 @@ function seriesCell(values: readonly number[], unit: string) {
     more: rest > 0 ? `+${rest}${unit}` : '',
   }
 }
-const contentYears = (row: Partial<RosterFileFields>) => seriesCell(partYears((row.registeredSummary?.declarations.map(d => d.part) ?? [])), '年')
-const contentBatches = (row: Partial<RosterFileFields>) => seriesCell(partBatches((row.registeredSummary?.declarations.map(d => d.part) ?? [])), '批')
-/** 完整清单进 `title` —— 列里只平铺前两个,悬停能看到全部。 */
-const contentYearsTitle = (row: Partial<RosterFileFields>) => joinSeries(partYears((row.registeredSummary?.declarations.map(d => d.part) ?? []))) ?? undefined
-const contentBatchesTitle = (row: Partial<RosterFileFields>) => joinSeries(partBatches((row.registeredSummary?.declarations.map(d => d.part) ?? []))) ?? undefined
+const registeredParts = computed(() => row.registeredSummary?.declarations.map(d => d.part) ?? [])
+const years = computed(() => partYears(registeredParts.value))
+const batches = computed(() => partBatches(registeredParts.value))
+const yearSeries = computed(() => seriesCell(years.value, '年'))
+const batchSeries = computed(() => seriesCell(batches.value, '批'))
+const emptyYears = computed(() => row.categoryState === undefined ? '—'
+  : row.registeredSummary?.count ? '未知' : row.registeredSummary ? '未登记' : '读取未确认')
 /** 「文件发布年份/批次」列:文件级**单值**(目录给的),形如 `2024 / 2`、`2024`、`—`。 */
 function publishedYearBatch(row: Partial<RosterFileFields>): string {
   if (row.year == null) return '—'
   return row.batch == null ? String(row.year) : `${row.year} / ${row.batch}`
 }
+const parseLabel = computed(() => row.parseState ? PARSE_STATES[row.parseState] : '—')
+const parseVariant = computed(() => row.parseState === 'failed' ? 'destructive'
+  : row.parseState === 'parsed' ? 'solid' : 'dashed')
+const details = computed(() => [
+  { label: '来源', value: row.source ? SOURCES[row.source] : '—' },
+  { label: '类别', value: row.kind ? KINDS[row.kind] : '—' },
+  { label: '文件发布', value: publishedYearBatch(row) },
+  { label: '内容年份', value: joinSeries(years.value) ?? emptyYears.value },
+  { label: '内容批次', value: joinSeries(batches.value) ?? '—' },
+  { label: '分类状态', value: row.categoryState ? CATEGORY_STATES[row.categoryState] : '—' },
+  { label: '解析状态', value: parseLabel.value },
+  { label: '被引用', value: row.referenceCount ?? '—' },
+])
 </script>
 
 <template>
+  <div v-if="mode === 'summary'" class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+    <RosterSourceChip v-if="row.source" :code="row.source" />
+    <Badge v-if="row.parseState" :variant="parseVariant">{{ parseLabel }}</Badge>
+  </div>
+  <dl v-else-if="mode === 'details'" class="bg-card mb-3 grid grid-cols-2 gap-x-4 gap-y-3 rounded-md border p-3 text-sm sm:grid-cols-4">
+    <div v-for="item in details" :key="item.label" class="min-w-0">
+      <dt class="text-muted-foreground">{{ item.label }}</dt>
+      <dd class="mt-0.5 font-medium wrap-anywhere">{{ item.value }}</dd>
+    </div>
+  </dl>
+  <template v-else>
   <TableCell>
     <!-- 方标 = 来源语言:经信局藏青、工信部金色(与台账页同一个 SourceChip)。
          写成一个灰底 Badge 就看不出哪份是国家级名单了。 -->
@@ -59,27 +89,27 @@ function publishedYearBatch(row: Partial<RosterFileFields>): string {
   <!-- 内容年份:文件**内容**含哪几年(如 2021、2024)。超过两个折成 `+N 年`。 -->
   <TableCell
     class="truncate text-xs font-medium tabular-nums"
-    :title="contentYearsTitle(row)"
+    :title="joinSeries(years) ?? undefined"
   >
-    <template v-if="contentYears(row)">
-      {{ contentYears(row)!.head
+    <template v-if="yearSeries">
+      {{ yearSeries.head
       }}<span
-        v-if="contentYears(row)!.more"
+        v-if="yearSeries.more"
         class="text-muted-foreground ml-1 font-normal"
       >
-        {{ contentYears(row)!.more }}</span
+        {{ yearSeries.more }}</span
       >
     </template>
-    <span v-else class="text-muted-foreground font-normal">{{ row.categoryState === undefined ? '—' : row.registeredSummary?.count ? '未知' : (row.registeredSummary ? '未登记' : '读取未确认') }}</span>
+    <span v-else class="text-muted-foreground font-normal">{{ emptyYears }}</span>
   </TableCell>
-  <TableCell class="truncate text-xs tabular-nums" :title="contentBatchesTitle(row)">
-    <template v-if="contentBatches(row)">
-      {{ contentBatches(row)!.head
+  <TableCell class="truncate text-xs tabular-nums" :title="joinSeries(batches) ?? undefined">
+    <template v-if="batchSeries">
+      {{ batchSeries.head
       }}<span
-        v-if="contentBatches(row)!.more"
+        v-if="batchSeries.more"
         class="text-muted-foreground ml-1"
       >
-        {{ contentBatches(row)!.more }}</span
+        {{ batchSeries.more }}</span
       >
     </template>
     <span v-else class="text-muted-foreground">—</span>
@@ -108,15 +138,9 @@ function publishedYearBatch(row: Partial<RosterFileFields>): string {
          (与入库培育同一档语义);`parsed` 已坐实走实线;`failed` 才是红。 -->
     <Badge
       v-if="row.parseState"
-      :variant="
-        row.parseState === 'failed'
-          ? 'destructive'
-          : row.parseState === 'parsed'
-            ? 'solid'
-            : 'dashed'
-      "
+      :variant="parseVariant"
     >
-      {{ PARSE_STATES[row.parseState] }}
+      {{ parseLabel }}
     </Badge>
     <span v-else class="text-muted-foreground text-xs">—</span>
   </TableCell>
@@ -129,4 +153,5 @@ function publishedYearBatch(row: Partial<RosterFileFields>): string {
       {{ row.referenceCount ?? '—' }}
     </span>
   </TableCell>
+  </template>
 </template>

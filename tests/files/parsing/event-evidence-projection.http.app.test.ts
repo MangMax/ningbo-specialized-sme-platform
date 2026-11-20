@@ -56,7 +56,7 @@ beforeAll(async () => {
   const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: filesDir, NUXT_INCOMING_DIR: join(dir, 'incoming') } })
   let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
-  try { await waitForHttp(service.baseUrl + '/api/stats', { timeoutMs: 60000, child }) } catch (error) { await service.stop(); throw new Error(String(error) + output) }
+  try { await waitForHttp(service.baseUrl + '/api/health', { timeoutMs: 60000, child }) } catch (error) { await service.stop(); throw new Error(String(error) + output) }
 }, 90000)
 afterAll(async () => { if (service) await service.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 

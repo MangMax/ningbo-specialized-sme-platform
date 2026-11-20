@@ -173,9 +173,7 @@ export interface RosterEnterpriseFilter {
   /**
    * 来源(多值,命中任一)—— RL-17 增量:命中「该企业**存在**一条该来源的记录」。
    *
-   * 与 `/api/records` 的 `source` 同构,只是把粒度从「企业 × 称号」抬到「企业」:
-   * 合并后的台账只有一个入口,而 `/stats` 的下钻是 `/roster?source=…`;企业粒度不认这一项的话,
-   * 下钻会**静默变成不筛**。
+   * 与 `/api/records` 的 `source` 同构,只是把粒度从「企业 × 称号」抬到「企业」。
    */
   source?: string[]
   /** 事件类型(多值,命中任一):该企业**存在**一条该类型的事件。 */

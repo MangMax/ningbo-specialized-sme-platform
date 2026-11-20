@@ -1,22 +1,25 @@
 import type { FileCategory } from '../../../core/lib/core/file-categories'
+import { isLibraryUploadPath } from '../../../core/lib/core/library-uploads'
 import { CATEGORY_STATES, CATEGORY_STATE_ORDER, PARSE_STATES, PARSE_STATE_ORDER, SOURCES, SOURCE_ORDER } from '../labels'
 import { scopeOf } from './file-store-scope'
 
 export const rosterFileCategory = {
-  admission: scopeOf,
+  admission: (path, siblings) => isLibraryUploadPath(path)
+    ? { inScope: true, reason: 'in-scope', detail: '' }
+    : scopeOf(path, siblings),
   ocrSources: [
     { value: 'jxj', label: '市经信局' },
     { value: 'miit', label: '工信部' },
   ],
   columns: [
-    { label: '来源', width: 81 },
-    { label: '类别', width: 80 },
-    { label: '文件发布', width: 92, tooltip: '文件发布年份 / 批次；内容年份和批次在分段中维护' },
-    { label: '内容年份', width: 132, tooltip: '文件内容里各段的年份(可多个);复核段记的是被复核的原认定年份' },
-    { label: '内容批次', width: 84, tooltip: '文件内容里各段的批次(可多个)' },
-    { label: '分类状态', width: 76 },
-    { label: '解析状态', width: 76 },
-    { label: '被引用', width: 56, align: 'right' },
+    { label: '来源', width: 72 },
+    { label: '类别', width: 70 },
+    { label: '文件发布', width: 80, tooltip: '文件发布年份 / 批次；内容年份和批次在分段中维护' },
+    { label: '内容年份', width: 114, tooltip: '文件内容里各段的年份(可多个);复核段记的是被复核的原认定年份' },
+    { label: '内容批次', width: 75, tooltip: '文件内容里各段的批次(可多个)' },
+    { label: '分类状态', width: 72 },
+    { label: '解析状态', width: 72 },
+    { label: '被引用', width: 52, align: 'right' },
   ],
   filters: [
     { key: 'source', description: '来源,多值:`jxj` / `miit`。', label: '来源', placeholder: '全部来源', width: 'w-28', options: SOURCE_ORDER.map(value => ({ value, label: SOURCES[value] ?? value })) },

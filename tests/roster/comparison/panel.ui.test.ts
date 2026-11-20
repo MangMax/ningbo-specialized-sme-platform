@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { chooseCalendarSelect } from '../../support/calendar-select'
+import { chooseCalendarPeriod } from '../../support/calendar-period'
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, reactive } from 'vue'
 import ComparisonSourcePicker from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonSourcePicker.vue'
@@ -382,8 +382,8 @@ it('browses cutoff years without querying and commits a real leap day only on co
   await flushPromises()
   const before = calls.query.length
   await wrapper.get('#record-as-of').trigger('click'); await flushPromises()
-  await chooseCalendarSelect('年份', '2024')
-  await chooseCalendarSelect('月份', '2')
+  await chooseCalendarPeriod('年份', '2024')
+  await chooseCalendarPeriod('月份', '2')
   expect(calls.query).toHaveLength(before)
   expect(route.query.asOf).toBe('2026-10-18T10:04:05.123Z')
   document.querySelector<HTMLElement>('[data-value="2024-02-29"]')!.click(); await flushPromises()

@@ -69,7 +69,10 @@ const steps = computed(() => {
   <Button v-if="enterpriseId != null" variant="outline" size="sm" class="mt-2 max-w-full whitespace-normal" @click="open = true">查看全部业务来源</Button>
   <Dialog v-model:open="open">
     <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl">
-      <DialogHeader><DialogTitle>企业业务时间线</DialogTitle><DialogDescription>公布资料、认定目录、关联办理与申报记录；资格采用同一详情快照的后端评估。</DialogDescription></DialogHeader>
+      <DialogHeader>
+        <DialogTitle>企业业务时间线</DialogTitle>
+        <DialogDescription class="sr-only">按来源查看该企业的认定、复核及办理记录</DialogDescription>
+      </DialogHeader>
       <p v-if="loading" role="status">正在读取业务记录</p>
       <div v-if="failure" role="alert"><p>业务记录读取失败，保留上次成功结果。</p><Button :disabled="loading" @click="load">重试读取业务记录</Button></div>
       <template v-if="detail">

@@ -30,6 +30,32 @@ it('preserves numbered navigation, totals and custom page sizes for existing cal
   wrapper.unmount()
 })
 
+it('keeps size and count when all results fit on one page, then exposes page numbers if they no longer fit', async () => {
+  const wrapper = mount(TablePagination, { props: { inCard: true, page: 1, pageSize: 50, total: 26, unit: '个文件' } })
+  try {
+    expect(wrapper.get('[data-testid="table-total"]').text()).toBe('共 26 个文件')
+    expect(wrapper.find('[aria-label="表格分页"]').exists()).toBe(false)
+    await wrapper.setProps({ pageSize: 25 })
+    expect(wrapper.get('[aria-label="第 1 页"]').attributes('aria-current')).toBe('page')
+    await wrapper.get('[aria-label="第 2 页"]').trigger('click')
+    expect(wrapper.emitted('update:page')).toEqual([[2]])
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+it('keeps compact numbered navigation local and still supports first and last page', async () => {
+  const wrapper = mount(TablePagination, { props: { compact: true, page: 2, pageSize: 25, total: 1971, unit: '项' } })
+  try {
+    expect(wrapper.findAll('[data-slot="pagination-item"]').map(item => item.text())).toEqual(['1', '2', '3'])
+    await wrapper.get('[aria-label="最后一页"]').trigger('click')
+    await wrapper.get('[aria-label="第一页"]').trigger('click')
+    expect(wrapper.emitted('update:page')).toEqual([[79], [1]])
+  } finally {
+    wrapper.unmount()
+  }
+})
+
 it('selects only known cursor pages and bounds a long page history without claiming a final page', async () => {
   const wrapper = mount(TablePagination, { props: { mode: 'cursor', page: 6, knownPageCount: 12, pageSize: 25, unit: '条', hasNext: true } })
   expect(wrapper.get('[aria-label="已知页码"]').text()).toBe('1…567…12')

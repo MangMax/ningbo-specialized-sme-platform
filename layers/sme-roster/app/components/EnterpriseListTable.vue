@@ -100,10 +100,10 @@ function differenceReason(row: EnterpriseListRow): string {
   <div
     data-testid="enterprise-table-scroll"
     data-evidence-return-scroll-container
-    class="data-table-scroll [&_[data-slot=table-container]]:overflow-visible"
+    class="data-table-scroll"
   >
     <Table class="data-table w-full min-w-0 table-fixed lg:min-w-[980px]">
-      <TableHeader class="sticky top-0 z-10">
+      <TableHeader>
         <TableRow class="hover:bg-transparent">
           <TableHead class="bg-muted text-muted-foreground h-9 w-[28%] text-xs font-semibold tracking-wide lg:w-[20rem]">
             企业名称
