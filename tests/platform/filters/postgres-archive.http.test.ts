@@ -1,4 +1,4 @@
-import { createApp, createError, createRouter, defineEventHandler, toWebHandler } from 'h3'
+import { createApp, createError, createRouter, defineEventHandler, getMethod, getQuery, setHeader, setResponseStatus, toWebHandler } from 'h3'
 import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { schema } from '../../../db'
@@ -52,6 +52,7 @@ const isolatedIds = new Map<NativeSource, { text: number; blob: number }>()
 const rawArchive = '工信部原始响应🙂\n第二行'
 let evidenceCoordinates: { queryId: number; relationId: number }
 let reassignedCoordinates: { queryId: number; relationId: number; enterpriseId: number }
+let snapshotIds: { from: number; to: number; other: number }
 const capturedProjections = {
   declarations: ['platform_apply_projection', 'sql_fact_title_state'],
   'business-processes': ['platform_business_projection', 'sql_fact_title_state'],
@@ -66,7 +67,7 @@ async function read(backend: 'sqlite' | 'postgres', path: string, params: Record
   return {
     status: response.status,
     cacheControl: response.headers.get('cache-control'),
-    body: response.ok ? await response.json() : await response.json().then(body => body.statusMessage),
+    body: response.ok ? await response.json() : await response.json().then(body => body.statusMessage ?? body.message),
   }
 }
 
@@ -120,9 +121,26 @@ beforeAll(async () => {
     }
   }
 
+  const addBatch = (titleCode: string, revision: number, replacedBatchId?: number) =>
+    fixture.db.insert(schema.platformExportBatch).values({
+      titleCode, year: 2025, collectedOn: '2025-12-20', originalFilename: `快照-${revision}.xlsx`,
+      sha256: String(revision).repeat(64), rowCount: 2, importStatus: 'imported', replacedBatchId,
+    }).returning({ id: schema.platformExportBatch.id }).get().id
+  const from = addBatch('specialized_sme', 1)
+  snapshotIds = { from, to: addBatch('specialized_sme', 2, from), other: addBatch('little_giant', 3) }
+  fixture.db.insert(schema.platformExportRow).values([
+    { batchId: from, sourceRowNo: 7, usccRaw: ' a ', nameRaw: '公司甲', district: '海曙区' },
+    { batchId: from, sourceRowNo: 8, usccRaw: 'B', nameRaw: '公司乙' },
+    { batchId: snapshotIds.to, sourceRowNo: 9, usccRaw: 'A', nameRaw: '公司甲', district: '江北区' },
+    { batchId: snapshotIds.to, sourceRowNo: 20, usccRaw: 'C', nameRaw: '公司丙' },
+  ]).run()
   await installArchiveFixture(pgClient, fixture.db.$client)
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('createError', createError)
+  vi.stubGlobal('getMethod', getMethod)
+  vi.stubGlobal('getQuery', getQuery)
+  vi.stubGlobal('setHeader', setHeader)
+  vi.stubGlobal('setResponseStatus', setResponseStatus)
   vi.stubEnv('NUXT_DB_READONLY', '1')
   vi.doMock('@db', () => ({ useDb: () => {
     if (process.env.NUXT_POSTGRES_DIRECTORY_URL) throw new Error('Unexpected SQLite access in PostgreSQL mode')
@@ -137,6 +155,8 @@ beforeAll(async () => {
     .get('/api/platform/recognized-directory/:recordId', (await import('../../../layers/sme-roster/server/api/platform/recognized-directory/[recordId].get')).default)
     .get('/api/platform/filter-options', (await import('../../../layers/sme-roster/server/api/platform/filter-options.get')).default)
     .get('/api/platform/queries', (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default)
+    .get('/api/platform/snapshots', (await import('../../../layers/sme-roster/server/api/platform/snapshots.get')).default)
+    .get('/api/platform/snapshots/diff', (await import('../../../layers/sme-roster/server/api/platform/snapshots/diff.get')).default)
     .get('/api/platform/queries/:queryId/evidence', (await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default)
   request = toWebHandler(createApp().use(router))
 }, 30_000)
@@ -148,6 +168,23 @@ afterAll(async () => {
   vi.doUnmock('@db')
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
+})
+
+it.skipIf(!url)('reads export snapshots and row-level differences from the same PostgreSQL snapshot', async () => {
+  const { from, to, other } = snapshotIds
+  const params = { title: 'specialized_sme', year: '2025,2026' }
+  const listed = await read('postgres', 'snapshots', params)
+  expect(listed).toEqual(await read('sqlite', 'snapshots', params))
+  expect(listed).toMatchObject({ status: 200, body: { count: 2, rows: [{ batch: { id: from } }, { batch: { id: to }, replacedBatchId: from }] } })
+  const compared = await read('postgres', 'snapshots/diff', { from, to })
+  expect(compared).toEqual(await read('sqlite', 'snapshots/diff', { from, to }))
+  expect(compared).toMatchObject({ status: 200, body: { diff: {
+    added: [{ sourceRowNo: 20 }], removed: [{ sourceRowNo: 8 }], unchanged: 0,
+    changed: [{ fromSourceRowNo: 7, toSourceRowNo: 9, fields: [{ field: 'district', from: '海曙区', to: '江北区' }] }],
+  } } })
+  for (const scope of [{ from, to: other }, { from, to: 9_000_000 }, { from: 'bogus', to }]) {
+    expect(await read('postgres', 'snapshots/diff', scope)).toEqual(await read('sqlite', 'snapshots/diff', scope))
+  }
 })
 
 it.skipIf(!url)('reads historical query summaries with stable pages, title scope and the latest owner', async () => {

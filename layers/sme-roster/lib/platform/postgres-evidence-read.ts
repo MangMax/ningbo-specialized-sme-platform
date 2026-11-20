@@ -146,7 +146,7 @@ export function readPostgresPlatformEvidence(db: NodePgDatabase, value: Platform
     if (input.field === 'relations') {
       const page = input.page ?? 1
       const pageSize = input.pageSize ?? 100
-      const offset = (BigInt(page) - 1n) * BigInt(pageSize)
+      const offset = (BigInt(page) - BigInt(1)) * BigInt(pageSize)
       const { rows: [count] } = await tx.execute<{ total: string }>(sql`
         SELECT count(*) AS total FROM platform_business_observation WHERE collection_id = ${collection.id}`)
       const rows = offset >= BigInt(count!.total) ? [] : (await tx.execute<{ id: string | null; sequenceNo: string }>(sql`

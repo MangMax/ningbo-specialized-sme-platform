@@ -1,5 +1,6 @@
 import { useDb } from '@db'
-import { handlePlatformSnapshotRequest } from '../../utils/platform-snapshots-http'
+import { usePostgresDirectoryDb } from '../../../../../db/postgresql/client'
+import { handlePlatformSnapshotRequest, handlePostgresPlatformSnapshotRequest } from '../../utils/platform-snapshots-http'
 
 /**
  * 平台导出**快照与版本**(契约 §7.7,RL-05)。
@@ -33,12 +34,12 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler((event) => {
-  const response = handlePlatformSnapshotRequest(
-    'snapshots',
-    { method: getMethod(event), query: getQuery(event) as Record<string, unknown> },
-    { db: useDb() },
-  )
+export default defineEventHandler(async (event) => {
+  const request = { method: getMethod(event), query: getQuery(event) as Record<string, unknown> }
+  const postgres = usePostgresDirectoryDb()
+  const response = postgres
+    ? await handlePostgresPlatformSnapshotRequest('snapshots', request, postgres)
+    : handlePlatformSnapshotRequest('snapshots', request, { db: useDb() })
   setResponseStatus(event, response.status)
   for (const [name, value] of Object.entries(response.headers)) setHeader(event, name, value)
   return response.body

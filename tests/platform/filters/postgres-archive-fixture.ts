@@ -17,6 +17,8 @@ const tables = {
   platform_legacy_relation_alias: 'old_id:i observation_id:i',
   platform_query_title_scope: 'collection_id:i rdjb',
   platform_query_title_scope_error: 'collection_id:i',
+  platform_export_batch: 'id:i title_code year:i collected_on original_filename sha256 row_count:i import_status source_document_id:i import_batch_id:i replaced_batch_id:i created_at',
+  platform_export_row: 'id:i batch_id:i source_row_no:i uscc_raw name_raw province city district reg_status',
   record_correspondence: 'id:i observation_id:i status revision:i',
   platform_apply_projection: 'id:i observation_id:i record_id:i version_id:i rule_version title_raw name_raw uscc_raw declare_kind declaration_year:i applied_at status exact_title_raw:x exact_declare_kind:x exact_year:x exact_applied_at:x exact_status:x exact_stored_state sql_fact_title_state',
   platform_business_projection: 'id:i observation_id:i record_id:i version_id:i rule_version title_raw name_raw uscc_raw declare_kind business_year:i applied_at status batch award_batch_label province exact_title_raw:x exact_declare_kind:x exact_year:x exact_applied_at:x exact_status:x exact_batch:x exact_award_batch_label:x exact_province:x exact_stored_state exact_stored_rule sql_fact_title_state sql_fact_title_rule',

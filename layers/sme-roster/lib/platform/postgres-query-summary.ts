@@ -43,7 +43,7 @@ export function readPostgresPlatformQuerySummary(db: NodePgDatabase, filter: Pla
   if (filter.includeRawResponse) throw createError({ statusCode: 400, statusMessage: 'Invalid view or includeRawResponse combination' })
   const page = Math.min(filter.page ?? 1, Number.MAX_SAFE_INTEGER)
   const pageSize = Math.min(filter.pageSize ?? 25, MAX_PAGE_SIZE)
-  const offset = (BigInt(page) - 1n) * BigInt(pageSize)
+  const offset = (BigInt(page) - BigInt(1)) * BigInt(pageSize)
   const conditions = conditionsOf(filter)
   const where = () => conditions.length ? sql`WHERE ${sql.join(conditions, sql` AND `)}` : sql.empty()
 
