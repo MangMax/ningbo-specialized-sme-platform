@@ -52,7 +52,8 @@ export async function findPostgresImportRelation(db: Reader,raw: unknown,field: 
     '关系引用缺少 sequenceNo（同一次查询内第几条，从 1 起）')
   const queries = await findQueries(db,ref)
   if (!queries.length) return fail('query_ref_not_found',field,'引用不到平台查询：'+describeRef(ref))
-  const known = sql`c.id=ANY(${sql.param(queries.map(row=>row.collectionId))}::bigint[])`
+  if (queries.length>1) return fail('relation_ref_ambiguous',field,`引用不唯一：${describeRef(ref)} 命中 ${queries.length} 次查询；请补 queriedAt`)
+  const known = sql`c.id=${queries[0]!.collectionId}`
   const rows = await relations(db,sql`${known} AND o.sequence_no=${ref.sequenceNo}`)
   if (!rows.length) return fail('relation_ref_not_found',field,
     `引用不到平台关系：${describeRef(ref)}（该查询里没有序号 ${ref.sequenceNo} 的关系）`)

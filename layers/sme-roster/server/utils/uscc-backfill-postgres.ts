@@ -3,12 +3,12 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { missingUsccSourceFields, usccFormatVerdict } from '../../lib/roster/uscc-research'
-import type { RosterImportItemResult, RosterImportRequest, RosterImportUsccBackfill } from '../../lib/roster-import-client'
+import type { RosterImportItemResult, RosterImportUsccBackfill } from '../../lib/roster-import-client'
 import { capturePostgresIdentityChange, readPostgresIdentityMaterial } from './postgres-identity-evidence'
-import { executePostgresRosterImport } from './roster-export-import-postgres'
-import { usePostgresRosterDb } from './postgres-roster-db'
+import type { NativeImportExecution, PostgresImportAction, PostgresImportBatch } from './roster-export-import-postgres'
 
 type Reader = Pick<NodePgDatabase,'execute'>
+type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Subject = { id:number; name:string; nameNorm:string; uscc:string | null; flags:string[] | null }
 type Change = { target:Subject; backfill:RosterImportUsccBackfill; uscc:string; ref:string }
 const emptySummary = { written:0,skipped:0,failed:0,evidenceRepointed:0 }
@@ -61,45 +61,40 @@ class BackfillConflict extends Error {
   constructor(readonly results: RosterImportItemResult[]) { super('uscc_backfill_conflict') }
 }
 
-export function runPostgresUsccBackfill(action: 'preflight' | 'commit' | 'replay', request: RosterImportRequest) {
-  const changes = request.payload.usccBackfills
-  if (action==='replay' || !changes?.length || Object.keys(request.payload).some(key=>key!=='usccBackfills')) return
-  const db = usePostgresRosterDb(true)
-  if (!db) return
-  return executePostgresRosterImport(db,action,request,async (tx,batch)=>{
-    const plans = []
-    for (const [index,input] of changes.entries()) plans.push(await planBackfill(tx,input,index))
-    const conflicts = plans.filter((entry): entry is RosterImportItemResult => 'ok' in entry)
-    const ready = plans.filter((entry): entry is Change => !('ok' in entry))
-    const preflight = { add:0,update:ready.length,remove:0,review:0,conflicts,evidenceRepoints:0,batchStatus:batch.status }
-    if (action==='preflight') return { preflight }
-    if (conflicts.length) return { preflight,items:plans.map(plan=>'ok' in plan ? plan : item(plan)),
-      summary:{ ...emptySummary,failed:conflicts.length },error:`批次校验未通过：${conflicts.length} 项有误，未写入任何数据` }
-    await lockPostgresReviewedEnterpriseBatch(tx,ready.map(change=>change.target.id),ready.map(change=>({uscc:change.uscc})))
-    try {
-      const items = await tx.transaction(async nested=>{
-        const results: RosterImportItemResult[] = []
-        for (const [index,original] of ready.entries()) {
-          const plan = await planBackfill(nested,original.backfill,index)
-          if ('ok' in plan) throw new BackfillConflict([...results,plan])
-          if (plan.target.id!==original.target.id) throw new BackfillConflict([...results,
-            failure(plan.ref,'enterprise_selector_conflict','补录归属企业已变更，请重新核对','enterpriseId')])
-          const { target,uscc,backfill } = plan
-          const before = await readPostgresIdentityMaterial(nested,target.id)
-          const flags = (target.flags ?? []).filter(flag=>flag!=='uscc_missing')
-          await nested.execute(sql`UPDATE enterprise SET uscc_norm=${uscc},quality_flags=${JSON.stringify(flags)} WHERE id=${target.id}`)
-          await capturePostgresIdentityChange(nested,target.id,'uscc:'+uscc,before)
-          results.push({ ok:true,kind:'uscc_backfill',ref:item(plan).ref,detail:{ enterpriseId:target.id,uscc,rowsWritten:1,
-            lineage:{ enterpriseId:target.id,enterpriseName:target.name,uscc,previousUscc:null,source:backfill.source,note:optionalText(backfill.note) } } })
-        }
-        return results
-      })
-      return { preflight,items,summary:{ ...emptySummary,written:items.length },error:null }
-    } catch (error) {
-      if (!(error instanceof BackfillConflict)) throw error
-      const items = [...error.results.map(row=>row.ok ? { ...row,ok:false,error:{code:'commit_rolled_back',message:'整批回滚，本项未写入'} } : row),
-        ...ready.slice(error.results.length).map(plan=>({ ...item(plan),ok:false,error:{code:'not_executed',message:'整批回滚，本项未执行'} }))]
-      return { preflight,items,summary:{ ...emptySummary,failed:items.length },error:'批次执行阶段有项失败（已整批回滚，未写入任何数据）' }
-    }
-  })
+export async function executePostgresUsccBackfillItems(tx: Tx,batch:PostgresImportBatch,action:PostgresImportAction,
+  changes: readonly RosterImportUsccBackfill[]): Promise<NativeImportExecution> {
+  const plans = []
+  for (const [index,input] of changes.entries()) plans.push(await planBackfill(tx,input,index))
+  const conflicts = plans.filter((entry): entry is RosterImportItemResult => 'ok' in entry)
+  const ready = plans.filter((entry): entry is Change => !('ok' in entry))
+  const preflight = { add:0,update:ready.length,remove:0,review:0,conflicts,evidenceRepoints:0,batchStatus:batch.status }
+  if (action==='preflight') return { preflight }
+  if (conflicts.length) return { preflight,items:plans.map(plan=>'ok' in plan ? plan : item(plan)),
+    summary:{ ...emptySummary,failed:conflicts.length },error:`批次校验未通过：${conflicts.length} 项有误，未写入任何数据` }
+  await lockPostgresReviewedEnterpriseBatch(tx,ready.map(change=>change.target.id),ready.map(change=>({uscc:change.uscc})))
+  try {
+    const items = await tx.transaction(async nested=>{
+      const results: RosterImportItemResult[] = []
+      for (const [index,original] of ready.entries()) {
+        const plan = await planBackfill(nested,original.backfill,index)
+        if ('ok' in plan) throw new BackfillConflict([...results,plan])
+        if (plan.target.id!==original.target.id) throw new BackfillConflict([...results,
+          failure(plan.ref,'enterprise_selector_conflict','补录归属企业已变更，请重新核对','enterpriseId')])
+        const { target,uscc,backfill } = plan
+        const before = await readPostgresIdentityMaterial(nested,target.id)
+        const flags = (target.flags ?? []).filter(flag=>flag!=='uscc_missing')
+        await nested.execute(sql`UPDATE enterprise SET uscc_norm=${uscc},quality_flags=${JSON.stringify(flags)} WHERE id=${target.id}`)
+        await capturePostgresIdentityChange(nested,target.id,'uscc:'+uscc,before)
+        results.push({ ok:true,kind:'uscc_backfill',ref:item(plan).ref,detail:{ enterpriseId:target.id,uscc,rowsWritten:1,
+          lineage:{ enterpriseId:target.id,enterpriseName:target.name,uscc,previousUscc:null,source:backfill.source,note:optionalText(backfill.note) } } })
+      }
+      return results
+    })
+    return { preflight,items,summary:{ ...emptySummary,written:items.length },error:null }
+  } catch (error) {
+    if (!(error instanceof BackfillConflict)) throw error
+    const items = [...error.results.map(row=>row.ok ? { ...row,ok:false,error:{code:'commit_rolled_back',message:'整批回滚，本项未写入'} } : row),
+      ...ready.slice(error.results.length).map(plan=>({ ...item(plan),ok:false,error:{code:'not_executed',message:'整批回滚，本项未执行'} }))]
+    return { preflight,items,summary:{ ...emptySummary,failed:items.length },error:'批次执行阶段有项失败（已整批回滚，未写入任何数据）' }
+  }
 }

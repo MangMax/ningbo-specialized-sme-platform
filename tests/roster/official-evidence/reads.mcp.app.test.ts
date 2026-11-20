@@ -983,6 +983,23 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     expect(await codeOf(subjects[0].id)).toBe(uscc)
     expect(await codeOf(subjects[1].id)).toBeNull()
     expect(await nativeTool('save_roster_batch',backfillCommand)).toMatchObject({isError:false,body:backfillReceipt})
+    const mergedImport = { ...repair, idempotencyKey:'native-mixed-rollback',
+      payload:{ ...repair.payload, aliases:[{ uscc:event.uscc,name:'合成同批别名',sourceKind:'manual',verificationStatus:'confirmed' }] } }
+    const failedMixed = await (await stage(mergedImport)).json()
+    expect(failedMixed).toMatchObject({status:'failed',summary:{written:0},
+      items:[{kind:'alias',error:{code:'commit_rolled_back'}},{kind:'uscc_backfill'},{kind:'uscc_backfill'}]})
+    const rolledBackId = Number(failedMixed.items[0].ref.slice('alias:'.length))
+    const mixedOwner = failedMixed.items[0].detail.enterpriseId
+    expect((await app.request('/api/roster/enterprises/'+mixedOwner+'/aliases/'+rolledBackId)).status).toBe(404)
+    const mixedCommand = { ...mergedImport,idempotencyKey:'native-mixed-commit',
+      payload:{ ...mergedImport.payload,usccBackfills:[{...repairs[1],uscc:'91330201000207415U'}] } }
+    const mixedPreview = await nativeTool('preflight_roster_batch',mixedCommand)
+    expect(mixedPreview.body).toMatchObject({status:'preflight',preflight:{add:1,update:1,conflicts:[]}})
+    expect(await codeOf(subjects[1].id)).toBeNull()
+    const mixedCommitted = await (await stage(mixedCommand)).json()
+    expect(mixedCommitted).toMatchObject({status:'committed',summary:{written:2},items:[{kind:'alias'},{kind:'uscc_backfill'}]})
+    expect(await codeOf(subjects[1].id)).toBe('91330201000207415U')
+    expect(await nativeTool('save_roster_batch',mixedCommand)).toMatchObject({isError:false,body:mixedCommitted})
     const aliasSource = archiveQuery('business_list')
     const alias = { uscc:event.uscc,name:'合成原值',sourceKind:'platform_business',verificationStatus:'confirmed',
       sourceRelationRef:{ interface:aliasSource.interface,queryKey:aliasSource.queryKey,rdjb:aliasSource.rdjb,
@@ -1003,6 +1020,17 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
       status:'failed',items:[{error:{code:'alias_source_evidence_mismatch'}}] })
     const repeatAlias = { ...aliasRequest,idempotencyKey:'native-platform-alias-repeat' }
     expect(await (await stage(repeatAlias)).json()).toMatchObject({status:'committed',summary:{written:0,skipped:1}})
+    const secondArchive = { ...archiveRequest,idempotencyKey:'native-archive-nul-retry',
+      payload:{platformQueries:[{ ...aliasSource,queriedAt:'2026-10-10T02:00:00Z',
+        rawResponse:'before\u0000after',relations:[] }]} }
+    const nulReceipt = await (await stage(secondArchive)).json()
+    expect(nulReceipt).toMatchObject({status:'committed',summary:{written:1}})
+    expect(await (await stage(secondArchive)).json()).toEqual(nulReceipt)
+    const { queriedAt: _otherTime, ...unscopedRef } = alias.sourceRelationRef
+    const ambiguousAlias = { ...aliasRequest,idempotencyKey:'native-ambiguous-platform-reference',
+      payload:{aliases:[{ ...alias,sourceRelationRef:unscopedRef }]} }
+    expect((await nativeTool('preflight_roster_batch',ambiguousAlias)).body).toMatchObject({
+      status:'preflight',preflight:{add:0,conflicts:[{error:{code:'relation_ref_ambiguous'}}]} })
     const legacyRow = { id:'native-legacy-page-row',rdjb:'2',qymc:'合成分页主体',tyshxydm:event.uscc }
     const queriedAt = '2026-10-10T08:12:00.000Z'
     const legacyQuery = { interface:'business_list',queryKey:event.uscc,rdjb:'1,2,3',queriedAt,status:'success',

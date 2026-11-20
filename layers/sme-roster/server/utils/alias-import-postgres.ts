@@ -2,14 +2,14 @@ import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
-import type { RosterImportAlias, RosterImportItemResult, RosterImportRequest } from '../../lib/roster-import-client'
+import type { RosterImportAlias, RosterImportItemResult } from '../../lib/roster-import-client'
 import { replayOptionalString as text } from '../../lib/platform/query-replay'
 import { capturePostgresIdentityChange, readPostgresIdentityMaterial } from './postgres-identity-evidence'
 import { findPostgresImportRelation, findPostgresImportRelationById } from './roster-import-references-postgres'
-import { executePostgresRosterImport } from './roster-export-import-postgres'
-import { usePostgresRosterDb } from './postgres-roster-db'
+import type { NativeImportExecution, PostgresImportAction, PostgresImportBatch } from './roster-export-import-postgres'
 
 type Reader = Pick<NodePgDatabase,'execute'>
+type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Subject = { id:number; uscc:string | null }
 type AliasPlan = { enterpriseId:number; name:string; nameNorm:string; sourceRefId:number;
   input:RosterImportAlias; existingId:number | null; ref:string }
@@ -78,50 +78,45 @@ function view(plan:AliasPlan):RosterImportItemResult {
   return { ok:true,kind:'alias',ref:plan.existingId===null ? plan.ref : 'alias:'+plan.existingId,detail:{enterpriseId:plan.enterpriseId} }
 }
 
-export function runPostgresAliasImport(action: 'preflight'|'commit'|'replay',request:RosterImportRequest) {
-  const aliases = request.payload.aliases
-  if (action==='replay' || !Array.isArray(aliases) || !aliases.length || Object.keys(request.payload).some(key=>key!=='aliases')) return
-  const db = usePostgresRosterDb(true)
-  if (!db) return
-  return executePostgresRosterImport(db,action,request,async (tx,batch)=>{
-    const collect = async () => {
-      const rows: Array<Awaited<ReturnType<typeof planAlias>>> = []
-      for (const [index,input] of aliases.entries()) rows.push(await planAlias(tx,input,index))
-      return rows
+export async function executePostgresAliasItems(tx: Tx,batch:PostgresImportBatch,action:PostgresImportAction,
+  aliases: readonly RosterImportAlias[]): Promise<NativeImportExecution> {
+  const collect = async () => {
+    const rows: Array<Awaited<ReturnType<typeof planAlias>>> = []
+    for (const [index,input] of aliases.entries()) rows.push(await planAlias(tx,input,index))
+    return rows
+  }
+  let plans = await collect()
+  const planned = plans.filter((plan):plan is AliasPlan=>!('ok' in plan))
+  if (action==='commit' && planned.length===plans.length) {
+    const ids = planned.map(plan=>plan.enterpriseId)
+    await lockPostgresReviewedEnterpriseBatch(tx,ids,planned.map(plan=>({name:plan.name,uscc:normalizeUscc(plan.input.uscc) || null})))
+    const verified = await collect()
+    plans = verified.map((plan,index)=>'ok' in plan || plan.enterpriseId===ids[index] ? plan
+      : {ok:false,kind:'alias',ref:plan.ref,error:{code:'enterprise_changed',field:'enterpriseName',message:'别名归属企业已变更，请重新核对'}})
+  }
+  const ready = plans.filter((plan):plan is AliasPlan=>!('ok' in plan))
+  const conflicts = plans.filter((plan):plan is RosterImportItemResult=>'ok' in plan)
+  const preflight = { add:ready.filter(plan=>plan.existingId===null).length,update:0,remove:0,
+    review:ready.filter(plan=>plan.input.verificationStatus!=='confirmed').length,conflicts,evidenceRepoints:0,batchStatus:batch.status }
+  if (action==='preflight') return {preflight}
+  if (conflicts.length) return {preflight,items:plans.map(plan=>'ok' in plan ? plan : view(plan)),
+    summary:{...summary,failed:conflicts.length},error:`批次校验未通过：${conflicts.length} 项有误，未写入任何数据`}
+  let written = 0
+  const items: RosterImportItemResult[] = []
+  for (const {enterpriseId,name,nameNorm,sourceRefId,input} of ready) {
+    const before = await readPostgresIdentityMaterial(tx,enterpriseId)
+    const { rows:[newAlias] } = await tx.execute<{id:number}>(sql`INSERT INTO enterprise_alias
+      (enterprise_id,name,name_norm,source_kind,source_ref_id,valid_from,valid_to,verification_status,note,created_at)
+      VALUES(${enterpriseId},${name},${nameNorm},${input.sourceKind},${sourceRefId},${text(input.validFrom)},${text(input.validTo)},
+        ${input.verificationStatus ?? 'pending'},${text(input.note)},${new Date().toISOString()})
+      ON CONFLICT(enterprise_id,name_norm,source_kind,source_ref_id) DO NOTHING RETURNING id::float8 AS id`)
+    if (newAlias) {
+      await capturePostgresIdentityChange(tx,enterpriseId,'alias-import:'+newAlias.id,before)
+      written++
     }
-    let plans = await collect()
-    const planned = plans.filter((plan):plan is AliasPlan=>!('ok' in plan))
-    if (action==='commit' && planned.length===plans.length) {
-      const ids = planned.map(plan=>plan.enterpriseId)
-      await lockPostgresReviewedEnterpriseBatch(tx,ids,planned.map(plan=>({name:plan.name,uscc:normalizeUscc(plan.input.uscc) || null})))
-      const verified = await collect()
-      plans = verified.map((plan,index)=>'ok' in plan || plan.enterpriseId===ids[index] ? plan
-        : {ok:false,kind:'alias',ref:plan.ref,error:{code:'enterprise_changed',field:'enterpriseName',message:'别名归属企业已变更，请重新核对'}})
-    }
-    const ready = plans.filter((plan):plan is AliasPlan=>!('ok' in plan))
-    const conflicts = plans.filter((plan):plan is RosterImportItemResult=>'ok' in plan)
-    const preflight = { add:ready.filter(plan=>plan.existingId===null).length,update:0,remove:0,
-      review:ready.filter(plan=>plan.input.verificationStatus!=='confirmed').length,conflicts,evidenceRepoints:0,batchStatus:batch.status }
-    if (action==='preflight') return {preflight}
-    if (conflicts.length) return {preflight,items:plans.map(plan=>'ok' in plan ? plan : view(plan)),
-      summary:{...summary,failed:conflicts.length},error:`批次校验未通过：${conflicts.length} 项有误，未写入任何数据`}
-    let written = 0
-    const items: RosterImportItemResult[] = []
-    for (const {enterpriseId,name,nameNorm,sourceRefId,input} of ready) {
-      const before = await readPostgresIdentityMaterial(tx,enterpriseId)
-      const { rows:[newAlias] } = await tx.execute<{id:number}>(sql`INSERT INTO enterprise_alias
-        (enterprise_id,name,name_norm,source_kind,source_ref_id,valid_from,valid_to,verification_status,note,created_at)
-        VALUES(${enterpriseId},${name},${nameNorm},${input.sourceKind},${sourceRefId},${text(input.validFrom)},${text(input.validTo)},
-          ${input.verificationStatus ?? 'pending'},${text(input.note)},${new Date().toISOString()})
-        ON CONFLICT(enterprise_id,name_norm,source_kind,source_ref_id) DO NOTHING RETURNING id::float8 AS id`)
-      if (newAlias) {
-        await capturePostgresIdentityChange(tx,enterpriseId,'alias-import:'+newAlias.id,before)
-        written++
-      }
-      const id = newAlias?.id ?? (await tx.execute<{id:number}>(sql`SELECT id::float8 AS id FROM enterprise_alias
-        WHERE enterprise_id=${enterpriseId} AND name_norm=${nameNorm} AND source_kind=${input.sourceKind} AND source_ref_id=${sourceRefId}`)).rows[0]!.id
-      items.push({ok:true,kind:'alias',ref:'alias:'+id,detail:{enterpriseId,rowsWritten:Number(!!newAlias),...(newAlias ? {sourceRefId} : {})}})
-    }
-    return {preflight,items,summary:{...summary,written,skipped:items.length-written},error:null}
-  })
+    const id = newAlias?.id ?? (await tx.execute<{id:number}>(sql`SELECT id::float8 AS id FROM enterprise_alias
+      WHERE enterprise_id=${enterpriseId} AND name_norm=${nameNorm} AND source_kind=${input.sourceKind} AND source_ref_id=${sourceRefId}`)).rows[0]!.id
+    items.push({ok:true,kind:'alias',ref:'alias:'+id,detail:{enterpriseId,rowsWritten:Number(!!newAlias),...(newAlias ? {sourceRefId} : {})}})
+  }
+  return {preflight,items,summary:{...summary,written,skipped:items.length-written},error:null}
 }
