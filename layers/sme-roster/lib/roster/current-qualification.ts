@@ -299,32 +299,7 @@ function createCurrentQualificationAssessmentReaderBody(db:Database.Database,rec
   const comparisonCollector = () => {
     let cycles: CandidateComparisonInput['formal']['cycles'] = []
     const collect: CurrentCycleObservation = (judgments, formal) => {
-      const unassignedGrantOffsets = new Map<number, number>()
-      cycles = judgments.map(judgment => {
-        const sameScope = formal.filter(event => originTime(event) === judgment.originYear && event.batchSeq === judgment.batch)
-        let eventIds = sameScope.map(event => event.id)
-        if (judgment.batch === null) {
-          const grants = sameScope.filter(event => event.eventType === 'award')
-          if (grants.length) {
-            // The authority emits one possible cycle per unassigned grant in
-            // formal input order, including future grants without an anchor.
-            const offset = unassignedGrantOffsets.get(judgment.originYear) ?? 0
-            const grant = grants[offset]
-            if (!grant) throw new Error('invalid_cycle_join')
-            eventIds = [grant.id]
-            unassignedGrantOffsets.set(judgment.originYear, offset + 1)
-          }
-        }
-        return {
-          cycle: { originYear: judgment.originYear, batchSeq: judgment.batch, precision: 'year' },
-          judgment: { originYear: judgment.originYear, batch: judgment.batch, group: judgment.group,
-            awardEventIds: [...judgment.awardEventIds], anchor: judgment.anchor === null ? null : {
-              id: judgment.anchor.id, eventType: judgment.anchor.eventType, year: judgment.anchor.year,
-              batchSeq: judgment.anchor.batchSeq, decidedYear: judgment.anchor.decidedYear, reviewOutcome: judgment.anchor.reviewOutcome,
-            } },
-          eventIds,
-        }
-      })
+      cycles = projectComparisonCycles(judgments, formal)
     }
     return { collect, cycles: () => cycles }
   }
@@ -1187,6 +1162,43 @@ export function evaluateLoadedCurrentQualification(
 
 export type LegacyQualificationInput = LoadedCurrentQualificationInput & Pick<CandidateSource,
   'readLegacyHeads' | 'readLegacyAssessment' | 'readLegacyReceipt' | 'readLegacyObservation'>
+
+function projectComparisonCycles(judgments: Parameters<CurrentCycleObservation>[0], formal: Parameters<CurrentCycleObservation>[1]): CandidateComparisonInput['formal']['cycles'] {
+  const unassignedGrantOffsets = new Map<number, number>()
+  return judgments.map(judgment => {
+    const sameScope = formal.filter(event => originTime(event) === judgment.originYear && event.batchSeq === judgment.batch)
+    let eventIds = sameScope.map(event => event.id)
+    if (judgment.batch === null) {
+      const grants = sameScope.filter(event => event.eventType === 'award')
+      if (grants.length) {
+        // The authority emits one possible cycle per unassigned grant in
+        // formal input order, including future grants without an anchor.
+        const offset = unassignedGrantOffsets.get(judgment.originYear) ?? 0
+        const grant = grants[offset]
+        if (!grant) throw new Error('invalid_cycle_join')
+        eventIds = [grant.id]
+        unassignedGrantOffsets.set(judgment.originYear, offset + 1)
+      }
+    }
+    return {
+      cycle: { originYear: judgment.originYear, batchSeq: judgment.batch, precision: 'year' },
+      judgment: { originYear: judgment.originYear, batch: judgment.batch, group: judgment.group,
+        awardEventIds: [...judgment.awardEventIds], anchor: judgment.anchor === null ? null : {
+          id: judgment.anchor.id, eventType: judgment.anchor.eventType, year: judgment.anchor.year,
+          batchSeq: judgment.anchor.batchSeq, decidedYear: judgment.anchor.decidedYear, reviewOutcome: judgment.anchor.reviewOutcome,
+        } },
+      eventIds,
+    }
+  })
+}
+
+export function projectLegacyComparisonCycles(snapshot: CurrentQualificationSnapshot, title: CurrentTitle) {
+  const evidence = snapshot.titles.find(assessment => assessment.titleCode === title)!.evidence
+  const formal = evidence.filter(event => event.evidenceIds.length > 0 && ['award', 'review'].includes(event.eventType))
+    .map(({ eventId: id, eventType, year, batchSeq, decidedYear, reviewOutcome }) => ({ id, eventType, year, batchSeq, decidedYear, reviewOutcome }))
+    .sort((a, b) => a.id - b.id)
+  return projectComparisonCycles(adjudicate407Cycles(formal, new Date(snapshot.asOf).getUTCFullYear()).cycles, formal)
+}
 
 export function assessLegacyQualificationInputs(enterpriseId: number, asOf: number, inputs: ReadonlyMap<CurrentTitle, LegacyQualificationInput>): CurrentQualificationSnapshot {
   const assessmentVersion = LEGACY_QUALIFICATION_ASSESSMENT_VERSION

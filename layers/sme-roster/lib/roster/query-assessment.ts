@@ -113,7 +113,9 @@ export function readQueryCoverageBatch(db: DecisionDb, scopes: readonly Assessme
 /** Internal opt-in witness projection. Keep every retained retry/asOf candidate,
  * not the legacy aggregate status or its latest map. No rows/body fields escape SQL. */
 export function readQueryComparisonWitnesses(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, ownQueryIds?: readonly number[]) {
-  const selected = queryMetadata(db, scope, variants, ownQueryIds)
+  return projectQueryComparisonWitnesses(queryMetadata(db, scope, variants, ownQueryIds), scope)
+}
+export function projectQueryComparisonWitnesses(selected: Parameters<typeof projectQueryCoverage>[0], scope: Pick<AssessmentScope, 'titleCode'>) {
   const coverage = projectQueryCoverage(selected, scope)
   const rows = new Map(selected.rows.map(row => [row.id, row]))
   return { truncated: selected.truncated, sources: coverage.sources.map(source => {

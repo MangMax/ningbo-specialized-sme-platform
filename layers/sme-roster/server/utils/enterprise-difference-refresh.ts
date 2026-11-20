@@ -8,6 +8,7 @@ import { readDifferenceRefreshMetadata,readDifferenceRefreshRows } from '../../l
 import { selectDifferenceCollections } from '../../lib/platform/difference-sources'
 import { targetSchema } from '../../lib/platform/target-schema'
 import { createCurrentQualificationAssessmentReaderWithWitnesses } from '../../lib/roster/current-qualification'
+import type { PlatformComparison } from '../../lib/roster/platform-comparison'
 import { CURRENT_TITLES } from '../../lib/roster/current-titles'
 import { createTargetRecognizedWitnessReader } from '../../lib/roster/recognized-witness-target'
 
@@ -20,10 +21,13 @@ export function parseEnterpriseDifferenceRefreshQuery(raw: Record<string, unknow
   if (typeof raw.enterpriseIds !== 'string' || !/^[1-9]\d*(,[1-9]\d*)*$/.test(raw.enterpriseIds)) return fail('Invalid enterpriseIds')
   return { enterpriseIds: raw.enterpriseIds.split(',').map(Number) }
 }
-function scope(db: Db, raw: unknown) {
+export function parseEnterpriseDifferenceRefreshInput(raw: unknown) {
   const parsed = enterpriseDifferenceRefreshInput.safeParse(raw)
   if (!parsed.success) return fail('Invalid enterpriseIds; provide distinct positive IDs or omit for all published enterprises')
-  const ids = parsed.data.enterpriseIds ?? (db.$client.prepare("select distinct enterprise_id id from record where source='jxj' order by enterprise_id").all() as {id:number}[]).map(r=>r.id)
+  return parsed.data
+}
+function scope(db: Db, raw: unknown) {
+  const ids = parseEnterpriseDifferenceRefreshInput(raw).enterpriseIds ?? (db.$client.prepare("select distinct enterprise_id id from record where source='jxj' order by enterprise_id").all() as {id:number}[]).map(r=>r.id)
   const exists = db.$client.prepare('select id from enterprise where id=?')
   if (ids.some(id => !exists.get(id))) return fail('Unknown enterprise ID')
   return [...ids].sort((a,b)=>a-b)
@@ -39,11 +43,59 @@ const scopeFields = (value: unknown): unknown => Array.isArray(value) ? value.ma
 // Freeze the original refresh inputs from before the observation-owner expansion.
 // Internal projection IDs, archive references and reconciliation columns were
 // added later and must not change a business fingerprint.
-const refreshProjectionColumns = {
+export const refreshProjectionColumns = {
   platform_apply_projection: ['declare_kind','declaration_year','applied_at','status','name_raw','uscc_raw'],
   platform_business_projection: ['declare_kind','business_year','applied_at','status','batch','award_batch_label','province','name_raw','uscc_raw'],
   platform_recognized_projection: ['validity_date_raw','maintenance_year','maintenance_batch','source_validity_date','source_maintenance_batch','source_maintenance_year_absent','district','award_note','title_raw','name_raw','uscc_raw'],
 } satisfies Record<string, string[]>
+type RefreshCollection = Pick<ReturnType<typeof selectDifferenceCollections>[number]['collection'],
+  'id' | 'interface' | 'queryKey' | 'rdjb' | 'titleCode' | 'queriedAt' | 'status'>
+type RefreshMaterials = {
+  relations: Record<string, unknown>[]
+  typed: Record<string, unknown>[][]
+  metadata: string | null
+}
+export function latestRefreshCollections<T extends RefreshCollection>(ordered: readonly T[]): T[] {
+  const latest = new Map<string, string>()
+  return ordered.filter(q => {
+    const key = canonical([q.interface, q.queryKey, q.rdjb, q.titleCode])
+    if (latest.has(key) && latest.get(key)! > q.queriedAt) return false
+    latest.set(key, q.queriedAt)
+    return true
+  })
+}
+export function projectRefreshObservation(q: RefreshCollection, { relations, typed, metadata: metadataText }: RefreshMaterials) {
+  let metadata: Record<string, unknown> | null = null
+  if (metadataText) {
+    try {
+      const m = JSON.parse(metadataText)
+      metadata = { source: m.source ?? null, status: m.status ?? null,
+        effectiveConditions: scopeFields(m.effectiveConditions ?? null), titleScope: scopeFields(m.titleScope ?? null),
+        completeness: m.completeness ?? null, fullRange: m.fullRange ?? null,
+        pageCoverage: Array.isArray(m.pages) ? setRows(m.pages.map((p: Record<string, unknown>) => ({
+          rdjb: p.rdjb ?? null, status: p.status ?? null, declaredTotal: p.declaredTotal ?? null,
+        }))) : null }
+    } catch { metadata = { malformed: true } }
+  }
+  return { interface: q.interface, rdjb: q.rdjb, title: q.titleCode, status: q.status,
+    metadata, relations: sortedRows(relations), typed: typed.map(sortedRows) }
+}
+export function hashRefreshInputs({ enterprise, aliases, formal, evidence, correspondences, observations }: {
+  enterprise: unknown; aliases: unknown[]; formal: unknown[]; evidence: unknown[]; correspondences: unknown[]; observations: unknown[]
+}) {
+  return createHash('sha256').update(canonical({ enterprise, aliases: setRows(aliases), formal: sortedRows(formal),
+    evidence: sortedRows(evidence), correspondences: setRows(correspondences), observations: setRows(observations) })).digest('hex')
+}
+
+export function projectRefreshComparison(result: PlatformComparison) {
+  return { state: result.comparison.state, reasons: [...new Set(result.comparison.cycles.flatMap(c => c.reasons))], error: null }
+}
+export function refreshComparisonFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : ''
+  if (message !== 'platform_comparison_scope_unavailable' && message !== 'input_resource_limit') throw error
+  return { state: 'not_established' as const, reasons: [message === 'input_resource_limit' ? 'metadata_truncated' : 'coverage_incomplete'], error: message }
+}
+
 type TargetFingerprintPlan = {
   collections: ReturnType<typeof selectDifferenceCollections>
   rows: Map<number, Record<string, unknown>[]>
@@ -59,17 +111,13 @@ function businessFingerprint(db: Db, enterpriseId: number, title: string, plan?:
   const enterprise = sqlite.prepare('select name,name_norm,uscc_norm,city,district from enterprise where id=?').get(enterpriseId) as {name:string;name_norm:string;uscc_norm:string|null}
   const formal = sqlite.prepare(`select r.source,r.title_code,r.name_raw,r.uscc_raw,e.event_type,e.year,e.batch_seq,e.decided_year,e.review_outcome,e.formal_validity from record r left join record_event e on e.record_id=r.id where r.enterprise_id=? and r.title_code=?`).all(enterpriseId,title)
   // Retain equal-time statements; never use arbitrary ID ordering to pick a winner.
-  const queries = (plan?.collections ?? selectDifferenceCollections(db, enterpriseId, { confirmedAliases: true }))
-    .filter(({ collection: c }) => c.titleCode === null || c.titleCode === title)
-    .map(({ collection: c, id }) => ({ id, collectionId: c.id, interface: c.interface, query_key: c.queryKey, rdjb: c.rdjb, title_code: c.titleCode, queried_at: c.queriedAt, status: c.status, collection_evidence: null }))
-  const latest = new Map<string,string>()
+  const queries = latestRefreshCollections((plan?.collections ?? selectDifferenceCollections(db, enterpriseId, { confirmedAliases: true }))
+    .map(({ collection }) => collection))
   const observations: unknown[] = []
   const projections = ['platform_apply_projection','platform_business_projection','platform_recognized_projection'] as const
   for (const q of queries) {
-    const key=canonical([q.interface,q.query_key,q.rdjb,q.title_code])
-    if (latest.has(key) && latest.get(key)! > q.queried_at) continue
-    latest.set(key,q.queried_at)
-    const collectionId = q.collectionId
+    if (q.titleCode !== null && q.titleCode !== title) continue
+    const collectionId = q.id
     const rows = plan?.rows.get(collectionId) ?? readDifferenceRefreshRows(db, collectionId)
     plan?.rows.set(collectionId, rows)
     const typed = plan?.typed.get(collectionId) ?? projections.map((table,index)=>{
@@ -92,11 +140,9 @@ function businessFingerprint(db: Db, enterpriseId: number, title: string, plan?:
         return {...fields,sourceBusiness:business}
       } catch {return {...fields,sourceBusinessMalformed:true}}
     })
-    let metadata: Record<string,unknown> | null = null
     const metadataText = plan?.metadata.has(collectionId) ? plan.metadata.get(collectionId)! : readDifferenceRefreshMetadata(db, collectionId)
     plan?.metadata.set(collectionId, metadataText)
-    if(metadataText) { try { const m=JSON.parse(metadataText);metadata={source:m.source ?? null,status:m.status ?? null,effectiveConditions:scopeFields(m.effectiveConditions ?? null),titleScope:scopeFields(m.titleScope ?? null),completeness:m.completeness ?? null,fullRange:m.fullRange ?? null,pageCoverage:Array.isArray(m.pages)?setRows(m.pages.map((p:Record<string,unknown>)=>({rdjb:p.rdjb ?? null,status:p.status ?? null,declaredTotal:p.declaredTotal ?? null}))):null} } catch { metadata={malformed:true} } }
-    observations.push({interface:q.interface,rdjb:q.rdjb,title:q.title_code,status:q.status,metadata,relations:sortedRows(relationFields),typed:typed.map(sortedRows)})
+    observations.push(projectRefreshObservation(q, { relations: relationFields, typed, metadata: metadataText }))
   }
   const correspondences=sqlite.prepare(`select c.type,c.role,c.status,(c.ended_at is not null) as ended,${'r.source_relation_key'} as relation_key,e.event_type,e.year,e.batch_seq,e.decided_year,e.review_outcome,
     p.event_type as predecessor_type,p.year as predecessor_year,p.batch_seq as predecessor_batch
@@ -104,7 +150,7 @@ function businessFingerprint(db: Db, enterpriseId: number, title: string, plan?:
     where c.enterprise_id=? and c.title_code=?`).all(enterpriseId,title)
   const evidence=sqlite.prepare(`select v.source_file,v.attachment,v.list_no,v.page,e.event_type,e.year,e.batch_seq from record_evidence v join record_event e on e.id=v.record_event_id join record r on r.id=e.record_id where r.enterprise_id=? and r.title_code=?`).all(enterpriseId,title)
   const aliases=sqlite.prepare("select name_norm,verification_status from enterprise_alias where enterprise_id=? and verification_status='confirmed'").all(enterpriseId)
-  return createHash('sha256').update(canonical({enterprise,aliases:setRows(aliases),formal:sortedRows(formal),evidence:sortedRows(evidence),correspondences:setRows(correspondences),observations:setRows(observations)})).digest('hex')
+  return hashRefreshInputs({ enterprise, aliases, formal, evidence, correspondences, observations })
 }
 interface Stored {enterprise_id:number;title_code:string;comparison_state:'synchronized'|'unsynchronized'|'not_established';reasons:string;comparison_error:string|null;decision_cutoff_id:number;business_fingerprint:string;changed_at:string;refreshed_at:string}
 function readScope(db: Db, ids: number[]) {
@@ -132,14 +178,9 @@ export function refreshEnterpriseDifferences(db: Db, raw: unknown, now = new Dat
       const pending=CURRENT_TITLES.map(title=>({title,fingerprint:businessFingerprint(db,id,title,plan),old:previous.get(id,title) as Stored|undefined}))
       const changed=pending.filter(p=>p.old?.business_fingerprint!==p.fingerprint)
       const comparisons=changed.map(p=>{
-        try {const result=reader.readPlatformComparisons(id,Date.parse(now),[p.title]).comparisons[0]!;return {title:p.title,state:result.comparison.state,reasons:[...new Set(result.comparison.cycles.flatMap(c=>c.reasons))],error:null}}
-        catch(error) {
-          // The existing reader deliberately refuses an incomplete protective
-          // graph. Expose that failure as uncertainty, never as synchronization.
-          const message=error instanceof Error ? error.message : ''
-          if(message!=='platform_comparison_scope_unavailable' && message!=='input_resource_limit') throw error
-          return {title:p.title,state:'not_established' as const,reasons:[message==='input_resource_limit'?'metadata_truncated':'coverage_incomplete'],error:message}
-        }
+        try {
+          return { title: p.title, ...projectRefreshComparison(reader.readPlatformComparisons(id, Date.parse(now), [p.title]).comparisons[0]!) }
+        } catch (error) { return { title: p.title, ...refreshComparisonFailure(error) } }
       })
       for(const p of pending){
         if(p.old?.business_fingerprint===p.fingerprint){db.$client.prepare('update enterprise_difference_comparison set refreshed_at=? where enterprise_id=? and title_code=?').run(now,id,p.title);unchanged++;continue}

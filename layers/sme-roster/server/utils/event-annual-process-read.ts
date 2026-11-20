@@ -274,6 +274,42 @@ function readTargetAnnualComparisonBatch(db: Db, request: { enterpriseId: number
   const pages = collectionIds.length ? db.select().from(schema.platformCollectionPage).where(inArray(schema.platformCollectionPage.collectionId, collectionIds)).all() : []
   const titleScope = targetSchema.platformQueryTitleScope
   const titleScopes = collectionIds.length ? db.select().from(titleScope).where(inArray(titleScope.collectionId, collectionIds)).all() : []
+  return admitAnnualComparison({ request, entries, history, decisions, historicalQueries, queryRows, pages, titleScopes,
+    metadata: readPlatformBusinessMetadata(db, [...protectedIds]), hasUnboundProcessCollection: () => {
+      const owner = db.select().from(schema.enterprise).where(eq(schema.enterprise.id, request.enterpriseId)).get()
+      if (!owner) return unavailable()
+      const a = targetSchema.platformObservationAssignment, original = alias(a, 'annual_empty_original')
+      const related = db.select({ id: o.collectionId }).from(o).innerJoin(a, eq(a.observationId, o.id)).innerJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1)))
+        .where(or(eq(a.enterpriseId, request.enterpriseId), owner.usccNorm ? sql`roster84_uscc(${original.usccRaw}) = ${owner.usccNorm}` : sql`0`))
+      const collection = schema.platformCollection
+      const aliases = db.select({ name: schema.enterpriseAlias.nameNorm }).from(schema.enterpriseAlias).where(and(eq(schema.enterpriseAlias.enterpriseId, owner.id), eq(schema.enterpriseAlias.verificationStatus, 'confirmed'))).all()
+      const keys = [owner.usccNorm ?? '', `name:${owner.nameNorm}`, ...aliases.map(a => `name:${a.name}`)]
+      return !!db.select({ id: collection.id }).from(collection).where(and(inArray(collection.interface, ['apply_list', 'business_list']), or(inArray(collection.queryKey, keys), inArray(collection.id, related)))).limit(1).get()
+    },
+  })
+}
+
+type AnnualComparisonRequest = Parameters<typeof readAnnualComparisonBatch>[2]
+type ComparisonEntry = ReturnType<typeof projectAnnualProcess>
+export function admitAnnualComparison({ request, entries, history, decisions, historicalQueries, queryRows, pages, titleScopes,
+  metadata, hasUnboundProcessCollection }: {
+  request: AnnualComparisonRequest; entries: ComparisonEntry[]; history: Map<number, number[]>
+  decisions: (Omit<ClosureDecision, 'relationId'> & { relationId: number | null })[]
+  historicalQueries: (Omit<ClosureHistory, 'recordId'> & { recordId: number | null })[]
+  queryRows: { id: number; collection: typeof schema.platformCollection.$inferSelect }[]
+  pages: Pick<typeof schema.platformCollectionPage.$inferSelect, 'collectionId' | 'rdjb'>[]
+  titleScopes: Pick<typeof schema.platformQueryTitleScope.$inferSelect, 'collectionId' | 'rdjb'>[]
+  metadata: Map<number, ClosureMetadata>; hasUnboundProcessCollection: () => boolean
+}) {
+  const ids = [...new Set(request.eventIds)], selected = new Set(request.selectedQueryIds)
+  const refs = entries.flatMap(entry => entry.read.sourceRefs.observations)
+  const titleRefs = entries.flatMap(entry => entry.read.sourceRefs.titleScopeRefs)
+  const requiredQueries = new Set([...entries.flatMap(entry => entry.read.sourceRefs.coverage.map(c => c.queryId)),
+    ...titleRefs.map(r => r.queryId), ...historicalQueries.map(q => q.queryId)])
+  const protectedIds = new Set([...refs.map(r => r.relationId), ...titleRefs.map(r => r.relationId), ...[...history.values()].flat()])
+  if (decisions.length > comparisonCaps.decisions) resource()
+  if (decisions.some(d => d.relationId === null || !protectedIds.has(d.relationId))) unavailable()
+  if (new Set(refs.map(r => r.relationId)).size > comparisonCaps.rows || new Set(titleRefs.map(r => r.relationId)).size > comparisonCaps.titles || [...history.values()].flat().length > comparisonCaps.history) resource()
   const queries: ClosureQuery[] = queryRows.map(({ id, collection: q }) => {
     const levels = q.rdjb.split(',').filter(Boolean)
     const title = q.titleCode ?? (levels.length === 1 ? closureTitles[levels[0]!] : null)
@@ -283,7 +319,6 @@ function readTargetAnnualComparisonBatch(db: Db, request: { enterpriseId: number
         pages.filter(p => p.collectionId === q.id).every(p => p.rdjb !== null && closureTitles[p.rdjb] === title))
     return { id, interface: q.interface, title_code: q.titleCode, rdjb: q.rdjb, structuredTitle: valid ? title : null }
   })
-  const metadata = readPlatformBusinessMetadata(db, [...protectedIds])
   const queryByRelation = new Map(historicalQueries.map(row => [row.relationId, row.queryId]))
   const titlesByRelation = new Map(titleRefs.map(row => [row.relationId, row]))
   const annualIds = new Set(refs.map(r => r.relationId))
@@ -301,17 +336,7 @@ function readTargetAnnualComparisonBatch(db: Db, request: { enterpriseId: number
   if (expandedCharge > comparisonCaps.charge) resource()
   if (!refs.length && !titleRefs.length) {
     if (entries.some(e => e.read.sourceRefs.coverage.some(c => c.completeness !== 'complete' || c.fullRange !== true || !['success', 'no_record'].includes(c.status)))) unavailable()
-    if (!ids.length) {
-      const owner = db.select().from(schema.enterprise).where(eq(schema.enterprise.id, request.enterpriseId)).get()
-      if (!owner) return unavailable()
-      const a = targetSchema.platformObservationAssignment, original = alias(a, 'annual_empty_original')
-      const related = db.select({ id: o.collectionId }).from(o).innerJoin(a, eq(a.observationId, o.id)).innerJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1)))
-        .where(or(eq(a.enterpriseId, request.enterpriseId), owner.usccNorm ? sql`roster84_uscc(${original.usccRaw}) = ${owner.usccNorm}` : sql`0`))
-      const collection = schema.platformCollection
-      const aliases = db.select({ name: schema.enterpriseAlias.nameNorm }).from(schema.enterpriseAlias).where(and(eq(schema.enterpriseAlias.enterpriseId, owner.id), eq(schema.enterpriseAlias.verificationStatus, 'confirmed'))).all()
-      const keys = [owner.usccNorm ?? '', `name:${owner.nameNorm}`, ...aliases.map(a => `name:${a.name}`)]
-      if (db.select({ id: collection.id }).from(collection).where(and(inArray(collection.interface, ['apply_list', 'business_list']), or(inArray(collection.queryKey, keys), inArray(collection.id, related)))).limit(1).get()) unavailable()
-    }
+    if (!ids.length && hasUnboundProcessCollection()) unavailable()
     return { kind: 'absent' as const, entries: [], history, admission: { kind: 'scope_closure' as const, uniqueScalarBytes, expandedCharge: null, sourceUpperBytes: [] as number[], actualSourceBytes: [] as number[] } }
   }
   return { kind: 'present' as const, entries, history, admission: { kind: 'annual' as const, uniqueScalarBytes, expandedCharge, sourceUpperBytes: actualSourceBytes, actualSourceBytes } }

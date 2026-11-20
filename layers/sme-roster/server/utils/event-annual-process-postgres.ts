@@ -4,6 +4,7 @@ import * as schema from '../../../../db/schema'
 import type { AnnualProcessSourceRefs } from '../../lib/roster/annual-process'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { projectAnnualFinalQualification, validAnnualDecisionQuery, type AnnualWriteScope, type AnnualWriteStep } from './annual-correspondence'
+import { ANNUAL_COMPARISON_RAW_LIMIT } from './annual-process-target-sources'
 import { annualScopeRecordIds, projectAnnualWriteScope } from './annual-correspondence-read'
 import { normalizedUscc } from './event-archive-discovery'
 import {
@@ -23,7 +24,7 @@ type Observation = Omit<AnnualSourceRows['rows'][number], keyof AnnualObservatio
 type Coverage = AnnualSourceRows['queries'][number] & { scopedTitle: string | null; named: boolean }
 const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
 
-async function readAnnualSources(db: Reader, scope: AnnualEventScope) {
+async function readAnnualSources(db: Reader, scope: AnnualEventScope, comparison: boolean) {
   const { owner, identity, titleCode } = scope
   const uscc = normalizedUscc(sql`original.uscc_raw`)
   const queryTitle = sql`coalesce(c.title_code,CASE c.rdjb WHEN '1' THEN 'innovative_sme' WHEN '2' THEN 'specialized_sme' WHEN '3' THEN 'little_giant' END)`
@@ -73,14 +74,16 @@ async function readAnnualSources(db: Reader, scope: AnnualEventScope) {
     ORDER BY q.old_id,o.sequence_no,ra.old_id`)
   const matchedQueries = new Set(matching.map(row => row.queryId))
   const queries = collections.filter(q => (q.named || matchedQueries.has(q.queryId)) &&
-    (q.scopedTitle === titleCode || q.scopedTitle === null && q.interface === 'apply_list'))
+    (q.scopedTitle === titleCode || q.scopedTitle === null && (q.interface === 'apply_list' || comparison)))
     .map(({ scopedTitle: _title, named: _named, ...q }) => q)
   const included = new Set(queries.map(q => q.queryId))
   const observations = matching.filter(row => included.has(row.queryId))
-  const typed = await readPostgresObservationComparisonFacts(db, observations, 'version')
+  const typed = await readPostgresObservationComparisonFacts(db, observations, comparison ? 'archive' : 'version')
   const facts = new Map(observations.map(row => {
     const fact = typed.get(row.observationId)
     if (!fact) throw new Error('annual_observation_fact_missing')
+    if (comparison && Buffer.byteLength(JSON.stringify([fact.province, fact.status, fact.batch, fact.declareKind,
+      fact.appliedAt, fact.awardBatchLabel, fact.year])) > ANNUAL_COMPARISON_RAW_LIMIT) throw new Error('input_resource_limit')
     return [row.id, fact]
   }))
   const rows = observations.map(row => ({ ...row, ...facts.get(row.id)!, rawFields: null }))
@@ -90,14 +93,14 @@ async function readAnnualSources(db: Reader, scope: AnnualEventScope) {
   return { queries, rows, titles, facts }
 }
 
-export async function readPostgresAnnualProcess(db: Reader, eventId: number) {
+export async function readPostgresAnnualProcessEntry(db: Reader, eventId: number, comparison = false) {
   const { rows: [header] } = await db.execute<Parameters<typeof scopeAnnualEvent>[0]>(sql`
     SELECT ${postgresRosterRow(schema.recordEvent,'v')} AS event,${postgresRosterRow(schema.record,'r')} AS record,
       json_build_object('nameNorm',e.name_norm,'usccNorm',e.uscc_norm) AS enterprise
     FROM record_event v JOIN record r ON r.id=v.record_id JOIN enterprise e ON e.id=r.enterprise_id WHERE v.id=${eventId}`)
   const scope = header && scopeAnnualEvent(header)
   if (!scope) return null
-  const sources = await readAnnualSources(db, scope)
+  const sources = await readAnnualSources(db, scope, comparison)
   const metadata = await readPostgresPlatformBusinessMetadata(db, [...sources.rows.map(r => r.id), ...sources.titles.map(t => t.relationId)])
   const prepared = prepareAnnualObservations(scope, sources.rows, sources.titles, sources.queries, metadata, sources.facts)
   const groups = await readPostgresPlatformBusinessGroups(db, prepared.observations, metadata)
@@ -106,7 +109,11 @@ export async function readPostgresAnnualProcess(db: Reader, eventId: number) {
       f.id::float8 AS "fileId",f.sha256,f.removed_at AS "removedAt"
     FROM record_evidence e LEFT JOIN stored_file f ON f.rel_path=e.source_file
     WHERE e.record_event_id=${eventId} ORDER BY e.id`)
-  return projectAnnualProcess(prepared, groups, evidence).read
+  return projectAnnualProcess(prepared, groups, evidence)
+}
+
+export async function readPostgresAnnualProcess(db: Reader, eventId: number) {
+  return (await readPostgresAnnualProcessEntry(db, eventId))?.read ?? null
 }
 
 export async function readPostgresAnnualWriteScope(db: Reader, eventId: number) {
@@ -124,7 +131,7 @@ async function projectPostgresAnnualScope(db: Reader, read: NonNullable<Awaited<
   return projectAnnualWriteScope(read, matching => matching.flatMap(id => (byRecord.get(id) ?? []).map(row => row.relationId)))
 }
 
-export async function readPostgresAnnualDecisionRefs(db: Reader, scope: AnnualWriteScope, step: AnnualWriteStep) {
+export async function readPostgresAnnualDecisionRefs(db: Reader, scope: AnnualWriteScope, step: Pick<AnnualWriteStep, 'protectionRelationIds' | 'currentRelationIds'>) {
   const relationIds = [...new Set([...step.protectionRelationIds, ...step.currentRelationIds])]
   const priors = (await readPostgresPlatformBusinessCorrespondences(db, relationIds)).filter(row => row.type === 'event_process'
     && row.eventId === scope.eventId && row.enterpriseId === scope.enterpriseId && row.titleCode === scope.titleCode
