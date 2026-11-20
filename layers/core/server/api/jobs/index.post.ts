@@ -1,5 +1,5 @@
 import { postgresJobHandler } from '../../utils/job-runner-postgres'
-import { postgresJobsEnabled, startPostgresJobs } from '../../utils/postgres-jobs'
+import { postgresJobStorageEnabled, requirePostgresJobsWritable, startPostgresJobs } from '../../utils/postgres-jobs'
 import { requestLogContext } from '../../../lib/logging'
 import { useDb } from '@db'
 import { normalizeJobParams } from '#core/lib/job'
@@ -116,7 +116,8 @@ export default defineEventHandler(async (event) => {
       message: `未知的任务种类:${kind}。已登记:${known || '(无)'}`,
     })
   }
-  const postgres = postgresJobsEnabled()
+  const postgres = postgresJobStorageEnabled()
+  if (postgres) requirePostgresJobsWritable()
   const handler = postgres ? postgresJobHandler(kind) : undefined
   if (spec.status !== 'ready' || !(postgres ? handler : spec.run)) {
     // **501 而不是 400**:名字是对的,只是活还没接。这个区分对代理很要紧 ——

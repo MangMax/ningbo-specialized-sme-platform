@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { useRuntimeDb as runtimeDb } from '../../../db/client'
+import { resolveDbPath, useRuntimeDb as runtimeDb } from '../../../db/client'
+import { validateRuntimeMode } from '../../../db/runtime-mode'
 
 const dirs: string[] = []
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
@@ -141,4 +142,26 @@ it('PostgreSQL mode rejects SQLite runtime access even when the legacy database 
     vi.unstubAllEnvs()
     legacy.$client.close()
   }
+})
+
+it('defaults to the existing SQLite path when database mode and path are unset', () => {
+  vi.stubEnv('NUXT_DB_MODE', undefined)
+  vi.stubEnv('NUXT_DB_PATH', undefined)
+  try {
+    expect(() => validateRuntimeMode()).not.toThrow()
+    expect(resolveDbPath()).toBe(join(process.cwd(), 'data/roster.db'))
+  } finally { vi.unstubAllEnvs() }
+})
+
+it('allows distinct PostgreSQL roles on the same endpoint and rejects another database or host override', () => {
+  vi.stubEnv('NUXT_DB_MODE', 'postgresql')
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', 'postgresql://business@db/roster?host=%2Fvar%2Frun%2Fpostgresql')
+  try {
+    vi.stubEnv('NUXT_POSTGRES_LOG_URL', 'postgres://log@other:5432/%72oster?host=%2Fvar%2Frun%2Fpostgresql')
+    expect(() => validateRuntimeMode()).not.toThrow()
+    vi.stubEnv('NUXT_POSTGRES_LOG_URL', 'postgres://log@db/logs?host=%2Fvar%2Frun%2Fpostgresql')
+    expect(() => validateRuntimeMode()).toThrow(/same PostgreSQL database/)
+    vi.stubEnv('NUXT_POSTGRES_LOG_URL', 'postgres://log@db/roster?host=%2Ftmp')
+    expect(() => validateRuntimeMode()).toThrow(/same PostgreSQL database/)
+  } finally { vi.unstubAllEnvs() }
 })

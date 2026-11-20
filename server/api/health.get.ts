@@ -3,12 +3,13 @@ import { useDb, schema } from '@db/index'
 import { usePostgresDirectoryDb } from '../../db/postgresql/client'
 import { postgresOnlyRuntime } from '../../db/runtime-mode'
 import { applicationLogs } from '../../layers/core/lib/logging'
+import { checkPostgresJobStorage } from '../../layers/core/server/utils/job-store-postgres'
 
 defineRouteMeta({
   openAPI: {
     tags: ['系统'],
     summary: '健康检查',
-    description: '只读检查已配置的业务库。PostgreSQL 模式也检查独立日志连接。',
+    description: '只读检查已配置的业务库。PostgreSQL 模式也检查任务表和独立日志连接。',
     responses: {
       200: { description: '`{ titles, recordCount }`。' },
       503: { description: 'PostgreSQL 19 或原生 schema 尚未就绪。' },
@@ -31,6 +32,7 @@ export default defineEventHandler(async () => {
           (SELECT count(*)::integer FROM business.record) AS "recordCount"
       `)
       const health = result.rows[0]!
+      await checkPostgresJobStorage(postgres!)
       await applicationLogs().policy()
       return { titles: health.titles, recordCount: health.recordCount }
     } catch {
