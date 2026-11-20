@@ -2,6 +2,9 @@
 export const MAX_EVIDENCE_CHUNK_BYTES = 65536
 export const MAX_FULL_QUERY_BYTES = 4 * 1024 * 1024
 export const MAX_FULL_PAGE_BYTES = 8 * 1024 * 1024
+export const PROVENANCE_CELL_NAMES = [
+  'query_id', 'source_identity', 'source_sha256', 'segment_index', 'collection', 'input_fingerprint', 'import_batch_id', 'created_at',
+] as const
 export interface PlatformEvidenceInput {
   queryId: number
   field: 'rawResponse' | 'collectionEvidence' | 'legacyProvenance' | 'relations' | 'relation'

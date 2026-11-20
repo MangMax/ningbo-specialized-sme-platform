@@ -4,6 +4,7 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { schema } from '../../../db'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { nativeCatalogFixture, type NativeSource } from '../fixtures/native-catalog'
+import { submitNativePlatformQuery } from '../fixtures/native-query'
 import { installArchiveFixture } from './postgres-archive-fixture'
 
 const url = process.env.TEST_MIIT_ARCHIVE_PG_URL
@@ -48,6 +49,9 @@ let fixture: ReturnType<typeof nativeCatalogFixture>
 let pgClient: pg.Client
 const recordIds = new Map<NativeSource, number>()
 const isolatedIds = new Map<NativeSource, { text: number; blob: number }>()
+const rawArchive = '工信部原始响应🙂\n第二行'
+let evidenceCoordinates: { queryId: number; relationId: number }
+let reassignedCoordinates: { queryId: number; relationId: number; enterpriseId: number }
 const capturedProjections = {
   declarations: ['platform_apply_projection', 'sql_fact_title_state'],
   'business-processes': ['platform_business_projection', 'sql_fact_title_state'],
@@ -82,7 +86,11 @@ beforeAll(async () => {
   for (const source of Object.keys(sources) as Source[]) {
     const interfaceName = sources[source]
     const { first, second } = scenarios[source]
-    const stored = fixture.seed(interfaceName, fixture.raw('A', { ...first, privateEvidence: 'archive-private' }), '2')
+    const raw = fixture.raw('A', { ...first, privateEvidence: 'archive-private' })
+    const stored = source === 'declarations'
+      ? submitNativePlatformQuery(fixture.db, { ...fixture.query(interfaceName, raw, '2'), rawResponse: rawArchive })
+      : fixture.seed(interfaceName, raw, '2')
+    if (source === 'declarations') evidenceCoordinates = { queryId: stored.queryId, relationId: stored.relationIds[0]! }
     recordIds.set(interfaceName, stored.observations[0]!.recordId!)
     if (source === 'business-processes') {
       fixture.save(fixture.request('archive-review', [{
@@ -94,6 +102,9 @@ beforeAll(async () => {
       observationId: later.observations[0]!.observationId, revision: 2, enterpriseId: other.id,
       matchBasis: 'manual', verificationStatus: 'confirmed', origin: 'command',
     }).run()
+    if (source === 'declarations') reassignedCoordinates = {
+      queryId: later.queryId, relationId: later.relationIds[0]!, enterpriseId: other.id,
+    }
     fixture.seed(interfaceName, fixture.raw('B', first), '2')
     const { id: _, ...unkeyed } = fixture.raw('', { rdjb: ' unknown ', ...(source !== 'recognized-directory' && { cszt: '孤立', year: 2022 }) })
     const text = fixture.seed(interfaceName, unkeyed, '3')
@@ -125,6 +136,7 @@ beforeAll(async () => {
     .get('/api/platform/recognized-directory', (await import('../../../layers/sme-roster/server/api/platform/recognized-directory.get')).default)
     .get('/api/platform/recognized-directory/:recordId', (await import('../../../layers/sme-roster/server/api/platform/recognized-directory/[recordId].get')).default)
     .get('/api/platform/filter-options', (await import('../../../layers/sme-roster/server/api/platform/filter-options.get')).default)
+    .get('/api/platform/queries/:queryId/evidence', (await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default)
   request = toWebHandler(createApp().use(router))
 }, 30_000)
 
@@ -135,6 +147,77 @@ afterAll(async () => {
   vi.doUnmock('@db')
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
+})
+
+it.skipIf(!url)('reads original bytes and persisted relation evidence through HTTP and MCP', async () => {
+  const { queryId, relationId } = evidenceCoordinates
+  const path = `queries/${queryId}/evidence`
+  const raw = Buffer.from(rawArchive)
+  for (const offset of [0, 1, raw.length, Number.MAX_SAFE_INTEGER - 65536]) {
+    const length = 3
+    const result = await read('postgres', path, { field: 'rawResponse', offset, length })
+    expect(result).toEqual(await read('sqlite', path, { field: 'rawResponse', offset, length }))
+    expect(result).toMatchObject({ status: 200, body: { data: raw.subarray(offset, offset + length).toString('base64'), totalBytes: raw.length, isNull: false } })
+  }
+  for (const field of ['collectionEvidence', 'legacyProvenance', 'relations']) {
+    expect(await read('postgres', path, { field })).toEqual(await read('sqlite', path, { field }))
+  }
+  const relation = { field: 'relation', relationId }
+  const result = await read('postgres', path, relation)
+  const previous = await read('sqlite', path, relation)
+  expect(result.status).toBe(200)
+  expect(JSON.parse(Buffer.from(result.body.data, 'base64').toString('utf8')))
+    .toEqual(JSON.parse(Buffer.from(previous.body.data, 'base64').toString('utf8')))
+  expect(await read('postgres', path, { field: 'relation', relationId: relationId + 2_000_000 }))
+    .toMatchObject({ status: 404, body: 'Platform evidence not found' })
+  expect(await read('postgres', path, { field: 'rawResponse', length: 65537 })).toMatchObject({ status: 400 })
+  const reassigned = await read('postgres', `queries/${reassignedCoordinates.queryId}/evidence`, {
+    field: 'relation', relationId: reassignedCoordinates.relationId,
+  })
+  expect(reassigned.status).toBe(200)
+  expect(JSON.parse(Buffer.from(reassigned.body.data, 'base64').toString('utf8'))).toMatchObject({
+    enterpriseId: reassignedCoordinates.enterpriseId, matchBasis: 'manual', verificationStatus: 'confirmed',
+  })
+
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
+  const tool = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_query_evidence')).default as unknown as {
+    handler(input: { queryId: number; field: 'rawResponse'; length: number }): Promise<unknown>
+  }
+  expect(await tool.handler({ queryId, field: 'rawResponse', length: 3 })).toMatchObject({
+    queryId, totalBytes: raw.length, data: raw.subarray(0, 3).toString('base64'),
+  })
+})
+
+it.skipIf(!url)('returns the original byte ranges of T04 and supplemented legacy provenance', async () => {
+  const { queryId } = evidenceCoordinates
+  const { rows: [collection] } = await pgClient.query('SELECT collection_id FROM business.platform_legacy_query_alias WHERE old_id=$1', [queryId])
+  const archiveId = 9_000_000
+  const raw = Buffer.from('{ "原档": "宁波🙂" }')
+  const fields: [string, string, string | Buffer][] = [
+    ['query_id', 'integer', String(queryId)], ['source_identity', 'text', 'fixture'],
+    ['source_sha256', 'text', 'a'.repeat(64)], ['segment_index', 'integer', '0'], ['collection', 'text', raw],
+    ['input_fingerprint', 'text', 'b'.repeat(64)], ['import_batch_id', 'integer', '1'], ['created_at', 'null', ''],
+  ]
+  const envelope = Buffer.concat([Buffer.from('T04-PROVENANCE\n'), ...fields.flatMap(([name, type, value]) => {
+    const bytes = typeof value === 'string' ? Buffer.from(value) : value
+    return [Buffer.from(`${name} ${type} ${bytes.length}\n`), bytes, Buffer.from('\n')]
+  })])
+  const path = `queries/${queryId}/evidence`
+  try {
+    await pgClient.query('INSERT INTO business.platform_archive_value VALUES ($1,$2,$3,$4)', [archiveId, 'blob', envelope, envelope.length])
+    await pgClient.query("INSERT INTO business.platform_collection_legacy_provenance VALUES ($1,'t04_envelope',$2)", [collection.collection_id, archiveId])
+    await pgClient.query("INSERT INTO business.platform_collection_archive_ref VALUES ($1,'legacyProvenance',$2,1)", [collection.collection_id, archiveId])
+    const expected = { status: 200, body: { isNull: false, totalBytes: raw.length, data: raw.subarray(6, 10).toString('base64') } }
+    expect(await read('postgres', path, { field: 'legacyProvenance', offset: 6, length: 4 })).toMatchObject(expected)
+    await pgClient.query("DELETE FROM business.platform_collection_archive_ref WHERE archive_id=$1", [archiveId])
+    await pgClient.query("UPDATE business.platform_collection_legacy_provenance SET origin='supplement' WHERE archive_id=$1", [archiveId])
+    await pgClient.query("UPDATE business.platform_archive_value SET storage_class='text', bytes=$2, byte_length=$3 WHERE id=$1", [archiveId, raw, raw.length])
+    expect(await read('postgres', path, { field: 'legacyProvenance', offset: 6, length: 4 })).toMatchObject(expected)
+  } finally {
+    await pgClient.query('DELETE FROM business.platform_collection_archive_ref WHERE archive_id=$1', [archiveId])
+    await pgClient.query('DELETE FROM business.platform_collection_legacy_provenance WHERE archive_id=$1', [archiveId])
+    await pgClient.query('DELETE FROM business.platform_archive_value WHERE id=$1', [archiveId])
+  }
 })
 
 it.skipIf(!url).each(Object.keys(sources) as Source[])('%s HTTP filters and exposes the matching archived version and all history', async source => {

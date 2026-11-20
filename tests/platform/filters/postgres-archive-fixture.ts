@@ -6,9 +6,13 @@ const tables = {
   enterprise: 'id:i name name_norm uscc_norm',
   platform_business_record: 'id:i platform_key interface identity_rule_version created_at',
   platform_business_record_version: 'id:i record_id:i hash_algorithm content_hash created_at',
-  platform_collection: 'id:i interface rdjb queried_at last_collected_at query_key status',
+  platform_collection: 'id:i interface rdjb queried_at last_collected_at query_key status provenance_state',
+  platform_archive_value: 'id:i storage_class bytes:b byte_length:i',
+  platform_collection_archive_ref: 'owner_id:i field archive_id:i sealed:i',
+  platform_observation_archive_ref: 'owner_id:i field archive_id:i sealed:i',
+  platform_collection_legacy_provenance: 'collection_id:i origin archive_id:i',
   platform_business_observation: 'id:i collection_id:i record_id:i version_id:i sequence_no:i source_relation_key identity_state content_state key_source projection_rule_version',
-  platform_observation_assignment: 'observation_id:i revision:i enterprise_id:i name_raw uscc_raw',
+  platform_observation_assignment: 'observation_id:i revision:i enterprise_id:i name_raw uscc_raw match_basis verification_status',
   platform_legacy_query_alias: 'old_id:i collection_id:i',
   platform_legacy_relation_alias: 'old_id:i observation_id:i',
   platform_query_title_scope: 'collection_id:i rdjb',
@@ -24,7 +28,7 @@ export async function installArchiveFixture(pg: pg.Client, sqlite: Database.Data
     const columns = spec.split(' ').map(def => def.split(':') as [string, string?])
     const pgColumns = columns.flatMap(([name, type]) => type === 'x'
       ? [`${name} bytea`, `${name}_sqlite_storage text`]
-      : [`${name} ${type === 'i' ? 'bigint' : 'text COLLATE "C"'}`])
+      : [`${name} ${type === 'i' ? 'bigint' : type === 'b' ? 'bytea' : 'text COLLATE "C"'}`])
     await pg.query(`CREATE TABLE business.${table} (${pgColumns.join(', ')})`)
     const selection = columns.flatMap(([name, type]) => type === 'x' ? [`typeof(${name})`, name] : [name])
     const rows = sqlite.prepare(`SELECT ${selection.join(', ')} FROM ${table}`).raw(true).safeIntegers(true).all() as unknown[][]

@@ -5,7 +5,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
 import { targetSchema as s } from './target-schema'
 import { resolveLegacyReference, readOwnerArchive } from './target-archive'
-import { MAX_EVIDENCE_CHUNK_BYTES, type PlatformEvidenceInput } from './evidence-contract'
+import { MAX_EVIDENCE_CHUNK_BYTES, PROVENANCE_CELL_NAMES, type PlatformEvidenceInput } from './evidence-contract'
 
 import { platformQueryResultShape } from './live-query'
 import { relationEvidenceColumns } from './relation-evidence-snapshot'
@@ -91,7 +91,7 @@ export function provenancePresence<S extends Record<string,unknown>>(db:BetterSQ
 export function* targetProvenanceCells(envelope:Buffer) {
   let cursor=Buffer.byteLength('T04-PROVENANCE\n')
   if(!envelope.subarray(0,cursor).equals(Buffer.from('T04-PROVENANCE\n')))throw new Error('Invalid original provenance envelope')
-  for(const name of ['query_id','source_identity','source_sha256','segment_index','collection','input_fingerprint','import_batch_id','created_at']) {
+  for(const name of PROVENANCE_CELL_NAMES) {
     const end=envelope.indexOf(10,cursor)
     const match=/^(\w+) (null|text|blob|integer|real) (\d+)$/.exec(envelope.subarray(cursor,end).toString())
     if(end<0||!match||match[1]!==name)throw new Error('Invalid original provenance cell')
