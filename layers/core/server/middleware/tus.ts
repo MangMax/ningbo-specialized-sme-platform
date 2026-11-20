@@ -1,4 +1,3 @@
-import { libraryUploadCategory } from '../../lib/core/library-uploads'
 import type { ResolveUploadPlacement } from '../../lib/core/file-categories'
 import { requirePostgresFileWrite, usePostgresFileDb } from '../utils/file-store-postgres'
 import { appLog, requestLogContext, setRequestLogMetadata, type TusLogContext } from '../../lib/logging'
@@ -6,13 +5,7 @@ import { httpLogModule } from '../../lib/logging/module'
 import { resolveUploadPlacement } from '../utils/stored-files'
 import { TUS_PATH, getTus, withTusObservation, type TusObservation } from '../utils/tus'
 
-const postgresUploadPlacement: ResolveUploadPlacement = metadata => {
-  const placement = resolveUploadPlacement(metadata)
-  if (metadata.fileCategory !== libraryUploadCategory) {
-    throw { status_code: 503, body: '此文件分类尚未接入 PostgreSQL 文件库\n' }
-  }
-  return placement
-}
+const postgresUploadPlacement: ResolveUploadPlacement = metadata => resolveUploadPlacement(metadata, { postgres: true })
 
 /**
  * 把 `/api/uploads` 交给 tus `Server` 处理(web 标准入口)。

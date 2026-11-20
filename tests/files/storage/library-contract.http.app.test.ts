@@ -288,8 +288,17 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
   it.skipIf(!enabled)('registers a landed roster notice and audits factual refreshes without replacing its bytes', async () => {
     const relPath = 'jxj/announcement/2025/2/notice.txt'
     const declared = { relPath, source: 'jxj', kind: 'announcement', year: 2025, batch: 2 }
-    mkdirSync(join(root, 'jxj/announcement/2025/2'), { recursive: true })
-    writeFileSync(join(root, relPath), original)
+    const metadata = Object.entries({ filename: 'notice.txt', source: declared.source, kind: declared.kind, year: declared.year, batch: declared.batch })
+      .map(([key, value]) => `${key} ${Buffer.from(String(value)).toString('base64')}`).join(',')
+    const upload = await app.request('/api/uploads', { method: 'POST', headers: {
+      'Tus-Resumable': '1.0.0', 'Upload-Length': String(original.length), 'Upload-Metadata': metadata,
+    } })
+    expect(upload.status, await upload.text()).toBe(201)
+    const landed = await fetch(new URL(upload.headers.get('location')!, app.url('/')), { method: 'PATCH', headers: {
+      'Tus-Resumable': '1.0.0', 'Upload-Offset': '0', 'Content-Type': 'application/offset+octet-stream',
+    }, body: original })
+    expect(landed.status, await landed.text()).toBe(204)
+    expect(decodeURIComponent(landed.headers.get('x-upload-path')!)).toBe(relPath)
     await json('files/register', 400, 'POST', { ...declared, batch: 3 })
     const submissions = await Promise.all([1, 2].map(() => app.request('/api/files/register', { method: 'POST', body: JSON.stringify(declared) })))
     expect(submissions.map(response => response.status).sort()).toEqual([200, 201])

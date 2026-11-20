@@ -7,7 +7,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/schema'
 import { baseName, directoryOf, extensionOf, siblingIndex } from '../../lib/core/file-path'
-import { evaluateFileAdmission, type FileAdmissionPolicy, type FileFilter, type FileLanding, type ResolveUploadPlacement } from '../../lib/core/file-categories'
+import { evaluateFileAdmission, type FileAdmissionPolicy, type FileFilter, type FileLanding, type ResolveUploadPlacement, type UploadMetadata } from '../../lib/core/file-categories'
 import { compareFileContentIdentity, type FileContentConflict } from './file-content-identity'
 import { appLog, type LogContext } from '../../lib/logging'
 
@@ -524,10 +524,13 @@ export function createFileStore<const Categories extends readonly FileCategorySe
     return owners[0] ?? defaultCategory
   }
 
-  const resolveUploadPlacement: ResolveUploadPlacement = metadata => {
+  function resolveUploadPlacement(metadata: UploadMetadata, { postgres = false } = {}): ReturnType<ResolveUploadPlacement> {
     const requested = metadata.fileCategory
     const category = requested ? categories.find(item => item.id === requested) : defaultCategory
     if (!category?.landing) throw { status_code: 400, body: '未登记上传落位规则\n' }
+    if (postgres && !category.registration?.preparePostgres) {
+      throw { status_code: 503, body: '此文件分类尚未接入 PostgreSQL 文件库\n' }
+    }
     const segments = category.landing(metadata)
     function assertOwnership(relPath: string) {
       try {
@@ -566,7 +569,7 @@ export function createFileStore<const Categories extends readonly FileCategorySe
       throw new UploadRegistrationError('上传分类与实际落位不符')
     }
     if (!owner?.registration) throw new UploadRegistrationError('无法确定登记上传分类')
-    return { category: owner.id, registration: owner.registration, relPath, input: { ...input, relPath } }
+    return { registration: owner.registration, relPath, input: { ...input, relPath } }
   }
 
   function registerUploadedFile(db: FileStoreDb, root: string, body: unknown, context: LogContext) {

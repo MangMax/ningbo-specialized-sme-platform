@@ -53,7 +53,7 @@ export const libraryFileServerCategory = {
   },
 } satisfies FileCategoryServer
 
-export function validateLibraryRegistration(input: Record<string, unknown>) {
+function validateLibraryRegistration(input: Record<string, unknown>) {
   const relPath = String(input.relPath ?? '')
   const segments = splitRegistrationPath(relPath)
   if (!isLibraryUploadPath(relPath) || segments.length !== 2 || Object.keys(input).length !== 1) {
