@@ -1,3 +1,4 @@
+import { normalizeUsccVerdicts, type UsccVerdictFile } from './uscc-verdicts'
 /**
  * RL-06 两个读侧端点的**入参解析**（清单筛选 + 公开来源 claim）。
  *
@@ -205,4 +206,24 @@ export function parseUsccResearchBody(body: unknown): UsccQueryParse {
     })
   }
   return { ...base, claims, platformClaims, verdictFiles, enterpriseIds }
+}
+
+export function prepareUsccClaims(parsed: Extract<UsccQueryParse, { ok: true }>) {
+  const ingest = parsed.verdictFiles.length
+    ? normalizeUsccVerdicts(parsed.verdictFiles.map(({ file, value }) => ({ file, value: value as UsccVerdictFile })))
+    : null
+  return {
+    claims: {
+      ...(parsed.enterpriseIds ? { enterpriseIds: parsed.enterpriseIds } : {}),
+      claims: [...parsed.claims, ...(ingest?.claims ?? [])],
+      platformClaims: [...parsed.platformClaims, ...(ingest?.platformClaims ?? [])],
+    },
+    verdicts: ingest ? {
+      batches: ingest.batches,
+      accepted: ingest.platformClaims.length,
+      foundClaims: ingest.claims.length,
+      untouched: ingest.untouched,
+      problems: ingest.problems,
+    } : null,
+  }
 }

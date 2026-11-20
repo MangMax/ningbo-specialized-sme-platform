@@ -29,7 +29,7 @@ async function searchEnterpriseIds(db: Reader, raw: string | undefined) {
     .map(row => Number(row.id))
 }
 
-async function formerPlatformMembers(db: Reader) {
+export async function formerPlatformMembers(db: Reader) {
   const { rows: owners } = await db.execute<{ id: string; uscc: string | null; name: string }>(sql`
     SELECT e.id, e.uscc_norm AS uscc, e.name_norm AS name FROM enterprise e WHERE ${currentIdentity} ORDER BY e.id`)
   const uscc = new Map<string, number>(), names = new Map<string, number>()

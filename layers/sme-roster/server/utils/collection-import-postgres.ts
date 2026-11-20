@@ -163,6 +163,23 @@ function archiveSummary(results: RosterImportItemResult[], reference: boolean, f
       projectionsChecked:versions.size,observationsChecked:synced.length,quarantinedObservations:quarantined }} : {}) }
 }
 
+export async function planPostgresPlatformQueries(tx: Tx, queries: RosterImportPlatformQuery[]) {
+  const plans: QueryPlan[] = []
+  const conflicts: RosterImportItemResult[] = []
+  const pending = new Map<string,PlatformQueryReplaySource>()
+  for (const [index,query] of queries.entries()) {
+    const key = JSON.stringify([query.interface,query.queryKey.trim(),query.rdjb?.trim() ?? '',query.queriedAt.trim()])
+    if (query.interface === 'recognized_list' && pending.has(key)) {
+      conflicts.push(itemError('query:'+index,'query_identity_duplicate','One original query identity may appear only once per batch','platformQueries'))
+      continue
+    }
+    const plan = await planQuery(tx,query,index,pending.get(key))
+    if ('error' in plan) conflicts.push(plan.error)
+    else { plans.push(plan); pending.set(key,plan.source) }
+  }
+  return { plans, conflicts }
+}
+
 export function runPostgresPlatformImport(action: 'preflight' | 'commit' | 'replay', request: RosterImportRequest,
   collectionJob?: { db: NodePgDatabase; checkpoint(tx: Tx): Promise<void> }) {
   if (action === 'replay' || !request.payload.platformQueries?.length || Object.keys(request.payload).some(key=>key!=='platformQueries')) return
@@ -170,19 +187,7 @@ export function runPostgresPlatformImport(action: 'preflight' | 'commit' | 'repl
   if (!db) return
   return executePostgresRosterImport(db,action,request,async (tx,batch)=>{
     if (action === 'commit') await tx.execute(sql`SELECT pg_advisory_xact_lock(21785,0)`)
-    const plans: QueryPlan[] = []
-    const conflicts: RosterImportItemResult[] = []
-    const pending = new Map<string,PlatformQueryReplaySource>()
-    for (const [index,query] of request.payload.platformQueries!.entries()) {
-      const key = JSON.stringify([query.interface,query.queryKey.trim(),query.rdjb?.trim() ?? '',query.queriedAt.trim()])
-      if (query.interface === 'recognized_list' && pending.has(key)) {
-        conflicts.push(itemError('query:'+index,'query_identity_duplicate','One original query identity may appear only once per batch','platformQueries'))
-        continue
-      }
-      const plan = await planQuery(tx,query,index,pending.get(key))
-      if ('error' in plan) conflicts.push(plan.error)
-      else { plans.push(plan); pending.set(key,plan.source) }
-    }
+    const { plans, conflicts } = await planPostgresPlatformQueries(tx, request.payload.platformQueries!)
     const preflight = { add:plans.filter(plan=>!plan.same && !plan.plannedReuse).length,update:0,remove:0,review:plans.filter(plan=>plan.query.status==='failed').length,
       conflicts,evidenceRepoints:0,batchStatus:batch.status }
     if (action === 'preflight') return {preflight}

@@ -1,3 +1,5 @@
+import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
+import { readPostgresUsccResearch } from '../../utils/identity-discovery-postgres'
 import { createReadTurns } from '../../../../core/server/utils/read-turn'
 import { withReadTurn } from '../../../../core/server/utils/read-turn-http'
 import { useDb } from '@db'
@@ -59,6 +61,8 @@ const researchReads = createReadTurns((input: { options: string }) =>
 export default defineEventHandler((event) => {
   const parsed = parseUsccChecklistQuery(getQuery(event))
   if (!parsed.ok) throw createError({ statusCode: 400, statusMessage: parsed.message })
+  const postgres = usePostgresRosterDb()
+  if (postgres) return readPostgresUsccResearch(postgres, parsed)
   useDb()
   // The parser projects named primitive options/claims. No raw body, event,
   // request or runtime config is captured by the fixed reader.

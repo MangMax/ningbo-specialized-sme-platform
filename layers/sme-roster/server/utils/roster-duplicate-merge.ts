@@ -63,10 +63,6 @@ function evidenceRelations(db: Db) {
   return db.select({ id: r.id, queryId: r.queryId, sequenceNo: r.sequenceNo, relationKey: r.relationKey, nameRaw: r.nameRaw, usccRaw: r.usccRaw }).from(r).all()
 }
 
-function platformQueriesForUscc(db: Db, uscc: string) {
-  return evidenceQueries(db).filter((query) => normalizeUscc(query.queryKey) === uscc)
-}
-
 /**
  * 证据查找的**预建索引**（只读快照）。
  *
@@ -75,24 +71,31 @@ function platformQueriesForUscc(db: Db, uscc: string) {
  * 候选逐个查找，实测真实库上 `platform_relation` 一次全扫约 126ms，于是几十次查找要十几秒。
  * 索引一次建好、多次复用，**判据一个字没变**（索引里放的正是原来每次现算的那两张表）。
  */
+export type PlatformEvidenceQuery = ReturnType<typeof evidenceQueries>[number]
+export type PlatformEvidenceRelation = ReturnType<typeof evidenceRelations>[number]
+
 export interface PlatformEvidenceIndex {
   /** 归一化查询键 → 以它为键的查询。 */
-  queriesByUscc: Map<string, ReturnType<typeof evidenceQueries>>
+  queriesByUscc: Map<string, PlatformEvidenceQuery[]>
   /** query_id → 该次查询的关系（按 `sequenceNo` 升序）。 */
-  relationsByQuery: Map<number, ReturnType<typeof evidenceRelations>>
+  relationsByQuery: Map<number, PlatformEvidenceRelation[]>
 }
 
 /** 建索引：一次读两张表，之后所有证据查找都在这份快照上做。 */
 export function buildPlatformEvidenceIndex(db: Db): PlatformEvidenceIndex {
+  return indexPlatformEvidence(evidenceQueries(db), evidenceRelations(db))
+}
+
+function indexPlatformEvidence(queries: PlatformEvidenceQuery[], relations: PlatformEvidenceRelation[]): PlatformEvidenceIndex {
   const queriesByUscc: PlatformEvidenceIndex['queriesByUscc'] = new Map()
-  for (const query of evidenceQueries(db)) {
+  for (const query of queries) {
     const key = normalizeUscc(query.queryKey)
     const bucket = queriesByUscc.get(key)
     if (bucket) bucket.push(query)
     else queriesByUscc.set(key, [query])
   }
   const relationsByQuery: PlatformEvidenceIndex['relationsByQuery'] = new Map()
-  for (const relation of evidenceRelations(db)) {
+  for (const relation of relations) {
     const bucket = relationsByQuery.get(relation.queryId)
     if (bucket) bucket.push(relation)
     else relationsByQuery.set(relation.queryId, [relation])
@@ -144,8 +147,20 @@ export function findUsccKeyedRelationEvidence(
    */
   match: (a: unknown, b: unknown) => NameMatchLevel | null = (a, b) => (a === b ? 'byte' : null),
 ): EvidenceResult {
+  if (index) return findIndexedUsccEvidence(index, input, match)
+  const queries = evidenceQueries(db).filter(query => normalizeUscc(query.queryKey) === input.uscc)
+  const queryIds = new Set(queries.map(query => query.id))
+  const relations = queryIds.size ? evidenceRelations(db).filter(relation => queryIds.has(relation.queryId)) : []
+  return findIndexedUsccEvidence(indexPlatformEvidence(queries, relations), input, match)
+}
+
+export function findIndexedUsccEvidence(
+  index: PlatformEvidenceIndex,
+  input: UsccNameEvidenceInput,
+  match: (a: unknown, b: unknown) => NameMatchLevel | null = (a, b) => a === b ? 'byte' : null,
+): EvidenceResult {
   const uscc = input.uscc
-  const queries = index ? (index.queriesByUscc.get(uscc) ?? []) : platformQueriesForUscc(db, uscc)
+  const queries = index.queriesByUscc.get(uscc) ?? []
   if (queries.length === 0) {
     return { ok: false, reason: 'no_platform_query', message: `统代 ${uscc} 一次都没查过（未查询 ≠ 查了没有）` }
   }
@@ -159,11 +174,7 @@ export function findUsccKeyedRelationEvidence(
     const sourceKind = ALIAS_SOURCE_KIND[query.interface]
     if (!sourceKind) continue
     // 一次查询的关系按 `sequenceNo` 升序取第一条 `qymc` 逐字相等的（索引已排好序）。
-    const relations = index
-      ? (index.relationsByQuery.get(query.id) ?? [])
-      : evidenceRelations(db)
-          .filter((relation) => relation.queryId === query.id)
-          .sort((a, b) => a.sequenceNo - b.sequenceNo)
+    const relations = index.relationsByQuery.get(query.id) ?? []
     for (const relation of relations) {
       // 判据：`match`（缺省逐字相等）—— 不做归一化、不做相似度、不算分数。
       const level = match(relation.nameRaw, input.name)
@@ -256,8 +267,33 @@ export function duplicateMergeSourceIdentity(batchKey: string): string {
  * 同一既有行被多条候选认领（同名多主体）时，**第一认领者进 `ready`、其余留待核** ——
  * 一条归并会删掉被并行，两条都执行只会让整批回滚，且「谁才是本体」本就不该由软件猜。
  */
-export function planDuplicateMerge(db: Db, batchKey: string): DuplicateMergeReport {
+type DuplicateSubject = { id: number; usccNorm: string | null; name: string }
+
+export async function planDuplicateMerge(db: Db, batchKey: string): Promise<DuplicateMergeReport> {
   const batch = readImportBatchOutcome(db, batchKey)
+  const executed = db.select().from(schema.importBatch).all()
+    .filter(item => item.sourceIdentity === duplicateMergeSourceIdentity(batchKey) && item.status === 'committed')
+    .sort((a, b) => b.id - a.id)[0]
+  let index: PlatformEvidenceIndex | undefined
+  return projectDuplicateMerge(batchKey, batch, executed, {
+    byId: id => findEnterpriseById(db, id),
+    byUscc: uscc => findEnterpriseByUscc(db, uscc),
+    evidence: (uscc, name) => findIndexedUsccEvidence(index ??= buildPlatformEvidenceIndex(db), { uscc, name }),
+    exportName: uscc => findExportSideName(db, uscc),
+  })
+}
+
+export async function projectDuplicateMerge(
+  batchKey: string,
+  batch: { batchId: number; duplicateCandidates: DuplicateNameCandidate[] } | null,
+  executed: { id: number; idempotencyKey: string } | undefined,
+  read: {
+    byId(id: number): DuplicateSubject | null | Promise<DuplicateSubject | null>
+    byUscc(uscc: string): DuplicateSubject | null | Promise<DuplicateSubject | null>
+    evidence(uscc: string, name: string): EvidenceResult
+    exportName(uscc: string): string | null
+  },
+): Promise<DuplicateMergeReport> {
   const seen = new Set<string>()
   const candidates: DuplicateNameCandidate[] = []
   for (const candidate of batch?.duplicateCandidates ?? []) {
@@ -277,7 +313,7 @@ export function planDuplicateMerge(db: Db, batchKey: string): DuplicateMergeRepo
       pending.push({ candidate, reason: 'source_gone', message: '候选里没有记录被并企业的行 id（无法安全归并）' })
       continue
     }
-    const from = findEnterpriseById(db, fromId)
+    const from = await read.byId(fromId)
     if (!from) {
       pending.push({ candidate, reason: 'source_gone', message: `被并企业行 ${fromId} 已不在库里` })
       continue
@@ -293,8 +329,8 @@ export function planDuplicateMerge(db: Db, batchKey: string): DuplicateMergeRepo
       continue
     }
     const uscc = normalizeUscc(candidate.newUscc)
-    const into = uscc ? findEnterpriseByUscc(db, uscc) : null
-    if (!into) {
+    const into = uscc ? await read.byUscc(uscc) : null
+    if (!uscc || !into) {
       pending.push({ candidate, reason: 'target_gone', message: `规范行（统代 ${uscc ?? '(空)'}）不在库里` })
       continue
     }
@@ -310,7 +346,7 @@ export function planDuplicateMerge(db: Db, batchKey: string): DuplicateMergeRepo
       })
       continue
     }
-    const evidence = findDuplicateMergeEvidence(db, candidate)
+    const evidence = read.evidence(uscc, candidate.existingEnterpriseName)
     if (!evidence.ok) {
       pending.push({ candidate, reason: evidence.reason, message: evidence.message })
       continue
@@ -318,19 +354,12 @@ export function planDuplicateMerge(db: Db, batchKey: string): DuplicateMergeRepo
     claimed.add(from.id)
     // 主名称（§5.3 ①）：导出表侧记了另一个现名 ⇒ 显式带 `canonicalName`，让归并**改名**并把
     // 被顶掉的原名落成别名。导出表侧没有这个名字（或与现名相同）⇒ 不带，规范行保持不动。
-    const exportName = findExportSideName(db, uscc)
+    const exportName = read.exportName(uscc)
     const canonicalName = exportName && exportName !== into.name ? exportName : null
-    ready.push({ candidate, evidence: evidence.evidence, exportName, merge: buildMerge(candidate, evidence.evidence, uscc!, canonicalName) })
+    ready.push({ candidate, evidence: evidence.evidence, exportName, merge: buildMerge(candidate, evidence.evidence, uscc, canonicalName) })
   }
 
   const merges = ready.map((item) => item.merge)
-  // 本批候选是不是**已经执行过**：来源身份是派生的、稳定的，所以直接按它找那一次批次。
-  const executed = db
-    .select()
-    .from(schema.importBatch)
-    .all()
-    .filter((batch) => batch.sourceIdentity === duplicateMergeSourceIdentity(batchKey) && batch.status === 'committed')
-    .sort((a, b) => b.id - a.id)[0]
   return {
     batchKey,
     batchId: batch?.batchId ?? null,

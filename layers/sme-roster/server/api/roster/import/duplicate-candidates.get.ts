@@ -1,3 +1,5 @@
+import { usePostgresRosterDb } from '../../../utils/postgres-roster-db'
+import { readPostgresDuplicateMerge } from '../../../utils/identity-discovery-postgres'
 import { useDb } from '@db'
 import { planDuplicateMerge } from '#sme-roster/server/utils/roster-duplicate-merge'
 
@@ -46,14 +48,15 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   const raw = getQuery(event).batchKey
   const batchKey = typeof raw === 'string' && raw.trim() ? raw.trim() : null
   if (!batchKey) {
     throw createError({ statusCode: 400, statusMessage: '缺少 batchKey（导入批次幂等键）' })
   }
-  const report = planDuplicateMerge(useDb(), batchKey)
-  if (report.batchId == null) {
+  const postgres = usePostgresRosterDb()
+  const report = postgres ? await readPostgresDuplicateMerge(postgres, batchKey) : await planDuplicateMerge(useDb(), batchKey)
+  if (report?.batchId == null) {
     throw createError({ statusCode: 404, statusMessage: `没有这个导入批次：${batchKey}` })
   }
   return report
