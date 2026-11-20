@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle as sqliteDrizzle } from 'drizzle-orm/better-sqlite3'
-import { drizzle } from 'drizzle-orm/node-postgres'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createRuntimeSchema } from '../../../db/create-runtime'
@@ -44,7 +44,7 @@ describe.runIf(Boolean(pgBin))('PostgreSQL official evidence import transaction'
   let dir: string
   let sqlite: Database.Database
   let pool: pg.Pool
-  let db: ReturnType<typeof drizzle>
+  let db: NodePgDatabase
   let started = false
 
   const run = (command: string, args: string[], env = process.env) =>

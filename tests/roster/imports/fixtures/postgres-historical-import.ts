@@ -3,13 +3,13 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/node-postgres'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
 import { createRuntimeSchema } from '../../../../db/create-runtime'
 
 export const pg19Bin = process.env.TEST_ROSTER_IMPORT_PG_BIN
 
-export async function withHistoricalImportDatabase(seed: string, run: (pool: pg.Pool, db: ReturnType<typeof drizzle>) => Promise<void>) {
+export async function withHistoricalImportDatabase(seed: string, run: (pool: pg.Pool, db: NodePgDatabase) => Promise<void>) {
   const dir = mkdtempSync(join(tmpdir(), 'pgi-'))
   const sqlitePath = join(dir, 'fixture.sqlite')
   const data = join(dir, 'pg')

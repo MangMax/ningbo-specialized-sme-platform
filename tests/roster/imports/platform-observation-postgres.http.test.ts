@@ -175,7 +175,7 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
       { apiToken: token, db: undefined as never })
 
   const mcp = (action: 'commit' | 'preflight', body: RosterImportRequest) =>
-    submitRosterImportMcp(action, { ...body, sourceSha256: body.sourceSha256 ?? undefined })
+    submitRosterImportMcp(action, { ...body, sourceSha256: body.sourceSha256 ?? undefined, payload: { ...body.payload } })
 
   it('freezes original aliases through HTTP and indexes only version projections through MCP', async () => {
     const ids = historical.map(row => ({ relationId: row.relationId }))

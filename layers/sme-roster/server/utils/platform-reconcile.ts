@@ -145,8 +145,9 @@ export interface ReconcileRunOptions {
   /** Explicit completed capture target, bound to this service's native connection. */
   targetSlots?: ReconcileTargetSlotReader
   now?: () => Date
-  onProgress?: (done: number, total: number) => void
+  onProgress?: (done: number, total: number) => void | Promise<void>
   shouldCancel?: () => boolean
+  isWriteCancelled?: () => boolean | Promise<boolean>
 }
 
 /** 报告的分项计数(票面要求的六个桶)。 */
@@ -231,7 +232,9 @@ async function mapWithConcurrency<T, R>(
       results[index] = await fn(items[index]!, index)
     }
   })
-  await Promise.all(workers)
+  const settled = await Promise.allSettled(workers)
+  const failed = settled.find(result => result.status === 'rejected')
+  if (failed) throw failed.reason
   return results
 }
 
@@ -308,6 +311,13 @@ export function collectReconcileTargets(
     })
     .from(schema.enterprise)
     .all()
+  return projectReconcileTargets(comparison, enterprises, filter)
+}
+
+type ReconcileTargetFilter = Pick<ReconcileRunOptions, 'titles'|'directions'|'usccs'|'limit'|'offset'>
+export function projectReconcileTargets(
+  comparison: ReturnType<typeof getComparison>['rows'], enterprises: KnownEnterprise[], filter: ReconcileTargetFilter,
+): CollectedTargets {
   const byId = new Map(enterprises.map((enterprise) => [enterprise.id, enterprise]))
 
   const seen = new Set<string>()
@@ -454,13 +464,7 @@ function hasFreshDecision(db: Db, target: ReconcileTarget, cutoffIso: string, co
     .sort((left, right) => left.recordedAt.localeCompare(right.recordedAt))
   const latest = matching[matching.length - 1]
 
-  return (
-    latest !== undefined &&
-    (latest.verificationStatus === 'confirmed' || (complete && latest.recordedAt >= cutoffIso)) &&
-    // A failed attempt is not a reusable conclusion. Checking only the latest row also prevents
-    // an older successful explanation from hiding a newer failure for the same target.
-    latest.status !== 'query_failed'
-  )
+  return isFreshReconcileDecision(latest, cutoffIso, complete)
 }
 
 // ---------------------------------------------------------------------------
@@ -472,6 +476,27 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
   const connection = sqliteConnection(db)
   const targetSlots = options.targetSlots ?? createReconcileTargetSlotReader(connection)
   targetSlots.assertConnection(db)
+  return runPlatformReconcileWithStore(options, {
+    async prepare(filter, cutoffIso) {
+      const collected = collectReconcileTargets(db, filter)
+      return { collected, reused: new Map([...collected.byUscc.keys()].map(uscc => [uscc,targetSlots.read(db,uscc,cutoffIso)])) }
+    },
+    freshDecision: (target,cutoffIso,complete) => hasFreshDecision(db,target,cutoffIso,complete),
+    writer: () => options.writer ?? inProcessReconcileWriter(db),
+  })
+}
+
+export function isFreshReconcileDecision(latest: { verificationStatus: string; recordedAt: string; status:string } | undefined,
+  cutoffIso: string, complete: boolean) {
+  return latest !== undefined && (latest.verificationStatus === 'confirmed' || (complete && latest.recordedAt >= cutoffIso))
+    && latest.status !== 'query_failed'
+}
+
+export async function runPlatformReconcileWithStore(options: Omit<ReconcileRunOptions, 'db'|'targetSlots'|'writer'>, store: {
+  prepare(filter: ReconcileTargetFilter, cutoffIso: string): Promise<{ collected: CollectedTargets; reused: Map<string, Map<string, StoredSlot>> }>
+  freshDecision(target: ReconcileTarget, cutoffIso: string, complete: boolean): boolean | Promise<boolean>
+  writer(): ReconcileWriter
+}): Promise<ReconcileReport> {
   const now = options.now ?? (() => new Date())
   const startedAt = now().toISOString()
   const freshnessMs = options.freshnessMs ?? DEFAULT_FRESHNESS_MS
@@ -480,21 +505,21 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
     options.titles?.length ? `:${[...options.titles].sort().join('+')}` : ''
   }${options.directions?.length ? `/${[...options.directions].sort().join('+')}` : ''}`
 
-  const collected = collectReconcileTargets(db, {
+  const { collected, reused: storedSlots } = await store.prepare({
     titles: options.titles,
     directions: options.directions,
     usccs: options.usccs,
     limit: options.limit,
     offset: options.offset,
-  })
+  }, cutoffIso)
   const usccs = [...collected.byUscc.keys()]
   const total = usccs.length
-  options.onProgress?.(0, total)
+  await options.onProgress?.(0, total)
 
   // 先按槽位判「哪些新鲜可复用、哪些必须实查」—— 一次都不查的话不需要凭据。
   const planned = new Map<string, { reused: Map<string, StoredSlot>; missing: typeof SLOTS }>()
   for (const uscc of usccs) {
-    const reused = targetSlots.read(db, uscc, cutoffIso)
+    const reused = storedSlots.get(uscc)!
     planned.set(uscc, { reused, missing: SLOTS.filter((slot) => !reused.has(slotKey(slot))) })
   }
   const missingSlots = [...planned.values()].reduce((sum, entry) => sum + entry.missing.length, 0)
@@ -515,8 +540,9 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
   let networkCount = 0
   let reusedCount = 0
   let cancelled = false
+  let completed = 0
 
-  await mapWithConcurrency(usccs, options.concurrency ?? 4, async (uscc, index) => {
+  await mapWithConcurrency(usccs, options.concurrency ?? 4, async (uscc) => {
     if (options.shouldCancel?.()) {
       cancelled = true
       return
@@ -560,7 +586,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
     if (options.shouldCancel?.()) cancelled = true
     slots.sort((a, b) => slotOrder(a.evidence) - slotOrder(b.evidence))
     slotsByUscc.set(uscc, slots)
-    options.onProgress?.(index + 1, total)
+    await options.onProgress?.(++completed, total)
   })
 
   // 只分类查询处理状态。confirmed_* 与业务原因仅由显式确认写入。
@@ -585,7 +611,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
   // 无统代的目标:平台按统代查,查不了 ⇒ 直接落 `not_queried` + 转人工。
   // 「新鲜」规则对它们同样适用 —— 否则每次重跑都会给同一批查不了的差异再堆一行。
   for (const target of collected.unqueryable) {
-    if (hasFreshDecision(db, target, cutoffIso)) {
+    if (await store.freshDecision(target, cutoffIso, true)) {
       counts.reusedFresh += 1
       continue
     }
@@ -597,7 +623,7 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
   for (const [uscc, targets] of collected.byUscc) {
     const evidence = (slotsByUscc.get(uscc) ?? []).map((slot) => slot.evidence)
     for (const target of targets) {
-      if (hasFreshDecision(db, target, cutoffIso, evidence.length === SLOTS.length && evidence.every(q => q.completeness === 'complete'))) {
+      if (await store.freshDecision(target, cutoffIso, evidence.length === SLOTS.length && evidence.every(q => q.completeness === 'complete'))) {
         counts.reusedFresh += 1
         continue
       }
@@ -689,9 +715,13 @@ export async function runPlatformReconcile(options: ReconcileRunOptions): Promis
     differences: differenceDecisions,
   })
 
-  const writer = options.writer ?? inProcessReconcileWriter(db)
+  const writer = store.writer()
   await writer.preflight(request)
-  if (options.shouldCancel?.()) { report.cancelled = true; return report }
+  if (options.shouldCancel?.() || await options.isWriteCancelled?.()) {
+    report.cancelled = true
+    report.finishedAt = now().toISOString()
+    return report
+  }
   const committed = await writer.commit(request)
   report.write = {
     batchId: committed.batchId,

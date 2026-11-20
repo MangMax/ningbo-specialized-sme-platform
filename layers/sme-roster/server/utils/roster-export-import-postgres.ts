@@ -28,7 +28,7 @@ export async function lockPostgresRosterImportBatch(tx: Tx, key: string) {
 
 export function committedPostgresImportResult(batch: PostgresImportBatch, action: PostgresImportAction) {
   return action === 'preflight' ? { batchId: batch.id, status: 'preflight' as const, preflight: {
-    add: 0, update: 0, remove: 0, review: 0, conflicts: [], evidenceRepoints: 0, batchStatus: 'committed',
+    add: 0, update: 0, remove: 0, review: 0, conflicts: [], evidenceRepoints: 0, batchStatus: 'committed' as const,
   } } : { batchId: batch.id, status: 'committed' as const, summary: readSummaryOf(batch.summary) ?? zeroSummary,
     items: publicRosterImportItems(batch.items ?? [], batch.id), error: null }
 }

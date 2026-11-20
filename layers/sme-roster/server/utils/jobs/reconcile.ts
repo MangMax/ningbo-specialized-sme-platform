@@ -1,34 +1,11 @@
+import { resolvePostgresCredential } from '../../../../core/server/utils/credential-state-postgres'
 import { resolvePlatformCookie } from '../platform-credential'
 import type { ComparisonDirection } from '../../../lib/comparison'
 import { TITLE_ORDER } from '../../../lib/labels'
 import { runPlatformReconcile, type ReconcileReport } from '../platform-reconcile'
+import { runPostgresPlatformReconcile } from '../platform-reconcile-postgres'
 import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../../../../core/server/utils/job-runner'
 
-/**
- * `reconcile` —— **批量平台核查**(工信部 `businessList` / `applyList` 两个接口)。
- *
- * `server/utils/job-specs.ts` 里这个 kind 从票 16 起就登记着、状态是 `todo`,备注写着
- * 「尚未接入:pipeline 的 CLI 只产出 JSON 缓存供 app 只读」。本模块就是那句话的答案:
- * 核心逻辑搬进了 app 自己的 `layers/sme-roster/server/utils/platform-reconcile.ts`,注册表与提交路由
- * **一行都不用改** —— 这正是当初「登记成 `todo` 而不是删掉」想要的效果:能力接上时
- * **只换实现**。
- *
- * ── 它做的事 ──────────────────────────────────────────────────────────────
- * 取比对口径的差异集合 → 对有统代的目标实查两接口(`rdjb=1/2/3` 全查 + 申报接口)→
- * 逐条落查询与关系证据 → 依显式证据标记查询状态、交代理核实 → **一个批次**经统一导入 API
- * 写回(`/api/roster/import/{preflight,commit}` 的核心函数;§8.7 自然键让证据指针在同批内
- * 指到本批新建的查询与关系)。
- *
- * ── 凭据 ──────────────────────────────────────────────────────────────────
- * 从数据库凭据表读取页面保存值，回退 `MIIT_COOKIE`；原值不进入任务历史、业务证据或日志;
- * 拿不到就明确失败，绝不写「一片未查询」的假结果。
- *
- * ── 可续跑 ────────────────────────────────────────────────────────────────
- * 24 小时内的既有查询与既有判定会被复用(不再打平台、不重复堆行);
- * 幂等键由**证据内容**派生,同一目标集重放命中同一个导入批次。
- */
-
-/** params 里 `titles` 的合法取值(称号字典的单一来源)。 */
 const TITLE_CODES = new Set(TITLE_ORDER)
 const DIRECTIONS = new Set<ComparisonDirection>(['missing_in_miit', 'extra_in_miit'])
 
@@ -138,20 +115,35 @@ export const reconcileSpec: JobSpec = {
     ' limit?: number(最多处理多少个差异目标,分批长跑用);offset?: number(跳过前 N 个,与 limit 配成分页);' +
     ' concurrency?: 1–12(默认 4);freshnessHours?: number(复用新鲜查询/判定的窗口,默认 24);' +
     ' write?: boolean(默认 true;false = 只采集预览不回写) }',
-  note: '需要配置页 Cookie 或 MIIT_COOKIE(提交时内存快照，不进入任务历史);无统代的差异查不了,会单独计入报告。',
+  note: '通过配置页 Cookie 或 MIIT_COOKIE 查询，有统代的差异才能实查。',
   parse: parseReconcileParams,
   prepare: () => {
     const cookie = resolvePlatformCookie()
     return (ctx, params) => runReconcile(ctx, params, cookie)
   },
   run: (ctx, params) => runReconcile(ctx, params, resolvePlatformCookie()),
+  postgres: {
+    async run(ctx, params) {
+      const cookie = (await resolvePostgresCredential(ctx.db, 'sme-roster.miitCookie')).value
+      let cancelled = await ctx.cancelled()
+      const report = await runPostgresPlatformReconcile(ctx.db, {
+        ...reconcileOptions(params),
+        cookie,
+        async onProgress(done, total) {
+          await ctx.progress(done, total)
+          cancelled = await ctx.cancelled()
+        },
+        shouldCancel: () => cancelled || ctx.signal.aborted,
+        isWriteCancelled: () => ctx.cancelled(),
+      })
+      return reconcileCompletion(report)
+    },
+  },
 }
 
-async function runReconcile(ctx: JobContext, params: Record<string, unknown>, cookie: string): Promise<JobCompletion> {
+function reconcileOptions(params: Record<string, unknown>) {
   const freshnessHours = numberParam(params, 'freshnessHours')
-  const report: ReconcileReport = await runPlatformReconcile({
-    db: ctx.db,
-    cookie: () => cookie,
+  return {
     titles: params.titles as string[] | undefined,
     directions: params.directions as ComparisonDirection[] | undefined,
     usccs: params.usccs as string[] | undefined,
@@ -160,14 +152,21 @@ async function runReconcile(ctx: JobContext, params: Record<string, unknown>, co
     concurrency: numberParam(params, 'concurrency'),
     freshnessMs: freshnessHours != null ? freshnessHours * 60 * 60 * 1000 : undefined,
     write: params.write !== false,
+  }
+}
+
+async function runReconcile(ctx: JobContext, params: Record<string, unknown>, cookie: string): Promise<JobCompletion> {
+  const report = await runPlatformReconcile({
+    ...reconcileOptions(params),
+    db: ctx.db,
+    cookie,
     onProgress: (done, total) => ctx.progress(done, total),
     shouldCancel: () => ctx.cancelled(),
   })
 
-  // 被取消时**主动停下并保留已判定的部分** —— 取消不该把做完的那部分明细一起丢掉
-  // (见 `JobCompletion.cancelled` 的说明)。
-  if (report.cancelled) {
-    return { result: report, cancelled: true }
-  }
-  return { result: report }
+  return reconcileCompletion(report)
+}
+
+function reconcileCompletion(report: ReconcileReport): JobCompletion {
+  return report.cancelled ? { result: report, cancelled: true } : { result: report }
 }

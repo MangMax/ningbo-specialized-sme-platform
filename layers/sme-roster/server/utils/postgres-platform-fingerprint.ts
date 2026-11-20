@@ -61,12 +61,12 @@ export async function readPostgresFingerprintRelations(db: Db, queryId: number) 
 export async function readPostgresRelationFingerprints(db: Db, scope: { queryId: number; archiveReplay?: true } | { relationIds: readonly number[] }) {
   const where = 'queryId' in scope ? sql`q.old_id=${scope.queryId}` : sql`ra.old_id=ANY(${sql.param(scope.relationIds)}::bigint[])`
   const { rows } = await db.execute<{
-    id: number; enterpriseId: number | null; queryId: number; observationId: number; sourceRdjb: string | null; originalUscc: string | null
+    id: number; enterpriseId: number | null; queryId: number; observationId: number; sourceRdjb: string | null; originalUscc: string | null; originalName: string | null
     matchBasis: PlatformStoredRelation['matchBasis']; verificationStatus: PlatformStoredRelation['verificationStatus']
     snapshot: Buffer | null
   }>(sql`
     SELECT ra.old_id::float8 AS id, q.old_id::float8 AS "queryId", o.id::float8 AS "observationId",
-      a.enterprise_id::float8 AS "enterpriseId", first.uscc_raw AS "originalUscc", page.rdjb AS "sourceRdjb",
+      a.enterprise_id::float8 AS "enterpriseId", first.uscc_raw AS "originalUscc", first.name_raw AS "originalName", page.rdjb AS "sourceRdjb",
       a.match_basis AS "matchBasis", a.verification_status AS "verificationStatus", v.bytes AS snapshot
     FROM platform_legacy_query_alias q
     JOIN platform_business_observation o ON o.collection_id=q.collection_id
@@ -84,7 +84,7 @@ export async function readPostgresRelationFingerprints(db: Db, scope: { queryId:
     LEFT JOIN platform_archive_value v ON v.id=r.archive_id
     WHERE ${where}
     ORDER BY ra.old_id`)
-  return rows.map(({ id, enterpriseId, matchBasis, verificationStatus, snapshot, queryId, observationId, sourceRdjb, originalUscc }) => {
+  return rows.map(({ id, enterpriseId, matchBasis, verificationStatus, snapshot, queryId, observationId, sourceRdjb, originalUscc, originalName }) => {
     if (!snapshot) throw new Error('Missing original correspondence fingerprint snapshot')
     const cells = new Map(snapshotSchema.parse(JSON.parse(snapshot.toString('utf8'))).fields.map(cell => [cell.name, cell]))
     const latest = { id, queryId, enterpriseId, matchBasis, verificationStatus }
@@ -100,6 +100,6 @@ export async function readPostgresRelationFingerprints(db: Db, scope: { queryId:
       const value = originalValue(cell)
       return [key, column.dataType === 'json' && value !== null ? JSON.parse(String(value)) : value]
     })) as unknown as PlatformStoredRelation
-    return { relation, observationId, sourceRdjb, originalUscc }
+    return { relation, observationId, sourceRdjb, originalUscc, originalName }
   })
 }
