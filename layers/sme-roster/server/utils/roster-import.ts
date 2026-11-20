@@ -40,7 +40,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { isPageCapable } from '../../lib/roster/evidence-page'
 import { normalizeName,normalizeUscc } from '../../lib/domain'
-import { duplicateTwinKey } from '../../lib/roster/duplicate-merge'
+import { duplicateCandidatesFromBatch, duplicateTwinKey } from '../../lib/roster/duplicate-merge'
 import { missingUsccSourceFields,usccFormatVerdict } from '../../lib/roster/uscc-research'
 import { diagnoseOfficialEventFields,readCurrentQualificationAssessment } from '../../lib/roster/current-qualification'
 import { PLATFORM_INTERFACE_VALUES,TITLE_ORDER,type PlatformInterface } from '../../lib/labels'
@@ -4824,14 +4824,7 @@ export function readImportBatchOutcome(db: Db, idempotencyKey: string) {
 export function readDuplicateCandidates(db: Db, idempotencyKey: string): DuplicateNameCandidate[] {
   const batch = findBatchByKey(db, idempotencyKey)
   if (!batch) return []
-  const items = (batch.itemResults as RosterImportItemResult[] | null) ?? []
-  if (items.length > 0) {
-    return items
-      .filter((item) => item.ok && item.kind === 'duplicate_candidate')
-      .map((item) => item.detail?.candidate as DuplicateNameCandidate)
-      .filter((candidate): candidate is DuplicateNameCandidate => !!candidate && typeof candidate.nameNorm === 'string')
-  }
-  return (batch.preflightResult as RosterImportPreflight | null)?.duplicateCandidates ?? []
+  return duplicateCandidatesFromBatch(batch.itemResults as RosterImportItemResult[] | null, batch.preflightResult as RosterImportPreflight | null)
 }
 
 /** 取回某条 item 的归并血缘（`merges` 项）。 */
