@@ -291,6 +291,18 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
       const legacyBody = await json(legacy)
       expect(legacy.status, JSON.stringify(legacyBody)).toBe(200)
       expect(legacyBody).toEqual(await json(await fetch(api(legacyPath))))
+      const selection = { eventId: event.id, queryIds: [query.id, historicalCollection.queryId], exportBatchIds: [batch.id], ruleVersion: 'manual', page: 1, pageSize: 2 }
+      for (const [suffix, tool, args] of [
+        ['candidates', 'find_record_correspondence_candidates', selection],
+        ['discover', 'discover_event_archive_candidates', { eventId: event.id, pageSize: 2, queryPageSize: 1 }],
+      ] as const) {
+        const expected = await json(await post('correspondences/' + suffix, args, false))
+        const actual = await native.request('/api/roster/correspondences/' + suffix, { method: 'POST', body: JSON.stringify(args) })
+        const selected = await json(actual)
+        expect(actual.status, JSON.stringify(selected)).toBe(200)
+        expect(selected).toEqual(expected)
+        expect(await nativeCall(tool, args)).toEqual(expected)
+      }
       const currentFilter = { titleCode: 'specialized_sme' as const, pageSize: 1, q: enterprise.name }
       const current = await native.request('/api/roster/current-enterprises?' + new URLSearchParams({
         titleCode: currentFilter.titleCode, pageSize: String(currentFilter.pageSize), q: currentFilter.q,
@@ -422,6 +434,7 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
       const drift = await native.request('/api/roster/' + path + '/' + currentProofId)
       expect(await drift.json()).toMatchObject({ status: 'confirmed', valid: false, invalidReason: 'source_drift_or_missing' })
       expect((await native.request('/api/roster/' + path + '/batches/current-proof', { headers: {} })).status).toBe(401)
+
     } finally {
       await client.end()
       await native.close()

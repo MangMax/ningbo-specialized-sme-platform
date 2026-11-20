@@ -24,16 +24,24 @@ function fieldValue(row: Record<string, unknown>, field: string, key: string) {
   return field === 'year' && value != null ? Number(value) : value
 }
 
-export async function readPostgresObservationComparisonFacts(db: Db, owners: ProjectionOwner[]) {
+export async function readPostgresObservationComparisonFacts(db: Db, owners: ProjectionOwner[], archiveDisplay = false) {
   const facts = new Map<number, Record<string, unknown>>()
   for (const [kind, matching] of Map.groupBy(owners, owner => owner.interface)) {
+    const table = sql.identifier(projections[kind])
     const columns = sql.join(fields.flatMap(([, key]) => ['stored_' + key, 'parsed_' + key, 'reconciled_' + key, key + '_conflict'])
-      .map(key => sql`${sql.identifier(key)}`), sql`,`)
+      .map(key => sql`p.${sql.identifier(key)}`), sql`,`)
+    const version = archiveDisplay && kind !== 'recognized_list'
+      ? sql`JOIN platform_business_observation o ON o.id=p.observation_id
+        LEFT JOIN ${table} v ON v.version_id=o.version_id AND v.record_id=o.record_id` : sql.empty()
+    const typed = !archiveDisplay || kind === 'recognized_list' ? sql.empty() : sql`,v.declare_kind AS typed_declare_kind,
+      v.applied_at AS typed_applied_at,v.status AS typed_status,
+      ${kind === 'apply_list' ? sql`v.declaration_year AS typed_year` : sql`v.business_year AS typed_year,
+        v.batch AS typed_batch,v.award_batch_label AS typed_award_batch_label,v.province AS typed_province`}`
     const { rows } = await db.execute(sql`
-      SELECT observation_id,source_title_kind,source_title_text,source_title_number_text,${columns}
-        ${kind === 'business_list' ? sql`,stored_status_sqlite_storage,reconciled_status_sqlite_storage` : sql.empty()}
-      FROM ${sql.identifier(projections[kind])}
-      WHERE observation_id=ANY(${sql.param(matching.map(row => row.observationId))}::bigint[])`)
+      SELECT p.observation_id,p.source_title_kind,p.source_title_text,p.source_title_number_text,${columns}
+        ${kind === 'business_list' ? sql`,p.stored_status_sqlite_storage,p.reconciled_status_sqlite_storage` : sql.empty()}${typed}
+      FROM ${table} p ${version}
+      WHERE p.observation_id=ANY(${sql.param(matching.map(row => row.observationId))}::bigint[])`)
     for (const row of rows) facts.set(Number(row.observation_id), row)
   }
   const result = new Map<number, Omit<RelationSource['facts'], 'id' | 'queryId' | 'sequenceNo' | 'enterpriseId' | 'usccRaw' | 'verificationStatus' | 'sourceRdjb'>>()
@@ -42,7 +50,11 @@ export async function readPostgresObservationComparisonFacts(db: Db, owners: Pro
       const stored = fieldValue(p, field, 'stored_' + key), parsed = fieldValue(p, field, 'parsed_' + key)
       return String(p[key + '_conflict']) === '1' && stored != null && parsed != null ? [platformNormalizationConflict(field, stored, parsed)] : []
     })
-    const value = (field: typeof fields[number][0], column: string) => fieldValue(p, field, 'reconciled_' + column)
+    const value = (field: typeof fields[number][0], column: string) => {
+      const typed = p['typed_' + column]
+      return typed != null && !conflicts.some(conflict => conflict.field === field)
+        ? fieldValue(p, field, 'typed_' + column) : fieldValue(p, field, 'reconciled_' + column)
+    }
     result.set(id, {
       province: value('province','province') as string | null,
       status: value('status','status') as string | Buffer | null,

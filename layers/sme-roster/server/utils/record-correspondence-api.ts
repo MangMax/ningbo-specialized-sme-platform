@@ -12,6 +12,7 @@ import { commitRecordCorrespondences, CorrespondenceError, getRecordCorresponden
 import { detail, details, sourceReader, sanitizeEvidence, summaries, type SourceKind } from './record-correspondence-read'
 import { discoverEventArchives } from './event-archive-discovery'
 import { generateCandidates } from './record-correspondence-candidates'
+import { discoverPostgresEventArchives, generatePostgresCandidates } from './record-correspondence-candidates-postgres'
 
 type Db = BetterSQLite3Database<typeof schema>
 export type CorrespondenceAction = 'discover' | 'list' | 'get' | 'audit' | 'source' | 'candidates' | 'preflight' | 'commit' | 'batch'
@@ -36,6 +37,8 @@ const operation = z.discriminatedUnion('action', [
 const decision = z.strictObject({ idempotencyKey: z.string().trim().min(1), sourceIdentity: z.string().trim().min(1), actor: z.strictObject({ type: z.enum(['user', 'agent']), id: z.string().trim().min(1) }), basis: z.string().trim().min(1), ruleId: z.string().trim().min(1), ruleVersion: z.string().trim().min(1), proofIds: z.array(positive).max(100).optional(), operations: z.array(operation).min(1) })
 const commitDecision = z.strictObject({ request: decision, planHash: z.string().regex(/^[0-9a-f]{64}$/) })
 const candidate = z.strictObject({ eventId: positive.optional(), enterpriseId: positive.optional(), titleCode: z.string().min(1).optional(), queryIds: z.array(positive).default([]), exportBatchIds: z.array(positive).default([]), ruleVersion: z.string().trim().min(1), page: positive.default(1), pageSize: positive.max(200).default(50) }).refine(v => v.eventId ? !v.enterpriseId && !v.titleCode : !!v.enterpriseId && !!v.titleCode, 'Provide eventId or enterpriseId and titleCode').refine(v => v.queryIds.length + v.exportBatchIds.length > 0, 'Specify archived query or export batch IDs')
+const discovery = z.strictObject({ eventId: positive, page: positive.default(1), pageSize: positive.max(200).default(50),
+  queryPage: positive.default(1), queryPageSize: positive.max(200).default(25) })
 const sourceKinds = ['event', 'relation', 'export_row'] as const
 function fail(status: number, code: string, message: string): CorrespondenceApiOutput { return { status, headers, body: { error: { code, message } } } }
 function success(body: object): CorrespondenceApiOutput { return { status: 200, headers, body: { ...body } } }
@@ -127,12 +130,12 @@ function parseListQuery(query: Record<string, unknown>) {
 
 export async function handlePostgresCorrespondenceRequest(input: CorrespondenceApiInput, apiToken?: string | null, browserAuthorized = false): Promise<CorrespondenceApiOutput | undefined> {
   const write = input.action === 'preflight' || input.action === 'commit'
-  if (!write && !['list', 'get', 'source', 'audit', 'batch'].includes(input.action)) return
+  const method = ['list', 'get', 'audit', 'source', 'batch'].includes(input.action) ? 'GET' : 'POST'
   const db = usePostgresRosterDb()
   if (!db) return
   if ((write || input.action === 'batch') && !browserAuthorized && !auth(input, apiToken)) return fail(401, 'unauthorized', 'Configured API token required')
+  if (input.method !== method) return fail(405, 'method_not_allowed', `${method} required`)
   if (write) {
-    if (input.method !== 'POST') return fail(405, 'method_not_allowed', 'POST required')
     const writable = usePostgresRosterDb(true)!
     try {
       const { knownRedactors } = await importPostgresReceiptRedactor(db, { additionalSecrets: [apiToken] })
@@ -149,10 +152,23 @@ export async function handlePostgresCorrespondenceRequest(input: CorrespondenceA
       throw error
     }
   }
-  if (input.method !== 'GET') return fail(405, 'method_not_allowed', 'GET required')
   return db.transaction(async tx => {
     const redact = await importPostgresReceiptRedactor(tx, { additionalSecrets: [apiToken] })
     const { knownRedactors } = redact
+    if (input.action === 'candidates') {
+      const parsed = candidate.safeParse(input.body)
+      if (!parsed.success) return fail(400, 'invalid_request', z.prettifyError(parsed.error))
+      const result = await generatePostgresCandidates(tx, parsed.data)
+      return result ? ok(result, knownRedactors) : fail(404, 'not_found', 'Official event or enterprise not found')
+    }
+    if (input.action === 'discover') {
+      const parsed = discovery.safeParse(input.body)
+      if (!parsed.success) return fail(400, 'invalid_request', 'Invalid event discovery request')
+      const result = await discoverPostgresEventArchives(tx, parsed.data, redact)
+      if (!result) return fail(404, 'not_found', 'Official award or review event not found')
+      return success(sanitizePublishedObject(result, knownRedactors, (key, value) => key === 'event'
+        ? sanitizePublishedEvent(result.event, knownRedactors) : sanitizeEvidence(value, knownRedactors)))
+    }
     if (input.action === 'list') {
       const parsed = parseListQuery(input.query ?? {})
       if ('status' in parsed) return parsed
@@ -219,7 +235,7 @@ function correspondenceSnapshot(input: CorrespondenceApiInput, context: { db: Db
       return detailPageResponse(result, details(db, result.rows, redact), redactors)
     }
     if (input.action === 'discover') {
-      const parsed = z.strictObject({ eventId: positive, page: positive.default(1), pageSize: positive.max(200).default(50), queryPage: positive.default(1), queryPageSize: positive.max(200).default(25) }).safeParse(input.body)
+      const parsed = discovery.safeParse(input.body)
       if (!parsed.success) return fail(400, 'invalid_request', 'Invalid event discovery request')
       const result = discoverEventArchives(db, parsed.data, redact)
       if (!result) return fail(404, 'not_found', 'Official award or review event not found')

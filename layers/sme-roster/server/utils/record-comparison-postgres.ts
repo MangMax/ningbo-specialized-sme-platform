@@ -13,11 +13,11 @@ import { readPostgresCorrespondenceSelection } from './record-correspondence-pos
 import { readPostgresFingerprintQueries } from './postgres-platform-fingerprint'
 import { compareRecordInputs, comparisonBefore, projectLegacyComparisonImpact, validatedComparisonInput, type ComparisonRead, type SelectedRecordComparison, type VerifiedComparisonEvidence } from './record-comparison'
 import { readPostgresComparisonProofHead, readPostgresCurrentProofSource, readPostgresOfficialProofSource } from './comparison-scope-proof-postgres'
+import { readPostgresPlatformBusinessMetadata } from './platform-business-record-read'
 import { ProofSourceError, type CurrentEvidence, type OfficialEvidence } from './comparison-scope-proof-source'
 
 type Reader = Pick<NodePgDatabase, 'execute'>
 type QueryFacts = SelectedRecordComparison['queries'][number]['comparisonFacts']
-type BusinessMetadata = SelectedRecordComparison['businessMetadata'] extends Map<number, infer T> ? T : never
 const numbers = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
 
 async function readDocuments(db: Reader, ids: number[]): Promise<SelectedRecordComparison['documents']> {
@@ -107,7 +107,7 @@ async function selectComparison(db: Reader, input: RecordComparisonInput, verifi
   const byQuery = new Map(queries.map(query => [query.id, query]))
   const observationIds = await readPostgresComparisonIdentities(db, input.queryIds)
   const normalized = await readPostgresObservationComparisonFacts(db, observationIds.map(row => ({ observationId: row.observationId,
-    interface: byQuery.get(row.queryId)!.interface })))
+    interface: byQuery.get(row.queryId)!.interface })), true)
   const relations = observationIds.map(({ enterpriseName: _name, relationId: _id, ...row }) => {
     const projection = normalized.get(row.observationId)
     if (!projection) throw new Error('comparison_observation_fact_missing')
@@ -128,14 +128,8 @@ async function selectComparison(db: Reader, input: RecordComparisonInput, verifi
   const unavailableEdges = allEdges.filter(edge => input.asOf && (revised.has(edge.id) || edge.decidedAt !== null && !comparisonBefore(edge.decidedAt, input.asOf)))
   const unavailable = new Set(unavailableEdges.map(edge => edge.id))
   const edges = allEdges.filter(edge => !unavailable.has(edge.id))
-  const { rows: metadata } = await db.execute<BusinessMetadata>(sql`
-    SELECT a.old_id::float8 AS "relationId",o.record_id::float8 AS "recordId",o.version_id::float8 AS "versionId",
-      b.interface,b.platform_key AS "platformKey",o.identity_state AS "identityState",o.content_state AS "contentState",
-      o.key_source AS "keySource",o.projection_rule_version AS "projectionRuleVersion",v.hash_algorithm AS "hashAlgorithm",v.content_hash AS "contentHash"
-    FROM platform_legacy_relation_alias a JOIN platform_business_observation o ON o.id=a.observation_id
-    LEFT JOIN platform_business_record b ON b.id=o.record_id LEFT JOIN platform_business_record_version v ON v.id=o.version_id
-    WHERE a.old_id=ANY(${numbers(relations.map(row => row.relation.id))})`)
-  return { input, queries, batches, documents, relations, exports, edges, unavailableEdges, businessMetadata: new Map(metadata.map(row => [row.relationId,row])) }
+  const metadata = await readPostgresPlatformBusinessMetadata(db, relations.map(row => row.relation.id))
+  return { input, queries, batches, documents, relations, exports, edges, unavailableEdges, businessMetadata: metadata }
 }
 
 type FormalStep = Extract<ComparisonRead, { type: 'events' }>

@@ -132,7 +132,7 @@ export function projectCorrespondenceSources({ events, evidenceRows, files, sort
   const detailRow = (row: CorrespondenceRead) => {
     return { ...publicCorrespondence(row), event: row.eventId ? eventSources.get(row.eventId) ?? null : null, predecessorEvent: row.predecessorEventId ? eventSources.get(row.predecessorEventId) ?? null : null, relation: row.relationId ? read('relation', row.relationId) : null, exportRow: row.exportRowId ? read('export_row', row.exportRowId) : null }
   }
-  return { read, detail: detailRow }
+  return { read, detail: detailRow, event: (id: number) => eventSources.get(id) ?? null }
 }
 export function readSource(db: Db, kind: SourceKind, id: number, redactor?: ReceiptRedactor) { return sourceReader(db, [], { kind, id }, redactor).read(kind, id) }
 export function eventSource(db: Db, id: number, redactor?: ReceiptRedactor) { return readSource(db, 'event', id, redactor) as ReturnType<typeof detail>['event'] }
