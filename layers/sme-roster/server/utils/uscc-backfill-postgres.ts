@@ -1,4 +1,5 @@
-import { sql } from 'drizzle-orm'
+import { and, eq, ne, notExists } from 'drizzle-orm'
+import { enterprise, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { backfillPostgresEnterpriseUscc, lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
@@ -7,17 +8,17 @@ import type { RosterImportItemResult, RosterImportUsccBackfill } from '../../lib
 import { capturePostgresIdentityChange, readPostgresIdentityMaterial } from './postgres-identity-evidence'
 import type { NativeImportExecution, PostgresImportAction, PostgresImportBatch } from './roster-export-import-postgres'
 
-type Reader = Pick<NodePgDatabase,'execute'>
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
-type Subject = { id:number; name:string; nameNorm:string; uscc:string | null; flags:string[] | null }
+type Subject = { id:number; name:string; nameNorm:string; uscc:string | null; flags:string | null }
 type Change = { target:Subject; backfill:RosterImportUsccBackfill; uscc:string; ref:string }
 const emptySummary = { written:0,skipped:0,failed:0,evidenceRepointed:0 }
 const optionalText = (value: unknown) => typeof value === 'string' ? value.trim() || null : null
-const subject = sql`id::float8 AS id,name,name_norm AS "nameNorm",uscc_norm AS uscc,quality_flags::json AS flags`
+const subject = { id: enterprise.id, name: enterprise.name, nameNorm: enterprise.nameNorm,
+  uscc: enterprise.usccNorm, flags: enterprise.qualityFlags }
 const failure = (ref:string,code:string,message:string,field:string): RosterImportItemResult =>
   ({ kind:'uscc_backfill',ref,ok:false,error:{code,message,field} })
 
-async function planBackfill(db: Reader, input: RosterImportUsccBackfill, index: number): Promise<Change | RosterImportItemResult> {
+async function planBackfill(db: Tx, input: RosterImportUsccBackfill, index: number): Promise<Change | RosterImportItemResult> {
   const ref = 'uscc_backfill:'+index
   const uscc = normalizeUscc(input?.uscc)
   const verdict = usccFormatVerdict(input?.uscc)
@@ -34,20 +35,22 @@ async function planBackfill(db: Reader, input: RosterImportUsccBackfill, index: 
   let target: Subject | undefined
   if (requested != null) {
     const id = Number.isSafeInteger(requested) ? await postgresCanonicalEnterpriseId(db,requested) : null
-    target = id === null ? undefined : (await db.execute<Subject>(sql`SELECT ${subject} FROM enterprise WHERE id=${id}`)).rows[0]
+    target = id === null ? undefined : (await db.select(subject).from(enterprise).where(eq(enterprise.id, id)))[0]
     if (target && name && normalizeName(name)!==target.nameNorm) {
       return failure(ref,'enterprise_selector_conflict',`enterpriseId=${requested} 的名称与给定 enterpriseName 不一致`,'enterpriseName')
     }
   } else {
-    const { rows } = await db.execute<Subject>(sql`SELECT ${subject} FROM enterprise e
-      WHERE e.name_norm=${normalizeName(name)} AND NOT EXISTS(SELECT 1 FROM enterprise_merge m WHERE m.from_enterprise_id=e.id) ORDER BY id`)
+    const redirect = db.select({ id: enterpriseMerge.fromEnterpriseId }).from(enterpriseMerge)
+      .where(eq(enterpriseMerge.fromEnterpriseId, enterprise.id))
+    const rows = await db.select(subject).from(enterprise)
+      .where(and(eq(enterprise.nameNorm, normalizeName(name)), notExists(redirect))).orderBy(enterprise.id)
     if (rows.length>1) return failure(ref,'enterprise_ambiguous',`同名企业有 ${rows.length} 家（${rows.map(row=>row.id).join('、')}）⇒ 同名多主体，不猜是哪一家`,'enterpriseName')
     target = rows[0]
   }
   if (!target) return failure(ref,'enterprise_not_found',`补录找不到归属企业：${requested ?? name}`,'enterpriseId')
   if (target.uscc) return failure(ref,'uscc_already_present',`企业 ${target.id} 已有统代 ${target.uscc} ⇒ 只补缺失值，不覆盖`,'uscc')
-  const { rows:[holder] } = await db.execute<{ id:number; name:string }>(sql`
-    SELECT id::float8 AS id,name FROM enterprise WHERE uscc_norm=${uscc} AND id<>${target.id}`)
+  const [holder] = await db.select({ id: enterprise.id, name: enterprise.name }).from(enterprise)
+    .where(and(eq(enterprise.usccNorm, uscc), ne(enterprise.id, target.id)))
   if (holder) return failure(ref,'uscc_taken',`统代 ${uscc} 已被企业 ${holder.id}「${holder.name}」占用 ⇒ 冲突，不覆盖、不自动合并身份`,'uscc')
   return { ref,target,backfill:input,uscc }
 }
@@ -82,7 +85,7 @@ export async function executePostgresUsccBackfillItems(tx: Tx,batch:PostgresImpo
           failure(plan.ref,'enterprise_selector_conflict','补录归属企业已变更，请重新核对','enterpriseId')])
         const { target,uscc,backfill } = plan
         const before = await readPostgresIdentityMaterial(nested,target.id)
-        await backfillPostgresEnterpriseUscc(nested,target.id,uscc,target.flags ?? [])
+        await backfillPostgresEnterpriseUscc(nested,target.id,uscc,JSON.parse(target.flags ?? 'null') ?? [])
         await capturePostgresIdentityChange(nested,target.id,'uscc:'+uscc,before)
         results.push({ ok:true,kind:'uscc_backfill',ref:item(plan).ref,detail:{ enterpriseId:target.id,uscc,rowsWritten:1,
           lineage:{ enterpriseId:target.id,enterpriseName:target.name,uscc,previousUscc:null,source:backfill.source,note:optionalText(backfill.note) } } })
