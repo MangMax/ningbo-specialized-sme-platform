@@ -25,7 +25,7 @@ export default defineEventHandler(async () => {
       const postgres = usePostgresDirectoryDb()
       const health = await postgres!.transaction(async tx => {
         const titles = await tx.select().from(title).orderBy(title.rank, title.code)
-        const [{ recordCount } = { recordCount: 0 }] = await tx.select({ recordCount: count() }).from(record)
+        const recordCount = await tx.$count(record)
         return { titles, recordCount }
       }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
       await checkPostgresJobStorage(postgres!)

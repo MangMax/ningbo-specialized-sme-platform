@@ -1,4 +1,6 @@
-import { sql } from 'drizzle-orm'
+import { and, eq, exists, inArray, isNotNull, isNull, min, ne, or } from 'drizzle-orm'
+import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { TITLE_ORDER } from '../../lib/labels'
 import { isPageCapable } from '../../lib/roster/evidence-page'
@@ -6,48 +8,19 @@ import { matchesRecognitionQuery } from '../../lib/roster/first-recognition'
 import { compareRecognitionCoordinates, summarizeRecognitionAwards } from '../../lib/roster/recognition-read'
 import { recognitionPageOf, type RosterRecognitionFilter, type RosterRecognitionRow, type RosterRecognitionsResult } from '../../lib/roster/recognitions'
 
-type Award = {
-  enterpriseId: string
-  name: string
-  titleCode: string
-  source: string
-  id: string
-  eventType: string
-  year: string | null
-  decidedYear: string | null
-  reviewOutcome: string | null
-  hasEvidence: boolean
-}
-type Identity = { id: string; uscc: string | null; district: string | null }
-type Pointer = {
-  recordEventId: string
-  sourceFile: string
-  attachment: string | null
-  listNo: string | null
-  page: string | null
-}
-
-function nullableNumber(value: string | null) {
-  return value === null ? null : Number(value)
-}
-
 export function readPostgresRecognitions(db: NodePgDatabase, filter: RosterRecognitionFilter): Promise<RosterRecognitionsResult> {
   const { page, pageSize } = recognitionPageOf(filter)
   return db.transaction(async tx => {
-    const titlesFilter = filter.title?.length
-      ? sql`AND r.title_code IN (${sql.join(filter.title.map(title => sql`${title}`), sql`, `)})`
-      : sql``
-    const { rows } = await tx.execute<Award>(sql`
-      SELECT e.id AS "enterpriseId", e.name, r.title_code AS "titleCode", r.source,
-        v.id, v.event_type AS "eventType", v.year, v.decided_year AS "decidedYear", v.review_outcome AS "reviewOutcome",
-        EXISTS (SELECT 1 FROM record_evidence ev WHERE ev.record_event_id = v.id) AS "hasEvidence"
-      FROM record r JOIN record_event v ON v.record_id = r.id JOIN enterprise e ON e.id = r.enterprise_id
-      WHERE v.event_type = 'award' ${titlesFilter}
-      ORDER BY e.id, r.title_code, v.id`)
-    const awards = rows.map(row => ({
-      ...row, enterpriseId: Number(row.enterpriseId), id: Number(row.id),
-      year: nullableNumber(row.year), decidedYear: nullableNumber(row.decidedYear),
-    }))
+    const evidenceForEvent = tx.select({ id: recordEvidence.id }).from(recordEvidence)
+      .where(eq(recordEvidence.recordEventId, recordEvent.id))
+    const awards = await tx.select({
+      enterpriseId: enterprise.id, name: enterprise.name, titleCode: record.titleCode, source: record.source,
+      id: recordEvent.id, eventType: recordEvent.eventType, year: recordEvent.year, decidedYear: recordEvent.decidedYear,
+      reviewOutcome: recordEvent.reviewOutcome, hasEvidence: exists(evidenceForEvent).mapWith(Boolean),
+    }).from(record).innerJoin(recordEvent, eq(recordEvent.recordId, record.id))
+      .innerJoin(enterprise, eq(enterprise.id, record.enterpriseId))
+      .where(and(eq(recordEvent.eventType, 'award'), filter.title?.length ? inArray(record.titleCode, filter.title) : undefined))
+      .orderBy(enterprise.id, record.titleCode, recordEvent.id)
     const query = { title: filter.title, firstYear: filter.year, firstStatus: filter.status }
     const summaries = [...summarizeRecognitionAwards(awards)].filter(summary => matchesRecognitionQuery(summary, query))
     const titles: Record<string, number> = Object.fromEntries(TITLE_ORDER.map(code => [code, 0]))
@@ -58,30 +31,29 @@ export function readPostgresRecognitions(db: NodePgDatabase, filter: RosterRecog
     if (!selected.length) return { rows: [], counts, page, pageSize }
 
     const ids = [...new Set(selected.map(summary => summary.enterpriseId))]
-    const identities = await tx.execute<Identity>(sql`
-      SELECT e.id, e.uscc_norm AS uscc, coalesce(nullif(e.district, ''), (
-        SELECT district FROM record r WHERE r.enterprise_id = e.id AND r.district IS NOT NULL AND r.district <> ''
-        ORDER BY r.id LIMIT 1
-      )) AS district
-      FROM enterprise e WHERE e.id IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})`)
-    const byEnterprise = new Map(identities.rows.map(row => [Number(row.id), row]))
+    const fallback = tx.select({ district: record.district }).from(record)
+      .where(and(eq(record.enterpriseId, enterprise.id), ne(record.district, '')))
+      .orderBy(record.id).limit(1).as('fallback')
+    const identities = await tx.select({
+      id: enterprise.id, uscc: enterprise.usccNorm, district: enterprise.district, fallback: fallback.district,
+    }).from(enterprise).leftJoinLateral(fallback, or(isNull(enterprise.district), eq(enterprise.district, ''))).where(inArray(enterprise.id, ids))
+    const byEnterprise = new Map(identities.map(row => [row.id, row]))
     const firstIds = selected.flatMap(summary => summary.firstEventId == null ? [] : [summary.firstEventId])
     const byEvent = new Map<number, RosterRecognitionRow['evidence']>()
     if (firstIds.length) {
-      const evidence = await tx.execute<Pointer>(sql`
-        SELECT record_event_id AS "recordEventId", source_file AS "sourceFile", attachment, list_no AS "listNo", page
-        FROM record_evidence WHERE record_event_id IN (${sql.join(firstIds.map(id => sql`${id}`), sql`, `)}) ORDER BY id`)
-      for (const { recordEventId, sourceFile, attachment, listNo, page } of evidence.rows) {
-        const id = Number(recordEventId)
+      const evidence = await tx.select({ id: recordEvidence.recordEventId, sourceFile: recordEvidence.sourceFile,
+        attachment: recordEvidence.attachment, listNo: recordEvidence.listNo, page: recordEvidence.page,
+      }).from(recordEvidence).where(inArray(recordEvidence.recordEventId, firstIds)).orderBy(recordEvidence.id)
+      for (const { id, sourceFile, attachment, listNo, page } of evidence) {
         const pointers = byEvent.get(id) ?? []
-        pointers.push({ sourceFile, attachment, listNo: nullableNumber(listNo), page: isPageCapable(sourceFile) ? nullableNumber(page) : null })
+        pointers.push({ sourceFile, attachment, listNo, page: isPageCapable(sourceFile) ? page : null })
         byEvent.set(id, pointers)
       }
     }
     return { counts, page, pageSize, rows: selected.map(summary => {
       const identity = byEnterprise.get(summary.enterpriseId)!
       return {
-        ...summary, uscc: identity.uscc, district: identity.district,
+        ...summary, uscc: identity.uscc, district: identity.district || identity.fallback,
         evidence: summary.firstEventId === null ? [] : byEvent.get(summary.firstEventId) ?? [],
       }
     }) }
@@ -89,19 +61,23 @@ export function readPostgresRecognitions(db: NodePgDatabase, filter: RosterRecog
 }
 
 export async function readPostgresLedgerYears(db: NodePgDatabase) {
-  const { rows } = await db.execute<{ year: string; kind: 'event' | 'first' }>(sql`
-    WITH roster_events AS (
-      SELECT r.enterprise_id, r.title_code, v.event_type, v.year, v.decided_year
-      FROM record r JOIN enterprise e ON e.id = r.enterprise_id JOIN record_event v ON v.record_id = r.id
-    )
-    SELECT DISTINCT year, 'event' AS kind FROM roster_events WHERE year IS NOT NULL
-    UNION
-    SELECT min(coalesce(decided_year, year)), 'first' FROM roster_events
-    WHERE event_type = 'award' AND coalesce(decided_year, year) IS NOT NULL
-    GROUP BY enterprise_id, title_code
-    ORDER BY year`)
-  return {
-    eventYears: rows.filter(row => row.kind === 'event').map(row => Number(row.year)),
-    firstRecognitionYears: rows.filter(row => row.kind === 'first').map(row => Number(row.year)),
-  }
+  return db.transaction(async tx => {
+    const eventYears = await tx.selectDistinct({ year: recordEvent.year }).from(recordEvent)
+      .innerJoin(record, eq(record.id, recordEvent.recordId)).innerJoin(enterprise, eq(enterprise.id, record.enterpriseId))
+      .where(isNotNull(recordEvent.year)).orderBy(recordEvent.year)
+    const awards = tx.select({ owner: record.enterpriseId, title: record.titleCode, year: recordEvent.decidedYear })
+      .from(recordEvent).innerJoin(record, eq(record.id, recordEvent.recordId))
+      .where(and(eq(recordEvent.eventType, 'award'), isNotNull(recordEvent.decidedYear)))
+      .unionAll(tx.select({ owner: record.enterpriseId, title: record.titleCode, year: recordEvent.year })
+        .from(recordEvent).innerJoin(record, eq(record.id, recordEvent.recordId))
+        .where(and(eq(recordEvent.eventType, 'award'), isNull(recordEvent.decidedYear), isNotNull(recordEvent.year))))
+      .as('award_years')
+    const firstYears = await tx.selectDistinct({ year: min(awards.year) }).from(awards)
+      .innerJoin(enterprise, eq(enterprise.id, awards.owner)).groupBy(awards.owner, awards.title)
+      .orderBy(min(awards.year))
+    return {
+      eventYears: eventYears.flatMap(row => row.year ?? []),
+      firstRecognitionYears: firstYears.flatMap(row => row.year ?? []),
+    }
+  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }
