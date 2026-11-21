@@ -9,12 +9,6 @@
 - For new background jobs or job notifications, follow [the job integration contract](docs/agents/background-jobs.md).
 - For test changes, follow [test ownership and execution conventions](docs/agents/testing.md).
 
-## 数据库访问
-
-本仓库的数据库读写一律使用 Drizzle 的类型化表定义、查询构造器和事务 API。手写 SQL 包括 `sql` 标签模板、`sql.raw()`、传给 `execute()` 的 SQL，以及通过底层驱动或独立 SQL 文件执行的自编语句。把 SQL 移进辅助函数或换一个执行入口，同样适用这条规则。
-
-唯一例外是项目所用 Drizzle 版本确实无法表达所需的数据库特性。先核对该版本的 API 和可保持业务语义的构造器写法；确需例外时，只保留实现该特性的最小 SQL，在对应实现旁说明具体特性和限制，所有外部值使用绑定参数。查询复杂、已有旧实现或少写代码均不构成例外。
-
 ## Agent skills
 
 ### Issue tracker
