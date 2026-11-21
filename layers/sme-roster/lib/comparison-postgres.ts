@@ -18,7 +18,7 @@ import { readPostgresQueryAssessments } from './roster/query-assessment-postgres
 import type { ComparisonSummaryOptions } from './comparison-summary-read'
 
 type Reader = Pick<NodePgDatabase,'execute'>
-type ComparisonReader = Pick<NodePgDatabase, 'execute' | 'select'>
+type ComparisonReader = Pick<NodePgDatabase, 'select' | '$with' | 'with'>
 type Subject = { id: number; nameNorm: string; uscc: string | null }
 type Membership = { enterpriseId: number; queryId: number; collectionId: number; owned: boolean }
 const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`

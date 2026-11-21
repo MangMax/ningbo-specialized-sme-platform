@@ -1,8 +1,11 @@
-import { sql, type SQL } from 'drizzle-orm'
+import { and, eq, inArray, isNull, min, ne, notExists, or, sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { alias } from 'drizzle-orm/pg-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { orderBy } from 'es-toolkit'
 import * as schema from '../../../db/schema'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { record } from '../../../db/postgresql/ledger-tables'
 import type { TitleCode } from '../../../db/titles'
 import { TITLE_ORDER } from './labels'
 
@@ -99,9 +102,50 @@ function comparisonInput(collation: SQL, enterpriseId: SQL) {
   `
 }
 
-export async function getPostgresComparison(db: Pick<NodePgDatabase,'execute'>, opts: ComparisonQuery = {}) {
-  const { rows } = await db.execute<ComparisonInputRow>(comparisonInput(sql`"C"`, sql`e.id::float8`))
-  return projectComparison(rows, opts)
+export async function getPostgresComparison(db: Pick<NodePgDatabase, 'select' | '$with' | 'with'>, opts: ComparisonQuery = {}) {
+  const opposite = alias(record, 'opposite')
+  const other = alias(enterprise, 'other')
+  const localSide = eq(record.source, 'jxj')
+  const opposingTitleAndSide = and(eq(opposite.titleCode, record.titleCode), or(
+    and(localSide, ne(opposite.source, 'jxj')),
+    and(ne(record.source, 'jxj'), eq(opposite.source, 'jxj')),
+  ))
+
+  const sameEnterprise = db.select({ id: opposite.id }).from(opposite)
+    .where(and(eq(opposite.enterpriseId, record.enterpriseId), opposingTitleAndSide))
+  const sameUscc = db.select({ id: opposite.id }).from(other)
+    .innerJoin(opposite, eq(opposite.enterpriseId, other.id))
+    .where(and(
+      ne(other.id, record.enterpriseId),
+      // Drizzle 0.45 has no COLLATE expression builder. Use bytewise USCC equality.
+      eq(other.usccNorm, sql`${enterprise.usccNorm} COLLATE "C"`),
+      opposingTitleAndSide,
+    ))
+  const differences = db.$with('differences').as(db.select({ recordId: min(record.id).as('record_id') })
+    .from(record)
+    .innerJoin(enterprise, eq(enterprise.id, record.enterpriseId))
+    .where(and(inArray(record.titleCode, TITLE_ORDER), or(isNull(enterprise.usccNorm),
+      and(notExists(sameEnterprise), notExists(sameUscc)))))
+    .groupBy(record.enterpriseId, record.titleCode, localSide))
+
+  const rows = await db.with(differences).select({
+    enterpriseId: enterprise.id,
+    name: enterprise.name,
+    uscc: enterprise.usccNorm,
+    district: record.district,
+    titleCode: record.titleCode,
+    source: record.source,
+    currentCity: enterprise.city,
+    regStatus: enterprise.regStatus,
+  }).from(differences)
+    .innerJoin(record, eq(record.id, differences.recordId))
+    .innerJoin(enterprise, eq(enterprise.id, record.enterpriseId))
+
+  return projectComparison(rows.map(({ source, titleCode, ...row }) => ({
+    ...row,
+    titleCode: titleCode as TitleCode,
+    direction: source === 'jxj' ? 'missing_in_miit' : 'extra_in_miit',
+  })), opts)
 }
 
 function projectComparison(records: ComparisonInputRow[], opts: ComparisonQuery) {

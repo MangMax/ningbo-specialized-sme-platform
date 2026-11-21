@@ -9,7 +9,7 @@ import { projectRosterDifferenceList, selectRosterDifferencePage } from './diffe
 import type { RosterDifferenceFilter, RosterDifferencesResult } from './enterprise-roster'
 import { readPostgresQueryAssessments } from './query-assessment-postgres'
 
-type Reader = Pick<NodePgDatabase,'execute'>
+type Reader = Pick<NodePgDatabase, 'execute' | 'select' | '$with' | 'with'>
 type Head = Parameters<typeof selectRosterDifferencePage>[2][number]
 type MapValue<T> = T extends Map<unknown,infer Value> ? Value : never
 type Explanation = MapValue<Parameters<typeof projectRosterDifferenceList>[2]>

@@ -14,10 +14,12 @@ import { dirname } from 'node:path'
 import type { ReadStream } from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema } from '../../../db'
-import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { assertSqliteRuntime } from '../../../db/runtime-mode'
 import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { patchCuration } from '../../../layers/sme-roster/lib/curation'
+import { getPostgresComparison } from '../../../layers/sme-roster/lib/comparison'
+import { readBaselineComparison } from './oracles/enterprise-title-antijoin'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-comparison-export-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.db') })
@@ -306,6 +308,7 @@ it.runIf(Boolean(pgBin))('exports all filtered comparison rows over HTTP in Post
       { enterpriseId: company.id, name: '待核曾用名', nameNorm: '待核曾用名', sourceKind: 'manual', verificationStatus: 'pending' },
     ]).run()
     patchCuration(curatedPath, { uscc: 'USCC26', titleCode: 'specialized_sme', direction: 'missing_in_miit', curated: true })
+    const baseline = readBaselineComparison(db)
     await db.$client.backup(snapshot)
     run('initdb', ['-D', cluster, '-A', 'trust', '-U', env.PGUSER, '--locale=C', '-E', 'UTF8'])
     run('pg_ctl', ['-D', cluster, '-l', join(fixture, 'pg.log'), '-o', `-h '' -k ${fixture}`, '-w', 'start'])
@@ -319,6 +322,10 @@ it.runIf(Boolean(pgBin))('exports all filtered comparison rows over HTTP in Post
     vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
     vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', `postgresql://fixture@localhost/postgres?host=${encodeURIComponent(fixture)}`)
     vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath }))
+
+    const comparison = await usePostgresDirectoryDb()!.transaction(tx => getPostgresComparison(tx),
+      { isolationLevel: 'repeatable read', accessMode: 'read only' })
+    expect(comparison).toEqual(baseline)
 
     async function rows(params: Record<string, string>) {
       const url = new URL('/api/export', baseUrl)
