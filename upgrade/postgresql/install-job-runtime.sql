@@ -7,6 +7,8 @@ ALTER TABLE business.job ADD COLUMN IF NOT EXISTS input_snapshot text;
 CREATE UNIQUE INDEX IF NOT EXISTS job_request_key_uq
   ON business.job (kind, request_key) WHERE request_key IS NOT NULL;
 
+DROP INDEX IF EXISTS business.job_export_request_uq;
+\ir job-request-index.sql
 \ir job-notifications.sql
 
 COMMIT;

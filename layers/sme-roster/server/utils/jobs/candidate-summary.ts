@@ -36,8 +36,8 @@ function projectCandidateSummary(state: JobState, discovery: CandidateRead | nul
 
 export async function summarizePostgresCandidateJobs(db: NodePgDatabase, ids: string[], detail: boolean, { authorized }: TaskSummaryAccess) {
   const { rows } = await db.execute<{ id: string; state: JobState; meta: CandidateRead; hasError: boolean; restarted: boolean }>(sql`
-    SELECT id,state,coalesce(result::jsonb,'{}'::jsonb) || jsonb_build_object('titleCode',params::json->>'titleCode',
-      'queryId',params::json->'queryId','eventCount',json_array_length(params::json->'eventIds')) AS meta,
+    SELECT id,state,coalesce(result::jsonb,'{}'::jsonb) || jsonb_build_object('titleCode',business.job_params_for_query(params)->>'titleCode',
+      'queryId',business.job_params_for_query(params)->'queryId','eventCount',json_array_length(business.job_params_for_query(params)->'eventIds')) AS meta,
       error IS NOT NULL AS "hasError",coalesce(position('服务重启' in error),0)>0 AS restarted
     FROM business.job WHERE id=ANY(${sql.param(ids)}::text[]) AND kind=${CANDIDATE_JOB_KIND}`)
   const out = new Map<string, Partial<Pick<TaskSummary, 'discovery' | 'links' | 'capabilities' | 'error'>>>()

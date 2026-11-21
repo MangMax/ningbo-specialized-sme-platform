@@ -15,6 +15,20 @@ const bin = process.env.TEST_POSTGRES_JOBS_BIN
 let dir: string, base: string, server: ReturnType<typeof createServer>, pool: pg.Pool
 let started = false
 const token = 'fixture-job-api-secret'
+const exportKind = 'current-roster-export'
+const historicalExports = [
+  { key: 'id\0suffix', jsonKey: '"id\\u0000suffix"' },
+  { key: 'id\ud800suffix', jsonKey: '"id\\uD800suffix"' },
+  { key: 'id\udc00suffix', jsonKey: '"id\\udc00suffix"' },
+  { key: 'id\ufffdsuffix', jsonKey: '"id\\uFFFDsuffix"' },
+  { key: 'id\\u0000suffix', jsonKey: '"id\\u005cu0000suffix"' },
+  { key: 'id\\ud800suffix', jsonKey: '"id\\\\ud800suffix"' },
+  { key: 'id😀suffix', jsonKey: '"id\\uD83D\\uDE00suffix"' },
+  { key: 'ordinary-history', jsonKey: '"ordinary-history"' },
+].map(({ key, jsonKey }, i) => ({
+  key, id: '01ARZ3NDEKTSV4RRFFQ69G5FA' + i,
+  params: '{"clientRequestId":' + jsonKey + ', "titleCode":"little_giant"}',
+}))
 const request = (path: string, init?: RequestInit) => fetch(base + path, init)
 const submit = (kind: string, params = {}) => request('/api/jobs', {
   method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
@@ -33,6 +47,10 @@ beforeAll(async () => {
   const source = initializeDb({ create: true, dbPath })
   source.$client.prepare('INSERT INTO service_credential (key,value,updated_at) VALUES (?,?,?)')
     .run('core.ocrToken', 'fixture-saved-ocr-secret', '2026-11-20T00:00:00Z')
+  const insertExport = source.$client.prepare(
+    "INSERT INTO job (id, kind, params, state, created_at) VALUES (?, ?, ?, 'cancelled', '2026-01-01T00:00:00Z')",
+  )
+  for (const { id, params } of historicalExports) insertExport.run(id, exportKind, params)
   source.$client.close()
   execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', dbPath, 'staged'], {
     env: { ...process.env, PGHOST: dir, PGPORT: '5432', PGDATABASE: 'postgres', PGUSER: 'fixture', PGSQL_BIN: join(bin, 'psql') },
@@ -574,6 +592,55 @@ it.runIf(!!bin)('cleans expired roster workbooks from PostgreSQL task records wi
   expect(await pool.query('SELECT state FROM business.job WHERE id = $1', [id]))
     .toMatchObject({ rows: [{ state: 'done' }] })
   expect(await (await submit(kind, params)).json()).toMatchObject({ jobId })
+})
+
+it.runIf(!!bin)('preserves historical export request identifiers across migration and HTTP replay', async () => {
+  vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
+  try {
+    const migrated = await pool.query('SELECT id, params FROM business.job WHERE id = ANY($1) ORDER BY id',
+      [historicalExports.map(row => row.id)])
+    expect(migrated.rows).toEqual(historicalExports.map(({ id, params }) => ({ id, params })))
+
+    for (const { id, key } of historicalExports) {
+      const replay = await submit(exportKind, { clientRequestId: key, titleCode: 'little_giant' })
+      expect(replay.status).toBe(202)
+      expect(await replay.json()).toMatchObject({ jobId: id, state: 'cancelled' })
+      const conflict = await submit(exportKind, { clientRequestId: key, titleCode: 'innovative_sme' })
+      expect(conflict.status).toBe(409)
+      await expect(pool.query(
+        "INSERT INTO business.job (id, kind, params, created_at) VALUES ('fixture-duplicate-export', $1, $2, now()::text)",
+        [exportKind, JSON.stringify({ clientRequestId: key, titleCode: 'little_giant' })],
+      )).rejects.toMatchObject({ code: '23505' })
+    }
+
+    const page = await request('/api/task-center?tab=sme-roster&group=export&titleCode=little_giant&state=cancelled')
+    expect(page.status).toBe(200)
+    expect(await page.json()).toMatchObject({ total: historicalExports.length, rows: expect.arrayContaining(
+      historicalExports.map(({ id }) => expect.objectContaining({ id, export: expect.objectContaining({ titleCode: 'little_giant' }) })),
+    ) })
+  } finally {
+    vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', undefined)
+  }
+})
+
+it.runIf(!!bin)('deduplicates newly submitted Unicode edge-case request identifiers independently', async () => {
+  const kind = 'fixture-request-ids'
+  registerJob({
+    kind, status: 'ready', summary: 'Fixture request identifiers', deduplicateRequest: true,
+    parse: params => ({ ok: true, params }),
+    postgres: { async run() { return { result: { completed: true } } } },
+  })
+  const ids = new Set<string>()
+  for (const clientRequestId of ['id\0suffix', 'id\ud800suffix', 'id\ufffdsuffix', 'id\\u0000suffix']) {
+    const responses = await Promise.all([submit(kind, { clientRequestId }), submit(kind, { clientRequestId })])
+    for (const response of responses) expect(response.status).toBe(202)
+    const [first, replay] = await Promise.all(responses.map(response => response.json()))
+    expect(replay.jobId).toBe(first.jobId)
+    expect(ids.has(first.jobId)).toBe(false)
+    ids.add(first.jobId)
+    expect(await (await request('/api/jobs/' + first.jobId)).json()).toMatchObject({ params: { clientRequestId } })
+  }
+  expect(await (await request('/api/jobs?view=summary&kind=' + kind)).json()).toMatchObject({ total: 4 })
 })
 
 it.runIf(!!bin)('reports one run per scheduled hour and keeps the last result visible in read-only mode', async () => {

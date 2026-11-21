@@ -28,10 +28,7 @@ ALTER TABLE business.job ALTER COLUMN claim_token SET DEFAULT gen_random_uuid();
 CREATE INDEX job_kind_idx ON business.job (kind);
 CREATE INDEX job_state_idx ON business.job (state);
 CREATE INDEX job_created_at_idx ON business.job (created_at DESC, id DESC);
--- Keep the complete historical JSON bytes in params, converting only in the index.
-CREATE UNIQUE INDEX job_export_request_uq
-  ON business.job (kind, (nullif(params::jsonb -> 'clientRequestId', 'null'::jsonb)))
-  WHERE kind = 'current-roster-export';
+\ir job-request-index.sql
 
 CREATE UNIQUE INDEX job_request_key_uq ON business.job (kind, request_key) WHERE request_key IS NOT NULL;
 

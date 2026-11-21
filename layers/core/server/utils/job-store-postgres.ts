@@ -106,6 +106,10 @@ export function listPostgresJobSummaries(db: NodePgDatabase, query: JobQuery = {
   return listJobs(db, query, summaryColumns(), decodeSummary)
 }
 
+function postgresTextRequestKey(key?: string) {
+  return key?.isWellFormed() && !key.includes('\0') ? key : null
+}
+
 export async function createPostgresJob(db: Executor, input: {
   id: string
   kind: string
@@ -118,7 +122,7 @@ export async function createPostgresJob(db: Executor, input: {
   const { rows } = await db.execute<StoredJob>(sql`INSERT INTO business.job
     (id, kind, params, state, progress, created_at, request_key, input_snapshot)
     VALUES (${input.id}, ${input.kind}, ${JSON.stringify(input.params)}, 'queued',
-      ${JSON.stringify(progress)}, ${new Date().toISOString()}, ${input.requestKey ?? null}, ${JSON.stringify(input.inputSnapshot ?? null)})
+      ${JSON.stringify(progress)}, ${new Date().toISOString()}, ${postgresTextRequestKey(input.requestKey)}, ${JSON.stringify(input.inputSnapshot ?? null)})
     RETURNING ${jobColumns}`)
   return decodeJob(rows[0]!)
 }
@@ -267,9 +271,9 @@ export async function lockPostgresJobAdmission(db: Executor, kind: string) {
 
 export function findPostgresJobRequest(db: Executor, kind: string, key: string) {
   return readJob(db, sql`SELECT ${jobColumns} FROM business.job WHERE kind = ${kind} AND
-    (request_key = ${key} OR (request_key IS NULL AND
-      (CASE WHEN pg_input_is_valid(params, 'jsonb') THEN params::jsonb ->> 'clientRequestId'
-       ELSE regexp_replace(params, ${jsonTextEscapes}, ${replacementEscape}, 'gi')::json ->> 'clientRequestId' END) = ${key}))
+    (request_key = ${postgresTextRequestKey(key)} OR (request_key IS NULL AND
+      (business.job_params_for_query(params) -> 'clientRequestId')::jsonb
+      = business.job_params_for_query(${JSON.stringify(key)})::jsonb))
     ORDER BY created_at DESC, id DESC LIMIT 1`)
 }
 

@@ -60,9 +60,9 @@ async function projectExportSummary(row: ExportSummaryRow, authorized: boolean, 
 
 export async function readPostgresExportSummaries(db: NodePgDatabase, ids: string[], _detail: boolean, { authorized, writable }: TaskSummaryAccess) {
   const { rows } = await db.execute<ExportSummaryRow>(sql`
-    SELECT id, kind, state, left(params::json->>'titleCode',40) AS "exportTitle",
+    SELECT id, kind, state, left(business.job_params_for_query(params)->>'titleCode',40) AS "exportTitle",
       json_build_object(
-        'regenerateOf',left(params::json->>'regenerateOf',26),
+        'regenerateOf',left(business.job_params_for_query(params)->>'regenerateOf',26),
         'phase',left(result::json->>'phase',20),'generatedAt',left(result::json->>'generatedAt',30),
         'snapshotStartedAt',left(result::json->>'snapshotStartedAt',30),
         'ruleVersion',left(result::json->>'ruleVersion',60),'dataVersion',left(result::json->>'dataVersion',72),

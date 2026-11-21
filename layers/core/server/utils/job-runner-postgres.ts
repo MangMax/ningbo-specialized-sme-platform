@@ -65,7 +65,7 @@ export async function stagePostgresJob(tx: PostgresJobTransaction, input: Submit
   if (spec.deduplicateRequest || spec.maxPending) await lockPostgresJobAdmission(tx, input.kind)
   let requestKey: string | undefined
   if (spec.deduplicateRequest) {
-    if (typeof params.clientRequestId !== 'string' || !params.clientRequestId.trim() || params.clientRequestId.includes('\0')) {
+    if (typeof params.clientRequestId !== 'string' || !params.clientRequestId.trim()) {
       throw admissionError(400, '任务需要有效的 clientRequestId')
     }
     requestKey = params.clientRequestId
