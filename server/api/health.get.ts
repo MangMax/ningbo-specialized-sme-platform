@@ -1,4 +1,6 @@
-import { sql } from 'drizzle-orm'
+import { record } from '../../db/postgresql/ledger-tables'
+import { title } from '../../db/postgresql/title-table'
+import { count } from 'drizzle-orm'
 import { useDb, schema } from '@db/index'
 import { usePostgresDirectoryDb } from '../../db/postgresql/client'
 import { postgresOnlyRuntime } from '../../db/runtime-mode'
@@ -21,20 +23,14 @@ export default defineEventHandler(async () => {
   if (postgresOnlyRuntime()) {
     try {
       const postgres = usePostgresDirectoryDb()
-      const result = await postgres!.execute<{
-        titles: { code: string; nameZh: string; level: string; rank: number }[]
-        recordCount: number
-      }>(sql`
-        SELECT
-          (SELECT coalesce(json_agg(
-            json_build_object('code', code, 'nameZh', name_zh, 'level', level, 'rank', rank) ORDER BY rank, code
-          ), '[]') FROM business.title) AS titles,
-          (SELECT count(*)::integer FROM business.record) AS "recordCount"
-      `)
-      const health = result.rows[0]!
+      const health = await postgres!.transaction(async tx => {
+        const titles = await tx.select().from(title).orderBy(title.rank, title.code)
+        const [{ recordCount } = { recordCount: 0 }] = await tx.select({ recordCount: count() }).from(record)
+        return { titles, recordCount }
+      }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
       await checkPostgresJobStorage(postgres!)
       await applicationLogs().policy()
-      return { titles: health.titles, recordCount: health.recordCount }
+      return health
     } catch {
       throw createError({
         statusCode: 503,
@@ -46,7 +42,7 @@ export default defineEventHandler(async () => {
   const db = useDb()
   const titles = db.select().from(schema.title).all()
   const total = db
-    .select({ n: sql<number>`count(*)` })
+    .select({ n: count() })
     .from(schema.record)
     .get()
   return { titles, recordCount: total?.n ?? 0 }

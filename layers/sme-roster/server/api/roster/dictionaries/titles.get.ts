@@ -1,4 +1,5 @@
-import { asc, sql } from 'drizzle-orm'
+import { title as postgresTitle } from '../../../../../../db/postgresql/title-table'
+import { asc } from 'drizzle-orm'
 import { useDb } from '@db'
 import { title } from '@db/schema'
 import { usePostgresRosterDb } from '../../../utils/postgres-roster-db'
@@ -9,6 +10,7 @@ defineRouteMeta({ openAPI: { tags: ['优质中小企业'], summary: '读取认�
 
 export default defineEventHandler(async () => {
   const pg = usePostgresRosterDb()
-  return pg ? (await pg.execute<{ code:string; name:string }>(sql`SELECT code,name_zh AS name FROM title ORDER BY rank,code`)).rows
+  return pg ? pg.select({ code: postgresTitle.code, name: postgresTitle.nameZh }).from(postgresTitle)
+      .orderBy(postgresTitle.rank, postgresTitle.code)
     : useDb().select({ code:title.code,name:title.nameZh }).from(title).orderBy(asc(title.rank)).all()
 })

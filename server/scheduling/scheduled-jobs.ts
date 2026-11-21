@@ -1,9 +1,10 @@
 import { Cron } from 'croner'
-import { sql } from 'drizzle-orm'
+import { and, desc, eq, like, sql } from 'drizzle-orm'
+import { job as pgJob } from '../../db/postgresql/job-tables'
+import { job as sqliteJob } from '../../db/schema'
 import { useDb } from '../../db'
 import { getAppModules } from '../../lib/app-modules'
 import { jobSchedules } from '../../lib/job-schedules'
-import type { JobState } from '../../layers/core/lib/job'
 import { ensureJobRunnerReady, getJobSpec, submitJob } from '../../layers/core/server/utils/job-runner'
 import { postgresJobStorageEnabled, postgresJobsEnabled, startPostgresJobs, usePostgresJobsDb } from '../../layers/core/server/utils/postgres-jobs'
 
@@ -31,22 +32,30 @@ export async function dispatchScheduledJob(kind: string, filesDir: string, now =
   return { jobId: submitJob(db, input).id }
 }
 
-type LastRun = { id: string; status: JobState; created_at: string; finished_at: string | null }
+async function lastScheduledRun(kind: string, postgres: ReturnType<typeof usePostgresJobsDb>) {
+  if (postgres) {
+    const [row] = await postgres.select({ id: pgJob.id, status: pgJob.state, createdAt: pgJob.createdAt, finishedAt: pgJob.finishedAt })
+      .from(pgJob).where(and(eq(pgJob.kind, kind), like(pgJob.requestKey, 'schedule:%')))
+      .orderBy(desc(pgJob.createdAt), desc(pgJob.id)).limit(1)
+    return row
+  }
+  // Drizzle 0.45's SQLite builder lacks a JSON path extractor for the legacy request key.
+  const requestKey = sql<string>`json_extract(${sqliteJob.params}, '$.clientRequestId')`
+  return useDb().select({ id: sqliteJob.id, status: sqliteJob.state, createdAt: sqliteJob.createdAt, finishedAt: sqliteJob.finishedAt })
+    .from(sqliteJob).where(and(eq(sqliteJob.kind, kind), like(requestKey, 'schedule:%')))
+    .orderBy(desc(sqliteJob.createdAt), desc(sqliteJob.id)).limit(1).get()
+}
 
 export async function readScheduledJobs(now = new Date()) {
   const enabled = schedulingEnabled()
   const postgres = usePostgresJobsDb()
   const items = await Promise.all(jobSchedules(getAppModules()).map(async job => {
-    const table = postgres ? sql`business.job` : sql`job`
-    const requestKey = postgres ? sql`request_key` : sql`json_extract(params, '$.clientRequestId')`
-    const query = sql`SELECT id, state AS status, created_at, finished_at FROM ${table}
-      WHERE kind = ${job.kind} AND ${requestKey} LIKE 'schedule:%' ORDER BY created_at DESC, id DESC LIMIT 1`
-    const row = postgres ? (await postgres.execute<LastRun>(query)).rows[0] : useDb().get<LastRun>(query)
+    const row = await lastScheduledRun(job.kind, postgres)
     return {
       id: job.kind, label: job.label, frequency: job.frequency,
       nextRunAt: enabled ? new Cron(job.cron, { paused: true }).nextRun(now)?.getTime() ?? null : null,
-      lastRun: row ? { id: row.id, status: row.status, createdAt: Date.parse(row.created_at),
-        finishedAt: row.finished_at ? Date.parse(row.finished_at) : null } : null,
+      lastRun: row ? { id: row.id, status: row.status, createdAt: Date.parse(row.createdAt),
+        finishedAt: row.finishedAt ? Date.parse(row.finishedAt) : null } : null,
     }
   }))
   return { enabled, items }
