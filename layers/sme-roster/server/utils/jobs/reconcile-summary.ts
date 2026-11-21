@@ -1,7 +1,7 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { platformTaskLinks } from './task-presentation'
 import type { ReconcileReportCounts } from '../platform-reconcile'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, count, eq, inArray, sql, sum } from 'drizzle-orm'
 import { job as pgJob } from '../../../../../db/postgresql/job-tables'
 import type { TaskSummary } from '../../../lib/sme-roster/task-summary'
 import { schema } from '../../../../../db/client'
@@ -87,47 +87,54 @@ export function readReconcileSummary(row: { kind: string; counts: string; reconc
 }
 
 export async function summarizePostgresReconcileJobs(db: NodePgDatabase, ids: string[]) {
-  // Drizzle 0.45.4 has no JSON set-returning functions, token validation or JSON aggregate builders.
+  // Drizzle 0.45.4 has no PostgreSQL JSON token, set-returning function or boolean aggregate builders.
   // Validate the full coverage on the server before preparing the bounded preview.
-  const rows = await db.select({
-    id: pgJob.id, kind: pgJob.kind,
+  const jobs = db.$with('reconcile_jobs').as(db.select({
+    id: pgJob.id, kind: pgJob.kind, result: sql`business.job_params_for_query(${pgJob.result})`.as('result'),
+  }).from(pgJob).where(and(eq(pgJob.kind, 'reconcile'), inArray(pgJob.id, ids))))
+  const scopes = db.$with('reconcile_scopes').as(db.select({
+    id: jobs.id, kind: jobs.kind, result: jobs.result,
+    coverage: sql`${jobs.result}->'collection'`.as('coverage'),
+    positions: sql`${jobs.result}->'collection'->'positions'`.as('positions'),
+  }).from(jobs))
+  const positions = scopes.positions
+  const unfinished = sql`pos.value->'unfinished'`
+  const ranges = db.select({
+    count: count().as('range_count'),
+    valid: sql<boolean>`coalesce(bool_and(coalesce(
+      CASE WHEN (u.value->'page')::text ~ '^[0-9]+$' AND length((u.value->'page')::text) <= 16
+        THEN (u.value->>'page')::numeric BETWEEN 1 AND 9007199254740991 ELSE false END
+      AND ((u.value->>'source'='businessList' AND (u.value->'rdjb')::text IN ('"1"','"2"','"3"'))
+        OR (u.value->>'source'='queryList' AND json_typeof(u.value->'rdjb')='null')),false)),true)`.as('range_valid'),
+  }).from(sql`json_array_elements(CASE WHEN json_typeof(${unfinished})='array' THEN ${unfinished} END) u`).as('ranges')
+  const stats = db.select({
+    count: count().as('position_count'),
+    unfinished: sql`coalesce(${sum(ranges.count)}, 0)`.as('unfinished'),
+    valid: sql<boolean>`coalesce(bool_and(coalesce(json_typeof(${unfinished})='array',false) AND ${ranges.valid}),true)`.as('valid'),
+  }).from(sql`json_array_elements(CASE WHEN json_typeof(${positions})='array' THEN ${positions} END) pos`)
+    .crossJoinLateral(ranges).as('stats')
+  const previewRows = db.select({ value: sql`u.value`.as('value') })
+    .from(sql`json_array_elements(${positions}) pos`).crossJoinLateral(sql`json_array_elements(${unfinished}) u`)
+    .limit(50).as('preview')
+  const preview = db.select({ json: sql`json_agg(json_build_object('source', preview.value->'source',
+    'rdjb', preview.value->'rdjb', 'page', preview.value->'page'))` }).from(previewRows)
+  const coverage = scopes.coverage
+  const total = db.select({ total: sum(sql`CASE WHEN (${coverage}->key)::text ~ '^[0-9]+$'
+    AND length((${coverage}->key)::text) <= 16 THEN
+    CASE WHEN (${coverage}->>key)::numeric <= 9007199254740991 THEN (${coverage}->>key)::numeric END
+    END`) }).from(sql`unnest(ARRAY['complete','partial','failed','unknown']) keys(key)`)
+  const rows = await db.with(jobs, scopes).select({
+    id: scopes.id, kind: scopes.kind,
     counts: sql<string | null>`json_build_object(
-      'total',r.result->'counts'->'total','needsReview',r.result->'counts'->'needsReview',
-      'queryFailed',r.result->'counts'->'queryFailed','notQueried',r.result->'counts'->'notQueried'
+      'total',${scopes.result}->'counts'->'total','needsReview',${scopes.result}->'counts'->'needsReview',
+      'queryFailed',${scopes.result}->'counts'->'queryFailed','notQueried',${scopes.result}->'counts'->'notQueried'
     )::text`,
-    reconcileCollection: sql<string | null>`CASE WHEN json_typeof(c.positions) = 'array'
-      AND (SELECT sum(CASE WHEN (c.coverage->key)::text ~ '^[0-9]+$'
-        AND length((c.coverage->key)::text) <= 16 THEN
-        CASE WHEN (c.coverage->>key)::numeric <= 9007199254740991 THEN (c.coverage->>key)::numeric END
-      END) FROM unnest(ARRAY['complete','partial','failed','unknown']) keys(key)) = p.count
-      AND p.valid THEN json_build_object(
-        'complete',c.coverage->'complete','partial',c.coverage->'partial','failed',c.coverage->'failed','unknown',c.coverage->'unknown',
-        'unfinished',p.unfinished,
-        'positions',(
-          SELECT json_agg(json_build_object('source',u.value->'source','rdjb',u.value->'rdjb','page',u.value->'page'))
-          FROM (
-            SELECT u.value FROM json_array_elements(c.positions) pos
-            CROSS JOIN LATERAL json_array_elements(pos.value->'unfinished') u LIMIT 50
-          ) u
-        )
+    reconcileCollection: sql<string | null>`CASE WHEN json_typeof(${positions}) = 'array'
+      AND ${total} = ${stats.count} AND ${stats.valid} THEN json_build_object(
+        'complete',${coverage}->'complete','partial',${coverage}->'partial','failed',${coverage}->'failed','unknown',${coverage}->'unknown',
+        'unfinished',${stats.unfinished}, 'positions', ${preview}
       )::text END`,
-  }).from(pgJob)
-    .crossJoinLateral(sql`(SELECT business.job_params_for_query(${pgJob.result}) AS result) r`)
-    .crossJoinLateral(sql`(SELECT r.result->'collection' AS coverage,r.result->'collection'->'positions' AS positions) c`)
-    .crossJoinLateral(sql`(
-      SELECT count(*) AS count,coalesce(sum(s.count),0) AS unfinished,
-        coalesce(bool_and(coalesce(json_typeof(pos.value->'unfinished')='array',false) AND s.valid),true) AS valid
-      FROM json_array_elements(CASE WHEN json_typeof(c.positions)='array' THEN c.positions END) pos
-      CROSS JOIN LATERAL (
-        SELECT count(*) AS count,coalesce(bool_and(coalesce(
-          CASE WHEN (u.value->'page')::text ~ '^[0-9]+$' AND length((u.value->'page')::text) <= 16
-            THEN (u.value->>'page')::numeric BETWEEN 1 AND 9007199254740991 ELSE false END
-          AND ((u.value->>'source'='businessList' AND (u.value->'rdjb')::text IN ('"1"','"2"','"3"'))
-            OR (u.value->>'source'='queryList' AND json_typeof(u.value->'rdjb')='null')),false)),true) AS valid
-        FROM json_array_elements(CASE WHEN json_typeof(pos.value->'unfinished')='array' THEN pos.value->'unfinished' END) u
-      ) s
-    ) p`)
-    .where(and(eq(pgJob.kind, 'reconcile'), sql`${pgJob.id} = any(${sql.param(ids)}::text[])`))
+  }).from(scopes).crossJoinLateral(stats)
   return new Map(rows.map(row => [row.id, {
     ...readReconcileSummary({ ...row, counts: row.counts ?? '{}', reconcileCollection: row.reconcileCollection ?? '{}' }),
     links: platformTaskLinks(),

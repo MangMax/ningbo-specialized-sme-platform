@@ -9,7 +9,7 @@ import type { TaskSummaryProjection } from '../../../../core/lib/task-center'
 import type { useApplicationDb } from '../../../../../db/client'
 import { currentArtifact, currentExportDbPath } from '../current-export-artifact'
 import type { ProjectedTask } from './task-summary'
-import { and, eq, isNotNull, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import { job as pgJob } from '../../../../../db/postgresql/job-tables'
 import { schema } from '../../../../../db/client'
 interface ExportRead {
@@ -98,7 +98,7 @@ export async function readPostgresExportSummaries(db: NodePgDatabase, ids: strin
         'size',${resultJson}#>'{artifact,size}','sha256',left(${resultJson}#>>'{artifact,sha256}',64),
         'generatedAt',left(${resultJson}#>>'{artifact,generatedAt}',30),
         'expiresAt',left(${resultJson}#>>'{artifact,expiresAt}',30)))::text`,
-  }).from(pgJob).where(and(eq(pgJob.kind, 'current-roster-export'), sql`${pgJob.id} = any(${sql.param(ids)}::text[])`))
+  }).from(pgJob).where(and(eq(pgJob.kind, 'current-roster-export'), inArray(pgJob.id, ids)))
   const dbPath = resolveDbPath()
   const result = new Map<string, TaskSummaryProjection>()
   for (const row of rows) {

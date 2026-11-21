@@ -91,7 +91,7 @@ function groupBusinessDetails(groups: ReturnType<typeof readPlatformBusinessGrou
   return groupPlatformBusinessDetails(observations)
 }
 
-async function loadPostgresFacts<T extends Projection>(db: Pg, table: T, ids: number[]) {
+async function loadPostgresFacts(db: Pg, table: Projection, ids: number[]) {
   if (!ids.length) return []
   const a = platformLegacyRelationAlias
   const o = platformBusinessObservation
@@ -115,13 +115,16 @@ export async function readPostgresPlatformDetailFacts(db: Pg, queries: RosterPla
   const value = (bytes: Buffer | null, kind: string) => kind === 'text' ? bytes?.toString('utf8') ?? null : bytes
   const facts = [
     ...declarations.map(row => projectDeclarationObservationFact(row as unknown as Parameters<typeof projectDeclarationObservationFact>[0])),
-    ...processes.map(row => projectBusinessProcessObservationFact({
-      ...row,
-      source: { ...row.source,
-        storedStatus: value(row.source.storedStatus, row.source.storedStatusSqliteStorage),
-        reconciledStatus: value(row.source.reconciledStatus, row.source.reconciledStatusSqliteStorage),
-      },
-    } as unknown as Parameters<typeof projectBusinessProcessObservationFact>[0])),
+    ...processes.map(row => {
+      const source = row.source as typeof platformBusinessProjection.$inferSelect
+      return projectBusinessProcessObservationFact({
+        ...row,
+        source: { ...source,
+          storedStatus: value(source.storedStatus, source.storedStatusSqliteStorage),
+          reconciledStatus: value(source.reconciledStatus, source.reconciledStatusSqliteStorage),
+        },
+      } as unknown as Parameters<typeof projectBusinessProcessObservationFact>[0])
+    }),
     ...recognized.map(row => projectRecognizedObservationFact(row as unknown as Parameters<typeof projectRecognizedObservationFact>[0]))
       .map(archiveFactFieldOrder),
   ]
