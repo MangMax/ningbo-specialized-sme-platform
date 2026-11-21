@@ -1,5 +1,7 @@
-import { DrizzleQueryError, sql } from 'drizzle-orm'
+import { and, DrizzleQueryError, eq, inArray } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { ocrResult, storedFile } from '../../../../db/postgresql/file-tables'
+import { job } from '../../../../db/postgresql/job-tables'
 import { isJobId } from '../../lib/job'
 import { lockPostgresFile } from './file-store-postgres'
 import type { PostgresJobContext } from './job-runner-postgres'
@@ -16,15 +18,16 @@ import type { OcrWriteInput } from './ocr-result'
 
 async function registeredInput(db: NodePgDatabase, path: string): Promise<OcrRegisteredInput | null> {
   if (path.includes('\0')) return null
-  const { rows: [row] } = await db.execute<Omit<OcrRegisteredInput, 'id' | 'bytes'> & { id: string; bytes: string }>(sql`
-    SELECT id, sha256, bytes, removed_at AS "removedAt" FROM business.stored_file WHERE rel_path = ${path}`)
-  return row ? { ...row, id: Number(row.id), bytes: Number(row.bytes) } : null
+  const [row] = await db.select({
+    id: storedFile.id, sha256: storedFile.sha256, bytes: storedFile.bytes, removedAt: storedFile.removedAt,
+  }).from(storedFile).where(eq(storedFile.relPath, path))
+  return row ? { ...row, bytes: Number(row.bytes) } : null
 }
 
 async function readPageVersions(db: NodePgDatabase, fileId: number) {
-  const { rows } = await db.execute<{ page: string; version: string }>(sql`
-    SELECT page_no AS page, id || ':' || revision AS version FROM business.ocr_result WHERE file_id = ${fileId}`)
-  return new Map(rows.map(row => [Number(row.page), row.version]))
+  const rows = await db.select({ page: ocrResult.page, id: ocrResult.id, revision: ocrResult.revision })
+    .from(ocrResult).where(eq(ocrResult.fileId, fileId))
+  return new Map(rows.map(({ page, id, revision }) => [page, `${id}:${revision}`]))
 }
 
 export async function preparePostgresOcrPublication(
@@ -63,9 +66,8 @@ async function recoverySource(db: NodePgDatabase, publication: OcrPublication, f
 
 type RecoverySource = Awaited<ReturnType<typeof recoverySource>>
 async function writeMetadata(db: NodePgDatabase, source: RecoverySource, metadata: RecoveryMetadata) {
-  const changed = await db.execute(sql`
-    UPDATE business.job SET result = ${JSON.stringify({ ...source.result, ocrRecovery: metadata })}
-    WHERE id = ${source.id} AND kind = 'ocr' AND state IN ('done','failed','cancelled')`)
+  const changed = await db.update(job).set({ result: JSON.stringify({ ...source.result, ocrRecovery: metadata }) })
+    .where(and(eq(job.id, source.id), eq(job.kind, 'ocr'), inArray(job.state, ['done', 'failed', 'cancelled'])))
   if (changed.rowCount !== 1) throw recoveryError('恢复来源已变化,禁止提交')
 }
 

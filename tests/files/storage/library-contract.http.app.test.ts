@@ -307,9 +307,13 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     expect(file).toMatchObject({ id: 81, relPath, sha256, bytes: original.length })
     expect(await json('files/register', 200, 'POST', { relPath })).toEqual(file)
 
-    const rename = { ...controls(0, 'rename'), displayName: '改名附件' }
+    const displayName = '改名附件\\CASE_Ä'
+    const rename = { ...controls(0, 'rename'), displayName }
     const renamed = await json('files/81', 200, 'PATCH', rename)
-    expect(renamed).toMatchObject({ id: 81, relPath, sha256, displayName: '改名附件' })
+    expect(renamed).toMatchObject({ id: 81, relPath, sha256, displayName })
+    expect(await json('file-library?q=' + encodeURIComponent('\\case_Ä'), 200))
+      .toMatchObject({ rows: [{ id: 81, displayName }], total: 1 })
+    expect(await json('file-library?q=' + encodeURIComponent('\\case_ä'), 200)).toEqual({ rows: [], total: 0 })
     expect(await json('files/81', 200, 'PATCH', rename)).toEqual(renamed)
     await json('files/81', 409, 'PATCH', { ...rename, displayName: '不同请求' })
     await json('files/81', 409, 'PATCH', { ...controls(0, 'stale'), displayName: '旧版本' })
