@@ -1,11 +1,13 @@
 import { createError } from 'h3'
-import { sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
+import { postgresLeadListExport, postgresLeadListVersion } from '../../../../db/postgresql/lead-tables'
 import type { useApplicationDb } from '../../../../db/client'
 import { TITLE_SEED } from '../../../../db/titles'
 import { readEffectiveQualifications, readPostgresEffectiveQualificationsBatch } from '../../../sme-roster/public'
 import type { JobSpec, PostgresJobSpec } from '../../../core/server/public'
 import type { LeadVersionDetail } from '../../lib/contracts'
 import { LEAD_LIST_EXPORT, leadListExportInput } from '../../lib/export-contract'
+import { leadListExport } from '../../schema'
 import { readLeadVersion } from './versions'
 import { readPostgresLeadVersionInSnapshot, usePostgresLeadDb } from './postgres-versions'
 
@@ -43,22 +45,24 @@ function exportResult(version: LeadVersionDetail, asOf: number, jobId: string) {
 async function runLeadListExport({ db: database, jobId }: Parameters<NonNullable<JobSpec['run']>>[0], params: Record<string, unknown>) {
   const db = database as NativeDb
   const asOf = Date.now()
-  const result = db.$client.transaction(() => {
+  const result = db.transaction(tx => {
     const version = readLeadVersion(db, Number(params.versionId))
     const qualifications = new Map<number, string>()
     for (const id of linkedEnterprises(version)) {
       qualifications.set(id, qualificationNames(readEffectiveQualifications(db.$client, id, asOf)))
     }
-    db.$client.prepare('INSERT INTO lead_list_export(job_id,version_id,content) VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE SET content=excluded.content')
-      .run(jobId, version.id, exportContent(version, qualifications))
+    const content = exportContent(version, qualifications)
+    tx.insert(leadListExport).values({ jobId, versionId: version.id, content })
+      .onConflictDoUpdate({ target: leadListExport.jobId, set: { content } }).run()
     return exportResult(version, asOf, jobId)
-  }).immediate()
+  }, { behavior: 'immediate' })
   return { result }
 }
 
 const postgresExport: PostgresJobSpec = {
   async prepare(tx, params) {
-    const { rows } = await tx.execute(sql`SELECT id FROM lead_list_version WHERE id = ${Number(params.versionId)}`)
+    const rows = await tx.select({ id: postgresLeadListVersion.id }).from(postgresLeadListVersion)
+      .where(eq(postgresLeadListVersion.id, Number(params.versionId)))
     if (!rows.length) throw createError({ statusCode: 404, message: '名单版本不存在' })
   },
   async run(ctx, params) {
@@ -71,9 +75,8 @@ const postgresExport: PostgresJobSpec = {
       return { version, content: exportContent(version, qualifications) }
     }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
     if (await ctx.cancelled()) return { cancelled: true, result: null }
-    await ctx.db.execute(sql`INSERT INTO lead_list_export (job_id, version_id, content)
-      VALUES (${ctx.jobId}, ${version.id}, ${content})
-      ON CONFLICT (job_id) DO UPDATE SET content = excluded.content`)
+    await ctx.db.insert(postgresLeadListExport).values({ jobId: ctx.jobId, versionId: version.id, content })
+      .onConflictDoUpdate({ target: postgresLeadListExport.jobId, set: { content } })
     return { result: exportResult(version, asOf, ctx.jobId) }
   },
 }
