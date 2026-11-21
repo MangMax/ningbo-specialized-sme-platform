@@ -1,4 +1,4 @@
-ARG NODE_IMAGE=node:24-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5
+ARG NODE_IMAGE=node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1
 ARG POSTGRES_IMAGE=postgres:19.0-bookworm@sha256:f4859caf96de494e38efa69ed703b08a5bbd9605e152e604f2daec8841c87c41
 
 FROM ${POSTGRES_IMAGE} AS postgres-tools
@@ -13,7 +13,8 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 
-RUN npm install --global --no-audit --no-fund pnpm@12.11.2
+COPY package.json ./
+RUN npm install --global --no-audit --no-fund "$(node -p "require('./package.json').packageManager")"
 
 # Copy the root assembly and both local layers (layers/core and layers/sme-roster)
 # before pnpm install runs Nuxt prepare.
