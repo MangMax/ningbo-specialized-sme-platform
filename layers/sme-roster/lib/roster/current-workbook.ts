@@ -33,7 +33,9 @@ function rowHeight(values: (string | null)[]) {
   return height
 }
 function styledRow(sheet: Stream.WorksheetWriter, values: (string | null)[], header = false) {
-  const record = sheet.addRow(values.map(textCell))
+  // Preserve the line endings Excel readers saw before Documonster escaped CR in XML.
+  // Normalize only the written cell so layout and overflow boundaries still use source text.
+  const record = sheet.addRow(values.map(value => textCell(value)?.replace(/\r\n?/g, '\n') ?? null))
   record.height = header ? 34 : rowHeight(values)
   Stream.setRowFont(record,{name:'Arial Unicode MS',size:11,bold:header,color:{argb:header?'FFFFFFFF':'FF243247'}})
   Stream.setRowAlignment(record,{vertical:'top',wrapText:true})
