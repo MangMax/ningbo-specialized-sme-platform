@@ -1,4 +1,4 @@
-import { and, eq, getTableColumns, sql } from 'drizzle-orm'
+import { and, eq, getTableColumns, isNotNull, sql } from 'drizzle-orm'
 import { alias, type AnyPgColumn } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformRecognizedProjection } from '../../../../db/postgresql/platform-tables'
@@ -47,7 +47,7 @@ export async function readPostgresObservationComparisonFacts(db: Db, owners: Pro
       ? await db.select(common).from(p).where(where)
       : await db.select({
         ...common,
-        has_version: sql<boolean>`${v.versionId} IS NOT NULL`,
+        has_version: sql<boolean>`${isNotNull(v.versionId)}`,
         ...('declareKind' in v ? { typed_declare_kind: v.declareKind, typed_applied_at: v.appliedAt, typed_status: v.status } : {}),
         ...('declarationYear' in v ? { typed_year: v.declarationYear } : 'businessYear' in v
           ? { typed_year: v.businessYear, typed_batch: v.batch, typed_award_batch_label: v.awardBatchLabel, typed_province: v.province }

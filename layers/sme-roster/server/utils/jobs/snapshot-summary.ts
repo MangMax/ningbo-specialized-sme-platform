@@ -1,7 +1,8 @@
 import { platformTaskLinks } from './task-presentation'
 import type { TaskSummaryAccess } from '../../../../core/server/utils/job-runner-postgres'
-import { sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { job } from '../../../../../db/postgresql/job-tables'
 import type { useApplicationDb } from '../../../../../db/client'
 import type { TaskSummary } from '../../../lib/sme-roster/task-summary'
 
@@ -56,18 +57,23 @@ export async function summarizePostgresSnapshots(db: NodePgDatabase, ids: string
   if (!detail || !authorized) return new Map(ids.map(id => [id, {
     links: snapshotTaskLinks(id),
   }]))
-  const { rows } = await db.execute<{ id:string; counts:Record<string,unknown> & { bySource?:Record<string,Record<string,unknown>> } | null;
-    positions:Record<string,unknown>[] | null }>(sql`
-    SELECT j.id,v.result->'counts' AS counts,
-      (SELECT json_agg(json_build_object('enterpriseId',i.value->'enterpriseId','source',i.value->'source',
-        'rdjb',i.value->'rdjb','rows',i.value->'rows','page',coalesce((
-          SELECT max((p.value->>'page')::integer)
-          FROM json_array_elements(i.value->'segments') s(value),json_array_elements(s.value->'pages') p(value)
-          WHERE p.value->>'status'='success'),0)+1))
-        FROM (SELECT value FROM json_array_elements(v.result->'items') i(value)
-          WHERE coalesce((i.value->'complete')::text, '') NOT IN ('true','1') LIMIT 21) i) AS positions
-    FROM business.job j CROSS JOIN LATERAL (SELECT j.result::json AS result) v
-    WHERE j.id=ANY(${sql.param(ids)}::text[]) AND j.kind='difference-snapshot'`)
+  const result = sql`${job.result}::json`
+  type Counts = Record<string, unknown> & { bySource?: Record<string, Record<string, unknown>> }
+  // PostgreSQL JSON table functions and ordered, limited scalar projection keep
+  // raw archives and unbounded position data in the database.
+  const positions = sql<Record<string, unknown>[] | null>`(SELECT json_agg(json_build_object(
+    'enterpriseId', i.value->'enterpriseId', 'source', i.value->'source',
+    'rdjb', i.value->'rdjb', 'rows', i.value->'rows', 'page', coalesce((
+      SELECT max((p.value->>'page')::integer)
+      FROM json_array_elements(i.value->'segments') s(value), json_array_elements(s.value->'pages') p(value)
+      WHERE p.value->>'status' = 'success'), 0) + 1))
+    FROM (SELECT value FROM json_array_elements(${result}->'items') i(value)
+      WHERE coalesce((i.value->'complete')::text, '') NOT IN ('true', '1') LIMIT 21) i)`
+  const rows = await db.select({
+    id: job.id,
+    counts: sql<Counts | null>`${result}->'counts'`,
+    positions,
+  }).from(job).where(and(inArray(job.id, ids), eq(job.kind, 'difference-snapshot')))
   return new Map(rows.map(row=>[row.id,{ links: snapshotTaskLinks(row.id),
     snapshot:formatSnapshotSummary(row.counts ?? {},row.counts?.bySource ?? {},row.positions ?? []),
   }]))

@@ -1,7 +1,8 @@
-import { eq, sql } from 'drizzle-orm'
+import { and, count, eq, getTableColumns, sql } from 'drizzle-orm'
 import { listPostgresCorrespondences, pagePostgresCorrespondences, readPostgresCorrespondenceSources } from './record-correspondence-postgres'
 import { commitPostgresCorrespondences, preflightPostgresCorrespondences } from './record-correspondence-write-postgres'
-import { readPostgresRosterPage } from '../../lib/roster/postgres-rows'
+import { importBatch } from '../../../../db/postgresql/import-tables'
+import { recordCorrespondence, recordCorrespondenceAudit } from '../../../../db/postgresql/qualification-tables'
 import { z } from 'zod'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
@@ -180,9 +181,9 @@ export async function handlePostgresCorrespondenceRequest(input: CorrespondenceA
     if (input.action === 'batch') {
       const key = scalar(input.key)
       if (!key) return fail(400, 'invalid_request', 'Idempotency key required')
-      const { rows: [batch] } = await tx.execute<{ receipt: object | null }>(sql`
-        SELECT summary::json AS receipt FROM import_batch
-        WHERE idempotency_key = ${key} AND source_kind = 'correspondence_decision' AND status = 'committed'`)
+      const b = importBatch
+      const [batch] = await tx.select({ receipt: sql<object | null>`${b.summary}::json` }).from(b)
+        .where(and(eq(b.idempotencyKey, key), eq(b.sourceKind, 'correspondence_decision'), eq(b.status, 'committed')))
       return batchResponse(batch?.receipt, knownRedactors)
     }
     const id = int(input.id)
@@ -200,13 +201,20 @@ export async function handlePostgresCorrespondenceRequest(input: CorrespondenceA
       const reader = await readPostgresCorrespondenceSources(tx, rows, redact)
       return success(sanitizePublishedDetail(reader.detail(rows[0]!), knownRedactors))
     }
-    const { rows: [match] } = await tx.execute(sql`SELECT 1 FROM record_correspondence WHERE id = ${id}`)
+    const edge = recordCorrespondence
+    const [match] = await tx.select({ id: edge.id }).from(edge).where(eq(edge.id, id))
     if (!match) return fail(404, 'not_found', 'Correspondence not found')
     const paging = auditPaging(input.query ?? {})
     if (!paging) return fail(400, 'invalid_request', 'Invalid audit query')
-    const result = await readPostgresRosterPage(tx, schema.recordCorrespondenceAudit,
-      sql`FROM record_correspondence_audit p WHERE p.correspondence_id = ${id}`, paging.page, paging.pageSize)
-    return auditResponse(result, knownRedactors)
+    const a = recordCorrespondenceAudit
+    const fields = getTableColumns(a)
+    const where = eq(a.correspondenceId, id)
+    const [total] = await tx.select({ n: count() }).from(a).where(where)
+    const rows = await tx.select({
+      ...fields, evidence: sql<typeof schema.recordCorrespondenceAudit.$inferSelect.evidence>`${a.evidence}::json`,
+    }).from(a).where(where).orderBy(a.id).limit(paging.pageSize)
+      .offset(Math.min(Number.MAX_SAFE_INTEGER, (paging.page - 1) * paging.pageSize))
+    return auditResponse({ rows, total: total!.n, ...paging }, knownRedactors)
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }
 

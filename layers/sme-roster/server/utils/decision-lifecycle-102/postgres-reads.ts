@@ -1,8 +1,9 @@
-import { and, count, desc, eq, getTableColumns, sql, type SQL } from 'drizzle-orm'
+import { and, count, desc, eq, getTableColumns, isNotNull, sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { z } from 'zod'
-import { alias } from 'drizzle-orm/pg-core'
+import { alias, QueryBuilder } from 'drizzle-orm/pg-core'
 import { enterprise } from '../../../../../db/postgresql/enterprise-tables'
+import { platformLegacyQueryAlias, platformLegacyRelationAlias } from '../../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../../db/postgresql/roster-selection-tables'
 import { differencePublicColumns } from '../../../lib/platform/difference-reference-target'
 import { DecisionError102, publicVersion102, type currentDecision102, type decisionHistory102 } from '../decision-lifecycle-102'
@@ -13,15 +14,18 @@ type PublicRow = Parameters<typeof publicVersion102>[0]
 const p = alias(differenceReason, 'p')
 const decisionColumns = getTableColumns(p)
 const jsonFields = new Set(['actor', 'currentQualification', 'factReferences'])
+const qb = new QueryBuilder()
 const aliasOf = {
-  evidenceQueryId: sql`(SELECT old_id FROM platform_legacy_query_alias WHERE collection_id=p.evidence_query_id)`,
-  evidenceRelationId: sql`(SELECT old_id FROM platform_legacy_relation_alias WHERE observation_id=p.evidence_relation_id)`,
+  evidenceQueryId: qb.select({ id: platformLegacyQueryAlias.oldId }).from(platformLegacyQueryAlias)
+    .where(eq(platformLegacyQueryAlias.collectionId, p.evidenceQueryId)),
+  evidenceRelationId: qb.select({ id: platformLegacyRelationAlias.oldId }).from(platformLegacyRelationAlias)
+    .where(eq(platformLegacyRelationAlias.observationId, p.evidenceRelationId)),
 }
 
 export function postgresDifferenceRow(keys = Object.keys(differencePublicColumns({}))) {
   const fields = keys.map(key => {
     let value: SQL
-    if (key === 'evidenceQueryId' || key === 'evidenceRelationId') value = aliasOf[key]
+    if (key === 'evidenceQueryId' || key === 'evidenceRelationId') value = sql`(${aliasOf[key]})`
     else {
       const field = key as keyof typeof decisionColumns
       value = sql`${decisionColumns[field]}`
@@ -60,7 +64,7 @@ export async function currentPostgresDecisions102(db: Reader, scopes: readonly S
     eq(d.direction, sql`s.direction`),
   )).orderBy(desc(d.recordedAt), desc(d.id)).limit(1).as('p')
   const rows = await db.select({
-    existing: sql<boolean>`${enterprise.id} IS NOT NULL`,
+    existing: sql<boolean>`${isNotNull(enterprise.id)}`,
     headId: head.id,
     decision: sql<PublicRow | null>`CASE WHEN ${head.id} IS NOT NULL AND ${head.lifecycleAction} IS DISTINCT FROM 'withdraw'
       THEN ${postgresDifferenceRow()} END`,

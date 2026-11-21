@@ -32,16 +32,22 @@ function firstJsonFields(document: SQL, keys: readonly string[]) {
 // json_each decodes strings as it scans, including fields we discard. Quote
 // escapes PostgreSQL text cannot represent, along with literal backslashes
 // that could be mistaken for the quoting, before projecting raw JSON tokens.
-function jsonProjectionInput(raw: SQL) {
+function jsonProjectionInput(tx: Tx, value: SQL) {
+  const raw = sql`source_json.raw`
   const codeUnit = 'u(?:0000|[dD][89a-fA-F][0-9a-fA-F]{2})'
   const unsafeEscape = String.raw`\\${codeUnit}`
   const tokens = String.raw`\\\\|\\(${codeUnit})`
   const replacement = String.raw`\\\\|\1|`
-  return sql`
-    SELECT CASE WHEN ${raw} IS JSON THEN
+  return tx.select({
+    raw: sql<string | null>`${raw}`.as('raw'),
+    document: sql`CASE WHEN ${raw} IS JSON THEN
       CASE WHEN ${raw} ~ ${unsafeEscape} THEN regexp_replace(${raw}, ${tokens}, ${replacement}, 'g')::json
         ELSE ${raw}::json END
-      END AS document, ${raw} ~ ${unsafeEscape} AS quoted`
+      END`.as('document'),
+    quoted: sql<boolean | null>`${raw} ~ ${unsafeEscape}`.as('quoted'),
+    // A lateral VALUES row names the bytea conversion without reading another table.
+    // Drizzle 0.45.4 has no VALUES relation builder.
+  }).from(sql`(values (${value})) as source_json(raw)`).as('input')
 }
 
 function restoreJsonEscapes(text: string, quoted: boolean | null) {
@@ -108,42 +114,46 @@ async function readPlatformMaterials(tx: Tx, enterpriseIds: readonly number[]) {
   const snapshot = sql`convert_from(${archive.bytes}, 'UTF8')::json`
   const current = tx.select({ matchBasis: assignment.matchBasis, verificationStatus: assignment.verificationStatus })
     .from(assignment).where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('current_assignment')
+  const cells = tx.select({
+    selected: sql`json_agg(json_build_object('name',cell->>'name','storageClass',cell->>'storageClass','hex',cell->>'hex')
+      ORDER BY ordinal) FILTER (WHERE cell->>'name'=ANY(${sql.param(refreshRelationFields)}::text[]))`.as('selected'),
+    archiveBytes: sql`decode(max(cell->>'hex') FILTER
+      (WHERE cell->>'name'='raw_fields' AND cell->>'storageClass'<>'null'),'hex')`.as('archive_bytes'),
+  }).from(sql`json_array_elements(${snapshot}->'fields') WITH ORDINALITY entries(cell, ordinal)`).as('cells')
+  const input = jsonProjectionInput(tx, archiveJsonText(sql`${cells.archiveBytes}`))
+  const businessProjection = tx.select({ json: sql`coalesce(json_object_agg(key,value),'{}'::json)::text` })
+    .from(sql`(${firstJsonFields(sql`${input.document}`, refreshSourceKeys)}) fields`)
   const sources = await tx.select({
     collectionId: observation.collectionId, match_basis: current.matchBasis, verification_status: current.verificationStatus,
-    snapshot: sql<unknown>`json_build_object('encoding',${snapshot}->>'encoding','fields',coalesce(cells.selected,'[]'::json))`,
-    business: sql<string | null>`CASE WHEN original.raw IS NULL THEN NULL WHEN input.document IS NULL OR json_typeof(input.document)='null' THEN '{'
-      ELSE (SELECT coalesce(json_object_agg(key,value),'{}'::json)::text
-        FROM (${firstJsonFields(sql`input.document`, refreshSourceKeys)}) fields) END`,
-    quoted: sql<boolean | null>`input.quoted`,
+    snapshot: sql<unknown>`json_build_object('encoding',${snapshot}->>'encoding','fields',coalesce(${cells.selected},'[]'::json))`,
+    business: sql<string | null>`CASE WHEN ${input.raw} IS NULL THEN NULL
+      WHEN ${input.document} IS NULL OR json_typeof(${input.document})='null' THEN '{'
+      ELSE ${businessProjection} END`,
+    quoted: input.quoted,
   }).from(observation).innerJoin(relationAlias, eq(relationAlias.observationId, observation.id))
     .innerJoin(observationRef, and(eq(observationRef.ownerId, observation.id), eq(observationRef.field, 'legacyRowSnapshot')))
     .innerJoin(archive, eq(archive.id, observationRef.archiveId)).innerJoinLateral(current, sql`true`)
-    .crossJoinLateral(sql`(
-      SELECT json_agg(json_build_object('name',cell->>'name','storageClass',cell->>'storageClass','hex',cell->>'hex')
-        ORDER BY ordinal) FILTER (WHERE cell->>'name'=ANY(${sql.param(refreshRelationFields)}::text[])) AS selected,
-        decode(max(cell->>'hex') FILTER (WHERE cell->>'name'='raw_fields' AND cell->>'storageClass'<>'null'),'hex') AS raw
-      FROM json_array_elements(${snapshot}->'fields') WITH ORDINALITY entries(cell, ordinal)
-    ) cells`)
-    .crossJoinLateral(sql`(SELECT ${archiveJsonText(sql`cells.raw`)} AS raw) original`)
-    .crossJoinLateral(sql`(${jsonProjectionInput(sql`original.raw`)}) input`)
+    .crossJoinLateral(cells).crossJoinLateral(input)
     .where(sql`${observation.collectionId} = any(${selected})`)
   const relations = Map.groupBy(sources.map(row => ({
     collectionId: row.collectionId, material: relationMaterial(row.snapshot, row.match_basis, row.verification_status, row.business, row.quoted),
   })), row => row.collectionId)
+  const metadataInput = jsonProjectionInput(tx, archiveJsonText(sql`${archive.bytes}`))
+  const metadataPages = tx.select({ json: sql`coalesce(json_agg(CASE WHEN json_typeof(page)='null' THEN page
+    ELSE json_build_object('rdjb',page->'rdjb','status',page->'status','declaredTotal',page->'declaredTotal') END
+    ORDER BY ordinal),'[]'::json)` }).from(sql`json_array_elements(value) WITH ORDINALITY pages(page, ordinal)`)
+  const metadataProjection = tx.select({ json: sql`coalesce(json_object_agg(key,
+    CASE WHEN key='pages' THEN CASE WHEN json_typeof(value)='array' THEN ${metadataPages}
+      ELSE 'null'::json END ELSE value END),'{}'::json)::text` })
+    .from(sql`(${firstJsonFields(sql`${metadataInput.document}`, refreshMetadataKeys)}) fields`)
   const metadataRows = await tx.select({
     collectionId: collectionRef.ownerId,
-    quoted: sql<boolean | null>`input.quoted`,
-    metadata: sql<string | null>`CASE WHEN ${archive.storageClass}='null' THEN NULL WHEN input.document IS NULL THEN '{' WHEN json_typeof(input.document)='null' THEN 'null'
-        ELSE (SELECT coalesce(json_object_agg(key,
-          CASE WHEN key='pages' THEN CASE WHEN json_typeof(value)='array' THEN
-            (SELECT coalesce(json_agg(CASE WHEN json_typeof(page)='null' THEN page
-              ELSE json_build_object('rdjb',page->'rdjb','status',page->'status','declaredTotal',page->'declaredTotal') END
-              ORDER BY ordinal),'[]'::json) FROM json_array_elements(value) WITH ORDINALITY pages(page, ordinal))
-          ELSE 'null'::json END ELSE value END),'{}'::json)::text
-          FROM (${firstJsonFields(sql`input.document`, refreshMetadataKeys)}) fields)
-      END`,
+    quoted: metadataInput.quoted,
+    metadata: sql<string | null>`CASE WHEN ${archive.storageClass}='null' THEN NULL
+      WHEN ${metadataInput.document} IS NULL THEN '{' WHEN json_typeof(${metadataInput.document})='null' THEN 'null'
+      ELSE ${metadataProjection} END`,
   }).from(collectionRef).innerJoin(archive, eq(archive.id, collectionRef.archiveId))
-    .crossJoinLateral(sql`(${jsonProjectionInput(archiveJsonText(sql`${archive.bytes}`))}) input`)
+    .crossJoinLateral(metadataInput)
     .where(and(sql`${collectionRef.ownerId} = any(${selected})`, eq(collectionRef.field, 'collectionEvidence')))
   const metadata = new Map(metadataRows.map(row => [row.collectionId,
     row.metadata === null ? null : restoreJsonEscapes(row.metadata, row.quoted)]))

@@ -142,13 +142,19 @@ async function writeParse(
     const stored = mergeParseParts(parts, before.ingestionStatistics.parts)
     await db.delete(storedFilePart).where(eq(storedFilePart.fileId, fileId))
     if (stored.length) {
-      // The merged set includes unbounded derived coordinates. Bind the rows as one recordset.
+      // A single bind covers every derived part, even when the merged set exceeds bind limits.
+      const rows = db.select({
+        fileId: sql<number>`${fileId}`, titleCode: sql<string>`p."titleCode"`,
+        eventKind: sql<typeof storedFilePart.$inferSelect.eventKind>`p."eventKind"`,
+        year: sql<number | null>`p.year`, batch: sql<number | null>`p.batch`, attachment: sql<string | null>`p.attachment`,
+        rowCount: sql<number>`p."rowCount"`, origin: sql<typeof storedFilePart.$inferSelect.origin>`p.origin`,
+        hasConflict: sql<number>`CASE WHEN p."hasConflict" THEN 1 ELSE 0 END`,
+      }).from(sql`json_to_recordset(${JSON.stringify(stored)}::json) AS p(
+        "titleCode" text, "eventKind" text, year bigint, batch bigint, attachment text, "rowCount" bigint, origin text, "hasConflict" boolean)`)
+      // Drizzle insert-select includes the identity column. Omit it so PostgreSQL allocates IDs.
       await db.execute(sql`
         INSERT INTO ${storedFilePart} (file_id,title_code,event_kind,year,batch,attachment,row_count,origin,has_conflict)
-        SELECT ${fileId}, p."titleCode", p."eventKind", p.year, p.batch, p.attachment, p."rowCount", p.origin,
-          CASE WHEN p."hasConflict" THEN 1 ELSE 0 END
-        FROM json_to_recordset(${JSON.stringify(stored)}::json) AS p(
-          "titleCode" text, "eventKind" text, year bigint, batch bigint, attachment text, "rowCount" bigint, origin text, "hasConflict" boolean)`)
+        ${rows}`)
     }
   }
   await db.update(rosterFileClassification).set({ parseState }).where(eq(rosterFileClassification.fileId, fileId))

@@ -161,10 +161,10 @@ async function readQualificationItem(db: Reader, args: ImportItemsRead, redact: 
     enterpriseId: sql<number | null>`${enterpriseId}`,
     recordId: sql<number | null>`${recordId}`,
     recordBound: sql<boolean>`${recordId} IS NOT NULL AND ${item} ->> 'ref' = 'record:' || ${recordId}::bigint`,
-    captureMissing: sql<boolean>`${absentSummary} OR ${validSummary} AND ((${capture}) IS NULL OR json_typeof(${capture})='null')`,
+    captureMissing: sql<boolean>`${or(absentSummary, and(validSummary, or(isNull(capture), eq(sql`json_typeof(${capture})`, 'null'))))}`,
     payload: sql<string | null>`CASE WHEN json_typeof(${capture})='object' AND octet_length((${capture})::text)<=65536
       THEN (${capture})::text END`,
-    diagnosticsMissing: sql<boolean>`${absentSummary} OR ${validSummary} AND (${diagnostics}) IS NULL`,
+    diagnosticsMissing: sql<boolean>`${or(absentSummary, and(validSummary, isNull(diagnostics)))}`,
     diagnosticsBound: sql<boolean>`json_typeof(${diagnostics})='object' AND (${fieldCount})=7
       AND json_typeof(${diag} -> 'itemIndex')='number' AND (${diag} -> 'itemIndex')::text=${String(args.itemIndex)}
       AND ${diag} ->> 'ref'=${item} ->> 'ref' AND ${integerValue(sql`${diag} -> 'enterpriseId'`)}=${enterpriseId}

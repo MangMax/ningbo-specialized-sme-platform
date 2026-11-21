@@ -1,6 +1,6 @@
 import { recordCorrespondence, recordCorrespondenceAudit } from '../../../../db/postgresql/qualification-tables'
 import { setImmediate } from 'node:timers/promises'
-import { and, count, countDistinct, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
+import { and, count, countDistinct, eq, inArray, lt, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
@@ -19,7 +19,7 @@ import { fileNameOf } from '../../../core/lib/preview'
 import type { StoredFileContentIdentity } from '../../../core/server/utils/file-content-identity'
 import type { RecordComparisonInput } from '../../lib/roster/record-comparison'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
-import { officialSourceDirectory } from './official-source-directory'
+import { postgresOfficialSourceDirectory } from './official-source-directory'
 import { readPostgresComparisonIdentities } from './record-comparison-catalog-postgres'
 import { readPostgresObservationComparisonFacts } from './record-correspondence-target-postgres'
 import { readPostgresCorrespondenceSelection } from './record-correspondence-postgres'
@@ -36,11 +36,10 @@ const numbers = (values: readonly number[]) => sql`${sql.param(values)}::bigint[
 async function readDocuments(db: Reader, ids: number[]): Promise<SelectedRecordComparison['documents']> {
   const source = sourceDocument, f = storedFile
   const selectedIds = sql`ANY(${numbers(ids)})`
+  const d = postgresOfficialSourceDirectory(db)
   const index = db.select({
-    id: sql<number>`d.id`.as('id'), source: sql<'jxj'>`d.source`.as('source'),
-    title: sql<string | null>`d.title`.as('title'), docNumber: sql<string | null>`d."docNumber"`.as('doc_number'),
-    issueDate: sql<string | null>`d."issueDate"`.as('issue_date'), path: sql<string>`d.path`.as('path'),
-  }).from(sql`${officialSourceDirectory} d`).where(sql`d.id < 0 AND d.id = ${selectedIds}`)
+    id: d.id, source: d.source, title: d.title, docNumber: d.docNumber, issueDate: d.issueDate, path: d.path,
+  }).from(d).where(and(lt(d.id, 0), eq(d.id, selectedIds)))
   const selected = db.$with('selected').as(db.select({
     id: source.id, source: sql<'jxj'>`${source.source}`.as('source'), title: sql<string | null>`${source.title}`.as('title'),
     docNumber: source.docNumber, issueDate: source.issueDate, path: source.path,

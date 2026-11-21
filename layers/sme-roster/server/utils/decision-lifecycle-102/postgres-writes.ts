@@ -111,7 +111,7 @@ async function finishReview(tx: Tx, command: DecisionCommand102, hash: string, r
     reviewedRevisionId: revisionId, classification: 'evidence_changed',
   }).onConflictDoUpdate({
     target: [impact.enterpriseId, impact.titleCode, impact.direction, impact.decisionId],
-    set: { reviewedRevisionId: sql`excluded.reviewed_revision_id` },
+    set: { reviewedRevisionId: revisionId },
   })
   if (previousId !== null && previousId !== decisionId) {
     await tx.update(impact).set({ reviewedRevisionId: revisionId }).where(and(

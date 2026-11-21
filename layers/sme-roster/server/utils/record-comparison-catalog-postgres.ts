@@ -11,8 +11,7 @@ import * as schema from '../../../../db/schema'
 import { normalizeName } from '../../lib/domain'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { comparisonSourceCatalogInput, type ComparisonSourceCatalogInput } from '../../lib/roster/record-comparison'
-import { officialSourceDirectory, type OfficialSourceDocument } from './official-source-directory'
-import type { StoredFileContentIdentity } from '../../../core/server/utils/file-content-identity'
+import { postgresOfficialSourceDirectory, type OfficialSourceDocument } from './official-source-directory'
 import { comparisonCatalogWindows, projectCatalogDocument, projectCatalogExport, projectCatalogQuery, projectSourceEnterpriseLinks } from './record-comparison'
 
 type Reader = Pick<NodePgDatabase, 'select'>
@@ -55,26 +54,26 @@ export function readPostgresRecordComparisonSources(db: NodePgDatabase, input: C
     const q = platformLegacyQueryAlias, b = alias(platformExportBatch, 'b'), c = alias(platformCollection, 'c')
     const condition = platformCollectionCondition
     const byId = (column: typeof q.oldId | typeof b.id) => filter.ids === undefined ? undefined : inArray(column, filter.ids)
-    const docFilter = filter.ids === undefined ? undefined : inArray(sql<number>`d.id`, filter.ids)
+    const d = postgresOfficialSourceDirectory(tx)
+    // Derived SQL aliases render unqualified in Drizzle 0.45, and stored_file
+    // also has an id. Keep this reference qualified when joining file identity.
+    const documentId = sql`${sql.identifier('official_directory')}.${sql.identifier('id')}`.mapWith(Number)
+    const docFilter = filter.ids === undefined ? undefined : inArray(documentId, filter.ids)
     const queryFilter = byId(q.oldId), batchFilter = byId(b.id)
-    const docCount = tx.select({ n: count() }).from(sql`${officialSourceDirectory} d`).where(docFilter)
-    const queryCount = tx.select({ n: count() }).from(q).where(queryFilter)
-    const batchCount = tx.select({ n: count() }).from(b).where(batchFilter)
-    const [totals] = await tx.select({
-      official_document: sql<number>`(${docCount})::float8`,
-      query: sql<number>`(${queryCount})::float8`,
-      export_batch: sql<number>`(${batchCount})::float8`,
-    }).from(sql`(VALUES (1)) AS catalog_count(dummy)`)
-    const counts = totals!
+    const [documentCount] = await tx.select({ n: count() }).from(d).where(docFilter)
+    const [queryCount] = await tx.select({ n: count() }).from(q).where(queryFilter)
+    const [batchCount] = await tx.select({ n: count() }).from(b).where(batchFilter)
+    const counts = { official_document: documentCount!.n, query: queryCount!.n, export_batch: batchCount!.n }
     signal?.throwIfAborted()
     const { dw, qw, bw } = comparisonCatalogWindows(filter, counts)
     const f = storedFile
     const documents = dw.limit ? (await tx.select({
-      row: sql<OfficialSourceDocument>`json_build_object('id',d.id,'source',d.source,'title',d.title,'docNumber',d."docNumber",'issueDate',d."issueDate",'path',d.path)`,
-      registered: sql<StoredFileContentIdentity | null>`CASE WHEN ${f.id} IS NOT NULL THEN json_build_object(
-        'fileId',${f.id},'relPath',${f.relPath},'sha256',${f.sha256},'bytes',${f.bytes}) END`,
-    }).from(sql`${officialSourceDirectory} d`).leftJoin(f, eq(f.relPath, sql`d.path`)).where(docFilter)
-      .orderBy(sql`d.id`).limit(dw.limit).offset(dw.offset)).map(({ row, registered }) => projectCatalogDocument(row, registered)) : []
+      row: { id: documentId, source: d.source, title: d.title, docNumber: d.docNumber, issueDate: d.issueDate, path: d.path },
+      registered: { fileId: f.id, relPath: f.relPath, sha256: f.sha256, bytes: f.bytes },
+    }).from(d).leftJoin(f, eq(f.relPath, d.path)).where(docFilter)
+      .orderBy(documentId).limit(dw.limit).offset(dw.offset)).map(({ row, registered }) => projectCatalogDocument(
+        row as OfficialSourceDocument, registered ? { ...registered, bytes: Number(registered.bytes) } : null,
+      )) : []
     const batches = bw.limit ? (await tx.select({
       row: sql<typeof schema.platformExportBatch.$inferSelect>`${postgresRosterRow(schema.platformExportBatch,'b')}`,
     }).from(b).where(batchFilter).orderBy(b.id).limit(bw.limit).offset(bw.offset)).map(({ row }) => projectCatalogExport(row)) : []

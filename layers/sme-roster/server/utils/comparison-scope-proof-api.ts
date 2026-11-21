@@ -1,5 +1,6 @@
-import { sql } from 'drizzle-orm'
-import { readPostgresRosterPage } from '../../lib/roster/postgres-rows'
+import { and, count, eq, sql } from 'drizzle-orm'
+import { importBatch } from '../../../../db/postgresql/import-tables'
+import { comparisonScopeProofAudit } from '../../../../db/postgresql/comparison-proof-tables'
 import { importPostgresReceiptRedactor, importReceiptRedactor } from './import-receipt-redaction'
 import { usePostgresRosterDb } from './postgres-roster-db'
 import { preflightPostgresComparisonProof, commitPostgresComparisonProof } from './comparison-scope-proof-write-postgres'
@@ -70,9 +71,9 @@ export async function handleRuntimeComparisonProof(input: ProofApiInput, apiToke
     const query = input.query ?? {}
     if (input.action === 'batch') {
       if (typeof input.key !== 'string' || !input.key.trim()) return fail(400, 'invalid_request', 'Idempotency key required')
-      const { rows: [batch] } = await tx.execute<{ receipt: object | null }>(sql`
-        SELECT summary::json AS receipt FROM import_batch
-        WHERE idempotency_key=${input.key} AND source_kind='comparison_scope_proof' AND status='committed'`)
+      const b = importBatch
+      const [batch] = await tx.select({ receipt: sql<object | null>`${b.summary}::json` }).from(b)
+        .where(and(eq(b.idempotencyKey, input.key), eq(b.sourceKind, 'comparison_scope_proof'), eq(b.status, 'committed')))
       return batch?.receipt ? ok(batch.receipt) : fail(404, 'not_found', 'Committed receipt not found')
     }
     if (input.action === 'list') {
@@ -89,8 +90,12 @@ export async function handleRuntimeComparisonProof(input: ProofApiInput, apiToke
     if (input.action === 'get') return ok(proof)
     const paging = proofPaging(query)
     if (!paging) return fail(400, 'invalid_request', 'Invalid audit query')
-    return ok(await readPostgresRosterPage(tx, schema.comparisonScopeProofAudit,
-      sql`FROM comparison_scope_proof_audit p WHERE p.proof_id=${id}`, paging.page, paging.pageSize))
+    const a = comparisonScopeProofAudit
+    const where = eq(a.proofId, id)
+    const [total] = await tx.select({ n: count() }).from(a).where(where)
+    const rows = await tx.select().from(a).where(where).orderBy(a.id).limit(paging.pageSize)
+      .offset(Math.min(Number.MAX_SAFE_INTEGER, (paging.page - 1) * paging.pageSize))
+    return ok({ rows, total: total!.n, ...paging })
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }
 
