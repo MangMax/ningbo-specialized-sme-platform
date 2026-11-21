@@ -1,5 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { asc, eq, sql } from 'drizzle-orm'
+import {
+  enterpriseIndustry as postgresIndustry,
+  enterpriseRegion as postgresRegion,
+} from '../../../../db/postgresql/enterprise-tables'
+import {
+  enterpriseSourceChannel as postgresChannel,
+  enterpriseSourceListType as postgresListType,
+} from '../../../../db/postgresql/enterprise-source-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterpriseIndustry, enterpriseRegion, enterpriseSourceChannel, enterpriseSourceListType } from '@db/schema'
 import type { useDb } from '@db'
@@ -10,9 +18,8 @@ type DictionaryKind = typeof coreDictionaryKinds[number]
 type DictionaryInput = { name: string } | { code: string; name: string; previousName: string }
 const businessTables = { 'list-sources': enterpriseSourceChannel, 'list-types': enterpriseSourceListType } as const
 const postgresTables = {
-  regions: sql`enterprise_region`, industries: sql`enterprise_industry`,
-  'list-sources': sql`enterprise_source_channel`, 'list-types': sql`enterprise_source_list_type`,
-}
+  'list-sources': postgresChannel, 'list-types': postgresListType,
+} as const
 const normalizeName = (name: string) => name.normalize('NFKC').trim().toLowerCase()
 
 function withParentDetail(rows: { code: string; name: string; level: number; parentCode: string | null }[]): DictionaryEntry[] {
@@ -58,25 +65,27 @@ export function saveDictionaryEntry(db: Db, kind: EditableDictionaryKind, input:
 }
 
 export async function readPostgresDictionary(db: NodePgDatabase, kind: DictionaryKind): Promise<DictionaryEntry[]> {
-  const table = postgresTables[kind]
   if (kind === 'regions' || kind === 'industries') {
-    const { rows } = await db.execute<{ code: string; name: string; parentCode: string | null; level: string }>(sql`
-      SELECT code, name, parent_code AS "parentCode", level FROM ${table} ORDER BY code COLLATE "C"`)
-    return withParentDetail(rows.map(row => ({ ...row, level: Number(row.level) })))
+    const table = kind === 'regions' ? postgresRegion : postgresIndustry
+    // Drizzle order expressions do not expose COLLATE.
+    const rows = await db.select({ code: table.code, name: table.name, parentCode: table.parentCode, level: table.level })
+      .from(table).orderBy(sql`${table.code} COLLATE "C"`)
+    return withParentDetail(rows)
   }
-  const { rows } = await db.execute<{ code: string; name: string }>(sql`SELECT code, name FROM ${table} ORDER BY code COLLATE "C"`)
-  return rows
+  const table = postgresTables[kind]
+  return db.select({ code: table.code, name: table.name }).from(table).orderBy(sql`${table.code} COLLATE "C"`)
 }
 
 export function savePostgresDictionaryEntry(db: NodePgDatabase, kind: EditableDictionaryKind, input: DictionaryInput) {
   return db.transaction(async tx => {
+    // Drizzle has no builder for PostgreSQL transaction advisory locks.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('dictionary:' || ${kind}, 0))`)
     const checked = validateEntry(await readPostgresDictionary(tx, kind), input)
     if ('message' in checked) return checked
     const table = postgresTables[kind]
     const { code, name } = checked.entry
-    if ('code' in input) await tx.execute(sql`UPDATE ${table} SET name = ${name} WHERE code = ${code}`)
-    else await tx.execute(sql`INSERT INTO ${table} (code, name) VALUES (${code}, ${name})`)
+    if ('code' in input) await tx.update(table).set({ name }).where(eq(table.code, code))
+    else await tx.insert(table).values(checked.entry)
     return checked
   })
 }
