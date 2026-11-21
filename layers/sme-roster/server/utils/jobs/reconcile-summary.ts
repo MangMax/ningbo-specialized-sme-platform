@@ -1,3 +1,5 @@
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { platformTaskLinks } from './task-presentation'
 import type { ReconcileReportCounts } from '../platform-reconcile'
 import { sql } from 'drizzle-orm'
 import type { TaskSummary } from '../../../lib/sme-roster/task-summary'
@@ -81,4 +83,49 @@ export function readReconcileSummary(row: { kind: string; counts: string; reconc
   const count = (value: unknown): number | null => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
   const reconcile: NonNullable<TaskSummary['reconcile']> = { targets: count(counts.total), needsReview: count(counts.needsReview), queryFailed: count(counts.queryFailed), notQueried: count(counts.notQueried) }
   return { reconcile, reconcileCollection }
+}
+
+export async function summarizePostgresReconcileJobs(db: NodePgDatabase, ids: string[]) {
+  const { rows } = await db.execute<{ id: string; kind: string; counts: string | null; reconcileCollection: string | null }>(sql`
+    SELECT j.id,j.kind,json_build_object(
+      'total',r.result->'counts'->'total','needsReview',r.result->'counts'->'needsReview',
+      'queryFailed',r.result->'counts'->'queryFailed','notQueried',r.result->'counts'->'notQueried'
+    )::text AS counts,
+    CASE WHEN json_typeof(c.positions) = 'array'
+      AND (SELECT sum(CASE WHEN (c.coverage->key)::text ~ '^[0-9]+$'
+        AND length((c.coverage->key)::text) <= 16 THEN
+        CASE WHEN (c.coverage->>key)::numeric <= 9007199254740991 THEN (c.coverage->>key)::numeric END
+      END) FROM unnest(ARRAY['complete','partial','failed','unknown']) keys(key)) = p.count
+      AND p.valid THEN json_build_object(
+        'complete',c.coverage->'complete','partial',c.coverage->'partial','failed',c.coverage->'failed','unknown',c.coverage->'unknown',
+        'unfinished',p.unfinished,
+        'positions',(
+          SELECT json_agg(json_build_object('source',u.value->'source','rdjb',u.value->'rdjb','page',u.value->'page'))
+          FROM (
+            SELECT u.value FROM json_array_elements(c.positions) pos
+            CROSS JOIN LATERAL json_array_elements(pos.value->'unfinished') u LIMIT 50
+          ) u
+        )
+      )::text END AS "reconcileCollection"
+    FROM business.job j
+    CROSS JOIN LATERAL (SELECT business.job_params_for_query(j.result) AS result) r
+    CROSS JOIN LATERAL (SELECT r.result->'collection' AS coverage,r.result->'collection'->'positions' AS positions) c
+    CROSS JOIN LATERAL (
+      SELECT count(*) AS count,coalesce(sum(s.count),0) AS unfinished,
+        coalesce(bool_and(coalesce(json_typeof(pos.value->'unfinished')='array',false) AND s.valid),true) AS valid
+      FROM json_array_elements(CASE WHEN json_typeof(c.positions)='array' THEN c.positions END) pos
+      CROSS JOIN LATERAL (
+        SELECT count(*) AS count,coalesce(bool_and(coalesce(
+          CASE WHEN (u.value->'page')::text ~ '^[0-9]+$' AND length((u.value->'page')::text) <= 16
+            THEN (u.value->>'page')::numeric BETWEEN 1 AND 9007199254740991 ELSE false END
+          AND ((u.value->>'source'='businessList' AND (u.value->'rdjb')::text IN ('"1"','"2"','"3"'))
+            OR (u.value->>'source'='queryList' AND json_typeof(u.value->'rdjb')='null')),false)),true) AS valid
+        FROM json_array_elements(CASE WHEN json_typeof(pos.value->'unfinished')='array' THEN pos.value->'unfinished' END) u
+      ) s
+    ) p
+    WHERE j.id=ANY(${sql.param(ids)}::text[]) AND j.kind='reconcile'`)
+  return new Map(rows.map(row => [row.id, {
+    ...readReconcileSummary({ ...row, counts: row.counts ?? '{}', reconcileCollection: row.reconcileCollection ?? '{}' }),
+    links: platformTaskLinks(),
+  }]))
 }

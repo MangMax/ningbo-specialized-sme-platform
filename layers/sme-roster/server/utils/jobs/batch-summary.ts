@@ -1,3 +1,4 @@
+import { platformTaskLinks, rosterTaskError, taskRetryReason } from './task-presentation'
 import { isJobId } from '../../../../core/lib/job'
 import { MAX_BATCH_ATTEMPTS, type PlatformBatchItem } from '../../../lib/platform/batch-query'
 import type { TaskSummary } from '../../../lib/sme-roster/task-summary'
@@ -33,9 +34,9 @@ export function readBatchSummary(row: { kind: string; state: JobState; items: st
 
 export async function summarizePostgresBatches(db: NodePgDatabase, ids: string[], detail: boolean) {
   const { rows } = await db.execute<{
-    id: string; kind: string; state: JobState; hasError: boolean; itemCount: number; attempt: number; items: string
+    id: string; kind: string; state: JobState; hasError: boolean; restarted: boolean; itemCount: number; attempt: number; items: string
   }>(sql`
-    SELECT j.id, j.kind, j.state, j.error IS NOT NULL AS "hasError",
+    SELECT j.id, j.kind, j.state, j.error IS NOT NULL AS "hasError", coalesce(position('服务重启' in j.error),0)>0 AS restarted,
       json_array_length(j.params::json -> 'items') AS "itemCount",
       (v.result ->> 'attempt')::integer AS attempt,
       (SELECT json_agg(json_build_object(
@@ -44,7 +45,7 @@ export async function summarizePostgresBatches(db: NodePgDatabase, ids: string[]
         'unfinished', coalesce(json_array_length(item.value -> 'unfinished'), 0),
         'positions', CASE WHEN ${detail} THEN (
           SELECT json_agg(json_build_object('source', position.value ->> 'source',
-            'rdjb', position.value ->> 'rdjb', 'page', position.value -> 'page'))
+            'rdjb', position.value -> 'rdjb', 'page', position.value -> 'page'))
           FROM (SELECT value FROM json_array_elements(item.value -> 'unfinished') LIMIT 50) position
         ) END
       ))::text FROM (SELECT value FROM json_array_elements(v.result -> 'items') LIMIT 50) item) AS items
@@ -56,10 +57,9 @@ export async function summarizePostgresBatches(db: NodePgDatabase, ids: string[]
     const { items, retryItemIds, outcome, retry } = readBatchSummary(row, detail)
     return [row.id, {
       outcome, ...(detail ? { items } : {}),
-      error: row.hasError && row.state === 'failed' ? '批次有失败或未完成范围；请查看摘要并显式重试。' : null,
-      capabilities: { cancel: false, retry, retryItemIds: retry ? retryItemIds : [],
-        reason: retry ? '仅补查本批次未完成项，保留已完成结果。' : '此任务不支持安全重试，请从原业务入口核对后重新提交。' },
-      links: [{ label: '平台查询证据', to: '/platform-queries' }, { label: '比对与核查入口', to: '/comparison' }],
+      error: rosterTaskError(row),
+      ...(retry ? { capabilities: { cancel: false, retry, retryItemIds, reason: taskRetryReason } } : {}),
+      links: platformTaskLinks(),
     }]
   }))
 }

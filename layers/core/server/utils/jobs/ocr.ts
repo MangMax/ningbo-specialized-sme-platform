@@ -1,3 +1,4 @@
+import { summarizePostgresOcrJobs } from './ocr-summary'
 import { resolve } from 'node:path'
 import { isJobId } from '../../../lib/job'
 import { appLog } from '../../../lib/logging'
@@ -551,6 +552,7 @@ export const ocrSpec: JobSpec = {
   },
   run: runOcr,
   postgres: {
+    taskCenter: { summaries: summarizePostgresOcrJobs },
     async prepare(tx, params) {
       const config = await resolvePostgresOcrConfig(tx)
       const { files, model, resumeJobId } = params as unknown as OcrParams

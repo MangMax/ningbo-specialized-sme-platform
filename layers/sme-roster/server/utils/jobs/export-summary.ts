@@ -1,3 +1,4 @@
+import { rosterTaskError } from './task-presentation'
 import type { TaskSummaryAccess } from '../../../../core/server/utils/job-runner-postgres'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { resolveDbPath } from '../../../../../db/client'
@@ -76,9 +77,10 @@ async function projectExportSummary(row: ExportSummaryRow, authorized: boolean, 
   return exported
 }
 
-export async function readPostgresExportSummaries(db: NodePgDatabase, ids: string[], detail: boolean, { authorized, writable }: TaskSummaryAccess) {
-  const { rows } = await db.execute<ExportSummaryRow>(sql`
-    SELECT id, kind, state, left(business.job_params_for_query(params)->>'titleCode',40) AS "exportTitle",
+export async function readPostgresExportSummaries(db: NodePgDatabase, ids: string[], _detail: boolean, { authorized, writable }: TaskSummaryAccess) {
+  const { rows } = await db.execute<ExportSummaryRow & { hasError: boolean; restarted: boolean }>(sql`
+    SELECT id, kind, state, error IS NOT NULL AS "hasError", coalesce(position('服务重启' in error),0)>0 AS restarted,
+      left(business.job_params_for_query(params)->>'titleCode',40) AS "exportTitle",
       json_build_object(
         'regenerateOf',left(business.job_params_for_query(params)->>'regenerateOf',26),
         'phase',left(result::json->>'phase',20),'generatedAt',left(result::json->>'generatedAt',30),
@@ -98,10 +100,10 @@ export async function readPostgresExportSummaries(db: NodePgDatabase, ids: strin
     const { unit, stage, totalVisible } = exportTaskProgress(row.state, exported?.phase)
     result.set(row.id, {
       export: exported,
+      error: rosterTaskError(row),
       label: exportTaskLabel(exported?.titleCode),
       progress: { unit, stage, ...(totalVisible ? {} : { total: null }) },
       capabilities: { cancel: false, retry: false, retryItemIds: [], reason: exportRetryReason },
-      ...(detail ? { items: [] } : {}),
     })
   }
   return result

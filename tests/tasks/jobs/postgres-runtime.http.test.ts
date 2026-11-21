@@ -704,3 +704,98 @@ it.runIf(!!bin)('reports one run per scheduled hour and keeps the last result vi
     vi.stubEnv('NUXT_DB_MODE', undefined)
   }
 })
+
+it.runIf(!!bin)('keeps task-center list and detail semantics across PostgreSQL and SQLite', async () => {
+  const { newJobId } = await import('../../../layers/core/lib/job')
+  const { handleTaskCenterRequest } = await import('../../../layers/sme-roster/server/utils/task-center-http')
+  await (await import('../../../layers/core/server/utils/postgres-jobs')).stopPostgresJobs()
+  const sqlite = initializeDb({ create: true, readOnly: false, dbPath: join(dir, 'task-summary-parity.sqlite') })
+  const createdAt = '2027-01-01T00:00:00Z'
+  const rawError = 'PRIVATE_FAILURE /private/workbook.xlsx'
+  const file = { id: 891, path: 'synthetic/ocr.pdf' }
+  const unfinished = [{ source: 'queryList', rdjb: null, page: 4 }]
+  const scenarios = [
+    { kind: 'current-roster-export', state: 'failed', params: { titleCode: 'specialized_sme' }, error: rawError },
+    { kind: 'current-roster-export', state: 'failed', params: { titleCode: 'innovative_sme' }, error: '服务重启 ' + rawError },
+    { kind: 'event-archive-candidates', state: 'done', params: { queryId: 21 }, result: {
+      counts: { succeeded: 1, needsReview: 0, failed: 0, created: 2, existing: 0, privateRaw: rawError },
+      items: [{ eventId: 13, enterpriseId: 17, status: 'done', created: 2, existing: 0 }],
+      continuationJobId: newJobId(),
+    } },
+    { kind: 'event-archive-candidates', state: 'cancelled', params: { eventIds: [7] }, result: { attempt: 2 } },
+    { kind: 'event-archive-candidates', state: 'failed', error: '服务重启 ' + rawError },
+    { kind: 'event-annual-correspondence', state: 'done', result: { events: [{ status: 'done' }, { status: 'failed' }, { status: 'pending' }], attempt: 2 } },
+    { kind: 'event-annual-correspondence', state: 'queued' },
+    { kind: 'difference-snapshot', state: 'done', result: {
+      counts: { enterprises: 2, requests: 2, rows: 41, unfinished: 1 },
+      items: [
+        { complete: true, enterpriseId: 3 },
+        { complete: false, enterpriseId: 9, source: 'businessList', rdjb: '1', rows: 40, segments: [{ pages: [{ status: 'success', page: 4 }] }] },
+      ],
+    } },
+    { kind: 'platform-query-batch', state: 'failed', result: {
+      attempt: 2, items: [{ itemId: newJobId(), status: 'failed', completeness: 'partial', unfinished }],
+    }, error: '服务重启 ' + rawError },
+    { kind: 'reconcile', state: 'done', result: {
+      counts: { total: 7, needsReview: 3, queryFailed: 2, notQueried: 1 },
+      collection: { complete: 0, partial: 1, failed: 0, unknown: 0, positions: [{ unfinished }] },
+    } },
+    { kind: 'reconcile', state: 'failed', result: {
+      collection: { complete: '1', partial: 0, failed: 0, unknown: 0, positions: [{ unfinished }] },
+    }, error: rawError },
+    { kind: 'ocr', state: 'failed', result: {
+      files: [{ ok: true, fileId: file.id, file: '/private/wrong.pdf' }, { ok: false, fileId: file.id }],
+    }, error: rawError },
+    { kind: 'render-pages', state: 'running' },
+    { kind: 'future-kind', state: 'running' },
+  ].map(scenario => ({ ...scenario, id: newJobId() }))
+  const fileSql = 'INSERT INTO stored_file (id, rel_path, filename, ext, bytes, sha256, created_at) VALUES'
+  const fileValues = [file.id, file.path, 'ocr.pdf', 'pdf', 1, createHash('sha256').update(file.path).digest('hex'), createdAt]
+  const jobSql = 'INSERT INTO job (id, kind, state, params, progress, result, error, created_at) VALUES'
+  vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
+  try {
+    await pool.query(`${fileSql.replace('stored_file', 'business.stored_file')} ($1,$2,$3,$4,$5,$6,$7)`, fileValues)
+    sqlite.$client.prepare(`${fileSql} (?,?,?,?,?,?,?)`).run(...fileValues)
+    for (const { id, kind, state, params = {}, result = null, error = null } of scenarios) {
+      const values = [id, kind, state, JSON.stringify(params), '{"done":1,"total":3}', JSON.stringify(result), error, createdAt]
+      await pool.query(`${jobSql.replace('job', 'business.job')} ($1,$2,$3,$4,$5,$6,$7,$8)`, values)
+      sqlite.$client.prepare(`${jobSql} (?,?,?,?,?,?,?,?)`).run(...values)
+    }
+    const headers = { authorization: 'Bearer ' + token }
+    const context = { db: sqlite, apiToken: token, filesDir: dir }
+    for (const query of ['tab=sme-roster&group=platform', 'tab=sme-roster&group=export', 'tab=core&group=ocr', 'tab=all']) {
+      const path = '/api/task-center?pageSize=200&' + query
+      const url = new URL(path, base)
+      const pgResponse = await request(path, { headers })
+      expect(pgResponse.status).toBe(200)
+      const pgRows = (await pgResponse.json()).rows.filter((row: { createdAt: string }) => row.createdAt === createdAt)
+      const legacy = await handleTaskCenterRequest('list', { method: 'GET', path: url.pathname, query: Object.fromEntries(url.searchParams), headers }, context)
+      expect(pgRows.length).toBeGreaterThan(0)
+      expect(pgRows).toEqual((legacy.body as { rows: unknown[] }).rows)
+    }
+    for (const { id, kind, state } of scenarios) {
+      const path = '/api/task-center/' + id
+      const pgResponse = await request(path, { headers })
+      expect(pgResponse.status, kind + '/' + state).toBe(200)
+      const text = await pgResponse.text()
+      expect(text).not.toMatch(/PRIVATE_FAILURE|\/private\//)
+      const legacy = await handleTaskCenterRequest('detail', { method: 'GET', path, headers }, context)
+      expect(JSON.parse(text), kind + '/' + state).toEqual(legacy.body)
+    }
+    const failed = await (await request('/api/task-center/' + scenarios[0]!.id, { headers })).json()
+    expect(failed.error).toBe('导出失败；请检查数据与产物存储后显式重新生成。原始错误不展示。')
+    const retry = await (await request('/api/task-center/' + scenarios[3]!.id, { headers })).json()
+    expect(retry.capabilities).toMatchObject({ retry: true, reason: '仅补查本批次未完成项，保留已完成结果。' })
+    const annual = await (await request('/api/task-center/' + scenarios[5]!.id, { headers })).json()
+    expect(annual).toMatchObject({
+      items: [],
+      annual: { total: 3, done: 1, failed: 1, unfinished: 1, attempt: 2 },
+      capabilities: { retry: false, reason: '请通过年度专属接口核对当前来源代次与重试资格；此处不重放年度任务。' },
+    })
+  } finally {
+    vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', undefined)
+    sqlite.$client.close()
+    await pool.query('DELETE FROM business.job WHERE id = ANY($1)', [scenarios.map(({ id }) => id)])
+    await pool.query('DELETE FROM business.stored_file WHERE id = $1', [file.id])
+  }
+})

@@ -1,5 +1,5 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import type { TaskSummary } from '../../../lib/sme-roster/task-summary'
+import { annualTaskReason, platformTaskLinks } from './task-presentation'
 import { sql } from 'drizzle-orm'
 import { schema } from '../../../../../db/client'
 import { ANNUAL_CORRESPONDENCE_KIND } from '../../../lib/roster/annual-correspondence'
@@ -14,20 +14,33 @@ export const annualProjection = {
 }
 export function readAnnualSummary(row: ProjectedTask) {
   if (row.kind !== ANNUAL_CORRESPONDENCE_KIND) return undefined
-  return { total: row.annualTotal, done: row.annualDone, failed: row.annualFailed,
-    unfinished: row.annualTotal === null ? null : row.annualTotal - row.annualDone - row.annualFailed,
-    attempt: row.annualAttempt }
+  return annualTaskSummary(row.annualTotal, row.annualDone, row.annualFailed, row.annualAttempt)
 }
+
+function annualTaskSummary(total: number | null, done: number, failed: number, attempt: number | null) {
+  return { total, done, failed, unfinished: total === null ? null : total - done - failed, attempt }
+}
+
+export const annualTaskLinks = (id: string) => [
+  { label: '年度任务详情与重试资格', to: `/api/roster/annual-correspondence-tasks/${id}` },
+  ...platformTaskLinks(),
+]
 
 export async function summarizePostgresAnnualJobs(db: NodePgDatabase, ids: string[]) {
   const { rows } = await db.execute<{ id: string; attempt: number | null; total: number | null; done: number; failed: number }>(sql`
-    SELECT id,(result::json->>'attempt')::float8 AS attempt,json_array_length(result::json->'events') AS total,
-      (SELECT count(*)::float8 FROM json_array_elements(result::json->'events') AS event WHERE event->>'status'='done') AS done,
-      (SELECT count(*)::float8 FROM json_array_elements(result::json->'events') AS event WHERE event->>'status'='failed') AS failed
-    FROM business.job WHERE id=ANY(${sql.param(ids)}::text[]) AND kind=${ANNUAL_CORRESPONDENCE_KIND}`)
-  return new Map<string, Partial<Pick<TaskSummary, 'annual' | 'links' | 'capabilities'>>>(rows.map(({ id, total, done, failed, attempt }) => [
-    id, { annual: { total, done, failed, unfinished: total === null ? null : total - done - failed, attempt },
-      links: [{ label: '年度任务详情与重试资格', to: `/api/roster/annual-correspondence-tasks/${id}` }],
-      capabilities: { cancel: false, retry: false, retryItemIds: [], reason: '请通过年度专属接口核对当前来源代次与重试资格。' } },
+    SELECT id,
+      CASE WHEN (result::json->'attempt')::text ~ '^-?[0-9]+$' THEN (result::json->>'attempt')::float8 END AS attempt,
+      json_array_length(events.value) AS total,
+      (SELECT count(*)::float8 FROM json_array_elements(events.value) AS event WHERE event->>'status'='done') AS done,
+      (SELECT count(*)::float8 FROM json_array_elements(events.value) AS event WHERE event->>'status'='failed') AS failed
+    FROM business.job
+    CROSS JOIN LATERAL (SELECT CASE WHEN json_typeof(result::json->'events')='array' THEN result::json->'events' END AS value) events
+    WHERE id=ANY(${sql.param(ids)}::text[]) AND kind=${ANNUAL_CORRESPONDENCE_KIND}`)
+  return new Map(rows.map(({ id, total, done, failed, attempt }) => [
+    id, {
+      annual: annualTaskSummary(total, done, failed, attempt),
+      links: annualTaskLinks(id),
+      capabilities: { cancel: false, retry: false, retryItemIds: [], reason: annualTaskReason },
+    },
   ]))
 }

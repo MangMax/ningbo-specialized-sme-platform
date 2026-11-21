@@ -1,4 +1,4 @@
-import type { TaskSummaryAccess } from '../../../../core/server/utils/job-runner-postgres'
+import { platformTaskLinks, rosterTaskError, taskRetryReason } from './task-presentation'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { isJobId, type JobState } from '../../../../core/lib/job'
 import { TASK_EXPORTS } from '../../../lib/sme-roster/task-exports'
@@ -34,28 +34,47 @@ function projectCandidateSummary(state: JobState, discovery: CandidateRead | nul
   return { discovery, discoveryRetry, discoveryItems, summary }
 }
 
-export async function summarizePostgresCandidateJobs(db: NodePgDatabase, ids: string[], detail: boolean, { authorized }: TaskSummaryAccess) {
-  const { rows } = await db.execute<{ id: string; state: JobState; meta: CandidateRead; hasError: boolean; restarted: boolean }>(sql`
-    SELECT id,state,coalesce(result::jsonb,'{}'::jsonb) || jsonb_build_object('titleCode',business.job_params_for_query(params)->>'titleCode',
-      'queryId',business.job_params_for_query(params)->'queryId','eventCount',json_array_length(business.job_params_for_query(params)->'eventIds')) AS meta,
-      error IS NOT NULL AS "hasError",coalesce(position('服务重启' in error),0)>0 AS restarted
-    FROM business.job WHERE id=ANY(${sql.param(ids)}::text[]) AND kind=${CANDIDATE_JOB_KIND}`)
-  const out = new Map<string, Partial<Pick<TaskSummary, 'discovery' | 'links' | 'capabilities' | 'error'>>>()
-  for (const row of rows) {
+export function candidateTaskLinks(projected: ReturnType<typeof projectCandidateSummary>, detail: boolean) {
+  const links = platformTaskLinks()
+  if (detail) for (const item of projected.discoveryItems) if (item.enterpriseId) links.push({
+    label: `核对公布事件 #${item.eventId}`, to: `/enterprises/${item.enterpriseId}?eventId=${item.eventId}`,
+  })
+  if (isJobId(projected.discovery?.continuationJobId)) links.push({
+    label: '后续受影响事件任务', to: `/tasks?tab=sme-roster&group=platform&job=${projected.discovery.continuationJobId}`,
+  })
+  return links
+}
+
+export async function summarizePostgresCandidateJobs(db: NodePgDatabase, ids: string[], detail: boolean) {
+  const { rows } = await db.execute<{ id: string; kind: string; state: JobState; meta: CandidateRead; hasError: boolean; restarted: boolean }>(sql`
+    SELECT id,kind,state,json_build_object(
+      'titleCode',left(p.params->>'titleCode',40),'queryId',p.params->'queryId','eventCount',json_array_length(p.params->'eventIds'),
+      'ruleVersion',left(r.result->>'ruleVersion',80),'attempt',r.result->'attempt',
+      'throughEventId',r.result->'throughEventId','nextAfterEventId',r.result->'nextAfterEventId',
+      'continuationJobId',left(r.result->>'continuationJobId',26),
+      'counts',CASE WHEN json_typeof(r.result->'counts')='object' THEN (
+        SELECT json_object_agg(key,CASE WHEN (r.result->'counts'->key)::text ~ '^-?[0-9]+$' THEN r.result->'counts'->key END)
+        FROM unnest(ARRAY['succeeded','needsReview','failed','created','existing']) keys(key)
+      ) END,
+      'items',CASE WHEN ${detail} THEN (
+        SELECT json_agg(json_build_object('eventId',i.value->'eventId','enterpriseId',i.value->'enterpriseId',
+          'status',left(i.value->>'status',20),'created',i.value->'created','existing',i.value->'existing',
+          'errorCode',left(i.value->>'errorCode',50)))
+        FROM (SELECT value FROM json_array_elements(r.result->'items') LIMIT 200) i
+      ) END
+    ) AS meta,error IS NOT NULL AS "hasError",coalesce(position('服务重启' in error),0)>0 AS restarted
+    FROM business.job
+    CROSS JOIN LATERAL (SELECT business.job_params_for_query(params) AS params) p
+    CROSS JOIN LATERAL (SELECT business.job_params_for_query(result) AS result) r
+    WHERE id=ANY(${sql.param(ids)}::text[]) AND kind=${CANDIDATE_JOB_KIND}`)
+  return new Map(rows.map(row => {
     const projected = projectCandidateSummary(row.state, row.meta, detail)
-    const links: TaskSummary['links'] = [{ label: '平台查询证据', to: '/platform-queries' }, { label: '比对与核查入口', to: '/comparison' }]
-    if (detail) for (const item of projected.discoveryItems) if (item.enterpriseId) links.push({
-      label: `核对公布事件 #${item.eventId}`, to: `/enterprises/${item.enterpriseId}?eventId=${item.eventId}`,
-    })
-    if (isJobId(projected.discovery?.continuationJobId)) links.push({
-      label: '后续受影响事件任务', to: `/tasks?tab=sme-roster&group=platform&job=${projected.discovery.continuationJobId}`,
-    })
     const retry = projected.discoveryRetry
-    out.set(row.id, { discovery: projected.summary, links,
-      capabilities: { cancel: false, retry: authorized && retry, retryItemIds: [],
-        reason: retry ? '仅处理未完成事件，保留已完成结果。' : '请通过业务入口核对任务。' },
-      error: row.hasError && row.state === 'failed' ? row.restarted
-        ? '服务重启，任务中断；可从检查点重试。' : '部分事件未完成；已完成候选保留，可显式重试未完成项。' : null })
-  }
-  return out
+    return [row.id, {
+      discovery: projected.summary,
+      links: candidateTaskLinks(projected, detail),
+      ...(retry ? { capabilities: { cancel: false, retry, retryItemIds: [], reason: taskRetryReason } } : {}),
+      error: rosterTaskError(row),
+    }]
+  }))
 }

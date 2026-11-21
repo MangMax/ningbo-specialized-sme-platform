@@ -1,3 +1,4 @@
+import { summarizePostgresReconcileJobs } from './reconcile-summary'
 import { resolvePostgresCredential } from '../../../../core/server/utils/credential-state-postgres'
 import { resolvePlatformCookie } from '../platform-credential'
 import type { ComparisonDirection } from '../../../lib/comparison'
@@ -123,6 +124,7 @@ export const reconcileSpec: JobSpec = {
   },
   run: (ctx, params) => runReconcile(ctx, params, resolvePlatformCookie()),
   postgres: {
+    taskCenter: { summaries: summarizePostgresReconcileJobs },
     async run(ctx, params) {
       const cookie = (await resolvePostgresCredential(ctx.db, 'sme-roster.miitCookie')).value
       let cancelled = await ctx.cancelled()

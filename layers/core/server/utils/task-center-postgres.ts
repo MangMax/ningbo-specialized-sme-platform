@@ -4,18 +4,19 @@ import { createError, getHeader, getQuery, getRouterParam, setHeader, setRespons
 import { requestLogContext } from '../../lib/logging'
 import { registerJobSpecs } from '../../../../server/utils/job-specs'
 import type { TaskCenterAction } from '../../../../server/task-center'
-import { isJobId, JOB_STATES, type JobState, type JobSummaryDto } from '../../lib/job'
+import { isJobId, JOB_STATES, type JobState } from '../../lib/job'
 import { getTaskFilterKinds, getTaskKind, getTaskTabs, resolveTaskFilters } from '../../lib/task-catalog'
 import type { TaskList, TaskSummary, TaskSummaryProjection } from '../../lib/task-center'
 import { readApiToken, resolveApiAuth } from './api-auth'
 import { postgresJobHandler } from './job-runner-postgres'
-import { cancelPostgresJob, getPostgresJobSummary, listPostgresTaskCenter } from './job-store-postgres'
+import { cancelPostgresJob, getPostgresTaskCenterRow, listPostgresTaskCenter, type PostgresTaskCenterRow } from './job-store-postgres'
 import { postgresJobsEnabled, requirePostgresJobsWritable, usePostgresJobsDb } from './postgres-jobs'
 import { taskCenterBrowserAccess } from './task-center-access'
+import { taskSummaryBase, taskSummaryCapabilities, taskSummaryError } from './task-summary'
 
 async function projectSummaries(
-  db: NodePgDatabase, rows: JobSummaryDto[], authorizedFor: (kind: string) => boolean, detail = false, writable = true,
-) {
+  db: NodePgDatabase, rows: PostgresTaskCenterRow[], authorizedFor: (kind: string) => boolean, detail = false, writable = true,
+): Promise<TaskSummary[]> {
   const projections = new Map<string, TaskSummaryProjection>()
   for (const [kind, tasks] of Map.groupBy(rows, row => row.kind)) {
     const handler = postgresJobHandler(kind)?.taskCenter
@@ -29,54 +30,32 @@ async function projectSummaries(
   }
   return rows.map(row => {
     const authorized = authorizedFor(row.kind)
-    const base = summarize(row, authorized)
+    const base = taskSummaryBase(row)
     const fields = projections.get(row.id)
-    const capabilities = fields?.capabilities ?? base.capabilities
+    const retry = fields?.capabilities
     return {
       ...fields,
       ...base,
       label: fields?.label ?? base.label,
       progress: { ...base.progress, ...fields?.progress },
-      outcome: fields?.outcome ?? base.outcome,
-      links: fields?.links ?? base.links,
-      error: fields?.error === undefined ? base.error : fields.error,
-      capabilities: writable ? {
-        cancel: base.capabilities.cancel,
-        retry: authorized && capabilities.retry,
-        retryItemIds: capabilities.retryItemIds,
-        reason: !fields ? base.capabilities.reason : !authorized ? '当前请求仅可查看任务。'
-          : base.capabilities.cancel ? base.capabilities.reason : capabilities.reason,
-      } : { cancel: false, retry: false, retryItemIds: [], reason: '当前任务中心只读。' },
+      outcome: fields?.outcome ?? null,
+      links: fields?.links ?? [],
+      ...(detail ? { items: fields?.items ?? [] } : {}),
+      error: fields?.error === undefined ? taskSummaryError(row) : fields.error,
+      capabilities: taskSummaryCapabilities(row.state, authorized, writable, retry?.retry, retry?.retryItemIds, retry?.reason),
     }
   })
 }
 
 export async function readPostgresTaskCenterEntry(db: NodePgDatabase, id: string, authorizedFor: (kind: string) => boolean, writable = true) {
   return db.transaction(async tx => {
-    const current = await getPostgresJobSummary(tx, id)
+    const current = await getPostgresTaskCenterRow(tx, id)
     return current ? (await projectSummaries(tx, [current], authorizedFor, true, writable))[0]! : null
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }
 
 function positive(raw: unknown, fallback: number, max: number) {
   return typeof raw !== 'object' && Number.isInteger(Number(raw)) && Number(raw) > 0 ? Math.min(Number(raw), max) : fallback
-}
-
-function summarize(row: JobSummaryDto, authorized: boolean): TaskSummary {
-  const kind = getTaskKind(row.kind)
-  const active = row.state === 'queued' || row.state === 'running'
-  const unit = kind?.module === 'core' && kind.group.id === 'ocr' ? '份文件' : '项'
-  return {
-    id: row.id, kind: row.kind.slice(0, 100), label: kind?.label ?? row.kind.slice(0, 100),
-    module: kind?.module ?? null, group: kind?.group.id ?? 'all', state: row.state,
-    createdAt: row.createdAt, startedAt: row.startedAt, finishedAt: row.finishedAt,
-    progress: { done: row.progress.done, total: row.percent === null || row.progress.total <= 0 ? null : row.progress.total,
-      unit, stage: row.state === 'queued' ? '等待执行' : active ? '执行中' : '执行结束' },
-    error: row.state === 'failed' ? row.error : null, outcome: null,
-    capabilities: { cancel: active && authorized, retry: false, retryItemIds: [],
-      reason: active && authorized ? '可请求取消；实际状态以服务端终态为准。' : '请通过业务入口核对任务。' },
-    links: [],
-  }
 }
 
 export type PostgresTaskListOptions = (query: Record<string, unknown>) => { filter?: SQL; exportReady: boolean }
@@ -127,7 +106,7 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
     if (!task) throw createError({ statusCode: 404, message: '任务不存在' })
     return task
   }
-  const row = await getPostgresJobSummary(db, id)
+  const row = await getPostgresTaskCenterRow(db, id)
   if (!row) throw createError({ statusCode: 404, message: '任务不存在' })
   const authorized = authorizedFor(row.kind)
   if (!authorized) throw createError({ statusCode: 401, message: '管理操作需要 API 授权' })
@@ -150,7 +129,7 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
   const result = await cancelPostgresJob(db, id, requestLogContext(event))
   if (!result) throw createError({ statusCode: 404, message: '任务不存在' })
   if (result.cancelRequested) setResponseStatus(event, 202)
-  const task = await getPostgresJobSummary(db, id)
+  const task = await getPostgresTaskCenterRow(db, id)
   if (!task) throw createError({ statusCode: 404, message: '任务不存在' })
   return { task: (await projectSummaries(db, [task], authorizedFor))[0], cancelRequested: result.cancelRequested }
 }

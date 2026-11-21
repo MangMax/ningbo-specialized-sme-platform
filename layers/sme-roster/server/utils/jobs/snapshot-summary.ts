@@ -1,3 +1,4 @@
+import { platformTaskLinks } from './task-presentation'
 import type { TaskSummaryAccess } from '../../../../core/server/utils/job-runner-postgres'
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
@@ -46,9 +47,15 @@ function formatSnapshotSummary(counts: Record<string,unknown>, sources: Record<s
   }
 }
 
+export const snapshotTaskLinks = (id: string) => [
+  { label:'快照范围、计数与未完成位置',to:`/tasks?tab=sme-roster&group=platform&job=${id}#snapshot-result` },
+  ...platformTaskLinks(),
+]
+
 export async function summarizePostgresSnapshots(db: NodePgDatabase, ids: string[], detail: boolean, { authorized }: TaskSummaryAccess) {
-  const links = (id:string) => [{ label:'快照范围、计数与未完成位置',to:`/tasks?tab=sme-roster&group=platform&job=${id}#snapshot-result` }]
-  if (!detail || !authorized) return new Map(ids.map(id=>[id,{ links:links(id) }]))
+  if (!detail || !authorized) return new Map(ids.map(id => [id, {
+    links: snapshotTaskLinks(id),
+  }]))
   const { rows } = await db.execute<{ id:string; counts:Record<string,unknown> & { bySource?:Record<string,Record<string,unknown>> } | null;
     positions:Record<string,unknown>[] | null }>(sql`
     SELECT j.id,v.result->'counts' AS counts,
@@ -58,10 +65,10 @@ export async function summarizePostgresSnapshots(db: NodePgDatabase, ids: string
           FROM json_array_elements(i.value->'segments') s(value),json_array_elements(s.value->'pages') p(value)
           WHERE p.value->>'status'='success'),0)+1))
         FROM (SELECT value FROM json_array_elements(v.result->'items') i(value)
-          WHERE i.value->>'complete' IS DISTINCT FROM 'true' LIMIT 21) i) AS positions
+          WHERE coalesce((i.value->'complete')::text, '') NOT IN ('true','1') LIMIT 21) i) AS positions
     FROM business.job j CROSS JOIN LATERAL (SELECT j.result::json AS result) v
     WHERE j.id=ANY(${sql.param(ids)}::text[]) AND j.kind='difference-snapshot'`)
-  return new Map(rows.map(row=>[row.id,{ links:links(row.id),
+  return new Map(rows.map(row=>[row.id,{ links: snapshotTaskLinks(row.id),
     snapshot:formatSnapshotSummary(row.counts ?? {},row.counts?.bySource ?? {},row.positions ?? []),
   }]))
 }
