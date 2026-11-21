@@ -222,7 +222,7 @@ function restoreSourceFocus() {
                     />
                   </Button>
                 </TableHead>
-                <TableHead scope="col" class="sticky right-0 z-20 w-20 border-l bg-muted text-right">资料</TableHead>
+                <TableHead scope="col" class="sticky right-0 z-20 w-28 border-l bg-muted text-right">资料</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
