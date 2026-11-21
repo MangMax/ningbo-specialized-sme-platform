@@ -35,6 +35,8 @@ async function projectSummaries(
     return {
       ...fields,
       ...base,
+      label: fields?.label ?? base.label,
+      progress: { ...base.progress, ...fields?.progress },
       outcome: fields?.outcome ?? base.outcome,
       links: fields?.links ?? base.links,
       error: fields?.error === undefined ? base.error : fields.error,

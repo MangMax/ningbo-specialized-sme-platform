@@ -12,7 +12,9 @@ interface TaskSummaryBase {
 export interface TaskSummaryExtensions {}
 export type TaskSummary = TaskSummaryBase & TaskSummaryExtensions
 
-type ProjectableTaskFields = Pick<TaskSummaryBase, 'outcome' | 'links' | 'capabilities' | 'error'>
+type ProjectableTaskFields = Pick<TaskSummaryBase, 'label' | 'outcome' | 'links' | 'capabilities' | 'error'> & {
+  progress: Partial<Pick<TaskSummaryBase['progress'], 'total' | 'unit' | 'stage'>>
+}
 export type TaskSummaryProjection = Partial<ProjectableTaskFields & TaskSummaryExtensions> & {
   [Key in Exclude<keyof TaskSummaryBase, keyof ProjectableTaskFields>]?: never
 }
