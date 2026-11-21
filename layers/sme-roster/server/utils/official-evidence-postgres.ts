@@ -1,5 +1,9 @@
-import { sql, type SQL } from 'drizzle-orm'
+import { and, asc, count, eq, gt, lte, notExists, sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { alias } from 'drizzle-orm/pg-core'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
+import { officialEvidenceRowRevision } from '../../../../db/postgresql/official-evidence-tables'
 import * as schema from '../../../../db/schema'
 import { computeTitleLifecycle } from '../../lib/roster/lifecycle'
 import { postgresRosterRow, readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
@@ -154,31 +158,53 @@ export async function readPostgresPublicOfficialEvidence(db: NodePgDatabase, kin
   return officialProjectionResponse(result, availability, maxBytes, await importPostgresReceiptRedactor(db))
 }
 
-export async function readPostgresOfficialEvidencePages(db: Db, requests: readonly OfficialEvidencePageRequest[]): Promise<OfficialEvidencePageResult[]> {
-  const { rows } = await db.execute<{
-    eventId: number; scopeSize: number; fieldLimit: boolean; extra: boolean; rows: OfficialEvidenceRow[] | null
-  }>(sql`
-    SELECT q.event_id::float8 AS "eventId", s.count::integer AS "scopeSize", p.*
-    FROM unnest(${sql.param(requests.map(p => p.eventId))}::bigint[],
-      ${sql.param(requests.map(p => p.afterEvidenceId ?? 0))}::bigint[]) WITH ORDINALITY q(event_id, after_id, ordinal)
-    CROSS JOIN LATERAL (SELECT count(*) FROM (SELECT id FROM record_evidence WHERE record_event_id=q.event_id LIMIT 301) relevant) s
-    CROSS JOIN LATERAL (
-      WITH selected AS (
-        SELECT r.* FROM official_evidence_row_revision r
-        WHERE s.count <= 300 AND r.event_id = q.event_id AND r.evidence_id > q.after_id
-          AND NOT EXISTS (SELECT 1 FROM official_evidence_row_revision newer WHERE newer.evidence_id=r.evidence_id AND newer.revision>r.revision)
-        ORDER BY r.evidence_id LIMIT 51
-      ), projected AS (
-        SELECT r.evidence_id, ${capturedShape} AS body, ${oversizedField} AS field_limit
-        FROM (SELECT * FROM selected ORDER BY evidence_id LIMIT 50) r
-        LEFT JOIN record_event e ON e.id=r.event_id LEFT JOIN record rec ON rec.id=e.record_id
-        LEFT JOIN enterprise owner ON owner.id=rec.enterprise_id
-      )
-      SELECT (SELECT count(*) FROM selected)>50 AS extra, coalesce(bool_or(field_limit),false) AS "fieldLimit",
-        CASE WHEN NOT coalesce(bool_or(field_limit), false) AND coalesce(sum(octet_length(body::text)),0) <= 73536
-          THEN coalesce(json_agg(body ORDER BY evidence_id),'[]'::json) END AS rows
-      FROM projected
-    ) p ORDER BY q.ordinal`)
+export async function readPostgresOfficialEvidencePages(db: NodePgDatabase, requests: readonly OfficialEvidencePageRequest[]): Promise<OfficialEvidencePageResult[]> {
+  if (!requests.length) return []
+  // Drizzle can join lateral subqueries but cannot expose a table-valued UNNEST with
+  // ordinality. The two bound arrays preserve request order and duplicate event IDs.
+  const requested = sql`unnest(${sql.param(requests.map(page => page.eventId))}::bigint[],
+    ${sql.param(requests.map(page => page.afterEvidenceId ?? 0))}::bigint[]) WITH ORDINALITY q(event_id, after_id, ordinal)`
+  const eventId = sql<number>`q.event_id`.mapWith(Number)
+  const afterId = sql<number>`q.after_id`
+  const relevant = db.select({ id: recordEvidence.id }).from(recordEvidence)
+    .where(eq(recordEvidence.recordEventId, eventId)).limit(301).as('relevant_evidence')
+  const scope = db.select({ size: count().as('scope_size') }).from(relevant).as('source_scope')
+  const revision = alias(officialEvidenceRowRevision, 'r')
+  const newer = alias(officialEvidenceRowRevision, 'newer')
+  const selected = db.$with('selected').as(db.select().from(revision).where(and(
+    lte(scope.size, 300),
+    eq(revision.eventId, eventId),
+    gt(revision.evidenceId, afterId),
+    notExists(db.select({ id: newer.evidenceId }).from(newer).where(and(
+      eq(newer.evidenceId, revision.evidenceId), gt(newer.revision, revision.revision),
+    ))),
+  )).orderBy(revision.evidenceId).limit(51))
+  const current = db.select().from(selected).orderBy(selected.evidenceId).limit(50).as('r')
+  const event = alias(recordEvent, 'e')
+  const currentRecord = alias(record, 'rec')
+  const owner = alias(enterprise, 'owner')
+  // Reuse the database JSON projection and field-size expression so aggregate
+  // byte limits continue to measure the same representation before transfer.
+  const projected = db.$with('projected').as(db.select({
+    evidenceId: current.evidenceId,
+    body: capturedShape.as('body'),
+    fieldLimit: oversizedField.as('field_limit'),
+  }).from(current).leftJoin(event, eq(event.id, current.eventId))
+    .leftJoin(currentRecord, eq(currentRecord.id, event.recordId)).leftJoin(owner, eq(owner.id, currentRecord.enterpriseId)))
+  const total = db.select({ count: count() }).from(selected)
+  // Drizzle 0.45 has no ordered JSON aggregate or byte-length aggregate budget.
+  const fieldLimit = sql<boolean>`coalesce(bool_or(${projected.fieldLimit}), false)`
+  const body = sql<OfficialEvidenceRow[] | null>`CASE WHEN NOT ${fieldLimit}
+    AND coalesce(sum(octet_length(${projected.body}::text)), 0) <= 73536
+    THEN coalesce(json_agg(${projected.body} ORDER BY ${projected.evidenceId}), '[]'::json) END`
+  const pageResult = db.with(selected, projected).select({
+    extra: gt(total, 50).as('extra'),
+    fieldLimit: fieldLimit.as('has_oversized_field'),
+    rows: body.as('page_rows'),
+  }).from(projected).as('page_result')
+  const rows = await db.select({
+    eventId, scopeSize: scope.size, extra: pageResult.extra, fieldLimit: pageResult.fieldLimit, rows: pageResult.rows,
+  }).from(requested).crossJoinLateral(scope).crossJoinLateral(pageResult).orderBy(asc(sql`q.ordinal`))
   return rows.map(row => {
     const { eventId } = row
     if (row.scopeSize > 300) return { eventId, error: 'source_limit' }

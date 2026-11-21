@@ -4,7 +4,8 @@ import { MAX_BATCH_ATTEMPTS, type PlatformBatchItem } from '../../../lib/platfor
 import type { TaskSummary } from '../../../lib/sme-roster/task-summary'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { JobState } from '../../../../core/lib/job'
-import { sql } from 'drizzle-orm'
+import { and, eq, isNotNull, sql } from 'drizzle-orm'
+import { job as pgJob } from '../../../../../db/postgresql/job-tables'
 import { schema } from '../../../../../db/client'
 interface BatchItemRead extends Pick<PlatformBatchItem, 'status' | 'completeness'> {
   id: unknown; unfinished: number; positions: PlatformBatchItem['unfinished']
@@ -33,13 +34,14 @@ export function readBatchSummary(row: { kind: string; state: JobState; items: st
 }
 
 export async function summarizePostgresBatches(db: NodePgDatabase, ids: string[], detail: boolean) {
-  const { rows } = await db.execute<{
-    id: string; kind: string; state: JobState; hasError: boolean; restarted: boolean; itemCount: number; attempt: number; items: string
-  }>(sql`
-    SELECT j.id, j.kind, j.state, j.error IS NOT NULL AS "hasError", coalesce(position('服务重启' in j.error),0)>0 AS restarted,
-      json_array_length(j.params::json -> 'items') AS "itemCount",
-      (v.result ->> 'attempt')::integer AS attempt,
-      (SELECT json_agg(json_build_object(
+  // PostgreSQL JSON set-returning functions and per-item aggregate projection have no Drizzle 0.45.4 builders.
+  const rows = await db.select({
+    id: pgJob.id, kind: pgJob.kind, state: pgJob.state,
+    hasError: isNotNull(pgJob.error).mapWith(Boolean),
+    restarted: sql<boolean>`coalesce(position('服务重启' in ${pgJob.error}),0)>0`,
+    itemCount: sql<number>`json_array_length(${pgJob.params}::json -> 'items')`,
+    attempt: sql<number>`(v.result ->> 'attempt')::integer`,
+    items: sql<string>`(SELECT json_agg(json_build_object(
         'id', item.value ->> 'itemId', 'status', item.value ->> 'status',
         'completeness', item.value ->> 'completeness',
         'unfinished', coalesce(json_array_length(item.value -> 'unfinished'), 0),
@@ -48,11 +50,10 @@ export async function summarizePostgresBatches(db: NodePgDatabase, ids: string[]
             'rdjb', position.value -> 'rdjb', 'page', position.value -> 'page'))
           FROM (SELECT value FROM json_array_elements(item.value -> 'unfinished') LIMIT 50) position
         ) END
-      ))::text FROM (SELECT value FROM json_array_elements(v.result -> 'items') LIMIT 50) item) AS items
-    FROM business.job j
-    CROSS JOIN LATERAL (SELECT regexp_replace(j.result, ${String.raw`\\u(?:0000|d[89a-f][0-9a-f]{2})`},
-      ${String.raw`\\uFFFD`}, 'gi')::json AS result) v
-    WHERE j.id = ANY(${sql.param(ids)}::text[]) AND j.kind = 'platform-query-batch'`)
+      ))::text FROM (SELECT value FROM json_array_elements(v.result -> 'items') LIMIT 50) item)`,
+  }).from(pgJob).crossJoinLateral(sql`(SELECT regexp_replace(${pgJob.result}, ${String.raw`\\u(?:0000|d[89a-f][0-9a-f]{2})`},
+      ${String.raw`\\uFFFD`}, 'gi')::json AS result) v`)
+    .where(and(eq(pgJob.kind, 'platform-query-batch'), sql`${pgJob.id} = any(${sql.param(ids)}::text[])`))
   return new Map(rows.map(row => {
     const { items, retryItemIds, outcome, retry } = readBatchSummary(row, detail)
     return [row.id, {

@@ -1,4 +1,7 @@
-import { sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
+import { enterprise, enterpriseAlias } from '../../../../db/postgresql/enterprise-tables'
+import { evidenceRevisionEvent113 } from '../../../../db/postgresql/evidence-review-tables'
+import { record, recordEvent } from '../../../../db/postgresql/ledger-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { attachPostgresReviewedEnterprise, type ReviewedSubject } from '../../../core/server/public'
 import { evidenceDigest113 } from './evidence-impact-113'
@@ -7,12 +10,10 @@ import { appendPostgresEvidenceRevision } from './evidence-revision-postgres'
 type Transaction = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 
 export async function readPostgresIdentityMaterial(tx: Transaction, enterpriseId: number) {
-  const { rows: [enterprise] } = await tx.execute<{ uscc: string | null; name: string }>(sql`
-    SELECT uscc_norm AS uscc, name_norm AS name FROM enterprise WHERE id = ${enterpriseId}`)
-  const { rows } = await tx.execute<{ name: string; from: string | null; to: string | null }>(sql`
-    SELECT DISTINCT name_norm AS name, valid_from AS "from", valid_to AS "to" FROM enterprise_alias
-    WHERE enterprise_id = ${enterpriseId} AND verification_status = 'confirmed'`)
-  return evidenceDigest113({ enterprise: enterprise ?? null, aliases: rows.map(evidenceDigest113).sort() })
+  const [subject] = await tx.select({ uscc: enterprise.usccNorm, name: enterprise.nameNorm }).from(enterprise).where(eq(enterprise.id, enterpriseId))
+  const aliases = await tx.selectDistinct({ name: enterpriseAlias.nameNorm, from: enterpriseAlias.validFrom, to: enterpriseAlias.validTo })
+    .from(enterpriseAlias).where(and(eq(enterpriseAlias.enterpriseId, enterpriseId), eq(enterpriseAlias.verificationStatus, 'confirmed')))
+  return evidenceDigest113({ enterprise: subject ?? null, aliases: aliases.map(evidenceDigest113).sort() })
 }
 
 export async function capturePostgresIdentityChange(tx: Transaction, enterpriseId: number, sourceVersion: string, before: string) {
@@ -22,18 +23,22 @@ export async function capturePostgresIdentityChange(tx: Transaction, enterpriseI
     sourceKind: 'identity', sourceKey: `enterprise:${enterpriseId}`, sourceVersion, enterpriseId,
     beforeFactDigest: evidenceDigest113(before), factDigest: evidenceDigest113(after), metadata: { fromEnterpriseId: null },
   })
-  if (revisionId === null) return
-  await tx.execute(sql`
-    INSERT INTO evidence_revision_event_113 (revision_id, event_id, enterprise_id, title_code)
-    SELECT ${revisionId}, e.id, r.enterprise_id, r.title_code FROM record r JOIN record_event e ON e.record_id = r.id
-    WHERE r.enterprise_id = ${enterpriseId} ON CONFLICT DO NOTHING`)
+  if (revisionId !== null) await attachPostgresIdentityRevisionEvents(tx, revisionId, enterpriseId)
+}
+
+export async function attachPostgresIdentityRevisionEvents(tx: Transaction, revisionId: number, enterpriseId: number) {
+  await tx.insert(evidenceRevisionEvent113).select(tx.select({
+    revisionId: sql<number>`${revisionId}`.as('revision_id'), eventId: recordEvent.id,
+    enterpriseId: record.enterpriseId, titleCode: record.titleCode,
+  }).from(record).innerJoin(recordEvent, eq(recordEvent.recordId, record.id)).where(eq(record.enterpriseId, enterpriseId)))
+    .onConflictDoNothing()
 }
 
 export async function applyPostgresReviewedRosterIdentity(tx: Transaction, subject: Extract<ReviewedSubject, { action: 'attach' }>) {
   if (subject.fields?.name === undefined && subject.fields?.uscc === undefined) {
     return attachPostgresReviewedEnterprise(tx, subject)
   }
-  await tx.execute(sql`SELECT id FROM enterprise WHERE id = ${subject.enterpriseId} FOR UPDATE`)
+  await tx.select({ id: enterprise.id }).from(enterprise).where(eq(enterprise.id, subject.enterpriseId)).for('update')
   const before = await readPostgresIdentityMaterial(tx, subject.enterpriseId)
   const applied = await attachPostgresReviewedEnterprise(tx, subject)
   if (applied.auditId === null) return applied

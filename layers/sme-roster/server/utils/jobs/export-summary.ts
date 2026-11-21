@@ -9,7 +9,8 @@ import type { TaskSummaryProjection } from '../../../../core/lib/task-center'
 import type { useApplicationDb } from '../../../../../db/client'
 import { currentArtifact, currentExportDbPath } from '../current-export-artifact'
 import type { ProjectedTask } from './task-summary'
-import { sql } from 'drizzle-orm'
+import { and, eq, isNotNull, sql } from 'drizzle-orm'
+import { job as pgJob } from '../../../../../db/postgresql/job-tables'
 import { schema } from '../../../../../db/client'
 interface ExportRead {
   regenerateOf: string | null; phase: string; generatedAt: string | null; snapshotStartedAt: string | null
@@ -42,7 +43,7 @@ export function exportTaskProgress(state: JobState, phase: string | undefined) {
   }
 }
 
-type ExportSummaryRow = Pick<ProjectedTask, 'id' | 'kind' | 'state' | 'exportTitle' | 'exportMeta'>
+type ExportSummaryRow = Pick<ProjectedTask, 'id' | 'kind' | 'state' | 'exportMeta'> & { exportTitle: string | null }
 
 export function readExportSummary(row: ProjectedTask, authorized: boolean, db: ReturnType<typeof useApplicationDb>) {
   return projectExportSummary(row, authorized, row.kind === 'current-roster-export' ? currentExportDbPath(db) : '', true)
@@ -78,21 +79,26 @@ async function projectExportSummary(row: ExportSummaryRow, authorized: boolean, 
 }
 
 export async function readPostgresExportSummaries(db: NodePgDatabase, ids: string[], _detail: boolean, { authorized, writable }: TaskSummaryAccess) {
-  const { rows } = await db.execute<ExportSummaryRow & { hasError: boolean; restarted: boolean }>(sql`
-    SELECT id, kind, state, error IS NOT NULL AS "hasError", coalesce(position('服务重启' in error),0)>0 AS restarted,
-      left(business.job_params_for_query(params)->>'titleCode',40) AS "exportTitle",
-      json_build_object(
-        'regenerateOf',left(business.job_params_for_query(params)->>'regenerateOf',26),
-        'phase',left(result::json->>'phase',20),'generatedAt',left(result::json->>'generatedAt',30),
-        'snapshotStartedAt',left(result::json->>'snapshotStartedAt',30),
-        'ruleVersion',left(result::json->>'ruleVersion',60),'dataVersion',left(result::json->>'dataVersion',72),
-        'counts',json_build_object('eligible',result::json#>'{counts,eligible}',
-          'pending',result::json#>'{counts,pending}','excluded',result::json#>'{counts,excluded}'),
-        'artifact',json_build_object('id',left(result::json#>>'{artifact,id}',26),
-          'size',result::json#>'{artifact,size}','sha256',left(result::json#>>'{artifact,sha256}',64),
-          'generatedAt',left(result::json#>>'{artifact,generatedAt}',30),
-          'expiresAt',left(result::json#>>'{artifact,expiresAt}',30)))::text AS "exportMeta"
-    FROM business.job WHERE id=ANY(${sql.param(ids)}::text[]) AND kind='current-roster-export'`)
+  // Drizzle 0.45.4 lacks PostgreSQL JSON path and bounded text projection builders.
+  const params = sql`business.job_params_for_query(${pgJob.params})`
+  const resultJson = sql`${pgJob.result}::json`
+  const rows = await db.select({
+    id: pgJob.id, kind: pgJob.kind, state: pgJob.state,
+    hasError: isNotNull(pgJob.error).mapWith(Boolean),
+    restarted: sql<boolean>`coalesce(position('服务重启' in ${pgJob.error}),0)>0`,
+    exportTitle: sql<string | null>`left(${params}->>'titleCode',40)`,
+    exportMeta: sql<string>`json_build_object(
+      'regenerateOf',left(${params}->>'regenerateOf',26),
+      'phase',left(${resultJson}->>'phase',20),'generatedAt',left(${resultJson}->>'generatedAt',30),
+      'snapshotStartedAt',left(${resultJson}->>'snapshotStartedAt',30),
+      'ruleVersion',left(${resultJson}->>'ruleVersion',60),'dataVersion',left(${resultJson}->>'dataVersion',72),
+      'counts',json_build_object('eligible',${resultJson}#>'{counts,eligible}',
+        'pending',${resultJson}#>'{counts,pending}','excluded',${resultJson}#>'{counts,excluded}'),
+      'artifact',json_build_object('id',left(${resultJson}#>>'{artifact,id}',26),
+        'size',${resultJson}#>'{artifact,size}','sha256',left(${resultJson}#>>'{artifact,sha256}',64),
+        'generatedAt',left(${resultJson}#>>'{artifact,generatedAt}',30),
+        'expiresAt',left(${resultJson}#>>'{artifact,expiresAt}',30)))::text`,
+  }).from(pgJob).where(and(eq(pgJob.kind, 'current-roster-export'), sql`${pgJob.id} = any(${sql.param(ids)}::text[])`))
   const dbPath = resolveDbPath()
   const result = new Map<string, TaskSummaryProjection>()
   for (const row of rows) {

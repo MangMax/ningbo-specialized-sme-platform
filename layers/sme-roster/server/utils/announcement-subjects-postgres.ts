@@ -1,4 +1,5 @@
-import { sql } from 'drizzle-orm'
+import { and, eq, exists } from 'drizzle-orm'
+import { enterprise, enterpriseAlias } from '../../../../db/postgresql/enterprise-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { z } from 'zod'
 import { createPostgresReviewedEnterprise, EnterpriseKernelError, lockPostgresReviewedEnterpriseBatch } from '../../../core/server/public'
@@ -23,11 +24,15 @@ export async function reviewPostgresAnnouncementSubjects(tx: Tx, intakeId: numbe
     const sourceUscc = typeof source.uscc === 'string' ? normalizeReviewedUscc(source.uscc) : ''
     const name = normalizeName(source.name)
     const matchesSource = async (owner: number) => {
-      const { rows: [target] } = await tx.execute<{ name_norm: string; uscc_norm: string | null; confirmed_alias: boolean }>(sql`
-        SELECT name_norm,uscc_norm,EXISTS(SELECT 1 FROM enterprise_alias a WHERE a.enterprise_id=e.id
-          AND a.name_norm=${name} AND a.verification_status='confirmed') AS confirmed_alias FROM enterprise e WHERE e.id=${owner}`)
-      return !!target && (sourceUscc ? target.uscc_norm !== null && normalizeReviewedUscc(target.uscc_norm) === sourceUscc
-        : target.name_norm === name || target.confirmed_alias)
+      const confirmedAlias = tx.select({ id: enterpriseAlias.id }).from(enterpriseAlias).where(and(
+        eq(enterpriseAlias.enterpriseId, enterprise.id), eq(enterpriseAlias.nameNorm, name),
+        eq(enterpriseAlias.verificationStatus, 'confirmed'),
+      ))
+      const [target] = await tx.select({
+        nameNorm: enterprise.nameNorm, usccNorm: enterprise.usccNorm, confirmedAlias: exists(confirmedAlias).mapWith(Boolean),
+      }).from(enterprise).where(eq(enterprise.id, owner))
+      return !!target && (sourceUscc ? target.usccNorm !== null && normalizeReviewedUscc(target.usccNorm) === sourceUscc
+        : target.nameNorm === name || target.confirmedAlias)
     }
     const matchedBefore = subject.action === 'attach' && await matchesSource(subject.enterpriseId)
     let owner: number | undefined

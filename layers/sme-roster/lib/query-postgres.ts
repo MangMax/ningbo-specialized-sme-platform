@@ -86,7 +86,7 @@ function contains(column: AnyPgColumn, needle: string) {
 function ledgerScope(db: NodePgDatabase, params: RecordFilterQuery) {
   const filters: (SQL | undefined)[] = []
   if (params.title?.length) filters.push(inArray(record.titleCode, params.title))
-  if (params.source?.length) filters.push(inArray(record.source, params.source))
+  if (params.source?.length) filters.push(inArray(sql<string>`${record.source}`, params.source))
   if (params.district) filters.push(params.district.includes('\0') ? inArray(record.district, []) : eq(record.district, params.district))
   if (params.q) {
     const name = normalizeName(params.q)
@@ -105,7 +105,7 @@ function ledgerScope(db: NodePgDatabase, params: RecordFilterQuery) {
   if (params.eventType?.length || params.year?.length) {
     filters.push(exists(db.select({ id: recordEvent.id }).from(recordEvent).where(and(
       eq(recordEvent.recordId, record.id),
-      params.eventType?.length ? inArray(recordEvent.eventType, params.eventType) : undefined,
+      params.eventType?.length ? inArray(sql<string>`${recordEvent.eventType}`, params.eventType) : undefined,
       params.year?.length ? anyId(recordEvent.year, params.year.filter(Number.isSafeInteger)) : undefined,
     ))))
   }

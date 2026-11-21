@@ -1,17 +1,20 @@
-import { sql, type SQL } from 'drizzle-orm'
+import { and, desc, eq, sql, type SQLWrapper } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { platformApplyProjection as apply, platformBusinessObservation as observation, platformBusinessProjection as business,
+  platformCollection as collection, platformRecognizedProjection as recognized } from '../../../../db/postgresql/platform-tables'
 import { normalizeUscc } from '../domain'
 import { isValidUscc } from './uscc-research'
 import { projectPlatformQualificationFact, type PlatformQualificationInputRow, type PlatformQualificationFact } from './platform-qualification'
 
 /** Retain JS normalization for Unicode. Restrict the ordinary ASCII path in SQL
- * and recheck the small Unicode candidate set with the same domain function. */
-export function qualificationUsccCandidate(column: SQL, usccs: string[]) {
+ * and recheck the small Unicode candidate set with the same domain function.
+ * Drizzle 0.45 has no COLLATE, regexp_replace, length comparison or array ANY builder. */
+export function qualificationUsccCandidate(column: SQLWrapper, usccs: string[]) {
   return sql`(upper(regexp_replace(${column} COLLATE "C", '[[:space:]]', '', 'g')) = ANY(${sql.param(usccs)}::text[])
     OR octet_length(${column}) <> char_length(${column}))`
 }
 
-type Reader = Pick<NodePgDatabase, 'execute'>
+type Reader = Pick<NodePgDatabase, 'select'>
 type RecognizedRow = PlatformQualificationInputRow & { flag: Buffer | null; flagStorage: string }
 
 function recognizedFlag({ flag, flagStorage }: Pick<RecognizedRow, 'flag' | 'flagStorage'>): string | number | null {
@@ -37,51 +40,58 @@ export function createPostgresPlatformQualificationReader(db: Reader) {
 export type PostgresPlatformQualificationReader = ReturnType<typeof createPostgresPlatformQualificationReader>
 
 async function readQualificationKeyVariants(db: Reader) {
-  const { rows } = await db.execute<{ raw: string }>(sql`
-    SELECT uscc_raw AS raw FROM platform_recognized_projection WHERE uscc_raw COLLATE "C" !~ '^[0-9A-Z]{18}$'
-    UNION SELECT uscc_raw FROM platform_business_projection WHERE uscc_raw COLLATE "C" !~ '^[0-9A-Z]{18}$'
-    UNION SELECT uscc_raw FROM platform_apply_projection WHERE uscc_raw COLLATE "C" !~ '^[0-9A-Z]{18}$'`)
-  return Map.groupBy(rows.map(({ raw }) => ({ raw, normalized: normalizeUscc(raw) })), key => key.normalized)
+  // PostgreSQL regex with the bytewise collation has no Drizzle operator.
+  const unusual = (column: SQLWrapper) => sql`${column} COLLATE "C" !~ '^[0-9A-Z]{18}$'`
+  const variants = [recognized, business, apply].map(table =>
+    db.select({ raw: table.usccRaw }).from(table).where(unusual(table.usccRaw)))
+  const rows = await variants[0]!.union(variants[1]!).union(variants[2]!)
+  return Map.groupBy(rows.flatMap(({ raw }) => raw === null ? [] : [{ raw, normalized: normalizeUscc(raw) }]), key => key.normalized)
 }
 
 async function readFacts(db: Reader, byUscc: Map<string, { id: number; uscc_norm: string | null }[]>, codes: string[], raw: string[]) {
   const results = new Map<number, PlatformQualificationFact[]>()
-  const scope = sql`p.uscc_raw = ANY(${sql.param(raw)}::text[])`
-  const recognized = await db.execute<RecognizedRow>(sql`
-    SELECT ${latestProjection}, 'recognized_list' AS source,
-      p.source_valid_flag AS flag, p.source_valid_flag_sqlite_storage AS "flagStorage",
-      json_build_object('usccRaw',p.uscc_raw,'titleRaw',p.title_raw,'nameRaw',p.name_raw,
-        'qualificationFieldsRule',p.qualification_fields_rule,
-        'sourceRecognizedAt',p.source_recognized_at,'sourceValidityDate',p.source_validity_date,
-        'sourceProvinceName',p.source_province_name,'sourceCityName',p.source_city_name,
-        'sourceDistrictName',p.source_district_name,'sourceInvalidatedAt',p.source_invalidated_at,
-        'sourceInvalidationReason',p.source_invalidation_reason) AS p
-    FROM platform_recognized_projection p
-    ${latestObservation}
-    WHERE ${scope}`)
-  const business = await db.execute<PlatformQualificationInputRow>(sql`
-    SELECT ${latestProjection}, 'business_list' AS source,
-      json_build_object('usccRaw',p.uscc_raw,'titleRaw',p.title_raw,'nameRaw',p.name_raw,
-        'declareKind',p.declare_kind,'status',p.status,'businessYear',p.business_year,
-        'appliedAt',p.applied_at,'province',p.province) AS p
-    FROM platform_business_projection p
-    ${latestObservation}
-    WHERE ${scope}`)
-  const apply = await db.execute<PlatformQualificationInputRow>(sql`
-    SELECT ${latestProjection}, 'apply_list' AS source,
-      json_build_object('usccRaw',p.uscc_raw,'titleRaw',p.title_raw,'nameRaw',p.name_raw,
-        'declareKind',p.declare_kind,'status',p.status,'declarationYear',p.declaration_year,'appliedAt',p.applied_at) AS p
-    FROM platform_apply_projection p
-    ${latestObservation}
-    WHERE ${scope}`)
-  const recognizedFacts = recognized.rows.map(({ flag, flagStorage, ...row }) => ({
-    ...row, p: { ...row.p, sourceValidFlag: recognizedFlag({ flag, flagStorage }) },
-  }))
+  // Array ANY binds one parameter for an entire batch. Drizzle only offers parameter-per-value inArray.
+  const scope = (column: SQLWrapper) => sql`${column} = ANY(${sql.param(raw)}::text[])`
+  const latest = (recordId: typeof recognized.recordId | typeof business.recordId | typeof apply.recordId) =>
+    db.select({ recordId: observation.recordId, versionId: observation.versionId,
+      observationId: observation.id, collectedAt: collection.queriedAt })
+      .from(observation).innerJoin(collection, eq(collection.id, observation.collectionId))
+      .where(and(eq(observation.recordId, recordId), eq(observation.contentState, 'verified')))
+      // Drizzle has no COLLATE builder. The stored text order is bytewise.
+      .orderBy(desc(sql`${collection.queriedAt} COLLATE "C"`), desc(observation.id)).limit(1).as('latest')
+  const coordinates = (row: ReturnType<typeof latest>) => ({
+    recordId: row.recordId, versionId: row.versionId, observationId: row.observationId, collectedAt: row.collectedAt,
+  })
+  const recognizedLatest = latest(recognized.recordId)
+  const recognizedRows = await db.select({ ...coordinates(recognizedLatest),
+    flag: recognized.sourceValidFlag, flagStorage: recognized.sourceValidFlagSqliteStorage,
+    p: { usccRaw: recognized.usccRaw, titleRaw: recognized.titleRaw, nameRaw: recognized.nameRaw,
+      qualificationFieldsRule: recognized.qualificationFieldsRule, sourceRecognizedAt: recognized.sourceRecognizedAt,
+      sourceValidityDate: recognized.sourceValidityDate, sourceProvinceName: recognized.sourceProvinceName,
+      sourceCityName: recognized.sourceCityName, sourceDistrictName: recognized.sourceDistrictName,
+      sourceInvalidatedAt: recognized.sourceInvalidatedAt, sourceInvalidationReason: recognized.sourceInvalidationReason },
+  }).from(recognized).innerJoinLateral(recognizedLatest, eq(recognizedLatest.versionId, recognized.versionId))
+    .where(scope(recognized.usccRaw))
+  const businessLatest = latest(business.recordId)
+  const businessRows = await db.select({ ...coordinates(businessLatest),
+    p: { usccRaw: business.usccRaw, titleRaw: business.titleRaw, nameRaw: business.nameRaw, declareKind: business.declareKind,
+      status: business.status, businessYear: business.businessYear, appliedAt: business.appliedAt, province: business.province },
+  }).from(business).innerJoinLateral(businessLatest, eq(businessLatest.versionId, business.versionId)).where(scope(business.usccRaw))
+  const applyLatest = latest(apply.recordId)
+  const applyRows = await db.select({ ...coordinates(applyLatest),
+    p: { usccRaw: apply.usccRaw, titleRaw: apply.titleRaw, nameRaw: apply.nameRaw, declareKind: apply.declareKind,
+      status: apply.status, declarationYear: apply.declarationYear, appliedAt: apply.appliedAt },
+  }).from(apply).innerJoinLateral(applyLatest, eq(applyLatest.versionId, apply.versionId)).where(scope(apply.usccRaw))
+  const facts: PlatformQualificationInputRow[] = [
+    ...recognizedRows.map(({ flag, flagStorage, ...row }) => ({
+      ...row, source: 'recognized_list' as const, p: { ...row.p, sourceValidFlag: recognizedFlag({ flag, flagStorage }) },
+    })),
+    ...businessRows.map(row => ({ ...row, source: 'business_list' as const })),
+    ...applyRows.map(row => ({ ...row, source: 'apply_list' as const })),
+  ]
   const owners = new Map(codes.map(code => [code, new Set([byUscc.get(code)![0]!.id])]))
-  for (const row of [...recognizedFacts, ...business.rows, ...apply.rows]) {
-    const fact = projectPlatformQualificationFact({
-      ...row, recordId: Number(row.recordId), versionId: Number(row.versionId), observationId: Number(row.observationId),
-    }, owners)
+  for (const row of facts) {
+    const fact = projectPlatformQualificationFact(row, owners)
     if (!fact) continue
     for (const { id } of byUscc.get(fact.uscc)!) {
       const facts = results.get(id) ?? []
@@ -92,13 +102,3 @@ async function readFacts(db: Reader, byUscc: Map<string, { id: number; uscc_norm
   for (const facts of results.values()) facts.sort((a, b) => a.recordId - b.recordId)
   return results
 }
-
-const latestProjection = sql`o.record_id AS "recordId", o.version_id AS "versionId",
-  o.id AS "observationId", o.queried_at AS "collectedAt"`
-const latestObservation = sql`
-  JOIN LATERAL (
-    SELECT o.record_id, o.version_id, o.id, c.queried_at
-    FROM platform_business_observation o JOIN platform_collection c ON c.id = o.collection_id
-    WHERE o.record_id = p.record_id AND o.content_state = 'verified'
-    ORDER BY c.queried_at COLLATE "C" DESC, o.id DESC LIMIT 1
-  ) o ON o.version_id = p.version_id`

@@ -105,13 +105,18 @@ function options(value: OfficialEvidenceReadOptions, additional: readonly string
  * New capture ownership is validated at insertion; no historical owner is subsequently required to exist.
  * No no-op/deduplication or cross-row business decision is performed here.
  */
-export function prepareOfficialEvidenceRevision(input: OfficialEvidenceCapture, expectedRevision: number) {
+export function validateOfficialEvidenceRevision(input: OfficialEvidenceCapture, expectedRevision: number) {
   validateCapture(input); integer(expectedRevision, 'expectedRevision', 0, Number.MAX_SAFE_INTEGER - 1)
   const revision = expectedRevision + 1, createdAt = new Date().toISOString()
   const row: OfficialEvidenceRow = { ...input, formatVersion: 1, revision, createdAt,
     // Reserve the largest owner IDs: a later legal merge may change the current owner.
     currentOwner: { recordId: Number.MAX_SAFE_INTEGER, enterpriseId: Number.MAX_SAFE_INTEGER } }
   if (Buffer.byteLength(JSON.stringify({ formatVersion: 1, row })) > 65536) throw new OfficialEvidenceError(400, 'input_limit', 'Complete single-row projection exceeds 64KiB')
+  return { revision, createdAt }
+}
+
+export function prepareOfficialEvidenceRevision(input: OfficialEvidenceCapture, expectedRevision: number) {
+  const { revision, createdAt } = validateOfficialEvidenceRevision(input, expectedRevision)
   const insert = sql`
     INSERT INTO official_evidence_row_revision (
       evidence_id,revision,format_version,event_id,captured_record_id,captured_enterprise_id,

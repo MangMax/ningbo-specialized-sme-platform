@@ -1,12 +1,16 @@
-import { sql } from 'drizzle-orm'
+import { and, eq, exists, gte, isNotNull, notExists, or, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { differenceReason } from '../../../../db/schema'
+import { enterprise, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
+import { differenceReason as d } from '../../../../db/postgresql/roster-selection-tables'
+import { evidenceReviewReceipt114 as receipt } from '../../../../db/postgresql/evidence-review-tables'
+import { platformBusinessObservation as observation, platformCollection, platformCollectionPage as page,
+  platformLegacyQueryAlias as queryAlias, platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { TITLE_ORDER } from '../../lib/labels'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import type { RosterImportDifference, RosterImportItemResult } from '../../lib/roster-import-client'
-import { managedDecision102 } from './decision-lifecycle-102'
 import { findPostgresImportQuery, findPostgresImportRelation, findPostgresImportRelationById, type PostgresImportRelation } from './roster-import-references-postgres'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -23,30 +27,33 @@ const optionalInt = (value: unknown) => typeof value === 'number' && Number.isFi
 async function locateEnterprise(tx: Tx, difference: RosterImportDifference, lock: boolean) {
   const uscc = normalizeUscc(difference.uscc)
   const name = optionalText(difference.enterpriseName)
+  const owners = tx.select({ id: enterprise.id, uscc: enterprise.usccNorm }).from(enterprise)
   if (uscc) {
-    const { rows: [match] } = await tx.execute<{ id: number }>(sql`
-      SELECT id::float8 AS id FROM enterprise WHERE uscc_norm=${uscc}`)
+    const [match] = await tx.select({ id: enterprise.id }).from(enterprise).where(eq(enterprise.usccNorm, uscc))
     if (match) {
       const id = await postgresCanonicalEnterpriseId(tx, match.id)
-      const { rows: [owner] } = await tx.execute<Enterprise>(sql`
-        SELECT id::float8 AS id,uscc_norm AS uscc FROM enterprise WHERE id=${id} ${lock ? sql`FOR UPDATE` : sql.empty()}`)
-      if (owner) return owner
+      if (id !== null) {
+        const query = owners.where(eq(enterprise.id, id))
+        const [owner] = await (lock ? query.for('update') : query)
+        if (owner) return owner
+      }
     }
   }
   if (!name) return undefined
-  const { rows: [owner] } = await tx.execute<Enterprise>(sql`
-    SELECT id::float8 AS id,uscc_norm AS uscc FROM enterprise e WHERE name_norm=${normalizeName(name)}
-      AND NOT EXISTS(SELECT 1 FROM enterprise_merge WHERE from_enterprise_id=e.id)
-    ORDER BY id LIMIT 1 ${lock ? sql`FOR UPDATE` : sql.empty()}`)
+  const query = owners.where(and(eq(enterprise.nameNorm, normalizeName(name)), notExists(
+    tx.select({ id: enterpriseMerge.fromEnterpriseId }).from(enterpriseMerge).where(eq(enterpriseMerge.fromEnterpriseId, enterprise.id)),
+  ))).orderBy(enterprise.id).limit(1)
+  const [owner] = await (lock ? query.for('update') : query)
   return owner
 }
 
 async function findCollection(tx: Tx, aliasId: number) {
   if (!Number.isSafeInteger(aliasId) || aliasId < 1) return undefined
-  const { rows: [collection] } = await tx.execute<Collection>(sql`
-    SELECT a.old_id::float8 AS id,c.id::float8 AS "nativeId",c.interface,c.query_key AS "queryKey",c.rdjb
-    FROM platform_collection c JOIN platform_legacy_query_alias a ON a.collection_id=c.id
-    WHERE a.old_id=${aliasId}`)
+  const [collection] = await tx.select({
+    id: queryAlias.oldId, nativeId: platformCollection.id, interface: platformCollection.interface,
+    queryKey: platformCollection.queryKey, rdjb: platformCollection.rdjb,
+  }).from(platformCollection).innerJoin(queryAlias, eq(queryAlias.collectionId, platformCollection.id))
+    .where(eq(queryAlias.oldId, aliasId))
   return collection
 }
 
@@ -62,19 +69,20 @@ async function evidenceMismatch(tx: Tx, enterprise: Enterprise, difference: Rost
     return 'Evidence title scope does not include decision title'
   }
   if (!relation) return source.queryKey === uscc ? null : 'Query-only evidence requires an exact subject USCC query'
-  const { rows: [original] } = await tx.execute<{ sequenceNo: number; usccRaw: string | null }>(sql`
-    SELECT o.sequence_no::float8 AS "sequenceNo",a.uscc_raw AS "usccRaw" FROM platform_business_observation o
-    JOIN platform_observation_assignment a ON a.observation_id=o.id AND a.revision=1
-    WHERE o.id=${relation.observationId}`)
+  const [original] = await tx.select({ sequenceNo: observation.sequenceNo, usccRaw: assignment.usccRaw })
+    .from(observation).innerJoin(assignment, and(eq(assignment.observationId, observation.id), eq(assignment.revision, 1)))
+    .where(eq(observation.id, relation.observationId))
   if (!original || normalizeUscc(original.usccRaw) !== uscc || (relation.enterpriseId !== null && relation.enterpriseId !== enterprise.id)) {
     return 'Evidence relation belongs to another or unknown enterprise'
   }
-  const { rows: [page] } = await tx.execute<{ rdjb: string | null }>(sql`
-    SELECT rdjb FROM (
-      SELECT rdjb,ordinal,sum(coalesce(fetched_count,0)) OVER (ORDER BY ordinal) AS last_sequence
-      FROM platform_collection_page WHERE collection_id=${source.nativeId} AND status='success'
-    ) pages WHERE last_sequence >= ${original.sequenceNo} ORDER BY ordinal LIMIT 1`)
-  return RDJB_TITLE_CODES[page?.rdjb ?? ''] === difference.titleCode ? null : 'Evidence row belongs to another title'
+  // Drizzle 0.45.4 has no window function builder for the running page count.
+  const pages = tx.select({
+    rdjb: page.rdjb, ordinal: page.ordinal,
+    lastSequence: sql<number>`sum(coalesce(${page.fetchedCount}, 0)) over (order by ${page.ordinal})`.as('last_sequence'),
+  }).from(page).where(and(eq(page.collectionId, source.nativeId), eq(page.status, 'success'))).as('pages')
+  const [matchingPage] = await tx.select({ rdjb: pages.rdjb }).from(pages)
+    .where(gte(pages.lastSequence, original.sequenceNo)).orderBy(pages.ordinal).limit(1)
+  return RDJB_TITLE_CODES[matchingPage?.rdjb ?? ''] === difference.titleCode ? null : 'Evidence row belongs to another title'
 }
 
 type DifferencePlan = {
@@ -83,7 +91,7 @@ type DifferencePlan = {
   item: RosterImportItemResult
   action: 'add' | 'skip'
   review: boolean
-  values?: Evidence & { enterpriseId: number; recordedAt: string }
+  values?: Evidence & Pick<typeof d.$inferSelect, 'enterpriseId' | 'recordedAt' | 'reasonCode' | 'measureCode'>
 }
 
 export async function planPostgresImportDifference(tx: Tx, difference: RosterImportDifference, index: number): Promise<DifferencePlan> {
@@ -103,10 +111,12 @@ async function planDifference(tx: Tx, difference: RosterImportDifference, index:
   if (difference.status != null && !differenceReason.status.enumValues.includes(difference.status)) {
     return reject('difference_status_unknown', `status 不在状态机内：${difference.status}`, 'status')
   }
-  if (difference.reasonCode != null && !differenceReason.reasonCode.enumValues.some(code => code === difference.reasonCode)) {
+  const reasonCode = differenceReason.reasonCode.enumValues.find(code => code === difference.reasonCode) ?? null
+  if (difference.reasonCode != null && reasonCode === null) {
     return reject('reason_unknown', `reasonCode 不在字典内：${difference.reasonCode}`, 'reasonCode')
   }
-  if (difference.measureCode != null && !differenceReason.measureCode.enumValues.some(code => code === difference.measureCode)) {
+  const measureCode = differenceReason.measureCode.enumValues.find(code => code === difference.measureCode) ?? null
+  if (difference.measureCode != null && measureCode === null) {
     return reject('measure_unknown', `measureCode 不在字典内：${difference.measureCode}`, 'measureCode')
   }
   if (difference.reasonCode === 'pending_review' && (
@@ -149,18 +159,21 @@ async function planDifference(tx: Tx, difference: RosterImportDifference, index:
   const mismatch = await evidenceMismatch(tx, enterprise, difference, { query, relation })
   if (mismatch) return reject('evidence_subject_mismatch', mismatch, 'evidenceRelationRef')
 
-  const scope = sql`d.enterprise_id=${enterprise.id} AND d.title_code=${difference.titleCode} AND d.direction=${difference.direction}`
-  const { rows: [state] } = await tx.execute<{ existingId: number | null; managed: boolean }>(sql`
-    SELECT (SELECT id::float8 FROM difference_reason d WHERE ${scope} AND d.recorded_at=${recordedAt}) AS "existingId",
-      EXISTS(SELECT 1 FROM difference_reason d WHERE ${scope} AND ${managedDecision102(sql`d.id`, sql`d.lifecycle_action`)}) AS managed`)
-  if (state!.managed) return reject('decision_lifecycle_required', '该企业称号方向已采用差异决定生命周期；请用 /api/roster/decision-lifecycle/commands 或 save_difference_decision', 'differences')
-  const existingId = state!.existingId
+  const scope = and(eq(d.enterpriseId, enterprise.id), eq(d.titleCode, difference.titleCode), eq(d.direction, difference.direction))
+  const adopted = exists(tx.select({ id: receipt.id }).from(receipt).where(and(
+    or(eq(receipt.decisionId, d.id), eq(receipt.sourceDecisionId, d.id)),
+    isNotNull(receipt.reviewedRevisionId),
+  )))
+  const [managed] = await tx.select({ id: d.id }).from(d).where(and(scope, or(isNotNull(d.lifecycleAction), adopted))).limit(1)
+  if (managed) return reject('decision_lifecycle_required', '该企业称号方向已采用差异决定生命周期；请用 /api/roster/decision-lifecycle/commands 或 save_difference_decision', 'differences')
+  const [existing] = await tx.select({ id: d.id }).from(d).where(and(scope, eq(d.recordedAt, recordedAt)))
+  const existingId = existing?.id ?? null
   return {
     difference, index,
     action: existingId === null ? 'add' : 'skip',
     review: difference.status === 'needs_review' || difference.verificationStatus !== 'confirmed',
     item: { ok: true, kind: 'difference', ref: existingId === null ? ref : 'difference:' + existingId, detail: { enterpriseId: enterprise.id } },
-    values: { enterpriseId: enterprise.id, recordedAt, query, relation },
+    values: { enterpriseId: enterprise.id, recordedAt, reasonCode, measureCode, query, relation },
   }
 }
 
@@ -168,7 +181,7 @@ export async function writePostgresImportDifference(tx: Tx, plan: DifferencePlan
   if (!plan.values) return plan.item
   const current = await planDifference(tx, plan.difference, plan.index, true)
   if (!current.values) return current.item
-  const { enterpriseId, recordedAt, query, relation } = current.values
+  const { enterpriseId, recordedAt, reasonCode, measureCode, query, relation } = current.values
   const { difference } = current
   if (enterpriseId !== plan.values.enterpriseId) {
     return { ok: false, kind: 'difference', ref: 'difference:' + plan.index, error: {
@@ -177,15 +190,15 @@ export async function writePostgresImportDifference(tx: Tx, plan: DifferencePlan
   }
   if (current.action === 'skip') return { ...current.item, detail: { enterpriseId, rowsWritten: 0 } }
 
-  const { rows: [inserted] } = await tx.execute<{ id: number }>(sql`
-    INSERT INTO difference_reason(enterprise_id,title_code,direction,status,reason_code,reason_note,measure_code,measure_note,
-      evidence_query_id,evidence_relation_id,moved_in_city,moved_in_title_code,moved_in_year,moved_in_batch,verification_status,recorded_at,created_at)
-    VALUES(${enterpriseId},${difference.titleCode},${difference.direction},${difference.status ?? 'not_queried'},
-      ${difference.reasonCode ?? null},${optionalText(difference.reasonNote)},${difference.measureCode ?? null},${optionalText(difference.measureNote)},
-      ${query?.nativeId ?? null},${relation?.observationId ?? null},${optionalText(difference.movedIn?.city)},
-      ${optionalText(difference.movedIn?.titleCode)},${optionalInt(difference.movedIn?.year)},${optionalInt(difference.movedIn?.batch)},
-      ${difference.verificationStatus ?? 'pending'},${recordedAt},${new Date().toISOString()})
-    RETURNING id::float8 AS id`)
+  const [inserted] = await tx.insert(d).values({
+    enterpriseId, titleCode: difference.titleCode, direction: difference.direction,
+    status: difference.status ?? 'not_queried', reasonCode, reasonNote: optionalText(difference.reasonNote),
+    measureCode, measureNote: optionalText(difference.measureNote),
+    evidenceQueryId: query?.nativeId ?? null, evidenceRelationId: relation?.observationId ?? null,
+    movedInCity: optionalText(difference.movedIn?.city), movedInTitleCode: optionalText(difference.movedIn?.titleCode),
+    movedInYear: optionalInt(difference.movedIn?.year), movedInBatch: optionalInt(difference.movedIn?.batch),
+    verificationStatus: difference.verificationStatus ?? 'pending', recordedAt, createdAt: new Date().toISOString(),
+  }).returning({ id: d.id })
   return { ok: true, kind: 'difference', ref: 'difference:' + inserted!.id, detail: {
     enterpriseId, evidenceQueryId: query?.id ?? null, evidenceRelationId: relation?.id ?? null, rowsWritten: 1,
   } }

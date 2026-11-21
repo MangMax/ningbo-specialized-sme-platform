@@ -1,8 +1,8 @@
-import { sql } from 'drizzle-orm'
+import { asc, eq, inArray } from 'drizzle-orm'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import * as schema from '../../../../db/schema'
 import type { RosterImportItemResult, RosterImportRequest } from '../../lib/roster-import-client'
-import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { advancePostgresOfficialEventRevision } from './evidence-revision-postgres'
 import { lockPostgresFilePaths, refreshPostgresDerivedFileParts } from './file-parts-postgres'
 import {
@@ -17,11 +17,8 @@ import { hasOfficialFactInput } from './roster-import'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
-type Event = typeof schema.recordEvent.$inferSelect
-type Record = typeof schema.record.$inferSelect
 const appendBatch = officialAppendSchema.array().min(1).max(100)
 const correctionBatch = evidenceCorrectionRequestSchema.omit({ idempotencyKey: true })
-const ids = (values: Iterable<number>) => sql`${sql.param([...new Set(values)])}::bigint[]`
 
 interface OfficialImportOptions {
   filesDir?: string
@@ -65,14 +62,15 @@ async function lockOfficialImportTargets(tx: Tx, operations: ReturnType<typeof p
 ) {
   const { appends, correction } = operations
   const corrections = correction?.operations ?? []
-  const priorPaths = corrections.length ? (await tx.execute<{ path: string }>(sql`
-    SELECT source_file AS path FROM record_evidence WHERE id=ANY(${ids(corrections.map(op => op.evidenceId))})`)).rows : []
+  const priorPaths = corrections.length ? await tx.select({ path: recordEvidence.sourceFile }).from(recordEvidence)
+    .where(inArray(recordEvidence.id, corrections.map(op => op.evidenceId))) : []
   await lockPostgresFilePaths(tx, [
     ...paths, ...appends.map(op => op.evidence.sourceFile), ...corrections.map(op => op.coordinate.sourceFile),
     ...priorPaths.map(row => row.path),
   ])
   const events = [...eventIds, ...appends.map(op => op.eventId), ...corrections.map(op => op.eventId)]
-  if (events.length) await tx.execute(sql`SELECT id FROM record_event WHERE id=ANY(${ids(events)}) ORDER BY id FOR UPDATE`)
+  if (events.length) await tx.select({ id: recordEvent.id }).from(recordEvent)
+    .where(inArray(recordEvent.id, [...new Set(events)])).orderBy(asc(recordEvent.id)).for('update')
 }
 
 export async function lockPostgresOfficialImportTargets(tx: Tx, request: RosterImportRequest,
@@ -103,16 +101,20 @@ export async function planPostgresOfficialImport(tx: Tx, request: RosterImportRe
   const originalVersions: unknown[] = []
   const appendTargets = []
   for (const [index, op] of appends.entries()) {
-    const { rows: [target] } = await tx.execute<{ event: Event; record: Record }>(sql`
-      SELECT ${postgresRosterRow(schema.recordEvent,'e')} AS event,${postgresRosterRow(schema.record,'r')} AS record
-      FROM record_event e JOIN record r ON r.id=e.record_id JOIN enterprise owner ON owner.id=r.enterprise_id
-      WHERE e.id=${op.eventId}`)
+    const [row] = await tx.select({ event: recordEvent, record }).from(recordEvent)
+      .innerJoin(record, eq(record.id, recordEvent.recordId))
+      .innerJoin(enterprise, eq(enterprise.id, record.enterpriseId))
+      .where(eq(recordEvent.id, op.eventId))
+    const target = row && {
+      event: { ...row.event, formalValidity: row.event.formalValidity === null ? null : JSON.parse(row.event.formalValidity) },
+      record: { ...row.record, qualityFlags: row.record.qualityFlags === null ? null : JSON.parse(row.record.qualityFlags) },
+    }
     if (!target || target.record.source !== 'jxj' || target.record.id !== op.recordId || target.record.enterpriseId !== op.enterpriseId) {
       return officialFactFailure('target_mismatch', 'Exact event and current real owner must match', 409)
     }
     if (target.event.revision !== op.expectedVersion) return officialFactFailure('stale_version', 'Official event revision changed', 409)
-    const { rows: scope } = await tx.execute<{ id: number }>(sql`
-      SELECT id::float8 AS id FROM record_evidence WHERE record_event_id=${op.eventId} ORDER BY id LIMIT 301`)
+    const scope = await tx.select({ id: recordEvidence.id }).from(recordEvidence)
+      .where(eq(recordEvidence.recordEventId, op.eventId)).orderBy(asc(recordEvidence.id)).limit(301)
     if (scope.length > 300) return officialFactFailure('source_limit', 'Event evidence exceeds 300', 413)
     originalVersions.push({ ...target, scope: scope.map(row => row.id) })
     const { publishedRow, ...coordinate } = op.evidence
@@ -177,9 +179,9 @@ export async function applyPostgresOfficialImport(tx: Tx, plan: PostgresOfficial
       continue
     }
     const { sourceFile, attachment, listNo, page } = change.coordinate
-    const { rows: [inserted] } = await tx.execute<{ id: number }>(sql`
-      INSERT INTO record_evidence(record_event_id,source_file,attachment,list_no,page)
-      VALUES(${event.id},${sourceFile},${attachment},${listNo},${page}) RETURNING id::float8 AS id`)
+    const [inserted] = await tx.insert(recordEvidence).values({
+      recordEventId: event.id, sourceFile, attachment, listNo, page,
+    }).returning({ id: recordEvidence.id })
     evidence.push(await writePostgresOfficialPublishedRow(tx, change.publishedRow, inserted!.id, 0,
       { kind: 'import', batchId }, state.declarations))
     state.changedEvents.set(event.id, event.revision)

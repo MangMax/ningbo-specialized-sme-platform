@@ -1,4 +1,9 @@
-import { sql } from 'drizzle-orm'
+import { and, eq, max, sql } from 'drizzle-orm'
+import {
+  evidenceImpactProgress113, evidenceRevision113, evidenceRevisionEvent113, evidenceScopeVersion113, evidenceSemanticHead113,
+} from '../../../../db/postgresql/evidence-review-tables'
+import { record, recordEvent } from '../../../../db/postgresql/ledger-tables'
+import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { evidenceDigest113 } from './evidence-impact-113'
 
@@ -16,39 +21,43 @@ export async function appendPostgresEvidenceRevision(tx: Tx, input: Revision) {
   const coverage = input.coverageDigest ?? empty
   const metadata = JSON.stringify(input.metadata ?? {})
   if (Buffer.byteLength(metadata) > 16384) throw new Error('Evidence revision metadata exceeds 16KiB')
-  const { rows: [revision] } = await tx.execute<{ id: number }>(sql`
-    INSERT INTO evidence_revision_113(source_kind,source_key,source_version,enterprise_id,title_code,direction,event_id,
-      coverage_digest,fact_digest,coverage_changed,fact_changed,query_executed,metadata,max_decision_id,created_at)
-    SELECT ${input.sourceKind},${sourceKey},${input.sourceVersion},${input.enterpriseId ?? null},${input.titleCode ?? null},
-      ${input.direction ?? null},${input.eventId ?? null},${coverage},${input.factDigest},changed.coverage::int,changed.fact::int,
-      ${input.queryExecuted ? 1 : 0},${metadata},coalesce((SELECT max(id) FROM difference_reason),0),${new Date().toISOString()}
-    FROM (SELECT ${coverage}<>coalesce(h.coverage_digest,${empty}) AS coverage,
-      ${input.factDigest}<>coalesce(${input.beforeFactDigest ?? null},h.fact_digest,${empty}) AS fact
-      FROM (VALUES (${sourceKey})) v(key) LEFT JOIN evidence_semantic_head_113 h ON h.source_key=v.key) changed
-    WHERE changed.coverage OR changed.fact
-    ON CONFLICT (source_kind,source_key,source_version) DO NOTHING RETURNING id::float8 AS id`)
+  const latestDecision = tx.select({ id: max(differenceReason.id).as('id') }).from(differenceReason).as('latest_decision')
+  const [snapshot] = await tx.select({
+    maxDecisionId: latestDecision.id, coverageDigest: evidenceSemanticHead113.coverageDigest, factDigest: evidenceSemanticHead113.factDigest,
+  }).from(latestDecision).leftJoin(evidenceSemanticHead113, eq(evidenceSemanticHead113.sourceKey, sourceKey))
+  const coverageChanged = Number(coverage !== (snapshot!.coverageDigest ?? empty))
+  const factChanged = Number(input.factDigest !== (input.beforeFactDigest ?? snapshot!.factDigest ?? empty))
+  if (!coverageChanged && !factChanged) return null
+  const [revision] = await tx.insert(evidenceRevision113).values({
+    sourceKind: input.sourceKind, sourceKey, sourceVersion: input.sourceVersion, enterpriseId: input.enterpriseId,
+    titleCode: input.titleCode, direction: input.direction, eventId: input.eventId,
+    coverageDigest: coverage, factDigest: input.factDigest, coverageChanged, factChanged,
+    queryExecuted: Number(input.queryExecuted ?? false), metadata, maxDecisionId: snapshot!.maxDecisionId ?? 0,
+    createdAt: new Date().toISOString(),
+  }).onConflictDoNothing({ target: [evidenceRevision113.sourceKind, evidenceRevision113.sourceKey, evidenceRevision113.sourceVersion] })
+    .returning({ id: evidenceRevision113.id })
   if (!revision) return null
-  await tx.execute(sql`
-    INSERT INTO evidence_semantic_head_113(source_key,coverage_digest,fact_digest,latest_revision_id)
-      VALUES (${sourceKey},${coverage},${input.factDigest},${revision.id})
-    ON CONFLICT(source_key) DO UPDATE SET coverage_digest=excluded.coverage_digest,fact_digest=excluded.fact_digest,
-      latest_revision_id=excluded.latest_revision_id`)
-  await tx.execute(sql`INSERT INTO evidence_impact_progress_113(revision_id) VALUES (${revision.id})`)
-  const scope = JSON.stringify([input.enterpriseId ?? null,input.titleCode ?? null,input.direction ?? null])
-  await tx.execute(sql`
-    INSERT INTO evidence_scope_version_113(scope_key,latest_revision_id,pending_count) VALUES (${scope},${revision.id},1)
-    ON CONFLICT(scope_key) DO UPDATE SET latest_revision_id=excluded.latest_revision_id,
-      pending_count=evidence_scope_version_113.pending_count+1`)
-  if (input.eventId != null && input.enterpriseId != null && input.titleCode != null) await tx.execute(sql`
-    INSERT INTO evidence_revision_event_113(revision_id,event_id,enterprise_id,title_code)
-    VALUES (${revision.id},${input.eventId},${input.enterpriseId},${input.titleCode}) ON CONFLICT DO NOTHING`)
+  const head = { coverageDigest: coverage, factDigest: input.factDigest, latestRevisionId: revision.id }
+  await tx.insert(evidenceSemanticHead113).values({ sourceKey, ...head })
+    .onConflictDoUpdate({ target: evidenceSemanticHead113.sourceKey, set: head })
+  await tx.insert(evidenceImpactProgress113).values({ revisionId: revision.id })
+  const scope = JSON.stringify([input.enterpriseId ?? null, input.titleCode ?? null, input.direction ?? null])
+  await tx.insert(evidenceScopeVersion113).values({ scopeKey: scope, latestRevisionId: revision.id, pendingCount: 1 })
+    // Drizzle has no arithmetic update operator. Keep the increment atomic inside ON CONFLICT.
+    .onConflictDoUpdate({ target: evidenceScopeVersion113.scopeKey, set: {
+      latestRevisionId: revision.id, pendingCount: sql`${evidenceScopeVersion113.pendingCount} + 1`,
+    } })
+  if (input.eventId != null && input.enterpriseId != null && input.titleCode != null) {
+    await tx.insert(evidenceRevisionEvent113).values({
+      revisionId: revision.id, eventId: input.eventId, enterpriseId: input.enterpriseId, titleCode: input.titleCode,
+    }).onConflictDoNothing()
+  }
   return revision.id
 }
 
 export async function capturePostgresOfficialEventRevision(tx: Tx, eventId: number, beforeRevision: number, afterRevision: number) {
-  const { rows: [owner] } = await tx.execute<{ enterpriseId: number; titleCode: string }>(sql`
-    SELECT r.enterprise_id::float8 AS "enterpriseId",r.title_code AS "titleCode"
-    FROM record_event e JOIN record r ON r.id=e.record_id WHERE e.id=${eventId}`)
+  const [owner] = await tx.select({ enterpriseId: record.enterpriseId, titleCode: record.titleCode }).from(recordEvent)
+    .innerJoin(record, eq(record.id, recordEvent.recordId)).where(eq(recordEvent.id, eventId))
   if (!owner) throw new Error('Official event owner missing')
   return appendPostgresEvidenceRevision(tx, { sourceKind: 'official_event', sourceKey: String(eventId), sourceVersion: String(afterRevision),
     ...owner, eventId, beforeFactDigest: evidenceDigest113([eventId, beforeRevision]), factDigest: evidenceDigest113([eventId, afterRevision]),
@@ -58,9 +67,10 @@ export async function capturePostgresOfficialEventRevision(tx: Tx, eventId: numb
 
 export async function advancePostgresOfficialEventRevision(tx: Tx, eventId: number, expectedRevision: number) {
   const revision = expectedRevision + 1
-  const changed = await tx.execute(sql`UPDATE record_event SET revision=${revision}
-    WHERE id=${eventId} AND revision=${expectedRevision}`)
-  if (changed.rowCount !== 1) throw Object.assign(new Error('Official event revision changed'), { code: 'stale_revision', statusCode: 409 })
+  const changed = await tx.update(recordEvent).set({ revision }).where(and(
+    eq(recordEvent.id, eventId), eq(recordEvent.revision, expectedRevision),
+  )).returning({ id: recordEvent.id })
+  if (changed.length !== 1) throw Object.assign(new Error('Official event revision changed'), { code: 'stale_revision', statusCode: 409 })
   await capturePostgresOfficialEventRevision(tx, eventId, expectedRevision, revision)
   return revision
 }

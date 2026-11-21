@@ -1,7 +1,8 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { platformTaskLinks } from './task-presentation'
 import type { ReconcileReportCounts } from '../platform-reconcile'
-import { sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
+import { job as pgJob } from '../../../../../db/postgresql/job-tables'
 import type { TaskSummary } from '../../../lib/sme-roster/task-summary'
 import { schema } from '../../../../../db/client'
 const j = schema.job
@@ -86,12 +87,15 @@ export function readReconcileSummary(row: { kind: string; counts: string; reconc
 }
 
 export async function summarizePostgresReconcileJobs(db: NodePgDatabase, ids: string[]) {
-  const { rows } = await db.execute<{ id: string; kind: string; counts: string | null; reconcileCollection: string | null }>(sql`
-    SELECT j.id,j.kind,json_build_object(
+  // Drizzle 0.45.4 has no JSON set-returning functions, token validation or JSON aggregate builders.
+  // Validate the full coverage on the server before preparing the bounded preview.
+  const rows = await db.select({
+    id: pgJob.id, kind: pgJob.kind,
+    counts: sql<string | null>`json_build_object(
       'total',r.result->'counts'->'total','needsReview',r.result->'counts'->'needsReview',
       'queryFailed',r.result->'counts'->'queryFailed','notQueried',r.result->'counts'->'notQueried'
-    )::text AS counts,
-    CASE WHEN json_typeof(c.positions) = 'array'
+    )::text`,
+    reconcileCollection: sql<string | null>`CASE WHEN json_typeof(c.positions) = 'array'
       AND (SELECT sum(CASE WHEN (c.coverage->key)::text ~ '^[0-9]+$'
         AND length((c.coverage->key)::text) <= 16 THEN
         CASE WHEN (c.coverage->>key)::numeric <= 9007199254740991 THEN (c.coverage->>key)::numeric END
@@ -106,11 +110,11 @@ export async function summarizePostgresReconcileJobs(db: NodePgDatabase, ids: st
             CROSS JOIN LATERAL json_array_elements(pos.value->'unfinished') u LIMIT 50
           ) u
         )
-      )::text END AS "reconcileCollection"
-    FROM business.job j
-    CROSS JOIN LATERAL (SELECT business.job_params_for_query(j.result) AS result) r
-    CROSS JOIN LATERAL (SELECT r.result->'collection' AS coverage,r.result->'collection'->'positions' AS positions) c
-    CROSS JOIN LATERAL (
+      )::text END`,
+  }).from(pgJob)
+    .crossJoinLateral(sql`(SELECT business.job_params_for_query(${pgJob.result}) AS result) r`)
+    .crossJoinLateral(sql`(SELECT r.result->'collection' AS coverage,r.result->'collection'->'positions' AS positions) c`)
+    .crossJoinLateral(sql`(
       SELECT count(*) AS count,coalesce(sum(s.count),0) AS unfinished,
         coalesce(bool_and(coalesce(json_typeof(pos.value->'unfinished')='array',false) AND s.valid),true) AS valid
       FROM json_array_elements(CASE WHEN json_typeof(c.positions)='array' THEN c.positions END) pos
@@ -122,8 +126,8 @@ export async function summarizePostgresReconcileJobs(db: NodePgDatabase, ids: st
             OR (u.value->>'source'='queryList' AND json_typeof(u.value->'rdjb')='null')),false)),true) AS valid
         FROM json_array_elements(CASE WHEN json_typeof(pos.value->'unfinished')='array' THEN pos.value->'unfinished' END) u
       ) s
-    ) p
-    WHERE j.id=ANY(${sql.param(ids)}::text[]) AND j.kind='reconcile'`)
+    ) p`)
+    .where(and(eq(pgJob.kind, 'reconcile'), sql`${pgJob.id} = any(${sql.param(ids)}::text[])`))
   return new Map(rows.map(row => [row.id, {
     ...readReconcileSummary({ ...row, counts: row.counts ?? '{}', reconcileCollection: row.reconcileCollection ?? '{}' }),
     links: platformTaskLinks(),

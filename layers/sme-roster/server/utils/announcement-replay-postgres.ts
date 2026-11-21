@@ -1,9 +1,9 @@
 import { sql } from 'drizzle-orm'
+import { enterprise, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
+import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import * as schema from '../../../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
-import { isPageCapable } from '../../lib/roster/evidence-page'
-import { readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
+import { announcementValues, readPostgresAnnouncementEvents, readPostgresAnnouncementEvidenceHashes, repointPostgresAnnouncementEvidence } from './announcement-evidence-postgres'
 import type { RosterImportItemResult, RosterImportPreflight, RosterImportRequest } from '../../lib/roster-import-client'
 import { advancePostgresOfficialEventRevision } from './evidence-revision-postgres'
 import { lockPostgresFilePaths, refreshPostgresDerivedFileParts } from './file-parts-postgres'
@@ -15,13 +15,11 @@ import {
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Target = NonNullable<ReturnType<typeof evidenceRepointPlanFromItems>>[number]
-type Evidence = typeof schema.recordEvidence.$inferSelect
+type Evidence = typeof recordEvidence.$inferSelect
 type ReplayItem = { item: RosterImportItemResult; targets: Target[] }
 type ReplayPlan = { items: ReplayItem[]; preflight: RosterImportPreflight }
 type SourceBatch = { status: string; kind: string; identity: string; sha256: string | null; items: unknown }
 
-const ids = (values: number[]) => sql`${sql.param(values)}::bigint[]`
-const pathsSql = (paths: Set<string>) => sql`${sql.param([...paths])}::text[]`
 const coordinate = (owner: number, title: string, source: string) => JSON.stringify([owner, title, source])
 
 function errorItem(kind: string, ref: string, code: string, message: string, field?: string): RosterImportItemResult {
@@ -37,24 +35,25 @@ function summarize(items: ReplayItem[]): ReplayPlan {
 }
 
 async function findExistingOwners(tx: Tx, requested: { index: number; name: string; uscc: string }[]) {
+  // Drizzle has no recursive CTE builder or PostgreSQL CYCLE clause.
   const { rows } = await tx.execute<{ index: number; id: number; cycle: boolean }>(sql`
     WITH RECURSIVE wanted AS (
       SELECT * FROM json_to_recordset(${JSON.stringify(requested)}::json) AS w(index integer,name text,uscc text)
     ), matched AS (
-      SELECT w.index,e.id FROM wanted w JOIN enterprise e ON e.uscc_norm=w.uscc WHERE w.uscc<>''
+      SELECT w.index,e.id FROM wanted w JOIN ${enterprise} e ON e.uscc_norm=w.uscc WHERE w.uscc<>''
       UNION ALL
       SELECT w.index,owner.id FROM wanted w CROSS JOIN LATERAL (
-        SELECT id FROM enterprise e WHERE e.name_norm=w.name
-          AND NOT EXISTS(SELECT 1 FROM enterprise_merge m WHERE m.from_enterprise_id=e.id)
+        SELECT id FROM ${enterprise} e WHERE e.name_norm=w.name
+          AND NOT EXISTS(SELECT 1 FROM ${enterpriseMerge} m WHERE m.from_enterprise_id=e.id)
         ORDER BY id LIMIT 2
       ) owner WHERE w.uscc=''
     ), chain(index,id) AS (
       SELECT index,id FROM matched
       UNION ALL
-      SELECT c.index,m.into_enterprise_id FROM chain c JOIN enterprise_merge m ON m.from_enterprise_id=c.id
+      SELECT c.index,m.into_enterprise_id FROM chain c JOIN ${enterpriseMerge} m ON m.from_enterprise_id=c.id
     ) CYCLE id SET cycle USING path
     SELECT index,id::float8 AS id,cycle FROM chain c
-    WHERE cycle OR NOT EXISTS(SELECT 1 FROM enterprise_merge m WHERE m.from_enterprise_id=c.id)`)
+    WHERE cycle OR NOT EXISTS(SELECT 1 FROM ${enterpriseMerge} m WHERE m.from_enterprise_id=c.id)`)
   if (rows.some(row => row.cycle)) throw new Error('Enterprise identity merge cycle')
   return Map.groupBy(rows, row => row.index)
 }
@@ -105,8 +104,8 @@ export async function planPostgresAnnouncementReplay(tx: Tx, request: RosterImpo
     const candidates = matches.get(index)
     return candidates?.length === 1 ? [[index, candidates[0]!.id] as const] : []
   }))
-  const stored = owners.size ? await readPostgresRosterRowsById(tx, schema.record, sql`
-    FROM record p WHERE enterprise_id=ANY(${ids([...new Set(owners.values())])})`) : []
+  const stored = owners.size ? await tx.select().from(record)
+    .where(announcementValues(record.enterpriseId, [...new Set(owners.values())])).orderBy(record.id) : []
   const byCoordinate = new Map(stored.map(row => [coordinate(row.enterpriseId, row.titleCode, row.source), row.id]))
   const recordByIndex = new Map(checked.flatMap((row, index) => {
     const owner = owners.get(index)
@@ -114,11 +113,10 @@ export async function planPostgresAnnouncementReplay(tx: Tx, request: RosterImpo
     return id === undefined ? [] : [[index, id] as const]
   }))
   const recordIds = [...new Set(recordByIndex.values())]
-  let events = recordIds.length ? await readPostgresRosterRowsById(tx, schema.recordEvent, sql`
-    FROM record_event p WHERE record_id=ANY(${ids(recordIds)})`) : []
+  let events = recordIds.length ? await readPostgresAnnouncementEvents(tx, announcementValues(recordEvent.recordId, recordIds)) : []
   const eventIds = events.map(row => row.id)
-  const readEvidence = () => readPostgresRosterRowsById(tx, schema.recordEvidence, sql`
-    FROM record_evidence p WHERE record_event_id=ANY(${ids(eventIds)})`)
+  const readEvidence = () => tx.select().from(recordEvidence)
+    .where(announcementValues(recordEvidence.recordEventId, eventIds)).orderBy(recordEvidence.id)
 
   const sameSource = originalBatch?.status === 'committed' && originalBatch.kind === request.sourceKind &&
     originalBatch.identity === request.sourceIdentity && originalBatch.sha256 === (request.sourceSha256 ?? null)
@@ -136,18 +134,13 @@ export async function planPostgresAnnouncementReplay(tx: Tx, request: RosterImpo
 
   if (eventIds.length) {
     await lockPostgresFilePaths(tx, paths)
-    await tx.execute(sql`SELECT id FROM record_event WHERE id=ANY(${ids(eventIds)}) ORDER BY id FOR UPDATE`)
-    events = await readPostgresRosterRowsById(tx, schema.recordEvent, sql`FROM record_event p WHERE id=ANY(${ids(eventIds)})`)
+    events = await readPostgresAnnouncementEvents(tx, announcementValues(recordEvent.id, eventIds), true)
     evidenceRows = await readEvidence()
   }
   if (evidenceRows.some(row => !paths.has(row.sourceFile))) {
     return reject(errorItem('record_evidence', 'announcement', 'stale_revision', 'Evidence path changed while planning replay'))
   }
-  const { rows: sources } = evidenceRows.length ? await tx.execute<{ path: string; sha256: string | null }>(sql`
-    SELECT rel_path AS path,sha256 FROM stored_file WHERE rel_path=ANY(${pathsSql(paths)})
-    UNION ALL
-    SELECT source_identity,source_sha256 FROM import_batch WHERE status='committed' AND source_kind='announcement'
-      AND source_identity=ANY(${pathsSql(paths)})`) : { rows: [] }
+  const sources = evidenceRows.length ? await readPostgresAnnouncementEvidenceHashes(tx, paths) : []
   const hashes = indexedEvidenceHashes(request, sources)
   const ambiguous = saved === undefined ? ambiguousAnnouncementRepoints(records, recordByIndex, events, evidenceRows, hashes) : new Set<number>()
   const taken = new Set<number>()
@@ -193,16 +186,7 @@ export async function writePostgresAnnouncementReplay(tx: Tx, request: RosterImp
     if (targets.length === 0) { items.push(item); continue }
     let count = 0
     for (const target of targets) {
-      const keepPage = isPageCapable(target.sourceFile)
-      const { rows: [changed] } = await tx.execute<{ lostPage: boolean; revision: number }>(sql`
-        WITH previous AS (
-          SELECT v.id,v.page,e.revision FROM record_evidence v JOIN record_event e ON e.id=v.record_event_id
-          WHERE v.id=${target.id} AND v.source_file=${target.fromSourceFile}
-            AND e.id=${target.recordEventId} AND e.record_id=${target.recordId}
-        )
-        UPDATE record_evidence v SET source_file=${target.sourceFile},page=CASE WHEN ${keepPage} THEN v.page ELSE NULL END
-        FROM previous p WHERE v.id=p.id AND v.source_file=${target.fromSourceFile}
-        RETURNING (NOT ${keepPage} AND p.page IS NOT NULL) AS "lostPage",p.revision::float8 AS revision`)
+      const changed = await repointPostgresAnnouncementEvidence(tx, target, target.recordId)
       if (!changed) continue
       count++
       if (changed.lostPage) changedEvents.set(target.recordEventId, changed.revision)

@@ -1,11 +1,13 @@
-import { sql } from 'drizzle-orm'
+import { eq, exists, or } from 'drizzle-orm'
+import { enterprise, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
+import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
+import { sourceDocument } from '../../../../db/postgresql/official-evidence-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import * as schema from '../../../../db/schema'
 import { postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { diagnoseOfficialEventFields } from '../../lib/roster/current-qualification'
 import { readPostgresLegacyQualification } from '../../lib/roster/current-qualification-postgres'
-import { readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
+import { announcementValues, readPostgresAnnouncementEvents, readPostgresAnnouncementEvidenceHashes } from './announcement-evidence-postgres'
 import { usccFormatVerdict } from '../../lib/roster/uscc-research'
 import type {
   RosterImportEvent, RosterImportItemResult, RosterImportPreflight, RosterImportQualificationDiagnostic, RosterImportRequest,
@@ -27,8 +29,6 @@ type Enterprise = { id: number; name: string; nameNorm: string; usccNorm: string
 type Announcement = NonNullable<RosterImportRequest['payload']['announcement']>
 type Options = { pageCountErrors?: readonly RosterImportItemResult[]; filesDir?: string }
 
-const texts = (values: Iterable<string>) => sql`${sql.param([...new Set(values)])}::text[]`
-const ids = (values: Iterable<number>) => sql`${sql.param([...new Set(values)])}::bigint[]`
 const identityKey = (nameNorm: string, uscc: string | null) => uscc ? `uscc:${uscc}` : `name:${nameNorm}`
 const recordKey = (owner: number, title: string, source: string) => JSON.stringify([owner, title, source])
 
@@ -37,12 +37,14 @@ async function readIdentities(tx: Tx, records: Announcement['records']) {
     const name = typeof row?.enterprise?.name === 'string' ? row.enterprise.name.trim() : ''
     return { name, nameNorm: normalizeName(name), requestedUscc: normalizeUscc(row?.enterprise?.uscc) || null }
   })
-  const names = texts(input.map(row => row.nameNorm))
-  const codes = texts(input.flatMap(row => row.requestedUscc ? [row.requestedUscc] : []))
-  const { rows } = await tx.execute<Enterprise & { merged: boolean }>(sql`
-    SELECT id::float8 AS id, name, name_norm AS "nameNorm", uscc_norm AS "usccNorm",
-      EXISTS (SELECT 1 FROM enterprise_merge m WHERE m.from_enterprise_id=e.id) AS merged
-    FROM enterprise e WHERE name_norm=ANY(${names}) OR uscc_norm=ANY(${codes}) ORDER BY id`)
+  const names = [...new Set(input.map(row => row.nameNorm))]
+  const codes = [...new Set(input.flatMap(row => row.requestedUscc ? [row.requestedUscc] : []))]
+  const merged = tx.select({ id: enterpriseMerge.fromEnterpriseId }).from(enterpriseMerge)
+    .where(eq(enterpriseMerge.fromEnterpriseId, enterprise.id))
+  const rows = await tx.select({
+    id: enterprise.id, name: enterprise.name, nameNorm: enterprise.nameNorm, usccNorm: enterprise.usccNorm,
+    merged: exists(merged).mapWith(Boolean),
+  }).from(enterprise).where(or(announcementValues(enterprise.nameNorm, names), announcementValues(enterprise.usccNorm, codes))).orderBy(enterprise.id)
   const byName = Map.groupBy(rows.filter(row => !row.merged), row => row.nameNorm)
   const byUscc = new Map<string, number>()
   for (const row of rows) {
@@ -107,7 +109,7 @@ async function readQualification(tx: Tx, request: RosterImportRequest, result: R
 
 async function planRawCaptureHash(tx: Tx, request: RosterImportRequest, announcement: Announcement,
   identities: Awaited<ReturnType<typeof readIdentities>>['identities'],
-  prior: ReadonlyMap<number, number>, eventsByRecord: ReadonlyMap<number, typeof schema.recordEvent.$inferSelect[]>,
+  prior: ReadonlyMap<number, number>, eventsByRecord: ReadonlyMap<number, Awaited<ReturnType<typeof readPostgresAnnouncementEvents>>>,
   repoints: readonly OfficialEvidenceLocatorMove[], filesDir?: string) {
   const { records } = announcement
   if (!Array.isArray(records)) officialFactFailure('invalid_input', 'announcement.records must be an array', 409)
@@ -130,7 +132,7 @@ async function planRawCaptureHash(tx: Tx, request: RosterImportRequest, announce
   const changes: OfficialClaimChange[] = []
   const unknownClaims: { ref: string; coordinate: OfficialCoordinate }[] = []
   const coordinateKinds = new Map<string, boolean>()
-  const declarations = new Map<number, typeof schema.sourceDocument.$inferSelect>()
+  const declarations = new Map<number, typeof sourceDocument.$inferSelect>()
 
   for (const [index, record] of records.entries()) {
     const owner = ownerToken(index)
@@ -166,8 +168,7 @@ async function planRawCaptureHash(tx: Tx, request: RosterImportRequest, announce
         if (!parsed.success) officialFactFailure('invalid_input', 'Full explicit publishedRow required', 409)
         const { declaration } = link.publishedRow
         if (declaration.kind === 'existing' && !declarations.has(declaration.sourceDocumentId)) {
-          const [doc] = await readPostgresRosterRowsById(tx, schema.sourceDocument, sql`
-            FROM source_document p WHERE p.id=${declaration.sourceDocumentId}`)
+          const [doc] = await tx.select().from(sourceDocument).where(eq(sourceDocument.id, declaration.sourceDocumentId))
           if (doc) declarations.set(doc.id, doc)
         }
         checkOfficialOuterDocument(projectOfficialDeclaration(declaration,
@@ -201,7 +202,7 @@ export async function planPostgresRawAnnouncementPreflight(tx: Tx, request: Rost
   const result: RosterImportPreflight = { add: 0, update: 0, remove: 0, review: 0, conflicts, evidenceRepoints: 0, duplicateCandidates }
   if (conflicts.length || !announcement) return result
   const source = announcement.sourceDocument?.source
-  if (!announcement.sourceDocument || !schema.record.source.enumValues.includes(source)) {
+  if (!announcement.sourceDocument || !record.source.enumValues.includes(source)) {
     conflicts.push({ ok: false, kind: 'announcement', ref: 'announcement', error: {
       code: 'source_document_invalid', message: 'announcement.sourceDocument.source 必须是 jxj / miit', field: 'sourceDocument.source',
     } })
@@ -211,8 +212,8 @@ export async function planPostgresRawAnnouncementPreflight(tx: Tx, request: Rost
   const { identities, byName } = await readIdentities(tx, records)
   const checked = records.map((row, index) => validateAnnouncementRecord(announcement, row, index))
   const owners = identities.flatMap(row => row.owner ?? [])
-  const stored = owners.length ? await readPostgresRosterRowsById(tx, schema.record, sql`
-    FROM record p WHERE enterprise_id=ANY(${ids(owners)})`) : []
+  const stored = owners.length ? await tx.select().from(record)
+    .where(announcementValues(record.enterpriseId, [...new Set(owners)])).orderBy(record.id) : []
   const byCoordinate = new Map([...stored].reverse().map(row => [recordKey(row.enterpriseId, row.titleCode, row.source), row.id]))
   const prior = new Map(checked.flatMap((row, index) => {
     const { owner, ambiguous } = identities[index]!
@@ -220,18 +221,13 @@ export async function planPostgresRawAnnouncementPreflight(tx: Tx, request: Rost
     const id = byCoordinate.get(recordKey(owner, row.titleCode, row.source))
     return id === undefined ? [] : [[index, id] as const]
   }))
-  const events = prior.size ? await readPostgresRosterRowsById(tx, schema.recordEvent, sql`
-    FROM record_event p WHERE record_id=ANY(${ids(prior.values())})`) : []
-  const evidence = events.length ? await readPostgresRosterRowsById(tx, schema.recordEvidence, sql`
-    FROM record_evidence p WHERE record_event_id=ANY(${ids(events.map(row => row.id))})`) : []
-  const paths = texts([...evidence.map(row => row.sourceFile), ...checked.flatMap(row =>
+  const events = prior.size ? await readPostgresAnnouncementEvents(tx, announcementValues(recordEvent.recordId, [...new Set(prior.values())])) : []
+  const evidence = events.length ? await tx.select().from(recordEvidence)
+    .where(announcementValues(recordEvidence.recordEventId, events.map(row => row.id))).orderBy(recordEvidence.id) : []
+  const paths = [...evidence.map(row => row.sourceFile), ...checked.flatMap(row =>
     row.events?.flatMap(event => Array.isArray(event.evidence)
-      ? event.evidence.map(link => announcementEvidenceCoordinate(link).sourceFile) : []) ?? [])])
-  const { rows: hashes } = evidence.length ? await tx.execute<{ path: string; sha256: string | null }>(sql`
-    SELECT rel_path AS path, sha256 FROM stored_file WHERE rel_path=ANY(${paths})
-    UNION ALL
-    SELECT source_identity, source_sha256 FROM import_batch WHERE status='committed' AND source_kind='announcement'
-      AND source_identity=ANY(${paths})`) : { rows: [] }
+      ? event.evidence.map(link => announcementEvidenceCoordinate(link).sourceFile) : []) ?? [])]
+  const hashes = evidence.length ? await readPostgresAnnouncementEvidenceHashes(tx, paths) : []
   const hashIndex = indexedEvidenceHashes(request, hashes)
   const ambiguousRepoints = ambiguousAnnouncementRepoints(records, prior, events, evidence, hashIndex)
   const eventsByRecord = Map.groupBy(events, row => row.recordId)

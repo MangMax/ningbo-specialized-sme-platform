@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto'
-import { sql } from 'drizzle-orm'
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { RosterImportItemResult, RosterImportRequest, RosterImportPreflight, RosterImportSummary } from '../../lib/roster-import-client'
+import { alias } from 'drizzle-orm/pg-core'
+import { importBatch, importReceipt } from '../../../../db/postgresql/import-tables'
+import { rosterAnnouncementIntake } from '../../../../db/postgresql/roster-selection-tables'
 import { canonicalImportJson } from './import-receipt-ledger'
 import { importPostgresReceiptRedactor } from './import-receipt-redaction'
 import { ImportReceiptError } from './import-receipts'
@@ -19,11 +22,19 @@ export type PostgresImportBatch = {
 const zeroSummary = { written: 0, skipped: 0, failed: 0, evidenceRepointed: 0 }
 
 export async function lockPostgresRosterImportBatch(tx: Tx, key: string) {
-  const { rows: [row] } = await tx.execute<PostgresImportBatch>(sql`
-    SELECT id::float8 AS id,status,source_kind AS kind,source_identity AS identity,source_sha256 AS sha256,
-      summary::json AS summary,item_results::json AS items,preflight_result::json AS preflight
-    FROM import_batch WHERE idempotency_key=${key} FOR UPDATE`)
-  return row
+  const [row] = await tx.select({
+    id: importBatch.id, status: importBatch.status, kind: importBatch.sourceKind,
+    identity: importBatch.sourceIdentity, sha256: importBatch.sourceSha256,
+    summary: importBatch.summary, items: importBatch.itemResults, preflight: importBatch.preflightResult,
+  }).from(importBatch).where(eq(importBatch.idempotencyKey, key)).for('update')
+  if (!row) return undefined
+  return {
+    ...row,
+    status: row.status as PostgresImportBatch['status'],
+    summary: row.summary === null ? null : JSON.parse(row.summary),
+    items: row.items === null ? null : JSON.parse(row.items) as PostgresImportBatch['items'],
+    preflight: row.preflight === null ? null : JSON.parse(row.preflight) as PostgresImportBatch['preflight'],
+  }
 }
 
 export function committedPostgresImportResult(batch: PostgresImportBatch, action: PostgresImportAction) {
@@ -37,12 +48,14 @@ function conflict(message: string): never {
   throw new ImportReceiptError(409, 'idempotency_conflict', message)
 }
 
+// Drizzle 0.45 has row-level .for() locking but no PostgreSQL advisory lock or hashtext builder.
 export async function lockPostgresRosterImportKey(tx: Tx, key: string) {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(21784,hashtext(${key}))`)
 }
 
 export async function executePostgresExportItems(tx: Tx, batch: PostgresImportBatch, action: PostgresImportAction,
   snapshot: NonNullable<RosterImportRequest['payload']['exportSnapshot']>): Promise<NativeImportExecution> {
+  // This uses the same transaction-scoped advisory lock capability as the batch key.
   if (action === 'commit') await tx.execute(sql`SELECT pg_advisory_xact_lock(21783,hashtext(${String(snapshot.titleCode)}))`)
   const plan = await planPostgresExportSnapshot(tx, snapshot)
   if (action === 'preflight') return { preflight: { ...plan.preflight, batchStatus: batch.status } }
@@ -66,73 +79,86 @@ export async function executePostgresRosterImport(db: NodePgDatabase, action: Po
   const attempt = await db.transaction(async tx => {
     await lockPostgresRosterImportKey(tx, key)
     if (action === 'commit') {
-      const intake = await tx.execute(sql`SELECT id FROM roster_announcement_intake WHERE idempotency_key=${request.idempotencyKey}`)
-      if (intake.rows.length) conflict('Idempotency key belongs to an announcement intake')
+      const [intake] = await tx.select({ id: rosterAnnouncementIntake.id }).from(rosterAnnouncementIntake)
+        .where(eq(rosterAnnouncementIntake.idempotencyKey, request.idempotencyKey))
+      if (intake) conflict('Idempotency key belongs to an announcement intake')
     }
-    await tx.execute(sql`
-      INSERT INTO import_batch(idempotency_key,source_kind,source_identity,source_sha256,status,created_at)
-      VALUES (${key},${request.sourceKind},${request.sourceIdentity},${bound.sourceSha256},'preflight',${new Date().toISOString()})
-      ON CONFLICT (idempotency_key) DO NOTHING`)
+    await tx.insert(importBatch).values({
+      idempotencyKey: key, sourceKind: request.sourceKind, sourceIdentity: request.sourceIdentity,
+      sourceSha256: bound.sourceSha256, status: 'preflight', createdAt: new Date().toISOString(),
+    }).onConflictDoNothing({ target: importBatch.idempotencyKey })
     const batch = (await lockPostgresRosterImportBatch(tx, key))!
     if (batch.kind !== request.sourceKind || batch.identity !== request.sourceIdentity || batch.sha256 !== bound.sourceSha256) {
       conflict('Idempotency key belongs to a different source')
     }
-    const { rows: [previous] } = await tx.execute<{ id: number; status: string; hash: string }>(sql`
-      SELECT id::float8 AS id,status,request_hash AS hash FROM import_receipt WHERE batch_id=${batch.id} ORDER BY id DESC LIMIT 1`)
+    const [previous] = await tx.select({ id: importReceipt.id, status: importReceipt.status, hash: importReceipt.requestHash })
+      .from(importReceipt).where(eq(importReceipt.batchId, batch.id)).orderBy(desc(importReceipt.id)).limit(1)
     if (action !== 'replay' && previous && previous.hash !== hash) {
       if (['committed','processing'].includes(previous.status)) conflict('Idempotency key belongs to a different request')
       if (request.sourceKind === 'platform_archive') {
-        const { rows: [original] } = await tx.execute<{ body: string }>(sql`
-          SELECT coalesce(owner.request_body,r.request_body) AS body FROM import_receipt r
-          LEFT JOIN import_receipt owner ON owner.id=r.body_receipt_id WHERE r.id=${previous.id}`)
-        const prior = original?.body ? JSON.parse(original.body) as RosterImportRequest : null
+        const bodyOwner = alias(importReceipt, 'body_owner')
+        const [original] = await tx.select({ body: importReceipt.requestBody, ownerBody: bodyOwner.requestBody })
+          .from(importReceipt).leftJoin(bodyOwner, eq(bodyOwner.id, importReceipt.bodyReceiptId))
+          .where(eq(importReceipt.id, previous.id))
+        const originalBody = original?.ownerBody ?? original?.body
+        const prior = originalBody ? JSON.parse(originalBody) as RosterImportRequest : null
         if (request.payload.platformRecordObservations !== undefined || prior?.payload?.platformRecordObservations !== undefined) {
           conflict('Historical projection key belongs to a different request')
         }
       }
     }
     if (batch.status === 'committed' && action !== 'replay') return { batch, receipt: null }
-    const { rows: [receipt] } = await tx.execute<{ id: number }>(sql`
-      WITH owner AS (
-        SELECT id FROM import_receipt WHERE batch_id=${batch.id} AND request_hash=${hash}
-          AND body_receipt_id IS NULL AND request_body=${body} ORDER BY id LIMIT 1
-      ) INSERT INTO import_receipt(body_receipt_id,batch_id,operation,request_hash,request_body,status,created_at)
-      SELECT id,${batch.id},${action},${hash},CASE WHEN id IS NULL THEN ${body} ELSE '' END,'processing',${new Date().toISOString()}
-      FROM (VALUES(1)) instance(n) LEFT JOIN owner ON true RETURNING id::float8 AS id`)
+    const [owner] = await tx.select({ id: importReceipt.id }).from(importReceipt)
+      .where(and(eq(importReceipt.batchId, batch.id), eq(importReceipt.requestHash, hash),
+        isNull(importReceipt.bodyReceiptId), eq(importReceipt.requestBody, body)))
+      .orderBy(asc(importReceipt.id)).limit(1)
+    const [receipt] = await tx.insert(importReceipt).values({
+      bodyReceiptId: owner?.id ?? null, batchId: batch.id, operation: action, requestHash: hash,
+      requestBody: owner ? '' : body, status: 'processing', createdAt: new Date().toISOString(),
+    }).returning({ id: importReceipt.id })
     return { batch, receipt: receipt!.id }
   })
-  if (attempt.receipt === null) return committedPostgresImportResult(attempt.batch, action === 'preflight' ? 'preflight' : 'commit')
+  const receiptId = attempt.receipt
+  if (receiptId === null) return committedPostgresImportResult(attempt.batch, action === 'preflight' ? 'preflight' : 'commit')
   try {
     return await runPostgresCorrespondenceTransaction(db, async tx => {
       const batch = (await lockPostgresRosterImportBatch(tx, key))!
       if (batch.status === 'committed' && action !== 'replay') {
         const replay = committedPostgresImportResult(batch, action)
-        await tx.execute(sql`UPDATE import_receipt SET status=${action === 'preflight' ? 'preflight' : 'committed'},
-          summary=${'summary' in replay ? JSON.stringify(replay.summary) : null},
-          item_results=${JSON.stringify(redact('items' in replay ? replay.items : []))},completed_at=${new Date().toISOString()} WHERE id=${attempt.receipt}`)
+        await tx.update(importReceipt).set({
+          status: action === 'preflight' ? 'preflight' : 'committed',
+          summary: 'summary' in replay ? JSON.stringify(replay.summary) : null,
+          itemResults: JSON.stringify(redact('items' in replay ? replay.items : [])),
+          completedAt: new Date().toISOString(),
+        }).where(eq(importReceipt.id, receiptId))
         return replay
       }
       const result = await execute(tx,batch)
       const at = new Date().toISOString()
       if (result.summary === undefined) {
         const { preflight } = result
-        await tx.execute(sql`UPDATE import_batch SET preflight_result=${JSON.stringify(preflight)} WHERE id=${batch.id}`)
-        await tx.execute(sql`UPDATE import_receipt SET status='preflight',item_results=${JSON.stringify(redact(preflight.conflicts))},
-          completed_at=${at} WHERE id=${attempt.receipt}`)
+        await tx.update(importBatch).set({ preflightResult: JSON.stringify(preflight) }).where(eq(importBatch.id, batch.id))
+        await tx.update(importReceipt).set({
+          status: 'preflight', itemResults: JSON.stringify(redact(preflight.conflicts)), completedAt: at,
+        }).where(eq(importReceipt.id, receiptId))
         return { batchId: batch.id, status: 'preflight' as const, preflight }
       }
       const { items, summary, error } = result
       const status = error === null ? 'committed' as const : 'failed' as const
-      await tx.execute(sql`UPDATE import_batch SET status=${status},item_results=${JSON.stringify(items)},summary=${JSON.stringify(summary)},
-        error=${error},committed_at=${status === 'committed' ? at : null},preflight_result=${JSON.stringify(result.preflight)} WHERE id=${batch.id}`)
-      await tx.execute(sql`UPDATE import_receipt SET status=${status},summary=${JSON.stringify(summary)},
-        item_results=${JSON.stringify(redact(items))},completed_at=${at} WHERE id=${attempt.receipt}`)
+      await tx.update(importBatch).set({
+        status, itemResults: JSON.stringify(items), summary: JSON.stringify(summary), error,
+        committedAt: status === 'committed' ? at : null, preflightResult: JSON.stringify(result.preflight),
+      }).where(eq(importBatch.id, batch.id))
+      await tx.update(importReceipt).set({
+        status, summary: JSON.stringify(summary), itemResults: JSON.stringify(redact(items)), completedAt: at,
+      }).where(eq(importReceipt.id, receiptId))
       if (action === 'replay') return { batchId: batch.id, status: error === null ? 'replayed' as const : 'failed' as const,
         update: result.replayUpdate ?? 0, evidenceRepointed: summary.evidenceRepointed, items: publicRosterImportItems(items,batch.id), error }
       return { batchId: batch.id, status, summary, items, error, ...(result.candidateTaskIds?.length ? { candidateTaskIds: result.candidateTaskIds } : {}) }
     })
   } catch (error) {
-    await db.execute(sql`UPDATE import_receipt SET status='failed',completed_at=${new Date().toISOString()} WHERE id=${attempt.receipt}`)
+    await db.update(importReceipt).set({ status: 'failed', completedAt: new Date().toISOString() })
+      .where(eq(importReceipt.id, receiptId))
     throw error
   }
 }

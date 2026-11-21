@@ -1,7 +1,14 @@
-import { sql, type SQL, type Table } from 'drizzle-orm'
+import { eq, getTableName, or, sql, type Table } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/schema'
-import { postgresRosterRow, readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import { storedFile } from '../../../../db/postgresql/file-tables'
+import { importBatch } from '../../../../db/postgresql/import-tables'
+import { record, recordEvidence, recordEvent } from '../../../../db/postgresql/ledger-tables'
+import { officialEvidenceRowRevision as officialRevision } from '../../../../db/postgresql/official-evidence-tables'
+import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
+import { fileDeclaration669, rosterFileClassification } from '../../../../db/postgresql/roster-file-tables'
+import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { preflightPostgresParse } from './parse-maintenance-postgres'
 import { loadPostgresEventCorrectionInputs, preflightPostgresEventCorrections, commitPostgresEventCorrections } from './roster-event-correction-postgres'
 import { projectEventCorrectionPlan, validateEventCorrectionTargets } from './roster-event-correction'
@@ -15,42 +22,61 @@ type Db = NodePgDatabase
 type Operation = FileEventSyncPlan['operations'][number]
 const numberIds = (ids: readonly number[]) => sql`${sql.param(ids)}::bigint[]`
 
-async function records<T extends Table>(db: Db, table: T, from: SQL) {
-  const { rows } = await db.execute<{ row:T['$inferSelect'] }>(sql`SELECT ${postgresRosterRow(table,'p')} AS row ${from}`)
-  return rows.map(value=>value.row)
+// Stored plans fingerprint JSON.stringify output. Preserve the original logical column order
+// and JSON casts independently of the PostgreSQL table's column declaration order.
+function fingerprintRow<T extends Table>(legacyShape: T, table: Table) {
+  return sql<T['$inferSelect']>`${postgresRosterRow(legacyShape, getTableName(table))}`
 }
 
 async function snapshot(db: Db, id: number, dir: string, request: SyncRequest) {
-  const { rows:[stored] } = await db.execute<{ file:{ relPath:string; removedAt:string | null } }>(sql`
-    SELECT json_build_object('id',f.id,'relPath',f.rel_path,'displayName',f.display_name,'filename',f.filename,
-      'ext',f.ext,'bytes',f.bytes,'sha256',f.sha256,'source',c.source,'kind',c.kind,'year',c.year,'batch',c.batch,
-      'titleCode',c.title_code,'categoryState',c.category_state,'parseState',c.parse_state,'createdAt',f.created_at,'removedAt',f.removed_at) AS file
-    FROM stored_file f JOIN roster_file_classification c ON c.file_id=f.id WHERE f.id=${id}`)
-  if (!stored || stored.file.removedAt) fail('file_unavailable','文件不存在或已移出',404)
-  const file = stored.file
+  const fileTable = rosterFileClassification
+  const [file] = await db.select({
+    id: storedFile.id, relPath: storedFile.relPath, displayName: storedFile.displayName, filename: storedFile.filename,
+    ext: storedFile.ext, bytes: sql<number>`${storedFile.bytes}::float8`, sha256: storedFile.sha256,
+    source: fileTable.source, kind: fileTable.kind, year: fileTable.year, batch: fileTable.batch,
+    titleCode: fileTable.titleCode, categoryState: fileTable.categoryState, parseState: fileTable.parseState,
+    createdAt: storedFile.createdAt, removedAt: storedFile.removedAt,
+  }).from(storedFile).innerJoin(fileTable, eq(fileTable.fileId, storedFile.id)).where(eq(storedFile.id, id))
+  if (!file || file.removedAt) fail('file_unavailable','文件不存在或已移出',404)
   const source = fileEventSyncPhysical((await preflightPostgresParse(db,id,{kind:'file'},dir)).inputRef,dir)
-  const declarations = (await records(db,schema.fileDeclaration669,sql`FROM file_declaration_669 p WHERE file_id=${id}
-    ORDER BY declaration_id COLLATE "C" LIMIT 1001`)).map(row=>({ ...row,active:Boolean(row.active) }))
-  const refs = await records(db,schema.recordEvidence,sql`FROM record_evidence p WHERE source_file=${file.relPath}
-    ORDER BY id LIMIT ${limit+1}`)
+  const declarations = (await db.select({ row: fingerprintRow(schema.fileDeclaration669, fileDeclaration669) })
+    .from(fileDeclaration669).where(eq(fileDeclaration669.fileId, id))
+    .orderBy(sql`${fileDeclaration669.declarationId} COLLATE "C"`).limit(1001))
+    .map(({ row }) => ({ ...row, active: Boolean(row.active) }))
+  const refs = await db.select().from(recordEvidence).where(eq(recordEvidence.sourceFile, file.relPath))
+    .orderBy(recordEvidence.id).limit(limit + 1)
   if (refs.length>limit || declarations.length>1000) fail('capacity','超过3000出处或1000声明；须先缩小文件维护范围，不截断',413)
   const eventIds = [...new Set(refs.map(row=>row.recordEventId))].sort((a,b)=>a-b)
-  const { rows: owners } = await db.execute<Pick<FileSyncEventSources,'event'|'record'> & { enterprise:{id:number;name:string} }>(sql`
-    SELECT ${postgresRosterRow(schema.recordEvent,'v')} AS event,${postgresRosterRow(schema.record,'r')} AS record,
-      json_build_object('id',e.id,'name',e.name) AS enterprise FROM record_event v JOIN record r ON r.id=v.record_id
-    JOIN enterprise e ON e.id=r.enterprise_id WHERE v.id=ANY(${numberIds(eventIds)}) ORDER BY v.id`)
-  const evidence = await readPostgresRosterRowsById(db,schema.recordEvidence,sql`FROM unnest(${numberIds(eventIds)}) ids(id)
-    CROSS JOIN LATERAL (SELECT * FROM record_evidence WHERE record_event_id=ids.id ORDER BY id LIMIT 301) p`)
+  const owners = await db.select({
+    event: fingerprintRow(schema.recordEvent, recordEvent),
+    record: fingerprintRow(schema.record, record),
+    enterprise: { id: enterprise.id, name: enterprise.name },
+  }).from(recordEvent).innerJoin(record, eq(record.id, recordEvent.recordId))
+    .innerJoin(enterprise, eq(enterprise.id, record.enterpriseId))
+    .where(sql`${recordEvent.id} = ANY(${numberIds(eventIds)})`).orderBy(recordEvent.id)
+  const byEvent = db.select({
+    id: recordEvidence.id, row: fingerprintRow(schema.recordEvidence, recordEvidence).as('row'),
+  }).from(recordEvidence).where(sql`${recordEvidence.recordEventId} = ids.id`)
+    .orderBy(recordEvidence.id).limit(301).as('evidence_by_event')
+  const evidence = (await db.select({ row: byEvent.row }).from(sql`unnest(${numberIds(eventIds)}) ids(id)`)
+    .innerJoinLateral(byEvent, sql`TRUE`).orderBy(byEvent.id)).map(({ row }) => row)
   const siblingIds = [...new Set(owners.map(row=>row.record.id))]
-  const siblings = await readPostgresRosterRowsById(db,schema.recordEvent,sql`FROM unnest(${numberIds(siblingIds)}) ids(id)
-    CROSS JOIN LATERAL (SELECT * FROM record_event WHERE record_id=ids.id ORDER BY id LIMIT ${limit+1}) p`)
-  const official = await records(db,schema.officialEvidenceRowRevision,sql`FROM official_evidence_row_revision p
-    WHERE evidence_id=ANY(${numberIds(evidence.map(row=>row.id))}) ORDER BY evidence_id,revision`)
-  const { rows: correspondences } = await db.execute<{ eventId:number; row:FileSyncEventSources['correspondences'][number] }>(sql`
-    SELECT ids.id::float8 AS "eventId",${postgresRosterRow(schema.recordCorrespondence,'p')} AS row
-    FROM unnest(${numberIds(eventIds)}) ids(id) CROSS JOIN LATERAL (
-      SELECT * FROM record_correspondence WHERE event_id=ids.id OR predecessor_event_id=ids.id ORDER BY id LIMIT 301
-    ) p ORDER BY ids.id,p.id`)
+  const byRecord = db.select({
+    id: recordEvent.id, row: fingerprintRow(schema.recordEvent, recordEvent).as('row'),
+  }).from(recordEvent).where(sql`${recordEvent.recordId} = ids.id`).orderBy(recordEvent.id).limit(limit + 1).as('events_by_record')
+  const siblings = (await db.select({ row: byRecord.row }).from(sql`unnest(${numberIds(siblingIds)}) ids(id)`)
+    .innerJoinLateral(byRecord, sql`TRUE`).orderBy(byRecord.id)).map(({ row }) => row)
+  const official = (await db.select({ row: fingerprintRow(schema.officialEvidenceRowRevision, officialRevision) })
+    .from(officialRevision).where(sql`${officialRevision.evidenceId} = ANY(${numberIds(evidence.map(row => row.id))})`)
+    .orderBy(officialRevision.evidenceId, officialRevision.revision)).map(({ row }) => row)
+  const byCorrespondence = db.select({
+    id: recordCorrespondence.id, row: fingerprintRow(schema.recordCorrespondence, recordCorrespondence).as('row'),
+  }).from(recordCorrespondence).where(or(
+    sql`${recordCorrespondence.eventId} = ids.id`, sql`${recordCorrespondence.predecessorEventId} = ids.id`,
+  )).orderBy(recordCorrespondence.id).limit(301).as('correspondence_by_event')
+  const correspondences = await db.select({ eventId: sql<number>`ids.id::float8`, row: byCorrespondence.row })
+    .from(sql`unnest(${numberIds(eventIds)}) ids(id)`).innerJoinLateral(byCorrespondence, sql`TRUE`)
+    .orderBy(sql`ids.id`, byCorrespondence.id)
   const evidenceByEvent = Map.groupBy(evidence,row=>row.recordEventId)
   const siblingsByRecord = Map.groupBy(siblings,row=>row.recordId)
   const officialByEvidence = Map.groupBy(official,row=>row.evidenceId)
@@ -93,9 +119,9 @@ async function snapshot(db: Db, id: number, dir: string, request: SyncRequest) {
 
 async function bound(db: Db, id: number, request: SyncRequest, writing = false) {
   const key = `file-event-sync:${id}:${request.idempotencyKey}`
-  const { rows:[batch] } = await db.execute<{ id:number; plan:FileEventSyncPlan | null }>(sql`
-    SELECT id::float8 AS id,preflight_result::json AS plan FROM import_batch WHERE idempotency_key=${key}
-    ${writing ? sql`FOR UPDATE` : sql.empty()}`)
+  const lookup = db.select({ id: importBatch.id, plan: sql<FileEventSyncPlan | null>`${importBatch.preflightResult}::json` })
+    .from(importBatch).where(eq(importBatch.idempotencyKey, key))
+  const [batch] = await (writing ? lookup.for('update') : lookup)
   const plan = batch?.plan
   if (batch && (plan?.protocol!=='file-event-sync-671-v1' || plan.requestHash!==hash({id,request}))) {
     fail('idempotency_conflict','幂等键已被不同请求使用')
@@ -115,8 +141,10 @@ export async function preflightPostgresFileEventSync(db: Db, id: number, request
     const requestHash = hash({id,request})
     const plan:FileEventSyncPlan = { protocol:'file-event-sync-671-v1',requestHash,planHash:hash({requestHash,...s}),
       ...s,expectedFingerprint:s.fingerprint,chunks:Math.ceil(s.operations.length/chunkSize),completed:[],updated:0,receipts:{} }
-    await tx.execute(sql`INSERT INTO import_batch(idempotency_key,source_kind,source_identity,status,created_at,preflight_result)
-      VALUES(${old.key},'event_correction',${'file-event-sync:'+id},'preflight',${new Date().toISOString()},${JSON.stringify(plan)})`)
+    await tx.insert(importBatch).values({
+      idempotencyKey: old.key, sourceKind: 'event_correction', sourceIdentity: 'file-event-sync:' + id,
+      status: 'preflight', createdAt: new Date().toISOString(), preflightResult: JSON.stringify(plan),
+    })
     return result(plan)
   })
 }
@@ -138,7 +166,7 @@ export async function commitPostgresFileEventSync(db: Db,id: number,request: Syn
       if (!batch || !plan || plan.planHash!==planHash) fail('plan_mismatch','预检计划不存在')
       if (plan.completed.includes(chunk)) return plan.receipts[chunk]!
       if (chunk!==plan.completed.length || chunk>=plan.chunks) fail('chunk_order','必须顺序执行未完成块')
-      await tx.execute(sql`SELECT id FROM stored_file WHERE id=${id} FOR UPDATE`)
+      await tx.select({ id: storedFile.id }).from(storedFile).where(eq(storedFile.id, id)).for('update')
       if ((await snapshot(tx,id,dir,request)).fingerprint!==(plan.expectedFingerprint ?? plan.fingerprint)) {
         fail('stale_membership','完整候选成员、事件或出处已变化；请重新预检')
       }
@@ -152,8 +180,10 @@ export async function commitPostgresFileEventSync(db: Db,id: number,request: Syn
       plan.completed.push(chunk)
       const receipt = structuredClone(result(plan))
       plan.receipts[chunk] = receipt
-      await tx.execute(sql`UPDATE import_batch SET preflight_result=${JSON.stringify(plan)},
-        status=${plan.completed.length===plan.chunks ? 'committed' : 'preflight'},summary=${JSON.stringify(receipt)} WHERE id=${batch.id}`)
+      await tx.update(importBatch).set({
+        preflightResult: JSON.stringify(plan), summary: JSON.stringify(receipt),
+        status: plan.completed.length === plan.chunks ? 'committed' : 'preflight',
+      }).where(eq(importBatch.id, batch.id))
       return receipt
     })
   } catch (error) {
@@ -163,7 +193,8 @@ export async function commitPostgresFileEventSync(db: Db,id: number,request: Syn
       if (!batch || !plan || plan.completed.includes(chunk)) return
       plan.failedEvents = plan.operations.slice(chunk*chunkSize,(chunk+1)*chunkSize).length
       const summary = result(plan)
-      await tx.execute(sql`UPDATE import_batch SET preflight_result=${JSON.stringify(plan)},summary=${JSON.stringify(summary)} WHERE id=${batch.id}`)
+      await tx.update(importBatch).set({ preflightResult: JSON.stringify(plan), summary: JSON.stringify(summary) })
+        .where(eq(importBatch.id, batch.id))
       return summary
     })
     throw Object.assign(new Error('同步失败，本块已回滚；已完成块保留，可用原请求续跑'),{statusCode:500,code:'transaction_failed',progress})

@@ -1,4 +1,7 @@
-import { sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import { evidenceReviewReceipt114, evidenceRuleRelease114 } from '../../../../db/postgresql/evidence-review-tables'
+import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { z } from 'zod'
 import { DecisionError102 } from './decision-lifecycle-102'
@@ -13,12 +16,16 @@ type Rule = z.infer<typeof ruleCommand114>
 async function releaseRules(tx: Tx, command: Rule) {
   const revisions: Array<number | null> = []
   for (const { previousEvaluationDigest, evaluationDigest, ...scope } of command.scopes) {
-    const enterprise = await tx.execute(sql`SELECT id FROM enterprise WHERE id=${scope.enterpriseId}`)
-    if (!enterprise.rows.length) throw new DecisionError102(404, 'not_found', 'Rule scope enterprise not found')
-    const { rows: [prior] } = await tx.execute<{ previous: string; digest: string; revisionId: number | null }>(sql`
-      SELECT previous_digest AS previous,evaluation_digest AS digest,revision_id::float8 AS "revisionId"
-      FROM evidence_rule_release_114 WHERE rule_id=${command.ruleId} AND version=${command.version} AND enterprise_id=${scope.enterpriseId}
-        AND title_code=${scope.titleCode} AND direction=${scope.direction}`)
+    const [owner] = await tx.select({ id: enterprise.id }).from(enterprise).where(eq(enterprise.id, scope.enterpriseId))
+    if (!owner) throw new DecisionError102(404, 'not_found', 'Rule scope enterprise not found')
+    const [prior] = await tx.select({
+      previous: evidenceRuleRelease114.previousDigest, digest: evidenceRuleRelease114.evaluationDigest,
+      revisionId: evidenceRuleRelease114.revisionId,
+    }).from(evidenceRuleRelease114).where(and(
+      eq(evidenceRuleRelease114.ruleId, command.ruleId), eq(evidenceRuleRelease114.version, command.version),
+      eq(evidenceRuleRelease114.enterpriseId, scope.enterpriseId), eq(evidenceRuleRelease114.titleCode, scope.titleCode),
+      eq(evidenceRuleRelease114.direction, scope.direction),
+    ))
     if (prior) {
       if (prior.previous !== previousEvaluationDigest || prior.digest !== evaluationDigest) {
         throw new DecisionError102(409, 'rule_version_conflict', 'Rule version already identifies different evaluated material')
@@ -31,10 +38,10 @@ async function releaseRules(tx: Tx, command: Rule) {
       sourceKey: [command.ruleId, scope.enterpriseId, scope.titleCode, scope.direction].join(':'),
       metadata: { ruleId: command.ruleId, ruleVersion: command.version },
     })
-    await tx.execute(sql`INSERT INTO evidence_rule_release_114(rule_id,version,enterprise_id,title_code,direction,
-      previous_digest,evaluation_digest,revision_id,receipt_key)
-      VALUES(${command.ruleId},${command.version},${scope.enterpriseId},${scope.titleCode},${scope.direction},
-        ${previousEvaluationDigest},${evaluationDigest},${revisionId},${command.idempotencyKey})`)
+    await tx.insert(evidenceRuleRelease114).values({
+      ...scope, ruleId: command.ruleId, version: command.version, previousDigest: previousEvaluationDigest,
+      evaluationDigest, revisionId, receiptKey: command.idempotencyKey,
+    })
     revisions.push(revisionId)
   }
   return { revisionIds: revisions, unchanged: revisions.filter(revision => revision === null).length }
@@ -42,22 +49,25 @@ async function releaseRules(tx: Tx, command: Rule) {
 
 export function workPostgresEvidenceReview(db: NodePgDatabase, command: z.infer<typeof workCommand114>) {
   return db.transaction(async tx => {
+    // Drizzle has no PostgreSQL advisory-lock builder. Keep the transaction-scoped lock.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(42458,114)`)
     const hash = evidenceDigest113(command)
-    const { rows: [prior] } = await tx.execute<{ hash: string; response: Record<string, unknown> }>(sql`
-      SELECT request_hash AS hash,response::json AS response FROM evidence_review_receipt_114 WHERE idempotency_key=${command.idempotencyKey}`)
+    const [prior] = await tx.select({ hash: evidenceReviewReceipt114.requestHash, response: evidenceReviewReceipt114.response })
+      .from(evidenceReviewReceipt114).where(eq(evidenceReviewReceipt114.idempotencyKey, command.idempotencyKey))
     if (prior) {
       if (prior.hash !== hash) throw new DecisionError102(409, 'idempotency_conflict', 'Idempotency key has a different request')
-      return prior.response
+      return JSON.parse(prior.response) as Record<string, unknown>
     }
-    const existingDecision = await tx.execute(sql`SELECT 1 FROM difference_reason WHERE idempotency_key=${command.idempotencyKey}`)
-    if (existingDecision.rows.length) throw new DecisionError102(409, 'idempotency_conflict', 'Idempotency key belongs to a decision')
+    const [existingDecision] = await tx.select({ id: differenceReason.id }).from(differenceReason)
+      .where(eq(differenceReason.idempotencyKey, command.idempotencyKey))
+    if (existingDecision) throw new DecisionError102(409, 'idempotency_conflict', 'Idempotency key belongs to a decision')
     const result = command.action === 'process' ? await processPostgresEvidenceImpacts(tx, command.limit) : await releaseRules(tx, command)
     const recordedAt = new Date().toISOString()
     const response = { ...result, action: command.action, idempotencyKey: command.idempotencyKey, recordedAt }
-    await tx.execute(sql`
-      INSERT INTO evidence_review_receipt_114(idempotency_key,request_hash,kind,actor,basis,response,recorded_at)
-      VALUES(${command.idempotencyKey},${hash},${command.action},${JSON.stringify(command.actor)},${command.basis},${JSON.stringify(response)},${recordedAt})`)
+    await tx.insert(evidenceReviewReceipt114).values({
+      idempotencyKey: command.idempotencyKey, requestHash: hash, kind: command.action, actor: JSON.stringify(command.actor),
+      basis: command.basis, response: JSON.stringify(response), recordedAt,
+    })
     return response
   })
 }

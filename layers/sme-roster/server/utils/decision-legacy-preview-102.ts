@@ -83,7 +83,7 @@ export function previewLegacyDecision102(db: DecisionDb,path:string,input:Previe
   return boundedPreview(rows,page.total,input)
 }
 
-export async function previewPostgresLegacyDecision102(db: Pick<NodePgDatabase,'execute'>,path:string,input:PreviewInput) {
+export async function previewPostgresLegacyDecision102(db: Pick<NodePgDatabase,'execute' | 'select'>,path:string,input:PreviewInput) {
   const page = legacyPage(path,input)
   const rows = []
   for (const row of page.rows) {

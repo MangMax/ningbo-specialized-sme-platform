@@ -1,6 +1,8 @@
 import type { LogContext } from '../../../../core/lib/logging'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { eq, sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
+import { storedFile } from '../../../../../db/postgresql/file-tables'
+import { rosterFileClassification } from '../../../../../db/postgresql/roster-file-tables'
 import * as schema from '../../../../../db/schema'
 import {
   categoryStateOf,
@@ -188,9 +190,7 @@ export function preparePostgresRosterRegistration(input: Record<string, unknown>
       const { row: base, created } = await lockOrRegisterPostgresFile(tx, facts)
       const id = base.id
       if (created) {
-        await tx.execute(sql`
-          INSERT INTO roster_file_classification (file_id, source, kind, year, batch, category_state)
-          VALUES (${id}, ${source}, ${kind}, ${year}, ${batch}, ${categoryState})`)
+        await tx.insert(rosterFileClassification).values({ fileId: id, source, kind, year, batch, categoryState })
         return { row: await readPostgresFile(tx, id), created }
       }
 
@@ -198,11 +198,10 @@ export function preparePostgresRosterRegistration(input: Record<string, unknown>
       if (conflict) throw new UploadRegistrationError('文件内容与登记身份不符,请恢复原文件或使用新路径登记', 409, conflict)
       if (await activePostgresPhysicalIntent(tx, id)) throw new UploadRegistrationError('文件正在隔离或恢复，请使用物理恢复命令', 409)
       const before = await readPostgresFile(tx, id)
-      await tx.execute(sql`UPDATE stored_file SET filename = ${facts.filename}, ext = ${facts.ext}, removed_at = NULL WHERE id = ${id}`)
-      await tx.execute(sql`
-        UPDATE roster_file_classification
-        SET source = ${source}, kind = ${kind}, year = ${year}, batch = ${batch}, category_state = ${categoryState}
-        WHERE file_id = ${id}`)
+      await tx.update(storedFile).set({ filename: facts.filename, ext: facts.ext, removedAt: null })
+        .where(eq(storedFile.id, id))
+      await tx.update(rosterFileClassification).set({ source, kind, year, batch, categoryState })
+        .where(eq(rosterFileClassification.fileId, id))
       const row = await readPostgresFile(tx, id)
       await recordLegacyPostgresFileMaintenanceWrite(tx, before, row)
       return { row, created }

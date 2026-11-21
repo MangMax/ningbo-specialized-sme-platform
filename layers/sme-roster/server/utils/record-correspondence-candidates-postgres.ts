@@ -1,4 +1,12 @@
-import { sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import { record, recordEvent } from '../../../../db/postgresql/ledger-tables'
+import {
+  platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformCollection,
+  platformExportRow, platformLegacyQueryAlias, platformRecognizedProjection,
+} from '../../../../db/postgresql/platform-tables'
+import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
@@ -11,7 +19,7 @@ import { readPostgresPlatformBusinessGroups } from './platform-business-record-r
 import { projectCandidateRows, type CandidateInput } from './record-correspondence-candidates'
 import { readPostgresObservationComparisonFacts } from './record-correspondence-target-postgres'
 
-type Reader = Pick<NodePgDatabase, 'execute'>
+type Reader = Pick<NodePgDatabase, 'execute' | 'select'>
 type Sources = Parameters<typeof projectCandidateRows>[1]
 type Selection = { relationIds: number[]; total: number }
 const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
@@ -37,6 +45,8 @@ const genericTitle = sql`CASE WHEN c.interface='recognized_list' THEN ${recogniz
   WHEN replace(c.rdjb,',','')='' OR ${rawTitle}=ANY(string_to_array(c.rdjb,',')) THEN ${sourceTitle(rawTitle)} END) END`
 
 async function pageCandidateGroups(db: Reader, input: CandidateInput, enterpriseId: number, identity: string, titleCode: string) {
+  // PostgreSQL MATERIALIZED freezes eligible archive rows before grouping and
+  // pagination. The CTE hint is outside Drizzle's query builder.
   const { rows: [result] } = await db.execute<{ total: number; ids: number[] }>(sql`
     WITH eligible AS MATERIALIZED (
       SELECT ra.old_id AS id,row_number() OVER (ORDER BY q.old_id,o.sequence_no,ra.old_id) AS ordinal,
@@ -53,37 +63,40 @@ async function pageCandidateGroups(db: Reader, input: CandidateInput, enterprise
 }
 
 async function readPostgresCandidateQueries(db: Reader, queryIds: readonly number[]): Promise<Sources['queries']> {
-  const { rows } = await db.execute<Sources['queries'][number]>(sql`
-    SELECT q.old_id::float8 AS id,c.interface,c.query_key AS "queryKey",c.rdjb,c.title_code AS "titleCode",c.queried_at AS "queriedAt",
-      c.last_collected_at AS "lastCollectedAt",c.status,c.failure_reason AS "failureReason",c.created_at AS "createdAt",
+  const q = platformLegacyQueryAlias, c = platformCollection
+  const rows = await db.select({
+    id: q.oldId, interface: c.interface, queryKey: c.queryKey, rdjb: c.rdjb, titleCode: c.titleCode, queriedAt: c.queriedAt,
+    lastCollectedAt: c.lastCollectedAt, status: c.status, failureReason: c.failureReason, createdAt: c.createdAt,
+    collectionEvidence: sql<Sources['queries'][number]['collectionEvidence']>`
       (SELECT CASE WHEN json_typeof(archive.data)='object' THEN (
         SELECT coalesce(json_object_agg(f.key,f.value ORDER BY f.ordinal),'{}'::json)
         FROM json_each(archive.data) WITH ORDINALITY f(key,value,ordinal) WHERE f.key<>'rows'
       ) END FROM platform_collection_archive_ref r JOIN platform_archive_value v ON v.id=r.archive_id
         CROSS JOIN LATERAL (SELECT convert_from(v.bytes,'UTF8')::json AS data) archive
-      WHERE r.owner_id=c.id AND r.field='collectionEvidence') AS "collectionEvidence"
-    FROM platform_legacy_query_alias q JOIN platform_collection c ON c.id=q.collection_id
-    WHERE q.old_id=ANY(${ids(queryIds)}) ORDER BY q.old_id`)
-  return rows
+      WHERE r.owner_id=${c.id} AND r.field='collectionEvidence')`,
+  }).from(q).innerJoin(c, eq(c.id, q.collectionId)).where(eq(q.oldId, sql`ANY(${ids(queryIds)})`)).orderBy(q.oldId)
+  return rows as Sources['queries']
 }
 
 async function factsForCandidates(db: Reader, relations: (Sources['relevantRelations'][number] & { observationId: number; interface: Sources['queries'][number]['interface'] })[]) {
   const result = new Map<number, Sources['factsByRelation'] extends ReadonlyMap<number,infer V> ? V : never>()
   const normalized = await readPostgresObservationComparisonFacts(db, relations)
-  const tables = { apply_list: 'platform_apply_projection', business_list: 'platform_business_projection', recognized_list: 'platform_recognized_projection' }
+  const tables = { apply_list: platformApplyProjection, business_list: platformBusinessProjection, recognized_list: platformRecognizedProjection }
   for (const [source, group] of Map.groupBy(relations, row => row.interface)) {
-    const table = sql.identifier(tables[source])
     const process = source !== 'recognized_list'
-    const { rows } = await db.execute<{ id: number; typed: boolean; titleRaw: string | null; usccRaw: string | null;
-      declareKind: string | null; year: number | null; status: string | null; appliedAt: string | null; batch: string | null; awardBatchLabel: string | null }>(sql`
-      SELECT o.id::float8 AS id,v.version_id IS NOT NULL AS typed,v.uscc_raw AS "usccRaw",
-        ${process ? sql`p.sql_fact_title` : sql`v.title_raw`} AS "titleRaw",
-        ${process ? sql`v.declare_kind AS "declareKind",v.status,v.applied_at AS "appliedAt",
-          ${source === 'apply_list' ? sql`v.declaration_year` : sql`v.business_year`}::float8 AS year` : sql`NULL AS "declareKind",NULL AS status,NULL AS "appliedAt",NULL AS year`},
-        ${source === 'business_list' ? sql`v.batch,v.award_batch_label AS "awardBatchLabel"` : sql`NULL AS batch,NULL AS "awardBatchLabel"`}
-      FROM platform_business_observation o JOIN ${table} p ON p.observation_id=o.id
-      LEFT JOIN ${table} v ON v.version_id=o.version_id AND v.record_id=o.record_id
-      WHERE o.id=ANY(${ids(group.map(row => row.observationId))})`)
+    const o = platformBusinessObservation, p = alias(tables[source], 'observed'), v = alias(tables[source], 'version')
+    const rows = await db.select({
+      id: o.id, typed: sql<boolean>`${v.versionId} IS NOT NULL`, usccRaw: v.usccRaw,
+      titleRaw: 'sqlFactTitle' in p ? p.sqlFactTitle : v.titleRaw,
+      declareKind: 'declareKind' in v ? v.declareKind : sql<null>`NULL`,
+      year: 'declarationYear' in v ? v.declarationYear : 'businessYear' in v ? v.businessYear : sql<null>`NULL`,
+      status: 'status' in v ? v.status : sql<null>`NULL`,
+      appliedAt: 'appliedAt' in v ? v.appliedAt : sql<null>`NULL`,
+      batch: 'businessYear' in v ? v.batch : sql<null>`NULL`,
+      awardBatchLabel: 'businessYear' in v ? v.awardBatchLabel : sql<null>`NULL`,
+    }).from(o).innerJoin(p, eq(p.observationId, o.id))
+      .leftJoin(v, and(eq(v.versionId, o.versionId), eq(v.recordId, o.recordId)))
+      .where(eq(o.id, sql`ANY(${ids(group.map(row => row.observationId))})`))
     const typed = new Map(rows.map(row => [row.id,row]))
     for (const relation of group) {
       const base = normalized.get(relation.observationId), fact = typed.get(relation.observationId)
@@ -103,9 +116,12 @@ async function factsForCandidates(db: Reader, relations: (Sources['relevantRelat
 }
 
 export async function generatePostgresCandidates(db: Reader, input: CandidateInput, selection?: Selection) {
-  const event = input.eventId ? (await db.execute<NonNullable<Sources['event']>>(sql`
-    SELECT ${postgresRosterRow(schema.recordEvent,'e')} AS event,${postgresRosterRow(schema.record,'r')} AS record
-    FROM record_event e JOIN record r ON r.id=e.record_id WHERE e.id=${input.eventId} AND r.source='jxj'`)).rows[0] : null
+  const e = alias(recordEvent, 'e'), r = alias(record, 'r')
+  type Event = NonNullable<Sources['event']>
+  const event = input.eventId ? (await db.select({
+    event: sql<Event['event']>`${postgresRosterRow(schema.recordEvent,'e')}`,
+    record: sql<Event['record']>`${postgresRosterRow(schema.record,'r')}`,
+  }).from(e).innerJoin(r, eq(r.id, e.recordId)).where(and(eq(e.id, input.eventId), eq(r.source, 'jxj'))))[0] : null
   if (input.eventId && !event) return null
   const enterpriseId = event?.record.enterpriseId ?? input.enterpriseId!, titleCode = event?.record.titleCode ?? input.titleCode!
   const [enterprise] = await readPostgresRosterRowsById(db,schema.enterprise,sql`
@@ -130,13 +146,12 @@ export async function generatePostgresCandidates(db: Reader, input: CandidateInp
   const factsByRelation = await factsForCandidates(db,relevantRelations)
   const positions = new Map(relevantRelations.map(row => [row.id,{ sourceRdjb: row.sourceRdjb,sourcePage: row.sourcePage }]))
   const exportBatches = event && identity ? batches.filter(b => b.importStatus === 'imported' && b.titleCode === titleCode).map(b => b.id) : []
-  const { rows: exports } = await db.execute<Sources['relevantExports'][number]>(sql`
-    SELECT id::float8 AS id,batch_id::float8 AS "batchId",source_row_no::float8 AS "sourceRowNo",uscc_raw AS "usccRaw"
-    FROM platform_export_row WHERE batch_id=ANY(${ids(exportBatches)}) ORDER BY batch_id,source_row_no`)
+  const exported = platformExportRow, edge = recordCorrespondence
+  const exports = await db.select({ id: exported.id, batchId: exported.batchId, sourceRowNo: exported.sourceRowNo, usccRaw: exported.usccRaw })
+    .from(exported).where(eq(exported.batchId, sql`ANY(${ids(exportBatches)})`)).orderBy(exported.batchId, exported.sourceRowNo)
   const relevantExports = exports.filter(row => identity && normalizeUscc(row.usccRaw) === identity)
-  const { rows: priors } = await db.execute<Sources['priors'][number]>(sql`
-    SELECT id::float8 AS id,event_id::float8 AS "eventId",type,export_row_id::float8 AS "exportRowId",revision::float8 AS revision
-    FROM record_correspondence WHERE export_row_id=ANY(${ids(relevantExports.map(row => row.id))}) ORDER BY id`)
+  const priors = await db.select({ id: edge.id, eventId: edge.eventId, type: edge.type, exportRowId: edge.exportRowId, revision: edge.revision })
+    .from(edge).where(eq(edge.exportRowId, sql`ANY(${ids(relevantExports.map(row => row.id))})`)).orderBy(edge.id)
   const steps = projectCandidateRows(input,{ event,enterprise,queries,batches,relevantRelations,relevantExports,factsByRelation,positions,priors,targetPage,selection })
   const pending = steps.next()
   if (pending.done) return pending.value
@@ -146,10 +161,11 @@ export async function generatePostgresCandidates(db: Reader, input: CandidateInp
 }
 
 export async function discoverPostgresEventArchives(db: NodePgDatabase, input: EventArchiveInput, redact: ReceiptRedactor) {
-  const { rows: [owner] } = await db.execute<{ id: number; title: string; name: string; uscc: string | null }>(sql`
-    SELECT e.id::float8 AS id,r.title_code AS title,e.name_norm AS name,coalesce(r.uscc_raw,e.uscc_norm) AS uscc
-    FROM record_event v JOIN record r ON r.id=v.record_id JOIN enterprise e ON e.id=r.enterprise_id
-    WHERE v.id=${input.eventId} AND r.source='jxj' AND v.event_type IN ('award','review')`)
+  const [owner] = await db.select({
+    id: enterprise.id, title: record.titleCode, name: enterprise.nameNorm,
+    uscc: sql<string | null>`coalesce(${record.usccRaw},${enterprise.usccNorm})`,
+  }).from(recordEvent).innerJoin(record, eq(record.id, recordEvent.recordId)).innerJoin(enterprise, eq(enterprise.id, record.enterpriseId))
+    .where(and(eq(recordEvent.id, input.eventId), eq(record.source, 'jxj'), inArray(recordEvent.eventType, ['award','review'])))
   if (!owner) return null
   const identity = normalizeUscc(owner.uscc)
   const rowKey = normalizedUscc(sql`original.uscc_raw`)

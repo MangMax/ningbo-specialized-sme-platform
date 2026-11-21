@@ -1,6 +1,6 @@
 import { appLog, type LogContext } from '../../lib/logging'
 import { jobLogModule } from '../../lib/logging/module'
-import { and, asc, count, desc, eq, getTableColumns, inArray, isNotNull, isNull, not, or, sql, type SQL } from 'drizzle-orm'
+import { and, asc, count, desc, eq, getTableColumns, inArray, isNotNull, isNull, ne, not, or, sql, type SQL } from 'drizzle-orm'
 import { job } from '../../../../db/postgresql/job-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { isTerminalJobState, makeProgress, type JobProgress, type JobState } from '../../lib/job'
@@ -44,8 +44,8 @@ const jsonTextEscapes = String.raw`\\u(?:0000|d[89a-f][0-9a-f]{2})`
 const replacementEscape = String.raw`\\uFFFD`
 const summaryColumns = () => ({
   ...commonColumns,
-  hasResult: sql<boolean>`${job.result} IS NOT NULL AND ${job.result} <> 'null'`,
-  hasError: sql<boolean>`${job.error} IS NOT NULL`,
+  hasResult: and(isNotNull(job.result), ne(job.result, 'null'))!.mapWith(Boolean),
+  hasError: isNotNull(job.error).mapWith(Boolean),
   phaseAvailable: progressPhaseMatch(sql`regexp_replace(${job.result}, ${jsonTextEscapes}, ${replacementEscape}, 'gi')::json ->> 'phase'`),
 })
 
@@ -88,7 +88,7 @@ export async function getPostgresJobSummary(db: Executor, id: string) {
 
 const taskCenterColumns = {
   ...commonColumns,
-  hasError: sql<boolean>`${job.error} IS NOT NULL`,
+  hasError: isNotNull(job.error).mapWith(Boolean),
   restarted: sql<boolean>`coalesce(position('服务重启' in ${job.error}), 0) > 0`,
 }
 type StoredTaskCenterRow = JobColumns & { hasError: boolean; restarted: boolean }
@@ -292,7 +292,7 @@ export async function lockPostgresJobAdmission(db: Executor, kind: string) {
 
 export function findPostgresJobRequest(db: Executor, kind: string, key: string) {
   return readJob(db.select(jobColumns).from(job).where(and(eq(job.kind, kind), or(
-    sql`${job.requestKey} = ${postgresTextRequestKey(key)}`,
+    eq(job.requestKey, postgresTextRequestKey(key) ?? sql`NULL`),
     and(isNull(job.requestKey), sql`(business.job_params_for_query(${job.params}) -> 'clientRequestId')::jsonb
       = business.job_params_for_query(${JSON.stringify(key)})::jsonb`),
   ))).orderBy(...newestJobsFirst).limit(1))

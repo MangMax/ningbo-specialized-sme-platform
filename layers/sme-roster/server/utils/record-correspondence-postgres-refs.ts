@@ -1,12 +1,14 @@
-import { getTableColumns, sql, type SQL, type Table } from 'drizzle-orm'
+import { and, eq, getTableColumns, isNotNull, or, sql, type SQL, type Table } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { platformLegacyRelationAlias } from '../../../../db/postgresql/platform-tables'
+import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import * as schema from '../../../../db/schema'
 import { sourceQueryFields, sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
 import { readPostgresCurrentProofCoverage } from './comparison-scope-proof-postgres'
 import { correspondenceAttributionChanged, type CorrespondenceAttribution } from './record-correspondence-ref-validity'
 import type { CorrespondenceRefRow } from './record-correspondence'
 
-type Db = Pick<NodePgDatabase, 'execute'>
+type Db = Pick<NodePgDatabase, 'execute' | 'select'>
 type ProofReference = Parameters<typeof readPostgresCurrentProofCoverage>[1][number]
 const NULL_JSON = sql`'null'::jsonb`
 const refValue = (...segments: string[]) => sql`p.provenance_json #> ${sql.param(segments)}::text[]`
@@ -96,33 +98,39 @@ const exportMatches = sql`CASE WHEN p.export_row_id IS NULL THEN
 
 type RefSources = { eventIds: number[]; relationIds: number[]; exportRowIds: number[] }
 export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly number[] | RefSources | { annualDecisionIds: number[] }, witnessTitle?: string) {
-  let where: SQL
+  const edge = recordCorrespondence, relation = platformLegacyRelationAlias
+  const anyId = (ids: readonly number[]) => sql`ANY(${sql.param(ids)}::bigint[])`
+  let where: SQL | undefined
   const annual = 'annualDecisionIds' in ids
   if (annual) {
     if (!ids.annualDecisionIds.length) return []
-    where = sql`p.id=ANY(${sql.param(ids.annualDecisionIds)}::bigint[])`
+    where = eq(edge.id, anyId(ids.annualDecisionIds))
   } else if ('eventIds' in ids) {
     if (ids.eventIds.length + ids.relationIds.length + ids.exportRowIds.length === 0) return []
-    const events = sql`${sql.param(ids.eventIds)}::bigint[]`
-    where = sql`(p.event_id=ANY(${events}) OR p.predecessor_event_id=ANY(${events})
-      OR ra.old_id=ANY(${sql.param(ids.relationIds)}::bigint[]) OR p.export_row_id=ANY(${sql.param(ids.exportRowIds)}::bigint[]))`
+    const events = anyId(ids.eventIds)
+    where = or(eq(edge.eventId, events), eq(edge.predecessorEventId, events),
+      eq(relation.oldId, anyId(ids.relationIds)), eq(edge.exportRowId, anyId(ids.exportRowIds)))
   } else {
     if (!ids.length) return []
-    where = sql`p.enterprise_id=ANY(${sql.param(ids)}::bigint[])`
+    where = eq(edge.enterpriseId, anyId(ids))
   }
+  const selected = db.select({
+    id: edge.id, type: edge.type, role: edge.role, status: edge.status, eventId: edge.eventId,
+    predecessorEventId: edge.predecessorEventId, observationId: edge.observationId, exportRowId: edge.exportRowId,
+    enterpriseId: edge.enterpriseId, titleCode: edge.titleCode, revision: edge.revision,
+    relation: sql`${relation.oldId}`.as('relation_id'),
+    provenance: sql`CASE WHEN ${annual ? sql`true` : eq(edge.status, 'confirmed')} THEN ${edge.provenance}::jsonb END`.as('provenance_json'),
+  }).from(edge).leftJoin(relation, eq(relation.observationId, edge.observationId))
+    .where(and(where, witnessTitle === undefined ? undefined : and(eq(edge.titleCode, witnessTitle),
+      eq(edge.status, 'confirmed'), eq(edge.type, 'event_recognized'), eq(edge.role, 'recognized_corrob'),
+      isNotNull(edge.eventId), isNotNull(relation.oldId))))
   const validate = annual ? sql`true` : sql`p.status='confirmed'`
+  // Materialize the bounded scope before inspecting archived byte fields and
+  // saved JSON provenance. Drizzle has no MATERIALIZED option on its CTE API.
   const { rows } = await db.execute<{
     ref: CorrespondenceRefRow; matches: boolean; attribution: CorrespondenceAttribution | null; proof: ProofReference | null
   }>(sql`
-    WITH selected AS MATERIALIZED (
-      SELECT p.id,p.type,p.role,p.status,p.event_id,p.predecessor_event_id,p.observation_id,p.export_row_id,
-        p.enterprise_id,p.title_code,p.revision,ra.old_id AS relation_id,
-        CASE WHEN ${validate} THEN p.provenance::jsonb END AS provenance_json
-      FROM record_correspondence p LEFT JOIN platform_legacy_relation_alias ra ON ra.observation_id=p.observation_id
-      WHERE ${where}
-      ${witnessTitle === undefined ? sql.empty() : sql`AND p.title_code=${witnessTitle}
-        AND p.status='confirmed' AND p.type='event_recognized' AND p.role='recognized_corrob' AND p.event_id IS NOT NULL AND ra.old_id IS NOT NULL`}
-    )
+    WITH selected AS MATERIALIZED (${selected})
     SELECT json_build_object('id',p.id,'type',p.type,'role',p.role,'status',p.status,'eventId',p.event_id,
       'predecessorEventId',p.predecessor_event_id,'relationId',p.relation_id,'exportRowId',p.export_row_id,
       'enterpriseId',p.enterprise_id,'titleCode',p.title_code,'revision',p.revision) AS ref,
