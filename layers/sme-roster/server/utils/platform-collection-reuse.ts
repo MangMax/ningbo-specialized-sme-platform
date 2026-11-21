@@ -1,6 +1,7 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { and, desc, eq, isNotNull, isNull, ne, or, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import {
   platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformCollection,
   platformLegacyQueryAlias, platformObservationAssignment, platformRecognizedProjection,
@@ -80,7 +81,8 @@ export async function reusePostgresCollectedPlatformResult(db: Pick<NodePgDataba
   const content = contents(result)
   if (content === null) return false
   const query = platformResultToImport(result)
-  const c = platformCollection
+  // FOR UPDATE OF accepts the unqualified relation alias even though FROM uses business.
+  const c = alias(platformCollection, 'collection')
   const qa = platformLegacyQueryAlias
   const [row] = await db.select({ id: qa.oldId, collection: c }).from(c).innerJoin(qa, eq(qa.collectionId, c.id))
     .where(and(eq(c.interface, query.interface), eq(c.queryKey, query.queryKey), eq(c.rdjb, query.rdjb ?? ''),
@@ -109,7 +111,7 @@ export async function reusePostgresCollectedPlatformResult(db: Pick<NodePgDataba
   const original = (await readPostgresFingerprintQueries(db,[row.id],false)).get(row.id)?.query.collectionEvidence
   if (!evidenceShape.safeParse(original).success || contents(original!)!==content) return false
   if (Date.parse(result.queriedAt)>Date.parse(collection.lastCollectedAt ?? collection.queriedAt)) {
-    await db.update(c).set({ lastCollectedAt: result.queriedAt }).where(eq(c.id, collection.id))
+    await db.update(platformCollection).set({ lastCollectedAt: result.queriedAt }).where(eq(platformCollection.id, collection.id))
   }
   return true
 }

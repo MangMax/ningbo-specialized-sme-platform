@@ -1,7 +1,7 @@
 /** SQL selection coordinates for the enterprise list, never a query-result cache.
  * Full lifecycle/evidence projections still use enterprise-roster's business rules.
  * The only JS-wide operation is the original localeCompare stable sort. */
-import { and, asc, eq, exists, gt, inArray, isNotNull, isNull, max, ne, notInArray, or, sql, type SQL } from 'drizzle-orm'
+import { and, asc, count, eq, exists, gt, inArray, isNotNull, isNull, max, min, ne, notExists, notInArray, or, sql, sum, sumDistinct, type SQL } from 'drizzle-orm'
 import { alias, SQLiteSyncDialect } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { Database } from 'better-sqlite3'
@@ -14,7 +14,6 @@ import { currentEnterpriseIdentity } from './enterprise-identity'
 
 type Db = BetterSQLite3Database<typeof schema>
 const rank = (column: SQL, values: string[]) => sql`case ${sql.join(values.map((value, i) => sql`when ${column} = ${value} then ${i}`), sql` `)} else ${values.length} end`
-const selected = (column: SQL, values?: (string | number)[]) => values?.length ? inArray(column, values) : sql`1`
 function membershipCtes(db: Db) {
   const enterprise = schema.enterprise
   const batch = schema.platformExportBatch
@@ -22,7 +21,7 @@ function membershipCtes(db: Db) {
   const currentIdentity = currentEnterpriseIdentity(db)
   const usccKey = identityUsccSql(sql`${enterprise.usccNorm}`).as('uscc_key')
   const usccQuery = db.select({ key: usccKey, id: max(enterprise.id).as('uscc_owner_id') }).from(enterprise)
-    .where(currentIdentity).groupBy(usccKey)
+    .where(currentIdentity).groupBy(fields => fields.key)
   const nameQuery = db.select({ key: enterprise.nameNorm, id: max(enterprise.id).as('name_owner_id') }).from(enterprise)
     .where(currentIdentity).groupBy(enterprise.nameNorm)
   const usccOwners = db.$with('uscc_owners').as(usccQuery)
@@ -37,8 +36,8 @@ function membershipCtes(db: Db) {
   // Preserve SQLite integer affinity for the membership join.
   const owner = sql<number>`cast(coalesce(${usccOwners.id},${nameOwners.id}) as integer)`
   const membershipQuery = db.select({
-    id: owner.as('id'),
-    current: max(inArray(row.batchId, db.select({ id: latest.id }).from(latest))).as('current'),
+    id: owner.as('member_enterprise_id'),
+    current: max(inArray(row.batchId, db.select({ id: latest.id }).from(latest))).mapWith(Number).as('current'),
   }).from(row)
     .leftJoin(usccOwners, eq(usccOwners.key, identityUsccSql(sql`${row.usccRaw}`)))
     .leftJoin(nameOwners, and(
@@ -60,7 +59,7 @@ export function removedEnterpriseIds(db: Db, ids: number[]): Set<number> {
   const { ctes, membership } = membershipCtes(db)
   const removed = db.select({ id: membership.id }).from(membership)
     .where(and(eq(membership.current, 0), inArray(membership.id, ids)))
-  return new Set(db.all<{ id: number }>(sql`with ${ctes} ${removed.getSQL()}`).map(row => row.id))
+  return new Set(db.all<{ member_enterprise_id: number }>(sql`with ${ctes} ${removed.getSQL()}`).map(row => row.member_enterprise_id))
 }
 
 export interface EnterpriseSelection {
@@ -108,12 +107,11 @@ function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: numbe
     includes(sql`case when instr(${enterprise.usccNorm},char(0))>0 or ${enterprise.usccNorm} glob '*[^ -~]*'
       then roster84_upper(${enterprise.usccNorm}) else upper(coalesce(${enterprise.usccNorm},'')) end`, usccNeedle),
   ) : undefined
-  const recognitionMatch = and(selected(sql`f.title_code`, filter.title), selected(sql`f.first_year`, filter.firstYear), selected(sql`f.status`, filter.firstStatus))!
   const recordMatch = and(
-    filter.source?.length ? inArray(record.source, filter.source) : undefined,
+    filter.source?.length ? inArray(record.source.getSQL(), filter.source) : undefined,
     filter.eventType?.length || filter.year?.length ? exists(db.select({ id: event.id }).from(event).where(and(
       eq(event.recordId, record.id),
-      filter.eventType?.length ? inArray(event.eventType, filter.eventType) : undefined,
+      filter.eventType?.length ? inArray(event.eventType.getSQL(), filter.eventType) : undefined,
       filter.year?.length ? inArray(event.year, filter.year) : undefined,
     ))) : undefined,
   ) ?? sql`1`
@@ -145,96 +143,189 @@ function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: numbe
   const scope = db.select({ id: entityId }).from(enterprise).where(scopeFilter)
   const titleMask = sql`case r.title_code ${sql.join(TITLE_ORDER.map((title,index) => sql`when ${title} then ${1<<index}`),sql` `)} else 0 end`
   const selectedMask = TITLE_ORDER.reduce((mask,title,index) => mask | (!filter.title?.length || filter.title.includes(title) ? 1<<index : 0),0)
-  const defaultDifference = sql`case when ${entityUscc} is null then coalesce(h.unkeyed_difference_count,0) else coalesce(h.difference_count,0) end`
-  const differenceCount = sql`coalesce(d.count,${defaultDifference})`
-  const differenceStatus = sql`coalesce(d.status,case when ${defaultDifference}>0 then 'not_queried' end)`
-  const diffFilter = filter.diffStatus?.length ? sql`(
-    ${filter.diffStatus.includes('none') ? sql`${differenceCount}=0` : sql`0`} or
-    ${inArray(differenceStatus, filter.diffStatus.filter(x => x !== 'none'))} or
-    exists(select 1 from coordinates c where c.enterprise_id=${entityId} and ${selected(sql`c.status`, filter.diffStatus.filter(x => x !== 'none'))} and c.status != 'none'
-      ${filter.diffStatus.every(x => x === 'none') ? sql`and 0` : sql``}) or ${inArray(sql`d.reason`, filter.diffStatus.filter(x => x !== 'none'))})` : sql`1`
-  // SQLite materialized CTEs and window projections have no builder equivalents.
-  const generalQuery = sql`
-    with scope as materialized (
-      ${scope.getSQL()}
-    ), fact_base as materialized (
-      select r.enterprise_id,r.title_code,
-        min(case when v.event_type='award' then coalesce(v.decided_year,v.year) end) as first_year,
-        sum(v.event_type='award') as awards,
-        max(v.event_type='award' and coalesce(v.decided_year,v.year) is null) as undated,
-        max(r.source='jxj') as official,max(r.source!='jxj') as platform,
-        max(case when ${recordMatch} then 1 else 0 end) as record_match
-      from record r ${needle != null || filter.district || explainedOnly ? sql`join scope o on o.id=r.enterprise_id` : sql``}
-        left join record_event v on v.record_id=r.id
-      group by r.enterprise_id,r.title_code
-    ), facts as (
-      select f.*,case when f.first_year is null or f.undated or not exists (
-        select 1 from record_evidence ev where ev.record_event_id=(
-          select v.id from record r join record_event v on v.record_id=r.id
-          where r.enterprise_id=f.enterprise_id and r.title_code=f.title_code and v.event_type='award'
-            and coalesce(v.decided_year,v.year)=f.first_year order by v.id limit 1)) then 'pending' else 'confirmed' end as status
-      from fact_base f
-    ), history as (
-      select f.enterprise_id,json_group_array(f.title_code) as titles,min(f.first_year) as first_year,
-        min(${rank(sql`f.title_code`, TITLE_ORDER)}) as title_rank,max(f.official) as official,max(f.record_match) as record_match,
-        sum(case when f.title_code in ('little_giant','specialized_sme','innovative_sme') then (f.official != f.platform) else 0 end) as difference_count,
-        sum(case when f.title_code in ('little_giant','specialized_sme','innovative_sme') then f.official + f.platform else 0 end) as unkeyed_difference_count,
-        sum(case when f.awards>0 and ${recognitionMatch} then 1 else 0 end) as recognition_pairs,
-        max(case when ${selected(sql`f.title_code`, filter.title)} then 1 else 0 end) as title_match
-      from facts f group by f.enterprise_id
-    ), derived as materialized (
-      -- uscc_norm is UNIQUE in the existing schema; non-null exact keys can
-      -- only refer to this enterprise. Null keys deliberately never match.
-      select f.enterprise_id,f.title_code,'missing_in_miit' as direction from fact_base f join enterprise e on e.id=f.enterprise_id
-        where title_code in ('little_giant','specialized_sme','innovative_sme') and official and (uscc_norm is null or not platform)
-          and enterprise_id in (select enterprise_id from explanations)
-      union all select f.enterprise_id,f.title_code,'extra_in_miit' from fact_base f join enterprise e on e.id=f.enterprise_id
-        where title_code in ('little_giant','specialized_sme','innovative_sme') and platform and (uscc_norm is null or not official)
-          and enterprise_id in (select enterprise_id from explanations)
-    ), explanation_versions as (
-      select enterprise_id,title_code,direction,status,reason_code,recorded_at,id,row_number() over(partition by enterprise_id,title_code,direction order by recorded_at desc,id) as n
-      from difference_reason where enterprise_id in (select id from scope)
-    ), explanations as materialized (select * from explanation_versions where n=1), legacy_coordinates as materialized (
-      select d.*,coalesce(x.status,'not_queried') as status,x.reason_code,1 as current from derived d left join explanations x
-        on x.enterprise_id=d.enterprise_id and x.title_code=d.title_code and x.direction=d.direction
-      union all select x.enterprise_id,x.title_code,x.direction,x.status,x.reason_code,0 from explanations x where not exists(
-        select 1 from derived d where d.enterprise_id=x.enterprise_id and d.title_code=x.title_code and d.direction=x.direction)
-    ), refreshed_decisions as (
-      select x.*,row_number() over(partition by x.enterprise_id,x.title_code order by x.recorded_at desc,x.id desc) as latest
-      from explanations x join enterprise_difference_comparison c on c.enterprise_id=x.enterprise_id and c.title_code=x.title_code where x.id>c.decision_cutoff_id
-    ), coordinates as materialized (
-      select x.* from legacy_coordinates x where not exists(select 1 from enterprise_difference_comparison c where c.enterprise_id=x.enterprise_id and c.title_code=x.title_code)
-      union all select c.enterprise_id,c.title_code,'missing_in_miit',coalesce(d.status,'needs_review'),d.reason_code,1
-      from enterprise_difference_comparison c left join refreshed_decisions d on d.enterprise_id=c.enterprise_id and d.title_code=c.title_code and d.latest=1
-      where c.enterprise_id in (select id from scope)
-    ), ranked_differences as (
-      select *,row_number() over(partition by enterprise_id order by ${rank(sql`status`, DIFFERENCE_STATUS_ORDER)} desc,${rank(sql`title_code`, TITLE_ORDER)},direction) as n from coordinates
-    ), explained_differences as (
-      select enterprise_id,count(*) as count,max(current) as current,max(case when n=1 then status end) as status,
-        max(case when n=1 then reason_code end) as reason from ranked_differences group by enterprise_id
-    ), ${membershipCtes(db).ctes}, candidates as (
-      select ${entityId} as id,${entityName} as name,h.titles,h.first_year,h.title_rank,h.recognition_pairs,
-        ${filter.rosterState ? sql`case when h.official=0 and m.id is not null and not m.current then 'removed_platform_only' else 'current' end` : sql`'current'`} as state,
-        ${differenceCount} as difference_count,${differenceStatus} as status,d.reason,coalesce(d.current,${defaultDifference}>0) as difference_current
-      from scope o join enterprise e on e.id=o.id left join history h on h.enterprise_id=e.id left join explained_differences d on d.enterprise_id=${entityId}
-        ${filter.rosterState ? sql`left join membership m on m.id=+e.id` : sql``}
-      where ${filter.title?.length ? sql`h.title_match=1` : sql`1`}
-        and ${filter.firstYear?.length || filter.firstStatus?.length ? sql`h.recognition_pairs>0` : sql`1`}
-        and ${filter.source?.length || filter.eventType?.length || filter.year?.length ? sql`h.record_match=1` : sql`1`}
-        and ${diffFilter}
-    ) select * from candidates where ${filter.rosterState ? sql`state=${filter.rosterState}` : sql`1`}`
+  const scoped = db.$with('scope').as(scope)
+  const awardYear = sql<number | null>`coalesce(${event.decidedYear}, ${event.year})`
+  const isAward = eq(event.eventType, 'award')
+  const recordFacts = db.select({
+    enterpriseId: record.enterpriseId,
+    title: record.titleCode,
+    firstYear: min(sql`case when ${isAward} then ${awardYear} end`).mapWith(Number).as('fact_first_year'),
+    awards: sum(isAward).mapWith(Number).as('fact_awards'),
+    undated: max(and(isAward, isNull(awardYear))!).mapWith(Number).as('fact_undated'),
+    official: max(eq(record.source, 'jxj')).mapWith(Number).as('fact_official'),
+    platform: max(ne(record.source, 'jxj')).mapWith(Number).as('fact_platform'),
+    recordMatch: max(sql`case when ${recordMatch} then 1 else 0 end`).mapWith(Number).as('fact_record_match'),
+  }).from(record).$dynamic()
+  const limitRecords = needle != null || !!filter.district || explainedOnly
+  const factQuery = (limitRecords ? recordFacts.innerJoin(scoped, eq(scoped.id, record.enterpriseId)) : recordFacts)
+    .leftJoin(event, eq(event.recordId, record.id)).groupBy(record.enterpriseId, record.titleCode)
+  const factBase = db.$with('fact_base').as(factQuery)
+
+  const evidence = schema.recordEvidence
+  const firstAward = db.select({ id: event.id }).from(event).innerJoin(record, eq(record.id, event.recordId))
+    .where(and(eq(record.enterpriseId, factBase.enterpriseId), eq(record.titleCode, factBase.title),
+      isAward, eq(awardYear, factBase.firstYear)))
+    .orderBy(asc(event.id)).limit(1)
+  const evidenceExists = exists(db.select({ id: evidence.id }).from(evidence)
+    .where(eq(evidence.recordEventId, sql`(${firstAward.getSQL()})`)))
+  const factsQuery = db.select({
+    enterpriseId: factBase.enterpriseId, title: factBase.title, firstYear: factBase.firstYear,
+    awards: factBase.awards, undated: factBase.undated, official: factBase.official,
+    platform: factBase.platform, recordMatch: factBase.recordMatch,
+    status: sql<string>`case when ${isNull(factBase.firstYear)} or ${factBase.undated} or not ${evidenceExists}
+      then 'pending' else 'confirmed' end`.as('fact_status'),
+  }).from(factBase)
+  const facts = db.$with('facts').as(factsQuery)
+  const supportedTitles = ['little_giant', 'specialized_sme', 'innovative_sme']
+  const recognitionMatch = and(
+    filter.title?.length ? inArray(facts.title, filter.title) : undefined,
+    filter.firstYear?.length ? inArray(facts.firstYear, filter.firstYear) : undefined,
+    filter.firstStatus?.length ? inArray(facts.status, filter.firstStatus) : undefined,
+  ) ?? sql`1`
+  const comparisonTitle = inArray(facts.title, supportedTitles)
+  const historyQuery = db.select({
+    enterpriseId: facts.enterpriseId,
+    titles: sql<string>`json_group_array(${facts.title})`.as('history_titles'),
+    firstYear: min(facts.firstYear).as('history_first_year'),
+    rank: min(rank(sql`${facts.title}`, TITLE_ORDER)).as('history_title_rank'),
+    official: max(facts.official).mapWith(Number).as('history_official'),
+    recordMatch: max(facts.recordMatch).mapWith(Number).as('history_record_match'),
+    differenceCount: sum(sql`case when ${comparisonTitle} then (${ne(facts.official, facts.platform)}) else 0 end`).as('history_difference_count'),
+    unkeyedDifferenceCount: sum(sql`case when ${comparisonTitle} then ${facts.official} + ${facts.platform} else 0 end`).as('history_unkeyed_difference_count'),
+    recognitionPairs: sum(sql`case when ${gt(facts.awards, 0)} and ${recognitionMatch} then 1 else 0 end`).mapWith(Number).as('history_recognition_pairs'),
+    titleMatch: max(sql`case when ${filter.title?.length ? inArray(facts.title, filter.title) : sql`1`} then 1 else 0 end`).mapWith(Number).as('history_title_match'),
+  }).from(facts).groupBy(facts.enterpriseId)
+  const history = db.$with('history').as(historyQuery)
+
+  const reason = schema.differenceReason
+  const comparison = schema.enterpriseDifferenceComparison
+  const scopedIds = db.select({ id: scoped.id }).from(scoped)
+  // SQLite window ordering has no Drizzle query-builder equivalent.
+  const explanationsRanked = db.select({
+    enterpriseId: reason.enterpriseId, title: reason.titleCode, direction: reason.direction, status: reason.status,
+    reasonCode: reason.reasonCode, id: reason.id, recordedAt: reason.recordedAt,
+    row: sql<number>`row_number() over(partition by ${reason.enterpriseId},${reason.titleCode},${reason.direction}
+      order by ${reason.recordedAt} desc,${reason.id})`.as('explanation_row'),
+  }).from(reason).where(inArray(reason.enterpriseId, scopedIds)).as('explanation_versions')
+  const explanationsQuery = db.select().from(explanationsRanked).where(eq(explanationsRanked.row, 1))
+  const explanations = db.$with('explanations').as(explanationsQuery)
+  const explanationIds = db.select({ id: explanations.enterpriseId }).from(explanations)
+  // Null credit codes never match platform evidence. The unique non-null keys
+  // can only match the same enterprise.
+  const derivedBranch = (direction: 'missing_in_miit' | 'extra_in_miit', present: SQL.Aliased, absent: SQL.Aliased) => db.select({
+    enterpriseId: factBase.enterpriseId, title: factBase.title,
+    direction: sql<string>`${direction}`.as('derived_direction'),
+  }).from(factBase).innerJoin(enterprise, eq(enterprise.id, factBase.enterpriseId))
+    .where(and(inArray(factBase.title, supportedTitles), eq(present, 1),
+      or(isNull(enterprise.usccNorm), eq(absent, 0)), inArray(factBase.enterpriseId, explanationIds)))
+  const derivedQuery = derivedBranch('missing_in_miit', factBase.official, factBase.platform)
+    .unionAll(derivedBranch('extra_in_miit', factBase.platform, factBase.official))
+  const derived = db.$with('derived').as(derivedQuery)
+  const sameExplanation = and(eq(derived.enterpriseId, explanations.enterpriseId),
+    eq(derived.title, explanations.title), eq(derived.direction, explanations.direction))
+  const legacyQuery = db.select({
+    enterpriseId: derived.enterpriseId, title: derived.title, direction: derived.direction,
+    status: sql<string>`coalesce(${explanations.status}, 'not_queried')`.as('legacy_status'),
+    reasonCode: explanations.reasonCode,
+    current: sql<number>`1`.as('legacy_current'),
+  }).from(derived).leftJoin(explanations, sameExplanation).unionAll(db.select({
+    enterpriseId: explanations.enterpriseId, title: explanations.title, direction: sql<string>`${explanations.direction}`,
+    status: sql<string>`${explanations.status}`, reasonCode: explanations.reasonCode,
+    current: sql<number>`0`,
+  }).from(explanations).where(notExists(db.select({ id: derived.enterpriseId }).from(derived).where(sameExplanation))))
+  const legacy = db.$with('legacy_coordinates').as(legacyQuery)
+  const refreshedQuery = db.select({
+    enterpriseId: explanations.enterpriseId, title: explanations.title, status: explanations.status, reasonCode: explanations.reasonCode,
+    latest: sql<number>`row_number() over(partition by ${explanations.enterpriseId},${explanations.title}
+      order by ${explanations.recordedAt} desc,${explanations.id} desc)`.as('refresh_row'),
+  }).from(explanations).innerJoin(comparison, and(eq(comparison.enterpriseId, explanations.enterpriseId),
+    eq(comparison.titleCode, explanations.title))).where(gt(explanations.id, comparison.decisionCutoffId))
+  const refreshed = db.$with('refreshed_decisions').as(refreshedQuery)
+  const coordinatesQuery = db.select({
+    enterpriseId: legacy.enterpriseId, title: legacy.title, direction: legacy.direction,
+    status: legacy.status, reasonCode: legacy.reasonCode, current: legacy.current,
+  }).from(legacy).where(notExists(db.select({ id: comparison.enterpriseId }).from(comparison)
+    .where(and(eq(comparison.enterpriseId, legacy.enterpriseId), eq(comparison.titleCode, legacy.title)))))
+    .unionAll(db.select({
+      enterpriseId: comparison.enterpriseId, title: comparison.titleCode,
+      direction: sql<string>`'missing_in_miit'`,
+      status: sql<string>`coalesce(${refreshed.status}, 'needs_review')`,
+      reasonCode: refreshed.reasonCode, current: sql<number>`1`,
+    }).from(comparison).leftJoin(refreshed, and(eq(refreshed.enterpriseId, comparison.enterpriseId),
+      eq(refreshed.title, comparison.titleCode), eq(refreshed.latest, 1)))
+      .where(inArray(comparison.enterpriseId, scopedIds)))
+  const coordinates = db.$with('coordinates').as(coordinatesQuery)
+  const rankedDifferencesQuery = db.select({
+    enterpriseId: coordinates.enterpriseId, title: coordinates.title, direction: coordinates.direction,
+    status: coordinates.status, reasonCode: coordinates.reasonCode, current: coordinates.current,
+    row: sql<number>`row_number() over(partition by ${coordinates.enterpriseId}
+      order by ${rank(sql`${coordinates.status}`, DIFFERENCE_STATUS_ORDER)} desc,
+        ${rank(sql`${coordinates.title}`, TITLE_ORDER)},${coordinates.direction})`.as('difference_row'),
+  }).from(coordinates)
+  const rankedDifferences = db.$with('ranked_differences').as(rankedDifferencesQuery)
+  const differencesQuery = db.select({
+    enterpriseId: rankedDifferences.enterpriseId,
+    count: count().as('difference_count'),
+    current: max(rankedDifferences.current).as('difference_any_current'),
+    status: max(sql`case when ${eq(rankedDifferences.row, 1)} then ${rankedDifferences.status} end`).as('difference_status'),
+    reasonCode: max(sql`case when ${eq(rankedDifferences.row, 1)} then ${rankedDifferences.reasonCode} end`).as('difference_reason'),
+  }).from(rankedDifferences).groupBy(rankedDifferences.enterpriseId)
+  const differences = db.$with('explained_differences').as(differencesQuery)
+  const { ctes: membershipQueries, membership } = membershipCtes(db)
+  const defaultDifference = sql<number>`case when ${isNull(entityUscc)}
+    then coalesce(${history.unkeyedDifferenceCount},0) else coalesce(${history.differenceCount},0) end`
+  const differenceCount = sql<number>`coalesce(${differences.count},${defaultDifference})`
+  const differenceStatus = sql<string>`coalesce(${differences.status},case when ${gt(defaultDifference, 0)} then 'not_queried' end)`
+  const selectedStatuses = filter.diffStatus?.filter(status => status !== 'none') ?? []
+  const diffFilter = filter.diffStatus?.length ? or(
+    filter.diffStatus.includes('none') ? eq(differenceCount, 0) : undefined,
+    selectedStatuses.length ? inArray(differenceStatus, selectedStatuses) : undefined,
+    selectedStatuses.length ? exists(db.select({ id: coordinates.enterpriseId }).from(coordinates).where(and(
+      eq(coordinates.enterpriseId, entityId), inArray(coordinates.status, selectedStatuses), ne(coordinates.status, 'none'),
+    ))) : undefined,
+    selectedStatuses.length ? inArray(differences.reasonCode, selectedStatuses) : undefined,
+  ) : undefined
+  const state = filter.rosterState ? sql<RosterState>`case when ${eq(history.official, 0)}
+    and ${isNotNull(membership.id)} and not ${membership.current} then 'removed_platform_only' else 'current' end`
+    : sql<RosterState>`'current'`
+  const selection = db.select({
+    id: entityId, name: entityName, titles: history.titles, firstYear: history.firstYear, rank: history.rank,
+    recognitionPairs: history.recognitionPairs, state, differenceCount, status: differenceStatus,
+    reasonCode: differences.reasonCode, differenceCurrent: sql`coalesce(${differences.current},${gt(defaultDifference, 0)})`,
+  }).from(scoped).innerJoin(enterprise, eq(enterprise.id, scoped.id))
+    .leftJoin(history, eq(history.enterpriseId, enterprise.id))
+    .leftJoin(differences, eq(differences.enterpriseId, enterprise.id)).$dynamic()
+  const candidateQuery = (filter.rosterState
+    ? selection.leftJoin(membership, eq(membership.id, sql`+${enterprise.id}`))
+    : selection).where(and(
+    filter.title?.length ? eq(history.titleMatch, 1) : undefined,
+    filter.firstYear?.length || filter.firstStatus?.length ? gt(history.recognitionPairs, 0) : undefined,
+    filter.source?.length || filter.eventType?.length || filter.year?.length ? eq(history.recordMatch, 1) : undefined,
+    filter.rosterState ? eq(state, filter.rosterState) : undefined,
+    diffFilter,
+  ))
+  // Drizzle does not expose SQLite's MATERIALIZED hint. The surrounding
+  // CTE declarations preserve the original evaluation boundaries.
+  const generalQuery = sql`with scope as materialized (${scope.getSQL()}),
+    fact_base as materialized (${factQuery.getSQL()}), facts as (${factsQuery.getSQL()}), history as (${historyQuery.getSQL()}),
+    explanations as materialized (${explanationsQuery.getSQL()}), derived as materialized (${derivedQuery.getSQL()}),
+    legacy_coordinates as materialized (${legacyQuery.getSQL()}), refreshed_decisions as (${refreshedQuery.getSQL()}),
+    coordinates as materialized (${coordinatesQuery.getSQL()}), ranked_differences as (${rankedDifferencesQuery.getSQL()}),
+    explained_differences as (${differencesQuery.getSQL()}), ${membershipQueries} ${candidateQuery.getSQL()}`
   // Compute the sparse explained subset once, rather than forcing every
   // enterprise through window/coordinate joins. This map is request-local and
   // has no archive fields; the common masks still include every enterprise.
   const explained = directHistory ? new Map(selectCoordinates(db, filter, undefined, true).candidates.map(row => [row.id,row.difference])) : null
-  // The CASE expressions and bit masks are the SQLite aggregate projections.
+  // Drizzle has no CASE, COALESCE, or bit-shift expression builders.
+  const directAward = eq(event.eventType, 'award')
+  const directAwardYear = sql`coalesce(${event.decidedYear},${event.year})`
   const directQuery = db.select({
     id: entityId,
     name: entityName,
     unkeyed: isNull(entityUscc),
-    firstYear: sql`min(case when ${event.eventType}='award' then coalesce(${event.decidedYear},${event.year}) end)`,
-    sourceMask: sql`sum(distinct case when ${record.source}='jxj' then ${titleMask} else (${titleMask} << ${TITLE_ORDER.length}) end)`,
-    recognitionMask: sql`sum(distinct case when ${event.eventType}='award' then ${titleMask} else 0 end)`,
+    firstYear: min(sql`case when ${directAward} then ${directAwardYear} end`).mapWith(Number),
+    sourceMask: sumDistinct(sql`case when ${eq(record.source, 'jxj')} then ${titleMask} else (${titleMask} << ${TITLE_ORDER.length}) end`).mapWith(Number),
+    recognitionMask: sumDistinct(sql`case when ${directAward} then ${titleMask} else 0 end`).mapWith(Number),
   }).from(enterprise).leftJoin(record, eq(record.enterpriseId, enterprise.id))
     .leftJoin(event, eq(event.recordId, record.id)).where(scopeFilter).groupBy(enterprise.id)
   // The SQLite builder exposes only eager reads. Keep the native iterator so
