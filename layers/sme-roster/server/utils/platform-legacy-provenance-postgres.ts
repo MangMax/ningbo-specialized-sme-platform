@@ -82,7 +82,7 @@ async function existing(tx: Tx, collectionId: number, queryId: number) {
     identity: provenance.sourceIdentity, sha256: provenance.sourceSha256, segment: provenance.segmentIndex,
     fingerprint: provenance.inputFingerprint,
     sealed: exists(tx.select({ id: r.archiveId }).from(r).where(and(eq(r.ownerId, provenance.collectionId),
-      eq(r.field, 'legacyProvenance'), eq(r.archiveId, a.id), eq(r.sealed, 1)))),
+      eq(r.field, 'legacyProvenance'), eq(r.archiveId, a.id), eq(r.sealed, 1)))).mapWith(Boolean),
   }).from(provenance).innerJoin(a, eq(a.id, provenance.archiveId)).where(eq(provenance.collectionId, collectionId))
   const row = stored ? { ...stored, id: String(stored.id), byteLength: stored.byteLength === null ? null : String(stored.byteLength) } : null
   if (!row) return null
