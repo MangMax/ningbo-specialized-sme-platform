@@ -1,8 +1,11 @@
-import { sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import { platformCollection as collection, platformLegacyQueryAlias as queryAlias } from '../../../../db/postgresql/platform-tables'
+import { platformCollectionArchiveRef as archive } from '../../../../db/postgresql/platform-archive-tables'
+import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { getPostgresComparison } from '../../lib/comparison'
 import type { LegacySlotCollection } from '../../lib/platform/client'
-import type { KnownEnterprise } from '../../lib/platform/payload'
 import type { ReconcileQueryEvidence } from '../../lib/platform/reconcile'
 import { snapshotStoredReplayInput } from '../../lib/platform/reconcile-replay-input'
 import { RECONCILE_SLOT_RULE, slotLegacyRow, slotPayloadRow } from '../../lib/platform/reconcile-slot-capture'
@@ -16,7 +19,7 @@ import {
 } from './platform-reconcile'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
-type SelectedSlot = { id: number; uscc: string; archiveId: string | null; boundArchiveId: string | null; status: string; queriedAt: string }
+type SelectedSlot = { id: number; uscc: string; archiveId: bigint | null; boundArchiveId: number | null; status: string; queriedAt: string }
 
 async function readSlot(tx: Tx, selected: SelectedSlot, cutoffIso: string): Promise<StoredSlot | undefined> {
   if ((selected.status !== 'success' && selected.status !== 'no_record') || selected.queriedAt < cutoffIso) return
@@ -27,7 +30,7 @@ async function readSlot(tx: Tx, selected: SelectedSlot, cutoffIso: string): Prom
   if (captured.reconcileSlotRule !== RECONCILE_SLOT_RULE) throw new Error('Reconcile capture target NOTREADY: unsupported rule')
   if (captured.reconcileSlotState === 'miss') return
   if (captured.reconcileSlotState === 'error') throw new SyntaxError((captured.reconcileSlotReason ?? '').replace(/^SyntaxError: /, ''))
-  if (query.rawResponse === null || selected.archiveId === null || selected.archiveId !== selected.boundArchiveId ||
+  if (query.rawResponse === null || selected.archiveId === null || selected.boundArchiveId === null || selected.archiveId !== BigInt(selected.boundArchiveId) ||
     captured.reconcileSlotRowCount === null) throw new Error('Missing selected reconcile original response')
   const originals = (await readPostgresRelationFingerprints(tx,{queryId:query.id,archiveReplay:true}))
     .sort((a,b)=>a.relation.sequenceNo-b.relation.sequenceNo)
@@ -69,19 +72,20 @@ export function runPostgresPlatformReconcile(db: NodePgDatabase, options: Omit<R
       const directions = filter.directions?.length ? filter.directions : [undefined]
       const comparison = []
       for (const direction of directions) comparison.push(...(await getPostgresComparison(tx,{title:filter.titles,direction})).rows)
-      const { rows: enterprises } = await tx.execute<Pick<KnownEnterprise, 'id' | 'name' | 'nameNorm' | 'uscc'>>(sql`
-        SELECT id::float8 AS id,name,name_norm AS "nameNorm",uscc_norm AS uscc FROM enterprise ORDER BY id`)
+      const enterprises = await tx.select({ id: enterprise.id, name: enterprise.name, nameNorm: enterprise.nameNorm, uscc: enterprise.usccNorm })
+        .from(enterprise).orderBy(enterprise.id)
       const collected = projectReconcileTargets(comparison,enterprises,filter)
       const reused = new Map([...collected.byUscc.keys()].map(uscc=>[uscc,new Map<string,StoredSlot>()]))
       if (!reused.size) return {collected,reused}
-      const { rows } = await tx.execute<SelectedSlot>(sql`
-        SELECT DISTINCT ON (c.query_key,c.interface,c.rdjb) q.old_id::float8 AS id,c.query_key AS uscc,c.status,c.queried_at AS "queriedAt",
-          a.archive_id AS "archiveId",c.reconcile_slot_raw_archive_id AS "boundArchiveId"
-        FROM platform_collection c JOIN platform_legacy_query_alias q ON q.collection_id=c.id
-        LEFT JOIN platform_collection_archive_ref a ON a.owner_id=c.id AND a.field='rawResponse' AND a.sealed=1
-        WHERE c.query_key=ANY(${sql.param([...reused.keys()])}::text[])
-          AND ((c.interface='business_list' AND c.rdjb IN ('1','2','3')) OR (c.interface='apply_list' AND c.rdjb=''))
-        ORDER BY c.query_key,c.interface,c.rdjb,c.queried_at DESC,q.old_id DESC`)
+      const slotKeys = [collection.queryKey, collection.interface, collection.rdjb]
+      const rows = await tx.selectDistinctOn(slotKeys, { id: queryAlias.oldId, uscc: collection.queryKey, status: collection.status,
+        queriedAt: collection.queriedAt, archiveId: archive.archiveId, boundArchiveId: collection.reconcileSlotRawArchiveId })
+        .from(collection).innerJoin(queryAlias, eq(queryAlias.collectionId, collection.id))
+        .leftJoin(archive, and(eq(archive.ownerId, collection.id), eq(archive.field, 'rawResponse'), eq(archive.sealed, 1)))
+        .where(and(sql`${collection.queryKey} = ANY(${sql.param([...reused.keys()])}::text[])`,
+          or(and(eq(collection.interface, 'business_list'), inArray(collection.rdjb, ['1','2','3'])),
+            and(eq(collection.interface, 'apply_list'), eq(collection.rdjb, '')))))
+        .orderBy(...slotKeys, desc(collection.queriedAt), desc(queryAlias.oldId))
       for (const row of rows) {
         const slot = await readSlot(tx,row,cutoffIso)
         if (slot) reused.get(row.uscc)!.set(slot.evidence.interface+'|'+slot.evidence.rdjb,slot)
@@ -89,10 +93,11 @@ export function runPostgresPlatformReconcile(db: NodePgDatabase, options: Omit<R
       return {collected,reused}
     },{isolationLevel:'repeatable read',accessMode:'read only'}),
     async freshDecision(target,cutoffIso,complete) {
-      const { rows:[latest] } = await db.execute<{verificationStatus:string;recordedAt:string;status:string}>(sql`
-        SELECT verification_status AS "verificationStatus",recorded_at AS "recordedAt",status
-        FROM difference_reason WHERE enterprise_id=${target.enterpriseId} AND title_code=${target.titleCode} AND direction=${target.direction}
-        ORDER BY recorded_at DESC,id DESC LIMIT 1`)
+      const [latest] = await db.select({ verificationStatus: differenceReason.verificationStatus, recordedAt: differenceReason.recordedAt,
+        status: differenceReason.status }).from(differenceReason)
+        .where(and(eq(differenceReason.enterpriseId, target.enterpriseId), eq(differenceReason.titleCode, target.titleCode),
+          eq(differenceReason.direction, target.direction)))
+        .orderBy(desc(differenceReason.recordedAt), desc(differenceReason.id)).limit(1)
       return isFreshReconcileDecision(latest,cutoffIso,complete)
     },
     writer:()=>({

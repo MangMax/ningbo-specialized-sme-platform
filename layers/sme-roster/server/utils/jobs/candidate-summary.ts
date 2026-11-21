@@ -6,7 +6,8 @@ import { type TaskSummary } from '../../../lib/sme-roster/task-summary'
 import { CANDIDATE_JOB_KIND, type CandidateJobResult } from './candidate-discovery'
 import { EVENT_ARCHIVE_RULE_VERSION } from '../event-archive-discovery'
 import type { ProjectedTask } from './task-summary'
-import { sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
+import { job as pgJob } from '../../../../../db/postgresql/job-tables'
 import { schema } from '../../../../../db/client'
 interface CandidateParamsRead { titleCode?: string; queryId?: number; eventCount?: number }
 type CandidateRead = Partial<Omit<CandidateJobResult, 'items'>> & CandidateParamsRead & {
@@ -46,27 +47,24 @@ export function candidateTaskLinks(projected: ReturnType<typeof projectCandidate
 }
 
 export async function summarizePostgresCandidateJobs(db: NodePgDatabase, ids: string[], detail: boolean) {
-  const { rows } = await db.execute<{ id: string; kind: string; state: JobState; meta: CandidateRead; hasError: boolean; restarted: boolean }>(sql`
-    SELECT id,kind,state,json_build_object(
-      'titleCode',left(p.params->>'titleCode',40),'queryId',p.params->'queryId','eventCount',json_array_length(p.params->'eventIds'),
-      'ruleVersion',left(r.result->>'ruleVersion',80),'attempt',r.result->'attempt',
-      'throughEventId',r.result->'throughEventId','nextAfterEventId',r.result->'nextAfterEventId',
-      'continuationJobId',left(r.result->>'continuationJobId',26),
-      'counts',CASE WHEN json_typeof(r.result->'counts')='object' THEN (
-        SELECT json_object_agg(key,CASE WHEN (r.result->'counts'->key)::text ~ '^-?[0-9]+$' THEN r.result->'counts'->key END)
-        FROM unnest(ARRAY['succeeded','needsReview','failed','created','existing']) keys(key)
-      ) END,
-      'items',CASE WHEN ${detail} THEN (
-        SELECT json_agg(json_build_object('eventId',i.value->'eventId','enterpriseId',i.value->'enterpriseId',
-          'status',left(i.value->>'status',20),'created',i.value->'created','existing',i.value->'existing',
-          'errorCode',left(i.value->>'errorCode',50)))
-        FROM (SELECT value FROM json_array_elements(r.result->'items') LIMIT 200) i
-      ) END
-    ) AS meta,error IS NOT NULL AS "hasError",coalesce(position('服务重启' in error),0)>0 AS restarted
-    FROM business.job
-    CROSS JOIN LATERAL (SELECT business.job_params_for_query(params) AS params) p
-    CROSS JOIN LATERAL (SELECT business.job_params_for_query(result) AS result) r
-    WHERE id=ANY(${sql.param(ids)}::text[]) AND kind=${CANDIDATE_JOB_KIND}`)
+  const params = sql`business.job_params_for_query(${pgJob.params})`
+  const result = sql`business.job_params_for_query(${pgJob.result})`
+  const counts = db.select({ value: sql`json_object_agg(key,case when (${result}->'counts'->key)::text ~ '^-?[0-9]+$'
+    then ${result}->'counts'->key end)` }).from(sql`unnest(array['succeeded','needsReview','failed','created','existing']) keys(key)`)
+  const items = db.select({ value: sql`value`.as('value') })
+    .from(sql`json_array_elements(${result}->'items')`).limit(200).as('items')
+  const itemSummary = db.select({ rows: sql`json_agg(json_build_object('eventId',${items.value}->'eventId',
+    'enterpriseId',${items.value}->'enterpriseId','status',left(${items.value}->>'status',20),
+    'created',${items.value}->'created','existing',${items.value}->'existing','errorCode',left(${items.value}->>'errorCode',50)))` }).from(items)
+  const rows = await db.select({ id: pgJob.id, kind: pgJob.kind, state: pgJob.state,
+    meta: sql<CandidateRead>`json_build_object('titleCode',left(${params}->>'titleCode',40),'queryId',${params}->'queryId',
+      'eventCount',json_array_length(${params}->'eventIds'),'ruleVersion',left(${result}->>'ruleVersion',80),'attempt',${result}->'attempt',
+      'throughEventId',${result}->'throughEventId','nextAfterEventId',${result}->'nextAfterEventId',
+      'continuationJobId',left(${result}->>'continuationJobId',26),
+      'counts',case when json_typeof(${result}->'counts')='object' then (${counts}) end,
+      'items',case when ${detail} then (${itemSummary}) end)`,
+    hasError: isNotNull(pgJob.error).mapWith(Boolean), restarted: sql<boolean>`coalesce(position('服务重启' in ${pgJob.error}),0)>0`,
+  }).from(pgJob).where(and(inArray(pgJob.id, ids), eq(pgJob.kind, CANDIDATE_JOB_KIND)))
   return new Map(rows.map(row => {
     const projected = projectCandidateSummary(row.state, row.meta, detail)
     const retry = projected.discoveryRetry

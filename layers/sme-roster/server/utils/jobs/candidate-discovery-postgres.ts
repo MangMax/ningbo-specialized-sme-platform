@@ -1,5 +1,13 @@
 import { createHash } from 'node:crypto'
-import { sql } from 'drizzle-orm'
+import { and, desc, eq, exists, gt, inArray, isNull, lte, max, ne, or, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
+import { enterprise, enterpriseAlias } from '../../../../../db/postgresql/enterprise-tables'
+import { record, recordEvent } from '../../../../../db/postgresql/ledger-tables'
+import { recordCorrespondence } from '../../../../../db/postgresql/qualification-tables'
+import {
+  platformBusinessObservation as observation, platformCollection as collection, platformLegacyQueryAlias as queryAlias,
+  platformLegacyRelationAlias as relationAlias, platformObservationAssignment as assignment,
+} from '../../../../../db/postgresql/platform-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { LogContext } from '../../../../core/lib/logging'
 import { type PostgresJobContext, stagePostgresJob } from '../../../../core/server/utils/job-runner-postgres'
@@ -16,41 +24,48 @@ import {
   candidateSourceLimitError, candidateCompletion, updateCounts, type CandidateJobResult, type CandidateJobParams,
 } from './candidate-discovery'
 
-const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
 const readOnly = { isolationLevel: 'repeatable read', accessMode: 'read only' } as const
 const fail = (message: string, statusCode = 400): never => { throw Object.assign(new Error(message), { statusCode }) }
 
+function affectedByQuery(db: NodePgDatabase, queryId: number) {
+  const original = alias(assignment, 'original')
+  const canonical = normalizedUscc(sql`coalesce(${record.usccRaw}, ${enterprise.usccNorm})`)
+  const raw = normalizedUscc(original.usccRaw)
+  const latest = db.select({ enterpriseId: assignment.enterpriseId, status: assignment.verificationStatus })
+    .from(assignment).where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('latest')
+  const matchingObservation = db.select({ id: observation.id }).from(observation)
+    .innerJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
+    .crossJoinLateral(latest)
+    .where(and(eq(observation.collectionId, collection.id), or(isNull(latest.enterpriseId), eq(latest.enterpriseId, enterprise.id)),
+      or(and(ne(raw, ''), eq(raw, canonical)), and(eq(latest.enterpriseId, enterprise.id), eq(latest.status, 'confirmed'), eq(raw, '')))))
+  const namedAlias = db.select({ id: enterpriseAlias.id }).from(enterpriseAlias).where(and(
+    eq(enterpriseAlias.enterpriseId, enterprise.id), eq(enterpriseAlias.verificationStatus, 'confirmed'),
+    eq(collection.queryKey, sql`'name:' || ${enterpriseAlias.nameNorm}`)))
+  const scopedTitle = sql`coalesce(${collection.titleCode}, case ${collection.rdjb}
+    when '1' then 'innovative_sme' when '2' then 'specialized_sme' when '3' then 'little_giant' end)`
+  const requestedLevel = sql`case ${record.titleCode} when 'innovative_sme' then '1'
+    when 'specialized_sme' then '2' when 'little_giant' then '3' end`
+  return exists(db.select({ id: collection.id }).from(queryAlias)
+    .innerJoin(collection, eq(collection.id, queryAlias.collectionId)).where(and(eq(queryAlias.oldId, queryId),
+      or(eq(scopedTitle, record.titleCode), and(eq(collection.interface, 'recognized_list'), isNull(collection.titleCode),
+        sql`${requestedLevel} = any(string_to_array(${collection.rdjb}, ','))`)),
+      or(eq(collection.queryKey, canonical), eq(collection.queryKey, sql`'name:' || ${enterprise.nameNorm}`),
+        exists(namedAlias), exists(matchingObservation)))))
+}
+
 async function initializePostgresCandidates(db: NodePgDatabase, params: CandidateJobParams) {
-  const canonical = normalizedUscc(sql`coalesce(r.uscc_raw,e.uscc_norm)`)
-  const raw = normalizedUscc(sql`original.uscc_raw`)
-  const affected = params.queryId === undefined ? sql.empty() : sql`AND EXISTS (
-    SELECT 1 FROM platform_legacy_query_alias q JOIN platform_collection c ON c.id=q.collection_id
-    WHERE q.old_id=${params.queryId}
-      AND (coalesce(c.title_code,CASE c.rdjb WHEN '1' THEN 'innovative_sme' WHEN '2' THEN 'specialized_sme' WHEN '3' THEN 'little_giant' END)=r.title_code
-        OR c.interface='recognized_list' AND c.title_code IS NULL
-          AND (CASE r.title_code WHEN 'innovative_sme' THEN '1' WHEN 'specialized_sme' THEN '2' WHEN 'little_giant' THEN '3' END)=ANY(string_to_array(c.rdjb,',')))
-      AND (c.query_key=${canonical} OR c.query_key='name:'||e.name_norm
-        OR EXISTS(SELECT 1 FROM enterprise_alias a WHERE a.enterprise_id=e.id AND a.verification_status='confirmed' AND c.query_key='name:'||a.name_norm)
-        OR EXISTS (
-          SELECT 1 FROM platform_business_observation o
-          JOIN platform_observation_assignment original ON original.observation_id=o.id AND original.revision=1
-          JOIN LATERAL (SELECT enterprise_id,verification_status FROM platform_observation_assignment
-            WHERE observation_id=o.id ORDER BY revision DESC LIMIT 1) a ON true
-          WHERE o.collection_id=c.id AND (a.enterprise_id IS NULL OR a.enterprise_id=e.id)
-            AND ((${raw}<>'' AND ${raw}=${canonical}) OR (a.enterprise_id=e.id AND a.verification_status='confirmed' AND ${raw}=''))
-        ))
-  )`
-  const { rows: [result] } = await db.execute<{ high: number; events: { eventId: number; enterpriseId: number }[] }>(sql`
-    WITH upper_bound AS (SELECT coalesce(${params.throughEventId ?? null},(SELECT max(id) FROM record_event),0) AS id),
-    entries AS (SELECT v.id AS "eventId",r.enterprise_id AS "enterpriseId"
-      FROM record_event v JOIN record r ON r.id=v.record_id JOIN enterprise e ON e.id=r.enterprise_id
-      WHERE r.source='jxj' AND v.event_type IN ('award','review')
-        AND v.id>${params.afterEventId} AND v.id<=(SELECT id FROM upper_bound)
-        ${params.eventIds ? sql`AND v.id=ANY(${ids(params.eventIds)})` : sql.empty()}
-        ${params.titleCode ? sql`AND r.title_code=${params.titleCode}` : sql.empty()} ${affected}
-      ORDER BY v.id LIMIT 201)
-    SELECT id::float8 AS high,(SELECT coalesce(json_agg(entries ORDER BY "eventId"),'[]'::json) FROM entries) AS events FROM upper_bound`)
-  return candidateResult(result!.events, result!.high, params.eventIds)
+  return db.transaction(async tx => {
+    const high = params.throughEventId ?? (await tx.select({ id: max(recordEvent.id) }).from(recordEvent))[0]?.id ?? 0
+    const events = await tx.select({ eventId: recordEvent.id, enterpriseId: record.enterpriseId }).from(recordEvent)
+      .innerJoin(record, eq(record.id, recordEvent.recordId)).innerJoin(enterprise, eq(enterprise.id, record.enterpriseId))
+      .where(and(eq(record.source, 'jxj'), inArray(recordEvent.eventType, ['award', 'review']),
+        gt(recordEvent.id, params.afterEventId), lte(recordEvent.id, high),
+        params.eventIds && inArray(recordEvent.id, params.eventIds),
+        params.titleCode && eq(record.titleCode, params.titleCode),
+        params.queryId === undefined ? undefined : affectedByQuery(tx, params.queryId)))
+      .orderBy(recordEvent.id).limit(201)
+    return candidateResult(events, high, params.eventIds)
+  }, readOnly)
 }
 
 export async function runPostgresCandidateDiscovery(ctx: PostgresJobContext, raw: Record<string, unknown>) {
@@ -87,9 +102,10 @@ export async function runPostgresCandidateDiscovery(ctx: PostgresJobContext, raw
           const request = candidateRequest(ctx.jobId, item.eventId, candidate)
           const edge = request.operations[0].edge
           const committed = await runPostgresCorrespondenceTransaction(ctx.db, async tx => {
-            const { rows: [prior] } = await tx.execute<{ status: string }>(sql`
-              SELECT p.status FROM record_correspondence p JOIN platform_legacy_relation_alias a ON a.observation_id=p.observation_id
-              WHERE p.event_id=${item.eventId} AND a.old_id=${edge.relationId} AND p.type=${edge.type} ORDER BY p.id LIMIT 1`)
+            const [prior] = await tx.select({ status: recordCorrespondence.status }).from(recordCorrespondence)
+              .innerJoin(relationAlias, eq(relationAlias.observationId, recordCorrespondence.observationId))
+              .where(and(eq(recordCorrespondence.eventId, item.eventId), eq(relationAlias.oldId, edge.relationId),
+                eq(recordCorrespondence.type, edge.type))).orderBy(recordCorrespondence.id).limit(1)
             const next = { ...item, rowIndex: item.rowIndex + 1 }
             if (prior || candidate.recommendation === 'existing_decision') {
               next.existing++
