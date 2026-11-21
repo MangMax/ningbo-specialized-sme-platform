@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import { asc, desc, eq, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { createError } from 'h3'
 import { usePostgresDirectoryDb } from '../../../../db/postgresql/client'
-import { storedFile } from '../../../../db/postgresql/file-tables'
+import { enterpriseSourceChannel, enterpriseSourceListType } from '../../../../db/postgresql/enterprise-source-tables'
+import { filePhysicalIntent, storedFile } from '../../../../db/postgresql/file-tables'
 import { postgresLeadListRow as leadRow, postgresLeadListVersion as leadVersion } from '../../../../db/postgresql/lead-tables'
 import { registerPostgresEnterpriseSource, verifyRegisteredFileRead } from '../../../core/server/public'
 import type { LeadCatalog, LeadVersionDetail, LeadVersionSummary, VersionInput } from '../../lib/contracts'
@@ -43,18 +44,18 @@ function versionDto({ filename, displayName, removedAt, ...row }: Awaited<Return
   return { ...row, fileName: displayName ?? filename, fileAvailable: removedAt === null }
 }
 
+// Drizzle 0.45 has no collation operator. Keep the catalog and dictionary bytewise ordering.
 async function dictionaries(db: NodePgDatabase) {
-  const channels = await db.execute<LeadCatalog['channels'][number]>(sql`
-    SELECT code, name FROM enterprise_source_channel WHERE code <> 'direct' ORDER BY code COLLATE "C"`)
-  const listTypes = await db.execute<LeadCatalog['listTypes'][number]>(sql`
-    SELECT code, name FROM enterprise_source_list_type WHERE code <> 'direct' ORDER BY code COLLATE "C"`)
-  return { channels: channels.rows, listTypes: listTypes.rows }
+  const channels = await db.select().from(enterpriseSourceChannel).where(ne(enterpriseSourceChannel.code, 'direct'))
+    .orderBy(asc(sql`${enterpriseSourceChannel.code} COLLATE "C"`))
+  const listTypes = await db.select().from(enterpriseSourceListType).where(ne(enterpriseSourceListType.code, 'direct'))
+    .orderBy(asc(sql`${enterpriseSourceListType.code} COLLATE "C"`))
+  return { channels, listTypes }
 }
 
 export function listPostgresLeadVersions(db: NodePgDatabase): Promise<LeadCatalog> {
   return db.transaction(async tx => {
     const dict = await dictionaries(tx)
-    // Drizzle 0.45 has no collation operator. Keep the catalog's bytewise ordering.
     const versions = await summaries(tx).orderBy(
       asc(sql`${leadVersion.series} COLLATE "C"`),
       desc(sql`${leadVersion.acquiredOn} COLLATE "C"`),
@@ -105,29 +106,34 @@ export async function registerPostgresLeadVersion(db: NodePgDatabase, root: stri
     if (!live || live.removedAt || live.sha256 !== file.sha256 || live.relPath !== file.relPath || Number(live.bytes) !== file.bytes) {
       throw createError({ statusCode: 409, message: '原文件登记已变化，请重新选择' })
     }
-    const physical = await tx.execute(sql`SELECT 1 FROM file_physical_intent
-      WHERE file_id = ${file.fileId} AND state IN ('pending', 'quarantined', 'recovering') LIMIT 1`)
-    if (physical.rows.length) throw createError({ statusCode: 409, message: '原文件正在隔离或恢复，请稍后重试' })
+    const [physical] = await tx.select({ id: filePhysicalIntent.id }).from(filePhysicalIntent)
+      .where(and(eq(filePhysicalIntent.fileId, file.fileId), inArray(filePhysicalIntent.state, ['pending', 'quarantined', 'recovering'])))
+      .limit(1)
+    if (physical) throw createError({ statusCode: 409, message: '原文件正在隔离或恢复，请稍后重试' })
     const dict = await dictionaries(tx)
     if (!dict.channels.some(row => row.code === fields.channel) || !dict.listTypes.some(row => row.code === fields.listType)) {
       throw createError({ statusCode: 400, message: '请选择已登记的来源和名单类型' })
     }
-    const prior = (await tx.execute<{ id: string; requestHash: string }>(sql`
-      SELECT id, request_hash AS "requestHash" FROM lead_list_version
-      WHERE series = ${fields.series} AND channel_code = ${fields.channel} AND list_type_code = ${fields.listType}
-        AND acquired_on = ${fields.acquiredOn} AND file_id = ${fields.fileId}`)).rows[0]
+    const [prior] = await tx.select({ id: leadVersion.id, requestHash: leadVersion.requestHash }).from(leadVersion)
+      .where(and(
+        eq(leadVersion.series, fields.series),
+        eq(leadVersion.channel, fields.channel),
+        eq(leadVersion.listType, fields.listType),
+        eq(leadVersion.acquiredOn, fields.acquiredOn),
+        eq(leadVersion.fileId, fields.fileId),
+      ))
     if (prior) {
       if (prior.requestHash !== requestHash) throw createError({ statusCode: 409, message: '该原文件已登记为此版本，请使用新的版本资料' })
-      return { id: Number(prior.id), created: false }
+      return { id: prior.id, created: false }
     }
-    const created = await tx.execute<{ id: string }>(sql`INSERT INTO lead_list_version
-      (series, channel_code, list_type_code, acquired_on, file_id, file_sha256, request_hash, created_at)
-      VALUES (${fields.series}, ${fields.channel}, ${fields.listType}, ${fields.acquiredOn},
-        ${fields.fileId}, ${file.sha256}, ${requestHash}, ${new Date().toISOString()}) RETURNING id`)
-    const id = Number(created.rows[0]!.id)
-    const values = ranked.map(row => sql`(${id}, ${row.rowNumber}, ${row.name}, ${row.uscc ?? null}, ${row.district ?? null}, ${row.note ?? null})`)
-    await tx.execute(sql`INSERT INTO lead_list_row (version_id, row_number, name, uscc, district, note)
-      VALUES ${sql.join(values, sql`, `)}`)
+    const [created] = await tx.insert(leadVersion).values({
+      ...fields, fileSha256: file.sha256, requestHash, createdAt: new Date().toISOString(),
+    }).returning({ id: leadVersion.id })
+    const id = created!.id
+    await tx.insert(leadRow).values(ranked.map(row => ({
+      versionId: id, rowNumber: row.rowNumber, name: row.name,
+      uscc: row.uscc ?? null, district: row.district ?? null, note: row.note ?? null,
+    })))
     await registerPostgresEnterpriseSource(tx, {
       module: 'lead-lists', businessTable: 'lead_list_version', versionKey: String(id),
       channel: fields.channel, listType: fields.listType, acquiredOn: fields.acquiredOn,

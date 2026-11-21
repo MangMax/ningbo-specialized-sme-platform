@@ -591,20 +591,27 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
       const connection = new pg.Client({ connectionString: pgUrl })
       await connection.connect()
       const pending: Promise<unknown>[] = []
-      const waitForRowLock = (part: string) => vi.waitFor(async () => {
+      const waitForRowLock = (count: number) => vi.waitFor(async () => {
         await connection.query('SELECT pg_stat_clear_snapshot()')
         const { rows } = await connection.query(
-          "SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE $1", [part],
+          `WITH RECURSIVE blocked(pid) AS (
+            SELECT pg_backend_pid()
+            UNION
+            SELECT activity.pid FROM pg_stat_activity activity
+            JOIN blocked ON blocked.pid = ANY(pg_blocking_pids(activity.pid))
+            WHERE activity.datname = current_database() AND activity.wait_event_type = 'Lock'
+          )
+          SELECT pid FROM blocked WHERE pid <> pg_backend_pid()`,
         )
-        expect(rows).toHaveLength(1)
+        expect(rows).toHaveLength(count)
       }, { timeout: 3000 })
       try {
         await connection.query('BEGIN')
         await connection.query('SELECT id FROM business.stored_file WHERE id = $1 FOR UPDATE', [id])
         pending.push(json('lead-lists/versions', 201, 'POST', lead))
-        await waitForRowLock('%FROM stored_file f WHERE f.id =%FOR UPDATE%')
+        await waitForRowLock(1)
         pending.push(json(quarantine, 409, 'DELETE', controls(0, 'protect-live-lead-source')))
-        await waitForRowLock('%SELECT id FROM stored_file WHERE id =%FOR UPDATE%')
+        await waitForRowLock(2)
         await connection.query('COMMIT')
         await Promise.all(pending)
       } finally {

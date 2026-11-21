@@ -304,16 +304,22 @@ describe.skipIf(!bin)('PostgreSQL-only lead versions', () => {
     ].join('\r\n'))
   })
 
-  it('registers verified source bytes and returns a missing-version 404 in PostgreSQL-only mode', async () => {
-    const registered = await app.request(versions, {
-      method: 'POST',
-      body: JSON.stringify({
-        series: '新登记名单', channel: 'research', listType: 'lead', acquiredOn: '2026-11-19',
-        fileId: 91, rows: [{ rowNumber: 2, name: '新登记企业' }],
-      }),
-    })
+  it('registers verified source bytes once and rejects a conflicting registration in PostgreSQL-only mode', async () => {
+    const input = {
+      series: '新登记名单', channel: 'research', listType: 'lead', acquiredOn: '2026-11-19',
+      fileId: 91, rows: [{ rowNumber: 2, name: '新登记企业' }],
+    }
+    const register = (body: typeof input) => app.request(versions, { method: 'POST', body: JSON.stringify(body) })
+    const registered = await register(input)
     const receipt = await registered.json()
     expect(registered.status, JSON.stringify(receipt)).toBe(201)
+    const repeat = await register(input)
+    expect(repeat.status).toBe(200)
+    expect(await repeat.json()).toMatchObject({ id: receipt.id })
+    expect((await register({ ...input, rows: [{ rowNumber: 2, name: '内容冲突' }] })).status).toBe(409)
+    expect(await (await app.request(`${versions}/${receipt.id}`)).json()).toMatchObject({
+      rows: [{ rowNumber: 2, name: '新登记企业' }],
+    })
     const catalog = await app.request(versions)
     expect(catalog.status).toBe(200)
     expect(await catalog.json()).toMatchObject({
