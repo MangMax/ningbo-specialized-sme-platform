@@ -16,10 +16,14 @@ it.runIf(!!pg19Bin)('keeps persisted and negative official source IDs and reads 
     await pool.query(`
       INSERT INTO business.stored_file(id,rel_path,filename,ext,bytes,sha256,created_at)
       VALUES (4,'official.pdf','official.pdf','pdf',12,repeat('a',64),'2026-11-20T00:00:00Z');
+      INSERT INTO business.platform_export_batch(id,title_code,year,collected_on,original_filename,sha256,row_count,import_status,created_at)
+      VALUES (1,'specialized_sme',2025,'2026-11-20','export.xlsx',repeat('b',64),1,'imported','2026-11-20T00:00:00Z');
+      INSERT INTO business.platform_export_row(id,batch_id,source_row_no,name_raw,created_at)
+      VALUES (1,1,2,'合成企业','2026-11-20T00:00:00Z');
       INSERT INTO business.record_correspondence(
-        edge_key,type,role,event_id,enterprise_id,title_code,status,revision,target_identity,provenance,
+        edge_key,type,role,event_id,export_row_id,enterprise_id,title_code,status,revision,target_identity,provenance,
         source_fingerprint,rule_id,rule_version,created_at
-      ) VALUES ('test','event_process','review',1,1,'specialized_sme','candidate',1,'{}','{}',
+      ) VALUES ('test','event_export_context','current_snapshot_context',1,1,1,'specialized_sme','candidate',1,'{}','{}',
         'synthetic','test','1','2026-11-20T00:00:00Z');
     `)
     const catalog = await readPostgresRecordComparisonSources(db, { kind: 'official_document', page: 1, pageSize: 10 })
@@ -33,7 +37,7 @@ it.runIf(!!pg19Bin)('keeps persisted and negative official source IDs and reads 
     const filtered = await readPostgresRecordComparisonSources(db, { kind: 'official_document', ids: [-2], page: 1, pageSize: 1 })
     expect(filtered).toMatchObject({ total: 1, rows: [{ id: -2 }] })
     expect(await readPostgresCorrespondenceRefs(db, { eventIds: [1], relationIds: [], exportRowIds: [] })).toMatchObject([
-      { eventId: 1, enterpriseId: 1, status: 'candidate', relationId: null, requiresRevalidation: false },
+      { eventId: 1, enterpriseId: 1, status: 'candidate', relationId: null, exportRowId: 1, requiresRevalidation: false },
     ])
   })
 }, 30_000)

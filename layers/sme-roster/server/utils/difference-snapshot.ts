@@ -247,7 +247,7 @@ async function backupPostgresSnapshot(db: NodePgDatabase, filesDir: string, id: 
     const scope = published.map(row => ({ ...row, uscc: row.uscc?.length === 18 && /^[0-9A-Z]{18}$/.test(row.uscc) ? row.uscc : null }))
     if (enterpriseIds && scope.length !== enterpriseIds.length) fail(400, 'Selected enterprise IDs must identify published enterprises')
     // PostgreSQL's exported MVCC snapshot is shared with pg_dump in this transaction.
-    const [exported] = await tx.select({ snapshot: sql<string>`pg_export_snapshot()` })
+    const { rows: [exported] } = await tx.execute<{ snapshot: string }>(sql`SELECT pg_export_snapshot() AS snapshot`)
     const destination = resolve(filesDir,'..','snapshot-backups')
     await mkdir(destination,{ recursive:true,mode:0o700 })
     const directory = await mkdtemp(join(destination,id+'-'))

@@ -1,4 +1,4 @@
-import { and, asc, between, count, countDistinct, desc, eq, exists, getTableColumns, notExists, inArray, isNotNull, isNull, ne, or, sql, type SQL, type SQLWrapper } from 'drizzle-orm'
+import { and, asc, between, count, countDistinct, desc, eq, exists, getTableColumns, gt, inArray, notExists, isNotNull, isNull, ne, or, sql, type SQL, type SQLWrapper } from 'drizzle-orm'
 import type { AnyPgColumn, PgSelect, PgTable } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import {
@@ -189,7 +189,7 @@ function scopeMatch(tx: Reader, rdjb: string) {
   const supplemental = tx.select({ id: titleScope.collectionId }).from(titleScope)
     .where(and(eq(titleScope.collectionId, archivedCollection.id), eq(titleScope.rdjb, rdjb)))
   // Drizzle 0.45 has no strpos or string concatenation operators.
-  return or(sql`strpos(',' || ${archivedCollection.rdjb} || ',', ${',' + rdjb + ','}) > 0`, exists(supplemental))
+  return or(gt(sql<number>`strpos(',' || ${archivedCollection.rdjb} || ',', ${',' + rdjb + ','})`, 0), exists(supplemental))
 }
 
 const jsWhitespace = ' \t\n\r\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff'
@@ -217,18 +217,6 @@ function versionData(catalog: Catalog, versionId: number, projection: Readonly<R
   return { versionId, ...Object.fromEntries(Object.keys(catalog.fields).map(key => [key, projection?.[key] ?? null])) }
 }
 
-interface RecordSummary extends Record<string, unknown> {
-  enterpriseIds: number[]
-  enterpriseNames: string[]
-  titleScopes: string[] | null
-  titleConflict: boolean
-  unverifiable: boolean
-  assignmentConflict: boolean
-  observationCount: number
-  versionCount: number
-  latestObservationAt: string | null
-}
-
 function recordOwners(tx: Reader) {
   const owner = tx.select({ enterpriseId: assignment.enterpriseId }).from(assignment)
     .where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('record_owner')
@@ -243,7 +231,7 @@ function recordTitleConflict(tx: Reader, catalog: Catalog) {
   const projection = recognizedProjection
   const list = sql<string>`translate(${collection.rdjb}, ${' \t\n\r'}, '')`
   const supplemental = tx.select({ id: titleScope.collectionId }).from(titleScope)
-    .where(and(eq(titleScope.collectionId, collection.id), sql`btrim(${titleScope.rdjb}) <> ''`))
+    .where(and(eq(titleScope.collectionId, collection.id), ne(sql<string>`btrim(${titleScope.rdjb})`, '')))
   const acceptedTitle = tx.select({ id: titleScope.collectionId }).from(titleScope)
     .where(and(eq(titleScope.collectionId, collection.id), eq(titleScope.rdjb, projection.titleRaw)))
   const conflict = tx.select({ id: observation.id }).from(observation)
@@ -252,36 +240,44 @@ function recordTitleConflict(tx: Reader, catalog: Catalog) {
     .where(and(
       eq(observation.recordId, record.id),
       inArray(projection.titleRaw, ['1', '2', '3']),
-      or(sql`replace(${list}, ',', '') <> ''`, exists(supplemental)),
-      sql`strpos(',' || ${list} || ',', ',' || ${projection.titleRaw} || ',') = 0`,
+      or(ne(sql<string>`replace(${list}, ',', '')`, ''), exists(supplemental)),
+      eq(sql<number>`strpos(',' || ${list} || ',', ',' || ${projection.titleRaw} || ',')`, 0),
       notExists(acceptedTitle),
     ))
   return exists(conflict)
 }
 
 function recordSummary(tx: Reader, catalog: Catalog) {
+  const owners = tx.$with('owners').as(recordOwners(tx))
+  const ids = tx.select({ id: owners.enterpriseId }).from(owners).orderBy(asc(owners.enterpriseId))
+  const names = tx.select({ name: owners.name }).from(owners).where(ne(owners.name, '')).orderBy(asc(owners.enterpriseId))
   const collections = tx.selectDistinct({ id: collection.id, rdjb: collection.rdjb }).from(observation)
     .innerJoin(collection, eq(collection.id, observation.collectionId)).where(eq(observation.recordId, record.id))
-  const versionCount = tx.$count(recordVersion, eq(recordVersion.recordId, record.id))
-  const observationCount = tx.$count(observation, eq(observation.recordId, record.id))
-  // Drizzle 0.45 has no correlated array constructor or ordered array aggregation.
-  return sql`
-    ${versionCount} AS "versionCount", ${observationCount} AS "observationCount",
-    ARRAY(SELECT enterprise_id::double precision FROM owners ORDER BY enterprise_id) AS "enterpriseIds",
-    ARRAY(SELECT name FROM owners WHERE name <> '' ORDER BY enterprise_id) AS "enterpriseNames",
-    ${catalog.interface === 'apply_list' ? sql`NULL` : scopeArray(collections)} AS "titleScopes",
-    ${recordConflictFields(tx, catalog)}`
+  // Drizzle 0.45 has no ARRAY(subquery) expression. Keep the order in the typed subqueries.
+  return tx.with(owners).select({
+    versionCount: tx.$count(recordVersion, eq(recordVersion.recordId, record.id)).as('version_count'),
+    observationCount: tx.$count(observation, eq(observation.recordId, record.id)).as('observation_count'),
+    enterpriseIds: sql<string[]>`ARRAY(${ids})`.mapWith((values: string[]) => values.map(Number)).as('enterprise_ids'),
+    enterpriseNames: sql<string[]>`ARRAY(${names})`.as('enterprise_names'),
+    titleScopes: (catalog.interface === 'apply_list' ? sql<null>`NULL` : scopeArray(collections) as SQL<string[]>).as('title_scopes'),
+    ...recordConflictFields(tx, catalog),
+  }).from(owners).as('record_summary')
 }
 
-type RecordConflicts = Pick<RecordSummary, 'titleConflict' | 'unverifiable' | 'assignmentConflict'>
+interface RecordConflicts {
+  titleConflict: boolean
+  unverifiable: boolean
+  assignmentConflict: boolean
+}
 
 function recordConflictFields(tx: Reader, catalog: Catalog) {
   const unverifiable = tx.select({ id: observation.id }).from(observation)
     .where(and(eq(observation.recordId, record.id), eq(observation.contentState, 'unverifiable')))
-  return sql`
-    ${recordTitleConflict(tx, catalog)} AS "titleConflict",
-    ${exists(unverifiable)} AS unverifiable,
-    (SELECT count(*) > 1 FROM owners) AS "assignmentConflict"`
+  return {
+    titleConflict: recordTitleConflict(tx, catalog).mapWith(Boolean).as('title_conflict'),
+    unverifiable: exists(unverifiable).mapWith(Boolean).as('unverifiable'),
+    assignmentConflict: gt(count(), 1).mapWith(Boolean).as('assignment_conflict'),
+  }
 }
 
 function summaryConflicts(summary: RecordConflicts) {
@@ -346,19 +342,24 @@ async function listRecords(tx: Reader, catalog: Catalog, filter: ArchiveFilter) 
     latest: sql<string | null>`(${latest})`.as('latest'),
   }).from(ranked).where(eq(ranked.rank, 1))
     .orderBy(sql`latest DESC NULLS LAST`, desc(ranked.recordId)).limit(pageSize).offset(offset))
-  // Drizzle 0.45 has no row_to_json or correlated array aggregation builder.
+  const summary = recordSummary(tx, catalog)
   const matched = await tx.with(ranked, pageRows).select({
     recordId: record.id,
     platformKey: record.platformKey,
     matchedVersionCount: pageRows.matchedVersionCount,
     versionId: version.id,
     projectedVersion: versionFields(catalog, projection),
-    summary: sql<RecordSummary>`(SELECT row_to_json(summary) FROM (WITH owners AS (${recordOwners(tx)}) SELECT ${recordSummary(tx, catalog)}) summary)`,
+    summary: {
+      versionCount: summary.versionCount, observationCount: summary.observationCount,
+      enterpriseIds: summary.enterpriseIds, enterpriseNames: summary.enterpriseNames, titleScopes: summary.titleScopes,
+      titleConflict: summary.titleConflict, unverifiable: summary.unverifiable, assignmentConflict: summary.assignmentConflict,
+    },
     latestObservationAt: pageRows.latest,
   }).from(pageRows)
     .innerJoin(record, eq(record.id, pageRows.recordId))
     .innerJoin(version, eq(version.id, pageRows.id))
     .leftJoin(projection, eq(projection.versionId, version.id))
+    .innerJoinLateral(summary, eq(record.id, record.id))
     .orderBy(sql`${pageRows.latest} DESC NULLS LAST`, desc(record.id))
   return {
     view: 'records' as const, page, pageSize, total: total!.total,
@@ -576,11 +577,11 @@ export function readPostgresPlatformArchiveDetail(db: NodePgDatabase, source: So
       const scopes = titleScopes ?? []
       return { ...row, titleConflict: !!title && ['1', '2', '3'].includes(title) && scopes.length > 0 && !scopes.includes(title) }
     })
-    // Drizzle 0.45 has no row_to_json builder for the correlated conflict result.
+    const owners = tx.$with('owners').as(recordOwners(tx))
+    const conflicts = tx.with(owners).select(recordConflictFields(tx, catalog)).from(owners).as('record_conflicts')
     const [summary] = recognized ? await tx.select({
-      conflicts: sql<RecordConflicts>`(SELECT row_to_json(conflicts)
-        FROM (WITH owners AS (${recordOwners(tx)}) SELECT ${recordConflictFields(tx, catalog)}) conflicts)`,
-    }).from(record).where(eq(record.id, recordId)) : []
+      titleConflict: conflicts.titleConflict, unverifiable: conflicts.unverifiable, assignmentConflict: conflicts.assignmentConflict,
+    }).from(record).innerJoinLateral(conflicts, eq(record.id, record.id)).where(eq(record.id, recordId)) : []
 
     return {
       record: { ...recordInfo, interface: catalog.interface },
@@ -590,7 +591,7 @@ export function readPostgresPlatformArchiveDetail(db: NodePgDatabase, source: So
         ...totals, versionsTruncated: totals.versions > versions.length,
         observationsTruncated: totals.observations > observations.length,
       },
-      ...(summary && { conflicts: summaryConflicts(summary.conflicts) }),
+      ...(summary && { conflicts: summaryConflicts(summary) }),
     }
   }, snapshot)
 }

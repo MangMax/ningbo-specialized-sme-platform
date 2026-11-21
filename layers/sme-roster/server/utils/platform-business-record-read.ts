@@ -1,6 +1,9 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { asc,eq,inArray,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { platformBusinessObservation as observation, platformBusinessRecord as businessRecord,
+  platformBusinessRecordVersion as version, platformLegacyRelationAlias as relation } from '../../../../db/postgresql/platform-tables'
+import { recordCorrespondence as correspondence } from '../../../../db/postgresql/qualification-tables'
 import * as schema from '../../../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import type { PlatformBusinessGroup,PlatformBusinessMetadata,PlatformBusinessObservationRef,PlatformCorrespondenceRef,ScopedPlatformObservation } from '../../lib/platform/business-record'
@@ -25,16 +28,19 @@ export function readPlatformBusinessMetadata(db: Db, relationIds: number[]) {
 }
 
 type BusinessMetadataRow = ReturnType<typeof readPlatformBusinessMetadata> extends Map<number,infer T> ? T : never
-export async function readPostgresPlatformBusinessMetadata(db: Pick<NodePgDatabase, 'execute'>, relationIds: readonly number[]) {
+// Drizzle inArray binds each ID separately. Use one bound array for large scoped reads.
+const postgresRelationScope = (ids: readonly number[]) => sql`${relation.oldId} = ANY(${sql.param(ids)}::bigint[])`
+
+export async function readPostgresPlatformBusinessMetadata(db: Pick<NodePgDatabase, 'select'>, relationIds: readonly number[]) {
   if (!relationIds.length) return new Map<number, BusinessMetadataRow>()
-  const { rows: metadata } = await db.execute<BusinessMetadataRow>(sql`
-    SELECT a.old_id::float8 AS "relationId",o.record_id::float8 AS "recordId",o.version_id::float8 AS "versionId",
-      b.interface,b.platform_key AS "platformKey",o.identity_state AS "identityState",o.content_state AS "contentState",
-      o.key_source AS "keySource",o.projection_rule_version AS "projectionRuleVersion",v.hash_algorithm AS "hashAlgorithm",v.content_hash AS "contentHash"
-    FROM platform_legacy_relation_alias a JOIN platform_business_observation o ON o.id=a.observation_id
-    LEFT JOIN platform_business_record b ON b.id=o.record_id LEFT JOIN platform_business_record_version v ON v.id=o.version_id
-    WHERE a.old_id=ANY(${sql.param(relationIds)}::bigint[])`)
-  return new Map(metadata.map(row => [row.relationId,row]))
+  const rows = await db.select({ relationId: relation.oldId, recordId: observation.recordId, versionId: observation.versionId,
+    interface: businessRecord.interface, platformKey: businessRecord.platformKey, identityState: observation.identityState,
+    contentState: observation.contentState, keySource: observation.keySource, projectionRuleVersion: observation.projectionRuleVersion,
+    hashAlgorithm: version.hashAlgorithm, contentHash: version.contentHash,
+  }).from(relation).innerJoin(observation, eq(observation.id, relation.observationId))
+    .leftJoin(businessRecord, eq(businessRecord.id, observation.recordId))
+    .leftJoin(version, eq(version.id, observation.versionId)).where(postgresRelationScope(relationIds))
+  return new Map<number, BusinessMetadataRow>(rows.map(row => [row.relationId, row as BusinessMetadataRow]))
 }
 
 function decisionConflicts(priors: PlatformCorrespondenceRef[]) {
@@ -57,23 +63,24 @@ export function readPlatformBusinessGroups(db: Db, observations: ScopedPlatformO
   return projectPlatformBusinessGroups(observations, metadata, priors)
 }
 
-export async function readPostgresPlatformBusinessGroups(db: Pick<NodePgDatabase, 'execute'>, observations: ScopedPlatformObservation[], metadata?: ReturnType<typeof readPlatformBusinessMetadata>) {
+export async function readPostgresPlatformBusinessGroups(db: Pick<NodePgDatabase, 'select'>, observations: ScopedPlatformObservation[], metadata?: ReturnType<typeof readPlatformBusinessMetadata>) {
   if (!observations.length) return []
   const relationIds = observations.map(row => row.relationId)
   metadata ??= await readPostgresPlatformBusinessMetadata(db, relationIds)
   return projectPlatformBusinessGroups(observations, metadata, await readPostgresPlatformBusinessCorrespondences(db, relationIds))
 }
 
-export async function readPostgresPlatformBusinessCorrespondences(db: Pick<NodePgDatabase, 'execute'>, relationIds: readonly number[]) {
+export async function readPostgresPlatformBusinessCorrespondences(
+  db: Pick<NodePgDatabase, 'select'>, relationIds: readonly number[],
+): Promise<PlatformCorrespondenceRef[]> {
   if (!relationIds.length) return []
-  const { rows } = await db.execute<{ [K in keyof PlatformCorrespondenceRef]: PlatformCorrespondenceRef[K] }>(sql`
-    SELECT p.id::float8 AS id,a.old_id::float8 AS "relationId",p.export_row_id::float8 AS "exportRowId",p.event_id::float8 AS "eventId",
-      p.predecessor_event_id::float8 AS "predecessorEventId",p.enterprise_id::float8 AS "enterpriseId",p.title_code AS "titleCode",
-      p.type,p.role,p.status,p.revision::float8 AS revision,p.rule_id AS "ruleId",p.rule_version AS "ruleVersion",
-      p.created_at AS "createdAt",p.decided_at AS "decidedAt",p.ended_at AS "endedAt"
-    FROM record_correspondence p JOIN platform_legacy_relation_alias a ON a.observation_id=p.observation_id
-    WHERE a.old_id=ANY(${sql.param(relationIds)}::bigint[]) ORDER BY p.id`)
-  return rows
+  return db.select({ id: correspondence.id, relationId: relation.oldId, exportRowId: correspondence.exportRowId,
+    eventId: correspondence.eventId, predecessorEventId: correspondence.predecessorEventId, enterpriseId: correspondence.enterpriseId,
+    titleCode: correspondence.titleCode, type: correspondence.type, role: correspondence.role, status: correspondence.status,
+    revision: correspondence.revision, ruleId: correspondence.ruleId, ruleVersion: correspondence.ruleVersion,
+    createdAt: correspondence.createdAt, decidedAt: correspondence.decidedAt, endedAt: correspondence.endedAt,
+  }).from(correspondence).innerJoin(relation, eq(relation.observationId, correspondence.observationId))
+    .where(postgresRelationScope(relationIds)).orderBy(correspondence.id)
 }
 
 export function projectPlatformBusinessGroups(observations: ScopedPlatformObservation[], metadata: ReturnType<typeof readPlatformBusinessMetadata>, priors: PlatformCorrespondenceRef[]): PlatformBusinessGroup[] {
