@@ -167,6 +167,7 @@ export const APPLICATION_LOG_ROUTES: ReadonlySet<string> = new Set([
   "/api/roster/title-cycle-dispositions/history",
   "/api/roster/title-cycle-dispositions/preflight",
   "/api/roster/uscc-research",
+  "/api/scheduled-tasks",
   "/api/settings/credentials",
   "/api/settings/credentials/:key/reveal",
   "/api/sme-roster/files",
@@ -174,5 +175,6 @@ export const APPLICATION_LOG_ROUTES: ReadonlySet<string> = new Set([
   "/api/task-center/:id",
   "/api/task-center/:id/cancel",
   "/api/task-center/:id/retry",
+  "/api/task-center/events",
   "/mcp",
 ])
