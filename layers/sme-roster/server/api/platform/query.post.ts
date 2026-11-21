@@ -322,6 +322,10 @@ export default defineEventHandler(async event => {
   try { return await runPlatformLiveQuery(await readBody(event), { logContext: event.context ? requestLogContext(event) : undefined }) }
   catch (caught) {
     const e = caught as { statusCode?: number; code?: string }
+    if (e.statusCode === 503) {
+      setResponseStatus(event, 503)
+      return { error: { code: 'service_unavailable', message: '平台查询服务暂时不可用。' } }
+    }
     setResponseStatus(event, e.statusCode === 400 ? 400 : 500)
     return { error: { code: e.statusCode === 400 ? e.code : 'internal_error', message: 'Platform query request rejected' } }
   }

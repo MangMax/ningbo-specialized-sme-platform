@@ -128,8 +128,7 @@ export const differenceSnapshotSpec: JobSpec = {
   parse: () => ({ ok: false, message: 'Use dedicated difference-snapshots endpoint for verified prestart backup' }),
   async run(ctx) {
     const row = getJob(ctx.db,ctx.jobId)!
-    let cookie = ''
-    try { cookie = resolvePlatformCookie(undefined,{ db:ctx.db }) } catch { /* provider reports credential failure */ }
+    const cookie = resolvePlatformCookie(undefined, { db: ctx.db })
     const checkpoint = (result:Receipt) => { setJobResult(ctx.db,ctx.jobId,result) }
     return runSnapshot({ ...ctx,checkpoint,admit(stored,owner,request,result) {
       ctx.db.transaction(() => {

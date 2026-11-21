@@ -15,7 +15,7 @@ export function credentialContext(): CredentialContext {
   const config: { ocrToken?: string } = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : {}
   return { ocrToken: config.ocrToken }
 }
-const storageError = () => new Error('凭据配置存储不可用，请检查数据库后重试。')
+const storageError = () => Object.assign(new Error('凭据配置存储不可用，请检查数据库后重试。'), { statusCode: 503 })
 export function credentialState(rows: { key: string; value: string; updatedAt: string }[]) {
   const state: State = {}
   for (const row of rows) {

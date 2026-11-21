@@ -50,8 +50,7 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
     completeness: 'not_queried', fullRange: q.startPage === 1, unfinished: [], error: null,
     limits: { maxRequests: q.maxRequests, maxRows: q.maxRows, maxDurationMs: q.maxDurationMs, pageSize: Math.min(q.pageSize, q.maxRows) },
   }
-  let cookie = ''
-  try { cookie = ctx.cookie ?? (await resolveRuntimeCredential('sme-roster.miitCookie', ctx.credentials)).value } catch { /* fixed failure below */ }
+  const cookie = ctx.cookie ?? (await resolveRuntimeCredential('sme-roster.miitCookie', ctx.credentials)).value
   const redact = cookieRedactor(cookie)
   const redactString = (value: string): string => {
     try {

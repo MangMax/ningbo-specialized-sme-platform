@@ -230,3 +230,16 @@ it('short credential components do not corrupt fixed public contract fields', as
   fetcher.mockResolvedValue(response(page([{ qymc: '合成' }])))
   expect(await query({ source: 'queryList', name: '合成' })).toMatchObject({ source: 'queryList', status: 'success', effectiveConditions: { combination: 'and' }, completeness: 'complete' })
 })
+
+it('returns a service error without querying upstream when credential storage is unavailable', async () => {
+  db.$client.exec('ALTER TABLE service_credential RENAME TO unavailable_credential')
+  try {
+    expect(await query({ source: 'queryList', name: '合成' })).toEqual({
+      error: { code: 'service_unavailable', message: '平台查询服务暂时不可用。' },
+    })
+    expect(setResponseStatus).toHaveBeenCalledWith(expect.anything(), 503)
+    expect(fetcher).not.toHaveBeenCalled()
+  } finally {
+    db.$client.exec('ALTER TABLE unavailable_credential RENAME TO service_credential')
+  }
+})
