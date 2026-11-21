@@ -133,10 +133,7 @@ beforeAll(async () => {
     db,
     apiToken: TOKEN,
     getRoutes: {
-      '/api/platform/queries': (url) => {
-        currentQuery = Object.fromEntries(url.searchParams.entries())
-        return queriesRoute({})
-      },
+      '/api/platform/queries': url => queriesRoute({ path: url.pathname + url.search }),
       '/api/comparison': (url) => {
         currentQuery = Object.fromEntries(url.searchParams.entries())
         return comparisonRoute({})
@@ -439,6 +436,7 @@ describe('第二批 · 曾用名、已核验处置与归并', () => {
 
   it('读回:GET /api/platform/queries?enterpriseId= 能列出该企业的全部关系', async () => {
     const result = (await json(`/api/platform/queries?enterpriseId=${canonical}&pageSize=50`)) as unknown as PlatformQueriesResult
+    expect(result.pageSize).toBe(50)
     const relations = result.rows.flatMap((row) => row.relations)
     expect(relations).toHaveLength(8)
     expect(relations.filter((r) => r.nameRaw === OLD_NAME)).toHaveLength(3)
