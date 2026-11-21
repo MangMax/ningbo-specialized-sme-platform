@@ -110,10 +110,14 @@ export function readComparisonSummary(
 type SummaryAlias = { enterpriseId: number; name: string; verificationStatus: string }
 type CuratedComparison = ReturnType<typeof getCuratedComparison>
 
-export function selectComparisonSummaryPage(result: CuratedComparison, filter: ComparisonRowFilter, page: number, pageSize: number, aliasesByEnterprise: ReadonlyMap<number, SummaryAlias[]>) {
-  const scoped = filterComparisonRows(result.rows.map(row => ({ ...row,
+export function filterCuratedComparison(result: CuratedComparison, filter: ComparisonRowFilter, aliasesByEnterprise: ReadonlyMap<number, SummaryAlias[]>) {
+  return filterComparisonRows(result.rows.map(row => ({ ...row,
     platform: { aliases: aliasesByEnterprise.get(row.enterpriseId) ?? [] },
   })), filter)
+}
+
+export function selectComparisonSummaryPage(result: CuratedComparison, filter: ComparisonRowFilter, page: number, pageSize: number, aliasesByEnterprise: ReadonlyMap<number, SummaryAlias[]>) {
+  const scoped = filterCuratedComparison(result, filter, aliasesByEnterprise)
   return { scoped, selected: scoped.slice((page - 1) * pageSize, page * pageSize) }
 }
 

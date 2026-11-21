@@ -3,9 +3,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import pg from 'pg'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { expect, it, vi } from 'vitest'
 import { reserveLoopbackPort, spawnCompiledApp, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
 import { defaultLogCollection } from '../../../layers/core/lib/logging/policy'
+import coreManifest from '../../../layers/core/lib/core/manifest'
+import rosterManifest from '../../../layers/sme-roster/manifest'
 
 const bin = process.env.TEST_POSTGRES_STARTUP_BIN
 
@@ -110,6 +114,7 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
           NUXT_FILES_DIR: join(dir, 'files'),
           NUXT_INCOMING_DIR: join(dir, 'incoming'),
           NUXT_API_TOKEN: apiToken,
+          NUXT_MCP_TOKEN: apiToken,
         },
       })
       let output = ''
@@ -149,6 +154,15 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
         'render-pages', 'ocr', 'difference-snapshot', 'platform-query-batch', 'reconcile',
         'event-archive-candidates', 'event-annual-correspondence', 'current-roster-export', 'lead-lists-version-export',
       ].map(kind => expect.objectContaining({ kind, status: 'ready' }))))
+      const credentials = await fetch(`${base}/api/settings/credentials`, {
+        method: 'PATCH',
+        headers: { authorization: `Bearer ${apiToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ 'core.ocrToken': 'fixture-ocr-credential' }),
+      })
+      expect(credentials.status).toBe(200)
+      expect(await credentials.json()).toMatchObject({
+        'core.ocrToken': { configured: true, source: 'saved', masked: 'fix********ial' },
+      })
     })
 
     const id = '01J00000000000000000000000'
@@ -156,7 +170,7 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
     const snapshotId = '01J00000000000000000000002'
     query(`INSERT INTO business.job (id, kind, params, state, result, created_at) VALUES
       ('${id}', 'render-pages', '{}', 'queued', NULL, '2026-11-20T00:00:00.000Z'),
-      ('${batchId}', 'platform-query-batch', '{"items":[],"limits":{}}', 'done',
+      ('${batchId}', 'platform-query-batch', '{"items":[],"limits":{"maxRequests":10,"maxRows":100,"maxDurationMs":5000,"maxResultBytes":65536}}', 'done',
         '{"attempt":1,"items":[],"completeness":"complete"}', '2026-11-20T00:00:00.000Z'),
       ('${snapshotId}', 'difference-snapshot', '{}', 'done', '{"completeness":"complete"}', '2026-11-20T00:00:00.000Z')`)
     await withApp(true, async base => {
@@ -167,6 +181,14 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
         return response.json()
       }
       expect(await get('/api/jobs?view=summary')).toMatchObject({ total: 3 })
+      expect(await get('/api/settings/credentials')).toMatchObject({
+        'core.ocrToken': { configured: true, source: 'saved', masked: 'fix********ial' },
+      })
+      expect(await get('/api/logs/policy')).toMatchObject({ retentionDays: 30, maxBytes: 1048576 })
+      expect(await get('/api/scheduled-tasks')).toMatchObject({
+        enabled: false,
+        items: expect.arrayContaining([expect.objectContaining({ id: 'roster_export_cleanup', nextRunAt: null })]),
+      })
       expect(await get('/api/jobs?kind=render-pages')).toMatchObject({ total: 1, rows: [{ id, params: {} }] })
       expect(await get(`/api/jobs/${id}`)).toMatchObject({ id, state: 'queued' })
       expect(await get('/api/task-center')).toMatchObject({
@@ -180,6 +202,27 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
       expect(await get(`/api/roster/difference-snapshots/${snapshotId}`)).toMatchObject({
         id: snapshotId, state: 'done', result: { completeness: 'complete' },
       })
+      const mcp = new Client({ name: 'pg-startup-fixture', version: '1' })
+      await mcp.connect(new StreamableHTTPClientTransport(new URL('/mcp', base), { requestInit: { headers } }))
+      try {
+        const { tools } = await mcp.listTools()
+        expect(tools.map(tool => tool.name).sort()).toEqual([
+          ...coreManifest.mcpTools!, ...rosterManifest.mcpTools!,
+        ].sort())
+        const calls = [
+          ['get_platform_batch', { batchId }, { batchId, state: 'done', attempt: 1 }],
+          ['difference_snapshot', { action: 'read', jobId: snapshotId }, { id: snapshotId, state: 'done' }],
+          ['get_runtime_log_policy', {}, { retentionDays: 30, maxBytes: 1048576 }],
+        ] as const
+        for (const [name, args, expected] of calls) {
+          const result = await mcp.callTool({ name, arguments: args })
+          expect(result.isError, JSON.stringify(result)).not.toBe(true)
+          const content = result.content as { type: string; text: string }[]
+          expect(JSON.parse(content[0]!.text)).toMatchObject(expected)
+        }
+      } finally {
+        await mcp.close()
+      }
       expect((await get('/api/jobs/kinds')).kinds).toEqual(expect.arrayContaining([
         expect.objectContaining({ kind: 'render-pages', status: 'todo', note: '当前任务中心只读' }),
       ]))

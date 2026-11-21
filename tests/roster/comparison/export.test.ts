@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -6,18 +7,26 @@ import ExcelJS from 'exceljs'
 import { readExportWorkbook } from '../../support/read-workbook'
 import { Readable } from 'node:stream'
 import { createServer, type Server } from 'node:http'
+import { eq } from 'drizzle-orm'
 import { createApp, toNodeListener, getQuery as h3Query, setHeader as h3Header, createError as h3Error } from 'h3'
 import { existsSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { ReadStream } from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { schema, useDb } from '../../../db'
+import { schema } from '../../../db'
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { assertSqliteRuntime } from '../../../db/runtime-mode'
+import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
+import { patchCuration } from '../../../layers/sme-roster/lib/curation'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-comparison-export-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.db') })
 vi.doMock('@db', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  useDb: () => db,
+  useDb: () => {
+    assertSqliteRuntime()
+    return db
+  },
 }))
 let server: Server
 let baseUrl: string
@@ -274,3 +283,69 @@ describe('comparison export route', () => {
     }
   })
 })
+
+const pgBin = process.env.TEST_ROSTER_COMPARISON_PG_BIN
+
+it.runIf(Boolean(pgBin))('exports all filtered comparison rows over HTTP in PostgreSQL-only mode', async () => {
+  const fixture = mkdtempSync('/tmp/roster-comparison-pg-')
+  const cluster = join(fixture, 'cluster')
+  const snapshot = join(fixture, 'source.sqlite')
+  const curatedPath = join(fixture, 'curation.json')
+  const env = {
+    PATH: process.env.PATH, LC_ALL: 'C', PGHOST: fixture, PGPORT: '5432',
+    PGDATABASE: 'postgres', PGUSER: 'fixture', PGSQL_BIN: pgBin!,
+  }
+  const run = (program: string, args: string[]) =>
+    execFileSync(join(pgBin!, program), args, { env, stdio: 'pipe' })
+  let started = false
+  try {
+    installLeadListSchema(db.$client)
+    const company = db.select({ id: schema.enterprise.id }).from(schema.enterprise).where(eq(schema.enterprise.usccNorm, 'USCC1')).get()!
+    db.insert(schema.enterpriseAlias).values([
+      { enterpriseId: company.id, name: '可信曾用名', nameNorm: '可信曾用名', sourceKind: 'manual', verificationStatus: 'confirmed' },
+      { enterpriseId: company.id, name: '待核曾用名', nameNorm: '待核曾用名', sourceKind: 'manual', verificationStatus: 'pending' },
+    ]).run()
+    patchCuration(curatedPath, { uscc: 'USCC26', titleCode: 'specialized_sme', direction: 'missing_in_miit', curated: true })
+    await db.$client.backup(snapshot)
+    run('initdb', ['-D', cluster, '-A', 'trust', '-U', env.PGUSER, '--locale=C', '-E', 'UTF8'])
+    run('pg_ctl', ['-D', cluster, '-l', join(fixture, 'pg.log'), '-o', `-h '' -k ${fixture}`, '-w', 'start'])
+    started = true
+    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', snapshot, 'staged'], { env, stdio: 'pipe' })
+    for (const layer of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
+      run('psql', ['-Xqw', '-v', 'staging=staged', '-f', `upgrade/postgresql/materialize-${layer}.sql`])
+    }
+    vi.stubEnv('NUXT_DB_MODE', 'postgresql')
+    vi.stubEnv('NUXT_DB_READONLY', '1')
+    vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
+    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', `postgresql://fixture@localhost/postgres?host=${encodeURIComponent(fixture)}`)
+    vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath }))
+
+    async function rows(params: Record<string, string>) {
+      const url = new URL('/api/export', baseUrl)
+      url.search = new URLSearchParams({
+        mode: 'comparison', title: 'specialized_sme', direction: 'missing_in_miit', page: '2', pageSize: '1', ...params,
+      }).toString()
+      const response = await fetch(url)
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      const sheet = (await readExportWorkbook(new Uint8Array(await response.arrayBuffer()))).getWorksheet('比对')!
+      return sheet.getRows(2, sheet.rowCount - 1)?.map(row => row.values) ?? []
+    }
+    const missing = await rows({})
+    expect(missing.map(row => (row as string[])[1])).toEqual(Array.from({ length: 26 }, (_, i) => `市专${String(i).padStart(2, '0')}`))
+    expect(missing[0]).toEqual([undefined, '市专00', '', '鄞州区', '专精特新中小企业', '应纳未纳', '嘉兴市', '注销', '无统代,另一侧无可匹配身份'])
+    expect((await rows({ showCurated: 'true' })).at(-1)).toEqual([undefined, '市专26', 'USCC26', '鄞州区', '专精特新中小企业', '应纳未纳', '嘉兴市', '注销', ''])
+    expect(await rows({ q: '可信曾用名', district: '鄞州区' })).toEqual([
+      [undefined, '市专01', 'USCC1', '鄞州区', '专精特新中小企业', '应纳未纳', '嘉兴市', '注销', ''],
+    ])
+    expect(await rows({ q: '待核曾用名' })).toEqual([])
+    expect(await rows({ direction: 'extra_in_miit' })).toEqual([
+      [undefined, '反方向', '=001234567890123456', '鄞州区', '专精特新中小企业', '应出未出', '嘉兴市', '注销', ''],
+    ])
+  } finally {
+    await closePostgresDirectoryDb()
+    vi.unstubAllEnvs()
+    if (started) run('pg_ctl', ['-D', cluster, '-m', 'fast', '-w', 'stop'])
+    rmSync(fixture, { recursive: true, force: true })
+  }
+}, 60_000)

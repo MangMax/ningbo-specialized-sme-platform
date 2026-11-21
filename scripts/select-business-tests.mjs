@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { inventory, matrices, loggingBusiness } from './business-test-groups.mjs'
+import { inventory, matrices, loggingBusiness, postgresTestFiles } from './business-test-groups.mjs'
 import { selectUpgrade } from './select-upgrade-tests.mjs'
 
 // These are terminal HTTP surfaces. Shared implementation changes deliberately
@@ -46,7 +46,9 @@ export function selectBusinessTests(paths, event = 'pull_request') {
   const upgrade = full || selectUpgrade(paths)
   const all = matrices(upgrade)
   const selected = {
-    native: all.native.filter(group => full || businesses.has(group.business)),
+    native: all.native.filter(group => full || (group.postgres
+      ? paths.some(path => postgresTestFiles.includes(path))
+      : businesses.has(group.business))),
     app: all.app.filter(group => full || businesses.has(group.business)),
   }
   const watcher = full || paths.includes('tests/runtime/development/nuxt-runtime-watch.http.app.test.ts')

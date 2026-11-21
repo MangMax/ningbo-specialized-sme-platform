@@ -17,6 +17,17 @@ it('keeps platform qualification facts in the existing qualification business gr
   expect(result.app.map(row => row.business)).toEqual(['名录 · 资格与认定读取'])
 })
 
+it.each([
+  'tests/files/segments/postgres-source-boundaries.http.test.ts',
+  'tests/roster/comparison/export.test.ts',
+  'tests/roster/enterprise-read/research-postgres.http.test.ts',
+  'layers/sme-roster/server/api/files/[id]/segments.get.ts',
+  'layers/sme-roster/server/api/export.get.ts',
+])('requires PostgreSQL endpoint coverage when %s changes', (path) => {
+  const result = selectBusinessTests([path])
+  expect(result.native).toContainEqual(expect.objectContaining({ group: 'PostgreSQL 19 · 文件分段与名录入口' }))
+})
+
 it('keeps shared qualification consumers and unknown or deleted paths in full coverage', () => {
   for (const path of ['layers/sme-roster/lib/roster/qualification-cycles.ts', 'db/schema.ts', 'tests/support/new-helper.ts', 'layers/sme-roster/server/api/roster/deleted.get.ts', 'new-module.ts', 'pnpm-lock.yaml']) {
     const result = selectBusinessTests([path])
