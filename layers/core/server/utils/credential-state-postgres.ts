@@ -1,5 +1,6 @@
-import { sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { serviceCredential } from '../../../../db/postgresql/credential-tables'
 import { usePostgresDirectoryDb } from '../../../../db/postgresql/client'
 import { registeredCredentials, type CredentialKey } from '../../../../lib/app-modules'
 import { credentialContext, credentialState, resolveCredential, resolveFromState, type CredentialContext } from './credential-state'
@@ -10,9 +11,7 @@ export function selectedCredentialDb(ctx?: CredentialContext) {
 
 export async function readPostgresCredentialState(db: NodePgDatabase) {
   try {
-    const result = await db.execute<{ key: string; value: string; updatedAt: string }>(sql`
-      SELECT key,value,updated_at AS "updatedAt" FROM business.service_credential`)
-    return credentialState(result.rows)
+    return credentialState(await db.select().from(serviceCredential))
   } catch {
     throw Object.assign(new Error('凭据配置存储不可用，请检查数据库后重试。'), { statusCode: 503 })
   }
@@ -24,10 +23,12 @@ export function updatePostgresCredentialState(db: NodePgDatabase, values: Partia
     for (const key of registeredCredentials.keys()) {
       const value = values[key]
       if (value === undefined) continue
-      if (value === null) await tx.execute(sql`DELETE FROM business.service_credential WHERE key = ${key}`)
-      else await tx.execute(sql`
-        INSERT INTO business.service_credential (key, value, updated_at) VALUES (${key}, ${value}, ${updatedAt})
-        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`)
+      if (value === null) {
+        await tx.delete(serviceCredential).where(eq(serviceCredential.key, key))
+      } else {
+        await tx.insert(serviceCredential).values({ key, value, updatedAt })
+          .onConflictDoUpdate({ target: serviceCredential.key, set: { value, updatedAt } })
+      }
     }
     return readPostgresCredentialState(tx)
   })
