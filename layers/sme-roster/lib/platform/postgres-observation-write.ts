@@ -1,18 +1,16 @@
 import { createHash } from 'node:crypto'
-import { getTableName, sql } from 'drizzle-orm'
+import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import * as schema from '../../../../db/schema'
+import * as schema from '../../../../db/postgresql/platform-tables'
+import { platformArchiveValue, platformVersionArchiveRef } from '../../../../db/postgresql/platform-archive-tables'
 import { BUSINESS_STATUS_V2 } from '../../../../db/business-status'
 import type { RosterImportRelation } from '../roster-import-client'
 import type { PlatformProjectionResult } from './business-record'
 import { normalizePlatformRelation } from './normalization'
 import { allocatePostgresPlatformAlias, bindPostgresArchive, sealPostgresArchive, writePostgresArchiveValue } from './postgres-archive-write'
-import { encodePlatformExactCell, insertPostgresPlatformRow, postgresPlatformInsert } from './postgres-platform-insert'
+import { encodePlatformExactCell } from './postgres-platform-insert'
 import type { writePostgresCollectionHeader } from './postgres-collection-write'
 import { materializedText } from './apply-materialization'
-import { storedApplyProjection } from './apply-stored-schema'
-import { storedProcessProjection } from './process-stored-schema'
-import { storedRecognizedProjection } from './recognized-stored-schema'
 import { parseApplyRecord, APPLY_PROJECTION_RULE } from './apply-record'
 import { parseBusinessProcess, BUSINESS_PROJECTION_RULE } from './business-projection'
 import { parseRecognizedRecord, parseRecognizedQualificationFields, parseRecognizedSourceFidelity, RECOGNIZED_PROJECTION_RULE } from './recognized-projection'
@@ -21,7 +19,6 @@ import { sourceFieldComparison, sourceValueKind } from './source-extraction'
 import { relationEvidenceColumns } from './relation-evidence-snapshot'
 import { slotFallbackColumns, type SlotRelation } from './reconcile-slot-capture'
 import type { ApplyTargetInput } from './apply-target-writer'
-import { readPostgresRosterRowsById } from '../roster/postgres-rows'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Source = 'apply_list' | 'business_list' | 'recognized_list'
@@ -34,8 +31,8 @@ const projectionRules = { apply_list: APPLY_PROJECTION_RULE, business_list: BUSI
 const stamp = (data: unknown) => createHash('sha256').update(canonicalPlatformJson(data)).digest('hex')
 
 async function completeVersionProjection(tx: Tx, source: Source, plan: Content, recordId: number, versionId: number, createdAt: string) {
-  const stored = (await readPostgresRosterRowsById(tx, projectionTables[source],
-    sql`FROM ${sql.identifier(getTableName(projectionTables[source]))} p WHERE version_id=${versionId}`))[0]
+  const table = projectionTables[source]
+  const [stored] = await tx.select().from(table).where(eq(table.versionId, versionId)).orderBy(table.id).limit(1)
   const stable = source === 'apply_list' ? plan.applyRecord! : source === 'business_list' ? plan.businessProjection! : plan.recognizedProjection!
   if (stored) {
     if (stored.recordId !== recordId || stored.ruleVersion !== projectionRules[source] ||
@@ -43,14 +40,15 @@ async function completeVersionProjection(tx: Tx, source: Source, plan: Content, 
     return false
   }
   if (source === 'apply_list') {
-    await tx.execute(postgresPlatformInsert(schema.platformApplyProjection,{ versionId,recordId,...plan.applyRecord!,ruleVersion:APPLY_PROJECTION_RULE,createdAt }))
+    await tx.insert(schema.platformApplyProjection).values({ versionId,recordId,...plan.applyRecord!,ruleVersion:APPLY_PROJECTION_RULE,createdAt })
   } else if (source === 'business_list') {
-    await tx.execute(postgresPlatformInsert(schema.platformBusinessProjection,{ versionId,recordId,...plan.businessProjection!,ruleVersion:BUSINESS_PROJECTION_RULE,createdAt }))
+    await tx.insert(schema.platformBusinessProjection).values({ versionId,recordId,...plan.businessProjection!,ruleVersion:BUSINESS_PROJECTION_RULE,createdAt })
   } else {
     const { sourceValidFlag,...qualification } = parseRecognizedQualificationFields(JSON.parse(plan.canonicalRawJson!))
-    await tx.execute(postgresPlatformInsert(schema.platformRecognizedProjection,{ versionId,recordId,...plan.recognizedProjection!,
-      ...plan.recognizedSourceFidelity!,...qualification,ruleVersion:RECOGNIZED_PROJECTION_RULE,createdAt },
-      encodePlatformExactCell('source_valid_flag',sourceValidFlag)))
+    await tx.insert(schema.platformRecognizedProjection).values({ versionId,recordId,...plan.recognizedProjection!,
+      ...plan.recognizedSourceFidelity!, sourceMaintenanceYearAbsent: Number(plan.recognizedSourceFidelity!.sourceMaintenanceYearAbsent),
+      ...qualification,ruleVersion:RECOGNIZED_PROJECTION_RULE,createdAt,
+      ...encodePlatformExactCell('sourceValidFlag',sourceValidFlag) })
   }
   return true
 }
@@ -59,30 +57,49 @@ export async function ensurePostgresObservationContent(tx: Tx, source: Source, p
   const result: { recordId: number | null; versionId: number | null; recordCreated: boolean; versionCreated: boolean; projectionCreated: boolean } =
     { recordId:null,versionId:null,recordCreated:false,versionCreated:false,projectionCreated:false }
   if (!plan.platformKey) return result
-  const records = await tx.execute<{ id: number }>(sql`
-    INSERT INTO platform_business_record(interface,platform_key,identity_rule_version,created_at)
-    VALUES(${source},${plan.platformKey},${PLATFORM_PROJECTION_RULE},${now})
-    ON CONFLICT(interface,platform_key) DO NOTHING RETURNING id::float8 AS id`)
-  const fresh = records.rows[0]
-  const known = fresh ? null : (await tx.execute<{ id: number; rule: string }>(sql`SELECT id::float8 AS id,identity_rule_version AS rule
-    FROM platform_business_record WHERE interface=${source} AND platform_key=${plan.platformKey}`)).rows[0]
+  const recordTable = schema.platformBusinessRecord
+  const [fresh] = await tx.insert(recordTable).values({
+    interface: source, platformKey: plan.platformKey, identityRuleVersion: PLATFORM_PROJECTION_RULE, createdAt: now,
+  }).onConflictDoNothing({ target: [recordTable.interface, recordTable.platformKey] }).returning({ id: recordTable.id })
+  const known = fresh ? null : (await tx.select({ id: recordTable.id, rule: recordTable.identityRuleVersion })
+    .from(recordTable).where(and(eq(recordTable.interface, source), eq(recordTable.platformKey, plan.platformKey))))[0]
   if (!fresh && known?.rule !== PLATFORM_PROJECTION_RULE) throw new Error('projection_rule_conflict')
   const recordId = fresh?.id ?? known!.id
   Object.assign(result,{recordId,recordCreated:!!fresh})
   if (!plan.canonicalRawJson || !plan.contentHash) return result
-  const version = (await tx.execute<{ id: number; text: string; valid: boolean }>(sql`
-    SELECT v.id::float8 AS id,v.canonical_raw_json AS text,EXISTS(SELECT 1 FROM platform_version_archive_ref r
-      JOIN platform_archive_value a ON a.id=r.archive_id WHERE r.owner_id=v.id AND r.field='canonicalRawJson' AND r.sealed=1
-        AND r.archive_id=v.canonical_archive_id AND a.bytes=convert_to(v.canonical_raw_json,'UTF8')) AS valid
-    FROM platform_business_record_version v WHERE record_id=${recordId} AND hash_algorithm=${PLATFORM_RAW_HASH_RULE} AND content_hash=${plan.contentHash}`)).rows[0]
-  if (version && (!version.valid || version.text !== plan.canonicalRawJson)) throw new Error('platform_content_hash_conflict')
-  const versionId = version?.id ?? await insertPostgresPlatformRow(tx,schema.platformBusinessRecordVersion,
-    { recordId,hashAlgorithm:PLATFORM_RAW_HASH_RULE,contentHash:plan.contentHash,canonicalRawJson:plan.canonicalRawJson,createdAt:now })
-  if (!version) {
+  const versionTable = schema.platformBusinessRecordVersion
+  const [version] = await tx.select({
+    id: versionTable.id, text: versionTable.canonicalRawJson, valid: isNotNull(platformArchiveValue.id),
+  })
+    .from(versionTable)
+    .leftJoin(platformVersionArchiveRef, and(
+      eq(platformVersionArchiveRef.ownerId, versionTable.id),
+      eq(platformVersionArchiveRef.field, 'canonicalRawJson'),
+      eq(platformVersionArchiveRef.sealed, 1),
+    ))
+    .leftJoin(platformArchiveValue, and(
+      eq(platformArchiveValue.id, platformVersionArchiveRef.archiveId),
+      eq(platformArchiveValue.id, versionTable.canonicalArchiveId),
+      // Drizzle does not expose PostgreSQL's encoding conversion.
+      eq(platformArchiveValue.bytes, sql`convert_to(${versionTable.canonicalRawJson}, 'UTF8')`),
+    ))
+    .where(and(eq(versionTable.recordId, recordId), eq(versionTable.hashAlgorithm, PLATFORM_RAW_HASH_RULE),
+      eq(versionTable.contentHash, plan.contentHash)))
+  if (version && (version.text !== plan.canonicalRawJson || !version.valid)) {
+    throw new Error('platform_content_hash_conflict')
+  }
+  let versionId: number
+  if (version) {
+    versionId = version.id
+  } else {
+    const [inserted] = await tx.insert(versionTable).values({
+      recordId, hashAlgorithm: PLATFORM_RAW_HASH_RULE, contentHash: plan.contentHash, canonicalRawJson: plan.canonicalRawJson, createdAt: now,
+    }).returning({ id: versionTable.id })
+    versionId = inserted!.id
     const archive = await writePostgresArchiveValue(tx,plan.canonicalRawJson,now)
     await bindPostgresArchive(tx,{ kind:'version',ownerId:versionId,field:'canonicalRawJson' },archive.id)
     await sealPostgresArchive(tx,{ kind:'version',ownerId:versionId })
-    await tx.execute(sql`UPDATE platform_business_record_version SET canonical_archive_id=${archive.id} WHERE id=${versionId}`)
+    await tx.update(versionTable).set({ canonicalArchiveId: archive.id }).where(eq(versionTable.id, versionId))
   }
   const projectionCreated = await completeVersionProjection(tx,source,plan,recordId,versionId,now)
   return { ...result,versionId,versionCreated:!version,projectionCreated }
@@ -107,38 +124,38 @@ function writeObservationProjection(tx: Tx, source: Source, observationId: numbe
     sourceTitleNumberText:typeof title === 'number' ? String(title) : null, sourceTitleBoolean:typeof title === 'boolean' ? Number(title) : null,
     sourceTitleRuleVersion:source === 'business_list' ? BUSINESS_STATUS_V2 : 't05b-source-projections-v1' }
   const exact = {
-    ...encodePlatformExactCell('exact_status',fields.status),
-    ...encodePlatformExactCell('exact_declare_kind',fields.declareKind),
-    ...encodePlatformExactCell('exact_applied_at',fields.appliedAt),
-    ...encodePlatformExactCell('exact_title_raw',fields.titleRaw),
-    ...encodePlatformExactCell('exact_year',fields.year),
+    ...encodePlatformExactCell('exactStatus',fields.status),
+    ...encodePlatformExactCell('exactDeclareKind',fields.declareKind),
+    ...encodePlatformExactCell('exactAppliedAt',fields.appliedAt),
+    ...encodePlatformExactCell('exactTitleRaw',fields.titleRaw),
+    ...encodePlatformExactCell('exactYear',fields.year),
   }
-  if (source === 'apply_list') return tx.execute(postgresPlatformInsert(storedApplyProjection,
+  if (source === 'apply_list') return tx.insert(schema.platformApplyProjection).values(
     { ...common,...(plan.applyRecord ?? parseApplyRecord(raw)),ruleVersion:APPLY_PROJECTION_RULE,sqlFactTitle:fields.titleRaw,
       exactStoredState:'captured',exactStoredRule:'apply-stored-cells-v1',exactStoredOrigin:'command_materialized',
       sqlFactTitleState:'captured',sqlFactTitleRule:'apply-legacy-sql-fact-title-v1',
-      ...sourceFieldComparison('apply_list',{...fields,status:typeof fields.status === 'string' ? fields.status : null},raw,common.parseState) },exact))
+      ...sourceFieldComparison('apply_list',{...fields,status:typeof fields.status === 'string' ? fields.status : null},raw,common.parseState), ...exact })
   if (source === 'business_list') {
     const comparison = sourceFieldComparison('business_list',fields,raw,common.parseState)
     const { storedStatus,reconciledStatus,...facts } = comparison
-    return tx.execute(postgresPlatformInsert(storedProcessProjection,
-      { ...common,...(plan.businessProjection ?? parseBusinessProcess(raw)),ruleVersion:BUSINESS_PROJECTION_RULE,
+    return tx.insert(schema.platformBusinessProjection).values({ ...common,...(plan.businessProjection ?? parseBusinessProcess(raw)),ruleVersion:BUSINESS_PROJECTION_RULE,
         sqlFactTitle:fields.titleRaw,
         exactStoredState:'captured',exactStoredRule:'process-stored-cells-v1',exactStoredOrigin:'command_materialized',
-        sqlFactTitleState:'captured',sqlFactTitleRule:'process-legacy-sql-fact-title-v1',...facts },
-      { ...exact,...encodePlatformExactCell('exact_batch',fields.batch),...encodePlatformExactCell('exact_award_batch_label',fields.awardBatchLabel),
-        ...encodePlatformExactCell('exact_province',fields.province),...encodePlatformExactCell('stored_status',storedStatus),
-        ...encodePlatformExactCell('reconciled_status',reconciledStatus) }))
+        sqlFactTitleState:'captured',sqlFactTitleRule:'process-legacy-sql-fact-title-v1',...facts,
+      ...exact,...encodePlatformExactCell('exactBatch',fields.batch),...encodePlatformExactCell('exactAwardBatchLabel',fields.awardBatchLabel),
+        ...encodePlatformExactCell('exactProvince',fields.province),...encodePlatformExactCell('storedStatus',storedStatus),
+        ...encodePlatformExactCell('reconciledStatus',reconciledStatus) })
   }
   const original = { province:fields.province,status:typeof fields.status === 'string' ? fields.status : null,
     batch:fields.batch,declareKind:fields.declareKind,appliedAt:fields.appliedAt,awardBatchLabel:fields.awardBatchLabel,year:fields.year }
   const { sourceValidFlag,...qualification } = parseRecognizedQualificationFields(raw)
-  return tx.execute(postgresPlatformInsert(storedRecognizedProjection,
-    { ...common,...(plan.recognizedProjection ?? parseRecognizedRecord(raw)),...(raw ? parseRecognizedSourceFidelity(raw) : {}),
+  const fidelity = raw ? parseRecognizedSourceFidelity(raw) : null
+  return tx.insert(schema.platformRecognizedProjection).values({ ...common,...(plan.recognizedProjection ?? parseRecognizedRecord(raw)),
+      ...fidelity, sourceMaintenanceYearAbsent: fidelity ? Number(fidelity.sourceMaintenanceYearAbsent) : undefined,
       ...qualification,ruleVersion:RECOGNIZED_PROJECTION_RULE,
       exactTitleState:'captured',exactTitleOrigin:'commandInput',exactTitleArchiveId:fingerprint.id,exactTitleSha256:fingerprint.sha256,
-      ...sourceFieldComparison('recognized_list',original,raw,common.parseState) },
-    { ...encodePlatformExactCell('exact_title_raw',fields.titleRaw),...encodePlatformExactCell('source_valid_flag',sourceValidFlag) }))
+      ...sourceFieldComparison('recognized_list',original,raw,common.parseState),
+    ...encodePlatformExactCell('exactTitleRaw',fields.titleRaw),...encodePlatformExactCell('sourceValidFlag',sourceValidFlag) })
 }
 
 export async function writePostgresObservation(tx: Tx, collection: Collection, row: RosterImportRelation, assignment: Assignment, batchId: number) {
@@ -153,6 +170,7 @@ export async function writePostgresObservation(tx: Tx, collection: Collection, r
   const values = await ensurePostgresObservationContent(tx,source,content,now)
   const fingerprintInput = { collectionId:collection.collectionId,position,row,assignment,batchId }
   const inputFingerprint = stamp(fingerprintInput)
+  // Drizzle cannot reserve an identity value before insert. The exact-owner checks require the observation's own ID at insert.
   const { rows: [next] } = await tx.execute<{ id: number }>(sql`
     SELECT nextval(pg_get_serial_sequence('platform_business_observation','id'))::float8 AS id`)
   const observationId = next!.id
@@ -160,16 +178,17 @@ export async function writePostgresObservation(tx: Tx, collection: Collection, r
     ? { applyExactOwnerId:observationId,applyExactState:'captured' as const,applySqlFactTitleState:'captured' as const }
     : source === 'business_list'
       ? { processExactOwnerId:observationId,processExactState:'captured' as const,processSqlFactTitleState:'captured' as const } : {}
-  await tx.execute(postgresPlatformInsert(schema.platformBusinessObservation,{
+  await tx.insert(schema.platformBusinessObservation).values({
     id:observationId,collectionId:collection.collectionId,...position,...candidate,...witnessFields,...actorValues,
     sourceRelationKey:source === 'recognized_list' ? row.relationKey ?? null : fields.relationKey,recordId:values.recordId,
     versionId:values.versionId,identityState:content.identityState,contentState:content.contentState,keySource:content.keySource,
-    projectionRuleVersion:PLATFORM_PROJECTION_RULE,inputFingerprint,indexedAt:now,batchId,
-  },exact))
+    projectionRuleVersion:PLATFORM_PROJECTION_RULE,inputFingerprint,indexedAt:now,batchId,...exact,
+  })
   const fingerprintArchive = await writePostgresArchiveValue(tx,Buffer.from(canonicalPlatformJson(fingerprintInput)),null)
-  await tx.execute(sql`INSERT INTO platform_observation_fingerprint_basis(observation_id,scheme,input_archive_id)
-    VALUES(${observationId},'target-command-v1',${fingerprintArchive.id})`)
-  await tx.execute(postgresPlatformInsert(schema.platformObservationAssignment,{...assignment,observationId,revision:1}))
+  await tx.insert(schema.platformObservationFingerprintBasis).values({
+    observationId, scheme: 'target-command-v1', inputArchiveId: fingerprintArchive.id,
+  })
+  await tx.insert(schema.platformObservationAssignment).values({ ...assignment, actor: assignment.actor == null ? assignment.actor : JSON.stringify(assignment.actor), observationId, revision: 1 })
   const relationId = await allocatePostgresPlatformAlias(tx,'relation',observationId)
   const raw = row.rawFields ?? null
   const rawText = raw === null ? null : JSON.stringify(raw)

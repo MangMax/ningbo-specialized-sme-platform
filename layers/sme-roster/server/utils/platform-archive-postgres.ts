@@ -1,5 +1,22 @@
-import { sql, type SQL } from 'drizzle-orm'
+import { and, asc, between, count, countDistinct, desc, eq, exists, getTableColumns, gt, inArray, notExists, isNotNull, isNull, ne, or, sql, type SQL, type SQLWrapper } from 'drizzle-orm'
+import type { AnyPgColumn, PgSelect, PgTable } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import {
+  platformApplyProjection as applyProjection,
+  platformBusinessProjection as processProjection,
+  platformRecognizedProjection as recognizedProjection,
+  platformBusinessObservation as observation,
+  platformBusinessRecord as businessRecord,
+  platformBusinessRecordVersion as recordVersion,
+  platformCollection as collection,
+  platformLegacyQueryAlias as queryAlias,
+  platformLegacyRelationAlias as relationAlias,
+  platformObservationAssignment as assignment,
+} from '../../../../db/postgresql/platform-tables'
+import { platformQueryTitleScope as titleScope } from '../../../../db/postgresql/platform-archive-tables'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
+import { alias } from 'drizzle-orm/pg-core'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { BUSINESS_PROCESS_OBSERVATION_LIMIT, BUSINESS_PROCESS_VERSION_LIMIT, type BusinessProcessFilter } from '../../lib/platform/business-processes'
 import { DECLARATION_OBSERVATION_LIMIT, DECLARATION_VERSION_LIMIT, type DeclarationFilter } from '../../lib/platform/declarations'
@@ -8,7 +25,7 @@ import { normalizeDeclareKind } from '../../lib/platform/identity'
 import { RECOGNIZED_DIRECTORY_OBSERVATION_LIMIT, RECOGNIZED_DIRECTORY_VERSION_LIMIT, type RecognizedDirectoryFilter } from '../../lib/platform/recognized-directory'
 import { fail, orderedScopes, pageOf } from './platform-business-read'
 
-type Reader = Pick<NodePgDatabase, 'execute'>
+type Reader = Pick<NodePgDatabase, 'select' | 'selectDistinct' | '$with' | 'with' | '$count'>
 type Source = PlatformFilterOptionsQuery['source']
 type ArchiveFilter = DeclarationFilter & Partial<BusinessProcessFilter & RecognizedDirectoryFilter>
 type Fields = Readonly<Record<string, string>>
@@ -20,7 +37,7 @@ const processFields = { declareKind: 'declare_kind', appliedAt: 'applied_at', st
 const storedProcessFields = { titleRaw: 'exact_title_raw', declareKind: 'exact_declare_kind', appliedAt: 'exact_applied_at', status: 'exact_status' }
 const catalogs = {
   declarations: {
-    table: 'platform_apply_projection',
+    table: applyProjection,
     interface: 'apply_list',
     fields: { ...commonVersionFields, ...processFields, declarationYear: 'declaration_year' },
     exact: { ...storedProcessFields, declarationYear: 'exact_year' },
@@ -31,7 +48,7 @@ const catalogs = {
     notIndexedCode: 'apply_target_not_indexed', notIndexedMessage: 'Declaration observation is not indexed',
   },
   'business-processes': {
-    table: 'platform_business_projection',
+    table: processProjection,
     interface: 'business_list',
     fields: { ...commonVersionFields, ...processFields, businessYear: 'business_year', batch: 'batch', awardBatchLabel: 'award_batch_label', province: 'province' },
     exact: { ...storedProcessFields, businessYear: 'exact_year', batch: 'exact_batch', awardBatchLabel: 'exact_award_batch_label', province: 'exact_province' },
@@ -42,7 +59,7 @@ const catalogs = {
     notIndexedCode: 'process_target_not_indexed', notIndexedMessage: 'Record observation is not indexed',
   },
   'recognized-directory': {
-    table: 'platform_recognized_projection',
+    table: recognizedProjection,
     interface: 'recognized_list',
     fields: { ...commonVersionFields, validityDateRaw: 'validity_date_raw', maintenanceYear: 'maintenance_year', maintenanceBatch: 'maintenance_batch', district: 'district', awardNote: 'award_note' },
     exact: { titleRaw: 'exact_title_raw' },
@@ -53,72 +70,50 @@ const catalogs = {
     notIndexedCode: 'recognized_target_not_indexed', notIndexedMessage: 'Record observation is not indexed',
   },
 } as const satisfies Record<Source, {
-  table: string; interface: string; fields: Fields; exact: Fields; options: Partial<Options>; exactOptions: Partial<Options>
+  table: typeof applyProjection | typeof processProjection | typeof recognizedProjection; interface: string; fields: Fields; exact: Fields; options: Partial<Options>; exactOptions: Partial<Options>
   limits: { versions: number; observations: number }
   idCode: string; notFoundCode: string; notFoundMessage: string; notIndexedCode: string; notIndexedMessage: string
 }>
 type Catalog = typeof catalogs[Source]
 
-async function rows<T extends Record<string, unknown>>(tx: Reader, statement: SQL) {
-  return (await tx.execute<T>(statement)).rows
+const record = alias(businessRecord, 'b')
+const version = alias(recordVersion, 'v')
+const archivedObservation = alias(observation, 'o')
+const archivedCollection = alias(collection, 'c')
+
+function namedColumn(table: PgTable, name: string): AnyPgColumn {
+  return Object.values(getTableColumns(table)).find(column => column.name === name)!
 }
 
-const assignments = sql`
-  LEFT JOIN business.platform_observation_assignment a ON a.observation_id = o.id
-    AND a.revision = (SELECT max(revision) FROM business.platform_observation_assignment WHERE observation_id = o.id)
-  LEFT JOIN business.enterprise e ON e.id = a.enterprise_id`
-const originalAssignment = sql`
-  LEFT JOIN business.platform_observation_assignment original ON original.observation_id = o.id AND original.revision = 1`
-const observationsFrom = sql`
-  FROM business.platform_business_observation o
-  JOIN business.platform_collection c ON c.id = o.collection_id`
-const aliases = (join: SQL) => sql`
-  ${join} business.platform_legacy_query_alias qa ON qa.collection_id = c.id
-  ${join} business.platform_legacy_relation_alias ra ON ra.observation_id = o.id`
-const isolated = sql`(o.identity_state <> 'resolved' OR o.content_state <> 'verified' OR o.version_id IS NULL)`
-
-function projectionTable(catalog: Catalog) {
-  return sql`business.${sql.identifier(catalog.table)} p`
-}
-
-function projectionColumn(name: string) {
-  return sql`p.${sql.identifier(name)}`
-}
-
-function equals(column: SQL, value: string | number | undefined) {
-  if (value === undefined) return sql`true`
+function equals(column: AnyPgColumn, value: string | number | undefined) {
+  if (value === undefined) return undefined
   // Ordinary PostgreSQL text excludes NUL. Exact mixed storage cells use bytea.
-  if (typeof value === 'string' && value.includes('\0')) return sql`false`
-  return sql`${column} = ${value}`
+  return typeof value === 'string' && value.includes('\0') ? ne(column, column) : eq(column, value)
 }
 
 /** SQLite LIKE folds ASCII only and uses no escape character by default. */
-function like(column: SQL, pattern: string) {
+function like(column: AnyPgColumn, pattern: string) {
   const folded = pattern.replace(/[A-Z]/g, char => char.toLowerCase()).split('\0')[0]
+  // Drizzle 0.45 has no PostgreSQL translate, collation or custom LIKE escape builder.
   return sql`translate(${column}, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') COLLATE "C"
     LIKE ${folded} ESCAPE ''`
 }
 
-function enterpriseFilter(filter: ArchiveFilter) {
-  const keyword = filter.q
-    ? sql`(${like(sql`e.name_norm`, `%${normalizeName(filter.q)}%`)} OR ${like(sql`e.uscc_norm`, `%${normalizeUscc(filter.q)}%`)})`
-    : sql`true`
-  return sql`${equals(sql`a.enterprise_id`, filter.enterpriseId)} AND ${keyword}`
+function enterpriseKeyword(table: typeof enterprise, keyword: string | undefined) {
+  if (!keyword) return undefined
+  return or(like(table.nameNorm, `%${normalizeName(keyword)}%`),
+    like(table.usccNorm, `%${normalizeUscc(keyword)}%`))
 }
 
 // PostgreSQL materialization must retain these exact cells as bytea with the
 // staging tool's SQLite storage tags. Typed projection columns stay text/bigint.
-function exactEquals(name: string, value: string | number | undefined) {
-  if (value === undefined) return sql`true`
-  const cell = projectionColumn(name)
-  const storage = projectionColumn(name + '_sqlite_storage')
-  if (typeof value === 'string') {
-    return sql`(${storage} = 'text' AND ${cell} = ${Buffer.from(value)})`
-  }
+function exactEquals(cell: AnyPgColumn, storage: AnyPgColumn, value: string | number | undefined) {
+  if (value === undefined) return undefined
+  if (typeof value === 'string') return and(eq(storage, 'text'), eq(cell, Buffer.from(value)))
   const integer = Buffer.alloc(8), real = Buffer.alloc(8)
   integer.writeBigInt64BE(BigInt(value))
   real.writeDoubleBE(value)
-  return sql`((${storage} = 'integer' AND ${cell} = ${integer}) OR (${storage} = 'real' AND ${cell} = ${real}))`
+  return or(and(eq(storage, 'integer'), eq(cell, integer)), and(eq(storage, 'real'), eq(cell, real)))
 }
 
 interface ExactCell { storage: string | null; value: Buffer | null }
@@ -132,13 +127,6 @@ function exactValue({ storage, value }: ExactCell) {
     case 'real': return value.readDoubleBE()
     default: throw new Error('Invalid archived SQLite storage class')
   }
-}
-
-function exactSelection(fields: Fields) {
-  return sql.join(Object.entries(fields).flatMap(([key, name]) => [
-    sql`${projectionColumn(name)} AS ${sql.identifier(key)}`,
-    sql`${projectionColumn(name + '_sqlite_storage')} AS ${sql.identifier(key + 'Storage')}`,
-  ]), sql`, `)
 }
 
 function decodeExactFields(row: Record<string, unknown>, fields: Fields) {
@@ -162,44 +150,52 @@ function compareExactCells(a: ExactCell, b: ExactCell) {
 }
 
 async function captureGate(tx: Reader, catalog: Catalog, recordId?: number) {
+  const base = tx.select({ id: observation.id }).from(observation)
+    .innerJoin(collection, eq(collection.id, observation.collectionId))
+  const notCaptured = (column: AnyPgColumn, expected = 'captured') => or(isNull(column), ne(column, expected))
   if (catalog.interface === 'apply_list') {
-    const missing = await rows(tx, sql`SELECT 1 ${observationsFrom}
-      LEFT JOIN ${projectionTable(catalog)} ON p.observation_id = o.id
-      WHERE c.interface = 'apply_list' AND ${equals(sql`o.record_id`, recordId)}
-        AND (p.id IS NULL OR p.exact_stored_state IS DISTINCT FROM 'captured'
-          OR p.sql_fact_title_state IS DISTINCT FROM 'captured')
-      LIMIT 1`)
-    if (missing.length) fail(409, 'apply_stored_uncaptured', 'Declaration observation has uncaptured stored facts')
+    const [missing] = await base.leftJoin(applyProjection, eq(applyProjection.observationId, observation.id))
+      .where(and(
+        eq(collection.interface, 'apply_list'),
+        recordId === undefined ? undefined : eq(observation.recordId, recordId),
+        or(isNull(applyProjection.id), notCaptured(applyProjection.exactStoredState), notCaptured(applyProjection.sqlFactTitleState)),
+      )).limit(1)
+    if (missing) fail(409, 'apply_stored_uncaptured', 'Declaration observation has uncaptured stored facts')
     return
   }
 
   const process = catalog.interface === 'business_list'
-  const capture = process ? sql`
-    p.exact_stored_state IS DISTINCT FROM 'captured' OR p.sql_fact_title_state IS DISTINCT FROM 'captured'
-    OR p.exact_stored_rule IS DISTINCT FROM 'process-stored-cells-v1'
-    OR p.sql_fact_title_rule IS DISTINCT FROM 'process-legacy-sql-fact-title-v1'`
-    : sql`p.exact_title_state IS DISTINCT FROM 'captured'`
-  const missing = await rows(tx, sql`SELECT 1 ${observationsFrom}
-    LEFT JOIN ${projectionTable(catalog)} ON p.observation_id = o.id
-    ${assignments} ${originalAssignment} ${aliases(sql`LEFT JOIN`)}
-    WHERE c.interface = ${catalog.interface}
-      AND (p.id IS NULL OR ${capture} OR a.observation_id IS NULL OR original.observation_id IS NULL
-        OR ra.old_id IS NULL OR qa.old_id IS NULL)
-    LIMIT 1`)
-  if (missing.length) {
+  const projection = catalog.table
+  const capture = process ? or(
+    notCaptured(processProjection.exactStoredState), notCaptured(processProjection.sqlFactTitleState),
+    notCaptured(processProjection.exactStoredRule, 'process-stored-cells-v1'),
+    notCaptured(processProjection.sqlFactTitleRule, 'process-legacy-sql-fact-title-v1'),
+  ) : notCaptured(recognizedProjection.exactTitleState)
+  const original = alias(assignment, 'original')
+  const [missing] = await base.leftJoin(projection, eq(projection.observationId, observation.id))
+    .leftJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
+    .leftJoin(queryAlias, eq(queryAlias.collectionId, collection.id))
+    .leftJoin(relationAlias, eq(relationAlias.observationId, observation.id))
+    .where(and(eq(collection.interface, catalog.interface),
+      or(isNull(projection.id), capture, isNull(original.observationId), isNull(relationAlias.oldId), isNull(queryAlias.oldId))))
+    .limit(1)
+  if (missing) {
     if (process) fail(409, 'process_target_uncaptured', 'Process observation has uncaptured original facts or assignment')
     fail(409, 'recognized_target_uncaptured', 'Recognized observation has uncaptured original facts or assignment')
   }
 }
 
-function scopeMatch(rdjb: string) {
-  return sql`(strpos(',' || c.rdjb || ',', ${',' + rdjb + ','}) > 0
-    OR EXISTS (SELECT 1 FROM business.platform_query_title_scope s WHERE s.collection_id = c.id AND s.rdjb = ${rdjb}))`
+function scopeMatch(tx: Reader, rdjb: string) {
+  const supplemental = tx.select({ id: titleScope.collectionId }).from(titleScope)
+    .where(and(eq(titleScope.collectionId, archivedCollection.id), eq(titleScope.rdjb, rdjb)))
+  // Drizzle 0.45 has no strpos or string concatenation operators.
+  return or(gt(sql<number>`strpos(',' || ${archivedCollection.rdjb} || ',', ${',' + rdjb + ','})`, 0), exists(supplemental))
 }
 
 const jsWhitespace = ' \t\n\r\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff'
 
-function scopeArray(collections: SQL) {
+// Drizzle 0.45 cannot expand a delimited field as a PostgreSQL table function.
+function scopeArray(collections: SQLWrapper) {
   return sql`ARRAY(
     WITH collections AS (${collections})
     SELECT btrim(part.value, ${jsWhitespace}) COLLATE "C" FROM collections
@@ -213,72 +209,75 @@ function scopeArray(collections: SQL) {
 
 const collectionScopes = scopeArray(sql`SELECT c.id, c.rdjb`)
 
-const recordVersionsFrom = (catalog: Catalog) => sql`
-  FROM business.platform_business_record_version v
-  JOIN business.platform_business_record b ON b.id = v.record_id
-  LEFT JOIN ${projectionTable(catalog)} ON p.version_id = v.id`
-
-function versionSelection(catalog: Catalog, id: SQL) {
-  const numeric = new Set(['declaration_year', 'business_year', 'maintenance_year'])
-  const fields = Object.entries(catalog.fields).map(([key, name]) =>
-    sql`${projectionColumn(name)}${numeric.has(name) ? sql`::double precision` : sql.empty()} AS ${sql.identifier(key)}`)
-  return sql`${id}::double precision AS "versionId", ${sql.join(fields, sql`, `)}`
+function versionFields(catalog: Catalog, table: PgTable) {
+  return Object.fromEntries(Object.entries(catalog.fields).map(([key, name]) => [key, namedColumn(table, name)]))
 }
 
-const observationFields = sql`
-  ra.old_id::double precision AS "relationId", qa.old_id::double precision AS "queryId",
-  c.queried_at AS "queriedAt", c.query_key AS "queryKey", c.status AS "queryStatus",
-  o.sequence_no::double precision AS "sequenceNo", o.identity_state AS "identityState", o.content_state AS "contentState",
-  a.enterprise_id::double precision AS "enterpriseId", e.name AS "enterpriseName"`
+function versionData(catalog: Catalog, versionId: number, projection: Readonly<Record<string, unknown>> | null): Record<string, unknown> & { versionId: number } {
+  return { versionId, ...Object.fromEntries(Object.keys(catalog.fields).map(key => [key, projection?.[key] ?? null])) }
+}
 
-interface RecordSummary extends Record<string, unknown> {
-  enterpriseIds: number[]
-  enterpriseNames: string[]
-  titleScopes: string[] | null
+function recordOwners(tx: Reader) {
+  const owner = tx.select({ enterpriseId: assignment.enterpriseId }).from(assignment)
+    .where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('record_owner')
+  return tx.selectDistinct({ enterpriseId: owner.enterpriseId, name: enterprise.name })
+    .from(observation).innerJoinLateral(owner, eq(observation.id, observation.id))
+    .leftJoin(enterprise, eq(enterprise.id, owner.enterpriseId))
+    .where(and(eq(observation.recordId, record.id), isNotNull(owner.enterpriseId)))
+}
+
+function recordTitleConflict(tx: Reader, catalog: Catalog) {
+  if (catalog.interface !== 'recognized_list') return sql`FALSE`
+  const projection = recognizedProjection
+  const list = sql<string>`translate(${collection.rdjb}, ${' \t\n\r'}, '')`
+  const supplemental = tx.select({ id: titleScope.collectionId }).from(titleScope)
+    .where(and(eq(titleScope.collectionId, collection.id), ne(sql<string>`btrim(${titleScope.rdjb})`, '')))
+  const acceptedTitle = tx.select({ id: titleScope.collectionId }).from(titleScope)
+    .where(and(eq(titleScope.collectionId, collection.id), eq(titleScope.rdjb, projection.titleRaw)))
+  const conflict = tx.select({ id: observation.id }).from(observation)
+    .innerJoin(collection, eq(collection.id, observation.collectionId))
+    .innerJoin(projection, eq(projection.versionId, observation.versionId))
+    .where(and(
+      eq(observation.recordId, record.id),
+      inArray(projection.titleRaw, ['1', '2', '3']),
+      or(ne(sql<string>`replace(${list}, ',', '')`, ''), exists(supplemental)),
+      eq(sql<number>`strpos(',' || ${list} || ',', ',' || ${projection.titleRaw} || ',')`, 0),
+      notExists(acceptedTitle),
+    ))
+  return exists(conflict)
+}
+
+function recordSummary(tx: Reader, catalog: Catalog) {
+  const owners = tx.$with('owners').as(recordOwners(tx))
+  const ids = tx.select({ id: owners.enterpriseId }).from(owners).orderBy(asc(owners.enterpriseId))
+  const names = tx.select({ name: owners.name }).from(owners).where(ne(owners.name, '')).orderBy(asc(owners.enterpriseId))
+  const collections = tx.selectDistinct({ id: collection.id, rdjb: collection.rdjb }).from(observation)
+    .innerJoin(collection, eq(collection.id, observation.collectionId)).where(eq(observation.recordId, record.id))
+  // Drizzle 0.45 has no ARRAY(subquery) expression. Keep the order in the typed subqueries.
+  return tx.with(owners).select({
+    versionCount: tx.$count(recordVersion, eq(recordVersion.recordId, record.id)).as('version_count'),
+    observationCount: tx.$count(observation, eq(observation.recordId, record.id)).as('observation_count'),
+    enterpriseIds: sql<string[]>`ARRAY(${ids})`.mapWith((values: string[]) => values.map(Number)).as('enterprise_ids'),
+    enterpriseNames: sql<string[]>`ARRAY(${names})`.as('enterprise_names'),
+    titleScopes: (catalog.interface === 'apply_list' ? sql<null>`NULL` : scopeArray(collections) as SQL<string[]>).as('title_scopes'),
+    ...recordConflictFields(tx, catalog),
+  }).from(owners).as('record_summary')
+}
+
+interface RecordConflicts {
   titleConflict: boolean
   unverifiable: boolean
   assignmentConflict: boolean
-  observationCount: number
-  versionCount: number
-  latestObservationAt: string | null
 }
 
-const owners = sql`
-  SELECT DISTINCT a.enterprise_id, e.name FROM business.platform_business_observation o ${assignments}
-  WHERE o.record_id = b.id AND a.enterprise_id IS NOT NULL`
-const recordScopes = scopeArray(sql`
-  SELECT DISTINCT c.id, c.rdjb ${observationsFrom} WHERE o.record_id = b.id`)
-
-function recordTitleConflict(catalog: Catalog) {
-  if (catalog.interface !== 'recognized_list') return sql`false`
-  const list = sql`translate(c.rdjb, ${' \t\n\r'}, '')`
-  return sql`EXISTS (SELECT 1 ${observationsFrom}
-    JOIN ${projectionTable(catalog)} ON p.version_id = o.version_id
-    WHERE o.record_id = b.id AND p.title_raw IN ('1', '2', '3')
-      AND (replace(${list}, ',', '') <> '' OR EXISTS (SELECT 1 FROM business.platform_query_title_scope s
-        WHERE s.collection_id = c.id AND btrim(s.rdjb) <> ''))
-      AND strpos(',' || ${list} || ',', ',' || p.title_raw || ',') = 0
-      AND NOT EXISTS (SELECT 1 FROM business.platform_query_title_scope s
-        WHERE s.collection_id = c.id AND s.rdjb = p.title_raw))`
-}
-
-function recordSummary(catalog: Catalog) {
-  return sql`
-    (SELECT count(*)::double precision FROM business.platform_business_record_version WHERE record_id = b.id) AS "versionCount",
-    (SELECT count(*)::double precision FROM business.platform_business_observation WHERE record_id = b.id) AS "observationCount",
-    ARRAY(SELECT enterprise_id::double precision FROM owners ORDER BY enterprise_id) AS "enterpriseIds",
-    ARRAY(SELECT name FROM owners WHERE name <> '' ORDER BY enterprise_id) AS "enterpriseNames",
-    ${catalog.interface === 'apply_list' ? sql`NULL` : recordScopes} AS "titleScopes",
-    ${recordConflictFields(catalog)}`
-}
-
-type RecordConflicts = Pick<RecordSummary, 'titleConflict' | 'unverifiable' | 'assignmentConflict'>
-
-function recordConflictFields(catalog: Catalog) {
-  return sql`
-    ${recordTitleConflict(catalog)} AS "titleConflict",
-    EXISTS (SELECT 1 FROM business.platform_business_observation WHERE record_id = b.id AND content_state = 'unverifiable') AS unverifiable,
-    (SELECT count(*) > 1 FROM owners) AS "assignmentConflict"`
+function recordConflictFields(tx: Reader, catalog: Catalog) {
+  const unverifiable = tx.select({ id: observation.id }).from(observation)
+    .where(and(eq(observation.recordId, record.id), eq(observation.contentState, 'unverifiable')))
+  return {
+    titleConflict: recordTitleConflict(tx, catalog).mapWith(Boolean).as('title_conflict'),
+    unverifiable: exists(unverifiable).mapWith(Boolean).as('unverifiable'),
+    assignmentConflict: gt(count(), 1).mapWith(Boolean).as('assignment_conflict'),
+  }
 }
 
 function summaryConflicts(summary: RecordConflicts) {
@@ -289,71 +288,85 @@ function summaryConflicts(summary: RecordConflicts) {
   ]
 }
 
-interface MatchedRow extends RecordSummary {
-  recordId: number
-  platformKey: string
-  matchedVersion: Record<string, unknown>
-  matchedVersionCount: number
-}
-
-function recordFilter(catalog: Catalog, filter: ArchiveFilter) {
+function recordFilter(tx: Reader, catalog: Catalog, filter: ArchiveFilter, projection: PgTable) {
   const scope = filter.rdjb
-    ? sql`EXISTS (SELECT 1 ${observationsFrom} WHERE o.version_id = v.id AND ${scopeMatch(filter.rdjb)})`
-    : sql`true`
+    ? exists(tx.select({ id: archivedObservation.id }).from(archivedObservation)
+        .innerJoin(archivedCollection, eq(archivedCollection.id, archivedObservation.collectionId))
+        .where(and(eq(archivedObservation.versionId, version.id), scopeMatch(tx, filter.rdjb))))
+    : undefined
+  const currentOwner = tx.select({ enterpriseId: assignment.enterpriseId }).from(assignment)
+    .where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('filter_owner')
   const owner = filter.enterpriseId !== undefined || filter.q
-    ? sql`EXISTS (SELECT 1 FROM business.platform_business_observation o ${assignments}
-        WHERE o.record_id = b.id AND ${enterpriseFilter(filter)})`
-    : sql`true`
-  const common = sql`b.interface = ${catalog.interface}
-    AND ${equals(sql`b.platform_key`, filter.platformKey)} AND ${equals(sql`p.title_raw`, filter.titleRaw)}
-    AND ${scope} AND ${owner}`
+    ? exists(tx.select({ id: observation.id }).from(observation)
+        .leftJoinLateral(currentOwner, eq(observation.id, observation.id))
+        .leftJoin(enterprise, eq(enterprise.id, currentOwner.enterpriseId))
+        .where(and(eq(observation.recordId, record.id),
+          filter.enterpriseId === undefined ? undefined : eq(currentOwner.enterpriseId, filter.enterpriseId),
+          enterpriseKeyword(enterprise, filter.q))))
+    : undefined
+  const column = (name: string) => namedColumn(projection, name)
+  const common = and(eq(record.interface, catalog.interface), equals(record.platformKey, filter.platformKey),
+    equals(column('title_raw'), filter.titleRaw), scope, owner)
 
   if (catalog.interface === 'recognized_list') {
-    return sql`${common} AND ${equals(sql`p.validity_date_raw`, filter.rddqrq)}
-      AND ${equals(sql`p.maintenance_year`, filter.whpcyear)} AND ${equals(sql`p.maintenance_batch`, filter.whpc)}
-      AND ${equals(sql`p.district`, filter.szq)}`
+    return and(common, equals(column('validity_date_raw'), filter.rddqrq), equals(column('maintenance_year'), filter.whpcyear),
+      equals(column('maintenance_batch'), filter.whpc), equals(column('district'), filter.szq))
   }
-  const year = projectionColumn(catalog.interface === 'apply_list' ? 'declaration_year' : 'business_year')
-  const batch = catalog.interface === 'business_list' ? equals(sql`p.batch`, filter.batch) : sql`true`
-  return sql`${common} AND ${equals(sql`p.declare_kind`, normalizeDeclareKind(filter.declareKind) ?? undefined)}
-    AND ${equals(year, filter.year)} AND ${equals(sql`p.status`, filter.status)} AND ${batch}`
+  const year = column(catalog.interface === 'apply_list' ? 'declaration_year' : 'business_year')
+  const batch = catalog.interface === 'business_list' ? equals(column('batch'), filter.batch) : undefined
+  return and(common, equals(column('declare_kind'), normalizeDeclareKind(filter.declareKind) ?? undefined),
+    equals(year, filter.year), equals(column('status'), filter.status), batch)
 }
 
 async function listRecords(tx: Reader, catalog: Catalog, filter: ArchiveFilter) {
   const { page, pageSize, offset } = pageOf(filter)
-  const from = recordVersionsFrom(catalog)
-  const where = recordFilter(catalog, filter)
-  const [count] = await rows<{ total: number }>(tx, sql`
-    SELECT count(DISTINCT b.id)::double precision AS total ${from} WHERE ${where}`)
-  const versionOrder = catalog.interface === 'recognized_list' ? sql`v.id DESC`
-    : sql`p.applied_at COLLATE "C" DESC NULLS LAST, v.id DESC`
-  const matched = await rows<MatchedRow>(tx, sql`
-    WITH matched AS (
-      SELECT v.record_id, v.id,
-        count(*) OVER (PARTITION BY v.record_id)::double precision AS matched_count,
-        row_number() OVER (PARTITION BY v.record_id ORDER BY ${versionOrder}) AS rank
-      ${from} WHERE ${where}
-    ), page AS (
-      SELECT m.*, (SELECT max(coalesce(c.last_collected_at, c.queried_at) COLLATE "C")
-        ${observationsFrom} WHERE o.record_id = m.record_id) AS latest
-      FROM matched m WHERE m.rank = 1
-      ORDER BY latest DESC NULLS LAST, record_id DESC LIMIT ${pageSize} OFFSET ${BigInt(offset)}
-    )
-    SELECT b.id::double precision AS "recordId", b.platform_key AS "platformKey",
-      page.latest AS "latestObservationAt", page.matched_count AS "matchedVersionCount",
-      (SELECT row_to_json(fields) FROM (SELECT ${versionSelection(catalog, sql`v.id`)}) fields) AS "matchedVersion",
-      summary.*
-    FROM page JOIN business.platform_business_record b ON b.id = page.record_id
-    JOIN business.platform_business_record_version v ON v.id = page.id
-    LEFT JOIN ${projectionTable(catalog)} ON p.version_id = v.id
-    CROSS JOIN LATERAL (WITH owners AS (${owners}) SELECT ${recordSummary(catalog)}) summary
-    ORDER BY page.latest DESC NULLS LAST, b.id DESC`)
+  const projection = alias(catalog.table, 'p')
+  const where = recordFilter(tx, catalog, filter, projection)
+  const matching = <T extends PgSelect>(query: T) => query.innerJoin(record, eq(record.id, version.recordId))
+    .leftJoin(projection, eq(projection.versionId, version.id)).where(where)
+  const [total] = await matching(tx.select({ total: countDistinct(record.id) }).from(version).$dynamic())
+  // Drizzle 0.45 has no window functions or NULLS LAST modifier. Rank versions per record before paging records.
+  const versionOrder = catalog.interface === 'recognized_list' ? desc(version.id)
+    : sql`${namedColumn(projection, 'applied_at')} COLLATE "C" DESC NULLS LAST, ${desc(version.id)}`
+  const ranked = tx.$with('matched').as(matching(tx.select({
+    recordId: version.recordId,
+    id: version.id,
+    matchedVersionCount: sql<number>`count(*) OVER (PARTITION BY ${version.recordId})`.mapWith(Number).as('matched_count'),
+    rank: sql<number>`row_number() OVER (PARTITION BY ${version.recordId} ORDER BY ${versionOrder})`.mapWith(Number).as('rank'),
+  }).from(version).$dynamic()))
+  const latest = tx.select({ value: sql<string | null>`max(coalesce(${collection.lastCollectedAt}, ${collection.queriedAt}) COLLATE "C")` })
+    .from(observation).innerJoin(collection, eq(collection.id, observation.collectionId))
+    .where(eq(observation.recordId, ranked.recordId))
+  const pageRows = tx.$with('page').as(tx.select({
+    recordId: ranked.recordId, id: ranked.id, matchedVersionCount: ranked.matchedVersionCount,
+    latest: sql<string | null>`(${latest})`.as('latest'),
+  }).from(ranked).where(eq(ranked.rank, 1))
+    .orderBy(sql`latest DESC NULLS LAST`, desc(ranked.recordId)).limit(pageSize).offset(offset))
+  const summary = recordSummary(tx, catalog)
+  const matched = await tx.with(ranked, pageRows).select({
+    recordId: record.id,
+    platformKey: record.platformKey,
+    matchedVersionCount: pageRows.matchedVersionCount,
+    versionId: version.id,
+    projectedVersion: versionFields(catalog, projection),
+    summary: {
+      versionCount: summary.versionCount, observationCount: summary.observationCount,
+      enterpriseIds: summary.enterpriseIds, enterpriseNames: summary.enterpriseNames, titleScopes: summary.titleScopes,
+      titleConflict: summary.titleConflict, unverifiable: summary.unverifiable, assignmentConflict: summary.assignmentConflict,
+    },
+    latestObservationAt: pageRows.latest,
+  }).from(pageRows)
+    .innerJoin(record, eq(record.id, pageRows.recordId))
+    .innerJoin(version, eq(version.id, pageRows.id))
+    .leftJoin(projection, eq(projection.versionId, version.id))
+    .innerJoinLateral(summary, eq(record.id, record.id))
+    .orderBy(sql`${pageRows.latest} DESC NULLS LAST`, desc(record.id))
   return {
-    view: 'records' as const, page, pageSize, total: count!.total,
-    rows: matched.map(({ recordId, platformKey, matchedVersion, matchedVersionCount, ...summary }) => ({
+    view: 'records' as const, page, pageSize, total: total!.total,
+    rows: matched.map(({ recordId, platformKey, versionId, projectedVersion, matchedVersionCount, latestObservationAt, summary }) => ({
       kind: 'record' as const, record: { id: recordId, platformKey, interface: catalog.interface },
-      matchedVersion, matchedVersionCount, versionCount: summary.versionCount,
-      observationCount: summary.observationCount, latestObservationAt: summary.latestObservationAt,
+      matchedVersion: versionData(catalog, versionId, projectedVersion), matchedVersionCount, versionCount: summary.versionCount,
+      observationCount: summary.observationCount, latestObservationAt,
       enterpriseIds: summary.enterpriseIds, enterpriseNames: summary.enterpriseNames,
       ...(summary.titleScopes && { titleScopes: orderedScopes(summary.titleScopes) }),
       conflicts: summaryConflicts(summary),
@@ -368,28 +381,55 @@ async function listIsolated(tx: Reader, catalog: Catalog, filter: ArchiveFilter)
   if (recognized && [filter.rddqrq, filter.whpcyear, filter.whpc, filter.szq].some(value => value !== undefined)) {
     return { ...base, total: 0, rows: [] }
   }
-  const from = sql`${observationsFrom} JOIN ${projectionTable(catalog)} ON p.observation_id = o.id ${assignments}`
-  const processFilters = recognized ? sql`true` : sql`
-    ${exactEquals('exact_declare_kind', normalizeDeclareKind(filter.declareKind) ?? undefined)}
-    AND ${exactEquals('exact_year', filter.year)} AND ${exactEquals('exact_status', filter.status)}`
-  const scope = filter.rdjb ? scopeMatch(filter.rdjb) : sql`true`
-  const batch = catalog.interface === 'business_list' ? exactEquals('exact_batch', filter.batch) : sql`true`
-  const where = sql`WHERE c.interface = ${catalog.interface} AND ${isolated} AND ${enterpriseFilter(filter)}
-    AND ${equals(sql`o.source_relation_key`, filter.platformKey)} AND ${exactEquals('exact_title_raw', filter.titleRaw)}
-    AND ${processFilters} AND ${scope} AND ${batch}`
-  const results = await rows<{ total: number }>(tx, sql`
-    SELECT count(*)::double precision AS total ${from} ${where}`)
-  const scopeSelection = catalog.interface === 'apply_list' ? sql.empty() : sql`, ${collectionScopes} AS "titleScopes"`
-  const observations = await rows<{ titleScopes?: string[] }>(tx, sql`
-    SELECT ${observationFields}, original.name_raw AS "nameRaw", original.uscc_raw AS "usccRaw",
-      ${exactSelection(catalog.exact)} ${scopeSelection}
-    ${from} ${aliases(sql`JOIN`)} ${originalAssignment} ${where}
-    ORDER BY c.queried_at COLLATE "C" DESC, ra.old_id DESC LIMIT ${pageSize} OFFSET ${BigInt(offset)}`)
+  const obs = archivedObservation
+  const col = archivedCollection
+  const owner = alias(assignment, 'owner')
+  const original = alias(assignment, 'original')
+  const { table } = catalog
+  const columnNamed = (name: string) => namedColumn(table, name)
+  const exact = (name: string, value: string | number | undefined) =>
+    exactEquals(columnNamed(name), columnNamed(name + '_sqlite_storage'), value)
+  const current = tx.select({ enterpriseId: owner.enterpriseId }).from(owner)
+    .where(eq(owner.observationId, obs.id)).orderBy(desc(owner.revision)).limit(1).as('a')
+  const keyword = enterpriseKeyword(enterprise, filter.q)
+  const criteria = and(
+    eq(col.interface, catalog.interface),
+    or(ne(obs.identityState, 'resolved'), ne(obs.contentState, 'verified'), isNull(obs.versionId)),
+    filter.enterpriseId === undefined ? undefined : eq(current.enterpriseId, filter.enterpriseId),
+    keyword,
+    filter.platformKey === undefined ? undefined : filter.platformKey.includes('\0') ? ne(obs.id, obs.id) : eq(obs.sourceRelationKey, filter.platformKey),
+    exact('exact_title_raw', filter.titleRaw),
+    recognized ? undefined : exact('exact_declare_kind', normalizeDeclareKind(filter.declareKind) ?? undefined),
+    recognized ? undefined : exact('exact_year', filter.year),
+    recognized ? undefined : exact('exact_status', filter.status),
+    catalog.interface === 'business_list' ? exact('exact_batch', filter.batch) : undefined,
+    filter.rdjb ? scopeMatch(tx, filter.rdjb) : undefined,
+  )
+  const query = <T extends PgSelect>(selection: T) => selection
+    .innerJoin(col, eq(col.id, obs.collectionId)).innerJoin(table, eq(table.observationId, obs.id))
+    .leftJoinLateral(current, eq(obs.id, obs.id)).leftJoin(enterprise, eq(enterprise.id, current.enterpriseId))
+  const [result] = await query(tx.select({ total: count() }).from(obs).$dynamic()).where(criteria)
+  const cells = Object.fromEntries(Object.entries(catalog.exact).flatMap(([key, name]) => [
+    [key, columnNamed(name)], [key + 'Storage', columnNamed(name + '_sqlite_storage')],
+  ]))
+  const observations = await query(tx.select({
+    relationId: relationAlias.oldId, queryId: queryAlias.oldId, queriedAt: col.queriedAt, queryKey: col.queryKey, queryStatus: col.status,
+    sequenceNo: obs.sequenceNo, identityState: obs.identityState, contentState: obs.contentState,
+    enterpriseId: current.enterpriseId, enterpriseName: enterprise.name,
+    nameRaw: original.nameRaw, usccRaw: original.usccRaw, ...cells,
+    titleScopes: catalog.interface === 'apply_list' ? sql<null>`NULL` : collectionScopes as SQL<string[]>,
+  }).from(obs).$dynamic()).innerJoin(queryAlias, eq(queryAlias.collectionId, col.id))
+    .innerJoin(relationAlias, eq(relationAlias.observationId, obs.id))
+    .leftJoin(original, and(eq(original.observationId, obs.id), eq(original.revision, 1)))
+    .where(criteria)
+    // Drizzle 0.45 cannot express explicit bytewise collation.
+    .orderBy(desc(sql`${col.queriedAt} COLLATE "C"`), desc(relationAlias.oldId))
+    .limit(pageSize).offset(offset)
   return {
-    ...base, total: results[0]!.total,
-    rows: observations.map(row => ({
+    ...base, total: result!.total,
+    rows: observations.map(({ titleScopes, ...row }) => ({
       kind: 'observation' as const, ...decodeExactFields(row, catalog.exact),
-      ...(row.titleScopes && { titleScopes: orderedScopes(row.titleScopes) }),
+      ...(titleScopes && { titleScopes: orderedScopes(titleScopes) }),
     })),
   }
 }
@@ -408,33 +448,35 @@ export function readPostgresPlatformArchiveOptions(db: NodePgDatabase, { source,
     await captureGate(tx, catalog)
     const result = { titles: [], declareKinds: [], years: [], statuses: [], batches: [], districts: [], validityDates: [] } as Record<keyof Options, unknown[]>
     const exact = view === 'isolated'
-    const from = exact ? sql`${observationsFrom}
-      JOIN ${projectionTable(catalog)} ON p.observation_id = o.id
-      WHERE c.interface = ${catalog.interface} AND ${isolated}`
-      : sql`FROM ${projectionTable(catalog)}
-        JOIN business.platform_business_record_version v ON v.id = p.version_id
-        JOIN business.platform_business_record b ON b.id = v.record_id WHERE b.interface = ${catalog.interface}`
+    const projection = catalog.table
+    const selectOptions = <T extends PgSelect>(selection: T, predicate: SQL) => exact
+        ? selection.innerJoin(observation, eq(projection.observationId, observation.id))
+          .innerJoin(collection, eq(observation.collectionId, collection.id))
+          .where(and(eq(collection.interface, catalog.interface), or(
+            ne(observation.identityState, 'resolved'), ne(observation.contentState, 'verified'), isNull(observation.versionId),
+          ), predicate))
+        : selection.innerJoin(recordVersion, eq(projection.versionId, recordVersion.id))
+          .innerJoin(businessRecord, eq(recordVersion.recordId, businessRecord.id))
+          .where(and(eq(businessRecord.interface, catalog.interface), predicate))
+    const columnNamed = (name: string) => namedColumn(projection, name)
     for (const [key, name] of Object.entries(exact ? catalog.exactOptions : catalog.options)) {
       const option = key as keyof Options
-      const column = projectionColumn(name)
+      const column = columnNamed(name)
       if (!exact) {
-        const value = option === 'years' ? sql`${column}::double precision` : sql`${column} COLLATE "C"`
-        const where = option === 'years'
-          ? sql`${column} BETWEEN 1 AND 9007199254740991`
-          : sql`btrim(${column}) <> ''`
-        const order = option === 'years' ? sql`DESC` : sql`ASC`
-        result[option] = (await rows<{ value: unknown }>(tx, sql`
-          SELECT DISTINCT ${value} AS value ${from} AND ${where} ORDER BY value ${order}`)).map(row => row.value)
+        // Drizzle 0.45 cannot express COLLATE or btrim.
+        const value = option === 'years' ? sql<number>`${column}`.mapWith(Number) : sql<string>`${column} COLLATE "C"`
+        const where = option === 'years' ? between(column, 1, Number.MAX_SAFE_INTEGER) : sql`btrim(${column}) <> ''`
+        result[option] = (await selectOptions(tx.selectDistinct({ value }).from(projection).$dynamic(), where).orderBy(option === 'years' ? desc(value) : asc(value)))
+          .map(row => row.value)
         continue
       }
-      const storage = projectionColumn(name + '_sqlite_storage')
-      // SQLite trim() casts BLOBs to text for the empty check. Work on their
-      // original bytes so arbitrary octets (including NUL) survive.
-      const where = option === 'years' ? sql`${storage} IN ('integer', 'real')`
-        : sql`(${storage} IN ('integer', 'real') OR encode(${column}, 'hex') !~ '^(20)*$')`
-      const cells = await rows<ExactCell & Record<string, unknown>>(tx, sql`
-        SELECT DISTINCT ${column} AS value, ${storage} AS storage
-        ${from} AND ${column} IS NOT NULL AND ${where}`)
+      const storage = columnNamed(name + '_sqlite_storage')
+      // SQLite trim() casts BLOBs to text for the empty check. Drizzle 0.45 has no PostgreSQL encode / regex operator.
+      const numeric = inArray(storage, ['integer', 'real'])
+      const where = option === 'years' ? numeric : or(numeric, sql`encode(${column}, 'hex') !~ '^(20)*$'`)
+      const cells = await selectOptions(tx.selectDistinct({
+        value: column as AnyPgColumn<{ data: Buffer }>, storage: storage as AnyPgColumn<{ data: string }>,
+      }).from(projection).$dynamic(), and(isNotNull(column), where)!)
       if (option === 'years') {
         result.years = [...new Set(cells.map(exactValue)
           .filter((value): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0))]
@@ -451,15 +493,6 @@ export function readPostgresPlatformArchiveOptions(db: NodePgDatabase, { source,
   }, snapshot)
 }
 
-interface DetailObservation extends Record<string, unknown> {
-  titleScopes?: string[]
-  version: { titleRaw: string | null } | null
-  identityState: string
-  contentState: string
-  keySource: string | null
-  projectionRuleVersion: string | null
-}
-
 export function readPostgresPlatformArchiveDetail(db: NodePgDatabase, source: Source, recordId: number) {
   const catalog = catalogs[source]
   if (!Number.isSafeInteger(recordId) || recordId < 1) {
@@ -470,67 +503,89 @@ export function readPostgresPlatformArchiveDetail(db: NodePgDatabase, source: So
 
   return db.transaction(async tx => {
     if (scoped) await captureGate(tx, catalog)
-    const [record] = await rows(tx, sql`
-      SELECT id::double precision AS id, platform_key AS "platformKey",
-        identity_rule_version AS "identityRuleVersion", created_at AS "createdAt"
-      FROM business.platform_business_record WHERE id = ${recordId} AND interface = ${catalog.interface}`)
-    if (!record) fail(404, catalog.notFoundCode, catalog.notFoundMessage)
+    const [recordInfo] = await tx.select({
+      id: businessRecord.id, platformKey: businessRecord.platformKey,
+      identityRuleVersion: businessRecord.identityRuleVersion, createdAt: businessRecord.createdAt,
+    }).from(businessRecord).where(and(eq(businessRecord.id, recordId), eq(businessRecord.interface, catalog.interface)))
+    if (!recordInfo) fail(404, catalog.notFoundCode, catalog.notFoundMessage)
     if (!scoped) await captureGate(tx, catalog, recordId)
 
-    const totals = (await rows<{ versions: number; observations: number }>(tx, sql`
-      SELECT (SELECT count(*)::double precision FROM business.platform_business_record_version WHERE record_id = ${recordId}) AS versions,
-        (SELECT count(*)::double precision FROM business.platform_business_observation WHERE record_id = ${recordId}) AS observations`))[0]!
-    const versionScopes = scoped ? sql`, ${scopeArray(sql`
-      SELECT DISTINCT c.id, c.rdjb ${observationsFrom} WHERE o.version_id = v.id`)} AS "titleScopes"` : sql.empty()
-    const versions = await rows<{ titleScopes?: string[] }>(tx, sql`
-      SELECT ${versionSelection(catalog, sql`v.id`)}, v.hash_algorithm AS "hashAlgorithm",
-        v.content_hash AS "contentHash", v.created_at AS "createdAt", stats.*
-        ${versionScopes}
-      FROM (SELECT id, hash_algorithm, content_hash, created_at
-        FROM business.platform_business_record_version WHERE record_id = ${recordId}
-        ORDER BY id DESC LIMIT ${catalog.limits.versions}) v
-      LEFT JOIN ${projectionTable(catalog)} ON p.version_id = v.id
-      CROSS JOIN LATERAL (
-        SELECT count(*)::double precision AS "observationCount", min(c.queried_at COLLATE "C") AS "firstObservedAt",
-          max(coalesce(c.last_collected_at, c.queried_at) COLLATE "C") AS "lastObservedAt"
-        ${observationsFrom} WHERE o.record_id = ${recordId} AND o.version_id = v.id
-      ) stats
-      ORDER BY v.id DESC`)
+    const totals = {
+      versions: await tx.$count(recordVersion, eq(recordVersion.recordId, recordId)),
+      observations: await tx.$count(observation, eq(observation.recordId, recordId)),
+    }
+    const { table } = catalog
+    const projectionFields = versionFields(catalog, table)
+    const version = tx.select({
+      id: recordVersion.id, hashAlgorithm: recordVersion.hashAlgorithm,
+      contentHash: recordVersion.contentHash, createdAt: recordVersion.createdAt,
+    }).from(recordVersion).where(eq(recordVersion.recordId, recordId))
+      .orderBy(desc(recordVersion.id)).limit(catalog.limits.versions).as('v')
+    // Preserve explicit collation for the chronological aggregates.
+    const stats = tx.select({
+      observationCount: count().as('observation_count'),
+      firstObservedAt: sql<string | null>`min(${collection.queriedAt} COLLATE "C")`.as('first_observed_at'),
+      lastObservedAt: sql<string | null>`max(coalesce(${collection.lastCollectedAt}, ${collection.queriedAt}) COLLATE "C")`.as('last_observed_at'),
+    }).from(observation).innerJoin(collection, eq(collection.id, observation.collectionId))
+      .where(and(eq(observation.recordId, recordId), eq(observation.versionId, version.id))).as('stats')
+    const scopeCollections = tx.selectDistinct({ id: collection.id, rdjb: collection.rdjb }).from(observation)
+      .innerJoin(collection, eq(collection.id, observation.collectionId)).where(eq(observation.versionId, version.id))
+    const versions = await tx.select({
+      versionId: version.id, ...projectionFields,
+      hashAlgorithm: version.hashAlgorithm, contentHash: version.contentHash, createdAt: version.createdAt,
+      observationCount: stats.observationCount, firstObservedAt: stats.firstObservedAt, lastObservedAt: stats.lastObservedAt,
+      titleScopes: scoped ? scopeArray(scopeCollections) as SQL<string[]> : sql<null>`NULL`,
+    }).from(version).leftJoin(table, eq(table.versionId, version.id)).innerJoinLateral(stats, eq(version.id, version.id))
+      .orderBy(desc(version.id))
 
-    const scopedFields = scoped ? sql`,
-      ${collectionScopes} AS "titleScopes",
-      coalesce((SELECT json_agg(json_build_object('id', r.id, 'status', r.status, 'revision', r.revision) ORDER BY r.id)
-        FROM business.record_correspondence r WHERE r.observation_id = o.id), '[]'::json) AS "correspondenceRefs"` : sql.empty()
-    const observations = await rows<DetailObservation>(tx, sql`
-      SELECT ${observationFields}, o.key_source AS "keySource", o.projection_rule_version AS "projectionRuleVersion",
-        o.version_id::double precision AS "versionId",
-        CASE WHEN o.version_id IS NOT NULL
-          THEN (SELECT row_to_json(fields) FROM (SELECT ${versionSelection(catalog, sql`o.version_id`)}) fields)
-        END AS version ${scopedFields}
-      ${observationsFrom} ${aliases(sql`JOIN`)} ${assignments}
-      LEFT JOIN ${projectionTable(catalog)} ON p.version_id = o.version_id AND p.record_id = o.record_id
-      WHERE o.record_id = ${recordId}
-      ORDER BY c.queried_at COLLATE "C" DESC, ra.old_id DESC LIMIT ${catalog.limits.observations}`)
+    const obs = archivedObservation
+    const col = archivedCollection
+    const current = tx.select({ enterpriseId: assignment.enterpriseId }).from(assignment)
+      .where(eq(assignment.observationId, obs.id)).orderBy(desc(assignment.revision)).limit(1).as('owner')
+    // Drizzle 0.45 has no ordered JSON aggregation.
+    const links = tx.select({
+      refs: sql`json_agg(json_build_object('id', ${recordCorrespondence.id}, 'status', ${recordCorrespondence.status},
+        'revision', ${recordCorrespondence.revision}) ORDER BY ${recordCorrespondence.id})`,
+    }).from(recordCorrespondence).where(eq(recordCorrespondence.observationId, obs.id))
+    const correspondenceRefs = scoped ? sql`coalesce((${links}), '[]'::json)` : sql<null>`NULL`
+    const observations = await tx.select({
+      relationId: relationAlias.oldId, queryId: queryAlias.oldId, queriedAt: col.queriedAt,
+      queryKey: col.queryKey, queryStatus: col.status, sequenceNo: obs.sequenceNo,
+      identityState: obs.identityState, contentState: obs.contentState,
+      enterpriseId: current.enterpriseId, enterpriseName: enterprise.name, keySource: obs.keySource,
+      projectionRuleVersion: obs.projectionRuleVersion, versionId: obs.versionId,
+      projection: projectionFields,
+      titleScopes: scoped ? collectionScopes as SQL<string[]> : sql<null>`NULL`,
+      correspondenceRefs,
+    }).from(obs).innerJoin(col, eq(col.id, obs.collectionId))
+      .innerJoin(queryAlias, eq(queryAlias.collectionId, col.id))
+      .innerJoin(relationAlias, eq(relationAlias.observationId, obs.id))
+      .leftJoinLateral(current, eq(obs.id, obs.id)).leftJoin(enterprise, eq(enterprise.id, current.enterpriseId))
+      .leftJoin(table, and(eq(table.versionId, obs.versionId), eq(table.recordId, obs.recordId)))
+      .where(eq(obs.recordId, recordId))
+      .orderBy(desc(sql`${col.queriedAt} COLLATE "C"`), desc(relationAlias.oldId)).limit(catalog.limits.observations)
 
-    const detailObservations = observations.map(row => {
+    const detailObservations = observations.map(({ projection, titleScopes, correspondenceRefs, ...fields }) => {
+      const version = fields.versionId === null ? null : versionData(catalog, fields.versionId, projection)
+      const row = { ...fields, version, ...(titleScopes === null ? {} : { titleScopes: orderedScopes(titleScopes), correspondenceRefs }) }
       if (row.identityState === 'not_indexed' || row.contentState === 'not_indexed'
         || row.keySource === null || row.projectionRuleVersion === null) {
         fail(409, catalog.notIndexedCode, catalog.notIndexedMessage)
       }
-      if (row.titleScopes) row.titleScopes = orderedScopes(row.titleScopes)
       if (!recognized) return row
-      const title = row.version?.titleRaw
-      const scopes = row.titleScopes ?? []
+      const title = row.version?.titleRaw as string | null | undefined
+      const scopes = titleScopes ?? []
       return { ...row, titleConflict: !!title && ['1', '2', '3'].includes(title) && scopes.length > 0 && !scopes.includes(title) }
     })
-    const summary = recognized ? (await rows<RecordConflicts>(tx, sql`
-      SELECT summary.* FROM business.platform_business_record b
-      CROSS JOIN LATERAL (WITH owners AS (${owners}) SELECT ${recordConflictFields(catalog)}) summary
-      WHERE b.id = ${recordId}`))[0] : undefined
+    const owners = tx.$with('owners').as(recordOwners(tx))
+    const conflicts = tx.with(owners).select(recordConflictFields(tx, catalog)).from(owners).as('record_conflicts')
+    const [summary] = recognized ? await tx.select({
+      titleConflict: conflicts.titleConflict, unverifiable: conflicts.unverifiable, assignmentConflict: conflicts.assignmentConflict,
+    }).from(record).innerJoinLateral(conflicts, eq(record.id, record.id)).where(eq(record.id, recordId)) : []
 
     return {
-      record: { ...record, interface: catalog.interface },
-      versions: versions.map(row => row.titleScopes ? { ...row, titleScopes: orderedScopes(row.titleScopes) } : row),
+      record: { ...recordInfo, interface: catalog.interface },
+      versions: versions.map(({ titleScopes, ...row }) => titleScopes === null ? row : { ...row, titleScopes: orderedScopes(titleScopes) }),
       observations: detailObservations,
       counts: {
         ...totals, versionsTruncated: totals.versions > versions.length,

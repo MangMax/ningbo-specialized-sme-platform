@@ -1,14 +1,24 @@
-import { sql } from 'drizzle-orm'
+import { and, between, count, desc, eq, exists, or, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { alias } from 'drizzle-orm/pg-core'
+import { comparisonScopeProof, comparisonScopeProofAudit } from '../../../../db/postgresql/comparison-proof-tables'
+import { storedFile } from '../../../../db/postgresql/file-tables'
+import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
+import { sourceDocument } from '../../../../db/postgresql/official-evidence-tables'
+import { platformQueryTitleScope } from '../../../../db/postgresql/platform-archive-tables'
+import {
+  platformCollectionCondition, platformCollectionPage, platformCollectionUnfinished, platformExportBatch, platformExportRow,
+} from '../../../../db/postgresql/platform-tables'
+import { rosterFileClassification } from '../../../../db/postgresql/roster-file-tables'
 import * as schema from '../../../../db/schema'
-import { postgresRosterRow, readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
+import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import {
   currentProofFingerprint, currentProofInputs, officialProofFingerprint, officialProofReferences,
   ProofSourceError, validateCurrentProofBinding, validateOfficialProofScope, type CurrentEvidence, type OfficialEvidence,
 } from './comparison-scope-proof-source'
 import { readPostgresFingerprintQuery, readPostgresFingerprintRelations } from './postgres-platform-fingerprint'
 
-type Db = Pick<NodePgDatabase, 'execute'>
+type Db = Pick<NodePgDatabase, 'execute' | 'select'>
 type Proof = typeof schema.comparisonScopeProof.$inferSelect
 type ProofFile = Parameters<typeof officialProofReferences>[2][number]
 type State = {
@@ -20,80 +30,96 @@ type Stored = { proof: Proof; state: State | null }
 const idArray = (ids: readonly number[]) => sql`${sql.param(ids)}::bigint[]`
 
 async function proofFiles(db: Db, ids: number[]) {
-  const { rows } = await db.execute<{ file: ProofFile }>(sql`
-    SELECT json_build_object('id',f.id,'relPath',f.rel_path,'bytes',f.bytes,
-      'sha256',f.sha256,'removedAt',f.removed_at,'source',c.source) AS file
-    FROM stored_file f JOIN roster_file_classification c ON c.file_id=f.id
-    WHERE f.id=ANY(${idArray(ids)})`)
+  const f = storedFile, c = rosterFileClassification
+  const rows = await db.select({
+    file: sql<ProofFile>`json_build_object('id',${f.id},'relPath',${f.relPath},'bytes',${f.bytes},
+      'sha256',${f.sha256},'removedAt',${f.removedAt},'source',${c.source})`,
+  }).from(f).innerJoin(c, eq(c.fileId, f.id)).where(eq(f.id, sql`ANY(${idArray(ids)})`))
   return rows.map(row => row.file)
 }
 
 export async function readPostgresOfficialProofSource(db: Db, evidence: OfficialEvidence) {
   validateOfficialProofScope(evidence)
-  const documents = await readPostgresRosterRowsById(db, schema.sourceDocument,
-    sql`FROM source_document p WHERE p.id=ANY(${idArray(evidence.sourceDocuments.map(ref => ref.id))})`)
+  const d = alias(sourceDocument, 'd')
+  const documents = (await db.select({
+    row: sql<typeof schema.sourceDocument.$inferSelect>`${postgresRosterRow(schema.sourceDocument, 'd')}`,
+  }).from(d).where(eq(d.id, sql`ANY(${idArray(evidence.sourceDocuments.map(ref => ref.id))})`))
+    .orderBy(d.id)).map(({ row }) => row)
   const files = await proofFiles(db, evidence.sourceDocuments.map(ref => ref.fileId))
-  const { rows: matched } = await db.execute<{ id: number }>(sql`
-    SELECT d.id::float8 AS id FROM json_array_elements(${JSON.stringify(evidence.sourceDocuments)}::json) ref
-    JOIN source_document d ON d.id=(ref->>'id')::bigint
-    WHERE EXISTS (
-      SELECT 1 FROM record_evidence v WHERE v.source_file=d.path
-        AND (ref#>>'{reference,page}' IS NULL OR v.page=(ref#>>'{reference,page}')::bigint)
-        AND (ref#>>'{reference,listNo}' IS NULL OR v.list_no=(ref#>>'{reference,listNo}')::bigint)
-        AND (ref#>>'{reference,attachment}' IS NULL OR v.attachment=ref#>>'{reference,attachment}'))`)
+  const v = alias(recordEvidence, 'p')
+  const matchesReference = db.select({ id: v.id }).from(v).where(and(eq(v.sourceFile, d.path),
+    sql`(ref#>>'{reference,page}' IS NULL OR ${v.page}=(ref#>>'{reference,page}')::bigint)`,
+    sql`(ref#>>'{reference,listNo}' IS NULL OR ${v.listNo}=(ref#>>'{reference,listNo}')::bigint)`,
+    sql`(ref#>>'{reference,attachment}' IS NULL OR ${v.attachment}=ref#>>'{reference,attachment}')`))
+  const matched = await db.select({ id: d.id })
+    .from(sql`json_array_elements(${JSON.stringify(evidence.sourceDocuments)}::json) ref`)
+    .innerJoin(d, eq(d.id, sql`(ref->>'id')::bigint`)).where(exists(matchesReference))
   const coordinates = new Set(matched.map(row => row.id))
   const refs = officialProofReferences(evidence, documents, files, ref => coordinates.has(ref.id))
-  const recordScope = sql`r.source='jxj' AND r.title_code=${evidence.titleCode}
-    ${evidence.enterpriseIds === null ? sql.empty() : sql`AND r.enterprise_id=ANY(${idArray(evidence.enterpriseIds)})`}`
-  const eventScope = sql`(e.year BETWEEN ${evidence.fromYear} AND ${evidence.throughYear}
-    OR e.decided_year BETWEEN ${evidence.fromYear} AND ${evidence.throughYear})`
-  const records = await readPostgresRosterRowsById(db, schema.record, sql`FROM (SELECT r.* FROM record r WHERE ${recordScope}) p`)
-  const events = await readPostgresRosterRowsById(db, schema.recordEvent, sql`
-    FROM (SELECT e.* FROM record_event e JOIN record r ON r.id=e.record_id WHERE ${recordScope} AND ${eventScope}) p`)
-  const eventEvidence = await readPostgresRosterRowsById(db, schema.recordEvidence, sql`
-    FROM record_evidence p JOIN record_event e ON e.id=p.record_event_id JOIN record r ON r.id=e.record_id
-    WHERE ${recordScope} AND ${eventScope}`)
+  const r = alias(record, 'r'), e = alias(recordEvent, 'e')
+  const recordScope = and(eq(r.source, 'jxj'), eq(r.titleCode, evidence.titleCode),
+    evidence.enterpriseIds === null ? undefined : eq(r.enterpriseId, sql`ANY(${idArray(evidence.enterpriseIds)})`))
+  const eventScope = or(between(e.year, evidence.fromYear, evidence.throughYear), between(e.decidedYear, evidence.fromYear, evidence.throughYear))
+  const records = (await db.select({
+    row: sql<typeof schema.record.$inferSelect>`${postgresRosterRow(schema.record, 'r')}`,
+  }).from(r).where(recordScope).orderBy(r.id)).map(({ row }) => row)
+  const events = (await db.select({
+    row: sql<typeof schema.recordEvent.$inferSelect>`${postgresRosterRow(schema.recordEvent, 'e')}`,
+  }).from(e).innerJoin(r, eq(r.id, e.recordId)).where(and(recordScope, eventScope)).orderBy(e.id)).map(({ row }) => row)
+  const eventEvidence = (await db.select({
+    row: sql<typeof schema.recordEvidence.$inferSelect>`${postgresRosterRow(schema.recordEvidence, 'p')}`,
+  }).from(v).innerJoin(e, eq(e.id, v.recordEventId)).innerJoin(r, eq(r.id, e.recordId))
+    .where(and(recordScope, eventScope)).orderBy(v.id)).map(({ row }) => row)
   return officialProofFingerprint(evidence, refs, records, events, eventEvidence)
 }
 
 export async function readPostgresCurrentProofSource(db: Db, evidence: CurrentEvidence) {
   const target = await readPostgresFingerprintQuery(db, evidence.queryId)
-  const [batch] = await readPostgresRosterRowsById(db, schema.platformExportBatch, sql`
-    FROM platform_export_batch p WHERE p.id=${evidence.exportBatchId}`)
+  const b = alias(platformExportBatch, 'p')
+  const [entry] = await db.select({
+    row: sql<typeof schema.platformExportBatch.$inferSelect>`${postgresRosterRow(schema.platformExportBatch, 'p')}`,
+  }).from(b).where(eq(b.id, evidence.exportBatchId))
+  const batch = entry?.row
   const id = target?.collection.id
   let context: Parameters<typeof currentProofInputs>[1]
   if (target && id !== undefined) {
     type Context = NonNullable<typeof context>
-    const conditions = await db.execute<Context['conditions'][number]>(sql`
-      SELECT name,value_kind AS "valueKind",text_value AS "textValue",integer_value::float8 AS "integerValue"
-      FROM platform_collection_condition WHERE collection_id=${id}`)
-    const scopes = await db.execute<Context['scopes'][number]>(sql`
-      SELECT rdjb FROM platform_query_title_scope WHERE collection_id=${id}`)
-    const pages = await db.execute<Context['pages'][number]>(sql`
-      SELECT rdjb,page_no::float8 AS "pageNo",status,max_page::float8 AS "maxPage",
-        declared_total::float8 AS "declaredTotal",fetched_count::float8 AS "fetchedCount"
-      FROM platform_collection_page WHERE collection_id=${id} ORDER BY ordinal`)
-    const unfinished = await db.execute<Context['unfinished'][number]>(sql`
-      SELECT ordinal::float8 AS ordinal FROM platform_collection_unfinished WHERE collection_id=${id}`)
-    context = { ...target, conditions: conditions.rows, scopes: scopes.rows, pages: pages.rows, unfinished: unfinished.rows }
+    const c = platformCollectionCondition, scope = platformQueryTitleScope
+    const page = platformCollectionPage, u = platformCollectionUnfinished
+    const conditions = await db.select({ name: c.name, valueKind: c.valueKind, textValue: c.textValue, integerValue: c.integerValue })
+      .from(c).where(eq(c.collectionId, id))
+    const scopes = await db.select({ rdjb: scope.rdjb }).from(scope).where(eq(scope.collectionId, id))
+    const pages = await db.select({ rdjb: page.rdjb, pageNo: page.pageNo, status: page.status,
+      maxPage: page.maxPage, declaredTotal: page.declaredTotal, fetchedCount: page.fetchedCount,
+    }).from(page).where(eq(page.collectionId, id)).orderBy(page.ordinal)
+    const unfinished = await db.select({ ordinal: u.ordinal }).from(u).where(eq(u.collectionId, id))
+    context = { ...target, conditions, scopes, pages, unfinished } as Context
   }
   const inputs = currentProofInputs(evidence, context, batch)
   const [file] = await proofFiles(db, [evidence.scope.freezeFileId])
   const freeze = validateCurrentProofBinding(evidence, inputs, file)
   const queryRows = await readPostgresFingerprintRelations(db, evidence.queryId)
-  const exportRows = await readPostgresRosterRowsById(db, schema.platformExportRow,
-    sql`FROM platform_export_row p WHERE p.batch_id=${inputs.batch.id}`)
+  const r = alias(platformExportRow, 'p')
+  const exportRows = (await db.select({
+    row: sql<typeof schema.platformExportRow.$inferSelect>`${postgresRosterRow(schema.platformExportRow, 'p')}`,
+  }).from(r).where(eq(r.batchId, inputs.batch.id)).orderBy(r.id)).map(({ row }) => row)
   return currentProofFingerprint(evidence, inputs.target.query, inputs.batch, freeze, queryRows, exportRows)
 }
 
-const proofStateJoin = sql`
-  FROM comparison_scope_proof p
-  LEFT JOIN LATERAL (
-    SELECT id,to_status,resulting_revision,decided_at FROM comparison_scope_proof_audit
-    WHERE proof_id=p.id ORDER BY id DESC LIMIT 1
-  ) a ON true`
-const proofSelection = sql`SELECT ${postgresRosterRow(schema.comparisonScopeProof, 'p')} AS proof,
-  CASE WHEN a.id IS NOT NULL THEN json_build_object('status',a.to_status,'revision',a.resulting_revision,'decidedAt',a.decided_at) END AS state`
+const p = alias(comparisonScopeProof, 'p')
+const proofSelection = {
+  proof: sql<Proof>`${postgresRosterRow(schema.comparisonScopeProof, 'p')}`,
+}
+function latestProofAudit(db: Db) {
+  const a = comparisonScopeProofAudit
+  return db.select({ id: a.id, status: a.toStatus, revision: a.resultingRevision, decidedAt: a.decidedAt })
+    .from(a).where(eq(a.proofId, p.id)).orderBy(desc(a.id)).limit(1).as('a')
+}
+
+function proofState(a: ReturnType<typeof latestProofAudit>) {
+  return sql<State | null>`CASE WHEN ${a.id} IS NOT NULL THEN json_build_object(
+    'status',${a.status},'revision',${a.revision},'decidedAt',${a.decidedAt}) END`
+}
 
 async function observeProof(db: Db, { proof, state }: Stored) {
   let observed: Awaited<ReturnType<typeof readPostgresOfficialProofSource | typeof readPostgresCurrentProofSource>> | undefined
@@ -114,7 +140,9 @@ async function observeProof(db: Db, { proof, state }: Stored) {
 }
 
 export async function readPostgresComparisonProofHead(db: Db, id: number) {
-  const { rows: [row] } = await db.execute<Stored>(sql`${proofSelection} ${proofStateJoin} WHERE p.id=${id}`)
+  const a = latestProofAudit(db)
+  const [row] = await db.select({ ...proofSelection, state: proofState(a) })
+    .from(p).leftJoinLateral(a, sql`true`).where(eq(p.id, id))
   return row ?? null
 }
 
@@ -124,16 +152,15 @@ export async function readPostgresComparisonProof(db: Db, id: number) {
 }
 
 export async function pagePostgresComparisonProofs(db: Db, args: { kind?: Proof['kind']; status?: State['status']; page: number; pageSize: number }) {
-  const where = sql`WHERE true
-    ${args.kind === undefined ? sql.empty() : sql`AND p.kind=${args.kind}`}
-    ${args.status === undefined ? sql.empty() : sql`AND coalesce(a.to_status, 'candidate')=${args.status}`}`
-  const { rows: [total] } = await db.execute<{ n: string }>(sql`SELECT count(*) AS n ${proofStateJoin} ${where}`)
-  const { rows } = await db.execute<Stored>(sql`
-    ${proofSelection} ${proofStateJoin} ${where} ORDER BY p.id LIMIT ${args.pageSize}
-    OFFSET ${Math.min(Number.MAX_SAFE_INTEGER, (args.page - 1) * args.pageSize)}`)
+  const a = latestProofAudit(db)
+  const where = and(args.kind === undefined ? undefined : eq(p.kind, args.kind),
+    args.status === undefined ? undefined : eq(sql<string>`coalesce(${a.status},'candidate')`, args.status))
+  const [total] = await db.select({ n: count() }).from(p).leftJoinLateral(a, sql`true`).where(where)
+  const rows = await db.select({ ...proofSelection, state: proofState(a) }).from(p).leftJoinLateral(a, sql`true`)
+    .where(where).orderBy(p.id).limit(args.pageSize).offset(Math.min(Number.MAX_SAFE_INTEGER, (args.page - 1) * args.pageSize))
   const results = []
   for (const row of rows) results.push(await observeProof(db, row))
-  return { rows: results, total: Number(total!.n), page: args.page, pageSize: args.pageSize }
+  return { rows: results, total: total!.n, page: args.page, pageSize: args.pageSize }
 }
 
 export async function readPostgresCurrentProofCoverage(db: Db, references: readonly { ids: number[]; queryId: number; batchId: number }[]) {
@@ -141,9 +168,9 @@ export async function readPostgresCurrentProofCoverage(db: Db, references: reado
   const ids = [...new Set(references.flatMap(reference => reference.ids))]
   const valid = new Set<string>()
   if (ids.length) {
-    const { rows } = await db.execute<Stored>(sql`
-      ${proofSelection} ${proofStateJoin}
-      WHERE p.id=ANY(${idArray(ids)}) AND p.kind='current_source_equivalence' AND a.to_status='confirmed'`)
+    const a = latestProofAudit(db)
+    const rows = await db.select({ ...proofSelection, state: proofState(a) }).from(p).leftJoinLateral(a, sql`true`)
+      .where(and(eq(p.id, sql`ANY(${idArray(ids)})`), eq(p.kind, 'current_source_equivalence'), eq(a.status, 'confirmed')))
     for (const row of rows) {
       const evidence = row.proof.evidence as CurrentEvidence
       const key = `${row.proof.id}:${evidence.queryId}:${evidence.exportBatchId}`

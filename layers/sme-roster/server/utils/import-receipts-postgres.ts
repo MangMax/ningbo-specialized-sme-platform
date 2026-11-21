@@ -1,5 +1,7 @@
-import { sql, type SQL } from 'drizzle-orm'
+import { and, asc, count, desc, eq, exists, gt, inArray, isNotNull, isNull, lte, ne, notExists, or, sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { alias } from 'drizzle-orm/pg-core'
+import { importBatch, importReceipt } from '../../../../db/postgresql/import-tables'
 import { importItemsReadSchema, officialReadQuery, type ImportItemsRead } from './official-evidence-read'
 import { importPostgresReceiptRedactor, type ReceiptRedactor } from './import-receipt-redaction'
 import {
@@ -8,8 +10,12 @@ import {
   type ImportReceiptAction, type QualificationReceiptRow, type ReceiptRow,
 } from './import-receipts'
 
-type Reader = Pick<NodePgDatabase, 'execute'>
-const kinds = sql`('announcement','platform_export','platform_archive','alias_evidence')`
+type Reader = Pick<NodePgDatabase, 'select' | '$with' | 'with'>
+const kinds = ['announcement', 'platform_export', 'platform_archive', 'alias_evidence']
+
+// Drizzle 0.45 builds SELECTs and joins but has no typed expressions for PostgreSQL JSON operators,
+// shape validation and expansion with ordinality, or UTF-8 byte slices. Keep these projections in
+// PostgreSQL so the application receives bounded pages instead of the full retained evidence.
 const array = (value: SQL) => sql`(CASE WHEN json_typeof(${value}) = 'array' THEN ${value} ELSE '[]'::json END)`
 const object = (value: SQL) => sql`(CASE WHEN json_typeof(${value}) = 'object' THEN ${value} ELSE '{}'::json END)`
 const parse = (value: SQL, defaultValue = 'null') =>
@@ -23,36 +29,53 @@ function integerValue(value: SQL) {
 async function readStandardReceipt(db: Reader, action: ImportReceiptAction, args: Record<string, unknown>) {
   const { receiptId, batchId, key } = parseImportReceiptSelector(action, args)
   if (key?.includes('\0') || key && !key.isWellFormed()) throw new ImportReceiptError(404, 'not_found', 'Import batch or receipt not found')
-  const match = batchId !== undefined ? sql`b.id = ${batchId}` : receiptId !== undefined
-    ? sql`b.id = (SELECT batch_id FROM import_receipt WHERE id = ${receiptId})` : sql`b.idempotency_key = ${key}`
-  const { rows: [row] } = await db.execute<ReceiptRow>(sql`
-    SELECT b.id::float8 AS "batchId", left(b.idempotency_key,4096) AS "idempotencyKey",
-      (length(b.idempotency_key)>4096)::integer AS "idempotencyKeyTruncated",
-      coalesce(r.status,b.status) AS status, b.source_kind AS "sourceKind",
-      left(b.source_identity,4096) AS "sourceIdentity", (length(b.source_identity)>4096)::integer AS "sourceIdentityTruncated",
-      coalesce(r.created_at,b.created_at) AS "createdAt",
-      CASE WHEN r.id IS NULL THEN b.committed_at WHEN r.status='committed' THEN r.completed_at END AS "committedAt",
-      r.id::float8 AS "receiptId", r.operation, r.completed_at AS "completedAt",
-      json_array_length(${array(sql`j.items`)}) AS "itemCount",
-      (j.summary ->> 'written')::float8 AS written, (j.summary ->> 'skipped')::float8 AS skipped,
-      (j.summary ->> 'failed')::float8 AS failed, (j.summary ->> 'evidenceRepointed')::float8 AS "evidenceRepointed",
-      nullif((j.summary -> 'canonicalProjection')::text, 'null') AS "canonicalProjection"
-    FROM import_batch b LEFT JOIN import_receipt r ON r.id = ${receiptId === undefined
-      ? sql`(SELECT id FROM import_receipt WHERE batch_id=b.id ORDER BY id DESC LIMIT 1)` : sql`${receiptId}`}
-    CROSS JOIN LATERAL (SELECT (CASE WHEN r.id IS NULL THEN b.item_results ELSE r.item_results END)::json AS items,
-      (CASE WHEN r.id IS NULL THEN b.summary ELSE r.summary END)::json AS summary) j
-    WHERE ${match} AND b.source_kind IN ${kinds}`)
+  const latest = alias(importReceipt, 'latest')
+  const selectedReceipt = receiptId ?? db.select({ id: latest.id }).from(latest)
+    .where(eq(latest.batchId, importBatch.id)).orderBy(desc(latest.id)).limit(1)
+  const match = batchId !== undefined ? eq(importBatch.id, batchId) : receiptId !== undefined
+    ? eq(importReceipt.id, receiptId) : eq(importBatch.idempotencyKey, key!)
+  const items = sql`(CASE WHEN ${importReceipt.id} IS NULL THEN ${importBatch.itemResults} ELSE ${importReceipt.itemResults} END)::json`
+  const summary = sql`(CASE WHEN ${importReceipt.id} IS NULL THEN ${importBatch.summary} ELSE ${importReceipt.summary} END)::json`
+  const summaryCount = (field: string) => sql<number | null>`(${summary} ->> ${field}::text)::float8`
+  const itemCount = (value: SQL) => sql<number>`json_array_length(${array(value)})`
+  const [row]: ReceiptRow[] = await db.select({
+    batchId: importBatch.id,
+    idempotencyKey: sql<string>`left(${importBatch.idempotencyKey},4096)`,
+    idempotencyKeyTruncated: sql<number>`(length(${importBatch.idempotencyKey})>4096)::integer`,
+    status: sql<string>`coalesce(${importReceipt.status},${importBatch.status})`,
+    sourceKind: importBatch.sourceKind,
+    sourceIdentity: sql<string>`left(${importBatch.sourceIdentity},4096)`,
+    sourceIdentityTruncated: sql<number>`(length(${importBatch.sourceIdentity})>4096)::integer`,
+    createdAt: sql<string>`coalesce(${importReceipt.createdAt},${importBatch.createdAt})`,
+    committedAt: sql<string | null>`CASE WHEN ${importReceipt.id} IS NULL THEN ${importBatch.committedAt}
+      WHEN ${importReceipt.status}='committed' THEN ${importReceipt.completedAt} END`,
+    receiptId: importReceipt.id,
+    operation: importReceipt.operation,
+    completedAt: importReceipt.completedAt,
+    itemCount: itemCount(items),
+    written: summaryCount('written'),
+    skipped: summaryCount('skipped'),
+    failed: summaryCount('failed'),
+    evidenceRepointed: summaryCount('evidenceRepointed'),
+    canonicalProjection: sql<string | null>`nullif((${summary} -> 'canonicalProjection')::text,'null')`,
+  }).from(importBatch).leftJoin(importReceipt, and(eq(importReceipt.batchId, importBatch.id), eq(importReceipt.id, selectedReceipt)))
+    .where(and(match, inArray(importBatch.sourceKind, kinds)))
   if (!row) throw new ImportReceiptError(404, 'not_found', 'Import batch or receipt not found')
   if (action === 'get') return projectImportReceiptMetadata(row)
   if (action === 'request') {
     const offset = importReceiptInteger(args.offset, 'offset', 0, Number.MAX_SAFE_INTEGER - 1, 0)
     const maxBytes = importReceiptInteger(args.maxBytes, 'maxBytes', 16384, 65536)
     if (row.receiptId === null) throw new ImportReceiptError(404, 'not_retained', 'Original request was not retained')
-    const { rows: [stored] } = await db.execute<{ totalBytes: number; chunk: Buffer | null }>(sql`
-      SELECT octet_length(bytes) AS "totalBytes",
-        CASE WHEN ${offset}::bigint <= octet_length(bytes) THEN substring(bytes FROM (${offset}::integer+1) FOR ${maxBytes}) END AS chunk
-      FROM (SELECT convert_to(coalesce(owner.request_body,r.request_body),'UTF8') AS bytes
-        FROM import_receipt r LEFT JOIN import_receipt owner ON owner.id=r.body_receipt_id WHERE r.id=${row.receiptId}) source`)
+    const owner = alias(importReceipt, 'owner')
+    const source = db.select({
+      bytes: sql<Buffer>`convert_to(coalesce(${owner.requestBody},${importReceipt.requestBody}),'UTF8')`.as('bytes'),
+    }).from(importReceipt).leftJoin(owner, eq(owner.id, importReceipt.bodyReceiptId))
+      .where(eq(importReceipt.id, row.receiptId)).as('source')
+    const [stored] = await db.select({
+      totalBytes: sql<number>`octet_length(${source.bytes})`,
+      chunk: sql<Buffer | null>`CASE WHEN ${offset}::bigint <= octet_length(${source.bytes})
+        THEN substring(${source.bytes} FROM (${offset}::integer+1) FOR ${maxBytes}) END`,
+    }).from(source)
     if (!stored?.chunk) return invalidImportReceiptQuery('offset exceeds request bytes')
     const { totalBytes, chunk } = stored
     return { batchId: row.batchId, receiptId: row.receiptId, redacted: true, encoding: 'base64',
@@ -63,66 +86,96 @@ async function readStandardReceipt(db: Reader, action: ImportReceiptAction, args
   const pageSize = importReceiptInteger(args.pageSize, 'pageSize', 20, 50)
   const offset = (page - 1) * pageSize
   if (action === 'history') {
-    const { rows: [count] } = await db.execute<{ total: string }>(sql`SELECT count(*) AS total FROM import_receipt WHERE batch_id = ${row.batchId}`)
-    const { rows } = await db.execute(sql`
-      SELECT id::float8 AS "receiptId", batch_id::float8 AS "batchId", operation, status,
-        created_at AS "createdAt", completed_at AS "completedAt", json_array_length(${array(sql`item_results::json`)}) AS "itemCount"
-      FROM import_receipt WHERE batch_id = ${row.batchId} ORDER BY id LIMIT ${pageSize} OFFSET ${offset}`)
-    return { batchId: row.batchId, page, pageSize, total: Number(count!.total), rows }
+    const history = eq(importReceipt.batchId, row.batchId)
+    const [totals] = await db.select({ total: count() }).from(importReceipt).where(history)
+    const rows = await db.select({
+      receiptId: importReceipt.id, batchId: importReceipt.batchId, operation: importReceipt.operation,
+      status: importReceipt.status, createdAt: importReceipt.createdAt, completedAt: importReceipt.completedAt,
+      itemCount: itemCount(sql`${importReceipt.itemResults}::json`),
+    }).from(importReceipt).where(history).orderBy(asc(importReceipt.id)).limit(pageSize).offset(offset)
+    return { batchId: row.batchId, page, pageSize, total: totals!.total, rows }
   }
-  const items = row.receiptId === null ? sql`(SELECT item_results FROM import_batch WHERE id = ${row.batchId})`
-    : sql`(SELECT item_results FROM import_receipt WHERE id = ${row.receiptId})`
-  const { rows } = await db.execute(sql`
-    SELECT (ordinal-1)::integer AS "index", coalesce(value ->> 'ok' = 'true', false) AS ok,
-      left(value ->> 'kind',128) AS kind, left(value ->> 'ref',256) AS ref,
-      left(value #>> '{error,code}',128) AS "errorCode", left(value #>> '{error,field}',128) AS "errorField"
-    FROM json_array_elements(${array(sql`${items}::json`)}) WITH ORDINALITY item(value,ordinal)
-    ORDER BY ordinal LIMIT ${pageSize} OFFSET ${offset}`)
+  const selectedItems = row.receiptId === null
+    ? db.select({ items: importBatch.itemResults }).from(importBatch).where(eq(importBatch.id, row.batchId))
+    : db.select({ items: importReceipt.itemResults }).from(importReceipt).where(eq(importReceipt.id, row.receiptId))
+  const rows = await db.select({
+    index: sql<number>`(ordinal-1)::integer`,
+    ok: sql<boolean>`coalesce(value ->> 'ok' = 'true', false)`,
+    kind: sql<string | null>`left(value ->> 'kind',128)`,
+    ref: sql<string | null>`left(value ->> 'ref',256)`,
+    errorCode: sql<string | null>`left(value #>> '{error,code}',128)`,
+    errorField: sql<string | null>`left(value #>> '{error,field}',128)`,
+  }).from(sql`json_array_elements(${array(sql`(${selectedItems})::json`)}) WITH ORDINALITY item(value,ordinal)`)
+    .orderBy(sql`ordinal`).limit(pageSize).offset(offset)
   return { batchId: row.batchId, receiptId: row.receiptId, status: row.status, page, pageSize, total: row.itemCount, rows }
 }
 
-function exactSource(args: ImportItemsRead) {
+function exactSource(db: Reader, args: ImportItemsRead) {
   return args.source === 'private_batch'
-    ? sql`SELECT b.id AS batch_id,NULL::bigint AS receipt_id,b.status,b.status AS batch_status,b.source_kind,
-        'commit' AS operation,b.item_results,b.summary FROM import_batch b WHERE b.id=${args.batchId}`
-    : sql`SELECT b.id AS batch_id,r.id AS receipt_id,r.status,b.status AS batch_status,b.source_kind,
-        r.operation,r.item_results,r.summary FROM import_receipt r JOIN import_batch b ON b.id=r.batch_id WHERE r.id=${args.receiptId}`
+    ? db.select({
+      batchId: sql`${importBatch.id}`.as('batch_id'), receiptId: sql`NULL::bigint`.as('receipt_id'),
+      status: importBatch.status, batchStatus: sql`${importBatch.status}`.as('batch_status'), sourceKind: importBatch.sourceKind,
+      operation: sql<string>`'commit'::text`.as('operation'), itemResults: importBatch.itemResults, summary: importBatch.summary,
+    }).from(importBatch).where(eq(importBatch.id, args.batchId!))
+    : db.select({
+      batchId: sql`${importBatch.id}`.as('batch_id'), receiptId: sql`${importReceipt.id}`.as('receipt_id'),
+      status: importReceipt.status, batchStatus: sql`${importBatch.status}`.as('batch_status'), sourceKind: importBatch.sourceKind,
+      operation: sql<string>`${importReceipt.operation}`.as('operation'),
+      itemResults: importReceipt.itemResults, summary: importReceipt.summary,
+    }).from(importReceipt).innerJoin(importBatch, eq(importBatch.id, importReceipt.batchId))
+      .where(eq(importReceipt.id, args.receiptId!))
 }
 
-function exactItem(args: ImportItemsRead) {
+function exactItem(db: Reader, args: ImportItemsRead) {
   const index = args.itemIndex!
-  return sql`WITH source_row AS (${exactSource(args)}), selected AS (
-    SELECT *, ${index > 2147483647 ? sql`NULL::json` : sql`${parse(sql`item_results`)} -> ${index}::integer`} AS item,
-      ${parse(sql`summary`, 'false')} AS saved_summary FROM source_row
-  )`
+  const source = exactSource(db, args).as('source_row')
+  return db.select({
+    batchId: source.batchId, receiptId: source.receiptId, status: source.status, batchStatus: source.batchStatus,
+    sourceKind: source.sourceKind, operation: source.operation, summary: source.summary,
+    item: (index > 2147483647 ? sql`NULL::json` : sql`${parse(sql`${source.itemResults}`)} -> ${index}::integer`).as('item'),
+    savedSummary: parse(sql`${source.summary}`, 'false').as('saved_summary'),
+  }).from(source).as('selected')
 }
 
 async function readQualificationItem(db: Reader, args: ImportItemsRead, redact: ReceiptRedactor) {
-  const entId = integerValue(sql`item #> '{detail,enterpriseId}'`)
-  const recId = integerValue(sql`item #> '{detail,recordId}'`)
-  const diag = object(sql`saved_summary -> 'qualificationDiagnosticsByItem' -> ${String(args.itemIndex)}::text`)
-  const { rows: [row] } = await db.execute<QualificationReceiptRow>(sql`${exactItem(args)}, facts AS (
-    SELECT *, ${entId} AS enterprise_id, ${recId} AS record_id, saved_summary -> 'qualificationReadback' AS capture,
-      saved_summary -> 'qualificationDiagnosticsByItem' AS diagnostics, ${diag} AS diag FROM selected
-  )
-  SELECT batch_id::float8 AS "batchId", receipt_id::float8 AS "receiptId", json_typeof(item) AS "itemType",
-    (status='committed' AND batch_status='committed' AND operation='commit' AND source_kind='announcement') AS "validSource",
-    (json_typeof(item)='object' AND (item -> 'ok')::text='true' AND item ->> 'kind'='record_event' AND enterprise_id IS NOT NULL) AS "validItem",
-    enterprise_id AS "enterpriseId", record_id AS "recordId",
-    (record_id IS NOT NULL AND item ->> 'ref' = 'record:' || record_id::bigint) AS "recordBound",
-    (summary IS NULL OR json_typeof(saved_summary)='null' OR json_typeof(saved_summary)='object'
-      AND (capture IS NULL OR json_typeof(capture)='null')) AS "captureMissing",
-    CASE WHEN json_typeof(capture)='object' AND octet_length(capture::text)<=65536 THEN capture::text END AS payload,
-    (summary IS NULL OR json_typeof(saved_summary)='null' OR json_typeof(saved_summary)='object' AND diagnostics IS NULL) AS "diagnosticsMissing",
-    (json_typeof(diagnostics)='object' AND (SELECT count(*) FROM json_object_keys(diag))=7
-      AND json_typeof(diag -> 'itemIndex')='number' AND (diag -> 'itemIndex')::text=${String(args.itemIndex)}
-      AND diag ->> 'ref'=item ->> 'ref' AND ${integerValue(sql`diag -> 'enterpriseId'`)}=enterprise_id
-      AND ${integerValue(sql`diag -> 'recordId'`)}=record_id) AS "diagnosticsBound",
-    CASE WHEN json_typeof(diag -> 'candidateRef')='string' AND octet_length(diag ->> 'candidateRef')<=32 THEN diag ->> 'candidateRef' END AS "candidateRef",
-    CASE WHEN json_typeof(diag -> 'digest')='string' AND octet_length(diag ->> 'digest')=64 THEN diag ->> 'digest' END AS "diagnosticsDigest",
-    CASE WHEN json_typeof(diag -> 'diagnostics')='object' AND octet_length((diag -> 'diagnostics')::text)<=65536
-      THEN (diag -> 'diagnostics')::text END AS "diagnosticsPayload"
-  FROM facts`)
+  const selected = exactItem(db, args)
+  const item = selected.item
+  const enterpriseId = integerValue(sql`${item} #> '{detail,enterpriseId}'`)
+  const recordId = integerValue(sql`${item} #> '{detail,recordId}'`)
+  const capture = sql`${selected.savedSummary} -> 'qualificationReadback'`
+  const diagnostics = sql`${selected.savedSummary} -> 'qualificationDiagnosticsByItem'`
+  const diag = object(sql`(${diagnostics}) -> ${String(args.itemIndex)}::text`)
+  const summaryType = sql`json_typeof(${selected.savedSummary})`
+  const absentSummary = or(isNull(selected.summary), eq(summaryType, 'null'))
+  const validSummary = eq(summaryType, 'object')
+  const validSource = and(eq(selected.status, 'committed'), eq(selected.batchStatus, 'committed'),
+    eq(selected.operation, 'commit'), eq(selected.sourceKind, 'announcement'))
+  const fieldCount = db.select({ total: count() }).from(sql`json_object_keys(${diag})`)
+  const [row]: QualificationReceiptRow[] = await db.select({
+    batchId: sql<number>`${selected.batchId}::float8`,
+    receiptId: sql<number | null>`${selected.receiptId}::float8`,
+    itemType: sql<string | null>`json_typeof(${item})`,
+    validSource: sql<boolean>`${validSource}`,
+    validItem: sql<boolean>`json_typeof(${item})='object' AND (${item} -> 'ok')::text='true'
+      AND ${item} ->> 'kind'='record_event' AND ${enterpriseId} IS NOT NULL`,
+    enterpriseId: sql<number | null>`${enterpriseId}`,
+    recordId: sql<number | null>`${recordId}`,
+    recordBound: sql<boolean>`${recordId} IS NOT NULL AND ${item} ->> 'ref' = 'record:' || ${recordId}::bigint`,
+    captureMissing: sql<boolean>`${or(absentSummary, and(validSummary, or(isNull(capture), eq(sql`json_typeof(${capture})`, 'null'))))}`,
+    payload: sql<string | null>`CASE WHEN json_typeof(${capture})='object' AND octet_length((${capture})::text)<=65536
+      THEN (${capture})::text END`,
+    diagnosticsMissing: sql<boolean>`${or(absentSummary, and(validSummary, isNull(diagnostics)))}`,
+    diagnosticsBound: sql<boolean>`json_typeof(${diagnostics})='object' AND (${fieldCount})=7
+      AND json_typeof(${diag} -> 'itemIndex')='number' AND (${diag} -> 'itemIndex')::text=${String(args.itemIndex)}
+      AND ${diag} ->> 'ref'=${item} ->> 'ref' AND ${integerValue(sql`${diag} -> 'enterpriseId'`)}=${enterpriseId}
+      AND ${integerValue(sql`${diag} -> 'recordId'`)}=${recordId}`,
+    candidateRef: sql<string | null>`CASE WHEN json_typeof(${diag} -> 'candidateRef')='string'
+      AND octet_length(${diag} ->> 'candidateRef')<=32 THEN ${diag} ->> 'candidateRef' END`,
+    diagnosticsDigest: sql<string | null>`CASE WHEN json_typeof(${diag} -> 'digest')='string'
+      AND octet_length(${diag} ->> 'digest')=64 THEN ${diag} ->> 'digest' END`,
+    diagnosticsPayload: sql<string | null>`CASE WHEN json_typeof(${diag} -> 'diagnostics')='object'
+      AND octet_length((${diag} -> 'diagnostics')::text)<=65536 THEN (${diag} -> 'diagnostics')::text END`,
+  }).from(selected)
   return projectQualificationReceipt(row, args, redact)
 }
 
@@ -134,80 +187,120 @@ async function readMergeItem(db: Reader, args: ImportItemsRead, redact: ReceiptR
   const { binding, maxBytes, afterIndex, pageSize, nextCursor } = mergeReceiptSelection(args)
   const { oldRecordId, itemIndex, source } = binding
   const projectEvents = args.projection === 'eventIds'
-  const fromId = integerValue(sql`lineage -> 'fromEnterpriseId'`)
-  const intoId = integerValue(sql`lineage -> 'intoEnterpriseId'`)
-  const foldedInto = integerValue(sql`fold -> 'intoRecordId'`)
-  const snapshotId = integerValue(sql`snapshot -> 'id'`)
-  const snapshotEnterprise = integerValue(sql`snapshot -> 'enterpriseId'`)
-  const snapshotColumns = ['titleCode','source','nameRaw','usccRaw','district']
-  const types = sql.join(snapshotColumns.map((field, index) => sql`json_typeof(snapshot -> ${field}::text) IN ('string'${index >= 2 ? sql`,'null'` : sql.empty()})`), sql` AND `)
-  const sizes = sql.join(snapshotColumns.map(field => sql`coalesce(length(snapshot ->> ${field}::text),0)<=4000`), sql` AND `)
-  const flagRows = sql`json_array_elements(${array(sql`snapshot -> 'qualityFlags'`)}) WITH ORDINALITY flag(value, ordinal)`
-  const eventRows = sql`json_array_elements(${array(sql`fold -> 'eventIds'`)}) WITH ORDINALITY e(value, ordinal)`
-  const eventCount = sql`json_array_length(${array(sql`fold -> 'eventIds'`)})`
-  const eventPage = sql`'[' || coalesce((SELECT string_agg(value::text, ',' ORDER BY ordinal)
-      FROM (SELECT value, ordinal FROM ${eventRows} WHERE ordinal > ${afterIndex + 1}::bigint ORDER BY ordinal LIMIT ${pageSize}) page),'') || ']'`
-  const flagList = sql`CASE WHEN json_typeof(snapshot -> 'qualityFlags')='array' THEN
-      '[' || coalesce((SELECT string_agg(to_json(value #>> '{}')::text, ',' ORDER BY ordinal) FROM ${flagRows}),'') || ']'
-      ELSE 'null' END`
-  const literal = (value: unknown) => sql`${JSON.stringify(value)}::text`
-  const snapshot = jsonFields([
-    ['id', sql`${snapshotId}::bigint`], ['enterpriseId', sql`${snapshotEnterprise}::bigint`],
-    ...snapshotColumns.map(field => [field, sql`to_json(snapshot ->> ${field}::text)`] as [string, SQL]),
-    ['qualityFlags', sql`(${flagList})`],
-  ])
-  const origin = jsonFields([
-    ['fromEnterpriseId', sql`${fromId}::bigint`], ['intoEnterpriseId', sql`${intoId}::bigint`],
-    ['intoRecordId', sql`${foldedInto}::bigint`],
-  ])
+  const selected = exactItem(db, args)
+  const lineage = db.$with('lineage_row').as(db.select({
+    batchId: selected.batchId, receiptId: selected.receiptId, status: selected.status, batchStatus: selected.batchStatus,
+    sourceKind: selected.sourceKind, item: selected.item,
+    lineage: sql`${selected.item} #> '{detail,lineage}'`.as('lineage'),
+  }).from(selected))
+  const matches = db.$with('folds').as(db.select({
+    fold: sql`candidate.value`.as('fold'),
+  }).from(lineage).crossJoin(sql`json_array_elements(${array(sql`${lineage.lineage} -> 'recordsFolded'`)}) candidate(value)`)
+    .where(eq(integerValue(sql`candidate.value -> 'fromRecordId'`), oldRecordId)).limit(2))
+  const foldCount = db.select({ total: count() }).from(matches)
+  const fold = db.select({ fold: matches.fold }).from(matches).limit(1).as('chosen_fold')
+  const evidence = db.select({
+    batchId: lineage.batchId, receiptId: lineage.receiptId, status: lineage.status, batchStatus: lineage.batchStatus,
+    sourceKind: lineage.sourceKind, item: lineage.item, lineage: lineage.lineage, fold: fold.fold,
+    snapshot: sql`${fold.fold} -> 'fromRecordSnapshot'`.as('snapshot'),
+  }).from(lineage).leftJoin(fold, isNotNull(fold.fold)).as('selected_fold')
+  function mergeExpressions(evidence: Pick<typeof lineage, 'lineage'> & { fold: typeof fold.fold; snapshot: typeof selected.item }) {
+    const fromId = integerValue(sql`${evidence.lineage} -> 'fromEnterpriseId'`)
+    const intoId = integerValue(sql`${evidence.lineage} -> 'intoEnterpriseId'`)
+    const foldedInto = integerValue(sql`${evidence.fold} -> 'intoRecordId'`)
+    const snapshotId = integerValue(sql`${evidence.snapshot} -> 'id'`)
+    const snapshotEnterprise = integerValue(sql`${evidence.snapshot} -> 'enterpriseId'`)
+    const snapshotColumns = ['titleCode','source','nameRaw','usccRaw','district']
+    const types = and(...snapshotColumns.map((field, index) => inArray(
+      sql`json_typeof(${evidence.snapshot} -> ${field}::text)`, index >= 2 ? ['string', 'null'] : ['string'],
+    )))
+    const sizes = and(...snapshotColumns.map(field =>
+      lte(sql`coalesce(length(${evidence.snapshot} ->> ${field}::text),0)`, 4000)))
+    const flagRows = sql`json_array_elements(${array(sql`${evidence.snapshot} -> 'qualityFlags'`)}) WITH ORDINALITY flag(value, ordinal)`
+    const eventRows = sql`json_array_elements(${array(sql`${evidence.fold} -> 'eventIds'`)}) WITH ORDINALITY e(value, ordinal)`
+    const eventCount = sql`json_array_length(${array(sql`${evidence.fold} -> 'eventIds'`)})`
+    const events = db.select({
+      value: sql`value`.as('value'), ordinal: sql`ordinal`.as('ordinal'),
+    }).from(eventRows).where(gt(sql`ordinal`, sql`${afterIndex + 1}::bigint`))
+      .orderBy(asc(sql`ordinal`)).limit(pageSize).as('page')
+    const eventPage = db.select({
+      content: sql`'[' || coalesce(string_agg(${events.value}::text, ',' ORDER BY ${events.ordinal}),'') || ']'`,
+    }).from(events)
+    const flags = db.select({
+      content: sql`'[' || coalesce(string_agg(to_json(value #>> '{}')::text, ',' ORDER BY ordinal),'') || ']'`,
+    }).from(flagRows)
+    const flagList = sql`CASE WHEN json_typeof(${evidence.snapshot} -> 'qualityFlags')='array' THEN (${flags}) ELSE 'null' END`
+    const literal = (value: unknown) => sql`${JSON.stringify(value)}::text`
+    const snapshot = jsonFields([
+      ['id', sql`${snapshotId}::bigint`], ['enterpriseId', sql`${snapshotEnterprise}::bigint`],
+      ...snapshotColumns.map(field => [field, sql`to_json(${evidence.snapshot} ->> ${field}::text)`] as [string, SQL]),
+      ['qualityFlags', sql`(${flagList})`],
+    ])
+    const origin = jsonFields([
+      ['fromEnterpriseId', sql`${fromId}::bigint`], ['intoEnterpriseId', sql`${intoId}::bigint`],
+      ['intoRecordId', sql`${foldedInto}::bigint`],
+    ])
+    return { fromId, intoId, foldedInto, snapshotId, snapshotEnterprise, types, sizes, flagRows, eventRows,
+      eventCount, eventPage, literal, snapshot, origin }
+  }
+  const { fromId, intoId, foldedInto, snapshotId, snapshotEnterprise, types, sizes, flagRows, eventRows, eventCount } =
+    mergeExpressions(evidence)
+  const invalidEvents = db.select({ value: sql`value` }).from(eventRows)
+    .where(isNull(integerValue(sql`value`)))
+  const invalidFlags = db.select({ value: sql`value` }).from(flagRows)
+    .where(ne(sql`json_typeof(value)`, 'string'))
+  const oversizedFlags = db.select({ value: sql`value` }).from(flagRows)
+    .where(gt(sql`length(value #>> '{}')`, 4000))
+  const committedSource = and(eq(evidence.status, 'committed'), eq(evidence.batchStatus, 'committed'),
+    inArray(evidence.sourceKind, kinds))
+  const checked = db.select({
+    batchId: evidence.batchId, receiptId: evidence.receiptId, fold: evidence.fold,
+    snapshot: evidence.snapshot, lineage: evidence.lineage,
+    availability: sql<string>`CASE
+      WHEN NOT coalesce(${committedSource}
+        AND json_typeof(${evidence.item})='object' AND (${evidence.item} -> 'ok')::text='true' AND ${evidence.item} ->> 'kind'='merge'
+        AND ${fromId} IS NOT NULL AND ${intoId} IS NOT NULL, false) THEN 'selector_mismatch'
+      WHEN ${evidence.lineage} -> 'recordsFolded' IS NULL OR json_typeof(${evidence.lineage} -> 'recordsFolded')='null' THEN 'not_retained'
+      WHEN json_typeof(${evidence.lineage} -> 'recordsFolded')<>'array' THEN 'selector_mismatch'
+      WHEN (${foldCount})>1 THEN 'ambiguity'
+      WHEN ${evidence.fold} IS NULL OR ${foldedInto} IS NULL THEN 'selector_mismatch'
+      WHEN ${evidence.snapshot} IS NULL OR json_typeof(${evidence.snapshot})='null' THEN 'not_retained'
+      WHEN json_typeof(${evidence.snapshot})<>'object' OR ${snapshotId} IS DISTINCT FROM ${oldRecordId}
+        OR ${snapshotEnterprise} IS DISTINCT FROM ${fromId}
+        OR NOT coalesce(${types} AND (json_typeof(${evidence.snapshot} -> 'qualityFlags')='null' OR
+          json_typeof(${evidence.snapshot} -> 'qualityFlags')='array' AND ${notExists(invalidFlags)}),false)
+        OR ${evidence.snapshot} ->> 'source' NOT IN ('jxj','miit') THEN 'selector_mismatch'
+      ${projectEvents ? sql`
+        WHEN ${evidence.fold} -> 'eventIds' IS NULL OR json_typeof(${evidence.fold} -> 'eventIds')='null' THEN 'not_retained'
+        WHEN json_typeof(${evidence.fold} -> 'eventIds')<>'array' OR ${exists(invalidEvents)} THEN 'selector_mismatch'
+        WHEN ${afterIndex}::bigint >= ${eventCount} THEN 'invalid_cursor'` : sql`
+        WHEN NOT (${sizes} AND ${notExists(oversizedFlags)}) THEN 'field_limit'`}
+      ELSE 'available' END`.as('availability'),
+  }).from(evidence).as('checked')
+  const render = mergeExpressions(checked)
   const base = jsonFields([
-    ['formatVersion', literal(1)], ['source', literal(source)],
-    ['batchId', sql`batch_id`], ['receiptId', sql`receipt_id`], ['itemIndex', literal(itemIndex)],
-    ['oldRecordId', literal(oldRecordId)], ['storedRedacted', literal(source === 'redacted_receipt')],
-    ['responseRedacted', literal(true)], ['availability', sql`to_json(availability)`],
+    ['formatVersion', render.literal(1)], ['source', render.literal(source)],
+    ['batchId', sql`${checked.batchId}`], ['receiptId', sql`${checked.receiptId}`], ['itemIndex', render.literal(itemIndex)],
+    ['oldRecordId', render.literal(oldRecordId)], ['storedRedacted', render.literal(source === 'redacted_receipt')],
+    ['responseRedacted', render.literal(true)], ['availability', sql`to_json(${checked.availability})`],
   ])
   const extended = projectEvents ? jsonFields([
-    ['eventIds', sql`(${eventPage})`],
-    ['nextCursor', sql`CASE WHEN ${eventCount} > ${afterIndex + pageSize + 1}::bigint THEN ${literal(nextCursor)} END`],
+    ['eventIds', sql`(${render.eventPage})`],
+    ['nextCursor', sql`CASE WHEN ${render.eventCount} > ${afterIndex + pageSize + 1}::bigint THEN ${render.literal(nextCursor)} END`],
   ]) : jsonFields([
-    ['origin', sql`('{' || ${origin} || '}')`],
-    ['snapshot', sql`('{' || ${snapshot} || '}')`],
+    ['origin', sql`('{' || ${render.origin} || '}')`],
+    ['snapshot', sql`('{' || ${render.snapshot} || '}')`],
   ])
-  const { rows: [result] } = await db.execute<{ availability: string; requiredBytes: number; projection: string | null }>(sql`
-    ${exactItem(args)}, lineage AS (
-      SELECT *, item #> '{detail,lineage}' AS lineage FROM selected
-    ), folds AS (
-      SELECT fold.value AS fold FROM lineage l, json_array_elements(${array(sql`l.lineage -> 'recordsFolded'`)}) fold(value)
-      WHERE ${integerValue(sql`fold.value -> 'fromRecordId'`)}=${oldRecordId} LIMIT 2
-    ), selected_fold AS (
-      SELECT s.*, f.fold, f.fold -> 'fromRecordSnapshot' AS snapshot FROM lineage s
-      LEFT JOIN (SELECT fold FROM folds LIMIT 1) f ON true
-    ), checked AS (
-      SELECT *, CASE
-        WHEN NOT coalesce(status='committed' AND batch_status='committed' AND source_kind IN ${kinds}
-          AND json_typeof(item)='object' AND (item -> 'ok')::text='true' AND item ->> 'kind'='merge'
-          AND ${fromId} IS NOT NULL AND ${intoId} IS NOT NULL, false) THEN 'selector_mismatch'
-        WHEN lineage -> 'recordsFolded' IS NULL OR json_typeof(lineage -> 'recordsFolded')='null' THEN 'not_retained'
-        WHEN json_typeof(lineage -> 'recordsFolded')<>'array' THEN 'selector_mismatch'
-        WHEN (SELECT count(*) FROM folds)>1 THEN 'ambiguity'
-        WHEN fold IS NULL OR ${foldedInto} IS NULL THEN 'selector_mismatch'
-        WHEN snapshot IS NULL OR json_typeof(snapshot)='null' THEN 'not_retained'
-        WHEN json_typeof(snapshot)<>'object' OR ${snapshotId} IS DISTINCT FROM ${oldRecordId} OR ${snapshotEnterprise} IS DISTINCT FROM ${fromId}
-          OR NOT coalesce(${types} AND (json_typeof(snapshot -> 'qualityFlags')='null' OR
-            json_typeof(snapshot -> 'qualityFlags')='array' AND NOT EXISTS (SELECT 1 FROM ${flagRows} WHERE json_typeof(value)<>'string')),false)
-          OR snapshot ->> 'source' NOT IN ('jxj','miit') THEN 'selector_mismatch'
-        ${projectEvents ? sql`
-          WHEN fold -> 'eventIds' IS NULL OR json_typeof(fold -> 'eventIds')='null' THEN 'not_retained'
-          WHEN json_typeof(fold -> 'eventIds')<>'array' OR EXISTS (SELECT 1 FROM ${eventRows} WHERE ${integerValue(sql`value`)} IS NULL) THEN 'selector_mismatch'
-          WHEN ${afterIndex}::bigint >= ${eventCount} THEN 'invalid_cursor'` : sql`
-          WHEN NOT (${sizes} AND NOT EXISTS (SELECT 1 FROM ${flagRows} WHERE length(value #>> '{}')>4000)) THEN 'field_limit'`}
-        ELSE 'available' END AS availability FROM selected_fold
-    ), rendered AS (
-      SELECT availability, '{' || ${base} ||
-        CASE WHEN availability='available' THEN ',' || ${extended} ELSE '' END || '}' AS body FROM checked
-    )
-    SELECT availability, octet_length(body) AS "requiredBytes",
-      CASE WHEN availability IN ('available','not_retained') AND octet_length(body)<=${maxBytes} THEN body END AS projection FROM rendered`)
+  const rendered = db.select({
+    availability: checked.availability,
+    body: sql`'{' || ${base} || CASE WHEN ${checked.availability}='available' THEN ',' || ${extended} ELSE '' END || '}'`.as('body'),
+  }).from(checked).as('rendered')
+  const [result] = await db.with(lineage, matches).select({
+    availability: rendered.availability,
+    requiredBytes: sql<number>`octet_length(${rendered.body})`,
+    projection: sql<string | null>`CASE WHEN ${rendered.availability} IN ('available','not_retained')
+      AND octet_length(${rendered.body})<=${maxBytes} THEN ${rendered.body} END`,
+  }).from(rendered)
   return projectMergeReceipt(result, maxBytes, () => redact)
 }
 

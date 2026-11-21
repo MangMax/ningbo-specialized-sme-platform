@@ -272,6 +272,16 @@ describe.skipIf(!bin)('PostgreSQL-only lead versions', () => {
       VALUES ($1,'award',$2,1) RETURNING id`, [result.rows[0].id, year])
     await db.query("INSERT INTO record_evidence(record_event_id,source_file,list_no) VALUES ($1,'notice.pdf',1)", [event.rows[0].id])
     await db.query("UPDATE lead_list_row SET note='=1+1' WHERE id=102")
+    await db.query("INSERT INTO lead_list_row (version_id,row_number,name) VALUES (11,1,'补录首行')")
+    const snapshot = await (await app.request(`${versions}/11`)).json()
+    expect(snapshot).toMatchObject({
+      fileName: 'fixture.csv', fileAvailable: true,
+      rows: [
+        { rowNumber: 1, name: '补录首行', uscc: null, district: null, note: null, enterpriseId: null },
+        { rowNumber: 2, name: '原始企业', enterpriseId: linked },
+        { rowNumber: 3, name: '另一行', note: '=1+1', enterpriseId: null },
+      ],
+    })
     const base = '/api/lead-lists/exports'
     const request = { versionId: 11, clientRequestId: randomUUID() }
     const exportList = () => app.request(base, { method: 'POST', body: JSON.stringify(request) })
@@ -280,29 +290,36 @@ describe.skipIf(!bin)('PostgreSQL-only lead versions', () => {
     expect(accepted.status, JSON.stringify(receipt)).toBe(202)
     expect(await (await exportList()).json()).toEqual(receipt)
     const job = await app.terminal(receipt.jobId)
-    expect(job).toMatchObject({ kind: 'lead-lists-version-export', state: 'done', result: { versionId: 11, rowCount: 2 } })
+    expect(job).toMatchObject({ kind: 'lead-lists-version-export', state: 'done', result: { versionId: 11, rowCount: 3 } })
     expect((await fetch(app.url(job.result.downloadUrl))).status).toBe(401)
     const download = await app.download(job.result.downloadUrl)
     expect(download.response.status).toBe(200)
     expect(download.response.headers.get('content-type')).toBe('text/csv; charset=utf-8')
     expect(download.bytes.toString()).toBe([
       '\uFEFF"系列","获取日期","来源原件","原表序号","企业名称","统一社会信用代码","区县","备注","基础库企业编号","有效称号"',
+      '"走访名单","2026-11-18","fixture.csv","1","补录首行","","","","",""',
       `"走访名单","2026-11-18","fixture.csv","2","原始企业","待核对","","","${linked}","专精特新“小巨人”、专精特新中小企业、创新型中小企业"`,
       '"走访名单","2026-11-18","fixture.csv","3","另一行","","","\'=1+1","",""',
       '',
     ].join('\r\n'))
   })
 
-  it('registers verified source bytes and returns a missing-version 404 in PostgreSQL-only mode', async () => {
-    const registered = await app.request(versions, {
-      method: 'POST',
-      body: JSON.stringify({
-        series: '新登记名单', channel: 'research', listType: 'lead', acquiredOn: '2026-11-19',
-        fileId: 91, rows: [{ rowNumber: 2, name: '新登记企业' }],
-      }),
-    })
+  it('registers verified source bytes once and rejects a conflicting registration in PostgreSQL-only mode', async () => {
+    const input = {
+      series: '新登记名单', channel: 'research', listType: 'lead', acquiredOn: '2026-11-19',
+      fileId: 91, rows: [{ rowNumber: 2, name: '新登记企业' }],
+    }
+    const register = (body: typeof input) => app.request(versions, { method: 'POST', body: JSON.stringify(body) })
+    const registered = await register(input)
     const receipt = await registered.json()
     expect(registered.status, JSON.stringify(receipt)).toBe(201)
+    const repeat = await register(input)
+    expect(repeat.status).toBe(200)
+    expect(await repeat.json()).toMatchObject({ id: receipt.id })
+    expect((await register({ ...input, rows: [{ rowNumber: 2, name: '内容冲突' }] })).status).toBe(409)
+    expect(await (await app.request(`${versions}/${receipt.id}`)).json()).toMatchObject({
+      rows: [{ rowNumber: 2, name: '新登记企业' }],
+    })
     const catalog = await app.request(versions)
     expect(catalog.status).toBe(200)
     expect(await catalog.json()).toMatchObject({
@@ -315,5 +332,61 @@ describe.skipIf(!bin)('PostgreSQL-only lead versions', () => {
     expect((await app.request(`${versions}/999999/source`)).status).toBe(404)
     expect(existsSync(join(dir, 'legacy-runtime'))).toBe(false)
     expect(existsSync(join(dir, 'legacy-logs'))).toBe(false)
+  })
+
+  it('maintains linked directory details and paginates literal filters on PostgreSQL', async () => {
+    await db.query(`
+      INSERT INTO enterprise_region (code,name,parent_code,level)
+        VALUES ('330200','验收市',NULL,1), ('330201','验收区','330200',2), ('330201001','验收镇','330201',3);
+      INSERT INTO enterprise_industry (code,input_id,name,parent_code,level)
+        VALUES ('A','test-section','验收门类',NULL,0), ('01','test-division','验收大类','A',1),
+          ('011','test-group','验收中类','01',2), ('0111','test-detail','验收小类','011',3);
+    `)
+    const directory = '/api/core/enterprises'
+    const create = async (name: string) => {
+      const response = await app.request(directory, { method: 'POST', body: JSON.stringify({ name }) })
+      const row = await response.json()
+      expect(response.status, JSON.stringify(row)).toBe(200)
+      return row.id as number
+    }
+    const z = await create('验收目录%_Z')
+    const a = await create('验收目录%_a')
+    await create('验收目录xxb')
+    const details = `${directory}/${a}/details`
+    const input = {
+      expectedRevision: 1, districtCode: '330201', townshipCode: '330201001', industryCode: '0111',
+      registeredAddress: '验收路 1_号', operatingAddress: null,
+    }
+    const save = (body: typeof input) => app.request(details, { method: 'POST', body: JSON.stringify(body) })
+    expect((await save({ ...input, townshipCode: '330201002' })).status).toBe(409)
+    const saved = await save(input)
+    expect(saved.status).toBe(200)
+    expect(await saved.json()).toMatchObject({
+      id: a, revision: 2, districtName: '验收区', townshipName: '验收镇',
+      industryName: '验收小类', industryDivisionCode: '01', registeredAddress: '验收路 1_号',
+    })
+    expect((await save(input)).status).toBe(409)
+    const filtered = `${directory}?name=${encodeURIComponent('验收目录%_')}&sort=name&limit=1`
+    const first = await app.request(filtered)
+    expect(first.status).toBe(200)
+    expect(await first.json()).toMatchObject({ total: 2, page: 1, rows: [{ id: a }] })
+    expect(await (await app.request(filtered + '&page=10')).json()).toMatchObject({ total: 2, page: 2, rows: [{ id: z }] })
+    expect(await (await app.request(directory + '?industryDivisionCode=01&registeredAddress=1_')).json())
+      .toMatchObject({ rows: [{ id: a }], nextAfter: null })
+  })
+
+  it('serializes concurrent edits to a PostgreSQL source dictionary', async () => {
+    const path = '/api/core/dictionaries/list-sources'
+    const headers = {
+      'content-type': 'application/json', origin: app.url(''), 'sec-fetch-site': 'same-origin', 'x-dictionary-browser': '1',
+    }
+    const save = (body: object) => app.request(path, { method: 'POST', headers, body: JSON.stringify(body) })
+    const responses = await Promise.all([save({ name: '验收新渠道' }), save({ name: '验收新渠道' })])
+    expect(responses.map(response => response.status).sort()).toEqual([200, 409])
+    const created = await responses.find(response => response.ok)!.json()
+    const rename = await save({ code: created.code, previousName: '验收新渠道', name: '验收渠道更新' })
+    expect(rename.status).toBe(200)
+    expect((await save({ code: created.code, previousName: '验收新渠道', name: '验收渠道再次更新' })).status).toBe(409)
+    expect(await (await app.request(path)).json()).toContainEqual({ code: created.code, name: '验收渠道更新' })
   })
 })

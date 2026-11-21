@@ -1,4 +1,5 @@
-import { sql } from 'drizzle-orm'
+import { and, asc, count, eq, inArray, notInArray, sql } from 'drizzle-orm'
+import { ocrResult, storedFile } from '../../../../db/postgresql/file-tables'
 import { MAX_PAGE_NO } from '../../lib/ocr-markdown'
 import { appLog, type LogContext } from '../../lib/logging'
 import { activePostgresPhysicalIntent, requirePostgresFileWrite, type PostgresFileDb } from './file-store-postgres'
@@ -9,28 +10,39 @@ import {
 import { reviseOcrProvenance } from './ocr-provenance'
 
 type Provenance = NonNullable<Parameters<typeof ocrHistoricalBinding>[0]>
-export async function listPostgresOcrResults(db: PostgresFileDb, fileId: number, page?: number | null) {
-  const { rows } = await db.execute<Omit<OcrResultRow,'page' | 'version'> & {
-    page: string; version: string; revision: Provenance['revision'] | null; capture: Provenance['capture'] | null;
-  }>(sql`
-    SELECT page_no AS page, id || ':' || revision AS version, markdown, page_rel_path AS "pageRelPath",
-      engine, model, channel, created_at AS "createdAt", v.latest AS revision,
-      CASE WHEN json_typeof(v.latest->'capture') = 'number' THEN json_build_object(
-        'markdown', (j.doc->'captures'->(v.latest->>'capture')::int)->'markdown',
-        'input', (j.doc->'captures'->(v.latest->>'capture')::int)->'input'
-      ) END AS capture
-    FROM ocr_result r
-    CROSS JOIN LATERAL (SELECT CASE WHEN pg_input_is_valid(r.raw,'json') THEN r.raw::json END AS doc) j
-    CROSS JOIN LATERAL (SELECT CASE WHEN j.doc->>'format' = 'ocr-provenance-v1' THEN j.doc->'revisions'->-1 END AS latest) v
-    WHERE file_id = ${fileId} ${page == null ? sql.empty() : sql`AND page_no = ${page}`} ORDER BY page_no`)
-  return rows.map(({ page, revision, capture, ...row }) => ({
-    ...row, page: Number(page), historicalBinding: ocrHistoricalBinding({ revision: revision ?? undefined, capture: capture ?? undefined }, row.markdown),
+
+export async function listPostgresOcrResults(db: PostgresFileDb, fileId: number, page?: number | null): Promise<(OcrResultRow & { version: string })[]> {
+  // Drizzle has no API for validating or navigating nested JSON stored as text.
+  // Project the binding in PostgreSQL without fetching the full provider payload.
+  const results = db.select({
+    id: ocrResult.id, versionRevision: ocrResult.revision, page: ocrResult.page, markdown: ocrResult.markdown,
+    pageRelPath: ocrResult.pageRelPath, engine: ocrResult.engine, model: ocrResult.model,
+    channel: ocrResult.channel, createdAt: ocrResult.createdAt,
+    doc: sql`CASE WHEN pg_input_is_valid(${ocrResult.raw}, 'json') THEN ${ocrResult.raw}::json END`.as('provenance_doc'),
+  }).from(ocrResult).where(and(eq(ocrResult.fileId, fileId), page == null ? undefined : eq(ocrResult.page, page))).as('results')
+  const revisions = db.select({
+    id: results.id, versionRevision: results.versionRevision, page: results.page, markdown: results.markdown,
+    pageRelPath: results.pageRelPath, engine: results.engine, model: results.model,
+    channel: results.channel, createdAt: results.createdAt, doc: results.doc,
+    latest: sql<Provenance['revision'] | null>`CASE WHEN ${results.doc}->>'format' = 'ocr-provenance-v1' THEN ${results.doc}->'revisions'->-1 END`.as('latest_revision'),
+  }).from(results).as('revisions')
+  const capture = sql`(${revisions.doc}->'captures'->(${revisions.latest}->>'capture')::int)`
+  const rows = await db.select({
+    id: revisions.id, versionRevision: revisions.versionRevision, page: revisions.page, markdown: revisions.markdown,
+    pageRelPath: revisions.pageRelPath, engine: revisions.engine, model: revisions.model,
+    channel: revisions.channel, createdAt: revisions.createdAt, latest: revisions.latest,
+    capture: sql<Provenance['capture'] | null>`CASE WHEN json_typeof(${revisions.latest}->'capture') = 'number'
+      THEN json_build_object('markdown', ${capture}->'markdown', 'input', ${capture}->'input') END`,
+  }).from(revisions).orderBy(asc(revisions.page))
+  return rows.map(({ id, versionRevision, latest, capture, ...row }) => ({
+    ...row, version: `${id}:${versionRevision}`,
+    historicalBinding: ocrHistoricalBinding({ revision: latest ?? undefined, capture: capture ?? undefined }, row.markdown),
   }))
 }
 
 async function checkWritableFile(db: PostgresFileDb, fileId: number) {
-  const { rows: [file] } = await db.execute<{ removedAt: string | null }>(sql`
-    SELECT removed_at AS "removedAt" FROM stored_file WHERE id = ${fileId} FOR UPDATE`)
+  const [file] = await db.select({ removedAt: storedFile.removedAt }).from(storedFile)
+    .where(eq(storedFile.id, fileId)).for('update')
   if (!file || file.removedAt) return { ok: false as const, statusCode: 404, message: '文件不存在或已移出库' }
   if (await activePostgresPhysicalIntent(db, fileId)) return { ok: false as const, statusCode: 409, message: '文件正在隔离或恢复' }
 }
@@ -45,30 +57,34 @@ export async function writePostgresOcrResult(db: PostgresFileDb, input: OcrWrite
   const engine = input.engine?.trim() || DEFAULT_OCR_ENGINE
   const model = input.model ?? null
   const createdAt = new Date().toISOString()
-  const pageNumbers = sql`${sql.param(checked.pages)}::bigint[]`
+  const fileScope = eq(ocrResult.fileId, input.fileId)
   return db.transaction(async tx => {
     const file = await checkWritableFile(tx, input.fileId)
     if (file) return file
-    const { rows } = await tx.execute<NonNullable<Parameters<typeof reviseOcrProvenance>[0]> & { page: string; version: string }>(sql`
-      SELECT page_no AS page, markdown, raw::json, engine, model, channel, created_at AS "createdAt",
-        id || ':' || revision AS version
-      FROM ocr_result WHERE file_id = ${input.fileId} AND page_no = ANY(${pageNumbers})`)
-    const previous = new Map(rows.map(row => [Number(row.page), row]))
+    const rows = await tx.select().from(ocrResult).where(and(fileScope, inArray(ocrResult.page, checked.pages)))
+    const previous = new Map(rows.map(row => [row.page, { ...row, raw: row.raw === null ? null : JSON.parse(row.raw) }]))
     for (const [page, expected] of expectations.pages) {
-      const conflict = compareOcrPageVersion(page, previous.get(page)?.version ?? null, expected)
+      const row = previous.get(page)
+      const conflict = compareOcrPageVersion(page, row ? `${row.id}:${row.revision}` : null, expected)
       if (conflict) return conflict
     }
-    if (input.replaceExistingPages) await tx.execute(sql`
-      DELETE FROM ocr_result WHERE file_id = ${input.fileId} AND page_no <> ALL(${pageNumbers})`)
+    if (input.replaceExistingPages) {
+      await tx.delete(ocrResult).where(and(fileScope, notInArray(ocrResult.page, checked.pages)))
+    }
     for (const page of input.pages) {
-      const relPath = page.pageRelPath ?? pageRelPathOf(input.sourceRelPath, page.page)
-      const raw = reviseOcrProvenance(previous.get(page.page), { ...page, engine, model, channel: input.channel, createdAt })
-      await tx.execute(sql`
-        INSERT INTO ocr_result (file_id,page_no,page_rel_path,markdown,raw,engine,model,channel,created_at)
-        VALUES (${input.fileId},${page.page},${relPath},${page.markdown},${JSON.stringify(raw)},${engine},${model},${input.channel},${createdAt})
-        ON CONFLICT (file_id,page_no) DO UPDATE SET revision = ocr_result.revision + 1,
-          page_rel_path = excluded.page_rel_path, markdown = excluded.markdown, raw = excluded.raw,
-          engine = excluded.engine, model = excluded.model, channel = excluded.channel, created_at = excluded.created_at`)
+      const row = previous.get(page.page)
+      const raw = reviseOcrProvenance(row,
+        { ...page, engine, model, channel: input.channel, createdAt })
+      const values = {
+        pageRelPath: page.pageRelPath ?? pageRelPathOf(input.sourceRelPath, page.page),
+        markdown: page.markdown, raw: JSON.stringify(raw), engine, model, channel: input.channel, createdAt,
+      }
+      await tx.insert(ocrResult).values({ ...values, fileId: input.fileId, page: page.page })
+        .onConflictDoUpdate({
+          target: [ocrResult.fileId, ocrResult.page],
+          // Drizzle has no builder for column arithmetic in the conflict update.
+          set: { ...values, revision: sql`${ocrResult.revision} + 1` },
+        })
     }
     return { ok: true, written: input.pages.length, pages: checked.pages }
   })
@@ -83,15 +99,16 @@ export async function deletePostgresOcrPage(db: PostgresFileDb, fileId: number, 
     const result = await db.transaction(async tx => {
       const file = await checkWritableFile(tx, fileId)
       if (file) return file
-      const key = sql`WHERE file_id = ${fileId} AND page_no = ${page}`
+      const fileScope = eq(ocrResult.fileId, fileId)
+      const key = and(fileScope, eq(ocrResult.page, page))
       if (expectedVersion !== undefined) {
-        const { rows: [row] } = await tx.execute<{ version: string }>(sql`SELECT id || ':' || revision AS version FROM ocr_result ${key}`)
-        const conflict = compareOcrPageVersion(page, row?.version ?? null, expectedVersion)
+        const [row] = await tx.select({ id: ocrResult.id, revision: ocrResult.revision }).from(ocrResult).where(key)
+        const conflict = compareOcrPageVersion(page, row ? `${row.id}:${row.revision}` : null, expectedVersion)
         if (conflict) return conflict
       }
-      const deleted = await tx.execute(sql`DELETE FROM ocr_result ${key}`)
-      const { rows: [count] } = await tx.execute<{ remaining: string }>(sql`SELECT count(*) AS remaining FROM ocr_result WHERE file_id = ${fileId}`)
-      return { ok: true as const, page, deleted: deleted.rowCount ?? 0, remaining: Number(count!.remaining) }
+      const deleted = await tx.delete(ocrResult).where(key)
+      const [counted] = await tx.select({ remaining: count() }).from(ocrResult).where(fileScope)
+      return { ok: true as const, page, deleted: deleted.rowCount ?? 0, remaining: counted!.remaining }
     })
     appLog({ module: 'core', source: 'ocr', operation: 'ocr.page.delete', fileId, page,
       outcome: result.ok ? (result.deleted ? 'success' : 'skipped') : 'denied',

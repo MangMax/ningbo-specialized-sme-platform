@@ -1,5 +1,7 @@
-import { sql } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { comparisonScopeProof, comparisonScopeProofAudit } from '../../../../db/postgresql/comparison-proof-tables'
+import { importBatch } from '../../../../db/postgresql/import-tables'
 import { comparisonProofPlanSteps, ProofError, proofRequest, type ComparisonProofPlan, type ProofRequest, type ProofStatus } from './comparison-scope-proof'
 import { fingerprint, ProofSourceError, type CurrentEvidence, type OfficialEvidence } from './comparison-scope-proof-source'
 import {
@@ -37,10 +39,10 @@ async function plan(tx: Tx, request: ProofRequest) {
 }
 
 async function readBatch(tx: Tx, request: ProofRequest) {
-  const { rows: [batch] } = await tx.execute<Batch>(sql`
-    SELECT id::float8 AS id, source_kind AS kind, source_identity AS identity, status,
-      preflight_result::json AS plan, summary::json AS receipt
-    FROM import_batch WHERE idempotency_key=${request.idempotencyKey} FOR UPDATE`)
+  const [batch] = await tx.select({
+    id: importBatch.id, kind: importBatch.sourceKind, identity: importBatch.sourceIdentity, status: importBatch.status,
+    plan: sql<Batch['plan']>`${importBatch.preflightResult}::json`, receipt: sql<Batch['receipt']>`${importBatch.summary}::json`,
+  }).from(importBatch).where(eq(importBatch.idempotencyKey, request.idempotencyKey)).for('update')
   if (batch && (batch.kind !== 'comparison_scope_proof' || batch.identity !== request.sourceIdentity)) {
     throw new ProofError('idempotency_conflict', 'Idempotency key belongs to another source')
   }
@@ -66,24 +68,23 @@ export function preflightPostgresComparisonProof(db: NodePgDatabase, raw: ProofR
     if (prior && prior.requestHash !== fingerprint(request)) throw new ProofError('idempotency_conflict', 'Idempotency key belongs to a different request')
     if (batch?.status === 'committed' && prior) return { batchId: batch.id, batchStatus: 'committed' as const, ...prior }
     const next = await plan(tx, request)
-    const { rows: [saved] } = await tx.execute<{ id: number }>(sql`
-      INSERT INTO import_batch(idempotency_key,source_kind,source_identity,status,preflight_result,created_at)
-      VALUES (${request.idempotencyKey},'comparison_scope_proof',${request.sourceIdentity},'preflight',
-        ${JSON.stringify(next)},${new Date().toISOString()})
-      ON CONFLICT (idempotency_key) DO UPDATE SET preflight_result=excluded.preflight_result, error=NULL
-      WHERE import_batch.status='preflight'
-      RETURNING id::float8 AS id`)
+    const [saved] = await tx.insert(importBatch).values({
+      idempotencyKey: request.idempotencyKey, sourceKind: 'comparison_scope_proof', sourceIdentity: request.sourceIdentity,
+      status: 'preflight', preflightResult: JSON.stringify(next), createdAt: new Date().toISOString(),
+    }).onConflictDoUpdate({
+      target: importBatch.idempotencyKey, set: { preflightResult: sql`excluded.preflight_result`, error: null },
+      setWhere: eq(importBatch.status, 'preflight'),
+    }).returning({ id: importBatch.id })
     return { batchId: saved?.id ?? batch!.id, batchStatus: 'preflight' as const, ...next }
   })
 }
 
 async function writeAudit(tx: Tx, request: ProofRequest, batch: Batch, proofId: number, fromStatus: ProofStatus | null, toStatus: ProofStatus, expectedRevision: number, at: string) {
-  await tx.execute(sql`
-    INSERT INTO comparison_scope_proof_audit(proof_id,batch_id,idempotency_key,from_status,to_status,
-      expected_revision,resulting_revision,actor_type,actor_id,basis,rule_id,rule_version,decided_at)
-    VALUES (${proofId},${batch.id},${request.idempotencyKey},${fromStatus},${toStatus},
-      ${expectedRevision},${expectedRevision + 1},${request.actor.type},${request.actor.id},${request.basis},
-      ${request.ruleId},${request.ruleVersion},${at})`)
+  await tx.insert(comparisonScopeProofAudit).values({
+    proofId, batchId: batch.id, idempotencyKey: request.idempotencyKey, fromStatus, toStatus, expectedRevision,
+    resultingRevision: expectedRevision + 1, actorType: request.actor.type, actorId: request.actor.id,
+    basis: request.basis, ruleId: request.ruleId, ruleVersion: request.ruleVersion, decidedAt: at,
+  })
 }
 
 export function commitPostgresComparisonProof(db: NodePgDatabase, raw: ProofRequest, planHash: string) {
@@ -95,8 +96,8 @@ export function commitPostgresComparisonProof(db: NodePgDatabase, raw: ProofRequ
     if (batch.plan.planHash !== planHash) throw new ProofError('plan_mismatch', 'Submitted plan hash differs')
     if (batch.status === 'committed') return batch.receipt!
     const ids = request.operations.flatMap(op => op.action === 'decide' ? [op.proofId] : [])
-    if (ids.length) await tx.execute(sql`
-      SELECT id FROM comparison_scope_proof WHERE id=ANY(${sql.param(ids)}::bigint[]) ORDER BY id FOR UPDATE`)
+    const proof = comparisonScopeProof
+    if (ids.length) await tx.select({ id: proof.id }).from(proof).where(inArray(proof.id, ids)).orderBy(proof.id).for('update')
     const next = await plan(tx, request)
     if (next.planHash !== planHash) throw new ProofError('plan_mismatch', 'Archived sources or proof revisions changed')
     const at = new Date().toISOString()
@@ -108,19 +109,18 @@ export function commitPostgresComparisonProof(db: NodePgDatabase, raw: ProofRequ
         proofIds.push(target.proofId)
       } else {
         if (op.action !== 'create') throw new Error('Invalid comparison proof plan target')
-        const { rows: [row] } = await tx.execute<{ id: number }>(sql`
-          INSERT INTO comparison_scope_proof(kind,evidence,source_fingerprint,created_at)
-          VALUES (${op.kind},${JSON.stringify(op.evidence)},${target.sourceFingerprint},${at})
-          RETURNING id::float8 AS id`)
+        const [row] = await tx.insert(proof).values({
+          kind: op.kind, evidence: JSON.stringify(op.evidence), sourceFingerprint: target.sourceFingerprint, createdAt: at,
+        }).returning({ id: proof.id })
         await writeAudit(tx, request, batch, row!.id, null, 'candidate', 0, at)
         if (op.status === 'confirmed') await writeAudit(tx, request, batch, row!.id, 'candidate', 'confirmed', 1, at)
         proofIds.push(row!.id)
       }
     }
     const receipt = { batchId: batch.id, planHash, impact: next.impact, proofIds }
-    await tx.execute(sql`
-      UPDATE import_batch SET status='committed', summary=${JSON.stringify(receipt)},
-        item_results=${JSON.stringify(proofIds)}, committed_at=${at}, error=NULL WHERE id=${batch.id}`)
+    await tx.update(importBatch).set({
+      status: 'committed', summary: JSON.stringify(receipt), itemResults: JSON.stringify(proofIds), committedAt: at, error: null,
+    }).where(eq(importBatch.id, batch.id))
     return receipt
   })
 }

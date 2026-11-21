@@ -1,4 +1,7 @@
-import { sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, ne, notExists, or, sql } from 'drizzle-orm'
+import { unionAll } from 'drizzle-orm/pg-core'
+import { enterprise, enterpriseAddress, enterpriseAlias, enterpriseDirectory, enterpriseIndustry, enterpriseMerge, enterpriseProfileAudit, enterpriseRegion } from '../../../../db/postgresql/enterprise-tables'
+import { enterpriseSource, enterpriseSourceLink } from '../../../../db/postgresql/enterprise-source-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { normalizeEnterpriseName } from '../../lib/enterprise-name'
 import { normalizeReviewedUscc } from '../../lib/enterprise-uscc'
@@ -15,19 +18,30 @@ function conflict(code: string, message: string): never {
 
 async function validateCodes(tx: Transaction, { districtCode, townshipCode, industryCode }: Codes) {
   if (!districtCode && !townshipCode && !industryCode) return
-  const { rows } = await tx.execute<{ district: boolean; township: boolean; industry: boolean }>(sql`
-    SELECT EXISTS (SELECT 1 FROM enterprise_region WHERE code = ${districtCode ?? null} AND level = 2) AS district,
-           EXISTS (SELECT 1 FROM enterprise_region WHERE code = ${townshipCode ?? null} AND level = 3
-                   AND parent_code = ${districtCode ?? null}) AS township,
-           EXISTS (SELECT 1 FROM enterprise_industry WHERE code = ${industryCode ?? null} AND level = 3) AS industry`)
-  const valid = rows[0]!
-  if (districtCode && !valid.district) conflict('unknown_district', 'District code is absent from the supplied dictionary')
-  if (townshipCode && !valid.township) conflict('township_district_mismatch', 'Township code must belong to the selected district')
-  if (industryCode && !valid.industry) conflict('unknown_industry', 'Industry detail code is absent from the supplied dictionary')
+  // Check all three codes in one statement snapshot. Drizzle has no SQL literal builder.
+  type CodeKind = 'district' | 'township' | 'industry'
+  const rows = await unionAll(
+    tx.select({ kind: sql<CodeKind>`'district'` }).from(enterpriseRegion).where(and(
+      eq(enterpriseRegion.level, 2), districtCode ? eq(enterpriseRegion.code, districtCode) : sql`false`,
+    )),
+    tx.select({ kind: sql<CodeKind>`'township'` }).from(enterpriseRegion).where(and(
+      eq(enterpriseRegion.level, 3),
+      townshipCode && districtCode
+        ? and(eq(enterpriseRegion.code, townshipCode), eq(enterpriseRegion.parentCode, districtCode))
+        : sql`false`,
+    )),
+    tx.select({ kind: sql<CodeKind>`'industry'` }).from(enterpriseIndustry).where(and(
+      eq(enterpriseIndustry.level, 3), industryCode ? eq(enterpriseIndustry.code, industryCode) : sql`false`,
+    )),
+  )
+  const valid = new Set(rows.map(row => row.kind))
+  if (districtCode && !valid.has('district')) conflict('unknown_district', 'District code is absent from the supplied dictionary')
+  if (townshipCode && !valid.has('township')) conflict('township_district_mismatch', 'Township code must belong to the selected district')
+  if (industryCode && !valid.has('industry')) conflict('unknown_industry', 'Industry detail code is absent from the supplied dictionary')
 }
 
 async function checkedEnterprise(tx: Transaction, id: number, revision: number, operation: 'details' | 'membership') {
-  await tx.execute(sql`SELECT id FROM enterprise WHERE id = ${id} FOR UPDATE`)
+  await tx.select({ id: enterprise.id }).from(enterprise).where(eq(enterprise.id, id)).for('update')
   const before = await readPostgresEnterpriseDetails(tx, id)
   if (!before) {
     throw new EnterpriseKernelError(404, 'enterprise_not_found', operation === 'details' ? '未找到企业。' : 'Enterprise not found')
@@ -41,19 +55,27 @@ async function checkedEnterprise(tx: Transaction, id: number, revision: number, 
 }
 
 async function saveCodes(tx: Transaction, id: number, revision: number, fields: Codes) {
-  await tx.execute(sql`INSERT INTO enterprise_directory (enterprise_id, district_code, township_code, industry_code, revision)
-    VALUES (${id}, ${fields.districtCode ?? null}, ${fields.townshipCode ?? null}, ${fields.industryCode ?? null}, ${revision})
-    ON CONFLICT (enterprise_id) DO UPDATE SET district_code = excluded.district_code, township_code = excluded.township_code,
-      industry_code = excluded.industry_code, revision = excluded.revision`)
+  const profile = {
+    districtCode: fields.districtCode ?? null,
+    townshipCode: fields.townshipCode ?? null,
+    industryCode: fields.industryCode ?? null,
+    revision,
+  }
+  await tx.insert(enterpriseDirectory).values({ enterpriseId: id, ...profile })
+    .onConflictDoUpdate({ target: enterpriseDirectory.enterpriseId, set: profile })
 }
 
 async function matchingUsccExists(tx: Transaction, uscc: string, exceptId: number | null = null) {
-  const { rows } = await tx.execute<{ uscc: string }>(sql`SELECT uscc_norm AS uscc FROM enterprise
-    WHERE id IS DISTINCT FROM ${exceptId} AND (uscc_norm = ${uscc} OR uscc_norm COLLATE "C" ~ '[^A-Z0-9]')`)
-  return rows.some(row => normalizeReviewedUscc(row.uscc) === uscc)
+  // Drizzle has no PostgreSQL regex or collation expressions.
+  const rows = await tx.select({ uscc: enterprise.usccNorm }).from(enterprise).where(and(
+    exceptId === null ? undefined : ne(enterprise.id, exceptId),
+    or(eq(enterprise.usccNorm, uscc), sql`${enterprise.usccNorm} COLLATE "C" ~ '[^A-Z0-9]'`),
+  ))
+  return rows.some(row => row.uscc !== null && normalizeReviewedUscc(row.uscc) === uscc)
 }
 
 function lockIdentity(tx: Transaction, kind: 'name' | 'uscc', value: string) {
+  // Drizzle does not expose PostgreSQL transaction advisory locks or hashtextextended.
   return tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`enterprise:${kind}:${value}`}, 0))`)
 }
 
@@ -64,9 +86,8 @@ export async function lockPostgresReviewedEnterpriseBatch(
 ) {
   const names = new Set(fields.flatMap(field => field.name === undefined ? [] : [normalizeEnterpriseName(field.name)]))
   if (enterpriseIds.length) {
-    const { rows } = await tx.execute<{ name: string }>(sql`SELECT name FROM enterprise
-      WHERE id IN (${sql.join(enterpriseIds.map(id => sql`${id}`), sql`, `)})
-      ORDER BY id FOR UPDATE`)
+    const rows = await tx.select({ name: enterprise.name }).from(enterprise)
+      .where(inArray(enterprise.id, enterpriseIds)).orderBy(asc(enterprise.id)).for('update')
     if (names.size) for (const row of rows) names.add(normalizeEnterpriseName(row.name))
   }
   const codes = new Set(fields.flatMap(field => field.uscc ? [field.uscc] : []))
@@ -76,17 +97,18 @@ export async function lockPostgresReviewedEnterpriseBatch(
 
 export async function registerPostgresEnterpriseSource(tx: Transaction, input: EnterpriseSource, enterpriseIds: readonly number[]) {
   const { module, businessTable, versionKey, channel, listType, acquiredOn, series, fileId, sha256 } = input
-  const { rows } = await tx.execute<{ id: string }>(sql`INSERT INTO enterprise_source
-    (module, business_table, version_key, channel_code, list_type_code, acquired_on, series, file_id, sha256)
-    VALUES (${module}, ${businessTable}, ${versionKey}, ${channel}, ${listType}, ${acquiredOn}, ${series}, ${fileId}, ${sha256})
-    ON CONFLICT (module, business_table, version_key) DO NOTHING RETURNING id`)
-  let id = rows[0]?.id
+  const [{ id: insertedId } = {}] = await tx.insert(enterpriseSource).values({
+    module, businessTable, versionKey, channelCode: channel, listTypeCode: listType, acquiredOn, series, fileId, sha256,
+  }).onConflictDoNothing({ target: [enterpriseSource.module, enterpriseSource.businessTable, enterpriseSource.versionKey] })
+    .returning({ id: enterpriseSource.id })
+  let id = insertedId
   if (id === undefined) {
-    const prior = await tx.execute<{ id: string; channel: string; listType: string; series: string; sha256: string | null }>(sql`
-      SELECT id, channel_code AS channel, list_type_code AS "listType", series, sha256
-      FROM enterprise_source
-      WHERE module = ${module} AND business_table = ${businessTable} AND version_key = ${versionKey}`)
-    const existing = prior.rows[0]
+    const [existing] = await tx.select({
+      id: enterpriseSource.id, channel: enterpriseSource.channelCode, listType: enterpriseSource.listTypeCode,
+      series: enterpriseSource.series, sha256: enterpriseSource.sha256,
+    }).from(enterpriseSource).where(and(
+      eq(enterpriseSource.module, module), eq(enterpriseSource.businessTable, businessTable), eq(enterpriseSource.versionKey, versionKey),
+    ))
     if (!existing || existing.channel !== channel || existing.listType !== listType
       || existing.series !== series || existing.sha256 !== sha256) {
       conflict('source_conflict', 'This source version already has different provenance')
@@ -94,11 +116,10 @@ export async function registerPostgresEnterpriseSource(tx: Transaction, input: E
     id = existing.id
   }
   if (enterpriseIds.length) {
-    await tx.execute(sql`INSERT INTO enterprise_source_link (enterprise_id, source_id)
-      VALUES ${sql.join(enterpriseIds.map(enterpriseId => sql`(${enterpriseId}, ${id})`), sql`, `)}
-      ON CONFLICT DO NOTHING`)
+    await tx.insert(enterpriseSourceLink).values(enterpriseIds.map(enterpriseId => ({ enterpriseId, sourceId: id })))
+      .onConflictDoNothing()
   }
-  return Number(id)
+  return id
 }
 
 export async function createPostgresReviewedEnterprise(tx: Transaction, fields: EnterpriseFields & { name: string }) {
@@ -109,72 +130,80 @@ export async function createPostgresReviewedEnterprise(tx: Transaction, fields: 
   if (uscc) await lockIdentity(tx, 'uscc', uscc)
   const exists = uscc
     ? await matchingUsccExists(tx, uscc)
-    : (await tx.execute(sql`SELECT id FROM enterprise WHERE name_norm = ${name} LIMIT 1`)).rows.length > 0
+    : (await tx.select({ id: enterprise.id }).from(enterprise).where(eq(enterprise.nameNorm, name)).limit(1)).length > 0
   if (exists) {
     conflict('existing_subject', 'A matching identity already exists; confirm an enterprise ID')
   }
-  const inserted = await tx.execute<{ id: string }>(sql`INSERT INTO enterprise (name, name_norm, uscc_norm, quality_flags)
-    VALUES (${fields.name}, ${name}, ${uscc}, ${JSON.stringify(uscc ? [] : ['uscc_missing'])}) RETURNING id`)
-  const id = Number(inserted.rows[0]!.id)
-  await saveCodes(tx, id, 1, fields)
-  return id
+  const [inserted] = await tx.insert(enterprise).values({
+    name: fields.name, nameNorm: name, usccNorm: uscc, qualityFlags: JSON.stringify(uscc ? [] : ['uscc_missing']),
+  }).returning({ id: enterprise.id })
+  await saveCodes(tx, inserted!.id, 1, fields)
+  return inserted!.id
 }
 
 async function retainPostgresPreviousName(tx: Transaction, profile: EnterpriseProfile, nameNorm: string, idempotencyKey: string) {
   const { enterpriseId: id, name } = profile
   const oldNorm = normalizeEnterpriseName(name)
   if (!nameNorm || !oldNorm) throw new EnterpriseKernelError(422, 'invalid_name', 'Normalized enterprise name must not be empty')
-  const owner = await tx.execute(sql`
-    SELECT e.id FROM enterprise e WHERE e.id <> ${id} AND e.name_norm IN (${oldNorm}, ${nameNorm})
-      AND NOT EXISTS (SELECT 1 FROM enterprise_merge m WHERE m.from_enterprise_id = e.id)
-    UNION ALL
-    SELECT id FROM enterprise_alias WHERE enterprise_id <> ${id} AND name_norm IN (${oldNorm}, ${nameNorm})
-      AND verification_status = 'confirmed'
-    LIMIT 1`)
-  if (owner.rows.length) conflict('identity_conflict', 'Name belongs to another enterprise; use the identity operation')
-  const { rows } = await tx.execute<{ id: string; status: string }>(sql`
-    SELECT id, verification_status AS status FROM enterprise_alias WHERE enterprise_id = ${id} AND name_norm = ${oldNorm}
-      AND (verification_status = 'confirmed' OR (source_kind = 'manual' AND source_ref_id = 0))
-    ORDER BY (verification_status = 'confirmed') DESC, id LIMIT 1`)
-  const existing = rows[0]
+  const names = [oldNorm, nameNorm]
+  const owners = await unionAll(
+    tx.select({ id: enterprise.id }).from(enterprise).where(and(
+      ne(enterprise.id, id), inArray(enterprise.nameNorm, names),
+      notExists(tx.select({ id: enterpriseMerge.fromEnterpriseId }).from(enterpriseMerge)
+        .where(eq(enterpriseMerge.fromEnterpriseId, enterprise.id))),
+    )),
+    tx.select({ id: enterpriseAlias.id }).from(enterpriseAlias).where(and(
+      ne(enterpriseAlias.enterpriseId, id), inArray(enterpriseAlias.nameNorm, names), eq(enterpriseAlias.verificationStatus, 'confirmed'),
+    )),
+  ).limit(1)
+  if (owners.length) conflict('identity_conflict', 'Name belongs to another enterprise; use the identity operation')
+  const [existing] = await tx.select({ id: enterpriseAlias.id, status: enterpriseAlias.verificationStatus }).from(enterpriseAlias)
+    .where(and(eq(enterpriseAlias.enterpriseId, id), eq(enterpriseAlias.nameNorm, oldNorm), or(
+      eq(enterpriseAlias.verificationStatus, 'confirmed'),
+      and(eq(enterpriseAlias.sourceKind, 'manual'), eq(enterpriseAlias.sourceRefId, 0)),
+    )))
+    .orderBy(desc(eq(enterpriseAlias.verificationStatus, 'confirmed')), asc(enterpriseAlias.id)).limit(1)
   if (existing?.status === 'confirmed') return { id: existing.id, created: 0 }
   if (existing) conflict('alias_lifecycle_required', 'Previous-name record is not confirmed; confirm or restore it through alias lifecycle first')
-  const alias = await tx.execute<{ id: string }>(sql`INSERT INTO enterprise_alias
-    (enterprise_id, name, name_norm, source_kind, source_ref_id, verification_status, note, created_at)
-    VALUES (${id}, ${name}, ${oldNorm}, 'manual', 0, 'confirmed', ${`Enterprise profile rename: ${idempotencyKey}`},
-      ${new Date().toISOString()}) RETURNING id`)
-  return { id: alias.rows[0]!.id, created: 1 }
+  const [alias] = await tx.insert(enterpriseAlias).values({
+    enterpriseId: id, name, nameNorm: oldNorm, sourceKind: 'manual', sourceRefId: 0, verificationStatus: 'confirmed',
+    note: `Enterprise profile rename: ${idempotencyKey}`, createdAt: new Date().toISOString(),
+  }).returning({ id: enterpriseAlias.id })
+  return { id: alias!.id, created: 1 }
 }
 
-export async function insertPostgresEnterpriseAlias(tx: Transaction, values: {
-  enterpriseId: number; name: string; nameNorm: string; sourceKind: string; sourceRefId: number
-  validFrom: string | null; validTo: string | null; verificationStatus: string; note: string | null
-}) {
-  const { enterpriseId,name,nameNorm,sourceKind,sourceRefId,validFrom,validTo,verificationStatus,note } = values
-  const { rows: [inserted] } = await tx.execute<{ id: number }>(sql`INSERT INTO enterprise_alias
-    (enterprise_id,name,name_norm,source_kind,source_ref_id,valid_from,valid_to,verification_status,note,created_at)
-    VALUES(${enterpriseId},${name},${nameNorm},${sourceKind},${sourceRefId},${validFrom},${validTo},
-      ${verificationStatus},${note},${new Date().toISOString()})
-    ON CONFLICT(enterprise_id,name_norm,source_kind,source_ref_id) DO NOTHING RETURNING id::float8 AS id`)
+export async function insertPostgresEnterpriseAlias(tx: Transaction, values: Pick<typeof enterpriseAlias.$inferInsert,
+  'enterpriseId' | 'name' | 'nameNorm' | 'sourceKind' | 'sourceRefId' | 'validFrom' | 'validTo' | 'verificationStatus' | 'note'
+> & { sourceRefId: number }) {
+  const { enterpriseId, nameNorm, sourceKind, sourceRefId } = values
+  const [inserted] = await tx.insert(enterpriseAlias).values({ ...values, createdAt: new Date().toISOString() })
+    .onConflictDoNothing({ target: [enterpriseAlias.enterpriseId, enterpriseAlias.nameNorm, enterpriseAlias.sourceKind, enterpriseAlias.sourceRefId] })
+    .returning({ id: enterpriseAlias.id })
   if (inserted) return { id: inserted.id, created: true }
-  const { rows: [existing] } = await tx.execute<{ id: number }>(sql`SELECT id::float8 AS id FROM enterprise_alias
-    WHERE enterprise_id=${enterpriseId} AND name_norm=${nameNorm} AND source_kind=${sourceKind} AND source_ref_id=${sourceRefId}`)
+  const [existing] = await tx.select({ id: enterpriseAlias.id }).from(enterpriseAlias).where(and(
+    eq(enterpriseAlias.enterpriseId, enterpriseId), eq(enterpriseAlias.nameNorm, nameNorm),
+    eq(enterpriseAlias.sourceKind, sourceKind), eq(enterpriseAlias.sourceRefId, sourceRefId),
+  ))
   return { id: existing!.id, created: false }
 }
 
 export async function backfillPostgresEnterpriseUscc(tx: Transaction, id: number, uscc: string, qualityFlags: readonly string[]) {
   const flags = qualityFlags.filter(flag=>flag!=='uscc_missing')
-  await tx.execute(sql`UPDATE enterprise SET uscc_norm=${uscc},quality_flags=${JSON.stringify(flags)} WHERE id=${id}`)
+  await tx.update(enterprise).set({ usccNorm: uscc, qualityFlags: JSON.stringify(flags) }).where(eq(enterprise.id, id))
 }
 
 type ReviewedAttachment = Extract<ReviewedSubject, { action: 'attach' }>
 
 export async function postgresEnterpriseProfileState(tx: Transaction, id: number) {
-  const { rows: [state] } = await tx.execute<{ name: string; city: string | null; district: string | null;
-    usccNorm: string | null; nameNorm: string; qualityFlags: string | null; key: string | null }>(sql`
-    SELECT name, city, district, uscc_norm AS "usccNorm", name_norm AS "nameNorm", quality_flags AS "qualityFlags",
-      (SELECT idempotency_key FROM enterprise_profile_audit WHERE enterprise_id = ${id} ORDER BY id DESC LIMIT 1) AS key
-    FROM enterprise WHERE id = ${id}`)
+  const latestAudit = tx.select({
+    enterpriseId: enterpriseProfileAudit.enterpriseId, key: enterpriseProfileAudit.idempotencyKey,
+  }).from(enterpriseProfileAudit)
+    .where(eq(enterpriseProfileAudit.enterpriseId, id)).orderBy(desc(enterpriseProfileAudit.id)).limit(1).as('latest_audit')
+  const [state] = await tx.select({
+    name: enterprise.name, city: enterprise.city, district: enterprise.district, usccNorm: enterprise.usccNorm,
+    nameNorm: enterprise.nameNorm, qualityFlags: enterprise.qualityFlags,
+    key: latestAudit.key,
+  }).from(enterprise).leftJoin(latestAudit, eq(latestAudit.enterpriseId, enterprise.id)).where(eq(enterprise.id, id))
   if (!state) throw new EnterpriseKernelError(404, 'not_found', 'Enterprise not found')
   const { name, city, district, key, ...row } = state
   return { profile: { enterpriseId: id, name, city, district }, row, key }
@@ -199,29 +228,30 @@ export async function applyPostgresEnterpriseProfileChange(
   }
   const nameNorm = renamed ? normalizeEnterpriseName(after.name) : row.nameNorm
   const alias = renamed ? await retainPostgresPreviousName(tx, profile, nameNorm, audit.idempotencyKey) : { id: null, created: 0 }
-  const updates = []
-  if (renamed) updates.push(sql`name = ${after.name}, name_norm = ${nameNorm}`)
-  if (changes.city !== undefined) updates.push(sql`city = ${after.city}`)
-  if (changes.district !== undefined) updates.push(sql`district = ${after.district}`)
+  const updates: Partial<typeof enterprise.$inferInsert> = {}
+  if (renamed) Object.assign(updates, { name: after.name, nameNorm })
+  if (changes.city !== undefined) updates.city = after.city
+  if (changes.district !== undefined) updates.district = after.district
   if (usccChanged) {
     const previousFlags = JSON.parse(row.qualityFlags ?? 'null') as string[] | null
     const flags = (previousFlags ?? []).filter(flag => flag !== 'uscc_missing')
     if (uscc === null) flags.push('uscc_missing')
-    updates.push(sql`uscc_norm = ${uscc}, quality_flags = ${JSON.stringify(flags)}`)
+    updates.usccNorm = uscc
+    updates.qualityFlags = JSON.stringify(flags)
   }
-  if (updates.length) await tx.execute(sql`UPDATE enterprise SET ${sql.join(updates, sql`, `)} WHERE id = ${id}`)
+  if (Object.keys(updates).length) await tx.update(enterprise).set(updates).where(eq(enterprise.id, id))
   const beforeVersion = enterpriseProfileVersion(current)
   const afterVersion = enterpriseProfileVersion({ profile: after, row: { nameNorm, usccNorm: usccChanged ? uscc : row.usccNorm }, key: audit.idempotencyKey })
   const committedAt = new Date().toISOString()
-  const inserted = await tx.execute<{ id: string }>(sql`INSERT INTO enterprise_profile_audit
-    (enterprise_id, idempotency_key, request_hash, before_version, after_version, before, after, actor, basis,
-      retained_alias_id, alias_created, created_at)
-    VALUES (${id}, ${audit.idempotencyKey}, ${audit.requestHash}, ${beforeVersion}, ${afterVersion},
-      ${JSON.stringify(usccChanged ? { ...profile, uscc: row.usccNorm } : profile)},
-      ${JSON.stringify(usccChanged ? { ...after, uscc } : after)}, ${JSON.stringify(audit.actor)},
-      ${audit.basis}, ${alias.id}, ${alias.created}, ${committedAt}) RETURNING id`)
-  return { auditId: Number(inserted.rows[0]!.id), profile: after, version: afterVersion,
-    retainedAlias: alias.id === null ? null : { id: Number(alias.id), name: profile.name, created: !!alias.created },
+  const [inserted] = await tx.insert(enterpriseProfileAudit).values({
+    enterpriseId: id, idempotencyKey: audit.idempotencyKey, requestHash: audit.requestHash, beforeVersion, afterVersion,
+    before: JSON.stringify(usccChanged ? { ...profile, uscc: row.usccNorm } : profile),
+    after: JSON.stringify(usccChanged ? { ...after, uscc } : after),
+    actor: JSON.stringify(audit.actor), basis: audit.basis,
+    retainedAliasId: alias.id, aliasCreated: alias.created, createdAt: committedAt,
+  }).returning({ id: enterpriseProfileAudit.id })
+  return { auditId: inserted!.id, profile: after, version: afterVersion,
+    retainedAlias: alias.id === null ? null : { id: alias.id, name: profile.name, created: !!alias.created },
     committedAt }
 }
 
@@ -273,16 +303,11 @@ export function savePostgresEnterpriseDetails(db: NodePgDatabase, id: number, in
     const next = { ...before, ...fields }
     await validateCodes(tx, next)
     await saveCodes(tx, id, before.revision + 1, next)
-    await tx.execute(sql`DELETE FROM enterprise_address WHERE enterprise_id = ${id}`)
-    const values = [
-      { kind: 'registered', address: registeredAddress },
-      { kind: 'operating', address: operatingAddress },
-    ].filter(row => row.address !== null)
-    if (values.length) {
-      await tx.execute(sql`INSERT INTO enterprise_address (enterprise_id, kind, address) VALUES ${sql.join(
-        values.map(row => sql`(${id}, ${row.kind}, ${row.address})`), sql`, `,
-      )}`)
-    }
+    await tx.delete(enterpriseAddress).where(eq(enterpriseAddress.enterpriseId, id))
+    const values: (typeof enterpriseAddress.$inferInsert)[] = []
+    if (registeredAddress !== null) values.push({ enterpriseId: id, kind: 'registered', address: registeredAddress })
+    if (operatingAddress !== null) values.push({ enterpriseId: id, kind: 'operating', address: operatingAddress })
+    if (values.length) await tx.insert(enterpriseAddress).values(values)
     return (await readPostgresEnterpriseDetails(tx, id))!
   })
 }
@@ -290,9 +315,9 @@ export function savePostgresEnterpriseDetails(db: NodePgDatabase, id: number, in
 export function setPostgresEnterpriseRemoved(db: NodePgDatabase, id: number, revision: number, reason: string | null) {
   return db.transaction(async tx => {
     const before = await checkedEnterprise(tx, id, revision, 'membership')
-    await tx.execute(sql`INSERT INTO enterprise_directory (enterprise_id, revision, removed_reason)
-      VALUES (${id}, ${before.revision + 1}, ${reason})
-      ON CONFLICT (enterprise_id) DO UPDATE SET revision = excluded.revision, removed_reason = excluded.removed_reason`)
+    const membership = { revision: before.revision + 1, removedReason: reason }
+    await tx.insert(enterpriseDirectory).values({ enterpriseId: id, ...membership })
+      .onConflictDoUpdate({ target: enterpriseDirectory.enterpriseId, set: membership })
     return (await readPostgresEnterpriseDetails(tx, id))!
   })
 }

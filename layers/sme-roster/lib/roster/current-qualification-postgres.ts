@@ -1,7 +1,17 @@
 import { decodePostgresExactCell } from '../../../../db/postgresql/exact-cell'
-import { sql } from 'drizzle-orm'
-import * as schema from '../../../../db/schema'
-import { postgresRosterRow } from './postgres-rows'
+import { and, desc, eq, getTableColumns, inArray, isNotNull, isNull, max, or, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
+import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
+import { evidenceReviewReceipt114 } from '../../../../db/postgresql/evidence-review-tables'
+import { storedFile } from '../../../../db/postgresql/file-tables'
+import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
+import { officialEvidenceRowRevision } from '../../../../db/postgresql/official-evidence-tables'
+import {
+  platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformCollection,
+  platformCollectionPage, platformLegacyQueryAlias, platformLegacyRelationAlias, platformObservationAssignment,
+  platformRecognizedProjection,
+} from '../../../../db/postgresql/platform-tables'
+import { enterpriseFactRevision, titleCycleDispositionRevision } from '../../../../db/postgresql/qualification-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import {
   assessCurrentQualificationInputs, assessLegacyQualificationInputs, currentQualificationSnapshot, evaluateLoadedCurrentQualification, formatQualificationCorrespondence,
@@ -28,63 +38,77 @@ import { readPostgresQualificationDecisionHeads } from '../../server/utils/decis
 import { readPostgresDifferenceObservations } from '../platform/difference-sources-postgres'
 import { readPostgresQueryAssessments } from './query-assessment-postgres'
 
-type Reader = Pick<NodePgDatabase, 'execute'>
+type Reader = Pick<NodePgDatabase, 'select'>
 export type PostgresQualificationTransaction = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Enterprise = CurrentQualificationInput['enterprise']
-type EventInput = { owner: string; title: string; event: CandidateEvent; recordId: string; value: string | null }
-type EvidenceInput = {
-  owner: string; title: string; evidence: CurrentQualificationInput['evidence'][number]
-  file: CandidateFile | null; capture: NonNullable<ReturnType<CurrentQualificationInput['readCaptureVersion']>> | null
-}
-
 const pgIds = (ids: readonly number[]) => sql`${sql.param(ids)}::bigint[]`
 
 async function readEnterprises(db: Reader, ids: readonly number[]) {
-  const { rows } = await db.execute<{ requested: string; enterprise: Enterprise; cycle: boolean; isolation: string }>(sql`
+  // Drizzle's CTE builder has no recursive or CYCLE mode. Keep traversal and its
+  // cycle marker in one derived relation, within the caller's read snapshot.
+  const identityChain = sql`(
     WITH RECURSIVE identity_chain(requested, id) AS (
-      SELECT id, id FROM enterprise WHERE id = ANY(${pgIds(ids)})
+      SELECT ${enterprise.id}, ${enterprise.id} FROM ${enterprise} WHERE ${enterprise.id} = ANY(${pgIds(ids)})
       UNION ALL
-      SELECT i.requested, m.into_enterprise_id FROM identity_chain i JOIN enterprise_merge m ON m.from_enterprise_id = i.id
+      SELECT i.requested, ${enterpriseMerge.intoEnterpriseId} FROM identity_chain i
+      JOIN ${enterpriseMerge} ON ${enterpriseMerge.fromEnterpriseId} = i.id
     ) CYCLE id SET cycle USING path
-    SELECT i.requested, i.cycle, current_setting('transaction_isolation') AS isolation,
-      json_build_object('id',e.id,'name',e.name,'name_norm',e.name_norm,'uscc_norm',e.uscc_norm,'district',e.district,'city',e.city) AS enterprise
-    FROM identity_chain i JOIN enterprise e ON e.id = i.id
-    WHERE i.cycle OR NOT EXISTS (SELECT 1 FROM enterprise_merge m WHERE m.from_enterprise_id = i.id)`)
+    SELECT i.requested, i.id, i.cycle FROM identity_chain i
+    WHERE i.cycle OR NOT EXISTS (SELECT 1 FROM ${enterpriseMerge} WHERE ${enterpriseMerge.fromEnterpriseId} = i.id)
+  ) identity_chain`
+  const rows = await db.select({
+    requested: sql<number>`identity_chain.requested`.mapWith(Number),
+    cycle: sql<boolean>`identity_chain.cycle`,
+    isolation: sql<string>`current_setting('transaction_isolation')`,
+    enterprise: {
+      id: enterprise.id, name: enterprise.name, name_norm: enterprise.nameNorm,
+      uscc_norm: enterprise.usccNorm, district: enterprise.district, city: enterprise.city,
+    },
+  }).from(enterprise).innerJoin(identityChain, eq(enterprise.id, sql`identity_chain.id`))
   return rows.map(({ requested, enterprise, cycle, isolation }) => {
     if (isolation !== 'repeatable read' && isolation !== 'serializable') {
       throw new Error('PostgreSQL qualification requires a repeatable-read or serializable transaction')
     }
     if (cycle) throw new Error('Enterprise identity merge cycle')
-    return { requested: Number(requested), enterprise }
+    return { requested, enterprise }
   })
 }
 
 async function readDispositions(db: Reader, ids: readonly number[]) {
-  const { rows } = await db.execute<QualificationDisposition & { owner: string }>(sql`
-    SELECT d.enterprise_id AS owner, ${postgresRosterRow(schema.titleCycleDispositionRevision, 'd')} AS disposition,
-      CASE WHEN f.id IS NOT NULL THEN ${postgresRosterRow(schema.storedFile, 'f')} END AS file,
-      CASE WHEN e.id IS NOT NULL THEN ${postgresRosterRow(schema.recordEvent, 'e')} END AS cycle,
-      CASE WHEN r.id IS NOT NULL THEN ${postgresRosterRow(schema.record, 'r')} END AS record
-    FROM title_cycle_disposition_revision d
-    LEFT JOIN stored_file f ON f.id = d.source_file_id
-    LEFT JOIN record_event e ON e.id = d.cycle_event_id
-    LEFT JOIN record r ON r.id = e.record_id
-    WHERE d.enterprise_id = ANY(${pgIds(ids)})
-      AND d.revision = (SELECT max(head.revision) FROM title_cycle_disposition_revision head WHERE head.id = d.id)
-    ORDER BY d.revision_id`)
-  return Map.groupBy(rows.map(({ owner, ...input }) => ({ owner: Number(owner), input })), row => row.owner)
+  const disposition = titleCycleDispositionRevision
+  const head = alias(disposition, 'disposition_head')
+  const latestRevision = db.select({ revision: max(head.revision) }).from(head).where(eq(head.id, disposition.id))
+  const rows = await db.select({
+    owner: disposition.enterpriseId,
+    disposition: getTableColumns(disposition),
+    file: getTableColumns(storedFile),
+    // The qualification digest hashes these full objects in SQLite field order.
+    cycle: {
+      id: recordEvent.id, recordId: recordEvent.recordId, eventType: recordEvent.eventType, year: recordEvent.year,
+      batchSeq: recordEvent.batchSeq, sortKey: recordEvent.sortKey, reviewOutcome: recordEvent.reviewOutcome,
+      decidedYear: recordEvent.decidedYear, formalValidity: recordEvent.formalValidity, revision: recordEvent.revision,
+    },
+    record: getTableColumns(record),
+  }).from(disposition)
+    .leftJoin(storedFile, eq(storedFile.id, disposition.sourceFileId))
+    .leftJoin(recordEvent, eq(recordEvent.id, disposition.cycleEventId))
+    .leftJoin(record, eq(record.id, recordEvent.recordId))
+    .where(and(inArray(disposition.enterpriseId, ids), eq(disposition.revision, latestRevision)))
+    .orderBy(disposition.revisionId)
+  return Map.groupBy(rows.map(({ owner, disposition, file, cycle, record }) => {
+    const input = {
+      disposition: { ...disposition, fact: JSON.parse(disposition.fact), audit: JSON.parse(disposition.audit) },
+      file: file && { ...file, bytes: Number(file.bytes) },
+      cycle: cycle && { ...cycle, formalValidity: cycle.formalValidity === null ? null : JSON.parse(cycle.formalValidity) },
+      record: record && { ...record, qualityFlags: record.qualityFlags === null ? null : JSON.parse(record.qualityFlags) },
+    } as QualificationDisposition
+    return { owner, input }
+  }), row => row.owner)
 }
 
 type PlatformReference = CurrentQualificationInput['platformReferences'][number]
 type PlatformEffect = PlatformReference & { interface: PlatformInterface; status: string | null; year: number | null; batch: string | null }
 const titleScopeBits = { innovative_sme: 1, specialized_sme: 2, little_giant: 4 } satisfies Record<CurrentTitle, number>
-type PlatformScopeRow = { id: string; queryId: string; interface: PlatformInterface; queriedAt: string; collectionId: string;
-  sequenceNo: string; titleCode: string | null; rdjb: string; owner: string | null; uscc: string | null
-  captured: boolean; mask: number | null; textStatus: string | null; processStatus: Buffer | null; statusStorage: string | null
-  year: number | null; batch: string | null
-  processYear: Buffer | null; yearStorage: string | null
-  processBatch: Buffer | null; batchStorage: string | null
-}
 
 async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], scope: 'references' | 'roster-detail' | 'hydration') {
   const hydrated = scope === 'hydration'
@@ -93,52 +117,67 @@ async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], 
   byUscc.delete('')
   const codes = [...byUscc.keys()]
   const ids = subjects.map(owner => owner.id)
-  const { rows } = await db.execute<PlatformScopeRow>(sql`
-    SELECT ra.old_id AS id, qa.old_id AS "queryId", c.interface, c.queried_at AS "queriedAt",
-      c.id AS "collectionId", o.sequence_no AS "sequenceNo", c.title_code AS "titleCode", c.rdjb,
-      a.enterprise_id AS owner, ${hydrated ? sql`a.uscc_raw` : sql`first.uscc_raw`} AS uscc
-      ${hydrated ? sql`, o.candidate_scope_state='captured' AND o.candidate_scope_rule=${CANDIDATE_SCOPE_RULE} AS captured,
-        o.candidate_scope_mask::integer AS mask` : sql.empty()}
-      ${readCells ? sql`, coalesce(ap.stored_status,rp.stored_status) AS "textStatus",
-        bp.exact_status AS "processStatus", bp.exact_status_sqlite_storage AS "statusStorage",
-        bp.exact_year AS "processYear", bp.exact_year_sqlite_storage AS "yearStorage",
-        bp.exact_batch AS "processBatch", bp.exact_batch_sqlite_storage AS "batchStorage",
-        coalesce(ap.stored_year,rp.stored_year)::float8 AS year, coalesce(ap.stored_batch,rp.stored_batch) AS batch` : sql.empty()}
-    FROM platform_business_observation o
-    JOIN platform_legacy_relation_alias ra ON ra.observation_id = o.id
-    JOIN platform_collection c ON c.id = o.collection_id
-    JOIN platform_legacy_query_alias qa ON qa.collection_id = c.id
-    JOIN platform_observation_assignment first ON first.observation_id = o.id AND first.revision = 1
-    JOIN platform_observation_assignment a ON a.observation_id = o.id AND a.revision = (
-      SELECT max(head.revision) FROM platform_observation_assignment head WHERE head.observation_id = o.id)
-    ${readCells ? sql`LEFT JOIN platform_business_projection bp ON bp.observation_id=o.id
-      LEFT JOIN platform_apply_projection ap ON ap.observation_id=o.id
-      LEFT JOIN platform_recognized_projection rp ON rp.observation_id=o.id` : sql.empty()}
-    WHERE a.enterprise_id = ANY(${pgIds(ids)}) OR (${codes.length > 0} AND a.enterprise_id IS NULL
-      AND ${qualificationUsccCandidate(hydrated ? sql`a.uscc_raw` : sql`first.uscc_raw`, codes)})
-    ORDER BY ra.old_id`)
+  const observation = platformBusinessObservation
+  const collection = platformCollection
+  const assignment = platformObservationAssignment
+  const first = alias(assignment, 'first_assignment')
+  const head = alias(assignment, 'head_assignment')
+  const relationAlias = platformLegacyRelationAlias
+  const queryAlias = platformLegacyQueryAlias
+  const apply = platformApplyProjection
+  const recognized = platformRecognizedProjection
+  const business = platformBusinessProjection
+  const uscc = hydrated ? assignment.usccRaw : first.usccRaw
+  const latestRevision = db.select({ revision: max(head.revision) }).from(head).where(eq(head.observationId, observation.id))
+  const query = db.select({
+    id: relationAlias.oldId, queryId: queryAlias.oldId, interface: collection.interface, queriedAt: collection.queriedAt,
+    collectionId: collection.id, sequenceNo: observation.sequenceNo, titleCode: collection.titleCode, rdjb: collection.rdjb,
+    owner: assignment.enterpriseId, uscc,
+    state: observation.candidateScopeState, rule: observation.candidateScopeRule, mask: observation.candidateScopeMask,
+    ...(readCells ? {
+      applyStatus: apply.storedStatus, recognizedStatus: recognized.storedStatus,
+      applyYear: apply.storedYear, recognizedYear: recognized.storedYear,
+      applyBatch: apply.storedBatch, recognizedBatch: recognized.storedBatch,
+      processStatus: business.exactStatus, statusStorage: business.exactStatusSqliteStorage,
+      processYear: business.exactYear, yearStorage: business.exactYearSqliteStorage,
+      processBatch: business.exactBatch, batchStorage: business.exactBatchSqliteStorage,
+    } : {}),
+  }).from(observation)
+    .innerJoin(relationAlias, eq(relationAlias.observationId, observation.id))
+    .innerJoin(collection, eq(collection.id, observation.collectionId))
+    .innerJoin(queryAlias, eq(queryAlias.collectionId, collection.id))
+    .innerJoin(first, and(eq(first.observationId, observation.id), eq(first.revision, 1)))
+    .innerJoin(assignment, and(eq(assignment.observationId, observation.id), eq(assignment.revision, latestRevision)))
+    .where(or(inArray(assignment.enterpriseId, ids), codes.length
+      ? and(isNull(assignment.enterpriseId), qualificationUsccCandidate(sql`${uscc}`, codes)) : undefined))
+    .orderBy(relationAlias.oldId)
+  const rows = await (readCells ? query
+    .leftJoin(business, eq(business.observationId, observation.id))
+    .leftJoin(apply, eq(apply.observationId, observation.id))
+    .leftJoin(recognized, eq(recognized.observationId, observation.id)) : query)
   const exact = rows.flatMap(row => {
-    const owners = row.owner !== null ? [Number(row.owner)] : (byUscc.get(normalizeUscc(row.uscc)) ?? []).map(item => item.id)
-    return owners.map(owner => ({ ...row, owner, id: Number(row.id), queryId: Number(row.queryId),
-      collectionId: Number(row.collectionId), sequenceNo: Number(row.sequenceNo) }))
+    const owners = row.owner !== null ? [row.owner] : (byUscc.get(normalizeUscc(row.uscc)) ?? []).map(item => item.id)
+    return owners.map(owner => ({ ...row, owner }))
   })
   const pageCollections = hydrated ? [] : [...new Set(exact.filter(row => row.rdjb.includes(',')).map(row => row.collectionId))]
-  const pages = pageCollections.length ? (await db.execute<{ page: Parameters<typeof platformEffectsForTitle>[1][number] }>(sql`
-    SELECT json_build_object('collectionId',collection_id,'status',status,'sequenceStart',sequence_start,
-      'sequenceEnd',sequence_end,'rdjb',rdjb) AS page FROM platform_collection_page
-    WHERE collection_id = ANY(${sql.param(pageCollections)}::bigint[]) ORDER BY ordinal`)).rows.map(row => row.page) : []
+  const page = platformCollectionPage
+  const pages = pageCollections.length ? await db.select({
+    collectionId: page.collectionId, status: page.status, sequenceStart: page.sequenceStart,
+    sequenceEnd: page.sequenceEnd, rdjb: page.rdjb,
+  // This set covers all observations of the batch and can exceed the bind limit.
+  }).from(page).where(sql`${page.collectionId} = ANY(${pgIds(pageCollections)})`).orderBy(page.ordinal) : []
   const byOwner = Map.groupBy(exact, row => row.owner)
   return (owner: number, title: CurrentTitle): PlatformEffect[] => {
     const available = byOwner.get(owner) ?? []
     const selected = hydrated ? available.filter(row => {
-      if (!row.captured || row.mask === null) throw new Error('Current hydration candidate capture unavailable')
+      if (row.state !== 'captured' || row.rule !== CANDIDATE_SCOPE_RULE || row.mask === null) throw new Error('Current hydration candidate capture unavailable')
       return Boolean(row.mask & titleScopeBits[title])
     }) : platformEffectsForTitle(available, pages, title)
     return selected.map(row => ({
-      id: row.id, queryId: row.queryId, interface: row.interface, queriedAt: row.queriedAt,
-      year: row.processYear == null ? row.year ?? null : decodePostgresExactCell(row.processYear, row.yearStorage) as number | null,
-      batch: row.processBatch == null ? row.batch ?? null : decodePostgresExactCell(row.processBatch, row.batchStorage) as string | null,
-      status: row.processStatus == null ? row.textStatus ?? null : decodePostgresExactCell(row.processStatus, row.statusStorage) as string | null,
+      id: row.id, queryId: row.queryId, interface: row.interface as PlatformInterface, queriedAt: row.queriedAt,
+      year: row.processYear == null ? row.applyYear ?? row.recognizedYear ?? null : decodePostgresExactCell(row.processYear, row.yearStorage ?? null) as number | null,
+      batch: row.processBatch == null ? row.applyBatch ?? row.recognizedBatch ?? null : decodePostgresExactCell(row.processBatch, row.batchStorage ?? null) as string | null,
+      status: row.processStatus == null ? row.applyStatus ?? row.recognizedStatus ?? null : decodePostgresExactCell(row.processStatus, row.statusStorage ?? null) as string | null,
     }))
   }
 }
@@ -150,35 +189,54 @@ async function readQualificationInputs(tx: PostgresQualificationTransaction, ent
   if (!selection.length) return []
   const subjects = [...new Map(selection.map(({ enterprise }) => [enterprise.id, enterprise])).values()]
   const ids = subjects.map(enterprise => enterprise.id)
-  const events = await tx.execute<EventInput>(sql`
-    SELECT r.enterprise_id AS owner, r.title_code AS title, e.record_id AS "recordId", e.formal_validity AS value,
-      json_build_object('id',e.id,'eventType',e.event_type,'year',e.year,'decidedYear',e.decided_year,
-        'batchSeq',e.batch_seq,'reviewOutcome',e.review_outcome,'revision',e.revision,
-        'nameRaw',r.name_raw,'usccRaw',r.uscc_raw,'source',r.source) AS event
-    FROM record r JOIN record_event e ON e.record_id = r.id WHERE r.enterprise_id = ANY(${pgIds(ids)}) ORDER BY e.id`)
-  const evidence = await tx.execute<EvidenceInput>(sql`
-    SELECT r.enterprise_id AS owner, r.title_code AS title,
-      json_build_object('id',v.id,'eventId',v.record_event_id,'sourceFile',v.source_file,
-        'attachment',v.attachment,'listNo',v.list_no,'page',v.page) AS evidence,
-      CASE WHEN f.id IS NOT NULL THEN json_build_object('id',f.id,'sha256',f.sha256,'bytes',f.bytes,'removedAt',f.removed_at) END AS file,
-      CASE WHEN capture.revision IS NOT NULL THEN json_build_object('revision',capture.revision,'sha256',capture.sha256) END AS capture
-    FROM record r JOIN record_event e ON e.record_id = r.id JOIN record_evidence v ON v.record_event_id = e.id
-    LEFT JOIN stored_file f ON f.rel_path = v.source_file
-    LEFT JOIN LATERAL (SELECT revision, sha256 FROM official_evidence_row_revision
-      WHERE evidence_id = v.id ORDER BY revision DESC LIMIT 1) capture ON true
-    WHERE r.enterprise_id = ANY(${pgIds(ids)}) ORDER BY v.id`)
-  const aliases = await tx.execute<{ owner: string; alias: ReturnType<CurrentQualificationInput['readAliases']>[number] }>(sql`
-    SELECT enterprise_id AS owner, json_build_object('id',id,'name',name,'version',version) AS alias FROM enterprise_alias
-    WHERE enterprise_id = ANY(${pgIds(ids)}) AND verification_status = 'confirmed' ORDER BY id`)
-  const facts = await tx.execute<{ owner: string; fact: EnterpriseFactEffectRow }>(sql`
+  const events = await tx.select({
+    owner: record.enterpriseId, title: record.titleCode, recordId: recordEvent.recordId, value: recordEvent.formalValidity,
+    event: {
+      id: recordEvent.id, eventType: recordEvent.eventType, year: recordEvent.year, decidedYear: recordEvent.decidedYear,
+      batchSeq: recordEvent.batchSeq, reviewOutcome: recordEvent.reviewOutcome, revision: recordEvent.revision,
+      nameRaw: record.nameRaw, usccRaw: record.usccRaw, source: record.source,
+    },
+  }).from(record).innerJoin(recordEvent, eq(recordEvent.recordId, record.id))
+    .where(inArray(record.enterpriseId, ids)).orderBy(recordEvent.id)
+  const revision = officialEvidenceRowRevision
+  const latestCapture = tx.select({ revision: revision.revision, sha256: revision.sha256 }).from(revision)
+    .where(eq(revision.evidenceId, recordEvidence.id)).orderBy(desc(revision.revision)).limit(1).as('capture')
+  const evidence = await tx.select({
+    owner: record.enterpriseId, title: record.titleCode,
+    evidence: {
+      id: recordEvidence.id, eventId: recordEvidence.recordEventId, sourceFile: recordEvidence.sourceFile,
+      attachment: recordEvidence.attachment, listNo: recordEvidence.listNo, page: recordEvidence.page,
+    },
+    file: { id: storedFile.id, sha256: storedFile.sha256, bytes: storedFile.bytes, removedAt: storedFile.removedAt },
+    captureRevision: latestCapture.revision, captureSha256: latestCapture.sha256,
+  }).from(record)
+    .innerJoin(recordEvent, eq(recordEvent.recordId, record.id))
+    .innerJoin(recordEvidence, eq(recordEvidence.recordEventId, recordEvent.id))
+    .leftJoin(storedFile, eq(storedFile.relPath, recordEvidence.sourceFile))
+    .leftJoinLateral(latestCapture, isNotNull(latestCapture.revision))
+    .where(inArray(record.enterpriseId, ids)).orderBy(recordEvidence.id)
+  const aliases = await tx.select({
+    owner: enterpriseAlias.enterpriseId,
+    alias: { id: enterpriseAlias.id, name: enterpriseAlias.name, version: enterpriseAlias.version },
+  }).from(enterpriseAlias)
+    .where(and(inArray(enterpriseAlias.enterpriseId, ids), eq(enterpriseAlias.verificationStatus, 'confirmed')))
+    .orderBy(enterpriseAlias.id)
+  // Follow predecessor merges in one recursive set, deduplicating owner/ID
+  // pairs as before. Drizzle does not expose WITH RECURSIVE.
+  const members = sql`(
     WITH RECURSIVE members(owner, id) AS (
       SELECT requested, requested FROM unnest(${pgIds(ids)}) AS input(requested)
       UNION
-      SELECT i.owner, m.from_enterprise_id FROM enterprise_merge m JOIN members i ON m.into_enterprise_id = i.id
+      SELECT i.owner, ${enterpriseMerge.fromEnterpriseId} FROM ${enterpriseMerge}
+      JOIN members i ON ${enterpriseMerge.intoEnterpriseId} = i.id
     )
-    SELECT i.owner, json_build_object('enterpriseId',r.enterprise_id,'factId',r.fact_id,'revision',r.revision,
-      'status',r.status,'fact',r.fact::text,'basis',r.basis) AS fact
-    FROM enterprise_fact_revision r JOIN members i ON r.enterprise_id = i.id ORDER BY r.id`)
+    SELECT owner, id FROM members
+  ) members`
+  const fact = enterpriseFactRevision
+  const facts = await tx.select({
+    owner: sql<number>`members.owner`.mapWith(Number),
+    fact: { enterpriseId: fact.enterpriseId, factId: fact.factId, revision: fact.revision, status: fact.status, fact: fact.fact, basis: fact.basis },
+  }).from(fact).innerJoin(members, eq(fact.enterpriseId, sql`members.id`)).orderBy(fact.id)
   const dispositions = await readDispositions(tx, ids)
   const platformFacts = await readPlatform(subjects)
   const scanning = selectionScope?.mode === 'scan'
@@ -190,20 +248,23 @@ async function readQualificationInputs(tx: PostgresQualificationTransaction, ent
   const witnesses = selectionScope?.mode === 'detail' || scanning ? await readPostgresRecognizedWitnesses(tx, [...new Set(correspondence.flatMap(ref =>
     ref.type === 'event_recognized' && ref.role === 'recognized_corrob' && ref.status === 'confirmed' && !ref.requiresRevalidation
       && ref.relationId !== null ? [ref.relationId] : []))]) : undefined
-  const eventsByOwner = Map.groupBy(events.rows, row => Number(row.owner))
-  const evidenceByOwner = Map.groupBy(evidence.rows, row => Number(row.owner))
+  const eventsByOwner = Map.groupBy(events, row => row.owner)
+  const evidenceByOwner = Map.groupBy(evidence, row => row.owner)
   const referencesByOwner = Map.groupBy(correspondence, row => row.enterpriseId)
-  const aliasesByOwner = Map.groupBy(aliases.rows, row => Number(row.owner))
-  const factsByOwner = Map.groupBy(facts.rows, row => Number(row.owner))
+  const aliasesByOwner = Map.groupBy(aliases, row => row.owner)
+  const factsByOwner = Map.groupBy(facts, row => row.owner)
   const byCanonical = new Map(subjects.map(enterprise => {
     const { id } = enterprise
     const ownerEvidence = evidenceByOwner.get(id) ?? []
     const refsByTitle = Map.groupBy(referencesByOwner.get(id) ?? [], row => row.titleCode)
     const rowsByTitle = Map.groupBy(eventsByOwner.get(id) ?? [], row => row.title)
     const evidenceByTitle = Map.groupBy(ownerEvidence, row => row.title)
-    const files = new Map(ownerEvidence.flatMap(row => row.file ? [[row.evidence.sourceFile, row.file] as const] : []))
-    const captures = new Map(ownerEvidence.flatMap(row => row.capture ? [[row.evidence.id, row.capture] as const] : []))
-    const factRows = (factsByOwner.get(id) ?? []).map(row => row.fact)
+    const files = new Map<string, CandidateFile>(ownerEvidence.flatMap(row => row.file
+      ? [[row.evidence.sourceFile, { ...row.file, bytes: Number(row.file.bytes) }]] : []))
+    const captures = new Map(ownerEvidence.flatMap(row => row.captureRevision === null ? [] : [
+      [row.evidence.id, { revision: row.captureRevision, sha256: row.captureSha256 }] as const,
+    ]))
+    const factRows: EnterpriseFactEffectRow[] = (factsByOwner.get(id) ?? []).map(row => row.fact)
     const aliasRows = (aliasesByOwner.get(id) ?? []).map(row => row.alias)
     const inputs = new Map(CURRENT_TITLES.map(title => {
       const titleEvents = rowsByTitle.get(title) ?? []
@@ -211,9 +272,9 @@ async function readQualificationInputs(tx: PostgresQualificationTransaction, ent
       const refs = refsByTitle.get(title) ?? []
       const input: LoadedCurrentQualificationInput = {
         enterprise,
-        events: titleEvents.map(row => row.event),
+        events: titleEvents.map(row => row.event as CandidateEvent),
         evidence: (evidenceByTitle.get(title) ?? []).map(row => row.evidence),
-        readValidityRows: () => titleEvents.map(row => ({ id: row.event.id, recordId: Number(row.recordId), value: row.value })),
+        readValidityRows: () => titleEvents.map(row => ({ id: row.event.id, recordId: row.recordId, value: row.value })),
         readFile: path => files.get(path),
         readAliases: () => aliasRows,
         readDispositions: () => dispositions.get(id)?.map(row => row.input) ?? [],
@@ -400,16 +461,17 @@ export async function readPostgresLegacyQualification(tx: PostgresQualificationT
   })), coverage)
   const byScope = new Map(assessments.map(result => [result.currentDecision.titleCode + ':' + result.currentDecision.direction, result]))
   const observations = await readPostgresDifferenceObservations(tx, active.flatMap(row => row.evidenceRelationId === null ? [] : [row.evidenceRelationId]))
-  const receipts = active.length ? (await tx.execute<{ id: number; receipt: { basis: string; effectiveAt: string } }>(sql`
-    SELECT DISTINCT ON(decision_id) decision_id::float8 AS id, json_build_object('basis',basis,'effectiveAt',effective_at) AS receipt
-    FROM evidence_review_receipt_114 WHERE decision_id=ANY(${pgIds(active.map(row => row.id))}) AND reviewed_revision_id IS NOT NULL
-    ORDER BY decision_id,id DESC`)).rows : []
-  const byDecision = new Map(receipts.map(row => [row.id, row.receipt]))
+  const receipt = evidenceReviewReceipt114
+  const receipts = active.length ? await tx.selectDistinctOn([receipt.decisionId], {
+    id: receipt.decisionId, receipt: { basis: receipt.basis, effectiveAt: receipt.effectiveAt },
+  }).from(receipt).where(and(inArray(receipt.decisionId, active.map(row => row.id)), isNotNull(receipt.reviewedRevisionId)))
+    .orderBy(receipt.decisionId, desc(receipt.id)) : []
+  const byDecision = new Map(receipts.map(row => [row.id, row.receipt] as const))
   const projected = new Map<CurrentTitle, LegacyQualificationInput>([...inputs].map(([title, input]) => [title, {
     ...input,
     readLegacyHeads: () => heads,
     readLegacyAssessment: (target, direction) => byScope.get(target + ':' + direction)!,
-    readLegacyReceipt: id => byDecision.get(id),
+    readLegacyReceipt: id => byDecision.get(id) as ReturnType<NonNullable<LegacyQualificationInput['readLegacyReceipt']>>,
     readLegacyObservation: id => observations.get(id),
   }]))
   return assessLegacyQualificationInputs(enterpriseId, asOf, projected)

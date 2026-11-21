@@ -1,9 +1,10 @@
-import { sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
+import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
+import { sourceDocument } from '../../../../db/postgresql/official-evidence-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import * as schema from '../../../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import type { RosterImportRequest, RosterImportEvent, RosterImportItemResult } from '../../lib/roster-import-client'
-import { readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
+import { announcementValues, readPostgresAnnouncementEvents, readPostgresAnnouncementEvidenceHashes } from './announcement-evidence-postgres'
 import {
   ambiguousAnnouncementRepoints, announcementEvidenceCoordinate, eventCoordinates, groupNewAnnouncementEvidence, hasOfficialFactInput, indexedEvidenceHashes,
   matchesEventCoordinates, projectAnnouncementRepoints, validateAnnouncementRecord,
@@ -12,8 +13,7 @@ import { checkOfficialOuterDocument, officialPublishedRowSchema, officialFactFai
 import { lockPostgresOfficialImportTargets, planPostgresOfficialImport } from './official-evidence-import-postgres'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
-type ExistingRecord = typeof schema.record.$inferSelect
-const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
+type ExistingRecord = typeof record.$inferSelect
 const key = (owner: number, titleCode: string, source: string) => [owner,titleCode,source].join(':')
 
 export async function planPostgresAnnouncement(tx: Tx, request: RosterImportRequest, owners: ReadonlyMap<number, number>,
@@ -29,14 +29,13 @@ export async function planPostgresAnnouncement(tx: Tx, request: RosterImportRequ
     errors.push({ ok: false, kind: 'official_evidence', ref: 'payload', error: { code: issue.code, message: issue.message ?? issue.code } } satisfies RosterImportItemResult)
   }
 
-  const records = await readPostgresRosterRowsById(tx, schema.record, sql`
-    FROM record p WHERE enterprise_id=ANY(${ids([...new Set(owners.values())])})`)
+  const records = await tx.select().from(record).where(announcementValues(record.enterpriseId, [...new Set(owners.values())])).orderBy(record.id)
   const bySubject = new Map(records.map(row => [key(row.enterpriseId,row.titleCode,row.source), row]))
-  const events = await readPostgresRosterRowsById(tx, schema.recordEvent, sql`FROM record_event p WHERE record_id=ANY(${ids(records.map(row => row.id))})`)
+  const events = await readPostgresAnnouncementEvents(tx, announcementValues(recordEvent.recordId, records.map(row => row.id)))
   const byRecord = Map.groupBy(events, row => row.recordId)
   const findStoredEvent = (stored: ExistingRecord | undefined, event: RosterImportEvent) => stored &&
     byRecord.get(stored.id)?.find(row => matchesEventCoordinates(row, eventCoordinates(stored.id, event)))
-  const evidence = await readPostgresRosterRowsById(tx, schema.recordEvidence, sql`FROM record_evidence p WHERE record_event_id=ANY(${ids(events.map(row => row.id))})`)
+  const evidence = await tx.select().from(recordEvidence).where(announcementValues(recordEvidence.recordEventId, events.map(row => row.id))).orderBy(recordEvidence.id)
   const paths = new Set([request.sourceIdentity, ...evidence.map(row => row.sourceFile)])
   for (const row of checked) {
     for (const event of row.events ?? []) {
@@ -49,11 +48,7 @@ export async function planPostgresAnnouncement(tx: Tx, request: RosterImportRequ
     addOfficialError(error)
     return { errors, rows: [] as never[], ...noOfficial }
   }
-  const { rows: evidenceHashes } = await tx.execute<{ path: string; sha256: string | null }>(sql`
-    SELECT rel_path AS path,sha256 FROM stored_file WHERE rel_path=ANY(${sql.param([...paths])}::text[])
-    UNION ALL
-    SELECT source_identity,source_sha256 FROM import_batch WHERE status='committed' AND source_kind='announcement'
-      AND source_identity=ANY(${sql.param([...paths])}::text[])`)
+  const evidenceHashes = await readPostgresAnnouncementEvidenceHashes(tx, paths)
   const hashes = indexedEvidenceHashes(request, evidenceHashes)
   const prior = new Map(checked.flatMap((row, index) => {
     const stored = row.error ? undefined : bySubject.get(key(owners.get(index)!,row.titleCode,row.source))
@@ -93,7 +88,7 @@ export async function planPostgresAnnouncement(tx: Tx, request: RosterImportRequ
   if (errors.length || !hasOfficialFactInput(request)) return { errors, rows, ...noOfficial }
   const typedCount = announcement.records.reduce((count, record) => count + (record.events ?? []).reduce((n,event) =>
     n + (event.evidence ?? []).filter(link => link.publishedRow !== undefined).length, 0), 0)
-  const declarations = new Map<number, typeof schema.sourceDocument.$inferSelect>()
+  const declarations = new Map<number, typeof sourceDocument.$inferSelect>()
   const batchCoordinates = new Map<string, boolean>()
   try {
     if (typedCount + (request.payload.officialEvidenceAppends?.length ?? 0) + (request.payload.officialEvidenceCorrections?.operations?.length ?? 0) > 100) {
@@ -123,7 +118,7 @@ export async function planPostgresAnnouncement(tx: Tx, request: RosterImportRequ
           const publishedRow = link.publishedRow!
           const declaration = publishedRow.declaration
           if (declaration.kind === 'existing' && !declarations.has(declaration.sourceDocumentId)) {
-            const [doc] = await readPostgresRosterRowsById(tx,schema.sourceDocument,sql`FROM source_document p WHERE id=${declaration.sourceDocumentId}`)
+            const [doc] = await tx.select().from(sourceDocument).where(eq(sourceDocument.id, declaration.sourceDocumentId))
             if (doc) declarations.set(doc.id,doc)
           }
           checkOfficialOuterDocument(projectOfficialDeclaration(declaration, declaration.kind === 'existing' ? declarations.get(declaration.sourceDocumentId) : undefined), announcement.sourceDocument)

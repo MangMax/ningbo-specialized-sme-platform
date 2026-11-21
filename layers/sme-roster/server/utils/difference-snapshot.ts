@@ -5,11 +5,13 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
-import { eq, and, sql } from 'drizzle-orm'
+import { eq, and, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { useApplicationDb } from '../../../../db/client'
 import * as s from '../../../../db/schema'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import { record } from '../../../../db/postgresql/ledger-tables'
 import { newJobId } from '../../../core/lib/job'
 import type { PlatformLiveQueryResult } from '../../lib/platform/live-query'
 import { runPlatformLiveQuery } from './platform-live-query'
@@ -232,15 +234,20 @@ const executeBackupTool = promisify(execFile)
 
 async function backupPostgresSnapshot(db: NodePgDatabase, filesDir: string, id: string, enterpriseIds?: number[]) {
   return db.transaction(async tx => {
-    const { rows: scope } = await tx.execute<Scope>(sql`
-      SELECT e.id::float8 AS "enterpriseId",e.name,
-        CASE WHEN e.uscc_norm COLLATE "C"~'^[0-9A-Z]{18}$' THEN e.uscc_norm END AS uscc,
-        json_agg(r.id ORDER BY r.id) AS "recordIds"
-      FROM record r JOIN enterprise e ON e.id=r.enterprise_id WHERE r.source='jxj'
-        ${enterpriseIds ? sql`AND e.id=ANY(${sql.param(enterpriseIds)}::bigint[])` : sql.empty()}
-      GROUP BY e.id ORDER BY e.id`)
-    if (enterpriseIds && scope.length!==enterpriseIds.length) fail(400,'Selected enterprise IDs must identify published enterprises')
-    const { rows: [exported] } = await tx.execute<{ snapshot:string }>(sql`SELECT pg_export_snapshot() AS snapshot`)
+    // Drizzle 0.45 has no ordered aggregate builder. Preserve the frozen
+    // record ID order while returning one row per published enterprise.
+    const published = await tx.select({
+      enterpriseId: enterprise.id,
+      name: enterprise.name,
+      uscc: enterprise.usccNorm,
+      recordIds: sql<number[]>`json_agg(${record.id} ORDER BY ${record.id})`,
+    }).from(record).innerJoin(enterprise, eq(enterprise.id, record.enterpriseId))
+      .where(and(eq(record.source, 'jxj'), enterpriseIds ? inArray(enterprise.id, enterpriseIds) : undefined))
+      .groupBy(enterprise.id).orderBy(enterprise.id)
+    const scope = published.map(row => ({ ...row, uscc: row.uscc?.length === 18 && /^[0-9A-Z]{18}$/.test(row.uscc) ? row.uscc : null }))
+    if (enterpriseIds && scope.length !== enterpriseIds.length) fail(400, 'Selected enterprise IDs must identify published enterprises')
+    // PostgreSQL's exported MVCC snapshot is shared with pg_dump in this transaction.
+    const { rows: [exported] } = await tx.execute<{ snapshot: string }>(sql`SELECT pg_export_snapshot() AS snapshot`)
     const destination = resolve(filesDir,'..','snapshot-backups')
     await mkdir(destination,{ recursive:true,mode:0o700 })
     const directory = await mkdtemp(join(destination,id+'-'))

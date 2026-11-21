@@ -1,63 +1,113 @@
-import { sql } from 'drizzle-orm'
+import { and, count, desc, eq, getTableColumns, gt, inArray, notExists, or, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { alias } from 'drizzle-orm/pg-core'
+import { chunk } from 'es-toolkit'
 import { normalizeUscc } from './domain'
 import { readCuration, projectCuratedComparison } from './curation'
 import { getPostgresComparison } from './comparison'
 import type { ComparisonRowFilter } from './comparison-filter'
 import { attachReconcile, readReconcile } from './reconcile'
 import { filterCuratedComparison, projectComparisonSummary, selectComparisonSummaryPage, type SummaryDisposition } from './comparison-summary'
-import * as schema from '../../../db/schema'
-import { postgresRosterRow } from './roster/postgres-rows'
+import { enterprise, enterpriseAlias } from '../../../db/postgresql/enterprise-tables'
+import {
+  platformBusinessObservation, platformCollection, platformLegacyQueryAlias, platformLegacyRelationAlias,
+  platformObservationAssignment,
+} from '../../../db/postgresql/platform-tables'
+import { differenceReason } from '../../../db/postgresql/roster-selection-tables'
 import { projectPlatformComparisonEvidence, type ComparisonObservation } from './comparison-platform'
 import { readPostgresFingerprintQueries, readPostgresRelationFingerprints } from '../server/utils/postgres-platform-fingerprint'
 import { readPostgresObservationComparisonFacts } from '../server/utils/record-correspondence-target-postgres'
-import { postgresDifferenceRow } from '../server/utils/decision-lifecycle-102/postgres-reads'
 import { readPostgresQueryAssessments } from './roster/query-assessment-postgres'
 import type { ComparisonSummaryOptions } from './comparison-summary-read'
 
-type Reader = Pick<NodePgDatabase,'execute'>
+type ComparisonReader = Pick<NodePgDatabase, 'select' | '$with' | 'with'>
 type Subject = { id: number; nameNorm: string; uscc: string | null }
 type Membership = { enterpriseId: number; queryId: number; collectionId: number; owned: boolean }
-const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
+// inArray binds each ID separately. Keep queries below PostgreSQL's 65,535-parameter limit.
+const ownerBatchSize = 32_768
 
-async function readMemberships(db: Reader, subjects: Subject[]) {
-  if (!subjects.length) return []
-  const rows = subjects.flatMap(row => {
-    const uscc = normalizeUscc(row.uscc)
-    return [`name:${row.nameNorm}`, ...(uscc ? [uscc] : [])].map(key => [row.id,key] as const)
-  })
-  return (await db.execute<Membership>(sql`
-    WITH owned AS (
-      SELECT DISTINCT a.enterprise_id,c.id AS collection_id,q.old_id AS query_id FROM platform_observation_assignment a
-      JOIN platform_business_observation o ON o.id=a.observation_id
-      JOIN platform_collection c ON c.id=o.collection_id JOIN platform_legacy_query_alias q ON q.collection_id=c.id
-      WHERE a.enterprise_id=ANY(${ids(subjects.map(row => row.id))}) AND NOT EXISTS
-        (SELECT 1 FROM platform_observation_assignment n WHERE n.observation_id=a.observation_id AND n.revision>a.revision)
-    ), queried AS (
-      SELECT x.enterprise_id,c.id AS collection_id,q.old_id AS query_id
-      FROM unnest(${ids(rows.map(([owner]) => owner))},${sql.param(rows.map(([,key]) => key))}::text[]) AS x(enterprise_id,key)
-      JOIN platform_collection c ON c.query_key=x.key JOIN platform_legacy_query_alias q ON q.collection_id=c.id
-    ), membership AS (
-      SELECT *,true AS owned FROM owned UNION ALL SELECT *,false AS owned FROM queried
-    )
-    SELECT enterprise_id::float8 AS "enterpriseId",query_id::float8 AS "queryId",collection_id::float8 AS "collectionId",bool_or(owned) AS owned
-    FROM membership GROUP BY enterprise_id,query_id,collection_id`)).rows
+function queriedEnterpriseIds(subjects: readonly Subject[]) {
+  const owners = new Map<string, number[]>()
+  for (const subject of subjects) {
+    const code = normalizeUscc(subject.uscc)
+    for (const key of ['name:' + subject.nameNorm, ...(code ? [code] : [])]) {
+      const ids = owners.get(key) ?? []
+      ids.push(subject.id)
+      owners.set(key, ids)
+    }
+  }
+  return owners
 }
 
-async function readPostgresCuratedComparison(db: Reader, curatedPath: string) {
+async function readMemberships(db: Pick<NodePgDatabase, 'select' | 'selectDistinct'>, subjects: Subject[]) {
+  const latest = alias(platformObservationAssignment, 'newer_assignment')
+  const membership = new Map<string, Membership>()
+  const keyOf = (member: Omit<Membership, 'owned'>) => [member.enterpriseId, member.queryId, member.collectionId].join(':')
+  for (const subjectIds of chunk(subjects.map(subject => subject.id), ownerBatchSize)) {
+    const owned = await db.selectDistinct({
+      enterpriseId: platformObservationAssignment.enterpriseId,
+      collectionId: platformCollection.id,
+      queryId: platformLegacyQueryAlias.oldId,
+    }).from(platformObservationAssignment)
+      .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.id, platformObservationAssignment.observationId))
+      .innerJoin(platformCollection, eq(platformCollection.id, platformBusinessObservation.collectionId))
+      .innerJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformCollection.id))
+      .where(and(inArray(platformObservationAssignment.enterpriseId, subjectIds), notExists(
+        db.select({ revision: latest.revision }).from(latest).where(and(
+          eq(latest.observationId, platformObservationAssignment.observationId),
+          gt(latest.revision, platformObservationAssignment.revision),
+        )),
+      )))
+    for (const member of owned) {
+      if (member.enterpriseId === null) continue
+      const row = { ...member, enterpriseId: member.enterpriseId, owned: true }
+      membership.set(keyOf(row), row)
+    }
+  }
+
+  const queriedOwners = queriedEnterpriseIds(subjects)
+  for (const keys of chunk([...queriedOwners.keys()], ownerBatchSize)) {
+    const queried = await db.select({
+      key: platformCollection.queryKey, collectionId: platformCollection.id, queryId: platformLegacyQueryAlias.oldId,
+    }).from(platformCollection)
+      .innerJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformCollection.id))
+      .where(inArray(platformCollection.queryKey, keys))
+    for (const row of queried) {
+      for (const enterpriseId of queriedOwners.get(row.key) ?? []) {
+        const member = { enterpriseId, collectionId: row.collectionId, queryId: row.queryId, owned: false }
+        const key = keyOf(member)
+        if (!membership.has(key)) membership.set(key, member)
+      }
+    }
+  }
+  return [...membership.values()]
+}
+
+async function readPostgresCuratedComparison(db: ComparisonReader, curatedPath: string) {
   const base = await getPostgresComparison(db)
-  const { rows: enterprises } = await db.execute<Subject>(sql`
-    SELECT id::float8 AS id,name_norm AS "nameNorm",uscc_norm AS uscc FROM enterprise
-    WHERE id=ANY(${ids([...new Set(base.rows.map(row => row.enterpriseId))])})`)
+  const ownerIds = [...new Set(base.rows.map(row => row.enterpriseId))]
+  const enterprises: Subject[] = []
+  for (const batch of chunk(ownerIds, ownerBatchSize)) {
+    enterprises.push(...await db.select({
+      id: enterprise.id,
+      nameNorm: enterprise.nameNorm,
+      uscc: enterprise.usccNorm,
+    }).from(enterprise).where(inArray(enterprise.id, batch)))
+  }
   const names = new Map(enterprises.map(row => [row.id, row.nameNorm]))
   return { curated: projectCuratedComparison(base, readCuration(curatedPath), names), enterprises }
 }
 
-async function readPostgresComparisonAliases(db: Reader, owners: number[]) {
-  if (!owners.length) return new Map()
-  const { rows } = await db.execute<{ enterpriseId: number; name: string; verificationStatus: string }>(sql`
-    SELECT enterprise_id::float8 AS "enterpriseId",name,verification_status AS "verificationStatus"
-    FROM enterprise_alias WHERE enterprise_id=ANY(${ids(owners)})`)
+async function readPostgresComparisonAliases(db: Pick<NodePgDatabase, 'select'>, owners: number[]) {
+  const rows: Pick<typeof enterpriseAlias.$inferSelect, 'enterpriseId' | 'name' | 'verificationStatus'>[] = []
+  for (const batch of chunk([...new Set(owners)], ownerBatchSize)) {
+    const aliases = await db.select({
+      enterpriseId: enterpriseAlias.enterpriseId,
+      name: enterpriseAlias.name,
+      verificationStatus: enterpriseAlias.verificationStatus,
+    }).from(enterpriseAlias).where(inArray(enterpriseAlias.enterpriseId, batch))
+    for (const alias of aliases) rows.push(alias)
+  }
   return Map.groupBy(rows, row => row.enterpriseId)
 }
 
@@ -79,23 +129,42 @@ export function readPostgresWholeComparison(db: NodePgDatabase, input: Compariso
     const { scoped, selected } = selectComparisonSummaryPage(result, input, input.page, input.pageSize, aliases)
     const members = await readMemberships(tx, enterprises.filter(row => selectedOwners.has(row.id)))
     const byOwner = new Map([...Map.groupBy(members, row => row.enterpriseId)].map(([id, rows]) => [id, rows.map(row => row.queryId)]))
-    const { rows: dispositions } = await tx.execute<SummaryDisposition>(sql`
-      SELECT DISTINCT ON (p.enterprise_id,p.title_code,p.direction) p.enterprise_id::float8 AS "enterpriseId",p.title_code AS "titleCode",p.direction,
-        p.id::float8 AS "explanationId",p.status,p.reason_code AS "reasonCode",p.measure_code AS "measureCode",
-        p.verification_status AS "verificationStatus",p.recorded_at AS "recordedAt",
-        q.old_id::float8 AS "evidenceQueryId",r.old_id::float8 AS "evidenceRelationId"
-      FROM difference_reason p LEFT JOIN platform_legacy_query_alias q ON q.collection_id=p.evidence_query_id
-      LEFT JOIN platform_legacy_relation_alias r ON r.observation_id=p.evidence_relation_id
-      WHERE p.enterprise_id=ANY(${ids(scopedIds)}) ORDER BY p.enterprise_id,p.title_code,p.direction,p.recorded_at DESC,p.id DESC`)
+    const dispositions: SummaryDisposition[] = []
+    const coordinates = [differenceReason.enterpriseId, differenceReason.titleCode, differenceReason.direction] as const
+    for (const owners of chunk(scopedIds, ownerBatchSize)) {
+      const batch = await tx.selectDistinctOn([...coordinates], {
+        enterpriseId: differenceReason.enterpriseId,
+        titleCode: differenceReason.titleCode,
+        direction: differenceReason.direction,
+        explanationId: differenceReason.id,
+        status: differenceReason.status,
+        reasonCode: differenceReason.reasonCode,
+        measureCode: differenceReason.measureCode,
+        verificationStatus: differenceReason.verificationStatus,
+        recordedAt: differenceReason.recordedAt,
+        evidenceQueryId: platformLegacyQueryAlias.oldId,
+        evidenceRelationId: platformLegacyRelationAlias.oldId,
+      }).from(differenceReason)
+        .leftJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, differenceReason.evidenceQueryId))
+        .leftJoin(platformLegacyRelationAlias, eq(platformLegacyRelationAlias.observationId, differenceReason.evidenceRelationId))
+        .where(inArray(differenceReason.enterpriseId, owners))
+        .orderBy(...coordinates, desc(differenceReason.recordedAt), desc(differenceReason.id))
+      for (const row of batch) dispositions.push(row)
+    }
     const selectedQueryIds = [...new Set(selected.flatMap(row => byOwner.get(row.enterpriseId) ?? []))]
-    const { rows: counts } = await tx.execute<{ queryId: number; count: number }>(sql`
-      SELECT q.old_id::float8 AS "queryId",count(*)::float8 AS count FROM platform_legacy_query_alias q
-      JOIN platform_business_observation o ON o.collection_id=q.collection_id WHERE q.old_id=ANY(${ids(selectedQueryIds)}) GROUP BY q.old_id`)
+    const counts = new Map<number, number>()
+    for (const queryIds of chunk(selectedQueryIds, ownerBatchSize)) {
+      const batch = await tx.select({ queryId: platformLegacyQueryAlias.oldId, count: count() })
+        .from(platformLegacyQueryAlias)
+        .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.collectionId, platformLegacyQueryAlias.collectionId))
+        .where(inArray(platformLegacyQueryAlias.oldId, queryIds)).groupBy(platformLegacyQueryAlias.oldId)
+      for (const row of batch) counts.set(row.queryId, row.count)
+    }
     const assessment = await readPostgresQueryAssessments(tx, selected)
     const assessments = assessment.map(row => ({ queryCoverage: { status: row.queryCoverage.status }, assessment: row.assessment,
       explanationValidity: { status: row.explanationValidity.status } }))
     const reconcile = readReconcile(input.reconcilePath)
-    const summary = projectComparisonSummary(result, reconcile, scoped, selected, dispositions, byOwner, new Map(counts.map(row => [row.queryId,row.count])), assessments)
+    const summary = projectComparisonSummary(result, reconcile, scoped, selected, dispositions, byOwner, counts, assessments)
     if (view === 'summary') return summary
     const ownerIds = new Set(selected.map(row => row.enterpriseId))
     const { view: _view, rows: _summaries, ...countsOnly } = summary
@@ -109,24 +178,52 @@ export function readPostgresWholeComparison(db: NodePgDatabase, input: Compariso
 }
 
 async function readPostgresComparisonEvidence<T extends Parameters<typeof projectPlatformComparisonEvidence>[0][number]>(
-  tx: Reader, rows: T[], subjects: Subject[], membership: Membership[],
+  tx: NodePgDatabase, rows: T[], subjects: Subject[], membership: Membership[],
 ) {
   if (!rows.length) return []
   const ownerIds = subjects.map(row => row.id)
-  const aliases = (await tx.execute<{ alias: typeof schema.enterpriseAlias.$inferSelect }>(sql`
-    SELECT ${postgresRosterRow(schema.enterpriseAlias,'a')} AS alias FROM enterprise_alias a
-    WHERE enterprise_id=ANY(${ids(ownerIds)}) ORDER BY a.name_norm COLLATE "C", a.id`)).rows.map(row => row.alias)
-  const dispositions = (await tx.execute<{ row: Parameters<typeof projectPlatformComparisonEvidence>[2][number] }>(sql`
-    SELECT ${postgresDifferenceRow()} AS row FROM difference_reason p WHERE p.enterprise_id=ANY(${ids(ownerIds)})
-    ORDER BY p.recorded_at DESC,p.id DESC`)).rows.map(row => row.row)
+  type Disposition = Parameters<typeof projectPlatformComparisonEvidence>[2][number]
+  const aliases: (typeof enterpriseAlias.$inferSelect)[] = []
+  const dispositions: Disposition[] = []
+  const stored = getTableColumns(differenceReason)
+  for (const owners of chunk(ownerIds, ownerBatchSize)) {
+    // Drizzle 0.45's ORDER BY builder has no expression-level COLLATE modifier.
+    const aliasBatch = await tx.select().from(enterpriseAlias).where(inArray(enterpriseAlias.enterpriseId, owners))
+      .orderBy(sql`${enterpriseAlias.nameNorm} COLLATE "C"`, enterpriseAlias.id)
+    for (const row of aliasBatch) aliases.push(row)
+    const dispositionBatch = await tx.select({
+      ...stored, evidenceQueryId: platformLegacyQueryAlias.oldId, evidenceRelationId: platformLegacyRelationAlias.oldId,
+    }).from(differenceReason)
+      .leftJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, stored.evidenceQueryId))
+      .leftJoin(platformLegacyRelationAlias, eq(platformLegacyRelationAlias.observationId, stored.evidenceRelationId))
+      .where(inArray(stored.enterpriseId, owners)).orderBy(desc(stored.recordedAt), desc(stored.id))
+    for (const row of dispositionBatch) {
+      dispositions.push({
+        ...row,
+        actor: row.actor === null ? null : JSON.parse(row.actor),
+        currentQualification: row.currentQualification === null ? null : JSON.parse(row.currentQualification),
+        factReferences: row.factReferences === null ? null : JSON.parse(row.factReferences),
+      })
+    }
+  }
   const queries = [...(await readPostgresFingerprintQueries(tx, [...new Set(membership.map(row => row.queryId))], false)).values()]
     .map(row => row.query).sort((a,b) => a.id - b.id)
-  const collections = new Set(membership.filter(row => row.owned).map(row => row.collectionId))
+  const collections = [...new Set(membership.filter(row => row.owned).map(row => row.collectionId))]
   const recognized = queries.filter(query => query.interface === 'recognized_list').map(query => query.id)
-  const relationIds = (await tx.execute<{ id: number }>(sql`SELECT a.old_id::float8 AS id FROM platform_business_observation o
-    JOIN platform_legacy_relation_alias a ON a.observation_id=o.id JOIN platform_legacy_query_alias q ON q.collection_id=o.collection_id
-    WHERE o.collection_id=ANY(${ids([...collections])}) OR q.old_id=ANY(${ids(recognized)})`)).rows.map(row => row.id)
-  const originals = await readPostgresRelationFingerprints(tx, { relationIds })
+  const relationIds = new Set<number>()
+  const collectionBatches = chunk(collections, ownerBatchSize - 1)
+  const recognizedBatches = chunk(recognized, ownerBatchSize - 1)
+  for (let index = 0; index < Math.max(collectionBatches.length, recognizedBatches.length); index++) {
+    const batch = await tx.select({ id: platformLegacyRelationAlias.oldId }).from(platformBusinessObservation)
+      .innerJoin(platformLegacyRelationAlias, eq(platformLegacyRelationAlias.observationId, platformBusinessObservation.id))
+      .innerJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformBusinessObservation.collectionId))
+      .where(or(
+        inArray(platformBusinessObservation.collectionId, collectionBatches[index] ?? []),
+        inArray(platformLegacyQueryAlias.oldId, recognizedBatches[index] ?? []),
+      ))
+    for (const row of batch) relationIds.add(row.id)
+  }
+  const originals = await readPostgresRelationFingerprints(tx, { relationIds: [...relationIds] })
   const byQuery = new Map(queries.map(row => [row.id,row]))
   const archive = await readPostgresObservationComparisonFacts(tx, originals.map(row =>
     ({ observationId: row.observationId, interface: byQuery.get(row.relation.queryId)!.interface })), 'archive')
@@ -137,15 +234,6 @@ async function readPostgresComparisonEvidence<T extends Parameters<typeof projec
     const { rawFields: _raw, normalizationConflicts, ...archiveProcessFacts } = stored
     facts.set(relation.id, { normalizationConflicts, archiveProcessFacts })
   }
-  const queried = new Map<string,number[]>()
-  for (const row of subjects) {
-    const code = normalizeUscc(row.uscc)
-    for (const key of ['name:' + row.nameNorm, ...(code ? [code] : [])]) {
-      const owners = queried.get(key) ?? []
-      owners.push(row.id)
-      queried.set(key, owners)
-    }
-  }
-  return projectPlatformComparisonEvidence(rows, aliases, dispositions, queried, queries, originals.map(row => row.relation)
+  return projectPlatformComparisonEvidence(rows, aliases, dispositions, queriedEnterpriseIds(subjects), queries, originals.map(row => row.relation)
     .sort((a,b) => a.queryId-b.queryId || a.sequenceNo-b.sequenceNo), facts)
 }

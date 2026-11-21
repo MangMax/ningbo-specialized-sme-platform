@@ -1,4 +1,5 @@
-import { sql } from 'drizzle-orm'
+import { and, eq, notExists, or } from 'drizzle-orm'
+import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { insertPostgresEnterpriseAlias, lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
@@ -8,19 +9,20 @@ import { capturePostgresIdentityChange, readPostgresIdentityMaterial } from './p
 import { findPostgresImportRelation, findPostgresImportRelationById } from './roster-import-references-postgres'
 import type { NativeImportExecution, PostgresImportAction, PostgresImportBatch } from './roster-export-import-postgres'
 
-type Reader = Pick<NodePgDatabase,'execute'>
+type Reader = Pick<NodePgDatabase,'execute' | 'select'>
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
-type Subject = { id:number; uscc:string | null }
 type AliasPlan = { enterpriseId:number; name:string; nameNorm:string; sourceRefId:number;
   input:RosterImportAlias; existingId:number | null; ref:string }
 const summary = { written:0,skipped:0,failed:0,evidenceRepointed:0 }
 const sourceKinds = new Set(['platform_business','platform_apply','announcement','manual'])
 
 async function resolveAliasOwner(db: Reader, nameNorm:string | null, uscc:string, platform:boolean) {
-  const { rows } = await db.execute<Subject>(sql`SELECT e.id::float8 AS id,e.uscc_norm AS uscc FROM enterprise e
-    WHERE (e.uscc_norm=${uscc || null} OR e.name_norm=${nameNorm})
-    AND NOT EXISTS(SELECT 1 FROM enterprise_merge m WHERE m.from_enterprise_id=e.id)
-    ORDER BY e.id`)
+  if (!uscc && nameNorm === null) return { selected: undefined, ambiguity: 0 }
+  const rows = await db.select({ id: enterprise.id, uscc: enterprise.usccNorm }).from(enterprise)
+    .where(and(or(uscc ? eq(enterprise.usccNorm, uscc) : undefined, nameNorm === null ? undefined : eq(enterprise.nameNorm, nameNorm)),
+      notExists(db.select({ id: enterpriseMerge.fromEnterpriseId }).from(enterpriseMerge)
+        .where(eq(enterpriseMerge.fromEnterpriseId, enterprise.id)))))
+    .orderBy(enterprise.id)
   const byCode = uscc ? rows.find(row=>row.uscc===uscc) : undefined
   const ambiguity = !uscc && platform && rows.length>1 ? rows.length : 0
   return { selected:byCode ?? (platform && uscc ? undefined : rows[0]),ambiguity }
@@ -68,9 +70,9 @@ async function planAlias(db: Reader, input: RosterImportAlias,index:number): Pro
     }
   }
   const nameNorm = normalizeName(name)
-  const { rows:[existing] } = literal===null ? { rows:[] } : await db.execute<{id:number}>(sql`
-    SELECT id::float8 AS id FROM enterprise_alias WHERE enterprise_id=${selected.id} AND name_norm=${nameNorm}
-      AND source_kind=${input.sourceKind} AND source_ref_id=${sourceRefId}`)
+  const [existing] = literal === null ? [] : await db.select({ id: enterpriseAlias.id }).from(enterpriseAlias)
+    .where(and(eq(enterpriseAlias.enterpriseId, selected.id), eq(enterpriseAlias.nameNorm, nameNorm),
+      eq(enterpriseAlias.sourceKind, input.sourceKind), eq(enterpriseAlias.sourceRefId, sourceRefId)))
   return { enterpriseId:selected.id,name,nameNorm,sourceRefId,input,existingId:existing?.id ?? null,ref }
 }
 

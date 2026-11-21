@@ -1,14 +1,24 @@
-import { sql } from 'drizzle-orm'
+import { and, between, desc, eq, getTableColumns, isNotNull, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { alias } from 'drizzle-orm/pg-core'
 import * as schema from '../../../../db/schema'
+import { platformArchiveValue, platformCollectionArchiveRef, platformObservationArchiveRef } from '../../../../db/postgresql/platform-archive-tables'
+import {
+  platformBusinessObservation, platformCollection, platformCollectionPage,
+  platformLegacyQueryAlias, platformLegacyRelationAlias, platformObservationAssignment,
+} from '../../../../db/postgresql/platform-tables'
 import type { PlatformStoredQuery, PlatformStoredRelation } from '../../lib/platform/read'
 import { legacyFingerprintRaw } from '../../lib/platform/legacy-fingerprint-raw'
 import { sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
 import { snapshotSchema } from '../../lib/platform/target-evidence-read'
-import { postgresRosterRow } from '../../lib/roster/postgres-rows'
-
-type Db = Pick<NodePgDatabase, 'execute'>
+type Db = Pick<NodePgDatabase, 'select'>
 type Cell = ReturnType<typeof snapshotSchema.parse>['fields'][number]
+type Collection = typeof schema.platformCollection.$inferSelect
+
+const pgCollectionColumns = getTableColumns(platformCollection)
+// Preserve legacy collection field order for callers that fingerprint its projection.
+const collectionColumns = Object.fromEntries(Object.keys(getTableColumns(schema.platformCollection))
+  .map(key => [key, pgCollectionColumns[key as keyof Collection]])) as typeof pgCollectionColumns
 
 function originalValue(cell: Cell) {
   const bytes = Buffer.from(cell.hex, 'hex')
@@ -24,21 +34,26 @@ function originalValue(cell: Cell) {
 }
 
 export async function readPostgresFingerprintQueries(db: Db, ids: readonly number[], includeRaw = true) {
-  if (!ids.length) return new Map<number, { query: PlatformStoredQuery; collection: typeof schema.platformCollection.$inferSelect }>()
-  const { rows } = await db.execute<{
-    id: number; collection: typeof schema.platformCollection.$inferSelect
-    raw: Buffer | null
-    coverage: Buffer | null
-  }>(sql`
-    SELECT q.old_id::float8 AS id, ${postgresRosterRow(schema.platformCollection, 'c')} AS collection,
-      ${includeRaw ? sql`(SELECT v.bytes FROM platform_collection_archive_ref r JOIN platform_archive_value v ON v.id=r.archive_id
-        WHERE r.owner_id=c.id AND r.field='rawResponse')` : sql`NULL::bytea`} AS raw,
-      (SELECT v.bytes FROM platform_collection_archive_ref r JOIN platform_archive_value v ON v.id=r.archive_id
-        WHERE r.owner_id=c.id AND r.field='collectionEvidence') AS coverage
-    FROM platform_legacy_query_alias q JOIN platform_collection c ON c.id=q.collection_id
-    WHERE q.old_id=ANY(${sql.param(ids)}::bigint[])`)
+  if (!ids.length) return new Map<number, { query: PlatformStoredQuery; collection: Collection }>()
+  const queryAlias = platformLegacyQueryAlias
+  const coverageRef = alias(platformCollectionArchiveRef, 'coverage_ref')
+  const rawRef = alias(platformCollectionArchiveRef, 'raw_ref')
+  const coverageValue = alias(platformArchiveValue, 'coverage_value')
+  const rawValue = alias(platformArchiveValue, 'raw_value')
+  const select = db.select({
+    id: queryAlias.oldId, collection: collectionColumns, coverage: coverageValue.bytes,
+    ...(includeRaw ? { raw: rawValue.bytes } : {}),
+  }).from(queryAlias)
+    .innerJoin(platformCollection, eq(platformCollection.id, queryAlias.collectionId))
+    .leftJoin(coverageRef, and(eq(coverageRef.ownerId, platformCollection.id), eq(coverageRef.field, 'collectionEvidence')))
+    .leftJoin(coverageValue, eq(coverageValue.id, coverageRef.archiveId))
+    // Drizzle has no scalar = ANY with a single bound array for unbounded ID scopes.
+    .where(sql`${queryAlias.oldId} = ANY(${sql.param(ids)}::bigint[])`)
+  const rows = await (includeRaw ? select
+    .leftJoin(rawRef, and(eq(rawRef.ownerId, platformCollection.id), eq(rawRef.field, 'rawResponse')))
+    .leftJoin(rawValue, eq(rawValue.id, rawRef.archiveId)) : select)
   return new Map(rows.map(row => {
-    const c = row.collection
+    const c = row.collection as Collection
     const query: PlatformStoredQuery = {
       id: row.id, interface: c.interface, queryKey: c.queryKey, rdjb: c.rdjb, titleCode: c.titleCode,
       queriedAt: c.queriedAt, lastCollectedAt: c.lastCollectedAt, status: c.status, failureReason: c.failureReason,
@@ -59,31 +74,37 @@ export async function readPostgresFingerprintRelations(db: Db, queryId: number) 
 }
 
 export async function readPostgresRelationFingerprints(db: Db, scope: { queryId: number; archiveReplay?: true } | { relationIds: readonly number[] }) {
-  const where = 'queryId' in scope ? sql`q.old_id=${scope.queryId}` : sql`ra.old_id=ANY(${sql.param(scope.relationIds)}::bigint[])`
-  const { rows } = await db.execute<{
-    id: number; enterpriseId: number | null; queryId: number; observationId: number; sourceRdjb: string | null; originalUscc: string | null; originalName: string | null
-    matchBasis: PlatformStoredRelation['matchBasis']; verificationStatus: PlatformStoredRelation['verificationStatus']
-    snapshot: Buffer | null
-  }>(sql`
-    SELECT ra.old_id::float8 AS id, q.old_id::float8 AS "queryId", o.id::float8 AS "observationId",
-      a.enterprise_id::float8 AS "enterpriseId", first.uscc_raw AS "originalUscc", first.name_raw AS "originalName", page.rdjb AS "sourceRdjb",
-      a.match_basis AS "matchBasis", a.verification_status AS "verificationStatus", v.bytes AS snapshot
-    FROM platform_legacy_query_alias q
-    JOIN platform_business_observation o ON o.collection_id=q.collection_id
-    JOIN platform_legacy_relation_alias ra ON ra.observation_id=o.id
-    JOIN LATERAL (
-      SELECT enterprise_id,match_basis,verification_status FROM platform_observation_assignment
-      WHERE observation_id=o.id ORDER BY revision DESC LIMIT 1
-    ) a ON true
-    JOIN platform_observation_assignment first ON first.observation_id=o.id AND first.revision=1
-    LEFT JOIN LATERAL (
-      SELECT rdjb FROM platform_collection_page WHERE collection_id=o.collection_id AND status='success'
-        AND o.sequence_no BETWEEN sequence_start AND sequence_end ORDER BY ordinal LIMIT 1
-    ) page ON true
-    LEFT JOIN platform_observation_archive_ref r ON r.owner_id=o.id AND r.field='legacyRowSnapshot'
-    LEFT JOIN platform_archive_value v ON v.id=r.archive_id
-    WHERE ${where}
-    ORDER BY ra.old_id`)
+  const query = platformLegacyQueryAlias
+  const observation = platformBusinessObservation
+  const relation = platformLegacyRelationAlias
+  const assignment = platformObservationAssignment
+  const original = alias(assignment, 'first_assignment')
+  const page = platformCollectionPage
+  const ref = platformObservationArchiveRef
+  const latest = db.select({
+    enterpriseId: assignment.enterpriseId, matchBasis: assignment.matchBasis, verificationStatus: assignment.verificationStatus,
+  }).from(assignment).where(eq(assignment.observationId, observation.id))
+    .orderBy(desc(assignment.revision)).limit(1).as('latest_assignment')
+  const sourcePage = db.select({ rdjb: page.rdjb, sequenceStart: page.sequenceStart }).from(page)
+    .where(and(eq(page.collectionId, observation.collectionId), eq(page.status, 'success'),
+      between(observation.sequenceNo, page.sequenceStart, page.sequenceEnd)))
+    .orderBy(page.ordinal).limit(1).as('source_page')
+  const where = 'queryId' in scope ? eq(query.oldId, scope.queryId)
+    // Keep one bound array for relation scopes that can exceed the bind limit.
+    : sql`${relation.oldId} = ANY(${sql.param(scope.relationIds)}::bigint[])`
+  const rows = await db.select({
+    id: relation.oldId, queryId: query.oldId, observationId: observation.id,
+    enterpriseId: latest.enterpriseId, matchBasis: latest.matchBasis, verificationStatus: latest.verificationStatus,
+    originalUscc: original.usccRaw, originalName: original.nameRaw, sourceRdjb: sourcePage.rdjb, snapshot: platformArchiveValue.bytes,
+  }).from(query)
+    .innerJoin(observation, eq(observation.collectionId, query.collectionId))
+    .innerJoin(relation, eq(relation.observationId, observation.id))
+    .crossJoinLateral(latest)
+    .innerJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
+    .leftJoinLateral(sourcePage, isNotNull(sourcePage.sequenceStart))
+    .leftJoin(ref, and(eq(ref.ownerId, observation.id), eq(ref.field, 'legacyRowSnapshot')))
+    .leftJoin(platformArchiveValue, eq(platformArchiveValue.id, ref.archiveId))
+    .where(where).orderBy(relation.oldId)
   return rows.map(({ id, enterpriseId, matchBasis, verificationStatus, snapshot, queryId, observationId, sourceRdjb, originalUscc, originalName }) => {
     if (!snapshot) throw new Error('Missing original correspondence fingerprint snapshot')
     const cells = new Map(snapshotSchema.parse(JSON.parse(snapshot.toString('utf8'))).fields.map(cell => [cell.name, cell]))

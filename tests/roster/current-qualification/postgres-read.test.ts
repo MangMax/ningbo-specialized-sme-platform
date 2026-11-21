@@ -27,6 +27,7 @@ it.runIf(!!connectionString)('preserves three-title decisions and the public eff
   const sqlite = currentQualificationFixture()
   const client = new pg.Client({ connectionString })
   await client.connect()
+  let schemaCreated = false
   try {
     const matrix = qualificationMatrix(sqlite.sqlite)
     const db = sqliteDrizzle(sqlite.sqlite, { schema })
@@ -105,6 +106,9 @@ it.runIf(!!connectionString)('preserves three-title decisions and the public eff
       source: expect.objectContaining({ rawValid: '2026-06-01', rawMaintenanceBatch: '2025-2' }) })])
     const empty = sqlite.sqlite.prepare('insert into enterprise (name, name_norm) values (?, ?) returning id').get('无称号', '无称号') as { id: number }
 
+    await client.query('CREATE SCHEMA business')
+    schemaCreated = true
+    await client.query('SET search_path TO business, public')
     await copyQualificationsFixture(client, sqlite.sqlite)
     const postgres = drizzle(client)
     await expect(postgres.transaction(tx => readPostgresEffectiveQualifications(tx, giant.enterprise.id, asOf)))
@@ -177,7 +181,11 @@ it.runIf(!!connectionString)('preserves three-title decisions and the public eff
     }
   } finally {
     sqlite.close()
-    await client.end()
+    try {
+      if (schemaCreated) await client.query('DROP SCHEMA business CASCADE')
+    } finally {
+      await client.end()
+    }
   }
 })
 
@@ -201,7 +209,7 @@ async function copyQualificationsFixture(client: pg.Client, sqlite: ReturnType<t
     fields.push(...mixedColumns.map(name => 'typeof(' + name + ')'))
     const targetFields = columns.map(({ name, type }) => `"${name}" ${/int/i.test(type) ? 'bigint' : /blob/i.test(type) ? 'bytea' : 'text'}`)
     targetFields.push(...mixedColumns.map(name => name + '_sqlite_storage text'))
-    await client.query(`create temp table "${table}" (${targetFields.join(', ')})`)
+    await client.query(`create table "${table}" (${targetFields.join(', ')})`)
     for (const raw of sqlite.prepare(`select ${fields.join(', ')} from "${table}"`).raw().all()) {
       const row = raw as unknown[]
       for (const [offset, name] of mixedColumns.entries()) {

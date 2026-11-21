@@ -1,4 +1,6 @@
-import { sql } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
+import { importBatch, importReceipt } from '../../../../db/postgresql/import-tables'
+import { rosterAnnouncementIntake, rosterAnnouncementMember } from '../../../../db/postgresql/roster-selection-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { z } from 'zod'
 import type {
@@ -46,13 +48,14 @@ async function recordSupplementReceipt(tx: Tx, input: {
   summary: RosterImportSummary; items: unknown; startedAt: string; completedAt: string
 }) {
   const { batchId, requestHash, requestBody, status, summary, items, startedAt, completedAt } = input
-  await tx.execute(sql`WITH owner AS (
-    SELECT id FROM import_receipt WHERE batch_id=${batchId} AND request_hash=${requestHash}
-      AND body_receipt_id IS NULL AND request_body=${requestBody} ORDER BY id LIMIT 1
-  ) INSERT INTO import_receipt(body_receipt_id,batch_id,operation,request_hash,request_body,status,summary,item_results,created_at,completed_at)
-  SELECT id,${batchId},'commit',${requestHash},CASE WHEN id IS NULL THEN ${requestBody} ELSE '' END,${status},
-    ${JSON.stringify(summary)},${JSON.stringify(items)},${startedAt},${completedAt}
-  FROM (VALUES(1)) instance(n) LEFT JOIN owner ON true`)
+  const [owner] = await tx.select({ id: importReceipt.id }).from(importReceipt).where(and(
+    eq(importReceipt.batchId, batchId), eq(importReceipt.requestHash, requestHash),
+    isNull(importReceipt.bodyReceiptId), eq(importReceipt.requestBody, requestBody),
+  )).orderBy(importReceipt.id).limit(1)
+  await tx.insert(importReceipt).values({
+    bodyReceiptId: owner?.id ?? null, batchId, operation: 'commit', requestHash, requestBody: owner ? '' : requestBody,
+    status, summary: JSON.stringify(summary), itemResults: JSON.stringify(items), createdAt: startedAt, completedAt,
+  })
 }
 
 export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: number, input: Review, filesDir?: string) {
@@ -85,10 +88,13 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
     const startedAt = new Date().toISOString()
     const operation = preflight ? 'preflight' : 'commit'
     const steps = createPostgresImportSteps(operation,request,filesDir,true)
-    const createBatch = async (connection: Tx) => (await connection.execute<{ id: number }>(sql`
-      INSERT INTO import_batch(idempotency_key,source_kind,source_identity,source_sha256,status,created_at)
-      VALUES(${request.idempotencyKey},${request.sourceKind},${request.sourceIdentity},${request.sourceSha256 ?? null},'preflight',${startedAt})
-      RETURNING id::float8 AS id`)).rows[0]!.id
+    const createBatch = async (connection: Tx) => {
+      const [batch] = await connection.insert(importBatch).values({
+        idempotencyKey: request.idempotencyKey, sourceKind: request.sourceKind, sourceIdentity: request.sourceIdentity,
+        sourceSha256: request.sourceSha256 ?? null, status: 'preflight', createdAt: startedAt,
+      }).returning({ id: importBatch.id })
+      return batch!.id
+    }
     const batchId = preflight ? null : previous?.id ?? await createBatch(tx)
     try {
       return await tx.transaction(async nested => {
@@ -109,8 +115,10 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
           preflight ? plan.official! : officialEvidencePlanHash, evidence))
         await finishPostgresOfficialImport(nested, evidence)
         const sourceIds = await attachPostgresAnnouncementSources(nested, id, activeBatchId, request, owners, filesDir)
-        await nested.execute(sql`INSERT INTO roster_announcement_member(enterprise_id,intake_id)
-          SELECT owner,${id} FROM unnest(${sql.param([...new Set(owners.values())])}::bigint[]) AS input(owner) ON CONFLICT DO NOTHING`)
+        const members = [...new Set(owners.values())].map(enterpriseId => ({ enterpriseId, intakeId: id }))
+        for (let offset = 0; offset < members.length; offset += 30_000) {
+          await nested.insert(rosterAnnouncementMember).values(members.slice(offset, offset + 30_000)).onConflictDoNothing()
+        }
         const extra = steps.length ? await executePostgresImportSteps(nested, {
           id: activeBatchId, status: previous?.status ?? 'preflight', kind: request.sourceKind, identity: request.sourceIdentity,
           sha256: request.sourceSha256 ?? null, items: null, preflight: previous?.preflight ?? null, summary: null,
@@ -130,8 +138,10 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
         }
         items.push(...extra?.items ?? [])
         const completedAt = new Date().toISOString()
-        await nested.execute(sql`UPDATE import_batch SET status='committed',item_results=${JSON.stringify(items)},
-          summary=${JSON.stringify({ ...summary, qualificationReadback: readback })},error=NULL,committed_at=${completedAt} WHERE id=${batchId}`)
+        await nested.update(importBatch).set({
+          status: 'committed', itemResults: JSON.stringify(items),
+          summary: JSON.stringify({ ...summary, qualificationReadback: readback }), error: null, committedAt: completedAt,
+        }).where(eq(importBatch.id, batchId!))
         const publicItems = publicRosterImportItems(items, batchId!)
         await recordSupplementReceipt(nested, { batchId: batchId!, requestHash, requestBody, status: 'committed',
           summary, items: redactor(publicItems), startedAt, completedAt })
@@ -139,8 +149,9 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
         const receipt: SupplementAnnouncementResponse = { batchId: batchId!, status: 'supplemented', summary, items: publicItems, error: null,
           qualificationReadback: readback, intakeId: id, sourceIds, owners: [...owners.values()],
           ...(candidateTaskIds?.length ? { candidateTaskIds } : {}) }
-        await nested.execute(sql`UPDATE roster_announcement_intake SET supplement_digest=${decision},reviewed_request=${JSON.stringify(input)},
-          receipt=${JSON.stringify(receipt)} WHERE id=${id}`)
+        await nested.update(rosterAnnouncementIntake).set({
+          supplementDigest: decision, reviewedRequest: JSON.stringify(input), receipt: JSON.stringify(receipt),
+        }).where(eq(rosterAnnouncementIntake.id, id))
         return receipt
       })
     } catch (error) {
@@ -150,8 +161,9 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
       const message = '批次校验未通过：' + error.items.length + ' 项有误，未写入任何数据'
       const items = publicRosterImportItems(error.items, batchId!)
       const completedAt = new Date().toISOString()
-      await tx.execute(sql`UPDATE import_batch SET status='failed',item_results=${JSON.stringify(error.items)},summary=${JSON.stringify(summary)},
-        error=${message} WHERE id=${batchId}`)
+      await tx.update(importBatch).set({
+        status: 'failed', itemResults: JSON.stringify(error.items), summary: JSON.stringify(summary), error: message,
+      }).where(eq(importBatch.id, batchId!))
       await recordSupplementReceipt(tx, { batchId: batchId!, requestHash, requestBody, status: 'failed',
         summary, items: redactor(items), startedAt, completedAt })
       return { batchId: batchId!, status: 'failed' as const, summary, items, error: message }

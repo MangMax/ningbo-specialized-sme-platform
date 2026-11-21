@@ -1,5 +1,11 @@
-import { sql, type SQL } from 'drizzle-orm'
+import { and, count, desc, eq, gt, lte, ne, notExists, or, sql, type SQLWrapper } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
+import { importBatch } from '../../../../db/postgresql/import-tables'
+import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
+import { platformBusinessObservation, platformCollection, platformExportBatch, platformExportRow,
+  platformLegacyQueryAlias, platformLegacyRelationAlias, platformObservationAssignment } from '../../../../db/postgresql/platform-tables'
+import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import { postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeUscc } from '../../lib/domain'
 import { formerPlatformMembers } from '../../lib/roster/enterprise-list-postgres'
@@ -11,58 +17,80 @@ import { prepareUsccClaims, type UsccQueryParse } from './uscc-research-query'
 import { platformOnlyUsccTargets, selectUsccTargetRows } from './uscc-research-read'
 import { pageUsccChecklist, prepareUsccResearch, projectUsccDictionary, projectUsccResearch, projectUsccTargets, type UsccTargetSnapshot } from './uscc-research'
 
-type Reader = Pick<NodePgDatabase, 'execute'>
-const bigintArray = (ids: number[]) => sql`${sql.param(ids)}::bigint[]`
+type Reader = Pick<NodePgDatabase, 'select'>
+// Drizzle inArray binds each element separately. The checklist and its evidence
+// sets can span more IDs or keys than PostgreSQL permits in one Bind message.
+const containsIds = (column: SQLWrapper, ids: number[]) => sql`${column} = ANY(${sql.param(ids)}::bigint[])`
+const containsKeys = (column: SQLWrapper, values: string[]) => sql`${column} = ANY(${sql.param(values)}::text[])`
 const representable = (text: string) => !text.includes('\0') && text.isWellFormed()
-const textArray = (values: string[]) => sql`${sql.param(values)}::text[]`
-const currentIdentity = sql`NOT EXISTS (SELECT 1 FROM enterprise_merge m WHERE m.from_enterprise_id=e.id)`
+const currentIdentity = (db: Reader) => notExists(db.select({ id: enterpriseMerge.fromEnterpriseId })
+  .from(enterpriseMerge).where(eq(enterpriseMerge.fromEnterpriseId, enterprise.id)))
 const usccWhitespace = '\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u200b\u200c\u200d\u2028\u2029\u202f\u205f\u3000\ufeff'
-const withoutUsccWhitespace = (column: SQL) => sql`translate(${column},${usccWhitespace},'')`
 
-function potentiallyMatchingUscc(column: SQL, codes: string[]) {
-  const stripped = withoutUsccWhitespace(column)
-  // JS case folding can expand non-ASCII characters. Recheck those rows with normalizeUscc.
-  return sql`(${column}=ANY(${textArray(codes)}) OR upper(${stripped} COLLATE "C")=ANY(${textArray(codes)})
-    OR (octet_length(${stripped}) > length(${stripped})
-      AND length(${stripped}) <= ${codes.reduce((max, code) => Math.max(max, code.length), 0)}
-      ${codes.some(code => code.startsWith('NAME:')) ? sql.empty() : sql`AND lower(left(${stripped},5) COLLATE "C") <> 'name:'`}))`
+function potentiallyMatchingUscc(column: SQLWrapper, codes: string[]) {
+  // These PostgreSQL scalar expressions narrow the scan. The JS normalizer is
+  // authoritative, including Unicode uppercase expansions.
+  const stripped = sql`translate(${column}, ${usccWhitespace}, '')`
+  const length = sql`length(${stripped})`
+  return or(
+    containsKeys(column, codes),
+    containsKeys(sql`upper(${stripped} COLLATE "C")`, codes),
+    and(
+      gt(sql`octet_length(${stripped})`, length),
+      lte(length, codes.reduce((max, code) => Math.max(max, code.length), 0)),
+      codes.some(code => code.startsWith('NAME:')) ? undefined : ne(sql`lower(left(${stripped}, 5) COLLATE "C")`, 'name:'),
+    ),
+  )
 }
+
+const queryFields = {
+  id: platformLegacyQueryAlias.oldId,
+  interface: sql<PlatformEvidenceQuery['interface']>`${platformCollection.interface}`,
+  queryKey: platformCollection.queryKey,
+  rdjb: platformCollection.rdjb,
+  queriedAt: platformCollection.queriedAt,
+}
+const initialAssignment = and(
+  eq(platformObservationAssignment.observationId, platformBusinessObservation.id),
+  eq(platformObservationAssignment.revision, 1),
+)
+const parseJson = <T>(value: string | null): T | null => value === null ? null : JSON.parse(value)
 
 type Owner = Parameters<typeof projectUsccDictionary>[0][number] & { city: string | null }
 type Alias = Parameters<typeof projectUsccDictionary>[1][number]
 
-async function readTargets(db: Reader, owners: Owner[], aliases: Alias[], filter: Extract<UsccQueryParse, { ok: true }>["planFilter"]): Promise<UsccTargetSnapshot> {
+async function readTargets(db: NodePgDatabase, owners: Owner[], aliases: Alias[], filter: Extract<UsccQueryParse, { ok: true }>["planFilter"]): Promise<UsccTargetSnapshot> {
   const missing = owners.filter(owner => !normalizeUscc(owner.usccNorm))
-  const ids = bigintArray(missing.map(owner => owner.id))
-  const { rows: records } = await db.execute<UsccTargetSnapshot['records'][number]>(sql`
-    SELECT id::float8 AS id, enterprise_id::float8 AS "enterpriseId", title_code AS "titleCode", source, district
-    FROM record WHERE enterprise_id=ANY(${ids}) ORDER BY id`)
+  const records = await db.select({
+    id: record.id, enterpriseId: record.enterpriseId, titleCode: record.titleCode,
+    source: record.source, district: record.district,
+  }).from(record).where(containsIds(record.enterpriseId, missing.map(owner => owner.id))).orderBy(record.id)
   const platformOnly = platformOnlyUsccTargets(records)
   const removed = platformOnly.size ? (await formerPlatformMembers(db)).intersection(platformOnly) : new Set<number>()
   const rows = selectUsccTargetRows(missing, records, aliases, removed, filter)
   const selectedIds = new Set(rows.map(row => row.enterpriseId))
   const enterprises = missing.filter(row => selectedIds.has(row.id))
   const selectedRecords = records.filter(row => selectedIds.has(row.enterpriseId))
-  const recordIds = bigintArray(selectedRecords.map(row => row.id))
   const keys = [...new Set(enterprises.map(row => 'name:' + row.nameNorm))].filter(representable)
-  const { rows: events } = await db.execute<UsccTargetSnapshot['events'][number]>(sql`
-    SELECT id::float8 AS id, record_id::float8 AS "recordId" FROM record_event WHERE record_id=ANY(${recordIds}) ORDER BY id`)
-  const { rows: evidence } = await db.execute<UsccTargetSnapshot['evidence'][number]>(sql`
-    SELECT record_event_id::float8 AS "recordEventId", source_file AS "sourceFile", attachment,
-      list_no::float8 AS "listNo", page::float8 AS page FROM record_evidence
-    WHERE record_event_id=ANY(${bigintArray(events.map(row => row.id))}) ORDER BY id`)
-  const { rows: differences } = await db.execute<UsccTargetSnapshot['differences'][number]>(sql`
-    SELECT id::float8 AS id, enterprise_id::float8 AS "enterpriseId", title_code AS "titleCode", direction,
-      recorded_at AS "recordedAt", status, reason_code AS "reasonCode", reason_note AS "reasonNote"
-    FROM difference_reason WHERE enterprise_id=ANY(${bigintArray([...selectedIds])}) ORDER BY id`)
-  const { rows: traces } = await db.execute<UsccTargetSnapshot['queries'][number] & { count: number }>(sql`
-    SELECT qa.old_id::float8 AS id, c.interface, c.query_key AS "queryKey", c.rdjb, c.queried_at AS "queriedAt", c.status,
-      (SELECT count(*)::float8 FROM platform_business_observation o
-        JOIN platform_legacy_relation_alias ra ON ra.observation_id=o.id
-        JOIN platform_observation_assignment original ON original.observation_id=o.id AND original.revision=1
-        WHERE o.collection_id=c.id) AS count
-    FROM platform_collection c JOIN platform_legacy_query_alias qa ON qa.collection_id=c.id
-    WHERE c.query_key=ANY(${textArray(keys)}) ORDER BY qa.old_id`)
+  const events = await db.select({ id: recordEvent.id, recordId: recordEvent.recordId }).from(recordEvent)
+    .where(containsIds(recordEvent.recordId, selectedRecords.map(row => row.id))).orderBy(recordEvent.id)
+  const evidence = await db.select({
+    recordEventId: recordEvidence.recordEventId, sourceFile: recordEvidence.sourceFile, attachment: recordEvidence.attachment,
+    listNo: recordEvidence.listNo, page: recordEvidence.page,
+  }).from(recordEvidence).where(containsIds(recordEvidence.recordEventId, events.map(row => row.id))).orderBy(recordEvidence.id)
+  const differences = await db.select({
+    id: differenceReason.id, enterpriseId: differenceReason.enterpriseId, titleCode: differenceReason.titleCode,
+    direction: differenceReason.direction, recordedAt: differenceReason.recordedAt, status: differenceReason.status,
+    reasonCode: differenceReason.reasonCode, reasonNote: differenceReason.reasonNote,
+  }).from(differenceReason).where(containsIds(differenceReason.enterpriseId, [...selectedIds])).orderBy(differenceReason.id)
+  const relationCount = db.select({ count: count() }).from(platformBusinessObservation)
+    .innerJoin(platformLegacyRelationAlias, eq(platformLegacyRelationAlias.observationId, platformBusinessObservation.id))
+    .innerJoin(platformObservationAssignment, initialAssignment).where(eq(platformBusinessObservation.collectionId, platformCollection.id))
+  const traces = await db.select({
+    ...queryFields, status: sql<UsccTargetSnapshot['queries'][number]['status']>`${platformCollection.status}`,
+    count: sql<number>`${relationCount}`.mapWith(Number),
+  }).from(platformCollection).innerJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformCollection.id))
+    .where(containsKeys(platformCollection.queryKey, keys)).orderBy(platformLegacyQueryAlias.oldId)
   return { rows, enterprises, records: selectedRecords, events, evidence, differences,
     queries: traces, relationCounts: traces.map(row => ({ queryId: row.id, count: row.count })) }
 }
@@ -73,10 +101,9 @@ async function readEvidence(db: Reader, requested: string[]) {
   const index: PlatformEvidenceIndex = { queriesByUscc: new Map(), relationsByQuery: new Map() }
   const exportNames = new Map<string, string>()
   if (codes.length) {
-    const { rows } = await db.execute<PlatformEvidenceQuery>(sql`
-      SELECT qa.old_id::float8 AS id, c.interface, c.query_key AS "queryKey", c.rdjb, c.queried_at AS "queriedAt"
-      FROM platform_collection c JOIN platform_legacy_query_alias qa ON qa.collection_id=c.id
-      WHERE ${potentiallyMatchingUscc(sql`c.query_key`, codes)} ORDER BY qa.old_id`)
+    const rows = await db.select(queryFields).from(platformCollection)
+      .innerJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformCollection.id))
+      .where(potentiallyMatchingUscc(platformCollection.queryKey, codes)).orderBy(platformLegacyQueryAlias.oldId)
     const queryIds: number[] = []
     for (const query of rows) {
       const code = normalizeUscc(query.queryKey)
@@ -86,23 +113,25 @@ async function readEvidence(db: Reader, requested: string[]) {
       bucket.push(query)
       index.queriesByUscc.set(code, bucket)
     }
-    const { rows: relations } = await db.execute<PlatformEvidenceRelation>(sql`
-      SELECT ra.old_id::float8 AS id, qa.old_id::float8 AS "queryId", o.sequence_no::float8 AS "sequenceNo",
-        o.source_relation_key AS "relationKey", original.name_raw AS "nameRaw", original.uscc_raw AS "usccRaw"
-      FROM platform_legacy_query_alias qa JOIN platform_business_observation o ON o.collection_id=qa.collection_id
-      JOIN platform_legacy_relation_alias ra ON ra.observation_id=o.id
-      JOIN platform_observation_assignment original ON original.observation_id=o.id AND original.revision=1
-      WHERE qa.old_id=ANY(${bigintArray(queryIds)}) ORDER BY qa.old_id,o.sequence_no,ra.old_id`)
+    const relations: PlatformEvidenceRelation[] = await db.select({
+      id: platformLegacyRelationAlias.oldId, queryId: platformLegacyQueryAlias.oldId,
+      sequenceNo: platformBusinessObservation.sequenceNo, relationKey: platformBusinessObservation.sourceRelationKey,
+      nameRaw: platformObservationAssignment.nameRaw, usccRaw: platformObservationAssignment.usccRaw,
+    }).from(platformLegacyQueryAlias)
+      .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.collectionId, platformLegacyQueryAlias.collectionId))
+      .innerJoin(platformLegacyRelationAlias, eq(platformLegacyRelationAlias.observationId, platformBusinessObservation.id))
+      .innerJoin(platformObservationAssignment, initialAssignment)
+      .where(containsIds(platformLegacyQueryAlias.oldId, queryIds))
+      .orderBy(platformLegacyQueryAlias.oldId, platformBusinessObservation.sequenceNo, platformLegacyRelationAlias.oldId)
     for (const relation of relations) {
       const bucket = index.relationsByQuery.get(relation.queryId) ?? []
       bucket.push(relation)
       index.relationsByQuery.set(relation.queryId, bucket)
     }
-    const { rows: exports } = await db.execute<{ uscc: string; name: string | null }>(sql`
-      SELECT r.uscc_raw AS uscc, r.name_raw AS name FROM platform_export_row r
-      JOIN platform_export_batch b ON b.id=r.batch_id
-      WHERE ${potentiallyMatchingUscc(sql`r.uscc_raw`, codes)}
-      ORDER BY b.year DESC,b.id DESC,r.source_row_no`)
+    const exports = await db.select({ uscc: platformExportRow.usccRaw, name: platformExportRow.nameRaw })
+      .from(platformExportRow).innerJoin(platformExportBatch, eq(platformExportBatch.id, platformExportRow.batchId))
+      .where(potentiallyMatchingUscc(platformExportRow.usccRaw, codes))
+      .orderBy(desc(platformExportBatch.year), desc(platformExportBatch.id), platformExportRow.sourceRowNo)
     for (const row of exports) {
       const code = normalizeUscc(row.uscc)
       if (wanted.has(code) && !exportNames.has(code) && row.name?.trim()) exportNames.set(code, row.name.trim())
@@ -113,13 +142,14 @@ async function readEvidence(db: Reader, requested: string[]) {
 
 export function readPostgresUsccResearch(db: NodePgDatabase, parsed: Extract<UsccQueryParse, { ok: true }>) {
   return db.transaction(async tx => {
-    const { rows: owners } = await tx.execute<Owner>(sql`
-      SELECT e.id::float8 AS id, e.name, e.name_norm AS "nameNorm", e.uscc_norm AS "usccNorm", e.district, e.city
-      FROM enterprise e WHERE ${currentIdentity} ORDER BY e.id`)
-    const { rows: aliases } = await tx.execute<Alias>(sql`
-      SELECT a.enterprise_id::float8 AS "enterpriseId", a.name, a.name_norm AS "nameNorm"
-      FROM enterprise_alias a JOIN enterprise e ON e.id=a.enterprise_id
-      WHERE a.verification_status='confirmed' AND ${currentIdentity} ORDER BY a.id`)
+    const owners: Owner[] = await tx.select({
+      id: enterprise.id, name: enterprise.name, nameNorm: enterprise.nameNorm, usccNorm: enterprise.usccNorm,
+      district: enterprise.district, city: enterprise.city,
+    }).from(enterprise).where(currentIdentity(tx)).orderBy(enterprise.id)
+    const aliases: Alias[] = await tx.select({
+      enterpriseId: enterpriseAlias.enterpriseId, name: enterpriseAlias.name, nameNorm: enterpriseAlias.nameNorm,
+    }).from(enterpriseAlias).innerJoin(enterprise, eq(enterprise.id, enterpriseAlias.enterpriseId))
+      .where(and(eq(enterpriseAlias.verificationStatus, 'confirmed'), currentIdentity(tx))).orderBy(enterpriseAlias.id)
     const targets = projectUsccTargets(await readTargets(tx, owners, aliases, parsed.planFilter))
     const { claims, verdicts } = prepareUsccClaims(parsed)
     const inputs = prepareUsccResearch(targets, projectUsccDictionary(owners, aliases), claims)
@@ -140,29 +170,30 @@ export function readPostgresUsccResearch(db: NodePgDatabase, parsed: Extract<Usc
 export async function readPostgresDuplicateMerge(db: NodePgDatabase, batchKey: string) {
   if (!representable(batchKey)) return null
   return db.transaction(async tx => {
-    const { rows: [batch] } = await tx.execute<{
-      batchId: number; items: RosterImportItemResult[] | null; preflight: RosterImportPreflight | null;
-    }>(sql`
-      SELECT id::float8 AS "batchId", item_results::json AS items, preflight_result::json AS preflight
-      FROM import_batch WHERE idempotency_key=${batchKey}`)
+    const [batch] = await tx.select({
+      batchId: importBatch.id, items: importBatch.itemResults, preflight: importBatch.preflightResult,
+    }).from(importBatch).where(eq(importBatch.idempotencyKey, batchKey))
     if (!batch) return null
-    const duplicateCandidates = duplicateCandidatesFromBatch(batch.items, batch.preflight)
-    const { rows: [executed] } = await tx.execute<{ id: number; idempotencyKey: string }>(sql`
-      SELECT id::float8 AS id, idempotency_key AS "idempotencyKey" FROM import_batch
-      WHERE source_identity=${duplicateMergeSourceIdentity(batchKey)} AND status='committed' ORDER BY id DESC LIMIT 1`)
+    const duplicateCandidates = duplicateCandidatesFromBatch(
+      parseJson<RosterImportItemResult[]>(batch.items), parseJson<RosterImportPreflight>(batch.preflight),
+    )
+    const [executed] = await tx.select({ id: importBatch.id, idempotencyKey: importBatch.idempotencyKey })
+      .from(importBatch).where(and(
+        eq(importBatch.sourceIdentity, duplicateMergeSourceIdentity(batchKey)), eq(importBatch.status, 'committed'),
+      )).orderBy(desc(importBatch.id)).limit(1)
     const evidence = await readEvidence(tx, duplicateCandidates.map(candidate => normalizeUscc(candidate.newUscc)))
     async function byId(id: number) {
       const canonical = Number.isSafeInteger(id) ? await postgresCanonicalEnterpriseId(tx, id) : null
       if (canonical == null) return null
-      const { rows: [owner] } = await tx.execute<{ id: number; name: string; usccNorm: string | null }>(sql`
-        SELECT id::float8 AS id, name, uscc_norm AS "usccNorm" FROM enterprise WHERE id=${canonical}`)
+      const [owner] = await tx.select({ id: enterprise.id, name: enterprise.name, usccNorm: enterprise.usccNorm })
+        .from(enterprise).where(eq(enterprise.id, canonical))
       return owner ?? null
     }
     return projectDuplicateMerge(batchKey, { batchId: batch.batchId, duplicateCandidates }, executed, {
       byId,
       async byUscc(uscc) {
         if (!representable(uscc)) return null
-        const { rows: [owner] } = await tx.execute<{ id: number }>(sql`SELECT id::float8 AS id FROM enterprise WHERE uscc_norm=${uscc}`)
+        const [owner] = await tx.select({ id: enterprise.id }).from(enterprise).where(eq(enterprise.usccNorm, uscc))
         return owner ? byId(owner.id) : null
       },
       evidence: (uscc, name) => findIndexedUsccEvidence(evidence.index, { uscc, name }),

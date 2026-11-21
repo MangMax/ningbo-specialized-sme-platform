@@ -1,6 +1,11 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { and, desc, eq, getTableName, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, isNotNull, isNull, ne, or, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
+import {
+  platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformCollection,
+  platformLegacyQueryAlias, platformObservationAssignment, platformRecognizedProjection,
+} from '../../../../db/postgresql/platform-tables'
 import { z } from 'zod'
 import type * as schema from '../../../../db/schema'
 import type { PlatformLiveQueryResult } from '../../lib/platform/live-query'
@@ -11,7 +16,6 @@ import { sqliteConnection } from '../../lib/platform/target-connection'
 import { currentDifferenceAssignment, readDifferenceCollectionScope } from '../../lib/platform/difference-sources'
 import { targetReplaySource } from '../../lib/platform/collection-target-replay'
 import { canonicalPlatformJson } from './platform-business-record'
-import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { readPostgresCollectionScopes } from '../../lib/roster/query-coverage-postgres'
 import { readPostgresFingerprintQueries } from './postgres-platform-fingerprint'
 
@@ -73,39 +77,41 @@ export function reuseCollectedPlatformResult(db: Db, result: PlatformLiveQueryRe
   return reuseTarget(db, result, enterpriseId, content, query)
 }
 
-export async function reusePostgresCollectedPlatformResult(db: Pick<NodePgDatabase,'execute'>, result: PlatformLiveQueryResult, enterpriseId: number) {
+export async function reusePostgresCollectedPlatformResult(db: Pick<NodePgDatabase, 'select' | 'update'>, result: PlatformLiveQueryResult, enterpriseId: number) {
   const content = contents(result)
   if (content === null) return false
   const query = platformResultToImport(result)
-  const { rows: [row] } = await db.execute<{ id:number; collection:typeof s.platformCollection.$inferSelect }>(sql`
-    SELECT a.old_id::float8 AS id,${postgresRosterRow(s.platformCollection,'p')} AS collection
-    FROM platform_collection p JOIN platform_legacy_query_alias a ON a.collection_id=p.id
-    WHERE p.interface=${query.interface} AND p.query_key=${query.queryKey}
-      AND p.rdjb=${query.rdjb ?? ''} AND p.title_code IS NOT DISTINCT FROM ${query.titleCode ?? null}
-    ORDER BY p.queried_at DESC,a.old_id DESC LIMIT 1 FOR UPDATE OF p`)
+  // FOR UPDATE OF accepts the unqualified relation alias even though FROM uses business.
+  const c = alias(platformCollection, 'collection')
+  const qa = platformLegacyQueryAlias
+  const [row] = await db.select({ id: qa.oldId, collection: c }).from(c).innerJoin(qa, eq(qa.collectionId, c.id))
+    .where(and(eq(c.interface, query.interface), eq(c.queryKey, query.queryKey), eq(c.rdjb, query.rdjb ?? ''),
+      query.titleCode == null ? isNull(c.titleCode) : eq(c.titleCode, query.titleCode)))
+    .orderBy(desc(c.queriedAt), desc(qa.oldId)).limit(1).for('update', { of: c })
   if (!row || row.collection.status !== query.status) return false
   const { collection } = row
-  const { metadata,pages } = (await readPostgresCollectionScopes(db,[collection])).get(collection.id)!
+  const { metadata,pages } = (await readPostgresCollectionScopes(db, [collection as typeof s.platformCollection.$inferSelect])).get(collection.id)!
   if (!metadata || metadata.completeness !== 'complete' || !metadata.fullRange ||
     metadata.source !== result.source || metadata.status !== result.status ||
     !pages.length || pages.some((p,index)=>p.pageNo!==index+1 || p.status!=='success') ||
     canonicalPlatformJson(metadata.effectiveConditions)!==canonicalPlatformJson(result.effectiveConditions) ||
     metadata.titleScope.mode!==result.titleScope.mode ||
     canonicalPlatformJson(metadata.titleScope.rdjb.toSorted())!==canonicalPlatformJson(result.titleScope.rdjb.toSorted())) return false
-  const table = query.interface === 'apply_list' ? s.platformApplyProjection
-    : query.interface === 'business_list' ? s.platformBusinessProjection : s.platformRecognizedProjection
-  const { rows: incomplete } = await db.execute(sql`
-    SELECT 1 FROM platform_business_observation o
-    LEFT JOIN LATERAL (SELECT enterprise_id FROM platform_observation_assignment
-      WHERE observation_id=o.id ORDER BY revision DESC LIMIT 1) a ON true
-    LEFT JOIN ${sql.identifier(getTableName(table))} p ON p.version_id=o.version_id
-    WHERE o.collection_id=${collection.id} AND (a.enterprise_id IS DISTINCT FROM ${enterpriseId}
-      OR o.record_id IS NULL OR o.version_id IS NULL OR p.version_id IS NULL) LIMIT 1`)
+  const p = query.interface === 'apply_list' ? platformApplyProjection
+    : query.interface === 'business_list' ? platformBusinessProjection : platformRecognizedProjection
+  const o = platformBusinessObservation
+  const a = platformObservationAssignment
+  const latest = db.select({ enterpriseId: a.enterpriseId, observationId: a.observationId }).from(a)
+    .where(eq(a.observationId, o.id)).orderBy(desc(a.revision)).limit(1).as('latest_assignment')
+  const incomplete = await db.select({ id: o.id }).from(o)
+    .leftJoinLateral(latest, isNotNull(latest.observationId)).leftJoin(p, eq(p.versionId, o.versionId))
+    .where(and(eq(o.collectionId, collection.id), or(isNull(latest.enterpriseId), ne(latest.enterpriseId, enterpriseId),
+      isNull(o.recordId), isNull(o.versionId), isNull(p.versionId)))).limit(1)
   if (incomplete.length) return false
   const original = (await readPostgresFingerprintQueries(db,[row.id],false)).get(row.id)?.query.collectionEvidence
   if (!evidenceShape.safeParse(original).success || contents(original!)!==content) return false
   if (Date.parse(result.queriedAt)>Date.parse(collection.lastCollectedAt ?? collection.queriedAt)) {
-    await db.execute(sql`UPDATE platform_collection SET last_collected_at=${result.queriedAt} WHERE id=${collection.id}`)
+    await db.update(platformCollection).set({ lastCollectedAt: result.queriedAt }).where(eq(platformCollection.id, collection.id))
   }
   return true
 }

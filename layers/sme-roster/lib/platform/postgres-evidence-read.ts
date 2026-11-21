@@ -1,12 +1,25 @@
-import { sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, exists, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { createError } from 'h3'
+import {
+  platformArchiveValue as valueArchive,
+  platformCollectionArchiveRef as collectionRef,
+  platformCollectionLegacyProvenance as legacy,
+  platformObservationArchiveRef as observationRef,
+} from '../../../../db/postgresql/platform-archive-tables'
+import {
+  platformBusinessObservation as observation,
+  platformCollection as queryCollection,
+  platformLegacyQueryAlias as queryAlias,
+  platformLegacyRelationAlias as relationAlias,
+  platformObservationAssignment as assignment,
+} from '../../../../db/postgresql/platform-tables'
 import { MAX_EVIDENCE_CHUNK_BYTES, PROVENANCE_CELL_NAMES, type PlatformEvidenceInput, type PlatformEvidenceResult } from './evidence-contract'
 import { platformEvidenceInputSchema } from './evidence-read'
 import { relationEvidenceColumns } from './relation-evidence-snapshot'
 import { snapshotSchema } from './target-evidence-read'
 
-type Reader = Pick<NodePgDatabase, 'execute'>
+type Reader = Pick<NodePgDatabase, 'select'>
 export type PostgresPlatformArchive = { id: string; byteLength: string | null; storageClass: string; sealed: boolean }
 type Archive = PostgresPlatformArchive
 type Cell = ReturnType<typeof snapshotSchema.parse>['fields'][number]
@@ -15,8 +28,10 @@ const envelopeHeader = Buffer.from('T04-PROVENANCE\n')
 
 export async function readPlatformArchiveBytes(db: Reader, archiveId: string, offset: number, length: number): Promise<Buffer> {
   if (length === 0) return empty
-  const { rows: [archive] } = await db.execute<{ bytes: Buffer }>(sql`
-    SELECT substring(bytes FROM ${offset + 1} FOR ${length}) AS bytes FROM platform_archive_value WHERE id = ${archiveId}`)
+  // Drizzle 0.45 has no bytea substring expression. Read only the requested bytes.
+  const [archive] = await db.select({
+    bytes: sql<Buffer>`substring(${valueArchive.bytes} FROM ${offset + 1} FOR ${length})`,
+  }).from(valueArchive).where(eq(valueArchive.id, BigInt(archiveId)))
   return archive!.bytes
 }
 
@@ -62,13 +77,21 @@ export async function legacyEnvelopeCollection(db: Reader, archive: Archive, que
   return collection!
 }
 
-async function readLegacyEvidence(db: Reader, collectionId: string, provenanceState: string, input: PlatformEvidenceInput) {
-  const { rows: [archive] } = await db.execute<Archive & { origin: 't04_envelope' | 'supplement' }>(sql`
-    SELECT a.id, a.byte_length AS "byteLength", a.storage_class AS "storageClass", p.origin,
-      EXISTS (SELECT 1 FROM platform_collection_archive_ref r WHERE r.owner_id = p.collection_id
-        AND r.field = 'legacyProvenance' AND r.archive_id = a.id AND r.sealed = 1) AS sealed
-    FROM platform_collection_legacy_provenance p
-    JOIN platform_archive_value a ON a.id = p.archive_id WHERE p.collection_id = ${collectionId}`)
+async function readLegacyEvidence(db: Reader, collectionId: number, provenanceState: string, input: PlatformEvidenceInput) {
+  const sealedRef = db.select({ ownerId: collectionRef.ownerId }).from(collectionRef).where(and(
+    eq(collectionRef.ownerId, legacy.collectionId),
+    eq(collectionRef.field, 'legacyProvenance'),
+    eq(collectionRef.archiveId, valueArchive.id),
+    eq(collectionRef.sealed, 1),
+  ))
+  const [row] = await db.select({
+    id: valueArchive.id,
+    byteLength: valueArchive.byteLength,
+    storageClass: valueArchive.storageClass,
+    origin: legacy.origin,
+    sealed: exists(sealedRef).mapWith(Boolean),
+  }).from(legacy).innerJoin(valueArchive, eq(valueArchive.id, legacy.archiveId)).where(eq(legacy.collectionId, collectionId))
+  const archive = row && { ...row, id: String(row.id), byteLength: row.byteLength === null ? null : String(row.byteLength) }
   if (!archive) {
     if (provenanceState === 'legacy_supplement' || provenanceState === 'conflict') throw new Error('Missing original legacy provenance')
     return byteResult(input, input.offset ?? 0, null, empty)
@@ -100,26 +123,29 @@ function cellJson(cell: Cell, key: string) {
   return JSON.stringify(text)
 }
 
-async function readRelation(db: Reader, collectionId: string, input: PlatformEvidenceInput) {
-  const { rows: [row] } = await db.execute<{
-    bytes: Buffer | null; sealed: string | null; enterpriseId: string | null
-    matchBasis: string | null; verificationStatus: string | null
-  }>(sql`
-    SELECT a.bytes, ref.sealed, owner.enterprise_id AS "enterpriseId", owner.match_basis AS "matchBasis",
-      owner.verification_status AS "verificationStatus"
-    FROM platform_legacy_relation_alias r
-    JOIN platform_business_observation o ON o.id = r.observation_id
-    LEFT JOIN platform_observation_archive_ref ref ON ref.owner_id = o.id AND ref.field = 'legacyRowSnapshot'
-    LEFT JOIN platform_archive_value a ON a.id = ref.archive_id
-    LEFT JOIN LATERAL (SELECT enterprise_id, match_basis, verification_status
-      FROM platform_observation_assignment a WHERE a.observation_id = o.id ORDER BY revision DESC LIMIT 1) owner ON true
-    WHERE r.old_id = ${input.relationId} AND o.collection_id = ${collectionId}`)
+async function readRelation(db: Reader, collectionId: number, input: PlatformEvidenceInput) {
+  const owner = db.select({
+    enterpriseId: assignment.enterpriseId,
+    matchBasis: assignment.matchBasis,
+    verificationStatus: assignment.verificationStatus,
+  }).from(assignment).where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('owner')
+  const [row] = await db.select({
+    bytes: valueArchive.bytes,
+    sealed: observationRef.sealed,
+    enterpriseId: owner.enterpriseId,
+    matchBasis: owner.matchBasis,
+    verificationStatus: owner.verificationStatus,
+  }).from(relationAlias).innerJoin(observation, eq(observation.id, relationAlias.observationId))
+    .leftJoin(observationRef, and(eq(observationRef.ownerId, observation.id), eq(observationRef.field, 'legacyRowSnapshot')))
+    .leftJoin(valueArchive, eq(valueArchive.id, observationRef.archiveId))
+    .leftJoinLateral(owner, eq(observation.id, observation.id))
+    .where(and(eq(relationAlias.oldId, input.relationId!), eq(observation.collectionId, collectionId)))
   if (!row) throw createError({ statusCode: 404, statusMessage: 'Platform evidence not found' })
-  if (!row.bytes || row.sealed !== '1') throw new Error('Missing sealed original relation snapshot')
+  if (!row.bytes || row.sealed !== 1) throw new Error('Missing sealed original relation snapshot')
   if (row.matchBasis === null || row.verificationStatus === null) throw new Error('Missing observation assignment')
   const cells = new Map(snapshotSchema.parse(JSON.parse(row.bytes.toString('utf8'))).fields.map(cell => [cell.name, cell]))
   const overrides: Readonly<Record<string, string>> = {
-    id: String(input.relationId), queryId: String(input.queryId), enterpriseId: row.enterpriseId ?? 'null',
+    id: String(input.relationId), queryId: String(input.queryId), enterpriseId: row.enterpriseId === null ? 'null' : String(row.enterpriseId),
     matchBasis: JSON.stringify(row.matchBasis), verificationStatus: JSON.stringify(row.verificationStatus),
   }
   const fields = relationEvidenceColumns.map(([key, name]) => {
@@ -140,35 +166,39 @@ export function readPostgresPlatformEvidence(db: NodePgDatabase, value: Platform
   if (!parsed.success) throw createError({ statusCode: 400, statusMessage: 'Invalid platform evidence parameters' })
   const input = parsed.data
   return db.transaction(async tx => {
-    const { rows: [collection] } = await tx.execute<{ id: string; provenanceState: string }>(sql`
-      SELECT c.id, c.provenance_state AS "provenanceState" FROM platform_legacy_query_alias q
-      JOIN platform_collection c ON c.id = q.collection_id WHERE q.old_id = ${input.queryId}`)
+    const [collection] = await tx.select({ id: queryCollection.id, provenanceState: queryCollection.provenanceState }).from(queryAlias)
+      .innerJoin(queryCollection, eq(queryCollection.id, queryAlias.collectionId)).where(eq(queryAlias.oldId, input.queryId))
     if (!collection) throw createError({ statusCode: 404, statusMessage: 'Platform evidence not found' })
     if (input.field === 'relations') {
       const page = input.page ?? 1
       const pageSize = input.pageSize ?? 100
       const offset = (BigInt(page) - BigInt(1)) * BigInt(pageSize)
-      const { rows: [count] } = await tx.execute<{ total: string }>(sql`
-        SELECT count(*) AS total FROM platform_business_observation WHERE collection_id = ${collection.id}`)
-      const rows = offset >= BigInt(count!.total) ? [] : (await tx.execute<{ id: string | null; sequenceNo: string }>(sql`
-        SELECT r.old_id AS id, o.sequence_no AS "sequenceNo" FROM platform_business_observation o
-        LEFT JOIN platform_legacy_relation_alias r ON r.observation_id = o.id WHERE o.collection_id = ${collection.id}
-        ORDER BY o.sequence_no LIMIT ${pageSize} OFFSET ${String(offset)}`)).rows
+      const [total] = await tx.select({ count: count() }).from(observation).where(eq(observation.collectionId, collection.id))
+      const rows = offset >= BigInt(total!.count) ? [] : await tx.select({
+        id: relationAlias.oldId,
+        sequenceNo: observation.sequenceNo,
+      }).from(observation).leftJoin(relationAlias, eq(relationAlias.observationId, observation.id))
+        .where(eq(observation.collectionId, collection.id)).orderBy(asc(observation.sequenceNo)).limit(pageSize).offset(Number(offset))
       return {
-        queryId: input.queryId, field: input.field, total: Number(count!.total), page, pageSize,
+        queryId: input.queryId, field: input.field, total: total!.count, page, pageSize,
         rows: rows.map(row => {
           if (row.id === null) throw new Error('Missing observation alias')
-          return { id: Number(row.id), sequenceNo: Number(row.sequenceNo) }
+          return { id: row.id, sequenceNo: row.sequenceNo }
         }),
       }
     }
     if (input.field === 'relation') return readRelation(tx, collection.id, input)
     if (input.field === 'legacyProvenance') return readLegacyEvidence(tx, collection.id, collection.provenanceState, input)
-    const { rows: [archive] } = await tx.execute<Archive>(sql`
-      SELECT a.id, a.byte_length AS "byteLength", a.storage_class AS "storageClass", r.sealed = 1 AS sealed
-      FROM platform_collection_archive_ref r JOIN platform_archive_value a ON a.id = r.archive_id
-      WHERE r.owner_id = ${collection.id} AND r.field = ${input.field}`)
-    if (!archive?.sealed) throw new Error('Missing sealed collection archive')
-    return archiveResult(tx, archive, input)
+    const [archive] = await tx.select({
+      id: valueArchive.id,
+      byteLength: valueArchive.byteLength,
+      storageClass: valueArchive.storageClass,
+      sealed: collectionRef.sealed,
+    }).from(collectionRef).innerJoin(valueArchive, eq(valueArchive.id, collectionRef.archiveId))
+      .where(and(eq(collectionRef.ownerId, collection.id), eq(collectionRef.field, input.field)))
+    if (archive?.sealed !== 1) throw new Error('Missing sealed collection archive')
+    return archiveResult(tx, {
+      ...archive, id: String(archive.id), byteLength: archive.byteLength === null ? null : String(archive.byteLength), sealed: true,
+    }, input)
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }

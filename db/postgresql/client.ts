@@ -1,15 +1,16 @@
 import { drizzle } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
+import { eq } from 'drizzle-orm'
+import { settings } from './system-catalog'
 import { postgresOnlyRuntime } from '../runtime-mode'
 
 let pool: pg.Pool | undefined
 let db: ReturnType<typeof drizzle<Record<string, never>>> | undefined
 
 async function requirePostgres19(client: pg.ClientBase) {
-  const { rows: [server] } = await client.query<{ version: number }>(
-    "SELECT current_setting('server_version_num')::integer AS version",
-  )
-  if (Math.floor(server!.version / 10000) !== 19) throw new Error('PostgreSQL 19 required')
+  const [server] = await drizzle(client as pg.Client)
+    .select({ version: settings.setting }).from(settings).where(eq(settings.name, 'server_version_num'))
+  if (Math.floor(Number(server?.version) / 10000) !== 19) throw new Error('PostgreSQL 19 required')
 }
 
 export function usePostgresDirectoryDb() {

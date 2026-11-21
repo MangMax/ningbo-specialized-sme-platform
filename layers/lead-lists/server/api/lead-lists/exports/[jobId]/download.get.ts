@@ -1,4 +1,6 @@
-import { sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
+import { postgresLeadListExport } from '../../../../../../../db/postgresql/lead-tables'
+import { leadListExport } from '../../../../../schema'
 import { usePostgresLeadDb } from '../../../../utils/postgres-versions'
 import { useDb } from '@db'
 import { isJobId } from '#core/lib/job'
@@ -22,9 +24,11 @@ export default defineEventHandler(async event => {
   if (task?.kind !== LEAD_LIST_EXPORT) throw createError({ statusCode: 404, message: '名单导出任务不存在' })
   if (task.state !== 'done') throw createError({ statusCode: 409, message: '名单导出尚未完成' })
   const artifact = pg
-    ? (await pg.execute<{ versionId: string; content: string }>(sql`SELECT version_id AS "versionId", content FROM lead_list_export WHERE job_id = ${id}`)).rows[0]
-    : sqlite!.$client.prepare('SELECT version_id AS versionId,content FROM lead_list_export WHERE job_id=?').get(id) as { versionId: number; content: string } | undefined
-  if (!artifact || Number(artifact.versionId) !== task.params.versionId) throw createError({ statusCode: 404, message: '名单导出文件不存在' })
+    ? (await pg.select({ versionId: postgresLeadListExport.versionId, content: postgresLeadListExport.content })
+        .from(postgresLeadListExport).where(eq(postgresLeadListExport.jobId, id)))[0]
+    : sqlite!.select({ versionId: leadListExport.versionId, content: leadListExport.content })
+        .from(leadListExport).where(eq(leadListExport.jobId, id)).get()
+  if (!artifact || artifact.versionId !== task.params.versionId) throw createError({ statusCode: 404, message: '名单导出文件不存在' })
   setHeader(event, 'Content-Type', 'text/csv; charset=utf-8')
   setHeader(event, 'Content-Disposition', `attachment; filename="lead-list-${artifact.versionId}.csv"`)
   setHeader(event, 'Cache-Control', 'no-store')

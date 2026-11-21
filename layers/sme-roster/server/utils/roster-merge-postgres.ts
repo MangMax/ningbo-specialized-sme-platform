@@ -1,20 +1,24 @@
-import { sql } from 'drizzle-orm'
+import { and, desc, eq, exists, gt, isNotNull, isNull, ne, notExists, or, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { enterpriseAlias, record } from '../../../../db/schema'
+import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
+import { evidenceReviewReceipt114 } from '../../../../db/postgresql/evidence-review-tables'
+import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
+import { platformObservationAssignment } from '../../../../db/postgresql/platform-tables'
+import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
+import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import { applyPostgresEnterpriseMerge, findPostgresEnterpriseMergeAliasConflict, lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
-import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import type { RosterImportItemResult, RosterImportMerge } from '../../lib/roster-import-client'
-import { managedDecision102 } from './decision-lifecycle-102'
 import { evidenceDigest113 } from './evidence-impact-113'
 import { appendPostgresEvidenceRevision } from './evidence-revision-postgres'
-import { readPostgresIdentityMaterial } from './postgres-identity-evidence'
+import { attachPostgresIdentityRevisionEvents, readPostgresIdentityMaterial } from './postgres-identity-evidence'
 import type { MergeLineage } from './roster-import'
 import { findPostgresImportQuery, findPostgresImportRelation } from './roster-import-references-postgres'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Subject = { id: number; name: string; nameNorm: string; uscc: string | null }
-const subjectColumns = sql`e.id::float8 AS id,e.name,e.name_norm AS "nameNorm",e.uscc_norm AS uscc`
+const subjectColumns = { id: enterprise.id, name: enterprise.name, nameNorm: enterprise.nameNorm, uscc: enterprise.usccNorm }
 
 interface PostgresRosterMergePlan {
   readonly merge: RosterImportMerge
@@ -35,8 +39,7 @@ function failure(ref: string, code: string, message: string, field: string): Ros
 
 async function subjectById(tx: Tx, ref: number) {
   const id = Number.isSafeInteger(ref) ? await postgresCanonicalEnterpriseId(tx, ref) : null
-  return id === null ? undefined : (await tx.execute<Subject>(sql`
-    SELECT ${subjectColumns} FROM enterprise e WHERE e.id=${id}`)).rows[0]
+  return id === null ? undefined : (await tx.select(subjectColumns).from(enterprise).where(eq(enterprise.id, id)))[0]
 }
 
 async function resolveMerge(tx: Tx, merge: RosterImportMerge, index: number) {
@@ -77,45 +80,57 @@ async function resolveMerge(tx: Tx, merge: RosterImportMerge, index: number) {
       return failure(ref, 'enterprise_selector_conflict', `enterpriseId=${sourceId} 的名称与给定 fromEnterpriseName 不一致`, 'fromEnterpriseName')
     }
   } else {
-    const { rows } = await tx.execute<Subject>(sql`
-      SELECT ${subjectColumns} FROM enterprise e WHERE e.name_norm=${normalizeName(sourceName)}
-      AND NOT EXISTS (SELECT 1 FROM enterprise_merge m WHERE m.from_enterprise_id=e.id) ORDER BY e.id`)
+    const rows = await tx.select(subjectColumns).from(enterprise).where(and(eq(enterprise.nameNorm, normalizeName(sourceName)),
+      notExists(tx.select({ id: enterpriseMerge.fromEnterpriseId }).from(enterpriseMerge)
+        .where(eq(enterpriseMerge.fromEnterpriseId, enterprise.id))))).orderBy(enterprise.id)
     if (rows.length > 1) return failure(ref, 'enterprise_ambiguous', `同名企业有 ${rows.length} 个候选 ⇒ 不猜是哪一家`, 'fromEnterpriseName')
     from = rows[0]
   }
   if (!from) return failure(ref, 'merge_source_not_found', `被并企业不存在：${sourceId ?? sourceName}`, sourceId == null ? 'fromEnterpriseName' : 'fromEnterpriseId')
 
-  const { rows: [holder] } = await tx.execute<{ id: number }>(sql`SELECT id::float8 AS id FROM enterprise WHERE uscc_norm=${intoUscc}`)
+  const [holder] = await tx.select({ id: enterprise.id }).from(enterprise).where(eq(enterprise.usccNorm, intoUscc))
   const into = holder && await subjectById(tx, holder.id)
   if (!into) return failure(ref, 'merge_target_not_found', `规范行（统代 ${intoUscc}）不存在`, 'intoUscc')
   if (from.id === into.id) return failure(ref, 'merge_same_enterprise', '被并企业与规范行是同一行', 'fromEnterpriseId')
   return { from, into, sourceId, sourceName, intoUscc, sourceRefId, evidenceQueryId }
 }
 
-const differencePair = sql`(a.title_code,a.direction,a.recorded_at)=(b.title_code,b.direction,b.recorded_at)`
-const differenceContent = (alias: string) => sql`ROW(${sql.join([
-  'status', 'reason_code', 'reason_note', 'measure_code', 'measure_note', 'evidence_query_id', 'evidence_relation_id',
-  'moved_in_city', 'moved_in_title_code', 'moved_in_year', 'moved_in_batch', 'verification_status',
-].map(column => sql`${sql.identifier(alias)}.${sql.identifier(column)}`), sql`,`)})`
+const targetDifference = alias(differenceReason, 'target_difference')
+const sourceDifference = alias(differenceReason, 'source_difference')
+const differenceScope = and(eq(differenceReason.titleCode, targetDifference.titleCode), eq(differenceReason.direction, targetDifference.direction))
+const differencePair = and(differenceScope, eq(differenceReason.recordedAt, targetDifference.recordedAt))
+const differenceFields = [
+  'status', 'reasonCode', 'reasonNote', 'measureCode', 'measureNote', 'evidenceQueryId', 'evidenceRelationId',
+  'movedInCity', 'movedInTitleCode', 'movedInYear', 'movedInBatch', 'verificationStatus',
+] as const
 
 async function mergeConflict(tx: Tx, from: number, into: number, ref: string) {
-  const { rows: [managed] } = await tx.execute<{ id: string; enterpriseId: string; titleCode: string; direction: string }>(sql`
-    SELECT d.id,d.enterprise_id AS "enterpriseId",d.title_code AS "titleCode",d.direction
-    FROM difference_reason d WHERE (d.enterprise_id=${from} OR (d.enterprise_id=${into} AND EXISTS(
-      SELECT 1 FROM difference_reason a WHERE a.enterprise_id=${from} AND (a.title_code,a.direction)=(d.title_code,d.direction))))
-      AND ${managedDecision102(sql`d.id`, sql`d.lifecycle_action`)}
-    ORDER BY (d.enterprise_id=${from}) DESC,d.id LIMIT 1`)
+  const receipt = evidenceReviewReceipt114
+  const managedReview = tx.select({ id: receipt.id }).from(receipt).where(and(
+    or(eq(receipt.decisionId, differenceReason.id), eq(receipt.sourceDecisionId, differenceReason.id)),
+    isNotNull(receipt.reviewedRevisionId)))
+  const sourceScope = tx.select({ id: sourceDifference.id }).from(sourceDifference).where(and(
+    eq(sourceDifference.enterpriseId, from), eq(sourceDifference.titleCode, differenceReason.titleCode),
+    eq(sourceDifference.direction, differenceReason.direction)))
+  const [managed] = await tx.select({ id: differenceReason.id, enterpriseId: differenceReason.enterpriseId,
+    titleCode: differenceReason.titleCode, direction: differenceReason.direction }).from(differenceReason)
+    .where(and(or(eq(differenceReason.enterpriseId, from), and(eq(differenceReason.enterpriseId, into), exists(sourceScope))),
+      or(isNotNull(differenceReason.lifecycleAction), exists(managedReview))))
+    .orderBy(desc(eq(differenceReason.enterpriseId, from)), differenceReason.id).limit(1)
   if (managed) {
     return failure(ref, 'merge_difference_lifecycle_conflict',
       `差异决定版本 ${managed.id}（企业 ${managed.enterpriseId}/${managed.titleCode}/${managed.direction}）已接管；归并须保留原 ID、历史和接管状态`, 'merges')
   }
-  const alias = await findPostgresEnterpriseMergeAliasConflict(tx, from, into)
-  if (alias) return failure(ref, alias.code, alias.message, 'merges')
-  const { rows: [difference] } = await tx.execute<{ titleCode: string; direction: string; recordedAt: string }>(sql`
-    SELECT a.title_code AS "titleCode",a.direction,a.recorded_at AS "recordedAt"
-    FROM difference_reason a JOIN difference_reason b ON b.enterprise_id=${into} AND ${differencePair}
-    WHERE a.enterprise_id=${from} AND ${differenceContent('a')} IS DISTINCT FROM ${differenceContent('b')}
-    ORDER BY a.id LIMIT 1`)
+  const aliasConflict = await findPostgresEnterpriseMergeAliasConflict(tx, from, into)
+  if (aliasConflict) return failure(ref, aliasConflict.code, aliasConflict.message, 'merges')
+  const distinct = or(...differenceFields.map(field => {
+    const left = differenceReason[field], right = targetDifference[field]
+    return or(ne(left, right), and(isNull(left), isNotNull(right)), and(isNotNull(left), isNull(right)))
+  }))
+  const [difference] = await tx.select({ titleCode: differenceReason.titleCode, direction: differenceReason.direction,
+    recordedAt: differenceReason.recordedAt }).from(differenceReason)
+    .innerJoin(targetDifference, and(eq(targetDifference.enterpriseId, into), differencePair))
+    .where(and(eq(differenceReason.enterpriseId, from), distinct)).orderBy(differenceReason.id).limit(1)
   return difference ? failure(ref, 'merge_difference_conflict',
     `差异唯一键已存在但内容不同：${difference.titleCode}/${difference.direction}/${difference.recordedAt}`, 'merges') : null
 }
@@ -136,51 +151,63 @@ export async function planPostgresRosterMerge(tx: Tx, merge: RosterImportMerge, 
 }
 
 async function moveDifferences(tx: Tx, from: number, into: number) {
-  await tx.execute(sql`
-    DELETE FROM difference_reason a USING difference_reason b
-    WHERE a.enterprise_id=${from} AND b.enterprise_id=${into} AND ${differencePair}`)
-  const { rowCount } = await tx.execute(sql`UPDATE difference_reason SET enterprise_id=${into} WHERE enterprise_id=${from}`)
+  const duplicates = tx.select({ id: targetDifference.id }).from(targetDifference)
+    .where(and(eq(targetDifference.enterpriseId, into), differencePair))
+  await tx.delete(differenceReason).where(and(eq(differenceReason.enterpriseId, from), exists(duplicates)))
+  const { rowCount } = await tx.update(differenceReason).set({ enterpriseId: into }).where(eq(differenceReason.enterpriseId, from))
   return rowCount ?? 0
 }
 
 async function appendMergeAssignments(tx: Tx, from: number, into: number, basis: string, recordedAt: string) {
-  const { rowCount } = await tx.execute(sql`
-    INSERT INTO platform_observation_assignment (observation_id,revision,enterprise_id,match_basis,verification_status,
-      uscc_raw,name_raw,alias_name_raw,basis,recorded_at,origin)
-    SELECT a.observation_id,a.revision+1,${into},a.match_basis,a.verification_status,
-      a.uscc_raw,a.name_raw,a.alias_name_raw,${basis},${recordedAt},'command'
-    FROM platform_observation_assignment a WHERE a.enterprise_id=${from}
-      AND NOT EXISTS (SELECT 1 FROM platform_observation_assignment later
-        WHERE later.observation_id=a.observation_id AND later.revision>a.revision)
-    ORDER BY a.observation_id`)
+  const assignment = platformObservationAssignment
+  const later = alias(assignment, 'later')
+  const newer = tx.select({ revision: later.revision }).from(later)
+    .where(and(eq(later.observationId, assignment.observationId), gt(later.revision, assignment.revision)))
+  const { rowCount } = await tx.insert(assignment).select(tx.select({
+    observationId: assignment.observationId,
+    // Drizzle has no arithmetic expression builder. All command values are bound.
+    revision: sql<number>`${assignment.revision} + 1`.as('revision'),
+    enterpriseId: sql<number>`${into}`.as('enterprise_id'),
+    usccRaw: assignment.usccRaw,
+    nameRaw: assignment.nameRaw,
+    matchBasis: assignment.matchBasis,
+    verificationStatus: assignment.verificationStatus,
+    aliasNameRaw: assignment.aliasNameRaw,
+    actor: sql<null>`${null}`.as('actor'),
+    basis: sql<string>`${basis}`.as('basis'),
+    commandReceiptId: sql<null>`${null}`.as('command_receipt_id'),
+    recordedAt: sql<string>`${recordedAt}`.as('recorded_at'),
+    origin: sql<string>`${'command'}`.as('origin'),
+  }).from(assignment).where(and(eq(assignment.enterpriseId, from), notExists(newer))).orderBy(assignment.observationId))
   return rowCount ?? 0
 }
 
 async function moveRecords(tx: Tx, from: number, into: number) {
-  const { rows: records } = await tx.execute<{ snapshot: typeof record.$inferSelect; survivorId: number | null }>(sql`
-    SELECT ${postgresRosterRow(record, 'r')} AS snapshot,survivor.id::float8 AS "survivorId"
-    FROM record r LEFT JOIN record survivor
-      ON survivor.enterprise_id=${into} AND (survivor.title_code,survivor.source)=(r.title_code,r.source)
-    WHERE r.enterprise_id=${from} ORDER BY r.id FOR UPDATE OF r`)
+  const source = alias(record, 'source_record')
+  const survivor = alias(record, 'survivor')
+  const records = await tx.select({ snapshot: source, survivorId: survivor.id }).from(source)
+    .leftJoin(survivor, and(eq(survivor.enterpriseId, into), eq(survivor.titleCode, source.titleCode), eq(survivor.source, source.source)))
+    .where(eq(source.enterpriseId, from)).orderBy(source.id).for('update', { of: source })
   const recordsMoved: number[] = []
   const recordsFolded: MergeLineage['recordsFolded'] = []
   const eventsMoved: number[] = []
   const evidenceMoved: number[] = []
-  for (const { snapshot, survivorId } of records) {
-    const { rows: events } = await tx.execute<{ id: number }>(sql`
-      SELECT id::float8 AS id FROM record_event WHERE record_id=${snapshot.id} ORDER BY id FOR UPDATE`)
-    const { rows: evidence } = await tx.execute<{ id: number }>(sql`
-      SELECT v.id::float8 AS id FROM record_evidence v JOIN record_event e ON e.id=v.record_event_id
-      WHERE e.record_id=${snapshot.id} ORDER BY e.id,v.id`)
+  for (const { snapshot: row, survivorId } of records) {
+    const snapshot = { ...row, qualityFlags: row.qualityFlags === null ? null : JSON.parse(row.qualityFlags) as string[] }
+    const events = await tx.select({ id: recordEvent.id }).from(recordEvent).where(eq(recordEvent.recordId, snapshot.id))
+      .orderBy(recordEvent.id).for('update')
+    const evidence = await tx.select({ id: recordEvidence.id }).from(recordEvidence)
+      .innerJoin(recordEvent, eq(recordEvent.id, recordEvidence.recordEventId))
+      .where(eq(recordEvent.recordId, snapshot.id)).orderBy(recordEvent.id, recordEvidence.id)
     const eventIds = events.map(event => event.id)
     eventsMoved.push(...eventIds)
     evidenceMoved.push(...evidence.map(row => row.id))
     if (survivorId !== null) {
-      await tx.execute(sql`UPDATE record_event SET record_id=${survivorId} WHERE record_id=${snapshot.id}`)
-      await tx.execute(sql`DELETE FROM record WHERE id=${snapshot.id}`)
+      await tx.update(recordEvent).set({ recordId: survivorId }).where(eq(recordEvent.recordId, snapshot.id))
+      await tx.delete(record).where(eq(record.id, snapshot.id))
       recordsFolded.push({ fromRecordId: snapshot.id, intoRecordId: survivorId, fromRecordSnapshot: snapshot, eventIds })
     } else {
-      await tx.execute(sql`UPDATE record SET enterprise_id=${into} WHERE id=${snapshot.id}`)
+      await tx.update(record).set({ enterpriseId: into }).where(eq(record.id, snapshot.id))
       recordsMoved.push(snapshot.id)
     }
   }
@@ -194,11 +221,7 @@ async function captureMergeIdentity(tx: Tx, from: number, into: number, before: 
     beforeFactDigest: evidenceDigest113({ identity: before, from }),
     factDigest: evidenceDigest113({ identity: after, merged: from }), metadata: { fromEnterpriseId: from },
   })
-  if (revisionId === null) return
-  await tx.execute(sql`
-    INSERT INTO evidence_revision_event_113 (revision_id,event_id,enterprise_id,title_code)
-    SELECT ${revisionId},e.id,r.enterprise_id,r.title_code FROM record r JOIN record_event e ON e.record_id=r.id
-    WHERE r.enterprise_id=${into} ON CONFLICT DO NOTHING`)
+  if (revisionId !== null) await attachPostgresIdentityRevisionEvents(tx, revisionId, into)
 }
 
 export async function applyPostgresRosterMerge(tx: Tx, plan: PostgresRosterMergePlan): Promise<RosterImportItemResult> {
@@ -240,7 +263,7 @@ export async function applyPostgresRosterMerge(tx: Tx, plan: PostgresRosterMerge
   const differences = await moveDifferences(tx, from.id, into.id)
   const relations = await appendMergeAssignments(tx, from.id, into.id, basis, recordedAt)
   const records = await moveRecords(tx, from.id, into.id)
-  await tx.execute(sql`UPDATE record_correspondence SET enterprise_id=${into.id} WHERE enterprise_id=${from.id}`)
+  await tx.update(recordCorrespondence).set({ enterpriseId: into.id }).where(eq(recordCorrespondence.enterpriseId, from.id))
   await captureMergeIdentity(tx, from.id, into.id, identityBefore)
 
   const lineage: MergeLineage = {

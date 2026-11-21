@@ -1,8 +1,12 @@
-import { sql } from 'drizzle-orm'
+import { and, asc, eq, exists, inArray } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
+import { storedFile } from '../../../../db/postgresql/file-tables'
+import { importBatch } from '../../../../db/postgresql/import-tables'
+import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
+import { eventCorrectionAudit } from '../../../../db/postgresql/official-evidence-tables'
+import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import * as schema from '../../../../db/schema'
 import { readPostgresLegacyQualification, type PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
-import { postgresRosterRow, readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
 import {
   assertEventCorrectionBatch, eventCorrectionCapture, eventCorrectionCommitBatch, eventCorrectionCommitReplay,
   eventCorrectionFailure, eventCorrectionPreflightReplay, eventCorrectionPreflightResult, eventCorrectionReadbackScope,
@@ -13,37 +17,55 @@ import { lockPostgresRosterImportKey } from './roster-export-import-postgres'
 import { advancePostgresOfficialEventRevision } from './evidence-revision-postgres'
 import { lockPostgresFilePaths, refreshPostgresDerivedFileParts } from './file-parts-postgres'
 
-type Reader = Pick<NodePgDatabase, 'execute'>
+type Reader = Pick<NodePgDatabase, 'select'>
 type Tx = PostgresQualificationTransaction
 type EventSnapshot = ReturnType<EventCorrectionInputs['snapshot']>
 type Plan = ReturnType<typeof projectEventCorrectionPlan>
-const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
 
 export async function loadPostgresEventCorrectionInputs(tx: Reader, eventIds: number[]): Promise<EventCorrectionInputs> {
-  const { rows: targets } = await tx.execute<Pick<EventSnapshot, 'event' | 'record'>>(sql`
-    SELECT ${postgresRosterRow(schema.recordEvent,'e')} AS event,${postgresRosterRow(schema.record,'r')} AS record
-    FROM record_event e JOIN record r ON r.id=e.record_id WHERE e.id=ANY(${ids(eventIds)}) AND r.source='jxj'`)
+  const eventFilter = inArray(recordEvent.id, eventIds)
+  // The event plan hashes the serialized snapshot. Keep the established key order for stored preflights.
+  const parseEvent = ({ revision, formalValidity, ...event }: typeof recordEvent.$inferSelect): EventSnapshot['event'] => ({
+    ...event, formalValidity: formalValidity === null ? null : JSON.parse(formalValidity), revision,
+  })
+  const rows = await tx.select({ event: recordEvent, record }).from(recordEvent)
+    .innerJoin(record, eq(record.id, recordEvent.recordId)).where(and(eventFilter, eq(record.source, 'jxj')))
+  const targets = rows.map(row => ({
+    event: parseEvent(row.event),
+    record: { ...row.record, qualityFlags: row.record.qualityFlags === null ? null : JSON.parse(row.record.qualityFlags) },
+  }))
   const byId = new Map(targets.map(target => [target.event.id, target]))
-  const evidence = await readPostgresRosterRowsById(tx, schema.recordEvidence, sql`FROM unnest(${ids(eventIds)}) AS t(event_id)
-    CROSS JOIN LATERAL (SELECT * FROM record_evidence WHERE record_event_id=t.event_id ORDER BY id LIMIT 301) p`)
-  const files = evidence.length ? (await tx.execute<{ file: EventSnapshot['files'][number] }>(sql`
-    SELECT json_build_object('id',id,'relPath',rel_path,'sha256',sha256,'bytes',bytes,'removedAt',removed_at) AS file
-    FROM stored_file WHERE rel_path=ANY(${sql.param([...new Set(evidence.map(row => row.sourceFile))])}::text[]) ORDER BY id`)).rows : []
-  const correspondence = await tx.execute<{ eventId: number; relation: ReturnType<EventCorrectionInputs['correspondence']>[number] }>(sql`
-    SELECT t.event_id::float8 AS "eventId", json_build_object('id',c.id,'revision',c.revision,'status',c.status) AS relation
-    FROM unnest(${ids(eventIds)}) AS t(event_id)
-    CROSS JOIN LATERAL (
-      (SELECT id,revision,status FROM record_correspondence WHERE event_id=t.event_id ORDER BY id LIMIT 301)
-      UNION ALL
-      (SELECT id,revision,status FROM record_correspondence WHERE predecessor_event_id=t.event_id ORDER BY id LIMIT 301)
-    ) c ORDER BY c.id`)
-  const { rows: related } = await tx.execute<{ event: EventSnapshot['event']; key: string }>(sql`
-    SELECT ${postgresRosterRow(schema.recordEvent,'p')} AS event, r.enterprise_id::text || ':' || r.title_code AS key
-    FROM record_event p JOIN record r ON r.id=p.record_id WHERE r.source='jxj' AND EXISTS (
-      SELECT 1 FROM record_event e JOIN record source ON source.id=e.record_id
-      WHERE e.id=ANY(${ids(eventIds)}) AND source.enterprise_id=r.enterprise_id AND source.title_code=r.title_code) ORDER BY p.id`)
+  const eventEvidence = tx.select().from(recordEvidence).where(eq(recordEvidence.recordEventId, recordEvent.id))
+    .orderBy(asc(recordEvidence.id)).limit(301).as('event_evidence')
+  const evidence = await tx.select({
+    id: eventEvidence.id, recordEventId: eventEvidence.recordEventId, sourceFile: eventEvidence.sourceFile,
+    attachment: eventEvidence.attachment, listNo: eventEvidence.listNo, page: eventEvidence.page,
+  }).from(recordEvent).crossJoinLateral(eventEvidence).where(eventFilter).orderBy(asc(eventEvidence.id))
+  const files = evidence.length ? await tx.select({
+    id: storedFile.id, relPath: storedFile.relPath, sha256: storedFile.sha256, bytes: storedFile.bytes, removedAt: storedFile.removedAt,
+  }).from(storedFile).where(inArray(storedFile.relPath, [...new Set(evidence.map(row => row.sourceFile))]))
+    .orderBy(asc(storedFile.id)) : []
+  const correspondenceFor = (eventColumn: typeof recordCorrespondence.eventId | typeof recordCorrespondence.predecessorEventId) => tx.select({
+    id: recordCorrespondence.id, revision: recordCorrespondence.revision, status: recordCorrespondence.status,
+  }).from(recordCorrespondence).where(eq(eventColumn, recordEvent.id)).orderBy(asc(recordCorrespondence.id)).limit(301)
+  const eventCorrespondence = correspondenceFor(recordCorrespondence.eventId)
+    .unionAll(correspondenceFor(recordCorrespondence.predecessorEventId)).as('event_correspondence')
+  const correspondence = await tx.select({
+    eventId: recordEvent.id,
+    relation: { id: eventCorrespondence.id, revision: eventCorrespondence.revision, status: eventCorrespondence.status },
+  }).from(recordEvent).crossJoinLateral(eventCorrespondence).where(eventFilter).orderBy(asc(eventCorrespondence.id))
+  const targetEvent = alias(recordEvent, 'target_event')
+  const targetRecord = alias(record, 'target_record')
+  const targetScope = tx.select({ id: targetEvent.id }).from(targetEvent)
+    .innerJoin(targetRecord, eq(targetRecord.id, targetEvent.recordId)).where(and(
+      inArray(targetEvent.id, eventIds), eq(targetRecord.enterpriseId, record.enterpriseId), eq(targetRecord.titleCode, record.titleCode),
+    ))
+  const relatedRows = await tx.select({ event: recordEvent, enterpriseId: record.enterpriseId, titleCode: record.titleCode })
+    .from(recordEvent).innerJoin(record, eq(record.id, recordEvent.recordId))
+    .where(and(eq(record.source, 'jxj'), exists(targetScope))).orderBy(asc(recordEvent.id))
+  const related = relatedRows.map(row => ({ event: parseEvent(row.event), key: row.enterpriseId + ':' + row.titleCode }))
   const evidenceByEvent = Map.groupBy(evidence, row => row.recordEventId)
-  const correspondenceByEvent = Map.groupBy(correspondence.rows, row => row.eventId)
+  const correspondenceByEvent = Map.groupBy(correspondence, row => row.eventId)
   const titles = Map.groupBy(related, row => row.key)
   const events = related.map(row => row.event)
   const siblings = Map.groupBy(events, row => row.recordId)
@@ -55,7 +77,7 @@ export async function loadPostgresEventCorrectionInputs(tx: Reader, eventIds: nu
       const rows = evidenceByEvent.get(id) ?? []
       if (rows.length > 300) return eventCorrectionFailure(413,'source_limit','Event has more than 300 evidence references; narrow source maintenance required')
       const paths = new Set(rows.map(row => row.sourceFile))
-      return { ...target, evidence: rows, files: files.flatMap(({ file }) => paths.has(file.relPath) ? [file] : []) }
+      return { ...target, evidence: rows, files: files.flatMap(file => paths.has(file.relPath) ? [{ ...file, bytes: Number(file.bytes) }] : []) }
     },
     correspondence: id => correspondenceByEvent.get(id)?.map(row => row.relation) ?? [],
     titleEvents: record => titles.get(record.enterpriseId + ':' + record.titleCode)?.map(row => row.event) ?? [],
@@ -71,11 +93,16 @@ async function buildPostgresEventPlan(tx: Reader, request: EventCorrectionReques
 }
 
 async function readBatch(tx: Tx, request: EventCorrectionRequest) {
-  const { rows: [row] } = await tx.execute<NonNullable<Parameters<typeof assertEventCorrectionBatch>[0]>>(sql`
-    SELECT id::float8 AS id,status,source_kind AS "sourceKind",source_identity AS "sourceIdentity",
-      preflight_result::json AS "preflightResult",summary::json AS summary
-    FROM import_batch WHERE idempotency_key=${request.idempotencyKey} FOR UPDATE`)
-  return assertEventCorrectionBatch(row, request)
+  const [row] = await tx.select({
+    id: importBatch.id, status: importBatch.status, sourceKind: importBatch.sourceKind, sourceIdentity: importBatch.sourceIdentity,
+    preflightResult: importBatch.preflightResult, summary: importBatch.summary,
+  }).from(importBatch).where(eq(importBatch.idempotencyKey, request.idempotencyKey)).for('update')
+  type Batch = NonNullable<Parameters<typeof assertEventCorrectionBatch>[0]>
+  return assertEventCorrectionBatch(row && {
+    ...row, sourceKind: row.sourceKind as Batch['sourceKind'], status: row.status as Batch['status'],
+    preflightResult: row.preflightResult === null ? null : JSON.parse(row.preflightResult),
+    summary: row.summary === null ? null : JSON.parse(row.summary),
+  }, request)
 }
 
 async function readQualification(tx: Tx, plan: Plan, stage: 'before' | 'after', safety?: CorrectionQualificationSafety) {
@@ -93,13 +120,13 @@ export async function preflightPostgresEventCorrections(tx: Tx, request: EventCo
   const replay = eventCorrectionPreflightReplay(old, safety)
   if (replay) return replay
   const plan = await buildPostgresEventPlan(tx, request)
-  const { rows: [batch] } = await tx.execute<{ id: number }>(sql`
-    INSERT INTO import_batch(idempotency_key,source_kind,source_identity,status,created_at)
-    VALUES(${request.idempotencyKey},'event_correction',${request.sourceIdentity},'preflight',${new Date().toISOString()})
-    ON CONFLICT(idempotency_key) DO NOTHING RETURNING id::float8 AS id`)
+  const [batch] = await tx.insert(importBatch).values({
+    idempotencyKey: request.idempotencyKey, sourceKind: 'event_correction', sourceIdentity: request.sourceIdentity,
+    status: 'preflight', createdAt: new Date().toISOString(),
+  }).onConflictDoNothing({ target: importBatch.idempotencyKey }).returning({ id: importBatch.id })
   if (!batch) return eventCorrectionFailure(409, 'idempotency_conflict', 'Idempotency key belongs to another request')
   const result = eventCorrectionResult(eventCorrectionPreflightResult(batch.id, plan), await readQualification(tx, plan, 'before', safety), safety)
-  await tx.execute(sql`UPDATE import_batch SET preflight_result=${JSON.stringify(result.stored)} WHERE id=${batch.id}`)
+  await tx.update(importBatch).set({ preflightResult: JSON.stringify(result.stored) }).where(eq(importBatch.id, batch.id))
   return result.response
 }
 
@@ -108,29 +135,36 @@ export async function commitPostgresEventCorrections(tx: Tx, request: EventCorre
   const batch = eventCorrectionCommitBatch(await readBatch(tx, request), planHash)
   if (batch.status === 'committed') return eventCorrectionCommitReplay(batch, safety)
   const eventIds = request.operations.map(op => op.eventId)
-  const { rows } = await tx.execute<{ path: string }>(sql`SELECT source_file AS path FROM record_evidence WHERE record_event_id=ANY(${ids(eventIds)})`)
+  const rows = await tx.select({ path: recordEvidence.sourceFile }).from(recordEvidence)
+    .where(inArray(recordEvidence.recordEventId, eventIds))
   const paths = new Set(rows.map(row => row.path))
   await lockPostgresFilePaths(tx, paths)
-  await tx.execute(sql`SELECT id FROM record_event WHERE id=ANY(${ids(eventIds)}) ORDER BY id FOR UPDATE`)
+  await tx.select({ id: recordEvent.id }).from(recordEvent).where(inArray(recordEvent.id, eventIds))
+    .orderBy(asc(recordEvent.id)).for('update')
   const plan = await buildPostgresEventPlan(tx, request)
   if (plan.planHash !== planHash) return eventCorrectionFailure(409, 'plan_mismatch', 'Event/source/impact changed after preflight')
   const correctedAt = new Date().toISOString()
   for (const target of plan.targets) {
     const { after, before, evidence, enterpriseId } = target
     await advancePostgresOfficialEventRevision(tx, after.id, before.revision)
-    await tx.execute(sql`UPDATE record_event SET event_type=${after.eventType},year=${after.year},batch_seq=${after.batchSeq},
-      sort_key=${after.sortKey},review_outcome=${after.reviewOutcome},decided_year=${after.decidedYear},
-      formal_validity=${after.formalValidity === null ? null : JSON.stringify(after.formalValidity)} WHERE id=${after.id}`)
-    await tx.execute(sql`INSERT INTO event_correction_audit(event_id,batch_id,record_id,enterprise_id,before,after,evidence,
-      source_identity,actor_type,actor_id,basis,corrected_at)
-      VALUES(${after.id},${batch.id},${after.recordId},${enterpriseId},${JSON.stringify(before)},${JSON.stringify(after)},${JSON.stringify(evidence)},
-        ${request.sourceIdentity},${request.actor.type},${request.actor.id},${request.basis},${correctedAt})`)
+    const { eventType, year, batchSeq, sortKey, reviewOutcome, decidedYear, formalValidity } = after
+    await tx.update(recordEvent).set({
+      eventType, year, batchSeq, sortKey, reviewOutcome, decidedYear,
+      formalValidity: formalValidity === null ? null : JSON.stringify(formalValidity),
+    }).where(eq(recordEvent.id, after.id))
+    await tx.insert(eventCorrectionAudit).values({
+      eventId: after.id, batchId: batch.id, recordId: after.recordId, enterpriseId, before: JSON.stringify(before),
+      after: JSON.stringify(after), evidence: JSON.stringify(evidence), sourceIdentity: request.sourceIdentity,
+      actorType: request.actor.type, actorId: request.actor.id, basis: request.basis, correctedAt,
+    })
   }
   await refreshPostgresDerivedFileParts(tx, paths)
   const receipt = { batchId: batch.id, planHash, eventIds, impact: plan.impact, committedAt: correctedAt }
   const result = eventCorrectionResult(receipt, await readQualification(tx, plan, 'after', safety), safety)
   const itemResults = plan.targets.map(target => ({ eventId: target.eventId, revision: target.after.revision }))
-  await tx.execute(sql`UPDATE import_batch SET status='committed',summary=${JSON.stringify(result.stored)},item_results=${JSON.stringify(itemResults)},
-    committed_at=${correctedAt},error=NULL WHERE id=${batch.id}`)
+  await tx.update(importBatch).set({
+    status: 'committed', summary: JSON.stringify(result.stored), itemResults: JSON.stringify(itemResults),
+    committedAt: correctedAt, error: null,
+  }).where(eq(importBatch.id, batch.id))
   return result.response
 }

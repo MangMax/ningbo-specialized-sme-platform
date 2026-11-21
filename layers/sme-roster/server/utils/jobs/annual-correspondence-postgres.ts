@@ -1,4 +1,5 @@
-import { sql } from 'drizzle-orm'
+import { job } from '../../../../../db/postgresql/job-tables'
+import { and, eq, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { newJobId } from '../../../../core/lib/job'
 import type { PostgresJobContext, PostgresJobTransaction } from '../../../../core/server/utils/job-runner-postgres'
@@ -34,8 +35,8 @@ export async function stagePostgresAnnualCorrespondence(tx: Tx, raw: unknown) {
   const { clientRequestId } = parsed.data
   const eventIds = [...new Set(parsed.data.eventIds)].sort((a, b) => a - b)
   await lockPostgresJobAdmission(tx, KIND)
-  const { rows: [request] } = await tx.execute<{ id: string }>(sql`
-    SELECT id FROM business.job WHERE kind=${KIND} AND (params::jsonb->'clientRequestIds')?${clientRequestId}`)
+  const [request] = await tx.select({ id: job.id }).from(job).where(and(eq(job.kind, KIND),
+    sql`(${job.params}::jsonb->'clientRequestIds') ? ${clientRequestId}`)).limit(1)
   if (request) {
     const { row } = (await getPostgresJob(tx, request.id))!
     if (JSON.stringify(row.params.eventIds) !== JSON.stringify(eventIds)) annualFail('idempotency_conflict')
@@ -43,13 +44,13 @@ export async function stagePostgresAnnualCorrespondence(tx: Tx, raw: unknown) {
   }
   const sourceGenerations = await generations(tx, eventIds)
   const serverIdentity = annualHash({ sourceGenerations, ruleVersion: VERSION })
-  const { rows: [sameScope] } = await tx.execute<{ id: string }>(sql`
-    SELECT id FROM business.job WHERE kind=${KIND} AND params::json->>'serverIdentity'=${serverIdentity}`)
+  const [sameScope] = await tx.select({ id: job.id }).from(job).where(and(eq(job.kind, KIND),
+    eq(sql<string>`${job.params}::json->>'serverIdentity'`, serverIdentity))).limit(1)
   if (sameScope) {
     const { row } = (await getPostgresJob(tx, sameScope.id))!
     const params = row.params as AnnualTaskParams
-    await tx.execute(sql`UPDATE business.job SET params=${JSON.stringify({ ...params, clientRequestIds: [...params.clientRequestIds, clientRequestId] })}
-      WHERE id=${row.id}`)
+    await tx.update(job).set({ params: JSON.stringify({ ...params, clientRequestIds: [...params.clientRequestIds, clientRequestId] }) })
+      .where(eq(job.id, row.id))
     return annualTaskReceipt(row)
   }
   const params: AnnualTaskParams = { eventIds, clientRequestIds: [clientRequestId], serverIdentity, sourceGenerations, ruleVersion: VERSION }

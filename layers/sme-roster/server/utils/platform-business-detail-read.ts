@@ -1,7 +1,12 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { getTableName, sql, type Table } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import type * as schema from '../../../../db/schema'
+import {
+  platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformLegacyRelationAlias,
+  platformObservationAssignment, platformRecognizedProjection,
+} from '../../../../db/postgresql/platform-tables'
 import { normalizeUscc } from '../../lib/domain'
 import type { PlatformFactInterface,PlatformObservationFact } from '../../lib/platform/observation-facts'
 import type { PlatformStoredRelation } from '../../lib/platform/read'
@@ -14,12 +19,11 @@ import { projectBusinessProcessObservationFact, readTargetBusinessProcessFacts }
 import { readPlatformBusinessGroups, readPostgresPlatformBusinessGroups } from './platform-business-record-read'
 import { projectDeclarationObservationFact, readTargetDeclarationFacts } from './platform-declarations-target'
 import { projectRecognizedObservationFact, readTargetRecognizedFacts } from './platform-recognized-target'
-import { postgresRosterRow } from '../../lib/roster/postgres-rows'
-import { platformApplyProjection, platformBusinessProjection, platformRecognizedProjection } from '../../../../db/schema'
 
 type Db = BetterSQLite3Database<typeof schema>
-type Pg = Pick<NodePgDatabase, 'execute'>
+type Pg = Pick<NodePgDatabase, 'execute' | 'select'>
 type Positions = { sourceRdjb: string | null | undefined }
+type Projection = typeof platformApplyProjection | typeof platformBusinessProjection | typeof platformRecognizedProjection
 
 function archiveFactFieldOrder(fact: PlatformObservationFact): PlatformObservationFact {
   if (fact.interface !== 'recognized_list') return fact
@@ -87,22 +91,18 @@ function groupBusinessDetails(groups: ReturnType<typeof readPlatformBusinessGrou
   return groupPlatformBusinessDetails(observations)
 }
 
-async function loadPostgresFacts<T extends Table>(db: Pg, table: T, ids: number[], mixedStatus = false) {
+async function loadPostgresFacts(db: Pg, table: Projection, ids: number[]) {
   if (!ids.length) return []
-  const { rows } = await db.execute<{ relationId:number; source:T['$inferSelect']; version:T['$inferSelect'] | null;
-    originalName:string | null; originalUscc:string | null;
-    stored:Buffer | null; storedKind:string; reconciled:Buffer | null; reconciledKind:string }>(sql`
-    SELECT a.old_id::float8 AS "relationId",${postgresRosterRow(table,'p')} AS source,
-      CASE WHEN v.id IS NOT NULL THEN ${postgresRosterRow(table,'v')} END AS version,
-      first.name_raw AS "originalName",first.uscc_raw AS "originalUscc"
-      ${mixedStatus ? sql`, p.stored_status AS stored,p.stored_status_sqlite_storage AS "storedKind",
-        p.reconciled_status AS reconciled,p.reconciled_status_sqlite_storage AS "reconciledKind"` : sql.empty()}
-    FROM platform_legacy_relation_alias a JOIN platform_business_observation o ON o.id=a.observation_id
-    JOIN ${sql.identifier(getTableName(table))} p ON p.observation_id=o.id
-    LEFT JOIN ${sql.identifier(getTableName(table))} v ON v.version_id=o.version_id AND v.record_id=o.record_id
-    JOIN platform_observation_assignment first ON first.observation_id=o.id AND first.revision=1
-    WHERE a.old_id=ANY(${sql.param(ids)}::bigint[]) ORDER BY a.old_id`)
-  return rows
+  const a = platformLegacyRelationAlias
+  const o = platformBusinessObservation
+  const version = alias(table, 'version_projection')
+  const first = platformObservationAssignment
+  return db.select({ relationId: a.oldId, source: table, version, originalName: first.nameRaw, originalUscc: first.usccRaw })
+    .from(a).innerJoin(o, eq(o.id, a.observationId)).innerJoin(table, eq(table.observationId, o.id))
+    .leftJoin(version, and(eq(version.versionId, o.versionId), eq(version.recordId, o.recordId)))
+    .innerJoin(first, and(eq(first.observationId, o.id), eq(first.revision, 1)))
+    // A single array bind preserves global relation order without the parameter-count limit.
+    .where(sql`${a.oldId} = ANY(${sql.param(ids)}::bigint[])`).orderBy(a.oldId)
 }
 
 export async function readPostgresPlatformDetailFacts(db: Pg, queries: RosterPlatformQueryRow[], relations: PlatformStoredRelation[]) {
@@ -110,13 +110,24 @@ export async function readPostgresPlatformDetailFacts(db: Pg, queries: RosterPla
   const scoped = Map.groupBy(relations, row=>byQuery.get(row.queryId))
   const ids = (source: PlatformFactInterface) => (scoped.get(source) ?? []).map(row=>row.id)
   const declarations = await loadPostgresFacts(db,platformApplyProjection,ids('apply_list'))
-  const processes = await loadPostgresFacts(db,platformBusinessProjection,ids('business_list'),true)
+  const processes = await loadPostgresFacts(db,platformBusinessProjection,ids('business_list'))
   const recognized = await loadPostgresFacts(db,platformRecognizedProjection,ids('recognized_list'))
   const value = (bytes: Buffer | null, kind: string) => kind === 'text' ? bytes?.toString('utf8') ?? null : bytes
-  const facts = [...declarations.map(projectDeclarationObservationFact),
-    ...processes.map(row=>projectBusinessProcessObservationFact({ ...row, source:{ ...row.source,
-      storedStatus:value(row.stored,row.storedKind),reconciledStatus:value(row.reconciled,row.reconciledKind) } })),
-    ...recognized.map(projectRecognizedObservationFact).map(archiveFactFieldOrder)]
+  const facts = [
+    ...declarations.map(row => projectDeclarationObservationFact(row as unknown as Parameters<typeof projectDeclarationObservationFact>[0])),
+    ...processes.map(row => {
+      const source = row.source as typeof platformBusinessProjection.$inferSelect
+      return projectBusinessProcessObservationFact({
+        ...row,
+        source: { ...source,
+          storedStatus: value(source.storedStatus, source.storedStatusSqliteStorage),
+          reconciledStatus: value(source.reconciledStatus, source.reconciledStatusSqliteStorage),
+        },
+      } as unknown as Parameters<typeof projectBusinessProcessObservationFact>[0])
+    }),
+    ...recognized.map(row => projectRecognizedObservationFact(row as unknown as Parameters<typeof projectRecognizedObservationFact>[0]))
+      .map(archiveFactFieldOrder),
+  ]
   return new Map(facts.map(fact=>[fact.relationId,fact]))
 }
 

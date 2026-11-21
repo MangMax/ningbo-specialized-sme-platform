@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
+import { sql } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { Pool } from 'pg'
 import { appLog, type LogContext } from '../../lib/logging'
@@ -88,7 +89,7 @@ export async function stagePostgresJob(tx: PostgresJobTransaction, input: Submit
 }
 
 const pollIntervalMs = 500
-const schedulerLock = [144814, 1]
+const schedulerLock = [144814, 1] as const
 
 export function createPostgresJobRunner(db: PostgresJobDb, filesDir: string) {
   let inFlight: Promise<void> | undefined
@@ -147,16 +148,18 @@ export function createPostgresJobRunner(db: PostgresJobDb, filesDir: string) {
 
   async function drain() {
     const client = await db.$client.connect()
+    const connection = drizzle({ client })
     const abort = new AbortController()
     const onError = (error: Error) => abort.abort(error)
     client.on('error', onError)
     let locked = false
     let discard = false
     try {
-      const acquired = await client.query<{ locked: boolean }>('SELECT pg_try_advisory_lock($1, $2) AS locked', schedulerLock)
+      // Both lock calls and all work use the same pinned PostgreSQL session.
+      const acquired = await connection.execute<{ locked: boolean }>(sql`
+        SELECT pg_try_advisory_lock(${schedulerLock[0]}, ${schedulerLock[1]}) AS locked`)
       locked = acquired.rows[0]!.locked
       if (!locked) return
-      const connection = drizzle({ client })
       for (const row of await recoverPostgresJobs(connection)) {
         appLog({ module: jobLogModule(row.kind), source: 'task', operation: 'task.recovered', outcome: 'failure', taskId: row.id, errorCode: 'job_interrupted' })
       }
@@ -169,7 +172,7 @@ export function createPostgresJobRunner(db: PostgresJobDb, filesDir: string) {
     } finally {
       if (locked && !abort.signal.aborted) {
         try {
-          await client.query('SELECT pg_advisory_unlock($1, $2)', schedulerLock)
+          await connection.execute(sql`SELECT pg_advisory_unlock(${schedulerLock[0]}, ${schedulerLock[1]})`)
         } catch {
           discard = true
         }

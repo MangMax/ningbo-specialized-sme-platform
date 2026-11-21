@@ -1,8 +1,8 @@
-import { sql } from 'drizzle-orm'
-import { readPostgresRosterPage } from '../../lib/roster/postgres-rows'
+import { and, asc, eq } from 'drizzle-orm'
+import { record, recordEvent } from '../../../../db/postgresql/ledger-tables'
+import { evidenceCorrectionAudit, evidenceCorrectionBatch, eventCorrectionAudit } from '../../../../db/postgresql/official-evidence-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { z } from 'zod'
-import * as schema from '../../../../db/schema'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
 import { importPostgresReceiptRedactor } from './import-receipt-redaction'
 import { sanitizeEvidence } from './record-correspondence-read'
@@ -38,9 +38,9 @@ export async function handlePostgresOfficialEvidenceRead(input: Input, context: 
       const { key } = input
       if (typeof key !== 'string' || !key.trim() || key.length > 200) return failure(400, 'invalid_request', 'Idempotency key required')
       if (key.includes('\0') || !key.isWellFormed()) return failure(404, 'not_found', 'Receipt not found')
-      const { rows: [row] } = await context.db.execute<{ receipt: object }>(sql`
-        SELECT receipt::json AS receipt FROM evidence_correction_batch WHERE idempotency_key = ${key}`)
-      return row ? ok(row.receipt) : failure(404, 'not_found', 'Receipt not found')
+      const [row] = await context.db.select({ receipt: evidenceCorrectionBatch.receipt }).from(evidenceCorrectionBatch)
+        .where(eq(evidenceCorrectionBatch.idempotencyKey, key))
+      return row ? ok(JSON.parse(row.receipt)) : failure(404, 'not_found', 'Receipt not found')
     }
     const id = integer.safeParse(input.id)
     if (!id.success) return failure(400, 'invalid_request', event ? 'Positive event ID required' : 'Positive evidence ID required')
@@ -55,16 +55,28 @@ export async function handlePostgresOfficialEvidenceRead(input: Input, context: 
           return failure(400, 'invalid_request', event ? 'Invalid bounded audit pagination' : 'Invalid audit pagination')
         }
         const { page, pageSize } = paging.data
+        const offset = (page - 1) * pageSize
         if (!event) {
           await readPostgresExactEvidence(tx, value)
-          return ok(await readPostgresRosterPage(tx, schema.evidenceCorrectionAudit,
-            sql`FROM evidence_correction_audit p WHERE p.evidence_id = ${value}`, page, pageSize))
+          const filter = eq(evidenceCorrectionAudit.evidenceId, value)
+          const total = await tx.$count(evidenceCorrectionAudit, filter)
+          const rows = await tx.select().from(evidenceCorrectionAudit).where(filter)
+            .orderBy(asc(evidenceCorrectionAudit.id)).limit(pageSize).offset(offset)
+          return ok({ rows: rows.map(row => ({
+            ...row, actor: JSON.parse(row.actor), before: JSON.parse(row.before), after: JSON.parse(row.after),
+          })), total, page, pageSize })
         }
-        const { rowCount } = await tx.execute(sql`SELECT 1 FROM record_event e JOIN record r ON r.id = e.record_id
-          WHERE e.id = ${value} AND r.source = 'jxj'`)
-        if (!rowCount) return failure(404, 'not_found', 'Official event not found')
-        const result = await readPostgresRosterPage(tx, schema.eventCorrectionAudit,
-          sql`FROM event_correction_audit p WHERE p.event_id = ${value}`, page, pageSize)
+        const [found] = await tx.select({ id: recordEvent.id }).from(recordEvent)
+          .innerJoin(record, eq(record.id, recordEvent.recordId))
+          .where(and(eq(recordEvent.id, value), eq(record.source, 'jxj')))
+        if (!found) return failure(404, 'not_found', 'Official event not found')
+        const filter = eq(eventCorrectionAudit.eventId, value)
+        const total = await tx.$count(eventCorrectionAudit, filter)
+        const rows = await tx.select().from(eventCorrectionAudit).where(filter)
+          .orderBy(asc(eventCorrectionAudit.id)).limit(pageSize).offset(offset)
+        const result = { rows: rows.map(row => ({
+          ...row, evidence: JSON.parse(row.evidence), before: JSON.parse(row.before), after: JSON.parse(row.after),
+        })), total, page, pageSize }
         const redact = await importPostgresReceiptRedactor(tx, { additionalSecrets: [context.apiToken] })
         return ok(sanitizeEvidence(result, redact.knownRedactors) as typeof result)
       }

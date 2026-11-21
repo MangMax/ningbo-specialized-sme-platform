@@ -1,7 +1,14 @@
 import { createHash } from 'node:crypto'
-import { getTableName, sql } from 'drizzle-orm'
+import { and, eq, getTableColumns, gt, isNull, lte, notExists, or, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { platformApplyProjection, platformBusinessProjection, platformRecognizedProjection } from '../../../../db/schema'
+import {
+  platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformBusinessRecord, platformBusinessRecordVersion,
+  platformCollection, platformCollectionPage, platformLegacyQueryAlias, platformLegacyRelationAlias,
+  platformObservationFingerprintBasis, platformRecognizedProjection,
+} from '../../../../db/postgresql/platform-tables'
+import {
+  platformArchiveValue, platformCollectionArchiveRef, platformObservationArchiveRef, platformVersionArchiveRef,
+} from '../../../../db/postgresql/platform-archive-tables'
 import type { PlatformProjectionResult } from '../../lib/platform/business-record'
 import { legacyFingerprintRaw } from '../../lib/platform/legacy-fingerprint-raw'
 import { materializedText } from '../../lib/platform/apply-materialization'
@@ -10,7 +17,6 @@ import { writePostgresArchiveValue } from '../../lib/platform/postgres-archive-w
 import { ensurePostgresObservationContent } from '../../lib/platform/postgres-observation-write'
 import { snapshotSchema } from '../../lib/platform/target-evidence-read'
 import type { RosterImportPlatformQuery, RosterImportRelation } from '../../lib/roster-import-client'
-import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { applyProjectionPreview, businessProjectionPreview, PlatformProjectionError, recognizedProjectionPreview } from './platform-business-record'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -57,21 +63,26 @@ function previewFields(plan: ReturnType<typeof planPlatformObservation>) {
 
 async function inspectObservation(tx: Tx, relationId: number, options: { expected?: string; allowMissingVersionProjection?: boolean }) {
   const { expected, allowMissingVersionProjection } = options
-  const { rows: [row] } = await tx.execute<ArchivedObservation>(sql`
-    SELECT o.id::float8 AS id,c.id::float8 AS "collectionId",q.old_id::float8 AS "queryId",o.sequence_no::float8 AS "sequenceNo",
-      c.interface AS source,c.query_key AS "queryKey",c.rdjb,c.queried_at AS "queriedAt",o.source_relation_key AS "sourceRelationKey",
-      o.identity_state AS "identityState",o.content_state AS "contentState",o.key_source AS "keySource",
-      o.record_id::float8 AS "recordId",o.version_id::float8 AS "versionId",o.projection_rule_version AS "projectionRuleVersion",
-      o.input_fingerprint AS "inputFingerprint",o.indexed_at AS "indexedAt",o.batch_id::float8 AS "batchId",
-      b.scheme,b.input_archive_id::float8 AS "basisId",
-      CASE WHEN o.page_id IS NULL THEN o.page_row_no IS NULL ELSE EXISTS (
-        SELECT 1 FROM platform_collection_page p WHERE p.id=o.page_id AND p.collection_id=o.collection_id
-          AND (o.page_row_no IS NULL OR (o.page_row_no > 0 AND o.sequence_no=p.sequence_start+o.page_row_no-1 AND o.sequence_no<=p.sequence_end))
-      ) END AS "pageValid"
-    FROM platform_legacy_relation_alias a JOIN platform_business_observation o ON o.id=a.observation_id
-    JOIN platform_collection c ON c.id=o.collection_id
-    LEFT JOIN platform_legacy_query_alias q ON q.collection_id=c.id
-    LEFT JOIN platform_observation_fingerprint_basis b ON b.observation_id=o.id WHERE a.old_id=${relationId}`)
+  const o = platformBusinessObservation
+  const c = platformCollection
+  const q = platformLegacyQueryAlias
+  const b = platformObservationFingerprintBasis
+  const p = platformCollectionPage
+  const a = platformLegacyRelationAlias
+  // Drizzle has no CASE or bigint arithmetic builder for the archived page coordinate.
+  const [row] = await tx.select({
+    id: o.id, collectionId: c.id, queryId: q.oldId, sequenceNo: o.sequenceNo, source: c.interface,
+    queryKey: c.queryKey, rdjb: c.rdjb, queriedAt: c.queriedAt, sourceRelationKey: o.sourceRelationKey,
+    identityState: o.identityState, contentState: o.contentState, keySource: o.keySource, recordId: o.recordId,
+    versionId: o.versionId, projectionRuleVersion: o.projectionRuleVersion, inputFingerprint: o.inputFingerprint,
+    indexedAt: o.indexedAt, batchId: o.batchId, scheme: b.scheme, basisId: b.inputArchiveId,
+    pageValid: sql<boolean>`case when ${isNull(o.pageId)} then ${isNull(o.pageRowNo)} else ${p.id} is not null end`,
+  }).from(a).innerJoin(o, eq(o.id, a.observationId)).innerJoin(c, eq(c.id, o.collectionId))
+    .leftJoin(q, eq(q.collectionId, c.id)).leftJoin(b, eq(b.observationId, o.id))
+    .leftJoin(p, and(eq(p.id, o.pageId), eq(p.collectionId, o.collectionId), or(isNull(o.pageRowNo),
+      and(gt(o.pageRowNo, 0), eq(o.sequenceNo, sql`${p.sequenceStart} + ${o.pageRowNo} - 1`),
+        lte(o.sequenceNo, p.sequenceEnd)))))
+    .where(eq(a.oldId, relationId)) as ArchivedObservation[]
   if (!row) throw new PlatformProjectionError('projection_source_missing', 'Original relation ' + relationId + ' not found')
   const drift = (message: string): never => { throw new PlatformProjectionError('projection_source_drift', message) }
   const mapping = (message: string): never => { throw new PlatformProjectionError('projection_mapping_conflict', message) }
@@ -82,17 +93,18 @@ async function inspectObservation(tx: Tx, relationId: number, options: { expecte
     mapping('Invalid paired not_indexed observation')
   }
 
-  const { rows: archives } = await tx.execute<Archive & { field: string }>(sql`
-    SELECT r.field,a.id::float8 AS id,a.storage_class AS "storageClass",a.bytes,a.byte_length::float8 AS "byteLength",a.sha256
-    FROM platform_observation_archive_ref r JOIN platform_archive_value a ON a.id=r.archive_id
-    WHERE r.owner_id=${row.id} AND r.sealed=1
-    UNION ALL
-    SELECT 'basis',a.id::float8,a.storage_class,a.bytes,a.byte_length::float8,a.sha256
-    FROM platform_archive_value a WHERE a.id=${row.basisId}
-      AND NOT EXISTS(SELECT 1 FROM platform_collection_archive_ref WHERE archive_id=a.id)
-      AND NOT EXISTS(SELECT 1 FROM platform_observation_archive_ref WHERE archive_id=a.id)
-      AND NOT EXISTS(SELECT 1 FROM platform_version_archive_ref WHERE archive_id=a.id)`)
-  const originals = new Map(archives.map(archive => [archive.field, archive]))
+  const value = platformArchiveValue
+  const archived = { id: value.id, storageClass: value.storageClass, bytes: value.bytes, byteLength: value.byteLength, sha256: value.sha256 }
+  const refs = platformObservationArchiveRef
+  const unreferenced = [platformCollectionArchiveRef, platformObservationArchiveRef, platformVersionArchiveRef]
+    .map(ref => notExists(tx.select({ id: ref.archiveId }).from(ref).where(eq(ref.archiveId, value.id))))
+  const ownerArchives = tx.select({ field: refs.field, ...archived }).from(refs)
+    .innerJoin(value, eq(value.id, refs.archiveId)).where(and(eq(refs.ownerId, row.id), eq(refs.sealed, 1)))
+  const archives = await (row.basisId === null ? ownerArchives : ownerArchives.unionAll(
+    tx.select({ field: sql<string>`'basis'::text`.as('field'), ...archived }).from(value)
+      .where(and(eq(value.id, BigInt(row.basisId)), ...unreferenced)),
+  ))
+  const originals = new Map(archives.map(archive => [archive.field, { ...archive, id: Number(archive.id) } as Archive]))
   const raw = checkedArchive(originals.get('rawFields'))
   const sourceText = checkedArchive(originals.get('sourceText'))
   const snapshot = checkedArchive(originals.get('legacyRowSnapshot'), 'blob')
@@ -163,10 +175,8 @@ async function inspectObservation(tx: Tx, relationId: number, options: { expecte
   const fields = previewFields(plan)
   const typed = fields.applyProjection ?? fields.businessProjection ?? fields.recognizedProjection
   const table = projectionTables[row.source]
-  const name = sql.identifier(getTableName(table))
-  const { rows: [observed] } = await tx.execute<{ value: Record<string, unknown> }>(sql`
-    SELECT ${postgresRosterRow(table, 'p')} AS value FROM ${name} p
-    WHERE p.observation_id=${row.id} AND p.source_archive_id=${raw.id}`)
+  const [observed] = await tx.select().from(table)
+    .where(and(eq(table.observationId, row.id), eq(table.sourceArchiveId, raw.id)))
   if (!observed) throw new PlatformProjectionError('projection_missing', 'Original observation source-fidelity projection missing')
 
   let versionProjectionMissing = false
@@ -175,29 +185,32 @@ async function inspectObservation(tx: Tx, relationId: number, options: { expecte
       mapping('Original indexed observation state differs')
     }
     if (plan.platformKey !== null) {
-      const { rows: [record] } = await tx.execute(sql`
-        SELECT 1 FROM platform_business_record WHERE id=${row.recordId} AND interface=${row.source}
-          AND platform_key=${plan.platformKey} AND identity_rule_version=${PLATFORM_PROJECTION_RULE}`)
+      const r = platformBusinessRecord
+      const [record] = row.recordId === null ? [] : await tx.select({ id: r.id }).from(r)
+        .where(and(eq(r.id, row.recordId), eq(r.interface, row.source), eq(r.platformKey, plan.platformKey),
+          eq(r.identityRuleVersion, PLATFORM_PROJECTION_RULE)))
       if (!record) mapping('Original record owner differs')
     } else if (row.recordId !== null) mapping('Unexpected original record owner')
 
     if (plan.canonicalRawJson !== null && typed) {
-      const { rows: [version] } = await tx.execute<Archive & { projection: Record<string, unknown> | null }>(sql`
-        SELECT a.id::float8 AS id,a.storage_class AS "storageClass",a.bytes,a.byte_length::float8 AS "byteLength",a.sha256,
-          CASE WHEN p.id IS NOT NULL THEN ${postgresRosterRow(table, 'p')} ELSE NULL END AS projection
-        FROM platform_business_record_version v
-        JOIN platform_version_archive_ref r ON r.owner_id=v.id AND r.archive_id=v.canonical_archive_id AND r.field='canonicalRawJson' AND r.sealed=1
-        JOIN platform_archive_value a ON a.id=r.archive_id
-        LEFT JOIN ${name} p ON p.version_id=v.id AND p.record_id=v.record_id
-        WHERE v.id=${row.versionId} AND v.record_id=${row.recordId} AND v.hash_algorithm=${PLATFORM_RAW_HASH_RULE}
-          AND v.content_hash=${plan.contentHash} AND v.canonical_raw_json=${plan.canonicalRawJson}`)
-      if (!version || !checkedArchive(version, 'text').bytes!.equals(Buffer.from(plan.canonicalRawJson))) mapping('Original version owner or archive differs')
+      const v = platformBusinessRecordVersion
+      const r = platformVersionArchiveRef
+      const [version] = row.versionId === null || row.recordId === null || plan.contentHash === null ? []
+        : await tx.select({ ...archived, projection: getTableColumns(table) }).from(v)
+          .innerJoin(r, and(eq(r.ownerId, v.id), eq(r.archiveId, v.canonicalArchiveId), eq(r.field, 'canonicalRawJson'), eq(r.sealed, 1)))
+          .innerJoin(value, eq(value.id, r.archiveId))
+          .leftJoin(table, and(eq(table.versionId, v.id), eq(table.recordId, v.recordId)))
+          .where(and(eq(v.id, row.versionId), eq(v.recordId, row.recordId), eq(v.hashAlgorithm, PLATFORM_RAW_HASH_RULE),
+            eq(v.contentHash, plan.contentHash), eq(v.canonicalRawJson, plan.canonicalRawJson)))
+      if (!version || !checkedArchive({ ...version, id: Number(version.id) } as Archive, 'text').bytes!.equals(Buffer.from(plan.canonicalRawJson))) {
+        mapping('Original version owner or archive differs')
+      }
       const projection = version?.projection
       versionProjectionMissing = projection == null
       if (versionProjectionMissing && !allowMissingVersionProjection) {
         throw new PlatformProjectionError('projection_missing', 'Original version projection missing')
       }
-      if (projection && Object.entries(typed).some(([key, value]) => projection[key] !== value)) mapping('Original version projection differs')
+      if (projection && Object.entries(typed).some(([key, value]) => Reflect.get(projection, key) !== value)) mapping('Original version projection differs')
     } else if (row.versionId !== null) mapping('Unexpected original version owner')
   }
 
@@ -205,7 +218,7 @@ async function inspectObservation(tx: Tx, relationId: number, options: { expecte
     projectionRuleVersion: PLATFORM_PROJECTION_RULE, inputFingerprint }
   const historicalPreview = { ...fingerprint, ...fields }
   const observationPreview = { relationId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource,
-    [projectionNames[row.source]]: Object.fromEntries(previewKeys[row.source].map(key => [key, observed.value[key]])) }
+    [projectionNames[row.source]]: Object.fromEntries(previewKeys[row.source].map(key => [key, Reflect.get(observed, key)])) }
   return { row, indexed, plan, fingerprint, bytes, historicalPreview, observationPreview, versionProjectionMissing, legacyStatusBlob }
 }
 
@@ -240,12 +253,14 @@ export async function writePostgresArchivedObservation(tx: Tx, relationId: numbe
     if (!indexed) {
       const archive = await writePostgresArchiveValue(tx, bytes, null)
       const batchId = mode.kind === 'historical' ? mode.batchId : null
-      await tx.execute(sql`INSERT INTO platform_observation_fingerprint_basis(observation_id,scheme,input_archive_id)
-        VALUES(${row.id},'legacy-bootstrap-v1',${archive.id})`)
-      await tx.execute(sql`UPDATE platform_business_observation SET record_id=${content.recordId},version_id=${content.versionId},
-        identity_state=${plan.identityState},content_state=${plan.contentState},key_source=${plan.keySource},
-        projection_rule_version=${PLATFORM_PROJECTION_RULE},input_fingerprint=${fingerprint.inputFingerprint},indexed_at=${now},batch_id=${batchId}
-        WHERE id=${row.id}`)
+      await tx.insert(platformObservationFingerprintBasis).values({
+        observationId: row.id, scheme: 'legacy-bootstrap-v1', inputArchiveId: archive.id,
+      })
+      await tx.update(platformBusinessObservation).set({
+        recordId: content.recordId, versionId: content.versionId, identityState: plan.identityState,
+        contentState: plan.contentState, keySource: plan.keySource, projectionRuleVersion: PLATFORM_PROJECTION_RULE,
+        inputFingerprint: fingerprint.inputFingerprint, indexedAt: now, batchId,
+      }).where(eq(platformBusinessObservation.id, row.id))
     }
 
     const { projectionCreated, ...values } = content

@@ -1,4 +1,5 @@
-import { sql } from 'drizzle-orm'
+import { asc, count, desc, eq, or, sql } from 'drizzle-orm'
+import { fileMaintenanceAudit, filePhysicalIntent, storedFile, storedFileAudit } from '../../../../db/postgresql/file-tables'
 import type { LogContext } from '../../lib/logging'
 import {
   fileMaintenanceRequestHash, fileMaintenanceSnapshot, logFileMaintenance, normalizeFileMaintenancePatch,
@@ -12,9 +13,9 @@ import {
 } from './file-store-postgres'
 
 export async function postgresFileRevision(db: PostgresFileDb, id: number) {
-  const { rows: [latest] } = await db.execute<{ revision: string }>(sql`
-    SELECT revision FROM file_maintenance_audit WHERE file_id = ${id} ORDER BY revision DESC LIMIT 1`)
-  return Number(latest?.revision ?? 0)
+  const [latest] = await db.select({ revision: fileMaintenanceAudit.revision }).from(fileMaintenanceAudit)
+    .where(eq(fileMaintenanceAudit.fileId, id)).orderBy(desc(fileMaintenanceAudit.revision)).limit(1)
+  return latest?.revision ?? 0
 }
 
 export function checkPostgresFileRevision(actual: number, expected: number | undefined) {
@@ -24,13 +25,15 @@ export function checkPostgresFileRevision(actual: number, expected: number | und
 export async function lockPostgresFileRequestKey(db: PostgresFileDb, key: string | undefined) {
   if (key === undefined) return
   if (key.includes('\0')) throw new FileMaintenanceError(400, '幂等键不能包含 NUL')
+  // Drizzle 0.45 has no transaction-scoped advisory lock API. This lock serializes
+  // the same request key across the maintenance and physical-intent tables.
   await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`file-maintenance:${key}`}, 0))`)
 }
 
 export async function postgresMaintenanceHash(db: PostgresFileDb, key: string) {
-  const { rows: [row] } = await db.execute<{ request_hash: string }>(sql`
-    SELECT request_hash FROM file_maintenance_audit WHERE idempotency_key = ${key}`)
-  return row?.request_hash
+  const [row] = await db.select({ requestHash: fileMaintenanceAudit.requestHash }).from(fileMaintenanceAudit)
+    .where(eq(fileMaintenanceAudit.idempotencyKey, key))
+  return row?.requestHash
 }
 
 async function replay(db: PostgresFileDb, id: number, key: string | undefined, hash: string) {
@@ -42,8 +45,8 @@ async function replay(db: PostgresFileDb, id: number, key: string | undefined, h
 }
 
 export async function postgresPhysicalRequestKeyExists(db: PostgresFileDb, key: string) {
-  const { rows } = await db.execute(sql`
-    SELECT 1 FROM file_physical_intent WHERE delete_key = ${key} OR recover_key = ${key} LIMIT 1`)
+  const rows = await db.select({ id: filePhysicalIntent.id }).from(filePhysicalIntent)
+    .where(or(eq(filePhysicalIntent.deleteKey, key), eq(filePhysicalIntent.recoverKey, key))).limit(1)
   return rows.length !== 0
 }
 
@@ -72,16 +75,17 @@ export async function applyPostgresFileMaintenance(
   const now = new Date().toISOString()
   let after = current
   if (action === 'remove' && !current.removedAt) {
-    await db.execute(sql`UPDATE stored_file SET removed_at = ${now} WHERE id = ${id}`)
+    await db.update(storedFile).set({ removedAt: now }).where(eq(storedFile.id, id))
     after = { ...current, removedAt: now }
   } else if (action === 'restore' && current.removedAt) {
-    await db.execute(sql`UPDATE stored_file SET removed_at = NULL WHERE id = ${id}`)
+    await db.update(storedFile).set({ removedAt: null }).where(eq(storedFile.id, id))
     after = { ...current, removedAt: null }
   } else if (action === 'update' && typeof patch.displayName === 'string' && patch.displayName !== current.displayName) {
     const displayName = patch.displayName
-    await db.execute(sql`UPDATE stored_file SET display_name = ${displayName === current.filename ? null : displayName} WHERE id = ${id}`)
-    await db.execute(sql`INSERT INTO stored_file_audit (stored_file_id, old_display_name, new_display_name, created_at)
-      VALUES (${id}, ${current.displayName}, ${displayName}, ${now})`)
+    await db.update(storedFile).set({ displayName: displayName === current.filename ? null : displayName }).where(eq(storedFile.id, id))
+    await db.insert(storedFileAudit).values({
+      storedFileId: id, oldDisplayName: current.displayName, newDisplayName: displayName, createdAt: now,
+    })
     after = { ...current, displayName }
   } else if (action === 'update' && !('displayName' in patch) && Object.keys(patch).length) {
     await updatePostgresFileMetadata(db, current, patch)
@@ -103,11 +107,11 @@ async function recordPostgresFileMaintenance(
   const afterJson = JSON.stringify(afterValues)
   if (options.idempotencyKey || beforeJson !== afterJson) {
     const requestHash = hash ?? fileMaintenanceRequestHash(current.id, action, afterValues, options)
-    await db.execute(sql`INSERT INTO file_maintenance_audit
-      (file_id, revision, action, idempotency_key, request_hash, mode, actor, basis, before_json, after_json, created_at)
-      VALUES (${current.id}, ${revision + 1}, ${action}, ${options.idempotencyKey ?? null}, ${requestHash},
-        ${options.expectedRevision === undefined ? 'legacy' : 'versioned'}, ${options.actor ?? null}, ${options.basis ?? null},
-        ${beforeJson}, ${afterJson}, ${now})`)
+    await db.insert(fileMaintenanceAudit).values({
+      fileId: current.id, revision: revision + 1, action, idempotencyKey: options.idempotencyKey ?? null, requestHash,
+      mode: options.expectedRevision === undefined ? 'legacy' : 'versioned', actor: options.actor ?? null,
+      basis: options.basis ?? null, before: beforeJson, after: afterJson, createdAt: now,
+    })
   }
 }
 
@@ -163,28 +167,19 @@ export function maintainPostgresFile(
   return context ? logFileMaintenance(id, action, context, run) : run()
 }
 
-type PgAudit = {
-  id: string; fileId: string; revision: string; action: FileMaintenanceAction; idempotencyKey: string | null
-  requestHash: string; mode: 'legacy' | 'versioned'; actor: string | null; basis: string | null
-  before: string; after: string; createdAt: string
-}
-
 export function readPostgresFileMaintenance(db: PostgresFileDb, id: number, page: number, pageSize: number) {
   validateFileMaintenancePage(page, pageSize)
   return db.transaction(async tx => {
     const file = await readPostgresFile(tx, id)
     const revision = await postgresFileRevision(tx, id)
-    const { rows: [total] } = await tx.execute<{ total: string }>(sql`
-      SELECT count(*) AS total FROM file_maintenance_audit WHERE file_id = ${id}`)
-    const { rows } = await tx.execute<PgAudit>(sql`
-      SELECT id, file_id AS "fileId", revision, action, idempotency_key AS "idempotencyKey", request_hash AS "requestHash",
-        mode, actor, basis, before_json AS "before", after_json AS "after", created_at AS "createdAt"
-      FROM file_maintenance_audit WHERE file_id = ${id} ORDER BY revision
-      LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`)
+    const where = eq(fileMaintenanceAudit.fileId, id)
+    const [counted] = await tx.select({ total: count() }).from(fileMaintenanceAudit).where(where)
+    const rows = await tx.select().from(fileMaintenanceAudit).where(where)
+      .orderBy(asc(fileMaintenanceAudit.revision)).limit(pageSize).offset((page - 1) * pageSize)
     return {
-      file, revision, total: Number(total!.total), page, pageSize,
+      file, revision, total: counted!.total, page, pageSize,
       rows: rows.map(row => ({
-        ...row, id: Number(row.id), fileId: Number(row.fileId), revision: Number(row.revision),
+        ...row,
         before: JSON.parse(row.before), after: JSON.parse(row.after),
       })),
     }

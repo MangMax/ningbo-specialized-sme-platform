@@ -1,11 +1,13 @@
-import { sql } from 'drizzle-orm'
+import { and, eq, getTableColumns, isNotNull, sql } from 'drizzle-orm'
+import { alias, type AnyPgColumn } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformRecognizedProjection } from '../../../../db/postgresql/platform-tables'
 import { decodePostgresExactCell } from '../../../../db/postgresql/exact-cell'
 import { platformNormalizationConflict } from '../../lib/platform/normalization'
 import type { readCorrespondenceTargetSources } from './record-correspondence-target-sources'
 import { readPostgresFingerprintQueries, readPostgresRelationFingerprints } from './postgres-platform-fingerprint'
 
-type Db = Pick<NodePgDatabase, 'execute'>
+type Db = Pick<NodePgDatabase, 'execute' | 'select'>
 type RelationSource = ReturnType<typeof readCorrespondenceTargetSources>[number]
 type ProjectionOwner = { observationId: number; interface: keyof typeof projections }
 const fields = [
@@ -13,9 +15,9 @@ const fields = [
   ['appliedAt', 'applied_at'], ['awardBatchLabel', 'award_batch_label'], ['year', 'year'],
 ] as const
 const projections = {
-  apply_list: 'platform_apply_projection',
-  business_list: 'platform_business_projection',
-  recognized_list: 'platform_recognized_projection',
+  apply_list: platformApplyProjection,
+  business_list: platformBusinessProjection,
+  recognized_list: platformRecognizedProjection,
 } as const
 
 function fieldValue(row: Record<string, unknown>, field: string, key: string) {
@@ -27,21 +29,31 @@ function fieldValue(row: Record<string, unknown>, field: string, key: string) {
 export async function readPostgresObservationComparisonFacts(db: Db, owners: ProjectionOwner[], view: 'normalized' | 'archive' | 'version' = 'normalized') {
   const facts = new Map<number, Record<string, unknown>>()
   for (const [kind, matching] of Map.groupBy(owners, owner => owner.interface)) {
-    const table = sql.identifier(projections[kind])
-    const columns = sql.join(fields.flatMap(([, key]) => ['stored_' + key, 'parsed_' + key, 'reconciled_' + key, key + '_conflict'])
-      .map(key => sql`p.${sql.identifier(key)}`), sql`,`)
-    const version = view !== 'normalized' && kind !== 'recognized_list'
-      ? sql`JOIN platform_business_observation o ON o.id=p.observation_id
-        LEFT JOIN ${table} v ON v.version_id=o.version_id AND v.record_id=o.record_id` : sql.empty()
-    const typed = view === 'normalized' || kind === 'recognized_list' ? sql.empty() : sql`,v.version_id IS NOT NULL AS has_version,v.declare_kind AS typed_declare_kind,
-      v.applied_at AS typed_applied_at,v.status AS typed_status,
-      ${kind === 'apply_list' ? sql`v.declaration_year AS typed_year` : sql`v.business_year AS typed_year,
-        v.batch AS typed_batch,v.award_batch_label AS typed_award_batch_label,v.province AS typed_province`}`
-    const { rows } = await db.execute(sql`
-      SELECT p.observation_id,p.source_title_kind,p.source_title_text,p.source_title_number_text,${columns}
-        ${kind === 'business_list' ? sql`,p.stored_status_sqlite_storage,p.reconciled_status_sqlite_storage` : sql.empty()}${typed}
-      FROM ${table} p ${version}
-      WHERE p.observation_id=ANY(${sql.param(matching.map(row => row.observationId))}::bigint[])`)
+    const p = alias(projections[kind], 'stored'), v = alias(projections[kind], 'version')
+    const o = platformBusinessObservation
+    const storedColumns = new Map<string, AnyPgColumn>(Object.values(getTableColumns(p)).map(column => [column.name, column]))
+    const names = fields.flatMap(([, key]) => ['stored_' + key, 'parsed_' + key, 'reconciled_' + key, key + '_conflict'])
+    if (kind === 'business_list') names.push('stored_status_sqlite_storage', 'reconciled_status_sqlite_storage')
+    const compareFields = Object.fromEntries(names.map(name => [name, storedColumns.get(name)!]))
+    const common = {
+      observation_id: p.observationId,
+      source_title_kind: p.sourceTitleKind,
+      source_title_text: p.sourceTitleText,
+      source_title_number_text: p.sourceTitleNumberText,
+      ...compareFields,
+    }
+    const where = eq(p.observationId, sql`ANY(${sql.param(matching.map(row => row.observationId))}::bigint[])`)
+    const rows = view === 'normalized' || kind === 'recognized_list'
+      ? await db.select(common).from(p).where(where)
+      : await db.select({
+        ...common,
+        has_version: sql<boolean>`${isNotNull(v.versionId)}`,
+        ...('declareKind' in v ? { typed_declare_kind: v.declareKind, typed_applied_at: v.appliedAt, typed_status: v.status } : {}),
+        ...('declarationYear' in v ? { typed_year: v.declarationYear } : 'businessYear' in v
+          ? { typed_year: v.businessYear, typed_batch: v.batch, typed_award_batch_label: v.awardBatchLabel, typed_province: v.province }
+          : {}),
+      }).from(p).innerJoin(o, eq(o.id, p.observationId))
+        .leftJoin(v, and(eq(v.versionId, o.versionId), eq(v.recordId, o.recordId))).where(where)
     for (const row of rows) facts.set(Number(row.observation_id), row)
   }
   const result = new Map<number, Omit<RelationSource['facts'], 'id' | 'queryId' | 'sequenceNo' | 'enterpriseId' | 'usccRaw' | 'verificationStatus' | 'sourceRdjb'>>()

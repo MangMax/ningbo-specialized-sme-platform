@@ -1,3 +1,4 @@
+import { isComparisonSource } from '../comparison/fixtures/worker-observer'
 import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
 import '../../support/compiled-enterprise-reader'
 import { getEventListeners, once } from 'node:events'
@@ -270,7 +271,11 @@ it('summary metadata and FIFO overflow invoke one whole transactional original c
   cleanup.push(()=>reads.close())
   const options={curatedPath:join(f.dir,'curated.json'),reconcilePath:join(f.dir,'reconcile.json'),showCurated:false,page:1,pageSize:25}
   const sourceEntries:boolean[]=[],prepare=f.owner.$client.prepare.bind(f.owner.$client)
-  const spy=vi.spyOn(f.owner.$client,'prepare').mockImplementation(((sql:string)=>{if(sql.includes('with differences as ('))sourceEntries.push(f.owner.$client.inTransaction);return prepare(sql)}) as typeof prepare)
+  const spy=vi.spyOn(f.owner.$client,'prepare').mockImplementation(((sql:string)=>{
+    const statement=prepare(sql)
+    if(isComparisonSource(statement))sourceEntries.push(f.owner.$client.inTransaction)
+    return statement
+  }) as typeof prepare)
   try {
     const turns=createReadTurns((n:{n:number})=>n.n),held=Array.from({length:16},(_,n)=>turns.submit({n}))
     try {

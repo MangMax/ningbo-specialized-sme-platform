@@ -1,6 +1,7 @@
 import * as s from '../../../../db/schema'
 import { closeSync, existsSync, openSync, readSync } from 'node:fs'
-import { eq, sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { readPostgresDecisionHead102 } from './decision-lifecycle-102/postgres-reads'
 import { z } from 'zod'
@@ -83,15 +84,17 @@ export function previewLegacyDecision102(db: DecisionDb,path:string,input:Previe
   return boundedPreview(rows,page.total,input)
 }
 
-export async function previewPostgresLegacyDecision102(db: Pick<NodePgDatabase,'execute'>,path:string,input:PreviewInput) {
+export async function previewPostgresLegacyDecision102(db: Pick<NodePgDatabase,'execute' | 'select'>,path:string,input:PreviewInput) {
   const page = legacyPage(path,input)
   const rows = []
   for (const row of page.rows) {
     if (!row.tuple) { rows.push(projectRow(row,[])); continue }
     const [identity,titleCode,direction] = row.tuple
-    const { rows:candidates } = await db.execute<Candidate>(sql`SELECT id::float8 AS id,name,uscc_norm AS uscc
-      FROM enterprise WHERE ${identity.startsWith('name:') ? sql`name_norm=${identity.slice(5)}` : sql`uscc_norm=${identity}`}
-      ORDER BY id LIMIT 2`)
+    const candidates = await db.select({ id: enterprise.id, name: enterprise.name, uscc: enterprise.usccNorm })
+      .from(enterprise).where(identity.startsWith('name:')
+        ? eq(enterprise.nameNorm, identity.slice(5))
+        : eq(enterprise.usccNorm, identity))
+      .orderBy(enterprise.id).limit(2)
     const current = candidates.length===1 ? await readPostgresDecisionHead102(db,{enterpriseId:candidates[0]!.id,titleCode,direction}) : null
     rows.push(projectRow(row,candidates,current))
   }

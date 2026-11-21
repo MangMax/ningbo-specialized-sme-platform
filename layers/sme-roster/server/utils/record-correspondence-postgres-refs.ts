@@ -1,12 +1,20 @@
-import { getTableColumns, sql, type SQL, type Table } from 'drizzle-orm'
+import { and, desc, eq, getTableColumns, isNotNull, notExists, or, sql, type SQL, type Table } from 'drizzle-orm'
+import { alias, QueryBuilder } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import { title } from '../../../../db/postgresql/title-table'
+import {
+  platformBusinessObservation, platformBusinessProjection, platformExportRow,
+  platformLegacyQueryAlias, platformLegacyRelationAlias, platformObservationAssignment,
+} from '../../../../db/postgresql/platform-tables'
+import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import * as schema from '../../../../db/schema'
 import { sourceQueryFields, sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
 import { readPostgresCurrentProofCoverage } from './comparison-scope-proof-postgres'
 import { correspondenceAttributionChanged, type CorrespondenceAttribution } from './record-correspondence-ref-validity'
 import type { CorrespondenceRefRow } from './record-correspondence'
 
-type Db = Pick<NodePgDatabase, 'execute'>
+type Db = Pick<NodePgDatabase, 'execute' | 'select'>
 type ProofReference = Parameters<typeof readPostgresCurrentProofCoverage>[1][number]
 const NULL_JSON = sql`'null'::jsonb`
 const refValue = (...segments: string[]) => sql`p.provenance_json #> ${sql.param(segments)}::text[]`
@@ -46,7 +54,7 @@ function eventMatches(id: SQL, predecessor = false) {
     ) END`
 }
 
-function relationMatches() {
+function relationMatches(assignment: { enterpriseId: SQL; matchBasis: SQL; verificationStatus: SQL }) {
   const cells = sql`json_array_elements(convert_from(snapshot.bytes,'UTF8')::json->'fields')`
   const text = sql`convert_from(decode(cell->>'hex','hex'),'UTF8')`
   const decoded = sql`CASE cell->>'storageClass'
@@ -55,8 +63,7 @@ function relationMatches() {
     WHEN 'real' THEN to_json((${text})::double precision)
     ELSE 'null'::json END`
   const overrides = {
-    id: sql`p.relation_id`, queryId: sql`qa.old_id`, enterpriseId: sql`a.enterprise_id`,
-    matchBasis: sql`a.match_basis`, verificationStatus: sql`a.verification_status`,
+    id: sql`p.relation_id`, queryId: sql`qa.old_id`, ...assignment,
   }
   const fields = Object.entries(sourceRelationFields).map(([key, column]) => {
     const saved = refValue('relation', key)
@@ -96,57 +103,74 @@ const exportMatches = sql`CASE WHEN p.export_row_id IS NULL THEN
 
 type RefSources = { eventIds: number[]; relationIds: number[]; exportRowIds: number[] }
 export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly number[] | RefSources | { annualDecisionIds: number[] }, witnessTitle?: string) {
-  let where: SQL
+  const edge = recordCorrespondence, relation = platformLegacyRelationAlias
+  const anyId = (ids: readonly number[]) => sql`ANY(${sql.param(ids)}::bigint[])`
+  let where: SQL | undefined
   const annual = 'annualDecisionIds' in ids
   if (annual) {
     if (!ids.annualDecisionIds.length) return []
-    where = sql`p.id=ANY(${sql.param(ids.annualDecisionIds)}::bigint[])`
+    where = eq(edge.id, anyId(ids.annualDecisionIds))
   } else if ('eventIds' in ids) {
     if (ids.eventIds.length + ids.relationIds.length + ids.exportRowIds.length === 0) return []
-    const events = sql`${sql.param(ids.eventIds)}::bigint[]`
-    where = sql`(p.event_id=ANY(${events}) OR p.predecessor_event_id=ANY(${events})
-      OR ra.old_id=ANY(${sql.param(ids.relationIds)}::bigint[]) OR p.export_row_id=ANY(${sql.param(ids.exportRowIds)}::bigint[]))`
+    const events = anyId(ids.eventIds)
+    where = or(eq(edge.eventId, events), eq(edge.predecessorEventId, events),
+      eq(relation.oldId, anyId(ids.relationIds)), eq(edge.exportRowId, anyId(ids.exportRowIds)))
   } else {
     if (!ids.length) return []
-    where = sql`p.enterprise_id=ANY(${sql.param(ids)}::bigint[])`
+    where = eq(edge.enterpriseId, anyId(ids))
   }
-  const validate = annual ? sql`true` : sql`p.status='confirmed'`
+  const selected = db.select({
+    id: edge.id, type: edge.type, role: edge.role, status: edge.status, eventId: edge.eventId,
+    predecessorEventId: edge.predecessorEventId, observationId: edge.observationId, exportRowId: edge.exportRowId,
+    enterpriseId: edge.enterpriseId, titleCode: edge.titleCode, revision: edge.revision,
+    relation: sql`${relation.oldId}`.as('relation_id'),
+    provenance: sql`CASE WHEN ${annual ? sql`true` : eq(edge.status, 'confirmed')} THEN ${edge.provenance}::jsonb END`.as('provenance_json'),
+  }).from(edge).leftJoin(relation, eq(relation.observationId, edge.observationId))
+    .where(and(where, witnessTitle === undefined ? undefined : and(eq(edge.titleCode, witnessTitle),
+      eq(edge.status, 'confirmed'), eq(edge.type, 'event_recognized'), eq(edge.role, 'recognized_corrob'),
+      isNotNull(edge.eventId), isNotNull(relation.oldId))))
+  const p = new QueryBuilder().$with('p').as(selected)
+  const observation = platformBusinessObservation
+  const a = platformObservationAssignment, query = platformLegacyQueryAlias
+  const exportRow = platformExportRow, target = alias(enterprise, 'target'), business = platformBusinessProjection
+  const assignment = db.select({ enterpriseId: a.enterpriseId, matchBasis: a.matchBasis, verificationStatus: a.verificationStatus })
+    .from(a).where(eq(a.observationId, p.observationId)).orderBy(desc(a.revision)).limit(1).as('assignment')
+  const collection = db.select({ id: observation.collectionId }).from(observation).where(eq(observation.id, p.observationId))
+  const noOpaqueStatus = notExists(db.select({ id: business.id }).from(business)
+    .where(and(eq(business.observationId, p.observationId), eq(business.storedStatusSqliteStorage, 'blob'))))
+  const validate = annual ? sql`true` : eq(p.status, 'confirmed')
+  const relationMatch = relationMatches({
+    enterpriseId: sql`${assignment.enterpriseId}`,
+    matchBasis: sql`${assignment.matchBasis}`,
+    verificationStatus: sql`${assignment.verificationStatus}`,
+  })
+  const projected = db.select({
+    ref: sql`json_build_object('id',${p.id},'type',${p.type},'role',${p.role},'status',${p.status},'eventId',${p.eventId},
+      'predecessorEventId',${p.predecessorEventId},'relationId',p.relation_id,'exportRowId',${p.exportRowId},
+      'enterpriseId',${p.enterpriseId},'titleCode',${p.titleCode},'revision',${p.revision})`.as('ref'),
+    matches: sql`CASE WHEN ${validate} THEN ${and(
+      eventMatches(sql`${p.eventId}`), eventMatches(sql`${p.predecessorEventId}`, true),
+      relationMatch, exportMatches, noOpaqueStatus,
+    )} ELSE true END`.as('matches'),
+    attribution: sql`CASE WHEN ${validate} THEN json_build_object('type',${p.type},'enterpriseId',${p.enterpriseId},
+      'relationEnterpriseId',${assignment.enterpriseId},'relationStatus',${assignment.verificationStatus},'relationUscc',${refValue('relation', 'usccRaw')},
+      'ownerId',${enterprise.id},'ownerUscc',${enterprise.usccNorm},'targetId',${target.id},'targetUscc',${target.usccNorm},'targetTitle',${title.code})
+    END`.as('attribution'),
+    proof: sql`CASE WHEN ${and(eq(p.status, 'confirmed'), eq(p.type, 'recognized_export'), eq(p.role, 'same_current_row'))} THEN json_build_object(
+      'ids',coalesce(p.provenance_json->'comparisonProofIds','[]'::jsonb),
+      'queryId',${query.oldId},'batchId',${exportRow.batchId})
+    END`.as('proof'),
+  }).from(p).leftJoinLateral(assignment, sql`true`)
+    .leftJoin(query, eq(query.collectionId, sql`(${collection})`))
+    .leftJoin(exportRow, eq(exportRow.id, p.exportRowId))
+    .leftJoin(enterprise, eq(enterprise.id, assignment.enterpriseId))
+    .leftJoin(target, eq(target.id, p.enterpriseId)).leftJoin(title, eq(title.code, p.titleCode))
+    .orderBy(p.id)
+  // Drizzle cannot mark a CTE MATERIALIZED. Retain the planner boundary before
+  // checking archived byte fields and saved JSON provenance.
   const { rows } = await db.execute<{
     ref: CorrespondenceRefRow; matches: boolean; attribution: CorrespondenceAttribution | null; proof: ProofReference | null
-  }>(sql`
-    WITH selected AS MATERIALIZED (
-      SELECT p.id,p.type,p.role,p.status,p.event_id,p.predecessor_event_id,p.observation_id,p.export_row_id,
-        p.enterprise_id,p.title_code,p.revision,ra.old_id AS relation_id,
-        CASE WHEN ${validate} THEN p.provenance::jsonb END AS provenance_json
-      FROM record_correspondence p LEFT JOIN platform_legacy_relation_alias ra ON ra.observation_id=p.observation_id
-      WHERE ${where}
-      ${witnessTitle === undefined ? sql.empty() : sql`AND p.title_code=${witnessTitle}
-        AND p.status='confirmed' AND p.type='event_recognized' AND p.role='recognized_corrob' AND p.event_id IS NOT NULL AND ra.old_id IS NOT NULL`}
-    )
-    SELECT json_build_object('id',p.id,'type',p.type,'role',p.role,'status',p.status,'eventId',p.event_id,
-      'predecessorEventId',p.predecessor_event_id,'relationId',p.relation_id,'exportRowId',p.export_row_id,
-      'enterpriseId',p.enterprise_id,'titleCode',p.title_code,'revision',p.revision) AS ref,
-      CASE WHEN ${validate} THEN (
-        (${eventMatches(sql`p.event_id`)}) AND (${eventMatches(sql`p.predecessor_event_id`, true)}) AND
-        (${relationMatches()}) AND (${exportMatches})
-        AND NOT EXISTS (SELECT 1 FROM platform_business_projection bp WHERE bp.observation_id=p.observation_id AND bp.stored_status_sqlite_storage='blob')
-      ) ELSE true END AS matches,
-      CASE WHEN ${validate} THEN json_build_object('type',p.type,'enterpriseId',p.enterprise_id,
-        'relationEnterpriseId',a.enterprise_id,'relationStatus',a.verification_status,'relationUscc',${refValue('relation', 'usccRaw')},
-        'ownerId',e.id,'ownerUscc',e.uscc_norm,'targetId',target.id,'targetUscc',target.uscc_norm,'targetTitle',t.code)
-      END AS attribution,
-      CASE WHEN p.status='confirmed' AND p.type='recognized_export' AND p.role='same_current_row' THEN json_build_object(
-        'ids',coalesce(p.provenance_json->'comparisonProofIds','[]'::jsonb),
-        'queryId',qa.old_id,'batchId',export.batch_id)
-      END AS proof
-    FROM selected p
-    LEFT JOIN LATERAL (SELECT enterprise_id,match_basis,verification_status FROM platform_observation_assignment
-      WHERE observation_id=p.observation_id ORDER BY revision DESC LIMIT 1) a ON true
-    LEFT JOIN platform_legacy_query_alias qa ON qa.collection_id=(SELECT collection_id FROM platform_business_observation WHERE id=p.observation_id)
-    LEFT JOIN platform_export_row export ON export.id=p.export_row_id
-    LEFT JOIN enterprise e ON e.id=a.enterprise_id
-    LEFT JOIN enterprise target ON target.id=p.enterprise_id LEFT JOIN title t ON t.code=p.title_code
-    ORDER BY p.id`)
+  }>(sql`WITH p AS MATERIALIZED (${selected}) ${projected}`)
   const covers = await readPostgresCurrentProofCoverage(db, rows.flatMap(row => row.proof ? [row.proof] : []))
   return rows.map(({ ref, matches, attribution, proof }) => ({
     ...ref, requiresRevalidation: !matches || attribution !== null && correspondenceAttributionChanged(attribution)

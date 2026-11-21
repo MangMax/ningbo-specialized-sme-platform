@@ -27,6 +27,8 @@
 import { eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import * as schema from '../../../../db/schema'
 import {
   isPageCapable,
@@ -89,18 +91,19 @@ export function readEvidencePageCandidates(db: Db, sourceFiles: readonly string[
     .all()
 }
 
-async function readPostgresEvidencePageCandidates(db: NodePgDatabase, sourceFiles: string[]) {
+async function readPostgresEvidencePageCandidates(db: NodePgDatabase, sourceFiles: string[]): Promise<EvidencePageCandidate[]> {
   const wanted = sourceFiles.filter(path => !path.includes('\0') && path.isWellFormed())
   if (wanted.length === 0) return []
-  const { rows } = await db.execute<{ [K in keyof EvidencePageCandidate]: EvidencePageCandidate[K] }>(sql`
-    SELECT v.id::float8 AS "evidenceId", v.source_file AS "sourceFile", v.list_no::float8 AS "listNo",
-      v.page::float8 AS page, ent.id::float8 AS "enterpriseId", ent.name AS "enterpriseName",
-      r.district, ent.district AS "enterpriseDistrict"
-    FROM record_evidence v JOIN record_event e ON e.id=v.record_event_id
-    JOIN record r ON r.id=e.record_id JOIN enterprise ent ON ent.id=r.enterprise_id
-    WHERE v.source_file=ANY(${sql.param(wanted)}::text[])
-    ORDER BY v.source_file, v.id`)
-  return rows
+  return db.select({ evidenceId: recordEvidence.id, sourceFile: recordEvidence.sourceFile, listNo: recordEvidence.listNo,
+    page: recordEvidence.page, enterpriseId: enterprise.id, enterpriseName: enterprise.name, district: record.district,
+    enterpriseDistrict: enterprise.district,
+  }).from(recordEvidence)
+    .innerJoin(recordEvent, eq(recordEvent.id, recordEvidence.recordEventId))
+    .innerJoin(record, eq(record.id, recordEvent.recordId))
+    .innerJoin(enterprise, eq(enterprise.id, record.enterpriseId))
+    // Drizzle inArray binds each path separately. Retain one bound array for an unrestricted import batch.
+    .where(sql`${recordEvidence.sourceFile} = ANY(${sql.param(wanted)}::text[])`)
+    .orderBy(recordEvidence.sourceFile, recordEvidence.id)
 }
 
 /** 入参里那些**来源文件**。用于把候选读窄,顺带做输入校验(非字符串/空的丢掉)。 */

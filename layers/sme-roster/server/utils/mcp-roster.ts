@@ -1,6 +1,6 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { readPostgresQueryAssessments } from '../../lib/roster/query-assessment-postgres'
-import { and,asc,eq,sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, sql } from 'drizzle-orm'
 import { readQueryAssessments,type QueryAssessment } from '../../lib/roster/query-assessment'
 /**
  * RL-11 名录只读工具的投影（契约 §9）。
@@ -16,6 +16,9 @@ import { readQueryAssessments,type QueryAssessment } from '../../lib/roster/quer
 
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import { platformCollection, platformLegacyQueryAlias } from '../../../../db/postgresql/platform-tables'
+import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import {
 listRosterEnterprises,
 type RosterEnterpriseRow,
@@ -147,34 +150,39 @@ function projectListDifferences(rows: DifferenceRow[], assessments: QueryAssessm
 
 export async function listPostgresDifferences(db: NodePgDatabase, input: ListDifferencesInput = {}): Promise<ListDifferencesResult> {
   return db.transaction(async tx => {
-    const newest = sql`WITH heads AS (
-      SELECT DISTINCT ON(enterprise_id,title_code,direction) * FROM difference_reason
-      ORDER BY enterprise_id,title_code,direction,recorded_at DESC,id DESC
-    ), filtered AS (
-      SELECT * FROM heads WHERE true
-        ${input.title ? sql`AND title_code=${input.title}` : sql.empty()}
-        ${input.direction ? sql`AND direction=${input.direction}` : sql.empty()}
-        ${input.status ? sql`AND status=${input.status}` : sql.empty()}
-    )`
-    const { rows: groups } = await tx.execute<{ titleCode: string; direction: string; n: number }>(sql`
-      ${newest} SELECT title_code AS "titleCode",direction,count(*)::float8 AS n
-      FROM filtered GROUP BY title_code,direction`)
+    const key = [differenceReason.enterpriseId, differenceReason.titleCode, differenceReason.direction]
+    const head = tx.$with('difference_heads').as(tx.selectDistinctOn(key).from(differenceReason)
+      .orderBy(...key, desc(differenceReason.recordedAt), desc(differenceReason.id)))
+    const scope = and(
+      input.title ? eq(head.titleCode, input.title) : undefined,
+      input.direction ? eq(head.direction, input.direction) : undefined,
+      input.status ? eq(sql<string>`${head.status}`, input.status) : undefined,
+    )
+    const groups = await tx.with(head).select({ titleCode: head.titleCode, direction: head.direction, n: count() })
+      .from(head).where(scope).groupBy(head.titleCode, head.direction)
     const counts: ListDifferencesResult['counts'] = {}
     for (const group of groups) {
       counts[group.titleCode] ??= {}
       counts[group.titleCode]![group.direction] = group.n
     }
     const { page, pageSize } = pageOf(input)
-    const { rows } = await tx.execute<DifferenceRow>(sql`
-      ${newest}
-      SELECT d.enterprise_id::float8 AS "enterpriseId",e.name,d.title_code AS "titleCode",d.direction,d.status,
-        d.reason_code AS "reasonCode",d.measure_code AS "measureCode",d.verification_status AS "verificationStatus",d.recorded_at AS "recordedAt",
-        d.fact_references::json AS "factReferences",d.moved_in_city AS "movedInCity",d.moved_in_title_code AS "movedInTitleCode",
-        d.moved_in_year::float8 AS "movedInYear",d.moved_in_batch::float8 AS "movedInBatch",q.old_id::float8 AS "queryId",
-        c.queried_at AS "queriedAt",c.interface AS "queryInterface",c.status AS "queryStatus"
-      FROM filtered d JOIN enterprise e ON e.id=d.enterprise_id
-      LEFT JOIN platform_collection c ON c.id=d.evidence_query_id LEFT JOIN platform_legacy_query_alias q ON q.collection_id=c.id
-      ORDER BY d.enterprise_id,d.title_code COLLATE "C",d.direction COLLATE "C" LIMIT ${pageSize} OFFSET ${Math.min(Number.MAX_SAFE_INTEGER,(page-1)*pageSize)}`)
+    const stored = await tx.with(head).select({
+      enterpriseId: head.enterpriseId, name: enterprise.name, titleCode: head.titleCode, direction: head.direction,
+      status: head.status, reasonCode: head.reasonCode, measureCode: head.measureCode, verificationStatus: head.verificationStatus,
+      recordedAt: head.recordedAt, factReferences: head.factReferences, movedInCity: head.movedInCity,
+      movedInTitleCode: head.movedInTitleCode, movedInYear: head.movedInYear, movedInBatch: head.movedInBatch,
+      queryId: platformLegacyQueryAlias.oldId, queriedAt: platformCollection.queriedAt,
+      queryInterface: platformCollection.interface, queryStatus: platformCollection.status,
+    }).from(head).innerJoin(enterprise, eq(enterprise.id, head.enterpriseId))
+      .leftJoin(platformCollection, eq(platformCollection.id, head.evidenceQueryId))
+      .leftJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformCollection.id))
+      .where(scope)
+      // Drizzle 0.45 has no expression-level collation modifier.
+      .orderBy(head.enterpriseId, sql`${head.titleCode} COLLATE "C"`, sql`${head.direction} COLLATE "C"`)
+      .limit(pageSize).offset(Math.min(Number.MAX_SAFE_INTEGER, (page - 1) * pageSize))
+    const rows: DifferenceRow[] = stored.map(row => ({
+      ...row, factReferences: row.factReferences === null ? null : JSON.parse(row.factReferences),
+    }))
     const assessments = await readPostgresQueryAssessments(tx, rows)
     return { rows: projectListDifferences(rows, assessments), counts }
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })

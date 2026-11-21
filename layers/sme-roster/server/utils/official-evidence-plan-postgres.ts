@@ -1,46 +1,53 @@
-import { sql } from 'drizzle-orm'
+import { and, asc, count, eq, isNull } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import * as schema from '../../../../db/schema'
-import { postgresRosterRow, readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import { storedFile } from '../../../../db/postgresql/file-tables'
+import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
+import { sourceDocument } from '../../../../db/postgresql/official-evidence-tables'
+import { rosterFileClassification } from '../../../../db/postgresql/roster-file-tables'
 import { projectOfficialDeclaration, projectOfficialEvidenceChanges } from './official-evidence-plan'
 import { readPostgresOfficialPlanFacts } from './official-evidence-postgres'
 
-type Db = Pick<NodePgDatabase, 'execute'>
+type Db = Pick<NodePgDatabase, 'execute' | 'select'>
 type ReadRequest = Exclude<ReturnType<ReturnType<typeof projectOfficialEvidenceChanges>['next']>, { done: true }>['value']
 
 async function readOfficialPlanInput(db: Db, input: ReadRequest) {
   if (input.type === 'count') {
-    const { rows: [row] } = await db.execute<{ count: number }>(sql`
-      SELECT count(*)::int AS count FROM (SELECT id FROM record_evidence WHERE record_event_id=${input.eventId} LIMIT 301) evidence`)
-    return row!.count
+    const bounded = db.select({ id: recordEvidence.id }).from(recordEvidence)
+      .where(eq(recordEvidence.recordEventId, input.eventId)).limit(301).as('bounded_evidence')
+    const [result] = await db.select({ count: count() }).from(bounded)
+    return result!.count
   }
   if (input.type === 'declaration') {
     const declaration = input.declaration
-    const [document] = declaration.kind === 'existing' ? await readPostgresRosterRowsById(db, schema.sourceDocument, sql`
-      FROM source_document p WHERE p.id=${declaration.sourceDocumentId}`) : []
+    const [document] = declaration.kind === 'existing' ? await db.select().from(sourceDocument)
+      .where(eq(sourceDocument.id, declaration.sourceDocumentId)) : []
     return projectOfficialDeclaration(declaration, document)
   }
   if (input.type === 'latest') return readPostgresOfficialPlanFacts(db, { id: input.id })
   if (input.type === 'candidates') return readPostgresOfficialPlanFacts(db, { key: input.key })
   if (input.type === 'file') {
-    const { rows: [row] } = await db.execute(sql`
-      SELECT f.id::float8 AS id,f.rel_path AS "relPath",f.bytes::float8 AS bytes,f.sha256,f.removed_at AS "removedAt",
-        c.source,c.kind,c.title_code AS "titleCode"
-      FROM stored_file f JOIN roster_file_classification c ON c.file_id=f.id WHERE f.id=${input.id}`)
-    return row
+    const [row] = await db.select({
+      id: storedFile.id, relPath: storedFile.relPath, bytes: storedFile.bytes, sha256: storedFile.sha256, removedAt: storedFile.removedAt,
+      source: rosterFileClassification.source, kind: rosterFileClassification.kind, titleCode: rosterFileClassification.titleCode,
+    }).from(storedFile).innerJoin(rosterFileClassification, eq(rosterFileClassification.fileId, storedFile.id))
+      .where(eq(storedFile.id, input.id))
+    return row && { ...row, bytes: Number(row.bytes) }
   }
   if (input.type === 'repoint') {
-    const { rows: [row] } = await db.execute(sql`
-      SELECT ${postgresRosterRow(schema.recordEvidence,'v')} AS evidence,
-        ${postgresRosterRow(schema.recordEvent,'e')} AS event,r.id::float8 AS "recordId",ent.id::float8 AS "enterpriseId"
-      FROM record_evidence v JOIN record_event e ON e.id=v.record_event_id JOIN record r ON r.id=e.record_id
-      LEFT JOIN enterprise ent ON ent.id=r.enterprise_id WHERE v.id=${input.id}`)
-    return row
+    const [row] = await db.select({
+      evidence: recordEvidence, event: recordEvent, recordId: record.id, enterpriseId: enterprise.id,
+    }).from(recordEvidence).innerJoin(recordEvent, eq(recordEvent.id, recordEvidence.recordEventId))
+      .innerJoin(record, eq(record.id, recordEvent.recordId))
+      .leftJoin(enterprise, eq(enterprise.id, record.enterpriseId))
+      .where(eq(recordEvidence.id, input.id))
+    return row && { ...row, event: { ...row.event, formalValidity: row.event.formalValidity === null ? null : JSON.parse(row.event.formalValidity) } }
   }
   const c = input.coordinate
-  return readPostgresRosterRowsById(db, schema.recordEvidence, sql`
-    FROM (SELECT * FROM record_evidence WHERE source_file=${c.sourceFile} AND list_no=${c.listNo}
-      AND attachment IS NOT DISTINCT FROM ${c.attachment} LIMIT 101) p`)
+  return db.select().from(recordEvidence).where(and(
+    eq(recordEvidence.sourceFile, c.sourceFile), eq(recordEvidence.listNo, c.listNo!),
+    c.attachment === null ? isNull(recordEvidence.attachment) : eq(recordEvidence.attachment, c.attachment),
+  )).orderBy(asc(recordEvidence.id)).limit(101)
 }
 
 export async function planPostgresOfficialEvidenceChanges(db: Db, ...args: Parameters<typeof projectOfficialEvidenceChanges>) {

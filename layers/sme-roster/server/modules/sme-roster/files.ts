@@ -1,5 +1,8 @@
 import { landingSegments, matchesLandingPath } from '../../../lib/sme-roster/file-landing'
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
+import { storedFile } from '../../../../../db/postgresql/file-tables'
+import { recordEvidence } from '../../../../../db/postgresql/ledger-tables'
+import { rosterFileClassification } from '../../../../../db/postgresql/roster-file-tables'
 import * as schema from '../../../../../db/schema'
 import { KIND_ORDER, PARSE_STATE_ORDER, SOURCE_ORDER, TITLE_ORDER } from '../../../lib/labels'
 import { categoryStateOf, deriveClassification, type CategoryState, type FileKind, type FileSource, type ParseState } from '../../../lib/stored-file'
@@ -91,11 +94,10 @@ export const rosterFileServerCategory = {
     constraint: rosterFilePostgresConstraint,
     orderBy: rosterFilePostgresOrder,
     async countReferences(db, ids) {
-      const { rows } = await db.execute<{ id: string; count: string }>(sql`
-        SELECT f.id, count(*) FROM stored_file f
-        JOIN record_evidence e ON e.source_file COLLATE "C" = f.rel_path
-        WHERE f.id = ANY(${sql.param(ids)}::bigint[]) GROUP BY f.id`)
-      return new Map(rows.map(row => [Number(row.id), Number(row.count)]))
+      const rows = await db.select({ id: storedFile.id, count: count() }).from(storedFile)
+        .innerJoin(recordEvidence, sql`${recordEvidence.sourceFile} COLLATE "C" = ${storedFile.relPath}`)
+        .where(sql`${storedFile.id} = ANY(${sql.param(ids)}::bigint[])`).groupBy(storedFile.id)
+      return new Map(rows.map(row => [row.id, row.count]))
     },
   },
   constraint(db, filters) {
@@ -143,11 +145,10 @@ export const rosterFileServerCategory = {
       if (file.categoryState === undefined) return false
       const current = file as FileRow & RosterFileFields
       const next = { ...current, ...classificationChanges(current, patch) }
-      await db.execute(sql`
-        UPDATE roster_file_classification
-        SET source = ${next.source}, kind = ${next.kind}, year = ${next.year}, batch = ${next.batch},
-          title_code = ${next.titleCode}, category_state = ${next.categoryState}
-        WHERE file_id = ${file.id}`)
+      await db.update(rosterFileClassification).set({
+        source: next.source, kind: next.kind, year: next.year, batch: next.batch,
+        titleCode: next.titleCode, categoryState: next.categoryState,
+      }).where(eq(rosterFileClassification.fileId, file.id))
       return true
     },
   },

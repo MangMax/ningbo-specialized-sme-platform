@@ -5,8 +5,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import pg from 'pg'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
+import { readRuntimeImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipts-runtime'
 import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
 import { submitRosterImportMcp } from '../../../layers/sme-roster/server/utils/roster-import-mcp-submission'
 import { reserveLoopbackPort } from '../../support/owned-process.mjs'
@@ -325,6 +327,173 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
     expect(await http('commit', body)).toMatchObject({ status: 200, body: { status: 'failed', summary: { written: 0, failed: 1 } } })
     expect(await http('replay', body)).toMatchObject({ status: 400 })
     expect(await readOriginals()).toEqual(originals)
+  })
+
+  it('replays a committed import and reads bounded receipt pages and request bytes', async () => {
+    const body = { ...request('bounded-receipt', { platformQueries: [{
+      interface: 'apply_list', queryKey, rdjb: '2', queriedAt, reuseExisting: true, relations: [{ sequenceNo: 1 }],
+    }] }), sourceIdentity: '隔离历史🧾' }
+    expect(await http('preflight', body)).toMatchObject({ status: 200, body: { status: 'preflight' } })
+    const committed = await http('commit', body)
+    expect(committed).toMatchObject({ status: 200, body: { status: 'committed', items: [{ ref: 'query:91' }] } })
+    expect(await http('commit', body)).toMatchObject({ status: 200, body: committed.body })
+
+    const receipt = z.object({ batchId: z.number(), receiptId: z.number() }).parse(
+      await readRuntimeImportReceipt('get', { idempotencyKey: body.idempotencyKey }),
+    )
+    const history = await readRuntimeImportReceipt('history', { batchId: receipt.batchId, page: 2, pageSize: 1 })
+    expect(history).toMatchObject({ page: 2, pageSize: 1, total: 2, rows: [
+      { receiptId: receipt.receiptId, operation: 'commit', status: 'committed', itemCount: 1 },
+    ] })
+    expect(await readRuntimeImportReceipt('items', { receiptId: receipt.receiptId, pageSize: 1 }))
+      .toMatchObject({ page: 1, pageSize: 1, total: 1, rows: [{ index: 0, ref: 'query:91', ok: true }] })
+    expect(await readRuntimeImportReceipt('items', { receiptId: receipt.receiptId, page: 2, pageSize: 1 }))
+      .toMatchObject({ page: 2, pageSize: 1, total: 1, rows: [] })
+
+    const { rows: [stored] } = await client.query(`
+      SELECT original.request_body FROM import_receipt current
+      JOIN import_receipt original ON original.id=current.body_receipt_id WHERE current.id=$1
+    `, [receipt.receiptId])
+    expect(JSON.parse(stored.request_body)).toMatchObject({ idempotencyKey: body.idempotencyKey, sourceIdentity: body.sourceIdentity })
+    const expectedBody = Buffer.from(stored.request_body)
+    const offset = expectedBody.indexOf(Buffer.from('🧾')) + 1
+    expect(offset).toBeGreaterThan(0)
+    expect(await readRuntimeImportReceipt('request', { receiptId: receipt.receiptId, maxBytes: 17, offset }))
+      .toMatchObject({ totalBytes: expectedBody.length,
+        data: expectedBody.subarray(offset, offset + 17).toString('base64'), nextOffset: offset + 17 })
+    expect(await readRuntimeImportReceipt('request', { receiptId: receipt.receiptId, offset: expectedBody.length }))
+      .toMatchObject({ data: '', nextOffset: null })
+  })
+
+  it('projects only the selected retained import item and enforces snapshot byte limits', async () => {
+    const itemResults = JSON.stringify([
+      { ok: true, kind: 'record_event', ref: 'record:12', detail: { enterpriseId: 5, recordId: 12 } },
+      { ok: true, kind: 'merge', detail: { lineage: {
+        fromEnterpriseId: 5, intoEnterpriseId: 6,
+        recordsFolded: [{
+          fromRecordId: 12, intoRecordId: 13, eventIds: [81, 82],
+          fromRecordSnapshot: {
+            id: 12, enterpriseId: 5, titleCode: 'specialized_sme', source: 'jxj',
+            nameRaw: '保留的原名称', usccRaw: null, district: null, qualityFlags: ['unconfirmed'],
+          },
+        }],
+      } } },
+    ])
+    const { rows: [batch] } = await client.query(`
+      INSERT INTO import_batch(idempotency_key,source_kind,source_identity,status,created_at,item_results)
+      VALUES ('retained-projection','announcement','历史名单','committed',$1,$2) RETURNING id
+    `, [queriedAt, itemResults])
+    const source = { source: 'private_batch', batchId: Number(batch.id) }
+    const qualification = { ...source, projection: 'qualification', itemIndex: 0 }
+    expect(await readRuntimeImportReceipt('items', qualification)).toMatchObject({
+      itemIndex: 0, target: null, qualificationReadback: { status: 'not_retained', reason: 'legacy_receipt' },
+      qualificationDiagnostics: { status: 'not_retained', reason: 'legacy_receipt' },
+    })
+    const selector = { ...source, itemIndex: 1, oldRecordId: 12 }
+    expect(await readRuntimeImportReceipt('items', { ...selector, projection: 'snapshot' })).toMatchObject({
+      availability: 'available', origin: { fromEnterpriseId: 5, intoEnterpriseId: 6, intoRecordId: 13 },
+      snapshot: { id: 12, nameRaw: '保留的原名称', qualityFlags: ['unconfirmed'] },
+    })
+    await expect(readRuntimeImportReceipt('items', { ...selector, projection: 'snapshot', maxBytes: 1 }))
+      .rejects.toMatchObject({ statusCode: 413, code: 'response_limit' })
+    const events = { ...selector, projection: 'eventIds', pageSize: 1 }
+    const first = z.object({ eventIds: z.array(z.number()), nextCursor: z.string() })
+      .parse(await readRuntimeImportReceipt('items', events))
+    expect(first.eventIds).toEqual([81])
+    expect(await readRuntimeImportReceipt('items', { ...events, cursor: first.nextCursor }))
+      .toMatchObject({ eventIds: [82], nextCursor: null })
+  })
+
+  it('supplements page evidence once and keeps the original collection and relation bytes', async () => {
+    const queriedAt = '2026-11-17T08:30:00Z'
+    const queryKey = '9133020078041158X6'
+    const rawFields = { id: 'legacy-supplement', rdjb: '2', note: ' 合成🧾 ' }
+    const naturalKey = { interface: 'business_list', rdjb: '2', queryKey, queriedAt } as const
+    const relations = [{ sequenceNo: 1, relationKey: rawFields.id, rawFields }]
+    const result = await http('commit', request('legacy-page-source', { platformQueries: [
+      { ...naturalKey, status: 'success', rawResponse: ' 合成原始响应🧾 ', relations },
+    ] }))
+    const ref = z.object({ items: z.tuple([z.object({ ref: z.string() })]) }).parse(result.body).items[0].ref
+    const queryId = Number(ref.slice('query:'.length))
+    const input: NonNullable<RosterImportRequest['payload']['platformLegacyProvenance']>[number] = {
+      ...naturalKey, queryId, sourceIdentity: '分页证据.json', sourceSha256: 'c'.repeat(64), segmentIndex: 2, relations,
+      collection: {
+        source: 'businessList', status: 'success', titleScope: { mode: 'selected', rdjb: ['2'] },
+        effectiveConditions: { uscc: queryKey, combination: 'and' }, queriedAt, completedAt: '2026-11-17T08:30:10Z',
+        rows: [rawFields], pages: [{ source: 'businessList', rdjb: '2', page: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, error: null }],
+        fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null,
+        limits: { maxRequests: 10, maxRows: 20, maxDurationMs: 30000, pageSize: 10 },
+      },
+    }
+    const original = () => client.query(`
+      SELECT 'collection' AS owner, r.field, a.bytes FROM platform_collection_archive_ref r
+      JOIN platform_archive_value a ON a.id=r.archive_id
+      JOIN platform_legacy_query_alias q ON q.collection_id=r.owner_id WHERE q.old_id=$1
+      UNION ALL
+      SELECT 'observation', r.field, a.bytes FROM platform_observation_archive_ref r
+      JOIN platform_archive_value a ON a.id=r.archive_id
+      JOIN platform_business_observation o ON o.id=r.owner_id
+      JOIN platform_legacy_query_alias q ON q.collection_id=o.collection_id WHERE q.old_id=$1 ORDER BY owner, field
+    `, [queryId]).then(result => result.rows)
+    const bytes = await original()
+    const supplement = request('legacy-page-supplement', { platformLegacyProvenance: [input] })
+    expect(await http('preflight', supplement)).toMatchObject({
+      status: 200, body: { status: 'preflight', preflight: { conflicts: [], platformLegacyProvenanceSources: [
+        { queryId, inputFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) },
+      ] } },
+    })
+    expect(await http('commit', supplement)).toMatchObject({
+      status: 200, body: { status: 'committed', items: [{ ok: true, detail: { queryId, relationCount: 1, rowsWritten: 1 } }] },
+    })
+    expect(await http('commit', { ...supplement, idempotencyKey: 'legacy-page-replay' })).toMatchObject({
+      status: 200, body: { status: 'committed', items: [{ ok: true, detail: { queryId, relationCount: 1, rowsWritten: 0 } }] },
+    })
+    expect(await original()).toEqual(bytes)
+    const { rows } = await client.query(`
+      SELECT p.origin,p.source_identity,p.segment_index,a.bytes
+      FROM platform_collection_legacy_provenance p JOIN platform_archive_value a ON a.id=p.archive_id
+      WHERE p.source_sha256=$1
+    `, [input.sourceSha256])
+    expect(rows.map(({ bytes, ...row }) => ({ ...row, collection: JSON.parse(bytes.toString('utf8')) }))).toEqual([{
+      origin: 'supplement', source_identity: '分页证据.json', segment_index: '2', collection: input.collection,
+    }])
+  })
+
+  it('replays matching export rows and rejects changed raw fields before recording a replacement', async () => {
+    await client.query("INSERT INTO title (code,name_zh,level,rank) VALUES ('specialized_sme','专精特新中小企业','provincial',2)")
+    const snapshot = {
+      titleCode: 'specialized_sme', year: 2024, collectedOn: '2026-11-18',
+      originalFilename: '隔离快照.xlsx', sha256: 'a'.repeat(64),
+      rows: [{ sourceRowNo: 3, nameRaw: '企业🧾', rawFields: { 原始列: ' 保留空格 ' } }],
+    } as const
+    const body = (key: string, exportSnapshot: NonNullable<RosterImportRequest['payload']['exportSnapshot']>): RosterImportRequest => ({
+      idempotencyKey: key, sourceKind: 'platform_export', sourceIdentity: 'isolated-export', payload: { exportSnapshot },
+    })
+    const first = { ...snapshot, rows: [...snapshot.rows] }
+    const imported = await http('commit', body('export-first', first))
+    expect(imported).toMatchObject({ status: 200, body: { status: 'committed', items: [
+      { ok: true, ref: expect.stringMatching(/^export:\d+$/), detail: { rowsWritten: 2 } },
+    ] } })
+    const replay = await http('commit', body('export-replay', first))
+    expect(replay).toMatchObject({ status: 200, body: { status: 'committed', items: [
+      { ok: true, detail: { skipped: 1, rows: [], rowsWritten: 0 } },
+    ] } })
+    const changed = { ...first, rows: [{ ...first.rows[0]!, rawFields: { 原始列: '保留空格' } }] }
+    const conflict = await http('preflight', body('export-conflict', changed))
+    expect(conflict).toMatchObject({ status: 200, body: { status: 'preflight', preflight: { conflicts: [
+      { error: { code: 'export_row_payload_conflict', field: 'rows.rawFields' } },
+    ] } } })
+    expect(await http('commit', body('export-replacement', { ...changed, sha256: 'b'.repeat(64) })))
+      .toMatchObject({ status: 200, body: { status: 'committed', items: [{ ok: true, detail: { rowsWritten: 2 } }] } })
+    const { rows } = await client.query(`
+      SELECT b.sha256, p.sha256 AS previous, r.raw_fields
+      FROM platform_export_batch b LEFT JOIN platform_export_batch p ON p.id=b.replaced_batch_id
+      JOIN platform_export_row r ON r.batch_id=b.id ORDER BY b.id
+    `)
+    expect(rows).toEqual([
+      { sha256: 'a'.repeat(64), previous: null, raw_fields: '{"原始列":" 保留空格 "}' },
+      { sha256: 'b'.repeat(64), previous: 'a'.repeat(64), raw_fields: '{"原始列":"保留空格"}' },
+    ])
   })
 
   it('verifies an unindexed business status BLOB by reference and rejects ordinary first indexing', async () => {

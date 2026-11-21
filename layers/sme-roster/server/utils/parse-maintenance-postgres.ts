@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { sql } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, max, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { z } from 'zod'
 import type { fileParseAudit105 } from '../../../../db/schema'
+import { ocrResult, storedFile } from '../../../../db/postgresql/file-tables'
+import { fileDeclaration669 as declaration, fileParseAudit105 as audit, rosterFileClassification, storedFilePart } from '../../../../db/postgresql/roster-file-tables'
 import { appLog, type LogContext } from '../../../core/lib/logging'
 import { activePostgresPhysicalIntent, readPostgresFile, requirePostgresFileWrite } from '../../../core/server/utils/file-store-postgres'
 import { readPdfPageCount } from '../../../core/server/utils/pdf-pages'
@@ -25,17 +27,16 @@ function parse<T extends z.ZodType>(schema: T, raw: unknown) {
 }
 
 async function loadFile(db: NodePgDatabase, fileId: number) {
-  const { rows: [row] } = await db.execute<{
-    id: string; relPath: string; sha256: string; removedAt: string | null; ext: string;
-  }>(sql`
-    SELECT id, rel_path AS "relPath", sha256, removed_at AS "removedAt", ext
-    FROM stored_file WHERE id = ${fileId}`)
+  const [row] = await db.select({
+    id: storedFile.id, relPath: storedFile.relPath, sha256: storedFile.sha256,
+    removedAt: storedFile.removedAt, ext: storedFile.ext,
+  }).from(storedFile).where(eq(storedFile.id, fileId))
   if (!row) return fail(404, '文件不存在')
-  return { ...row, id: Number(row.id) }
+  return row
 }
 
 async function lockFile(db: NodePgDatabase, fileId: number) {
-  const { rows } = await db.execute(sql`SELECT id FROM stored_file WHERE id = ${fileId} FOR UPDATE`)
+  const rows = await db.select({ id: storedFile.id }).from(storedFile).where(eq(storedFile.id, fileId)).for('update')
   if (!rows.length) return fail(404, '文件不存在')
 }
 
@@ -45,9 +46,9 @@ async function loadState(
   const fields = (await readPostgresRosterFileFields(db, [file.id])).get(file.id)
   if (!fields) return fail(404, '文件不存在')
   if (!revision) {
-    const { rows: [last] } = await db.execute<{ id: string }>(sql`
-      SELECT id FROM file_parse_audit_105 WHERE file_id = ${file.id} ORDER BY id DESC LIMIT 1`)
-    if (last) revision = { id: Number(last.id), after: { inputLineage: fields.partsBinding.inputLineage } }
+    const [last] = await db.select({ id: audit.id }).from(audit)
+      .where(eq(audit.fileId, file.id)).orderBy(desc(audit.id)).limit(1)
+    if (last) revision = { id: last.id, after: { inputLineage: fields.partsBinding.inputLineage } }
   }
   const derived = await derivedPostgresFileParts(db, file.relPath)
   return projectParseState({ ...file, parseState: fields.parseState }, fields.parts, fields.registeredSummary.declarations, derived, revision)
@@ -63,10 +64,10 @@ async function currentInput(
 ) {
   const input = readParseInput310(file, selection, root, physicalSource)
   if (input.pages.length) {
-    const { rows } = await db.execute<{ page: string; version: string }>(sql`
-      SELECT page_no AS page, id || ':' || revision AS version FROM ocr_result
-      WHERE file_id = ${file.id} AND page_no = ANY(${sql.param(input.pages.map(page => page.page))}::bigint[])`)
-    const versions = new Map(rows.map(row => [Number(row.page), row.version]))
+    const rows = await db.select({
+      page: ocrResult.page, version: sql<string>`${ocrResult.id} || ':' || ${ocrResult.revision}`,
+    }).from(ocrResult).where(and(eq(ocrResult.fileId, file.id), inArray(ocrResult.page, input.pages.map(page => page.page))))
+    const versions = new Map(rows.map(row => [row.page, row.version]))
     if (input.pages.some(page => versions.get(page.page) !== page.version)) return fail(409, '解析 OCR 输入已变化,请重新读取实际采用页后预检')
   }
   return input
@@ -96,12 +97,12 @@ async function writeParse(
   db: NodePgDatabase, fileId: number, command: ReturnType<typeof prepareParseWrite105>, root: string, mode?: Mode,
 ) {
   const { input, parts, parseState, inputRef, requestHash } = command
-  const { rows: [receipt] } = await db.execute<{ receiptId: string; requestHash: string; state: Receipt['after'] }>(sql`
-    SELECT id AS "receiptId", request_hash AS "requestHash", after::json AS state FROM file_parse_audit_105
-    WHERE file_id = ${fileId} AND idempotency_key = ${input.idempotencyKey}`)
+  const [receipt] = await db.select({
+    receiptId: audit.id, requestHash: audit.requestHash, state: sql<Receipt['after']>`${audit.after}::json`,
+  }).from(audit).where(and(eq(audit.fileId, fileId), eq(audit.idempotencyKey, input.idempotencyKey)))
   if (receipt) {
     if (receipt.requestHash !== requestHash) return fail(409, '幂等键已用于不同解析请求')
-    return { receiptId: Number(receipt.receiptId), replayed: true, state: receipt.state }
+    return { receiptId: receipt.receiptId, replayed: true, state: receipt.state }
   }
   if (await activePostgresPhysicalIntent(db, fileId)) return fail(409, '文件正在隔离或恢复')
   const file = await loadFile(db, fileId)
@@ -121,42 +122,54 @@ async function writeParse(
     }
   }
   if (parts !== undefined) {
-    const { rows: [counter] } = await db.execute<{ maximum: string }>(sql`
-      SELECT coalesce(max(display_sequence),0) AS maximum FROM file_declaration_669 WHERE file_id = ${fileId}`)
-    const { next, withdrawn } = planDeclarations669(fileId, file.sha256, input.parts!, before.declarations, Number(counter!.maximum), inputRef)
-    if (withdrawn.length) await db.execute(sql`
-      UPDATE file_declaration_669 SET active = 0, revision = revision + 1
-      WHERE declaration_id = ANY(${sql.param(withdrawn.map(value => value.declarationId))}::text[])`)
-    if (next.length) await db.execute(sql`
-      INSERT INTO file_declaration_669 (file_id,declaration_id,display_sequence,revision,active,sha256,content_version,part,page_ranges)
-      VALUES ${sql.join(next.map(d => sql`(${fileId},${d.declarationId},${d.displaySequence},${d.revision},1,${d.sha256},
-        ${d.contentVersion},${JSON.stringify(d.part)},${d.pageRanges == null ? null : JSON.stringify(d.pageRanges)})`), sql`,`)}
-      ON CONFLICT (declaration_id) DO UPDATE SET
-        display_sequence = excluded.display_sequence, revision = excluded.revision, active = 1,
-        sha256 = excluded.sha256, content_version = excluded.content_version, part = excluded.part, page_ranges = excluded.page_ranges`)
+    const [counter] = await db.select({ maximum: max(declaration.displaySequence) }).from(declaration)
+      .where(eq(declaration.fileId, fileId))
+    const { next, withdrawn } = planDeclarations669(fileId, file.sha256, input.parts!, before.declarations, counter?.maximum ?? 0, inputRef)
+    if (withdrawn.length) {
+      await db.update(declaration).set({ active: 0, revision: sql`${declaration.revision} + 1` })
+        .where(inArray(declaration.declarationId, withdrawn.map(row => row.declarationId)))
+    }
+    if (next.length) {
+      await db.insert(declaration).values(next.map(row => ({
+        ...row, fileId, active: 1, part: JSON.stringify(row.part),
+        pageRanges: row.pageRanges == null ? null : JSON.stringify(row.pageRanges),
+      }))).onConflictDoUpdate({ target: declaration.declarationId, set: {
+        displaySequence: sql`excluded.display_sequence`, revision: sql`excluded.revision`, active: 1,
+        sha256: sql`excluded.sha256`, contentVersion: sql`excluded.content_version`,
+        part: sql`excluded.part`, pageRanges: sql`excluded.page_ranges`,
+      } })
+    }
     const stored = mergeParseParts(parts, before.ingestionStatistics.parts)
-    await db.execute(sql`DELETE FROM stored_file_part WHERE file_id = ${fileId}`)
+    await db.delete(storedFilePart).where(eq(storedFilePart.fileId, fileId))
     if (stored.length) {
+      // A single bind covers every derived part, even when the merged set exceeds bind limits.
+      const rows = db.select({
+        fileId: sql<number>`${fileId}`, titleCode: sql<string>`p."titleCode"`,
+        eventKind: sql<typeof storedFilePart.$inferSelect.eventKind>`p."eventKind"`,
+        year: sql<number | null>`p.year`, batch: sql<number | null>`p.batch`, attachment: sql<string | null>`p.attachment`,
+        rowCount: sql<number>`p."rowCount"`, origin: sql<typeof storedFilePart.$inferSelect.origin>`p.origin`,
+        hasConflict: sql<number>`CASE WHEN p."hasConflict" THEN 1 ELSE 0 END`,
+      }).from(sql`json_to_recordset(${JSON.stringify(stored)}::json) AS p(
+        "titleCode" text, "eventKind" text, year bigint, batch bigint, attachment text, "rowCount" bigint, origin text, "hasConflict" boolean)`)
+      // Drizzle insert-select includes the identity column. Omit it so PostgreSQL allocates IDs.
       await db.execute(sql`
-        INSERT INTO stored_file_part (file_id,title_code,event_kind,year,batch,attachment,row_count,origin,has_conflict)
-        SELECT ${fileId}, p."titleCode", p."eventKind", p.year, p.batch, p.attachment, p."rowCount", p.origin,
-          CASE WHEN p."hasConflict" THEN 1 ELSE 0 END
-        FROM json_to_recordset(${JSON.stringify(stored)}::json) AS p(
-          "titleCode" text, "eventKind" text, year bigint, batch bigint, attachment text, "rowCount" bigint, origin text, "hasConflict" boolean)`)
+        INSERT INTO ${storedFilePart} (file_id,title_code,event_kind,year,batch,attachment,row_count,origin,has_conflict)
+        ${rows}`)
     }
   }
-  await db.execute(sql`UPDATE roster_file_classification SET parse_state = ${parseState} WHERE file_id = ${fileId}`)
-  const { rows: [audit] } = await db.execute<{ id: string }>(sql`
+  await db.update(rosterFileClassification).set({ parseState }).where(eq(rosterFileClassification.fileId, fileId))
+  // The receipt ID participates in the returned state version before its append-only row is inserted.
+  const { rows: [sequence] } = await db.execute<{ id: string }>(sql`
     SELECT nextval(pg_get_serial_sequence('business.file_parse_audit_105', 'id')) AS id`)
-  const receiptId = Number(audit!.id)
+  const receiptId = Number(sequence!.id)
   const inputLineage = parts === undefined ? before.inputLineage
     : inputRef ? { status: 'bound' as const, inputRef } : { status: 'unknown' as const }
   const state = await loadState(db, file, { id: receiptId, after: { inputLineage } })
-  await db.execute(sql`
-    INSERT INTO file_parse_audit_105 (id,file_id,idempotency_key,request_hash,operation,actor,reason,before,after,created_at)
-    OVERRIDING SYSTEM VALUE
-    VALUES (${receiptId},${fileId},${input.idempotencyKey},${requestHash},${parts === undefined ? 'status' : 'replace'},
-      ${JSON.stringify(input.actor)},${input.reason},${JSON.stringify(before)},${JSON.stringify(state)},${new Date().toISOString()})`)
+  await db.insert(audit).overridingSystemValue().values({
+    id: receiptId, fileId, idempotencyKey: input.idempotencyKey, requestHash,
+    operation: parts === undefined ? 'status' : 'replace', actor: JSON.stringify(input.actor),
+    reason: input.reason, before: JSON.stringify(before), after: JSON.stringify(state), createdAt: new Date().toISOString(),
+  })
   return { receiptId, replayed: false, state }
 }
 
@@ -185,20 +198,21 @@ export function historyPostgresParse(db: NodePgDatabase, raw: unknown) {
   const { fileId, receiptId, afterId = 0, limit = 20 } = parse(parseHistory105, raw)
   return db.transaction(async tx => {
     await loadFile(tx, fileId)
-    const scope = sql`FROM file_parse_audit_105 WHERE file_id = ${fileId}`
-    const columns = sql`'fileId',file_id,'operation',operation,'actor',actor::json,'reason',reason,
-      'idempotencyKey',idempotency_key,'createdAt',created_at`
-    if (receiptId !== undefined) {
-      const { rows: [row] } = await tx.execute<{ receipt: Omit<Receipt, 'requestHash'> }>(sql`
-        SELECT json_build_object('id',id,${columns},'before',before::json,'after',after::json) AS receipt
-        ${scope} AND id = ${receiptId}`)
-      if (!row) return fail(404, '解析回执不存在')
-      return { ...row.receipt, inputLineage: lineage310(row.receipt.after) }
+    const scope = eq(audit.fileId, fileId)
+    const columns = {
+      fileId: audit.fileId, operation: audit.operation, actor: sql<Receipt['actor']>`${audit.actor}::json`,
+      reason: audit.reason, idempotencyKey: audit.idempotencyKey, createdAt: audit.createdAt,
     }
-    const { rows } = await tx.execute<{ item: Pick<Receipt, 'fileId' | 'operation' | 'actor' | 'reason' | 'idempotencyKey' | 'createdAt'> & { receiptId: number } }>(sql`
-      SELECT json_build_object('receiptId',id,${columns}) AS item
-      ${scope} AND id > ${afterId} ORDER BY id LIMIT ${limit + 1}`)
-    return { fileId, rows: rows.slice(0, limit).map(row => row.item), nextAfterId: rows.length > limit ? rows[limit - 1]!.item.receiptId : null }
+    if (receiptId !== undefined) {
+      const [receipt] = await tx.select({
+        id: audit.id, ...columns, before: sql<Receipt['before']>`${audit.before}::json`, after: sql<Receipt['after']>`${audit.after}::json`,
+      }).from(audit).where(and(scope, eq(audit.id, receiptId)))
+      if (!receipt) return fail(404, '解析回执不存在')
+      return { ...receipt, inputLineage: lineage310(receipt.after) }
+    }
+    const rows = await tx.select({ receiptId: audit.id, ...columns }).from(audit)
+      .where(and(scope, gt(audit.id, afterId))).orderBy(audit.id).limit(limit + 1)
+    return { fileId, rows: rows.slice(0, limit), nextAfterId: rows.length > limit ? rows[limit - 1]!.receiptId : null }
   }, readOnlySnapshot)
 }
 
@@ -206,8 +220,8 @@ export async function savePostgresParseMcp(db: NodePgDatabase, raw: unknown, roo
   const { fileId, relPath, ...input } = parse(parseSave105, raw)
   let id = fileId
   if (id === undefined && !relPath!.includes('\0')) {
-    const { rows: [row] } = await db.execute<{ id: string }>(sql`SELECT id FROM stored_file WHERE rel_path = ${relPath!}`)
-    if (row) id = Number(row.id)
+    const [row] = await db.select({ id: storedFile.id }).from(storedFile).where(eq(storedFile.relPath, relPath!))
+    if (row) id = row.id
   }
   if (id === undefined) return fail(404, '文件不存在')
   if (modernEnvelope105.some(key => input[key] !== undefined)) return savePostgresParse(db, id, input, root, undefined, context)

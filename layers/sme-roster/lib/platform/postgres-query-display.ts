@@ -1,30 +1,42 @@
 import { decodePostgresExactCell } from '../../../../db/postgresql/exact-cell'
-import { sql } from 'drizzle-orm'
+import { and, asc, desc, eq, exists, inArray, isNotNull, sql } from 'drizzle-orm'
+import { alias, type PgColumn } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import {
+  platformArchiveValue as archiveValue,
+  platformCollectionArchiveRef as collectionRef,
+  platformCollectionLegacyProvenance as legacyProvenance,
+  platformObservationArchiveRef as observationRef,
+} from '../../../../db/postgresql/platform-archive-tables'
+import {
+  platformApplyProjection as applyProjection,
+  platformBusinessProjection as businessProjection,
+  platformRecognizedProjection as recognizedProjection,
+  platformBusinessObservation as observation,
+  platformCollection as collection,
+  platformLegacyQueryAlias as queryAlias,
+  platformLegacyRelationAlias as relationAlias,
+  platformObservationAssignment as assignment,
+} from '../../../../db/postgresql/platform-tables'
 import { BUSINESS_STATUS_V1, BUSINESS_STATUS_V2 } from '../../../../db/business-status'
 import { MAX_FULL_QUERY_BYTES, assertPlatformFullReadBudget } from './evidence-contract'
 import { legacySourcePositionForSequence, type LegacyProvenanceDisplay } from './legacy-provenance'
-import { legacyEnvelopeCollection, readPlatformArchiveBytes, type PostgresPlatformArchive } from './postgres-evidence-read'
+import { legacyEnvelopeCollection, readPlatformArchiveBytes } from './postgres-evidence-read'
 import type { PlatformQueryRow } from './read'
 import { sourcePositionForSequence } from './recognized-evidence'
 import { snapshotSchema } from './target-evidence-read'
 import type { RelationEvidenceDisplay } from './target-relation-display'
 import { parsePlatformRelationDisplay } from './target-query-read'
 
-type Reader = Pick<NodePgDatabase, 'execute'>
+type Reader = Pick<NodePgDatabase, 'execute' | 'select' | 'selectDistinct'>
 type Query = PlatformQueryRow['query']
-type Observation = {
-  collectionId: string; observationId: string; id: string; sequenceNo: string; relationKey: string | null;
-  enterpriseId: string | null; matchedName: string | null; usccRaw: string | null; nameRaw: string | null;
-  matchBasis: string | null; verificationStatus: string | null; hasOriginal: boolean;
-}
-export type PostgresDisplayOwner = { collectionId: string; provenanceState: string; query: Query }
-type CollectionArchive = PostgresPlatformArchive & { owner: string; field: string }
-type RelationArchive = { owner: string; field: string; bytes: Buffer | null; sealed: boolean }
+type DisplayQuery = Omit<Query, 'relationCount'> & Partial<Pick<Query, 'relationCount'>>
+export type PostgresDisplayOwner<T extends DisplayQuery = Query> = { collectionId: string; provenanceState: string; query: T }
 const projectionTables = {
-  apply_list: 'platform_apply_projection',
-  business_list: 'platform_business_projection',
-  recognized_list: 'platform_recognized_projection',
+  apply_list: applyProjection,
+  business_list: businessProjection,
+  recognized_list: recognizedProjection,
 } as const
 const facts = [
   ['province', 'province'], ['status', 'status'], ['batch', 'batch'], ['declareKind', 'declare_kind'],
@@ -40,17 +52,22 @@ function factValue(row: Record<string, unknown>, field: string, key: string) {
   return data
 }
 
-async function legacyDisplay(db: Reader, owner: PostgresDisplayOwner) {
-  const { rows: [archive] } = await db.execute<PostgresPlatformArchive & Omit<LegacyProvenanceDisplay, 'kind' | 'collection' | 'queryId'> & {
-    origin: 't04_envelope' | 'supplement'
-  }>(sql`
-    SELECT a.id, a.byte_length AS "byteLength", a.storage_class AS "storageClass", p.origin,
-      p.source_identity AS "sourceIdentity", p.source_sha256 AS "sourceSha256", p.segment_index::double precision AS "segmentIndex",
-      p.input_fingerprint AS "inputFingerprint", p.import_batch_id::double precision AS "importBatchId", p.created_at AS "createdAt",
-      EXISTS (SELECT 1 FROM platform_collection_archive_ref r WHERE r.owner_id = p.collection_id
-        AND r.field = 'legacyProvenance' AND r.archive_id = a.id AND r.sealed = 1) AS sealed
-    FROM platform_collection_legacy_provenance p JOIN platform_archive_value a ON a.id = p.archive_id
-    WHERE p.collection_id = ${owner.collectionId}`)
+async function legacyDisplay(db: Reader, owner: PostgresDisplayOwner<DisplayQuery>) {
+  const sealedReference = db.select({ ownerId: collectionRef.ownerId }).from(collectionRef).where(and(
+    eq(collectionRef.ownerId, legacyProvenance.collectionId), eq(collectionRef.field, 'legacyProvenance'),
+    eq(collectionRef.archiveId, archiveValue.id), eq(collectionRef.sealed, 1),
+  ))
+  const [rowArchive] = await db.select({
+    id: archiveValue.id, byteLength: archiveValue.byteLength, storageClass: archiveValue.storageClass,
+    origin: legacyProvenance.origin, sourceIdentity: legacyProvenance.sourceIdentity,
+    sourceSha256: legacyProvenance.sourceSha256, segmentIndex: legacyProvenance.segmentIndex,
+    inputFingerprint: legacyProvenance.inputFingerprint, importBatchId: legacyProvenance.importBatchId, createdAt: legacyProvenance.createdAt,
+    sealed: exists(sealedReference).mapWith(Boolean),
+  }).from(legacyProvenance).innerJoin(archiveValue, eq(archiveValue.id, legacyProvenance.archiveId))
+    .where(eq(legacyProvenance.collectionId, Number(owner.collectionId)))
+  const archive = rowArchive && {
+    ...rowArchive, id: String(rowArchive.id), byteLength: rowArchive.byteLength === null ? null : String(rowArchive.byteLength),
+  }
   if (!archive) {
     if (['legacy_supplement', 'conflict'].includes(owner.provenanceState)) throw new Error('Missing original legacy provenance')
     return undefined
@@ -63,6 +80,7 @@ async function legacyDisplay(db: Reader, owner: PostgresDisplayOwner) {
     : { start: 0, size: Number(byteLength) }
   if (size === null) return { display: { ...metadata, kind: 'legacy_pagination' as const, queryId: owner.query.id,
     collection: null as unknown as LegacyProvenanceDisplay['collection'] }, bytes: 0 }
+  // Drizzle 0.45 cannot expand JSON with ordinality. Keep bounded metadata extraction in PostgreSQL.
   const { rows: [row] } = await db.execute<{ collection: LegacyProvenanceDisplay['collection'] | null; bytes: string }>(sql`
     WITH metadata AS MATERIALIZED (
       SELECT '{' || coalesce(string_agg(to_json(item.key)::text || ':' || item.value::text, ',' ORDER BY item.position),'') || '}' AS value
@@ -80,27 +98,32 @@ async function legacyDisplay(db: Reader, owner: PostgresDisplayOwner) {
     bytes: metadataBytes }
 }
 
-export async function readPostgresDisplayRows(db: Reader, owners: PostgresDisplayOwner[], includeRaw: boolean, selection?: readonly number[]) {
+export async function readPostgresDisplayRows<T extends DisplayQuery>(db: Reader, owners: PostgresDisplayOwner<T>[], includeRaw: boolean, selection?: readonly number[]) {
   if (!owners.length) return []
-  const ids = sql`${sql.param(owners.map(owner => owner.collectionId))}::bigint[]`
-  const { rows: archiveRows } = await db.execute<CollectionArchive>(sql`
-    SELECT r.owner_id AS owner,r.field,v.id,v.byte_length AS "byteLength",v.storage_class AS "storageClass",r.sealed = 1 AS sealed
-    FROM platform_collection_archive_ref r JOIN platform_archive_value v ON v.id = r.archive_id
-    WHERE r.owner_id = ANY(${ids}) AND (r.field = 'collectionEvidence' OR (${includeRaw} AND r.field = 'rawResponse'))`)
-  const archives = Map.groupBy(archiveRows, ref => ref.owner)
-  const { rows: relationBudget } = await db.execute<{ owner: string; bytes: string }>(sql`
-    SELECT o.collection_id AS owner, sum(1024 + coalesce(octet_length(e.name),0) + coalesce(
+  const collectionIds = owners.map(owner => Number(owner.collectionId))
+  const archiveRows = await db.select({
+    owner: collectionRef.ownerId, field: collectionRef.field, id: archiveValue.id, byteLength: archiveValue.byteLength,
+    storageClass: archiveValue.storageClass, sealed: collectionRef.sealed,
+  }).from(collectionRef).innerJoin(archiveValue, eq(archiveValue.id, collectionRef.archiveId))
+    .where(and(inArray(collectionRef.ownerId, collectionIds),
+      inArray(collectionRef.field, includeRaw ? ['collectionEvidence', 'rawResponse'] : ['collectionEvidence'])))
+  const archives = Map.groupBy(archiveRows, ref => String(ref.owner))
+  const budgetOwner = db.select({ enterpriseId: assignment.enterpriseId }).from(assignment)
+    .where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('budget_owner')
+  // Drizzle 0.45 cannot expand PostgreSQL JSON arrays. Budget the source cells in the database before fetching bytes.
+  const relationBudget = await db.select({
+    owner: observation.collectionId,
+    bytes: sql<number>`sum(1024 + coalesce(octet_length(${enterprise.name}),0) + coalesce(
       (SELECT sum(length(cell.value->>'hex')/2)
-       FROM json_array_elements(convert_from(v.bytes,'UTF8')::json->'fields') AS cell(value)
-       WHERE cell.value->>'name' = ANY(${sql.param(byteBudgetCells)}::text[])),0)) AS bytes
-    FROM platform_business_observation o
-    JOIN platform_observation_archive_ref r ON r.owner_id = o.id AND r.field = 'legacyRowSnapshot'
-    JOIN platform_archive_value v ON v.id = r.archive_id
-    JOIN LATERAL (SELECT enterprise_id FROM platform_observation_assignment
-      WHERE observation_id = o.id ORDER BY revision DESC LIMIT 1) a ON TRUE
-    LEFT JOIN enterprise e ON e.id = a.enterprise_id
-    WHERE o.collection_id = ANY(${ids}) GROUP BY o.collection_id`)
-  const byOwner = new Map(relationBudget.map(row => [row.owner, Number(row.bytes)]))
+       FROM json_array_elements(convert_from(${archiveValue.bytes},'UTF8')::json->'fields') AS cell(value)
+       WHERE cell.value->>'name' = ANY(${sql.param(byteBudgetCells)}::text[])),0))`.mapWith(Number),
+  }).from(observation)
+    .innerJoin(observationRef, and(eq(observationRef.ownerId, observation.id), eq(observationRef.field, 'legacyRowSnapshot')))
+    .innerJoin(archiveValue, eq(archiveValue.id, observationRef.archiveId))
+    .innerJoinLateral(budgetOwner, eq(observation.id, observation.id))
+    .leftJoin(enterprise, eq(enterprise.id, budgetOwner.enterpriseId))
+    .where(inArray(observation.collectionId, collectionIds)).groupBy(observation.collectionId)
+  const byOwner = new Map(relationBudget.map(row => [String(row.owner), row.bytes]))
   const basic = owners.map(owner => (byOwner.get(owner.collectionId) ?? 0) +
     (archives.get(owner.collectionId) ?? []).reduce((sum, value) => sum + Number(value.byteLength), 0))
   assertPlatformFullReadBudget(basic)
@@ -114,57 +137,82 @@ export async function readPostgresDisplayRows(db: Reader, owners: PostgresDispla
     }
   }
 
-  const queryByOwner = new Map<string, Query>()
+  const queryByOwner = new Map<string, T & DisplayQuery>()
   for (const owner of owners) {
     const entries = archives.get(owner.collectionId) ?? []
     const content = entries.find(value => value.field === 'collectionEvidence')
-    if (!content?.sealed) throw new Error('Missing sealed collection archive')
-    const bytes = content.byteLength === null ? null : await readPlatformArchiveBytes(db, content.id, 0, Number(content.byteLength))
-    const query: Query = { ...owner.query, collectionEvidence: bytes === null ? null : JSON.parse(bytes.toString('utf8')) }
+    if (content?.sealed !== 1) throw new Error('Missing sealed collection archive')
+    const bytes = content.byteLength === null ? null : await readPlatformArchiveBytes(db, String(content.id), 0, content.byteLength)
+    const query: T & DisplayQuery = { ...owner.query, collectionEvidence: bytes === null ? null : JSON.parse(bytes.toString('utf8')) }
     const provenance = legacy.get(owner.collectionId)
     if (provenance) query.legacyProvenance = provenance
     if (includeRaw) {
       const raw = entries.find(value => value.field === 'rawResponse')
-      if (!raw?.sealed) throw new Error('Missing sealed collection archive')
-      const response = raw.byteLength === null ? null : await readPlatformArchiveBytes(db, raw.id, 0, Number(raw.byteLength))
+      if (raw?.sealed !== 1) throw new Error('Missing sealed collection archive')
+      const response = raw.byteLength === null ? null : await readPlatformArchiveBytes(db, String(raw.id), 0, raw.byteLength)
       query.rawResponse = raw.storageClass === 'blob' ? response as unknown as string : response?.toString('utf8') ?? null
     }
     queryByOwner.set(owner.collectionId, query)
   }
-  const { rows: observations } = await db.execute<Observation>(sql`
-    SELECT o.collection_id AS "collectionId",o.id AS "observationId",r.old_id AS id,o.sequence_no AS "sequenceNo",
-      o.source_relation_key AS "relationKey",a.enterprise_id AS "enterpriseId",e.name AS "matchedName",
-      original.uscc_raw AS "usccRaw",original.name_raw AS "nameRaw",original.observation_id IS NOT NULL AS "hasOriginal",
-      a.match_basis AS "matchBasis",a.verification_status AS "verificationStatus"
-    FROM platform_business_observation o JOIN platform_legacy_relation_alias r ON r.observation_id = o.id
-    LEFT JOIN platform_observation_assignment original ON original.observation_id = o.id AND original.revision = 1
-    LEFT JOIN LATERAL (SELECT enterprise_id,match_basis,verification_status FROM platform_observation_assignment
-      WHERE observation_id = o.id ORDER BY revision DESC LIMIT 1) a ON TRUE
-    LEFT JOIN enterprise e ON e.id = a.enterprise_id
-    WHERE o.collection_id = ANY(${ids})
-      ${selection === undefined ? sql.empty() : sql`AND r.old_id=ANY(${sql.param(selection)}::bigint[])`}
-    ORDER BY o.collection_id,o.sequence_no`)
-  const observationIds = sql`${sql.param(observations.map(row => row.observationId))}::bigint[]`
-  const { rows: relationArchives } = await db.execute<RelationArchive>(sql`
-    SELECT r.owner_id AS owner,r.field,r.sealed=1 AS sealed,
-      CASE WHEN r.field IN ('rawFields','legacyRowSnapshot') THEN v.bytes END AS bytes
-    FROM platform_observation_archive_ref r JOIN platform_archive_value v ON v.id = r.archive_id
-    WHERE r.owner_id = ANY(${observationIds})`)
-  const byObservation = Map.groupBy(relationArchives, ref => ref.owner)
+  const original = alias(assignment, 'original')
+  const current = db.select({
+    enterpriseId: assignment.enterpriseId, matchBasis: assignment.matchBasis, verificationStatus: assignment.verificationStatus,
+  }).from(assignment).where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('current_owner')
+  const observationRows = await db.select({
+    collectionId: observation.collectionId, observationId: observation.id, id: relationAlias.oldId, sequenceNo: observation.sequenceNo,
+    relationKey: observation.sourceRelationKey, enterpriseId: current.enterpriseId, matchedName: enterprise.name,
+    usccRaw: original.usccRaw, nameRaw: original.nameRaw, hasOriginal: isNotNull(original.observationId).mapWith(Boolean),
+    matchBasis: current.matchBasis, verificationStatus: current.verificationStatus,
+  }).from(observation).innerJoin(relationAlias, eq(relationAlias.observationId, observation.id))
+    .leftJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
+    .leftJoinLateral(current, eq(observation.id, observation.id)).leftJoin(enterprise, eq(enterprise.id, current.enterpriseId))
+    .where(and(inArray(observation.collectionId, collectionIds), selection === undefined ? undefined : inArray(relationAlias.oldId, selection)))
+    .orderBy(asc(observation.collectionId), asc(observation.sequenceNo))
+  const observations = observationRows.map(row => ({
+    ...row, collectionId: String(row.collectionId), observationId: String(row.observationId),
+  }))
+  const relationArchives = await db.select({
+    owner: observationRef.ownerId, field: observationRef.field, sealed: observationRef.sealed,
+    // Drizzle 0.45 has no CASE expression. Transfer bytes only for the two fields consumed here.
+    bytes: sql<Buffer | null>`CASE WHEN ${inArray(observationRef.field, ['rawFields', 'legacyRowSnapshot'])}
+      THEN ${archiveValue.bytes} END`,
+  }).from(observationRef).innerJoin(archiveValue, eq(archiveValue.id, observationRef.archiveId))
+    .where(inArray(observationRef.ownerId, observationRows.map(row => row.observationId)))
+  const byObservation = Map.groupBy(relationArchives, ref => String(ref.owner))
   const projectionRows = new Map<string, Record<string, unknown>>()
   for (const [source, typed] of Map.groupBy(observations, row => queryByOwner.get(row.collectionId)!.interface)) {
-    const name = projectionTables[source as keyof typeof projectionTables]
-    if (!name) throw new Error('Unsupported observation type')
-    const columns = sql.join(facts.flatMap(([, field]) => [
-      sql.identifier('reconciled_' + field), sql.identifier(field + '_conflict'),
-      sql.identifier('stored_' + field), sql.identifier('parsed_' + field),
-    ]).map(value => sql`${value}`), sql`,`)
-    const state = source === 'recognized_list' ? sql`exact_title_state` : sql`exact_stored_state`
-    const statusTags = source === 'business_list' ? sql`, stored_status_sqlite_storage,reconciled_status_sqlite_storage` : sql.empty()
-    const { rows } = await db.execute(sql`
-      SELECT observation_id, ${state} AS capture_state, source_title_rule_version,${columns}${statusTags}
-        ${selection === undefined ? sql.empty() : sql`,exact_title_raw,exact_title_raw_sqlite_storage`}
-      FROM ${sql.identifier(name)} WHERE observation_id = ANY(${sql.param(typed.map(row => row.observationId))}::bigint[])`)
+    const projection = projectionTables[source as keyof typeof projectionTables]
+    if (!projection) throw new Error('Unsupported observation type')
+    const fields: Record<string, PgColumn> = {
+      observation_id: projection.observationId,
+      capture_state: source === 'recognized_list' ? recognizedProjection.exactTitleState
+        : source === 'apply_list' ? applyProjection.exactStoredState : businessProjection.exactStoredState,
+      source_title_rule_version: projection.sourceTitleRuleVersion,
+      reconciled_province: projection.reconciledProvince, province_conflict: projection.provinceConflict,
+      stored_province: projection.storedProvince, parsed_province: projection.parsedProvince,
+      reconciled_status: projection.reconciledStatus, status_conflict: projection.statusConflict,
+      stored_status: projection.storedStatus, parsed_status: projection.parsedStatus,
+      reconciled_batch: projection.reconciledBatch, batch_conflict: projection.batchConflict,
+      stored_batch: projection.storedBatch, parsed_batch: projection.parsedBatch,
+      reconciled_declare_kind: projection.reconciledDeclareKind, declare_kind_conflict: projection.declareKindConflict,
+      stored_declare_kind: projection.storedDeclareKind, parsed_declare_kind: projection.parsedDeclareKind,
+      reconciled_applied_at: projection.reconciledAppliedAt, applied_at_conflict: projection.appliedAtConflict,
+      stored_applied_at: projection.storedAppliedAt, parsed_applied_at: projection.parsedAppliedAt,
+      reconciled_award_batch_label: projection.reconciledAwardBatchLabel, award_batch_label_conflict: projection.awardBatchLabelConflict,
+      stored_award_batch_label: projection.storedAwardBatchLabel, parsed_award_batch_label: projection.parsedAwardBatchLabel,
+      reconciled_year: projection.reconciledYear, year_conflict: projection.yearConflict,
+      stored_year: projection.storedYear, parsed_year: projection.parsedYear,
+      ...(source === 'business_list' ? {
+        stored_status_sqlite_storage: businessProjection.storedStatusSqliteStorage,
+        reconciled_status_sqlite_storage: businessProjection.reconciledStatusSqliteStorage,
+      } : {}),
+      ...(selection === undefined ? {} : {
+        exact_title_raw: projection.exactTitleRaw,
+        exact_title_raw_sqlite_storage: projection.exactTitleRawSqliteStorage,
+      }),
+    }
+    const rows = await db.select(fields).from(projection)
+      .where(inArray(projection.observationId, typed.map(row => Number(row.observationId))))
     for (const row of rows) projectionRows.set(String(row.observation_id), row)
   }
   const relations = Map.groupBy(observations, row => row.collectionId)
@@ -175,7 +223,7 @@ export async function readPostgresDisplayRows(db: Reader, owners: PostgresDispla
       const snapshot = refs.find(ref => ref.field === 'legacyRowSnapshot')
       const raw = refs.find(ref => ref.field === 'rawFields')
       const projection = projectionRows.get(row.observationId)
-      if (!snapshot?.sealed || !snapshot.bytes || !raw?.sealed || !refs.some(ref => ref.field === 'sourceText' && ref.sealed) ||
+      if (snapshot?.sealed !== 1 || !snapshot.bytes || raw?.sealed !== 1 || !refs.some(ref => ref.field === 'sourceText' && ref.sealed === 1) ||
         !row.hasOriginal || row.matchBasis === null || !projection || projection.capture_state !== 'captured' ||
         !(projection.source_title_rule_version === BUSINESS_STATUS_V1 ||
           (query.interface === 'business_list' && projection.source_title_rule_version === BUSINESS_STATUS_V2))) {
@@ -229,14 +277,17 @@ export async function readPostgresQueryDisplays(db: Reader, owners: PostgresDisp
 export async function readPostgresRelationDisplays(db: Reader, selection: readonly number[]) {
   const result = new Map<number, RelationEvidenceDisplay>(selection.map(id => [id, null]))
   if (!selection.length) return result
-  const { rows: owners } = await db.execute<PostgresDisplayOwner>(sql`
-    SELECT DISTINCT c.id AS "collectionId", c.provenance_state AS "provenanceState",
-      jsonb_build_object('id',q.old_id,'interface',c.interface,'queryKey',c.query_key,
-        'rdjb',c.rdjb,'titleCode',c.title_code,'queriedAt',c.queried_at,'lastCollectedAt',c.last_collected_at,
-        'status',c.status,'failureReason',c.failure_reason,'createdAt',c.created_at) AS query
-    FROM platform_legacy_relation_alias a JOIN platform_business_observation o ON o.id=a.observation_id
-    JOIN platform_collection c ON c.id=o.collection_id JOIN platform_legacy_query_alias q ON q.collection_id=c.id
-    WHERE a.old_id=ANY(${sql.param(selection)}::bigint[])`)
+  const rows = await db.selectDistinct({
+    collectionId: collection.id, provenanceState: collection.provenanceState,
+    id: queryAlias.oldId, interface: collection.interface, queryKey: collection.queryKey, rdjb: collection.rdjb,
+    titleCode: collection.titleCode, queriedAt: collection.queriedAt, lastCollectedAt: collection.lastCollectedAt,
+    status: collection.status, failureReason: collection.failureReason, createdAt: collection.createdAt,
+  }).from(relationAlias).innerJoin(observation, eq(observation.id, relationAlias.observationId))
+    .innerJoin(collection, eq(collection.id, observation.collectionId))
+    .innerJoin(queryAlias, eq(queryAlias.collectionId, collection.id)).where(inArray(relationAlias.oldId, selection))
+  const owners = rows.map(({ collectionId, provenanceState, ...query }) => ({
+    collectionId: String(collectionId), provenanceState, query,
+  }))
   for (const { query, relations } of await readPostgresDisplayRows(db, owners, false, selection)) {
     for (const { relation } of relations) result.set(relation.id, { ...relation, query } as RelationEvidenceDisplay)
   }

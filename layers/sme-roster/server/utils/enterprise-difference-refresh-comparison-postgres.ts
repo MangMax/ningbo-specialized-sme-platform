@@ -1,9 +1,14 @@
-import { sql } from 'drizzle-orm'
-import * as schema from '../../../../db/schema'
+import { and, eq, exists, inArray, ne, or, sql, type SQLWrapper } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
+import { enterprise, enterpriseAlias } from '../../../../db/postgresql/enterprise-tables'
+import { recordCorrespondence as correspondence } from '../../../../db/postgresql/qualification-tables'
+import { platformQueryTitleScope as titleScope } from '../../../../db/postgresql/platform-archive-tables'
+import { platformBusinessObservation as observation, platformCollection as collection, platformCollectionPage as page,
+  platformLegacyQueryAlias as queryAlias, platformLegacyRelationAlias as relationAlias,
+  platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { projectLegacyComparisonCycles } from '../../lib/roster/current-qualification'
 import { readPostgresLegacyQualification, type PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
 import { COMPARISON_VERSION, comparePlatformComparison, type CandidateComparisonInput } from '../../lib/roster/platform-comparison'
-import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { projectQueryComparisonWitnesses } from '../../lib/roster/query-assessment'
 import { readPostgresQueryCoverageInputs } from '../../lib/roster/query-coverage-postgres'
 import type { CurrentTitle } from '../../lib/roster/current-titles'
@@ -17,24 +22,30 @@ import { projectPlatformComparisonProcesses } from './platform-comparison-input'
 
 type Tx = PostgresQualificationTransaction
 type AnnualInputs = Parameters<typeof admitAnnualComparison>[0]
-const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
+// Keep historical scopes in bound arrays instead of expanding a parameter per ID.
+const matchesIds = (column: SQLWrapper, ids: readonly number[]) => sql`${column} = any(${sql.param(ids)}::bigint[])`
 
 async function hasUnboundProcessCollection(tx: Tx, enterpriseId: number) {
-  const { rows: [row] } = await tx.execute<{ found: boolean }>(sql`
-    SELECT EXISTS (
-      SELECT 1 FROM platform_collection c CROSS JOIN enterprise e
-      WHERE e.id=${enterpriseId} AND c.interface IN ('apply_list','business_list') AND (
-        c.query_key IN (coalesce(e.uscc_norm,''), 'name:' || e.name_norm)
-        OR c.query_key IN (SELECT 'name:' || name_norm FROM enterprise_alias
-          WHERE enterprise_id=e.id AND verification_status='confirmed')
-        OR EXISTS (SELECT 1 FROM platform_business_observation o
-          JOIN platform_observation_assignment a ON a.observation_id=o.id
-          JOIN platform_observation_assignment original ON original.observation_id=o.id AND original.revision=1
-          WHERE o.collection_id=c.id AND (a.enterprise_id=e.id OR
-            e.uscc_norm<>'' AND ${normalizedUscc(sql`original.uscc_raw`)}=e.uscc_norm))
-      )
-    ) AS found`)
-  return row!.found
+  const original = alias(assignment, 'original')
+  const aliases = tx.select({
+    // Drizzle 0.45.4 has no expression builders for coalesce or text concatenation.
+    key: sql<string>`'name:' || ${enterpriseAlias.nameNorm}`,
+  }).from(enterpriseAlias).where(and(eq(enterpriseAlias.enterpriseId, enterprise.id), eq(enterpriseAlias.verificationStatus, 'confirmed')))
+  const assignments = tx.select({ id: observation.id }).from(observation)
+    .innerJoin(assignment, eq(assignment.observationId, observation.id))
+    .innerJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
+    .where(and(eq(observation.collectionId, collection.id), or(
+      eq(assignment.enterpriseId, enterprise.id),
+      and(ne(enterprise.usccNorm, ''), eq(normalizedUscc(original.usccRaw), enterprise.usccNorm)),
+    )))
+  const rows = await tx.select({ id: collection.id }).from(collection).crossJoin(enterprise)
+    .where(and(eq(enterprise.id, enterpriseId), inArray(collection.interface, ['apply_list', 'business_list']), or(
+      eq(collection.queryKey, sql`coalesce(${enterprise.usccNorm}, '')`),
+      eq(collection.queryKey, sql`'name:' || ${enterprise.nameNorm}`),
+      inArray(collection.queryKey, aliases),
+      exists(assignments),
+    ))).limit(1)
+  return rows.length > 0
 }
 
 async function readAnnualComparisonProcesses(tx: Tx, request: Parameters<typeof readAnnualComparisonBatch>[2],
@@ -42,12 +53,14 @@ async function readAnnualComparisonProcesses(tx: Tx, request: Parameters<typeof 
 ) {
   const eventIds = [...new Set(request.eventIds)]
   if (eventIds.length > 40) throw new Error('input_resource_limit')
-  const { rows: decisions } = await tx.execute<AnnualInputs['decisions'][number]>(sql`
-    SELECT a.old_id::float8 AS "relationId", c.event_id::float8 AS "eventId",
-      c.predecessor_event_id::float8 AS "predecessorEventId", c.enterprise_id::float8 AS "enterpriseId", c.title_code AS "titleCode"
-    FROM record_correspondence c LEFT JOIN platform_legacy_relation_alias a ON a.observation_id=c.observation_id
-    WHERE c.event_id=ANY(${ids(eventIds)}) OR c.predecessor_event_id=ANY(${ids(eventIds)})
-      OR c.enterprise_id=${request.enterpriseId} AND c.title_code=${request.titleCode} LIMIT 129`)
+  const decisions = await tx.select({
+    relationId: relationAlias.oldId, eventId: correspondence.eventId,
+    predecessorEventId: correspondence.predecessorEventId, enterpriseId: correspondence.enterpriseId, titleCode: correspondence.titleCode,
+  }).from(correspondence).leftJoin(relationAlias, eq(relationAlias.observationId, correspondence.observationId))
+    .where(or(
+      inArray(correspondence.eventId, eventIds), inArray(correspondence.predecessorEventId, eventIds),
+      and(eq(correspondence.enterpriseId, request.enterpriseId), eq(correspondence.titleCode, request.titleCode)),
+    )).limit(129)
   if (decisions.length > 128) throw new Error('input_resource_limit')
   if (!eventIds.length) {
     if (decisions.length || await hasUnboundCollection()) throw new Error('platform_comparison_scope_unavailable')
@@ -64,24 +77,22 @@ async function readAnnualComparisonProcesses(tx: Tx, request: Parameters<typeof 
   }
   const refs = entries.flatMap(({ read }) => [...read.sourceRefs.observations, ...read.sourceRefs.titleScopeRefs])
   const recordIds = [...new Set(refs.flatMap(row => row.recordId === null ? [] : [row.recordId]))]
-  const { rows: historicalQueries } = await tx.execute<AnnualInputs['historicalQueries'][number]>(sql`
-    SELECT o.record_id::float8 AS "recordId", a.old_id::float8 AS "relationId", q.old_id::float8 AS "queryId"
-    FROM platform_business_observation o JOIN platform_legacy_relation_alias a ON a.observation_id=o.id
-    JOIN platform_legacy_query_alias q ON q.collection_id=o.collection_id
-    WHERE o.record_id=ANY(${ids(recordIds)}) OR a.old_id=ANY(${ids(refs.map(row => row.relationId))}) ORDER BY a.old_id`)
+  const historicalQueries = await tx.select({ recordId: observation.recordId, relationId: relationAlias.oldId, queryId: queryAlias.oldId })
+    .from(observation).innerJoin(relationAlias, eq(relationAlias.observationId, observation.id))
+    .innerJoin(queryAlias, eq(queryAlias.collectionId, observation.collectionId))
+    .where(or(matchesIds(observation.recordId, recordIds), matchesIds(relationAlias.oldId, refs.map(row => row.relationId))))
+    .orderBy(relationAlias.oldId)
   const history = new Map([...Map.groupBy(historicalQueries, row => row.recordId)].flatMap(([id, rows]) =>
     id === null ? [] : [[id, rows.map(row => row.relationId)] as const]))
   const queryIds = [...new Set([...entries.flatMap(({ read }) => read.sourceRefs.coverage.map(row => row.queryId)),
     ...refs.map(row => row.queryId), ...historicalQueries.map(row => row.queryId)])]
-  const { rows: queryRows } = await tx.execute<AnnualInputs['queryRows'][number]>(sql`
-    SELECT a.old_id::float8 AS id, ${postgresRosterRow(schema.platformCollection, 'c')} AS collection
-    FROM platform_collection c JOIN platform_legacy_query_alias a ON a.collection_id=c.id
-    WHERE a.old_id=ANY(${ids(queryIds)})`)
-  const collectionIds = ids(queryRows.map(row => row.collection.id))
-  const { rows: pages } = await tx.execute<AnnualInputs['pages'][number]>(sql`
-    SELECT collection_id::float8 AS "collectionId", rdjb FROM platform_collection_page WHERE collection_id=ANY(${collectionIds})`)
-  const { rows: titleScopes } = await tx.execute<AnnualInputs['titleScopes'][number]>(sql`
-    SELECT collection_id::float8 AS "collectionId", rdjb FROM platform_query_title_scope WHERE collection_id=ANY(${collectionIds})`)
+  const queryRows = await tx.select({ id: queryAlias.oldId, collection }).from(collection)
+    .innerJoin(queryAlias, eq(queryAlias.collectionId, collection.id)).where(matchesIds(queryAlias.oldId, queryIds)) as AnnualInputs['queryRows']
+  const collectionIds = queryRows.map(row => row.collection.id)
+  const pages = await tx.select({ collectionId: page.collectionId, rdjb: page.rdjb }).from(page)
+    .where(matchesIds(page.collectionId, collectionIds))
+  const titleScopes = await tx.select({ collectionId: titleScope.collectionId, rdjb: titleScope.rdjb })
+    .from(titleScope).where(matchesIds(titleScope.collectionId, collectionIds))
   const metadata = await readPostgresPlatformBusinessMetadata(tx, historicalQueries.map(row => row.relationId))
   const batch = admitAnnualComparison({ request, entries, history, decisions, historicalQueries, queryRows, pages, titleScopes,
     metadata, hasUnboundProcessCollection: () => false })

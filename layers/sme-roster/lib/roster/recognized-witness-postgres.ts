@@ -1,58 +1,65 @@
 import { decodePostgresExactCell } from '../../../../db/postgresql/exact-cell'
-import { sql } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { platformArchiveValue as archive, platformCollectionArchiveRef as ref } from '../../../../db/postgresql/platform-archive-tables'
+import { platformBusinessObservation as o, platformBusinessRecord as b, platformCollection as c, platformCollectionCondition as condition,
+  platformLegacyQueryAlias as qa, platformLegacyRelationAlias as ra, platformObservationAssignment as assignment,
+  platformRecognizedProjection as p } from '../../../../db/postgresql/platform-tables'
 import { projectRecognizedWitnesses, type RecognizedWitnessRow } from './recognized-witness-target'
 import type { RecognizedWitnessReader } from './recognized-witness-reader'
 
-type Reader = Pick<NodePgDatabase, 'execute'>
+type Reader = Pick<NodePgDatabase, 'select'>
 type WitnessInput = Parameters<RecognizedWitnessReader['readMany']>[0]
-type Cell = Buffer | null
-type StoredWitness = {
-  row: Omit<RecognizedWitnessRow, 'valid' | 'year' | 'batch'>
-  valid: Cell; validStorage: string | null
-  year: Cell; yearStorage: string | null
-  batch: Cell; batchStorage: string | null
-}
+const valid = alias(condition, 'valid')
+const year = alias(condition, 'year')
+const batch = alias(condition, 'batch')
 
 export async function readPostgresRecognizedWitnesses(db: Reader, ids: readonly number[]) {
   const target = new Map<number, RecognizedWitnessRow>()
   if (ids.length) {
-    const { rows } = await db.execute<StoredWitness>(sql`
-      SELECT json_build_object(
-        'relationId', ra.old_id, 'observationId', o.id, 'collectionId', c.id, 'queryId', qa.old_id,
-        'titleCode', c.title_code, 'rdjb', c.rdjb, 'interface', c.interface, 'status', c.status, 'sequenceNo', o.sequence_no,
-        'identity', o.identity_state, 'content', o.content_state, 'recordInterface', b.interface,
-        'assignmentId', a.observation_id, 'enterpriseId', a.enterprise_id, 'uscc', a.uscc_raw, 'verification', a.verification_status,
-        'projectionId', p.id, 'rawValid', p.source_validity_date, 'rawMaintenanceBatch', p.source_maintenance_batch,
-        'yearAbsent', p.source_maintenance_year_absent, 'state', c.witness_state, 'rule', c.witness_rule, 'gate', c.witness_gate,
-        'archiveId', c.witness_archive_id, 'sha', c.witness_sha256, 'errorName', c.witness_error_name, 'error', c.witness_error,
-        'refId', ref.archive_id, 'sealed', ref.sealed, 'archiveOwner', archive.id, 'archiveSha', archive.sha256,
-        'positionState', o.witness_state, 'positionRule', o.witness_rule, 'positionCollection', o.witness_collection_id,
-        'positionSequence', o.witness_sequence_no, 'positionArchive', o.witness_archive_id, 'positionSha', o.witness_sha256,
-        'ordinal', o.witness_ordinal, 'key', o.witness_rdjb_key, 'pageKind', o.witness_page_kind,
-        'positionErrorName', o.witness_error_name, 'positionError', o.witness_error,
-        'validKind', valid.witness_kind, 'yearKind', yr.witness_kind, 'batchKind', batch.witness_kind
-      ) AS row,
-      valid.witness_value AS valid, valid.witness_value_sqlite_storage AS "validStorage",
-      yr.witness_value AS year, yr.witness_value_sqlite_storage AS "yearStorage",
-      batch.witness_value AS batch, batch.witness_value_sqlite_storage AS "batchStorage"
-      FROM platform_legacy_relation_alias ra
-      JOIN platform_business_observation o ON o.id = ra.observation_id
-      JOIN platform_collection c ON c.id = o.collection_id
-      LEFT JOIN platform_legacy_query_alias qa ON qa.collection_id = c.id
-      LEFT JOIN LATERAL (SELECT * FROM platform_observation_assignment a WHERE a.observation_id = o.id ORDER BY revision DESC LIMIT 1) a ON true
-      LEFT JOIN platform_business_record b ON b.id = o.record_id
-      LEFT JOIN platform_recognized_projection p ON p.version_id = o.version_id AND p.record_id = o.record_id
-      LEFT JOIN platform_collection_archive_ref ref ON ref.owner_id = c.id AND ref.field = 'collectionEvidence'
-      LEFT JOIN platform_archive_value archive ON archive.id = ref.archive_id
-      LEFT JOIN platform_collection_condition valid ON valid.collection_id = c.id AND valid.name = 'rddqrq'
-      LEFT JOIN platform_collection_condition yr ON yr.collection_id = c.id AND yr.name = 'whpcyear'
-      LEFT JOIN platform_collection_condition batch ON batch.collection_id = c.id AND batch.name = 'whpc'
-      WHERE ra.old_id = ANY(${sql.param(ids)}::bigint[])`)
-    for (const row of rows) target.set(row.row.relationId, {
-      ...row.row,
-      valid: decodePostgresExactCell(row.valid, row.validStorage), year: decodePostgresExactCell(row.year, row.yearStorage), batch: decodePostgresExactCell(row.batch, row.batchStorage),
-    })
+    const owner = db.select({ observationId: assignment.observationId, enterpriseId: assignment.enterpriseId,
+      usccRaw: assignment.usccRaw, verificationStatus: assignment.verificationStatus }).from(assignment)
+      .where(eq(assignment.observationId, o.id)).orderBy(desc(assignment.revision)).limit(1).as('owner')
+    const rows = await db.select({
+      relationId: ra.oldId, observationId: o.id, collectionId: c.id, queryId: qa.oldId,
+      titleCode: c.titleCode, rdjb: c.rdjb, interface: c.interface, status: c.status, sequenceNo: o.sequenceNo,
+      identity: o.identityState, content: o.contentState, recordInterface: b.interface,
+      assignmentId: owner.observationId, enterpriseId: owner.enterpriseId, uscc: owner.usccRaw, verification: owner.verificationStatus,
+      projectionId: p.id, rawValid: p.sourceValidityDate, rawMaintenanceBatch: p.sourceMaintenanceBatch,
+      yearAbsent: p.sourceMaintenanceYearAbsent, state: c.witnessState, rule: c.witnessRule, gate: c.witnessGate,
+      archiveId: c.witnessArchiveId, sha: c.witnessSha256, errorName: c.witnessErrorName, error: c.witnessError,
+      refId: ref.archiveId, sealed: ref.sealed, archiveOwner: archive.id, archiveSha: archive.sha256,
+      positionState: o.witnessState, positionRule: o.witnessRule, positionCollection: o.witnessCollectionId,
+      positionSequence: o.witnessSequenceNo, positionArchive: o.witnessArchiveId, positionSha: o.witnessSha256,
+      ordinal: o.witnessOrdinal, key: o.witnessRdjbKey, pageKind: o.witnessPageKind,
+      positionErrorName: o.witnessErrorName, positionError: o.witnessError,
+      validKind: valid.witnessKind, yearKind: year.witnessKind, batchKind: batch.witnessKind,
+      validBytes: valid.witnessValue, validStorage: valid.witnessValueSqliteStorage,
+      yearBytes: year.witnessValue, yearStorage: year.witnessValueSqliteStorage,
+      batchBytes: batch.witnessValue, batchStorage: batch.witnessValueSqliteStorage,
+    }).from(ra).innerJoin(o, eq(o.id, ra.observationId)).innerJoin(c, eq(c.id, o.collectionId))
+      .leftJoin(qa, eq(qa.collectionId, c.id))
+      .leftJoinLateral(owner, eq(owner.observationId, o.id))
+      .leftJoin(b, eq(b.id, o.recordId))
+      .leftJoin(p, and(eq(p.versionId, o.versionId), eq(p.recordId, o.recordId)))
+      .leftJoin(ref, and(eq(ref.ownerId, c.id), eq(ref.field, 'collectionEvidence')))
+      .leftJoin(archive, eq(archive.id, ref.archiveId))
+      .leftJoin(valid, and(eq(valid.collectionId, c.id), eq(valid.name, 'rddqrq')))
+      .leftJoin(year, and(eq(year.collectionId, c.id), eq(year.name, 'whpcyear')))
+      .leftJoin(batch, and(eq(batch.collectionId, c.id), eq(batch.name, 'whpc')))
+      // Drizzle inArray would bind one parameter per witness. Preserve the single-bound array.
+      .where(sql`${ra.oldId} = ANY(${sql.param(ids)}::bigint[])`)
+    for (const { validBytes, validStorage, yearBytes, yearStorage, batchBytes, batchStorage, ...row } of rows) {
+      target.set(row.relationId, {
+        ...row,
+        refId: row.refId === null ? null : Number(row.refId),
+        archiveOwner: row.archiveOwner === null ? null : Number(row.archiveOwner),
+        valid: decodePostgresExactCell(validBytes, validStorage),
+        year: decodePostgresExactCell(yearBytes, yearStorage),
+        batch: decodePostgresExactCell(batchBytes, batchStorage),
+      } as RecognizedWitnessRow)
+    }
   }
   return (input: WitnessInput) => projectRecognizedWitnesses(input, input.relationIds.flatMap(id => {
     const row = target.get(id)

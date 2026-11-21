@@ -1,6 +1,7 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { annualTaskReason, platformTaskLinks } from './task-presentation'
-import { sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
+import { job as pgJob } from '../../../../../db/postgresql/job-tables'
 import { schema } from '../../../../../db/client'
 import { ANNUAL_CORRESPONDENCE_KIND } from '../../../lib/roster/annual-correspondence'
 import type { ProjectedTask } from './task-summary'
@@ -27,15 +28,14 @@ export const annualTaskLinks = (id: string) => [
 ]
 
 export async function summarizePostgresAnnualJobs(db: NodePgDatabase, ids: string[]) {
-  const { rows } = await db.execute<{ id: string; attempt: number | null; total: number | null; done: number; failed: number }>(sql`
-    SELECT id,
-      CASE WHEN (result::json->'attempt')::text ~ '^-?[0-9]+$' THEN (result::json->>'attempt')::float8 END AS attempt,
-      json_array_length(events.value) AS total,
-      (SELECT count(*)::float8 FROM json_array_elements(events.value) AS event WHERE event->>'status'='done') AS done,
-      (SELECT count(*)::float8 FROM json_array_elements(events.value) AS event WHERE event->>'status'='failed') AS failed
-    FROM business.job
-    CROSS JOIN LATERAL (SELECT CASE WHEN json_typeof(result::json->'events')='array' THEN result::json->'events' END AS value) events
-    WHERE id=ANY(${sql.param(ids)}::text[]) AND kind=${ANNUAL_CORRESPONDENCE_KIND}`)
+  const result = sql`${pgJob.result}::json`
+  const events = sql`case when json_typeof(${result}->'events')='array' then ${result}->'events' end`
+  const countWithStatus = (status: 'done' | 'failed') => db.$count(
+    sql`json_array_elements(${events}) as event`, eq(sql`event->>'status'`, status))
+  const rows = await db.select({ id: pgJob.id,
+    attempt: sql<number | null>`case when (${result}->'attempt')::text ~ '^-?[0-9]+$' then (${result}->>'attempt')::float8 end`,
+    total: sql<number | null>`json_array_length(${events})`, done: countWithStatus('done'), failed: countWithStatus('failed'),
+  }).from(pgJob).where(and(inArray(pgJob.id, ids), eq(pgJob.kind, ANNUAL_CORRESPONDENCE_KIND)))
   return new Map(rows.map(({ id, total, done, failed, attempt }) => [
     id, {
       annual: annualTaskSummary(total, done, failed, attempt),

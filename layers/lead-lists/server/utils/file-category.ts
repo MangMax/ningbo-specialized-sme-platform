@@ -1,4 +1,7 @@
 import { count, inArray, sql } from 'drizzle-orm'
+import { QueryBuilder } from 'drizzle-orm/pg-core'
+import { storedFile as postgresStoredFile } from '../../../../db/postgresql/file-tables'
+import { postgresLeadListVersion } from '../../../../db/postgresql/lead-tables'
 import { storedFile } from '../../../../db/schema'
 import type { FileCategoryServer } from '../../../core/server/utils/file-store'
 import { leadListVersion } from '../../schema'
@@ -9,14 +12,14 @@ export const leadListFileServerCategory = {
   ...manifest.fileCategories,
   postgres: {
     async countReferences(db, ids) {
-      const { rows } = await db.execute<{ file_id: string; count: string }>(sql`
-        SELECT file_id, count(*) AS count FROM lead_list_version WHERE file_id IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})
-        GROUP BY file_id`)
-      return new Map(rows.map(row => [Number(row.file_id), Number(row.count)]))
+      const rows = await db.select({ id: postgresLeadListVersion.fileId, referenceCount: count() }).from(postgresLeadListVersion)
+        .where(inArray(postgresLeadListVersion.fileId, ids)).groupBy(postgresLeadListVersion.fileId)
+      return new Map(rows.map(({ id, referenceCount }) => [id, referenceCount]))
     },
     constraint(filters) {
       if (filters.leadListUsage?.includes('source')) {
-        return sql`stored_file.id IN (SELECT file_id FROM lead_list_version)`
+        const sources = new QueryBuilder().select({ id: postgresLeadListVersion.fileId }).from(postgresLeadListVersion)
+        return inArray(postgresStoredFile.id, sources)
       }
     },
   },

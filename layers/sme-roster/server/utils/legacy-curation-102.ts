@@ -1,5 +1,8 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, exists, isNotNull, or } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
+import { evidenceReviewReceipt114 as receipt } from '../../../../db/postgresql/evidence-review-tables'
 import * as s from '../../../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import { patchCuration, type CurationPatch } from '../../lib/curation'
@@ -41,16 +44,21 @@ export function patchLegacyCuration102(db: DecisionDb, path: string, patch: Cura
 export function patchPostgresLegacyCuration102(db: NodePgDatabase, path: string, patch: CurationPatch) {
   return db.transaction(async tx => {
     await lockPostgresDecisionOwnership102(tx)
-    const column = patch.uscc ? sql`uscc_norm` : sql`name_norm`
+    const column = patch.uscc ? enterprise.usccNorm : enterprise.nameNorm
     const key = patch.uscc ? normalizeUscc(patch.uscc) : patch.nameNorm!
-    const candidates = key.includes('\0') || !key.isWellFormed() ? [] : (await tx.execute<{ id: number }>(sql`
-      SELECT id::float8 AS id FROM enterprise WHERE ${column}=${key} LIMIT 2`)).rows
+    const candidates = key.includes('\0') || !key.isWellFormed() ? [] : await tx
+      .select({ id: enterprise.id }).from(enterprise).where(eq(column, key)).limit(2)
     const enterpriseId = exactLegacyEnterpriseId(candidates)
     if (enterpriseId != null) {
-      const owned = await tx.execute(sql`SELECT 1 FROM difference_reason d WHERE d.enterprise_id=${enterpriseId}
-        AND d.title_code=${patch.titleCode} AND d.direction=${patch.direction}
-        AND ${managedDecision102(sql`d.id`, sql`d.lifecycle_action`)} LIMIT 1`)
-      if (owned.rows.length) rejectManagedLegacyAnnotation()
+      const reviewed = tx.select({ id: receipt.reviewedRevisionId }).from(receipt).where(and(
+        isNotNull(receipt.reviewedRevisionId),
+        or(eq(receipt.decisionId, differenceReason.id), eq(receipt.sourceDecisionId, differenceReason.id)),
+      ))
+      const owned = await tx.select({ id: differenceReason.id }).from(differenceReason).where(and(
+        eq(differenceReason.enterpriseId, enterpriseId), eq(differenceReason.titleCode, patch.titleCode),
+        eq(differenceReason.direction, patch.direction), or(isNotNull(differenceReason.lifecycleAction), exists(reviewed)),
+      )).limit(1)
+      if (owned.length) rejectManagedLegacyAnnotation()
     }
     patchCuration(path, patch)
     return { curated: patch.curated }

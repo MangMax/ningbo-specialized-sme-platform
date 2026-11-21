@@ -1,73 +1,115 @@
-import { sql, type SQL } from 'drizzle-orm'
+import { and, count, desc, eq, exists, inArray, isNull, or, sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
+import { enterprise, enterpriseAlias } from '../../../db/postgresql/enterprise-tables'
+import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
 import { importPostgresReceiptRedactor } from '../server/utils/import-receipt-redaction'
 import { readPostgresPublishedNames } from './roster/official-published-presentation-postgres'
 import type { OfficialPublishedFact } from './roster/official-published-presentation'
 import { normalizeName } from './domain'
 import { TITLE_ORDER } from './labels'
-import { MAX_PAGE_SIZE, matchesLedgerDerivedFilters, projectLedgerRows,
-  prepareLedgerExportProjection, projectEnterpriseDetail, type DetailEvent, type DetailRecord, type EnterpriseDetail,
-  type LedgerExportEvent, type LedgerExportEvidence, type LedgerExportSource, type LedgerEvidence, type LedgerEvent, type LedgerGroup, type LedgerSource, type RecordQuery, type RecordFilterQuery } from './query'
+import {
+  MAX_PAGE_SIZE, matchesLedgerDerivedFilters, projectLedgerRows,
+  prepareLedgerExportProjection, projectEnterpriseDetail, type RecordQuery, type RecordFilterQuery,
+} from './query'
 
-const array = (values: readonly (number | string)[]) => sql`${sql.param(values)}`
+const groupFields = { enterpriseId: record.enterpriseId, titleCode: record.titleCode }
+const sourceFields = {
+  ...groupFields,
+  recordId: record.id,
+  name: enterprise.name,
+  uscc: enterprise.usccNorm,
+  district: record.district,
+  source: record.source,
+}
+const eventFields = {
+  id: recordEvent.id,
+  recordId: recordEvent.recordId,
+  type: recordEvent.eventType,
+  year: recordEvent.year,
+  seq: recordEvent.batchSeq,
+}
+const evidenceFields = {
+  id: recordEvidence.id,
+  recordEventId: recordEvidence.recordEventId,
+  sourceFile: recordEvidence.sourceFile,
+  attachment: recordEvidence.attachment,
+  listNo: recordEvidence.listNo,
+  page: recordEvidence.page,
+}
+
+// Drizzle has no expression-level collation helper. C preserves the legacy bytewise order.
+const bytewise = (column: AnyPgColumn) => sql`${column} COLLATE "C"`
+
+// Drizzle inArray expands every value into a parameter. ANY keeps unbounded export IDs in
+// one bound PostgreSQL array and avoids the driver's parameter limit.
+const anyId = (column: AnyPgColumn, ids: number[]) => sql`${column} = ANY(${sql.param(ids)}::bigint[])`
+
+function qualityFlags(value: string | null): string[] | null {
+  return value === null ? null : JSON.parse(value)
+}
 
 export function readPostgresLedgerEnterpriseDetail(db: NodePgDatabase, id: number) {
   if (!Number.isSafeInteger(id)) return null
   return db.transaction(async tx => {
-    const { rows: [enterprise] } = await tx.execute<{
-      data: Pick<EnterpriseDetail, 'id' | 'name' | 'uscc' | 'district' | 'qualityFlags'>
-    }>(sql`SELECT json_build_object('id',id,'name',name,'uscc',uscc_norm,'district',district,
-          'qualityFlags',quality_flags::json) AS data FROM enterprise WHERE id=${id}`)
-    if (!enterprise) return null
-    const { rows: records } = await tx.execute<{ data: Omit<DetailRecord, 'events'> }>(sql`
-      SELECT json_build_object('id',id,'titleCode',title_code,'source',source,'district',district) AS data
-      FROM record WHERE enterprise_id=${id} ORDER BY title_code COLLATE "C",source COLLATE "C"`)
-    const { rows: [first] } = enterprise.data.district == null ? await tx.execute<{ district: string | null }>(sql`
-      SELECT district FROM record WHERE enterprise_id=${id} ORDER BY id LIMIT 1`) : { rows: [] }
-    const { rows: events } = await tx.execute<{ data: Omit<DetailEvent, 'evidence'> }>(sql`
-      SELECT json_build_object('id',id,'recordId',record_id,'type',event_type,'year',year,'seq',batch_seq) AS data
-      FROM record_event WHERE record_id=ANY(${array(records.map(row=>row.data.id))}::bigint[])
-      ORDER BY sort_key,id`)
-    const { rows: evidence } = await tx.execute<{ data: DetailEvent['evidence'][number] & { recordEventId: number } }>(sql`
-      SELECT json_build_object('id',id,'recordEventId',record_event_id,'sourceFile',source_file,
-        'attachment',attachment,'listNo',list_no,'page',page) AS data FROM record_evidence
-      WHERE record_event_id=ANY(${array(events.map(row=>row.data.id))}::bigint[]) ORDER BY id`)
+    const [subject] = await tx.select({
+      id: enterprise.id, name: enterprise.name, uscc: enterprise.usccNorm,
+      district: enterprise.district, qualityFlags: enterprise.qualityFlags,
+    }).from(enterprise).where(eq(enterprise.id, id))
+    if (!subject) return null
+    const records = await tx.select({
+      id: record.id, titleCode: record.titleCode, source: record.source, district: record.district,
+    }).from(record).where(eq(record.enterpriseId, id))
+      .orderBy(bytewise(record.titleCode), bytewise(record.source))
+    const [first] = subject.district == null ? await tx.select({ district: record.district })
+      .from(record).where(eq(record.enterpriseId, id)).orderBy(record.id).limit(1) : []
+    const events = await tx.select(eventFields).from(recordEvent)
+      .where(anyId(recordEvent.recordId, records.map(row => row.id))).orderBy(recordEvent.sortKey, recordEvent.id)
+    const evidence = await tx.select(evidenceFields).from(recordEvidence)
+      .where(anyId(recordEvidence.recordEventId, events.map(row => row.id))).orderBy(recordEvidence.id)
     const published = await readPostgresPublishedNames(tx,
-      evidence.map(({ data })=>({ evidenceId:data.id,eventId:data.recordEventId })),await importPostgresReceiptRedactor(tx))
-    return projectEnterpriseDetail(enterprise.data, first?.district ?? null,
-      records.map(row=>row.data),events.map(row=>row.data),evidence.map(row=>row.data),published)
+      evidence.map(row => ({ evidenceId: row.id, eventId: row.recordEventId })), await importPostgresReceiptRedactor(tx))
+    return projectEnterpriseDetail({ ...subject, qualityFlags: qualityFlags(subject.qualityFlags) },
+      first?.district ?? null, records, events, evidence, published)
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }
 
-// SQLite LIKE ignores case in ASCII only and does not use a default escape character.
-function contains(column: SQL, needle: string) {
-  const lower = (value: SQL) => sql`translate(${value}, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')`
-  return needle.includes('\0') ? sql`FALSE` : sql`${lower(column)} COLLATE "C" LIKE ${lower(sql`${'%' + needle + '%'}::text`)} ESCAPE ''`
+// Drizzle's like helper has no ESCAPE option. ASCII translate and an empty escape
+// preserve SQLite's case matching and treat a backslash as an ordinary character.
+function contains(column: AnyPgColumn, needle: string) {
+  const lower = (value: AnyPgColumn | SQL) =>
+    sql`translate(${value}, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')`
+  return needle.includes('\0') ? inArray(column, []) :
+    sql`${lower(column)} COLLATE "C" LIKE ${lower(sql`${'%' + needle + '%'}::text`)} ESCAPE ''`
 }
 
-function ledgerScope(params: RecordQuery) {
-  const tests: SQL[] = []
-  if (params.title?.length) tests.push(sql`r.title_code = ANY(${array(params.title)}::text[])`)
-  if (params.source?.length) tests.push(sql`r.source = ANY(${array(params.source)}::text[])`)
-  if (params.district) tests.push(params.district.includes('\0') ? sql`FALSE` : sql`r.district = ${params.district}`)
+function ledgerScope(db: NodePgDatabase, params: RecordFilterQuery) {
+  const filters: (SQL | undefined)[] = []
+  if (params.title?.length) filters.push(inArray(record.titleCode, params.title))
+  if (params.source?.length) filters.push(inArray(sql<string>`${record.source}`, params.source))
+  if (params.district) filters.push(params.district.includes('\0') ? inArray(record.district, []) : eq(record.district, params.district))
   if (params.q) {
     const name = normalizeName(params.q)
-    const uscc = contains(sql`e.uscc_norm`, params.q.trim().toUpperCase())
-    tests.push(name ? sql`(${uscc} OR ${contains(sql`e.name_norm`, name)} OR EXISTS (
-      SELECT 1 FROM enterprise_alias a WHERE a.enterprise_id = e.id AND a.verification_status = 'confirmed'
-        AND ${contains(sql`a.name_norm`, name)}))` : uscc)
+    const uscc = contains(enterprise.usccNorm, params.q.trim().toUpperCase())
+    filters.push(name ? or(uscc, contains(enterprise.nameNorm, name), exists(
+      db.select({ id: enterpriseAlias.enterpriseId }).from(enterpriseAlias).where(and(
+        eq(enterpriseAlias.enterpriseId, enterprise.id),
+        eq(enterpriseAlias.verificationStatus, 'confirmed'),
+        contains(enterpriseAlias.nameNorm, name),
+      )),
+    )) : uscc)
   }
   const flags = params.flags?.split(',').map(flag => flag.trim()).filter(Boolean) ?? []
-  if (flags.length) tests.push(sql`(${sql.join(flags.map(flag => flag === 'uscc_missing'
-    ? sql`e.uscc_norm IS NULL` : contains(sql`e.quality_flags`, flag)), sql` OR `)})`)
+  if (flags.length) filters.push(or(...flags.map(flag =>
+    flag === 'uscc_missing' ? isNull(enterprise.usccNorm) : contains(enterprise.qualityFlags, flag))))
   if (params.eventType?.length || params.year?.length) {
-    tests.push(sql`EXISTS (
-      SELECT 1 FROM record_event v WHERE v.record_id = r.id
-      ${params.eventType?.length ? sql`AND v.event_type = ANY(${array(params.eventType)}::text[])` : sql.empty()}
-      ${params.year?.length ? sql`AND v.year = ANY(${array(params.year.filter(Number.isSafeInteger))}::bigint[])` : sql.empty()})`)
+    filters.push(exists(db.select({ id: recordEvent.id }).from(recordEvent).where(and(
+      eq(recordEvent.recordId, record.id),
+      params.eventType?.length ? inArray(sql<string>`${recordEvent.eventType}`, params.eventType) : undefined,
+      params.year?.length ? anyId(recordEvent.year, params.year.filter(Number.isSafeInteger)) : undefined,
+    ))))
   }
-  return sql`FROM record r JOIN enterprise e ON e.id = r.enterprise_id
-    ${tests.length ? sql`WHERE ${sql.join(tests, sql` AND `)}` : sql.empty()}`
+  return and(...filters)
 }
 
 export function listPostgresLedgerRecords(db: NodePgDatabase, params: RecordQuery) {
@@ -76,37 +118,38 @@ export function listPostgresLedgerRecords(db: NodePgDatabase, params: RecordQuer
     const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, params.pageSize ?? 25))
     const offset = (page - 1) * pageSize
     const derived = params.dueYear != null || params.firstYear?.length || params.firstStatus?.length
-    const scope = ledgerScope(params)
-    const rank = sql`coalesce(array_position(${array(TITLE_ORDER)}::text[],r.title_code), ${TITLE_ORDER.length + 1}::integer)`
-    const total = derived ? 0 : Number((await tx.execute<{ total: string }>(sql`
-      SELECT count(*) AS total FROM (SELECT DISTINCT r.enterprise_id,r.title_code ${scope}) matching`)).rows[0]!.total)
+    const scope = ledgerScope(tx, params)
+    const matching = tx.selectDistinct(groupFields).from(record)
+      .innerJoin(enterprise, eq(enterprise.id, record.enterpriseId)).where(scope).as('matching')
+    const total = derived ? 0 : (await tx.select({ total: count() }).from(matching))[0]!.total
     if (!derived && offset >= total) return { rows: [], total }
-    const { rows: groups } = await tx.execute<{ data: LedgerGroup }>(sql`
-      SELECT json_build_object('enterpriseId',r.enterprise_id,'titleCode',r.title_code) AS data
-      ${scope} GROUP BY r.enterprise_id,r.title_code
-      ORDER BY ${rank}, min(e.name COLLATE "C"), r.enterprise_id, r.title_code COLLATE "C"
-      ${derived ? sql.empty() : sql`LIMIT ${pageSize} OFFSET ${offset}`}`)
-    if (!groups.length) return { rows: [], total }
 
-    const ids = array(groups.map(({ data }) => data.enterpriseId))
-    const titles = array(groups.map(({ data }) => data.titleCode))
-    const { rows: sources } = await tx.execute<{ data: LedgerSource }>(sql`
-      SELECT json_build_object('recordId',r.id,'enterpriseId',e.id,'name',e.name,'uscc',e.uscc_norm,
-        'district',r.district,'titleCode',r.title_code,'source',r.source,'flags',e.quality_flags::json) AS data
-      FROM unnest(${ids}::bigint[], ${titles}::text[]) AS g(enterprise_id,title_code)
-      JOIN record r USING (enterprise_id,title_code) JOIN enterprise e ON e.id = r.enterprise_id
-      ORDER BY r.id DESC`)
-    const recordIds = array(sources.map(({ data }) => data.recordId))
-    const { rows: events } = await tx.execute<{ data: LedgerEvent }>(sql`
-      SELECT json_build_object('id',v.id,'recordId',v.record_id,'type',v.event_type,'year',v.year,
-        'decidedYear',v.decided_year,'reviewOutcome',v.review_outcome,'seq',v.batch_seq,'sortKey',v.sort_key) AS data
-      FROM record_event v WHERE v.record_id = ANY(${recordIds}::bigint[])`)
-    const { rows: evidence } = await tx.execute<{ data: LedgerEvidence }>(sql`
-      SELECT json_build_object('recordEventId',record_event_id,'sourceFile',source_file,
-        'attachment',attachment,'listNo',list_no,'page',page) AS data
-      FROM record_evidence WHERE record_event_id = ANY(${array(events.map(({ data }) => data.id))}::bigint[]) ORDER BY id`)
-    const projected = projectLedgerRows(groups.map(row => row.data), sources.map(row => row.data),
-      events.map(row => row.data), evidence.map(row => row.data))
+    // Drizzle has no array_position helper for the title order, which also ranks legacy codes after known titles.
+    const titleRank = sql`coalesce(array_position(${sql.param(TITLE_ORDER)}::text[], ${record.titleCode}), ${TITLE_ORDER.length + 1}::integer)`
+    const groupsQuery = tx.selectDistinct({
+      ...groupFields,
+      titleRank: titleRank.as('title_rank'),
+      nameKey: bytewise(enterprise.name).as('name_key'),
+      titleKey: bytewise(record.titleCode).as('title_key'),
+    }).from(record).innerJoin(enterprise, eq(enterprise.id, record.enterpriseId)).where(scope)
+      .orderBy(fields => [fields.titleRank, fields.nameKey, fields.enterpriseId, fields.titleKey]).$dynamic()
+    if (!derived) groupsQuery.limit(pageSize).offset(offset)
+
+    const groups = tx.$with('groups').as(groupsQuery)
+    const sources = await tx.with(groups).select({ ...sourceFields, flags: enterprise.qualityFlags })
+      .from(groups).innerJoin(record, and(eq(record.enterpriseId, groups.enterpriseId), eq(record.titleCode, groups.titleCode)))
+      .innerJoin(enterprise, eq(enterprise.id, record.enterpriseId))
+      .orderBy(groups.titleRank, groups.nameKey, groups.enterpriseId, groups.titleKey, desc(record.id))
+    if (!sources.length) return { rows: [], total }
+
+    const pageGroups = Array.from(new Map(sources.map(({ enterpriseId, titleCode }) =>
+      [JSON.stringify([enterpriseId, titleCode]), { enterpriseId, titleCode }])).values())
+    const events = await tx.select({
+      ...eventFields, decidedYear: recordEvent.decidedYear, reviewOutcome: recordEvent.reviewOutcome, sortKey: recordEvent.sortKey,
+    }).from(recordEvent).where(anyId(recordEvent.recordId, sources.map(row => row.recordId)))
+    const evidence = await tx.select(evidenceFields).from(recordEvidence)
+      .where(anyId(recordEvidence.recordEventId, events.map(row => row.id))).orderBy(recordEvidence.id)
+    const projected = projectLedgerRows(pageGroups, sources.map(row => ({ ...row, flags: qualityFlags(row.flags) })), events, evidence)
     if (!derived) return { rows: projected, total }
     const filtered = projected.filter(row => matchesLedgerDerivedFilters(row, params))
     return { rows: filtered.slice(offset, offset + pageSize), total: filtered.length }
@@ -115,21 +158,18 @@ export function listPostgresLedgerRecords(db: NodePgDatabase, params: RecordQuer
 
 export function allPostgresLedgerRecords(db: NodePgDatabase, params: RecordFilterQuery) {
   return db.transaction(async tx => {
-    const { rows: sources } = await tx.execute<{ data: LedgerExportSource }>(sql`
-      WITH groups AS (SELECT DISTINCT r.enterprise_id, r.title_code ${ledgerScope(params)})
-      SELECT json_build_object('recordId',r.id,'enterpriseId',e.id,'name',e.name,'uscc',e.uscc_norm,
-        'district',r.district,'titleCode',r.title_code,'source',r.source) AS data
-      FROM groups JOIN record r USING (enterprise_id,title_code) JOIN enterprise e ON e.id=r.enterprise_id
-      ORDER BY r.title_code COLLATE "C", e.name COLLATE "C", r.id`)
+    const groups = tx.$with('groups').as(tx.selectDistinct(groupFields).from(record)
+      .innerJoin(enterprise, eq(enterprise.id, record.enterpriseId)).where(ledgerScope(tx, params)))
+    const sources = await tx.with(groups).select(sourceFields).from(groups)
+      .innerJoin(record, and(eq(record.enterpriseId, groups.enterpriseId), eq(record.titleCode, groups.titleCode)))
+      .innerJoin(enterprise, eq(enterprise.id, record.enterpriseId))
+      .orderBy(bytewise(record.titleCode), bytewise(enterprise.name), record.id)
     if (!sources.length) return []
-    const { rows: events } = await tx.execute<{ data: LedgerExportEvent }>(sql`
-      SELECT json_build_object('id',id,'recordId',record_id,'type',event_type,'year',year,'seq',batch_seq,'sortKey',sort_key) AS data
-      FROM record_event WHERE record_id = ANY(${array(sources.map(row => row.data.recordId))}::bigint[])`)
-    const { rows: evidence } = await tx.execute<{ data: LedgerExportEvidence }>(sql`
-      SELECT json_build_object('id',id,'recordEventId',record_event_id,'sourceFile',source_file,
-        'attachment',attachment,'listNo',list_no,'page',page) AS data
-      FROM record_evidence WHERE record_event_id = ANY(${array(events.map(row => row.data.id))}::bigint[]) ORDER BY id`)
-    const projection = prepareLedgerExportProjection(sources.map(row => row.data), events.map(row => row.data), evidence.map(row => row.data))
+    const events = await tx.select({ ...eventFields, sortKey: recordEvent.sortKey }).from(recordEvent)
+      .where(anyId(recordEvent.recordId, sources.map(row => row.recordId)))
+    const evidence = await tx.select(evidenceFields).from(recordEvidence)
+      .where(anyId(recordEvidence.recordEventId, events.map(row => row.id))).orderBy(recordEvidence.id)
+    const projection = prepareLedgerExportProjection(sources, events, evidence)
     const published = new Map<number, OfficialPublishedFact>()
     const redact = await importPostgresReceiptRedactor(tx)
     for (let start = 0; start < projection.scopes.length; start += 40) {
