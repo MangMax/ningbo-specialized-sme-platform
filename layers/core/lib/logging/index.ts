@@ -21,6 +21,7 @@ export function applicationLogs(): LogService {
   return service ??= createLogService({
     directory: resolve(process.env.NUXT_LOG_DIR || './.runtime-logs'),
     postgresUrl,
+    postgresSchema: process.env.NUXT_POSTGRES_LOG_SCHEMA || undefined,
     retentionDays: Math.min(365, numberEnv('NUXT_LOG_RETENTION_DAYS', LOG_DEFAULTS.retentionDays)),
     maxBytes: Math.max(1048576, Math.min(4294967296, numberEnv('NUXT_LOG_MAX_BYTES', LOG_DEFAULTS.maxBytes))),
     stdout: true,

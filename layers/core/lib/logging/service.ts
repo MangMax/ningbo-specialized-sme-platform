@@ -17,6 +17,7 @@ export class LogServiceError extends Error {
 export interface LogServiceOptions {
   directory: string
   postgresUrl?: string
+  postgresSchema?: string
   retentionDays?: number; maxBytes?: number
   /** Explicit deployment budgets; bounded above by the frozen defaults. */
   maxQueueEntries?: number; maxQueueBytes?: number; maxEventBytes?: number
@@ -85,7 +86,7 @@ export function createLogService(options: LogServiceOptions) {
   const maxBytes = budget(options.maxQueueBytes, LOG_DEFAULTS.maxQueueBytes)
   const maxEventBytes = budget(options.maxEventBytes, LOG_DEFAULTS.maxEventBytes)
   const timeoutMs = budget(options.drainTimeoutMs, LOG_DEFAULTS.drainTimeoutMs)
-  const postgres = options.postgresUrl && createPostgresLogStorage(options.postgresUrl, maxEventBytes, timeoutMs, !!options.stdout)
+  const postgres = options.postgresUrl && createPostgresLogStorage(options.postgresUrl, maxEventBytes, timeoutMs, !!options.stdout, options.postgresSchema)
   const postgresRequests = new Set<AbortController>()
   let worker: Worker | undefined, serial = 0, closed = false, closing = false
   type QueueRow = { event: LogEvent; bytes: number; queryKey?: string }
