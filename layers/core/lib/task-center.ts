@@ -1,5 +1,6 @@
 import type { JobState } from './job'
 export const TASK_STATES: Record<JobState, string> = { queued: '排队中', running: '运行中', done: '已完成', failed: '失败', cancelled: '已取消' }
+export interface TaskSummaryItem {}
 interface TaskSummaryBase {
   id: string; kind: string; label: string; module: string | null; group: string; state: JobState
   createdAt: string; startedAt: string | null; finishedAt: string | null
@@ -8,11 +9,12 @@ interface TaskSummaryBase {
   outcome: { complete: number; partial: number; failed: number; notQueried: number; unfinished: number | null; attempt: number } | null
   capabilities: { cancel: boolean; retry: boolean; retryItemIds: string[]; reason: string }
   links: { label: string; to: string }[]
+  items?: TaskSummaryItem[]
 }
 export interface TaskSummaryExtensions {}
 export type TaskSummary = TaskSummaryBase & TaskSummaryExtensions
 
-type ProjectableTaskFields = Pick<TaskSummaryBase, 'label' | 'outcome' | 'links' | 'capabilities' | 'error'> & {
+type ProjectableTaskFields = Pick<TaskSummaryBase, 'label' | 'outcome' | 'links' | 'capabilities' | 'error' | 'items'> & {
   progress: Partial<Pick<TaskSummaryBase['progress'], 'total' | 'unit' | 'stage'>>
 }
 export type TaskSummaryProjection = Partial<ProjectableTaskFields & TaskSummaryExtensions> & {

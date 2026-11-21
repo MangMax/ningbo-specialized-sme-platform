@@ -1,6 +1,9 @@
 export type { TaskList, TaskSummary } from '../../../core/lib/task-center'
 
 declare module '../../../core/lib/task-center' {
+  interface TaskSummaryItem {
+    id: string; status: string; completeness: string; positions: { source: string; rdjb: string | null; page: number }[]
+  }
   interface TaskSummaryExtensions {
     reconcile?: { targets: number | null; needsReview: number | null; queryFailed: number | null; notQueried: number | null }
     reconcileCollection?: {
@@ -25,6 +28,5 @@ declare module '../../../core/lib/task-center' {
       nextAfterEventId: number | null; continuationJobId: string | null
       items: { eventId: number; enterpriseId: number | null; status: string; created: number; existing: number; errorCode: string | null }[]
     }
-    items?: { id: string; status: string; completeness: string; positions: { source: string; rdjb: string | null; page: number }[] }[]
   }
 }

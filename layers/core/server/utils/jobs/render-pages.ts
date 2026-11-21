@@ -1,3 +1,4 @@
+import { summarizePostgresRenderJobs } from './ocr-summary'
 import { appLog } from '../../../lib/logging'
 import { registeredFileAtLocator, verifyFileReadAtLocator, verifyRenderedPageRead } from '../file-read-identity'
 import { readPostgresFileIdentities, readPostgresFileIdentity } from '../file-store-postgres'
@@ -224,6 +225,7 @@ export const renderPagesSpec: JobSpec = {
   },
   run: runRenderPages,
   postgres: {
+    taskCenter: { summaries: summarizePostgresRenderJobs },
     prepare: (tx, params) => readPostgresFileIdentities(tx, params.files as string[]),
     run: (ctx, params, inputSnapshot) => renderFiles(ctx, params,
       (inputSnapshot as Array<StoredFileContentIdentity | null> | null) ?? [],

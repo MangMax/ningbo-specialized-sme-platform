@@ -79,6 +79,22 @@ export async function getPostgresJobSummary(db: Executor, id: string) {
   return rows[0] ? decodeSummary(rows[0]) : null
 }
 
+const taskCenterColumns = sql`${commonColumns}, error IS NOT NULL AS "hasError",
+  coalesce(position('服务重启' in error), 0) > 0 AS restarted`
+type StoredTaskCenterRow = JobColumns & { hasError: boolean; restarted: boolean }
+
+function decodeTaskCenterRow({ progress, ...row }: StoredTaskCenterRow) {
+  const { done, total } = JSON.parse(progress) as Partial<JobProgress> | null ?? {}
+  return { ...row, done: done ?? 0, total: total ?? 0 }
+}
+
+export type PostgresTaskCenterRow = ReturnType<typeof decodeTaskCenterRow>
+
+export async function getPostgresTaskCenterRow(db: Executor, id: string) {
+  const { rows } = await db.execute<StoredTaskCenterRow>(sql`SELECT ${taskCenterColumns} FROM business.job WHERE id = ${id}`)
+  return rows[0] ? decodeTaskCenterRow(rows[0]) : null
+}
+
 async function listJobs<Stored extends Record<string, unknown>, Dto>(
   db: NodePgDatabase,
   query: JobQuery,
@@ -259,10 +275,10 @@ export async function listPostgresTaskCenter(db: Executor, query: {
   const { rows: counts } = await db.execute<{ kind: string; n: string }>(sql`
       SELECT kind, count(*) AS n FROM business.job WHERE ${state} GROUP BY kind`)
   const total = counts.reduce((sum, row) => sum + (!query.kinds || query.kinds.includes(row.kind) ? Number(row.n) : 0), 0)
-  const { rows } = await db.execute<StoredJobSummary>(sql`SELECT ${summaryColumns()} FROM business.job
+  const { rows } = await db.execute<StoredTaskCenterRow>(sql`SELECT ${taskCenterColumns} FROM business.job
       WHERE ${state} AND ${kinds} ORDER BY created_at DESC, id DESC
       LIMIT ${query.pageSize} OFFSET ${(query.page - 1) * query.pageSize}`)
-  return { rows: rows.map(decodeSummary), total, counts }
+  return { rows: rows.map(decodeTaskCenterRow), total, counts }
 }
 
 export async function lockPostgresJobAdmission(db: Executor, kind: string) {
