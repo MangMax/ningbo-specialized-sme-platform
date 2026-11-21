@@ -1,8 +1,19 @@
 // One explicit business owner per directory. Unknown owners fail selection.
-import { readdirSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 export const loggingBusiness = '日志 · 审计'
+const postgresGroup = {
+  group: 'PostgreSQL 19 · 文件分段与名录入口',
+  project: 'native',
+  postgres: true,
+}
+export const postgresTestFiles = [
+  'tests/files/segments/postgres-source-boundaries.http.test.ts',
+  'tests/roster/comparison/export.test.ts',
+  'tests/roster/enterprise-read/research-postgres.http.test.ts',
+]
 const owners = {
   "线索 · 版本名单": ["lead-lists/versions"],
   "名录 · 导入与证据": [
@@ -153,17 +164,29 @@ export function matrices(includeUpgrade=true) {
     const group=`${project==='app'?'应用进程':upgrade?'逻辑及升级':'逻辑'} · ${r.business}`
     return {group,business:r.business,project,upgrade}
   })
-  return {native:unique.filter(r=>r.project==='native'),app:unique.filter(r=>r.project==='app')}
+  return {native:[...unique.filter(r=>r.project==='native'), postgresGroup],app:unique.filter(r=>r.project==='app')}
 }
 if(process.argv[1]===fileURLToPath(import.meta.url)) {
  const [command,arg,...extra]=process.argv.slice(2)
  if(command==='matrix') console.log(JSON.stringify(matrices(arg!=='false')))
  else if(command==='inventory') console.log(JSON.stringify(inventory(),null,2))
+ else if (command === 'verify-postgres') {
+   const report = JSON.parse(readFileSync(arg, 'utf8'))
+   for (const file of postgresTestFiles) {
+     const assertions = report.testResults.find(result => resolve(result.name) === resolve(file))
+       ?.assertionResults.filter(assertion => assertion.fullName.includes('PostgreSQL'))
+     if (!assertions?.length || assertions.some(assertion => assertion.status !== 'passed')) {
+       throw new Error(`Expected PostgreSQL tests to run and pass in ${file}`)
+     }
+   }
+ }
  else if(command==='run'||command==='list') {
    const group=[...matrices(true).native,...matrices(true).app,...matrices(false).native].find(r=>r.group===arg)
-   const rows=group?inventory().filter(r=>r.business===group.business && (group.project==='app'?r.project==='app':r.project==='runtime'||(group.upgrade&&r.project==='upgrade'))):[]
+   const rows = group?.postgres
+     ? postgresTestFiles.map(file => ({ file, project: 'runtime' }))
+     : group ? inventory().filter(r=>r.business===group.business && (group.project==='app'?r.project==='app':r.project==='runtime'||(group.upgrade&&r.project==='upgrade'))) : []
    if(!rows.length) throw new Error(`Unknown/empty test group: ${arg}`)
    const result=spawnSync('pnpm',[...(command==='list'?['exec','vitest','list','--filesOnly','--json']:['test']),...[...new Set(rows.map(r=>r.project))].map(p=>`--project=${p}`),...rows.map(r=>r.file),'--maxWorkers=1','--no-file-parallelism',...extra],{stdio:'inherit'})
    process.exit(result.status??1)
- } else throw new Error('Use inventory, matrix [false], or run GROUP [vitest options]')
+ } else throw new Error('Use inventory, matrix [false], run GROUP [vitest options], or verify-postgres REPORT')
 }

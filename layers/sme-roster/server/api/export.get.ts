@@ -12,12 +12,18 @@ import {
   COMPARISON_NO_USCC,
 } from '#sme-roster/lib/labels'
 import { attachPlatformEvidence } from '#sme-roster/lib/comparison-platform'
+import { readPostgresComparisonExport } from '../../lib/comparison-postgres'
 import { getCuratedComparison } from '#sme-roster/lib/curation'
 import { filterComparisonRows } from '#sme-roster/lib/comparison-filter'
 import {
   COMPARISON_DIRECTIONS,
   type ComparisonDirection,
 } from '#sme-roster/lib/comparison'
+
+function readSqliteComparisonExport(curatedPath: string, filter: Parameters<typeof filterComparisonRows>[1]) {
+  const db = useDb()
+  return filterComparisonRows(attachPlatformEvidence(getCuratedComparison(db, curatedPath).rows, db), filter)
+}
 
 const EVENT_TYPES: EventType[] = ['award', 'review', 'maintain', 'nurture']
 
@@ -120,17 +126,18 @@ export default defineEventHandler(async (event) => {
     if (q.showCurated != null && !['true', 'false', ''].includes(String(q.showCurated))) {
       throw createError({ statusCode: 400, statusMessage: 'showCurated must be true or false' })
     }
-    const db = useDb()
-    const config = useRuntimeConfig(event)
-    const comparison = getCuratedComparison(db, config.curatedPath)
-    const enriched = attachPlatformEvidence(comparison.rows, db)
-    const rows = filterComparisonRows(enriched, {
+    const { curatedPath } = useRuntimeConfig(event)
+    const filter = {
       title: [title],
       direction,
       q: str(q.q),
       district: str(q.district),
       showCurated: str(q.showCurated) === 'true',
-    })
+    }
+    const postgres = usePostgresRosterDb()
+    const rows = postgres
+      ? await readPostgresComparisonExport(postgres, curatedPath, filter)
+      : readSqliteComparisonExport(curatedPath, filter)
     summarized = true
     appLog({ module: 'sme-roster', source: 'export', operation, outcome: 'success', counts: { done: rows.length, total: rows.length } }, logContext)
     writeWorkbook = async (wb, pace) => {

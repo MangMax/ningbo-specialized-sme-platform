@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import pg from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { createLogService } from '../../../layers/core/lib/logging/service'
 import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { nativeAppAdapter } from '../../support/native-app'
 import { reserveLoopbackPort } from '../../support/owned-process.mjs'
@@ -12,8 +13,10 @@ import { reserveLoopbackPort } from '../../support/owned-process.mjs'
 const bin = process.env.LEAD_TEST_POSTGRES_BIN
 const versions = '/api/lead-lists/versions'
 const agent = { actor: { type: 'agent', id: 'lead-review' }, basis: '逐行核对原件' }
+const sourceBytes = Buffer.from('name\n原始企业\n')
+const sourceSha = createHash('sha256').update(sourceBytes).digest('hex')
 
-describe.skipIf(!bin)('native PostgreSQL lead supplementation', () => {
+describe.skipIf(!bin)('PostgreSQL-only lead versions', () => {
   let dir: string
   let data: string
   const command = (name: string, args: string[], options = {}) =>
@@ -26,29 +29,34 @@ describe.skipIf(!bin)('native PostgreSQL lead supplementation', () => {
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), 'lead-pg-'))
     data = join(dir, 'pg')
+    mkdirSync(join(dir, 'files'))
+    writeFileSync(join(dir, 'files', 'fixture.csv'), sourceBytes)
     app = nativeAppAdapter({
       dir, token: 'isolated-lead-pg-token',
       launch: ({ cwd, port: httpPort }) => ({
         args: [join(cwd, '.output/server/index.mjs')],
         env: {
           NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(httpPort),
-          NUXT_DB_READONLY: '1', NUXT_POSTGRES_DIRECTORY_WRITE: '1', NUXT_POSTGRES_LEAD_REGISTRATION: '1', NUXT_POSTGRES_JOBS: '1',
+          NUXT_DB_MODE: 'postgresql', NUXT_DB_READONLY: '0',
+          NUXT_DB_PATH: join(dir, 'legacy-runtime', 'business.db'),
+          NUXT_LOG_DIR: join(dir, 'legacy-logs'),
           NUXT_POSTGRES_DIRECTORY_URL: `postgresql://lead_fixture@127.0.0.1:${port}/postgres`,
+          NUXT_POSTGRES_LOG_URL: `postgresql://lead_fixture@127.0.0.1:${port}/postgres`,
         },
       }),
     })
     installLeadListSchema(app.db.$client)
     app.db.$client.exec(`
       INSERT INTO stored_file (id,rel_path,filename,ext,sha256,bytes,created_at)
-        VALUES (91,'fixture.csv','fixture.csv','csv','fixture-hash',12,'2026-11-18');
+        VALUES (91,'fixture.csv','fixture.csv','csv','${sourceSha}',${sourceBytes.length},'2026-11-18');
       INSERT INTO lead_list_version (id,series,channel_code,list_type_code,acquired_on,file_id,file_sha256,request_hash,created_at)
-        VALUES (11,'走访名单','research','lead','2026-11-18',91,'fixture-hash','request-one','2026-11-18'),
-               (12,'另一个名单','research','lead','2026-11-18',91,'fixture-hash','request-two','2026-11-18');
+        VALUES (11,'走访名单','research','lead','2026-11-18',91,'${sourceSha}','request-one','2026-11-18'),
+               (12,'另一个名单','research','lead','2026-11-18',91,'${sourceSha}','request-two','2026-11-18');
       INSERT INTO lead_list_row (id,version_id,row_number,name,uscc)
         VALUES (101,11,2,'原始企业','待核对'), (102,11,3,'另一行',NULL),
                (201,12,2,'其他名单行',NULL), (202,12,3,'同一名单另一行',NULL);
       INSERT INTO enterprise_source (id,module,business_table,version_key,channel_code,list_type_code,acquired_on,series,file_id,sha256)
-        VALUES (71,'lead-lists','lead_list_version','11','research','lead','2026-11-18','走访名单',91,'fixture-hash');
+        VALUES (71,'lead-lists','lead_list_version','11','research','lead','2026-11-18','走访名单',91,'${sourceSha}');
       PRAGMA wal_checkpoint(TRUNCATE);
     `)
     port = await reserveLoopbackPort()
@@ -63,6 +71,15 @@ describe.skipIf(!bin)('native PostgreSQL lead supplementation', () => {
     for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
       command('psql', ['-X', '-w', '-v', 'staging=lead_staging', '-f', `upgrade/postgresql/materialize-${name}.sql`], { env })
     }
+    const stagedLogs = join(dir, 'staged-logs')
+    const logs = createLogService({ directory: stagedLogs })
+    try {
+      await logs.policy()
+    } finally {
+      await logs.close()
+    }
+    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', join(stagedLogs, 'events.db'), 'logs_staging'], { env })
+    command('psql', ['-X', '-w', '-v', 'staging=logs_staging', '-f', 'upgrade/postgresql/materialize-runtime-logs.sql'], { env })
     db = new pg.Pool({ host: '127.0.0.1', port, user: 'lead_fixture', database: 'postgres', options: '-c search_path=business,public' })
     await app.start()
   }, 60_000)
@@ -106,7 +123,7 @@ describe.skipIf(!bin)('native PostgreSQL lead supplementation', () => {
       { id: 101, name: '原始企业', uscc: '待核对', enterpriseId: id }, { id: 102, enterpriseId: null },
     ])
     const sources = await (await app.request(`/api/core/enterprises/${id}/sources`)).json()
-    expect(sources).toMatchObject([{ id: 71, fileId: 91, sha256: 'fixture-hash', versionKey: '11' }])
+    expect(sources).toMatchObject([{ id: 71, fileId: 91, sha256: sourceSha, versionKey: '11' }])
     expect((await db.query('SELECT review_actor,review_basis FROM lead_list_row WHERE id=101')).rows).toEqual([
       { review_actor: JSON.stringify(agent.actor), review_basis: agent.basis },
     ])
@@ -206,8 +223,8 @@ describe.skipIf(!bin)('native PostgreSQL lead supplementation', () => {
     const b = await create('并发核对企业乙')
     await db.query(`
       INSERT INTO lead_list_version (id,series,channel_code,list_type_code,acquired_on,file_id,file_sha256,request_hash,created_at)
-        VALUES (31,'并发名单甲','research','lead','2026-11-18',91,'fixture-hash','concurrent-first','2026-11-18'),
-               (32,'并发名单乙','research','lead','2026-11-18',91,'fixture-hash','concurrent-second','2026-11-18');
+        VALUES (31,'并发名单甲','research','lead','2026-11-18',91,'${sourceSha}','concurrent-first','2026-11-18'),
+               (32,'并发名单乙','research','lead','2026-11-18',91,'${sourceSha}','concurrent-second','2026-11-18');
       INSERT INTO lead_list_row (id,version_id,row_number,name)
         VALUES (311,31,2,'甲'),(312,31,3,'乙'),(321,32,2,'乙'),(322,32,3,'甲');
       CREATE FUNCTION hold_concurrent_review() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -274,5 +291,29 @@ describe.skipIf(!bin)('native PostgreSQL lead supplementation', () => {
       '"走访名单","2026-11-18","fixture.csv","3","另一行","","","\'=1+1","",""',
       '',
     ].join('\r\n'))
+  })
+
+  it('registers verified source bytes and returns a missing-version 404 in PostgreSQL-only mode', async () => {
+    const registered = await app.request(versions, {
+      method: 'POST',
+      body: JSON.stringify({
+        series: '新登记名单', channel: 'research', listType: 'lead', acquiredOn: '2026-11-19',
+        fileId: 91, rows: [{ rowNumber: 2, name: '新登记企业' }],
+      }),
+    })
+    const receipt = await registered.json()
+    expect(registered.status, JSON.stringify(receipt)).toBe(201)
+    const catalog = await app.request(versions)
+    expect(catalog.status).toBe(200)
+    expect(await catalog.json()).toMatchObject({
+      versions: expect.arrayContaining([expect.objectContaining({ id: receipt.id, series: '新登记名单', fileId: 91 })]),
+    })
+    const path = `${versions}/${receipt.id}/source`
+    const download = await app.download(path)
+    expect(download.response.status).toBe(200)
+    expect(download.bytes).toEqual(sourceBytes)
+    expect((await app.request(`${versions}/999999/source`)).status).toBe(404)
+    expect(existsSync(join(dir, 'legacy-runtime'))).toBe(false)
+    expect(existsSync(join(dir, 'legacy-logs'))).toBe(false)
   })
 })

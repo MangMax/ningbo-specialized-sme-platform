@@ -3,8 +3,9 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { normalizeUscc } from './domain'
 import { readCuration, projectCuratedComparison } from './curation'
 import { getPostgresComparison } from './comparison'
+import type { ComparisonRowFilter } from './comparison-filter'
 import { attachReconcile, readReconcile } from './reconcile'
-import { projectComparisonSummary, selectComparisonSummaryPage, type SummaryDisposition } from './comparison-summary'
+import { filterCuratedComparison, projectComparisonSummary, selectComparisonSummaryPage, type SummaryDisposition } from './comparison-summary'
 import * as schema from '../../../db/schema'
 import { postgresRosterRow } from './roster/postgres-rows'
 import { projectPlatformComparisonEvidence, type ComparisonObservation } from './comparison-platform'
@@ -43,20 +44,39 @@ async function readMemberships(db: Reader, subjects: Subject[]) {
     FROM membership GROUP BY enterprise_id,query_id,collection_id`)).rows
 }
 
+async function readPostgresCuratedComparison(db: Reader, curatedPath: string) {
+  const base = await getPostgresComparison(db)
+  const { rows: enterprises } = await db.execute<Subject>(sql`
+    SELECT id::float8 AS id,name_norm AS "nameNorm",uscc_norm AS uscc FROM enterprise
+    WHERE id=ANY(${ids([...new Set(base.rows.map(row => row.enterpriseId))])})`)
+  const names = new Map(enterprises.map(row => [row.id, row.nameNorm]))
+  return { curated: projectCuratedComparison(base, readCuration(curatedPath), names), enterprises }
+}
+
+async function readPostgresComparisonAliases(db: Reader, owners: number[]) {
+  if (!owners.length) return new Map()
+  const { rows } = await db.execute<{ enterpriseId: number; name: string; verificationStatus: string }>(sql`
+    SELECT enterprise_id::float8 AS "enterpriseId",name,verification_status AS "verificationStatus"
+    FROM enterprise_alias WHERE enterprise_id=ANY(${ids(owners)})`)
+  return Map.groupBy(rows, row => row.enterpriseId)
+}
+
+export function readPostgresComparisonExport(db: NodePgDatabase, curatedPath: string, filter: ComparisonRowFilter) {
+  return db.transaction(async tx => {
+    const { curated, enterprises } = await readPostgresCuratedComparison(tx, curatedPath)
+    const aliases = await readPostgresComparisonAliases(tx, enterprises.map(row => row.id))
+    return filterCuratedComparison(curated, filter, aliases)
+  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
+}
+
 export function readPostgresWholeComparison(db: NodePgDatabase, input: ComparisonSummaryOptions, view: 'full' | 'summary') {
   return db.transaction(async tx => {
-    const base = await getPostgresComparison(tx)
-    const { rows: enterprises } = await tx.execute<Subject>(sql`
-      SELECT id::float8 AS id,name_norm AS "nameNorm",uscc_norm AS uscc FROM enterprise
-      WHERE id=ANY(${ids([...new Set(base.rows.map(row => row.enterpriseId))])})`)
-    const curated = projectCuratedComparison(base, readCuration(input.curatedPath), new Map(enterprises.map(row => [row.id,row.nameNorm])))
+    const { curated, enterprises } = await readPostgresCuratedComparison(tx, input.curatedPath)
     const result = input.enterpriseId === undefined ? curated : { ...curated, rows: curated.rows.filter(row => row.enterpriseId === input.enterpriseId) }
     const scopedIds = [...new Set(result.rows.map(row => row.enterpriseId))]
     const selectedOwners = new Set(scopedIds)
-    const { rows: aliases } = await tx.execute<{ enterpriseId: number; name: string; verificationStatus: string }>(sql`
-      SELECT enterprise_id::float8 AS "enterpriseId",name,verification_status AS "verificationStatus"
-      FROM enterprise_alias WHERE enterprise_id=ANY(${ids(scopedIds)})`)
-    const { scoped, selected } = selectComparisonSummaryPage(result, input, input.page, input.pageSize, Map.groupBy(aliases, row => row.enterpriseId))
+    const aliases = await readPostgresComparisonAliases(tx, scopedIds)
+    const { scoped, selected } = selectComparisonSummaryPage(result, input, input.page, input.pageSize, aliases)
     const members = await readMemberships(tx, enterprises.filter(row => selectedOwners.has(row.id)))
     const byOwner = new Map([...Map.groupBy(members, row => row.enterpriseId)].map(([id, rows]) => [id, rows.map(row => row.queryId)]))
     const { rows: dispositions } = await tx.execute<SummaryDisposition>(sql`
