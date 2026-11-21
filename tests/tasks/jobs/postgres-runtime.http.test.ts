@@ -513,6 +513,15 @@ it.runIf(!!bin)('filters roster exports by title before counting and reports pro
   expect(page).toMatchObject({ total: 2, counts: { all: 2, 'sme-roster': 2 }, exportReady: true })
   expect(page.rows).toHaveLength(1)
   expect([growing, preparing]).toContain(page.rows[0].id)
+  for (const [id, total, stage] of [[growing, 4, '生成工作簿'], [preparing, null, '固定数据快照']] as const) {
+    const detail = await request('/api/task-center/' + id, { headers: { authorization: 'Bearer ' + token } })
+    expect(detail.status).toBe(200)
+    expect(await detail.json()).toMatchObject({
+      label: '专精特新“小巨人”导出',
+      progress: { done: 1, total, unit: '家企业', stage },
+      capabilities: { cancel: true, retry: false },
+    })
+  }
   const summary = await (await request('/api/jobs?view=summary&kind=current-roster-export')).json()
   expect(summary.rows).toEqual(expect.arrayContaining([
     expect.objectContaining({ id: growing, percent: 25 }),
@@ -552,7 +561,7 @@ it.runIf(!!bin)('keeps authorized export downloads available in readonly task su
   try {
     const expected = {
       id, export: { canDownload: true, canRegenerate: false, artifact: { availability: 'available' } },
-      capabilities: { cancel: false, retry: false, retryItemIds: [] },
+      capabilities: { cancel: false, retry: false, retryItemIds: [], reason: '当前任务中心只读。' },
     }
     expect(await (await request(detail, { headers: auth })).json()).toMatchObject(expected)
     const page = await (await request(list, { headers: auth })).json()
@@ -613,11 +622,32 @@ it.runIf(!!bin)('preserves historical export request identifiers across migratio
       )).rejects.toMatchObject({ code: '23505' })
     }
 
-    const page = await request('/api/task-center?tab=sme-roster&group=export&titleCode=little_giant&state=cancelled')
+    const page = await request('/api/task-center?tab=sme-roster&group=export&titleCode=little_giant&state=cancelled', {
+      headers: { authorization: 'Bearer ' + token },
+    })
     expect(page.status).toBe(200)
-    expect(await page.json()).toMatchObject({ total: historicalExports.length, rows: expect.arrayContaining(
-      historicalExports.map(({ id }) => expect.objectContaining({ id, export: expect.objectContaining({ titleCode: 'little_giant' }) })),
-    ) })
+    const expectedSummary = {
+      label: '专精特新“小巨人”导出',
+      module: 'sme-roster',
+      progress: { done: 0, total: null, unit: '家企业', stage: '执行结束' },
+      capabilities: { cancel: false, retry: false, reason: '导出不重放任务；请显式重新生成，新任务保留原任务关联。' },
+      export: { titleCode: 'little_giant', canRegenerate: true },
+    }
+    const { total, rows } = await page.json()
+    expect(total).toBe(historicalExports.length)
+    expect(rows.map((row: { id: string }) => row.id).sort()).toEqual(historicalExports.map(({ id }) => id))
+    for (const row of rows) {
+      expect(row).toMatchObject(expectedSummary)
+      expect(row).not.toHaveProperty('items')
+    }
+    const detail = await request('/api/task-center/' + historicalExports[0]!.id)
+    expect(detail.status).toBe(200)
+    expect(await detail.json()).toMatchObject({
+      ...expectedSummary,
+      items: [],
+      capabilities: { cancel: false, retry: false, reason: '当前请求仅可查看任务。' },
+      export: { titleCode: 'little_giant', canRegenerate: false, canDownload: false },
+    })
   } finally {
     vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', undefined)
   }

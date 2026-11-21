@@ -3,7 +3,8 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { resolveDbPath } from '../../../../../db/client'
 import type { TaskSummary } from '../../../lib/sme-roster/task-summary'
 import { TASK_EXPORTS } from '../../../lib/sme-roster/task-exports'
-import { isJobId } from '../../../../core/lib/job'
+import { isJobId, type JobState } from '../../../../core/lib/job'
+import type { TaskSummaryProjection } from '../../../../core/lib/task-center'
 import type { useApplicationDb } from '../../../../../db/client'
 import { currentArtifact, currentExportDbPath } from '../current-export-artifact'
 import type { ProjectedTask } from './task-summary'
@@ -22,6 +23,23 @@ export const exportProjection = {
 }
 
 export const exportTitleFilter = (title: string) => sql`json_extract(${j.params}, '$.titleCode') = ${title}`
+
+export const exportRetryReason = '导出不重放任务；请显式重新生成，新任务保留原任务关联。'
+
+export function exportTaskLabel(titleCode: string | null | undefined) {
+  const title = TASK_EXPORTS.find(task => task.titleCode === titleCode)
+  return title ? `${title.label}导出` : undefined
+}
+
+export function exportTaskProgress(state: JobState, phase: string | undefined) {
+  return {
+    unit: '家企业',
+    stage: state === 'queued' ? '等待执行' : state === 'running'
+      ? phase === 'workbook' ? '生成工作簿' : '固定数据快照'
+      : '执行结束',
+    totalVisible: phase === 'workbook' || state === 'done',
+  }
+}
 
 type ExportSummaryRow = Pick<ProjectedTask, 'id' | 'kind' | 'state' | 'exportTitle' | 'exportMeta'>
 
@@ -58,7 +76,7 @@ async function projectExportSummary(row: ExportSummaryRow, authorized: boolean, 
   return exported
 }
 
-export async function readPostgresExportSummaries(db: NodePgDatabase, ids: string[], _detail: boolean, { authorized, writable }: TaskSummaryAccess) {
+export async function readPostgresExportSummaries(db: NodePgDatabase, ids: string[], detail: boolean, { authorized, writable }: TaskSummaryAccess) {
   const { rows } = await db.execute<ExportSummaryRow>(sql`
     SELECT id, kind, state, left(business.job_params_for_query(params)->>'titleCode',40) AS "exportTitle",
       json_build_object(
@@ -74,7 +92,17 @@ export async function readPostgresExportSummaries(db: NodePgDatabase, ids: strin
           'expiresAt',left(result::json#>>'{artifact,expiresAt}',30)))::text AS "exportMeta"
     FROM business.job WHERE id=ANY(${sql.param(ids)}::text[]) AND kind='current-roster-export'`)
   const dbPath = resolveDbPath()
-  const result = new Map<string, Pick<TaskSummary, 'export'>>()
-  for (const row of rows) result.set(row.id, { export: await projectExportSummary(row, authorized, dbPath, writable) })
+  const result = new Map<string, TaskSummaryProjection>()
+  for (const row of rows) {
+    const exported = await projectExportSummary(row, authorized, dbPath, writable)
+    const { unit, stage, totalVisible } = exportTaskProgress(row.state, exported?.phase)
+    result.set(row.id, {
+      export: exported,
+      label: exportTaskLabel(exported?.titleCode),
+      progress: { unit, stage, ...(totalVisible ? {} : { total: null }) },
+      capabilities: { cancel: false, retry: false, retryItemIds: [], reason: exportRetryReason },
+      ...(detail ? { items: [] } : {}),
+    })
+  }
   return result
 }
