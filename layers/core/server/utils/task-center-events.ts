@@ -1,4 +1,7 @@
 import pg from 'pg'
+import { and, eq, inArray } from 'drizzle-orm'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { namespaces, relations, triggers } from '../../../../db/postgresql/system-catalog'
 import { usePostgresJobsDb } from './postgres-jobs'
 
 const channel = 'task_center_changed'
@@ -29,13 +32,15 @@ async function listen(current: Listener) {
     await closing
     if (listener !== current) return
     await current.client.connect()
-    const installation = await current.client.query(
-      `SELECT 1 FROM pg_catalog.pg_trigger
-       WHERE tgrelid = 'business.job'::regclass
-         AND tgname = $1 AND tgenabled IN ('O', 'A')`,
-      [channel],
-    )
-    if (!installation.rowCount) throw new Error('Task center notification trigger is unavailable')
+    const [installation] = await drizzle(current.client).select({ name: triggers.name })
+      .from(triggers)
+      .innerJoin(relations, eq(relations.oid, triggers.relation))
+      .innerJoin(namespaces, eq(namespaces.oid, relations.namespace))
+      .where(and(eq(namespaces.name, 'business'), eq(relations.name, 'job'),
+        eq(triggers.name, channel), inArray(triggers.enabled, ['O', 'A'])))
+      .limit(1)
+    if (!installation) throw new Error('Task center notification trigger is unavailable')
+    // LISTEN must run on the same persistent connection that receives notifications.
     await current.client.query(`LISTEN ${channel}`)
     if (listener !== current) return
     current.ready = true
