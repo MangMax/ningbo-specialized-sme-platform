@@ -126,7 +126,6 @@ async function readQualificationItem(db: Reader, args: ImportItemsRead, redact: 
   return projectQualificationReceipt(row, args, redact)
 }
 
-/** Encode fixed JSON fields without database-added whitespace for byte limits. */
 function jsonFields(fields: Array<[key: string, value: SQL]>) {
   return sql.join(fields.map(([key, value]) => sql`${(JSON.stringify(key) + ':')} || coalesce(${value}::text,'null')`), sql` || ',' || `)
 }

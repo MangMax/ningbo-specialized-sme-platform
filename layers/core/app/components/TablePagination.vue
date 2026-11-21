@@ -71,11 +71,7 @@ function onSizeInput(event: Event) {
           <span class="text-muted-foreground">每页</span>
           <Select v-model="sizeModel">
             <SelectTrigger size="sm" class="bg-card w-20 shadow-none @max-[26rem]/pager:w-auto @max-[26rem]/pager:min-w-12 @max-[26rem]/pager:gap-0.5 @max-[26rem]/pager:px-1.5 transition-transform duration-150 ease-snap active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100" aria-label="每页条数" :disabled="loading">
-              <!-- The trigger shows the size that is really in effect. Reka's SelectValue
-                   resolves its text from the *registered* items, so a size that is not
-                   one of the presets (a deep link, or a typed custom size) matched no
-                   item and rendered as an empty control; the slot states the number
-                   the size model already carries. -->
+              <!-- Reka's default SelectValue text comes from the registered options. A custom page size has no matching option. -->
               <SelectValue>{{ pageSize }}</SelectValue>
             </SelectTrigger>
             <SelectContent class="shadow-none">

@@ -18,7 +18,6 @@ export type PostgresJobTransaction = Parameters<Parameters<NodePgDatabase['trans
 type SubmitPostgresJobInput = Omit<SubmitInput, 'filesDir'>
 
 export interface PostgresJobContext {
-  /** The execution connection. Await all its work before returning. */
   readonly db: NodePgDatabase
   readonly jobId: string
   readonly filesDir: string
@@ -30,9 +29,7 @@ export interface PostgresJobContext {
 }
 
 export interface TaskSummaryAccess {
-  /** The request may see protected information and use permitted actions. */
   authorized: boolean
-  /** The task runtime accepts mutations. Authorized reads can still work when false. */
   writable: boolean
 }
 
@@ -40,15 +37,12 @@ export interface PostgresJobSpec {
   allowBrowserCancel?: boolean
   parse?: JobSpec['parse']
   validateSubmission?(tx: PostgresJobTransaction, params: Record<string, unknown>): Promise<void>
-  /** E.g. refresh a download receipt against the module’s current artifact state. */
   projectResult?(db: NodePgDatabase, job: JobDto): Promise<unknown>
   taskCenter?: {
     summaries(db: NodePgDatabase, ids: string[], detail: boolean, access: TaskSummaryAccess): Promise<Map<string, TaskSummaryProjection>>
     retry?(db: NodePgDatabase, task: TaskSummary, context: LogContext): Promise<unknown>
   }
-  /** Validate admission and optionally capture non-secret execution inputs. */
   prepare?(tx: PostgresJobTransaction, params: Record<string, unknown>): Promise<unknown>
-  /** Resolve dependencies when claimed. Persist only non-secret, replayable parameters. */
   run(ctx: PostgresJobContext, params: Record<string, unknown>, inputSnapshot: unknown): Promise<JobCompletion>
 }
 
@@ -94,8 +88,6 @@ export async function stagePostgresJob(tx: PostgresJobTransaction, input: Submit
 }
 
 const pollIntervalMs = 500
-// A dedicated session owns execution across instances. No transaction spans
-// handler I/O. Row locks still serialize claims, cancellations and completion.
 const schedulerLock = [144814, 1]
 
 export function createPostgresJobRunner(db: PostgresJobDb, filesDir: string) {

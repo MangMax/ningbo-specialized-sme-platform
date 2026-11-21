@@ -119,7 +119,6 @@ function simulate(db: Db, request: DispositionRequest, committedAt = '') {
         (id, fact) => dependencies(db, id, fact), committedAt)
 }
 
-/** Apply the command order to a fixed collection of loaded facts. */
 export function simulateDispositions(existing: Row[], request: DispositionRequest,
     resolve: (id: number, fact: Fact) => unknown, committedAt: string) {
     const current = new Map(existing.map(r => [r.id, r]))

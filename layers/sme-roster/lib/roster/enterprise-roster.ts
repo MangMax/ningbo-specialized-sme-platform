@@ -170,11 +170,6 @@ export interface RosterEnterpriseFilter {
   /** 属地(= 企业自身属地,为空时退回记录属地)。 */
   district?: string
   rosterState?: RosterState
-  /**
-   * 来源(多值,命中任一)—— RL-17 增量:命中「该企业**存在**一条该来源的记录」。
-   *
-   * 与 `/api/records` 的 `source` 同构,只是把粒度从「企业 × 称号」抬到「企业」。
-   */
   source?: string[]
   /** 事件类型(多值,命中任一):该企业**存在**一条该类型的事件。 */
   eventType?: string[]

@@ -183,7 +183,6 @@ export type PlatformQualificationInputRow = {
   source: PlatformQualificationFact['source']; p: PlatformFactProjection
 }
 
-/** Map source-owned projections consistently on both storage backends. */
 export function projectPlatformQualificationFact(row: PlatformQualificationInputRow, owners: ReadonlyMap<string, ReadonlySet<number>>): PlatformQualificationFact | null {
   const p = row.p, uscc = normalizeUscc(p.usccRaw)
   const ids = owners.get(uscc)

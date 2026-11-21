@@ -80,7 +80,6 @@ interface FilesResponse {
 const queryCache = useQueryCache()
 const feedback = useToastFeedback()
 
-// —— 筛选(多选)——
 const selections = ref<Record<string, string[]>>({})
 const search = ref('')
 const q = ref('')
@@ -93,7 +92,6 @@ watchDebounced(
   { debounce: 300 },
 )
 
-// —— 分页 ——
 const MAX_PAGE_SIZE = 200
 const page = ref(1)
 const pageSize = ref(50)
@@ -116,7 +114,6 @@ const { data, isLoading, error, refetch } = useQuery<FilesQueryResult>({
     const response = await apiGet<FilesResponse>(endpoint, { query: request.params })
     return { ...response, request }
   },
-  // 换筛选/翻页时保留上一批数据,避免表体清空 → 文档高度骤变 → 页面闪一下并跳回顶部。
   placeholderData: (previous) => previous,
 })
 
@@ -135,7 +132,6 @@ const displayedPage = computed(() => displayedResult.value?.request.page ?? page
 const displayedPageSize = computed(() => displayedResult.value?.request.pageSize ?? pageSize.value)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / displayedPageSize.value)))
 
-// Draw the pinned action edge only when a table actually scrolls horizontally.
 const tableScroller = ref<HTMLElement | null>(null)
 const isPinned = ref(false)
 function measureOverflow() {
@@ -145,14 +141,12 @@ function measureOverflow() {
 onMounted(() => {
   measureOverflow()
   window.addEventListener('resize', measureOverflow)
-  // 字体或缩放变化也会改变文字宽度,进而改变总宽。
   window.addEventListener('pageshow', measureOverflow)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', measureOverflow)
   window.removeEventListener('pageshow', measureOverflow)
 })
-// 行数变化会改变滚动条的有无(竖向滚动条占宽)。
 watch([rows, pageSize, compactDetails], () => nextTick(measureOverflow))
 
 function refresh() {
@@ -187,7 +181,6 @@ const activeFilters = computed(() => [
 ])
 const hasFilters = computed(() => activeFilters.value.length > 0)
 
-// —— 行操作 ——
 const editing = ref<ListedFile | null>(null)
 const editablePanels = computed(() => {
   const file = editing.value
@@ -226,7 +219,6 @@ function openPreview(row: ListedFile) {
   previewOpen.value = true
 }
 
-/** 保存元数据:只提交分类字段;空串转为 null 表示「清空」。 */
 async function saveMetadata(patch: Record<string, unknown>) {
   if (!editing.value) return
   editPending.value = true
@@ -247,7 +239,6 @@ async function saveMetadata(patch: Record<string, unknown>) {
   }
 }
 
-/** 只提交用户可见名称;从不把它作为磁盘文件名或路径。 */
 async function saveDisplayName(displayName: string) {
   if (!editing.value) return
   renamePending.value = true
@@ -340,7 +331,6 @@ async function toggleDetails(id: number) {
   }
 }
 
-// Keep the displayed query fixed until the current detail operation is resolved.
 let changingQuery = false
 let queryGuardPending = false
 type QueryState = [typeof selections.value, string, number, number]
@@ -614,9 +604,6 @@ watch([selections, q, page, pageSize], async (values, previous) => {
       @confirm="confirmDelete"
     />
 
-    <!-- PDF 走「原文 / 页图」两视图弹窗(票 13 的页图在这里看);其余格式仍是单一预览弹窗。
-         为什么页图不做成第五颗行操作按钮:操作列 166px 已容纳编辑/改名/预览/移出,
-         再加一颗会继续扩宽表格 —— 详细理由见 `components/files/PdfViewDialog.vue`。 -->
     <PdfViewDialog
       v-if="previewFile && isPdfPath(previewFile.relPath)"
       v-model:open="previewOpen"
@@ -634,22 +621,7 @@ watch([selections, q, page, pageSize], async (values, previous) => {
 </template>
 
 <style scoped>
-/*
- * 钉在右边的「操作」列:横向滚动时它盖在中间列上,所以底色必须是**实心**的
- * (`bg-card` / hover 的 `bg-accent`),半透明会透出底下的文字。
- *
- * 这两个底色的写法有两个要点:
- *   1. 用 Tailwind 工具类写在模板里,不写进这个 style 块 —— 这里的规则不在 `@layer`
- *      里,会**压过** Tailwind 的 `group-hover:*`(未分层的样式总是赢分层样式,与选择器
- *      权重无关),那样 hover 时这一列不会跟着行底一起变深。
- *   2. 单元格先铺一层不透明的 `bg-card`,hover 再叠 `bg-accent/70` —— 与行的
- *      `hover:bg-accent/70` 走同一套合成(accent 70% 压在卡片白底上),两边得出的
- *      像素完全相同。直接写不透明的 `bg-accent` 会**偏深一档**,行里会多出一条竖带。
- * 这里只留一个不跟任何工具类打架的:分隔线。
- *
- * 分隔线只在真的横向溢出时才加(`isPinned`)。用 inset 的 box-shadow 而不是
- * border-left:border 会占 1px 宽、把量好的 166px 列挤成 165px;阴影不占位。
- */
+/* Unlayered CSS would override the Tailwind hover backgrounds. An inset shadow adds the divider without widening the column. */
 .pin-edge {
   box-shadow: inset 1px 0 0 var(--border);
 }

@@ -14,7 +14,6 @@ export type ImportReceiptAction = 'get' | 'items' | 'history' | 'request'
 export class ImportReceiptError extends Error {
   constructor(readonly statusCode: number, readonly code: string, message: string, readonly requiredBytes?: number) { super(message) }
 }
-/** Preserve REST domain error codes in the MCP tool-error envelope. */
 export async function asyncImportReceiptMcpResult<T>(run: () => Promise<T>) {
   try { return await run() }
   catch (error) {

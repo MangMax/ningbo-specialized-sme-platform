@@ -27,7 +27,6 @@ export function usePostgresJobsDb() {
 
 let runtime: { db: PostgresJobDb; runner: ReturnType<typeof createPostgresJobRunner> } | undefined
 
-/** The application starts this after registering job specs and supplying the files root. */
 export function startPostgresJobs(filesDir: string) {
   if (!postgresJobsEnabled()) return
   const db = usePostgresJobsDb()
@@ -37,7 +36,6 @@ export function startPostgresJobs(filesDir: string) {
   return runtime
 }
 
-/** Call before closing the business pool. Active handlers may finish. */
 export async function stopPostgresJobs() {
   const current = runtime
   try {

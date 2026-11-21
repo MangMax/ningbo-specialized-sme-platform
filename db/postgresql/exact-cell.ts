@@ -1,4 +1,3 @@
-/** Decode a mixed SQLite cell retained by the PostgreSQL materializer. */
 export function decodePostgresExactCell(value: Buffer | null, storage: string | null): string | number | Buffer | null {
   if (value === null) return null
   switch (storage) {

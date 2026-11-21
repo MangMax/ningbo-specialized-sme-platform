@@ -240,7 +240,6 @@ export function createPostgresLogStorage(connectionString: string, maxEventBytes
               code = failureCode(error)
             }
           } else if (allowed.length) code = 'storage_full'
-          // Emit only the projection authorized by the still-locked policy.
           let fallbackSkipped = 0
           if (stdout) for (const { detail } of allowed) if (!stdout.write(detail + '\n')) fallbackSkipped++
           result = { stored, filtered: events.length - collected.length, oversized: projected.length - allowed.length, fallbackSkipped, code }

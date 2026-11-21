@@ -33,7 +33,6 @@ async function projectSummaries(
     const fields = projections.get(row.id)
     const capabilities = fields?.capabilities ?? base.capabilities
     return {
-      // Core identity and progress take precedence even if a projection has extra keys.
       ...fields,
       ...base,
       outcome: fields?.outcome ?? base.outcome,

@@ -9,8 +9,6 @@ import { defaultLogCollection } from '../../../layers/core/lib/logging/policy'
 
 const bin = process.env.TEST_POSTGRES_STARTUP_BIN
 
-// Only the compiled child needs server registration. Skip the in-process test
-// setup's second copy of the server module graph.
 vi.mock('../../../server/install-application', () => ({ installApplicationServer() {} }))
 
 async function openTaskEvents(base: string) {
@@ -268,7 +266,6 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
 
       const openAtShutdown = await openTaskEvents(base)
       expect(await openAtShutdown.nextFrame()).toBe(ready)
-      // Keep the client connected until the app's shutdown hook closes the stream.
     })
     await expect.poll(listeners).toEqual([])
     expect(query(`SELECT state FROM business.job WHERE id = '${id}'`)).toBe('queued')

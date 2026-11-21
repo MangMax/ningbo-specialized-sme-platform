@@ -81,8 +81,6 @@ beforeAll(async () => {
     name: '另一个归属企业', nameNorm: '宁波另一个归属企业', usccNorm: '91330211255994458Q',
   }).returning().get()
   const sqlite = fixture.db.$client
-  // These deployed triggers enforce native command immutability. Set the
-  // historical cell examples directly in the fixture, as capture would.
   sqlite.exec('DROP TRIGGER platform_apply_stored_no_update; DROP TRIGGER platform_process_stored_no_update; DROP TRIGGER recognized_stored_update')
   for (const source of Object.keys(sources) as Source[]) {
     const interfaceName = sources[source]
@@ -450,7 +448,6 @@ it.skipIf(!url)('list capture, count and page use one PostgreSQL snapshot during
   await pgClient.query('BEGIN')
   let inFlight: ReturnType<typeof read> | undefined
   try {
-    // Block the count after capture has established its transaction snapshot.
     await pgClient.query('LOCK TABLE business.platform_business_record_version IN ACCESS EXCLUSIVE MODE')
     inFlight = read('postgres', 'declarations', params)
     await expect.poll(async () => {

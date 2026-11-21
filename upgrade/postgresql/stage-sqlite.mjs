@@ -165,7 +165,7 @@ async function copyTable(db, table) {
 
   try {
     if (existing) {
-      for (const _chunk of sourceChunks) { /* Hash the snapshot without loading it. */ }
+      for (const _chunk of sourceChunks) {  }
     } else {
       const copyIn = spawn(psql, [...psqlArgs, '--single-transaction', '-c', createTable, '-c', `COPY ${target} (${names.join(', ')}) FROM STDIN (FORMAT binary)`],
         { stdio: ['pipe', 'ignore', 'inherit'] })

@@ -101,12 +101,10 @@ export async function registerPostgresEnterpriseSource(tx: Transaction, input: E
   return Number(id)
 }
 
-/** Create a reviewed subject inside the caller's transaction, with provenance supplied by the caller. */
 export async function createPostgresReviewedEnterprise(tx: Transaction, fields: EnterpriseFields & { name: string }) {
   await validateCodes(tx, fields)
   const name = normalizeEnterpriseName(fields.name)
   const uscc = fields.uscc ?? null
-  // Serialize matching submissions, including legacy rows whose stored codes are not normalized.
   await lockIdentity(tx, 'name', name)
   if (uscc) await lockIdentity(tx, 'uscc', uscc)
   const exists = uscc
@@ -237,7 +235,6 @@ async function revisePostgresReviewedProfile(tx: Transaction, before: NonNullabl
   }, { ...audit, previousName: renamed ? before.name : undefined })).auditId
 }
 
-/** Update only explicitly reviewed fields and retain their audit inside the caller's transaction. */
 export async function attachPostgresReviewedEnterprise(tx: Transaction, subject: ReviewedAttachment) {
   const before = await checkedEnterprise(tx, subject.enterpriseId, subject.expectedRevision, 'membership')
   const fields = subject.fields ?? {}

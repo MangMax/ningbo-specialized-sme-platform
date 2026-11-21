@@ -14,7 +14,6 @@ type StoredWitness = {
   batch: Cell; batchStorage: string | null
 }
 
-/** Fetch only typed witness/binding columns. The caller reuses the map within a pinned read. */
 export async function readPostgresRecognizedWitnesses(db: Reader, ids: readonly number[]) {
   const target = new Map<number, RecognizedWitnessRow>()
   if (ids.length) {

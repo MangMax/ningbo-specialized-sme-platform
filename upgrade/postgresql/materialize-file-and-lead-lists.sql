@@ -1,5 +1,4 @@
 \set ON_ERROR_STOP on
--- Apply after the enterprise directory and jobs materializers.
 
 BEGIN;
 SET LOCAL search_path TO business, public;

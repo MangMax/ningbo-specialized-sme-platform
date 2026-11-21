@@ -1,4 +1,3 @@
--- Native roster relations. Install with the roster materializer.
 
 CREATE TABLE title (
   code text PRIMARY KEY NOT NULL,

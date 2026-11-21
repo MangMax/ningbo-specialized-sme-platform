@@ -146,7 +146,6 @@ async function writeParse(
     }
   }
   await db.execute(sql`UPDATE roster_file_classification SET parse_state = ${parseState} WHERE file_id = ${fileId}`)
-  // The audit ID is part of the output version. Reserve it before inserting the immutable receipt.
   const { rows: [audit] } = await db.execute<{ id: string }>(sql`
     SELECT nextval(pg_get_serial_sequence('business.file_parse_audit_105', 'id')) AS id`)
   const receiptId = Number(audit!.id)

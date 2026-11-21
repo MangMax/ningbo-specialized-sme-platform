@@ -4,8 +4,6 @@
 \set target business
 \endif
 
--- Run after the core enterprise and file materializers in a UTF-8 PG19 database.
--- staging must be the read-back-verified output of stage-sqlite.mjs.
 BEGIN ISOLATION LEVEL REPEATABLE READ;
 SET LOCAL search_path TO :"target", pg_catalog;
 SELECT (current_schema() = :'target' AND :'target' <> :'staging'
@@ -629,7 +627,6 @@ BEGIN
 END;
 $$;
 
--- Transactional RESTART advances beyond both the live IDs and deleted-row high-water marks.
 CREATE TEMP TABLE roster_sequence_restart (table_name text, column_name text, next_id bigint) ON COMMIT DROP;
 WITH owned_sequences(table_name, column_name) AS (
   VALUES

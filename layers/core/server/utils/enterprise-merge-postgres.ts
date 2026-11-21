@@ -28,7 +28,6 @@ export async function findPostgresEnterpriseMergeAliasConflict(tx: Transaction, 
 }
 
 async function moveAliases(tx: Transaction, from: number, into: number) {
-  // Only the audit lookup ID changes on collision. The original owner and payload stay intact.
   await tx.execute(sql`
     UPDATE enterprise_alias_audit audit SET alias_id=b.id FROM enterprise_alias a
     JOIN enterprise_alias b ON b.enterprise_id=${into} AND ${aliasPair}
@@ -64,9 +63,6 @@ interface EnterpriseMergeInput {
   basis: string
 }
 
-/** Apply the identity changes after the caller locks and checks both subjects.
- * The caller owns rollback, including conflicts found after creating new aliases.
- */
 export async function applyPostgresEnterpriseMerge(tx: Transaction, input: EnterpriseMergeInput) {
   const { fromEnterpriseId: from, intoEnterpriseId: into, rename, sourceAlias, sourceKind, sourceRefId, basis } = input
   let renameAlias: { id: number | null; created: boolean } = { id: null, created: false }

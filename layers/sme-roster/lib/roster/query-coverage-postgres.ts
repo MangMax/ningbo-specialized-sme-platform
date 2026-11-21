@@ -13,7 +13,6 @@ type CoverageSubject = { id: number; uscc_norm: string | null; name_norm: string
 type CoverageCollection = { slot: number; id: number; collection: DifferenceCollectionScopeRows['collection']; matched: number }
 type PostgresQueryCoverage = ReturnType<typeof projectQueryCoverage>
 
-/** The caller pins one snapshot for selected query coordinates and their typed metadata. */
 export async function readPostgresQueryCoverage(db: Reader, subjects: readonly CoverageSubject[], titleCodes: readonly string[]) {
   const coverages = new Map<number, Map<string, PostgresQueryCoverage>>()
   for (const { id, titleCode, input } of await readPostgresQueryCoverageInputs(db, subjects, titleCodes)) {

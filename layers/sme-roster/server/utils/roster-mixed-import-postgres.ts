@@ -182,7 +182,6 @@ export function createPostgresImportSteps(action: PostgresImportAction, request:
     },
   })
   if (platformQueries?.length || platformLegacyProvenance?.length || platformRecordObservations?.length) steps.push({
-    // Later items may refer to this command's natural query coordinates.
     writeForPreflight: Boolean(platformQueries?.length && (aliases?.length || differences?.length || merges?.length)),
     execute: (tx,batch,operation) => executePostgresPlatformItems(tx,batch,operation,request,undefined,action==='commit'),
   })

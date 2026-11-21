@@ -3,8 +3,6 @@ export type { TaskList, TaskSummary } from '../../../core/lib/task-center'
 declare module '../../../core/lib/task-center' {
   interface TaskSummaryExtensions {
     reconcile?: { targets: number | null; needsReview: number | null; queryFailed: number | null; notQueried: number | null }
-    /** Reconcile-only collection coverage, counted in slots/ranges, separate from target decisions.
-     * Historical reports without coverage retain null counts (unknown), never inferred completion. */
     reconcileCollection?: {
       complete: number | null; partial: number | null; failed: number | null; unknown: number | null
       unfinished: number | null

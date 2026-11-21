@@ -136,7 +136,6 @@ export function createLogService(options: LogServiceOptions) {
         const cancel = () => reject(new LogServiceError('drain_timeout', 503, action === 'write' ? 'unknown' : 'not_written'))
         controller.signal.addEventListener('abort', cancel, { once: true })
         const timer = setTimeout(() => controller.abort(), timeoutMs)
-        // Keep capacity charged until the adapter releases the connection.
         void postgres.execute(action, data, Date.now(), controller.signal)
           .then(result => resolve(result as T), error => reject(error instanceof PostgresLogError
             ? new LogServiceError(error.code, 503, error.writeOutcome) : new LogServiceError('storage_unavailable')))

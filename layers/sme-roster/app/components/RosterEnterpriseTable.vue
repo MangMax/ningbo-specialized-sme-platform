@@ -146,9 +146,6 @@ const TH_CLASS = 'text-muted-foreground h-9 text-xs font-medium'
 
     `table-fixed` + 只给后面三列写死宽度:名称列自动吃掉剩余空间,长名字拿到最宽的一份。
   -->
-  <!--
-    出处返回同时恢复这个结果区的纵向和横向位置。
-  -->
   <div
     data-evidence-return-scroll-container
     class="data-table-scroll [--table-budget:22rem]"

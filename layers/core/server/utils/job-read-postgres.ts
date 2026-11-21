@@ -10,7 +10,6 @@ const assignment = new RegExp(String.raw`(["']?\b${credential}\b["']?\s*[:=]\s*)
 const hostPath = /https?:\/\/[^\s"'<>;,)}\]]+|\b(?:file|postgres(?:ql)?):\/\/[^\s"'<>;,)}\]]+|(?<=^|[\s"'<>;,)}\]=:(\[{])\/(?!\/|api(?:\/|$))[^\s"'<>;,)}\]]+|\b[A-Za-z]:\\[^\s"'<>;,)}\]]+/giu
 const mask = '[REDACTED]'
 
-/** Project public copies only. Historical bytes and private claim data stay in storage. */
 export async function postgresJobReadProjector(db: NodePgDatabase, config: { apiToken?: string; mcpToken?: string; ocrToken?: string }) {
   const saved = await readPostgresCredentialState(db)
   const secrets = [
@@ -36,7 +35,6 @@ export async function postgresJobReadProjector(db: NodePgDatabase, config: { api
       }
     }
     const direct = scrub(value)
-    // Treat encoded credentials as credentials while leaving innocent encoded text byte-for-byte.
     const decoded = value.replace(/(?:%[0-9a-f]{2})+/gi, match => {
       try { return decodeURIComponent(match) } catch { return match }
     }).replace(/\\(["\\])/g, '$1')

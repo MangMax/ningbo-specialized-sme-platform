@@ -100,7 +100,6 @@ export function preflightPostgresDisposition(db: NodePgDatabase, request: Dispos
 
 export function commitPostgresDisposition(db: NodePgDatabase, request: DispositionRequest, planHash: string) {
   return db.transaction(async tx => {
-    // The public expected version covers every disposition, including independent cycles.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(144815, hashtext('title-cycle-disposition'))`)
     const committedAt = new Date().toISOString()
     const plan = await prepare(tx, request, committedAt)

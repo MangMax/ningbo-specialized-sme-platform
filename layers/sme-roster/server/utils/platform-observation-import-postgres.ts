@@ -115,7 +115,6 @@ async function inspectObservation(tx: Tx, relationId: number, options: { expecte
       verifyCell('raw_fields', raw.storageClass, raw.bytes)
       const commandScheme = row.scheme === 'target-command-v1'
       if (commandScheme) {
-        // The command archive keeps the exact input. The legacy cell snapshot models materialized text.
         const materialized = materializedText(sourceText.bytes?.toString('utf8'))
         verifyCell('source_text', materialized === null ? 'null' : 'text', materialized === null ? null : Buffer.from(materialized))
       } else {
@@ -232,7 +231,6 @@ export async function writePostgresArchivedObservation(tx: Tx, relationId: numbe
     const { row, indexed, plan, fingerprint, bytes, versionProjectionMissing, legacyStatusBlob } = await inspectObservation(tx, relationId,
       mode.kind === 'historical' ? { expected: mode.expected } : { allowMissingVersionProjection: true })
     if (!indexed && !sync) return null
-    // The SQLite bootstrap's ordinary writer only admits a text or null legacy status.
     if (legacyStatusBlob) throw new PlatformProjectionError('projection_source_drift', 'Legacy text class conflict')
 
     const now = new Date().toISOString()

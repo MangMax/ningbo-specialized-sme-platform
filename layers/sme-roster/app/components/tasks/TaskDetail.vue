@@ -40,8 +40,6 @@ const { data, sourceKey, loading, failed, refresh: reload } = useTaskSnapshot(
   signal => $fetch<TaskSummary>(`/api/task-center/${encodeURIComponent(props.id)}`, { headers, signal }),
   taskArtifactExpiry,
 )
-/** Event handlers and slot consumers get a plain void wrapper so Vue's handler
- *  typing stays simple. */
 function refresh() { void reload() }
 
 const pending = ref(false)

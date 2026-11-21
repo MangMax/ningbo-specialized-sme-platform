@@ -1,4 +1,3 @@
-/** Validate a page request in the single-machine app; this does not identify a user. */
 export function browserPageAllowed(input: {
   method: string
   serverOrigin: string

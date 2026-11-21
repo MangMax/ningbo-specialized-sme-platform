@@ -324,7 +324,6 @@ export function readPostgresCurrentWorkbookBatch(tx: PostgresQualificationTransa
   return readPostgresDetailedAssessments(tx, ids, title, asOf, 'workbook', readPlatform)
 }
 
-/** Read all input families in bounded sets on the caller's fixed snapshot. */
 export async function readPostgresEffectiveQualificationsBatch(tx: PostgresQualificationTransaction, enterpriseIds: readonly number[], asOf: number) {
   const completed = new Map<number, EffectiveQualification[]>()
   const readPlatform = createPostgresPlatformQualificationReader(tx)
@@ -339,7 +338,6 @@ export async function readPostgresCurrentQualification(tx: PostgresQualification
   return (await readQualificationCandidates(tx, [enterpriseId], asOf))[0]?.[1] ?? null
 }
 
-/** Read effective titles in the same transaction and asOf as the surrounding export. */
 export async function readPostgresEffectiveQualifications(tx: PostgresQualificationTransaction, enterpriseId: number, asOf: number): Promise<EffectiveQualification[] | null> {
   const read = await readPostgresCurrentQualification(tx, enterpriseId, asOf)
   return read === null ? null : projectEffectiveQualifications(read.titles)
@@ -357,8 +355,6 @@ export async function readPostgresDifferenceQualifications(tx: PostgresQualifica
 
 export async function readPostgresRosterDetailQualification(tx: PostgresQualificationTransaction,
   requestedId: number, asOf: number, copies: (enterpriseId:number)=>Promise<OfficialPublishedScope[]>) {
-  // The enterprise detail snapshot uses archived page scope and original USCC
-  // for unassigned observations, matching the SQLite detail response.
   const loaded = await readQualificationInputs(tx, [requestedId], asOf, { mode: 'roster-detail', title: 'specialized_sme' })
   const inputs = loaded[0]?.[1]
   if (!inputs) return null

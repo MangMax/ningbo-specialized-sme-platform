@@ -191,7 +191,6 @@ async function planRawCaptureHash(tx: Tx, request: RosterImportRequest, announce
     facts: facts.planHash, originalVersions: [], ownerMap: [] })
 }
 
-/** Preview raw rows before intake review on the caller's repeatable-read snapshot. */
 export async function planPostgresRawAnnouncementPreflight(tx: Tx, request: RosterImportRequest, options: Options = {}): Promise<RosterImportPreflight> {
   const announcement = request.payload.announcement
   const conflicts = [
@@ -253,7 +252,6 @@ export async function planPostgresRawAnnouncementPreflight(tx: Tx, request: Rost
     const reusedInBatch = planned.has(coordinate)
     const create = name.length > 0 && owner === null && !ambiguous && !creates.has(key)
     const earlier = earlierByName.get(nameNorm) ?? []
-    // Preserve the raw preview's first-create accounting even when that row has an item error.
     if (create) {
       creates.add(key)
       planned.add(coordinate)

@@ -2,7 +2,6 @@ import { appManifests } from '../../../../lib/installed-manifests'
 import { installAppModules } from '../../../../lib/app-modules'
 import { assertApplicationSchema } from '../../../../db/schema-phase'
 import { appLog, initializeWorkerLogging, closeApplicationLogging, type LogContext, type LogInput } from '../../../core/lib/logging/index'
-/** Enterprise read executor. This entry has no Nitro runtime dependency. */
 import { getHeapStatistics } from 'node:v8'
 import { realpathSync, statSync } from 'node:fs'
 import Database from 'better-sqlite3'

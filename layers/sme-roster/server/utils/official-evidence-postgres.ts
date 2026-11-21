@@ -154,7 +154,6 @@ export async function readPostgresPublicOfficialEvidence(db: NodePgDatabase, kin
   return officialProjectionResponse(result, availability, maxBytes, await importPostgresReceiptRedactor(db))
 }
 
-/** The publication reader requests at most 40 events per wave. */
 export async function readPostgresOfficialEvidencePages(db: Db, requests: readonly OfficialEvidencePageRequest[]): Promise<OfficialEvidencePageResult[]> {
   const { rows } = await db.execute<{
     eventId: number; scopeSize: number; fieldLimit: boolean; extra: boolean; rows: OfficialEvidenceRow[] | null

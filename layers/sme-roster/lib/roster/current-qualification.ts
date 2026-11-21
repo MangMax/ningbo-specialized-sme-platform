@@ -1126,8 +1126,6 @@ function evaluateCandidate(
   return { row, group, effectiveStatus, applicablePublication: formal.some(event => qualificationEventAppliesAt(event, year, day)) }
 }
 
-/** Qualification portion of the current assessment. Query coverage, name redaction
- * and correspondence revalidation belong to the full enterprise detail reader. */
 export type CurrentQualificationTitle = Pick<CurrentQualificationAssessment,
   'titleCode' | 'group' | 'cycles' | 'officialQualification' | 'subject' | 'region' | 'evidence' | 'sourceVersions' | 'shadow'>
   & { effectiveQualification: NonNullable<CurrentQualificationAssessment['effectiveQualification']>;
@@ -1137,7 +1135,6 @@ export type CurrentQualificationInput = Omit<CandidateSource,
   'readLegacyHeads' | 'readLegacyAssessment' | 'readLegacyReceipt' | 'readLegacyObservation' | 'readWitnesses' | 'readCoverage' | 'readPublishedNames' | 'readPlatformEffects'>
   & { platformReferences: readonly CurrentPlatformReference[] }
 
-/** Evaluate already-loaded inputs using the default qualification rules. */
 export type LoadedCurrentQualificationInput = CurrentQualificationInput & Pick<CandidateSource,
   'readWitnesses' | 'readCoverage' | 'readPublishedNames' | 'readPlatformEffects'>
 

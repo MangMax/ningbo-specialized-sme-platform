@@ -23,8 +23,6 @@ import { AS_OF_408, currentQualificationFixture, qualificationMatrix, qualificat
 const asOf = Date.parse(AS_OF_408)
 const connectionString = process.env.TEST_QUALIFICATION_POSTGRES_URL
 
-// Use an isolated fixture database. Temporary tables keep this test independent
-// of application state and are removed when the client disconnects.
 it.runIf(!!connectionString)('preserves three-title decisions and the public effective qualification projection', async () => {
   const sqlite = currentQualificationFixture()
   const client = new pg.Client({ connectionString })
@@ -156,7 +154,6 @@ it.runIf(!!connectionString)('preserves three-title decisions and the public eff
         group: 'eligible', sourceVersions: [{ sha256: sourceFile.sha256 }],
         evidence: [{ formalValidity: { interval: { validThrough: '2026-06-03' } }, validityInvalid: false }],
       })
-      // 16:00 UTC is midnight in Shanghai, where the confirmed disposition begins.
       expect(await readPostgresEffectiveQualifications(tx, disposed.enterprise.id, asOf + 16 * 3600000)).toEqual([])
       const sampled = [giant.enterprise.id, disposed.enterprise.id, expired.enterprise.id, unclear.enterprise.id,
         mergedFrom.id, recovered.enterprise.id, platformOnly.id, empty.id]

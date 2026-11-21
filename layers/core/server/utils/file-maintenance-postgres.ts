@@ -21,7 +21,6 @@ export function checkPostgresFileRevision(actual: number, expected: number | und
   if (expected !== undefined && actual !== expected) throw new FileMaintenanceError(409, '文件维护修订已变化,请重新读取')
 }
 
-/** Serialize client keys across the maintenance and physical journals. File locks are acquired first. */
 export async function lockPostgresFileRequestKey(db: PostgresFileDb, key: string | undefined) {
   if (key === undefined) return
   if (key.includes('\0')) throw new FileMaintenanceError(400, '幂等键不能包含 NUL')
@@ -49,7 +48,6 @@ export async function postgresPhysicalRequestKeyExists(db: PostgresFileDb, key: 
 }
 
 export function rejectNewPhysicalInternalKey(key: string | undefined) {
-  // These keys are generated from durable intent IDs and written by the physical completer.
   if (key && /^physical:[0-9a-f-]{36}:(remove|restore)$/.test(key)) {
     throw new FileMaintenanceError(409, '幂等键保留给物理命令')
   }
@@ -61,7 +59,6 @@ export function physicalMaintenanceKey(intentId: string, action: 'remove' | 'res
 
 interface VerifiedFileState { file: FileRow; revision: number }
 
-/** Caller owns the stored_file row lock. The physical completer joins its existing transaction. */
 export async function applyPostgresFileMaintenance(
   db: PostgresFileDb, current: FileRow, revision: number, action: FileMaintenanceAction,
   patch: Record<string, unknown>, options: FileMaintenanceOptions, hash: string,

@@ -28,7 +28,6 @@ export async function supplementPostgresLeadVersion(db: NodePgDatabase, id: numb
       const pending = input.decisions.filter(item => byId.get(item.rowId)!.enterpriseId === null)
       const enterpriseIds = new Set(rows.flatMap(row => row.enterpriseId === null ? [] : [Number(row.enterpriseId)]))
       for (const item of pending) if (item.action === 'attach') enterpriseIds.add(item.enterpriseId)
-      // Different versions may review the same subjects in opposite order.
       await lockPostgresReviewedEnterpriseBatch(tx, [...enterpriseIds], pending.flatMap(item => item.fields ? [item.fields] : []))
       const resolved = []
       for (const item of input.decisions) {

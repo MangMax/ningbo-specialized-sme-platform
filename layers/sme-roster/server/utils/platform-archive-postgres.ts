@@ -174,8 +174,6 @@ async function captureGate(tx: Reader, catalog: Catalog, recordId?: number) {
   }
 
   const process = catalog.interface === 'business_list'
-  // Native materialization installs the source tables atomically. Per-row
-  // capture is still checked over the complete source before any filter or page.
   const capture = process ? sql`
     p.exact_stored_state IS DISTINCT FROM 'captured' OR p.sql_fact_title_state IS DISTINCT FROM 'captured'
     OR p.exact_stored_rule IS DISTINCT FROM 'process-stored-cells-v1'
@@ -194,8 +192,6 @@ async function captureGate(tx: Reader, catalog: Catalog, recordId?: number) {
   }
 }
 
-// Filter matching uses the stored, untrimmed collection scope plus its index.
-// Display scopes trim the comma-delimited column, then union the index values.
 function scopeMatch(rdjb: string) {
   return sql`(strpos(',' || c.rdjb || ',', ${',' + rdjb + ','}) > 0
     OR EXISTS (SELECT 1 FROM business.platform_query_title_scope s WHERE s.collection_id = c.id AND s.rdjb = ${rdjb}))`
@@ -301,9 +297,6 @@ interface MatchedRow extends RecordSummary {
 }
 
 function recordFilter(catalog: Catalog, filter: ArchiveFilter) {
-  // All typed filters apply to the matched version. A scope must have been
-  // observed for that version. Enterprise ownership is a record-level predicate;
-  // enterprise ID and keyword must match the same current assignment.
   const scope = filter.rdjb
     ? sql`EXISTS (SELECT 1 ${observationsFrom} WHERE o.version_id = v.id AND ${scopeMatch(filter.rdjb)})`
     : sql`true`
@@ -476,8 +469,6 @@ export function readPostgresPlatformArchiveDetail(db: NodePgDatabase, source: So
   const recognized = catalog.interface === 'recognized_list'
 
   return db.transaction(async tx => {
-    // Declaration capture is record-scoped and follows identity lookup. The
-    // other two surfaces gate the entire source even for a missing detail ID.
     if (scoped) await captureGate(tx, catalog)
     const [record] = await rows(tx, sql`
       SELECT id::double precision AS id, platform_key AS "platformKey",

@@ -38,8 +38,6 @@ it.runIf(Boolean(pgBin))('preserves archived title scope, original identity and 
       ]),
       rdjb: '1,2,3', titleCode: null,
     })
-    // A historical business collection can have normalized page positions
-    // even when its sealed evidence does not carry the raw pages.
     sqlite.insert(platformCollectionPage).values([
       { collectionId: collection.collectionId, ordinal: 0, source: 'businessList', rdjb: '3', pageNo: 1,
         fetchedCount: 2, status: 'success', sequenceStart: 1, sequenceEnd: 2, positionState: 'verified' },

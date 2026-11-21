@@ -81,8 +81,6 @@ async function completePhysicalCommand(
     const maintenance = { ...options, idempotencyKey: physicalMaintenanceKey(intent.id, maintenanceAction) }
     await lockPostgresFileRequestKey(tx, maintenance.idempotencyKey)
     await checkKeyAvailable(tx, maintenance.idempotencyKey)
-    // A committed intent identifies the original bytes across process or SQL failure.
-    // The row lock also excludes lead registration until the final state is committed.
     movePhysicalFile(root, intent, action)
     const after = await applyPostgresFileMaintenance(tx, current, revision, maintenanceAction, {}, maintenance,
       fileMaintenanceRequestHash(id, maintenanceAction, {}, maintenance))

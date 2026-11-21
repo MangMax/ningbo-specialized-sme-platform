@@ -14,7 +14,6 @@ let workerExecution = !isMainThread
 const numberEnv = (name: string, fallback: number) => {
   const value = Number(process.env[name]); return Number.isInteger(value) && value > 0 ? value : fallback
 }
-/** Server and each worker own a bounded drain to the shared runtime log store. */
 export function applicationLogs(): LogService {
   const postgresUrl = process.env.NUXT_POSTGRES_LOG_URL
     ?? (postgresOnlyRuntime() ? process.env.NUXT_POSTGRES_DIRECTORY_URL : undefined)

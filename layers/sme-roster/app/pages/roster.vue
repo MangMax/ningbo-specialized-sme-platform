@@ -48,27 +48,6 @@ import { Input } from '#core/app/components/ui/input'
 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
 
-/**
- * **企业列表**(RL-20)—— 一行一家企业的唯一台账表。
- *
- * ── 这一票删掉了什么(用户原话逐条对得上)────────────────────────────────
- *
- * 1. 「**只要一个表格**」 —— 原先这里按 `view` 切三种分组(按企业 / 按企业×称号 /
- *    差异与原因),三个 tab、三张表、三套筛选可见性。现在只剩**企业粒度**那一张,
- *    `view` 参数整组退役。差异不再单独成表:它的**状态**落到表里的「差异状态」列与
- *    原因摘要,**原因 → 措施**落到抽屉里。
- * 2. 「称号历史、原因用**侧边抽屉**展示,**原因也要可视化**」 —— 见 `EnterpriseDrawer`。
- * 3. 「**删掉解释小字**」 —— 上一版表格上方那一整段「共 X 家企业 · 合计 Y 个企业×称号
- *    (多称号企业在企业数里只算一家…)」、每视图的计数说明、空态里的「可放宽…再试」全部删掉。
- *    留下的只有页头的总数、筛选控件、表和页脚——**页面上没有一句解释性的话**。
- * 4. 「把原生 `<select>` 全部换成项目已有的 `Select` 组件」 —— 原先这一页同时存在两套:
- *    手写的原生 `<select>`(属地 / 总表状态 / 差异方向)与正规的 `Select`(每页条数)。
- *    现在单值筛选用 `Select`、多值筛选用 `MultiSelectFilter`,**没有一处原生 `<select>`**。
- * 5. 页面名与侧栏入口共用 `ENTERPRISE_LIST_TITLE`。
- *
- * ── 状态全在地址栏(深链与「返回不丢上下文」)────────────────────────────
- * 筛选、排序和分页用 replace。打开抽屉时增加一个历史条目，浏览器返回就能关抽屉。
- */
 
 interface Counts {
   total: number
@@ -320,13 +299,6 @@ const sortOptions = computed(() =>
   })),
 )
 
-/**
- * 生效中的条件摊平成一行,每项可单独撤掉。
- *
- * `source` / `eventType` / `rosterState` **没有常驻控件**，可以由台账 URL 带入，
- * 但一直在 state 里生效 —— 所以必须出现在这一行里。不出现在这里,它们就是**静默筛选**:
- * 地址栏里带着、页面上看不见、也清不掉。
- */
 interface ActiveFilter {
   key: string
   label: string
@@ -530,7 +502,6 @@ useHead({ title: ENTERPRISE_LIST_TITLE })
           <div class="flex flex-wrap items-center gap-2"><ReuseAdvancedFilters /></div>
         </DisclosurePanel>
 
-        <!-- 生效中的条件:一个都不许藏着(见 `activeFilters` 的注释)。 -->
         <TransitionGroup
           v-if="activeFilters.length"
           tag="div"

@@ -120,7 +120,6 @@ async function mergeConflict(tx: Tx, from: number, into: number, ref: string) {
     `差异唯一键已存在但内容不同：${difference.titleCode}/${difference.direction}/${difference.recordedAt}`, 'merges') : null
 }
 
-/** Plan against rows visible on the caller's connection, including its staged import writes. */
 export async function planPostgresRosterMerge(tx: Tx, merge: RosterImportMerge, index: number): Promise<{
   item: RosterImportItemResult; plan: PostgresRosterMergePlan | null
 }> {
@@ -202,7 +201,6 @@ async function captureMergeIdentity(tx: Tx, from: number, into: number, before: 
     WHERE r.enterprise_id=${into} ON CONFLICT DO NOTHING`)
 }
 
-/** Apply on the caller's transaction. The caller owns batch rollback and the receipt. */
 export async function applyPostgresRosterMerge(tx: Tx, plan: PostgresRosterMergePlan): Promise<RosterImportItemResult> {
   const { merge, sourceEnterpriseId, intoEnterpriseId } = plan
   const ref = `merge:${sourceEnterpriseId}->${intoEnterpriseId}`

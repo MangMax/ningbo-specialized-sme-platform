@@ -23,13 +23,11 @@ INSERT INTO business.job (id, kind, params, state, progress, result, error, crea
 SELECT id, kind, params, state, progress, result, error, created_at, started_at, finished_at
 FROM :"staging".job;
 
--- Existing jobs have no PostgreSQL claim. New submissions receive a token.
 ALTER TABLE business.job ALTER COLUMN claim_token SET DEFAULT gen_random_uuid();
 
 CREATE INDEX job_kind_idx ON business.job (kind);
 CREATE INDEX job_state_idx ON business.job (state);
 CREATE INDEX job_created_at_idx ON business.job (created_at DESC, id DESC);
--- The export idempotency key is a string, and absent or null keys remain distinct.
 -- Keep the complete historical JSON bytes in params, converting only in the index.
 CREATE UNIQUE INDEX job_export_request_uq
   ON business.job (kind, (nullif(params::jsonb -> 'clientRequestId', 'null'::jsonb)))

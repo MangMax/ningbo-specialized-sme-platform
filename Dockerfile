@@ -25,7 +25,6 @@ RUN pnpm install --frozen-lockfile --store-dir /tmp/pnpm-store \
 FROM ${NODE_IMAGE} AS runtime-tools
 
 # Use the version-matched PostgreSQL client binaries and libpq from the official image.
-# Bookworm's packages supply the remaining runtime libraries.
 COPY --from=postgres-tools /usr/lib/postgresql/19/bin/pg_dump /usr/lib/postgresql/19/bin/pg_restore /usr/local/bin/
 COPY --from=postgres-tools /usr/lib/*/libpq.so.5.19 /usr/local/lib/
 RUN apt-get update \
@@ -51,7 +50,6 @@ LABEL org.opencontainers.image.source="https://github.com/MangMax/ningbo-special
 
 COPY --from=build --chown=node:node /app/.output/ ./.output/
 
-# Independent diagnostics volume for explicit legacy SQLite startup.
 RUN mkdir -p /logs && chown node:node /logs
 ENV NUXT_LOG_DIR=/logs
 

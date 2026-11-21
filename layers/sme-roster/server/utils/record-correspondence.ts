@@ -81,7 +81,6 @@ function relationSource(sources: ReadSources, id: number) {
   if (!positive(id)) fail('invalid_endpoint_type', 'relationId must be a positive integer')
   const row = sources.relations.get(id)
   if (!row || !['success', 'partial'].includes(row.query.status)) fail('invalid_endpoint_type', 'Persisted positive interface row not found')
-  // Validation uses the projected facts. Fingerprints use the original persisted cells.
   return { ...row, relation: row.facts }
 }
 function exportSource(sources: ReadSources, id: number) {

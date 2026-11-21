@@ -21,7 +21,6 @@ function subscribe(listener: (event: TaskSignal) => void) {
         })
       }
     } catch {
-      // REST also serves installations without task notifications.
     }
   }
   return () => {
@@ -35,7 +34,6 @@ function subscribe(listener: (event: TaskSignal) => void) {
   }
 }
 
-/** Reads task snapshots from REST. The stream only invalidates them. */
 export function useTaskSnapshot<T>(
   key: Readonly<Ref<string>>,
   load: (signal: AbortSignal) => Promise<T>,
@@ -84,7 +82,6 @@ export function useTaskSnapshot<T>(
     if (!loading.value && !failed.value) schedule()
   }
 
-  /** Explicit refresh and key changes replace the current request. */
   function refresh(): Promise<void> {
     stop()
     if (!active || !key.value) {
@@ -110,7 +107,6 @@ export function useTaskSnapshot<T>(
       failed.value = false
       failures = 0
       const deadline = nextExpiry?.(result) ?? Infinity
-      // A deadline crossed during the read still needs a new snapshot.
       if (deadline > started) expiry = deadline
     } catch {
       if (current !== generation) return

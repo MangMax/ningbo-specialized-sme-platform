@@ -9,7 +9,6 @@ interface TaskSummaryBase {
   capabilities: { cancel: boolean; retry: boolean; retryItemIds: string[]; reason: string }
   links: { label: string; to: string }[]
 }
-// Modules declare their own display fields here. The base owns task identity and permissions.
 export interface TaskSummaryExtensions {}
 export type TaskSummary = TaskSummaryBase & TaskSummaryExtensions
 

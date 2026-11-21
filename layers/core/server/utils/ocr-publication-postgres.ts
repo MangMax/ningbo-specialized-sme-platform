@@ -79,7 +79,6 @@ async function writePageRecord(db: NodePgDatabase, source: RecoverySource, key: 
   return writeMetadata(db, source, { ...source.metadata, version: 1, pages: { ...source.metadata?.pages, [key]: record } })
 }
 
-/** OCR requests run concurrently, while the job uses a single PostgreSQL session. */
 export function postgresOcrStorage(ctx: PostgresJobContext) {
   let pending = Promise.resolve()
   function serial<T>(operation: () => Promise<T>): Promise<T> {

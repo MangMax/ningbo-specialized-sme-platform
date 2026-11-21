@@ -1,4 +1,3 @@
--- Platform collections, versioned records, observations and source-owned projections.
 -- Tagged evidence retains SQLite storage class: UTF-8 for text, original bytes for blobs,
 -- eight-byte big-endian signed integers or IEEE-754 doubles for numeric cells.
 

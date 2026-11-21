@@ -154,7 +154,6 @@ function encodeResult(result: unknown) {
   return encoded
 }
 
-/** Keep the prior checkpoint when reopening a job. */
 export function reopenPostgresJob(
   db: Executor, id: string, kind: string, expected: PostgresJobExpectation<TerminalState>, params: Record<string, unknown>,
   inputSnapshot?: unknown,
@@ -183,7 +182,6 @@ const interrupted = '服务重启,任务未完成(进行中的任务不跨进程
 const cancelledBeforeStart = '任务在开始前被取消,未执行'
 const cancelledWhileRunning = '已按取消请求停止(尽力而为:取消在任务的下一个检查点生效),已完成的部分见 result'
 
-/** Requires exclusive scheduler ownership. Queued PostgreSQL submissions are durable. */
 export async function recoverPostgresJobs(db: Executor) {
   const { rows } = await db.execute<{ id: string; kind: string }>(sql`UPDATE business.job
     SET state = 'failed', error = ${interrupted}, finished_at = ${new Date().toISOString()}
@@ -268,7 +266,6 @@ export async function lockPostgresJobAdmission(db: Executor, kind: string) {
 }
 
 export function findPostgresJobRequest(db: Executor, kind: string, key: string) {
-  // Older receipts keep their original params bytes and did not have request_key.
   return readJob(db, sql`SELECT ${jobColumns} FROM business.job WHERE kind = ${kind} AND
     (request_key = ${key} OR (request_key IS NULL AND
       (CASE WHEN pg_input_is_valid(params, 'jsonb') THEN params::jsonb ->> 'clientRequestId'

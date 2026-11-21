@@ -59,7 +59,6 @@ export async function readPostgresFileIdentities(db: PostgresFileDb, paths: stri
   return paths.map(path => byPath.get(path) ?? null)
 }
 
-/** Lead registration locks this same stored_file row before inspecting physical intents. */
 export async function lockPostgresFile(db: PostgresFileDb, id: number) {
   const { rows } = await db.execute(sql`SELECT id FROM stored_file WHERE id = ${id} FOR UPDATE`)
   if (!rows.length) throw new FileMaintenanceError(404, '文件不存在')

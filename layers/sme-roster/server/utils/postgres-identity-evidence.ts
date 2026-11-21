@@ -33,7 +33,6 @@ export async function applyPostgresReviewedRosterIdentity(tx: Transaction, subje
   if (subject.fields?.name === undefined && subject.fields?.uscc === undefined) {
     return attachPostgresReviewedEnterprise(tx, subject)
   }
-  // Capture the previous material after any earlier writer has released the enterprise row.
   await tx.execute(sql`SELECT id FROM enterprise WHERE id = ${subject.enterpriseId} FOR UPDATE`)
   const before = await readPostgresIdentityMaterial(tx, subject.enterpriseId)
   const applied = await attachPostgresReviewedEnterprise(tx, subject)

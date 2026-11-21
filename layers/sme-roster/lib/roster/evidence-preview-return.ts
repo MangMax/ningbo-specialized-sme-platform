@@ -142,7 +142,6 @@ function rememberHistoryReturnPath(back: string): void {
   }
 }
 
-/** Remember the workspace and ledger scroll offsets when a same-tab evidence link is activated. */
 export function rememberEvidencePreviewReturn(back: unknown, source?: EventTarget | null): void {
   if (typeof window === 'undefined' || !isSafeBackPath(back)) return
   const scrollY = workspaceScrollTop()

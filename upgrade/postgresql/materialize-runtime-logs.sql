@@ -1,4 +1,3 @@
--- Run against the isolated target after staging and verifying events.db.
 \set ON_ERROR_STOP on
 BEGIN ISOLATION LEVEL REPEATABLE READ;
 CREATE SCHEMA runtime_logs;
@@ -58,7 +57,6 @@ SELECT seq, id, timestamp, level, source, :module_projection, operation, outcome
   "taskId", "fileId", "batchId", "resourceId", summary, detail
 FROM :"staging".log_events;
 
--- The runtime capacity accounts for the two persisted JSON representations.
 UPDATE log_policy SET logical_bytes = (
   SELECT coalesce(sum(octet_length(summary)::bigint + octet_length(detail)), 0)
   FROM log_events

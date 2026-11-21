@@ -25,7 +25,6 @@ export const TITLE_SHORT: Record<string, string> = {
   innovative_sme: '创新型',
 }
 
-/** 称号代号 → 等级(1 最高)。用于徽章梯度和称号排序。 */
 export const TITLE_RANK: Record<string, number> = Object.fromEntries(
   TITLE_SEED.map((t) => [t.code, t.rank]),
 )

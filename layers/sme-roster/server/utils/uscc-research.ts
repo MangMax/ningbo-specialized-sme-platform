@@ -182,19 +182,6 @@ export function projectUsccTargets(snap: UsccTargetSnapshot): UsccChecklistRow[]
   return rows.sort((a, b) => titleRank(a.titles[0] ?? '') - titleRank(b.titles[0] ?? '') || a.enterpriseId - b.enterpriseId)
 }
 
-/**
- * **待查清单**：仍缺统一社会信用代码的企业。
- *
- * 判据是**「缺统代」**（`enterprise.uscc_norm IS NULL`）**且仍在当前总表里**（`rosterState === 'current'`）。「接口曾用名匹配后仍未解决」
- * 在数据上就落在这里：实测库里 133 家无统代企业**全部**停在 `not_queried`（平台两接口按
- * `tyshxydm` 取数，无统代直查不了），所以两者是同一集合 —— 但清单**按缺统代筛**，
- * 因为那才是「还没解决」的定义，而「未查询」只是它当前的表现。补齐/归并之后该企业自然
- * 离开清单（票面第 6 条），不需要额外的排除规则。
- *
- * 每行带上「为什么它还没解决」：① `traces`（该企业的差异解释行，状态机取值原样）；
- * ② `queries`（以它为查询键的平台查询 —— 无统代时通常查不了，有 `name:` 查询时照实列出）；
- * ③ `evidence`（公布来源，带页码，供人工回到原文核对）。
- */
 export function listUsccChecklist(db: Db, filter: UsccChecklistFilter = {}): UsccChecklistResult {
   return pageUsccChecklist(collectUsccTargets(db, filter), filter)
 }
@@ -522,7 +509,6 @@ export function prepareUsccResearch(
       ? claimedTargetIds
       : null
   const targets = allTargets.filter((row) => (restrict ? restrict.has(row.enterpriseId) : true))
-  // Additional aliases in this plan only use these already loaded candidate or claim codes.
   const codes = [
     ...targets.flatMap(target => findLibraryCandidates(target, dictionary).map(candidate => candidate.uscc)),
     ...(options.platformClaims ?? []).map(claim => claim.uscc),
@@ -531,7 +517,6 @@ export function prepareUsccResearch(
   return { allTargets, targets, restrict, dictionary, codes }
 }
 
-/** Ask the caller to validate generated archive proposals on its own database snapshot. */
 export function* projectUsccResearch(
   { allTargets, targets, restrict, dictionary }: ReturnType<typeof prepareUsccResearch>,
   researchEvidence: { index: PlatformEvidenceIndex; exportName(uscc: string): string | null },

@@ -46,7 +46,6 @@ export function getComparison(
   db: BetterSQLite3Database<typeof schema>,
   opts: ComparisonQuery = {},
 ): ComparisonResult {
-  // Matched source rows stay inside the database. Keep the legacy jxj / everything-else
   // partition and binary equality of stored USCC (including an empty string).
   // The legacy record table scan kept its first row; MIN(id) retains that
   // representative district for historical non-jxj sources sharing a side.

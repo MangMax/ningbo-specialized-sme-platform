@@ -21,7 +21,6 @@ export async function readPostgresCredentialState(db: NodePgDatabase) {
 export function updatePostgresCredentialState(db: NodePgDatabase, values: Partial<Record<CredentialKey, string | null>>) {
   return db.transaction(async tx => {
     const updatedAt = new Date().toISOString()
-    // Use the same key order for independent and mixed updates.
     for (const key of registeredCredentials.keys()) {
       const value = values[key]
       if (value === undefined) continue

@@ -8,7 +8,6 @@ type AppNavLink = {
 
 export type AppNavItem = {
   readonly icon?: LucideIcon
-  /** A core entry used directly in business workflows. */
   readonly placement?: 'business'
 } & (
   | (AppNavLink & { readonly items?: never })
@@ -19,7 +18,6 @@ export type AppJobKind = {
   readonly kind: string
   readonly label: string
   readonly group: { readonly id: string; readonly label: string }
-  /** Percentage becomes meaningful when the running job reports this phase. */
   readonly progressPhase?: string
   readonly schedule?: { readonly cron: string; readonly frequency: string }
   /** Export name in the owning module's server JobSpec adapter. */

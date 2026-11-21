@@ -168,7 +168,6 @@ export const batchSpec: JobSpec = {
       const cookie = (await resolvePostgresCredential(ctx.db, 'sme-roster.miitCookie')).value
       validateConditions(params, cookie)
       const row = (await getPostgresJob(ctx.db, ctx.jobId))!.row
-      // A changed credential requires an explicit retry. No value is persisted in task inputs.
       return runBatch(ctx, params, inputSnapshot === fingerprint(cookie) ? cookie : '', row.result as PlatformBatchResult | null)
     },
   },

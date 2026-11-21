@@ -20,7 +20,6 @@ import type { PostgresJobSpec } from './job-runner-postgres'
 
 type Db = BetterSQLite3Database<typeof schema>
 
-// SQLite executes OCR jobs with bounded concurrency; other kinds run exclusively.
 // ---------------------------------------------------------------------------
 // kind → handler 的注册表
 // ---------------------------------------------------------------------------

@@ -63,7 +63,6 @@ async function legacyDisplay(db: Reader, owner: PostgresDisplayOwner) {
     : { start: 0, size: Number(byteLength) }
   if (size === null) return { display: { ...metadata, kind: 'legacy_pagination' as const, queryId: owner.query.id,
     collection: null as unknown as LegacyProvenanceDisplay['collection'] }, bytes: 0 }
-  // Remove the legacy rows inside PostgreSQL before returning the bounded metadata.
   const { rows: [row] } = await db.execute<{ collection: LegacyProvenanceDisplay['collection'] | null; bytes: string }>(sql`
     WITH metadata AS MATERIALIZED (
       SELECT '{' || coalesce(string_agg(to_json(item.key)::text || ':' || item.value::text, ',' ORDER BY item.position),'') || '}' AS value

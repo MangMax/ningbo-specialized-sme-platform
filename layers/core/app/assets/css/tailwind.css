@@ -3,19 +3,6 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* ===========================================================================
- * 专精特新台账看板 · 视觉 token
- *
- * 色板取自仓库自带的「政企汇报风格包」(政务藏青蓝 + 金色点睛 + 点睛红),
- * 不另造一套色:看板与线下汇报材料同源。
- *
- *   藏青 #14417E  —— 主色。导航、主操作、市级来源、称号高等级。
- *   金色 #C29A3B  —— 只做 6px 方形标记,表示「国家级」。白底对比度仅 2.6:1,
- *                    故一律不写金色文字,只做图形标记(风格包同款用法)。
- *   点睛红 #B01F24 —— 异常告警。只出现在真有问题的地方。
- *
- * 表面层级靠色相偏移区分,不只靠明暗:页面底色带一点蓝,卡片纯白。
- * ========================================================================= */
 
 :root {
   --radius: 0.375rem;
@@ -178,7 +165,6 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  /* 称号梯度 / 等级标记 */
   --color-tier-1-surface: var(--tier-1-surface);
   --color-tier-1-on: var(--tier-1-on);
   --color-tier-1-line: var(--tier-1-line);
@@ -243,9 +229,6 @@
     background-color: color-mix(in oklab, var(--primary) 22%, transparent);
   }
 
-  /* 手写 <button> 的兜底焦点环。
-   * components/ui 的按钮自带 data-slot 与焦点样式,:not([data-slot]) 防止双环。
-   * 只画静态 outline,不含 transition/animation,prefers-reduced-motion 下无差异。 */
   button:not([data-slot]):focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 4px;
@@ -413,12 +396,10 @@ html.theme-transition::view-transition-new(root) {
   max-height: max(320px, calc(100dvh - var(--table-budget)));
   overflow: auto;
 }
-/* The header follows the same scroll container as the rows. */
 .data-table-scroll > [data-slot='table-container'] {
   overflow: visible;
 }
 
-/* Derive the result height from the workspace, after the controls take their space. */
 .workspace-list,
 .workspace-list-body,
 .paginated-table-card {
@@ -447,9 +428,6 @@ html.theme-transition::view-transition-new(root) {
 [data-floating-drawer] {
   --drawer-gutter: 8px;
   --drawer-width: 448px;
-  /* 阴影随 --foreground 走，
-   * 三档宽度共用这一个变量;暗色下由下方 .dark 覆写为更深的纯黑柔影 ——
-   * 浅色前景混合在 #0A1020 底上会读成光晕而非层次。 */
   --drawer-shadow: 0 8px 24px color-mix(in oklch, var(--foreground) 16%, transparent);
   top: var(--drawer-gutter);
   bottom: var(--drawer-gutter);

@@ -1,15 +1,3 @@
-/**
- * **首次认定清单**(契约 §7.5)—— 一行 = 一个**企业 × 称号**。
- *
- * ── 单位(页面与导出都要说清)────────────────────────────────────────────
- * 行是「企业 × 称号」,不是企业:一家企业在三个称号上首次认定过三次,就是三行。
- * 所以计数**两个都给**:`counts.titlePairs`(企业 × 称号)与 `counts.enterprises`(企业数)。
- * 只报一个,用户就会把前者当成后者(或反过来)。
- *
- * ── 计算只有一处 ────────────────────────────────────────────────────────
- * 与企业视图共用 `computeTitleLifecycle` / 首认判据;取数走独立的轻量读模型。
- * 年份选项只读取生命周期字段，分页后才读取所选事件的全部出处。
- */
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { asc, eq } from 'drizzle-orm'
 import * as schema from '../../../../db/schema'
@@ -83,7 +71,6 @@ export function listRosterRecognitions(
   return db.transaction(() => readRecognitionPage(db, filter, page, pageSize))
 }
 
-/** 台账筛选所需的事件年份和首次正式认定年份。 */
 export function readLedgerYears(db: Db): { eventYears: number[]; firstRecognitionYears: number[] } {
   const eventYears = new Set<number>()
   const firstRecognitionYears = new Set<number>()

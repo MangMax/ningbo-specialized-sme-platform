@@ -106,8 +106,6 @@ export async function refreshPostgresEnterpriseDifferences(db: NodePgDatabase, r
         return { refreshed, unchanged, enterprises: await readScope(tx, scope) }
       }, { isolationLevel: 'repeatable read' })
     } catch (error) {
-      // Concurrent refreshes can touch the same projection rows. Retry the
-      // complete command so fingerprints, cutoffs and receipts share a snapshot.
       const cause = error as { code?: string; cause?: { code?: string } }
       if (!['40001', '40P01'].includes(cause.code ?? cause.cause?.code ?? '') || attempt === 2) throw error
     }

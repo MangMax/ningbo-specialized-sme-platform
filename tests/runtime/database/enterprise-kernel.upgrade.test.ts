@@ -98,7 +98,6 @@ test('enterprise upgrade links existing announcement file references and repairs
       { enterprise_id: 2, source_id: 1, file_id: 11 },
     ])
 
-    // Simulate the earlier cutover, with an existing source ID and a missing link.
     db.exec(`UPDATE enterprise_source SET business_table='source_document', version_key='1:${hash}';
       DELETE FROM enterprise_source_link WHERE enterprise_id=2;`)
     expect(upgradeEnterpriseKernel(db, syntheticEnterpriseDictionaries)).toMatchObject({ migrated: true, linked: 1 })

@@ -157,7 +157,6 @@ BEGIN
   IF NEW.revision <> coalesce(previous_revision, 0) + 1 THEN
     RAISE EXCEPTION 'Assignment revision must append' USING ERRCODE = 'integrity_constraint_violation';
   END IF;
-  -- The (observation_id, revision) primary key arbitrates concurrent appends.
   RETURN NEW;
 END;
 $$;

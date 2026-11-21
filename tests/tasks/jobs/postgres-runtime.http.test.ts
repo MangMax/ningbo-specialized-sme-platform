@@ -257,7 +257,6 @@ it.runIf(!!bin)('recovers a lost running claim while preserving its checkpoint a
   await db.transaction(tx => stagePostgresJob(tx, { id: queued, kind, params: {} }))
   expect(await read(queued)).toMatchObject({ state: 'queued' })
 
-  // This cluster belongs to the test. End the session that owns the active scheduler lock.
   const { rows } = await db.execute<{ terminated: boolean }>(sql`
     SELECT pg_terminate_backend(pid) AS terminated
     FROM pg_locks WHERE locktype = 'advisory' AND granted AND objsubid = 2`)

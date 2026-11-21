@@ -75,14 +75,12 @@ async function lockOfficialImportTargets(tx: Tx, operations: ReturnType<typeof p
   if (events.length) await tx.execute(sql`SELECT id FROM record_event WHERE id=ANY(${ids(events)}) ORDER BY id FOR UPDATE`)
 }
 
-/** Lock the combined announcement and explicit-operation targets in file-then-event order. */
 export async function lockPostgresOfficialImportTargets(tx: Tx, request: RosterImportRequest,
   paths: Iterable<string>, eventIds: Iterable<number>,
 ) {
   await lockOfficialImportTargets(tx, parseOfficialImportOperations(request), paths, eventIds)
 }
 
-/** Plan against the caller's serializable transaction before writing announcement events, repoints or merges. */
 export async function planPostgresOfficialImport(tx: Tx, request: RosterImportRequest, options: OfficialImportOptions = {}) {
   if (!hasOfficialFactInput(request)) return null
   const { captures = [], unknownClaims = [], locatorMoves = [], filesDir, ownerMap = new Map<string, string>(), reviewDecision } = options
@@ -164,7 +162,6 @@ export async function planPostgresOfficialImport(tx: Tx, request: RosterImportRe
 
 type PostgresOfficialImportPlan = NonNullable<Awaited<ReturnType<typeof planPostgresOfficialImport>>>
 
-/** Apply a plan rebuilt in this transaction. The coordinator finalizes shared effects before merges. */
 export async function applyPostgresOfficialImport(tx: Tx, plan: PostgresOfficialImportPlan, batchId: number,
   submittedPlanHash: string | undefined, sharedState?: PostgresOfficialImportState): Promise<RosterImportItemResult> {
   if (submittedPlanHash !== plan.planHash) {

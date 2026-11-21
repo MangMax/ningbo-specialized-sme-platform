@@ -1,7 +1,6 @@
 import type Database from 'better-sqlite3'
 import type pg from 'pg'
 
-// Read-facing slice of the native business schema. No staging ordinals or archive tables.
 const tables = {
   enterprise: 'id:i name name_norm uscc_norm',
   platform_business_record: 'id:i platform_key interface identity_rule_version created_at',

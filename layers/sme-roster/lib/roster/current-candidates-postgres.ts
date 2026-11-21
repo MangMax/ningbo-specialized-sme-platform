@@ -8,7 +8,6 @@ import { qualificationUsccCandidate } from './platform-qualification-postgres'
 type Reader = Pick<NodePgDatabase, 'execute'>
 type Sort = 'id_asc' | 'name_asc' | 'name_desc'
 
-/** Collect the same narrow candidates as SQLite before evaluating any qualification. */
 export async function readPostgresCurrentCandidateIds(db: Reader, title: CurrentTitle, sort: Sort = 'id_asc') {
   const titles = CURRENT_TITLES.slice(0, CURRENT_TITLES.indexOf(title) + 1)
   const titleNames = sql`${sql.param(titles)}::text[]`

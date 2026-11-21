@@ -724,7 +724,6 @@ function ledgerRecordsSnapshot(db: Db, params: RecordFilterQuery): ExportRow[] {
   for (let start = 0; start < projection.scopes.length; start += 40) {
     const scopes = projection.scopes.slice(start, start + 40)
     const batch = readPublicPublishedNames(db, scopes.flat())
-    // If the batch exceeds its budget, each group retains its own display boundary.
     const results = batch.availability === 'available' ? [batch] : scopes.map(scope => readPublicPublishedNames(db, scope))
     for (const result of results) for (const fact of result.facts) publishedByEvidence.set(fact.evidenceId, fact)
   }

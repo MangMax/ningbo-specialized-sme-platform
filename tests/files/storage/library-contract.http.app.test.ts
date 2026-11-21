@@ -132,8 +132,6 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
       for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
         runPg('psql', ['-X', '-w', '-q', '-v', 'staging=staged', '-f', `upgrade/postgresql/materialize-${name}.sql`])
       }
-      // The companion SQLite stays a valid but empty app database. A SQLite
-      // fallback cannot pass the migrated-file or new-write assertions.
       await app.resetBusiness()
     }
     await app.start()
@@ -242,7 +240,6 @@ describe.each(['SQLite', 'PostgreSQL'] as const)('%s file library HTTP contract'
     } finally { writeFileSync(join(root, migratedPath), original) }
     await json('files/41?deleteDisk=1', 409, 'DELETE', controls(1, 'protect-official-evidence'))
     expect(await json('files/41', 200, 'DELETE', controls(1, 'soft-remove-official-evidence'))).toMatchObject({ referenceCount: 1, removed: true })
-    // History remains addressable after soft removal.
     expect(Buffer.from(await (await app.request('/api/files/41')).arrayBuffer())).toEqual(original)
     await json('files/41/restore', 200, 'POST', controls(2, 'restore-official-evidence'))
     expect(await json('files/41/maintenance', 200)).toMatchObject({ rows: [{ id: 23 }, { id: 91 }, { id: 92 }] })

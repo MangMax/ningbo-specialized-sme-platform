@@ -1,4 +1,3 @@
--- Create indexes before validating the foreign keys on the loaded rows.
 CREATE INDEX comparison_scope_proof_audit_proof_idx ON comparison_scope_proof_audit (proof_id,id);
 CREATE INDEX comparison_scope_proof_kind_idx ON comparison_scope_proof (kind);
 CREATE UNIQUE INDEX difference_reason_command_uq ON difference_reason(idempotency_key);

@@ -12,8 +12,6 @@ import { getTargetRecognizedRecord, listTargetRecognizedDirectory, readTargetRec
 
 type Source = PlatformFilterOptionsQuery['source']
 
-// An explicit PostgreSQL connection selects the native reader for the entire
-// action. Connection and query failures propagate to the transport.
 const readers = {
   declarations: {
     parse: declarationFilterSchema,

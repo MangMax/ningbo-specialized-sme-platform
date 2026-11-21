@@ -82,7 +82,6 @@ function addHistoricalDuplicateStatus(relationId: number, status: string) {
  const original = Buffer.from(raw.hex, 'hex').toString()
  raw.hex = Buffer.from(original.replace(/}$/, ',"cszt":' + JSON.stringify(status) + '}')).toString('hex')
  const bytes = Buffer.from(JSON.stringify(snapshot))
- // Model a sealed historical cell with duplicate keys that a new command would normalize.
  sqlite.transaction(() => {
   const trigger = sqlite.prepare("SELECT sql FROM sqlite_schema WHERE name='platform_archive_no_update'").pluck().get() as string
   sqlite.exec('DROP TRIGGER platform_archive_no_update')

@@ -26,7 +26,6 @@ export const badgeVariants = cva(
         outline:
           "text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
 
-        // 语义状态使用卡片底色混合，避免行悬停或选中改变标签对比度。
         success: "border-success/25 bg-[color-mix(in_oklab,var(--success)_10%,var(--card))] text-success",
         warning: "border-warning/25 bg-[color-mix(in_oklab,var(--warning)_10%,var(--card))] text-warning",
         info: "border-info/25 bg-[color-mix(in_oklab,var(--primary)_10%,var(--card))] text-info",

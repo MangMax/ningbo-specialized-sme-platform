@@ -36,7 +36,6 @@ export function validateRuntimeMode() {
   }
 }
 
-/** Existing routes and subprocesses consume these switches independently. */
 export function configurePostgresRuntime() {
   if (!postgresOnlyRuntime()) return
   const writable = process.env.NUXT_DB_READONLY === '1' ? '0' : '1'
