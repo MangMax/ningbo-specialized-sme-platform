@@ -1,7 +1,9 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { TaskSummary } from '../../../lib/task-center'
-import { sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { schema } from '../../../../../db/client'
+import { job } from '../../../../../db/postgresql/job-tables'
+import { storedFile } from '../../../../../db/postgresql/file-tables'
 const j = schema.job
 export const ocrProjection = {
   files: sql<string>`case when ${j.kind} = 'ocr' then (select json_group_array(json_object('id',json_extract(value,'$.fileId'),'path',(select rel_path from stored_file where id = json_extract(value,'$.fileId')))) from (select value from json_each(${j.result}, '$.files') where json_extract(value,'$.ok') = 1 limit 50)) else '[]' end`,
@@ -18,17 +20,17 @@ export function readOcrLinks(row: { kind: string; files: string }): TaskSummary[
 
 
 export async function summarizePostgresOcrJobs(db: NodePgDatabase, ids: string[]) {
-  const { rows } = await db.execute<{ id: string; kind: string; files: string | null }>(sql`
-    SELECT j.id,j.kind,(
-      SELECT json_agg(json_build_object('id',i.value->'fileId','path',f.rel_path))::text
-      FROM (
-        SELECT value FROM json_array_elements(business.job_params_for_query(j.result)->'files')
-        WHERE (value->'ok')::text IN ('true','1') LIMIT 50
-      ) i
-      LEFT JOIN business.stored_file f ON f.id=CASE WHEN (i.value->'fileId')::text ~ '^[0-9]{1,16}$'
-        THEN (i.value->>'fileId')::bigint END
-    ) AS files
-    FROM business.job j WHERE j.id=ANY(${sql.param(ids)}::text[]) AND j.kind='ocr'`)
+  // The bounded, correlated set-returning JSON expansion keeps large task
+  // payloads out of the summary and preserves the historical array projection.
+  const items = db.select({ value: sql`value`.as('value') })
+    .from(sql`json_array_elements(business.job_params_for_query(${job.result})->'files')`)
+    .where(sql`(value->'ok')::text IN ('true','1')`).limit(50).as('items')
+  const files = db.select({
+    files: sql`json_agg(json_build_object('id',${items.value}->'fileId','path',${storedFile.relPath}))::text`,
+  }).from(items).leftJoin(storedFile, eq(storedFile.id, sql`CASE WHEN (${items.value}->'fileId')::text ~ '^[0-9]{1,16}$'
+      THEN (${items.value}->>'fileId')::bigint END`))
+  const rows = await db.select({ id: job.id, kind: job.kind, files: sql<string | null>`(${files})` })
+    .from(job).where(and(inArray(job.id, ids), eq(job.kind, 'ocr')))
   return new Map(rows.map(row => [row.id, { links: readOcrLinks({ ...row, files: row.files ?? '[]' }) }]))
 }
 
