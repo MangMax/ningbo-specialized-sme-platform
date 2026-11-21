@@ -1,14 +1,13 @@
 import { createHash } from 'node:crypto'
-import { sql } from 'drizzle-orm'
+import { asc, desc, eq, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { createError } from 'h3'
 import { usePostgresDirectoryDb } from '../../../../db/postgresql/client'
+import { storedFile } from '../../../../db/postgresql/file-tables'
+import { postgresLeadListRow as leadRow, postgresLeadListVersion as leadVersion } from '../../../../db/postgresql/lead-tables'
 import { registerPostgresEnterpriseSource, verifyRegisteredFileRead } from '../../../core/server/public'
-import type { LeadCatalog, LeadRow, LeadVersionDetail, LeadVersionSummary, VersionInput } from '../../lib/contracts'
+import type { LeadCatalog, LeadVersionDetail, LeadVersionSummary, VersionInput } from '../../lib/contracts'
 
-type PgSummary = Omit<LeadVersionSummary, 'id' | 'fileId'> & { id: string; fileId: string }
-type PgRow = Omit<LeadRow, 'id' | 'enterpriseId' | 'rowNumber'> & { id: string; enterpriseId: string | null; rowNumber: string }
-type PgFile = { fileId: string; relPath: string; filename: string; removedAt: string | null; sha256: string; bytes: string }
 export function usePostgresLeadDb() {
   if (process.env.NUXT_POSTGRES_LEAD_REGISTRATION !== '1') return
   const db = usePostgresDirectoryDb()
@@ -16,18 +15,34 @@ export function usePostgresLeadDb() {
   return db
 }
 
-const summary = sql`SELECT v.id, v.series, v.channel_code AS channel, v.list_type_code AS "listType",
-  v.acquired_on AS "acquiredOn", v.file_id AS "fileId", f.rel_path AS "filePath",
-  coalesce(f.display_name, f.filename) AS "fileName", f.removed_at IS NULL AS "fileAvailable"
-  FROM lead_list_version v JOIN stored_file f ON f.id = v.file_id`
-const fileColumns = sql`f.id AS "fileId", f.rel_path AS "relPath", f.filename, f.removed_at AS "removedAt", f.sha256, f.bytes`
+const fileColumns = {
+  fileId: storedFile.id,
+  relPath: storedFile.relPath,
+  filename: storedFile.filename,
+  removedAt: storedFile.removedAt,
+  sha256: storedFile.sha256,
+  bytes: storedFile.bytes,
+}
 
-function versionDto(row: PgSummary): LeadVersionSummary {
-  return { ...row, id: Number(row.id), fileId: Number(row.fileId) }
+function summaries(db: NodePgDatabase) {
+  return db.select({
+    id: leadVersion.id,
+    series: leadVersion.series,
+    channel: leadVersion.channel,
+    listType: leadVersion.listType,
+    acquiredOn: leadVersion.acquiredOn,
+    fileId: leadVersion.fileId,
+    filePath: storedFile.relPath,
+    filename: storedFile.filename,
+    displayName: storedFile.displayName,
+    removedAt: storedFile.removedAt,
+  }).from(leadVersion).innerJoin(storedFile, eq(leadVersion.fileId, storedFile.id))
 }
-function fileDto(row: PgFile) {
-  return { ...row, fileId: Number(row.fileId), bytes: Number(row.bytes) }
+
+function versionDto({ filename, displayName, removedAt, ...row }: Awaited<ReturnType<typeof summaries>>[number]): LeadVersionSummary {
+  return { ...row, fileName: displayName ?? filename, fileAvailable: removedAt === null }
 }
+
 async function dictionaries(db: NodePgDatabase) {
   const channels = await db.execute<LeadCatalog['channels'][number]>(sql`
     SELECT code, name FROM enterprise_source_channel WHERE code <> 'direct' ORDER BY code COLLATE "C"`)
@@ -39,9 +54,13 @@ async function dictionaries(db: NodePgDatabase) {
 export function listPostgresLeadVersions(db: NodePgDatabase): Promise<LeadCatalog> {
   return db.transaction(async tx => {
     const dict = await dictionaries(tx)
-    const versions = await tx.execute<PgSummary>(sql`${summary}
-      ORDER BY v.series COLLATE "C", v.acquired_on COLLATE "C" DESC, v.id DESC`)
-    return { ...dict, versions: versions.rows.map(versionDto) }
+    // Drizzle 0.45 has no collation operator. Keep the catalog's bytewise ordering.
+    const versions = await summaries(tx).orderBy(
+      asc(sql`${leadVersion.series} COLLATE "C"`),
+      desc(sql`${leadVersion.acquiredOn} COLLATE "C"`),
+      desc(leadVersion.id),
+    )
+    return { ...dict, versions: versions.map(versionDto) }
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }
 
@@ -50,36 +69,39 @@ export function readPostgresLeadVersion(db: NodePgDatabase, id: number): Promise
 }
 
 export async function readPostgresLeadVersionInSnapshot(db: NodePgDatabase, id: number): Promise<LeadVersionDetail> {
-  const version = (await db.execute<PgSummary>(sql`${summary} WHERE v.id = ${id}`)).rows[0]
+  const [version] = await summaries(db).where(eq(leadVersion.id, id))
   if (!version) throw createError({ statusCode: 404, message: '名单版本不存在' })
-  const { rows } = await db.execute<PgRow>(sql`SELECT id, row_number AS "rowNumber", name, uscc, district, note,
-    enterprise_id AS "enterpriseId" FROM lead_list_row WHERE version_id = ${id} ORDER BY row_number`)
-  return { ...versionDto(version), rows: rows.map(row => ({
-    ...row, id: Number(row.id), rowNumber: Number(row.rowNumber),
-    enterpriseId: row.enterpriseId === null ? null : Number(row.enterpriseId),
-  })) }
+  const rows = await db.select({
+    id: leadRow.id,
+    rowNumber: leadRow.rowNumber,
+    name: leadRow.name,
+    uscc: leadRow.uscc,
+    district: leadRow.district,
+    note: leadRow.note,
+    enterpriseId: leadRow.enterpriseId,
+  }).from(leadRow).where(eq(leadRow.versionId, id)).orderBy(asc(leadRow.rowNumber))
+  return { ...versionDto(version), rows }
 }
 
 export async function readPostgresLeadVersionSource(db: NodePgDatabase, id: number) {
-  const { rows } = await db.execute<PgFile & { versionSha: string }>(sql`SELECT ${fileColumns}, v.file_sha256 AS "versionSha"
-    FROM lead_list_version v JOIN stored_file f ON f.id = v.file_id WHERE v.id = ${id}`)
-  const row = rows[0]
+  const [row] = await db.select({ ...fileColumns, versionSha: leadVersion.fileSha256 })
+    .from(leadVersion).innerJoin(storedFile, eq(leadVersion.fileId, storedFile.id)).where(eq(leadVersion.id, id))
   if (!row || row.removedAt) throw createError({ statusCode: 404, message: '原文件不存在或已移出' })
-  return { ...fileDto(row), versionSha: row.versionSha }
+  return { ...row, bytes: Number(row.bytes) }
 }
 
 export async function registerPostgresLeadVersion(db: NodePgDatabase, root: string, input: VersionInput) {
   const { rows, ...fields } = input
-  const registered = (await db.execute<PgFile>(sql`SELECT ${fileColumns} FROM stored_file f WHERE f.id = ${fields.fileId}`)).rows[0]
+  const [registered] = await db.select(fileColumns).from(storedFile).where(eq(storedFile.id, fields.fileId))
   if (!registered || registered.removedAt) throw createError({ statusCode: 404, message: '原文件不存在或已移出' })
-  const file = fileDto(registered)
+  const file = { ...registered, bytes: Number(registered.bytes) }
   const verified = await verifyRegisteredFileRead(root, file)
   if (verified.status !== 'verified') throw createError({ statusCode: 409, message: '无法确认原文件内容' })
   const ranked = rows.toSorted((a, b) => a.rowNumber - b.rowNumber)
   const requestHash = createHash('sha256').update(JSON.stringify({ ...fields, rows: ranked, sha256: file.sha256 })).digest('hex')
 
   return db.transaction(async tx => {
-    const live = (await tx.execute<PgFile>(sql`SELECT ${fileColumns} FROM stored_file f WHERE f.id = ${file.fileId} FOR UPDATE`)).rows[0]
+    const [live] = await tx.select(fileColumns).from(storedFile).where(eq(storedFile.id, file.fileId)).for('update')
     if (!live || live.removedAt || live.sha256 !== file.sha256 || live.relPath !== file.relPath || Number(live.bytes) !== file.bytes) {
       throw createError({ statusCode: 409, message: '原文件登记已变化，请重新选择' })
     }

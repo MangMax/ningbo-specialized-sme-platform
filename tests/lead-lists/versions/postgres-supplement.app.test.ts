@@ -272,6 +272,16 @@ describe.skipIf(!bin)('PostgreSQL-only lead versions', () => {
       VALUES ($1,'award',$2,1) RETURNING id`, [result.rows[0].id, year])
     await db.query("INSERT INTO record_evidence(record_event_id,source_file,list_no) VALUES ($1,'notice.pdf',1)", [event.rows[0].id])
     await db.query("UPDATE lead_list_row SET note='=1+1' WHERE id=102")
+    await db.query("INSERT INTO lead_list_row (version_id,row_number,name) VALUES (11,1,'补录首行')")
+    const snapshot = await (await app.request(`${versions}/11`)).json()
+    expect(snapshot).toMatchObject({
+      fileName: 'fixture.csv', fileAvailable: true,
+      rows: [
+        { rowNumber: 1, name: '补录首行', uscc: null, district: null, note: null, enterpriseId: null },
+        { rowNumber: 2, name: '原始企业', enterpriseId: linked },
+        { rowNumber: 3, name: '另一行', note: '=1+1', enterpriseId: null },
+      ],
+    })
     const base = '/api/lead-lists/exports'
     const request = { versionId: 11, clientRequestId: randomUUID() }
     const exportList = () => app.request(base, { method: 'POST', body: JSON.stringify(request) })
@@ -280,13 +290,14 @@ describe.skipIf(!bin)('PostgreSQL-only lead versions', () => {
     expect(accepted.status, JSON.stringify(receipt)).toBe(202)
     expect(await (await exportList()).json()).toEqual(receipt)
     const job = await app.terminal(receipt.jobId)
-    expect(job).toMatchObject({ kind: 'lead-lists-version-export', state: 'done', result: { versionId: 11, rowCount: 2 } })
+    expect(job).toMatchObject({ kind: 'lead-lists-version-export', state: 'done', result: { versionId: 11, rowCount: 3 } })
     expect((await fetch(app.url(job.result.downloadUrl))).status).toBe(401)
     const download = await app.download(job.result.downloadUrl)
     expect(download.response.status).toBe(200)
     expect(download.response.headers.get('content-type')).toBe('text/csv; charset=utf-8')
     expect(download.bytes.toString()).toBe([
       '\uFEFF"系列","获取日期","来源原件","原表序号","企业名称","统一社会信用代码","区县","备注","基础库企业编号","有效称号"',
+      '"走访名单","2026-11-18","fixture.csv","1","补录首行","","","","",""',
       `"走访名单","2026-11-18","fixture.csv","2","原始企业","待核对","","","${linked}","专精特新“小巨人”、专精特新中小企业、创新型中小企业"`,
       '"走访名单","2026-11-18","fixture.csv","3","另一行","","","\'=1+1","",""',
       '',
