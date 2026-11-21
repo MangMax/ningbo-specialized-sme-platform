@@ -1,6 +1,7 @@
+import { registerPostgresFile, usePostgresFileDb } from '../../utils/file-store-postgres'
 import { useDb } from '@db'
 import { requestLogContext } from '../../../lib/logging'
-import { UploadRegistrationError } from '../../utils/file-store'
+import { FileMaintenanceError, UploadRegistrationError } from '../../utils/file-store'
 import { registerUploadedFile } from '../../utils/stored-files'
 
 defineRouteMeta({
@@ -42,13 +43,19 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const { row, created } = await registerUploadedFile(useDb(), useRuntimeConfig().filesDir, input, requestLogContext(event))
+    const pg = usePostgresFileDb()
+    const root = useRuntimeConfig().filesDir
+    const context = requestLogContext(event)
+    const { row, created } = pg
+      ? await registerPostgresFile(pg, root, input, context)
+      : await registerUploadedFile(useDb(), root, input, context)
     if (created) setResponseStatus(event, 201)
     return row
   } catch (error) {
     if (error instanceof UploadRegistrationError) {
       throw createError({ statusCode: error.statusCode, message: error.message, ...(error.reason ? { data: { reason: error.reason } } : {}) })
     }
+    if (error instanceof FileMaintenanceError) throw createError({ statusCode: error.statusCode, message: error.message })
     throw error
   }
 })

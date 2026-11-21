@@ -2,7 +2,7 @@ import { readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { z } from 'zod'
 import { useDb } from '@db'
 import { checkBrowserReviewRequest } from './browser-review-102'
-import { handleRecordCorrespondenceRequest } from './record-correspondence-api'
+import { handlePostgresCorrespondenceRequest, handleRecordCorrespondenceRequest, type CorrespondenceApiInput } from './record-correspondence-api'
 
 const requestSchema = z.strictObject({
   idempotencyKey: z.string().trim().min(1).max(200),
@@ -25,7 +25,9 @@ export function browserCorrespondenceRoute(action: 'preflight' | 'commit', conte
     const envelope = parsed.data
     const business = 'request' in envelope ? envelope.request : envelope
     const request = { ...business, sourceIdentity: 'same-origin-correspondence', actor: { type: 'agent', id: 'same-origin-correspondence-adapter' }, ruleId: 'manual-source-row-review', ruleVersion: '1' }
-    const output = handleRecordCorrespondenceRequest({ action, method: 'POST', headers: {}, body: 'request' in envelope ? { request, planHash: envelope.planHash } : request }, { db: runtime.db, browserAuthorized: true })
+    const input: CorrespondenceApiInput = { action, method: 'POST', body: 'request' in envelope ? { request, planHash: envelope.planHash } : request }
+    const output = await handlePostgresCorrespondenceRequest(input, undefined, true)
+      ?? handleRecordCorrespondenceRequest(input, { db: runtime.db, browserAuthorized: true })
     setResponseStatus(event, output.status)
     return output.body
   })

@@ -1,4 +1,5 @@
-import { asc,eq,inArray } from 'drizzle-orm'
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { asc,eq,inArray,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
@@ -23,6 +24,19 @@ export function readPlatformBusinessMetadata(db: Db, relationIds: number[]) {
 
 }
 
+type BusinessMetadataRow = ReturnType<typeof readPlatformBusinessMetadata> extends Map<number,infer T> ? T : never
+export async function readPostgresPlatformBusinessMetadata(db: Pick<NodePgDatabase, 'execute'>, relationIds: readonly number[]) {
+  if (!relationIds.length) return new Map<number, BusinessMetadataRow>()
+  const { rows: metadata } = await db.execute<BusinessMetadataRow>(sql`
+    SELECT a.old_id::float8 AS "relationId",o.record_id::float8 AS "recordId",o.version_id::float8 AS "versionId",
+      b.interface,b.platform_key AS "platformKey",o.identity_state AS "identityState",o.content_state AS "contentState",
+      o.key_source AS "keySource",o.projection_rule_version AS "projectionRuleVersion",v.hash_algorithm AS "hashAlgorithm",v.content_hash AS "contentHash"
+    FROM platform_legacy_relation_alias a JOIN platform_business_observation o ON o.id=a.observation_id
+    LEFT JOIN platform_business_record b ON b.id=o.record_id LEFT JOIN platform_business_record_version v ON v.id=o.version_id
+    WHERE a.old_id=ANY(${sql.param(relationIds)}::bigint[])`)
+  return new Map(metadata.map(row => [row.relationId,row]))
+}
+
 function decisionConflicts(priors: PlatformCorrespondenceRef[]) {
   // Different endpoint types/roles may legitimately coexist. Compare decisions
   // within a type/role, retaining all other references without rewriting them.
@@ -40,6 +54,29 @@ function decisionConflicts(priors: PlatformCorrespondenceRef[]) {
 export function readPlatformBusinessGroups(db: Db, observations: ScopedPlatformObservation[], metadata = readPlatformBusinessMetadata(db, observations.map(o => o.relationId))): PlatformBusinessGroup[] {
   const c = correspondenceTable(db), columns = correspondenceColumns(db)
   const priors = chunks(observations.map(o => o.relationId)).flatMap(ids => db.select({ id: c.id, relationId: columns.relationId, exportRowId: c.exportRowId, eventId: c.eventId, predecessorEventId: c.predecessorEventId, enterpriseId: c.enterpriseId, titleCode: c.titleCode, type: c.type, role: c.role, status: c.status, revision: c.revision, ruleId: c.ruleId, ruleVersion: c.ruleVersion, createdAt: c.createdAt, decidedAt: c.decidedAt, endedAt: c.endedAt }).from(c).where(inArray(externalRelationColumn(db), ids)).orderBy(asc(c.id)).all())
+  return projectPlatformBusinessGroups(observations, metadata, priors)
+}
+
+export async function readPostgresPlatformBusinessGroups(db: Pick<NodePgDatabase, 'execute'>, observations: ScopedPlatformObservation[], metadata?: ReturnType<typeof readPlatformBusinessMetadata>) {
+  if (!observations.length) return []
+  const relationIds = observations.map(row => row.relationId)
+  metadata ??= await readPostgresPlatformBusinessMetadata(db, relationIds)
+  return projectPlatformBusinessGroups(observations, metadata, await readPostgresPlatformBusinessCorrespondences(db, relationIds))
+}
+
+export async function readPostgresPlatformBusinessCorrespondences(db: Pick<NodePgDatabase, 'execute'>, relationIds: readonly number[]) {
+  if (!relationIds.length) return []
+  const { rows } = await db.execute<{ [K in keyof PlatformCorrespondenceRef]: PlatformCorrespondenceRef[K] }>(sql`
+    SELECT p.id::float8 AS id,a.old_id::float8 AS "relationId",p.export_row_id::float8 AS "exportRowId",p.event_id::float8 AS "eventId",
+      p.predecessor_event_id::float8 AS "predecessorEventId",p.enterprise_id::float8 AS "enterpriseId",p.title_code AS "titleCode",
+      p.type,p.role,p.status,p.revision::float8 AS revision,p.rule_id AS "ruleId",p.rule_version AS "ruleVersion",
+      p.created_at AS "createdAt",p.decided_at AS "decidedAt",p.ended_at AS "endedAt"
+    FROM record_correspondence p JOIN platform_legacy_relation_alias a ON a.observation_id=p.observation_id
+    WHERE a.old_id=ANY(${sql.param(relationIds)}::bigint[]) ORDER BY p.id`)
+  return rows
+}
+
+export function projectPlatformBusinessGroups(observations: ScopedPlatformObservation[], metadata: ReturnType<typeof readPlatformBusinessMetadata>, priors: PlatformCorrespondenceRef[]): PlatformBusinessGroup[] {
   const byRelation = Map.groupBy(priors, p => p.relationId)
   const groups = new Map<string, PlatformBusinessObservationRef[]>()
   for (const observation of observations) {

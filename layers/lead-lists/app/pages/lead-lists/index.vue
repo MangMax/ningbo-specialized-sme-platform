@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
-import { FileText, Plus } from '@lucide/vue'
+import { ArrowLeft, FileText } from '@lucide/vue'
 import PageHeader from '#core/app/components/PageHeader.vue'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import TableLoadingStatus from '#core/app/components/TableLoadingStatus.vue'
+import TablePagination from '#core/app/components/TablePagination.vue'
 import { Button } from '#core/app/components/ui/button'
 import { Badge } from '#core/app/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '#core/app/components/ui/card'
-import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '#core/app/components/ui/empty'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '#core/app/components/ui/table'
 import type { LeadCatalog, LeadRow, LeadVersionDetail } from '../../../lib/contracts'
 import LeadListRegistration from '../../components/LeadListRegistration.vue'
+import LeadListCatalog from '../../components/LeadListCatalog.vue'
 import LeadListExport from '../../components/LeadListExport.vue'
 import LeadListSupplement from '../../components/LeadListSupplement.vue'
 
@@ -24,15 +24,15 @@ const catalog = useQuery({
   key: () => ['lead-lists', 'versions'],
   query: () => $fetch<LeadCatalog>('/api/lead-lists/versions'), placeholderData: previous => previous,
 })
-const routeId = computed(() => {
+const activeVersion = computed(() => {
   const raw = route.query.version
   return typeof raw === 'string' && /^[1-9]\d*$/.test(raw) && Number.isSafeInteger(Number(raw)) ? Number(raw) : undefined
 })
-const versions = computed(() => catalog.data.value?.versions ?? [])
-const activeVersion = computed(() => routeId.value ?? versions.value[0]?.id)
-const selectedSeries = computed(() => versions.value.find(version => version.id === activeVersion.value)?.series ?? '')
-const series = computed(() => [...new Set(versions.value.map(version => version.series))])
-const displayedVersions = computed(() => versions.value.filter(version => version.series === selectedSeries.value))
+const catalogDestination = computed(() => ({ query: { ...route.query, version: undefined, exportJob: undefined } }))
+const detailHeader = useTemplateRef('detail-header')
+watch(activeVersion, id => {
+  if (id) detailHeader.value?.focus({ preventScroll: true })
+}, { flush: 'post' })
 const detail = useQuery({
   key: () => ['lead-lists', 'detail', activeVersion.value ?? 0],
   query: ({ entry }) => $fetch<LeadVersionDetail>(`/api/lead-lists/versions/${entry.key[2]}`),
@@ -40,16 +40,24 @@ const detail = useQuery({
   placeholderData: previous => previous,
 })
 const displayed = computed(() => detail.data.value)
+const page = ref(1)
+const pageSize = ref(25)
+const tableScroll = useTemplateRef('lead-rows')
+const total = computed(() => displayed.value?.rows.length ?? 0)
+const visibleRows = computed(() => displayed.value?.rows.slice((page.value - 1) * pageSize.value, page.value * pageSize.value) ?? [])
+watch(() => displayed.value?.id, () => { page.value = 1 })
+watch([page, pageSize, () => displayed.value?.id], () => tableScroll.value?.scrollTo({ top: 0 }), { flush: 'post' })
+function resize(size: number) {
+  pageSize.value = size
+  page.value = 1
+}
+
 const showingActive = computed(() => displayed.value?.id === activeVersion.value)
 const sourceLabels = computed(() => new Map(catalog.data.value?.channels.map(item => [item.code, item.name])))
 const listTypeLabels = computed(() => new Map(catalog.data.value?.listTypes.map(item => [item.code, item.name])))
 
 function navigate(id: number) {
   if (Number.isSafeInteger(id) && id > 0) void router.push({ query: { ...route.query, version: String(id), exportJob: undefined } })
-}
-function switchSeries(name: unknown) {
-  const first = versions.value.find(item => item.series === name)
-  if (first) navigate(first.id)
 }
 function registered(id: number) {
   navigate(id)
@@ -63,31 +71,31 @@ useHead({ title: '线索名单' })
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4">
-    <PageHeader title="线索名单">
-      <template #actions><Button :disabled="!catalog.data.value" @click="registration = true"><Plus aria-hidden="true" />登记版本</Button></template>
-    </PageHeader>
+  <div class="workspace-list flex min-w-0 flex-col gap-4">
+    <PageHeader title="线索名单" />
     <LeadListRegistration v-if="catalog.data.value" v-model:open="registration" :catalog="catalog.data.value" @registered="registered" />
-    <TableFailureState v-if="catalog.error.value" title="名单目录加载失败" :compact="Boolean(catalog.data.value)" :description="catalog.data.value ? '仍显示上次读取的名单目录。' : '请重新加载名单目录。'" :pending="catalog.isLoading.value" @retry="catalog.refetch()" />
-    <div v-if="versions.length" class="flex flex-wrap items-center gap-2">
-      <Select :model-value="selectedSeries" @update:model-value="switchSeries">
-        <SelectTrigger aria-label="所属系列" class="max-w-full"><SelectValue placeholder="选择系列" /></SelectTrigger>
-        <SelectContent><SelectItem v-for="item in series" :key="item" :value="item">{{ item }}</SelectItem></SelectContent>
-      </Select>
-      <Select :model-value="String(activeVersion ?? '')" @update:model-value="navigate(Number($event))">
-        <SelectTrigger aria-label="名单版本" class="max-w-full"><SelectValue placeholder="选择版本" /></SelectTrigger>
-        <SelectContent><SelectItem v-for="item in displayedVersions" :key="item.id" :value="String(item.id)">{{ item.acquiredOn }} · {{ item.fileName }}</SelectItem></SelectContent>
-      </Select>
-    </div>
-    <Card v-if="activeVersion" class="relative min-w-0 gap-0 overflow-hidden py-0 shadow-none">
+    <LeadListCatalog
+      v-show="!activeVersion"
+      :catalog="catalog.data.value" :loading="catalog.isLoading.value" :failed="Boolean(catalog.error.value)"
+      @register="registration = true" @retry="catalog.refetch()"
+    />
+    <Card v-if="activeVersion" class="paginated-table-card relative min-w-0 gap-0 overflow-hidden py-0 shadow-none">
       <TableLoadingStatus kind="ledger" :loading="detail.isLoading.value" label="正在读取名单…" />
-      <TableFailureState v-if="detail.error.value" title="名单版本加载失败" :compact="Boolean(displayed)" :description="displayed ? '仍显示上次成功读取的版本。' : '请重新加载所选版本。'" :pending="detail.isLoading.value" @retry="detail.refetch()" />
+      <CardHeader class="table-toolbar flex-row">
+        <div ref="detail-header" tabindex="-1" class="outline-none">
+          <Button as-child variant="ghost" size="sm">
+            <NuxtLink :to="catalogDestination" replace><ArrowLeft aria-hidden="true" />返回名单目录</NuxtLink>
+          </Button>
+        </div>
+      </CardHeader>
+      <TableFailureState v-if="catalog.error.value" title="名单目录加载失败" compact :pending="catalog.isLoading.value" @retry="catalog.refetch()" />
+      <TableFailureState v-if="detail.error.value" title="名单详情加载失败" :compact="Boolean(displayed)" :description="displayed ? '仍显示上次成功读取的名单。' : undefined" :pending="detail.isLoading.value" @retry="detail.refetch()" />
       <template v-if="displayed">
-        <CardHeader class="gap-2 border-b px-4 py-4">
-          <CardTitle><h2 class="wrap-anywhere">{{ displayed.series }} · {{ displayed.acquiredOn }}</h2></CardTitle>
+        <CardHeader class="shrink-0 gap-2 border-b px-4 py-4">
+          <CardTitle as="h2" class="wrap-anywhere">{{ displayed.series }} · {{ displayed.acquiredOn }}</CardTitle>
           <div class="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">{{ sourceLabels.get(displayed.channel) ?? displayed.channel }}</Badge>
-            <Badge variant="outline">{{ listTypeLabels.get(displayed.listType) ?? displayed.listType }}</Badge>
+            <Badge variant="outline">类型 {{ listTypeLabels.get(displayed.listType) ?? displayed.listType }}</Badge>
+            <Badge variant="outline">来源 {{ sourceLabels.get(displayed.channel) ?? displayed.channel }}</Badge>
             <Button v-if="displayed.fileAvailable" variant="link" size="sm" class="h-auto max-w-full whitespace-normal" as-child>
               <a :href="`/api/lead-lists/versions/${displayed.id}/source`" download><FileText aria-hidden="true" /><span class="wrap-anywhere">{{ displayed.fileName }}</span></a>
             </Button>
@@ -95,11 +103,11 @@ useHead({ title: '线索名单' })
           </div>
           <LeadListExport :key="displayed.id" :version-id="displayed.id" :disabled="!showingActive || Boolean(detail.error.value)" />
         </CardHeader>
-        <CardContent class="p-0">
-          <div class="data-table-scroll">
+        <CardContent class="paginated-table-body flex min-h-0 flex-col p-0">
+          <div ref="lead-rows" class="data-table-scroll" role="region" aria-label="名单企业" tabindex="0">
             <Table class="data-table table-fixed sm:min-w-[700px]">
               <TableHeader><TableRow><TableHead class="w-14">序号</TableHead><TableHead>企业名称</TableHead><TableHead class="hidden w-44 sm:table-cell">统一社会信用代码</TableHead><TableHead class="hidden w-24 sm:table-cell">区县</TableHead><TableHead class="hidden sm:table-cell">备注</TableHead><TableHead class="w-20">基础库</TableHead></TableRow></TableHeader>
-              <TableBody><TableRow v-for="item in displayed.rows" :key="item.id">
+              <TableBody><TableRow v-for="item in visibleRows" :key="item.id">
                 <TableCell>{{ item.rowNumber }}</TableCell>
                 <TableCell class="whitespace-normal wrap-anywhere">
                   <div class="font-medium">{{ item.name }}</div>
@@ -120,14 +128,13 @@ useHead({ title: '线索名单' })
             </Table>
           </div>
         </CardContent>
+        <TablePagination
+          v-if="total > 0" in-card :page="page" :page-size="pageSize" :total="total"
+          :loading="!showingActive || detail.isLoading.value || Boolean(detail.error.value)" unit="家"
+          @update:page="page = $event" @update:page-size="resize"
+        />
       </template>
     </Card>
-    <div v-else-if="catalog.isLoading.value" class="relative h-9">
-      <TableLoadingStatus kind="ledger" :loading="true" label="正在读取名单目录…" />
-    </div>
-    <Empty v-else-if="catalog.data.value">
-      <EmptyHeader><EmptyMedia variant="icon"><FileText aria-hidden="true" /></EmptyMedia><EmptyTitle>还没有名单版本</EmptyTitle></EmptyHeader>
-    </Empty>
     <LeadListSupplement :row="reviewing?.row ?? null" :version-id="reviewing?.versionId" @close="reviewing = null" @saved="supplemented" />
   </div>
 </template>

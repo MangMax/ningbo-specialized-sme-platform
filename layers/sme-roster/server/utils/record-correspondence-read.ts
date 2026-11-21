@@ -2,6 +2,7 @@ import { asc,eq,inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { readPublicPublishedNames } from '../../lib/roster/enterprise-roster'
+import type { PublishedPresentation } from '../../lib/roster/correspondence-view'
 import type { ReceiptRedactor } from './import-receipt-redaction'
 import { readTargetRelationEvidenceDisplay } from './platform-relation-evidence-display-target'
 import { getRecordCorrespondenceAudit,listRecordCorrespondenceRefs,type CorrespondenceRead } from './record-correspondence'
@@ -62,17 +63,30 @@ function publicCorrespondence(row: CorrespondenceRead) {
   const { edgeKey: _edgeKey, targetIdentity: _targetIdentity, provenance: _provenance, sourceFingerprint: _sourceFingerprint, ...publicRow } = row
   return publicRow
 }
-/** Request-local hydration only. Never retained across a write or shared with another request. */
-export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind: SourceKind; id: number }, redactor?: ReceiptRedactor) {
+export type SourceSelection = { kind: SourceKind; id: number }
+export function correspondenceSourceSelections(rows: readonly CorrespondenceRead[], extra?: SourceSelection) {
   const eventIds = [...new Set(rows.flatMap(row => [row.eventId, row.predecessorEventId]).filter((id): id is number => id != null).concat(extra?.kind === 'event' ? [extra.id] : []))]
   const relationIds = [...new Set(rows.flatMap(row => row.relationId == null ? [] : [row.relationId]).concat(extra?.kind === 'relation' ? [extra.id] : []))]
   const exportRowIds = [...new Set(rows.flatMap(row => row.exportRowId == null ? [] : [row.exportRowId]).concat(extra?.kind === 'export_row' ? [extra.id] : []))]
+  const occurrences = rows.flatMap(row => [row.eventId, row.predecessorEventId]).filter((id): id is number => id != null)
+  if (extra?.kind === 'event') occurrences.push(extra.id)
+  return { eventIds, relationIds, exportRowIds, occurrences }
+}
+
+export type SourceEvidence = typeof schema.recordEvidence.$inferSelect
+export function correspondencePublishedScope(evidence: SourceEvidence[], occurrences: number[]) {
+  const scope = evidence.map(e => ({ evidenceId: e.id, eventId: e.recordEventId }))
+  const byEvent = Map.groupBy(scope, row => row.eventId)
+  const copies = occurrences.flatMap(id => (byEvent.get(id) ?? []).flatMap(item => [item, item, item]))
+  return { scope, copies }
+}
+
+/** Request-local hydration only. Never retained across a write or shared with another request. */
+export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: SourceSelection, redactor?: ReceiptRedactor) {
+  const { eventIds, relationIds, exportRowIds, occurrences } = correspondenceSourceSelections(rows, extra)
   const events = chunks(eventIds).flatMap(ids => db.select({ event: schema.recordEvent, record: schema.record }).from(schema.recordEvent).innerJoin(schema.record, eq(schema.recordEvent.recordId, schema.record.id)).where(inArray(schema.recordEvent.id, ids)).all())
   const evidenceRows = chunks(eventIds).flatMap(ids => db.select().from(schema.recordEvidence).where(inArray(schema.recordEvidence.recordEventId, ids)).orderBy(asc(schema.recordEvidence.id)).all())
   const files = chunks(evidenceRows.map(e => e.sourceFile)).flatMap(paths => db.select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath, bytes: schema.storedFile.bytes, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt }).from(schema.storedFile).where(inArray(schema.storedFile.relPath, paths)).all())
-  const filesByPath = new Map(files.map(f => [f.relPath, f]))
-  const evidenceByEvent = Map.groupBy(evidenceRows, e => e.recordEventId)
-
   const targetDisplays = readTargetRelationEvidenceDisplay(db, relationIds.map(relationId => ({ relationId })), redactor).sources
   const exports = chunks(exportRowIds).flatMap(ids => db.select({ row: schema.platformExportRow, batch: schema.platformExportBatch }).from(schema.platformExportRow).innerJoin(schema.platformExportBatch, eq(schema.platformExportRow.batchId, schema.platformExportBatch.id)).where(inArray(schema.platformExportRow.id, ids)).all())
   // Three source sets together stay below SQLite's parameter budget, including the repeated event predicate.
@@ -82,16 +96,26 @@ export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind:
     for (const link of listRecordCorrespondenceRefs(db, {}, { eventIds: eventChunks[i] ?? [], relationIds: relationChunks[i] ?? [], exportRowIds: exportChunks[i] ?? [] })) links.set(link.id, link)
   }
   const sortedLinks = [...links.values()].sort((a, b) => a.id - b.id)
+  const { scope, copies } = correspondencePublishedScope(evidenceRows, occurrences)
+  const presentation = readPublicPublishedNames(db, scope, copies, occurrences.length, 1, redactor)
+  return projectCorrespondenceSources({ events, evidenceRows, files, sortedLinks, exports, targetDisplays, presentation })
+}
+
+export function projectCorrespondenceSources({ events, evidenceRows, files, sortedLinks, exports, targetDisplays, presentation }: {
+  events: { event: typeof schema.recordEvent.$inferSelect; record: typeof schema.record.$inferSelect }[]
+  evidenceRows: SourceEvidence[]
+  files: (Pick<typeof schema.storedFile.$inferSelect, 'id' | 'relPath' | 'bytes' | 'removedAt'> & { sha256: string | null })[]
+  sortedLinks: ReturnType<typeof listRecordCorrespondenceRefs>
+  exports: { row: typeof schema.platformExportRow.$inferSelect; batch: typeof schema.platformExportBatch.$inferSelect }[]
+  targetDisplays: ReadonlyMap<number, unknown>
+  presentation: PublishedPresentation
+}) {
+  const filesByPath = new Map(files.map(f => [f.relPath, f]))
+  const evidenceByEvent = Map.groupBy(evidenceRows, e => e.recordEventId)
   const byEvent = Map.groupBy(sortedLinks.filter(r => r.eventId != null), r => r.eventId)
   const byPredecessor = Map.groupBy(sortedLinks.filter(r => r.predecessorEventId != null), r => r.predecessorEventId)
   const byRelation = Map.groupBy(sortedLinks.filter(r => r.relationId != null), r => r.relationId)
   const byExport = Map.groupBy(sortedLinks.filter(r => r.exportRowId != null), r => r.exportRowId)
-  // One Map for the already-selected event/source/reference scope, reused below.
-  const scope = evidenceRows.map(e => ({ evidenceId: e.id, eventId: e.recordEventId }))
-  const occurrences = rows.flatMap(row => [row.eventId, row.predecessorEventId]).filter((id): id is number => id != null)
-  if (extra?.kind === 'event') occurrences.push(extra.id)
-  const copies = occurrences.flatMap(id => scope.filter(item => item.eventId === id).flatMap(item => [item, item, item]))
-  const presentation = readPublicPublishedNames(db, scope, copies, occurrences.length, 1, redactor)
   const facts = new Map(presentation.facts.map(fact => [fact.evidenceId, fact]))
   const eventSources = new Map(events.map(joined => {
     const id = joined.event.id, evidence = evidenceByEvent.get(id) ?? []
@@ -108,7 +132,7 @@ export function sourceReader(db: Db, rows: CorrespondenceRead[], extra?: { kind:
   const detailRow = (row: CorrespondenceRead) => {
     return { ...publicCorrespondence(row), event: row.eventId ? eventSources.get(row.eventId) ?? null : null, predecessorEvent: row.predecessorEventId ? eventSources.get(row.predecessorEventId) ?? null : null, relation: row.relationId ? read('relation', row.relationId) : null, exportRow: row.exportRowId ? read('export_row', row.exportRowId) : null }
   }
-  return { read, detail: detailRow }
+  return { read, detail: detailRow, event: (id: number) => eventSources.get(id) ?? null }
 }
 export function readSource(db: Db, kind: SourceKind, id: number, redactor?: ReceiptRedactor) { return sourceReader(db, [], { kind, id }, redactor).read(kind, id) }
 export function eventSource(db: Db, id: number, redactor?: ReceiptRedactor) { return readSource(db, 'event', id, redactor) as ReturnType<typeof detail>['event'] }

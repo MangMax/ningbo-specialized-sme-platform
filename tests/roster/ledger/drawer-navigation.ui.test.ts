@@ -24,7 +24,7 @@ async function openLedger(path: string, beforeResult?: Promise<void>) {
   vi.stubGlobal('useRouter', useRouter)
   vi.stubGlobal('definePageMeta', () => {})
   vi.stubGlobal('$fetch', async (url: string, options?: { query: { q?: string } }) => {
-    if (url === '/api/stats') return { byYear: [], byFirstRecognitionYear: [] }
+    if (url === '/api/roster/ledger-years') return { eventYears: [], firstRecognitionYears: [] }
     if (url !== '/api/roster/enterprises') throw new Error(`Unexpected request: ${url}`)
     if (options?.query.q === '断开') throw new Error('Network failure')
     await beforeResult
@@ -89,7 +89,7 @@ it('closes a shared drawer link without navigating to the previous page', async 
 it('has no loading label left in the title or live region after an empty result settles', async () => {
   const { view, setHead } = await openLedger('/roster?q=未命中')
   expect(view.text()).toContain('没有匹配的企业')
-  expect(setHead).toHaveBeenCalledWith({ title: '企业列表' })
+  expect(setHead).toHaveBeenCalledWith({ title: '历年优质中小企业' })
   expect(view.get('[data-testid="ledger-loading-status"]').text()).toBe('')
 })
 

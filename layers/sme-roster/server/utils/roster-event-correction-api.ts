@@ -7,10 +7,39 @@ import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-aut
 import { sanitizeEvidence } from './record-correspondence-read'
 import { cookieRedactor } from '../../lib/platform/client'
 import { credentialContext, resolveCredential } from '../../../core/server/utils/credential-state'
-import { commitEventCorrections, eventCorrectionRequestSchema, finalizedCorrectionReadback, preflightEventCorrections, readEventCorrectionAudit, readOfficialEvent } from './roster-event-correction'
+import { eventCorrectionFailure, commitEventCorrections, eventCorrectionRequestSchema, finalizedCorrectionReadback, preflightEventCorrections, readEventCorrectionAudit, readOfficialEvent } from './roster-event-correction'
 
 export type EventCorrectionAction = 'get' | 'audit' | 'preflight' | 'commit'
 const integer = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER)
+const commitSchema = z.strictObject({ request: eventCorrectionRequestSchema, planHash: z.string().regex(/^[a-f0-9]{64}$/) })
+
+export function parseEventCorrectionWrite(action: 'preflight' | 'commit', body: unknown) {
+  if (Buffer.byteLength(JSON.stringify(body) ?? '', 'utf8') > 1024 * 1024) return eventCorrectionFailure(413, 'request_limit', 'Event correction request exceeds 1 MiB')
+  if (action === 'preflight') {
+    const parsed = eventCorrectionRequestSchema.safeParse(body)
+    if (!parsed.success) return eventCorrectionFailure(400, 'invalid_request', 'Invalid event correction request; use the documented strict whitelist')
+    return { request: parsed.data, planHash: null }
+  }
+  const parsed = commitSchema.safeParse(body)
+  if (!parsed.success) return eventCorrectionFailure(400, 'invalid_request', 'Original correction request and planHash required')
+  return parsed.data
+}
+
+export function eventCorrectionOutput(result: unknown, safety: Parameters<typeof finalizedCorrectionReadback>[1], redactors: ReadonlyArray<(text: string) => string>) {
+  const finalized = finalizedCorrectionReadback(result, safety)
+  if (!finalized) return sanitizeEvidence(result, redactors)
+  const legacy = sanitizeEvidence(finalized.legacy, redactors)
+  if (!legacy || typeof legacy !== 'object' || Array.isArray(legacy)) throw new Error('Invalid sanitized correction result')
+  return { ...legacy, qualificationReadback: finalized.value }
+}
+
+export function eventCorrectionError(error: unknown) {
+  const known = error as { statusCode?: number; code?: string; message?: string }
+  return known.statusCode && known.code
+    ? { status: known.statusCode, code: known.code, message: known.message ?? 'Correction rejected' }
+    : { status: 500, code: 'transaction_failed', message: 'Event correction failed; no partial changes committed' }
+}
+
 export function handleEventCorrectionRequest(input: { action: EventCorrectionAction; method: string; id?: unknown; query?: Record<string, unknown>; body?: unknown; headers?: Record<string, string | undefined> }, context: { db: BetterSQLite3Database<typeof schema>; apiToken?: string | null }) {
   const headers = { 'cache-control': 'no-store' }
   const fail = (status: number, code: string, message: string) => ({ status, headers, body: { error: { code, message } } })
@@ -27,16 +56,9 @@ export function handleEventCorrectionRequest(input: { action: EventCorrectionAct
     const qualificationSafety = (value: unknown) => isDeepStrictEqual(value, sanitizeEvidence(value, redactors))
     let result: unknown
     if (write) {
-      if (Buffer.byteLength(JSON.stringify(input.body) ?? '', 'utf8') > 1024 * 1024) return fail(413, 'request_limit', 'Event correction request exceeds 1 MiB')
-      if (input.action === 'preflight') {
-        const parsed = eventCorrectionRequestSchema.safeParse(input.body)
-        if (!parsed.success) return fail(400, 'invalid_request', 'Invalid event correction request; use the documented strict whitelist')
-        result = preflightEventCorrections(context.db, parsed.data, qualificationSafety)
-      } else {
-        const parsed = z.strictObject({ request: eventCorrectionRequestSchema, planHash: z.string().regex(/^[a-f0-9]{64}$/) }).safeParse(input.body)
-        if (!parsed.success) return fail(400, 'invalid_request', 'Original correction request and planHash required')
-        result = commitEventCorrections(context.db, parsed.data.request, parsed.data.planHash, qualificationSafety)
-      }
+      const command = parseEventCorrectionWrite(input.action as 'preflight' | 'commit', input.body)
+      result = command.planHash === null ? preflightEventCorrections(context.db, command.request, qualificationSafety)
+        : commitEventCorrections(context.db, command.request, command.planHash, qualificationSafety)
     } else {
       const id = integer.safeParse(input.id)
       if (!id.success) return fail(400, 'invalid_request', 'Positive event ID required')
@@ -55,17 +77,9 @@ export function handleEventCorrectionRequest(input: { action: EventCorrectionAct
     // The opt-in branch already sanitizes legacy fields and independently budgets the
     // redacted official envelope. A second pass can expand it after that final gate.
     if (input.action==='get' && input.query && 'official' in input.query) return { status: 200, headers, body: result }
-    const finalized = finalizedCorrectionReadback(result, qualificationSafety)
-    if (finalized) {
-      const legacy = sanitizeEvidence(finalized.legacy, redactors)
-      if (!legacy || typeof legacy !== 'object' || Array.isArray(legacy)) throw new Error('Invalid sanitized correction result')
-      return { status: 200, headers, body: { ...legacy, qualificationReadback: finalized.value } }
-    }
-    return { status: 200, headers, body: sanitizeEvidence(result, redactors) }
+    return { status: 200, headers, body: eventCorrectionOutput(result, qualificationSafety, redactors) }
   } catch (error) {
-    const known = error as { statusCode?: number; code?: string; message?: string }
-    if (known.statusCode && known.code) return fail(known.statusCode, known.code, known.message ?? 'Correction rejected')
-    // SQL/trigger failures reveal no raw SQL, credentials or request data; transaction already rolled back.
-    return fail(500, 'transaction_failed', 'Event correction failed; no partial changes committed')
+    const rejection = eventCorrectionError(error)
+    return fail(rejection.status, rejection.code, rejection.message)
   }
 }

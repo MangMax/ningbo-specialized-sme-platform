@@ -55,7 +55,7 @@ beforeAll(async () => {
     }) }),
   }, getRoutes: {
     '/api/comparison': url => comparisonRoute({ query: Object.fromEntries(url.searchParams) } as never),
-    '/api/platform/queries': url => queriesRoute({ query: Object.fromEntries(url.searchParams) } as never),
+    '/api/platform/queries': url => queriesRoute({ path: url.pathname + url.search } as never),
     '/api/roster/record-comparison': url => { const input = parseRecordComparisonQuery(Object.fromEntries(url.searchParams)); return getRecordComparison(db, input, resolveVerifiedComparisonEvidence(db, input.proofIds ?? [], input)) },
   } })
   client = createReviewedFixtureImportClient({ baseUrl: api.baseUrl, token }, db)

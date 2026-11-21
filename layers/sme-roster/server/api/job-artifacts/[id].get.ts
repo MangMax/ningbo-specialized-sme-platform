@@ -2,6 +2,9 @@ import { sendStream } from 'h3'
 import { useDb } from '@db'
 import { isJobId } from '../../../../core/lib/job'
 import { requireTaskCenterAccess } from '../../../../core/server/utils/task-center-access'
+import { resolveDbPath } from '../../../../../db/client'
+import { usePostgresJobsDb } from '../../../../core/server/utils/postgres-jobs'
+import { getPostgresJob } from '../../../../core/server/utils/job-store-postgres'
 import { getJob } from '../../../../core/server/utils/job-store'
 import { artifactStream, currentArtifact, EXPORT_MIME } from '../../utils/current-export-artifact'
 import { appLog, requestLogContext } from '../../../../core/lib/logging'
@@ -18,10 +21,13 @@ export default defineEventHandler(async event => {
   requireTaskCenterAccess(event)
   const id = getRouterParam(event,'id')
   if (!isJobId(id)) throw createError({statusCode:400,message:'产物ID非法'})
-  const db = useDb(), job = getJob(db,id)
+  const postgres = usePostgresJobsDb()
+  const sqlite = postgres ? undefined : useDb()
+  const job = postgres ? (await getPostgresJob(postgres, id))?.row : getJob(sqlite!, id)
+  const path = sqlite?.$client.name ?? resolveDbPath()
   // A syntactically valid URL parameter alone does not establish a known job.
   if (job?.kind === 'current-roster-export') taskId = job.id
-  const artifact = job ? await currentArtifact(job,db.$client.name,logContext) : null
+  const artifact = job ? await currentArtifact(job,path,logContext) : null
   if (artifact?.availability === 'expired') throw createError({statusCode:410,message:'产物已过期，请重新导出'})
   if (!artifact || artifact.availability !== 'available') throw createError({statusCode:404,message:'产物不存在或尚未发布'})
   setHeader(event,'content-type',EXPORT_MIME)
@@ -29,7 +35,7 @@ export default defineEventHandler(async event => {
   setHeader(event,'content-length',artifact.size)
   setHeader(event,'etag',`"${artifact.sha256}"`)
   setHeader(event,'cache-control','private, no-store')
-  const stream = artifactStream(db.$client.name,id)
+  const stream = artifactStream(path,id)
   event.node.res.once('finish', () => record('success', 200))
   event.node.res.once('close', () => {
     if (event.node.res.writableFinished) return

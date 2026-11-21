@@ -1,6 +1,5 @@
 import { getRouterParam, setHeader } from 'h3'
-import { useDb } from '@db'
-import { getTargetBusinessProcess } from '../../../utils/platform-business-processes-target'
+import { readPlatformArchiveDetail } from '../../../utils/platform-archive-read'
 
 defineRouteMeta({
   openAPI: {
@@ -17,10 +16,10 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler(event => {
+export default defineEventHandler(async event => {
   setHeader(event, 'cache-control', 'no-store')
   try {
-    return getTargetBusinessProcess(useDb(), Number(getRouterParam(event, 'recordId')))
+    return await readPlatformArchiveDetail('business-processes', Number(getRouterParam(event, 'recordId')))
   } catch (error) {
     const failure = error as { statusCode?: number; code?: string; message?: string }
     throw createError({ statusCode: failure.statusCode ?? 500, statusMessage: failure.message ?? 'business process detail failed' })

@@ -49,6 +49,16 @@ export async function inspectExcelSource(input: Uint8Array) {
   }
 }
 
+// Documonster can reject an invalid typed date before the model-level date check.
+export function rethrowExcelReadError(error: unknown, parts: Map<string, string>): never {
+  if (error instanceof Error && error.cause instanceof Error && 'context' in error) {
+    const cell = /^cell ([A-Z]+[0-9]+): <v>[\s\S]*<\/v> is not a date$/.exec(error.cause.message)
+    const sheet = [...parts].find(([, part]) => part === error.context)
+    if (cell && sheet) throw new Error(`无法读取 Excel 原始日期:${sheet[0]}!${cell[1]}`)
+  }
+  throw error
+}
+
 export function assertExcelSheets(parts: Map<string, string>, names: string[]) {
   if (parts.size !== names.length || [...parts.keys()].some((name, index) => name !== names[index])) {
     throw new Error('Excel 读取器未完整读取声明的工作表')

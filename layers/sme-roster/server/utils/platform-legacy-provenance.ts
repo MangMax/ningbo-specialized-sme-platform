@@ -17,6 +17,20 @@ function inspectInSnapshot(db: Executor, input: LegacyPlatformProvenanceInput, e
   const parsed = legacyPlatformProvenanceSchema.safeParse(input)
   if (!parsed.success) reject('legacy_provenance_invalid', parsed.error.issues.map(issue => issue.message).join('; '))
   const target = originalLegacyProvenanceInput(db, input.queryId)
+  const inputFingerprint = legacyProvenanceFingerprint(input,target,expectedFingerprint)
+  const collection = input.collection, rows = target.rows
+  const existing = existingTargetLegacyProvenance(db, target.collectionId)
+  if (existing && (existing.sourceIdentity !== input.sourceIdentity || existing.sourceSha256 !== input.sourceSha256
+    || existing.segmentIndex !== input.segmentIndex || existing.inputFingerprint !== inputFingerprint
+    || !isDeepStrictEqual(existing.collection, collection))) reject('legacy_provenance_conflict', 'Query already has different immutable legacy provenance')
+  const sourceOwner = targetLegacySourceOwner(db, input)
+  if (sourceOwner && sourceOwner.collectionId !== target.collectionId)
+    reject('legacy_source_identity_conflict', 'Original source file/segment already belongs to another query')
+  return { inputFingerprint, exists: !!existing, relationCount: rows.length }
+}
+
+export function legacyProvenanceFingerprint(input:LegacyPlatformProvenanceInput,
+  target:ReturnType<typeof originalLegacyProvenanceInput>,expectedFingerprint?:string) {
   const query = target.query
   if (!query) reject('legacy_query_missing', 'Original query does not exist')
   if (query.interface !== input.interface || query.queryKey !== input.queryKey || query.rdjb !== input.rdjb || query.queriedAt !== input.queriedAt)
@@ -44,14 +58,7 @@ function inspectInSnapshot(db: Executor, input: LegacyPlatformProvenanceInput, e
   const inputFingerprint = createHash('sha256').update(JSON.stringify({ query, rows })).digest('hex')
   if (expectedFingerprint && expectedFingerprint !== inputFingerprint)
     reject('legacy_source_drift', 'Original query or relations changed since preflight')
-  const existing = existingTargetLegacyProvenance(db, target.collectionId)
-  if (existing && (existing.sourceIdentity !== input.sourceIdentity || existing.sourceSha256 !== input.sourceSha256
-    || existing.segmentIndex !== input.segmentIndex || existing.inputFingerprint !== inputFingerprint
-    || !isDeepStrictEqual(existing.collection, collection))) reject('legacy_provenance_conflict', 'Query already has different immutable legacy provenance')
-  const sourceOwner = targetLegacySourceOwner(db, input)
-  if (sourceOwner && sourceOwner.collectionId !== target.collectionId)
-    reject('legacy_source_identity_conflict', 'Original source file/segment already belongs to another query')
-  return { inputFingerprint, exists: !!existing, relationCount: rows.length }
+  return inputFingerprint
 }
 
 export function writeLegacyPlatformProvenance(db: Executor, input: LegacyPlatformProvenanceInput, batchId: number, expectedFingerprint: string) {

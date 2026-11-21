@@ -148,10 +148,11 @@ function reset() {
     </FieldGroup>
     <!-- 单一主操作：窄屏排在折叠面板之后（填完即可提交），桌面与字段同行。 -->
     <div
-      class="order-3 flex w-full shrink-0 items-center gap-2 sm:col-start-2 sm:row-start-1 sm:w-auto"
+      class="bg-card order-3 flex w-full shrink-0 items-center gap-2 max-sm:sticky max-sm:bottom-0 max-sm:z-10 sm:col-start-2 sm:row-start-1 sm:w-auto"
     >
       <Button type="submit" size="sm" class="max-sm:flex-1">应用筛选</Button>
       <Button v-if="showReset" type="button" variant="ghost" size="sm" @click="reset">重置</Button>
+      <slot name="actions" />
     </div>
     <DisclosurePanel
       v-model:open="advancedOpen"

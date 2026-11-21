@@ -2,13 +2,13 @@ import { APPLY_GRID, APPLY_LIST_PATH, BUSINESS_GRID, BUSINESS_LIST_PATH, RECOGNI
 import { cookieRedactor, PlatformHttpError, postPlatformRequest, type PlatformQueryOptions } from '../../lib/platform/client'
 import { platformQueryInputSchema, platformQueryTitles, recognizedConditionShape, type PlatformLiveQueryResult, type PlatformQueryPage, type PlatformQueryError } from '../../lib/platform/live-query'
 import type { CredentialContext } from '../../../core/server/utils/credential-state'
-import { resolvePlatformCookie } from './platform-credential'
+import { resolveRuntimeCredential } from '../../../core/server/utils/credential-state-postgres'
 import { newLogContext, type LogContext } from '../../../core/lib/logging'
 import { logPlatformResult, platformOperation, platformQueryOperation } from '../../lib/platform/logging'
 
 export interface PlatformLiveQueryContext {
   logContext?: LogContext
-  onProgress?: (result: PlatformLiveQueryResult) => void
+  onProgress?: (result: PlatformLiveQueryResult) => void | Promise<void>
   maxResultBytes?: number
   credentials?: CredentialContext
   /** In-memory snapshot for batch consumers; never put this context in persistent job params. */
@@ -50,8 +50,7 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
     completeness: 'not_queried', fullRange: q.startPage === 1, unfinished: [], error: null,
     limits: { maxRequests: q.maxRequests, maxRows: q.maxRows, maxDurationMs: q.maxDurationMs, pageSize: Math.min(q.pageSize, q.maxRows) },
   }
-  let cookie = ''
-  try { cookie = ctx.cookie ?? resolvePlatformCookie(undefined, ctx.credentials) } catch { /* fixed failure below */ }
+  const cookie = ctx.cookie ?? (await resolveRuntimeCredential('sme-roster.miitCookie', ctx.credentials)).value
   const redact = cookieRedactor(cookie)
   const redactString = (value: string): string => {
     try {
@@ -101,6 +100,7 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
         result.status = 'partial'; result.completeness = 'partial'; result.error = error('safety_limit', '查询达到安全上限，仍有未完成页。'); result.unfinished.push(...remaining(index, page)); break outer
       }
       const pageStarted = Date.now()
+      let persisting = false
       try {
         const raw = await postPlatformRequest({ ...ctx.transport, logContext, uscc: q.uscc ?? '', cookie, retries: 0, deadlineMs: started + q.maxDurationMs, timeoutMs: Math.min(ctx.transport?.timeoutMs ?? 15000, q.maxDurationMs - (Date.now() - started)) }, q.source === 'businessList' ? BUSINESS_LIST_PATH : q.source === 'queryBusList' ? RECOGNIZED_LIST_PATH : APPLY_LIST_PATH, {
           ...(q.source === 'queryBusList' ? { rdjb: title!, sqsj: q.sqsj ?? '', rddqrq: q.rddqrq ?? '', whpcyear: q.whpcyear ?? '', whpc: q.whpc ?? '', szq: q.szq ?? '', orderField: q.orderField ?? '', orderDirection: q.orderDirection ?? '', ...(q.orderField ? { target: 'businessGrid' } : {}) } : {}),
@@ -168,13 +168,15 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
             const conditions = snapshot.effectiveConditions as Record<string, string>
             if (conditions[key]) conditions[key] = redactString(conditions[key]!)
           }
-          ctx.onProgress(snapshot)
+          persisting = true
+          await ctx.onProgress(snapshot)
         }
         if (titleComplete) {
           result.status = result.rows.length ? 'success' : 'no_record'; result.completeness = 'complete'; break
         }
         if (!parsedPage.rows.length) throw error('invalid_response', '平台返回空页但声明仍有记录。')
       } catch (caught) {
+        if (persisting) throw caught
         const e = caught as { code?: string; message?: string; name?: string }
         const failure = caught instanceof PlatformSessionExpiredError || (caught instanceof PlatformHttpError && [401, 403].includes(caught.status)) ? error('auth_failed', '平台会话失效，请更新服务端凭据。')
           : e.code === 'sensitive_response' || e.code === 'invalid_response' ? e as PlatformQueryError

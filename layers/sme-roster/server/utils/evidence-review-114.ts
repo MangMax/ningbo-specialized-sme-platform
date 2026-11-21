@@ -56,13 +56,13 @@ function openSnapshot(db: DecisionDb) {
   snapshots.set(id, snapshot)
   return { id, ...snapshot }
 }
-type Anchor = { revision: number; impact: number; decision: number; receipt: number; snapshotId?: string }
-function anchor(db: DecisionDb): Anchor {
-  return db.get<Anchor>(sql`select coalesce((select min(revision_id)-1 from evidence_impact_progress_113 where done=0),(select max(id) from evidence_revision_113),0) revision,
+export type EvidenceReviewAnchor = { revision: number; impact: number; decision: number; receipt: number; snapshotId?: string }
+function anchor(db: DecisionDb): EvidenceReviewAnchor {
+  return db.get<EvidenceReviewAnchor>(sql`select coalesce((select min(revision_id)-1 from evidence_impact_progress_113 where done=0),(select max(id) from evidence_revision_113),0) revision,
     coalesce((select max(id) from explanation_impact_113),0) impact, coalesce((select max(id) from difference_reason),0) decision,coalesce((select max(id) from evidence_review_receipt_114),0) receipt`)!
 }
 function signature(body: string) { return createHmac('sha256',secret).update(body).digest() }
-function encode(operation: string, filter: unknown, asOf: Anchor, after: number) { const body = Buffer.from(JSON.stringify({operation,filter:evidenceDigest113(filter),asOf,after})).toString('base64url'); return body+'.'+signature(body).toString('base64url') }
+function encode(operation: string, filter: unknown, asOf: EvidenceReviewAnchor, after: number) { const body = Buffer.from(JSON.stringify({operation,filter:evidenceDigest113(filter),asOf,after})).toString('base64url'); return body+'.'+signature(body).toString('base64url') }
 function pageContext(db: DecisionDb, operation: string, input: {cursor?:string}) {
   const {cursor: token,...filter}=input
   if(!token) {
@@ -71,37 +71,52 @@ function pageContext(db: DecisionDb, operation: string, input: {cursor?:string})
     try { return {asOf:{...anchor(snapshot.db),snapshotId:snapshot.id},after:0,filter,db:snapshot.db} }
     catch (error) { closeSnapshot(snapshot.id); throw error }
   }
+  const cursor = decodeImpactCursor(operation, filter, token)
+  const snapshot = operation === 'list' ? snapshots.get(cursor.asOf.snapshotId!) : null
+  if (operation === 'list' && !snapshot) throw invalidImpactCursor()
+  return { ...cursor, filter, db: snapshot?.db ?? db }
+}
+
+export function invalidImpactCursor() {
+  return new DecisionError102(400, 'invalid_cursor', 'Cursor is invalid, expired, evicted or belongs to different filters; restart the read')
+}
+
+export function decodeImpactCursor(operation: string, filter: unknown, token: string) {
   try {
-    const [body,mac,...extra]=token.split('.'); if(!body || !mac || extra.length) throw 0
-    const expected=signature(body),given=Buffer.from(mac,'base64url');if(given.length!==expected.length || !timingSafeEqual(expected,given))throw 0
-    const v=JSON.parse(Buffer.from(body,'base64url').toString())
-    if(v.operation!==operation || v.filter!==evidenceDigest113(filter) || !Number.isSafeInteger(v.after) || v.after<0 || !v.asOf || !['revision','impact','decision','receipt'].every(k=>Number.isSafeInteger(v.asOf[k])&&v.asOf[k]>=0))throw 0
-    const snapshot = operation === 'list' ? snapshots.get(v.asOf.snapshotId) : null
-    if (operation === 'list' && !snapshot) throw 0
-    return {asOf:v.asOf as Anchor,after:v.after as number,filter,db:snapshot?.db ?? db}
-  }catch{throw new DecisionError102(400,'invalid_cursor','Cursor is invalid, expired, evicted or belongs to different filters; restart the read')}
+    const [body,mac,...extra] = token.split('.')
+    if (!body || !mac || extra.length) throw invalidImpactCursor()
+    const expected = signature(body), given = Buffer.from(mac, 'base64url')
+    if (given.length !== expected.length || !timingSafeEqual(expected, given)) throw invalidImpactCursor()
+    const value = JSON.parse(Buffer.from(body, 'base64url').toString())
+    if (value.operation !== operation || value.filter !== evidenceDigest113(filter) || !Number.isSafeInteger(value.after) ||
+        value.after < 0 || !value.asOf || !['revision','impact','decision','receipt'].every(key =>
+          Number.isSafeInteger(value.asOf[key]) && value.asOf[key] >= 0)) throw invalidImpactCursor()
+    return { asOf: value.asOf as EvidenceReviewAnchor, after: value.after as number }
+  } catch { throw invalidImpactCursor() }
 }
-function paged<T>(rows: T[], max: number, operation: string, context: ReturnType<typeof pageContext>, key: (v:T)=>number) {
-  const more=rows.length>max, selected=rows.slice(0,max)
-  return {rows:selected,nextCursor:more ? encode(operation,context.filter,context.asOf,key(selected.at(-1)!)):null,asOf:context.asOf}
+
+export function pageImpactRows<T>(rows: T[], max: number, operation: string,
+  context: { asOf: EvidenceReviewAnchor; filter: unknown }, key: (value: T) => number) {
+  const more = rows.length > max, selected = rows.slice(0, max)
+  return { rows: selected, nextCursor: more ? encode(operation, context.filter, context.asOf, key(selected.at(-1)!)) : null, asOf: context.asOf }
 }
-function scoped(input: z.infer<typeof filters>, alias: 'i'|'d') {
+export function impactScopeFilter114(input: z.infer<typeof filters>, alias: 'i'|'d') {
   const fragments: SQL[]=[]
   if(input.enterpriseId!=null)fragments.push(sql`${sql.raw(alias+'.enterprise_id')}=${input.enterpriseId}`)
   if(input.titleCode!=null)fragments.push(sql`${sql.raw(alias+'.title_code')}=${input.titleCode}`)
   if(input.direction!=null)fragments.push(sql`${sql.raw(alias+'.direction')}=${input.direction}`)
   if(input.decisionId!=null)fragments.push(sql`${sql.raw(alias==='i'?'i.decision_id':'d.id')}=${input.decisionId}`)
-  return fragments.length?sql.join(fragments,sql` and `):sql`1`
+  return fragments.length ? sql.join(fragments, sql` and `) : sql`true`
 }
-const headAt = (a:Anchor) => sql`select d.id from difference_reason d where d.enterprise_id=i.enterprise_id and d.title_code=i.title_code and d.direction=i.direction and d.id<=${a.decision} order by d.recorded_at desc,d.id desc limit 1`
-function impactRows(db:DecisionDb,input:z.infer<typeof impactList114>,a:Anchor,after:number,id?:number) {
+const headAt = (a:EvidenceReviewAnchor) => sql`select d.id from difference_reason d where d.enterprise_id=i.enterprise_id and d.title_code=i.title_code and d.direction=i.direction and d.id<=${a.decision} order by d.recorded_at desc,d.id desc limit 1`
+function impactRows(db:DecisionDb,input:z.infer<typeof impactList114>,a:EvidenceReviewAnchor,after:number,id?:number) {
   return db.all<any>(sql`with frozen as (
     select i.id,i.enterprise_id enterpriseId,i.title_code titleCode,i.direction,i.decision_id decisionId,
       coalesce((select max(l.revision_id) from evidence_impact_link_113 l where l.impact_id=i.id and l.revision_id<=${a.revision}),0) latestRevisionId,
       (select max(r.reviewed_revision_id) from evidence_review_receipt_114 r where r.enterprise_id=i.enterprise_id and r.title_code=i.title_code and r.direction=i.direction and (r.decision_id=i.decision_id or r.source_decision_id=i.decision_id) and r.id<=${a.receipt}) reviewedRevisionId,
       (${headAt(a)}) headId,
       exists(select 1 from enterprise e where e.id=i.enterprise_id and ${currentEnterpriseIdentity(db, sql`e.id`)}) ownerExists
-    from explanation_impact_113 i where i.id>${after} and i.id<=${a.impact} and ${scoped(input,'i')} and ${id==null?sql`1`:sql`i.id=${id}`}
+    from explanation_impact_113 i where i.id>${after} and i.id<=${a.impact} and ${impactScopeFilter114(input,'i')} and ${id==null?sql`1`:sql`i.id=${id}`}
     and ${input.eventId==null?sql`1`:sql`exists(select 1 from evidence_impact_link_113 l join evidence_revision_event_113 e on e.revision_id=l.revision_id where l.impact_id=i.id and l.revision_id<=${a.revision} and e.event_id=${input.eventId} and e.enterprise_id=i.enterprise_id and e.title_code=i.title_code)`}
   ), classified as (
     select *,latestRevisionId>coalesce(reviewedRevisionId,-1) pending,
@@ -124,7 +139,7 @@ export function listImpacts114(db:DecisionDb,input:z.infer<typeof impactList114>
   try {
     const rows=impactRows(c.db,input,c.asOf,c.after).map(r=>hydrate(c.db,r))
     const readiness=input.enterpriseId && input.titleCode && input.direction ? readEvidenceToken113(c.db,{enterpriseId:input.enterpriseId,titleCode:input.titleCode,direction:input.direction}).projectionReady : !c.db.get(sql`select 1 from evidence_impact_progress_113 where done=0 limit 1`)
-    const result={...paged(rows,input.limit,'list',c,r=>r.id),projectionReady:readiness}
+    const result={...pageImpactRows(rows,input.limit,'list',c,r=>r.id),projectionReady:readiness}
     if (!result.nextCursor && c.after === 0 && c.asOf.snapshotId) closeSnapshot(c.asOf.snapshotId)
     return result
   } catch (error) { if (c.asOf.snapshotId) closeSnapshot(c.asOf.snapshotId); throw error }
@@ -148,10 +163,10 @@ export function previewImpacts114(db:DecisionDb,input:z.infer<typeof impactPrevi
   const revision=readEvidenceRevision113(db,input.revisionId);if(!revision)throw new DecisionError102(404,'not_found','Committed evidence revision not found')
   const c=pageContext(db,'preview',input)
   const rows=db.all<{id:number;enterpriseId:number;titleCode:string;direction:string;status:string;evidenceQueryId:number|null;lifecycleAction:string|null}>(sql`select d.id,d.enterprise_id enterpriseId,d.title_code titleCode,d.direction,d.status,${differenceEvidenceColumns(db, 'd').evidenceQueryId} evidenceQueryId,d.lifecycle_action lifecycleAction
-    from difference_reason d where d.id>${c.after} and d.id<=${Math.min(c.asOf.decision,revision.maxDecisionId)} and ${scoped(input,'d')}
+    from difference_reason d where d.id>${c.after} and d.id<=${Math.min(c.asOf.decision,revision.maxDecisionId)} and ${impactScopeFilter114(input,'d')}
     and ${revision.enterpriseId==null?sql`1`:sql`d.enterprise_id=${revision.enterpriseId}`} and ${revision.titleCode==null?sql`1`:sql`d.title_code=${revision.titleCode}`} and ${revision.direction==null?sql`1`:sql`d.direction=${revision.direction}`}
     and not exists(select 1 from difference_reason n where n.enterprise_id=d.enterprise_id and n.title_code=d.title_code and n.direction=d.direction and n.id<=${c.asOf.decision} and (n.recorded_at>d.recorded_at or (n.recorded_at=d.recorded_at and n.id>d.id))) order by d.id limit ${input.limit+1}`)
-  return paged(rows.map(d=>({...d,classification:evaluateEvidenceImpact113(db,revision,d)})),input.limit,'preview',c,r=>r.id)
+  return pageImpactRows(rows.map(d=>({...d,classification:evaluateEvidenceImpact113(db,revision,d)})),input.limit,'preview',c,r=>r.id)
 }
 export function listSources114(db:DecisionDb,input:z.infer<typeof impactSources114>) {
   if(!db.get(sql`select 1 from explanation_impact_113 where id=${input.id}`))throw new DecisionError102(404,'not_found','Evidence impact not found')
@@ -159,13 +174,13 @@ export function listSources114(db:DecisionDb,input:z.infer<typeof impactSources1
   // Sources are immutable metadata/scalars; never return arbitrary raw source metadata.
   const rows=db.all<any>(sql`select r.id revisionId,r.source_kind sourceKind,r.source_key sourceKey,r.source_version sourceVersion,r.enterprise_id enterpriseId,r.title_code titleCode,r.direction,r.event_id eventId,r.coverage_changed coverageChanged,r.fact_changed factChanged,r.created_at createdAt,l.classification
     from evidence_impact_link_113 l join evidence_revision_113 r on r.id=l.revision_id where l.impact_id=${input.id} and r.id>${c.after} and r.id<=${c.asOf.revision} order by r.id limit ${input.limit+1}`)
-  return paged(rows,input.limit,'sources',c,r=>r.revisionId)
+  return pageImpactRows(rows,input.limit,'sources',c,r=>r.revisionId)
 }
 export function listEvents114(db:DecisionDb,input:z.infer<typeof impactEvents114>) {
   if(!readEvidenceRevision113(db,input.revisionId))throw new DecisionError102(404,'not_found','Committed evidence revision not found')
   const c=pageContext(db,'events',input)
   const rows=db.all<any>(sql`select revision_id revisionId,event_id eventId,enterprise_id enterpriseId,title_code titleCode from evidence_revision_event_113 where revision_id=${input.revisionId} and event_id>${c.after} and ${input.enterpriseId==null?sql`1`:sql`enterprise_id=${input.enterpriseId}`} order by event_id limit ${input.limit+1}`)
-  return paged(rows,input.limit,'events',c,r=>r.eventId)
+  return pageImpactRows(rows,input.limit,'events',c,r=>r.eventId)
 }
 export function work114(db:DecisionDb,command:z.infer<typeof workCommand114>) {
   return db.transaction(tx=>{

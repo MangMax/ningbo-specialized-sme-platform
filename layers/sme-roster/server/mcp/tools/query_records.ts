@@ -5,6 +5,8 @@ import { EVENT_ORDER, SOURCE_ORDER, TITLE_ORDER } from '#sme-roster/lib/labels'
 import { FIRST_RECOGNITION_STATUS_VALUES } from '#sme-roster/lib/roster/first-recognition'
 import { listRecords } from '#sme-roster/lib/query'
 import { parseRecordQuery } from '../../utils/roster-read-query'
+import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
+import { listPostgresLedgerRecords } from '../../../lib/query-postgres'
 
 /** 通用记录查询；与 `GET /api/records` 共用参数解析和读模型。 */
 export default defineMcpTool({
@@ -38,6 +40,9 @@ export default defineMcpTool({
     page: z.number().int().min(1).optional(),
     pageSize: z.number().int().min(1).max(200).optional(),
   },
-  handler: async (input) =>
-    listRecords(useDb(), parseRecordQuery(input as Record<string, unknown>)),
+  handler: async (input) => {
+    const filter = parseRecordQuery(input as Record<string, unknown>)
+    const pg = usePostgresRosterDb()
+    return pg ? listPostgresLedgerRecords(pg, filter) : listRecords(useDb(), filter)
+  },
 })

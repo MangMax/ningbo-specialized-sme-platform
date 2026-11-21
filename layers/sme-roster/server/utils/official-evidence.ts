@@ -105,15 +105,14 @@ function options(value: OfficialEvidenceReadOptions, additional: readonly string
  * New capture ownership is validated at insertion; no historical owner is subsequently required to exist.
  * No no-op/deduplication or cross-row business decision is performed here.
  */
-export function appendOfficialEvidenceRevision(db: OfficialEvidenceExecutor, input: OfficialEvidenceCapture, expectedRevision: number) {
+export function prepareOfficialEvidenceRevision(input: OfficialEvidenceCapture, expectedRevision: number) {
   validateCapture(input); integer(expectedRevision, 'expectedRevision', 0, Number.MAX_SAFE_INTEGER - 1)
   const revision = expectedRevision + 1, createdAt = new Date().toISOString()
   const row: OfficialEvidenceRow = { ...input, formatVersion: 1, revision, createdAt,
     // Reserve the largest owner IDs: a later legal merge may change the current owner.
     currentOwner: { recordId: Number.MAX_SAFE_INTEGER, enterpriseId: Number.MAX_SAFE_INTEGER } }
   if (Buffer.byteLength(JSON.stringify({ formatVersion: 1, row })) > 65536) throw new OfficialEvidenceError(400, 'input_limit', 'Complete single-row projection exceeds 64KiB')
-  let result: ReturnType<OfficialEvidenceExecutor['run']>
-  try { result = db.run(sql`
+  const insert = sql`
     INSERT INTO official_evidence_row_revision (
       evidence_id,revision,format_version,event_id,captured_record_id,captured_enterprise_id,
       name_raw,uscc_raw,district_raw,source_document_id,stored_file_id,path,sha256,bytes,
@@ -124,7 +123,15 @@ export function appendOfficialEvidenceRevision(db: OfficialEvidenceExecutor, inp
       ${input.command.kind},${input.command.kind === 'import' ? input.command.batchId : null},${input.command.kind === 'evidence_correction' ? input.command.batchKey : null},${createdAt}
     FROM record_evidence ev JOIN record_event e ON e.id=ev.record_event_id JOIN record rec ON rec.id=e.record_id JOIN enterprise ent ON ent.id=rec.enterprise_id
     WHERE ev.id=${input.evidenceId} AND e.id=${input.eventId} AND rec.id=${input.capturedRecordId} AND rec.enterprise_id=${input.capturedEnterpriseId}
-      AND (SELECT coalesce(max(revision),0) FROM official_evidence_row_revision WHERE evidence_id=${input.evidenceId})=${expectedRevision}`) }
+      AND (SELECT coalesce(max(revision),0) FROM official_evidence_row_revision WHERE evidence_id=${input.evidenceId})=${expectedRevision}`
+  const reference = sql`SELECT ev.id FROM record_evidence ev JOIN record_event e ON e.id=ev.record_event_id JOIN record rec ON rec.id=e.record_id JOIN enterprise ent ON ent.id=rec.enterprise_id WHERE ev.id=${input.evidenceId} AND e.id=${input.eventId} AND rec.id=${input.capturedRecordId} AND rec.enterprise_id=${input.capturedEnterpriseId}`
+  return { revision, insert, reference }
+}
+
+export function appendOfficialEvidenceRevision(db: OfficialEvidenceExecutor, input: OfficialEvidenceCapture, expectedRevision: number) {
+  const { revision, insert, reference } = prepareOfficialEvidenceRevision(input, expectedRevision)
+  let result: ReturnType<OfficialEvidenceExecutor['run']>
+  try { result = db.run(insert) }
   catch (error) {
     const cause = (error as { cause?: { code?: string } }).cause
     if (cause?.code === 'SQLITE_CONSTRAINT_FOREIGNKEY' || (error as { code?: string }).code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
@@ -133,8 +140,8 @@ export function appendOfficialEvidenceRevision(db: OfficialEvidenceExecutor, inp
     throw error
   }
   if (!result.changes) {
-    const reference = db.get(sql`SELECT ev.id FROM record_evidence ev JOIN record_event e ON e.id=ev.record_event_id JOIN record rec ON rec.id=e.record_id JOIN enterprise ent ON ent.id=rec.enterprise_id WHERE ev.id=${input.evidenceId} AND e.id=${input.eventId} AND rec.id=${input.capturedRecordId} AND rec.enterprise_id=${input.capturedEnterpriseId}`)
-    throw new OfficialEvidenceError(409, reference ? 'revision_conflict' : 'reference_mismatch', reference ? 'Expected row revision is stale' : 'New capture does not match evidence/event/current owner')
+    const found = db.get(reference)
+    throw new OfficialEvidenceError(409, found ? 'revision_conflict' : 'reference_mismatch', found ? 'Expected row revision is stale' : 'New capture does not match evidence/event/current owner')
   }
   return { formatVersion: 1 as const, evidenceId: input.evidenceId, eventId: input.eventId, revision }
 }
@@ -162,7 +169,7 @@ function fieldGuard(candidate: boolean) {
   return sql.join((candidate ? rawSqlFields : allSqlFields).map(field => sql`(${sql.raw(field)} IS NULL OR (typeof(${sql.raw(field)})='text' AND length(${sql.raw(field)})<=4000 AND length(CAST(${sql.raw(field)} AS BLOB))<=16000))`), sql` AND `)
 }
 interface GuardedProjection { count: number; fieldLimit: number; requiredBytes: number; projection: string | null; scopeCount: number }
-function checkProjectedRows(rows: readonly Partial<OfficialEvidenceRow>[]) {
+export function checkOfficialEvidenceFields(rows: readonly Partial<OfficialEvidenceRow>[]) {
   for (const row of rows) {
     for (const field of textFields) if (field in row) text(row[field], field, field !== 'basis', 413)
     if (row.actor) text(row.actor.id, 'actor.id', false, 413)
@@ -177,7 +184,7 @@ function project<T>(db: OfficialEvidenceExecutor, query: SQL, maxBytes: number, 
   if (result.requiredBytes > maxBytes || result.projection === null) throw new OfficialEvidenceError(413, 'response_limit', 'Projection exceeds maxBytes')
   const parsed = JSON.parse(result.projection)
   const rows = parsed.row ? [parsed.row] : parsed.rows ?? parsed.candidates ?? []
-  checkProjectedRows(rows)
+  checkOfficialEvidenceFields(rows)
   return parsed as T
 }
 function guardedQuery(selection: SQL, shape: SQL, envelope: SQL, maxBytes: number, candidate = false, pageSize = 101, scopeCount: SQL = sql`0`) {
@@ -289,7 +296,7 @@ export function listEventsOfficialEvidencePages(db: OfficialEvidenceExecutor, re
     if (gate.scopeCount > 300 || gate.count > pageSize + 1) return { eventId, error: 'source_limit' }
     if (gate.fieldLimit) return { eventId, error: 'field_limit' }
     if (gate.requiredBytes > maxBytes || gate.projection === null) return { eventId, error: 'response_limit' }
-    try { checkProjectedRows(gate.projection.rows) }
+    try { checkOfficialEvidenceFields(gate.projection.rows) }
     catch (error) {
       if (error instanceof OfficialEvidenceError && error.code === 'field_limit') return { eventId, error: 'field_limit' }
       throw error

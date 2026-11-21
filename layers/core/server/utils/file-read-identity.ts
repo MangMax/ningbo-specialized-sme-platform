@@ -22,9 +22,25 @@ export function registeredFileAtLocator(db: Db, relPath: string) {
 
 /** A locator resolves a registered ID; it never becomes a content identity. */
 export async function verifyFileRead(db: Db, root: string, locator: string): Promise<FileReadIdentity> {
+  return verifyFileReadAtLocator(root, locator, path => registeredFileAtLocator(db, path))
+}
+
+export async function verifyFileReadAtLocator(
+  root: string, locator: string, lookup: (path: string) => StoredFileContentIdentity | null | Promise<StoredFileContentIdentity | null>,
+): Promise<FileReadIdentity> {
   const abs = resolveInsideRoot(root, locator)
   if (!abs) throw createError({ statusCode: 403, message: '路径越界' })
-  const registered = registeredFileAtLocator(db, relative(root, abs).split('\\').join('/'))
+  const registered = await lookup(relative(root, abs).split('\\').join('/'))
+  return verifyRegisteredBytes(abs, registered)
+}
+
+export async function verifyRegisteredFileRead(root: string, registered: StoredFileContentIdentity): Promise<FileReadIdentity> {
+  const abs = resolveInsideRoot(root, registered.relPath)
+  if (!abs) throw createError({ statusCode: 403, message: '路径越界' })
+  return verifyRegisteredBytes(abs, registered)
+}
+
+async function verifyRegisteredBytes(abs: string, registered: StoredFileContentIdentity | null): Promise<FileReadIdentity> {
   if (!registered || !/^[a-f0-9]{64}$/i.test(registered.sha256)) {
     return { registered, status: 'unknown', historical: 'unknown' }
   }
@@ -46,6 +62,10 @@ export async function verifyFileRead(db: Db, root: string, locator: string): Pro
 /** Existing v2 manifest is the only available page/source lineage. No backfill. */
 export async function verifyPageRead(db: Db, root: string, source: string, pagePath?: string, verified?: FileReadIdentity) {
   const identity = verified ?? await verifyFileRead(db, root, source)
+  return verifyRenderedPageRead(root, source, identity, pagePath)
+}
+
+export async function verifyRenderedPageRead(root: string, source: string, identity: FileReadIdentity, pagePath?: string) {
   const { readFile } = await import('node:fs/promises')
   const { manifestRelPath } = await import('../../lib/pdf-page')
   const manifestAbs = resolveInsideRoot(root, manifestRelPath(source))
@@ -79,8 +99,14 @@ export async function verifyPageRead(db: Db, root: string, source: string, pageP
 }
 
 /** Historical readers keep their text even when the mutable current locator conflicts. */
-export async function describeFileRead(db: Db, root: string, locator: string) {
-  try { return await verifyFileRead(db, root, locator) } catch (error) {
+export function describeFileRead(db: Db, root: string, locator: string) {
+  return describeFileReadAtLocator(root, locator, path => registeredFileAtLocator(db, path))
+}
+
+export async function describeFileReadAtLocator(
+  root: string, locator: string, lookup: Parameters<typeof verifyFileReadAtLocator>[2],
+) {
+  try { return await verifyFileReadAtLocator(root, locator, lookup) } catch (error) {
     const failure = error as { statusCode?: number; code?: string; data?: unknown }
     if (failure.statusCode === 403) throw error
     let status: 'file_content_conflict' | 'missing' | 'unavailable'
@@ -88,6 +114,6 @@ export async function describeFileRead(db: Db, root: string, locator: string) {
     else if (failure.statusCode === 404 || failure.code === 'ENOENT' || failure.code === 'ENOTDIR') status = 'missing'
     else if (failure.code === 'EACCES' || failure.code === 'EPERM') status = 'unavailable'
     else throw error
-    return { registered: registeredFileAtLocator(db, locator), status, historical: 'unknown' as const, conflict: failure.data ?? null }
+    return { registered: await lookup(locator), status, historical: 'unknown' as const, conflict: failure.data ?? null }
   }
 }

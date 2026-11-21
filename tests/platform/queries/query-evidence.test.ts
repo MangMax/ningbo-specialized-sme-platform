@@ -3,6 +3,17 @@ import {listPlatformQueries,MAX_FULL_QUERY_BYTES} from '../../../layers/sme-rost
 import {readPlatformQueryEvidence} from '../../../layers/sme-roster/lib/platform/evidence-read'
 import {submitNativePlatformQuery} from '../fixtures/native-query'
 import {nativeImportDb,businessSource} from '../../roster/imports/fixtures/native-import'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import pg from 'pg'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { readPostgresPlatformQueries } from '../../../layers/sme-roster/lib/platform/postgres-query-read'
+import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
+import { insertTargetLegacyProvenance } from '../../../layers/sme-roster/lib/platform/legacy-provenance-command'
+import { readPostgresPlatformEvidence } from '../../../layers/sme-roster/lib/platform/postgres-evidence-read'
+import { importBatch } from '../../../db/schema'
 const handles:ReturnType<typeof nativeImportDb>[]=[]
 afterEach(()=>{for(const db of handles.splice(0))db.$client.close()})
 function fixture(){const db=nativeImportDb();handles.push(db);return db}
@@ -34,3 +45,67 @@ it('enforces full-read budgets while keeping summary and bounded bytes available
  expect(listPlatformQueries(db,{queryId:huge.queryId,view:'summary'}).total).toBe(1)
  expect(readPlatformQueryEvidence(db,{queryId:huge.queryId,field:'rawResponse',length:7})).toMatchObject({byteLength:7,hasMore:true})
 })
+
+const pgBin = process.env.TEST_PLATFORM_HISTORY_PG_BIN
+it.skipIf(!pgBin)('materializes native history with complete relations, original text and full-read limits', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pg-history-'))
+  const sqlite = fixture()
+  sqlite.$client.transaction(() => installLeadListSchema(sqlite.$client))()
+  const key = 'full-history'
+  const rawRows = [{ id: 'original', qymc: '合成🙂企业', rdjb: '2', cszt: '终审通过' }, { id: 'repeated', rdjb: '2' }]
+  const sourceQuery = businessSource(key, [
+    { sequenceNo: 1, relationKey: 'original', rawFields: rawRows[0],
+      sourceText: '页面一原文', nameRaw: '合成🙂企业', aliasNameRaw: '原名' },
+    { sequenceNo: 2, relationKey: 'repeated', rawFields: rawRows[1], sourceText: '页面二原文' },
+  ])
+  const rawResponse = '原始\\文本🙂'
+  const observed = submitNativePlatformQuery(sqlite, {
+    ...sourceQuery, rawResponse,
+  })
+  const date = sourceQuery.queriedAt!
+  const supplemental = sqlite.insert(importBatch).values({
+    idempotencyKey: 'legacy-meta', sourceKind: 'platform_archive', sourceIdentity: 'legacy-meta-source', status: 'committed', createdAt: date,
+  }).returning({ id: importBatch.id }).get()
+  insertTargetLegacyProvenance(sqlite, {
+    queryId: observed.queryId, interface: 'business_list', queryKey: key, rdjb: '2', queriedAt: date,
+    sourceIdentity: 'archived/source.json', sourceSha256: 'a'.repeat(64), segmentIndex: 0,
+    collection: { source: 'businessList', status: 'success', effectiveConditions: { combination: 'and' },
+      titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: date, completedAt: date, rows: rawRows as Record<string,string>[],
+      pages: [1, 2].map(page => ({ source: 'businessList', rdjb: '2', page, status: 'success', fetchedCount: 1, declaredTotal: 2, error: null })),
+      fetchedCount: 2, declaredTotal: 2, completeness: 'complete', fullRange: true, unfinished: [], error: null,
+      limits: { maxRequests: 5, maxRows: 20, maxDurationMs: 1_000, pageSize: 1 } },
+    relations: rawRows.map((rawFields, index) => ({ sequenceNo: index + 1, relationKey: rawFields.id, rawFields: rawFields as Record<string,string> })),
+  }, supplemental.id, 'b'.repeat(64))
+  const large = submitNativePlatformQuery(sqlite, { ...businessSource('full-history-limit'), rawResponse: 'x'.repeat(MAX_FULL_QUERY_BYTES + 1) })
+  const source = join(dir, 'source.sqlite')
+  const pgEnv = { ...process.env, PGHOST: dir, PGPORT: '5432', PGDATABASE: 'postgres', PGUSER: 'history_fixture', PGSQL_BIN: join(pgBin!, 'psql') }
+  const ctl = (...args: string[]) => execFileSync(join(pgBin!, 'pg_ctl'), ['-D', join(dir, 'pg'), '-w', ...args], { env: pgEnv })
+  let started = false
+  let pool: pg.Pool | undefined
+  try {
+    await sqlite.$client.backup(source)
+    execFileSync(join(pgBin!, 'initdb'), ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', 'history_fixture', '-D', join(dir, 'pg')], { env: pgEnv })
+    ctl('-l', join(dir, 'pg.log'), '-o', `-h '' -k ${dir}`, 'start')
+    started = true
+    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', source, 'staged'], { env: pgEnv })
+    for (const layer of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
+      execFileSync(pgEnv.PGSQL_BIN, ['-Xqw', '-v', 'staging=staged', '-f', `upgrade/postgresql/materialize-${layer}.sql`], { env: pgEnv })
+    }
+    pool = new pg.Pool({ user: pgEnv.PGUSER, database: pgEnv.PGDATABASE, host: dir, port: 5432, options: '-c search_path=business,public' })
+    const db = drizzle({ client: pool })
+    for (const query of [
+      { queryId: observed.queryId }, { includeRawResponse: true, queryId: observed.queryId },
+      { queryId: observed.queryId, view: 'summary' as const }, { queryId: large.queryId },
+    ]) expect(await readPostgresPlatformQueries(db, query)).toEqual(listPlatformQueries(sqlite, query))
+    const saved = (await readPostgresPlatformQueries(db, { queryId: observed.queryId })).rows[0]!
+    expect(saved.query.legacyProvenance?.collection).not.toHaveProperty('rows')
+    expect(saved.relations.map(row => [row.sourceRdjb, row.sourcePage])).toEqual([['2', 1], ['2', 2]])
+    expect(await readPostgresPlatformEvidence(db, { queryId: observed.queryId, field: 'rawResponse' }))
+      .toMatchObject({ totalBytes: Buffer.byteLength(rawResponse), data: Buffer.from(rawResponse).toString('base64') })
+    await expect(readPostgresPlatformQueries(db, { queryId: large.queryId, includeRawResponse: true })).rejects.toMatchObject({ statusCode: 413 })
+  } finally {
+    await pool?.end()
+    if (started) ctl('-m', 'fast', 'stop')
+    rmSync(dir, { recursive: true, force: true })
+  }
+}, 90_000)

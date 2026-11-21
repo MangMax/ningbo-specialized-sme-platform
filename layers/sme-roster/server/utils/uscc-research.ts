@@ -34,7 +34,6 @@ import {
   isByteEqualName,
   judgeUsccClaim,
   nameMatchLevel,
-  missingUsccSourceFields,
   PLATFORM_INTERFACE_URLS,
   usccFormatVerdict,
   type NameMatchLevel,
@@ -53,6 +52,7 @@ import {
   type UsccTargetOutcome,
 } from '../../lib/roster/uscc-research'
 import type {
+  RosterImportItemResult,
   RosterImportMerge,
   RosterImportPlatformQuery,
   RosterImportRelation,
@@ -63,7 +63,7 @@ import type {
 import type { DuplicateMergeEvidence } from '../../lib/roster/duplicate-merge'
 import { TITLE_ORDER } from '../../lib/labels'
 import { MAX_PAGE_SIZE } from '../../lib/query'
-import { findUsccKeyedRelationEvidence } from './roster-duplicate-merge'
+import { findIndexedUsccEvidence, type PlatformEvidenceIndex } from './roster-duplicate-merge'
 import { currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
 import { readUsccTargets, usccResearchEvidence } from './uscc-research-read'
 
@@ -85,7 +85,10 @@ export function collectUsccTargets(
   db: Db,
   filter: Omit<UsccChecklistFilter, 'page' | 'pageSize'> = {},
 ): UsccChecklistRow[] {
-  const snap = readUsccTargets(db, filter)
+  return projectUsccTargets(readUsccTargets(db, filter))
+}
+
+export function projectUsccTargets(snap: UsccTargetSnapshot): UsccChecklistRow[] {
   const missing = snap.rows
   const recordsByEnterprise = new Map<number, (typeof snap.records)[number][]>()
   for (const record of snap.records) {
@@ -179,20 +182,6 @@ export function collectUsccTargets(
   return rows.sort((a, b) => titleRank(a.titles[0] ?? '') - titleRank(b.titles[0] ?? '') || a.enterpriseId - b.enterpriseId)
 }
 
-/**
- * **待查清单**：仍缺统一社会信用代码的企业。
- *
- * 判据是**「缺统代」**（`enterprise.uscc_norm IS NULL`，与 `GET /api/quality?kind=uscc_missing`
- * 同一口径）**且仍在当前总表里**（`rosterState === 'current'`）。「接口曾用名匹配后仍未解决」
- * 在数据上就落在这里：实测库里 133 家无统代企业**全部**停在 `not_queried`（平台两接口按
- * `tyshxydm` 取数，无统代直查不了），所以两者是同一集合 —— 但清单**按缺统代筛**，
- * 因为那才是「还没解决」的定义，而「未查询」只是它当前的表现。补齐/归并之后该企业自然
- * 离开清单（票面第 6 条），不需要额外的排除规则。
- *
- * 每行带上「为什么它还没解决」：① `traces`（该企业的差异解释行，状态机取值原样）；
- * ② `queries`（以它为查询键的平台查询 —— 无统代时通常查不了，有 `name:` 查询时照实列出）；
- * ③ `evidence`（公布来源，带页码，供人工回到原文核对）。
- */
 export function listUsccChecklist(db: Db, filter: UsccChecklistFilter = {}): UsccChecklistResult {
   return pageUsccChecklist(collectUsccTargets(db, filter), filter)
 }
@@ -227,7 +216,7 @@ function titleRank(code: string): number {
  * 每 (企业 × 称号 × 方向) 的**当前**解释 = `recordedAt` 最新那条。
  * 与读侧（`layers/sme-roster/lib/roster/enterprise-roster.ts` 的 `currentExplanations`）同一口径。
  */
-function currentTraces(snap: Snapshot): UsccInterfaceTrace[] {
+function currentTraces(snap: UsccTargetSnapshot): UsccInterfaceTrace[] {
   const current = new Map<string, (typeof snap.differences)[number]>()
   for (const row of snap.differences) {
     const key = `${row.enterpriseId}|${row.titleCode}|${row.direction}`
@@ -245,7 +234,7 @@ function currentTraces(snap: Snapshot): UsccInterfaceTrace[] {
   }))
 }
 
-type Snapshot = ReturnType<typeof readUsccTargets>
+export type UsccTargetSnapshot = ReturnType<typeof readUsccTargets>
 
 // ---------------------------------------------------------------------------
 // 库内匹配字典（②：现名 + 已确认曾用名）
@@ -271,8 +260,18 @@ interface DictionaryEntry {
  * （契约 §1.2：未确认的别名不参与搜索/归并，证据不足宁可待核）。
  */
 function buildDictionary(db: Db): DictionaryEntry[] {
+  return projectUsccDictionary(
+    db.select({ id: schema.enterprise.id, name: schema.enterprise.name, nameNorm: schema.enterprise.nameNorm, usccNorm: schema.enterprise.usccNorm, district: schema.enterprise.district }).from(schema.enterprise).where(currentEnterpriseIdentity(db)).all(),
+    db.select({ enterpriseId: schema.enterpriseAlias.enterpriseId, name: schema.enterpriseAlias.name, nameNorm: schema.enterpriseAlias.nameNorm }).from(schema.enterpriseAlias).where(eq(schema.enterpriseAlias.verificationStatus, 'confirmed')).all(),
+  )
+}
+
+export function projectUsccDictionary(
+  owners: Array<{ id: number; name: string; nameNorm: string; usccNorm: string | null; district: string | null }>,
+  aliases: Array<{ enterpriseId: number; name: string; nameNorm: string }>,
+): DictionaryEntry[] {
   const entries = new Map<number, DictionaryEntry>()
-  for (const enterprise of db.select({ id: schema.enterprise.id, name: schema.enterprise.name, nameNorm: schema.enterprise.nameNorm, usccNorm: schema.enterprise.usccNorm, district: schema.enterprise.district }).from(schema.enterprise).where(currentEnterpriseIdentity(db)).all()) {
+  for (const enterprise of owners) {
     const uscc = normalizeUscc(enterprise.usccNorm)
     if (!uscc) continue
     entries.set(enterprise.id, {
@@ -285,7 +284,7 @@ function buildDictionary(db: Db): DictionaryEntry[] {
       confirmedAliasNorms: new Set(),
     })
   }
-  for (const alias of db.select({ enterpriseId: schema.enterpriseAlias.enterpriseId, name: schema.enterpriseAlias.name, nameNorm: schema.enterpriseAlias.nameNorm }).from(schema.enterpriseAlias).where(eq(schema.enterpriseAlias.verificationStatus, 'confirmed')).all()) {
+  for (const alias of aliases) {
     const entry = entries.get(alias.enterpriseId)
     if (!entry) continue
     entry.confirmedAliasNorms!.add(alias.nameNorm)
@@ -471,7 +470,21 @@ export const USCC_RESEARCH_SOURCE_IDENTITY = 'roster/uscc-research'
  * 全程不写库；`merges` / `usccBackfills` 只是**载荷**，落库仍由统一导入 API 完成。
  */
 export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): UsccResearchReport {
-  const allTargets = listAllTargets(db, options)
+  const allTargets = options.targets ? [...options.targets] : collectUsccTargets(db, options.filter ?? {})
+  const inputs = prepareUsccResearch(allTargets, buildDictionary(db), options)
+  const evidence = usccResearchEvidence(db)
+  evidence.load(inputs.codes)
+  const plan = projectUsccResearch(inputs, evidence, options)
+  let step = plan.next()
+  while (!step.done) step = plan.next(planRosterImport(db, step.value).conflicts)
+  return step.value
+}
+
+export function prepareUsccResearch(
+  allTargets: readonly UsccChecklistRow[],
+  dictionary: DictionaryEntry[],
+  options: UsccResearchOptions,
+) {
   // ── 范围：给了**认领**（公开来源 claim / 平台证据认领）就**只判这些目标** ──────────
   // 为什么必须这样：认领是「逐家查证的结果」，调用方要的是「把这些查到的写进去」。
   // 若还顺手跑全库库内计划，就会**顺带**把库内路径能解决的几十家也一起归并了 ——
@@ -496,7 +509,19 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       ? claimedTargetIds
       : null
   const targets = allTargets.filter((row) => (restrict ? restrict.has(row.enterpriseId) : true))
-  const dictionary = buildDictionary(db)
+  const codes = [
+    ...targets.flatMap(target => findLibraryCandidates(target, dictionary).map(candidate => candidate.uscc)),
+    ...(options.platformClaims ?? []).map(claim => claim.uscc),
+    ...(options.claims ?? []).map(claim => claim.uscc),
+  ]
+  return { allTargets, targets, restrict, dictionary, codes }
+}
+
+export function* projectUsccResearch(
+  { allTargets, targets, restrict, dictionary }: ReturnType<typeof prepareUsccResearch>,
+  researchEvidence: { index: PlatformEvidenceIndex; exportName(uscc: string): string | null },
+  options: UsccResearchOptions,
+): Generator<RosterImportRequest, UsccResearchReport, RosterImportItemResult[]> {
   // Reuse the identity/confirmed-alias projection for every ready item. Keep
   // first-owner precedence for legacy differently formatted copies of a code.
   const holders = new Map<string, { id: number; name: string }>()
@@ -504,13 +529,6 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
   for (const entry of dictionary) if (!holders.has(entry.uscc)) holders.set(entry.uscc, { id: entry.enterpriseId, name: entry.name })
   const findHolder = (uscc: string) => holders.get(uscc) ?? null
   const hasAlias = (enterpriseId: number, name: string) => aliases.get(enterpriseId)?.has(normalizeName(name)) ?? false
-  // 仅按实际候选/认领统代批量建轻量证据索引；同轮字典增长时增量补齐。
-  const researchEvidence = usccResearchEvidence(db)
-  researchEvidence.load([
-    ...targets.flatMap(target => findLibraryCandidates(target, dictionary).map(candidate => candidate.uscc)),
-    ...(options.platformClaims ?? []).map(claim => claim.uscc),
-    ...(options.claims ?? []).map(claim => claim.uscc),
-  ])
   const evidenceIndex = researchEvidence.index
 
   const resolved = new Map<number, UsccResearchReady>()
@@ -832,13 +850,12 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       continue
     }
     const correctionMatch = claim.correction
-      ? (a: unknown, b: unknown) => (!isByteEqualName(a, claim.correction!.platformName) ? null : ('byte' as const))
+      ? (a: unknown) => (!isByteEqualName(a, claim.correction!.platformName) ? null : ('byte' as const))
       : null
     const evidenceName = claim.correction ? claim.correction.platformName : target.name
-    const stored = findUsccKeyedRelationEvidence(
-      db,
-      { uscc, name: evidenceName },
+    const stored = findIndexedUsccEvidence(
       evidenceIndex,
+      { uscc, name: evidenceName },
       correctionMatch ?? nameMatchLevel,
     )
     const supplied = pickSuppliedEvidence(claim, evidenceName, uscc)
@@ -892,11 +909,11 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
         }))
     const platformQuery: RosterImportPlatformQuery | null = platformQueries[0] ?? null
     if (platformQueries.length) {
-      const conflicts = planRosterImport(db, {
+      const conflicts = yield {
         idempotencyKey: `uscc-source:${target.enterpriseId}:${uscc}`,
         sourceKind: 'platform_archive', sourceIdentity: USCC_RESEARCH_SOURCE_IDENTITY,
         payload: { platformQueries },
-      }).conflicts
+      }
       if (conflicts.length) {
         pending.set(target.enterpriseId, {
           targetId: target.enterpriseId, targetName: target.name, outcome: 'manual',
@@ -1022,14 +1039,12 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
       const candidates = findLibraryCandidates(target, dictionary)
       if (candidates.length) candidateCount.set(targetId, candidates.length)
       if (!candidates.length) continue // 本轮先放进「未找到」，等曾用名字典长大后再扫
-      researchEvidence.load(candidates.map(candidate => candidate.uscc))
       // 拿候选统代**去平台按统代查**（已落库的查询/关系就是那次实查的证据）。
       const evidenced = new Map<string, { candidate: UsccLibraryCandidate; evidence: DuplicateMergeEvidence }>()
       for (const candidate of candidates) {
-        const found = findUsccKeyedRelationEvidence(
-          db,
-          { uscc: candidate.uscc, name: target.name },
+        const found = findIndexedUsccEvidence(
           evidenceIndex,
+          { uscc: candidate.uscc, name: target.name },
           nameMatchLevel,
         )
         if (found.ok && !evidenced.has(candidate.uscc)) {
@@ -1254,11 +1269,6 @@ export function planUsccResearch(db: Db, options: UsccResearchOptions = {}): Usc
             },
           },
   }
-}
-
-/** 清单（不分页）—— 计划要的是全部目标，不是当前页。 */
-function listAllTargets(db: Db, options: UsccResearchOptions): UsccChecklistRow[] {
-  return options.targets ? [...options.targets] : collectUsccTargets(db, options.filter ?? {})
 }
 
 /**

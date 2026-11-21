@@ -66,7 +66,7 @@ it('discovers module and subgroup filters in development OpenAPI and lists all s
   const { kinds } = await read('/api/jobs/kinds', false)
   expect(kinds.map((entry: { kind: string }) => entry.kind)).toEqual([
     'current-roster-export', 'difference-snapshot', 'event-annual-correspondence', 'event-archive-candidates',
-    'lead-lists-version-export', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages',
+    'lead-lists-version-export', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages', 'roster_export_cleanup',
   ])
   const snapshot = await request('/api/jobs', { method: 'POST', headers, body: JSON.stringify({ kind: 'difference-snapshot' }) })
   expect(snapshot.status).toBe(400)

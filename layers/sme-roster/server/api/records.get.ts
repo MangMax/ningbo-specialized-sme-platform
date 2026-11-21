@@ -1,6 +1,8 @@
 import { useDb } from '@db'
 import { listRecords } from '#sme-roster/lib/query'
 import { parseRecordQuery } from '../utils/roster-read-query'
+import { usePostgresRosterDb } from '../utils/postgres-roster-db'
+import { listPostgresLedgerRecords } from '../../lib/query-postgres'
 
 /**
  * 通用台账查询(一行 = 企业 × 称号；行内保留全部来源、事件与出处)。
@@ -75,5 +77,7 @@ defineRouteMeta({
 })
 
 export default defineEventHandler((event) => {
-  return listRecords(useDb(), parseRecordQuery(getQuery(event)))
+  const filter = parseRecordQuery(getQuery(event))
+  const pg = usePostgresRosterDb()
+  return pg ? listPostgresLedgerRecords(pg, filter) : listRecords(useDb(), filter)
 })

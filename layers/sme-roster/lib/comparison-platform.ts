@@ -1,4 +1,4 @@
-import type { PlatformStoredRelation } from './platform/read'
+import type { PlatformStoredQuery, PlatformStoredRelation } from './platform/read'
 import { differencePublicColumns } from './platform/difference-reference-target'
 import { readTargetDeclarationFacts } from '../server/utils/platform-declarations-target'
 import { readTargetBusinessProcessFacts } from '../server/utils/platform-business-processes-target'
@@ -232,12 +232,25 @@ function attachPlatformEvidenceSnapshot<T extends RowKey>(
   for (const interfaceName of ['apply_list', 'business_list', 'recognized_list'] as const) {
     const queryIds = new Set(queries.filter(q => q.interface === interfaceName).map(q => q.id))
     const ids = relationRows.filter(r => queryIds.has(r.queryId)).map(r => r.id)
-    const selected = interfaceName === 'apply_list' ? readTargetDeclarationFacts(db, ids, { scope: 'selected' })
+    const selected = interfaceName === 'apply_list' ? readTargetDeclarationFacts(db, ids)
       : interfaceName === 'business_list' ? readTargetBusinessProcessFacts(db, ids, { scope: 'selected' })
       : readTargetRecognizedFacts(db, ids)
     for (const [id, fact] of selected) facts.set(id, fact)
   }
 
+  return projectPlatformComparisonEvidence(rows, aliases, dispositions, queriedEnterpriseByKey, queries, relationRows, facts)
+}
+
+export type ComparisonObservation = Pick<PlatformObservationFact, 'archiveProcessFacts' | 'normalizationConflicts'>
+type StoredDisposition = Omit<typeof schema.differenceReason.$inferSelect, 'evidenceCollectionId' | 'evidenceObservationId'> &
+    { evidenceQueryId: number | null; evidenceRelationId: number | null }
+
+export function projectPlatformComparisonEvidence<T extends RowKey>(rows: T[],
+  aliases: readonly (ComparisonAlias & { enterpriseId: number })[],
+  dispositions: readonly StoredDisposition[], queriedEnterpriseByKey: ReadonlyMap<string, number[]>,
+  queries: readonly PlatformStoredQuery[], relationRows: readonly PlatformStoredRelation[],
+  facts: ReadonlyMap<number, ComparisonObservation>,
+): (T & { platform: ComparisonPlatformEvidence })[] {
   const aliasesByEnterprise = new Map<number, ComparisonAlias[]>()
   for (const alias of aliases) {
     const item: ComparisonAlias = {

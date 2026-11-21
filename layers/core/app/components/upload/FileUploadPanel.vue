@@ -39,7 +39,7 @@ const props = withDefaults(
     disabled?: boolean
     /** tus 端点。默认与 `server/utils/tus.ts` 的 `TUS_PATH` 一致。 */
     endpoint?: string
-    metadataFields: Component
+    metadataFields?: Component
     placement: {
       emptyBatchMeta: () => Batch
       validateBatch: (batch: Batch) => string[]
@@ -126,7 +126,7 @@ const sentBytes = computed(() =>
 )
 
 const dropHint = computed(() => {
-  if (resumableCount.value > 0)
+  if (props.metadataFields && resumableCount.value > 0)
     return `有 ${resumableCount.value} 个未传完;重新选入同一个文件会从断点接着传`
   return '或点击选择文件'
 })
@@ -140,6 +140,15 @@ const previewFilename = computed(() => queue.value.find((t) => t.phase !== 'done
 
 function openAddDialog(files: File[]) {
   if (props.disabled || files.length === 0) return
+  if (!props.metadataFields) {
+    const valid = files.filter(file => {
+      if (file.name !== '.' && isFilenameSafe(file.name)) return true
+      emit('error', { name: file.name, failure: { kind: 'invalid', message: '文件名称无效。' } })
+      return false
+    })
+    addToQueue(valid)
+    return
+  }
   pendingFiles.value = files
   pendingName.value = files[0] ? baseName(files[0].name) : ''
   // 不再从文件名**自动回填**落位信息:建议值由 `MetadataFields` 摆出来、由用户点「采纳」
@@ -441,7 +450,7 @@ defineExpose({ addFiles: addToQueue })
     <div class="flex flex-col gap-5">
       <UploadDropzone :disabled="disabled" :hint="dropHint" @files="openAddDialog" />
 
-      <component :is="metadataFields"
+      <component :is="metadataFields" v-if="metadataFields"
         v-model:meta="meta"
         :filename="previewFilename"
         :problems="problems"
@@ -500,7 +509,7 @@ defineExpose({ addFiles: addToQueue })
   </div>
 
   <!-- 入队前先把落位信息确认掉:确认框里就能看见东西会落到哪。 -->
-  <Dialog v-model:open="dialogOpen">
+  <Dialog v-if="metadataFields" v-model:open="dialogOpen">
     <DialogContent class="sm:max-w-xl">
       <DialogHeader>
         <DialogTitle>这份文件放到哪里</DialogTitle>

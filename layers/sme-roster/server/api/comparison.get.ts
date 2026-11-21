@@ -7,6 +7,9 @@ import { readWholeComparisonFull } from '#sme-roster/lib/comparison-full'
 import { TITLE_ORDER } from '#sme-roster/lib/labels'
 import { MAX_PAGE_SIZE } from '#sme-roster/lib/query'
 
+import { readPostgresWholeComparison } from '#sme-roster/lib/comparison-postgres'
+import { usePostgresRosterDb } from '../utils/postgres-roster-db'
+
 /**
  * 两侧比对结果(已公布 vs 平台导出),带人工标注、**库内平台原因与证据**、旧解释缓存对照。
  *
@@ -106,28 +109,23 @@ export default defineEventHandler((event) => {
     throw createError({ statusCode: 400, statusMessage: 'enterpriseId must be a positive integer' })
   }
   const config = useRuntimeConfig(event)
-  const db = useDb()
-  if (q.view === 'summary') {
-    const options = {
-      curatedPath: config.curatedPath, reconcilePath: config.reconcilePath, enterpriseId,
-      title, direction: direction as ComparisonDirection | undefined,
-      district: typeof q.district === 'string' ? q.district : undefined,
-      q: typeof q.q === 'string' ? q.q : undefined, showCurated: q.showCurated === 'true',
-      page: Math.max(1, Math.floor(num(q.page, 1))),
-      pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25)))),
-    }
-    return withEnterpriseReadSignal(event, async signal => {
-      const result = await readSummary(db, options, signal, undefined, requestLogContext(event))
-      if (Buffer.isBuffer(result)) setHeader(event, 'content-type', 'application/json')
-      return result
-    })
-  }
-  return readWholeComparisonFull(db, {
+  const options = {
     curatedPath: config.curatedPath, reconcilePath: config.reconcilePath, enterpriseId,
     title, direction: direction as ComparisonDirection | undefined,
     district: typeof q.district === 'string' ? q.district : undefined,
     q: typeof q.q === 'string' ? q.q : undefined, showCurated: q.showCurated === 'true',
     page: Math.max(1, Math.floor(num(q.page, 1))),
     pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25)))),
-  })
+  }
+  const postgres = usePostgresRosterDb()
+  if (postgres) return readPostgresWholeComparison(postgres, options, q.view === 'summary' ? 'summary' : 'full')
+  const db = useDb()
+  if (q.view === 'summary') {
+    return withEnterpriseReadSignal(event, async signal => {
+      const result = await readSummary(db, options, signal, undefined, requestLogContext(event))
+      if (Buffer.isBuffer(result)) setHeader(event, 'content-type', 'application/json')
+      return result
+    })
+  }
+  return readWholeComparisonFull(db, options)
 })

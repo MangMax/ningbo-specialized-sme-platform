@@ -7,6 +7,7 @@ import { actualSessionEntryProfile, configureSessionVirtuals, installSessionOver
 import { installRosterWorkers } from './layers/sme-roster/nuxt-workers'
 import tailwindcss from '@tailwindcss/vite'
 import { LOG_ICON_IDS } from './layers/core/app/components/logs/logIcons'
+import { nitroJobSchedules } from './lib/job-schedules'
 import { appManifests } from './lib/installed-manifests'
 import { validateAppModules } from './layers/core/lib/core/module-registry'
 
@@ -47,7 +48,6 @@ export default defineNuxtConfig({
     '@pinia/nuxt',
     '@pinia/colada-nuxt',
     '@vueuse/nuxt',
-    'nuxt-charts',
     // MCP tool definitions are discovered in the installed layers. The
     // application handler and transport contract live in server/mcp/index.ts.
     '@nuxtjs/mcp-toolkit',
@@ -83,11 +83,6 @@ export default defineNuxtConfig({
   evlog: {
     silent: true, pretty: false, console: false, sourceLocation: false, strip: [],
     transport: { enabled: false }, stream: false,
-  },
-
-  // 统计页图表(nuxt-charts v3)。只注册用到的图表组件,缩小客户端包体。
-  nuxtCharts: {
-    include: ['LineChart', 'DonutChart'],
   },
 
   css: ['#core/app/assets/css/tailwind.css'],
@@ -196,7 +191,8 @@ export default defineNuxtConfig({
         installRosterWorkers(config)
       },
     },
-    experimental: { openAPI: true },
+    experimental: { openAPI: true, tasks: true },
+    ...nitroJobSchedules(appManifests, fileURLToPath(new URL('./server/scheduling/dispatch-task.ts', import.meta.url))),
     openAPI: {
       meta: {
         title: '专精特新台账看板 — 代理 HTTP 能力面',

@@ -1,6 +1,5 @@
-import { useDb } from '@db'
-import { readStoredFileContentIdentity } from '../../utils/file-content-identity'
-import { verifyFileRead, verifyPageRead } from '../../utils/file-read-identity'
+import { readHttpFileIdentity, verifyHttpFileRead } from '../../utils/file-content-http'
+import { verifyRenderedPageRead } from '../../utils/file-read-identity'
 import { createReadStream, statSync } from 'node:fs'
 import { extname, normalize, resolve, sep } from 'node:path'
 import { resolvePreviewKind } from '../../../lib/preview'
@@ -83,10 +82,9 @@ export default defineEventHandler(async (event) => {
   // 路由参数可能是数组(带斜杠的路径),拼回一条相对路径。
   const requested = Array.isArray(raw) ? raw.join('/') : raw
   let decoded = decodeURIComponent(requested)
-  const db = useDb()
   // Numeric IDs are unambiguous: supported source filenames require an extension.
   if (/^[1-9]\d*$/.test(decoded)) {
-    const registered = readStoredFileContentIdentity(db, Number(decoded))
+    const registered = await readHttpFileIdentity(Number(decoded))
     if (!registered) throw createError({ statusCode: 404, message: '文件不存在' })
     decoded = registered.relPath
   }
@@ -120,9 +118,9 @@ export default defineEventHandler(async (event) => {
   }
 
   const pageSource = /^((?:[^/]+\/)*)\.([^/]+\.pdf)\.pages\/p\d+\.png$/i.exec(decoded)
-  const identity = pageSource
-    ? await verifyPageRead(db, root, `${pageSource[1]}${pageSource[2]}`, decoded)
-    : await verifyFileRead(db, root, decoded)
+  const source = pageSource ? `${pageSource[1]}${pageSource[2]}` : decoded
+  const sourceIdentity = await verifyHttpFileRead(root, source)
+  const identity = pageSource ? await verifyRenderedPageRead(root, source, sourceIdentity, decoded) : sourceIdentity
   setHeader(event, 'x-file-content-status', identity.status)
   setHeader(event, 'x-file-historical-identity', identity.historical)
   if (identity.registered) {

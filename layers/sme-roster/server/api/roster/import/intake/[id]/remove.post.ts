@@ -2,6 +2,8 @@ import { useDb } from '@db'
 import { z } from 'zod'
 import { removeAnnouncementIntake } from '../../../../../utils/announcement-intake'
 import { intakeRoute } from '../../../../../utils/announcement-intake-route'
+import { removePostgresAnnouncementIntake } from '../../../../../utils/announcement-intake-postgres'
+import { usePostgresRosterDb } from '../../../../../utils/postgres-roster-db'
 
 defineRouteMeta({ openAPI: {
   tags: ['名录'], summary: '从名录录入移出名单版本', security: [{ bearerAuth: [] }],
@@ -12,4 +14,8 @@ defineRouteMeta({ openAPI: {
   responses: { 200: { description: '保留原行、基础库及历史来源' }, 409: { description: '名单版本冲突' } },
 } })
 const input = z.strictObject({ sourceDigest: z.string().regex(/^[0-9a-f]{64}$/), reason: z.string().trim().min(1).max(4000) })
-export default intakeRoute((id, body) => removeAnnouncementIntake(useDb(), id, body.sourceDigest, body.reason), input)
+export default intakeRoute((id, body) => {
+  const pg = usePostgresRosterDb(true)
+  return pg ? removePostgresAnnouncementIntake(pg, id, body.sourceDigest, body.reason)
+    : removeAnnouncementIntake(useDb(), id, body.sourceDigest, body.reason)
+}, input)

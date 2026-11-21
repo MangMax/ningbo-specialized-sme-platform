@@ -84,7 +84,7 @@ for (const entry of TASK_EXPORTS) it(`${entry.titleCode}: filtered query submits
   expect(wrapper.get('#current-export-scope').text()).toBe('包含全部资格状态')
   const actions = wrapper.get('header').text()
   expect(actions).not.toMatch(/导出范围|导出说明|忽略搜索|产物保留|工作表|数据快照/)
-  expect(wrapper.get('header').findAll('button')).toHaveLength(1)
+  expect(wrapper.findAll('button[aria-describedby~="current-export-scope"]')).toHaveLength(1)
   await submit().trigger('click'); await flushPromises()
   const posts = calls.filter(c => c.options.method === 'POST')
   expect(posts).toHaveLength(1)

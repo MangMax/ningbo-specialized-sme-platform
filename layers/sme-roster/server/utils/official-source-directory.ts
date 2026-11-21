@@ -9,7 +9,7 @@ import { fileNameOf } from '../../../core/lib/preview'
  * No backfill, import, or evidence correction occurs on this read path. */
 export const officialSourceDirectory = sql`(
   select coalesce(d.id, -p.evidence_id) as id, 'jxj' as source,
-    d.title, d.doc_number as docNumber, d.issue_date as issueDate, p.path
+    d.title, d.doc_number as "docNumber", d.issue_date as "issueDate", p.path
   from (
     select v.source_file as path, min(v.id) as evidence_id
     from record_evidence v join record_event e on e.id = v.record_event_id

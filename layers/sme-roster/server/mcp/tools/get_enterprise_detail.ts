@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { enterpriseReads } from '../../utils/enterprise-read'
+import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
+import { readPostgresRosterEnterpriseDetail } from '../../../lib/roster/enterprise-detail-postgres'
 
 /** 与 `GET /api/roster/enterprises/:id` 共用企业详情读模型。 */
 export default defineMcpTool({
@@ -26,6 +28,12 @@ export default defineMcpTool({
     enterpriseId: z.number().int().positive().describe('企业 id'),
   },
   handler: async ({ enterpriseId }, extra) => {
+    const pg = usePostgresRosterDb()
+    if (pg) {
+      const detail = await readPostgresRosterEnterpriseDetail(pg,enterpriseId)
+      if (!detail) throw createError({ statusCode:404,statusMessage:'not found' })
+      return JSON.stringify(detail)
+    }
     const detail = await enterpriseReads.json(useDb().$client.name, { operation: 'detail',enterpriseId }, extra?.signal, (extra as typeof extra & { logContext?: LogContext })?.logContext)
     if (!detail.found) throw createError({ statusCode: 404, statusMessage: 'not found' })
     return detail.body.toString('utf8')

@@ -10,6 +10,7 @@ import { createFileStore, sha256Of, type FileCategoryServer, type FileStoreDb, t
 import { extendFileOpenApi } from '../../../layers/core/server/utils/file-openapi'
 import { rosterFileServerCategory } from '../../../layers/sme-roster/server/modules/sme-roster/files'
 import { createTus, TUS_PATH } from '../../../layers/core/server/utils/tus'
+import { libraryFileServerCategory } from '../../../layers/core/server/utils/library-file-category'
 
 let dir: string
 beforeAll(() => { dir = mkdtempSync(join(tmpdir(), 'file-categories-')) })
@@ -131,10 +132,14 @@ async function uploadAndRegisterFixture(name: string, installed: readonly FileCa
   const base = 'http://localhost'
   const registerRoute = (await import('../../../layers/core/server/api/files/register.post')).default
   const listRoute = (await import('../../../layers/core/server/api/files/index.get')).default
+  const libraryRoute = (await import('../../../layers/core/server/api/file-library.get')).default
+  const rosterRoute = (await import('../../../layers/sme-roster/server/api/sme-roster/files.get')).default
   const detailRoute = (await import('../../../layers/core/server/api/files/[id]/maintenance.get')).default
   const router = h3.createRouter()
     .post('/api/files/register', registerRoute)
     .get('/api/files', listRoute)
+    .get('/api/file-library', libraryRoute)
+    .get('/api/sme-roster/files', rosterRoute)
     .get('/api/files/:id/maintenance', detailRoute)
   const errors: string[] = []
   const app = h3.createApp({ onError: error => { errors.push(error.message) } })
@@ -179,6 +184,32 @@ async function uploadAndRegisterFixture(name: string, installed: readonly FileCa
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.doUnmock('@db')
+})
+
+it('uploads ordinary files without roster classification and lists shared originals by scope', async () => {
+  const { upload, request, db } = await uploadAndRegisterFixture('library-and-roster', [libraryFileServerCategory, ...categories])
+  const plain = await upload({ fileCategory: 'core', filename: '入库培育附件.txt' }, 'abc')
+  expect(plain).toBe('uploads/入库培育附件.txt')
+  const original = await request('/api/files/register', { fileCategory: 'core', relPath: plain })
+  expect(original.status).toBe(201)
+  expect(original.body).toMatchObject({ relPath: plain, filename: '入库培育附件.txt', bytes: 3 })
+  expect(await request('/api/files/register', { fileCategory: 'core', relPath: plain })).toMatchObject({
+    status: 200, body: { id: original.body.id },
+  })
+
+  const notice = await upload({ source: 'jxj', kind: 'announcement', year: '2024', filename: '正式名单.pdf' }, 'pdf')
+  const registeredNotice = await request('/api/files/register', { relPath: notice, source: 'jxj', kind: 'announcement', year: '2024' })
+  expect(registeredNotice.status).toBe(201)
+  const global = await request('/api/file-library?source=miit')
+  expect(global.status).toBe(200)
+  expect(global.body.total).toBe(2)
+  expect(global.body.rows.map((row: { id: number }) => row.id).sort()).toEqual([original.body.id, registeredNotice.body.id].sort())
+  expect(global.body.rows.every((row: object) => !('categoryState' in row || 'referenceCount' in row || 'parts' in row))).toBe(true)
+  expect(await request('/api/sme-roster/files?source=jxj')).toMatchObject({
+    status: 200, body: { total: 1, rows: [{ id: registeredNotice.body.id, source: 'jxj', year: 2024, parts: [] }] },
+  })
+  expect(await request('/api/sme-roster/files?q=入库培育附件')).toEqual({ status: 200, body: { total: 0, rows: [] } })
+  expect(db.select({ id: rosterFileClassification.fileId }).from(rosterFileClassification).all()).toEqual([{ id: registeredNotice.body.id }])
 })
 
 function expectNoRegistrationRows(db: FileStoreDb) {

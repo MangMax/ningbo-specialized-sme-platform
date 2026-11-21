@@ -51,7 +51,7 @@ function clear() { emit('validity-change', true); emit('update:modelValue', '');
         <span>{{ display }}</span><CalendarIcon data-icon="inline-end" />
       </Button>
     </PopoverTrigger>
-    <PopoverContent align="start" class="w-auto p-0" :aria-label="label">
+    <PopoverContent align="start" :collision-padding="8" class="max-h-(--reka-popover-content-available-height) w-auto overflow-y-auto overscroll-contain p-0" :aria-label="label">
       <Calendar v-model:placeholder="placeholder" layout="month-and-year" :model-value="date" locale="zh-CN" :calendar-label="label" :week-starts-on="1" :prevent-deselect="true" @update:model-value="selectDate" />
       <div class="flex flex-col gap-2 border-t p-3">
         <Label :for="`${id}-time`">本地时间（时:分:秒）</Label>

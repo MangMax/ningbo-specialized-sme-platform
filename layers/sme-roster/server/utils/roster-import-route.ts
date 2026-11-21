@@ -24,6 +24,6 @@ export function createRosterImportHandler(action: RosterImportAction) {
   // `core-route.ts` 单点维护(RL-10 收拢)—— 这里只剩「哪个动作 + 要哪些依赖」。
   return defineEventHandler(event => createCoreRouteHandler(
     (request, ctx) => handleRosterImportRequest(action, request, ctx),
-    () => ({ db: useDb(), apiToken: useRuntimeConfig().apiToken, filesDir: useRuntimeConfig().filesDir, logContext: requestLogContext(event) }),
+    () => ({ get db() { return useDb() }, apiToken: useRuntimeConfig().apiToken, filesDir: useRuntimeConfig().filesDir, logContext: requestLogContext(event) }),
   )(event))
 }

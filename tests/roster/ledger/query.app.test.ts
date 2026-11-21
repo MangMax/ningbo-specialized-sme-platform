@@ -518,7 +518,7 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
     expect((yearAndDueYearRest as { rows: { enterpriseId: number }[] }).rows.map((r) => r.enterpriseId)).toContain(passed)
   })
 
-  it('详情与 GET /api/records 对 legacy DOCX/XLSX 隐藏不可靠的数字页码', () => {
+  it('详情与 GET /api/records 对 legacy DOCX/XLSX 隐藏不可靠的数字页码', async () => {
     routeQuery = {}
     const result = recordsHandler({}) as {
       rows: { enterpriseId: number; events: { evidence: { sourceFile: string; page: number | null }[] }[] }[]
@@ -533,14 +533,14 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
     ])
 
     routeId = String(legacyDocx)
-    const detail = enterpriseDetailHandler({}) as {
+    const detail = await enterpriseDetailHandler({}) as {
       records: { events: { evidence: { sourceFile: string; page: number | null }[] }[] }[]
     }
     expect(detail.records.flatMap((item) => item.events.flatMap((entry) => entry.evidence))).toEqual([
       { id: legacyDocxEvidence, sourceFile: 'jxj/announcement/legacy.docx', attachment: '附件2', listNo: 19, page: null },
     ])
     routeId = String(legacyXlsx)
-    const xlsxDetail = enterpriseDetailHandler({}) as typeof detail
+    const xlsxDetail = await enterpriseDetailHandler({}) as typeof detail
     expect(xlsxDetail.records.flatMap((item) => item.events.flatMap((entry) => entry.evidence))).toEqual([
       { id: legacyXlsxEvidence, sourceFile: 'jxj/announcement/legacy.xlsx', attachment: '附件2', listNo: 19, page: null },
     ])

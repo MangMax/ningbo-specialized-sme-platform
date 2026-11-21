@@ -1,6 +1,7 @@
 import { useDb } from '@db'
 import { createCoreRouteHandler } from '../../../../../core/server/utils/core-route'
 import { handleEvidencePagesRequest } from '../../../utils/roster-evidence-pages'
+import { usePostgresRosterDb } from '../../../utils/postgres-roster-db'
 
 /**
  * **出处页码补录**:`POST /api/roster/evidence/pages`(RL-10)。
@@ -109,5 +110,5 @@ defineRouteMeta({
 
 export default createCoreRouteHandler(handleEvidencePagesRequest, () => {
   const config = useRuntimeConfig()
-  return { db: useDb(), apiToken: config.apiToken, filesDir: config.filesDir }
+  return { get db() { return useDb() }, postgres: usePostgresRosterDb, apiToken: config.apiToken, filesDir: config.filesDir }
 })

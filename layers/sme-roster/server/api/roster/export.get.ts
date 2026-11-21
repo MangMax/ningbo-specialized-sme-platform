@@ -5,6 +5,8 @@ import { allRosterEnterprises, type RosterEnterpriseRow } from '#sme-roster/lib/
 import { evidencePointerText, firstRecognitionYearText } from '#sme-roster/lib/roster/first-recognition'
 import { parseRosterEnterpriseQuery } from '../../utils/roster-read-query'
 import { appLog, requestLogContext } from '../../../../core/lib/logging'
+import { allPostgresRosterEnterprises } from '../../../lib/roster/enterprise-list-postgres'
+import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 
 /**
  * **企业总表导出**(RL-04)。与 `GET /api/roster/enterprises` **同一套筛选解析、
@@ -116,7 +118,9 @@ export default defineEventHandler(async (event) => {
   let summarized = false
   appLog({ module: 'sme-roster', source: 'export', operation: 'export.legacy.enterprises.summary', outcome: 'started' }, logContext)
   try {
-  const { rows, counts } = allRosterEnterprises(useDb(), parseRosterEnterpriseQuery(getQuery(event)))
+  const filter = parseRosterEnterpriseQuery(getQuery(event))
+  const pg = usePostgresRosterDb()
+  const { rows, counts } = pg ? await allPostgresRosterEnterprises(pg, filter) : allRosterEnterprises(useDb(), filter)
   summarized = true
   appLog({ module: 'sme-roster', source: 'export', operation: 'export.legacy.enterprises.summary', outcome: 'success', counts: { done: rows.length, total: rows.length } }, logContext)
 

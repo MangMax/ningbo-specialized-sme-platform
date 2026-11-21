@@ -1,5 +1,7 @@
 import { useDb } from '@db'
 import { getEnterpriseDetail } from '#sme-roster/lib/query'
+import { readPostgresLedgerEnterpriseDetail } from '#sme-roster/lib/query-postgres'
+import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 
 /**
  * 一个企业的详情(含它的记录与事件)。
@@ -19,10 +21,11 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   const id = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'invalid id' })
-  const detail = getEnterpriseDetail(useDb(), id)
+  const pg = usePostgresRosterDb()
+  const detail = pg ? await readPostgresLedgerEnterpriseDetail(pg, id) : getEnterpriseDetail(useDb(), id)
   if (!detail) throw createError({ statusCode: 404, statusMessage: 'not found' })
   return detail
 })

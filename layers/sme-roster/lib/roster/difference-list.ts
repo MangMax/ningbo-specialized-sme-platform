@@ -3,13 +3,13 @@ import { differencePublicColumns } from '../platform/difference-reference-target
 import { eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as s from '../../../../db/schema'
-import { explainCurrentDifferencePage } from './current-difference'
-import { getComparison } from '../comparison'
+import { explainCurrentDifferencePage, type DifferenceQualification } from './current-difference'
+import { getComparison, type ComparisonRow } from '../comparison'
 import { normalizeName } from '../domain'
 import { TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query'
 import type { RosterDifferenceFilter, RosterDifferencesResult } from './enterprise-roster'
-import { readQueryAssessments } from './query-assessment'
+import { readQueryAssessments, type QueryAssessment } from './query-assessment'
 import { targetCandidateTables } from '../../server/utils/candidate-target-sources'
 
 type Db = BetterSQLite3Database<typeof s>
@@ -27,36 +27,17 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
     const d = s.differenceReason
     const heads = db.select({ id: d.id, enterpriseId: d.enterpriseId, titleCode: d.titleCode, direction: d.direction, status: d.status, reasonCode: d.reasonCode }).from(d)
       .where(sql`not exists (select 1 from difference_reason n where n.enterprise_id=${d.enterpriseId} and n.title_code=${d.titleCode} and n.direction=${d.direction} and (n.recorded_at>${d.recordedAt} or (n.recorded_at=${d.recordedAt} and n.id>${d.id})))`).all()
-    const current = new Map(heads.map(r => [keyOf(r), r]))
     const enterprises = new Map(db.select({ id: s.enterprise.id, name: s.enterprise.name, uscc: s.enterprise.usccNorm }).from(s.enterprise).all().map(e => [e.id, e]))
-    const derived = getComparison(db).rows
-    const derivedKeys = new Set(derived.map(keyOf))
-    const coordinates = new Map([...derived, ...heads].map(r => [keyOf(r), { enterpriseId: r.enterpriseId, titleCode: r.titleCode, direction: r.direction }]))
-    const needle = filter.q?.trim() ? normalizeName(filter.q) : null
-    const usccNeedle = filter.q?.trim() ? filter.q.trim().toUpperCase() : null
     const aliases = new Map<number, string[]>()
-    if (needle || usccNeedle) {
-      for (const alias of db.select({ enterpriseId: s.enterpriseAlias.enterpriseId, name: s.enterpriseAlias.name }).from(s.enterpriseAlias).where(eq(s.enterpriseAlias.verificationStatus, 'confirmed')).all()) {
-        const names = aliases.get(alias.enterpriseId) ?? []
-        names.push(normalizeName(alias.name)); aliases.set(alias.enterpriseId, names)
-      }
+    if (filter.q?.trim()) for (const alias of db.select({ enterpriseId: s.enterpriseAlias.enterpriseId, name: s.enterpriseAlias.name })
+      .from(s.enterpriseAlias).where(eq(s.enterpriseAlias.verificationStatus, 'confirmed')).all()) {
+      const names = aliases.get(alias.enterpriseId) ?? []
+      names.push(normalizeName(alias.name))
+      aliases.set(alias.enterpriseId, names)
     }
-    const rows = [...coordinates.values()].map(r => {
-      const head = current.get(keyOf(r)), enterprise = enterprises.get(r.enterpriseId)
-      return { ...r, name: enterprise?.name ?? '', uscc: enterprise?.uscc ?? null, explanationId: head?.id ?? null, status: head?.status ?? 'not_queried', reasonCode: head?.reasonCode ?? null, inCurrentDifference: derivedKeys.has(keyOf(r)) }
-    }).filter(r =>
-      (!filter.title?.length || filter.title.includes(r.titleCode)) &&
-      (!filter.direction?.length || filter.direction.includes(r.direction)) &&
-      (!filter.status?.length || filter.status.includes(r.status)) &&
-      (!filter.reason?.length || r.reasonCode != null && filter.reason.includes(r.reasonCode)) &&
-      (!(needle || usccNeedle) || needle != null && (normalizeName(r.name).includes(needle) || (aliases.get(r.enterpriseId) ?? []).some(a => a.includes(needle))) || usccNeedle != null && (r.uscc ?? '').toUpperCase().includes(usccNeedle)),
-    ).sort((a, b) => rank(a.titleCode) - rank(b.titleCode) || a.direction.localeCompare(b.direction) || a.name.localeCompare(b.name) || a.enterpriseId - b.enterpriseId)
-    const counts = Object.fromEntries(TITLE_ORDER.map(t => [t, { missing_in_miit: 0, extra_in_miit: 0 }])) as RosterDifferencesResult['counts']
-    for (const r of rows) { counts[r.titleCode] ??= { missing_in_miit: 0, extra_in_miit: 0 }; counts[r.titleCode]![r.direction]++ }
-    const page = Number.isFinite(filter.page) && filter.page! >= 1 ? Math.floor(filter.page!) : 1
-    const pageSize = Math.min(Number.isFinite(filter.pageSize) && filter.pageSize! >= 1 ? Math.floor(filter.pageSize!) : 50, MAX_PAGE_SIZE)
-    const pageRows = rows.slice((page - 1) * pageSize, page * pageSize)
-    if (!pageRows.length) return { rows: [], counts, total: rows.length, page, pageSize }
+    const page = selectRosterDifferencePage(filter, getComparison(db).rows, heads, enterprises, aliases)
+    const pageRows = page.rows
+    if (!pageRows.length) return { ...page, rows: [] }
     const qualificationPage = explainCurrentDifferencePage(db, pageRows, asOf)
     const selected = qualificationPage.rows
     const selectedIds = selected.flatMap(r => r.explanationId == null ? [] : [r.explanationId])
@@ -72,7 +53,46 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
       const ids = relations.get(r.queryId) ?? []; ids.push(r.id); relations.set(r.queryId, ids)
     }
     const assessments = readQueryAssessments(db, selected, qualificationPage.coverages)
-    return { counts, total: rows.length, page, pageSize, rows: selected.map((r, i) => {
+    return projectRosterDifferenceList(page, selected, explanations, districts, queries, relations, assessments)
+  })
+}
+
+type Head = Pick<typeof s.differenceReason.$inferSelect, 'id' | 'enterpriseId' | 'titleCode' | 'direction' | 'status' | 'reasonCode'>
+type Enterprise = { id: number; name: string; uscc: string | null }
+export function selectRosterDifferencePage(filter: RosterDifferenceFilter, derived: ComparisonRow[], heads: Head[],
+  enterprises: Map<number, Enterprise>, aliases: Map<number, string[]>,
+) {
+  const current = new Map(heads.map(r => [keyOf(r), r]))
+  const derivedKeys = new Set(derived.map(keyOf))
+  const coordinates = new Map([...derived, ...heads].map(r => [keyOf(r), { enterpriseId: r.enterpriseId, titleCode: r.titleCode, direction: r.direction }]))
+  const needle = filter.q?.trim() ? normalizeName(filter.q) : null
+  const usccNeedle = filter.q?.trim() ? filter.q.trim().toUpperCase() : null
+  const rows = [...coordinates.values()].map(r => {
+    const head = current.get(keyOf(r)), enterprise = enterprises.get(r.enterpriseId)
+    return { ...r, name: enterprise?.name ?? '', uscc: enterprise?.uscc ?? null, explanationId: head?.id ?? null, status: head?.status ?? 'not_queried', reasonCode: head?.reasonCode ?? null, inCurrentDifference: derivedKeys.has(keyOf(r)) }
+  }).filter(r =>
+    (!filter.title?.length || filter.title.includes(r.titleCode)) &&
+    (!filter.direction?.length || filter.direction.includes(r.direction)) &&
+    (!filter.status?.length || filter.status.includes(r.status)) &&
+    (!filter.reason?.length || r.reasonCode != null && filter.reason.includes(r.reasonCode)) &&
+    (!(needle || usccNeedle) || needle != null && (normalizeName(r.name).includes(needle) || (aliases.get(r.enterpriseId) ?? []).some(a => a.includes(needle))) || usccNeedle != null && (r.uscc ?? '').toUpperCase().includes(usccNeedle)),
+  ).sort((a, b) => rank(a.titleCode) - rank(b.titleCode) || a.direction.localeCompare(b.direction) || a.name.localeCompare(b.name) || a.enterpriseId - b.enterpriseId)
+  const counts = Object.fromEntries(TITLE_ORDER.map(t => [t, { missing_in_miit: 0, extra_in_miit: 0 }])) as RosterDifferencesResult['counts']
+  for (const r of rows) { counts[r.titleCode] ??= { missing_in_miit: 0, extra_in_miit: 0 }; counts[r.titleCode]![r.direction]++ }
+  const page = Number.isFinite(filter.page) && filter.page! >= 1 ? Math.floor(filter.page!) : 1
+  const pageSize = Math.min(Number.isFinite(filter.pageSize) && filter.pageSize! >= 1 ? Math.floor(filter.pageSize!) : 50, MAX_PAGE_SIZE)
+  return { rows: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize, counts }
+}
+
+type Page = ReturnType<typeof selectRosterDifferencePage>
+type Explanation = Omit<typeof s.differenceReason.$inferSelect, 'evidenceCollectionId' | 'evidenceObservationId'>
+  & { evidenceQueryId: number | null; evidenceRelationId: number | null }
+type Query = Pick<typeof s.platformCollection.$inferSelect, 'id' | 'queriedAt' | 'interface' | 'status' | 'failureReason'>
+export function projectRosterDifferenceList(page: Page, selected: (Page['rows'][number] & DifferenceQualification)[],
+  explanations: Map<number, Explanation>, districts: Map<number, string | null>, queries: Map<number, Query>, relations: Map<number, number[]>,
+  assessments: QueryAssessment[],
+): RosterDifferencesResult {
+  return { ...page, rows: selected.map((r, i) => {
       const explanation = r.explanationId == null ? null : explanations.get(r.explanationId)!
       const query = explanation?.evidenceQueryId == null ? null : queries.get(explanation.evidenceQueryId)
       const movedIn = explanation && ([explanation.movedInCity, explanation.movedInTitleCode, explanation.movedInYear, explanation.movedInBatch].some(v => v != null) || explanation.reasonCode === 'moved_in')
@@ -84,5 +104,4 @@ export function listRosterDifferences(db: Db, filter: RosterDifferenceFilter = {
         ...assessments[i]!,
       }
     }) }
-  })
 }

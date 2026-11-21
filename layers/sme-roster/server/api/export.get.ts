@@ -1,6 +1,8 @@
 import { legacyExportSheet, writeLegacyXlsx } from '../utils/legacy-export-xlsx'
 import { appLog, requestLogContext } from '../../../core/lib/logging'
 import { useDb } from '@db'
+import { usePostgresRosterDb } from '../utils/postgres-roster-db'
+import { allPostgresLedgerRecords } from '../../lib/query-postgres'
 import { allRecords, type EventType } from '#sme-roster/lib/query'
 import {
   TITLES,
@@ -157,7 +159,7 @@ export default defineEventHandler(async (event) => {
     }
     filename = `${TITLES[title]}-${COMPARISON_LABELS[direction]}.xlsx`
   } else {
-    const rows = allRecords(useDb(), {
+    const filter = {
       title: csv(q.title),
       source: csv(q.source),
       district: str(q.district),
@@ -165,7 +167,9 @@ export default defineEventHandler(async (event) => {
       year: csvYears(q.year),
       q: str(q.q),
       flags: str(q.flags),
-    })
+    }
+    const db = usePostgresRosterDb()
+    const rows = db ? await allPostgresLedgerRecords(db, filter) : allRecords(useDb(), filter)
 
     const enterprises = new Set(rows.map((r) => r.enterpriseId)).size
     summarized = true

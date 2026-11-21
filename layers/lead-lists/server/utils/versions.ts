@@ -4,8 +4,9 @@ import { and, asc, desc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { storedFile } from '../../../../db/schema'
 import type { useApplicationDb } from '../../../../db/client'
-import { applyReviewedEnterprise, enterpriseFieldsSchema, EnterpriseKernelError, registerEnterpriseSource } from '../../../core/server/utils/enterprise-kernel'
+import { applyReviewedEnterprise, enterpriseFieldsSchema, EnterpriseKernelError, registerEnterpriseSource } from '../../../core/server/public'
 import { verifyFileRead } from '../../../core/server/utils/file-read-identity'
+import { applyReviewedRosterIdentity } from '../../../sme-roster/public'
 import { leadListId, type LeadCatalog, type LeadVersionDetail, type VersionInput } from '../../lib/contracts'
 import { leadListSchemaPresent } from '../../install-schema'
 import { leadListRow, leadListVersion } from '../../schema'
@@ -129,15 +130,28 @@ export async function registerLeadVersion(db: Db, root: string, input: VersionIn
 const reviewer = z.strictObject({ type: z.enum(['user', 'agent']), id: z.string().trim().min(1).max(120) })
 const decision = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('create'), rowId: leadListId, fields: enterpriseFieldsSchema.required({ name: true }) }),
-  z.strictObject({ action: z.literal('attach'), rowId: leadListId, enterpriseId: leadListId, expectedRevision: leadListId }),
+  z.strictObject({ action: z.literal('attach'), rowId: leadListId, enterpriseId: leadListId, expectedRevision: leadListId, fields: enterpriseFieldsSchema.optional() }),
 ])
-export const supplementInput = z.strictObject({
-  actor: reviewer,
-  basis: z.string().trim().min(1).max(500),
+export const browserSupplementInput = z.strictObject({
   decisions: z.array(decision).min(1).max(200).refine(items => new Set(items.map(item => item.rowId)).size === items.length),
 })
+export const supplementInput = browserSupplementInput.extend({
+  actor: reviewer,
+  basis: z.string().trim().min(1).max(500),
+})
 
-export function supplementLeadVersion(db: Db, id: number, input: z.infer<typeof supplementInput>) {
+export type LeadSupplementInput = z.infer<typeof supplementInput>
+
+export function leadReviewHash(decision: LeadSupplementInput['decisions'][number], { actor, basis }: LeadSupplementInput) {
+  return hash({ decision, actor, basis })
+}
+
+export function leadSupplementError(error: unknown): never {
+  if (error instanceof EnterpriseKernelError) throw createError({ statusCode: error.statusCode, message: error.message, data: { code: error.code } })
+  throw error
+}
+
+export function supplementLeadVersion(db: Db, id: number, input: LeadSupplementInput) {
   checkSchema(db)
   try {
     return db.$client.transaction(() => {
@@ -146,13 +160,15 @@ export function supplementLeadVersion(db: Db, id: number, input: z.infer<typeof 
       const resolved = input.decisions.map(item => {
         const row = db.select().from(leadListRow).where(and(eq(leadListRow.id, item.rowId), eq(leadListRow.versionId, id))).get()
         if (!row) throw createError({ statusCode: 404, message: '所选行不在此名单版本中' })
-        const auditHash = hash({ decision: item, actor: input.actor, basis: input.basis })
+        const auditHash = leadReviewHash(item, input)
         if (row.enterpriseId !== null) {
           if (row.reviewHash !== auditHash) throw createError({ statusCode: 409, message: '该行已有核对结果' })
           return { rowId: item.rowId, enterpriseId: row.enterpriseId }
         }
         const audit = { idempotencyKey: `lead-lists:${row.id}`, requestHash: auditHash, actor: input.actor, basis: input.basis }
-        const { id: enterpriseId } = applyReviewedEnterprise(db, item.action === 'create' ? item : { ...item, audit })
+        const { id: enterpriseId } = item.action === 'create'
+          ? applyReviewedEnterprise(db, item)
+          : applyReviewedRosterIdentity(db, { ...item, audit })
         db.update(leadListRow).set({
           enterpriseId, reviewHash: auditHash, reviewActor: JSON.stringify(input.actor), reviewBasis: input.basis, reviewedAt: new Date().toISOString(),
         }).where(eq(leadListRow.id, item.rowId)).run()
@@ -162,7 +178,6 @@ export function supplementLeadVersion(db: Db, id: number, input: z.infer<typeof 
       return { sourceId, rows: resolved }
     }).immediate()
   } catch (error) {
-    if (error instanceof EnterpriseKernelError) throw createError({ statusCode: error.statusCode, message: error.message, data: { code: error.code } })
-    throw error
+    leadSupplementError(error)
   }
 }

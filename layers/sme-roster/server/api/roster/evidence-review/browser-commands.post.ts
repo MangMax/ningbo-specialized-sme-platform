@@ -2,7 +2,10 @@ import { readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { useDb } from '@db'
 import { checkBrowserReviewRequest } from '../../../utils/browser-review-102'
 import { browserDecisionCommand102, DecisionError102, parse102, saveDecision102, type DecisionCommand102 } from '../../../utils/decision-lifecycle-102'
-import { decisionFailure102, decisionOutput102 } from '../../../utils/decision-lifecycle-102-output'
+import { decisionFailure102, decisionOutput102, postgresDecisionOutput102 } from '../../../utils/decision-lifecycle-102-output'
+
+import { usePostgresRosterDb } from '../../../utils/postgres-roster-db'
+import { savePostgresDecision102 } from '../../../utils/decision-lifecycle-102/postgres-writes'
 
 defineRouteMeta({
   openAPI: {
@@ -89,7 +92,13 @@ export default defineEventHandler(async (event: H3Event) => {
     // A browser review has no recorded actor and no real business rule version. Null is
     // the honest value; it is filled only here, never accepted from the request body.
     const command: DecisionCommand102 = { ...parsed, actor: null, ruleVersion: null }
-    return decisionOutput102(useDb())(saveDecision102(useDb(), command))
+    const postgres = usePostgresRosterDb(true)
+    if (postgres) {
+      const output = await postgresDecisionOutput102(postgres)
+      return output(await savePostgresDecision102(postgres, command))
+    }
+    const sqlite = useDb()
+    return decisionOutput102(sqlite)(saveDecision102(sqlite, command))
   } catch (error) {
     const failure = decisionFailure102(error)
     if (failure.status === 401) setHeader(event, 'www-authenticate', 'Bearer realm="agent-api"')

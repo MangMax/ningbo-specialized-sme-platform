@@ -1,7 +1,5 @@
-import { verifyFileRead } from '../utils/file-read-identity'
+import { verifyHttpFileRead } from '../utils/file-content-http'
 import { requestLogContext } from '../../lib/logging'
-import { useDb } from '@db'
-import { findFileIdByRelPath } from '../utils/file-agent-reference'
 import { stat } from 'node:fs/promises'
 import { isPdfPath, normalizeDpi } from '#core/lib/pdf-page'
 import { renderPdfPages, resolveWithinRoot } from '../utils/pdf-pages'
@@ -88,12 +86,12 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, message: `文件不存在:${file}` })
   }
 
-  const contentIdentity = await verifyFileRead(useDb(), root, file)
+  const contentIdentity = await verifyHttpFileRead(root, file)
   const logContext = requestLogContext(event)
-  try { const id = findFileIdByRelPath(useDb(), file); if (id !== null) logContext.fileId = id } catch { /* Optional log identity cannot stop rendering. */ }
+  if (contentIdentity.registered) logContext.fileId = contentIdentity.registered.fileId
   try {
     const outcome = await renderPdfPages(root, file, { dpi, force: body?.force === true, logContext })
-    await verifyFileRead(useDb(), root, file)
+    await verifyHttpFileRead(root, file)
     return { ...outcome, contentIdentity }
   } catch (error) {
     if ((error as { statusCode?: number }).statusCode === 409) throw error

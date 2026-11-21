@@ -7,6 +7,7 @@ import * as schema from './schema'
 import { assertApplicationSchema } from './schema-phase'
 import { createRuntimeSchema } from './create-runtime'
 import { readOwnerIdentity, sameReadOwner, type ReadOwnerIdentity } from './read-owner-identity'
+import { assertSqliteRuntime } from './runtime-mode'
 
 export interface DbOptions {
   /** SQLite 文件路径。默认 `NUXT_DB_PATH` → `<cwd>/data/roster.db`。 */
@@ -37,6 +38,7 @@ export function getDbOwnerIdentity(owner: unknown): ReadOwnerIdentity | undefine
 
 /** Runtime connections only open an existing, initialized database. */
 export function useRuntimeDb(opts: DbOptions = {}) {
+  assertSqliteRuntime()
   const path = resolveDbPath(opts)
   const readOnly = opts.readOnly ?? process.env.NUXT_DB_READONLY === '1'
   const cacheKey = `${path}\u0000${readOnly ? 'readonly' : 'readwrite'}`
@@ -79,6 +81,7 @@ export function useApplicationDb(opts: DbOptions = {}) {
 
 /** Explicit native initialization; existing databases must already be final. */
 export function initializeDb(opts: DbOptions & { create?: boolean } = {}) {
+  assertSqliteRuntime()
   const path = resolveDbPath(opts)
   const readOnly = opts.readOnly ?? process.env.NUXT_DB_READONLY === '1'
   if (readOnly) return useRuntimeDb(opts)

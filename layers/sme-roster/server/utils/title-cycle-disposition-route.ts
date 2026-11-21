@@ -1,8 +1,7 @@
 import { getQuery, readBody, setHeader, setResponseStatus } from 'h3'
-import { useDb } from '@db'
 import { semanticRouteHandler } from '../../../core/server/utils/core-route'
 import { requireApiToken } from '../../../core/server/utils/api-guard'
-import { dispositionOperation, dispositionFailure, type DispositionAction } from './title-cycle-disposition-protocol'
+import { runtimeDispositionOperation, dispositionFailure, type DispositionAction } from './title-cycle-disposition-protocol'
 export function dispositionRoute(action: DispositionAction) {
  return semanticRouteHandler(`maintenance.disposition.${action}`, async event => {
   setHeader(event,'cache-control','no-store')
@@ -15,7 +14,7 @@ export function dispositionRoute(action: DispositionAction) {
    } else {
     try { body = await readBody(event) } catch { setResponseStatus(event,400); return {error:{code:'invalid_request',message:'Malformed JSON'}} }
    }
-   return dispositionOperation(useDb(),action,body)
+   return await runtimeDispositionOperation(action,body)
   } catch(error) { const failure = dispositionFailure(error); setResponseStatus(event,failure.status); return failure.body }
  })
 }

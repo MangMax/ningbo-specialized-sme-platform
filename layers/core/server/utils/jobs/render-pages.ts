@@ -1,5 +1,6 @@
 import { appLog } from '../../../lib/logging'
-import { registeredFileAtLocator, verifyFileRead, verifyPageRead } from '../file-read-identity'
+import { registeredFileAtLocator, verifyFileReadAtLocator, verifyRenderedPageRead } from '../file-read-identity'
+import { readPostgresFileIdentities, readPostgresFileIdentity } from '../file-store-postgres'
 import type { StoredFileContentIdentity } from '../file-content-identity'
 import { isPdfPath, normalizeDpi } from '../../../lib/pdf-page'
 import type { RenderOutcome } from '../pdf-pages'
@@ -116,13 +117,26 @@ export function parseRenderPagesParams(raw: Record<string, unknown>): JobParseRe
  * 粒度是**一份文件** —— 一份 97 页的 PDF 实测 3.3 s(票 13),不做页级取消
  * (页级要在 `renderPdfPages` 内部插回调,那是票 13 的文件,本票不动它)。
  */
-export async function runRenderPages(
+export function runRenderPages(
   ctx: JobContext,
   params: Record<string, unknown>,
   registeredInputs?: Array<StoredFileContentIdentity | null>,
 ): Promise<JobCompletion> {
+  const lookup = (path: string) => registeredFileAtLocator(ctx.db, path)
+  const inputs = registeredInputs ?? (params.files as string[]).map(lookup)
+  return renderFiles(ctx, params, inputs, lookup)
+}
+
+async function renderFiles(
+  ctx: Pick<JobContext, 'jobId' | 'filesDir' | 'logContext'> & {
+    cancelled(): boolean | Promise<boolean>
+    progress(done: number, total: number): void | Promise<void>
+  },
+  params: Record<string, unknown>,
+  inputs: Array<StoredFileContentIdentity | null>,
+  lookup: Parameters<typeof verifyFileReadAtLocator>[2],
+): Promise<JobCompletion> {
   const { files, dpi, force } = params as unknown as RenderPagesParams
-  const inputs = registeredInputs ?? files.map(file => registeredFileAtLocator(ctx.db, file))
   const logContext = { ...ctx.logContext, taskId: ctx.jobId }
   const outcomes: RenderedFileOutcome[] = []
   let failed = 0
@@ -138,7 +152,7 @@ export async function runRenderPages(
 
   for (let i = 0; i < files.length; i += 1) {
     // 每份之前看一眼取消标记 —— 这是「尽力而为」唯一的检查点。
-    if (ctx.cancelled()) {
+    if (await ctx.cancelled()) {
       appLog({ module: 'core', source: 'file', operation: 'file.render.batch', outcome: 'cancelled', counts: { done: i, total: files.length, failed } }, logContext)
       return {
         result: { ...snapshot(), cancelled: true, done: i },
@@ -153,7 +167,7 @@ export async function runRenderPages(
       if (!expected) throw new Error('file_content_unknown: 待核实登记,禁止渲染发布')
       fileContext.fileId = expected.fileId
       const checkInput = async () => {
-        const identity = await verifyFileRead(ctx.db, ctx.filesDir, file)
+        const identity = await verifyFileReadAtLocator(ctx.filesDir, file, lookup)
         const current = identity.registered
         if (identity.status !== 'verified') throw new Error('file_content_unknown: 待核实登记,禁止渲染发布')
         if (!current || current.fileId !== expected.fileId || current.sha256 !== expected.sha256 || current.bytes !== expected.bytes) throw new Error('file_content_conflict: 渲染输入登记已变化')
@@ -162,7 +176,7 @@ export async function runRenderPages(
       await checkInput()
       const out = await renderPdfPages(ctx.filesDir, file, { dpi, force, logContext: fileContext })
       const verified = await checkInput()
-      await verifyPageRead(ctx.db, ctx.filesDir, file, undefined, verified)
+      await verifyRenderedPageRead(ctx.filesDir, file, verified)
       outcomes.push({
         file,
         ok: true,
@@ -181,7 +195,7 @@ export async function runRenderPages(
       outcomes.push({ file, ok: false, error: (error as Error).message ?? String(error) })
     }
 
-    ctx.progress(i + 1, files.length)
+    await ctx.progress(i + 1, files.length)
   }
 
   const result = snapshot()
@@ -209,4 +223,10 @@ export const renderPagesSpec: JobSpec = {
     return (ctx, input) => runRenderPages(ctx, input, inputs)
   },
   run: runRenderPages,
+  postgres: {
+    prepare: (tx, params) => readPostgresFileIdentities(tx, params.files as string[]),
+    run: (ctx, params, inputSnapshot) => renderFiles(ctx, params,
+      (inputSnapshot as Array<StoredFileContentIdentity | null> | null) ?? [],
+      path => readPostgresFileIdentity(ctx.db, path)),
+  },
 }

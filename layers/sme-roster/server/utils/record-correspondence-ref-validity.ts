@@ -80,6 +80,22 @@ function targetSourceMatches(observationId: SQL): SQL {
       and not exists(select 1 from json_each(snapshot.bytes,'$.fields') cell where not(case json_extract(cell.value,'$.name') ${sql.join(relationFields,sql` `)} else 1 end))
       and ${and(...queryFields)})`
 }
+export interface CorrespondenceAttribution {
+  type: string; enterpriseId: number | null;
+  relationEnterpriseId: number | null; relationStatus: string | null; relationUscc: string | null;
+  ownerId: number | null; ownerUscc: string | null;
+  targetId: number | null; targetUscc: string | null; targetTitle: string | null;
+}
+
+export function correspondenceAttributionChanged(row: CorrespondenceAttribution) {
+  if (row.relationEnterpriseId && row.relationUscc && (!row.ownerId || row.ownerUscc && normalizeUscc(row.ownerUscc) !== normalizeUscc(row.relationUscc))) return true
+  return row.type === 'later_process' && (
+    !row.targetId || !row.targetTitle ||
+    correspondenceIdentityProblem({ enterpriseId: row.enterpriseId, uscc: row.targetUscc }, { enterpriseId: row.relationEnterpriseId, uscc: row.relationUscc }, true) !== null ||
+    !normalizeUscc(row.relationUscc) && row.relationStatus !== 'confirmed'
+  )
+}
+
 const owner = alias(s.enterprise,'ref_owner')
 /** Narrow reverse-link validity, with the same immutable source/change boundary.
  * Proof revalidation retains its existing service behind a 64KiB read budget;
@@ -116,12 +132,7 @@ export function createCorrespondenceRefValidityReader(db: Db) {
       const proofs=rows.filter(row=>row.type==='recognized_export'&&row.role==='same_current_row').map(row=>row.id)
       const proofValidity=new Map(proofs.length?listRecordCorrespondencesForIds(db,proofs).map(row=>[row.id,row.requiresRevalidation]):[])
       const validity = new Map(rows.map(row => {
-        let invalid=!row.matches
-        if(row.relationEnterpriseId&&row.relationUscc&&(!row.ownerId||row.ownerUscc&&normalizeUscc(row.ownerUscc)!==normalizeUscc(row.relationUscc)))invalid=true
-        if(row.type==='later_process') {
-          if(!row.targetId||!row.targetTitle||correspondenceIdentityProblem({enterpriseId:row.enterpriseId,uscc:row.targetUscc},{enterpriseId:row.relationEnterpriseId,uscc:row.relationUscc},true))invalid=true
-          if(!normalizeUscc(row.relationUscc)&&row.relationStatus!=='confirmed')invalid=true
-        }
+        const invalid = !row.matches || correspondenceAttributionChanged(row)
         return [row.id,invalid||(proofValidity.get(row.id)??false)] as const
       }))
       // The old reverse-link SQL compares saved JSON with the native status cell.

@@ -5,12 +5,8 @@ import { qualifyAnnualFinal,readAnnualDecisionRefs,type AnnualDb,type AnnualWrit
 import { readTargetAnnualHistory } from './annual-process-target-sources'
 import { readAnnualComparisonBatch,readAnnualProcessBatch,readEventAnnualProcess } from './event-annual-process-read'
 
-function writeScope(db: AnnualDb, read: EventAnnualProcessRead, historyFor?: (recordIds: number[]) => number[]): AnnualWriteScope {
+export function projectAnnualWriteScope(read: EventAnnualProcessRead, historyFor: (recordIds: number[]) => number[]): AnnualWriteScope {
   const process = read.process
-  if (!historyFor) {
-    const history = readTargetAnnualHistory(db, process.steps.flatMap(step => step.groups.flatMap(g => g.observationRefs.flatMap(ref => ref.businessRecord.recordId === null ? [] : [ref.businessRecord.recordId]))))
-    historyFor = ids => ids.flatMap(id => history.get(id) ?? [])
-  }
   return {
     eventId: process.event.id, enterpriseId: process.event.record.enterpriseId, titleCode: process.event.record.titleCode,
     declareKind: process.declareKind, generation: read.sourceGeneration, sourceRefs: read.sourceRefs,
@@ -31,15 +27,24 @@ function writeScope(db: AnnualDb, read: EventAnnualProcessRead, historyFor?: (re
     }),
   }
 }
+function writeScope(db: AnnualDb, read: EventAnnualProcessRead) {
+  const history = readTargetAnnualHistory(db, annualScopeRecordIds(read))
+  return projectAnnualWriteScope(read, ids => ids.flatMap(id => history.get(id) ?? []))
+}
+
+export function annualScopeRecordIds(read: EventAnnualProcessRead) {
+  return [...new Set(read.process.steps.flatMap(step => step.groups.flatMap(g => g.observationRefs.flatMap(ref => ref.businessRecord.recordId === null ? [] : [ref.businessRecord.recordId]))))]
+}
+
 export function readAnnualWriteScope(db: AnnualDb, eventId: number): AnnualWriteScope | null {
   return readAnnualWriteScopes(db, [eventId]).get(eventId) ?? null
 }
 export function readAnnualWriteScopes(db: AnnualDb, eventIds: readonly number[]) {
   return db.transaction(() => {
     const reads = readAnnualProcessBatch(db, eventIds)
-    const records = [...new Set([...reads.values()].flatMap(r => r.read.process.steps.flatMap(step => step.groups.flatMap(g => g.observationRefs.flatMap(ref => ref.businessRecord.recordId === null ? [] : [ref.businessRecord.recordId])))))]
+    const records = [...reads.values()].flatMap(entry => annualScopeRecordIds(entry.read))
     const history = readTargetAnnualHistory(db, records)
-    return new Map([...reads].map(([id, entry]) => [id, writeScope(db, entry.read, history ? ids => ids.flatMap(id => history.get(id) ?? []) : undefined)]))
+    return new Map([...reads].map(([id, entry]) => [id, projectAnnualWriteScope(entry.read, ids => ids.flatMap(id => history.get(id) ?? []))]))
   })
 }
 readAnnualWriteScope.batch = readAnnualWriteScopes
@@ -85,7 +90,7 @@ export function readAnnualComparisonInputs(sqlite: Database.Database, db: Annual
     return rows
   })
   const processes = batch.entries.map(({ input, read }) => {
-    const scope = writeScope(db, read, historyFor)
+    const scope = projectAnnualWriteScope(read, historyFor)
     const currentDecisionRefs = readAnnualDecisionRefs(db, [...new Set(scope.steps.flatMap(step => [...step.protectionRelationIds, ...step.currentRelationIds]))], scope)
     const final = qualifyAnnualFinal(db, scope)
     const used = new Set(final.decisionRefs.map(ref => ref.id))

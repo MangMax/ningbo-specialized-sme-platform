@@ -1,3 +1,5 @@
+import { postgresJobsEnabled, postgresJobStorageEnabled } from '../../utils/postgres-jobs'
+import { postgresJobHandler } from '../../utils/job-runner-postgres'
 import { jobSpecs } from '../../utils/job-runner'
 import { registerJobSpecs } from '../../../../../server/utils/job-specs'
 
@@ -55,13 +57,16 @@ defineRouteMeta({
 
 export default defineEventHandler(() => {
   registerJobSpecs()
+  const postgres = postgresJobStorageEnabled()
+  const writable = !postgres || postgresJobsEnabled()
   return {
     kinds: jobSpecs().map((spec) => ({
       kind: spec.kind,
-      status: spec.status,
+      status: writable && spec.status === 'ready' && (postgres ? postgresJobHandler(spec.kind) : spec.run) ? 'ready' : 'todo',
       summary: spec.summary,
       paramsHint: spec.paramsHint ?? null,
-      note: spec.note ?? null,
+      note: !writable ? '当前任务中心只读'
+        : postgres && spec.status === 'ready' && !postgresJobHandler(spec.kind) ? '尚未接入 PostgreSQL' : spec.note ?? null,
     })),
   }
 })

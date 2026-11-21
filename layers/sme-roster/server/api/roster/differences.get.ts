@@ -2,6 +2,8 @@ import { requestLogContext } from '../../../../core/lib/logging'
 import { useDb } from '@db'
 import { COMPARISON_DIRECTIONS } from '#sme-roster/lib/comparison'
 import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES } from '#sme-roster/lib/labels'
+import { listPostgresRosterDifferences } from '#sme-roster/lib/roster/difference-list-postgres'
+import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 import { readDifferences } from '../../utils/difference-read'
 import { withEnterpriseReadSignal } from '../../../../core/server/utils/enterprise-read-signal'
 import { parseRosterDifferenceQuery } from '../../utils/roster-read-query'
@@ -76,6 +78,8 @@ function differenceOptions(query: Record<string, unknown>) {
 
 export default defineEventHandler((event) => {
   setHeader(event, 'cache-control', 'no-store')
+  const native = usePostgresRosterDb()
+  if (native) return listPostgresRosterDifferences(native, differenceOptions(getQuery(event)))
   // Preserve owner-connection acquisition and validation before deferral.
   const owner = useDb()
   const filter = differenceOptions(getQuery(event))

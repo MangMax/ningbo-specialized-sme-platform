@@ -25,7 +25,7 @@ import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { Readable } from 'node:stream'
 import { Workbook, Worksheet } from 'documonster/excel'
-import { assertExcelSheets, inspectExcelSource } from './excel-source'
+import { assertExcelSheets, inspectExcelSource, rethrowExcelReadError } from './excel-source'
 import { createExcelValueReader } from './excel-read-value'
 
 /** 三张导出表对应的称号(与 `db/titles.ts` 的 `TitleCode` 同值)。 */
@@ -195,7 +195,7 @@ export async function readPlatformExport(
   const workbook = Workbook.create()
   const input = await readFile(filePath)
   const sourceParts = await inspectExcelSource(input)
-  await Workbook.readStream(workbook, Readable.from([input]))
+  await Workbook.readStream(workbook, Readable.from([input])).catch(error => rethrowExcelReadError(error, sourceParts))
   const sheets = Workbook.getWorksheets(workbook)
   assertExcelSheets(sourceParts, sheets.map(sheet => Worksheet.getName(sheet)))
   const sheet = sheets[0]

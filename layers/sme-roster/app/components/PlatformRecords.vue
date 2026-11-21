@@ -16,7 +16,7 @@ const titles = computed(() => [...new Set(props.timeline.sources.flatMap(s => s.
 <template>
   <Tabs v-model="source" class="bg-card min-w-0 gap-0 overflow-hidden rounded-lg border" data-testid="platform-records">
     <header class="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
-      <div><h2 class="text-base font-semibold">业务时间线</h2><p class="text-muted-foreground mt-1 text-sm">按来源查看认定、复核与办理记录</p></div>
+      <h2 class="text-base font-semibold">业务时间线</h2>
       <Select v-model="title"><SelectTrigger class="w-full sm:w-56" aria-label="业务称号"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部称号</SelectItem><SelectItem v-for="code in titles" :key="code" :value="code">{{ TITLES[code] ?? code }}</SelectItem></SelectContent></Select>
     </header>
     <div class="border-b px-4 py-3">
@@ -26,7 +26,6 @@ const titles = computed(() => [...new Set(props.timeline.sources.flatMap(s => s.
     </div>
     <TabsContent v-for="section in timeline.sources" :key="section.source" :value="section.source" class="min-w-0 space-y-3 p-4">
       <p v-if="statuses[section.collectionStatus]" role="status" class="mb-2 text-sm">{{ statuses[section.collectionStatus] }}</p>
-      <p v-if="section.collectedAt" class="text-muted-foreground mb-2 text-xs">最近采集：{{ section.collectedAt }}（辅助信息）</p>
       <template v-if="section.source !== 'publication' || !$slots.publication">
       <div class="grid min-w-0 gap-3">
         <RosterPlatformBusinessHistory v-for="event in section.events.filter(e => title === 'all' || e.title === title)" :key="event.key" :event="event" />

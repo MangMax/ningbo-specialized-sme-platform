@@ -34,7 +34,7 @@ function positive(value: number) {
   if (!Number.isSafeInteger(value) || value < 1) throw new Error('Invalid target identity')
   return value
 }
-function queryInput(input: NewCollectionTargetCommand): RosterImportPlatformQuery {
+export function parseNewCollectionInput(input: NewCollectionTargetCommand): RosterImportPlatformQuery {
   if (input.batchId !== undefined) positive(input.batchId)
   const original: unknown = JSON.parse(input.queryText)
   platformQueriesInputSchema.parse([original])
@@ -76,14 +76,45 @@ function queryInput(input: NewCollectionTargetCommand): RosterImportPlatformQuer
   return q
 }
 
+export function collectionInsertValues(q: RosterImportPlatformQuery, createdAt: string) {
+  const e = q.collectionEvidence, metadata = platformQueryInsertMetadata(q)
+  return {
+    interface: q.interface,
+    queryKey: q.queryKey,
+    rdjb: replayOptionalString(q.rdjb) ?? '',
+    titleCode: metadata.titleCode,
+    queriedAt: q.queriedAt,
+    createdAt,
+    status: metadata.status,
+    failureReason: metadata.failureReason,
+    source: e?.source ?? null,
+    evidenceStatus: e?.status ?? null,
+    completedAt: e?.completedAt ?? null,
+    completeness: e?.completeness ?? 'unknown',
+    fullRange: e ? Number(e.fullRange) : null,
+    fetchedCount: e?.fetchedCount ?? null,
+    declaredTotal: e?.declaredTotal ?? null,
+    scopeMode: e?.titleScope.mode ?? null,
+    provenanceState: e ? 'captured' : 'unknown',
+    parseState: e ? 'valid' : 'absent',
+    ruleVersion: 'w4a-new-collection-v1',
+    errorCode: e?.error?.code ?? null,
+    errorMessage: e?.error?.message ?? null,
+    maxRequests: e?.limits.maxRequests ?? null,
+    maxRows: e?.limits.maxRows ?? null,
+    maxDurationMs: e?.limits.maxDurationMs ?? null,
+    pageSize: e?.limits.pageSize ?? null
+  } as const
+}
+
 /** Savepoint remains atomic when composed inside a caller transaction which catches errors. */
 export function writeNewCollectionTarget<S extends Record<string, unknown>>(db: BetterSQLite3Database<S>, input: NewCollectionTargetCommand) {
   requireCaptureForeignKeys(db)
   return db.transaction(tx => {
     ensureProcessStoredReady(sqliteConnection(tx))
     reconcileSlotWriteInstalled(sqliteConnection(tx))
-    const q = queryInput(input)
-    const e = q.collectionEvidence, metadata = platformQueryInsertMetadata(q)
+    const q = parseNewCollectionInput(input)
+    const e = q.collectionEvidence
     const existing = tx.select({ id: s.platformCollection.id }).from(s.platformCollection).where(and(eq(s.platformCollection.interface, q.interface), eq(s.platformCollection.queryKey, q.queryKey), eq(s.platformCollection.rdjb, replayOptionalString(q.rdjb) ?? ''), eq(s.platformCollection.queriedAt, q.queriedAt))).get()
     if (existing) throw new Error('collection_already_exists: new-only command; public reuse is deferred')
     // Same exact-USCC evidence gate as current import. Assignment is explicit, never inferred here.
@@ -96,33 +127,7 @@ export function writeNewCollectionTarget<S extends Record<string, unknown>>(db: 
       if (!['uscc', 'none'].includes(a.matchBasis)) throw new Error('Evidence identity requires exact USCC')
       if (a.verificationStatus === 'confirmed' && (!uscc || !tx.select({ id: s.enterprise.id }).from(s.enterprise).where(eq(s.enterprise.usccNorm, uscc)).get())) throw new Error('Confirmed relation requires exact-USCC enterprise')
     }
-    const collection = tx.insert(s.platformCollection).values({
-      interface: q.interface,
-      queryKey: q.queryKey,
-      rdjb: replayOptionalString(q.rdjb) ?? '',
-      titleCode: metadata.titleCode,
-      queriedAt: q.queriedAt,
-      createdAt: input.createdAt,
-      status: metadata.status,
-      failureReason: metadata.failureReason,
-      source: e?.source ?? null,
-      evidenceStatus: e?.status ?? null,
-      completedAt: e?.completedAt ?? null,
-      completeness: e?.completeness ?? 'unknown',
-      fullRange: e ? Number(e.fullRange) : null,
-      fetchedCount: e?.fetchedCount ?? null,
-      declaredTotal: e?.declaredTotal ?? null,
-      scopeMode: e?.titleScope.mode ?? null,
-      provenanceState: e ? 'captured' : 'unknown',
-      parseState: e ? 'valid' : 'absent',
-      ruleVersion: 'w4a-new-collection-v1',
-      errorCode: e?.error?.code ?? null,
-      errorMessage: e?.error?.message ?? null,
-      maxRequests: e?.limits.maxRequests ?? null,
-      maxRows: e?.limits.maxRows ?? null,
-      maxDurationMs: e?.limits.maxDurationMs ?? null,
-      pageSize: e?.limits.pageSize ?? null
-    }).returning().get()
+    const collection = tx.insert(s.platformCollection).values(collectionInsertValues(q, input.createdAt)).returning().get()
     const collectionId = positive(collection.id)
     const positions = new Map<number, ApplyTargetInput['position']>()
     let offset = 0

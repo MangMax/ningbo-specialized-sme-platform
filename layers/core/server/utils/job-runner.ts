@@ -16,32 +16,9 @@ import {
   type JobRow,
 } from './job-store'
 
-type Db = BetterSQLite3Database<typeof schema>
+import type { PostgresJobSpec } from './job-runner-postgres'
 
-/**
- * 异步任务的**执行面**:kind → handler 的注册表,加一条进程内队列。
- *
- * ── 为什么是「队列 + 轮询」而不是同步 ──────────────────────────────────────
- * 97 页 OCR、700+ 家平台核查这类活是**分钟到小时**级的。同步接口下一个请求要挂到
- * 天荒地老,代理也只能一次干等一件 —— 而代理要在技能里 `curl`,没有后台线程可用。
- * `POST` 立刻回 `202 + jobId`、之后 `GET /api/jobs/:id` 轮询,批量才跑得动。
- *
- * ── 并发语义───────────────────────────────────────────────────────────
- * OCR job 最多 4 个同时运行,让独立 PDF 任务能并行推进;OCR 页图请求另由共享信号量限制。
- * 非 OCR 任务仍保持先进先出、一次只跑一个,且不会和 OCR 任务交错运行:
- *  1. `submitJob` 只**入队**并立刻返回,HTTP 请求不等它;
- *  2. 非 OCR handler 不与任何其他 handler 并行,保护 `render-pages` 同文件页图清单与
- *     暂存文件的原子性;这些任务仍按 FIFO 串行;
- *  3. OCR handler 彼此最多同时 4 个,由 `ocrImageFile` 再统一限制最多 8 个未完成的
- *     Paddle 单页 job;多文件和多页展开后也不会无上限地打到远端。
- *  4. 单进程语义。多实例部署(两个 node 进程指向同一个 db 文件)不在本票范围内 ——
- *     那需要一把跨进程的锁,**不是**现在这个内存队列能保证的事,写在这里免得误以为能。
- *
- * ── 任务不跨重启续跑 ────────────────────────────────────────────────────
- * 队列在内存里,进程一没就没了。启动时 `ensureJobRunnerReady` 把上一个进程留下的
- * `queued` / `running` 一律标 `failed`(原因见 `job-store.ts` 的
- * `reconcileInterruptedJobs`)——**任务史保留,任务本身重开**。
- */
+type Db = BetterSQLite3Database<typeof schema>
 
 // ---------------------------------------------------------------------------
 // kind → handler 的注册表
@@ -135,12 +112,14 @@ export interface JobSpec {
   paramsHint?: string
   /** Development OpenAPI contribution; order preserves the published parameter guide. */
   openAPIParams?: { description: string; order?: number }
+  validateSubmission?(db: Db, params: Record<string, unknown>): void
   parse: (raw: Record<string, unknown>) => JobParseResult
   /** 提交时就能算出的**分母**(进度条的 total)。默认 1。 */
   total?: (params: Record<string, unknown>) => number
   /** Capture submission-time dependencies in a closure, retained only in the process queue.
    * Never put credentials in params, progress or the business database. */
   prepare?: (params: Record<string, unknown>, db: Db) => NonNullable<JobSpec['run']>
+  postgres?: PostgresJobSpec
   run?: (ctx: JobContext, params: Record<string, unknown>) => Promise<JobCompletion>
 }
 
@@ -256,11 +235,8 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
       if (JSON.stringify(existing.params) !== JSON.stringify(input.params)) throw Object.assign(new Error('请求标识已用于不同参数'),{statusCode:409})
       return existing
     }
-    if (input.params.regenerateOf) {
-      const previous = getJob(db,String(input.params.regenerateOf))
-      if (!previous || previous.kind !== input.kind || previous.params.titleCode !== input.params.titleCode || !isTerminalJobState(previous.state)) throw Object.assign(new Error('重新生成需要同称号已结束任务'),{statusCode:409})
-    }
   }
+  spec.validateSubmission?.(db, input.params)
   if (spec.maxPending) {
     const n = db.select({n:sql<number>`count(*)`}).from(schema.job).where(and(eq(schema.job.kind,input.kind),sql`${schema.job.state} in ('queued','running')`)).get()!.n
     if (n >= spec.maxPending) throw Object.assign(new Error('导出执行/排队容量已满，请稍后重试'),{statusCode:429})

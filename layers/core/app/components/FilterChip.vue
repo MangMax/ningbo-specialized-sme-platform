@@ -6,7 +6,7 @@ import { Button } from '#core/app/components/ui/button'
  * 已生效的筛选条件。表格上方列出一行,每项可单独撤掉。
  * 光看四个下拉按钮看不出「年份里到底勾了哪几年」,所以把生效的值摊开写出来。
  */
-defineProps<{ label: string; disabled?: boolean }>()
+defineProps<{ label: string; disabled?: boolean; removeLabel?: string }>()
 defineEmits<{ remove: [] }>()
 </script>
 
@@ -20,7 +20,7 @@ defineEmits<{ remove: [] }>()
       variant="ghost"
       size="icon"
       class="hover:bg-primary/20 size-4 shrink-0 rounded-[3px]"
-      :aria-label="`移除筛选条件:${label}`"
+      :aria-label="removeLabel ?? `移除筛选条件:${label}`"
       :disabled="disabled"
       @click="$emit('remove')"
     >

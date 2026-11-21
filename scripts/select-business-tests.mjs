@@ -6,7 +6,6 @@ import { selectUpgrade } from './select-upgrade-tests.mjs'
 // These are terminal HTTP surfaces. Shared implementation changes deliberately
 // select all consumers; directory ownership is not a dependency graph.
 const routes = [
-  [/^(?:layers\/sme-roster\/)?server\/api\/(statistics\/|stats\.get\.ts$)/, ['统计 ·', '名录 · 导入与证据', '名录 · 资格与认定读取', '文件 ·']],
   [/^(?:layers\/core\/)?server\/api\/logs\//, [loggingBusiness]],
 ]
 

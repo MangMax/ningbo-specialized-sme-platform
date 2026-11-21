@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { OfficialEvidenceExecutor } from './official-evidence'
 import { listEventOfficialEvidence, readLatestOfficialEvidence, readOfficialEvidenceHistory, OfficialEvidenceError } from './official-evidence'
-import { importReceiptRedactor } from './import-receipt-redaction'
+import { importReceiptRedactor, type ReceiptRedactor } from './import-receipt-redaction'
 
 type Db = Parameters<typeof importReceiptRedactor>[0]
 const id = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
@@ -37,16 +37,26 @@ export function officialReadQuery(query: Record<string,unknown>) {
     ['id','eventId','batchId','receiptId','itemIndex','oldRecordId','page','pageSize','beforeRevision','afterEvidenceId','maxBytes'].includes(key) && typeof value==='string' && /^(0|[1-9]\d*)$/.test(value) ? Number(value) : value]))
 }
 
+const projectionMetadata = { source: 'official_evidence' as const, responseRedacted: true as const, uncaptured: 'unknown_legacy' as const }
+
+export function officialProjectionBudget(args: EvidenceRead | EventRead) {
+  const maxBytes = args.maxBytes ?? 16384
+  const overhead = Buffer.byteLength(JSON.stringify({ ...projectionMetadata, availability: 'unknown_legacy' })) - 2
+  if (maxBytes <= overhead) throw new OfficialEvidenceError(413, 'response_limit', 'Official projection exceeds maxBytes')
+  return { maxBytes, budget: maxBytes - overhead }
+}
+
+export function officialProjectionResponse(result: object, availability: string, maxBytes: number, redact: ReceiptRedactor) {
+  const projection = redact({ ...result, ...projectionMetadata, availability })
+  if (Buffer.byteLength(JSON.stringify(projection)) > maxBytes) throw new OfficialEvidenceError(413, 'response_limit', 'Redacted official projection exceeds maxBytes')
+  return projection
+}
+
 /** Only the new projection is budgeted/redacted; no legacy field is trimmed or rewritten. */
 export function readPublicOfficialEvidence(db: Db, kind: 'evidence'|'event', args: EvidenceRead | EventRead) {
-  const maxBytes=args.maxBytes??16384
-  const metadata={source:'official_evidence' as const,responseRedacted:true as const,uncaptured:'unknown_legacy' as const}
-  // Reserve the complete new envelope before A's SQL length gate. Availability's longest
-  // spelling is reserved; the final exact JSON check also catches redaction expansion.
-  const overhead=Buffer.byteLength(JSON.stringify({...metadata,availability:'unknown_legacy'}))-2
-  if(maxBytes<=overhead) throw new OfficialEvidenceError(413,'response_limit','Official projection exceeds maxBytes')
-  const executor:OfficialEvidenceExecutor=db
-  const budget={maxBytes:maxBytes-overhead}
+  const { maxBytes, budget: availableBytes } = officialProjectionBudget(args)
+  const executor: OfficialEvidenceExecutor = db
+  const budget = { maxBytes: availableBytes }
   let result:object, availability:string
   if(kind==='event') {
     const event=args as EventRead
@@ -62,9 +72,7 @@ export function readPublicOfficialEvidence(db: Db, kind: 'evidence'|'event', arg
       result=latest; availability=latest.row?'available':'unknown_legacy'
     }
   }
-  const projection=importReceiptRedactor(db)({...result,...metadata,availability})
-  if(Buffer.byteLength(JSON.stringify(projection))>maxBytes) throw new OfficialEvidenceError(413,'response_limit','Redacted official projection exceeds maxBytes')
-  return projection
+  return officialProjectionResponse(result, availability, maxBytes, importReceiptRedactor(db))
 }
 
 /** Toolkit takes raw shapes and strips root extras. Validate the original RPC, and

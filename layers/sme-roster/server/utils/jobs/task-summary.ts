@@ -10,7 +10,7 @@ import { desc, sql, type SQL } from 'drizzle-orm'
 import { schema, type useApplicationDb } from '../../../../../db/client'
 import { isJobId } from '../../../../core/lib/job'
 import { TASK_EXPORTS } from '../../../lib/sme-roster/task-exports'
-import { type TaskSummary } from '../../../../core/lib/task-center'
+import { type TaskSummary } from '../../../lib/sme-roster/task-summary'
 import { getTaskKind } from '../../../../core/lib/task-catalog'
 
 type Db = ReturnType<typeof useApplicationDb>

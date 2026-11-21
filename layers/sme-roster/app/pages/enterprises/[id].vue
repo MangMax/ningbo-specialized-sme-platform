@@ -12,7 +12,7 @@ import { eventDecisionText } from '#sme-roster/lib/roster/correspondence-view'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import RosterPlatformRecords from '#sme-roster/app/components/PlatformRecords.vue'
 import RosterTitleBadge from '#sme-roster/app/components/TitleBadge.vue'
-import { TITLE_ORDER } from '#sme-roster/lib/labels'
+import { CURRENT_ENTERPRISES_TITLE, ENTERPRISE_LIST_TITLE, TITLE_ORDER } from '#sme-roster/lib/labels'
 import { fileUrl, fileNameOf } from '#core/lib/preview'
 import {
   hasEvidencePreviewReturn,
@@ -74,7 +74,7 @@ interface LedgerEvent extends DetailEvent {
 const route = useRoute()
 const id = computed(() => String(route.params.id ?? ''))
 const comparisonReturn = computed(() => sourceReturnTarget(route.query.returnTo))
-const backLabel = computed(() => typeof route.query.currentBack === 'string' ? '优质中小企业查询' : comparisonReturn.value ? '记录级对比' : '企业列表')
+const backLabel = computed(() => typeof route.query.currentBack === 'string' ? CURRENT_ENTERPRISES_TITLE : comparisonReturn.value ? '记录级对比' : ENTERPRISE_LIST_TITLE)
 
 /**
  * 返回名录台账。

@@ -209,16 +209,16 @@ describe('Nitro 路由只是薄薄地转调 HTTP 核心', () => {
     query = {}
   })
 
-  it('snapshots 路由:同样的查询得到同样的响应体,状态码写进响应', () => {
+  it('snapshots 路由:同样的查询得到同样的响应体,状态码写进响应', async () => {
     query = { title: 'specialized_sme' }
-    const body = snapshots({}) as SnapshotBody
+    const body = await snapshots({}) as SnapshotBody
     expect(body.count).toBe(2)
     expect(status).toBe(200)
   })
 
-  it('diff 路由:缺参时状态码是 400', () => {
+  it('diff 路由:缺参时状态码是 400', async () => {
     query = {}
-    diff({})
+    await diff({})
     expect(status).toBe(400)
   })
 

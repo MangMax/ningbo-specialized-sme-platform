@@ -7,6 +7,7 @@ import { importExecutor } from './import-execution'
 import { asyncImportReceiptMcpResult } from './import-receipts'
 import { validateImportRequest } from './roster-import'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
+import { runPostgresMixedImport } from './roster-mixed-import-postgres'
 
 /** The two import tools share only submission. Schemas and authorization stay on the tools. */
 export function submitRosterImportMcp(action: 'preflight' | 'commit', input: {
@@ -27,6 +28,8 @@ export function submitRosterImportMcp(action: 'preflight' | 'commit', input: {
       throw createError({ statusCode: validated.status, message: validated.message })
     }
     try {
+      const nativeMixed = await runPostgresMixedImport(action,validated.value,useRuntimeConfig().filesDir)
+      if (nativeMixed !== undefined) return nativeMixed
       const pageCountErrors = await validateRosterImportPageCounts(validated.value, useRuntimeConfig().filesDir)
       if (action === 'commit' && hasAnnouncementRows(validated.value)) {
         const staged = await importExecutor.stage(useDb(), validated.value, pageCountErrors, context)

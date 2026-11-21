@@ -1,6 +1,7 @@
 {
   "core": [
     "enterprise",
+    "enterprise_address",
     "enterprise_alias",
     "enterprise_alias_audit",
     "enterprise_directory",

@@ -1,8 +1,15 @@
+import { execFileSync } from 'node:child_process'
+import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
+import { recognizedResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import { readLatestOfficialEvidence } from '../../../layers/sme-roster/server/utils/official-evidence'
+import { nativeAppAdapter } from '../../support/native-app'
+import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { reviewFixtureRows } from '../imports/fixtures/reviewed-announcement'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { createRuntimeSchema } from '../../../db/create-runtime'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import ExcelJS from 'exceljs'
+import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
@@ -276,3 +283,801 @@ it('transport other legacy receipt tools retain SDK field errors', async () => {
   const result = await rpc('get_roster_import_request', { batchId: 1, maxBytes: 65537 })
   expect(result.status).toBe(200); expect(result.body).not.toHaveProperty('error'); expect(rpcResult.parse(result.body).result.isError).toBe(true)
 })
+
+const pgBin = process.env.TEST_IMPORT_RECEIPTS_PG_BIN
+it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projections with HTTP and MCP parity', async () => {
+  const pgDir = mkdtempSync('/tmp/receipt-pg-')
+  const url = 'postgresql://receipt_fixture@localhost/postgres?host=' + encodeURIComponent(pgDir)
+  const app = nativeAppAdapter({ dir: pgDir, token: apiToken, launch: ({ cwd, port }) => ({
+    args: [join(cwd, '.output/server/index.mjs')],
+    env: { NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_MCP_TOKEN: mcpToken,
+      NUXT_DB_READONLY: '1', NUXT_POSTGRES_ROSTER_READ: '1', NUXT_POSTGRES_DIRECTORY_URL: url,
+      NUXT_POSTGRES_DIRECTORY_WRITE: '1', NUXT_FILES_DIR: filesDir,
+      NUXT_CURATED_PATH: join(pgDir, 'curated.json'), NUXT_RECONCILE_PATH: join(pgDir, 'reconcile.json') },
+  }) })
+  const env = {
+    PATH: process.env.PATH, LANG: 'C', PGHOST: pgDir, PGPORT: '5432', PGDATABASE: 'postgres',
+    PGUSER: 'receipt_fixture', PGSQL_BIN: join(pgBin!, 'psql'),
+  }
+  const run = (command: string, args: string[]) => execFileSync(join(pgBin!, command), args, { env, stdio: 'pipe' })
+  let started = false
+  try {
+    const event = sqlite.prepare(`
+      SELECT ev.id, e.uscc_norm AS uscc FROM record_event ev
+      JOIN record r ON r.id=ev.record_id JOIN enterprise e ON e.id=r.enterprise_id
+      WHERE r.source='jxj' AND r.title_code='specialized_sme' AND e.uscc_norm IS NOT NULL ORDER BY ev.id LIMIT 1
+    `).get() as { id: number; uscc: string }
+    const snapshot = {
+      idempotencyKey: 'correspondence-source', sourceKind: 'platform_export', sourceIdentity: 'history-test.xlsx',
+      payload: { exportSnapshot: {
+        titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-11-20', originalFilename: 'history-test.xlsx', sha256: 'b'.repeat(64),
+        rows: [{ sourceRowNo: 2, nameRaw: '测试来源企业', usccRaw: event.uscc, rawFields: { password: 'synthetic-private-history-value', preserved: '原始信息' } }],
+      } },
+    }
+    const imported = await http('/api/roster/import/commit', snapshot)
+    expect(imported.body).toMatchObject({ status: 'committed' })
+    const { id: exportRowId } = sqlite.prepare("SELECT id FROM platform_export_row ORDER BY id DESC LIMIT 1").get() as { id: number }
+    const decision = {
+      idempotencyKey: 'correspondence-history', sourceIdentity: 'history-test.xlsx',
+      actor: { type: 'agent', id: 'tester' }, basis: '测试审计依据', ruleId: 'manual-review', ruleVersion: '1',
+      operations: [{ action: 'create', status: 'candidate', edge: {
+        type: 'event_export_context', eventId: event.id, exportRowId, role: 'current_snapshot_context',
+      } }],
+    }
+    const preview = await http('/api/roster/correspondences/preflight', decision)
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200)
+    const { planHash } = z.object({ planHash: z.string() }).parse(preview.body)
+    const saved = await http('/api/roster/correspondences/commit', { request: decision, planHash })
+    expect(saved.status).toBe(200)
+    const { correspondenceIds: [correspondenceId] } = z.object({ correspondenceIds: z.array(z.number()).length(1) }).parse(saved.body)
+
+    const firstOwner = sqlite.prepare('SELECT r.enterprise_id AS id FROM record_event e JOIN record r ON r.id=e.record_id WHERE e.id=?').get(event.id) as { id: number }
+    const scope = { enterpriseId: firstOwner.id, titleCode: 'specialized_sme', direction: 'missing_in_miit' }
+    const legacyDecision = { ...scope, action: 'replace', expectedCurrentId: null, idempotencyKey: 'native-decision-read',
+      actor: { type: 'agent', id: 'decision-fixture' }, basis: 'Synthetic source decision', ruleVersion: 'fixture', effectiveAt: '2026-10-18T00:00:00Z',
+      decision: { status: 'confirmed_no_diff', measureCode: 'none', verificationStatus: 'confirmed' } }
+    const savedDecision = await http('/api/roster/decision-lifecycle/commands', legacyDecision)
+    expect(savedDecision.status, JSON.stringify(savedDecision.body)).toBe(200)
+    const decisionVersionId = z.object({ versionId: z.number() }).parse(savedDecision.body).versionId
+    const withdrawal = await http('/api/roster/decision-lifecycle/commands', {
+      ...scope, action: 'withdraw', expectedCurrentId: decisionVersionId, idempotencyKey: 'native-decision-withdraw',
+      actor: legacyDecision.actor, basis: legacyDecision.basis, ruleVersion: legacyDecision.ruleVersion, effectiveAt: legacyDecision.effectiveAt,
+    })
+    expect(withdrawal.status, JSON.stringify(withdrawal.body)).toBe(200)
+
+    const activeScope = { ...scope, direction: 'extra_in_miit' }
+    const active = await http('/api/roster/decision-lifecycle/commands', { ...legacyDecision, ...activeScope, idempotencyKey: 'native-impact-decision' })
+    expect(active.status, JSON.stringify(active.body)).toBe(200)
+    const activeDecisionId = z.object({ versionId: z.number() }).parse(active.body).versionId
+
+    const secondScope = { ...activeScope, titleCode: 'little_giant' }
+    const second = await http('/api/roster/decision-lifecycle/commands', { ...legacyDecision, ...secondScope, idempotencyKey: 'native-second-impact' })
+    expect(second.status, JSON.stringify(second.body)).toBe(200)
+    const secondDecisionId = z.object({ versionId: z.number() }).parse(second.body).versionId
+    const archivedAt = '2026-10-09T01:08:28Z'
+    const archived = await http('/api/roster/import/commit', {
+      idempotencyKey: 'native-qualification-source', sourceKind: 'alias_evidence', sourceIdentity: '合成工信部来源',
+      payload: { platformQueries: [{ interface: 'business_list', queryKey: event.uscc, titleCode: scope.titleCode, rdjb: '2',
+        queriedAt: archivedAt, status: 'success', rawResponse: '{}', relations: [{ sequenceNo: 1, enterpriseId: firstOwner.id, usccRaw: event.uscc,
+          nameRaw: '合成迁入核验', matchBasis: 'uscc', verificationStatus: 'confirmed' }] }] },
+    })
+    expect(archived.status, JSON.stringify(archived.body)).toBe(200)
+    expect(archived.body).toMatchObject({ status: 'committed' })
+    const archiveCoordinates = sqlite.prepare(`SELECT q.old_id AS queryId,r.old_id AS relationId FROM platform_legacy_query_alias q
+      JOIN platform_collection c ON c.id=q.collection_id JOIN platform_business_observation o ON o.collection_id=c.id
+      JOIN platform_legacy_relation_alias r ON r.observation_id=o.id WHERE c.query_key=? AND c.queried_at=?`)
+      .get(event.uscc, archivedAt) as { queryId: number; relationId: number }
+    expect(archiveCoordinates).toMatchObject({ queryId: expect.any(Number), relationId: expect.any(Number) })
+
+    const refresh = await http('/api/roster/differences/refresh', { enterpriseIds: [firstOwner.id] })
+    expect(refresh.status, JSON.stringify(refresh.body)).toBe(200)
+    installLeadListSchema(sqlite)
+    run('initdb', ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', 'receipt_fixture', '-D', join(pgDir, 'pg')])
+    run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-l', join(pgDir, 'pg.log'), '-o', "-c listen_addresses='' -k " + pgDir, 'start'])
+    started = true
+    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', dbPath, 'staged'], { env, stdio: 'pipe' })
+    for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
+      run('psql', ['-X', '-w', '-q', '-v', 'staging=staged', '-f', 'upgrade/postgresql/materialize-' + name + '.sql'])
+    }
+    await app.start()
+    const ledgerDetailPath = '/api/enterprises/' + firstOwner.id
+    const nativeLedgerDetail = await app.request(ledgerDetailPath)
+    expect(nativeLedgerDetail.status).toBe(200)
+    expect(await nativeLedgerDetail.json()).toEqual((await http(ledgerDetailPath)).body)
+    expect((await app.request('/api/enterprises/99999999')).status).toBe(404)
+    const rosterDetailPath = '/api/roster/enterprises/' + firstOwner.id
+    const rosterResponse = await app.request(rosterDetailPath)
+    const rosterNative = await rosterResponse.json()
+    expect(rosterResponse.status, JSON.stringify(rosterNative)).toBe(200)
+    const rosterSqlite = await http(rosterDetailPath)
+    expect(rosterSqlite.status).toBe(200)
+    const detailShape = z.object({
+      businessTimeline: z.object({ asOf: z.string() }).passthrough(),
+      qualificationAssessment: z.object({ asOf: z.string(), snapshotId: z.string() }).passthrough(),
+    }).passthrough()
+    const comparable = (value: unknown) => {
+      const same = detailShape.parse(value)
+      const { asOf: _timestamp, snapshotId: _snapshot, ...assessment } = same.qualificationAssessment
+      const { asOf: _timelineTimestamp, ...timeline } = same.businessTimeline
+      return { ...same,qualificationAssessment:assessment,businessTimeline:timeline }
+    }
+    expect(comparable(rosterNative)).toEqual(comparable(rosterSqlite.body))
+    const entries = new URLSearchParams(Object.entries(scope).map(([key, value]) => [key, String(value)]))
+    const decisionReads = [
+      ['/api/roster/decision-lifecycle/current?' + entries, 'get_current_difference_decision', scope],
+      ['/api/roster/decision-lifecycle/' + decisionVersionId, 'get_difference_decision', { id: decisionVersionId }],
+      ['/api/roster/decision-lifecycle/history?' + entries + '&pageSize=1&page=2', 'list_difference_decision_history', { ...scope, page: 2, pageSize: 1 }],
+    ] as const
+    const nativeTool = async (name: string, args: Record<string, unknown>) => {
+      const response = await app.request('/mcp', {
+        method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream',
+          'mcp-protocol-version': '2025-06-18', authorization: 'Bearer ' + mcpToken },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name, arguments: args } }),
+      })
+      const raw = await response.text()
+      const content = JSON.parse(raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : raw)
+      return rpcValue({ status: response.status, body: content })
+    }
+    const mcpDetail = await nativeTool('get_enterprise_detail',{enterpriseId:firstOwner.id})
+    expect(mcpDetail.isError).toBe(false)
+    expect(comparable(mcpDetail.body)).toEqual(comparable(rosterNative))
+    const curatedPath = join(pgDir,'curated.json')
+    const legacyCuratedPath = join(dir,'curated.json')
+    const legacyKey = JSON.stringify([event.uscc,scope.titleCode,scope.direction])
+    const annotations = JSON.stringify({[legacyKey]:{note:'合成旧标注',by:'核对人员'},invalid:{note:'旧键待核'}})
+    writeFileSync(curatedPath,annotations)
+    writeFileSync(legacyCuratedPath,annotations)
+    try {
+      const previewPath = '/api/roster/decision-lifecycle/legacy-preview'
+      const legacy = await http(previewPath)
+      const native = await app.request(previewPath)
+      expect(legacy.status).toBe(200)
+      expect(native.status).toBe(200)
+      expect(await native.json()).toEqual(legacy.body)
+      expect(await nativeTool('preview_legacy_difference_decisions',{})).toEqual({body:legacy.body,isError:false})
+      expect(legacy.body).toMatchObject({total:2,rows:expect.arrayContaining([
+        expect.objectContaining({legacyKey,enterpriseId:firstOwner.id,conflicts:expect.arrayContaining(['formal_withdrawal_exists'])}),
+      ])})
+    } finally {
+      rmSync(curatedPath,{force:true})
+      rmSync(legacyCuratedPath,{force:true})
+    }
+    for (const [path, name, args] of decisionReads) {
+      const source = await http(path), native = await app.request(path)
+      expect(source.status, JSON.stringify(source.body)).toBe(200)
+      expect(native.status, await native.clone().text()).toBe(200)
+      expect(await native.json()).toEqual(source.body)
+      expect(await nativeTool(name, args)).toEqual({ body: source.body, isError: false })
+    }
+    const listScope = { title: scope.titleCode, direction: scope.direction, pageSize: 1 }
+    expect(await nativeTool('list_differences', listScope)).toEqual(rpcValue(await rpc('list_differences', listScope)))
+    for (const query of ['pageSize=4', 'pageSize=1&page=2&q=source', 'pageSize=6&title=specialized_sme&direction=missing_in_miit']) {
+      const path = '/api/roster/differences?' + query
+      const legacy = await http(path)
+      const response = await app.request(path)
+      expect(legacy.status, JSON.stringify(legacy.body)).toBe(200)
+      expect(response.status, await response.clone().text()).toBe(200)
+      expect(await response.json()).toEqual(legacy.body)
+    }
+
+    for (const query of ['view=summary&pageSize=2', 'view=full&showCurated=true&pageSize=4', 'view=summary&enterpriseId=' + firstOwner.id]) {
+      const path = '/api/comparison?' + query
+      const original = await http(path)
+      const native = await app.request(path)
+      expect(original.status, JSON.stringify(original.body)).toBe(200)
+      expect(native.status, await native.clone().text()).toBe(200)
+      expect(await native.json()).toEqual(original.body)
+    }
+    const refreshPath = '/api/roster/differences/refresh?enterpriseIds=' + firstOwner.id
+    const refreshState = await http(refreshPath)
+    const nativeRefresh = await app.request(refreshPath)
+    expect(refreshState.status, JSON.stringify(refreshState.body)).toBe(200)
+    expect(nativeRefresh.status, await nativeRefresh.clone().text()).toBe(200)
+    expect(await nativeRefresh.json()).toEqual(refreshState.body)
+    expect(await nativeTool('list_enterprise_difference_comparisons', { enterpriseIds: [firstOwner.id] })).toEqual({ body: refreshState.body, isError: false })
+
+    const batch = sqlite.prepare("SELECT id,item_results FROM import_batch WHERE idempotency_key LIKE '%-merge' AND status='committed' ORDER BY id LIMIT 1").get() as { id: number; item_results: string }
+    const items = JSON.parse(batch.item_results)
+    const itemIndex = items.findIndex((item: { kind: string }) => item.kind === 'merge')
+    const { fromRecordId: oldRecordId } = items[itemIndex].detail.lineage.recordsFolded[0]
+    const { id: receiptId } = sqlite.prepare("SELECT id FROM import_receipt WHERE batch_id=? ORDER BY id DESC LIMIT 1").get(batch.id) as { id: number }
+    const { id: grantBatchId, item_results: grantItems } = sqlite.prepare("SELECT id,item_results FROM import_batch WHERE status='committed' AND idempotency_key NOT LIKE '%-merge' ORDER BY id LIMIT 1").get() as { id: number; item_results: string }
+    const grantIndex = JSON.parse(grantItems).findIndex((item: { kind: string }) => item.kind === 'record_event')
+    const selector = { batchId: batch.id, source: 'private_batch', itemIndex, oldRecordId }
+    const calls = [
+      ['', 'get_roster_import_receipt', { receiptId }],
+      ['/history', 'list_roster_import_receipts', { batchId: batch.id, pageSize: 1 }],
+      ['/request', 'get_roster_import_request', { receiptId, offset: 3, maxBytes: 17 }],
+      ['/items', 'list_roster_import_items', { batchId: batch.id, pageSize: 1 }],
+      ['/items', 'list_roster_import_items', { ...selector, projection: 'snapshot' }],
+      ['/items', 'list_roster_import_items', { ...selector, projection: 'eventIds', pageSize: 1 }],
+      ['/items', 'list_roster_import_items', { projection: 'snapshot', receiptId, source: 'redacted_receipt', itemIndex, oldRecordId }],
+      ['/items', 'list_roster_import_items', { projection: 'qualification', batchId: grantBatchId, source: 'private_batch', itemIndex: grantIndex }],
+    ] as const
+    const historyCalls = [
+      [`/api/roster/correspondences/${correspondenceId}/audit?pageSize=1`, 'get_record_correspondence_audit', { id: correspondenceId!, pageSize: 1 }],
+      ['/api/roster/correspondences/batches/' + decision.idempotencyKey, 'get_record_correspondence_batch', { idempotencyKey: decision.idempotencyKey }],
+    ] as const
+    for (const [path, name, args] of [...calls.map(([suffix, name, args]) =>
+      ['/api/roster/import/receipts' + suffix + '?' + query(args), name, args] as const), ...historyCalls]) {
+      const expected = await http(path)
+      expect(expected.status, path).toBe(200)
+      const response = await app.request(path)
+      const body = await response.json()
+      expect(response.status, JSON.stringify({ path, body })).toBe(200)
+      expect(body, path).toEqual(expected.body)
+      if (name === 'get_record_correspondence_audit') {
+        expect(body).toMatchObject({ rows: [{ toStatus: 'candidate', actorId: 'tester', evidence: expect.any(Object) }], total: 1, page: 1, pageSize: 1 })
+        expect(JSON.stringify(body)).not.toContain('synthetic-private-history-value')
+      }
+      if (name === 'get_record_correspondence_batch') expect(body).toEqual(saved.body)
+      const remote = await app.request('/mcp', {
+        method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream',
+          'mcp-protocol-version': '2025-06-18', authorization: 'Bearer ' + mcpToken },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+      })
+      const raw = await remote.text()
+      const text = raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : raw
+      expect(JSON.parse(JSON.parse(text).result.content[0].text), name).toEqual(expected.body)
+    }
+    const batchPath = '/api/roster/correspondences/batches/' + decision.idempotencyKey
+    const unauthorized = await app.request(batchPath, { headers: {} })
+    expect(unauthorized.status).toBe(401)
+    expect(await unauthorized.json()).toEqual((await http(batchPath, undefined, null)).body)
+    const missing = await app.request('/api/roster/correspondences/batches/' + snapshot.idempotencyKey)
+    expect(missing.status).toBe(404)
+    const invalidAudit = await app.request(`/api/roster/correspondences/${correspondenceId}/audit?pageSize=201`)
+    expect(invalidAudit.status).toBe(400)
+
+    const bounded = '/api/roster/import/receipts/items?' + query({ ...selector, projection: 'snapshot', maxBytes: 1 })
+    const expected = await http(bounded)
+    const response = await app.request(bounded)
+    expect(response.status).toBe(413)
+    expect(await response.json()).toEqual(expected.body)
+
+    const exportPath = '/api/export?title=specialized_sme&q=source-1'
+    const workbookRows = async (response: Response) => {
+      expect(response.status).toBe(200)
+      const workbook = new ExcelJS.Workbook()
+      await workbook.xlsx.load(await response.arrayBuffer())
+      return workbook.getWorksheet('台账')!.getSheetValues()
+    }
+    const [legacyRows, nativeRows] = await Promise.all([
+      workbookRows(await fetch(base + exportPath)), workbookRows(await app.request(exportPath)),
+    ])
+    expect(nativeRows).toEqual(legacyRows)
+    expect(JSON.stringify(nativeRows)).toContain('2021旧名')
+
+    const { evidenceId } = sqlite.prepare('SELECT evidence_id AS evidenceId FROM official_evidence_row_revision WHERE source_binding_known=1 ORDER BY evidence_id LIMIT 1').get() as { evidenceId: number }
+    const exactPath = '/api/roster/evidence/' + evidenceId
+    const row = await (await app.request(exactPath)).json()
+    expect(row).toEqual((await http(exactPath)).body)
+    const { sourceDocumentId, revision, nameRaw, usccRaw, districtRaw, storedFileId, path, sha256: sourceHash, bytes, attachment, sectionKey, listNo, page, sourceBindingKnown } =
+      readLatestOfficialEvidence(db, evidenceId).row!
+    const actor = { type: 'agent', id: 'native-evidence-review' }, basis = '按原件更正原文'
+    const change = { idempotencyKey: 'native-exact-evidence', actor, basis, operations: [{
+      evidenceId, eventId: row.eventId, recordId: row.recordId, enterpriseId: row.enterpriseId,
+      expectedVersion: row.version, expectedRowRevision: revision, coordinate: row.coordinate,
+      publishedRow: { nameRaw: nameRaw + '（更正）', usccRaw, districtRaw, storedFileId, path, sha256: sourceHash, bytes, attachment,
+        sectionKey, listNo, page, sourceBindingKnown, declaration: { kind: 'existing', sourceDocumentId, basis }, actor, basis },
+    }] }
+    const correction = (operation: string, body: unknown) => app.request('/api/roster/evidence/corrections/' + operation, {
+      method: 'POST', body: JSON.stringify(body),
+    })
+    const before = await http('/api/roster/evidence/corrections/preflight', change)
+    expect(before.status, JSON.stringify(before.body)).toBe(200)
+    const nativeBefore = await correction('preflight', change)
+    const nativeCorrectionPlan = await nativeBefore.json()
+    expect(nativeBefore.status, JSON.stringify(nativeCorrectionPlan)).toBe(200)
+    expect(nativeCorrectionPlan).toEqual(before.body)
+    const command = { request: change, planHash: nativeCorrectionPlan.planHash }
+    const responses = await Promise.all([correction('commit', command), correction('commit', command)])
+    const receipts = await Promise.all(responses.map(response => response.json()))
+    expect(responses.map(response => response.status), JSON.stringify(receipts)).toEqual([200, 200])
+    expect(receipts[0]).toEqual(receipts[1])
+    expect(receipts[0]).toMatchObject({ status: 'committed', evidenceIds: [evidenceId], impact: { updated: 1, audit: 1 } })
+    expect(await (await app.request(exactPath)).json()).toMatchObject({ evidenceId, event: { revision: row.event.revision + 1 } })
+    const audit = await (await app.request(exactPath + '/audit')).json()
+    expect(audit.rows.at(-1)).toMatchObject({ before: { row: { revision, nameRaw } }, after: { rowRevision: revision + 1 } })
+    expect(await (await app.request('/api/roster/evidence/corrections/batches/' + change.idempotencyKey)).json()).toEqual(receipts[0])
+    expect((await http(exactPath)).body).toEqual(row)
+
+    const intake = sqlite.prepare('SELECT id,digest FROM roster_announcement_intake WHERE removed_reason IS NULL AND receipt IS NOT NULL ORDER BY id LIMIT 1').get() as { id: number; digest: string }
+    const intakePath = `/api/roster/import/intake/${intake.id}`
+    const sourceIntake = await http(intakePath)
+    expect(sourceIntake.status).toBe(200)
+    const originalIntake = await app.request(intakePath)
+    expect(originalIntake.status).toBe(200)
+    expect(await originalIntake.json()).toEqual(sourceIntake.body)
+    const remove = (sourceDigest: string, reason: string) => app.request(intakePath + '/remove', {
+      method: 'POST', body: JSON.stringify({ sourceDigest, reason }),
+    })
+    expect((await remove('a'.repeat(64), '旧摘要')).status).toBe(409)
+    const removals = await Promise.all([remove(intake.digest, '撤下一版'), remove(intake.digest, '撤下另一版')])
+    expect(removals.map(response => response.status).sort()).toEqual([200, 409])
+    const result = await removals.find(response => response.ok)!.json()
+    expect(await (await remove(intake.digest, result.removedReason)).json()).toEqual(result)
+    const original = z.looseObject({ status: z.literal('supplemented') }).parse(sourceIntake.body)
+    expect(await (await app.request(intakePath)).json()).toEqual({ ...original, status: 'removed', removedReason: result.removedReason })
+    expect((await http(intakePath)).body).toEqual(sourceIntake.body)
+
+    const stagedRequest = { idempotencyKey: 'native-announcement-staged', sourceKind: 'announcement',
+      sourceIdentity: 'isolated-new-notice.xlsx', sourceSha256: null,
+      payload: { announcement: { sourceDocument: { source: 'jxj', title: '合成新名单' },
+        records: [{ enterprise: { name: '合成新企业' }, titleCode: 'specialized_sme', events: [] }] } } }
+    const stage = (request: unknown = stagedRequest) => app.request('/api/roster/import/commit', {
+      method: 'POST', body: JSON.stringify(request),
+    })
+    const sqliteStage = await http('/api/roster/import/commit', stagedRequest)
+    expect(sqliteStage.status, JSON.stringify(sqliteStage.body)).toBe(200)
+    expect(sqliteStage.body).toMatchObject({ status: 'staged', rowCount: 1 })
+    const stagedResponses = await Promise.all([stage(), stage()])
+    expect(stagedResponses.map(response => response.status)).toEqual([200, 200])
+    const staged = await Promise.all(stagedResponses.map(response => response.json()))
+    expect(staged[0]).toEqual(sqliteStage.body)
+    expect(staged[1]).toEqual(staged[0])
+    const newIntakePath = '/api/roster/import/intake/' + staged[0].intakeId
+    expect(await (await app.request(newIntakePath)).json()).toEqual((await http(newIntakePath)).body)
+    expect((await stage({ ...stagedRequest, sourceIdentity: 'another-source.xlsx' })).status).toBe(409)
+    expect((await stage({ ...snapshot, idempotencyKey: stagedRequest.idempotencyKey })).status).toBe(409)
+    const sourceRecordCount = run('psql', ['-X', '-w', '-Atc', "SELECT count(*) FROM business.enterprise WHERE name='合成新企业'"]).toString().trim()
+    expect(sourceRecordCount).toBe('0')
+
+    const reviewStaged = (path: string, input: unknown) => app.request(path + '/supplement', { method: 'POST', body: JSON.stringify(input) })
+    const name = '合成新企业'
+    const untypedReview = { sourceDigest: staged[0].sourceDigest, basis, rows: [{ action: 'create', fields: { name } }] }
+    expect((await reviewStaged(newIntakePath, { ...untypedReview, rows: [{ action: 'same_subject', row: 0 }] })).status).toBe(422)
+    const accepted = await reviewStaged(newIntakePath, untypedReview)
+    const supplemented = await accepted.json()
+    expect(accepted.status, JSON.stringify(supplemented)).toBe(200)
+    expect(supplemented).toMatchObject({ status: 'supplemented', owners: [expect.any(Number)], sourceIds: [expect.any(Number)] })
+    expect(await (await reviewStaged(newIntakePath, untypedReview)).json()).toEqual(supplemented)
+    expect((await reviewStaged(newIntakePath, { ...untypedReview, basis: '不同人工核对' })).status).toBe(409)
+    expect((await http(newIntakePath)).body).toMatchObject({ status: 'staged', receipt: null })
+
+    const typedName = '合成类型化补充'
+    const publishedRow = { ...change.operations[0]!.publishedRow, nameRaw: typedName, usccRaw: null,
+      attachment: null, sectionKey: '合成类型化补充清单', listNo: 998, declaration: { kind: 'independent', basis,
+        sourceDocument: { source: 'jxj', title: '合成类型化原件', path: 'notice.txt', docNumber: null, issueDate: null } } }
+    const typedRequest = { ...stagedRequest, idempotencyKey: 'native-typed-announcement', sourceIdentity: 'notice.txt', sourceSha256: sha256,
+      payload: { announcement: { sourceDocument: { source: 'jxj', title: '合成类型化原件' }, records: [
+        { enterprise: { name: typedName }, titleCode: 'specialized_sme', events: [
+          { eventType: 'award', year: 2023, evidence: [{ sourceFile: 'notice.txt', attachment: null, listNo: 998, page: null, publishedRow }] },
+        ] },
+      ] } } }
+    const nativeTypedStage = await stage(typedRequest)
+    const typedIntake = await nativeTypedStage.json()
+    expect(nativeTypedStage.status, JSON.stringify(typedIntake)).toBe(200)
+    expect(typedIntake).toMatchObject({ officialEvidencePreflightRequired: true, status: 'staged' })
+    const sqliteTypedStage = await http('/api/roster/import/commit', typedRequest)
+    expect(sqliteTypedStage.status, JSON.stringify(sqliteTypedStage.body)).toBe(200)
+    const sqliteTyped = z.object({ intakeId: z.number(), sourceDigest: z.string() }).parse(sqliteTypedStage.body)
+    const typedPath = '/api/roster/import/intake/' + typedIntake.intakeId
+    const typedReview = { sourceDigest: typedIntake.sourceDigest, basis, rows: [{ action: 'create', fields: { name: typedName } }] }
+    const typedBefore = await reviewStaged(typedPath, { ...typedReview, preflight: true })
+    const typedPlan = await typedBefore.json()
+    expect(typedBefore.status, JSON.stringify(typedPlan)).toBe(200)
+    expect(typedPlan).toMatchObject({ conflicts: [], officialEvidencePlanHash: expect.stringMatching(/^[a-f0-9]{64}$/) })
+    expect((await http('/api/roster/import/intake/' + sqliteTyped.intakeId + '/supplement', { ...typedReview, preflight: true })).body).toEqual(typedPlan)
+    expect((await (await app.request(typedPath)).json())).toMatchObject({ status: 'staged', receipt: null })
+    const rejected = await reviewStaged(typedPath, { ...typedReview, officialEvidencePlanHash: 'a'.repeat(64) })
+    const rejectedBody = await rejected.json()
+    expect(rejected.status, rejected.ok ? undefined : readFileSync(join(pgDir, 'pg.log'), 'utf8').slice(-4000)).toBe(200)
+    expect(rejectedBody).toMatchObject({ status: 'failed', items: [expect.objectContaining({ error: expect.objectContaining({ code: 'plan_mismatch' }) })] })
+    expect(run('psql', ['-X','-w','-Atc', "SELECT count(*) FROM business.enterprise WHERE name='合成类型化补充'"]).toString().trim()).toBe('0')
+    const reviewedTyped = { ...typedReview, officialEvidencePlanHash: typedPlan.officialEvidencePlanHash }
+    const typedResponses = await Promise.all([reviewStaged(typedPath, reviewedTyped), reviewStaged(typedPath, reviewedTyped)])
+    const typedReceipts = await Promise.all(typedResponses.map(response => response.json()))
+    expect(typedResponses.map(response => response.status), JSON.stringify(typedReceipts) +
+      (typedResponses.some(response => !response.ok) ? readFileSync(join(pgDir, 'pg.log'), 'utf8').slice(-4000) : '')).toEqual([200, 200])
+    expect(typedReceipts[0]).toEqual(typedReceipts[1])
+    expect(typedReceipts[0]).toMatchObject({ status: 'supplemented', sourceIds: [expect.any(Number)], qualificationReadback: { status: 'captured' } })
+    const typedItem = typedReceipts[0].items.find((item: {kind: string}) => item.kind === 'record_event')
+    const published = await app.request('/api/roster/evidence/' + typedItem.detail.evidence[0] + '?official=latest')
+    expect(published.status).toBe(200)
+    expect(await published.json()).toMatchObject({ enterpriseId: typedReceipts[0].owners[0], official: { row: { nameRaw: typedName, listNo: 998 } } })
+
+    const exportRequest = { ...snapshot, idempotencyKey: 'postgres-new-export', sourceIdentity: 'new-platform-export.xlsx',
+      payload: { exportSnapshot: { ...snapshot.payload.exportSnapshot, year: 2027, sha256: 'c'.repeat(64) } } }
+    const exportCommand = (action: string, request = exportRequest) => app.request(`/api/roster/import/${action}`, {
+      method: 'POST', body: JSON.stringify(request),
+    })
+    const expectedPreview = await http('/api/roster/import/preflight', exportRequest)
+    const nativePreview = await exportCommand('preflight')
+    const nativePlan = await nativePreview.json()
+    expect(nativePreview.status, JSON.stringify(nativePlan)).toBe(200)
+    expect(nativePlan.preflight).toEqual(z.object({ preflight: z.unknown() }).parse(expectedPreview.body).preflight)
+    expect(nativePlan.preflight.add).toBe(1)
+    const attempts = await Promise.all([exportCommand('commit'), exportCommand('commit')])
+    const committed = await Promise.all(attempts.map(response => response.json()))
+    expect(attempts.map(response => response.status), JSON.stringify(committed)).toEqual([200, 200])
+    expect(committed[0]).toEqual(committed[1])
+    expect(committed[0]).toMatchObject({ status: 'committed', summary: { written: 2, skipped: 0, failed: 0 }, items: [{ detail: { rows: [expect.any(Number)] } }] })
+    expect(JSON.parse(run('psql', ['-X', '-w', '-Atc', `SELECT json_build_object('count',(SELECT count(*) FROM business.platform_export_batch WHERE year=2027),
+      'revision',(SELECT count(*) FROM business.evidence_revision_113 WHERE source_kind='selected_snapshot' AND metadata::json#>>'{after,year}'='2027'))`]).toString())).toEqual({ count: 1, revision: 1 })
+    const receipt = await app.request(`/api/roster/import/receipts/history?batchId=${committed[0].batchId}`)
+    expect(receipt.status).toBe(200)
+    expect(await receipt.json()).toMatchObject({ rows: expect.arrayContaining([expect.objectContaining({ status: 'committed' })]) })
+    const replay = await app.request('/mcp', {
+      method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream',
+        'mcp-protocol-version': '2025-06-18', authorization: 'Bearer ' + mcpToken },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'save_roster_batch', arguments: exportRequest } }),
+    })
+    const replayBody = await replay.text()
+    const replayEvent = replayBody.startsWith('event:') ? replayBody.split('\n').find(line => line.startsWith('data: '))!.slice(6) : replayBody
+    expect(JSON.parse(JSON.parse(replayEvent).result.content[0].text)).toEqual(committed[0])
+
+    const eventPath = '/api/roster/events/' + event.id
+    const legacyEvent = await http(eventPath)
+    const eventBefore = z.object({ event: z.object({ revision: z.number(), batchSeq: z.number().nullable() }),
+      record: z.object({ id: z.number(), enterpriseId: z.number() }) }).parse(legacyEvent.body)
+    const priorNative = await (await app.request(eventPath)).json()
+    const eventRequest = {
+      idempotencyKey: 'native-event-correction', sourceIdentity: '合成原件', actor, basis,
+      operations: [{ eventId: event.id, recordId: eventBefore.record.id, enterpriseId: eventBefore.record.enterpriseId,
+        expectedRevision: eventBefore.event.revision, patch: { batchSeq: (eventBefore.event.batchSeq ?? 0) + 42 } }],
+    }
+    const eventRoot = '/api/roster/events/corrections/'
+    const nativeEventCommand = (action: string, body: unknown) => app.request(eventRoot + action, {
+      method: 'POST', body: JSON.stringify(body),
+    })
+    const proof = z.object({ stage: z.string(), status: z.literal('captured'), target: z.object({ enterpriseId: z.number() }),
+      assessment: z.object({ assessmentVersion: z.literal('enterprise-qualification-407-v1'), ruleVersion: z.literal('current-roster-116-v8'),
+        titles: z.array(z.unknown()).length(3) }) })
+    const legacyEventPlan = await http(eventRoot + 'preflight', eventRequest)
+    const nativeEventPlanResponse = await nativeEventCommand('preflight', eventRequest)
+    const nativeEventPlan = await nativeEventPlanResponse.json()
+    expect(legacyEventPlan.status, JSON.stringify(legacyEventPlan.body)).toBe(200)
+    expect(nativeEventPlanResponse.status, JSON.stringify(nativeEventPlan)).toBe(200)
+    expect(nativeEventPlan).toMatchObject({ targets: z.object({ targets: z.array(z.unknown()) }).parse(legacyEventPlan.body).targets })
+    expect(nativeEventPlan.planHash).toEqual(z.object({ planHash: z.string() }).parse(legacyEventPlan.body).planHash)
+    expect(proof.parse(nativeEventPlan.qualificationReadback)).toEqual(proof.parse(z.object({ qualificationReadback: z.unknown() }).parse(legacyEventPlan.body).qualificationReadback))
+    expect(await nativeTool('preflight_event_corrections', eventRequest)).toEqual({ body: nativeEventPlan, isError: false })
+    const eventCommand = { request: eventRequest, planHash: nativeEventPlan.planHash }
+    const legacyEventCommit = await http(eventRoot + 'commit', eventCommand)
+    const responsesToEvent = await Promise.all([nativeEventCommand('commit', eventCommand), nativeEventCommand('commit', eventCommand)])
+    const eventReceipts = await Promise.all(responsesToEvent.map(response => response.json()))
+    expect(legacyEventCommit.status, JSON.stringify(legacyEventCommit.body)).toBe(200)
+    expect(responsesToEvent.map(response => response.status), JSON.stringify(eventReceipts)).toEqual([200, 200])
+    expect(eventReceipts[0]).toEqual(eventReceipts[1])
+    expect(proof.parse(eventReceipts[0].qualificationReadback)).toEqual(proof.parse(z.object({ qualificationReadback: z.unknown() }).parse(legacyEventCommit.body).qualificationReadback))
+    expect(await nativeTool('commit_event_corrections', eventCommand)).toEqual({ body: eventReceipts[0], isError: false })
+    const corrected = await (await app.request(eventPath)).json()
+    expect(corrected.event).toMatchObject({ id: event.id, revision: eventBefore.event.revision + 1, batchSeq: eventRequest.operations[0]!.patch.batchSeq })
+    expect(corrected.evidence).toEqual(priorNative.evidence)
+    const eventAudit = await (await app.request(eventPath + '/audit')).json()
+    expect(eventAudit.rows).toEqual([expect.objectContaining({ eventId: event.id, before: priorNative.event, after: corrected.event })])
+
+
+    const workPath = '/api/roster/evidence-impacts/commands'
+    const evidenceWork = (body: unknown) => app.request(workPath, { method: 'POST', body: JSON.stringify(body) })
+    const rule = { action: 'release_rule', idempotencyKey: 'native-impact-release', actor, basis, ruleId: 'fixture-source-rule', version: '2',
+      scopes: [activeScope, secondScope].map(target => ({ ...target, previousEvaluationDigest: 'a'.repeat(64), evaluationDigest: 'b'.repeat(64) })) }
+    const releaseResponses = await Promise.all([evidenceWork(rule), evidenceWork(rule)])
+    const releases = await Promise.all(releaseResponses.map(response => response.json()))
+    expect(releaseResponses.map(response => response.status), JSON.stringify(releases)).toEqual([200, 200])
+    expect(releases[0]).toEqual(releases[1])
+    expect(releases[0]).toMatchObject({ unchanged: 0, revisionIds: [expect.any(Number), expect.any(Number)] })
+    expect(await nativeTool('release_evidence_rule', rule)).toEqual({ body: releases[0], isError: false })
+    expect((await evidenceWork({ ...rule, idempotencyKey: 'different-rule-request', scopes: [{ ...rule.scopes[0], evaluationDigest: 'c'.repeat(64) }] })).status).toBe(409)
+    const processCommand = { action: 'process', idempotencyKey: 'native-impact-process', limit: 100, actor, basis }
+    const applied = await evidenceWork(processCommand)
+    const workReceipt = await applied.json()
+    expect(applied.status, JSON.stringify(workReceipt)).toBe(200)
+    expect(workReceipt).toMatchObject({ processed: expect.any(Number), unfinished: false })
+    expect(workReceipt.processed).toBeGreaterThan(0)
+    expect(workReceipt.watermark).toBeGreaterThanOrEqual(releases[0].revisionIds[0])
+    expect(await nativeTool('process_evidence_impacts', processCommand)).toEqual({ body: workReceipt, isError: false })
+    const link = run('psql', ['-X', '-w', '-Atc', `SELECT l.classification,i.decision_id FROM business.evidence_impact_link_113 l
+      JOIN business.explanation_impact_113 i ON i.id=l.impact_id WHERE l.revision_id=${releases[0].revisionIds[0]}`]).toString().trim()
+    expect(link).toEqual('evidence_changed|' + activeDecisionId)
+    const pending = run('psql', ['-X', '-w', '-Atc', 'SELECT sum(pending_count) FROM business.evidence_scope_version_113']).toString().trim()
+    expect(pending).toBe('0')
+
+
+    const impactsPath = '/api/roster/evidence-impacts'
+    const impacted = await app.request(impactsPath + '?limit=1&enterpriseId=' + firstOwner.id)
+    const firstImpact = await impacted.json()
+    expect(impacted.status, JSON.stringify(firstImpact)).toBe(200)
+    expect(firstImpact).toMatchObject({ rows: [expect.objectContaining({ decisionId: activeDecisionId, pending: true })],
+      nextCursor: expect.any(String), projectionReady: true })
+    const impactId = firstImpact.rows[0].id
+    const impactRead = await app.request(impactsPath + '/' + impactId)
+    const impactDetail = await impactRead.json()
+    expect(impactRead.status, JSON.stringify(impactDetail)).toBe(200)
+    expect(impactDetail).toMatchObject({ decisionId: activeDecisionId, oldDecision: { id: activeDecisionId },
+      evidenceToken: { latestRevisionId: releases[0].revisionIds[0], projectionReady: true } })
+    expect(await nativeTool('get_evidence_impact', { id: impactId })).toEqual({ body: impactDetail, isError: false })
+    const sources = await app.request(impactsPath + '/' + impactId + '/sources')
+    expect(sources.status).toBe(200)
+    expect(await sources.json()).toMatchObject({ rows: expect.arrayContaining([expect.objectContaining({
+      revisionId: releases[0].revisionIds[0], sourceKind: 'rule_release', classification: 'evidence_changed',
+    })]) })
+    const impactPreview = await nativeTool('preview_evidence_impacts', { revisionId: releases[0].revisionIds[1] })
+    expect(impactPreview).toMatchObject({ isError: false, body: { rows: [expect.objectContaining({ id: secondDecisionId, classification: 'evidence_changed' })] } })
+    const eventRevision = Number(run('psql', ['-X', '-w', '-Atc',
+      'SELECT max(id) FROM business.evidence_revision_113 WHERE event_id=' + event.id]).toString().trim())
+    expect(await nativeTool('list_evidence_revision_events', { revisionId: eventRevision })).toMatchObject({
+      isError: false, body: { rows: [expect.objectContaining({ eventId: event.id, enterpriseId: firstOwner.id })] },
+    })
+
+    const decisionRoot = '/api/roster/decision-lifecycle/'
+    const decide = (action: string, body: unknown) => app.request(decisionRoot + action, { method: 'POST', body: JSON.stringify(body) })
+    const maintain = { ...activeScope, action: 'maintain', expectedCurrentId: activeDecisionId,
+      idempotencyKey: 'native-scope-review', basis, effectiveAt: '2026-10-18T00:00:00Z',
+      reviewedEvidence: { latestRevisionId: releases[0].revisionIds[0], projectionReady: true } }
+    const reviewPath = '/api/roster/evidence-review/browser-commands'
+    const reviewResponse = await app.request(reviewPath, {
+      method: 'POST', headers: { origin: new URL(app.url(reviewPath)).origin, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
+      body: JSON.stringify(maintain),
+    })
+    const reviewed = await reviewResponse.json()
+    expect(reviewResponse.status, JSON.stringify(reviewed)).toBe(200)
+    expect(reviewed).toMatchObject({ action: 'maintain', versionId: activeDecisionId, reviewedRevisionId: releases[0].revisionIds[0] })
+    const secondPage = await app.request(impactsPath + '?limit=1&enterpriseId=' + firstOwner.id + '&cursor=' + encodeURIComponent(firstImpact.nextCursor))
+    expect(secondPage.status).toBe(200)
+    expect(await secondPage.json()).toMatchObject({ asOf: firstImpact.asOf,
+      rows: [expect.objectContaining({ decisionId: secondDecisionId, pending: true })] })
+    const nowReviewed = await app.request(impactsPath + '/' + impactId)
+    expect(await nowReviewed.json()).toMatchObject({ pending: false, reviewedBaseline: { actor: null, ruleVersion: null } })
+    const migration = { ...legacyDecision, ...activeScope, expectedCurrentId: activeDecisionId, idempotencyKey: 'native-qualification-decision',
+      decision: { status: 'confirmed_reason', reasonCode: 'moved_in', measureCode: 'record_moved_in', verificationStatus: 'confirmed',
+        evidenceQueryId: archiveCoordinates.queryId, evidenceRelationId: archiveCoordinates.relationId, movedIn: { city: '南通' },
+        currentQualification: { titleCode: scope.titleCode, validFrom: '2025-07-22T00:00:00Z', validUntil: '2028-07-22T00:00:00Z',
+          basis: '合成独立资格', publicationCheck: { status: 'not_found', scope: '合成公布范围' } } } }
+    const legacyPlan = await http(decisionRoot + 'qualification-preflight', migration)
+    expect(legacyPlan.status, JSON.stringify(legacyPlan.body)).toBe(200)
+    const pgPreview = await decide('qualification-preflight', migration)
+    const pgPlan = await pgPreview.json()
+    expect(pgPreview.status, JSON.stringify(pgPlan)).toBe(200)
+    expect(pgPlan).toEqual(legacyPlan.body)
+    const qualifiedCommand = { command: migration, planHash: pgPlan.planHash }
+    expect((await decide('qualification-commit', { ...qualifiedCommand, planHash: '0'.repeat(64) })).status).toBe(409)
+    const decided = await decide('qualification-commit', qualifiedCommand)
+    const qualificationReceipt = await decided.json()
+    const commitDiagnostic = decided.ok ? undefined : JSON.stringify(qualificationReceipt) + '\n' + readFileSync(join(pgDir, 'pg.log'), 'utf8').slice(-4000)
+    expect(decided.status, commitDiagnostic).toBe(200)
+    expect(await nativeTool('commit_qualification_decision', qualifiedCommand)).toEqual({ body: qualificationReceipt, isError: false })
+    const decisionsPath = decisionRoot + 'current?' + new URLSearchParams(Object.entries(activeScope).map(([key,value]) => [key,String(value)]))
+    const qualificationDecision = await (await app.request(decisionsPath)).json()
+    expect(qualificationDecision).toMatchObject({ versionId: qualificationReceipt.versionId,
+      current: { ...activeScope, evidenceQueryId: archiveCoordinates.queryId,
+        evidenceRelationId: archiveCoordinates.relationId, currentQualification: migration.decision.currentQualification } })
+    const withdrawalCommand = { ...activeScope, action: 'withdraw', expectedCurrentId: qualificationReceipt.versionId,
+      idempotencyKey: 'native-qualification-withdraw', actor, basis, ruleVersion: legacyDecision.ruleVersion, effectiveAt: legacyDecision.effectiveAt }
+    const cancelledDecision = await nativeTool('save_difference_decision', withdrawalCommand)
+    expect(cancelledDecision).toMatchObject({ isError: false, body: { action: 'withdraw', previousId: qualificationReceipt.versionId, currentId: null } })
+    expect(await (await app.request(decisionsPath)).json()).toMatchObject({ current: null })
+
+
+    const recognizedSource = { id: 'pg-new-recognized', qymc: '合成原始认定', whpcyear: '2026', rdjb: '2', fieldType: 2, fieldNull: null }
+    const live = await runPlatformLiveQuery({ source: 'queryBusList', name: recognizedSource.qymc, rdjb: ['2'], rawDataVersion: 1, pageSize: 1 }, {
+      cookie: 'sid=synthetic', transport: { fetchImpl: async () => ({ ok: true, status: 200, text: async () => JSON.stringify({
+        zrarData: { grid: { businessGrid: { pageSet: [recognizedSource], page: 1, pageSize: 1, maxCount: 1, maxPage: 1 } } },
+      }) }) },
+    })
+    expect(live.status).toBe('success')
+    const recognized = recognizedResultToImport(live)
+    const archiveQuery = (kind: 'business_list' | 'apply_list') => ({
+      interface: kind, titleCode: 'specialized_sme', rdjb: '2', queryKey: event.uscc, queriedAt: '2026-10-10T01:00:00Z', status: 'success',
+      rawResponse: JSON.stringify({ original: kind, flag: true, n: 1, blank: null }),
+      relations: [{ sequenceNo: 1, relationKey: 'pg-new-' + kind, nameRaw: '合成原值', usccRaw: event.uscc, status: '有效',
+        rawFields: { id: 'pg-new-' + kind, qymc: '合成原值', tyshxydm: event.uscc, rdjb: '2', cszt: '有效', other: { n: 1, flag: true, nil: null } } }],
+    })
+    const archiveRequest = { idempotencyKey: 'native-platform-all-sources', sourceKind: 'platform_archive', sourceIdentity: 'isolated-platform-archive',
+      payload: { platformQueries: [archiveQuery('business_list'), archiveQuery('apply_list'), recognized] } }
+    const plannedArchive = await app.request('/api/roster/import/preflight', { method: 'POST', body: JSON.stringify(archiveRequest) })
+    expect(plannedArchive.status).toBe(200)
+    expect(await plannedArchive.json()).toMatchObject({ status: 'preflight', preflight: { add: 3, conflicts: [] } })
+    const savedArchive = await stage(archiveRequest)
+    const archiveReceipt = await savedArchive.json()
+    expect(savedArchive.status, JSON.stringify(archiveReceipt) + (savedArchive.ok ? '' : readFileSync(join(pgDir, 'pg.log'), 'utf8').slice(-5000))).toBe(200)
+    expect(archiveReceipt).toMatchObject({ status: 'committed', summary: { written: 6,
+      platformFields: { status: 'ready', eligibleVersions: 3, observationsChecked: 3 } } })
+    const sqliteArchive = await http('/api/roster/import/commit', archiveRequest)
+    expect(sqliteArchive.status, JSON.stringify(sqliteArchive.body)).toBe(200)
+    expect(sqliteArchive.body).toMatchObject({ status: 'committed', summary: archiveReceipt.summary })
+    const originalRows = run('psql', ['-X','-w','-Atc', `SELECT c.interface, q.old_id, a.old_id, octet_length(v.bytes)
+      FROM business.platform_collection c JOIN business.platform_legacy_query_alias q ON q.collection_id=c.id
+      JOIN business.platform_business_observation o ON o.collection_id=c.id JOIN business.platform_legacy_relation_alias a ON a.observation_id=o.id
+      JOIN business.platform_observation_archive_ref r ON r.owner_id=o.id AND r.field='rawFields' AND r.sealed=1
+      JOIN business.platform_archive_value v ON v.id=r.archive_id WHERE o.source_relation_key LIKE 'pg-new-%' ORDER BY c.interface`]).toString().trim().split('\n')
+    expect(originalRows.map(row => row.split('|')[0])).toEqual(['apply_list', 'business_list', 'recognized_list'])
+    const conflict = structuredClone(archiveRequest)
+    conflict.idempotencyKey = 'native-conflicting-archive'
+    conflict.payload.platformQueries[0]!.rawResponse = '{"replacement":true}'
+    const rejectedArchive = await stage(conflict)
+    expect(await rejectedArchive.json()).toMatchObject({ status: 'failed', items: [expect.objectContaining({
+      error: expect.objectContaining({ code: 'query_payload_conflict' }),
+    })] })
+    expect(await nativeTool('save_roster_batch', archiveRequest)).toMatchObject({ isError: false, body: { status:'committed', batchId: archiveReceipt.batchId } })
+
+    const updatedDetail = await app.request(rosterDetailPath)
+    const typedDetail = await updatedDetail.json()
+    expect(updatedDetail.status, JSON.stringify(typedDetail)).toBe(200)
+    expect(typedDetail).toMatchObject({ platform: {
+      queries: expect.arrayContaining([expect.objectContaining({ interface:'apply_list',relationCount:1 }),
+        expect.objectContaining({ interface:'business_list',relationCount:1 })]),
+      relations: expect.arrayContaining([expect.objectContaining({ nameRaw:'合成原值', status:'有效', verificationStatus:'confirmed' })]),
+    } })
+
+    const snapshotFiles = join(pgDir,'snapshot-files')
+    mkdirSync(snapshotFiles)
+    const provider = join(pgDir,'snapshot-provider.mjs')
+    writeFileSync(provider,`
+      const native = globalThis.fetch
+      globalThis.fetch = (input, init) => {
+        const url = new URL(String(input))
+        if (url.hostname !== 'zjtx.miit.gov.cn') return native(input,init)
+        const grid = url.pathname.endsWith('/queryList') ? 'applyGrid'
+          : url.pathname.endsWith('/queryBusList') ? 'businessGrid' : 'businessListGrid'
+        return Promise.resolve(Response.json({zrarData:{grid:{[grid]:{pageSet:[],page:1,pageSize:50,maxCount:0,maxPage:1}}}}))
+      }
+    `)
+    const snapshotApp = nativeAppAdapter({ dir:pgDir,token:apiToken,launch:({cwd,port})=>({
+      args:['--import',provider,join(cwd,'.output/server/index.mjs')],
+      env:{ NODE_ENV:'production',HOST:'127.0.0.1',PORT:String(port),MIIT_COOKIE:'sid=synthetic-snapshot-cookie',
+        NUXT_DB_READONLY:'1',NUXT_POSTGRES_ROSTER_READ:'1',NUXT_POSTGRES_DIRECTORY_URL:url,
+        NUXT_POSTGRES_DIRECTORY_WRITE:'1',NUXT_POSTGRES_JOBS:'1',NUXT_POSTGRES_BIN:pgBin,
+        NUXT_FILES_DIR:snapshotFiles,NUXT_INCOMING_DIR:join(pgDir,'incoming') },
+    }) })
+    try {
+      await snapshotApp.start()
+      const send = (request:unknown) => snapshotApp.request('/api/roster/difference-snapshots',{
+        method:'POST',body:JSON.stringify(request),
+      })
+      const create = { action:'create',clientRequestId:'native-verified-snapshot',enterpriseIds:[firstOwner.id] }
+      const [first,duplicate] = await Promise.all([send(create),send(create)])
+      const metadata = await first.json()
+      expect(first.status,JSON.stringify(metadata)).toBe(202)
+      expect(duplicate.status).toBe(202)
+      expect(await duplicate.json()).toMatchObject({ id:metadata.id })
+      expect((await send({...create,enterpriseIds:[999999]})).status).toBe(409)
+      const backup = metadata.params.backup
+      expect(createHash('sha256').update(readFileSync(backup.path)).digest('hex')).toBe(backup.sha256)
+      const jobs = run('pg_restore',['--data-only','--schema=business','--table=job','--file=-',backup.path]).toString()
+      expect(jobs).toContain('COPY business.job')
+      expect(jobs).not.toContain(metadata.id)
+      const settled = await snapshotApp.terminal(metadata.id)
+      expect(settled).toMatchObject({ state:'done',result:{ completeness:'complete',
+        counts:{ enterprises:1,requests:7,rows:0,unfinished:0 },
+      } })
+      const task = await snapshotApp.request('/api/task-center/'+metadata.id)
+      expect(task.status).toBe(200)
+      expect(await task.json()).toMatchObject({ snapshot:{ enterprises:1,requests:7,rows:0,unfinished:0,positions:[] } })
+      const nativeRows = () => run('psql',['-X','-w','-Atc',`SELECT count(*) FROM business.import_batch
+        WHERE source_identity='collection:${metadata.id}' AND status='committed'`]).toString().trim()
+      expect(nativeRows()).toBe('7')
+      const retried = await send({action:'retry',jobId:metadata.id})
+      expect(retried.status).toBe(202)
+      expect(await snapshotApp.terminal(metadata.id)).toMatchObject({ state:'done',result:{ attempt:2,counts:{ requests:7 } } })
+      expect(nativeRows()).toBe('7')
+      appendFileSync(backup.path,'altered isolated backup')
+      expect((await send({action:'retry',jobId:metadata.id})).status).toBe(409)
+    } finally { await snapshotApp.close() }
+
+    const subjects = []
+    for (const name of ['合成查证主体一','合成查证主体二']) {
+      const created = await app.request('/api/core/enterprises',{method:'POST',body:JSON.stringify({name})})
+      expect(created.status).toBe(200)
+      subjects.push({ ...(await created.json()), name })
+    }
+    const uscc = '913302017133602847'
+    const repairs = subjects.map(subject=>({enterpriseId:subject.id,uscc,
+      source:{url:'https://registry.example.test/enterprise',checkedOn:'2026-11-20',basis:'合成公开主体证据',name:subject.name} }))
+    const repair = { idempotencyKey:'native-uscc-backfill',sourceKind:'alias_evidence',sourceIdentity:'checked registry',
+      payload:{usccBackfills:repairs} }
+    const rollback = await stage({...repair,idempotencyKey:'native-uscc-backfill-overlap'})
+    expect(rollback.status).toBe(200)
+    expect(await rollback.json()).toMatchObject({ status:'failed',summary:{written:0,failed:2},
+      items:[{error:{code:'commit_rolled_back'}},{error:{code:'uscc_taken'}}] })
+    const codeOf = async (id:number) => (await (await app.request('/api/core/enterprises/'+id+'/details')).json()).uscc
+    expect(await codeOf(subjects[0].id)).toBeNull()
+    expect(await codeOf(subjects[1].id)).toBeNull()
+    const backfillCommand = {...repair,payload:{usccBackfills:[repairs[0]]}}
+    const previewBackfill = await app.request('/api/roster/import/preflight',{method:'POST',body:JSON.stringify(backfillCommand)})
+    expect(await previewBackfill.json()).toMatchObject({status:'preflight',preflight:{update:1,conflicts:[]}})
+    const committedBackfill = await stage(backfillCommand)
+    const backfillReceipt = await committedBackfill.json()
+    expect(backfillReceipt).toMatchObject({status:'committed',summary:{written:1},items:[{detail:{lineage:{previousUscc:null,source:repairs[0]!.source}}}]})
+    expect(await codeOf(subjects[0].id)).toBe(uscc)
+    expect(await codeOf(subjects[1].id)).toBeNull()
+    expect(await nativeTool('save_roster_batch',backfillCommand)).toMatchObject({isError:false,body:backfillReceipt})
+    const mergedImport = { ...repair, idempotencyKey:'native-mixed-rollback',
+      payload:{ ...repair.payload, aliases:[{ uscc:event.uscc,name:'合成同批别名',sourceKind:'manual',verificationStatus:'confirmed' }] } }
+    const failedMixed = await (await stage(mergedImport)).json()
+    expect(failedMixed).toMatchObject({status:'failed',summary:{written:0},
+      items:[{kind:'alias',error:{code:'commit_rolled_back'}},{kind:'uscc_backfill'},{kind:'uscc_backfill'}]})
+    const rolledBackId = Number(failedMixed.items[0].ref.slice('alias:'.length))
+    const mixedOwner = failedMixed.items[0].detail.enterpriseId
+    expect((await app.request('/api/roster/enterprises/'+mixedOwner+'/aliases/'+rolledBackId)).status).toBe(404)
+    const mixedCommand = { ...mergedImport,idempotencyKey:'native-mixed-commit',
+      payload:{ ...mergedImport.payload,usccBackfills:[{...repairs[1],uscc:'91330201000207415U'}] } }
+    const mixedPreview = await nativeTool('preflight_roster_batch',mixedCommand)
+    expect(mixedPreview.body).toMatchObject({status:'preflight',preflight:{add:1,update:1,conflicts:[]}})
+    expect(await codeOf(subjects[1].id)).toBeNull()
+    const mixedCommitted = await (await stage(mixedCommand)).json()
+    expect(mixedCommitted).toMatchObject({status:'committed',summary:{written:2},items:[{kind:'alias'},{kind:'uscc_backfill'}]})
+    expect(await codeOf(subjects[1].id)).toBe('91330201000207415U')
+    expect(await nativeTool('save_roster_batch',mixedCommand)).toMatchObject({isError:false,body:mixedCommitted})
+    const mergeRequest = { ...repair,idempotencyKey:'native-direct-roster-merge',
+      payload:{merges:[{fromEnterpriseId:subjects[1].id,intoUscc:uscc,sourceKind:'manual'}]} }
+    const plannedMerge = await nativeTool('preflight_roster_batch',mergeRequest)
+    expect(plannedMerge.body).toMatchObject({status:'preflight',preflight:{update:1,remove:1,conflicts:[]}})
+    const merged = await (await stage(mergeRequest)).json()
+    expect(merged).toMatchObject({status:'committed',items:[{kind:'merge',detail:{lineage:{fromEnterpriseId:subjects[1].id,
+      intoEnterpriseId:subjects[0].id}}}]})
+    const mergedSource = await app.request('/api/core/enterprises/'+subjects[1].id+'/details')
+    expect(await mergedSource.json()).toMatchObject({id:subjects[1].id,mergedInto:subjects[0].id,uscc:'91330201000207415U'})
+    expect(await nativeTool('save_roster_batch',mergeRequest)).toMatchObject({isError:false,body:merged})
+    const aliasSource = archiveQuery('business_list')
+    const alias = { uscc:event.uscc,name:'合成原值',sourceKind:'platform_business',verificationStatus:'confirmed',
+      sourceRelationRef:{ interface:aliasSource.interface,queryKey:aliasSource.queryKey,rdjb:aliasSource.rdjb,
+        queriedAt:aliasSource.queriedAt,sequenceNo:1,relationKey:aliasSource.relations[0]!.relationKey } }
+    const aliasRequest = { idempotencyKey:'native-platform-alias',sourceKind:'alias_evidence',
+      sourceIdentity:'synthetic-platform-alias',payload:{aliases:[alias]} }
+    expect((await nativeTool('preflight_roster_batch',aliasRequest)).body).toMatchObject({
+      status:'preflight',preflight:{add:1,conflicts:[]} })
+    const aliasReceipt = await (await stage(aliasRequest)).json()
+    expect(aliasReceipt).toMatchObject({status:'committed',summary:{written:1},items:[{kind:'alias',detail:{rowsWritten:1}}]})
+    const aliasId = Number(aliasReceipt.items[0].ref.slice('alias:'.length))
+    const aliasOwner = aliasReceipt.items[0].detail.enterpriseId
+    const aliasRead = await app.request('/api/roster/enterprises/'+aliasOwner+'/aliases/'+aliasId)
+    expect(await aliasRead.json()).toMatchObject({ id:aliasId,name:alias.name,verificationStatus:'confirmed' })
+    const mismatch = { ...aliasRequest,idempotencyKey:'native-platform-alias-mismatch',
+      payload:{aliases:[{...alias,name:'非该条证据的名称'}]} }
+    expect((await nativeTool('save_roster_batch',mismatch)).body).toMatchObject({
+      status:'failed',items:[{error:{code:'alias_source_evidence_mismatch'}}] })
+    const repeatAlias = { ...aliasRequest,idempotencyKey:'native-platform-alias-repeat' }
+    expect(await (await stage(repeatAlias)).json()).toMatchObject({status:'committed',summary:{written:0,skipped:1}})
+    const secondArchive = { ...archiveRequest,idempotencyKey:'native-archive-nul-retry',
+      payload:{platformQueries:[{ ...aliasSource,queriedAt:'2026-10-10T02:00:00Z',
+        rawResponse:'before\u0000after',relations:[] }]} }
+    const nulReceipt = await (await stage(secondArchive)).json()
+    expect(nulReceipt).toMatchObject({status:'committed',summary:{written:1}})
+    expect(await (await stage(secondArchive)).json()).toEqual(nulReceipt)
+    const { queriedAt: _otherTime, ...unscopedRef } = alias.sourceRelationRef
+    const ambiguousAlias = { ...aliasRequest,idempotencyKey:'native-ambiguous-platform-reference',
+      payload:{aliases:[{ ...alias,sourceRelationRef:unscopedRef }]} }
+    expect((await nativeTool('preflight_roster_batch',ambiguousAlias)).body).toMatchObject({
+      status:'preflight',preflight:{add:0,conflicts:[{error:{code:'relation_ref_ambiguous'}}]} })
+    const legacyRow = { id:'native-legacy-page-row',rdjb:'2',qymc:'合成分页主体',tyshxydm:event.uscc }
+    const queriedAt = '2026-10-10T08:12:00.000Z'
+    const legacyQuery = { interface:'business_list',queryKey:event.uscc,rdjb:'1,2,3',queriedAt,status:'success',
+      rawResponse:'synthetic-legacy-original',relations:[{ sequenceNo:1,relationKey:legacyRow.id,rawFields:legacyRow }] }
+    const historical = await stage({ idempotencyKey:'native-legacy-page-original',sourceKind:'platform_archive',
+      sourceIdentity:'synthetic-legacy-original',payload:{platformQueries:[legacyQuery]} })
+    const originalReceipt = await historical.json()
+    expect(historical.status, JSON.stringify(originalReceipt) + (historical.ok ? '' : '\n' + app.output + readFileSync(join(pgDir, 'pg.log'), 'utf8').slice(-4000))).toBe(200)
+    expect(originalReceipt).toMatchObject({status:'committed'})
+    const queryId = Number(originalReceipt.items[0].ref.slice('query:'.length))
+    const pagination = { source:'businessList',status:'success',effectiveConditions:{uscc:event.uscc,combination:'and'},
+      titleScope:{mode:'selected',rdjb:['1','2','3']},queriedAt,completedAt:'2026-10-10T08:13:00.000Z',
+      rows:[legacyRow],pages:['1','2','3'].map(rdjb=>({source:'businessList',rdjb,page:1,status:'success',
+        fetchedCount:rdjb==='2' ? 1 : 0,declaredTotal:rdjb==='2' ? 1 : 0,error:null})),
+      fetchedCount:1,declaredTotal:1,completeness:'complete',fullRange:true,unfinished:[],error:null,
+      limits:{maxRequests:100,maxRows:5000,maxDurationMs:60000,pageSize:50} }
+    const provenanceInput = { queryId,interface:'business_list',queryKey:event.uscc,rdjb:'1,2,3',queriedAt,
+      sourceIdentity:'synthetic-legacy-pages.json',sourceSha256:'f'.repeat(64),segmentIndex:0,
+      collection:pagination,relations:[{sequenceNo:1,relationKey:legacyRow.id,rawFields:legacyRow}] }
+    const provenance = { idempotencyKey:'native-legacy-page-provenance',sourceKind:'platform_archive',
+      sourceIdentity:'synthetic-legacy-pages.json',payload:{platformLegacyProvenance:[provenanceInput]} }
+    const legacyPlanResponse = await app.request('/api/roster/import/preflight',{method:'POST',body:JSON.stringify(provenance)})
+    expect(await legacyPlanResponse.json()).toMatchObject({ status:'preflight',preflight:{add:1,conflicts:[],
+      platformLegacyProvenanceSources:[{queryId,inputFingerprint:expect.stringMatching(/^[a-f0-9]{64}$/)}],
+    } })
+    const provenanceResponse = await stage(provenance)
+    const provenanceReceipt = await provenanceResponse.json()
+    expect(provenanceReceipt).toMatchObject({status:'committed',summary:{written:1},
+      items:[{kind:'platform_legacy_provenance',detail:{typedState:'unknown',relationCount:1}}] })
+    const legacyArchive = await nativeTool('get_platform_query_evidence',{queryId,field:'legacyProvenance'})
+    expect(legacyArchive).toMatchObject({isError:false,body:{data:Buffer.from(JSON.stringify(pagination)).toString('base64'),hasMore:false}})
+    const repeatProvenance = await stage({...provenance,idempotencyKey:'native-legacy-page-repeat'})
+    expect(await repeatProvenance.json()).toMatchObject({status:'committed',summary:{written:0,skipped:1}})
+
+  } finally {
+    await app.close()
+    if (started) run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-m', 'fast', 'stop'])
+    rmSync(pgDir, { recursive: true, force: true })
+  }
+}, 120_000)

@@ -15,6 +15,7 @@ export function nativeAppAdapter({ dir, token, launch }: { dir: string; token: s
   let db = initializeDb({ dbPath, create: true })
   let baseUrl = ''
   let processId: number | undefined
+  let output = ''
   let stop: (() => Promise<void>) | undefined
   const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` }
   const url = (path: string) => baseUrl + path
@@ -36,7 +37,7 @@ export function nativeAppAdapter({ dir, token, launch }: { dir: string; token: s
       },
     })
     processId = child.pid
-    let output = ''
+    output = ''
     for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-12000) })
     baseUrl = `http://127.0.0.1:${port}`
     stop = () => stopOwnedChild(child)
@@ -71,7 +72,7 @@ export function nativeAppAdapter({ dir, token, launch }: { dir: string; token: s
   }
 
   return {
-    get processId() { return processId }, get db() { return db }, get dbPath() { return dbPath },
+    get processId() { return processId }, get output() { return output }, get db() { return db }, get dbPath() { return dbPath },
     headers, url, request, start, terminal, download, resetBusiness,
     async close() { try { await stop?.(); stop = undefined } finally { db.$client.close() } },
   }

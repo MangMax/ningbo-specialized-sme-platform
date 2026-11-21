@@ -6,6 +6,8 @@ import { TITLE_ORDER } from '#sme-roster/lib/labels'
 import { FIRST_RECOGNITION_STATUS_VALUES } from '#sme-roster/lib/roster/first-recognition'
 import { enterpriseListFilter } from '../../utils/mcp-roster'
 import { enterpriseReads } from '../../utils/enterprise-read'
+import { listPostgresRosterEnterprises } from '../../../lib/roster/enterprise-list-postgres'
+import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 
 const titleCodeSchema = z.enum(TITLE_ORDER as [string, ...string[]])
 
@@ -51,7 +53,10 @@ export default defineMcpTool({
     pageSize: z.number().int().min(1).max(200).optional().describe('每页数量，默认 50，上限 200'),
   },
   handler: async (input, extra) => {
-    const result = await enterpriseReads.json(useDb().$client.name, { operation: 'list',filter: enterpriseListFilter(input) }, extra?.signal, (extra as typeof extra & { logContext?: LogContext })?.logContext)
+    const filter = enterpriseListFilter(input)
+    const pg = usePostgresRosterDb()
+    if (pg) return JSON.stringify(await listPostgresRosterEnterprises(pg, filter))
+    const result = await enterpriseReads.json(useDb().$client.name, { operation: 'list',filter }, extra?.signal, (extra as typeof extra & { logContext?: LogContext })?.logContext)
     return result.body.toString('utf8')
   },
 })

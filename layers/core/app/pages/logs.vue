@@ -230,6 +230,7 @@ const dated = (iso: string) =>
 // —— 换页/换筛选后回到结果顶部；失败时保持原位置和原结果 ——
 const resultsRef = ref<HTMLElement | null>(null)
 const tableScrollRef = ref<HTMLElement | null>(null)
+const cardListRef = ref<HTMLElement | null>(null)
 const pendingReset = ref(false)
 const pendingFocus = ref(false)
 const tableOverflows = ref(false)
@@ -277,11 +278,8 @@ watch([loading, error, data], () => {
   pendingFocus.value = false
   void nextTick(() => {
     if (tableScrollRef.value) tableScrollRef.value.scrollTop = 0
-    const section = resultsRef.value
-    if (!section) return
-    const top = section.getBoundingClientRect().top + window.scrollY - 72
-    if (window.scrollY > top) window.scrollTo({ top, behavior: 'auto' })
-    if (focusResults) section.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true })
+    if (cardListRef.value) cardListRef.value.scrollTop = 0
+    if (focusResults) resultsRef.value?.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true })
   })
 })
 
@@ -299,38 +297,33 @@ function restoreFocus(event: Event) {
 }
 </script>
 <template>
-  <div class="flex min-w-0 flex-col gap-2 sm:h-[calc(100dvh-6rem)] sm:min-h-0 sm:gap-3">
-    <PageHeader
-      class="shrink-0"
-      title="日志"
-      ><template #actions
-        ><Button v-if="activeTab === 'logs'" variant="outline" size="sm" :disabled="loading" @click="fresh"
-          >刷新最新日志</Button
-        ></template
-      ></PageHeader
-    >
-    <Tabs v-model="activeTab" class="min-h-0 flex-1 gap-3">
+  <div class="workspace-list flex min-w-0 flex-1 flex-col gap-2 sm:gap-3">
+    <PageHeader class="shrink-0" title="日志" />
+    <Tabs v-model="activeTab" class="workspace-list-body min-h-0 flex-1 gap-3">
       <TabsList class="shrink-0" aria-label="日志功能">
         <TabsTrigger value="logs" class="min-h-11 sm:min-h-0">运行日志</TabsTrigger>
         <TabsTrigger value="settings" class="min-h-11 sm:min-h-0">日志配置</TabsTrigger>
       </TabsList>
       <TabsContent value="logs" force-mount v-show="activeTab === 'logs'" class="flex min-h-0 flex-col gap-3">
-    <!-- 快速筛选与高级筛选共用这一张卡：筛选只有一层表面。 -->
-    <Card class="min-w-0 shrink-0 gap-0 py-0 shadow-none"
-      ><CardContent class="p-3"><LogFilters :filter="filter" @apply="apply" /></CardContent></Card
-    >
-    <div v-if="chips.length" class="flex min-w-0 shrink-0 flex-wrap gap-1.5" role="group" aria-label="已应用筛选">
-      <FilterChip v-for="chip in chips" :key="chip.key" :label="chip.label" @remove="removeFilter(chip.key)" />
-    </div>
     <section
       ref="resultsRef"
       aria-labelledby="log-list-heading"
-      class="flex min-w-0 flex-col sm:min-h-[320px] sm:flex-1"
+      class="flex min-h-0 min-w-0 flex-1 flex-col"
     >
       <h2 id="log-list-heading" class="sr-only scroll-mt-16" tabindex="-1">日志列表</h2>
       <Card
-        class="flex min-w-0 flex-col gap-0 overflow-hidden py-0 shadow-none sm:min-h-[320px] sm:flex-1"
+        class="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0 shadow-none"
       >
+        <CardHeader class="table-toolbar workspace-list-filter gap-3" role="region" aria-label="日志筛选区" tabindex="0">
+          <LogFilters :filter="filter" @apply="apply">
+            <template #actions>
+              <Button v-if="activeTab === 'logs'" type="button" variant="outline" size="sm" :disabled="loading" @click="fresh">刷新最新日志</Button>
+            </template>
+          </LogFilters>
+          <div v-if="chips.length" class="flex min-w-0 flex-wrap gap-1.5" role="group" aria-label="已应用筛选">
+            <FilterChip v-for="chip in chips" :key="chip.key" :label="chip.label" @remove="removeFilter(chip.key)" />
+          </div>
+        </CardHeader>
         <CardContent class="relative flex min-h-0 flex-1 flex-col p-0">
         <TableLoadingStatus :loading="loading" kind="files" label="正在读取运行日志…" />
         <p
@@ -364,11 +357,11 @@ function restoreFocus(event: Event) {
             <div
               ref="tableScrollRef"
               data-testid="log-table-scroll"
-              class="hidden min-h-0 flex-1 overflow-auto sm:block [&_[data-slot=table-container]]:overflow-visible"
+              class="data-table-scroll hidden min-h-0 flex-1 sm:block"
               @scroll.passive="onTableScroll"
             >
               <Table class="data-table w-full min-w-[940px] table-fixed">
-                <TableHeader class="sticky top-0 z-10"><TableRow class="hover:bg-transparent">
+                <TableHeader><TableRow class="hover:bg-transparent">
                   <TableHead class="w-[12%]">时间</TableHead>
                   <TableHead class="w-[8%]">级别</TableHead>
                   <TableHead class="w-[9%]">来源与模块</TableHead>
@@ -418,7 +411,6 @@ function restoreFocus(event: Event) {
                     <TableCell class="overflow-hidden">
                       <Badge
                         :variant="item.view.levelVariant"
-                        :class="item.view.levelClass"
                         class="w-12 shrink-0 justify-center"
                         >{{ item.row.level }}</Badge
                       >
@@ -458,7 +450,6 @@ function restoreFocus(event: Event) {
                     <TableCell class="overflow-hidden">
                       <Badge
                         :variant="item.view.outcomeVariant"
-                        :class="item.view.outcomeClass"
                         :title="item.view.outcomeCode"
                         >{{ item.view.outcomeLabel }}</Badge
                       >
@@ -516,8 +507,9 @@ function restoreFocus(event: Event) {
             <!-- 窄屏用同一份数据的摘要：来源与操作各自带词，不必横向滚动。 -->
             <ul
               v-if="rows.length || firstLoad"
+              ref="cardListRef"
               data-testid="log-card-list"
-              class="flex min-w-0 flex-col divide-y sm:hidden"
+              class="data-table-scroll flex min-h-0 min-w-0 flex-1 flex-col divide-y sm:hidden"
               aria-label="运行日志列表"
             >
               <template v-if="firstLoad">
@@ -562,7 +554,6 @@ function restoreFocus(event: Event) {
                     <div class="flex flex-wrap items-center gap-2">
                       <Badge
                         :variant="item.view.levelVariant"
-                        :class="item.view.levelClass"
                         class="w-12 justify-center"
                         >{{ item.row.level }}</Badge
                       >
@@ -601,7 +592,6 @@ function restoreFocus(event: Event) {
                     <span class="text-muted-foreground shrink-0 text-xs">结果</span>
                     <Badge
                       :variant="item.view.outcomeVariant"
-                      :class="item.view.outcomeClass"
                       :title="item.view.outcomeCode"
                       >{{ item.view.outcomeLabel }}</Badge
                     >
@@ -658,9 +648,8 @@ function restoreFocus(event: Event) {
             />
           </div>
           <!-- 分页：复用 cursor 表达与它自己的尺寸所有权；接口没有 total，不编造总页数。 -->
-          <div class="shrink-0 border-t p-3">
-            <TablePagination
-              mode="cursor"
+          <TablePagination
+              in-card mode="cursor"
               :page="source?.page ?? page"
               :page-size="limit"
               unit="条"
@@ -673,8 +662,7 @@ function restoreFocus(event: Event) {
               @next="next"
               @update:page="goToPage"
               >{{ firstLoad ? '正在读取…' : `本页 ${rows.length} 条 · 第 ${source?.page ?? page} 页` }}</TablePagination
-            >
-          </div>
+          >
         </template>
         </CardContent>
       </Card>

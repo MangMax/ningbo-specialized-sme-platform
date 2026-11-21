@@ -6,7 +6,10 @@ type AppNavLink = {
   readonly url: string
 }
 
-export type AppNavItem = { readonly icon?: LucideIcon } & (
+export type AppNavItem = {
+  readonly icon?: LucideIcon
+  readonly placement?: 'business'
+} & (
   | (AppNavLink & { readonly items?: never })
   | { readonly title: string; readonly items: readonly AppNavLink[]; readonly url?: never }
 )
@@ -15,6 +18,8 @@ export type AppJobKind = {
   readonly kind: string
   readonly label: string
   readonly group: { readonly id: string; readonly label: string }
+  readonly progressPhase?: string
+  readonly schedule?: { readonly cron: string; readonly frequency: string }
   /** Export name in the owning module's server JobSpec adapter. */
   readonly spec: string
 }
@@ -34,8 +39,6 @@ export type AppModuleManifest = {
   readonly id: string
   readonly name: string
   readonly description?: string
-  readonly home?: string
-  readonly dashboard?: readonly AppDashboardCard[]
   readonly dependsOn?: readonly string[]
   readonly routes?: readonly string[]
   /** Browser-safe log page tokens and their static path prefixes. */
@@ -50,11 +53,6 @@ export type AppModuleManifest = {
   readonly fileCategories?: FileCategory
   readonly nav?: readonly AppNavItem[]
   readonly jobKinds?: readonly AppJobKind[]
-}
-
-type AppDashboardCard = {
-  readonly id: string
-  readonly title: string
 }
 
 export function defineAppModule<const T extends AppModuleManifest>(manifest: T): T {

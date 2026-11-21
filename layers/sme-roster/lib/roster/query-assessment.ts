@@ -22,7 +22,7 @@ const metadataSchema = z.object({
 type Metadata = z.infer<typeof metadataSchema>
 const rdjbByTitle: Record<string, string> = { innovative_sme: '1', specialized_sme: '2', little_giant: '3' }
 const sourceByInterface: Record<string, string> = { business_list: 'businessList', apply_list: 'queryList', recognized_list: 'queryBusList' }
-interface QueryMetadata {
+export interface QueryMetadata {
   id: number; interface: string; queryKey: string; titleCode: string | null; rdjb: string; queriedAt: string; status: string
   metadata: string | null; matched: number
 }
@@ -74,7 +74,7 @@ function completePages(pages: PlatformQueryPage[], pageSize: number, fullRange: 
   return last.fetchedCount === 0 && pages.slice(0, -1).every(p => p.fetchedCount === pageSize)
 }
 export function readQueryCoverage(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, ownQueryIds?: readonly number[]) {
-  return coverageOf(queryMetadata(db, scope, variants, ownQueryIds), scope)
+  return projectQueryCoverage(queryMetadata(db, scope, variants, ownQueryIds), scope)
 }
 /** Chunk-local source read plan. Direction does not change query coverage, and
  * scope metadata is loaded once for the union of each title's newest 50 rows.
@@ -101,7 +101,7 @@ export function readQueryCoverageBatch(db: DecisionDb, scopes: readonly Assessme
   const metadata = readDifferenceCollectionScopes(db, [...new Map(retained.map(row => [row.collection.id, row.collection])).values()])
   for (const [slot, scope] of unique.entries()) {
     const rows = selected.get(slot) ?? []
-    set(scope, coverageOf({ uscc: targets[slot]!.uscc, truncated: rows.length > 50,
+    set(scope, projectQueryCoverage({ uscc: targets[slot]!.uscc, truncated: rows.length > 50,
       rows: rows.slice(0, 50).map(({ collection: q, id, matched }) => ({
         id, interface: q.interface, queryKey: q.queryKey, titleCode: q.titleCode, rdjb: q.rdjb, queriedAt: q.queriedAt, status: q.status, matched,
         metadata: q.provenanceState === 'legacy_supplement' ? null : JSON.stringify(metadata.get(q.id)!.metadata),
@@ -113,15 +113,17 @@ export function readQueryCoverageBatch(db: DecisionDb, scopes: readonly Assessme
 /** Internal opt-in witness projection. Keep every retained retry/asOf candidate,
  * not the legacy aggregate status or its latest map. No rows/body fields escape SQL. */
 export function readQueryComparisonWitnesses(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, ownQueryIds?: readonly number[]) {
-  const selected = queryMetadata(db, scope, variants, ownQueryIds)
-  const coverage = coverageOf(selected, scope)
+  return projectQueryComparisonWitnesses(queryMetadata(db, scope, variants, ownQueryIds), scope)
+}
+export function projectQueryComparisonWitnesses(selected: Parameters<typeof projectQueryCoverage>[0], scope: Pick<AssessmentScope, 'titleCode'>) {
+  const coverage = projectQueryCoverage(selected, scope)
   const rows = new Map(selected.rows.map(row => [row.id, row]))
   return { truncated: selected.truncated, sources: coverage.sources.map(source => {
     const row = rows.get(source.queryId)!
     return { source, queryKey: row.queryKey, metadata: metadataOf(row) }
   }) }
 }
-function coverageOf({ rows, truncated, uscc }: ReturnType<typeof queryMetadata>, scope: AssessmentScope) {
+export function projectQueryCoverage({ rows, truncated, uscc }: { rows: QueryMetadata[]; truncated: boolean; uscc: string | null }, scope: Pick<AssessmentScope, 'titleCode'>) {
   const rdjb = rdjbByTitle[scope.titleCode]
 
   const sources: QueryCoverageSource[] = rows.flatMap(q => {
@@ -181,6 +183,10 @@ function assessmentStatuses(scope: AssessmentScope, queryCoverage: ReturnType<ty
 function assessmentOf(db: DecisionDb, scope: AssessmentScope, queryCoverage: ReturnType<typeof readQueryCoverage>, currentDecision = currentDecision102(db, scope), ownedImpact?: ReturnType<typeof readEvidenceImpact113>) {
   const current = currentDecision.current
   const impact = ownedImpact ?? readEvidenceImpact113(db, scope, current?.id ?? null)
+  return projectQueryAssessment(scope, queryCoverage, currentDecision, impact)
+}
+export function projectQueryAssessment(scope: AssessmentScope, queryCoverage: ReturnType<typeof readQueryCoverage>, currentDecision: ReturnType<typeof currentDecision102>, impact: ReturnType<typeof readEvidenceImpact113>) {
+  const current = currentDecision.current
   const { validity, invalid, executed, assessment } = assessmentStatuses(scope, queryCoverage, currentDecision, impact)
   const reasons = validity === 'premise_invalid' ? ['query_executed'] : validity === 'evidence_changed' ? ['committed_evidence_changed'] : validity === 'unknown' ? ['no_evidence_baseline'] : []
   return {

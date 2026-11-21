@@ -2,6 +2,8 @@ import { appLog, type LogContext } from '../../lib/logging'
 import { jobLogModule } from '../../lib/logging/module'
 import { and, desc, eq, inArray, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { getTaskKind } from '../../lib/task-catalog'
+import { getAppModules } from '../../../../lib/app-modules'
 import { compact } from 'es-toolkit'
 import * as schema from '../../../../db/schema'
 import {
@@ -41,22 +43,28 @@ export interface JobDto {
   finishedAt: string | null
 }
 
-/** Same main export progress semantics for full receipts and narrow summaries. */
-function jobPercent(row: { kind: string; state: JobState; progress: JobProgress }, phase: unknown): number | null {
-  if (row.kind === 'current-roster-export') {
+function jobPercent(row: { state: JobState; progress: JobProgress }, phaseAvailable: number | boolean | null): number | null {
+  if (phaseAvailable !== null) {
     if (row.state === 'done') return 100
-    if (row.state === 'queued' || row.state === 'running' && phase !== 'workbook') return null
+    if (row.state === 'queued' || (row.state === 'running' && !phaseAvailable)) return null
   }
   return progressPercent(row.progress)
 }
 
+export function progressPhaseMatch(phase: SQL) {
+  const cases = getAppModules().flatMap(module => (module.jobKinds ?? []).flatMap(job =>
+    job.progressPhase ? [sql`WHEN kind = ${job.kind} THEN CASE WHEN state = 'running' THEN coalesce(${phase} = ${job.progressPhase}, false) ELSE false END`] : []))
+  return cases.length ? sql<number | boolean | null>`CASE ${sql.join(cases, sql` `)} END` : sql<number | boolean | null>`NULL`
+}
+
 export function toJobDto(row: JobRow): JobDto {
+  const progressPhase = getTaskKind(row.kind)?.progressPhase
   return {
     id: row.id,
     kind: row.kind,
     state: row.state,
     progress: row.progress,
-    percent: jobPercent(row, (row.result as { phase?: unknown } | null)?.phase),
+    percent: jobPercent(row, progressPhase ? (row.result as { phase?: unknown } | null)?.phase === progressPhase : null),
     params: row.params,
     result: row.result ?? null,
     error: row.error ?? null,
@@ -161,7 +169,7 @@ export function listJobs(db: Db, query: JobQuery = {}): { rows: JobRow[]; total:
 
 // Presence checks run in SQLite: neither JSON body nor error text crosses the
 // driver boundary. In particular, do not replace this with select() + deletion.
-const jobSummaryColumns = {
+const jobSummaryColumns = () => ({
   id: schema.job.id,
   kind: schema.job.kind,
   state: schema.job.state,
@@ -171,18 +179,17 @@ const jobSummaryColumns = {
   finishedAt: schema.job.finishedAt,
   hasResult: sql<number>`${schema.job.result} is not null and ${schema.job.result} != 'null'`,
   hasError: sql<number>`${schema.job.error} is not null`,
-  // Only a boolean discriminator for active exports; never hydrate the result body.
-  exportWorkbook: sql<number | null>`case when ${schema.job.kind}='current-roster-export' and ${schema.job.state}='running' then json_extract(${schema.job.result}, '$.phase') = 'workbook' else 0 end`,
-}
+  phaseAvailable: progressPhaseMatch(sql`json_extract(${schema.job.result}, '$.phase')`),
+})
 
-function toJobSummary(row: {
+export function toJobSummary(row: {
   id: string; kind: string; state: JobState; progress: JobProgress
   createdAt: string; startedAt: string | null; finishedAt: string | null
-  hasResult: number; hasError: number; exportWorkbook: number | null
+  hasResult: number | boolean; hasError: number | boolean; phaseAvailable: number | boolean | null
 }): JobSummaryDto {
   return {
     id: row.id, kind: row.kind, state: row.state, progress: row.progress,
-    percent: jobPercent(row, row.exportWorkbook ? 'workbook' : null),
+    percent: jobPercent(row, row.phaseAvailable),
     error: row.hasError ? '任务有错误，请读取详情' : null,
     createdAt: row.createdAt, startedAt: row.startedAt, finishedAt: row.finishedAt,
     resultSummary: { available: !!row.hasResult },
@@ -195,13 +202,13 @@ export function listJobSummaries(db: Db, query: JobQuery = {}): { rows: JobSumma
   const where = jobWhere(query)
   const limit = Math.min(MAX_JOB_LIMIT, Math.max(1, Math.floor(query.limit ?? DEFAULT_JOB_LIMIT)))
   const total = db.select({ n: sql<number>`count(*)` }).from(schema.job).where(where).get()?.n ?? 0
-  const rows = db.select(jobSummaryColumns).from(schema.job).where(where)
+  const rows = db.select(jobSummaryColumns()).from(schema.job).where(where)
     .orderBy(desc(schema.job.createdAt), desc(schema.job.id)).limit(limit).all()
   return { rows: rows.map(toJobSummary), total }
 }
 
 export function getJobSummary(db: Db, id: string): JobSummaryDto | null {
-  const row = db.select(jobSummaryColumns).from(schema.job).where(eq(schema.job.id, id)).get()
+  const row = db.select(jobSummaryColumns()).from(schema.job).where(eq(schema.job.id, id)).get()
   return row ? toJobSummary(row) : null
 }
 
@@ -243,9 +250,6 @@ export function setJobProgress(db: Db, id: string, progress: JobProgress): void 
  *    走这条的是 runner 自己发起的收尾:执行抛异常、排队时被取消、kind 尚未接入。
  *  - `null` = 调用方**显式**要求清空。
  *  - 其它值 = 写入这次的新产出(handler 正常返回必带 `result`,见 `JobCompletion`)。
- * 逐项核对调用方:`current-roster-export` 的失败/取消都会带上 `checkpoint`(非空对象)
- * 或显式 `null`,`ocr`/`render-pages`/`reconcile` 的产出在方法体里构造完毕才返回
- * —— 它们都不依赖"省略即清空"这个旧行为。
  */
 export function finishJob(
   db: Db,

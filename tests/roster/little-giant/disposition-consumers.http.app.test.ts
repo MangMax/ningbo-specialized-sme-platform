@@ -27,7 +27,7 @@ beforeAll(async () => {
 afterAll(async () => { await client.close(); if(priorNodeOptions == null) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS=priorNodeOptions; if(priorMcpToken == null) delete process.env.NUXT_MCP_TOKEN; else process.env.NUXT_MCP_TOKEN=priorMcpToken; await f.close() })
 const get = async(path:string) => { const r=await fetch(f.url(path),{headers:f.headers});expect(r.status,await r.clone().text()).toBe(200);return r.json() }
 const post = async(path:string, body:unknown) => { const r=await fetch(f.url(path),{method:'POST',headers:f.headers,body:JSON.stringify(body)});expect(r.status,await r.clone().text()).toBe(200);return r.json() }
-it('confirmed cycle dispositions keep HTTP detail statistics filters and XLSX identities aligned across withdrawal and source replacement',async()=>{
+it('confirmed cycle dispositions keep HTTP detail filters and XLSX identities aligned across withdrawal and source replacement',async()=>{
  // The live MCP contract was inspected before issuing business commands.
  const c=f.candidate('合成周期处置',[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
  const event=f.db.select().from(s.recordEvent).all().find(e=>e.recordId===c.record.id)!
@@ -48,8 +48,6 @@ it('confirmed cycle dispositions keep HTTP detail statistics filters and XLSX id
   const detail=await get(`/api/roster/enterprises/${c.enterprise.id}`)
   const giant=detail.qualificationAssessment.titles.find((t:any)=>t.titleCode==='little_giant')
   expect(giant.group).toBe(included?'eligible':'excluded')
-  const stats=await get('/api/statistics/districts?title=little_giant&district=鄞州区')
-  expect(stats.total).toBe(expected.length)
   const submitted=await fetch(f.url('/api/roster/exports/current/little-giant'),{method:'POST',headers:f.headers,body:JSON.stringify({clientRequestId:key})})
   expect(submitted.status).toBe(202)
   const job=await f.terminal((await submitted.json()).jobId);expect(job.state,JSON.stringify(job)).toBe('done')

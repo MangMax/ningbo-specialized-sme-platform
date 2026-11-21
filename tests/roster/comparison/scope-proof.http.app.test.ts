@@ -1,3 +1,13 @@
+import { createHash } from 'node:crypto'
+import { readExportWorkbook } from '../../support/read-workbook'
+import { listCurrentQualified, type CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import { execFileSync } from 'node:child_process'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import pg from 'pg'
+import { listRecordCorrespondenceRefs } from '../../../layers/sme-roster/server/utils/record-correspondence'
+import { readPostgresCorrespondenceRefs } from '../../../layers/sme-roster/server/utils/record-correspondence-postgres-refs'
+import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
+import { nativeAppAdapter } from '../../support/native-app'
 import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
@@ -5,7 +15,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { initializeDb, schema } from '../../../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
@@ -188,4 +198,248 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
     db.update(schema.platformExportRow).set({ nameRaw: '甲企业' }).where(eq(schema.platformExportRow.id, matchedExport.id)).run()
     expect((await json(await fetch(api(`comparison-scope-proofs/${currentProofId}`)))).valid).toBe(true)
   })
+
+  const pgBin = process.env.TEST_IMPORT_RECEIPTS_PG_BIN
+  it.runIf(!!pgBin)('preserves migrated scope proof coverage, pagination, receipts and drift over HTTP and MCP', async () => {
+    const pgDir = mkdtempSync('/tmp/scope-pg-')
+    const url = 'postgresql://scope_fixture@localhost/postgres?host=' + encodeURIComponent(pgDir)
+    const native = nativeAppAdapter({ dir: pgDir, token: 'synthetic-api-token', launch: ({ cwd, port }) => ({
+      args: [join(cwd, '.output/server/index.mjs')],
+      env: { NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_MCP_TOKEN: 'synthetic-mcp-token',
+        NUXT_DB_READONLY: '1', NUXT_POSTGRES_ROSTER_READ: '1', NUXT_POSTGRES_DIRECTORY_URL: url,
+        NUXT_POSTGRES_DIRECTORY_WRITE: '1', NUXT_POSTGRES_JOBS: '1' },
+    }) })
+    const env = { PATH: process.env.PATH, LANG: 'C', PGHOST: pgDir, PGPORT: '5432', PGDATABASE: 'postgres',
+      PGUSER: 'scope_fixture', PGSQL_BIN: join(pgBin!, 'psql') }
+    const run = (name: string, args: string[]) => execFileSync(join(pgBin!, name), args, { env, stdio: 'pipe' })
+    let started = false
+    const client = new pg.Client({ connectionString: url })
+    try {
+      installLeadListSchema(db.$client)
+      run('initdb', ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', 'scope_fixture', '-D', join(pgDir, 'pg')])
+      run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-l', join(pgDir, 'pg.log'), '-o', "-c listen_addresses='' -k " + pgDir, 'start'])
+      started = true
+      execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', dbPath, 'staged'], { env, stdio: 'pipe' })
+      for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
+        run('psql', ['-X', '-w', '-q', '-v', 'staging=staged', '-f', 'upgrade/postgresql/materialize-' + name + '.sql'])
+      }
+      await client.connect()
+      await client.query('set search_path=business,public')
+      const postgres = drizzle(client)
+      const expectedRefs = listRecordCorrespondenceRefs(db, { enterpriseId: enterprise.id })
+      expect(expectedRefs).toHaveLength(1)
+      expect(expectedRefs[0]).toMatchObject({ requiresRevalidation: false, status: 'confirmed' })
+      expect(await readPostgresCorrespondenceRefs(postgres, [enterprise.id])).toEqual(expectedRefs)
+      await native.start()
+      const path = 'comparison-scope-proofs'
+      const calls = [
+        ['correspondences?view=summary&type=recognized_export&pageSize=2', 'list_record_correspondences', { view: 'summary', type: 'recognized_export', pageSize: 2 }],
+        ['correspondences?type=recognized_export&pageSize=2', 'list_record_correspondences', { type: 'recognized_export', pageSize: 2 }],
+        [`correspondences/${expectedRefs[0]!.id}`, 'get_record_correspondence', { id: expectedRefs[0]!.id }],
+        [`correspondences/events/${event.id}`, 'get_record_correspondence_source', { kind: 'event', id: event.id }],
+        [`correspondences/relations/${matchedRelation!.id}`, 'get_record_correspondence_source', { kind: 'relation', id: matchedRelation!.id }],
+        [`correspondences/relations/${historicalRelationId}`, 'get_record_correspondence_source', { kind: 'relation', id: historicalRelationId }],
+        [`correspondences/export-rows/${matchedExport.id}`, 'get_record_correspondence_source', { kind: 'export_row', id: matchedExport.id }],
+        [`${path}/${officialProofId}`, 'get_comparison_scope_proof', { id: officialProofId }],
+        [`${path}/${currentProofId}`, 'get_comparison_scope_proof', { id: currentProofId }],
+        [`${path}?status=confirmed&page=2&pageSize=1`, 'list_comparison_scope_proofs', { status: 'confirmed', page: 2, pageSize: 1 }],
+        [`${path}/${currentProofId}/audit?page=2&pageSize=1`, 'get_comparison_scope_proof_audit', { id: currentProofId, page: 2, pageSize: 1 }],
+        [`${path}/batches/current-proof`, 'get_comparison_scope_proof_batch', { idempotencyKey: 'current-proof' }],
+      ] as const
+      async function nativeCall(name: string, args: Record<string, unknown>) {
+        const rpcResponse = await native.request('/mcp', {
+          method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream',
+            'mcp-protocol-version': '2025-06-18', authorization: 'Bearer synthetic-mcp-token' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+        })
+        const raw = await rpcResponse.text()
+        const text = raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : raw
+        return mcpValue({ body: JSON.parse(text) })
+      }
+      for (const [suffix, name, args] of calls) {
+        const source = await fetch(api(suffix), { headers: { authorization: 'Bearer synthetic-api-token' } })
+        const response = await native.request('/api/roster/' + suffix)
+        const expected = await source.json()
+        const actual = await response.json()
+        expect(source.status, suffix).toBe(200)
+        expect(response.status, JSON.stringify(actual)).toBe(200)
+        expect(actual, suffix).toEqual(expected)
+        if (name === 'get_comparison_scope_proof') expect(actual).toMatchObject({ valid: true, status: 'confirmed', sourceSummary: expect.any(Object) })
+        expect(await nativeCall(name, args), name).toEqual(expected)
+      }
+      for (const filter of ['', '?kind=query&pageSize=1&page=2', '?kind=official_document', `?kind=export_batch&ids=${batch.id}`, `?kind=query&ids=${query.id}`]) {
+        const suffix = 'record-comparison/sources' + filter
+        const nativeSource = await native.request('/api/roster/' + suffix)
+        const actual = await nativeSource.json()
+        expect(nativeSource.status, JSON.stringify(actual)).toBe(200)
+        expect(actual, suffix).toEqual(await json(await fetch(api(suffix))))
+      }
+      const comparisonArgs = { queryIds: [query.id, historicalCollection.queryId], exportBatchIds: [batch.id],
+        officialSourceDocumentIds: [doc.id], proofIds: [officialProofId, currentProofId], page: 1, pageSize: 1, businessPageSize: 2 }
+      const comparisonPath = `record-comparison?${sourceQuery}&proofIds=${comparisonArgs.proofIds.join(',')}&pageSize=1&businessPageSize=2`
+      for (const cutoff of ['', '&asOf=2026-10-18T23%3A59%3A59Z']) {
+        const suffix = comparisonPath + cutoff
+        const nativeComparison = await native.request('/api/roster/' + suffix)
+        const expected = await json(await fetch(api(suffix)))
+        const actual = await json(nativeComparison)
+        expect(nativeComparison.status, JSON.stringify(actual)).toBe(200)
+        expect(actual, suffix).toEqual(expected)
+        if (!cutoff) expect(await nativeCall('list_record_comparison', comparisonArgs)).toEqual(expected)
+      }
+      const legacyPath = `record-comparison/legacy-impact?${sourceQuery}&pageSize=1`
+      const legacy = await native.request('/api/roster/' + legacyPath)
+      const legacyBody = await json(legacy)
+      expect(legacy.status, JSON.stringify(legacyBody)).toBe(200)
+      expect(legacyBody).toEqual(await json(await fetch(api(legacyPath))))
+      const selection = { eventId: event.id, queryIds: [query.id, historicalCollection.queryId], exportBatchIds: [batch.id], ruleVersion: 'manual', page: 1, pageSize: 2 }
+      for (const [suffix, tool, args] of [
+        ['candidates', 'find_record_correspondence_candidates', selection],
+        ['discover', 'discover_event_archive_candidates', { eventId: event.id, pageSize: 2, queryPageSize: 1 }],
+      ] as const) {
+        const expected = await json(await post('correspondences/' + suffix, args, false))
+        const actual = await native.request('/api/roster/correspondences/' + suffix, { method: 'POST', body: JSON.stringify(args) })
+        const selected = await json(actual)
+        expect(actual.status, JSON.stringify(selected)).toBe(200)
+        expect(selected).toEqual(expected)
+        expect(await nativeCall(tool, args)).toEqual(expected)
+      }
+      const currentFilter = { titleCode: 'specialized_sme' as const, pageSize: 1, q: enterprise.name }
+      const current = await native.request('/api/roster/current-enterprises?' + new URLSearchParams({
+        titleCode: currentFilter.titleCode, pageSize: String(currentFilter.pageSize), q: currentFilter.q,
+      }))
+      const actualPage = await current.json() as CurrentQualifiedResult
+      expect(current.status, JSON.stringify(actualPage)).toBe(200)
+      expect(actualPage.rows.map(row => row.enterpriseId)).toContain(enterprise.id)
+      const mcpPage = await nativeCall('list_current_qualified_enterprises', currentFilter) as CurrentQualifiedResult
+      for (const page of [actualPage, mcpPage]) {
+        vi.setSystemTime(new Date(page.snapshotStartedAt))
+        try { expect(page).toEqual(listCurrentQualified(db.$client, currentFilter)) }
+        finally { vi.useRealTimers() }
+      }
+
+      const sheets = async (response: Response, hash: string) => {
+        expect(response.status).toBe(200)
+        const bytes = Buffer.from(await response.arrayBuffer())
+        expect(createHash('sha256').update(bytes).digest('hex')).toBe(hash)
+        const workbook = await readExportWorkbook(bytes)
+        workbook.getWorksheet('口径说明')!.getCell('B2').value = '生成时间'
+        return workbook.worksheets.map(sheet => ({ name: sheet.name, cells: sheet.getSheetValues() }))
+      }
+      const terminal = async (fetchJob: () => Promise<Response>) => {
+        const until = Date.now() + 15_000
+        while (Date.now() < until) {
+          const response = await fetchJob()
+          expect(response.status).toBe(200)
+          const job = await response.json()
+          if (['done', 'failed', 'cancelled'].includes(job.state)) return job
+          await new Promise(resolve => setTimeout(resolve, 25))
+        }
+        throw new Error('Current workbook did not reach terminal state')
+      }
+      const headers = { authorization: 'Bearer synthetic-api-token', 'content-type': 'application/json' }
+      for (const title of ['little-giant', 'specialized-sme', 'innovative-sme']) {
+        const endpoint = 'exports/current/' + title
+        const request = { method: 'POST', headers, body: JSON.stringify({ clientRequestId: 'migrated-workbook-' + title }) }
+        const sourceSubmission = await fetch(api(endpoint), request)
+        const targetSubmission = await native.request('/api/roster/' + endpoint, request)
+        expect(sourceSubmission.status).toBe(202)
+        expect(targetSubmission.status).toBe(202)
+        const [{ jobId: sourceId }, { jobId: targetId }] = await Promise.all([sourceSubmission.json(), targetSubmission.json()])
+        const [sourceJob, targetJob] = await Promise.all([
+          terminal(() => fetch(service.baseUrl + '/api/jobs/' + sourceId, { headers })),
+          terminal(() => native.request('/api/jobs/' + targetId)),
+        ])
+        expect(sourceJob.state, JSON.stringify(sourceJob.error)).toBe('done')
+        expect(targetJob.state, JSON.stringify(targetJob.error)).toBe('done')
+        expect(targetJob.result.statusCounts).toEqual(sourceJob.result.statusCounts)
+        const [sourceSheets, targetSheets] = await Promise.all([
+          sheets(await fetch(service.baseUrl + '/api/job-artifacts/' + sourceId, { headers }), sourceJob.result.artifact.sha256),
+          sheets(await native.request('/api/job-artifacts/' + targetId), targetJob.result.artifact.sha256),
+        ])
+        expect(targetSheets).toEqual(sourceSheets)
+        const filtered = await native.request('/api/task-center?titleCode=' + title.replaceAll('-', '_'))
+        expect(await filtered.json()).toMatchObject({ exportReady: true, total: 1, rows: [{
+          id: targetId, export: { canDownload: true, artifact: { sha256: targetJob.result.artifact.sha256 } },
+        }] })
+      }
+      const submitProof = (action: 'preflight' | 'commit', body: object) =>
+        native.request('/api/roster/comparison-scope-proofs/' + action, { method: 'POST', body: JSON.stringify(body) })
+      const candidate = { ...officialRequest, ...baseDecision('postgres-native-candidate'),
+        operations: officialRequest.operations.map(operation => ({ ...operation, status: 'candidate' })) }
+      const originalPlan = await json(await post('comparison-scope-proofs/preflight', candidate))
+      const nativePlans = await Promise.all([submitProof('preflight', candidate), submitProof('preflight', candidate)])
+      expect(nativePlans.map(response => response.status)).toEqual([200, 200])
+      const [nativePlan, replayedPlan] = await Promise.all(nativePlans.map(json))
+      expect(nativePlan).toEqual(replayedPlan)
+      expect(nativePlan.planHash).toBe(originalPlan.planHash)
+      const request = { request: candidate, planHash: nativePlan.planHash }
+      const writes = await Promise.all([submitProof('commit', request), submitProof('commit', request)])
+      expect(writes.map(response => response.status)).toEqual([200, 200])
+      const [receipt, replayed] = await Promise.all(writes.map(json))
+      expect(receipt).toEqual(replayed)
+
+      const proofId = receipt.proofIds[0]
+      const decisions = ['confirmed', 'revoked'].map(status => ({ ...baseDecision('postgres-native-' + status),
+        operations: [{ action: 'decide', proofId, expectedRevision: 1, status }],
+      }))
+      const plans = await Promise.all(decisions.map(async decision => {
+        const response = await submitProof('preflight', decision)
+        expect(response.status).toBe(200)
+        return { request: decision, planHash: (await json(response)).planHash }
+      }))
+      const contested = await Promise.all(plans.map(plan => submitProof('commit', plan)))
+      expect(contested.map(response => response.status).sort()).toEqual([200, 409])
+      const persisted = await nativeCall('get_comparison_scope_proof_audit', { id: proofId })
+      expect(persisted.rows).toHaveLength(2)
+      expect(persisted.rows.map((row: { resultingRevision: number }) => row.resultingRevision)).toEqual([1, 2])
+      expect(native.db.$client.prepare('SELECT count(*) AS n FROM comparison_scope_proof').get()).toEqual({ n: 0 })
+
+      const submitCorrespondence = (action: 'preflight' | 'commit', body: object) =>
+        native.request('/api/roster/correspondences/' + action, { method: 'POST', body: JSON.stringify(body) })
+      const draft = { ...baseDecision('postgres-edge'), operations: [{ action: 'create', status: 'candidate', edge: {
+        type: 'event_process', eventId: event.id, relationId: historicalRelationId, role: 'supports_award',
+      } }] }
+      const reference = await json(await post('correspondences/preflight', draft))
+      const draftPlan = await nativeCall('preflight_record_correspondences', draft)
+      expect(draftPlan.planHash).toBe(reference.planHash)
+      expect(draftPlan.targets).toEqual(reference.targets)
+      const draftReceipt = await nativeCall('save_record_correspondences', { request: draft, planHash: draftPlan.planHash })
+      const correspondenceId = draftReceipt.correspondenceIds[0]
+      const decisionsFor = ['confirmed', 'rejected'].map(status => ({ ...baseDecision('postgres-edge-' + status), operations: [
+        { action: 'decide', correspondenceId, expectedRevision: 1, status },
+      ] }))
+      const edgePlans = await Promise.all(decisionsFor.map(async decision => {
+        const response = await submitCorrespondence('preflight', decision)
+        const body = await json(response)
+        expect(response.status, JSON.stringify(body)).toBe(200)
+        return { request: decision, planHash: body.planHash }
+      }))
+      const confirmResponses = await Promise.all(edgePlans.map(plan => submitCorrespondence('commit', plan)))
+      expect(confirmResponses.map(response => response.status).sort()).toEqual([200, 409])
+      const winner = confirmResponses.findIndex(response => response.status === 200)
+      const winningReceipt = await json(confirmResponses[winner]!)
+      expect(await json(await submitCorrespondence('commit', edgePlans[winner]!))).toEqual(winningReceipt)
+      const audit = await nativeCall('get_record_correspondence_audit', { id: correspondenceId })
+      expect(audit.rows.map((row: { resultingRevision: number }) => row.resultingRevision)).toEqual([1, 2])
+      expect(native.db.$client.prepare('SELECT count(*) AS n FROM record_correspondence').get()).toEqual({ n: 0 })
+
+      run('psql', ['-X', '-w', '-c', `UPDATE business.platform_export_row SET name_raw='changed after confirmation' WHERE id=${matchedExport.id}`])
+      const refsAfterDrift = await readPostgresCorrespondenceRefs(postgres, [enterprise.id])
+      expect(refsAfterDrift).toEqual([
+        ...expectedRefs.map(ref => ({ ...ref, requiresRevalidation: true })),
+        expect.objectContaining({ id: correspondenceId, status: decisionsFor[winner]!.operations[0]!.status, requiresRevalidation: false }),
+      ])
+      const summary = await native.request('/api/roster/correspondences?view=summary&relationId=' + matchedRelation!.id)
+      expect(await summary.json()).toMatchObject({ total: 1, rows: [{ requiresRevalidation: true }] })
+      const drift = await native.request('/api/roster/' + path + '/' + currentProofId)
+      expect(await drift.json()).toMatchObject({ status: 'confirmed', valid: false, invalidReason: 'source_drift_or_missing' })
+      expect((await native.request('/api/roster/' + path + '/batches/current-proof', { headers: {} })).status).toBe(401)
+
+    } finally {
+      await client.end()
+      await native.close()
+      if (started) run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-m', 'fast', 'stop'])
+      rmSync(pgDir, { recursive: true, force: true })
+    }
+  }, 90_000)
 })

@@ -2,14 +2,15 @@ import { createHash } from 'node:crypto'
 import { closeSync, openSync, readSync, readFileSync, statSync } from 'node:fs'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { JobContext } from './job-runner'
-import { getJob, setJobResult } from './job-store'
+import { getJob, setJobResult, type JobRow } from './job-store'
 import { isJobId } from '../../lib/job'
 import { pageDirRelPath, PAGES_MANIFEST_NAME } from '../../lib/pdf-page'
 import * as schema from '../../../../db/schema'
 import { resolveWithinRoot } from './pdf-pages'
-import { compareFileContentIdentity, readStoredFileContentIdentity } from './file-content-identity'
+import { compareFileContentIdentity } from './file-content-identity'
 
 type Db = JobContext['db']
+export type OcrRegisteredInput = Pick<typeof schema.storedFile.$inferSelect, 'id' | 'sha256' | 'bytes' | 'removedAt'>
 export interface OcrCapture {
   page: number
   markdown: string
@@ -64,16 +65,11 @@ export function ocrInputHash(path: string): string {
 
 /** Submission-time capture: no markdown/raw hydration and no file-store scan. */
 export function prepareOcrPublication(db: Db, filesDir: string, files: string[], model: string, variant: string, providerUrl: string, resumeJobId?: string): OcrPublication {
-  const providerFingerprint = createHash('sha256').update(providerUrl.replace(/\/+$/, '')).digest('hex')
+  const providerFingerprint = ocrProviderFingerprint(providerUrl)
   if (resumeJobId) {
     const prior = isJobId(resumeJobId) ? getJob(db, resumeJobId) : null
-    const publication = (prior?.result as { publication?: OcrPublication } | null)?.publication
-    if (!prior || prior.kind !== 'ocr' || !['done', 'failed', 'cancelled'].includes(prior.state)
-      || publication?.version !== 1 || publication.model !== model || publication.variant !== variant || publication.providerFingerprint !== providerFingerprint
-      || JSON.stringify(publication.files.map(f => f.file)) !== JSON.stringify(files)) {
-      throw Object.assign(new Error('恢复需要同文件、同模型/选项的已结束 OCR 任务及采集检查点'), { statusCode: 409 })
-    }
-    let source = prior
+    const publication = validateOcrResume(prior, files, model, variant, providerFingerprint)
+    let source = prior!
     const seen = new Set<string>()
     while (true) {
       if (seen.has(source.id) || seen.size >= 64) throw recoveryError('恢复来源链不可核实')
@@ -82,37 +78,60 @@ export function prepareOcrPublication(db: Db, filesDir: string, files: string[],
       const parentId = value?.recovery?.sourceJobId ?? value?.resumedFrom
       if (!parentId) break
       const parent = isJobId(parentId) ? getJob(db, parentId) : null
-      if (!parent || parent.kind !== 'ocr' || !terminal(parent.state)) throw recoveryError('恢复来源任务不可核实')
+      if (!parent || parent.kind !== 'ocr' || !terminalOcrJob(parent.state)) throw recoveryError('恢复来源任务不可核实')
       source = parent
     }
-    const sourcePublication = (source.result as { publication?: OcrPublication }).publication
-    if (!sourcePublication || publicationIdentity(sourcePublication) !== publicationIdentity(publication)) throw recoveryError('恢复来源输入不一致')
-    return { ...structuredClone(publication), resumedFrom: resumeJobId, recovery: { sourceJobId: source.id, anchorJobId: prior.id } }
+    return resumeOcrPublication(publication, source, resumeJobId)
   }
   return { version: 1, model, variant, providerFingerprint, files: files.map(file => {
     const row = db.select({ id: schema.storedFile.id, sha256: schema.storedFile.sha256, bytes: schema.storedFile.bytes, removedAt: schema.storedFile.removedAt })
       .from(schema.storedFile).where(eq(schema.storedFile.relPath, file)).get()
-    const entry: OcrPublicationFile = { file, fileId: row?.id ?? null, registeredSha256: row?.sha256 ?? null, registeredBytes: row?.bytes ?? null, sourceBytes: null, sourceSha256: null, targets: {}, images: {}, captures: [], requests: {}, state: 'pending' }
-    try {
-      if (!row || row.removedAt) throw new Error('stored_file 中没有这个文件或已移出库')
-      const source = resolveWithinRoot(filesDir, file)
-      entry.sourceSha256 = ocrInputHash(source)
-      entry.sourceBytes = statSync(source).size
-      const registered = readStoredFileContentIdentity(db, row.id)!
-      if (!/^[a-f0-9]{64}$/i.test(registered.sha256)) throw new Error('OCR 输入文件内容身份未知;待核实登记')
-      if (compareFileContentIdentity(registered, { sha256: entry.sourceSha256, bytes: entry.sourceBytes })) throw new Error('OCR 输入文件内容身份冲突;原采集结果保留待处理')
-      const versions = db.select({ page: schema.ocrResult.pageNo, id: schema.ocrResult.id, revision: schema.ocrResult.revision })
-        .from(schema.ocrResult).where(eq(schema.ocrResult.fileId, row.id)).all()
-      const manifest = JSON.parse(readFileSync(resolveWithinRoot(filesDir, `${pageDirRelPath(file)}/${PAGES_MANIFEST_NAME}`), 'utf8'))
-      if (!Array.isArray(manifest.pages) || manifest.sourceSha256 !== entry.sourceSha256 || manifest.sourceBytes !== entry.sourceBytes) throw new Error('页图输入不匹配,请先渲染最新页图')
-      for (const page of manifest.pages) {
-        const existing = versions.find(v => v.page === page.page)
-        entry.targets[page.page] = existing ? `${existing.id}:${existing.revision}` : null
-        entry.images[page.page] = { relPath: page.relPath, sha256: ocrInputHash(resolveWithinRoot(filesDir, page.relPath)) }
-      }
-    } catch (error) { entry.error = (error as Error).message; entry.state = 'failed' }
-    return entry
+    const versions = row && !row.removedAt ? db.select({ page: schema.ocrResult.pageNo, id: schema.ocrResult.id, revision: schema.ocrResult.revision })
+      .from(schema.ocrResult).where(eq(schema.ocrResult.fileId, row.id)).all() : []
+    return freezeOcrFile(filesDir, file, row, new Map(versions.map(value => [value.page, `${value.id}:${value.revision}`])))
   }) }
+}
+
+export function ocrProviderFingerprint(url: string) {
+  return createHash('sha256').update(url.replace(/\/+$/, '')).digest('hex')
+}
+
+export function validateOcrResume(prior: JobRow | null | undefined, files: string[], model: string, variant: string, providerFingerprint: string) {
+  const publication = (prior?.result as { publication?: OcrPublication } | null)?.publication
+  if (!prior || prior.kind !== 'ocr' || !terminalOcrJob(prior.state)
+    || publication?.version !== 1 || publication.model !== model || publication.variant !== variant || publication.providerFingerprint !== providerFingerprint
+    || JSON.stringify(publication.files.map(f => f.file)) !== JSON.stringify(files)) {
+    throw recoveryError('恢复需要同文件、同模型/选项的已结束 OCR 任务及采集检查点')
+  }
+  return publication
+}
+
+export function resumeOcrPublication(publication: OcrPublication, source: JobRow, resumeJobId: string): OcrPublication {
+  const sourcePublication = (source.result as { publication?: OcrPublication }).publication
+  if (!sourcePublication || publicationIdentity(sourcePublication) !== publicationIdentity(publication)) throw recoveryError('恢复来源输入不一致')
+  return { ...structuredClone(publication), resumedFrom: resumeJobId, recovery: { sourceJobId: source.id, anchorJobId: resumeJobId } }
+}
+
+export function freezeOcrFile(filesDir: string, file: string, row: OcrRegisteredInput | null | undefined, versions: ReadonlyMap<number, string>) {
+  const entry: OcrPublicationFile = {
+    file, fileId: row?.id ?? null, registeredSha256: row?.sha256 ?? null, registeredBytes: row?.bytes ?? null,
+    sourceBytes: null, sourceSha256: null, targets: {}, images: {}, captures: [], requests: {}, state: 'pending',
+  }
+  try {
+    if (!row || row.removedAt) throw new Error('stored_file 中没有这个文件或已移出库')
+    const source = resolveWithinRoot(filesDir, file)
+    entry.sourceSha256 = ocrInputHash(source)
+    entry.sourceBytes = statSync(source).size
+    if (!/^[a-f0-9]{64}$/i.test(row.sha256)) throw new Error('OCR 输入文件内容身份未知;待核实登记')
+    if (compareFileContentIdentity({ ...row, fileId: row.id, relPath: file }, { sha256: entry.sourceSha256, bytes: entry.sourceBytes })) throw new Error('OCR 输入文件内容身份冲突;原采集结果保留待处理')
+    const manifest = JSON.parse(readFileSync(resolveWithinRoot(filesDir, `${pageDirRelPath(file)}/${PAGES_MANIFEST_NAME}`), 'utf8'))
+    if (!Array.isArray(manifest.pages) || manifest.sourceSha256 !== entry.sourceSha256 || manifest.sourceBytes !== entry.sourceBytes) throw new Error('页图输入不匹配,请先渲染最新页图')
+    for (const page of manifest.pages) {
+      entry.targets[page.page] = versions.get(page.page) ?? null
+      entry.images[page.page] = { relPath: page.relPath, sha256: ocrInputHash(resolveWithinRoot(filesDir, page.relPath)) }
+    }
+  } catch (error) { entry.error = (error as Error).message; entry.state = 'failed' }
+  return entry
 }
 
 type ClaimState = 'unsubmitted' | 'claimed' | 'unknown' | 'accepted' | 'rejected' | 'failed' | 'complete'
@@ -124,16 +143,16 @@ export interface OcrClaim {
   jobId?: string
   capture?: OcrCapture
 }
-interface PageClaims { attempts: OcrClaim[] }
-interface PublicationReceipt { taskId: string; versions: Record<number, string> }
-interface RecoveryMetadata {
+export interface PageClaims { attempts: OcrClaim[] }
+export interface PublicationReceipt { taskId: string; versions: Record<number, string> }
+export interface RecoveryMetadata {
   version: 1
   pages?: Record<string, PageClaims>
   publications?: Record<string, PublicationReceipt>
 }
 
-const terminal = (state: string) => ['done', 'failed', 'cancelled'].includes(state)
-const recoveryError = (message: string) => Object.assign(new Error(message), { statusCode: 409 })
+export const terminalOcrJob = (state: string) => ['done', 'failed', 'cancelled'].includes(state)
+export const recoveryError = (message: string) => Object.assign(new Error(message), { statusCode: 409 })
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 function pageIdentity(publication: OcrPublication, file: OcrPublicationFile, page: number) {
   return [file.file, file.fileId, file.registeredSha256, file.sourceSha256, page, file.images[page], file.targets[page], publication.model, publication.variant, publication.providerFingerprint]
@@ -144,6 +163,8 @@ function fileIdentity(publication: OcrPublication, file: OcrPublicationFile) {
 function publicationIdentity(publication: OcrPublication) {
   return digest([publication.model, publication.variant, publication.providerFingerprint, publication.files.map(file => fileIdentity(publication, file))])
 }
+export const ocrPageFingerprint = (publication: OcrPublication, file: OcrPublicationFile, page: number) => digest(pageIdentity(publication, file, page))
+export const ocrFileFingerprint = (publication: OcrPublication, file: OcrPublicationFile) => digest(fileIdentity(publication, file))
 
 /** The host is permanently terminal. Generic active-only checkpoint/finish and
  * startup reconciliation cannot overwrite its appended metadata. Descendant
@@ -151,15 +172,18 @@ function publicationIdentity(publication: OcrPublication) {
 function recoverySource(db: Db, publication: OcrPublication, file: OcrPublicationFile) {
   const recovery = publication.recovery
   if (!recovery) throw recoveryError('没有共享恢复来源')
-  const row = getJob(db, recovery.sourceJobId)
+  return validateOcrRecoverySource(getJob(db, recovery.sourceJobId), publication, file)
+}
+
+export function validateOcrRecoverySource(row: JobRow | null | undefined, publication: OcrPublication, file: OcrPublicationFile) {
   const result = row?.result as { publication?: OcrPublication; ocrRecovery?: RecoveryMetadata } | null
   const original = result?.publication
-  if (!row || row.kind !== 'ocr' || !terminal(row.state) || !original || original.resumedFrom || original.recovery
+  if (!row || row.kind !== 'ocr' || !terminalOcrJob(row.state) || !original || original.resumedFrom || original.recovery
     || publicationIdentity(original) !== publicationIdentity(publication)
     || (result?.ocrRecovery && result.ocrRecovery.version !== 1)) throw recoveryError('恢复来源或共享认领不可核实')
   const originalFile = original.files.find(f => f.file === file.file)
-  if (!originalFile || digest(fileIdentity(original, originalFile)) !== digest(fileIdentity(publication, file))) throw recoveryError('恢复目标输入不一致')
-  return { id: row.id, originalFile, metadata: result?.ocrRecovery }
+  if (!originalFile || ocrFileFingerprint(original, originalFile) !== ocrFileFingerprint(publication, file)) throw recoveryError('恢复目标输入不一致')
+  return { id: row.id, originalFile, metadata: result?.ocrRecovery, result: result! }
 }
 
 /** Only this namespaced JSON path changes, in the caller's SQLite transaction.
@@ -170,10 +194,27 @@ function writeRecoveryPath(db: Db, sourceId: string, path: string, value: unknow
   if (changed.changes !== 1) throw recoveryError('恢复来源已变化,禁止提交')
 }
 
-function seedPage(sourceId: string, file: OcrPublicationFile, page: number): PageClaims {
+export function seedPage(sourceId: string, file: OcrPublicationFile, page: number): PageClaims {
   const request = file.requests[page], capture = file.captures.find(c => c.page === page)
   return { attempts: [{ attemptId: sourceId, ownerTaskId: request?.taskId ?? sourceId, anchorJobId: null,
     state: capture ? 'complete' : request?.state ?? 'unsubmitted', ...(request?.jobId ? { jobId: request.jobId } : {}), ...(capture ? { capture } : {}) }] }
+}
+
+export function currentOcrClaim(record: PageClaims, publication: OcrPublication, file: OcrPublicationFile, page: number) {
+  const claim = record.attempts?.at(-1)
+  if (!claim || !claim.ownerTaskId || !claim.attemptId
+    || (claim.state === 'accepted' && !claim.jobId)
+    || (claim.state === 'complete' && (!claim.capture || claim.capture.page !== page
+      || claim.capture.imageSha256 !== file.images[page]?.sha256 || claim.capture.variant !== publication.variant
+      || claim.capture.model !== publication.model))) throw recoveryError('共享认领回执不完整或输入不一致,禁止新提交')
+  return claim
+}
+
+export function applyOcrAttemptUpdate(claim: OcrClaim, update: OcrAttemptUpdate) {
+  if (claim.state === 'complete') return
+  if (update.state === 'unknown' && claim.state !== 'claimed') throw recoveryError('共享认领不允许重新提交')
+  if (update.state === 'accepted' && !['claimed', 'unknown', 'accepted'].includes(claim.state)) throw recoveryError('远端接受回执状态冲突')
+  Object.assign(claim, update)
 }
 
 export interface SharedOcrAttempt {
@@ -229,16 +270,11 @@ export function acquireOcrAttempt(db: Db, publication: OcrPublication, file: Ocr
     const source = recoverySource(tx, publication, file)
     const fingerprint = digest(pageIdentity(publication, file, page))
     const record = structuredClone(source.metadata?.pages?.[fingerprint] ?? seedPage(source.id, source.originalFile, page))
-    let claim = record.attempts?.at(-1)
-    if (!claim || !claim.ownerTaskId || !claim.attemptId
-      || (claim.state === 'accepted' && !claim.jobId)
-      || (claim.state === 'complete' && (!claim.capture || claim.capture.page !== page
-        || claim.capture.imageSha256 !== file.images[page]?.sha256 || claim.capture.variant !== publication.variant
-        || claim.capture.model !== publication.model))) throw recoveryError('共享认领回执不完整或输入不一致,禁止新提交')
+    let claim = currentOcrClaim(record, publication, file, page)
     let action: SharedOcrAttempt['action'] = claim.state === 'complete' ? 'complete' : claim.state === 'accepted' ? 'poll' : 'blocked'
     if (['unsubmitted', 'rejected', 'failed'].includes(claim.state) && publication.recovery!.anchorJobId === claim.ownerTaskId) {
       const anchor = getJob(tx, claim.ownerTaskId)
-      if (!anchor || anchor.kind !== 'ocr' || !terminal(anchor.state)) throw recoveryError('明确重试锚点尚未结束')
+      if (!anchor || anchor.kind !== 'ocr' || !terminalOcrJob(anchor.state)) throw recoveryError('明确重试锚点尚未结束')
       claim = { attemptId: taskId, ownerTaskId: taskId, anchorJobId: anchor.id, state: 'claimed' }
       record.attempts.push(claim)
       action = 'submit'
@@ -254,11 +290,8 @@ export function updateOcrAttempt(db: Db, publication: OcrPublication, file: OcrP
     const record = structuredClone(source.metadata?.pages?.[shared.fingerprint])
     const claim = record?.attempts.find(c => c.attemptId === shared.claim.attemptId)
     if (!record || !claim || claim.ownerTaskId !== shared.claim.ownerTaskId) throw recoveryError('共享认领已变化')
-    // A late poll/error must not erase an already captured paid response.
     if (claim.state === 'complete') return claim
-    if (update.state === 'unknown' && claim.state !== 'claimed') throw recoveryError('共享认领不允许重新提交')
-    if (update.state === 'accepted' && !['claimed', 'unknown', 'accepted'].includes(claim.state)) throw recoveryError('远端接受回执状态冲突')
-    Object.assign(claim, update)
+    applyOcrAttemptUpdate(claim, update)
     writeRecoveryPath(tx, source.id, `$.ocrRecovery.pages."${shared.fingerprint}"`, record)
     return claim
   }, { behavior: 'immediate' })
@@ -281,6 +314,10 @@ export function recordSharedOcrPublication(db: Db, publication: OcrPublication, 
 export function verifyOcrInput(db: Db, filesDir: string, file: OcrPublicationFile): void {
   const row = db.select({ id: schema.storedFile.id, sha256: schema.storedFile.sha256, bytes: schema.storedFile.bytes, removedAt: schema.storedFile.removedAt })
     .from(schema.storedFile).where(eq(schema.storedFile.relPath, file.file)).get()
+  verifyFrozenOcrInput(filesDir, file, row)
+}
+
+export function verifyFrozenOcrInput(filesDir: string, file: OcrPublicationFile, row: OcrRegisteredInput | null | undefined) {
   if (file.registeredBytes == null || file.sourceBytes == null || !file.registeredSha256 || !/^[a-f0-9]{64}$/i.test(file.registeredSha256)) throw new Error('OCR 输入文件内容身份未知;原采集结果保留待核实,禁止付费或发布')
   if (!row || row.removedAt || row.id !== file.fileId || row.sha256 !== file.registeredSha256
     || row.bytes !== file.registeredBytes || file.sourceSha256 !== file.registeredSha256 || file.sourceBytes !== file.registeredBytes

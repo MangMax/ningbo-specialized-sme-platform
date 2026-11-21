@@ -2,6 +2,8 @@ import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { openFileStore } from '../../../../../server/mcp-file-store'
 import { listStoredFiles } from '../../utils/stored-files'
+import { listPostgresFiles, usePostgresFileDb } from '../../utils/file-store-postgres'
+import { serverFileCategories } from '../../../../../server/file-store'
 
 /**
  * `list_files` —— 文件库列表(票 18,只读)。
@@ -38,8 +40,7 @@ export default defineMcpTool({
     includeRemoved: z.boolean().optional().describe('是否含已移出库的文件(removed_at 非空),默认不含'),
   },
   handler: async (input) => {
-    const { db } = await openFileStore({ readOnly: true })
-    const { rows, total } = listStoredFiles(db, {
+    const params = {
       source: input.source ? [input.source] : undefined,
       categoryState: input.categoryState ? [input.categoryState] : undefined,
       parseState: input.parseState ? [input.parseState] : undefined,
@@ -47,7 +48,11 @@ export default defineMcpTool({
       includeRemoved: input.includeRemoved,
       page: input.page ?? 1,
       pageSize: input.pageSize ?? 50,
-    })
+    }
+    const pg = usePostgresFileDb()
+    const { rows, total } = pg
+      ? await listPostgresFiles(pg, params, { categories: serverFileCategories })
+      : listStoredFiles((await openFileStore({ readOnly: true })).db, params)
     return {
       total,
       page: input.page ?? 1,

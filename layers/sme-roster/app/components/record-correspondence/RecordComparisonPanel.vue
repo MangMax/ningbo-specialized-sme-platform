@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import { GitCompareArrows, RefreshCw } from '@lucide/vue'
 import { COMPARISON_CLASSES, comparisonRequest, comparisonRouteFromQuery, comparisonRouteKey, comparisonRouteQuery, comparisonSelectionQuery, instantFromLocalDateTime, localDateTimeForInstant, type ComparisonRouteState, type ComparisonSelection, type ComparisonSource, type RecordComparisonResult } from '#sme-roster/lib/roster/record-comparison-view'
+import { workspaceScrollTop } from '#core/lib/workspace-scroll'
 import { useEvidencePreviewScrollRestore } from '#sme-roster/lib/roster/evidence-preview-return'
 import { humanRecordTime } from '#sme-roster/lib/roster/record-ledger'
 import { useRosterCorrespondenceReadback } from '#sme-roster/app/composables/useRosterCorrespondenceReadback'
@@ -108,7 +109,7 @@ const restoreReady = computed(() => displayedIsTarget.value && !loading.value &&
   && sourceReadyKey.value === sourceLayoutKey.value && proofReadyKey.value === proofLayoutKey.value)
 useEvidencePreviewScrollRestore(restoreReady, (anchor) => {
   const event = [...(panel.value?.querySelectorAll<HTMLElement>('[data-event-id]') ?? [])].find(element => element.dataset.eventId === anchor.eventId)
-  return event ? window.scrollY + event.getBoundingClientRect().top - anchor.viewportTop : undefined
+  return event ? workspaceScrollTop() + event.getBoundingClientRect().top - anchor.viewportTop : undefined
 })
 
 /** 一次 200ms 的落点：更新后结果标题轻微变色，告诉用户列表已经换成新结果。 */

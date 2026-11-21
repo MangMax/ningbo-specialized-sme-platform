@@ -22,6 +22,7 @@ import {
 } from './roster-import'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { stageAnnouncement } from './announcement-intake'
+import { runPostgresMixedImport } from './roster-mixed-import-postgres'
 import { hasAnnouncementRows } from '../../lib/roster-import-client'
 import * as schema from '../../../../db/schema'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
@@ -101,6 +102,8 @@ export async function handleRosterImportRequest(
   if (action === 'replay' && validated.value.payload.platformLegacyProvenance) return json(400, { message: 'Legacy provenance uses preflight/commit with its original idempotency key' })
 
   try {
+    const nativeMixed = await runPostgresMixedImport(action,validated.value,deps.filesDir)
+    if (nativeMixed !== undefined) return json(200,nativeMixed)
     const pageCountErrors =
       (action === 'preflight' || action === 'commit') && deps.filesDir
         ? await validateRosterImportPageCounts(validated.value, deps.filesDir)

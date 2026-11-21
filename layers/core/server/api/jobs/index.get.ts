@@ -1,3 +1,6 @@
+import { postgresJobReadProjector } from '../../utils/job-read-postgres'
+import { usePostgresJobsDb } from '../../utils/postgres-jobs'
+import { listPostgresJobs, listPostgresJobSummaries } from '../../utils/job-store-postgres'
 import { useDb } from '@db'
 import { parseCsvQuery } from '#core/lib/csv'
 import { JOB_STATES, type JobState } from '#core/lib/job'
@@ -108,9 +111,6 @@ defineRouteMeta({
 
 export default defineEventHandler(async (event) => {
   registerJobSpecs()
-  const db = useDb()
-  ensureJobRunnerReady(db)
-
   const q = getQuery(event)
   if (q.view !== undefined && q.view !== 'full' && q.view !== 'summary') {
     throw createError({ statusCode: 400, message: 'view 必须是 full 或 summary' })
@@ -129,8 +129,19 @@ export default defineEventHandler(async (event) => {
     limit,
   }
 
-  if (q.view === 'summary') return listJobSummaries(db, query)
-  const { rows, total } = listJobs(db, query)
+  const db = usePostgresJobsDb()
+  if (db) {
+    const config = useRuntimeConfig(event)
+    if (q.view === 'summary') return listPostgresJobSummaries(db, query)
+    const { rows, total } = await listPostgresJobs(db, query)
+    const project = await postgresJobReadProjector(db, config)
+    return { rows: await Promise.all(rows.map(row => project(row))), total }
+  }
 
-  return { rows: await Promise.all(rows.map(jobRuntime.readProjector(db))), total }
+  const sqlite = useDb()
+  ensureJobRunnerReady(sqlite)
+  if (q.view === 'summary') return listJobSummaries(sqlite, query)
+  const { rows, total } = listJobs(sqlite, query)
+
+  return { rows: await Promise.all(rows.map(jobRuntime.readProjector(sqlite))), total }
 })

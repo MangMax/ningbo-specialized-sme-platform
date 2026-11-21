@@ -43,6 +43,11 @@ export interface EnterpriseSelection {
   state: RosterState
   difference: RosterEnterpriseDifference
 }
+export function compareEnterpriseSelection(sort: RosterEnterpriseFilter['sort'], a: EnterpriseSelection, b: EnterpriseSelection) {
+  if (sort === 'title' && a.rank !== b.rank) return a.rank - b.rank
+  if (sort !== 'name' && sort !== 'title' && a.year !== b.year) return a.year == null ? 1 : b.year == null ? -1 : b.year - a.year
+  return a.name.localeCompare(b.name) || a.id - b.id
+}
 
 export function selectEnterpriseCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: number) {
   return db.transaction(() => selectCoordinates(db, filter, limit))
@@ -175,11 +180,7 @@ function selectCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: numbe
   const counts: RosterCounts = { total: 0, titlePairs: 0, recognitionPairs: 0, differences: 0, titles: Object.fromEntries(TITLE_ORDER.map(code => [code, 0])) }
   const candidates: EnterpriseSelection[] = []
   const sort = filter.sort ?? 'recognition'
-  const compare = (a: EnterpriseSelection, b: EnterpriseSelection) => {
-    if (sort === 'title' && a.rank !== b.rank) return a.rank-b.rank
-    if (sort !== 'name' && sort !== 'title' && a.year !== b.year) return a.year == null ? 1 : b.year == null ? -1 : b.year-a.year
-    return a.name.localeCompare(b.name) || a.id-b.id
-  }
+  const compare = (a: EnterpriseSelection, b: EnterpriseSelection) => compareEnterpriseSelection(sort, a, b)
   const popcount = (mask: number) => { let count=0; while (mask) { mask &= mask-1; count++ } return count }
   for (const values of rows) {
     const id=values[0] as number, name=values[1] as string, year=values[3] as number|null

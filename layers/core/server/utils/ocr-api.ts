@@ -1,4 +1,6 @@
 import { credentialContext, resolveCredential } from './credential-state'
+import { resolvePostgresCredential } from './credential-state-postgres'
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 /**
  * **通路 a:在线 PaddleOCR API**(票 14)。每次异步提交一张已渲染页图 → 轮询 → 取 JSONL 结果。
  *
@@ -109,42 +111,27 @@ export const MAX_CONCURRENT_PADDLE_JOBS = 8
 export const IMAGE_RETRY_BASE_DELAY_MS = 250
 
 let paddleJobsInFlight = 0
-interface PaddleJobWaiter {
-  isCancelled?: () => boolean
-  resolve(): void
-  reject(error: Error): void
-}
-const paddleJobWaiters: PaddleJobWaiter[] = []
+const paddleJobWaiters: Array<() => void> = []
 
 /** 在不同 OCR/PDF job 间共享的公平信号量,限制未完成的远端单页任务数。 */
 async function withPaddleJobPermit<T>(
-  isCancelled: (() => boolean) | undefined,
+  isCancelled: OcrApiOptions['isCancelled'],
   action: () => Promise<T>,
 ): Promise<T> {
-  if (isCancelled?.()) throw new OcrApiError('识别已按取消请求停止(尚未提交页图)。', 499)
+  if (await isCancelled?.()) throw new OcrApiError('识别已按取消请求停止(尚未提交页图)。', 499)
   if (paddleJobsInFlight < MAX_CONCURRENT_PADDLE_JOBS) {
     paddleJobsInFlight += 1
   } else {
-    await new Promise<void>((resolve, reject) => {
-      paddleJobWaiters.push({ isCancelled, resolve, reject })
-    })
+    await new Promise<void>(resolve => paddleJobWaiters.push(resolve))
   }
 
   try {
+    if (await isCancelled?.()) throw new OcrApiError('识别已按取消请求停止(尚未提交页图)。', 499)
     return await action()
   } finally {
-    let permitTransferred = false
-    while (paddleJobWaiters.length) {
-      const next = paddleJobWaiters.shift()!
-      if (next.isCancelled?.()) {
-        next.reject(new OcrApiError('识别已按取消请求停止(尚未提交页图)。', 499))
-        continue
-      }
-      next.resolve()
-      permitTransferred = true
-      break
-    }
-    if (!permitTransferred) paddleJobsInFlight -= 1
+    const next = paddleJobWaiters.shift()
+    if (next) next()
+    else paddleJobsInFlight -= 1
   }
 }
 
@@ -202,10 +189,10 @@ export interface OcrApiOptions {
   expectedImageSha256?: string
   /** Durable OCR owner may resume polling an accepted job without another POST. */
   resumeJobId?: string
-  onSubmissionStarted?: () => void
-  onSubmitted?: (jobId: string) => void
-  onSubmissionRejected?: () => void
-  onRemoteFailed?: () => void
+  onSubmissionStarted?: () => void | Promise<void>
+  onSubmitted?: (jobId: string) => void | Promise<void>
+  onSubmissionRejected?: () => void | Promise<void>
+  onRemoteFailed?: () => void | Promise<void>
   token: string
   /** 要识别的 PNG 页图的**绝对路径**。 */
   filePath: string
@@ -220,7 +207,7 @@ export interface OcrApiOptions {
   /** 进度回调:`{done,total}` 是**页**数(服务端报的)。 */
   onProgress?: (done: number, total: number) => void
   /** 取消检查 —— 每个轮询周期问一次(这就是「尽力而为」的检查点)。 */
-  isCancelled?: () => boolean
+  isCancelled?: () => boolean | Promise<boolean>
   /** 测试用:跳过真实 `setTimeout` 等待。 */
   sleep?: (ms: number) => Promise<void>
 }
@@ -441,11 +428,11 @@ async function ocrImageFileAttempt(options: OcrApiOptions): Promise<OcrImageOut>
       return form
     }
 
-    if (options.isCancelled?.()) {
+    if (await options.isCancelled?.()) {
       throw new OcrApiError('识别已按取消请求停止(尚未提交页图)。', 499)
     }
 
-    options.onSubmissionStarted?.()
+    await options.onSubmissionStarted?.()
     const submitRes = await fetchWithTimeout(
       impl,
       jobsUrl,
@@ -454,7 +441,7 @@ async function ocrImageFileAttempt(options: OcrApiOptions): Promise<OcrImageOut>
       '提交单张 PNG OCR 任务',
     )
     if (!submitRes.ok) {
-      if (submitRes.status >= 400 && submitRes.status < 500 && submitRes.status !== 408) options.onSubmissionRejected?.()
+      if (submitRes.status >= 400 && submitRes.status < 500 && submitRes.status !== 408) await options.onSubmissionRejected?.()
       const detail = await readErrorText(submitRes, token)
       throw new OcrApiError(
         `提交 OCR 任务被拒(HTTP ${submitRes.status}):${detail}`,
@@ -466,7 +453,7 @@ async function ocrImageFileAttempt(options: OcrApiOptions): Promise<OcrImageOut>
     jobId = submitted.jobId as string
     if (typeof jobId !== 'string' || !jobId) throw new OcrApiError('提交响应里没有 jobId')
     if (options.onSubmitted && ocrTokenRedactor(token)(jobId) !== jobId) throw new OcrApiError('远端任务 ID 不可安全保存;提交结果保持未知')
-    options.onSubmitted?.(jobId)
+    await options.onSubmitted?.(jobId)
   }
 
   // ---- 2. 轮询 ----------------------------------------------------------------
@@ -474,7 +461,7 @@ async function ocrImageFileAttempt(options: OcrApiOptions): Promise<OcrImageOut>
   let totalPages: number | null = null
   let jsonUrl: string | null = null
   for (;;) {
-    if (options.isCancelled?.()) {
+    if (await options.isCancelled?.()) {
       throw new OcrApiError(`识别已按取消请求停止(服务端任务 ${jobId} 可凭原回执继续查询)。`, 499)
     }
     const statusRes = await fetchWithTimeout(
@@ -517,7 +504,7 @@ async function ocrImageFileAttempt(options: OcrApiOptions): Promise<OcrImageOut>
       break
     }
     if (state === 'failed') {
-      options.onRemoteFailed?.()
+      await options.onRemoteFailed?.()
       const why = typeof data.errorMsg === 'string' && data.errorMsg ? data.errorMsg : '(无 errorMsg)'
       const statusMatch = /(?:HTTP\s*|状态码\s*)(\d{3})/i.exec(why)
       const remoteStatus = statusMatch ? Number(statusMatch[1]) : null
@@ -636,35 +623,36 @@ async function safeJson(res: Response, what: string): Promise<unknown> {
  * `useRuntimeConfig` 在 nitro 之外(裸 node 跑测试)不存在,所以用 `typeof` 探一下 ——
  * 这不是给生产写的兼容层,而是让这个函数能被单测直接调。
  */
-export function resolveOcrConfig(override: { token?: string } = {}): {
-  token: string
-  baseUrl: string
-  model: string
-  pollTimeoutMs: number
-} {
+export function resolveOcrConfig(override: { token?: string } = {}) {
+  const token = resolveCredential('core.ocrToken', credentialContext(), override.token).value
+  return { ...ocrProviderOptions(), token }
+}
+
+export async function resolvePostgresOcrConfig(db: NodePgDatabase) {
+  const token = (await resolvePostgresCredential(db, 'core.ocrToken')).value
+  return { ...ocrProviderOptions(), token }
+}
+
+function ocrProviderOptions() {
   const config = (
     typeof useRuntimeConfig === 'function'
       ? (useRuntimeConfig() as {
-          ocrToken?: string
           ocrBaseUrl?: string
           ocrModel?: string
           ocrPollTimeoutMs?: number
         })
       : {}
   ) as {
-    ocrToken?: string
     ocrBaseUrl?: string
     ocrModel?: string
     ocrPollTimeoutMs?: number
   }
   const env = process.env
-  const token = resolveCredential('core.ocrToken', { ...credentialContext(), ocrToken: config.ocrToken }, override.token).value
   const pollTimeoutMs = firstNumber(
     [config.ocrPollTimeoutMs, Number(env.NUXT_OCR_POLL_TIMEOUT_MS)],
     DEFAULT_POLL_TIMEOUT_MS,
   )
   return {
-    token,
     baseUrl:
       clean(config.ocrBaseUrl) ||
       clean(env.NUXT_OCR_BASE_URL) ||

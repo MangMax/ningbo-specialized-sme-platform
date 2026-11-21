@@ -70,7 +70,7 @@ export type OcrWriteResult =
   | { ok: false; message: string; statusCode?: number }
 
 /** 一页页图路径:只有 PDF 推得出(票 13 的规则按「相对 PDF 路径」派生)。 */
-function pageRelPathOf(sourceRelPath: string | null | undefined, pageNo: number): string | null {
+export function pageRelPathOf(sourceRelPath: string | null | undefined, pageNo: number): string | null {
   if (!sourceRelPath || !isPdfPath(sourceRelPath)) return null
   return pageImageRelPath(sourceRelPath, pageNo)
 }
@@ -170,24 +170,16 @@ export function writeOcrResult(db: Db, input: OcrWriteInput): OcrWriteResult {
   if (!validOcrExpectedVersion(input.expectedVersion)) return { ok: false, statusCode: 400, message: 'expectedVersion 非法' }
   const checked = validateOcrPages(input.pages)
   if (!checked.ok) return checked
+  const expectations = ocrVersionExpectations(input)
+  if (!expectations.ok) return expectations
 
   const engine = input.engine?.trim() || DEFAULT_OCR_ENGINE
   const model = input.model ?? null
   const createdAt = new Date().toISOString()
 
   return db.transaction((tx) => {
-    if (input.expectedVersions) {
-      if (input.expectedVersion !== undefined || input.replaceExistingPages || Object.keys(input.expectedVersions).length !== input.pages.length) return { ok: false as const, statusCode: 400, message: '批量页版本必须精确对应实际目标页' }
-      for (const page of input.pages) {
-        const expected = input.expectedVersions[page.page]
-        if (expected === undefined || !validOcrExpectedVersion(expected)) return { ok: false as const, statusCode: 400, message: '缺少目标页版本' }
-        const conflict = checkOcrPageVersion(tx, input.fileId, page.page, expected)
-        if (conflict) return conflict
-      }
-    }
-    if (input.expectedVersion !== undefined) {
-      if (input.pages.length !== 1 || input.replaceExistingPages) return { ok: false as const, statusCode: 400, message: 'expectedVersion 只用于显式单页写入' }
-      const conflict = checkOcrPageVersion(tx, input.fileId, input.pages[0]!.page, input.expectedVersion)
+    for (const [page, expected] of expectations.pages) {
+      const conflict = checkOcrPageVersion(tx, input.fileId, page, expected)
       if (conflict) return conflict
     }
     // Keep IDs and history of rewritten pages even for legacy replace callers.
@@ -228,6 +220,23 @@ export function writeOcrResult(db: Db, input: OcrWriteInput): OcrWriteResult {
   }, { behavior: 'immediate' })
 }
 
+export function ocrVersionExpectations(input: OcrWriteInput): Extract<OcrWriteResult, { ok: false }> | { ok: true; pages: [number, string | null][] } {
+  const versions: [number, string | null][] = []
+  if (input.expectedVersions) {
+    if (input.expectedVersion !== undefined || input.replaceExistingPages || Object.keys(input.expectedVersions).length !== input.pages.length) return { ok: false, statusCode: 400, message: '批量页版本必须精确对应实际目标页' }
+    for (const page of input.pages) {
+      const expected = input.expectedVersions[page.page]
+      if (expected === undefined || !validOcrExpectedVersion(expected)) return { ok: false, statusCode: 400, message: '缺少目标页版本' }
+      versions.push([page.page, expected])
+    }
+  }
+  if (input.expectedVersion !== undefined) {
+    if (input.pages.length !== 1 || input.replaceExistingPages) return { ok: false, statusCode: 400, message: 'expectedVersion 只用于显式单页写入' }
+    versions.push([input.pages[0]!.page, input.expectedVersion])
+  }
+  return { ok: true, pages: versions }
+}
+
 /** 一行结果(投影成给人看/给 tool 用的形状)。 */
 export interface OcrResultRow {
   /** 旧客户端可在本地构造无版本的临时行;所有服务端读回均带版本。 */
@@ -240,6 +249,19 @@ export interface OcrResultRow {
   model: string | null
   channel: string
   createdAt: string
+}
+
+export function ocrHistoricalBinding(provenance: {
+  revision?: { capture?: number; channel?: string; markdown?: string }
+  capture?: { markdown?: string; input?: OcrPageWrite['capture'] }
+} | null, markdown: string): NonNullable<OcrResultRow['historicalBinding']> {
+  const revision = provenance?.revision
+  const capture = Number.isInteger(revision?.capture) ? provenance?.capture : null
+  if (revision?.channel === 'api' && revision.markdown === markdown && capture?.markdown === markdown
+    && capture.input?.taskId && /^[a-f0-9]{64}$/i.test(capture.input.sourceSha256 ?? '')) {
+    return { status: 'captured', input: capture.input }
+  }
+  return { status: 'unknown' }
 }
 
 /** 取某文件的 OCR 结果;**给了 `pageNo` 就只取那一页**。按页号升序。 */
@@ -268,19 +290,7 @@ export function listOcrResults(db: Db, fileId: number, pageNo?: number | null): 
     .from(schema.ocrResult)
     .where(where)
     .orderBy(asc(schema.ocrResult.pageNo))
-    .all().map(({ provenance, ...row }) => {
-      let historicalBinding: NonNullable<OcrResultRow['historicalBinding']> = { status: 'unknown' }
-      if (provenance) {
-        const history = JSON.parse(provenance)
-        const revision = history.revision
-        const capture = Number.isInteger(revision?.capture) ? history.capture : null
-        if (revision?.channel === 'api' && revision.markdown === row.markdown && capture?.markdown === row.markdown
-          && capture.input?.taskId && /^[a-f0-9]{64}$/i.test(capture.input.sourceSha256 ?? '')) {
-          historicalBinding = { status: 'captured', input: capture.input }
-        }
-      }
-      return { ...row, historicalBinding }
-    })
+    .all().map(({ provenance, ...row }) => ({ ...row, historicalBinding: ocrHistoricalBinding(provenance ? JSON.parse(provenance) : null, row.markdown) }))
 }
 
 /** 某文件 OCR 结果覆盖了哪些页(升序)。页数一致性的核对点。 */
@@ -334,7 +344,12 @@ export function ocrMarkdown(
   fileId: number,
   pageNo?: number | null,
 ): { ok: true; markdown: string; pages: number[] } | { ok: false; message: string } {
-  const rows = listOcrResults(db, fileId, pageNo)
+  return formatOcrMarkdown(listOcrResults(db, fileId, pageNo), fileId, pageNo)
+}
+
+export function formatOcrMarkdown(
+  rows: readonly OcrResultRow[], fileId: number, pageNo?: number | null,
+): { ok: true; markdown: string; pages: number[] } | { ok: false; message: string } {
   if (!rows.length) {
     return {
       ok: false,
@@ -353,6 +368,10 @@ function checkOcrPageVersion(db: Db, fileId: number, page: number, expected: str
   const row = db.select({ id: schema.ocrResult.id, revision: schema.ocrResult.revision }).from(schema.ocrResult)
     .where(and(eq(schema.ocrResult.fileId, fileId), eq(schema.ocrResult.pageNo, page))).get()
   const current = row ? `${row.id}:${row.revision}` : null
+  return compareOcrPageVersion(page, current, expected)
+}
+
+export function compareOcrPageVersion(page: number, current: string | null, expected: string | null) {
   return current === expected ? null : { ok: false as const, statusCode: 409, message: `OCR 第 ${page} 页版本冲突;请重新读取后再提交` }
 }
 

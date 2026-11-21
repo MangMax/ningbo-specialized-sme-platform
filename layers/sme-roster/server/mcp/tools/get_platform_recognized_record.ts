@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
-import { getTargetRecognizedRecord } from '../../utils/platform-recognized-target'
+import { readPlatformArchiveDetail } from '../../utils/platform-archive-read'
 
 export default defineMcpTool({
   name: 'get_platform_recognized_record',
@@ -11,7 +10,7 @@ export default defineMcpTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   inputSchema: { recordId: z.number().int().positive() },
   handler: async input => {
-    const result = getTargetRecognizedRecord(useDb(), input.recordId)
+    const result = await readPlatformArchiveDetail('recognized-directory', input.recordId)
     return { structuredContent: { ...result }, content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
   },
 })

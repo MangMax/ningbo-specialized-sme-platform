@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { Workbook, Worksheet } from 'documonster/excel'
-import { assertExcelSheets, inspectExcelSource } from '../excel-source'
+import { assertExcelSheets, inspectExcelSource, rethrowExcelReadError } from '../excel-source'
 import { createExcelValueReader } from '../excel-read-value'
 import { isNingboDistrict, normalizeUscc } from '../domain'
 
@@ -165,7 +165,7 @@ export async function parseLittleGiantWorkbook(
 ): Promise<LittleGiantWorkbook> {
   const workbook = Workbook.create()
   const sourceParts = await inspectExcelSource(input)
-  await Workbook.read(workbook, input)
+  await Workbook.read(workbook, input).catch(error => rethrowExcelReadError(error, sourceParts))
 
   const sheets = Workbook.getWorksheets(workbook)
   assertExcelSheets(sourceParts, sheets.map(sheet => Worksheet.getName(sheet)))

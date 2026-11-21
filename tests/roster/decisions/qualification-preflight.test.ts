@@ -1,6 +1,5 @@
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
 import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
-import { readDistrictStatistics } from '../../../layers/sme-roster/lib/roster/district-statistics'
 import { listCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
 import ExcelJS from 'exceljs'
 import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
@@ -66,9 +65,6 @@ it('preflights without writes and commits a bound qualification with original re
   expect(listed.total).toBe(0)
   expect(listed.rows).toEqual([])
  }
- const stats = readDistrictStatistics(db, { title:'specialized_sme',page:1,pageSize:25 }, Date.parse('2026-11-16T00:00:00Z'))
- expect(stats.total).toBe(0)
- expect(stats.rows).toEqual([])
  const path = join(dir,'synthetic-own-qualification.xlsx')
  await writeCurrentWorkbook(db.$client,'specialized_sme',path,()=>{})
  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(path)

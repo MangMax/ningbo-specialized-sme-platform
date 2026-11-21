@@ -1,7 +1,6 @@
 import type { LogContext } from '../../../../core/lib/logging'
-import { extensionOf } from '../../../../core/lib/core/file-path'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import * as schema from '../../../../../db/schema'
 import {
   categoryStateOf,
@@ -9,9 +8,13 @@ import {
   type FileSource,
 } from '../../../lib/stored-file'
 import { checkAdmission, getStoredFile, type StoredFileRow } from '../../../../core/server/utils/stored-files'
-import { runFileRegistration, sha256Of, splitRegistrationPath, UploadRegistrationError, type RegistrationWriter } from '../../../../core/server/utils/file-store'
+import { fileRegistrationFacts, runFileRegistration, splitRegistrationPath, UploadRegistrationError, type RegistrationWriter } from '../../../../core/server/utils/file-store'
+import {
+  activePostgresPhysicalIntent, lockOrRegisterPostgresFile, postgresFileIdentity, readPostgresFile, type PostgresFileDb,
+} from '../../../../core/server/utils/file-store-postgres'
 import { createClassifiedFile } from '../../utils/roster-file-classification'
 import { recordLegacyFileMaintenanceWrite } from '../../../../core/server/utils/file-maintenance'
+import { recordLegacyPostgresFileMaintenanceWrite } from '../../../../core/server/utils/file-maintenance-postgres'
 import { landingSegments } from '../../../lib/sme-roster/file-landing'
 import { compareFileContentIdentity } from '../../../../core/server/utils/file-content-identity'
 
@@ -84,7 +87,7 @@ export function parseUploadDeclaration(body: unknown): UploadDeclaration {
  * 都不给分类时不硬填:写 `null` + `category_state='unset'`,交票 12 回写
  * (与 `layers/sme-roster/lib/stored-file.ts` 的 `categoryStateOf` 同一条规则 —— 公布文件没年份就是未定)。
  */
-function prepareRosterWriter(input: UploadDeclaration): RegistrationWriter {
+function declaredClassification(input: UploadDeclaration) {
   const segments = splitRegistrationPath(input.relPath)
   const filename = segments[segments.length - 1]!
   const actualDirs = segments.slice(0, -1)
@@ -136,9 +139,13 @@ function prepareRosterWriter(input: UploadDeclaration): RegistrationWriter {
   // 分类状态由「分类是否补齐」推出 —— 与票 09 同一套规则,不在这里另定一套。
   const categoryState =
     source && kind ? categoryStateOf({ source, kind, year, batch }) : 'unset'
+  return { source, kind, year, batch, categoryState } as const
+}
 
-  return async (db, { relPath, filename, abs, bytes }) => {
-    const facts = { relPath, filename, ext: extensionOf(filename), bytes, sha256: await sha256Of(abs) }
+function prepareRosterWriter(input: UploadDeclaration): RegistrationWriter {
+  const classification = declaredClassification(input)
+  return async (db, file) => {
+    const facts = await fileRegistrationFacts(file)
     return db.transaction((tx) => {
       const existing = tx
         .select()
@@ -146,7 +153,6 @@ function prepareRosterWriter(input: UploadDeclaration): RegistrationWriter {
         .where(eq(schema.storedFile.relPath, facts.relPath))
         .get()
 
-      const classification = { source, kind, year, batch, categoryState }
       if (existing) {
         const conflict = compareFileContentIdentity({ ...existing, fileId: existing.id }, facts)
         if (conflict) {
@@ -154,7 +160,7 @@ function prepareRosterWriter(input: UploadDeclaration): RegistrationWriter {
         }
         const before = getStoredFile(tx, existing.id)!
         tx.update(schema.storedFile)
-          .set({ filename, ext: facts.ext, removedAt: null })
+          .set({ filename: facts.filename, ext: facts.ext, removedAt: null })
           .where(eq(schema.storedFile.id, existing.id))
           .run()
         tx.update(schema.rosterFileClassification).set(classification)
@@ -171,13 +177,37 @@ function prepareRosterWriter(input: UploadDeclaration): RegistrationWriter {
 }
 
 export function prepareRosterRegistration(input: Record<string, unknown>): RegistrationWriter {
-  let declaration
-  try {
-    declaration = parseUploadDeclaration(input)
-  } catch (error) {
-    throw new UploadRegistrationError((error as Error).message)
+  return prepareRosterWriter(parseUploadDeclaration(input))
+}
+
+export function preparePostgresRosterRegistration(input: Record<string, unknown>): RegistrationWriter<PostgresFileDb> {
+  const { source, kind, year, batch, categoryState } = declaredClassification(parseUploadDeclaration(input))
+  return async (db, file) => {
+    const facts = await fileRegistrationFacts(file)
+    return db.transaction(async tx => {
+      const { row: base, created } = await lockOrRegisterPostgresFile(tx, facts)
+      const id = base.id
+      if (created) {
+        await tx.execute(sql`
+          INSERT INTO roster_file_classification (file_id, source, kind, year, batch, category_state)
+          VALUES (${id}, ${source}, ${kind}, ${year}, ${batch}, ${categoryState})`)
+        return { row: await readPostgresFile(tx, id), created }
+      }
+
+      const conflict = compareFileContentIdentity(postgresFileIdentity(base), facts)
+      if (conflict) throw new UploadRegistrationError('文件内容与登记身份不符,请恢复原文件或使用新路径登记', 409, conflict)
+      if (await activePostgresPhysicalIntent(tx, id)) throw new UploadRegistrationError('文件正在隔离或恢复，请使用物理恢复命令', 409)
+      const before = await readPostgresFile(tx, id)
+      await tx.execute(sql`UPDATE stored_file SET filename = ${facts.filename}, ext = ${facts.ext}, removed_at = NULL WHERE id = ${id}`)
+      await tx.execute(sql`
+        UPDATE roster_file_classification
+        SET source = ${source}, kind = ${kind}, year = ${year}, batch = ${batch}, category_state = ${categoryState}
+        WHERE file_id = ${id}`)
+      const row = await readPostgresFile(tx, id)
+      await recordLegacyPostgresFileMaintenanceWrite(tx, before, row)
+      return { row, created }
+    })
   }
-  return prepareRosterWriter(declaration)
 }
 
 export function registerStoredFile(

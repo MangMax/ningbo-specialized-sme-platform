@@ -19,7 +19,9 @@
 import type { PlatformInterface } from '../labels'
 import type {
   DuplicateNameCandidate,
+  RosterImportItemResult,
   RosterImportMerge,
+  RosterImportPreflight,
   RosterImportRequest,
 } from '../roster-import-client'
 import type { NameMatchLevel } from './uscc-research'
@@ -144,4 +146,14 @@ export interface DuplicateMergeReport {
    * 没有可并项时是 `null`（**不发空批**：空 `merges` 只会白记一条批次）。
    */
   request: RosterImportRequest | null
+}
+
+export function duplicateCandidatesFromBatch(
+  items: RosterImportItemResult[] | null,
+  preflight: RosterImportPreflight | null,
+): DuplicateNameCandidate[] {
+  if (!items?.length) return preflight?.duplicateCandidates ?? []
+  return items.filter(item => item.ok && item.kind === 'duplicate_candidate')
+    .map(item => item.detail?.candidate as DuplicateNameCandidate)
+    .filter(candidate => candidate && typeof candidate.nameNorm === 'string')
 }

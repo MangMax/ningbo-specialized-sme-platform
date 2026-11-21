@@ -37,6 +37,9 @@ const businessRelationShape = relationShape.extend({
     z.object({field:z.enum(['province','batch','declareKind','appliedAt','awardBatchLabel','year']),storedValue:z.union([z.string(),z.number()]),rawValue:z.union([z.string(),z.number()])}),
   ])).optional(),
 })
+export function parsePlatformRelationDisplay(interfaceName: string | undefined, value: unknown) {
+  return (interfaceName === 'business_list' ? businessRelationShape : relationShape).parse(value)
+}
 function clamp(value: number | undefined, fallback: number, max = Number.MAX_SAFE_INTEGER) {
   const n = Number(value)
   return !Number.isFinite(n) || n < 1 ? fallback : Math.min(Math.floor(n), max)
@@ -93,7 +96,7 @@ export function listTargetPlatformQueries(db: Db, filter: PlatformQueryFilter): 
     const namesById = new Map(names.map(row => [row.id, row.name]))
     for (const row of relationIds) {
       const interfaceName=selected.find(owner=>owner.collection.id===row.collectionId)?.collection.interface
-      const relation = { ...(interfaceName==='business_list'?businessRelationShape:relationShape).parse(displays.sources.get(row.id)), matchedName: namesById.get(row.id) ?? null }
+      const relation = { ...parsePlatformRelationDisplay(interfaceName, displays.sources.get(row.id)), matchedName: namesById.get(row.id) ?? null }
       const bucket = byCollection.get(row.collectionId) ?? []
       bucket.push(relation); byCollection.set(row.collectionId, bucket)
     }

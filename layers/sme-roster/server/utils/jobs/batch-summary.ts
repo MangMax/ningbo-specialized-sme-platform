@@ -1,7 +1,8 @@
 import { isJobId } from '../../../../core/lib/job'
 import { MAX_BATCH_ATTEMPTS, type PlatformBatchItem } from '../../../lib/platform/batch-query'
-import type { TaskSummary } from '../../../../core/lib/task-center'
-import type { ProjectedTask } from './task-summary'
+import type { TaskSummary } from '../../../lib/sme-roster/task-summary'
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import type { JobState } from '../../../../core/lib/job'
 import { sql } from 'drizzle-orm'
 import { schema } from '../../../../../db/client'
 interface BatchItemRead extends Pick<PlatformBatchItem, 'status' | 'completeness'> {
@@ -14,7 +15,7 @@ export const batchProjection = {
   items: sql<string>`case when ${j.kind} = 'platform-query-batch' then (select json_group_array(json_object('id',json_extract(item.value,'$.itemId'),'status',json_extract(item.value,'$.status'),'completeness',json_extract(item.value,'$.completeness'),'unfinished',coalesce(json_array_length(json_extract(item.value,'$.unfinished')),0),'positions',json((select json_group_array(json_object('source',json_extract(pos.value,'$.source'),'rdjb',json_extract(pos.value,'$.rdjb'),'page',json_extract(pos.value,'$.page'))) from (select value from json_each(item.value,'$.unfinished') limit 50) pos)))) from (select value from json_each(${j.result}, '$.items') limit 50) item) else '[]' end`,
 }
 
-export function readBatchSummary(row: ProjectedTask, detail: boolean) {
+export function readBatchSummary(row: { kind: string; state: JobState; items: string; itemCount: number; attempt: number }, detail: boolean) {
   const active = row.state === 'queued' || row.state === 'running'
   const items = JSON.parse(row.items || '[]') as BatchItemRead[]
   const retryItemIds = items.filter(i => i.completeness !== 'complete' && isJobId(i.id)).map(i => i.id as string)
@@ -28,4 +29,37 @@ export function readBatchSummary(row: ProjectedTask, detail: boolean) {
   const retry = row.kind === 'platform-query-batch' && !active && row.attempt < MAX_BATCH_ATTEMPTS && retryItemIds.length > 0
   const safeItems: NonNullable<TaskSummary['items']> = items.map(i => ({ id: isJobId(i.id) ? i.id : '', status: ['success', 'no_record', 'auth_failed', 'failed', 'partial', 'not_queried'].includes(i.status) ? i.status : 'unknown', completeness: ['complete', 'partial', 'not_queried'].includes(i.completeness) ? i.completeness : 'unknown', positions: (i.positions ?? []).filter(p => ['queryList','businessList','queryBusList'].includes(p.source) && (p.rdjb === null || ['1','2','3'].includes(p.rdjb)) && Number.isSafeInteger(p.page) && p.page > 0) }))
   return { items: detail ? safeItems : [], retryItemIds, outcome, retry }
+}
+
+export async function summarizePostgresBatches(db: NodePgDatabase, ids: string[], detail: boolean) {
+  const { rows } = await db.execute<{
+    id: string; kind: string; state: JobState; hasError: boolean; itemCount: number; attempt: number; items: string
+  }>(sql`
+    SELECT j.id, j.kind, j.state, j.error IS NOT NULL AS "hasError",
+      json_array_length(j.params::json -> 'items') AS "itemCount",
+      (v.result ->> 'attempt')::integer AS attempt,
+      (SELECT json_agg(json_build_object(
+        'id', item.value ->> 'itemId', 'status', item.value ->> 'status',
+        'completeness', item.value ->> 'completeness',
+        'unfinished', coalesce(json_array_length(item.value -> 'unfinished'), 0),
+        'positions', CASE WHEN ${detail} THEN (
+          SELECT json_agg(json_build_object('source', position.value ->> 'source',
+            'rdjb', position.value ->> 'rdjb', 'page', position.value -> 'page'))
+          FROM (SELECT value FROM json_array_elements(item.value -> 'unfinished') LIMIT 50) position
+        ) END
+      ))::text FROM (SELECT value FROM json_array_elements(v.result -> 'items') LIMIT 50) item) AS items
+    FROM business.job j
+    CROSS JOIN LATERAL (SELECT regexp_replace(j.result, ${String.raw`\\u(?:0000|d[89a-f][0-9a-f]{2})`},
+      ${String.raw`\\uFFFD`}, 'gi')::json AS result) v
+    WHERE j.id = ANY(${sql.param(ids)}::text[]) AND j.kind = 'platform-query-batch'`)
+  return new Map(rows.map(row => {
+    const { items, retryItemIds, outcome, retry } = readBatchSummary(row, detail)
+    return [row.id, {
+      outcome, ...(detail ? { items } : {}),
+      error: row.hasError && row.state === 'failed' ? '批次有失败或未完成范围；请查看摘要并显式重试。' : null,
+      capabilities: { cancel: false, retry, retryItemIds: retry ? retryItemIds : [],
+        reason: retry ? '仅补查本批次未完成项，保留已完成结果。' : '此任务不支持安全重试，请从原业务入口核对后重新提交。' },
+      links: [{ label: '平台查询证据', to: '/platform-queries' }, { label: '比对与核查入口', to: '/comparison' }],
+    }]
+  }))
 }

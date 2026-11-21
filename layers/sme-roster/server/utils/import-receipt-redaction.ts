@@ -1,3 +1,6 @@
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { readPostgresCredentialState } from '../../../core/server/utils/credential-state-postgres'
+import { resolveFromState } from '../../../core/server/utils/credential-state'
 import { validateReceiptRuntimeContext, type ReceiptRuntimeContext } from './receipt-runtime-context'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../../../db/schema'
@@ -21,6 +24,20 @@ export function importReceiptRedactor(db: Db, options: RedactionOptions = {}, re
   const runtime = receiptRuntime === undefined ? (typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : undefined) : validateReceiptRuntimeContext(receiptRuntime)
   const context = receiptRuntime === undefined ? { ...credentialContext(), db } : { db, ocrToken: runtime?.ocrToken }
   const secrets = [...(options.additionalSecrets ?? []), runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN, resolveCredential('sme-roster.miitCookie', context).value, resolveCredential('core.ocrToken', context).value]
+  return receiptRedactor(secrets)
+}
+
+export async function importPostgresReceiptRedactor(db: NodePgDatabase, options: RedactionOptions = {}) {
+  const runtime = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : undefined
+  const saved = await readPostgresCredentialState(db)
+  const context = credentialContext()
+  return receiptRedactor([
+    ...(options.additionalSecrets ?? []), runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN,
+    resolveFromState('sme-roster.miitCookie', context, saved).value, resolveFromState('core.ocrToken', context, saved).value,
+  ])
+}
+
+function receiptRedactor(secrets: readonly (string | null | undefined)[]): ReceiptRedactor {
   const redactors = Object.freeze([...new Set(secrets.filter((value): value is string => !!value))].map(cookieRedactor))
   function redact(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(redact)

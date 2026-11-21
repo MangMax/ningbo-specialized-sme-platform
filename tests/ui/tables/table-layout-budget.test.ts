@@ -53,6 +53,11 @@ describe('表格滚动预算 token', () => {
     expect(scrollRule![0]).toMatch(/max\(\s*320px/)
   })
 
+  it('lets the result scroll container own both axes for its shared table', async () => {
+    const out = await compileTailwind(['data-table-scroll', 'overflow-auto'])
+    expect(out).toMatch(/\.data-table-scroll\s*>\s*\[data-slot=['"]table-container['"]\]\s*\{[^}]*overflow:\s*visible/)
+  })
+
   it('编译后 --table-budget 落到 :root，.data-table-scroll 消费 var()', async () => {
     const out = await compileTailwind(['data-table-scroll'])
     // 非 inline @theme 把 token 实体输出到 :root,普通规则才能 var() 引用。

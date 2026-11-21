@@ -2,7 +2,7 @@ import { asc,eq,inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
-import type { ScopedPlatformObservation } from '../../lib/platform/business-record'
+import type { PlatformBusinessGroup, ScopedPlatformObservation } from '../../lib/platform/business-record'
 import type { PlatformObservationFact } from '../../lib/platform/observation-facts'
 import { RDJB_TITLE_CODES,sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 import { platformRowTitle } from '../../lib/platform/row-title'
@@ -49,6 +49,34 @@ function generateCandidateSnapshot(db: Db, input: CandidateInput, selection?: { 
   const relevantExports = exports.filter(r => identity && normalizeUscc(r.usccRaw) === identity)
   const priors = batchesOf(relevantExports.map(r => r.id)).map(ids => inArray(c.exportRowId, ids))
     .flatMap(where => db.select({ id: c.id, eventId: c.eventId, type: c.type, role: c.role, relationId: externalRelationColumn(db), exportRowId: c.exportRowId, revision: c.revision }).from(c).where(where).orderBy(asc(c.id)).all())
+  const steps = projectCandidateRows(input, { event, enterprise, queries, batches, relevantRelations, relevantExports,
+    factsByRelation, positions, priors, targetPage, selection })
+  const pending = steps.next()
+  if (pending.done) return pending.value
+  const final = steps.next(readPlatformBusinessGroups(db, pending.value))
+  if (final.done) return final.value
+  throw new Error('Candidate projection did not finish')
+}
+
+type CandidateFact = Pick<PlatformObservationFact, 'usccRaw' | 'titleRaw' | 'declareKind' | 'normalizationConflicts' | 'year' | 'awardBatchLabel' | 'batch' | 'appliedAt' | 'status'>
+type ExportRow = Pick<typeof schema.platformExportRow.$inferSelect, 'id' | 'batchId' | 'sourceRowNo' | 'usccRaw'>
+type ExportPrior = Pick<typeof schema.recordCorrespondence.$inferSelect, 'id' | 'eventId' | 'type' | 'exportRowId' | 'revision'>
+export function* projectCandidateRows(input: CandidateInput, { event, enterprise, queries, batches, relevantRelations, relevantExports,
+  factsByRelation, positions, priors, targetPage, selection }: {
+  event: { event: typeof schema.recordEvent.$inferSelect; record: typeof schema.record.$inferSelect } | null | undefined
+  enterprise: typeof schema.enterprise.$inferSelect
+  queries: ReturnType<typeof readCandidateTargetQueries>
+  batches: Array<typeof schema.platformExportBatch.$inferSelect>
+  relevantRelations: ReturnType<typeof readCandidateTargetRelations>
+  relevantExports: ExportRow[]
+  factsByRelation: ReadonlyMap<number, CandidateFact>
+  positions: ReturnType<typeof readCandidateTargetPositions>
+  priors: ExportPrior[]
+  targetPage: { total: number } | null
+  selection?: { total: number }
+}) {
+  const enterpriseId = enterprise.id, titleCode = event?.record.titleCode ?? input.titleCode!
+  const identity = normalizeUscc(event?.record.usccRaw ?? enterprise.usccNorm)
   const relationsByQuery = Map.groupBy(relevantRelations, r => r.queryId)
   const exportsByBatch = Map.groupBy(relevantExports, r => r.batchId)
   const exportPriors = Map.groupBy(priors.filter(r => r.exportRowId != null), r => r.exportRowId)
@@ -92,7 +120,8 @@ function generateCandidateSnapshot(db: Db, input: CandidateInput, selection?: { 
     }
   }
   // Every original business filter above runs before canonical metadata/decision reads.
-  for (const group of readPlatformBusinessGroups(db, observations)) {
+  const groups: PlatformBusinessGroup[] = yield observations
+  for (const group of groups) {
     const representative = group.observationRefs.find(o => o.relationId === group.representativeRelationId)!
     const decisions = representative.existingCorrespondences.filter(p => p.eventId === representative.target.eventId && p.enterpriseId === enterpriseId && p.titleCode === titleCode && p.type === representative.target.type)
     const prior = decisions.find(p => p.role === representative.target.role) ?? (selection ? decisions[0] : undefined)

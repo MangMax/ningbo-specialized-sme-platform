@@ -1,7 +1,6 @@
 import { requestLogContext } from '../../../lib/logging'
 import { MAX_PAGE_NO } from '../../../lib/ocr-markdown'
-import { fileRefFromQuery, resolveOcrFileTarget } from '../../utils/ocr-files'
-import { deleteOcrPage } from '../../utils/ocr-result'
+import { deleteOcrFilePage, fileRefFromQuery, resolveOcrFileTarget } from '../../utils/ocr-files'
 
 /**
  * **删掉某一页的 OCR 结果**。`DELETE /api/ocr-results?file=…|fileId=…&page=3`
@@ -97,7 +96,7 @@ export default defineEventHandler(async (event) => {
   const target = await resolveOcrFileTarget(ref.ref)
   if (!target.ok) throw createError({ statusCode: target.statusCode, message: target.message })
 
-  const out = deleteOcrPage(target.db, target.row.id, page, q.expectedVersion as string | undefined, requestLogContext(event))
+  const out = await deleteOcrFilePage(target, page, q.expectedVersion as string | undefined, requestLogContext(event))
   if (!out.ok) throw createError({ statusCode: out.statusCode, message: out.message })
 
   return {

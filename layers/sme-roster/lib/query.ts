@@ -1,12 +1,11 @@
 import { MAX_PAGE_SIZE } from './query-limits'
-import { readPublicPublishedNames,type OfficialPublishedFact } from './roster/official-published-presentation'
+import { readPublicPublishedNames,type OfficialPublishedFact, type OfficialPublishedScope } from './roster/official-published-presentation'
 import { publishedNameText,type PublishedPresentation } from './roster/correspondence-view'
 import { and,desc,eq,exists,inArray,isNull,like,or,sql,type SQL } from 'drizzle-orm'
-import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import { compact,groupBy,minBy,orderBy } from 'es-toolkit'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../db/schema'
-import { isNingboDistrict,normalizeName } from './domain'
+import { normalizeName } from './domain'
 import { EVENTS,LIFECYCLE_FLAGS,LIFECYCLE_FLAG_ORDER,SOURCE_ORDER,TITLE_ORDER } from './labels'
 import { isPageCapable } from './roster/evidence-page'
 import {
@@ -109,6 +108,14 @@ export interface RecordRow {
   lifecycle: RecordLifecycle
   flags: string[]
 }
+
+export type LedgerGroup = { enterpriseId: number; titleCode: string }
+export type LedgerSource = LedgerGroup & {
+  recordId: number; name: string; uscc: string | null; district: string | null;
+  source: string; flags: string[] | null
+}
+export type LedgerEvent = Pick<RecordEvent, 'id' | 'recordId' | 'type' | 'year' | 'decidedYear' | 'reviewOutcome' | 'seq'> & { sortKey: number }
+export type LedgerEvidence = RecordEvent['evidence'][number] & { recordEventId: number }
 
 export { MAX_PAGE_SIZE } from './query-limits'
 
@@ -235,22 +242,13 @@ export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; t
       .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
       .where(where)
       .groupBy(schema.record.enterpriseId, schema.record.titleCode)
-      .orderBy(sql`min(${titleRank})`, sql`min(${schema.enterprise.name})`)
+      .orderBy(sql`min(${titleRank})`, sql`min(${schema.enterprise.name})`, schema.record.enterpriseId, schema.record.titleCode)
 
   if (params.dueYear != null || params.firstYear?.length || params.firstStatus?.length) {
     // 生命周期到期年、首次认定年与首次认定状态都是派生值，先对所有候选组合计算，再排序/分页。
     const candidates = groupsQuery().all()
     if (!candidates.length) return { rows: [], total: 0 }
-    const derivedRows = buildRecordRows(db, candidates).filter((row) => {
-      if (params.dueYear != null && row.lifecycle.dueYear !== params.dueYear) return false
-      if (
-        (params.firstYear?.length || params.firstStatus?.length) &&
-        !matchesRecordRecognition(row, params)
-      ) {
-        return false
-      }
-      return true
-    })
+    const derivedRows = buildRecordRows(db, candidates).filter(row => matchesLedgerDerivedFilters(row, params))
     return {
       rows: derivedRows.slice((page - 1) * pageSize, page * pageSize),
       total: derivedRows.length,
@@ -269,6 +267,11 @@ export function listRecords(db: Db, params: RecordQuery): { rows: RecordRow[]; t
 
   const pageGroups = groupsQuery().limit(pageSize).offset((page - 1) * pageSize).all()
   return { rows: buildRecordRows(db, pageGroups), total }
+}
+
+export function matchesLedgerDerivedFilters(row: RecordRow, params: RecordQuery) {
+  return (params.dueYear == null || row.lifecycle.dueYear === params.dueYear) &&
+    (!(params.firstYear?.length || params.firstStatus?.length) || matchesRecordRecognition(row, params))
 }
 
 /** 首次年份与状态都使用 RL-08 已有的共享判定和筛选语义。 */
@@ -298,7 +301,7 @@ function matchesRecordRecognition(row: RecordRow, params: RecordQuery): boolean 
 /** 读取分组下全部来源/事件/出处并投影同一生命周期结果。 */
 function buildRecordRows(
   db: Db,
-  pageGroups: { enterpriseId: number; titleCode: string }[],
+  pageGroups: LedgerGroup[],
 ): RecordRow[] {
   if (!pageGroups.length) return []
   const groupKeys = pageGroups.map((g) => groupKey(g.enterpriseId, g.titleCode))
@@ -353,6 +356,10 @@ function buildRecordRows(
         .all()
     : []
 
+  return projectLedgerRows(pageGroups, matched, rawEvents, evidence)
+}
+
+export function projectLedgerRows(pageGroups: LedgerGroup[], matched: LedgerSource[], rawEvents: LedgerEvent[], evidence: LedgerEvidence[]): RecordRow[] {
   const evidenceByEvent = groupBy(evidence, (row) => row.recordEventId)
   const eventsByRecord = groupBy(rawEvents, (e) => e.recordId)
   const recordsByKey = groupBy(matched, (r) => groupKey(r.enterpriseId, r.titleCode))
@@ -559,17 +566,26 @@ function enterpriseDetailSnapshot(db: Db, id: number): EnterpriseDetail | null {
         .all()
     : []
 
+  const publishedPresentation = readPublicPublishedNames(db, evidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
+  return projectEnterpriseDetail(ent, anyRecord?.district ?? null, records, events, evidence, publishedPresentation)
+}
+
+export function projectEnterpriseDetail(
+  ent: Pick<EnterpriseDetail, 'id' | 'name' | 'uscc' | 'district'> & { qualityFlags: string[] | null },
+  recordDistrict: string | null,
+  records: Omit<DetailRecord, 'events'>[],
+  events: Omit<DetailEvent, 'evidence'>[],
+  evidence: (DetailEvent['evidence'][number] & { recordEventId: number })[],
+  publishedPresentation: PublishedPresentation,
+): EnterpriseDetail {
   const evByEvent = groupBy(evidence, (v) => v.recordEventId)
   const evByRecord = groupBy(events, (e) => e.recordId)
-
-  const publishedPresentation = readPublicPublishedNames(db, evidence.map(v => ({ evidenceId: v.id, eventId: v.recordEventId })))
-
   return {
-    ...(publishedPresentation ? { publishedPresentation } : {}),
+    publishedPresentation,
     id: ent.id,
     name: ent.name,
     uscc: ent.uscc,
-    district: ent.district ?? anyRecord?.district ?? null,
+    district: ent.district ?? recordDistrict,
     qualityFlags: ent.qualityFlags ?? [],
     records: records.map((r) => ({
       id: r.id,
@@ -592,183 +608,6 @@ function enterpriseDetailSnapshot(db: Db, id: number): EnterpriseDetail | null {
       })),
     })),
   }
-}
-
-// ---------------------------------------------------------------------------
-// 统计
-// ---------------------------------------------------------------------------
-
-export interface RosterWorkbenchCounts {
-  totalRecords: number
-  totalEnterprises: number
-}
-
-export interface Stats extends RosterWorkbenchCounts {
-  byTitle: { key: string; n: number }[]
-  bySource: { key: string; n: number }[]
-  byEvent: { key: string; n: number }[]
-  byDistrict: { key: string; n: number }[]
-  byYear: { key: string; n: number }[]
-}
-
-/** 统计过滤条件(与 `/api/stats` 的 query 参数一致)。 */
-export interface StatsFilter {
-  title?: string
-  district?: string
-  source?: string
-}
-
-/** 组合键:企业 × 称号。 */
-const statsGroupKey = sql`${schema.record.enterpriseId} || '/' || ${schema.record.titleCode}`
-
-function countRosterRecords(db: Db, where?: SQL): RosterWorkbenchCounts {
-  const totalRecords = db
-    .select({ n: sql<number>`count(distinct ${statsGroupKey})` })
-    .from(schema.record)
-    .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
-    .where(where)
-    .get()?.n ?? 0
-
-  const totalEnterprises = db
-    .select({ n: sql<number>`count(distinct ${schema.record.enterpriseId})` })
-    .from(schema.record)
-    .where(where)
-    .get()?.n ?? 0
-
-  return { totalRecords, totalEnterprises }
-}
-
-export function readRosterWorkbenchCounts(db: Db): RosterWorkbenchCounts {
-  return countRosterRecords(db)
-}
-
-/**
- * 计数聚合。
- *
- * **全部计数以「记录」为单位**,与 `listRecords` 的筛选语义一致:
- * - `byTitle` / `bySource` / `byDistrict`:record 表本身即「企业 × 称号 × 来源」,
- *   按列分组计数即「记录数」。
- * - `byEvent` / `byYear`:按**有该事件类型 / 年份的记录数**(distinct record_id),
- *   等于 `listRecords({ eventType })` / `listRecords({ year })` 的 total —— 不再是事件条数。
- */
-/**
- * 计数聚合。
- *
- * **全部计数以「企业 × 称号」组合为单位**,与 `listRecords`(及台账表格、导出)同粒度,
- * 从而保证「统计桶的数字 = 点进去的行数」。
- * - `byTitle` / `bySource` / `byDistrict`:按列分组,数**含该取值的组合数**;一个组合含
- *   两个来源时,在两个来源桶里各计一次(与 `listRecords({ source })` 一致)。
- * - `byEvent` / `byYear`:数**有该事件类型 / 年份的组合数**。
- */
-export function getStats(db: Db, filter: StatsFilter = {}): Stats {
-  const conds: SQL[] = []
-  if (filter.title) conds.push(eq(schema.record.titleCode, filter.title))
-  if (filter.source) conds.push(eq(schema.record.source, filter.source as 'jxj' | 'miit'))
-  if (filter.district) conds.push(eq(schema.record.district, filter.district))
-  const where = conds.length ? and(...conds) : undefined
-
-  /** 按 record 的某列分组,数组合数(称号 / 来源 / 区县)。 */
-  const groupsByRecordColumn = (column: AnySQLiteColumn) =>
-    (
-      db
-        .select({ key: column, n: sql<number>`count(distinct ${statsGroupKey})` })
-        .from(schema.record)
-        .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
-        .where(where)
-        .groupBy(column)
-        .all() as { key: unknown; n: number }[]
-    ).map((r) => ({ key: String(r.key ?? '—'), n: r.n }))
-
-  /** 按某个事件列分组,数**含该事件 / 年份的组合数**。 */
-  const groupsByEventColumn = (column: AnySQLiteColumn) =>
-    (
-      db
-        .select({ key: column, n: sql<number>`count(distinct ${statsGroupKey})` })
-        .from(schema.recordEvent)
-        .innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId))
-        .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
-        .where(where)
-        .groupBy(column)
-        .all() as { key: unknown; n: number }[]
-    ).map((r) => ({ key: String(r.key ?? '—'), n: r.n }))
-
-  return {
-    ...countRosterRecords(db, where),
-    byTitle: groupsByRecordColumn(schema.record.titleCode),
-    bySource: groupsByRecordColumn(schema.record.source),
-    byEvent: groupsByEventColumn(schema.recordEvent.eventType),
-    byDistrict: orderBy(groupsByRecordColumn(schema.record.district), [(r) => r.n], ['desc']).slice(0, 20),
-    byYear: groupsByEventColumn(schema.recordEvent.year).sort((a, b) => a.key.localeCompare(b.key)),
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 数据质量
-// ---------------------------------------------------------------------------
-
-export interface QualityGroup {
-  kind: string
-  label: string
-  n: number
-  samples: { enterpriseId: number; name: string; uscc: string | null; district: string | null }[]
-}
-
-/**
- * 可由公布文件/工信部名单直接推出的质量项。
- * - `uscc_missing`:无统代(按名称归并)。
- * - `name_ambiguous`:重名 —— 同名(归一化后)对应多个企业,或同名下出现多个不同统代。
- *
- * 非宁波、注销等需外部富化数据,不在本期(见 SPEC 用户故事 11 与 ADR)。
- */
-export function getQuality(db: Db): QualityGroup[] {
-  const usccMissing = db
-    .select({ enterpriseId: schema.enterprise.id, name: schema.enterprise.name, uscc: schema.enterprise.usccNorm, district: schema.enterprise.district })
-    .from(schema.enterprise)
-    .where(isNull(schema.enterprise.usccNorm))
-    .all()
-
-  // 重名:同名(归一化后)对应多个企业,或同名下出现多个不同统代。
-  const dupNames = db
-    .select({ nameNorm: schema.enterprise.nameNorm })
-    .from(schema.enterprise)
-    .groupBy(schema.enterprise.nameNorm)
-    .having(sql`count(*) > 1 or count(distinct ${schema.enterprise.usccNorm}) > 1`)
-
-  const ambiguous = db
-    .select({ enterpriseId: schema.enterprise.id, name: schema.enterprise.name, uscc: schema.enterprise.usccNorm, district: schema.enterprise.district })
-    .from(schema.enterprise)
-    .where(inArray(schema.enterprise.nameNorm, dupNames))
-    .orderBy(schema.enterprise.nameNorm)
-    .all()
-
-  // 漂移:属地不在宁波区县/功能区之列(可能是外市注册,或来源里的写法异常)。
-  const offCity = db
-    .select({ enterpriseId: schema.enterprise.id, name: schema.enterprise.name, uscc: schema.enterprise.usccNorm, district: schema.enterprise.district })
-    .from(schema.enterprise)
-    .where(and(sql`${schema.enterprise.district} is not null`, sql`${schema.enterprise.district} <> ''`))
-    .all()
-    .filter((e) => !isNingboDistrict(e.district ?? ''))
-
-  return [
-    {
-      kind: 'uscc_missing',
-      label: '无统一社会信用代码(按名称归并)',
-      n: usccMissing.length,
-      samples: usccMissing.slice(0, 50),
-    },
-    {
-      kind: 'name_ambiguous',
-      label: '重名(同名对应多个主体)',
-      n: ambiguous.length,
-      samples: ambiguous.slice(0, 50),
-    },
-    {
-      kind: 'district_off_city',
-      label: '属地不在宁波(可能是外市注册或写法异常)',
-      n: offCity.length,
-      samples: offCity.slice(0, 50),
-    },
-  ]
 }
 
 // ---------------------------------------------------------------------------
@@ -880,6 +719,22 @@ function ledgerRecordsSnapshot(db: Db, params: RecordFilterQuery): ExportRow[] {
         .where(inArray(schema.recordEvidence.recordEventId, eventIds))
         .all()
     : []
+  const projection = prepareLedgerExportProjection(matched, events, evidence)
+  const publishedByEvidence = new Map<number, OfficialPublishedFact>()
+  for (let start = 0; start < projection.scopes.length; start += 40) {
+    const scopes = projection.scopes.slice(start, start + 40)
+    const batch = readPublicPublishedNames(db, scopes.flat())
+    const results = batch.availability === 'available' ? [batch] : scopes.map(scope => readPublicPublishedNames(db, scope))
+    for (const result of results) for (const fact of result.facts) publishedByEvidence.set(fact.evidenceId, fact)
+  }
+  return projection.rows(publishedByEvidence)
+}
+
+export type LedgerExportSource = Omit<LedgerSource, 'flags'>
+export type LedgerExportEvent = Pick<LedgerEvent, 'id' | 'recordId' | 'type' | 'year' | 'seq' | 'sortKey'>
+export type LedgerExportEvidence = LedgerEvidence & { id: number }
+
+export function prepareLedgerExportProjection(matched: LedgerExportSource[], events: LedgerExportEvent[], evidence: LedgerExportEvidence[]) {
   const evByRecord = groupBy(events, (e) => e.recordId)
   const evByEvent = groupBy(evidence, (v) => v.recordEventId)
 
@@ -887,55 +742,50 @@ function ledgerRecordsSnapshot(db: Db, params: RecordFilterQuery): ExportRow[] {
   const byKey = groupBy(matched, (r) => groupKey(r.enterpriseId, r.titleCode))
 
   const recordGroups = Object.values(byKey)
-  const publishedByEvidence = new Map<number, OfficialPublishedFact>()
-  for (let start = 0; start < recordGroups.length; start += 40) {
-    const scopes = recordGroups.slice(start, start + 40).map(recs => recs.flatMap(r =>
-      (evByRecord[r.recordId] ?? []).flatMap(e => (evByEvent[e.id] ?? []).map(v => ({ evidenceId: v.id, eventId: e.id }))),
-    ))
-    const batch = readPublicPublishedNames(db, scopes.flat())
-    // Keep the existing per-group budget/error boundary if a batch cannot be projected.
-    const results = batch.availability === 'available' ? [batch] : scopes.map(scope => readPublicPublishedNames(db, scope))
-    for (const result of results) for (const fact of result.facts) publishedByEvidence.set(fact.evidenceId, fact)
+  const scopes: OfficialPublishedScope[][] = recordGroups.map(recs => recs.flatMap(r =>
+    (evByRecord[r.recordId] ?? []).flatMap(e => (evByEvent[e.id] ?? []).map(v => ({ evidenceId: v.id, eventId: e.id }))),
+  ))
+  function rows(publishedByEvidence: ReadonlyMap<number, OfficialPublishedFact>): ExportRow[] {
+    return recordGroups.map((recs) => {
+      const head = minBy(recs, (r) => r.recordId)!
+      // 组内 enterpriseId 恒定(分组键就是它),取 head 的即可。
+      const enterpriseId = head.enterpriseId
+      // 区县取组内 record.id 最小且有值者(与列表同一规则)。
+      const district = minBy(recs.filter((r) => r.district), (r) => r.recordId)?.district ?? null
+      // 该组合下全部事件(保留每条事件所属来源),按 sortKey 排序。
+      const evRows = orderBy(
+        recs.flatMap((r) =>
+          (evByRecord[r.recordId] ?? []).map((e) => ({
+            type: e.type,
+            year: e.year,
+            seq: e.seq,
+            sortKey: e.sortKey,
+            id: e.id,
+            recordId: r.recordId,
+          })),
+        ),
+        [(e) => e.sortKey, (e) => e.id],
+        ['asc', 'asc'],
+      )
+      const selectedEvidence = evRows.flatMap(e => evByEvent[e.id] ?? [])
+      const evidenceText = selectedEvidence.map(v => {
+        const locator = formatEvidence(v)
+        const fact = publishedByEvidence.get(v.id)
+        return locator + ' / ' + (fact ? publishedNameText(fact) : '公布名称暂不可用')
+      }).join('; ')
+      return {
+        enterpriseId,
+        name: head.name,
+        uscc: head.uscc,
+        district,
+        titleCode: head.titleCode,
+        sources: orderSources(recs.map((r) => r.source)),
+        events: evRows
+          .map((e) => `${EVENTS[e.type] ?? e.type} ${e.year ?? ''}${e.seq ? '-' + e.seq : ''}`.trim())
+          .join('; '),
+        evidence: evidenceText,
+      }
+    })
   }
-
-  return recordGroups.map((recs) => {
-    const head = minBy(recs, (r) => r.recordId)!
-    // 组内 enterpriseId 恒定(分组键就是它),取 head 的即可。
-    const enterpriseId = head.enterpriseId
-    // 区县取组内 record.id 最小且有值者(与列表同一规则)。
-    const district = minBy(recs.filter((r) => r.district), (r) => r.recordId)?.district ?? null
-    // 该组合下全部事件(保留每条事件所属来源),按 sortKey 排序。
-    const evRows = orderBy(
-      recs.flatMap((r) =>
-        (evByRecord[r.recordId] ?? []).map((e) => ({
-          type: e.type,
-          year: e.year,
-          seq: e.seq,
-          sortKey: e.sortKey,
-          id: e.id,
-          recordId: r.recordId,
-        })),
-      ),
-      [(e) => e.sortKey, (e) => e.id],
-      ['asc', 'asc'],
-    )
-    const selectedEvidence = evRows.flatMap(e => evByEvent[e.id] ?? [])
-    const evidenceText = selectedEvidence.map(v => {
-      const locator = formatEvidence(v)
-      const fact = publishedByEvidence.get(v.id)
-      return locator + ' / ' + (fact ? publishedNameText(fact) : '公布名称暂不可用')
-    }).join('; ')
-    return {
-      enterpriseId,
-      name: head.name,
-      uscc: head.uscc,
-      district,
-      titleCode: head.titleCode,
-      sources: orderSources(recs.map((r) => r.source)),
-      events: evRows
-        .map((e) => `${EVENTS[e.type] ?? e.type} ${e.year ?? ''}${e.seq ? '-' + e.seq : ''}`.trim())
-        .join('; '),
-      evidence: evidenceText,
-    }
-  })
+  return { scopes, rows }
 }

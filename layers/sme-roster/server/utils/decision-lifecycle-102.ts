@@ -90,7 +90,7 @@ export const browserDecisionCommand102 = decisionScope102.extend({
  * Keeping it separate from the public schemas is what stops a client from omitting metadata
  * to bypass the identity requirement on HTTP/MCP.
  */
-const internalDecisionCommand102 = decisionScope102.extend({
+export const internalDecisionCommand102 = decisionScope102.extend({
   action: z.enum(['replace', 'withdraw', 'maintain']),
   actor: actor102.nullable(), ruleVersion: ruleVersion102.nullable(),
   ...decisionCommandFields(),
@@ -112,11 +112,11 @@ export function managedDecision102(id: AnyColumn | SQL = s.differenceReason.id, 
 export function latestDecision102(db: DecisionDb, scope: Scope) {
   return db.select().from(s.differenceReason).where(whereScope(scope)).orderBy(desc(s.differenceReason.recordedAt), desc(s.differenceReason.id)).limit(1).get()
 }
-function publicVersion(row: Omit<typeof s.differenceReason.$inferSelect, 'evidenceCollectionId' | 'evidenceObservationId'> & { evidenceQueryId: number | null; evidenceRelationId: number | null }, currentId: number | null) {
+export function publicVersion102(row: Omit<typeof s.differenceReason.$inferSelect, 'evidenceCollectionId' | 'evidenceObservationId'> & { evidenceQueryId: number | null; evidenceRelationId: number | null }, currentId: number | null) {
   const { requestHash, idempotencyKey, ...version } = row
   return { ...version, origin: row.lifecycleAction ? 'lifecycle' : 'legacy_import', isCurrent: row.id === currentId }
 }
-function receipt(row: Pick<typeof s.differenceReason.$inferSelect, 'id' | 'lifecycleAction' | 'previousId' | 'recordedAt'>) {
+export function decisionReceipt102(row: Pick<typeof s.differenceReason.$inferSelect, 'id' | 'lifecycleAction' | 'previousId' | 'recordedAt'>) {
   return { versionId: row.id, currentId: row.lifecycleAction === 'withdraw' ? null : row.id, previousId: row.previousId, action: row.lifecycleAction as string | null, recordedAt: row.recordedAt }
 }
 function requireEnterprise(db: DecisionDb, enterpriseId: number) {
@@ -127,12 +127,12 @@ function requireEnterprise(db: DecisionDb, enterpriseId: number) {
 export function readDecision102(db: DecisionDb, id: number) {
   const row = db.select(differencePublicColumns(db)).from(s.differenceReason).where(eq(s.differenceReason.id, id)).get()
   if (!row) throw new DecisionError102(404, 'not_found', 'Decision version not found')
-  return publicVersion(row, latestDecisionHead102(db, row)?.id ?? null)
+  return publicVersion102(row, latestDecisionHead102(db, row)?.id ?? null)
 }
 export function currentDecision102(db: DecisionDb, scope: Scope) {
   requireEnterprise(db, scope.enterpriseId)
   const state = decisionState102(db.select(differencePublicColumns(db)).from(s.differenceReason).where(whereScope(scope)).orderBy(desc(s.differenceReason.recordedAt), desc(s.differenceReason.id)).limit(1).get())
-  return { ...scope, versionId: state.versionId, current: state.current ? publicVersion(state.current, state.current.id) : null }
+  return { ...scope, versionId: state.versionId, current: state.current ? publicVersion102(state.current, state.current.id) : null }
 }
 function decisionState102<T extends { id: number; lifecycleAction: string | null }>(row: T | undefined) {
   return { versionId: row?.id ?? null, current: row && row.lifecycleAction !== 'withdraw' ? row : null }
@@ -172,26 +172,27 @@ export function currentDecisions102(db: DecisionDb, scopes: readonly Scope[]) {
   const rows = ids.length ? db.select(differencePublicColumns(db)).from(s.differenceReason).where(inArray(s.differenceReason.id, ids)).all() : []
   const bodies = new Map(rows.map(row => [row.id, row]))
   return states.map((state, index) => ({ ...scopes[index]!, versionId: state.versionId,
-    current: state.current ? publicVersion(bodies.get(state.current.id)!, state.current.id) : null }))
+    current: state.current ? publicVersion102(bodies.get(state.current.id)!, state.current.id) : null }))
 }
-/** Shared read-only admission; optional pins bind the qualification confirmation plan. */
-function prepareDecision102(db: DecisionDb, command: DecisionCommand102, capturePins = false) {
-  const enterprise = requireEnterprise(db, command.enterpriseId)
-  const previous = latestDecisionHead102(db, command)
+export function checkDecisionHead102(command: DecisionCommand102, previous: ReturnType<typeof latestDecisionHead102>, token?: ReturnType<typeof readEvidenceToken113>) {
   if ((previous?.id ?? null) !== command.expectedCurrentId) throw new DecisionError102(409, 'stale_version', 'Expected current version no longer matches')
   if (command.reviewedEvidence) {
-    const token = readEvidenceToken113(db, command)
-    if (!token.projectionReady || token.latestRevisionId !== command.reviewedEvidence.latestRevisionId) throw new DecisionError102(409, 'stale_evidence', 'Relevant committed evidence changed or its projection is unfinished')
+    if (!token?.projectionReady || token.latestRevisionId !== command.reviewedEvidence.latestRevisionId) throw new DecisionError102(409, 'stale_evidence', 'Relevant committed evidence changed or its projection is unfinished')
     if (!previous || previous.lifecycleAction === 'withdraw') throw new DecisionError102(409, 'no_current_decision', 'Review requires an active current decision')
   }
-  const d = command.decision ?? { status: 'not_queried' as const, measureCode: 'none' as const, verificationStatus: 'pending' as const }
-  for (const ref of d.factReferences ?? []) {
-    const fact = db.select().from(s.enterpriseFactRevision).where(and(eq(s.enterpriseFactRevision.enterpriseId, command.enterpriseId), eq(s.enterpriseFactRevision.factId, ref.factId))).orderBy(desc(s.enterpriseFactRevision.revision)).get()
-    if (ref.enterpriseId !== command.enterpriseId || !fact || fact.revision !== ref.revision || fact.status !== 'confirmed' || fact.fact.kind !== ref.kind) throw new DecisionError102(422, 'fact_reference_mismatch', 'Fact reference must pin a current confirmed fact owned by this enterprise')
+}
+
+export const decisionContent102 = (command: DecisionCommand102) => command.decision ??
+  { status: 'not_queried' as const, measureCode: 'none' as const, verificationStatus: 'pending' as const }
+
+export function checkDecisionFact102(enterpriseId: number, ref: NonNullable<NonNullable<DecisionCommand102['decision']>['factReferences']>[number],
+  fact: typeof s.enterpriseFactRevision.$inferSelect | undefined) {
+  if (ref.enterpriseId !== enterpriseId || !fact || fact.revision !== ref.revision || fact.status !== 'confirmed' || fact.fact.kind !== ref.kind) {
+    throw new DecisionError102(422, 'fact_reference_mismatch', 'Fact reference must pin a current confirmed fact owned by this enterprise')
   }
-  // Validate source identity/title with narrow projections; original bodies remain untouched.
-  const targetRelation = d.evidenceRelationId ? readDifferenceObservation(db, d.evidenceRelationId) : null
-  const relation = targetRelation
+}
+
+export function checkDecisionRelation102(enterprise: ReturnType<typeof requireEnterprise>, d: ReturnType<typeof decisionContent102>, relation: ReturnType<typeof readDifferenceObservation> | null) {
   if (d.currentQualification && (!relation || relation.verificationStatus !== 'confirmed')) throw new DecisionError102(422, 'qualification_evidence_unconfirmed', 'Current qualification requires an explicitly confirmed source row')
   if (d.evidenceRelationId && !relation) throw new DecisionError102(422, 'evidence_not_found', 'Relation evidence not found')
   const enterpriseUscc=normalizeUscc(enterprise.usccNorm), relationUscc=normalizeUscc(relation?.uscc)
@@ -199,8 +200,11 @@ function prepareDecision102(db: DecisionDb, command: DecisionCommand102, capture
   const explicitConflict=relationUscc && enterpriseUscc && relationUscc !== enterpriseUscc
   if (ownerMismatch || explicitConflict) throw new DecisionError102(422, 'evidence_mismatch', 'Relation evidence belongs to another or conflicting enterprise')
   if (relation && d.evidenceQueryId && relation.queryId !== d.evidenceQueryId) throw new DecisionError102(422, 'evidence_mismatch', 'Query and relation evidence must identify the same query')
-  const queryId = d.evidenceQueryId ?? relation?.queryId
-  const targetQuery = queryId ? readDifferenceCollection(db, queryId) : null
+}
+
+export function checkDecisionQuery102(command: DecisionCommand102, enterprise: ReturnType<typeof requireEnterprise>, queryId: number | null | undefined,
+  targetQuery: ReturnType<typeof readDifferenceCollection> | null, relation: ReturnType<typeof readDifferenceObservation> | null,
+  collectionPages: () => ReturnType<typeof readDifferenceCollectionScope>['pages']) {
   if (queryId) {
     const query = targetQuery?.collection
     if (!query) throw new DecisionError102(422, 'evidence_not_found', 'Query evidence not found')
@@ -208,17 +212,36 @@ function prepareDecision102(db: DecisionDb, command: DecisionCommand102, capture
     if (!titles.some(rdjb => RDJB_TITLE_CODES[rdjb] === command.titleCode)) throw new DecisionError102(422, 'evidence_mismatch', 'Evidence title scope does not include decision title')
     if (!relation && query.queryKey !== enterprise.usccNorm && query.queryKey !== `name:${enterprise.nameNorm}`) throw new DecisionError102(422, 'evidence_mismatch', 'Query-only evidence must identify the exact enterprise')
     if (relation && titles.length > 1) {
-      // Only page metadata is needed to locate a multi-title original row.
-
-      const pages = readDifferenceCollectionScope(db, targetQuery!.collection.id).pages
+      const pages = collectionPages()
       let offset = 0; let rowTitle: string | undefined
       for (const page of pages) { if (page.status !== 'success') continue; offset += page.fetchedCount ?? 0; if (relation.sequenceNo <= offset) { rowTitle = page.rdjb ? RDJB_TITLE_CODES[page.rdjb] : undefined; break } }
       if (rowTitle !== command.titleCode) throw new DecisionError102(422, 'evidence_mismatch', 'Original row title is unknown or different')
     }
   }
+}
+
+export function checkDecisionPriorTime102(command: DecisionCommand102, previous: ReturnType<typeof latestDecisionHead102>) {
   if (command.action !== 'maintain' && previous && !Number.isFinite(Date.parse(previous.recordedAt.slice(0, 19) + 'Z'))) throw new DecisionError102(422, 'invalid_prior_time', 'Historical registration time must be reviewed before replacement')
+}
+
+function prepareDecision102(db: DecisionDb, command: DecisionCommand102, capturePins = false) {
+  const enterprise = requireEnterprise(db, command.enterpriseId)
+  const previous = latestDecisionHead102(db, command)
+  checkDecisionHead102(command, previous, command.reviewedEvidence && readEvidenceToken113(db, command))
+  const d = decisionContent102(command)
+  const facts = (d.factReferences ?? []).map(ref => {
+    const fact = db.select().from(s.enterpriseFactRevision).where(and(eq(s.enterpriseFactRevision.enterpriseId, command.enterpriseId), eq(s.enterpriseFactRevision.factId, ref.factId))).orderBy(desc(s.enterpriseFactRevision.revision)).get()
+    checkDecisionFact102(command.enterpriseId, ref, fact)
+    return fact
+  })
+  const relation = d.evidenceRelationId ? readDifferenceObservation(db, d.evidenceRelationId) : null
+  checkDecisionRelation102(enterprise, d, relation)
+  const queryId = d.evidenceQueryId ?? relation?.queryId
+  const targetQuery = queryId ? readDifferenceCollection(db, queryId) : null
+  checkDecisionQuery102(command, enterprise, queryId, targetQuery, relation, () => readDifferenceCollectionScope(db, targetQuery!.collection.id).pages)
+  checkDecisionPriorTime102(command, previous)
+  const targetRelation = relation
   if (!capturePins) return { previous, d, targetQuery, targetRelation, pins: null }
-  const facts = (d.factReferences ?? []).map(ref => db.select().from(s.enterpriseFactRevision).where(and(eq(s.enterpriseFactRevision.enterpriseId, command.enterpriseId), eq(s.enterpriseFactRevision.factId, ref.factId))).orderBy(desc(s.enterpriseFactRevision.revision)).get())
   const observation = relation ? db.select().from(s.platformBusinessObservation).where(eq(s.platformBusinessObservation.id, relation.observationId)).get() : null
   const version = observation?.versionId ? db.select().from(s.platformBusinessRecordVersion).where(eq(s.platformBusinessRecordVersion.id, observation.versionId)).get() : null
   const assignment = observation ? db.select().from(s.platformObservationAssignment).where(eq(s.platformObservationAssignment.observationId, observation.id)).orderBy(desc(s.platformObservationAssignment.revision)).get() : null
@@ -227,10 +250,10 @@ function prepareDecision102(db: DecisionDb, command: DecisionCommand102, capture
   const pins = { sourceVersions, enterprise, previous: previous ?? null, relation, observation, version, assignment, sourceScope, facts }
   return { previous, d, targetQuery, targetRelation, pins }
 }
-const qualificationPlanRule = 'qualification-preflight-1'
+export const qualificationPlanRule = 'qualification-preflight-1'
 export const qualificationPreflight102 = decisionCommand102.refine(c => c.action === 'replace' && !!c.decision?.currentQualification, 'Requires qualification replacement')
 export const qualificationCommit102 = z.strictObject({ command: qualificationPreflight102, planHash: z.string().regex(/^[a-f0-9]{64}$/) })
-function qualificationPlanHash(command: DecisionCommand102, pins: unknown) {
+export function qualificationPlanHash(command: DecisionCommand102, pins: unknown) {
   return createHash('sha256').update(JSON.stringify({ rule: qualificationPlanRule, command, pins })).digest('hex')
 }
 export function preflightQualification102(db: DecisionDb, input: unknown) {
@@ -247,8 +270,7 @@ export function commitQualification102(db: DecisionDb, input: unknown) {
   return saveDecision102(db, envelope.command, envelope.planHash)
 }
 
-export function saveDecision102(db: DecisionDb, command: DecisionCommand102, planHash?: string) {
-  command = parse102(internalDecisionCommand102, command)
+export function decisionRequestHash102(command: DecisionCommand102, planHash?: string) {
   // External receipts predate the browser envelope. Preserve their normalized key
   // order even when shared schema fields move; nested fields are ordered by content.
   // Nullable internal metadata keeps its existing envelope and stored hashes;
@@ -260,7 +282,31 @@ export function saveDecision102(db: DecisionDb, command: DecisionCommand102, pla
     basis: command.basis, ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt,
     decision: command.decision, reviewedEvidence: command.reviewedEvidence,
   } : command
-  const hash = createHash('sha256').update(JSON.stringify(planHash ? { command: normalized, planHash } : normalized)).digest('hex')
+  return createHash('sha256').update(JSON.stringify(planHash ? { command: normalized, planHash } : normalized)).digest('hex')
+}
+
+export function decisionValues102(command: DecisionCommand102, previous: ReturnType<typeof latestDecisionHead102>,
+  d: ReturnType<typeof decisionContent102>, hash: string) {
+  if (command.action === 'maintain' || (command.action === 'replace') !== !!command.decision) throw new DecisionError102(400, 'invalid_request', 'Replacement requires decision; withdrawal must omit decision')
+  if (command.action === 'withdraw' && (!previous || previous.lifecycleAction === 'withdraw')) throw new DecisionError102(409, 'no_current_decision', 'No active decision to withdraw')
+  const previousWall = previous ? Date.parse(previous.recordedAt.slice(0, 19) + 'Z') : 0
+  // Older imports may omit milliseconds or carry offsets. Move beyond their
+  // wall-clock second as well as actual instant so all existing lexical readers agree.
+  const recordedAt = new Date(Math.max(Date.now(), previousWall + 1000, previous ? Date.parse(previous.recordedAt) + 1000 : 0)).toISOString()
+  return {
+    enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction,
+    status: d.status, reasonCode: d.reasonCode ?? null, reasonNote: d.reasonNote ?? null,
+    measureCode: d.measureCode, measureNote: d.measureNote ?? null,
+    verificationStatus: d.verificationStatus, movedInCity: d.movedIn?.city ?? null, movedInTitleCode: d.movedIn?.titleCode ?? null,
+    movedInYear: d.movedIn?.year ?? null, movedInBatch: d.movedIn?.batch ?? null, factReferences: d.factReferences ?? [], currentQualification: d.currentQualification ?? null,
+    lifecycleAction: command.action, previousId: previous?.id ?? null, actor: command.actor, basis: command.basis,
+    ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, idempotencyKey: command.idempotencyKey, requestHash: hash, recordedAt,
+  }
+}
+
+export function saveDecision102(db: DecisionDb, command: DecisionCommand102, planHash?: string) {
+  command = parse102(internalDecisionCommand102, command)
+  const hash = decisionRequestHash102(command, planHash)
   return db.transaction(tx => {
     const review = tx.select().from(s.evidenceReviewReceipt114).where(eq(s.evidenceReviewReceipt114.idempotencyKey, command.idempotencyKey)).get()
     if (review) {
@@ -270,12 +316,12 @@ export function saveDecision102(db: DecisionDb, command: DecisionCommand102, pla
     const prior = tx.select().from(s.differenceReason).where(eq(s.differenceReason.idempotencyKey, command.idempotencyKey)).get()
     if (prior) {
       if (prior.requestHash !== hash) throw new DecisionError102(409, 'idempotency_conflict', 'Idempotency key already has a different request')
-      return receipt(prior)
+      return decisionReceipt102(prior)
     }
     const prepared = prepareDecision102(tx, command, !!planHash)
     const { previous } = prepared
     if (planHash && qualificationPlanHash(command, prepared.pins) !== planHash) throw new DecisionError102(409, 'stale_plan', 'Qualification plan changed; preflight again')
-    const finishReview = (result: ReturnType<typeof receipt>, decisionId: number) => {
+    const finishReview = (result: ReturnType<typeof decisionReceipt102>, decisionId: number) => {
       if (!command.reviewedEvidence) return result
       const revisionId = command.reviewedEvidence.latestRevisionId
       // Establish the baseline for the resulting version; replacement never invents content.
@@ -289,28 +335,14 @@ export function saveDecision102(db: DecisionDb, command: DecisionCommand102, pla
     }
     if (command.action === 'maintain') {
       const row = latestDecision102(tx, command)!
-      return finishReview({ ...receipt(row), action: 'maintain', recordedAt: new Date().toISOString() }, row.id)
+      return finishReview({ ...decisionReceipt102(row), action: 'maintain', recordedAt: new Date().toISOString() }, row.id)
     }
-    if ((command.action === 'replace') !== !!command.decision) throw new DecisionError102(400, 'invalid_request', 'Replacement requires decision; withdrawal must omit decision')
-    if (command.action === 'withdraw' && (!previous || previous.lifecycleAction === 'withdraw')) throw new DecisionError102(409, 'no_current_decision', 'No active decision to withdraw')
     const { d, targetQuery, targetRelation } = prepared
-    const previousWall = previous ? Date.parse(previous.recordedAt.slice(0, 19) + 'Z') : 0
-    // Older imports may omit milliseconds or carry offsets. Move beyond their
-    // wall-clock second as well as actual instant so all existing lexical readers agree.
-    const recordedAt = new Date(Math.max(Date.now(), previousWall + 1000, previous ? Date.parse(previous.recordedAt) + 1000 : 0)).toISOString()
-    const values = {
-      enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction,
-      status: d.status, reasonCode: d.reasonCode ?? null, reasonNote: d.reasonNote ?? null,
-      measureCode: d.measureCode, measureNote: d.measureNote ?? null,
-      verificationStatus: d.verificationStatus, movedInCity: d.movedIn?.city ?? null, movedInTitleCode: d.movedIn?.titleCode ?? null,
-      movedInYear: d.movedIn?.year ?? null, movedInBatch: d.movedIn?.batch ?? null, factReferences: d.factReferences ?? [], currentQualification: d.currentQualification ?? null,
-      lifecycleAction: command.action, previousId: previous?.id ?? null, actor: command.actor === null ? jsonNull : command.actor, basis: command.basis,
-      ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, idempotencyKey: command.idempotencyKey, requestHash: hash, recordedAt,
-    }
+    const values = decisionValues102(command, previous, d, hash)
     // External IDs have already been resolved and validated. Bind them exactly once
     // to the target slots; hashes and serialized receipts retain the original request.
-    const row = tx.insert(targetDifferenceReason).values({ ...values, evidenceCollectionId: d.evidenceQueryId ? targetQuery!.collection.id : null, evidenceObservationId: targetRelation?.observationId ?? null }).returning({ id: targetDifferenceReason.id, lifecycleAction: targetDifferenceReason.lifecycleAction, previousId: targetDifferenceReason.previousId, recordedAt: targetDifferenceReason.recordedAt }).get()
-    return finishReview(receipt(row), row.id)
+    const row = tx.insert(targetDifferenceReason).values({ ...values, actor: values.actor ?? jsonNull, evidenceCollectionId: d.evidenceQueryId ? targetQuery!.collection.id : null, evidenceObservationId: targetRelation?.observationId ?? null }).returning({ id: targetDifferenceReason.id, lifecycleAction: targetDifferenceReason.lifecycleAction, previousId: targetDifferenceReason.previousId, recordedAt: targetDifferenceReason.recordedAt }).get()
+    return finishReview(decisionReceipt102(row), row.id)
   }, { behavior: 'immediate' })
 }
 

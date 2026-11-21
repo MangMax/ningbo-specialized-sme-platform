@@ -22,6 +22,15 @@ export const enterpriseProfilePatchSchema = z.strictObject({
   actor: z.strictObject({ type: z.enum(['user', 'agent']), id: text(200) }),
   basis: text(2000),
 })
+export function parseEnterpriseProfileHistoryQuery(query: Record<string, unknown>) {
+  const parsed = z.strictObject({ page: z.coerce.number().int().min(1).max(10000).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(25) }).safeParse(query)
+  if (!parsed.success) throw new EnterpriseProfileError(400, 'invalid_request', 'Expected page 1..10000 and pageSize 1..100; no other selectors')
+  return parsed.data
+}
+export function boundedEnterpriseProfileHistory<T>(history: T): T {
+  if (Buffer.byteLength(JSON.stringify(history)) > 256 * 1024) throw new EnterpriseProfileError(413, 'response_too_large', 'History page exceeds 256 KiB; request a smaller pageSize')
+  return history
+}
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 export function getEnterpriseProfile(db: Db, enterpriseId: number) {
   return db.transaction(tx => {
@@ -60,15 +69,12 @@ export function patchEnterpriseProfile(db: Db, enterpriseId: number, body: unkno
   }, { behavior: 'immediate' })
 }
 export function getEnterpriseProfileHistory(db: Db, enterpriseId: number, query: Record<string, unknown>) {
-  const parsed = z.strictObject({ page: z.coerce.number().int().min(1).max(10000).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(25) }).safeParse(query)
-  if (!parsed.success) throw new EnterpriseProfileError(400, 'invalid_request', 'Expected page 1..10000 and pageSize 1..100; no other selectors')
+  const { page, pageSize } = parseEnterpriseProfileHistoryQuery(query)
   return db.transaction(tx => {
-    const { page, pageSize } = parsed.data, scope = eq(s.enterpriseProfileAudit.enterpriseId, enterpriseId)
+    const scope = eq(s.enterpriseProfileAudit.enterpriseId, enterpriseId)
     const total = tx.select({ count: sql<number>`count(*)` }).from(s.enterpriseProfileAudit).where(scope).get()!.count
     if (total === 0 && !tx.select({ id: s.enterprise.id }).from(s.enterprise).where(eq(s.enterprise.id, enterpriseId)).get()) throw new EnterpriseProfileError(404, 'not_found', 'Enterprise and profile history not found')
     const rows = tx.select({ id: s.enterpriseProfileAudit.id, enterpriseId: s.enterpriseProfileAudit.enterpriseId, before: s.enterpriseProfileAudit.before, after: s.enterpriseProfileAudit.after, beforeVersion: s.enterpriseProfileAudit.beforeVersion, afterVersion: s.enterpriseProfileAudit.afterVersion, actor: s.enterpriseProfileAudit.actor, basis: s.enterpriseProfileAudit.basis, retainedAliasId: s.enterpriseProfileAudit.retainedAliasId, aliasCreated: s.enterpriseProfileAudit.aliasCreated, createdAt: s.enterpriseProfileAudit.createdAt }).from(s.enterpriseProfileAudit).where(scope).orderBy(desc(s.enterpriseProfileAudit.id)).limit(pageSize).offset((page - 1) * pageSize).all()
-    const result = { rows, total, page, pageSize }
-    if (Buffer.byteLength(JSON.stringify(result)) > 256 * 1024) throw new EnterpriseProfileError(413, 'response_too_large', 'History page exceeds 256 KiB; request a smaller pageSize')
-    return result
+    return boundedEnterpriseProfileHistory({ rows, total, page, pageSize })
   })
 }

@@ -15,15 +15,19 @@ export function credentialContext(): CredentialContext {
   const config: { ocrToken?: string } = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : {}
   return { ocrToken: config.ocrToken }
 }
-const storageError = () => new Error('凭据配置存储不可用，请检查数据库后重试。')
+const storageError = () => Object.assign(new Error('凭据配置存储不可用，请检查数据库后重试。'), { statusCode: 503 })
+export function credentialState(rows: { key: string; value: string; updatedAt: string }[]) {
+  const state: State = {}
+  for (const row of rows) {
+    if (!isCredentialKey(row.key) || typeof row.value !== 'string' || !row.value.trim() || typeof row.updatedAt !== 'string') throw storageError()
+    state[row.key] = { value: row.value, updatedAt: row.updatedAt }
+  }
+  return state
+}
+
 function readState(ctx: CredentialContext): State {
   try {
-    const state: State = {}
-    for (const row of (ctx.db ?? useDb()).select().from(serviceCredential).all()) {
-      if (!isCredentialKey(row.key) || typeof row.value !== 'string' || !row.value.trim() || typeof row.updatedAt !== 'string') throw storageError()
-      state[row.key] = { value: row.value, updatedAt: row.updatedAt }
-    }
-    return state
+    return credentialState((ctx.db ?? useDb()).select().from(serviceCredential).all())
   } catch { throw storageError() }
 }
 export function resolveCredential(key: CredentialKey, ctx: CredentialContext = credentialContext(), override?: string) {
@@ -31,7 +35,7 @@ export function resolveCredential(key: CredentialKey, ctx: CredentialContext = c
   if (override?.trim()) return { value: override.trim(), source: 'override', updatedAt: null, hasSaved: false }
   return resolveFromState(key, ctx, readState(ctx))
 }
-function resolveFromState(key: CredentialKey, ctx: CredentialContext, state: State) {
+export function resolveFromState(key: CredentialKey, ctx: CredentialContext, state: State) {
   const saved = state[key]
   if (saved) return { ...saved, source: 'saved', hasSaved: true }
   const env = ctx.env ?? process.env
@@ -42,8 +46,7 @@ function resolveFromState(key: CredentialKey, ctx: CredentialContext, state: Sta
   }
   return { value: '', source: 'none', updatedAt: null, hasSaved: false }
 }
-export function credentialStatus(ctx: CredentialContext) {
-  const state = readState(ctx)
+export function credentialStatus(ctx: CredentialContext, state = readState(ctx)) {
   const status = (key: CredentialKey) => {
     const { value, ...rest } = resolveFromState(key, ctx, state)
     return { ...rest, configured: !!value, masked: !value ? '' : value.length <= 8 ? '********' : `${value.slice(0, 3)}********${value.slice(-3)}` }

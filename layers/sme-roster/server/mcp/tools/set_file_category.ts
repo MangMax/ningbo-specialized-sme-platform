@@ -5,7 +5,9 @@ import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { TITLE_ORDER } from '#sme-roster/lib/labels'
-import { fileRefShape } from '../../../../core/server/utils/file-agent-reference'
+import { fileRefShape, requirePostgresFileRef } from '../../../../core/server/utils/file-agent-reference'
+import { maintainPostgresFile } from '../../../../core/server/utils/file-maintenance-postgres'
+import { usePostgresFileDb } from '../../../../core/server/utils/file-store-postgres'
 import { setFileCategoryForAgent } from '../../utils/mcp-files'
 import { writeGuard } from '../../../../core/server/utils/mcp-guard'
 
@@ -65,7 +67,6 @@ export default defineMcpTool({
       .describe('该文件对应的称号(取值见 db/titles.ts 的称号字典);null 清空'),
   },
   handler: async (input, extra) => {
-    const db = useDb()
     // 只把**给了的**字段递下去:`parseMetadataPatch` 把「键不存在」当未提供、
     // 「值为 null」当清空,两者语义不同,所以不能用 undefined 占位。
     const meta: Record<string, unknown> = {}
@@ -73,8 +74,20 @@ export default defineMcpTool({
       if (input[key] !== undefined) meta[key] = input[key]
     }
 
-    // 写入不接受已移出库的文件(resolveFileRef 的 allowRemoved 默认 false)。
-    const result = setFileCategoryForAgent(db, input, meta, undefined, parseFileMaintenanceOptions(input), (extra as { logContext?: LogContext } | undefined)?.logContext)
+    const options = parseFileMaintenanceOptions(input)
+    const context = (extra as { logContext?: LogContext } | undefined)?.logContext
+    const pg = usePostgresFileDb()
+    if (pg) {
+      const file = await requirePostgresFileRef(pg, input)
+      if (!Object.keys(meta).length) throw createError({ statusCode: 400, message: '至少给一个分类字段:source / kind / year / batch / titleCode' })
+      try {
+        const row = await maintainPostgresFile(pg, useRuntimeConfig().filesDir, file.id, 'update', meta, options, context, { requireActive: true })
+        return { file: row }
+      } catch (error) {
+        throw createError({ statusCode: (error as { statusCode?: number }).statusCode ?? 500, message: (error as Error).message })
+      }
+    }
+    const result = setFileCategoryForAgent(useDb(), input, meta, undefined, options, context)
     if (!result.ok) throw createError({ statusCode: result.statusCode, message: result.message })
     return { file: { ...result.row } }
   },

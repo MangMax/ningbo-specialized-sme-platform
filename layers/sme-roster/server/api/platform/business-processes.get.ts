@@ -1,7 +1,6 @@
 import { getQuery, setHeader } from 'h3'
-import { useDb } from '@db'
 import { businessProcessFilterFromQuery } from '../../../lib/platform/business-processes'
-import { listTargetBusinessProcesses } from '../../utils/platform-business-processes-target'
+import { listPlatformArchive } from '../../utils/platform-archive-read'
 
 defineRouteMeta({
   openAPI: {
@@ -30,10 +29,10 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler(event => {
+export default defineEventHandler(async event => {
   setHeader(event, 'cache-control', 'no-store')
   try {
-    return listTargetBusinessProcesses(businessProcessFilterFromQuery(getQuery(event)), useDb())
+    return await listPlatformArchive('business-processes', businessProcessFilterFromQuery(getQuery(event)))
   } catch (error) {
     const failure = error as { statusCode?: number; code?: string; message?: string }
     throw createError({ statusCode: failure.statusCode ?? 500, statusMessage: failure.message ?? 'business process query failed' })

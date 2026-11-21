@@ -48,7 +48,7 @@ beforeAll(async () => {
   let startupOutput = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { startupOutput = (startupOutput + data).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
-  try { await waitForHttp(`${service.baseUrl}/api/stats`, { timeoutMs: 60000, child }) } catch (error) { await service.stop(); throw new Error(`${String(error)}\n${startupOutput}`) }
+  try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) } catch (error) { await service.stop(); throw new Error(`${String(error)}\n${startupOutput}`) }
 }, 90000)
 afterAll(async () => { if (service) await service.stop(); rmSync(dir, { recursive: true, force: true }) })
 

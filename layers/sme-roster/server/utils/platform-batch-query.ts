@@ -1,4 +1,6 @@
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { createHash } from 'node:crypto'
 import * as schema from '../../../../db/schema'
 import { recognizedConditionShape, platformQueryTitles, type PlatformLiveQueryResult } from '../../lib/platform/live-query'
 import { cookieRedactor } from '../../lib/platform/client'
@@ -10,6 +12,10 @@ import { getJob, setJobResult } from '../../../core/server/utils/job-store'
 import { runPlatformLiveQuery } from './platform-live-query'
 import { appLog, newLogContext, type LogContext } from '../../../core/lib/logging'
 import { logPlatformResult, platformOperation } from '../../lib/platform/logging'
+import { resolvePostgresCredential } from '../../../core/server/utils/credential-state-postgres'
+import { getPostgresJob, reopenPostgresJob } from '../../../core/server/public'
+import type { JobRow } from '../../../core/server/utils/job-store'
+import { summarizePostgresBatches } from './jobs/batch-summary'
 
 type Db = BetterSQLite3Database<typeof schema>
 const fail = (statusCode: number, message: string): never => { throw Object.assign(new Error(message), { statusCode }) }
@@ -19,20 +25,25 @@ function initialItem(entry: PlatformBatchParams['items'][number]): PlatformBatch
   const titles = platformQueryTitles(q)
   return { itemId: entry.itemId, status: 'not_queried', completeness: 'not_queried', segments: [], unfinished: titles.map(rdjb => ({ source: q.source, rdjb, page: q.startPage })) }
 }
-async function runBatch(ctx: JobContext, raw: Record<string, unknown>, cookie: string) {
+type BatchContext = Pick<JobContext, 'jobId' | 'logContext'> & {
+  cancelled(): boolean | Promise<boolean>
+  progress(done: number, total: number): void | Promise<void>
+  checkpoint(result: PlatformBatchResult): void | Promise<void>
+}
+
+async function runBatch(ctx: BatchContext, raw: Record<string, unknown>, cookie: string, prior: PlatformBatchResult | null) {
   const params = raw as unknown as PlatformBatchParams
-  const prior = getJob(ctx.db, ctx.jobId)?.result as PlatformBatchResult | null
   const result: PlatformBatchResult = prior ? structuredClone(prior) : { attempt: 0, completeness: 'partial', items: params.items.map(initialItem), usage: { requests: 0, rows: 0 }, limits: params.limits }
   result.attempt++
   result.usage.requests = 0
   const start = Date.now()
   const logContext = { ...(ctx.logContext ?? newLogContext()), taskId: ctx.jobId, batchId: ctx.jobId }
-  const persist = () => {
+  const persist = async () => {
     result.completeness = result.items.every(item => item.completeness === 'complete') ? 'complete' : 'partial'
-    setJobResult(ctx.db, ctx.jobId, result)
-    ctx.progress(result.items.filter(item => item.completeness === 'complete').length, result.items.length)
+    await ctx.checkpoint(result)
+    await ctx.progress(result.items.filter(item => item.completeness === 'complete').length, result.items.length)
   }
-  persist()
+  await persist()
   for (const [index, item] of result.items.entries()) {
     if (item.completeness === 'complete' || (params.retryItemIds && !params.retryItemIds.includes(item.itemId))) continue
     const original = params.items[index]!.query
@@ -47,7 +58,7 @@ async function runBatch(ctx: JobContext, raw: Record<string, unknown>, cookie: s
       const rows = Math.min(params.limits.maxRows - result.usage.rows, original.maxRows - (result.usage.rows - itemStartRows))
       const duration = Math.min(params.limits.maxDurationMs - (Date.now() - start), original.maxDurationMs - (Date.now() - itemStarted))
       const available = params.limits.maxResultBytes - bytes(result) - 16384
-      if (ctx.cancelled() || requests <= 0 || rows <= 0 || duration <= 0 || available <= 0) break
+      if (await ctx.cancelled() || requests <= 0 || rows <= 0 || duration <= 0 || available <= 0) break
       const pageSize = item.segments[0]?.limits.pageSize ?? Math.min(original.pageSize, original.maxRows)
       if (rows < pageSize) break // Never shift page boundaries on a continuation.
       const query = { ...original, ...(position ? { startPage: position.page, ...(position.rdjb ? { rdjb: original.source === 'queryBusList' ? [position.rdjb] : position.rdjb } : {}) } : {}), pageSize, maxRequests: Math.min(original.maxRequests, requests), maxRows: Math.min(original.maxRows, rows), maxDurationMs: Math.min(original.maxDurationMs, duration) }
@@ -62,7 +73,7 @@ async function runBatch(ctx: JobContext, raw: Record<string, unknown>, cookie: s
         item.unfinished = position ? baseUnfinished.flatMap(p => p.source === position.source && p.rdjb === position.rdjb && p.page === position.page ? segment.unfinished : [p]) : segment.unfinished
         item.completeness = item.unfinished.length ? 'partial' : 'complete'
         item.status = item.completeness === 'complete' ? item.segments.some(s => s.rows.length) ? 'success' : 'no_record' : item.segments.some(s => s.pages.some(p => p.status === 'success')) ? 'partial' : segment.status
-        persist()
+        return persist()
       }
       const declaredTotals = new Map<string | null, number>()
       const acceptedPages = new Map<string | null, Map<number, number>>()
@@ -83,7 +94,7 @@ async function runBatch(ctx: JobContext, raw: Record<string, unknown>, cookie: s
       }
       const segment = await runPlatformLiveQuery(query, { cookie, declaredTotals, priorFetchedCounts, maxResultBytes: available, onProgress: admit,
         logContext: { ...logContext, resourceType: 'platform_batch_item', resourceId: item.itemId } })
-      admit(segment)
+      await admit(segment)
       // Authentication is not automatically retried. Other independent items still
       // receive their own outcome using the same immutable submission snapshot.
       if (segment.pages.some(page => page.status === 'auth_failed') || segment.error?.code === 'safety_limit' || (original.source === 'queryBusList' && segment.unfinished.length)) break
@@ -91,12 +102,40 @@ async function runBatch(ctx: JobContext, raw: Record<string, unknown>, cookie: s
     logPlatformResult(platformOperation(original.source, 'item'), item.status, { ...logContext, resourceType: 'platform_batch_item', resourceId: item.itemId },
       { done: result.usage.rows - itemStartRows }, Date.now() - itemStarted)
   }
-  persist()
+  await persist()
+  const cancelled = await ctx.cancelled()
   // This is a collection-attempt summary, not the generic job terminal event.
-  appLog({ module: 'sme-roster', source: 'platform', operation: 'platform.batch.collect', outcome: ctx.cancelled() ? 'cancelled' : result.completeness === 'complete' ? 'success' : 'partial',
+  appLog({ module: 'sme-roster', source: 'platform', operation: 'platform.batch.collect', outcome: cancelled ? 'cancelled' : result.completeness === 'complete' ? 'success' : 'partial',
     durationMs: Date.now() - start, counts: { done: result.items.filter(item => item.completeness === 'complete').length, total: result.items.length,
       failed: result.items.filter(item => item.status === 'failed' || item.status === 'auth_failed').length } }, logContext)
-  return { result, progress: { done: result.items.filter(item => item.completeness === 'complete').length, total: result.items.length }, ...(ctx.cancelled() ? { cancelled: true } : result.completeness !== 'complete' ? { error: '批次仍有未完成范围，请查看逐项结果并显式重试。' } : {}) }
+  return { result, progress: { done: result.items.filter(item => item.completeness === 'complete').length, total: result.items.length }, ...(cancelled ? { cancelled: true } : result.completeness !== 'complete' ? { error: '批次仍有未完成范围，请查看逐项结果并显式重试。' } : {}) }
+}
+
+function validateConditions(params: Record<string, unknown>, cookie: string) {
+  const redact = cookieRedactor(cookie)
+  for (const item of (params as unknown as PlatformBatchParams).items) {
+    for (const key of ['name', 'uscc', ...Object.keys(recognizedConditionShape)]) {
+      const raw = (item.query as unknown as Record<string, unknown>)[key]
+      if (typeof raw !== 'string') continue
+      let decoded = raw
+      try { decoded = decodeURIComponent(raw) } catch { /* query need not be URI encoded */ }
+      if (redact(raw) !== raw || redact(decoded) !== decoded) return fail(400, 'Platform batch conditions contain sensitive data')
+    }
+  }
+}
+
+function runSqliteBatch(ctx: JobContext, params: Record<string, unknown>, cookie: string) {
+  return runBatch({
+    ...ctx, checkpoint: result => { setJobResult(ctx.db, ctx.jobId, result) },
+  }, params, cookie, getJob(ctx.db, ctx.jobId)?.result as PlatformBatchResult | null)
+}
+
+const fingerprint = (cookie: string) => createHash('sha256').update(cookie).digest('hex')
+
+async function preparePostgresBatch(db: NodePgDatabase, params: Record<string, unknown>) {
+  const cookie = (await resolvePostgresCredential(db, 'sme-roster.miitCookie')).value
+  validateConditions(params, cookie)
+  return fingerprint(cookie)
 }
 export const batchSpec: JobSpec = {
   openAPIParams: {
@@ -114,21 +153,24 @@ export const batchSpec: JobSpec = {
   prepare: (params, db) => {
     let snapshot = ''
     try { snapshot = resolvePlatformCookie(undefined, { db }) } catch { /* sanitized query outcome */ }
-    const redact = cookieRedactor(snapshot)
-    // Only untrusted condition strings can carry credential echoes. Fixed source,
-    // title enums, generated IDs and numeric bounds must survive short collisions.
-    for (const item of (params as unknown as PlatformBatchParams).items) {
-      for (const key of ['name', 'uscc', ...Object.keys(recognizedConditionShape)]) {
-        const raw = (item.query as unknown as Record<string, unknown>)[key]
-        if (typeof raw !== 'string') continue
-        let decoded = raw
-        try { decoded = decodeURIComponent(raw) } catch { /* query need not be URI encoded */ }
-        if (redact(raw) !== raw || redact(decoded) !== decoded) return fail(400, 'Platform batch conditions contain sensitive data')
-      }
-    }
-    return (ctx, params) => runBatch(ctx, params, snapshot)
+    validateConditions(params, snapshot)
+    return (ctx, params) => runSqliteBatch(ctx, params, snapshot)
   },
-  run: (ctx, params) => runBatch(ctx, params, ''),
+  run: (ctx, params) => runSqliteBatch(ctx, params, ''),
+  postgres: {
+    allowBrowserCancel: true,
+    taskCenter: {
+      summaries: summarizePostgresBatches,
+      retry: (db, task, context) => retryPostgresPlatformBatch(db, { batchId: task.id, itemIds: task.capabilities.retryItemIds }, context),
+    },
+    prepare: preparePostgresBatch,
+    async run(ctx, params, inputSnapshot) {
+      const cookie = (await resolvePostgresCredential(ctx.db, 'sme-roster.miitCookie')).value
+      validateConditions(params, cookie)
+      const row = (await getPostgresJob(ctx.db, ctx.jobId))!.row
+      return runBatch(ctx, params, inputSnapshot === fingerprint(cookie) ? cookie : '', row.result as PlatformBatchResult | null)
+    },
+  },
 }
 export function registerPlatformBatchJob() { if (!getJobSpec(PLATFORM_BATCH_KIND)) registerJob(batchSpec) }
 export function submitPlatformBatch(db: Db, input: unknown, filesDir: string, logContext?: LogContext) {
@@ -142,7 +184,10 @@ export function getPlatformBatch(db: Db, input: unknown) {
   const parsed = platformBatchStatusSchema.safeParse(input)
   if (!parsed.success) return fail(400, 'Invalid batch ID')
   ensureJobRunnerReady(db)
-  const row = getJob(db, parsed.data.batchId)
+  return projectBatch(getJob(db, parsed.data.batchId))
+}
+
+function projectBatch(row: JobRow | null | undefined) {
   if (!row || row.kind !== PLATFORM_BATCH_KIND) return fail(404, 'Platform batch not found')
   const params = row.params as unknown as PlatformBatchParams
   const result = row.result as PlatformBatchResult | null
@@ -160,9 +205,7 @@ export function retryPlatformBatch(db: Db, input: unknown, filesDir: string, log
   const parsed = platformBatchRetrySchema.safeParse(input)
   if (!parsed.success) return fail(400, 'Invalid batch retry parameters')
   const batch = getPlatformBatch(db, { batchId: parsed.data.batchId })
-  if (batch.state === 'queued' || batch.state === 'running') return fail(409, 'Platform batch is still active')
-  if (batch.attempt >= MAX_BATCH_ATTEMPTS) return fail(409, 'Platform batch retry limit reached')
-  if (parsed.data.itemIds.some(id => !batch.items.some(item => item.itemId === id && item.completeness !== 'complete'))) return fail(409, 'Retry requires existing unfinished items')
+  validateRetry(batch, parsed.data.itemIds)
   const row = getJob(db, batch.batchId)!
   registerPlatformBatchJob()
   const retryContext = logContext ?? newLogContext()
@@ -170,4 +213,44 @@ export function retryPlatformBatch(db: Db, input: unknown, filesDir: string, log
   appLog({ module: 'sme-roster', source: 'platform', operation: 'platform.batch.retry', outcome: 'started', counts: { total: parsed.data.itemIds.length } },
     { ...retryContext, taskId: batch.batchId, batchId: batch.batchId })
   return { batchId: batch.batchId, itemIds: batch.itemIds, state: 'queued' }
+}
+
+function validateRetry(batch: ReturnType<typeof projectBatch>, itemIds: string[]) {
+  if (batch.state === 'queued' || batch.state === 'running') return fail(409, 'Platform batch is still active')
+  if (batch.attempt >= MAX_BATCH_ATTEMPTS) return fail(409, 'Platform batch retry limit reached')
+  if (itemIds.some(id => !batch.items.some(item => item.itemId === id && item.completeness !== 'complete'))) return fail(409, 'Retry requires existing unfinished items')
+}
+
+export async function getPostgresPlatformBatch(db: NodePgDatabase, input: unknown) {
+  const parsed = platformBatchStatusSchema.safeParse(input)
+  if (!parsed.success) return fail(400, 'Invalid batch ID')
+  return projectBatch((await getPostgresJob(db, parsed.data.batchId))?.row)
+}
+
+export async function getPostgresPlatformBatchItem(db: NodePgDatabase, input: unknown) {
+  const parsed = platformBatchItemSchema.safeParse(input)
+  if (!parsed.success) return fail(400, 'Invalid batch or item ID')
+  const batch = await getPostgresPlatformBatch(db, { batchId: parsed.data.batchId })
+  return batch.items.find(item => item.itemId === parsed.data.itemId) ?? fail(404, 'Platform batch item not found')
+}
+
+export async function retryPostgresPlatformBatch(db: NodePgDatabase, input: unknown, logContext?: LogContext) {
+  const parsed = platformBatchRetrySchema.safeParse(input)
+  if (!parsed.success) return fail(400, 'Invalid batch retry parameters')
+  const retry = parsed.data
+  const receipt = await db.transaction(async tx => {
+    const previous = await getPostgresJob(tx, retry.batchId)
+    const batch = projectBatch(previous?.row)
+    validateRetry(batch, retry.itemIds)
+    const { row, claimToken } = previous!
+    if (row.state === 'queued' || row.state === 'running') return fail(409, 'Platform batch is still active')
+    const params = { ...row.params, retryItemIds: retry.itemIds }
+    const snapshot = await preparePostgresBatch(tx, params)
+    const reopened = await reopenPostgresJob(tx, row.id, row.kind, { state: row.state, claimToken }, params, snapshot)
+    if (!reopened) return fail(409, 'Platform batch is still active')
+    return { batchId: batch.batchId, itemIds: batch.itemIds, state: 'queued' as const }
+  })
+  appLog({ module: 'sme-roster', source: 'platform', operation: 'platform.batch.retry', outcome: 'started', counts: { total: retry.itemIds.length } },
+    { ...logContext, taskId: receipt.batchId, batchId: receipt.batchId })
+  return receipt
 }

@@ -34,7 +34,7 @@ export class EvidenceCorrectionError extends Error {
   constructor(readonly code: string, message: string, readonly status = 422) { super(message) }
 }
 function fail(code: string, message: string, status = 422): never { throw new EvidenceCorrectionError(code, message, status) }
-const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+export const evidenceCorrectionDigest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const coordinateOf = (row: typeof schema.recordEvidence.$inferSelect): EvidenceCoordinate => ({ sourceFile: row.sourceFile, attachment: row.attachment, listNo: row.listNo, page: row.page })
 function fileIdentity(db: Executor, sourceFile: string) {
   return db.select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath, sha256: schema.storedFile.sha256, bytes: schema.storedFile.bytes, removedAt: schema.storedFile.removedAt, source: schema.rosterFileClassification.source, kind: schema.rosterFileClassification.kind, titleCode: schema.rosterFileClassification.titleCode }).from(schema.storedFile).innerJoin(schema.rosterFileClassification, fileClassificationJoin).where(eq(schema.storedFile.relPath, sourceFile)).get() ?? null
@@ -45,8 +45,16 @@ export function readExactEvidence(db: Executor, evidenceId: number) {
   if (!row) fail('not_found', 'Evidence not found', 404)
   const file = fileIdentity(db, row.evidence.sourceFile)
   const revision = db.select({ id: schema.evidenceCorrectionAudit.id }).from(schema.evidenceCorrectionAudit).where(eq(schema.evidenceCorrectionAudit.evidenceId, evidenceId)).orderBy(desc(schema.evidenceCorrectionAudit.id)).limit(1).get()?.id ?? 0
+  return projectExactEvidence(row, file, revision)
+}
+
+export function projectExactEvidence(row: {
+  evidence: typeof schema.recordEvidence.$inferSelect; event: typeof schema.recordEvent.$inferSelect
+  recordId: number; enterpriseId: number; titleCode: string; source: 'jxj' | 'miit'
+}, file: ReturnType<typeof fileIdentity>, revision: number) {
+  const evidenceId = row.evidence.id
   const coordinate = coordinateOf(row.evidence)
-  return { evidenceId, eventId: row.event.id, recordId: row.recordId, enterpriseId: row.enterpriseId, source: row.source, titleCode: row.titleCode, event: row.event, coordinate, file, revision, version: hash({ row, file, revision }), sourceHref: evidencePreviewHref(coordinate) }
+  return { evidenceId, eventId: row.event.id, recordId: row.recordId, enterpriseId: row.enterpriseId, source: row.source, titleCode: row.titleCode, event: row.event, coordinate, file, revision, version: evidenceCorrectionDigest({ row, file, revision }), sourceHref: evidencePreviewHref(coordinate) }
 }
 
 /** Read only the requested file bytes, streaming the digest; never change source content. */
@@ -78,46 +86,80 @@ async function inspectSource(filesDir: string | undefined, coordinate: EvidenceC
   }
 }
 type Inspection = Awaited<ReturnType<typeof inspectSource>>
-function validateDestination(db: Executor, row: ReturnType<typeof readExactEvidence>, coordinate: EvidenceCoordinate, inspection: Inspection, strictFile: boolean) {
-  const file = fileIdentity(db, coordinate.sourceFile)
+type ExactEvidence = ReturnType<typeof readExactEvidence>
+type DestinationPart = Pick<typeof schema.storedFilePart.$inferSelect, 'titleCode' | 'eventKind' | 'year' | 'batch' | 'attachment' | 'hasConflict'>
+type EvidencePlanInput = { type: 'evidence'; id: number } | { type: 'enterprise'; id: number } | { type: 'file'; sourceFile: string }
+  | { type: 'parts'; fileId: number } | { type: 'collisions'; coordinate: EvidenceCoordinate; id: number } | { type: 'correspondences'; eventId: number }
+type EvidencePlanValues = {
+  evidence: ExactEvidence
+  enterprise: boolean
+  file: ReturnType<typeof fileIdentity>
+  parts: DestinationPart[]
+  collisions: { id: number; attachment: string | null; event: typeof schema.recordEvent.$inferSelect }[]
+  correspondences: number
+}
+function* evidenceInput<T extends EvidencePlanInput['type']>(input: Extract<EvidencePlanInput, { type: T }>): Generator<EvidencePlanInput, EvidencePlanValues[T], unknown> {
+  return (yield input) as EvidencePlanValues[T]
+}
+function readEvidencePlanInput(db: Executor, input: EvidencePlanInput) {
+  if (input.type === 'evidence') return readExactEvidence(db, input.id)
+  if (input.type === 'enterprise') return !!db.select({ id: schema.enterprise.id }).from(schema.enterprise).where(eq(schema.enterprise.id, input.id)).get()
+  if (input.type === 'file') return fileIdentity(db, input.sourceFile)
+  if (input.type === 'parts') return db.select({ titleCode: schema.storedFilePart.titleCode, eventKind: schema.storedFilePart.eventKind, year: schema.storedFilePart.year, batch: schema.storedFilePart.batch, attachment: schema.storedFilePart.attachment, hasConflict: schema.storedFilePart.hasConflict }).from(schema.storedFilePart).where(and(eq(schema.storedFilePart.fileId, input.fileId), inArray(schema.storedFilePart.origin, ['agent', 'legacy']))).limit(1001).all()
+  if (input.type === 'collisions') return db.select({ id: schema.recordEvidence.id, attachment: schema.recordEvidence.attachment, event: schema.recordEvent }).from(schema.recordEvidence).innerJoin(schema.recordEvent, eq(schema.recordEvent.id, schema.recordEvidence.recordEventId))
+        .where(and(eq(schema.recordEvidence.sourceFile, input.coordinate.sourceFile), eq(schema.recordEvidence.listNo, input.coordinate.listNo!), ne(schema.recordEvidence.id, input.id))).limit(101).all()
+  return db.select({ n: count() }).from(schema.recordCorrespondence)
+    .where(or(eq(schema.recordCorrespondence.eventId, input.eventId), eq(schema.recordCorrespondence.predecessorEventId, input.eventId))).get()!.n
+}
+function validateFile(row: ExactEvidence, file: ReturnType<typeof fileIdentity>, inspection: Inspection, strictFile: boolean) {
   if (strictFile && (!file || file.removedAt || file.source !== 'jxj' || file.kind !== 'announcement' || file.titleCode && file.titleCode !== row.titleCode)) fail('file_identity_conflict', 'An active official announcement file of the same title is required')
   if (file && (file.removedAt || file.sha256 !== inspection.sha256 || file.bytes !== inspection.bytes)) fail('file_changed', 'Original file differs from registered identity', 409)
-  // A supplied attachment must belong to the explicitly declared segment, when present.
-  const parts = strictFile && file ? db.select({ titleCode: schema.storedFilePart.titleCode, eventKind: schema.storedFilePart.eventKind, year: schema.storedFilePart.year, batch: schema.storedFilePart.batch, attachment: schema.storedFilePart.attachment, hasConflict: schema.storedFilePart.hasConflict }).from(schema.storedFilePart).where(and(eq(schema.storedFilePart.fileId, file.id), inArray(schema.storedFilePart.origin, ['agent', 'legacy']))).limit(1001).all() : []
+}
+function validateParts(row: ExactEvidence, coordinate: EvidenceCoordinate, parts: DestinationPart[]) {
   if (parts.length > 1000) fail('ambiguous_attachment', 'Too many declared segments; narrow source before correction')
-  if (strictFile && parts.length) {
+  if (parts.length) {
     const matches = parts.filter(p => p.titleCode === row.titleCode && p.eventKind === row.event.eventType && p.year === row.event.year && p.batch === row.event.batchSeq && normalizeAttachment(p.attachment) === normalizeAttachment(coordinate.attachment))
     if (matches.length !== 1 || matches[0]!.hasConflict) fail('attachment_conflict', 'Attachment must match one conflict-free declared event segment')
   }
-  return { ...file, ...inspection }
 }
 export function planEvidenceCorrectionTargets(db: Executor, request: EvidenceCorrectionRequest, inspected: Map<string, Inspection>, typed = request.operations.some(op => op.publishedRow !== undefined)) {
+  const query = projectEvidenceCorrectionTargets(request, inspected, typed)
+  let next = query.next()
+  while (!next.done) next = query.next(readEvidencePlanInput(db, next.value))
+  return next.value
+}
+
+export function* projectEvidenceCorrectionTargets(request: EvidenceCorrectionRequest, inspected: Map<string, Inspection>, typed = request.operations.some(op => op.publishedRow !== undefined)) {
   const seen = new Set<number>()
-  const targets = request.operations.map(op => {
+  const targets = []
+  for (const op of request.operations) {
     if (seen.has(op.evidenceId)) fail('ambiguous_target', 'Duplicate evidence ID in batch')
     seen.add(op.evidenceId)
-    const row = readExactEvidence(db, op.evidenceId)
+    const row = yield* evidenceInput<'evidence'>({ type: 'evidence', id: op.evidenceId })
     if (row.source !== 'jxj' || row.eventId !== op.eventId || row.recordId !== op.recordId || row.enterpriseId !== op.enterpriseId) fail('target_mismatch', 'Evidence, event and ownership IDs must match')
-    if (typed && !db.select({ id: schema.enterprise.id }).from(schema.enterprise).where(eq(schema.enterprise.id, row.enterpriseId)).get()) fail('target_mismatch', 'Current real enterprise is required', 409)
+    if (typed && !(yield* evidenceInput<'enterprise'>({ type: 'enterprise', id: row.enterpriseId }))) fail('target_mismatch', 'Current real enterprise is required', 409)
     if (row.version !== op.expectedVersion) fail('stale_version', 'Evidence or source version changed', 409)
     const after = { ...op.coordinate, attachment: normalizeAttachment(op.coordinate.attachment) }
-    const file = validateDestination(db, row, after, inspected.get(after.sourceFile)!, true)
+    const registered = yield* evidenceInput<'file'>({ type: 'file', sourceFile: after.sourceFile })
+    const inspection = inspected.get(after.sourceFile)!
+    validateFile(row, registered, inspection, true)
+    validateParts(row, after, yield* evidenceInput<'parts'>({ type: 'parts', fileId: registered!.id }))
+    const file = { ...registered, ...inspection }
     // List numbers restart per event segment. Do not use them as a target locator.
     if (!typed && after.listNo !== null) {
-      const collisions = db.select({ id: schema.recordEvidence.id, attachment: schema.recordEvidence.attachment, event: schema.recordEvent }).from(schema.recordEvidence).innerJoin(schema.recordEvent, eq(schema.recordEvent.id, schema.recordEvidence.recordEventId))
-        .where(and(eq(schema.recordEvidence.sourceFile, after.sourceFile), eq(schema.recordEvidence.listNo, after.listNo), ne(schema.recordEvidence.id, row.evidenceId))).limit(101).all()
+      const collisions = yield* evidenceInput<'collisions'>({ type: 'collisions', coordinate: after, id: row.evidenceId })
       if (collisions.length > 100) fail('ambiguous_target', 'Too many existing coordinate claims; resolve source ambiguity first')
       for (const collision of collisions) {
         const moving = request.operations.find(item => item.evidenceId === collision.id)
-        if (moving && hash({ ...moving.coordinate, attachment: normalizeAttachment(moving.coordinate.attachment) }) !== hash(after)) continue
+        if (moving && evidenceCorrectionDigest({ ...moving.coordinate, attachment: normalizeAttachment(moving.coordinate.attachment) }) !== evidenceCorrectionDigest(after)) continue
         if (normalizeAttachment(collision.attachment) === after.attachment && collision.event.eventType === row.event.eventType && collision.event.year === row.event.year && collision.event.batchSeq === row.event.batchSeq) fail('coordinate_conflict', 'Destination conflicts with another evidence in the same event segment')
       }
     }
-    const correspondenceCount = db.select({ n: count() }).from(schema.recordCorrespondence).where(or(eq(schema.recordCorrespondence.eventId, row.eventId), eq(schema.recordCorrespondence.predecessorEventId, row.eventId))).get()!.n
+    const correspondenceCount = yield* evidenceInput<'correspondences'>({ type: 'correspondences', eventId: row.eventId })
     const rowChange: OfficialClaimChange | undefined = op.publishedRow ? { ref: `correction:${op.evidenceId}`, evidenceId: op.evidenceId, eventId: op.eventId, owner: `enterprise:${op.enterpriseId}`, titleCode: row.titleCode, coordinate: after, publishedRow: op.publishedRow, expectedRowRevision: op.expectedRowRevision! } : undefined
     if (typed && !rowChange) fail('ambiguity', 'A mixed typed correction batch requires explicit publishedRow for every target')
-    return { evidenceId: row.evidenceId, eventId: row.eventId, recordId: row.recordId, enterpriseId: row.enterpriseId, expectedVersion: row.version, before: row.coordinate, beforeFile: row.file, event: row.event, after, file, relatedCorrespondences: correspondenceCount, rowChange }
-  })
+    targets.push({ evidenceId: row.evidenceId, eventId: row.eventId, recordId: row.recordId, enterpriseId: row.enterpriseId, expectedVersion: row.version, before: row.coordinate, beforeFile: row.file, event: row.event, after, file, relatedCorrespondences: correspondenceCount, rowChange })
+  }
   for (let i = 0; i < targets.length; i++) for (let j = i + 1; j < targets.length; j++) {
     const a = targets[i]!, b = targets[j]!
     const ae = a.event, be = b.event
@@ -129,10 +171,13 @@ function buildPlan(db: Executor, request: EvidenceCorrectionRequest, inspected: 
   const targets = planEvidenceCorrectionTargets(db, request, inspected)
   const changes = targets.flatMap(target => target.rowChange ? [target.rowChange] : [])
   const facts = changes.length ? planOfficialEvidenceChanges(db, changes, filesDir) : null
-  const impact = { updated: targets.filter(t => hash(t.before) !== hash(t.after) || t.rowChange?.changed).length, audit: targets.filter(t => hash(t.before) !== hash(t.after) || t.rowChange?.changed).length, correspondencePolicy: 'dynamic_source_fingerprint_revalidation' }
-  return { status: 'preflight', targets, impact, planHash: hash({ request, targets, impact, facts: facts?.planHash }) }
+  return projectEvidenceCorrectionPlan(request, targets, facts?.planHash)
 }
-async function inspectRequest(request: EvidenceCorrectionRequest, filesDir?: string) {
+export function projectEvidenceCorrectionPlan(request: EvidenceCorrectionRequest, targets: ReturnType<typeof planEvidenceCorrectionTargets>, factsHash?: string) {
+  const impact = { updated: targets.filter(t => evidenceCorrectionDigest(t.before) !== evidenceCorrectionDigest(t.after) || t.rowChange?.changed).length, audit: targets.filter(t => evidenceCorrectionDigest(t.before) !== evidenceCorrectionDigest(t.after) || t.rowChange?.changed).length, correspondencePolicy: 'dynamic_source_fingerprint_revalidation' }
+  return { status: 'preflight', targets, impact, planHash: evidenceCorrectionDigest({ request, targets, impact, facts: factsHash }) }
+}
+export async function inspectEvidenceCorrectionRequest(request: EvidenceCorrectionRequest, filesDir?: string) {
   const inspections = new Map<string, Inspection>()
   // Sequential to bound PDF engines/stream buffers; validate each page even for reused files.
   for (const op of request.operations) {
@@ -147,47 +192,62 @@ async function inspectRequest(request: EvidenceCorrectionRequest, filesDir?: str
   return inspections
 }
 export async function preflightEvidenceCorrection(db: Db, request: EvidenceCorrectionRequest, filesDir?: string) {
-  const inspected = await inspectRequest(request, filesDir)
+  const inspected = await inspectEvidenceCorrectionRequest(request, filesDir)
   const plan = translateOfficialErrors(() => db.transaction(tx => buildPlan(tx, request, inspected, filesDir), { behavior: 'immediate' }))
+  return projectEvidenceCorrectionPreview(plan)
+}
+export function projectEvidenceCorrectionPreview(plan: ReturnType<typeof projectEvidenceCorrectionPlan>) {
   return { ...plan, targets: plan.targets.map(({ rowChange, ...target }) => ({ ...target, ...(rowChange ? { beforeRowRevision: rowChange.before?.revision ?? 0, afterRowRevision: rowChange.expectedRowRevision + Number(rowChange.changed) } : {}) })) }
 }
 function translateOfficialErrors<T>(run: () => T): T {
-  try { return run() } catch (error) {
-    if (error instanceof OfficialFactError) throw new EvidenceCorrectionError(error.code, error.message, error.statusCode)
-    if (error instanceof OfficialEvidenceError) throw new EvidenceCorrectionError(error.code, error.message, error.statusCode)
-    throw error
-  }
+  try { return run() } catch (error) { throw evidenceCorrectionError(error) }
+}
+export function evidenceCorrectionError(error: unknown) {
+  if (error instanceof OfficialFactError || error instanceof OfficialEvidenceError) return new EvidenceCorrectionError(error.code, error.message, error.statusCode)
+  return error
 }
 
 /** The only coordinate writer for exact corrections and the compatibility adapter. */
 function writeEvidenceCoordinate(db: Executor, row: ReturnType<typeof readExactEvidence>, coordinate: EvidenceCoordinate, audit: { actor: { type: 'user' | 'agent' | 'legacy'; id: string }; basis: string; entryPoint: 'correction' | 'legacy_pages'; batchKey: string | null }, file: unknown, advanceRevision = true, facts?: { change: OfficialClaimChange; command: import('./official-evidence').OfficialEvidenceCommand; declarations: Map<string, number> }) {
-  if (hash(row.coordinate) === hash(coordinate) && !facts?.change.changed) return false
+  if (evidenceCorrectionDigest(row.coordinate) === evidenceCorrectionDigest(coordinate) && !facts?.change.changed) return false
   const current = readExactEvidence(db, row.evidenceId)
   if (current.version !== row.version) fail('stale_version', 'Evidence changed before write', 409)
   db.update(schema.recordEvidence).set(coordinate).where(eq(schema.recordEvidence.id, row.evidenceId)).run()
   const rowRevision = facts?.change.changed ? writeOfficialPublishedRow(db, facts.change.publishedRow, row.evidenceId, facts.change.expectedRowRevision, facts.command, facts.declarations).revision : undefined
   if (advanceRevision) advanceOfficialEventRevision(db, row.eventId, row.event.revision)
-  const importRef = facts?.command.kind === 'import' ? { importBatchId: facts.command.batchId } : {}
-  db.insert(schema.evidenceCorrectionAudit).values({ evidenceId: row.evidenceId, eventId: row.eventId, ...audit, before: { coordinate: row.coordinate, file: row.file, version: row.version, eventRevision: row.event.revision, ...(facts ? { row: facts.change.before ?? null } : {}), ...importRef }, after: { coordinate, file, eventRevision: row.event.revision + 1, ...(rowRevision !== undefined ? { rowRevision, publishedRow: facts!.change.publishedRow } : {}), ...importRef }, createdAt: new Date().toISOString() }).run()
+  db.insert(schema.evidenceCorrectionAudit).values(evidenceCorrectionAuditValues(row, coordinate, audit, file, facts?.change, rowRevision,
+    facts?.command.kind === 'import' ? facts.command.batchId : undefined)).run()
   return true
+}
+export function evidenceCorrectionAuditValues(row: ExactEvidence, coordinate: EvidenceCoordinate,
+  audit: { actor: { type: 'user' | 'agent' | 'legacy'; id: string }; basis: string; entryPoint: 'correction' | 'legacy_pages'; batchKey: string | null },
+  file: unknown, change?: OfficialClaimChange, rowRevision?: number, importBatchId?: number,
+) {
+  const importRef = importBatchId === undefined ? {} : { importBatchId }
+  return { evidenceId: row.evidenceId, eventId: row.eventId, ...audit,
+    before: { coordinate: row.coordinate, file: row.file, version: row.version, eventRevision: row.event.revision, ...(change ? { row: change.before ?? null } : {}), ...importRef },
+    after: { coordinate, file, eventRevision: row.event.revision + 1,
+      ...(rowRevision !== undefined ? { rowRevision, publishedRow: change!.publishedRow } : {}), ...importRef },
+    createdAt: new Date().toISOString(),
+  }
 }
 function replay(db: Executor, request: EvidenceCorrectionRequest, planHash: string) {
   const batch = db.select().from(schema.evidenceCorrectionBatch).where(eq(schema.evidenceCorrectionBatch.idempotencyKey, request.idempotencyKey)).get()
   if (!batch) return null
-  if (batch.requestHash !== hash(request) || batch.planHash !== planHash) fail('idempotency_conflict', 'Key already committed with another request or plan', 409)
+  if (batch.requestHash !== evidenceCorrectionDigest(request) || batch.planHash !== planHash) fail('idempotency_conflict', 'Key already committed with another request or plan', 409)
   return batch.receipt
 }
 export async function commitEvidenceCorrection(db: Db, request: EvidenceCorrectionRequest, planHash: string, filesDir?: string) {
   const previous = replay(db, request, planHash)
   if (previous) return previous
-  const inspected = await inspectRequest(request, filesDir)
+  const inspected = await inspectEvidenceCorrectionRequest(request, filesDir)
   return translateOfficialErrors(() => db.transaction(tx => {
     const raced = replay(tx, request, planHash)
     if (raced) return raced
     const plan = buildPlan(tx, request, inspected, filesDir)
     if (plan.planHash !== planHash) fail('plan_mismatch', 'Preflight impact or source changed; preflight again', 409)
     const receipt = { status: 'committed', idempotencyKey: request.idempotencyKey, planHash, impact: plan.impact, evidenceIds: plan.targets.map(t => t.evidenceId), committedAt: new Date().toISOString() }
-    tx.insert(schema.evidenceCorrectionBatch).values({ idempotencyKey: request.idempotencyKey, requestHash: hash(request), planHash, receipt, createdAt: receipt.committedAt }).run()
+    tx.insert(schema.evidenceCorrectionBatch).values({ idempotencyKey: request.idempotencyKey, requestHash: evidenceCorrectionDigest(request), planHash, receipt, createdAt: receipt.committedAt }).run()
     const changedEvents = new Map<number, number>()
     const changedFiles = new Set<string>()
     const declarations = new Map<string, number>()
@@ -218,11 +278,11 @@ export function readEvidenceCorrectionAudit(db: Executor, evidenceId: number, pa
   return { rows: db.select().from(schema.evidenceCorrectionAudit).where(where).orderBy(asc(schema.evidenceCorrectionAudit.id)).limit(pageSize).offset((page - 1) * pageSize).all(), total: db.select({ n: count() }).from(schema.evidenceCorrectionAudit).where(where).get()!.n, page, pageSize }
 }
 
-/** Preserve the legacy per-row protocol and reuse file inspection within one request. */
-export function createLegacyEvidencePageAdapter(db: Db, filesDir?: string) {
+export type LegacyEvidencePageInput = { evidenceId: number; previous: number | null; page: number; basis?: string; dryRun?: boolean }
+
+export function createLegacyEvidencePageInspection(filesDir?: string) {
   const inspections = new Map<string, Inspection>()
-  return async (input: { evidenceId: number; previous: number | null; page: number; basis?: string; dryRun?: boolean }) => {
-    const row = readExactEvidence(db, input.evidenceId)
+  return async (row: ExactEvidence, input: LegacyEvidencePageInput) => {
     if (row.coordinate.page !== input.previous) fail('stale_version', 'Legacy candidate page changed', 409)
     const coordinate = { ...row.coordinate, page: input.page }
     const inspection = inspections.get(coordinate.sourceFile) ?? await inspectSource(filesDir, coordinate)
@@ -230,10 +290,32 @@ export function createLegacyEvidencePageAdapter(db: Db, filesDir?: string) {
     if (!isPageCapable(coordinate.sourceFile)) fail('not_page_capable', 'Source has no stable PDF pages')
     if (inspection.pageCount === null) fail('page_count_unknown', 'Cannot read original PDF page count')
     if (coordinate.page > inspection.pageCount!) fail('page_invalid', 'Page exceeds original PDF page count')
+    return { coordinate, inspection }
+  }
+}
+
+export function legacyEvidencePageFile(row: ExactEvidence, file: ExactEvidence['file'], inspection: Inspection) {
+  validateFile(row, file, inspection, false)
+  return { ...file, ...inspection }
+}
+
+export function legacyEvidencePageAudit(basis?: string) {
+  return {
+    actor: { type: 'legacy', id: 'evidence-pages-adapter' },
+    basis: basis ?? 'Legacy page entry; basis not supplied', entryPoint: 'legacy_pages', batchKey: null,
+  } as const
+}
+
+/** Preserve the legacy per-row protocol and reuse file inspection within one request. */
+export function createLegacyEvidencePageAdapter(db: Db, filesDir?: string) {
+  const inspect = createLegacyEvidencePageInspection(filesDir)
+  return async (input: LegacyEvidencePageInput) => {
+    const row = readExactEvidence(db, input.evidenceId)
+    const { coordinate, inspection } = await inspect(row, input)
     return db.transaction(tx => {
-      const file = validateDestination(tx, row, coordinate, inspection, false)
+      const file = legacyEvidencePageFile(row, fileIdentity(tx, coordinate.sourceFile), inspection)
       if (input.dryRun) return false
-      const changed = writeEvidenceCoordinate(tx, row, coordinate, { actor: { type: 'legacy', id: 'evidence-pages-adapter' }, basis: input.basis ?? 'Legacy page entry; basis not supplied', entryPoint: 'legacy_pages', batchKey: null }, file)
+      const changed = writeEvidenceCoordinate(tx, row, coordinate, legacyEvidencePageAudit(input.basis), file)
       if (changed) refreshDerivedFileParts(tx, [row.coordinate.sourceFile, coordinate.sourceFile])
       return changed
     }, { behavior: 'immediate' })

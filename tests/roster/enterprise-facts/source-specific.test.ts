@@ -79,6 +79,6 @@ it('serves the review-year annual process and candidate discovery through real H
     const candidates = await discovered.json()
     expect(candidates.rows[0].conflicts).not.toContain('year_mismatch')
     expect(candidates.rows[0].evidence.temporal).toMatchObject({ awardYear: 2021, decisionYear: 2024, comparisonYear: 2024 })
-    expect(dispatchRecordCorrespondenceMcp('discover', { eventId: f.event.id }, { db: f.db })).toEqual(candidates)
+    expect(await dispatchRecordCorrespondenceMcp('discover', { eventId: f.event.id }, { db: f.db })).toEqual(candidates)
   } finally { await app.close() }
 })

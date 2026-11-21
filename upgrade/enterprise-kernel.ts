@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3'
 import { normalizeReviewedUscc, usccFormatVerdict } from '../layers/core/public'
 import { assertFinalPlatformRuntime, assertRosterFileClassificationSchema, assertApplicationSchema } from '../db/schema-phase'
-import { ENTERPRISE_KERNEL_RUNTIME_VERSION, ENTERPRISE_KERNEL_VERSION, installEnterpriseKernelSchema } from '../db/enterprise-kernel-schema'
+import { ENTERPRISE_KERNEL_RUNTIME_VERSION, ENTERPRISE_KERNEL_VERSION, installEnterpriseAddressSchema, installEnterpriseKernelSchema } from '../db/enterprise-kernel-schema'
 import { installEnterpriseDictionaries, type EnterpriseDictionaries } from './enterprise-dictionaries'
 
 function enterpriseMigrationPreflight(db: Database.Database) {
@@ -37,6 +37,25 @@ function enterpriseMigrationPreflight(db: Database.Database) {
   return { terminals, legacyUscc }
 }
 
+function ensureEnterpriseAddresses(db: Database.Database) {
+  const exists = db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='enterprise_address'").get()
+  if (!exists) installEnterpriseAddressSchema(db)
+  assertApplicationSchema(db)
+  return !exists
+}
+
+export function upgradeEnterpriseAddresses(db: Database.Database) {
+  if (db.inTransaction || db.pragma('foreign_keys', { simple: true }) !== 1) {
+    throw new Error('Offline address upgrade requires its own transaction with foreign_keys=ON')
+  }
+  return db.transaction(() => {
+    if (assertFinalPlatformRuntime(db) !== ENTERPRISE_KERNEL_RUNTIME_VERSION) {
+      throw new Error('Address upgrade requires a database with the enterprise kernel installed')
+    }
+    return { migrated: ensureEnterpriseAddresses(db) }
+  }).immediate()
+}
+
 export function upgradeEnterpriseKernel(db: Database.Database, dictionaries: EnterpriseDictionaries) {
   if (db.inTransaction || db.pragma('foreign_keys', { simple: true }) !== 1) {
     throw new Error('Offline cutover requires its own transaction with foreign_keys=ON')
@@ -47,11 +66,12 @@ export function upgradeEnterpriseKernel(db: Database.Database, dictionaries: Ent
     const preflight = enterpriseMigrationPreflight(db)
     const existing = db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='enterprise_kernel_completion'").get()
     if (existing) {
-      assertApplicationSchema(db)
+      const addressMigration = ensureEnterpriseAddresses(db)
       const marker = db.prepare('SELECT region_sha256,industry_sha256 FROM enterprise_kernel_completion WHERE id=1').get() as
         { region_sha256: string | null; industry_sha256: string | null }
       if (marker.region_sha256 === dictionaries.regionSha256 && marker.industry_sha256 === dictionaries.industrySha256) {
-        return { migrated: false, legacyUscc: preflight.legacyUscc }
+        const linked = backfillAnnouncementSources(db, preflight.terminals)
+        return { migrated: addressMigration || linked > 0, linked, legacyUscc: preflight.legacyUscc }
       }
       if (marker.region_sha256 !== null) throw new Error('Enterprise dictionaries already installed from different inputs')
     } else {
@@ -68,7 +88,7 @@ export function upgradeEnterpriseKernel(db: Database.Database, dictionaries: Ent
         SELECT min(r.code) FROM enterprise_region r JOIN enterprise e ON e.district=r.name
         WHERE e.id=enterprise_directory.enterprise_id AND r.level=2 HAVING count(*)=1)
       WHERE district_code IS NULL;`)
-    const sources = existing ? { linked: 0, unresolvedEvidenceIds: [] } : seedAnnouncementSources(db, preflight.terminals)
+    const linked = backfillAnnouncementSources(db, preflight.terminals)
     db.prepare(`INSERT INTO enterprise_kernel_completion(id,version,region_sha256,industry_sha256) VALUES (1,?,?,?)
       ON CONFLICT(id) DO UPDATE SET region_sha256=excluded.region_sha256,industry_sha256=excluded.industry_sha256`)
       .run(ENTERPRISE_KERNEL_VERSION, dictionaries.regionSha256, dictionaries.industrySha256)
@@ -76,7 +96,7 @@ export function upgradeEnterpriseKernel(db: Database.Database, dictionaries: Ent
     assertApplicationSchema(db)
     if (db.prepare('PRAGMA foreign_key_check').all().length) throw new Error('Enterprise kernel foreign key conflict')
     return {
-      migrated: true, ...sources, legacyUscc: preflight.legacyUscc,
+      migrated: true, linked, legacyUscc: preflight.legacyUscc,
       unmatchedDistricts: db.prepare(`SELECT e.district,count(*) AS count FROM enterprise e
         JOIN enterprise_directory d ON d.enterprise_id=e.id WHERE e.district IS NOT NULL AND d.district_code IS NULL
         GROUP BY e.district ORDER BY e.district`).all(),
@@ -84,51 +104,39 @@ export function upgradeEnterpriseKernel(db: Database.Database, dictionaries: Ent
   }).immediate()
 }
 
-function seedAnnouncementSources(db: Database.Database, terminals: ReadonlyMap<number, number>) {
-  // A captured, version-bound row takes precedence over legacy path evidence.
-  // A legacy path needs a single declaration and registered announcement bytes.
-  const captures = db.prepare(`
-    WITH committed_announcement AS MATERIALIZED (
-      SELECT source_identity, max(source_sha256) AS sha256
-      FROM import_batch
-      WHERE source_kind='announcement' AND status='committed'
-      GROUP BY source_identity HAVING count(DISTINCT source_sha256)=1
-    ),
-    legacy_original AS MATERIALIZED (
-      SELECT d.id, d.path, d.source, d.title, f.id AS fileId, f.sha256
-      FROM source_document d
-      JOIN stored_file f ON f.rel_path=d.path
-      JOIN roster_file_classification c ON c.file_id=f.id AND c.kind='announcement' AND c.source=d.source
-      JOIN committed_announcement b ON b.source_identity=d.path AND b.sha256=f.sha256
-      WHERE d.source IN ('jxj','miit')
-        AND (SELECT count(*) FROM source_document x WHERE x.path=d.path AND x.source=d.source)=1
-    )
-    SELECT h.evidence_id AS evidenceId,r.enterprise_id AS enterpriseId,d.id AS documentId,d.source,
-      d.title,h.stored_file_id AS fileId,h.sha256
-    FROM official_evidence_row_revision h
-    JOIN record_event v ON v.id=h.event_id JOIN record r ON r.id=v.record_id
-    JOIN source_document d ON d.id=h.source_document_id
-    WHERE h.source_binding_known=1 AND d.source IN ('jxj','miit')
-    UNION ALL
-    SELECT e.id,r.enterprise_id,d.id,d.source,d.title,d.fileId,d.sha256
-    FROM legacy_original d
-    JOIN record_evidence e ON e.source_file=d.path
-    JOIN record_event v ON v.id=e.record_event_id
-    JOIN record r ON r.id=v.record_id AND r.source=d.source
-    WHERE NOT EXISTS (SELECT 1 FROM official_evidence_row_revision h WHERE h.evidence_id=e.id)
-  `).all() as { evidenceId: number; enterpriseId: number; documentId: number; source: string; title: string; fileId: number | null; sha256: string }[]
-  const insert = db.prepare(`INSERT INTO enterprise_source(module,business_table,version_key,channel_code,list_type_code,series,file_id,sha256)
-    VALUES ('sme-roster','source_document',?,?,'announcement',?,?,?)
-    ON CONFLICT(module,business_table,version_key) DO UPDATE SET file_id=coalesce(enterprise_source.file_id,excluded.file_id)
+function backfillAnnouncementSources(db: Database.Database, terminals: ReadonlyMap<number, number>) {
+  const references = db.prepare(`
+    SELECT DISTINCT f.id AS fileId,f.sha256,coalesce(f.display_name,f.filename) AS title,c.source AS channel,r.enterprise_id AS enterpriseId
+    FROM record_evidence e
+    JOIN record_event v ON v.id=e.record_event_id JOIN record r ON r.id=v.record_id
+    JOIN stored_file f ON f.rel_path=e.source_file AND f.removed_at IS NULL
+    JOIN roster_file_classification c ON c.file_id=f.id AND c.source=r.source AND c.kind='announcement'
+    WHERE c.source IN ('jxj','miit')
+    ORDER BY f.id,r.enterprise_id
+  `).all() as { fileId: number; sha256: string; title: string; channel: string; enterpriseId: number }[]
+  const findSource = db.prepare(`SELECT id FROM enterprise_source
+    WHERE module='sme-roster' AND list_type_code='announcement'
+      AND file_id=@fileId AND channel_code=@channel AND sha256=@sha256
+    ORDER BY id LIMIT 1`)
+  const createSource = db.prepare(`INSERT INTO enterprise_source(module,business_table,version_key,channel_code,list_type_code,series,file_id,sha256)
+    VALUES ('sme-roster','stored_file',CAST(@fileId AS TEXT),@channel,'announcement',@title,@fileId,@sha256)
     RETURNING id`)
-  const link = db.prepare('INSERT INTO enterprise_source_link VALUES (?,?) ON CONFLICT DO NOTHING')
-  const resolved = new Set<number>()
+  const link = db.prepare(`INSERT INTO enterprise_source_link(enterprise_id,source_id)
+    SELECT @enterpriseId,@sourceId WHERE NOT EXISTS (
+      SELECT 1 FROM enterprise_source_link l JOIN enterprise_source s ON s.id=l.source_id
+      WHERE l.enterprise_id=@enterpriseId AND s.module='sme-roster' AND s.list_type_code='announcement'
+        AND s.file_id=@fileId AND s.channel_code=@channel AND s.sha256=@sha256
+    )`)
+  const sourcesByFile = new Map<number, number>()
   let linked = 0
-  for (const row of captures) {
-    const { id } = insert.get(`${row.documentId}:${row.sha256}`, row.source, row.title, row.fileId, row.sha256) as { id: number }
-    linked += link.run(terminals.get(row.enterpriseId) ?? row.enterpriseId, id).changes
-    resolved.add(row.evidenceId)
+  for (const row of references) {
+    let sourceId = sourcesByFile.get(row.fileId)
+    if (sourceId === undefined) {
+      const source = (findSource.get(row) ?? createSource.get(row)) as { id: number }
+      sourceId = source.id
+      sourcesByFile.set(row.fileId, sourceId)
+    }
+    linked += link.run({ ...row, sourceId, enterpriseId: terminals.get(row.enterpriseId) ?? row.enterpriseId }).changes
   }
-  const unresolvedEvidenceIds = (db.prepare('SELECT id FROM record_evidence ORDER BY id').pluck().all() as number[]).filter(id => !resolved.has(id))
-  return { linked, unresolvedEvidenceIds }
+  return linked
 }

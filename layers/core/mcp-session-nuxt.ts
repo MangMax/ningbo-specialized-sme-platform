@@ -27,11 +27,11 @@ function sessionFrontendPins() {
     const cli = dirname(dirname(realpathSync(require.resolve('@nuxt/cli/cli'))))
     const builder = realpathSync(require.resolve('@nuxt/nitro-server'))
     const core = realpathSync(fileURLToPath(import.meta.resolve('nitropack')))
-    if (!sessionRoutingPins() || createHash('sha256').update(readFileSync(builder)).digest('hex') !== '5d4bea601b06d31e7a0e7cd5f0f26b373702ba0c1308ef4315b4279c7527f395' || createHash('sha256').update(readFileSync(core)).digest('hex') !== 'b6b0bd3e12f18e2830016dc37cb6c6ad4c939d14a60458634fd329b23653993a') return false
+    if (!sessionRoutingPins() || createHash('sha256').update(readFileSync(builder)).digest('hex') !== 'e801ee220727ceb177a91fd29cae7a03bcaaf7d6736c6a210796bcc4d56a94ac' || createHash('sha256').update(readFileSync(core)).digest('hex') !== 'f9f7c38df72a55254a4613c007ca975178dccee25ce2737b84f75f711dc929b2') return false
     const pins = [
-      {"path": "dist/dev/index.mjs", "sha": "2403949150bbd4fdcfb69407ca88e512ff4a864139add7fe1eae7bfeb30ea969", "text": "await this.#currentNuxt.hooks.callHook(\"listen\", this.listener.server, this.listener);", "count": 1},
-      {"path": "dist/dev/index.mjs", "sha": "2403949150bbd4fdcfb69407ca88e512ff4a864139add7fe1eae7bfeb30ea969", "text": "await Promise.all([typesPromise, kit.buildNuxt(this.#currentNuxt)]);", "count": 1},
-      {"path": "dist/listen-BjyzPJ2X.mjs", "sha": "bddb50c7107c769c9b197d391eb61ebc88a55a5bc34679c6a1b82f5a60212894", "text": "const server = certificate ? createSecureServer(certificate, handler) : createServer(handler);", "count": 1},
+      {"path": "dist/dev/index.mjs", "sha": "1d5a694881382b19ff989b6acf419f59dbd89cac6711eac3427715be6a8a048c", "text": "await this.#currentNuxt.hooks.callHook(\"listen\", this.listener.server, this.listener);", "count": 1},
+      {"path": "dist/dev/index.mjs", "sha": "1d5a694881382b19ff989b6acf419f59dbd89cac6711eac3427715be6a8a048c", "text": "await Promise.all([typesPromise, kit.buildNuxt(this.#currentNuxt)]);", "count": 1},
+      {"path": "dist/listen-BU67IWQG.mjs", "sha": "943db40881061c25eb75aba282506798f69db6aaaa5e3392b784c907e8820e38", "text": "const server = certificate ? createSecureServer(certificate, handler) : createServer(handler);", "count": 1},
     ]
     for (const pin of pins) {
       const file = realpathSync(resolve(cli, pin.path))
@@ -39,7 +39,7 @@ function sessionFrontendPins() {
       const bytes = readFileSync(file), code = bytes.toString('utf8')
       if (createHash('sha256').update(bytes).digest('hex') !== pin.sha || code.split(pin.text).length - 1 !== pin.count) return false
     }
-    return JSON.parse(readFileSync(resolve(cli, 'package.json'), 'utf8')).version === '4.0.1'
+    return JSON.parse(readFileSync(resolve(cli, 'package.json'), 'utf8')).version === '4.0.3'
   } catch { return false }
 }
 export function actualSessionEntryProfile(nitro: any): SessionEntryProfile {
@@ -104,7 +104,7 @@ export function installSessionOverlay(nitro: any, config: any, audit: ((value: u
             count: 1, kind: 'protocol',
           }, {
             path: realpathSync(resolve(nitroCore, nitro.options.dev ? '../presets/_nitro/runtime/nitro-dev.mjs' : '../presets/node/runtime/node-server.mjs')),
-            sha: nitro.options.dev ? '7369466a832ac75e8d98cb573e373abab751f7d6535613cadb1efda25cdc1c3d' : 'de34cd965af3b45c8a108cef1dcb0aa70fa864f44dbd5b5e92625c1e44d66d7c',
+            sha: nitro.options.dev ? '8809de8d74dd6aed84e7fa6280a35506e487937e725bd27305ba950d2427fc79' : '7879a46c8f6bf8c76facf336ac6c908220adae9e87713e24786f3aae88cb89ff',
             before: 'toNodeListener(nitroApp.h3App)', after: nitro.options.dev || profile.kind === 'component' ? 'ownAllRequests(toNodeListener(nitroApp.h3App))' : `ownAllRequests(toNodeListener(nitroApp.h3App), ${JSON.stringify(profile.mount)}, ${sessionRoutingPins()})`,
             count: nitro.options.dev ? 1 : 2, kind: 'entry',
           }, {

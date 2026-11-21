@@ -16,7 +16,7 @@ type AssessedTitle = { enterpriseId: number; assessment: CurrentQualificationAss
 const assessedTitles = (snapshot: CurrentQualificationSnapshot): AssessedTitle[] => snapshot.titles.map(assessment => ({ enterpriseId: snapshot.enterpriseId, assessment }))
 
 /** Pure qualification/advice projection shared by independently owned reads. */
-function projectDifferences<T extends Coordinate>(rows: T[], assessed: readonly AssessedTitle[], facts: readonly PlatformQualificationFact[], asOf: number): (T & DifferenceQualification)[] {
+export function projectDifferences<T extends Coordinate>(rows: T[], assessed: readonly AssessedTitle[], facts: readonly PlatformQualificationFact[], asOf: number): (T & DifferenceQualification)[] {
   const assessments = new Map(assessed.map(({ enterpriseId, assessment }) => [JSON.stringify([enterpriseId, assessment.titleCode]), assessment]))
   const at = new Date(asOf + 8 * 60 * 60 * 1000).toISOString().slice(0, 19)
   return rows.map(row => {

@@ -9,6 +9,8 @@ import {
 import { parseRosterEnterpriseQuery } from '../../utils/roster-read-query'
 import { enterpriseReads } from '../../utils/enterprise-read'
 import { withEnterpriseReadSignal } from '../../../../core/server/utils/enterprise-read-signal'
+import { listPostgresRosterEnterprises } from '../../../lib/roster/enterprise-list-postgres'
+import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 
 /**
  * **跨称号去重的企业总表**(契约 §7.1,RL-04)。
@@ -112,6 +114,8 @@ defineRouteMeta({
 export default defineEventHandler((event) => {
   const filter = parseRosterEnterpriseQuery(getQuery(event))
   admitEnterpriseResponse(event)
+  const pg = usePostgresRosterDb()
+  if (pg) return listPostgresRosterEnterprises(pg, filter)
   return withEnterpriseReadSignal(event, async signal => {
     const result = await enterpriseReads.json(useDb().$client.name, { operation: 'list',filter }, signal, requestLogContext(event))
     setHeader(event, 'content-type', 'application/json; charset=utf-8')

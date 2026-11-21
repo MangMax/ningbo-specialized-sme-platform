@@ -108,10 +108,7 @@ let handlerEnterprises: (event: unknown) => Promise<{
   counts: { total: number; titlePairs: number; recognitionPairs: number }
 }>
 let handlerExport: (event: unknown) => Promise<Uint8Array | Readable>
-let handlerStats: (event: unknown) => {
-  byYear: { key: string; n: number }[]
-  byFirstRecognitionYear: { key: string; n: number }[]
-}
+let handlerYears: (event: unknown) => { eventYears: number[]; firstRecognitionYears: number[] }
 
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
@@ -139,7 +136,7 @@ beforeAll(async () => {
   handlerRecognitions = (await import('../../../layers/sme-roster/server/api/roster/recognitions.get')).default as unknown as typeof handlerRecognitions
   handlerEnterprises = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default) as unknown as typeof handlerEnterprises
   handlerExport = (await import('../../../layers/sme-roster/server/api/roster/export.get')).default as unknown as typeof handlerExport
-  handlerStats = (await import('../../../layers/sme-roster/server/api/stats.get')).default as unknown as typeof handlerStats
+  handlerYears = (await import('../../../layers/sme-roster/server/api/roster/ledger-years.get')).default as unknown as typeof handlerYears
 })
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -313,24 +310,24 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
 
 
 
-  it('首页统计年份不读取无关平台原文，保留结论年份口径', () => {
+  it('台账年份选项不读取无关平台原文，保留结论年份口径', () => {
     const previousDb = db
     try {
-      db = initializeDb({ create: true, dbPath: join(dir, 'stats-scoped.db') })
-      seed('统计范围合成企业', '91330211STATS00001X', null, 'specialized_sme', [
+      db = initializeDb({ create: true, dbPath: join(dir, 'ledger-years.db') })
+      seed('年份选项合成企业', '91330211STATS00001X', null, 'specialized_sme', [
         { eventType: 'award', year: 2022, decidedYear: 2024 },
         { eventType: 'review', year: 2022, decidedYear: 2025 },
       ])
-      submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'unrelated-stats', queriedAt: '2026-10-19', status: 'success', rawResponse: 'unrelated'.repeat(1000) })
+      submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'unrelated-ledger-years', queriedAt: '2026-10-19', status: 'success', rawResponse: 'unrelated'.repeat(1000) })
       query = {}
-      expect(handlerStats({}).byFirstRecognitionYear).toEqual([{ key: '2024', n: 1 }])
+      expect(handlerYears({})).toEqual({ eventYears: [2022], firstRecognitionYears: [2024] })
     } finally {
       db = previousDb
       query = {}
     }
   })
 
-  it('空库返回空的首次认定、企业列表、统计桶和导出', async () => {
+  it('空库返回空的首次认定、企业列表、年份选项和导出', async () => {
     const previousDb = db
     try {
       db = initializeDb({ create: true, dbPath: join(dir, 'empty.db') })
@@ -344,9 +341,7 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
       expect(enterprises.rows).toEqual([])
       expect(enterprises.counts).toMatchObject({ total: 0, titlePairs: 0, recognitionPairs: 0 })
 
-      const stats = handlerStats({})
-      expect(stats.byYear).toEqual([])
-      expect(stats.byFirstRecognitionYear).toEqual([])
+      expect(handlerYears({})).toEqual({ eventYears: [], firstRecognitionYears: [] })
 
       const workbook = await readExportWorkbook(await handlerExport({}))
       expect(workbook.worksheets[0]!.rowCount).toBe(2) // 说明 + 表头,无数据行

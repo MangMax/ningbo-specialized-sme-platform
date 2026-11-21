@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { normalizeAttachment } from '../../lib/attachment'
-import { compareParts, partKey } from '../../lib/file-parts'
+import { compareParts, partKey, type StoredFilePart } from '../../lib/file-parts'
 import type { EventKind, FilePart } from '../../../../db/file-part'
 import { EVENT_ORDER, TITLE_ORDER } from '../../lib/labels'
 import type { ParseState } from '../../lib/stored-file'
@@ -167,38 +167,8 @@ export function applyParseResult(
         .where(eq(schema.storedFilePart.fileId, fileId))
         .run()
 
-      const agentByKey = new Map(parts.map((part) => [partKey(part), part]))
-      const derivedKeys = new Set<string>()
-      for (const part of derivedParts) {
-        const key = partKey(part)
-        const agent = agentByKey.get(key)
-        if (agent) {
-          derivedKeys.add(key)
-          tx.insert(schema.storedFilePart)
-            .values({
-              fileId,
-              ...agent,
-              origin: 'agent',
-              hasConflict: agent.rowCount !== part.rowCount,
-            })
-            .run()
-        } else {
-          tx.insert(schema.storedFilePart)
-            .values({ fileId, ...part, origin: 'derived', hasConflict: false })
-            .run()
-        }
-      }
-
-      for (const part of parts) {
-        if (derivedKeys.has(partKey(part))) continue
-        tx.insert(schema.storedFilePart)
-          .values({
-            fileId,
-            ...part,
-            origin: 'agent',
-            hasConflict: false,
-          })
-          .run()
+      for (const part of mergeParseParts(parts, derivedParts)) {
+        tx.insert(schema.storedFilePart).values({ fileId, ...part }).run()
       }
     }
     if (rawState !== undefined || hasParts) {
@@ -210,4 +180,16 @@ export function applyParseResult(
   })
 
   return { ok: true, parts, parseState }
+}
+
+export function mergeParseParts(parts: readonly FilePart[], derived: readonly FilePart[]): StoredFilePart[] {
+  const agents = new Map(parts.map(part => [partKey(part), part]))
+  const merged = derived.map((part): StoredFilePart => {
+    const key = partKey(part)
+    const agent = agents.get(key)
+    if (!agent) return { ...part, origin: 'derived', hasConflict: false }
+    agents.delete(key)
+    return { ...agent, origin: 'agent', hasConflict: agent.rowCount !== part.rowCount }
+  })
+  return [...merged, ...Array.from(agents.values(), part => ({ ...part, origin: 'agent' as const, hasConflict: false }))]
 }

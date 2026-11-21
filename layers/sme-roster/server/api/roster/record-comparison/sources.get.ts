@@ -2,6 +2,8 @@ import { ZodError } from 'zod'
 import { useDb } from '@db'
 import { comparisonSourceCatalogInput } from '#sme-roster/lib/roster/record-comparison'
 import { readRecordComparisonSources } from '#sme-roster/server/utils/record-comparison-read'
+import { readPostgresRecordComparisonSources } from '#sme-roster/server/utils/record-comparison-catalog-postgres'
+import { usePostgresRosterDb } from '#sme-roster/server/utils/postgres-roster-db'
 
 defineRouteMeta({ openAPI: { tags: ['名录'], summary: '记录级对比来源选择目录', description: '逐项列已归档查询、导出批次、正式文件的 ID、中文名称、时间与范围状态。只供显式选择；目录不证明全覆盖，也不默认选择最新。', parameters: [
   { name: 'kind', in: 'query', schema: { type: 'string', enum: ['query', 'export_batch', 'official_document'] } },
@@ -18,7 +20,9 @@ export default defineEventHandler(async event => {
   event.node.res.once('close', abort)
   if (event.node.req.aborted || event.node.res.destroyed || event.node.res.closed || event.node.res.writableFinished) controller.abort()
   try {
-    return await readRecordComparisonSources(useDb(), comparisonSourceCatalogInput.parse({ kind: query.kind, ids: query.ids === undefined ? undefined : (Array.isArray(query.ids) ? query.ids : [query.ids]).flatMap(value => String(value).split(',')).map(value => /^-?\d+$/.test(value.trim()) ? Number(value.trim()) : NaN), page: query.page === undefined ? undefined : Number(query.page), pageSize: query.pageSize === undefined ? undefined : Number(query.pageSize) }), controller.signal)
+    const input = comparisonSourceCatalogInput.parse({ kind: query.kind, ids: query.ids === undefined ? undefined : (Array.isArray(query.ids) ? query.ids : [query.ids]).flatMap(value => String(value).split(',')).map(value => /^-?\d+$/.test(value.trim()) ? Number(value.trim()) : NaN), page: query.page === undefined ? undefined : Number(query.page), pageSize: query.pageSize === undefined ? undefined : Number(query.pageSize) })
+    const pg = usePostgresRosterDb()
+    return await (pg ? readPostgresRecordComparisonSources(pg, input, controller.signal) : readRecordComparisonSources(useDb(), input, controller.signal))
   } catch (error) {
     if (error instanceof ZodError) throw createError({ statusCode: 400, statusMessage: error.message })
     throw error

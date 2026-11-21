@@ -40,7 +40,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { isPageCapable } from '../../lib/roster/evidence-page'
 import { normalizeName,normalizeUscc } from '../../lib/domain'
-import { duplicateTwinKey } from '../../lib/roster/duplicate-merge'
+import { duplicateCandidatesFromBatch, duplicateTwinKey } from '../../lib/roster/duplicate-merge'
 import { missingUsccSourceFields,usccFormatVerdict } from '../../lib/roster/uscc-research'
 import { diagnoseOfficialEventFields,readCurrentQualificationAssessment } from '../../lib/roster/current-qualification'
 import { PLATFORM_INTERFACE_VALUES,TITLE_ORDER,type PlatformInterface } from '../../lib/labels'
@@ -154,7 +154,7 @@ function optionalInt(value: unknown): number | null {
 }
 
 /** Typed coordinates are verbatim; the old legacy grouping/write rules stay local. */
-function announcementEvidenceCoordinate(evidence: { sourceFile: string; attachment?: unknown; listNo?: unknown; page?: unknown; publishedRow?: unknown }, grouped = false): OfficialCoordinate {
+export function announcementEvidenceCoordinate(evidence: { sourceFile: string; attachment?: unknown; listNo?: unknown; page?: unknown; publishedRow?: unknown }, grouped = false): OfficialCoordinate {
   if (evidence.publishedRow !== undefined) return {
     sourceFile: evidence.sourceFile,
     attachment: typeof evidence.attachment === 'string' ? evidence.attachment : null,
@@ -220,7 +220,7 @@ export function validateImportRequest(raw: unknown): ValidateResult {
 }
 
 /** Strict additive field validation: malformed/empty projection commands cannot silently succeed. */
-function validatePlatformProjectionPayload(payload: Record<string, unknown>, sourceKind: string): string | null {
+export function validatePlatformProjectionPayload(payload: Record<string, unknown>, sourceKind: string): string | null {
   if (Object.hasOwn(payload, 'platformLegacyProvenance')) {
     if (sourceKind !== 'platform_archive') return 'platformLegacyProvenance requires sourceKind=platform_archive'
     const parsed = legacyPlatformProvenanceItemsSchema.safeParse(payload.platformLegacyProvenance)
@@ -696,7 +696,7 @@ function collectPendingPlatformRefs(payload: RosterImportPayload): PendingPlatfo
 }
 
 /** 归一后的自然键（`queriedAt` 可空 = 要求 `(interface, queryKey, rdjb)` 唯一）。 */
-interface NormalizedRef {
+export interface NormalizedRef {
   interface: string
   queryKey: string
   rdjb: string
@@ -715,7 +715,7 @@ interface NormalizedRef {
 type RefError = { code: string; field: string; message: string }
 
 /** 校验自然键的形状（不查库）。 */
-function normalizeRef(ref: unknown, field: string): { ok: true; value: NormalizedRef } | { ok: false; error: RefError } {
+export function normalizeRef(ref: unknown, field: string): { ok: true; value: NormalizedRef } | { ok: false; error: RefError } {
   if (!isObject(ref)) {
     return { ok: false, error: { code: 'ref_shape_invalid', field, message: `引用必须是对象 { interface, queryKey, rdjb?, queriedAt?, sequenceNo? }` } }
   }
@@ -865,7 +865,7 @@ function resolveRelationRefPlan(source: Executor, pending: PendingPlatformRefs, 
   return { ok: true }
 }
 
-function describeRef(ref: NormalizedRef): string {
+export function describeRef(ref: NormalizedRef): string {
   const parts = [`interface=${ref.interface}`, `queryKey=${ref.queryKey}`, `rdjb=${ref.rdjb || "''"}`]
   if (ref.queriedAt) parts.push(`queriedAt=${ref.queriedAt}`)
   if (ref.sequenceNo != null) parts.push(`sequenceNo=${ref.sequenceNo}`)
@@ -1062,6 +1062,60 @@ function planNewEventEvidence(
   records: readonly RosterImportAnnouncement['records'][number][],
   identityPlan: AnnouncementBatchIdentityPlan,
 ): { eventsByRecord: Map<number, RosterImportEvent[]>; groupedOccurrences: Set<string> } {
+  return groupNewAnnouncementEvidence(announcement, records, (recordIndex, name) => {
+    const record = records[recordIndex]!
+    const requestedUscc = usccOrNull(record.enterprise?.uscc)
+    const uscc = identityPlan.identityUsccByRecord.get(recordIndex) ?? requestedUscc
+    const nameMatches = findEnterprisesByNorm(db, normalizeName(name))
+    const resolvedByWriteIdentity = announcementOwner(db, identityPlan, recordIndex, name, uscc)
+    const ambiguousNameOnly = !identityPlan.reviewedOwners?.has(recordIndex) && !requestedUscc && (
+      identityPlan.ambiguousNameOnlyRecords.has(recordIndex) || nameMatches.length > 1
+    )
+    const groupIdentity = identityPlan.reviewedOwners?.has(recordIndex) ? `enterprise:${resolvedByWriteIdentity!.id}` : uscc
+      ? resolvedByWriteIdentity
+        ? `enterprise:${resolvedByWriteIdentity.id}`
+        : identityKeyOf({ name, uscc })
+      : nameMatches.length === 1
+        ? `enterprise:${nameMatches[0]!.id}`
+        : identityKeyOf({ name, uscc: null })
+    return { ambiguous: ambiguousNameOnly, key: groupIdentity }
+  }, (recordIndex, titleCode, source, event) => {
+    const representative = records[recordIndex]!
+    const name = optionalString(representative.enterprise.name)!
+    const requestedUscc = usccOrNull(representative.enterprise?.uscc)
+    const uscc = identityPlan.identityUsccByRecord.get(recordIndex) ?? requestedUscc
+    const enterprise = announcementOwner(db, identityPlan, recordIndex, name, uscc)
+    const storedRecord = enterprise
+      ? db
+          .select()
+          .from(schema.record)
+          .where(
+            and(
+              eq(schema.record.enterpriseId, enterprise.id),
+              eq(schema.record.titleCode, titleCode),
+              eq(schema.record.source, source),
+            ),
+          )
+          .get()
+      : undefined
+    const existingEvent = storedRecord
+      ? db
+          .select()
+          .from(schema.recordEvent)
+          .where(eq(schema.recordEvent.recordId, storedRecord.id))
+          .all()
+          .find((row) => matchesEventCoordinates(row, eventCoordinates(storedRecord.id, event)))
+      : undefined
+    return !!existingEvent
+  })
+}
+
+export function groupNewAnnouncementEvidence(
+  announcement: RosterImportAnnouncement,
+  records: readonly RosterImportAnnouncement['records'][number][],
+  identity: (index: number, name: string) => { key: string; ambiguous?: boolean },
+  alreadyStored: (recordIndex: number, titleCode: string, source: 'jxj' | 'miit', event: RosterImportEvent) => boolean,
+): { eventsByRecord: Map<number, RosterImportEvent[]>; groupedOccurrences: Set<string> } {
   interface Occurrence {
     recordIndex: number
     eventIndex: number
@@ -1092,20 +1146,7 @@ function planNewEventEvidence(
     const titleCode = optionalString(record?.titleCode)
     const source = record?.source ?? announcement.sourceDocument?.source
     if (!name || !titleCode || !TITLE_CODES.has(titleCode) || !SOURCES.has(String(source))) continue
-    const requestedUscc = usccOrNull(record.enterprise?.uscc)
-    const uscc = identityPlan.identityUsccByRecord.get(recordIndex) ?? requestedUscc
-    const nameMatches = findEnterprisesByNorm(db, normalizeName(name))
-    const resolvedByWriteIdentity = announcementOwner(db, identityPlan, recordIndex, name, uscc)
-    const ambiguousNameOnly = !identityPlan.reviewedOwners?.has(recordIndex) && !requestedUscc && (
-      identityPlan.ambiguousNameOnlyRecords.has(recordIndex) || nameMatches.length > 1
-    )
-    const groupIdentity = identityPlan.reviewedOwners?.has(recordIndex) ? `enterprise:${resolvedByWriteIdentity!.id}` : uscc
-      ? resolvedByWriteIdentity
-        ? `enterprise:${resolvedByWriteIdentity.id}`
-        : identityKeyOf({ name, uscc })
-      : nameMatches.length === 1
-        ? `enterprise:${nameMatches[0]!.id}`
-        : identityKeyOf({ name, uscc: null })
+    const group = identity(recordIndex, name)
     events.forEach((event, eventIndex) => {
       if (!EVENT_TYPES.has(String(event?.eventType))) return
       const coordinates = eventCoordinates(0, event)
@@ -1117,7 +1158,7 @@ function planNewEventEvidence(
 
       // 一条不唯一的名称无法确认企业身份，不能按名称查询碰巧返回的第一家参与归组。
       // planAnnouncementRecord 会在任何写入解析前拒绝这条 name-only 记录。
-      const identityKey = ambiguousNameOnly ? `ambiguous:${recordIndex}:${eventIndex}` : groupIdentity
+      const identityKey = group.ambiguous ? `ambiguous:${recordIndex}:${eventIndex}` : group.key
       const key = JSON.stringify([identityKey, titleCode, source, coordinates])
       const occurrences = groups.get(key) ?? []
       occurrences.push(occurrence)
@@ -1135,31 +1176,7 @@ function planNewEventEvidence(
     const titleCode = optionalString(representative?.titleCode)
     const source = representative?.source ?? announcement.sourceDocument?.source
     if (!name || !titleCode || !SOURCES.has(String(source))) continue
-    const requestedUscc = usccOrNull(representative.enterprise?.uscc)
-    const uscc = identityPlan.identityUsccByRecord.get(first.recordIndex) ?? requestedUscc
-    const enterprise = announcementOwner(db, identityPlan, first.recordIndex, name, uscc)
-    const storedRecord = enterprise
-      ? db
-          .select()
-          .from(schema.record)
-          .where(
-            and(
-              eq(schema.record.enterpriseId, enterprise.id),
-              eq(schema.record.titleCode, titleCode),
-              eq(schema.record.source, source),
-            ),
-          )
-          .get()
-      : undefined
-    const existingEvent = storedRecord
-      ? db
-          .select()
-          .from(schema.recordEvent)
-          .where(eq(schema.recordEvent.recordId, storedRecord.id))
-          .all()
-          .find((row) => matchesEventCoordinates(row, eventCoordinates(storedRecord.id, first.event)))
-      : undefined
-    if (existingEvent) continue
+    if (alreadyStored(first.recordIndex, titleCode, source, first.event)) continue
 
     const uniqueEvidence = new Map<string, RosterImportEvidence>()
     const invalidEvidence: unknown[] = []
@@ -1223,7 +1240,7 @@ function canonicalEvidencePlanJson(value: unknown): string {
 }
 
 /** 同一幂等键若被复用于不同公告载荷或默认来源,不应复用旧的收敛目标快照。 */
-function evidenceRepointPlanFingerprint(request: RosterImportRequest): string {
+export function evidenceRepointPlanFingerprint(request: RosterImportRequest): string {
   return createHash('sha256')
     .update(canonicalEvidencePlanJson(request.payload?.announcement ?? null))
     .digest('hex')
@@ -1728,6 +1745,43 @@ export function validateAnnouncementIdentityAndEvidence(
 
 // --- 公布文件 --------------------------------------------------------------
 
+export function validateAnnouncementRecord(
+  announcement: RosterImportAnnouncement, record: RosterImportAnnouncement['records'][number], index: number,
+) {
+  const ref = `record:${index}`
+  const name = optionalString(record?.enterprise?.name)
+  if (!name) {
+    return { error: failure('record', ref, 'enterprise_name_required', '记录缺少企业名称', 'records[].enterprise.name') } as const
+  }
+  const titleCode = optionalString(record.titleCode)
+  if (!titleCode || !TITLE_CODES.has(titleCode)) {
+    return { error: failure('record', ref, 'title_unknown', `称号不在字典内：${titleCode ?? '(空)'}`, 'titleCode') } as const
+  }
+  const source = record.source ?? announcement.sourceDocument.source
+  if (!SOURCES.has(String(source))) {
+    return { error: failure('record', ref, 'source_unknown', `来源必须是 jxj / miit，收到：${String(source)}`, 'source') } as const
+  }
+  const events = Array.isArray(record.events) ? record.events : []
+  for (let i = 0; i < events.length; i += 1) {
+    const event = events[i]!
+    const eventRef = `record:${index}#${i}`
+    if (!EVENT_TYPES.has(String(event?.eventType))) {
+      return { error: failure('record_event', eventRef, 'event_type_unknown', `事件类型不在字典内：${String(event?.eventType)}`, 'eventType') } as const
+    }
+    if (event.reviewOutcome != null && !REVIEW_OUTCOMES.has(String(event.reviewOutcome))) {
+      return { error: failure('record_event', eventRef, 'review_outcome_unknown', `复核结论必须是 passed / failed，收到：${String(event.reviewOutcome)}`, 'reviewOutcome') } as const
+    }
+    const evidence = Array.isArray(event.evidence) ? event.evidence : []
+    for (let k = 0; k < evidence.length; k += 1) {
+      if (!optionalString(evidence[k]?.sourceFile)) {
+        return { error: failure('record_evidence', `${eventRef}/e${k}`, 'source_file_required', '出处缺少 sourceFile', 'evidence.sourceFile') } as const
+      }
+    }
+  }
+
+  return { name, titleCode, source, events }
+}
+
 function planAnnouncementRecord(
   db: Executor,
   request: RosterImportRequest,
@@ -1754,41 +1808,12 @@ function planAnnouncementRecord(
   officialState?: OfficialImportState,
 ): void {
   const ref = `record:${index}`
-  const name = optionalString(record?.enterprise?.name)
-  if (!name) {
-    push({ item: failure('record', ref, 'enterprise_name_required', '记录缺少企业名称', 'records[].enterprise.name'), action: 'skip', review: false })
+  const validated = validateAnnouncementRecord(announcement, record, index)
+  if (validated.error) {
+    push({ item: validated.error, action: 'skip', review: false })
     return
   }
-  const titleCode = optionalString(record.titleCode)
-  if (!titleCode || !TITLE_CODES.has(titleCode)) {
-    push({ item: failure('record', ref, 'title_unknown', `称号不在字典内：${titleCode ?? '(空)'}`, 'titleCode'), action: 'skip', review: false })
-    return
-  }
-  const source = record.source ?? announcement.sourceDocument.source
-  if (!SOURCES.has(String(source))) {
-    push({ item: failure('record', ref, 'source_unknown', `来源必须是 jxj / miit，收到：${String(source)}`, 'source'), action: 'skip', review: false })
-    return
-  }
-  const events = Array.isArray(record.events) ? record.events : []
-  for (let i = 0; i < events.length; i += 1) {
-    const event = events[i]!
-    const eventRef = `record:${index}#${i}`
-    if (!EVENT_TYPES.has(String(event?.eventType))) {
-      push({ item: failure('record_event', eventRef, 'event_type_unknown', `事件类型不在字典内：${String(event?.eventType)}`, 'eventType'), action: 'skip', review: false })
-      return
-    }
-    if (event.reviewOutcome != null && !REVIEW_OUTCOMES.has(String(event.reviewOutcome))) {
-      push({ item: failure('record_event', eventRef, 'review_outcome_unknown', `复核结论必须是 passed / failed，收到：${String(event.reviewOutcome)}`, 'reviewOutcome'), action: 'skip', review: false })
-      return
-    }
-    const evidence = Array.isArray(event.evidence) ? event.evidence : []
-    for (let k = 0; k < evidence.length; k += 1) {
-      if (!optionalString(evidence[k]?.sourceFile)) {
-        push({ item: failure('record_evidence', `${eventRef}/e${k}`, 'source_file_required', '出处缺少 sourceFile', 'evidence.sourceFile'), action: 'skip', review: false })
-        return
-      }
-    }
-  }
+  const { name, titleCode, source, events } = validated
 
   const requestedUscc = usccOrNull(record.enterprise.uscc)
   const identityUscc = candidates.identityUscc !== undefined ? candidates.identityUscc : requestedUscc
@@ -2185,7 +2210,7 @@ interface EventCoordinates {
 }
 
 /** 由载荷里的一条事件 + 它所属记录算出坐标。 */
-function eventCoordinates(recordId: number, event: RosterImportEvent): EventCoordinates {
+export function eventCoordinates(recordId: number, event: RosterImportEvent): EventCoordinates {
   return {
     recordId,
     eventType: String(event.eventType),
@@ -2197,7 +2222,7 @@ function eventCoordinates(recordId: number, event: RosterImportEvent): EventCoor
 }
 
 /** 一行 `record_event` 是不是这个坐标。 */
-function matchesEventCoordinates(row: EventCoordinates, values: EventCoordinates): boolean {
+export function matchesEventCoordinates(row: EventCoordinates, values: EventCoordinates): boolean {
   return (
     row.recordId === values.recordId &&
     row.eventType === values.eventType &&
@@ -2254,7 +2279,7 @@ interface EvidenceCoordinateRow {
 }
 
 /** 收集只与其精确路径身份绑定的 SHA-256；逻辑身份不能替另一条出处路径背书。 */
-function evidenceContentHashIndex(db: Executor, request: RosterImportRequest): EvidenceContentHashIndex {
+export function indexedEvidenceHashes(request: RosterImportRequest, sources: readonly { path: string; sha256: string | null }[]) {
   const index: EvidenceContentHashIndex = new Map()
   const add = (path: string | null | undefined, rawHash: unknown) => {
     const sha256 = optionalString(rawHash)
@@ -2264,20 +2289,16 @@ function evidenceContentHashIndex(db: Executor, request: RosterImportRequest): E
     index.set(path, hashes)
   }
 
-  for (const file of db.select({ relPath: schema.storedFile.relPath, sha256: schema.storedFile.sha256 }).from(schema.storedFile).all()) {
-    add(file.relPath, file.sha256)
-  }
-  for (const batch of db
-    .select({ sourceKind: schema.importBatch.sourceKind, sourceIdentity: schema.importBatch.sourceIdentity, sourceSha256: schema.importBatch.sourceSha256, status: schema.importBatch.status })
-    .from(schema.importBatch)
-    .all()) {
-    if (batch.status === 'committed' && batch.sourceKind === 'announcement') {
-      add(batch.sourceIdentity, batch.sourceSha256)
-    }
-  }
-  // The current request's hash proves a path only when sourceIdentity is that exact path.
+  for (const { path, sha256 } of sources) add(path, sha256)
   add(request.sourceIdentity, request.sourceSha256)
   return index
+}
+
+function evidenceContentHashIndex(db: Executor, request: RosterImportRequest): EvidenceContentHashIndex {
+  const files = db.select({ path: schema.storedFile.relPath, sha256: schema.storedFile.sha256 }).from(schema.storedFile).all()
+  const batches = db.select({ path: schema.importBatch.sourceIdentity, sha256: schema.importBatch.sourceSha256 })
+    .from(schema.importBatch).where(and(eq(schema.importBatch.status, 'committed'), eq(schema.importBatch.sourceKind, 'announcement'))).all()
+  return indexedEvidenceHashes(request, [...files, ...batches])
 }
 
 function verifiedEvidenceContentHash(index: EvidenceContentHashIndex, path: string): string | null {
@@ -2423,6 +2444,12 @@ function ambiguousEvidenceRepointIds(
     .where(inArray(schema.recordEvidence.recordEventId, eventIds))
     .all()
 
+  return ambiguousAnnouncementRepoints(records, recordIdByIndex, eventRows, evidenceRows, evidenceContentHashes)
+}
+
+export function ambiguousAnnouncementRepoints(records: readonly RosterImportAnnouncement['records'][number][],
+  recordIdByIndex: ReadonlyMap<number, number>, eventRows: typeof schema.recordEvent.$inferSelect[],
+  evidenceRows: readonly (EvidenceCoordinateRow & { recordEventId: number })[], evidenceContentHashes: EvidenceContentHashIndex) {
   const eventsByRecord = new Map<number, typeof eventRows>()
   for (const row of eventRows) {
     const rows = eventsByRecord.get(row.recordId) ?? []
@@ -2599,6 +2626,12 @@ function countEvidenceRepoints(
     )
     .all()
 
+  return projectAnnouncementRepoints(recordId, events, eventRows, evidenceRows, taken, ambiguous, evidenceContentHashes)
+}
+
+export function projectAnnouncementRepoints(recordId: number, events: readonly RosterImportEvent[],
+  eventRows: readonly typeof schema.recordEvent.$inferSelect[], evidenceRows: readonly (EvidenceCoordinateRow & { recordEventId: number })[],
+  taken: Set<number>, ambiguous: ReadonlySet<number>, evidenceContentHashes: EvidenceContentHashIndex) {
   const byEvent = new Map<number, EvidenceCoordinateRow[]>()
   for (const row of evidenceRows) {
     const list = byEvent.get(row.recordEventId)
@@ -3141,17 +3174,38 @@ function exportReplayConflict(db: Executor, snapshot: RosterImportExportSnapshot
   for (let start = 0; start < rows.length; start += 200) {
     const chunk = rows.slice(start, start + 200)
     const stored = new Map(db.select().from(schema.platformExportRow).where(and(eq(schema.platformExportRow.batchId, batchId), inArray(schema.platformExportRow.sourceRowNo, chunk.map(row => row.sourceRowNo)))).all().map(row => [row.sourceRowNo, row]))
-    for (const row of chunk) {
-      const original = stored.get(row.sourceRowNo)
-      if (!original) return failure('export_row', `export:row:${row.sourceRowNo}`, 'export_row_set_conflict', 'Existing file cannot acquire new source rows', 'rows')
-      for (const field of ['nameRaw', 'usccRaw', 'district', 'province', 'city', 'regStatus', 'rawFields'] as const) {
-        if (!Object.hasOwn(row, field)) continue
-        const value = field === 'rawFields' ? row[field] ?? null : optionalString(row[field])
-        if (!isDeepStrictEqual(original[field], value)) return failure('export_row', `export:row:${row.sourceRowNo}`, 'export_row_payload_conflict', `Existing file row has different ${field}`, `rows.${field}`)
-      }
+    const issue = exportSnapshotRowConflict(chunk, stored)
+    if (issue) return issue
+  }
+  return null
+}
+
+export function exportSnapshotRowConflict(rows: NonNullable<RosterImportExportSnapshot['rows']>, stored: ReadonlyMap<number, typeof schema.platformExportRow.$inferSelect>) {
+  for (const row of rows) {
+    const original = stored.get(row.sourceRowNo)
+    if (!original) return failure('export_row', `export:row:${row.sourceRowNo}`, 'export_row_set_conflict', 'Existing file cannot acquire new source rows', 'rows')
+    for (const field of ['nameRaw', 'usccRaw', 'district', 'province', 'city', 'regStatus', 'rawFields'] as const) {
+      if (!Object.hasOwn(row, field)) continue
+      const value = field === 'rawFields' ? row[field] ?? null : optionalString(row[field])
+      if (!isDeepStrictEqual(original[field], value)) return failure('export_row', `export:row:${row.sourceRowNo}`, 'export_row_payload_conflict', `Existing file row has different ${field}`, `rows.${field}`)
     }
   }
   return null
+}
+
+export function projectExportSnapshotRow(batchId: number, row: NonNullable<RosterImportExportSnapshot['rows']>[number]) {
+  return {
+    batchId,
+    sourceRowNo: optionalInt(row.sourceRowNo)!,
+    usccRaw: optionalString(row.usccRaw),
+    nameRaw: optionalString(row.nameRaw),
+    district: optionalString(row.district),
+    province: optionalString(row.province),
+    city: optionalString(row.city),
+    regStatus: optionalString(row.regStatus),
+    rawFields: row.rawFields == null ? null : JSON.stringify(row.rawFields),
+    createdAt: new Date().toISOString(),
+  }
 }
 
 function findExportBatch(db: Executor, snapshot: RosterImportExportSnapshot) {
@@ -3166,36 +3220,40 @@ function latestExportBatch(db: Executor, snapshot: RosterImportExportSnapshot, e
     .orderBy(desc(schema.platformExportBatch.id)).limit(1).get()
 }
 
-function planExportSnapshot(
-  db: Executor,
-  snapshot: RosterImportExportSnapshot,
-  context: { batchId?: number },
-  push: (item: PlannedItem) => void,
-): void {
+export function validateExportSnapshot(snapshot: RosterImportExportSnapshot): RosterImportItemResult | null {
   const ref = 'export:snapshot'
   if (!TITLE_CODES.has(String(snapshot?.titleCode))) {
-    push({ item: failure('export_batch', ref, 'title_unknown', `称号不在字典内：${String(snapshot?.titleCode)}`, 'titleCode'), action: 'skip', review: false })
-    return
+    return failure('export_batch', ref, 'title_unknown', `称号不在字典内：${String(snapshot?.titleCode)}`, 'titleCode')
   }
   if (!optionalInt(snapshot.year) || !optionalString(snapshot.collectedOn) || !optionalString(snapshot.originalFilename) || !optionalString(snapshot.sha256)) {
-    push({ item: failure('export_batch', ref, 'export_identity_incomplete', '快照缺少 year / collectedOn / originalFilename / sha256', 'exportSnapshot'), action: 'skip', review: false })
-    return
+    return failure('export_batch', ref, 'export_identity_incomplete', '快照缺少 year / collectedOn / originalFilename / sha256', 'exportSnapshot')
   }
   const rows = Array.isArray(snapshot.rows) ? snapshot.rows : []
   const seen = new Set<number>()
   for (let i = 0; i < rows.length; i += 1) {
     const rowNo = optionalInt(rows[i]?.sourceRowNo)
     if (rowNo == null) {
-      push({ item: failure('export_row', `export:row:${i}`, 'source_row_no_required', '快照行缺少 sourceRowNo', 'rows[].sourceRowNo'), action: 'skip', review: false })
-      return
+      return failure('export_row', `export:row:${i}`, 'source_row_no_required', '快照行缺少 sourceRowNo', 'rows[].sourceRowNo')
     }
     if (seen.has(rowNo)) {
-      push({ item: failure('export_row', `export:row:${rowNo}`, 'source_row_no_duplicate', `快照行号重复：${rowNo}`, 'rows[].sourceRowNo'), action: 'skip', review: false })
-      return
+      return failure('export_row', `export:row:${rowNo}`, 'source_row_no_duplicate', `快照行号重复：${rowNo}`, 'rows[].sourceRowNo')
     }
     seen.add(rowNo)
   }
 
+  return null
+}
+
+function planExportSnapshot(
+  db: Executor,
+  snapshot: RosterImportExportSnapshot,
+  context: { batchId?: number },
+  push: (item: PlannedItem) => void,
+): void {
+  const issue = validateExportSnapshot(snapshot)
+  if (issue) { push({ item: issue, action: 'skip', review: false }); return }
+  const ref = 'export:snapshot'
+  const rows = Array.isArray(snapshot.rows) ? snapshot.rows : []
   const existing = findExportBatch(db, snapshot)
   // `replaced_batch_id` 的方向（父代理 2026-10-16 裁决 / 契约 §1.6「本批**替换**了哪一批」）：
   // **新批**记下它替换掉的那一批 = 同 (称号, 年度) 现有的**最新**批（不同 sha256）；
@@ -3267,19 +3325,8 @@ function writeExportSnapshot(
     if (chunk.length === INSERT_CHUNK) flush()
     // Encode once and bind the JSON text directly: the JSON column encoder must not
     // stringify it again. Only this chunk plus the next single row is retained.
-    const raw = row.rawFields == null ? null : JSON.stringify(row.rawFields)
-    const values = {
-      batchId: batch.id,
-      sourceRowNo: optionalInt(row.sourceRowNo)!,
-      usccRaw: optionalString(row.usccRaw),
-      nameRaw: optionalString(row.nameRaw),
-      district: optionalString(row.district),
-      province: optionalString(row.province),
-      city: optionalString(row.city),
-      regStatus: optionalString(row.regStatus),
-      rawFields: raw,
-      createdAt: new Date().toISOString(),
-    }
+    const values = projectExportSnapshotRow(batch.id, row)
+    const raw = values.rawFields
     const bytes = Object.values(values).reduce<number>((total, value) => total + Buffer.byteLength(String(value ?? '')), 0)
     if (chunk.length && chunkBytes + bytes > INSERT_BYTES) flush()
     chunk.push({ ...values, rawFields: raw == null ? null : sql`${raw}` })
@@ -4519,7 +4566,7 @@ export function replayBatchKey(idempotencyKey: string): string {
 }
 
 /** 从原提交批次读取目标快照；旧批次没有快照时返回 undefined，保留兼容重算路径。 */
-function evidenceRepointPlanFromItems(items: unknown, fingerprint: string): EvidenceRepointTarget[] | undefined {
+export function evidenceRepointPlanFromItems(items: unknown, fingerprint: string): EvidenceRepointTarget[] | undefined {
   if (!Array.isArray(items)) return undefined
   let hasPlan = false
   let samePayload = true
@@ -4732,7 +4779,7 @@ function rowsRepointed(item: RosterImportItemResult): number {
  * 「那一批没收敛过任何出处行」，所以补 0 是**事实**，不是猜测。没有摘要则返回 `null`
  * （预检批还没提交过，与既有口径一致）。
  */
-function readSummaryOf(raw: unknown): RosterImportSummary | null {
+export function readSummaryOf(raw: unknown): RosterImportSummary | null {
   if (!isObject(raw)) return null
   const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
   return {
@@ -4777,14 +4824,7 @@ export function readImportBatchOutcome(db: Db, idempotencyKey: string) {
 export function readDuplicateCandidates(db: Db, idempotencyKey: string): DuplicateNameCandidate[] {
   const batch = findBatchByKey(db, idempotencyKey)
   if (!batch) return []
-  const items = (batch.itemResults as RosterImportItemResult[] | null) ?? []
-  if (items.length > 0) {
-    return items
-      .filter((item) => item.ok && item.kind === 'duplicate_candidate')
-      .map((item) => item.detail?.candidate as DuplicateNameCandidate)
-      .filter((candidate): candidate is DuplicateNameCandidate => !!candidate && typeof candidate.nameNorm === 'string')
-  }
-  return (batch.preflightResult as RosterImportPreflight | null)?.duplicateCandidates ?? []
+  return duplicateCandidatesFromBatch(batch.itemResults as RosterImportItemResult[] | null, batch.preflightResult as RosterImportPreflight | null)
 }
 
 /** 取回某条 item 的归并血缘（`merges` 项）。 */

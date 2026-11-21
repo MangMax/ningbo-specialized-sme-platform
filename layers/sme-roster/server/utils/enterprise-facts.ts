@@ -33,9 +33,9 @@ export const enterpriseFactCommandSchema = z.discriminatedUnion('action', [
   z.strictObject({ ...envelope, action: z.literal('replace'), factId: id, fact: factSchema }),
 ])
 export const enterpriseFactCommitSchema = z.strictObject({ request: enterpriseFactCommandSchema, planHash: z.string().regex(/^[a-f0-9]{64}$/) })
-const hash = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex')
+export const enterpriseFactHash = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex')
 function fail(code: string, message: string): never { throw new EnterpriseProfileError(409, code, message) }
-function parse<T>(schema: z.ZodType<T>, body: unknown): T {
+export function parseEnterpriseFactInput<T>(schema: z.ZodType<T>, body: unknown): T {
   const result = schema.safeParse(body)
   if (!result.success) throw new EnterpriseProfileError(400, 'invalid_request', z.prettifyError(result.error))
   return result.data
@@ -43,16 +43,30 @@ function parse<T>(schema: z.ZodType<T>, body: unknown): T {
 function state(db: Executor, enterpriseId: number) {
   if (!db.select({ id: s.enterprise.id }).from(s.enterprise).where(eq(s.enterprise.id, enterpriseId)).get()) throw new EnterpriseProfileError(404, 'not_found', 'Enterprise not found')
   const history = db.select().from(s.enterpriseFactRevision).where(eq(s.enterpriseFactRevision.enterpriseId, enterpriseId)).orderBy(asc(s.enterpriseFactRevision.id)).all()
+  return projectEnterpriseFactState(enterpriseId, history)
+}
+
+export function projectEnterpriseFactState(enterpriseId: number, history: Array<typeof s.enterpriseFactRevision.$inferSelect>) {
   const facts = new Map<number, typeof history[number]>()
   for (const row of history) facts.set(row.factId, row)
-  return { enterpriseId, version: hash({ enterpriseId, lastRevision: history.at(-1)?.id ?? null }), facts: [...facts.values()], history }
+  return { enterpriseId, version: enterpriseFactHash({ enterpriseId, lastRevision: history.at(-1)?.id ?? null }), facts: [...facts.values()], history }
 }
 export function getEnterpriseFacts(db: Db, enterpriseId: number) { return db.transaction(tx => state(tx, enterpriseId)) }
 function prepare(db: Executor, enterpriseId: number, body: unknown) {
-  const request = parse(enterpriseFactCommandSchema, body), requestHash = hash({ enterpriseId, request })
+  const request = parseEnterpriseFactInput(enterpriseFactCommandSchema, body), requestHash = enterpriseFactHash({ enterpriseId, request })
   const prior = db.select().from(s.enterpriseFactReceipt).where(eq(s.enterpriseFactReceipt.idempotencyKey, request.idempotencyKey)).get()
   if (prior && prior.requestHash !== requestHash) fail('idempotency_conflict', 'Key already used for another fact command')
   const current = state(db, enterpriseId)
+  return planEnterpriseFact(enterpriseId, request, requestHash, prior, current)
+}
+
+export function planEnterpriseFact(
+  enterpriseId: number,
+  request: z.infer<typeof enterpriseFactCommandSchema>,
+  requestHash: string,
+  prior: { requestHash: string; receipt: typeof s.enterpriseFactReceipt.$inferSelect['receipt'] } | undefined,
+  current: ReturnType<typeof projectEnterpriseFactState>,
+) {
   const target = 'factId' in request ? current.facts.find(f => f.factId === request.factId) : undefined
   if (!prior) {
     if (current.version !== request.expectedVersion) fail('version_conflict', 'Read current enterprise facts again')
@@ -61,7 +75,7 @@ function prepare(db: Executor, enterpriseId: number, body: unknown) {
       if (request.action === 'confirm' && target.status !== 'pending') fail('fact_conflict', 'Only pending facts can be confirmed')
     }
   }
-  return { request, requestHash, prior, current, target, planHash: hash({ rule: 'enterprise-facts-306-v1', enterpriseId, request }) }
+  return { request, requestHash, prior, current, target, planHash: enterpriseFactHash({ rule: 'enterprise-facts-306-v1', enterpriseId, request }) }
 }
 export function preflightEnterpriseFact(db: Db, enterpriseId: number, body: unknown) {
   return db.transaction(tx => {
@@ -70,24 +84,33 @@ export function preflightEnterpriseFact(db: Db, enterpriseId: number, body: unkn
   })
 }
 export function commitEnterpriseFact(db: Db, enterpriseId: number, body: unknown) {
-  const input = parse(enterpriseFactCommitSchema, body)
+  const input = parseEnterpriseFactInput(enterpriseFactCommitSchema, body)
   return db.transaction(tx => {
     const p = prepare(tx, enterpriseId, input.request)
     if (p.planHash !== input.planHash) fail('plan_conflict', 'Preflight does not match request')
     if (p.prior) return p.prior.receipt
-    const { request, target } = p, createdAt = new Date().toISOString()
-    const audit = { enterpriseId, actor: request.actor, basis: request.basis, action: request.action, createdAt }
-    let factId: number
-    if (request.action === 'assert' || request.action === 'replace') {
-      if (target) tx.insert(s.enterpriseFactRevision).values({ ...audit, factId: target.factId, revision: target.revision + 1, fact: target.fact, status: 'replaced', replaces: target.replaces }).run()
-      factId = Math.max(0, ...p.current.facts.map(f => f.factId)) + 1
-      tx.insert(s.enterpriseFactRevision).values({ ...audit, factId, revision: 1, fact: request.fact, status: 'pending', replaces: target?.factId ?? null }).run()
-    } else {
-      factId = target!.factId
-      tx.insert(s.enterpriseFactRevision).values({ ...audit, factId, revision: target!.revision + 1, fact: target!.fact, status: request.action === 'confirm' ? 'confirmed' : 'withdrawn', replaces: target!.replaces }).run()
-    }
+    const createdAt = new Date().toISOString()
+    const { factId, revisions } = enterpriseFactRevisions(enterpriseId, p, createdAt)
+    for (const revision of revisions) tx.insert(s.enterpriseFactRevision).values(revision).run()
     const receipt = { factId, version: state(tx, enterpriseId).version, committedAt: createdAt }
-    tx.insert(s.enterpriseFactReceipt).values({ idempotencyKey: request.idempotencyKey, requestHash: p.requestHash, receipt }).run()
+    tx.insert(s.enterpriseFactReceipt).values({ idempotencyKey: p.request.idempotencyKey, requestHash: p.requestHash, receipt }).run()
     return receipt
   }, { behavior: 'immediate' })
+}
+
+export function enterpriseFactRevisions(enterpriseId: number, plan: ReturnType<typeof planEnterpriseFact>, createdAt: string) {
+  const { request, target } = plan
+  const audit = { enterpriseId, actor: request.actor, basis: request.basis, action: request.action, createdAt }
+  const revisions: Array<typeof s.enterpriseFactRevision.$inferInsert> = []
+  if (request.action === 'assert' || request.action === 'replace') {
+    if (target) revisions.push({ ...audit, factId: target.factId, revision: target.revision + 1,
+      fact: target.fact, status: 'replaced', replaces: target.replaces })
+    const factId = plan.current.facts.reduce((max, fact) => Math.max(max, fact.factId), 0) + 1
+    revisions.push({ ...audit, factId, revision: 1, fact: request.fact, status: 'pending', replaces: target?.factId ?? null })
+    return { factId, revisions }
+  }
+  const prior = target!
+  revisions.push({ ...audit, factId: prior.factId, revision: prior.revision + 1, fact: prior.fact,
+    status: request.action === 'confirm' ? 'confirmed' : 'withdrawn', replaces: prior.replaces })
+  return { factId: prior.factId, revisions }
 }

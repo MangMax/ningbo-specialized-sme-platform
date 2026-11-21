@@ -8,6 +8,7 @@ import { provenancePresence } from './target-evidence-read'
 import { requireLegacyProvenanceReady } from './legacy-provenance-catalog'
 import { sqliteConnection } from './target-connection'
 import type { PlatformQueryRow } from './read'
+import { PROVENANCE_CELL_NAMES } from './evidence-contract'
 
 type Db<S extends Record<string, unknown>> = BetterSQLite3Database<S>
 export type SelectedProvenanceOwner = { collection: typeof s.platformCollection.$inferSelect; id: number }
@@ -19,7 +20,6 @@ export type ResolvedLegacyProvenance = {
   display?: LegacyDisplay
 }
 export type SelectedLegacyProvenance = ReadonlyMap<number, ResolvedLegacyProvenance | null>
-const names = ['query_id', 'source_identity', 'source_sha256', 'segment_index', 'collection', 'input_fingerprint', 'import_batch_id', 'created_at'] as const
 const batches = <T>(items: readonly T[], size = 300) => Array.from({ length: Math.ceil(items.length / size) }, (_, i) => items.slice(i * size, (i + 1) * size))
 function lifecycle(message: string): never { throw new Error(`Legacy provenance lifecycle: ${message}`) }
 function numberLiteral(value: number) {
@@ -35,7 +35,7 @@ function envelopeFields<S extends Record<string, unknown>>(db: Db<S>, archiveId:
   let cursor = Buffer.byteLength('T04-PROVENANCE\n')
   const prefix = db.get<{ value: Buffer }>(sql`select substr(bytes,1,${cursor}) value from platform_archive_value where id=${archive}`)!.value
   if (!prefix.equals(Buffer.from('T04-PROVENANCE\n'))) lifecycle('invalid T04 envelope')
-  for (const name of names) {
+  for (const name of PROVENANCE_CELL_NAMES) {
     const header = db.get<{ value: Buffer }>(sql`select substr(bytes,${cursor + 1},128) value from platform_archive_value where id=${archive}`)!.value
     const match = /^(\w+) (null|text|blob|integer|real) (\d+)\n/.exec(header.toString('utf8'))
     if (!match || match[1] !== name) lifecycle('invalid T04 cell')

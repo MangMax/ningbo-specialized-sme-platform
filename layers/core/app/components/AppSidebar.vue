@@ -5,7 +5,6 @@ import NavMain from '#core/app/components/NavMain.vue'
 import {
   Sidebar,
   SidebarContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -23,7 +22,9 @@ const modules = getAppModules()
 const businessModules = modules.flatMap(({ id, name, nav }) =>
   id !== 'core' && nav?.length ? [{ id, name, nav }] : [],
 )
-const platformNav = modules.find(module => module.id === 'core')?.nav
+const coreNav = modules.find(module => module.id === 'core')?.nav ?? []
+const sharedBusinessNav = coreNav.filter(item => item.placement === 'business')
+const platformNav = coreNav.filter(item => item.placement !== 'business')
 </script>
 
 <template>
@@ -34,10 +35,10 @@ const platformNav = modules.find(module => module.id === 'core')?.nav
           <SidebarMenuButton
             size="lg"
             as-child
-            tooltip="平台工作台"
+            tooltip="返回首页"
             class="group-data-[collapsible=icon]:justify-center"
           >
-            <NuxtLink to="/" aria-label="返回平台工作台">
+            <NuxtLink to="/" aria-label="返回首页">
               <img
                 :src="colorMode === 'dark' ? '/brand/symbol-small-white.svg' : '/brand/symbol-small.svg'"
                 alt=""
@@ -55,18 +56,16 @@ const platformNav = modules.find(module => module.id === 'core')?.nav
     </SidebarHeader>
 
     <SidebarContent>
-      <section v-if="businessModules.length" aria-label="业务模块">
-        <SidebarGroupLabel v-if="businessModules.length > 1" class="mx-2">
-          业务模块
-        </SidebarGroupLabel>
+      <section v-if="sharedBusinessNav.length || businessModules.length" aria-label="业务模块">
+        <NavMain v-if="sharedBusinessNav.length" :items="sharedBusinessNav" />
         <NavMain
           v-for="module in businessModules"
           :key="module.id"
-          :label="businessModules.length === 1 ? '业务模块' : module.name"
+          :label="module.name"
           :items="module.nav"
         />
       </section>
-      <section v-if="platformNav?.length" aria-label="平台管理" class="mt-auto">
+      <section v-if="platformNav.length" aria-label="平台管理" class="mt-auto">
         <NavMain label="平台管理" :items="platformNav" />
       </section>
     </SidebarContent>

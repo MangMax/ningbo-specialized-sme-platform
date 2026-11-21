@@ -52,7 +52,7 @@ async function startService(configured = true) {
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output += data })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
-  try { await waitForHttp(`${service.baseUrl}/api/stats`, { timeoutMs: 60000, child }) }
+  try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) }
   catch (error) { await service.stop(); throw new Error(`${String(error)}\n${output.slice(-8000)}`) }
 }
 beforeAll(() => startService(), 90000)

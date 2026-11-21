@@ -110,7 +110,7 @@ it('rejects writes on a read-only database while preserving saved values', async
   await request('PATCH', { 'core.ocrToken': 'synthetic-kept' })
   const readonly = useDb({ dbPath: join(dir, 'roster.sqlite'), readOnly: true }); connections.push(readonly.$client)
   for (const [method, body] of [['PATCH', { 'core.ocrToken': 'synthetic-rejected' }], ['DELETE', { key: 'core.ocrToken' }]] as const) {
-    const response = handleCredentialsRequest('state', { method, body, headers: {} }, { db: readonly, env: {} })
+    const response = await handleCredentialsRequest('state', { method, body, headers: {} }, { db: readonly, env: {} })
     expect(response.status).toBe(503)
     expect(JSON.stringify(response)).not.toContain('synthetic')
   }
@@ -120,7 +120,7 @@ it('fails closed when the database is unavailable instead of falling back or exp
   await start()
   db.$client.close()
   for (const action of ['state', 'reveal'] as const) {
-    const response = handleCredentialsRequest(action, { method: action === 'state' ? 'GET' : 'POST', headers: {}, body: null }, { db, env: { NUXT_OCR_TOKEN: 'synthetic-fallback' } }, 'core.ocrToken')
+    const response = await handleCredentialsRequest(action, { method: action === 'state' ? 'GET' : 'POST', headers: {}, body: null }, { db, env: { NUXT_OCR_TOKEN: 'synthetic-fallback' } }, 'core.ocrToken')
     expect(response.status).toBe(503)
     expect(JSON.stringify(response)).not.toMatch(/synthetic|closed|sqlite|roster.sqlite/)
   }
@@ -131,7 +131,7 @@ it('clears only database overrides and restores deployment fallback without chan
   const ctx = { db, env }
   await request('PATCH', { 'core.ocrToken': 'synthetic-saved', 'sme-roster.miitCookie': 'session=synthetic-saved' })
   for (const key of ['core.ocrToken', 'sme-roster.miitCookie']) {
-    const response = handleCredentialsRequest('state', { method: 'DELETE', body: { key }, headers: {} }, ctx)
+    const response = await handleCredentialsRequest('state', { method: 'DELETE', body: { key }, headers: {} }, ctx)
     expect(response.status).toBe(200)
     expect(response.body).toMatchObject({ [key]: { source: key === 'core.ocrToken' ? 'NUXT_OCR_TOKEN' : 'MIIT_COOKIE', hasSaved: false } })
   }

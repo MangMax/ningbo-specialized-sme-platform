@@ -11,6 +11,7 @@
  */
 
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/schema'
 import {
   diffPlatformSnapshots,
@@ -18,7 +19,11 @@ import {
   getPlatformSnapshotBatch,
   listPlatformSnapshots,
   type PlatformSnapshotBatch,
+  type PlatformSnapshotListItem,
+  type PlatformSnapshotQuery,
+  type SnapshotRow,
 } from '../../lib/platform-snapshots'
+import { readPostgresSnapshotBatches, readPostgresSnapshotRows } from '../../lib/platform-snapshots-postgres'
 import { parseIntegerList, parsePositiveInt, toList } from './platform-snapshot-query'
 
 type Db = BetterSQLite3Database<typeof schema>
@@ -44,38 +49,70 @@ export function handlePlatformSnapshotRequest(
   request: PlatformSnapshotHttpRequest,
   deps: { db: Db },
 ): PlatformSnapshotHttpResponse {
-  const path = action === 'diff' ? '/api/platform/snapshots/diff' : '/api/platform/snapshots'
-  if (request.method !== 'GET') return json(405, { message: `本端点是 GET:${path}` })
-  return action === 'diff' ? diffAction(deps.db, request.query) : listAction(deps.db, request.query)
+  const selection = parseSnapshotRequest(action, request)
+  if ('status' in selection) return selection
+  if (selection.action === 'snapshots') return listResult(listPlatformSnapshots(deps.db, selection.filter))
+  const { fromId, toId } = selection
+  const from = getPlatformSnapshotBatch(deps.db, fromId)
+  const to = getPlatformSnapshotBatch(deps.db, toId)
+  if (!from || !to || from.titleCode !== to.titleCode) return invalidDiff(fromId, toId, from, to)
+  return diffResult(from, to, getPlatformExportRows(deps.db, fromId), getPlatformExportRows(deps.db, toId))
 }
 
-function listAction(db: Db, query: Record<string, unknown>): PlatformSnapshotHttpResponse {
-  const { values: years, invalid } = parseIntegerList(query.year)
-  if (invalid.length) {
-    return json(400, { message: `年度参数必须是正整数:${invalid.join(',')}` })
+export async function handlePostgresPlatformSnapshotRequest(
+  action: PlatformSnapshotAction, request: PlatformSnapshotHttpRequest, db: NodePgDatabase,
+): Promise<PlatformSnapshotHttpResponse> {
+  const selection = parseSnapshotRequest(action, request)
+  if ('status' in selection) return selection
+  if (selection.action === 'snapshots') {
+    const batches = await readPostgresSnapshotBatches(db, selection.filter)
+    return listResult(batches.map(batch => ({
+      batch, replacedBatchId: batch.replacedBatchId, rowCount: batch.rowCount, importStatus: batch.importStatus,
+    })))
   }
-  const rows = listPlatformSnapshots(db, { title: toList(query.title), year: years })
+  const { fromId, toId } = selection
+  return db.transaction(async tx => {
+    const batches = await readPostgresSnapshotBatches(tx, { batchIds: [fromId, toId] })
+    const from = batches.find(batch => batch.id === fromId)
+    const to = batches.find(batch => batch.id === toId)
+    if (!from || !to || from.titleCode !== to.titleCode) return invalidDiff(fromId, toId, from, to)
+    const rows = await readPostgresSnapshotRows(tx, [fromId, toId])
+    return diffResult(from, to, rows.get(fromId) ?? [], rows.get(toId) ?? [])
+  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
+}
+
+function parseSnapshotRequest(action: PlatformSnapshotAction, { method, query }: PlatformSnapshotHttpRequest):
+  | { action: 'snapshots'; filter: PlatformSnapshotQuery }
+  | { action: 'diff'; fromId: number; toId: number }
+  | PlatformSnapshotHttpResponse {
+  if (method !== 'GET') {
+    const path = action === 'diff' ? '/api/platform/snapshots/diff' : '/api/platform/snapshots'
+    return json(405, { message: `本端点是 GET:${path}` })
+  }
+  if (action === 'snapshots') {
+    const { values: year, invalid } = parseIntegerList(query.year)
+    if (invalid.length) return json(400, { message: `年度参数必须是正整数:${invalid.join(',')}` })
+    return { action, filter: { title: toList(query.title), year } }
+  }
+  const fromId = parsePositiveInt(query.from)
+  const toId = parsePositiveInt(query.to)
+  if (fromId === null || toId === null) return json(400, { message: '需要正整数参数 from 与 to(两个快照批次 id)。' })
+  return { action, fromId, toId }
+}
+
+function listResult(rows: PlatformSnapshotListItem[]) {
   return json(200, { rows, count: rows.length })
 }
 
-function diffAction(db: Db, query: Record<string, unknown>): PlatformSnapshotHttpResponse {
-  const fromId = parsePositiveInt(query.from)
-  const toId = parsePositiveInt(query.to)
-  if (fromId === null || toId === null) {
-    return json(400, { message: '需要正整数参数 from 与 to(两个快照批次 id)。' })
-  }
-
-  const from = getPlatformSnapshotBatch(db, fromId)
-  const to = getPlatformSnapshotBatch(db, toId)
+function invalidDiff(fromId: number, toId: number, from: PlatformSnapshotBatch | null | undefined, to: PlatformSnapshotBatch | null | undefined) {
   if (!from || !to) {
     return json(404, { message: `快照批次不存在:${!from ? `from=${fromId} ` : ''}${!to ? `to=${toId}` : ''}` })
   }
-  if (from.titleCode !== to.titleCode) {
-    return json(400, { message: `两批称号不同(${from.titleCode} vs ${to.titleCode}),不能相互比较。` })
-  }
+  return json(400, { message: `两批称号不同(${from.titleCode} vs ${to.titleCode}),不能相互比较。` })
+}
 
-  const diff = diffPlatformSnapshots(getPlatformExportRows(db, fromId), getPlatformExportRows(db, toId))
-  return json(200, { from: summarize(from), to: summarize(to), diff })
+function diffResult(from: PlatformSnapshotBatch, to: PlatformSnapshotBatch, fromRows: SnapshotRow[], toRows: SnapshotRow[]) {
+  return json(200, { from: summarize(from), to: summarize(to), diff: diffPlatformSnapshots(fromRows, toRows) })
 }
 
 /** 比较结果里附带的批次摘要(够看清是哪两版,不塞整批行)。 */

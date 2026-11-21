@@ -30,14 +30,16 @@ export const dispositionRequestSchema = z.strictObject({
         z.strictObject({ action: z.literal('confirm'), ...target }), z.strictObject({ action: z.literal('withdraw'), ...target }),
     ])).min(1).max(100),
 });
-const hash = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
+export const dispositionHash = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
 export class DispositionError extends Error {
     readonly statusCode = 409;
     constructor(readonly code: string) { super(code); }
 }
 const fail = (code: string): never => { throw new DispositionError(code); };
 const revisionTable = s.titleCycleDispositionRevision;
-type Row = typeof revisionTable.$inferSelect;
+export type DispositionRow = typeof revisionTable.$inferSelect;
+type Row = DispositionRow;
+export type DispositionRequest = z.infer<typeof dispositionRequestSchema>;
 function rows(db: Db, enterpriseIds?: number[], currentOnly = false): Row[] {
     if (enterpriseIds) z.array(positive).max(500).parse(enterpriseIds);
     if (enterpriseIds?.length === 0) return [];
@@ -47,43 +49,61 @@ function rows(db: Db, enterpriseIds?: number[], currentOnly = false): Row[] {
         currentOnly ? notExists(db.select().from(newer).where(and(eq(newer.id, revisionTable.id), gt(newer.revision, revisionTable.revision)))) : undefined,
     )).orderBy(revisionTable.revisionId).all();
 }
-function head(db: Db) { return hash(db.select({ n: max(revisionTable.revisionId) }).from(revisionTable).get()); }
-function dependencies(db: Db, enterpriseId: number, f: Fact) {
-    const enterprise = db.select().from(s.enterprise).where(eq(s.enterprise.id, enterpriseId)).get();
-    if (!enterprise)
-        fail('enterprise_not_found');
-    const file = db.select().from(s.storedFile).where(eq(s.storedFile.id, f.source.fileId)).get();
-    if (!file || file.sha256 !== f.source.sha256 || file.removedAt)
-        fail('source_conflict');
-    const event = (ref: {
-        eventId: number;
-        revision: number;
-    }, kind: 'award' | 'review') => {
-        const e = db.select().from(s.recordEvent).where(eq(s.recordEvent.id, ref.eventId)).get();
-        const r = e && db.select().from(s.record).where(eq(s.record.id, e.recordId)).get();
-        if (!e || e.revision !== ref.revision || e.eventType !== kind || r?.enterpriseId !== enterpriseId || r.titleCode !== 'little_giant' || r.source !== 'jxj' || (kind === 'review' && e.reviewOutcome !== 'failed'))
-            fail('cycle_conflict');
-        const evidence = db.select().from(s.recordEvidence).where(eq(s.recordEvidence.recordEventId, e!.id)).all();
-        return { e, r, evidence };
-    };
-    const cycle = f.cycle ? event(f.cycle, 'award') : null, formal = f.formalEvent ? event(f.formalEvent, 'review') : null;
-    if (formal && (!cycle || formal.e!.formalValidity?.originAwardEventId !== cycle.e!.id))
-        fail('cycle_conflict');
-    return { enterprise, file, cycle, formal };
+function head(db: Db) { return dispositionHash(db.select({ n: max(revisionTable.revisionId) }).from(revisionTable).get()); }
+export type DispositionSources = {
+    enterprise(id: number): typeof s.enterprise.$inferSelect | undefined
+    file(id: number): typeof s.storedFile.$inferSelect | undefined
+    event(id: number): typeof s.recordEvent.$inferSelect | undefined
+    record(id: number): typeof s.record.$inferSelect | undefined
+    evidence(eventId: number): Array<typeof s.recordEvidence.$inferSelect>
+}
+
+export function dispositionDependencies(source: DispositionSources, enterpriseId: number, f: Fact) {
+    const enterprise = source.enterprise(enterpriseId)
+    if (!enterprise) fail('enterprise_not_found')
+    const file = source.file(f.source.fileId)
+    if (!file || file.sha256 !== f.source.sha256 || file.removedAt) fail('source_conflict')
+    const event = (ref: { eventId: number; revision: number }, kind: 'award' | 'review') => {
+        const e = source.event(ref.eventId)
+        const r = e && source.record(e.recordId)
+        if (!e || e.revision !== ref.revision || e.eventType !== kind || r?.enterpriseId !== enterpriseId ||
+            r.titleCode !== 'little_giant' || r.source !== 'jxj' || (kind === 'review' && e.reviewOutcome !== 'failed')) fail('cycle_conflict')
+        return { e, r, evidence: source.evidence(e!.id) }
+    }
+    const cycle = f.cycle ? event(f.cycle, 'award') : null
+    const formal = f.formalEvent ? event(f.formalEvent, 'review') : null
+    if (formal && (!cycle || formal.e!.formalValidity?.originAwardEventId !== cycle.e!.id)) fail('cycle_conflict')
+    return { enterprise, file, cycle, formal }
+}
+
+function dependencies(db: Db, enterpriseId: number, fact: Fact) {
+    return dispositionDependencies({
+        enterprise: id => db.select().from(s.enterprise).where(eq(s.enterprise.id, id)).get(),
+        file: id => db.select().from(s.storedFile).where(eq(s.storedFile.id, id)).get(),
+        event: id => db.select().from(s.recordEvent).where(eq(s.recordEvent.id, id)).get(),
+        record: id => db.select().from(s.record).where(eq(s.record.id, id)).get(),
+        evidence: id => db.select().from(s.recordEvidence).where(eq(s.recordEvidence.recordEventId, id)).all(),
+    }, enterpriseId, fact)
+}
+
+export function projectCurrentDispositions(version: string, rows: Row[], resolve: (id: number, fact: Fact) => unknown) {
+    return {
+        version, rows: rows.map(row => {
+            let sourceCurrent = true
+            try { resolve(row.enterpriseId, row.fact) } catch (error) {
+                if (!(error instanceof DispositionError)) throw error
+                sourceCurrent = false
+            }
+            const effectReady = row.status === 'confirmed' && row.kind !== 'formal_failure' && sourceCurrent &&
+                !!row.fact.cycle && row.fact.effective.precision === 'day' && !!row.fact.effectiveBasis
+            return { ...row, sourceCurrent, effectReady }
+        }),
+    }
 }
 export function historyDispositions(db: Db, enterpriseIds: number[]) { return db.transaction(() => rows(db, enterpriseIds)); }
 export function currentDispositions(db: Db, enterpriseIds: number[]) {
-    return db.transaction(() => ({ version: head(db), rows: rows(db, enterpriseIds, true).map(r => {
-            let sourceCurrent = true;
-            try {
-                dependencies(db, r.enterpriseId, r.fact);
-            }
-            catch (error) {
-                if (!(error instanceof DispositionError)) throw error;
-                sourceCurrent = false;
-            }
-            return { ...r, sourceCurrent, effectReady: r.status === 'confirmed' && r.kind !== 'formal_failure' && sourceCurrent && !!r.fact.cycle && r.fact.effective.precision === 'day' && !!r.fact.effectiveBasis };
-        }) }));
+    return db.transaction(() => projectCurrentDispositions(head(db), rows(db, enterpriseIds, true),
+        (id, fact) => dependencies(db, id, fact)));
 }
 function commandEnterprises(db: Db, request: z.infer<typeof dispositionRequestSchema>) {
     return [...new Set(request.operations.map(op => {
@@ -94,8 +114,14 @@ function commandEnterprises(db: Db, request: z.infer<typeof dispositionRequestSc
     }))];
 }
 /** Ordered lifecycle simulation shared by preflight and transactional commit. */
-function simulate(db: Db, request: z.infer<typeof dispositionRequestSchema>, committedAt = '') {
-    const current = new Map(rows(db, commandEnterprises(db, request), true).map(r => [r.id, r]));
+function simulate(db: Db, request: DispositionRequest, committedAt = '') {
+    return simulateDispositions(rows(db, commandEnterprises(db, request), true), request,
+        (id, fact) => dependencies(db, id, fact), committedAt)
+}
+
+export function simulateDispositions(existing: Row[], request: DispositionRequest,
+    resolve: (id: number, fact: Fact) => unknown, committedAt: string) {
+    const current = new Map(existing.map(r => [r.id, r]))
     const appended: Omit<Row, 'revisionId'>[] = [], ids: string[] = [], deps: unknown[] = [];
     const append = (r: Omit<Row, 'revisionId'>) => {
         const { revisionId: _revisionId, ...value } = { ...r, revisionId: 0 };
@@ -108,7 +134,7 @@ function simulate(db: Db, request: z.infer<typeof dispositionRequestSchema>, com
         if (op.action === 'confirm' && old?.status !== 'pending') fail('revision_conflict');
         const fact = 'fact' in op ? op.fact : old!.fact;
         const enterpriseId = 'enterpriseId' in op ? op.enterpriseId : old!.enterpriseId;
-        if (op.action !== 'withdraw') deps.push(dependencies(db, enterpriseId, fact));
+        if (op.action !== 'withdraw') deps.push(resolve(enterpriseId, fact));
         const audit = { actor: request.actor, basis: request.basis, action: op.action, committedAt, replaces: op.action === 'replace' ? old!.id : null };
         if (op.action === 'assert' || op.action === 'replace') {
             if (old) append({ ...old, revision: old.revision + 1, status: 'replaced', audit });
@@ -126,16 +152,16 @@ function simulate(db: Db, request: z.infer<typeof dispositionRequestSchema>, com
     return { deps, appended, ids };
 }
 function prepare(db: Db, body: unknown) {
-    const request = dispositionRequestSchema.parse(body), requestHash = hash(request);
+    const request = dispositionRequestSchema.parse(body), requestHash = dispositionHash(request);
     const prior = db.select().from(s.titleCycleDispositionReceipt).where(eq(s.titleCycleDispositionReceipt.key, request.idempotencyKey)).get();
     if (prior && prior.requestHash !== requestHash)
         fail('idempotency_conflict');
     if (prior)
-        return { request, requestHash, prior, planHash: hash({ requestHash }) };
+        return { request, requestHash, prior, planHash: dispositionHash({ requestHash }) };
     if (head(db) !== request.expectedVersion)
         fail('version_conflict');
     const { deps } = simulate(db, request);
-    return { request, requestHash, prior, planHash: hash({ requestHash, deps }) };
+    return { request, requestHash, prior, planHash: dispositionHash({ requestHash, deps }) };
 }
 export function preflightDisposition(db: Db, body: unknown) { return db.transaction(() => { const p = prepare(db, body); return { planHash: p.planHash, replay: !!p.prior }; }); }
 export function commitDisposition(db: Db, body: unknown) {

@@ -32,7 +32,7 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 it.each([
-  ['/', 'core', 'roster'],
+  ['/', null, 'other'],
   ['/roster', 'sme-roster', 'other'],
   ['/enterprises/1', 'sme-roster', 'roster'],
   ['/comparison', 'sme-roster', 'other'],

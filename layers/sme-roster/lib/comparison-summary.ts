@@ -90,20 +90,7 @@ export function readComparisonSummary(
     recordedAt: schema.differenceReason.recordedAt,
     ...differenceEvidenceColumns(db),
   }).from(schema.differenceReason).where(inArray(schema.differenceReason.enterpriseId, ids)).all() : []
-  const current = new Map<string, ComparisonSummaryDisposition>()
-  for (const { enterpriseId, titleCode, direction, ...disposition } of dispositions) {
-    const key = `${enterpriseId}|${titleCode}|${direction}`
-    const previous = current.get(key)
-    if (!previous?.recordedAt || previous.recordedAt < disposition.recordedAt) current.set(key, disposition)
-  }
-  const defaultDisposition: ComparisonSummaryDisposition = {
-    explanationId: null, status: 'not_queried', reasonCode: null, measureCode: null,
-    verificationStatus: 'pending', recordedAt: null, evidenceQueryId: null, evidenceRelationId: null,
-  }
-  const scoped = filterComparisonRows(result.rows.map(row => ({ ...row,
-    platform: { aliases: aliasesByEnterprise.get(row.enterpriseId) ?? [] },
-  })), filter)
-  const selected = scoped.slice((page - 1) * pageSize, page * pageSize)
+  const { scoped, selected } = selectComparisonSummaryPage(result, filter, page, pageSize, aliasesByEnterprise)
   const assessments = readQueryAssessmentSummaries(db, selected.map(row => ({
     enterpriseId: row.enterpriseId, titleCode: row.titleCode, direction: row.direction,
   })))
@@ -116,6 +103,37 @@ export function readComparisonSummary(
       .from(o).innerJoin(qa, sql`${qa.collectionId}=${o.collectionId}`)
       .where(inArray(qa.oldId, selectedQueryIds.slice(start, start + 500))).groupBy(qa.oldId).all()
     for (const row of counts) relationCounts.set(row.queryId, row.count)
+  }
+  return projectComparisonSummary(result, reconcile, scoped, selected, dispositions, queriesByEnterprise, relationCounts, assessments)
+}
+
+type SummaryAlias = { enterpriseId: number; name: string; verificationStatus: string }
+type CuratedComparison = ReturnType<typeof getCuratedComparison>
+
+export function selectComparisonSummaryPage(result: CuratedComparison, filter: ComparisonRowFilter, page: number, pageSize: number, aliasesByEnterprise: ReadonlyMap<number, SummaryAlias[]>) {
+  const scoped = filterComparisonRows(result.rows.map(row => ({ ...row,
+    platform: { aliases: aliasesByEnterprise.get(row.enterpriseId) ?? [] },
+  })), filter)
+  return { scoped, selected: scoped.slice((page - 1) * pageSize, page * pageSize) }
+}
+
+type SummaryInput = ReturnType<typeof selectComparisonSummaryPage>['selected']
+export type SummaryDisposition = Omit<ComparisonSummaryDisposition, 'recordedAt'> & {
+  enterpriseId: number; titleCode: string; direction: string; recordedAt: string
+}
+
+export function projectComparisonSummary(result: CuratedComparison, reconcile: ReconcileIndex,
+  scoped: SummaryInput, selected: SummaryInput, dispositions: readonly SummaryDisposition[],
+  queriesByEnterprise: ReadonlyMap<number, number[]>, relationCounts: ReadonlyMap<number, number>, assessments: readonly QueryAssessmentSummary[]) {
+  const current = new Map<string, ComparisonSummaryDisposition>()
+  for (const { enterpriseId, titleCode, direction, ...disposition } of dispositions) {
+    const key = `${enterpriseId}|${titleCode}|${direction}`
+    const previous = current.get(key)
+    if (!previous?.recordedAt || previous.recordedAt < disposition.recordedAt) current.set(key, disposition)
+  }
+  const defaultDisposition: ComparisonSummaryDisposition = {
+    explanationId: null, status: 'not_queried', reasonCode: null, measureCode: null,
+    verificationStatus: 'pending', recordedAt: null, evidenceQueryId: null, evidenceRelationId: null,
   }
   const explanationFor = (row: typeof scoped[number]) => reconcile.entries.get(reconcileKey(row))
   const dispositionFor = (row: typeof scoped[number]) => current.get(`${row.enterpriseId}|${row.titleCode}|${row.direction}`) ?? defaultDisposition

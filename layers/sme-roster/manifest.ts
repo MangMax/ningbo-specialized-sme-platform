@@ -1,7 +1,7 @@
-import { ChartColumn, Gauge, LayoutList, Search } from '@lucide/vue'
+import { BadgeCheck, FolderOpen, Landmark, LayoutList } from '@lucide/vue'
 import { defineAppModule } from '../core/lib/core/module-registry'
-import { ENTERPRISE_LIST_TITLE } from './lib/labels'
-import { ROSTER_LEDGER_PATH } from './lib/sme-roster/routes'
+import { CURRENT_ENTERPRISES_TITLE, ENTERPRISE_LIST_TITLE } from './lib/labels'
+import { ROSTER_FILES_PATH, ROSTER_LEDGER_PATH } from './lib/sme-roster/routes'
 import { rosterFileCategory } from './lib/sme-roster/file-category'
 
 const platform = { id: 'platform', label: '工信部平台' }
@@ -12,13 +12,6 @@ export default defineAppModule({
   id: 'sme-roster',
   name: '优质中小企业',
   description: '查询企业称号、历年认定记录与有效资格。',
-  home: ROSTER_LEDGER_PATH,
-  dashboard: [
-    {
-      id: 'roster-stats',
-      title: '名录统计',
-    },
-  ],
   clientPages: [
     { page: 'roster', paths: ['/current-enterprises', '/enterprises'] },
     {
@@ -26,9 +19,8 @@ export default defineAppModule({
       operationPage: 'other',
       paths: [
         ROSTER_LEDGER_PATH,
+        ROSTER_FILES_PATH,
         '/comparison',
-        '/quality',
-        '/stats',
         '/platform-business-processes',
         '/platform-declarations',
         '/platform-queries',
@@ -45,11 +37,9 @@ export default defineAppModule({
     '/api/files/:id/segments',
     '/api/job-artifacts',
     '/api/platform',
-    '/api/quality',
     '/api/records',
     '/api/roster',
-    '/api/statistics',
-    '/api/stats',
+    '/api/sme-roster/files',
   ],
   mcpTools: [
     'cancel_event_annual_correspondence_task',
@@ -161,18 +151,17 @@ export default defineAppModule({
     singleLine: true,
   }],
   nav: [
+    { title: CURRENT_ENTERPRISES_TITLE, url: '/current-enterprises', icon: BadgeCheck },
     { title: ENTERPRISE_LIST_TITLE, url: ROSTER_LEDGER_PATH, icon: LayoutList },
-    { title: '优质中小企业查询', url: '/current-enterprises', icon: Search },
     {
-      title: '工信部查询', icon: Search,
+      title: platform.label, icon: Landmark,
       items: [
         { title: '申报记录', url: '/platform-declarations' },
         { title: '关联办理', url: '/platform-business-processes' },
         { title: '平台认定目录', url: '/platform-recognized-directory' },
       ],
     },
-    { title: '统计', url: '/stats', icon: ChartColumn },
-    { title: '数据质量', url: '/quality', icon: Gauge },
+    { title: '名单文件', url: ROSTER_FILES_PATH, icon: FolderOpen },
   ],
   jobKinds: [
     { kind: 'difference-snapshot', label: '平台业务采集入库', group: platform, spec: 'differenceSnapshotSpec' },
@@ -180,6 +169,7 @@ export default defineAppModule({
     { kind: 'reconcile', label: '平台核查', group: platform, spec: 'reconcileSpec' },
     { kind: 'event-archive-candidates', label: '公布事件候选发现', group: platform, spec: 'candidateDiscoverySpec' },
     { kind: 'event-annual-correspondence', label: '年度过程对应', group: platform, spec: 'annualSpec' },
-    { kind: 'current-roster-export', label: '当前名录导出', group: rosterExport, spec: 'currentRosterExportSpec' },
+    { kind: 'current-roster-export', label: '当前名录导出', group: rosterExport, spec: 'currentRosterExportSpec', progressPhase: 'workbook' },
+    { kind: 'roster_export_cleanup', label: '清理过期名录导出文件', group: rosterExport, spec: 'rosterExportCleanupSpec', schedule: { cron: '0 * * * *', frequency: '每小时整点' } },
   ],
 })

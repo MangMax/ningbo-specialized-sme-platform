@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import { CalendarDate } from '@internationalized/date'
 import { TimeFieldRoot } from 'reka-ui'
-import { calendarSelectValue, calendarYearOptions, chooseCalendarSelect } from '../../support/calendar-select'
+import { calendarPeriodValue, calendarYearOptions, chooseCalendarPeriod } from '../../support/calendar-period'
 import { Calendar } from '../../../layers/core/app/components/ui/calendar'
 import ComparisonDateTimePicker from '../../../layers/core/app/components/DateTimePicker.vue'
 
@@ -55,8 +55,8 @@ describe('comparison calendar and segmented time picker', () => {
 })
 
 async function navigate(year: string, month: string) {
-  await chooseCalendarSelect('年份', year)
-  await chooseCalendarSelect('月份', month)
+  await chooseCalendarPeriod('年份', year)
+  await chooseCalendarPeriod('月份', month)
 }
 async function clickDay(day: string) {
   const cell = document.querySelector<HTMLElement>(`[data-value="${day}"]`)
@@ -81,8 +81,8 @@ it('discards month-only browsing on close and reopens at the selected month end'
   done.click(); await flushPromises()
   expect(view.emitted('update:modelValue')).toBeUndefined()
   await view.get('#cutoff').trigger('click'); await flushPromises()
-  expect(calendarSelectValue('月份')).toBe('1')
-  expect(calendarSelectValue('年份')).toBe('2024')
+  expect(calendarPeriodValue('月份')).toBe('1')
+  expect(calendarPeriodValue('年份')).toBe('2024')
   await navigate('2024', '4')
   await clickDay('2024-04-30')
   expect(view.emitted('update:modelValue')?.at(-1)).toEqual(['2024-04-30T23:59:58.987'])
@@ -91,8 +91,8 @@ it('discards month-only browsing on close and reopens at the selected month end'
 it('opens empty at the local current month without filling and selects midnight through a real day', async () => {
   const view = await start('')
   const now = new Date()
-  expect(calendarSelectValue('月份')).toBe(String(now.getMonth() + 1))
-  expect(calendarSelectValue('年份')).toBe(String(now.getFullYear()))
+  expect(calendarPeriodValue('月份')).toBe(String(now.getMonth() + 1))
+  expect(calendarPeriodValue('年份')).toBe(String(now.getFullYear()))
   expect(view.emitted('update:modelValue')).toBeUndefined()
   await navigate('2024', '2')
   await clickDay('2024-02-29')
@@ -101,10 +101,10 @@ it('opens empty at the local current month without filling and selects midnight 
 
 it('keeps an old selected year and supports adjacent-month arrows and day selection', async () => {
   const view = await start('1800-12-31T12:34:56.789')
-  expect(calendarSelectValue('年份')).toBe('1800')
+  expect(calendarPeriodValue('年份')).toBe('1800')
   document.querySelector<HTMLButtonElement>('[aria-label="下一月"]')!.click(); await flushPromises()
-  expect(calendarSelectValue('月份')).toBe('1')
-  expect(calendarSelectValue('年份')).toBe('1801')
+  expect(calendarPeriodValue('月份')).toBe('1')
+  expect(calendarPeriodValue('年份')).toBe('1801')
   expect(view.emitted('update:modelValue')).toBeUndefined()
   const day = document.querySelector<HTMLElement>('[data-value="1801-01-31"]')!
   day.click()
@@ -117,19 +117,14 @@ it.each(['', '1800-12-31T12:34:56.789'])('keeps default years reachable while br
   const currentYear = new Date().getFullYear()
   const earliestYear = String(currentYear - 100)
   const latestYear = String(currentYear + 10)
-  const options = calendarYearOptions
-  expect(await options()).toEqual(expect.arrayContaining([earliestYear, latestYear]))
-  if (cutoff) expect(calendarSelectValue('年份')).toBe('1800')
-  await chooseCalendarSelect('年份', earliestYear)
-  expect(calendarSelectValue('年份')).toBe(earliestYear)
-  expect(await options()).toContain(latestYear)
-  await chooseCalendarSelect('年份', latestYear)
-  expect(calendarSelectValue('年份')).toBe(latestYear)
-  expect(await options()).toContain(earliestYear)
+  if (cutoff) expect(calendarPeriodValue('年份')).toBe('1800')
+  await chooseCalendarPeriod('年份', earliestYear)
+  expect(calendarPeriodValue('年份')).toBe(earliestYear)
+  await chooseCalendarPeriod('年份', latestYear)
+  expect(calendarPeriodValue('年份')).toBe(latestYear)
   if (cutoff) {
-    expect(await options()).toContain('1800')
-    await chooseCalendarSelect('年份', '1800')
-    expect(calendarSelectValue('年份')).toBe('1800')
+    await chooseCalendarPeriod('年份', '1800')
+    expect(calendarPeriodValue('年份')).toBe('1800')
   }
   expect(view.emitted('update:modelValue')).toBeUndefined()
 })
@@ -147,7 +142,7 @@ it.each([false, true])('preserves caller date limits with custom year range %s',
   })
   await flushPromises()
   const years = calendarYearOptions
-  const expectedYears = customRange ? ['2023', '2024', '2025'] : ['2024']
+  const expectedYears = ['2024']
   expect(await years()).toEqual(expectedYears)
   await navigate('2024', '3')
   expect(await years()).toEqual(expectedYears)

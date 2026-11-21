@@ -1,21 +1,3 @@
-/**
- * **企业列表页的筛选状态与 URL 映射**(RL-20 重写;原为 RL-17 的「三视图合并台账」)。
- *
- * ── 这一票把「三种分组」删掉了 ───────────────────────────────────────────
- * 用户原话:「**只要一个表格**」。原先 `/` 一个入口下按 `view` 切三种分组
- * (按企业 / 按企业×称号 / 差异与原因),每种分组用到的筛选还不一样 —— 于是这个模块
- * 里最早长出来的是 `LEDGER_VIEW_FILTERS`(每视图认哪些筛选)与 `filtersForView`(切视图时
- * 清掉用不到的)。这些**随三视图一起去掉**:现在只有一个企业粒度的表,筛选集合也只有一份。
- *
- * 留下的两条不变量,理由不变:
- *
- *  1. **「筛选与导出同口径」** —— 导出地址与列表请求**读同一个对象**。两处各拼一遍参数,
- *     迟早有一边漏掉新加的项,而漏掉的表现是**导出多出几行**,没人会在页面上发现。
- *  2. **「没有静默筛选」** —— 地址栏里带着、页面上却看不见的条件,用户既不知道它在生效,
- *     也清不掉。所以状态里认的每一项,要么是筛选条上的控件,要么是筛选条下面那排可撤掉的
- *     条件 chip(`source` / `eventType` / `rosterState` 走后者:它们是 `/stats`
- *     下钻带进来的,不给常驻控件,但**绝不静默丢弃**)。
- */
 import { parseCsvQuery } from '../../../core/lib/csv'
 import {
   DEFAULT_ROSTER_ENTERPRISE_SORT,
@@ -32,7 +14,6 @@ export interface LedgerState {
   q: string
   title: string[]
   district: string
-  /** 总表成员状态(派生)。`/stats` 下钻会带,页面上只以 chip 出现。 */
   rosterState: string
   source: string[]
   eventType: string[]
@@ -151,7 +132,6 @@ export function ledgerExportUrl(state: LedgerState): string {
 /** 导出按钮上的文案:**写清粒度与格式**,免得把「企业」当成「企业×称号」。 */
 export const LEDGER_EXPORT_LABEL = '导出当前筛选(企业,xlsx)'
 
-/** 年份来自实际事件统计；分享链接中已选年份在统计加载期间仍可见。 */
 export function ledgerYearOptions(years: readonly string[], selected: readonly string[] = []) {
   return [...new Set([...years, ...selected])]
     .filter(year => /^\d{4}$/.test(year))

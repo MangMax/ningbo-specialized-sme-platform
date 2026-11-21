@@ -3,9 +3,11 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
 import * as schema from '../../../../db/schema'
 import { getStoredFile, type StoredFileRow } from './stored-files'
-import { DEFAULT_DPI, isPdfPath, normalizeDpi } from '../../lib/pdf-page'
-import { verifyFileRead, verifyPageRead, type FileReadIdentity } from './file-read-identity'
+import { isPdfPath, normalizeDpi } from '../../lib/pdf-page'
+import { verifyFileRead, verifyRegisteredFileRead, verifyRenderedPageRead, type FileReadIdentity } from './file-read-identity'
 import { listPdfPages, resolveWithinRoot, type PdfPagesState } from './pdf-pages'
+import { FileMaintenanceError } from './file-store'
+import { postgresFileIdentity, readPostgresFile, type PostgresFileDb } from './file-store-postgres'
 
 type Db = BetterSQLite3Database<typeof schema>
 
@@ -53,17 +55,7 @@ export function findFileIdByRelPath(db: Db, relPath: string): number | null {
   )
 }
 
-/**
- * 把 `{ fileId?, relPath? }` 解析成库里的整行。
- *
- * 返回结果对象而不是抛错:这一层的职责是「翻译用户输入」,抛什么 HTTP/MCP 错误
- * 是调用方(tool)的事 —— 顺带也让它不必起服务就能单测。
- */
-export function resolveFileRef(
-  db: Db,
-  ref: FileRefInput,
-  options: FileRefOptions = {},
-): FileRefResult {
+function fileLocator(ref: FileRefInput): { ok: true; locator: number | string } | { ok: false; message: string } {
   const id = ref.fileId ?? null
   const relPath = typeof ref.relPath === 'string' ? ref.relPath.trim() : ''
 
@@ -74,20 +66,17 @@ export function resolveFileRef(
     return { ok: false, message: '必须给 `fileId` 或 `relPath` 之一' }
   }
 
-  let row: StoredFileRow | null
-  if (id !== null) {
-    if (!Number.isInteger(id) || id <= 0) {
-      return { ok: false, message: `文件 id 必须是正整数:${id}` }
-    }
-    row = getStoredFile(db, id)
-    if (!row) return { ok: false, message: `文件不存在:id=${id}` }
-  } else {
-    const found = findFileIdByRelPath(db, relPath)
-    if (found === null) return { ok: false, message: `文件不存在:relPath=${relPath}` }
-    row = getStoredFile(db, found)
-    if (!row) return { ok: false, message: `文件不存在:relPath=${relPath}` }
+  if (id !== null && (!Number.isInteger(id) || id <= 0)) {
+    return { ok: false, message: `文件 id 必须是正整数:${id}` }
   }
+  return { ok: true, locator: id ?? relPath }
+}
 
+function missingFileRef(locator: number | string) {
+  return `文件不存在:${typeof locator === 'number' ? 'id' : 'relPath'}=${locator}`
+}
+
+function visibleFileRef(row: StoredFileRow, options: FileRefOptions): FileRefResult {
   if (row.removedAt && !options.allowRemoved) {
     return {
       ok: false,
@@ -95,6 +84,29 @@ export function resolveFileRef(
     }
   }
   return { ok: true, row }
+}
+
+export function resolveFileRef(db: Db, ref: FileRefInput, options: FileRefOptions = {}): FileRefResult {
+  const result = fileLocator(ref)
+  if (!result.ok) return result
+  const { locator } = result
+  const id = typeof locator === 'number' ? locator : findFileIdByRelPath(db, locator)
+  const row = id === null ? null : getStoredFile(db, id)
+  return row ? visibleFileRef(row, options) : { ok: false, message: missingFileRef(locator) }
+}
+
+export async function requirePostgresFileRef(db: PostgresFileDb, ref: FileRefInput, options: FileRefOptions = {}) {
+  const result = fileLocator(ref)
+  if (!result.ok) throw createError({ statusCode: 404, message: result.message })
+  const { locator } = result
+  if (typeof locator === 'string' && locator.includes('\0')) throw createError({ statusCode: 404, message: missingFileRef(locator) })
+  const row = await readPostgresFile(db, locator).catch(error => {
+    if (!(error instanceof FileMaintenanceError) || error.statusCode !== 404) throw error
+    throw createError({ statusCode: 404, message: missingFileRef(locator) })
+  })
+  const visible = visibleFileRef(row, options)
+  if (!visible.ok) throw createError({ statusCode: 404, message: visible.message })
+  return visible.row
 }
 
 /**
@@ -129,14 +141,26 @@ export async function pageImagesForAgent(
 ): Promise<{ ok: true; value: Omit<PdfPagesState, 'file'> & { file: FileRef } } | AgentFailure> {
   const found = resolveFileRef(db, input, options)
   if (!found.ok) return { ok: false, statusCode: 404, message: found.message }
+  return readPageImagesForAgent(found.row, root, input.dpi, () => verifyFileRead(db, root, found.row.relPath))
+}
 
-  const { id, relPath, filename } = found.row
+export async function postgresPageImagesForAgent(db: PostgresFileDb, root: string, input: FileRefInput & { dpi?: number | null }) {
+  const file = await requirePostgresFileRef(db, input, { allowRemoved: true })
+  return readPageImagesForAgent(file, root, input.dpi, () => verifyRegisteredFileRead(root, postgresFileIdentity(file)))
+}
+
+async function readPageImagesForAgent(
+  { id, relPath, filename }: Pick<StoredFileRow, 'id' | 'relPath' | 'filename'>,
+  root: string,
+  requestedDpi: number | null | undefined,
+  verify: () => Promise<FileReadIdentity>,
+): Promise<{ ok: true; value: Omit<PdfPagesState, 'file'> & { file: FileRef } } | AgentFailure> {
   if (!isPdfPath(relPath)) {
     return { ok: false, statusCode: 415, message: `不是 PDF,没有页图:${relPath}` }
   }
   let dpi: number
   try {
-    dpi = normalizeDpi(input.dpi)
+    dpi = normalizeDpi(requestedDpi)
   } catch (error) {
     return { ok: false, statusCode: 400, message: (error as Error).message }
   }
@@ -146,9 +170,9 @@ export async function pageImagesForAgent(
     return { ok: false, statusCode: 403, message: '路径越界' }
   }
 
-  const contentIdentity = await verifyFileRead(db, root, relPath)
+  const contentIdentity = await verify()
   const state = await listPdfPages(root, relPath, dpi)
-  if (state.pages.length) await verifyPageRead(db, root, relPath, undefined, contentIdentity)
+  if (state.pages.length) await verifyRenderedPageRead(root, relPath, contentIdentity)
   // `state.file` 本来是个字符串(相对路径);这里换成带 id 的对象,代理解析结果时
   // 不必再去 `list_files` 反查一次。
   return { ok: true, value: { ...state, file: { id, relPath, filename, contentIdentity } } }

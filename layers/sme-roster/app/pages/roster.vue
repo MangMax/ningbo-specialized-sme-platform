@@ -48,27 +48,6 @@ import { Input } from '#core/app/components/ui/input'
 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
 
-/**
- * **企业列表**(RL-20)—— 一行一家企业的唯一台账表。
- *
- * ── 这一票删掉了什么(用户原话逐条对得上)────────────────────────────────
- *
- * 1. 「**只要一个表格**」 —— 原先这里按 `view` 切三种分组(按企业 / 按企业×称号 /
- *    差异与原因),三个 tab、三张表、三套筛选可见性。现在只剩**企业粒度**那一张,
- *    `view` 参数整组退役。差异不再单独成表:它的**状态**落到表里的「差异状态」列与
- *    原因摘要,**原因 → 措施**落到抽屉里。
- * 2. 「称号历史、原因用**侧边抽屉**展示,**原因也要可视化**」 —— 见 `EnterpriseDrawer`。
- * 3. 「**删掉解释小字**」 —— 上一版表格上方那一整段「共 X 家企业 · 合计 Y 个企业×称号
- *    (多称号企业在企业数里只算一家…)」、每视图的计数说明、空态里的「可放宽…再试」全部删掉。
- *    留下的只有页头的总数、筛选控件、表和页脚——**页面上没有一句解释性的话**。
- * 4. 「把原生 `<select>` 全部换成项目已有的 `Select` 组件」 —— 原先这一页同时存在两套:
- *    手写的原生 `<select>`(属地 / 总表状态 / 差异方向)与正规的 `Select`(每页条数)。
- *    现在单值筛选用 `Select`、多值筛选用 `MultiSelectFilter`,**没有一处原生 `<select>`**。
- * 5. 页面名与侧边栏入口都叫「企业列表」(`layers/sme-roster/lib/labels.ts` 的 `ENTERPRISE_LIST_TITLE` 一处定义)。
- *
- * ── 状态全在地址栏(深链与「返回不丢上下文」)────────────────────────────
- * 筛选、排序和分页用 replace。打开抽屉时增加一个历史条目，浏览器返回就能关抽屉。
- */
 
 interface Counts {
   total: number
@@ -89,7 +68,6 @@ const route = useRoute()
 const router = useRouter()
 const isNarrow = useMediaQuery('(max-width: 639px)')
 const [DefineAdvancedFilters, ReuseAdvancedFilters] = createReusableTemplate()
-const [DefineActions, ReuseActions] = createReusableTemplate()
 
 /** 参数集合的规范串:比对「地址栏 ⇄ 页面状态」是否已经一致,避免来回写地址。 */
 const normalize = (q: Record<string, unknown>) =>
@@ -234,10 +212,7 @@ const rows = computed<EnterpriseListRow[]>(() => displayedResult.value?.rows ?? 
 const displayedEnterpriseIds = computed(() => rows.value.map(row => row.enterpriseId))
 const returnRowsReady = computed(() => !isLoading.value && (displayedResult.value?.request.key === activeRequestKey.value || error.value != null))
 useEvidencePreviewScrollRestore(returnRowsReady)
-const counts = computed<Counts>(
-  () => displayedResult.value?.counts ?? { total: 0, titlePairs: 0, titles: {}, recognitionPairs: 0, differences: 0 },
-)
-const total = computed(() => counts.value.total)
+const total = computed(() => displayedResult.value?.counts.total ?? 0)
 const displayedPage = computed(() => displayedResult.value?.request.page ?? page.value)
 const displayedPageSize = computed(() => displayedResult.value?.request.pageSize ?? pageSize.value)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / displayedPageSize.value)))
@@ -280,19 +255,16 @@ async function selectRow(id: number, trigger: HTMLButtonElement | null) {
 const titleOptions = computed(() =>
   TITLE_ORDER.map((code) => ({ value: code, label: TITLES[code] ?? code, short: TITLE_SHORT[code] })),
 )
-const { data: yearStats } = useQuery({
-  key: () => ['stats'],
-  query: () => apiGet<{
-    byYear: { key: string; n: number }[]
-    byFirstRecognitionYear: { key: string; n: number }[]
-  }>('/api/stats'),
+const { data: ledgerYears } = useQuery({
+  key: () => ['roster-ledger-years'],
+  query: () => apiGet<{ eventYears: number[]; firstRecognitionYears: number[] }>('/api/roster/ledger-years'),
 })
 const yearOptions = computed(() => ledgerYearOptions(
-  (yearStats.value?.byYear ?? []).map(bucket => bucket.key),
+  (ledgerYears.value?.eventYears ?? []).map(String),
   state.value.year,
 ))
 const firstYearOptions = computed(() => ledgerYearOptions(
-  (yearStats.value?.byFirstRecognitionYear ?? []).map(bucket => bucket.key),
+  (ledgerYears.value?.firstRecognitionYears ?? []).map(String),
   state.value.firstYear,
 ))
 const firstStatusOptions = computed(() =>
@@ -327,13 +299,6 @@ const sortOptions = computed(() =>
   })),
 )
 
-/**
- * 生效中的条件摊平成一行,每项可单独撤掉。
- *
- * `source` / `eventType` / `rosterState` **没有常驻控件**(它们来自 `/stats` 的下钻),
- * 但一直在 state 里生效 —— 所以必须出现在这一行里。不出现在这里,它们就是**静默筛选**:
- * 地址栏里带着、页面上看不见、也清不掉。
- */
 interface ActiveFilter {
   key: string
   label: string
@@ -439,13 +404,7 @@ useHead({ title: ENTERPRISE_LIST_TITLE })
 </script>
 
 <template>
-  <div class="ledger-page flex min-w-0 flex-col gap-2 sm:gap-3">
-    <DefineActions>
-      <RosterEnterpriseDifferenceRefresh :enterprise-ids="displayedEnterpriseIds" :disabled="isLoading || !!error" @refreshed="refetch()" />
-      <Button as-child variant="outline" size="sm">
-        <a :href="exportUrl"><ExternalLink class="size-3.5" aria-hidden="true" />{{ LEDGER_EXPORT_LABEL }}</a>
-      </Button>
-    </DefineActions>
+  <div class="workspace-list ledger-page flex min-w-0 flex-col gap-2 sm:gap-3">
     <DefineAdvancedFilters>
       <MultiSelectFilter
         v-model="state.diffStatus"
@@ -491,75 +450,80 @@ useHead({ title: ENTERPRISE_LIST_TITLE })
         </SelectContent>
       </Select>
     </DefineAdvancedFilters>
-    <PageHeader :title="ENTERPRISE_LIST_TITLE">
-      <template v-if="!isNarrow" #actions><ReuseActions /></template>
-    </PageHeader>
+    <PageHeader :title="ENTERPRISE_LIST_TITLE" />
 
-    <div data-testid="ledger-filters" class="flex flex-wrap items-center gap-2">
-      <div class="relative w-full sm:w-72">
-        <Search
-          class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
-          aria-hidden="true"
-        />
-        <Input
-          v-model="search"
-          class="bg-card h-8 pl-8 shadow-none"
-          placeholder="企业名称、曾用名或信用代码"
-          aria-label="按企业名称、已确认曾用名或统一社会信用代码搜索"
-        />
-      </div>
-      <MultiSelectFilter
-        v-model="state.title"
-        :options="titleOptions"
-        placeholder="全部称号"
-        summary-prefix="称号"
-        class="w-28 shadow-none"
-      />
-      <Select v-model="districtModel">
-        <SelectTrigger
-          size="sm"
-          class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-28 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100"
-          :data-active="state.district !== ''"
-          aria-label="按属地筛选"
+    <Card class="paginated-table-card min-w-0 gap-0 overflow-hidden py-0 shadow-none">
+      <div role="region" aria-label="企业列表筛选" tabindex="0" class="table-toolbar workspace-list-filter flex flex-col gap-3">
+        <div class="flex min-w-0 flex-wrap items-start gap-2">
+          <div data-testid="ledger-filters" class="flex min-w-0 flex-wrap items-center gap-2">
+            <div class="relative w-full sm:w-72">
+              <Search
+                class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+                aria-hidden="true"
+              />
+              <Input
+                v-model="search"
+                class="bg-card h-8 pl-8 shadow-none"
+                placeholder="企业名称、曾用名或信用代码"
+                aria-label="按企业名称、已确认曾用名或统一社会信用代码搜索"
+              />
+            </div>
+            <MultiSelectFilter
+              v-model="state.title"
+              :options="titleOptions"
+              placeholder="全部称号"
+              summary-prefix="称号"
+              class="w-28 shadow-none"
+            />
+            <Select v-model="districtModel">
+              <SelectTrigger
+                size="sm"
+                class="bg-card data-[active=true]:border-primary/45 data-[active=true]:bg-accent data-[active=true]:text-accent-foreground w-28 shadow-none active:scale-[0.98] transition-transform duration-150 ease-snap motion-reduce:transition-none motion-reduce:active:scale-100"
+                :data-active="state.district !== ''"
+                aria-label="按属地筛选"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent class="shadow-none">
+                <SelectItem :value="ALL_DISTRICTS">全部属地</SelectItem>
+                <SelectItem v-for="d in districtOptions" :key="d" :value="d">{{ d }}</SelectItem>
+              </SelectContent>
+            </Select>
+            <ReuseAdvancedFilters v-if="!isNarrow" />
+          </div>
+          <div class="ml-auto flex flex-wrap items-center justify-end gap-2" role="group" aria-label="企业列表操作">
+            <RosterEnterpriseDifferenceRefresh :enterprise-ids="displayedEnterpriseIds" :disabled="isLoading || !!error" @refreshed="refetch()" />
+            <Button as-child variant="outline" size="sm">
+              <a :href="exportUrl"><ExternalLink class="size-3.5" aria-hidden="true" />{{ LEDGER_EXPORT_LABEL }}</a>
+            </Button>
+          </div>
+        </div>
+        <DisclosurePanel v-if="isNarrow" compact :heading-level="2" title="更多筛选与排序">
+          <div class="flex flex-wrap items-center gap-2"><ReuseAdvancedFilters /></div>
+        </DisclosurePanel>
+
+        <TransitionGroup
+          v-if="activeFilters.length"
+          tag="div"
+          class="flex flex-wrap items-center gap-1.5"
+          enter-active-class="transition duration-150 ease-snap motion-reduce:transition-none"
+          enter-from-class="scale-90 opacity-0"
+          leave-active-class="transition duration-100 ease-snap motion-reduce:transition-none"
+          leave-to-class="scale-90 opacity-0"
+          move-class="transition duration-150 ease-snap motion-reduce:transition-none"
         >
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent class="shadow-none">
-          <SelectItem :value="ALL_DISTRICTS">全部属地</SelectItem>
-          <SelectItem v-for="d in districtOptions" :key="d" :value="d">{{ d }}</SelectItem>
-        </SelectContent>
-      </Select>
-      <ReuseAdvancedFilters v-if="!isNarrow" />
-    </div>
-    <DisclosurePanel v-if="isNarrow" compact :heading-level="2" title="更多筛选与排序">
-      <div class="flex flex-wrap items-center gap-2"><ReuseAdvancedFilters /></div>
-    </DisclosurePanel>
-
-    <!-- 生效中的条件:一个都不许藏着(见 `activeFilters` 的注释)。 -->
-    <TransitionGroup
-      v-if="activeFilters.length"
-      tag="div"
-      class="flex flex-wrap items-center gap-1.5"
-      enter-active-class="transition duration-150 ease-snap motion-reduce:transition-none"
-      enter-from-class="scale-90 opacity-0"
-      leave-active-class="transition duration-100 ease-snap motion-reduce:transition-none"
-      leave-to-class="scale-90 opacity-0"
-      move-class="transition duration-150 ease-snap motion-reduce:transition-none"
-    >
-      <FilterChip v-for="f in activeFilters" :key="f.key" :label="f.label" @remove="f.clear()" />
-      <Button
-        variant="ghost"
-        size="sm"
-        class="text-muted-foreground h-6 px-1.5 text-xs"
-        @click="clearFilters"
-      >
-        清除全部
-      </Button>
-    </TransitionGroup>
-
-
-    <Card class="gap-0 overflow-hidden py-0 shadow-none">
-      <CardContent class="relative p-0">
+          <FilterChip v-for="f in activeFilters" :key="f.key" :label="f.label" @remove="f.clear()" />
+          <Button
+            variant="ghost"
+            size="sm"
+            class="text-muted-foreground h-6 px-1.5 text-xs"
+            @click="clearFilters"
+          >
+            清除全部
+          </Button>
+        </TransitionGroup>
+      </div>
+      <CardContent class="paginated-table-body relative flex min-h-0 flex-col p-0">
         <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在搜索…" />
         <TableFailureState v-if="error" title="企业列表暂时无法加载" :compact="!!displayedResult" :pending="isLoading" :description="failureDescription" @retry="retry" />
         <RosterEnterpriseListTable
@@ -573,12 +537,8 @@ useHead({ title: ENTERPRISE_LIST_TITLE })
           @clear-filters="clearFilters"
         />
       </CardContent>
+      <TablePagination in-card v-if="displayedResult" :page="displayedPage" :page-size="displayedPageSize" :total="total" :loading="paginationDisabled" unit="家" @update:page="setPage" @update:page-size="setPageSize" />
     </Card>
-
-    <TablePagination v-if="displayedResult" :page="displayedPage" :page-size="displayedPageSize" :total="total" :loading="paginationDisabled" unit="家企业" @update:page="setPage" @update:page-size="setPageSize">
-      共 {{ total.toLocaleString('zh-CN') }} 家<span v-if="state.firstYear.length || state.firstStatus.length"> · 首次认定 {{ counts.recognitionPairs.toLocaleString('zh-CN') }} 组</span> · 差异 {{ counts.differences.toLocaleString('zh-CN') }} 条
-    </TablePagination>
-    <div v-if="isNarrow" class="flex flex-wrap items-center gap-2"><ReuseActions /></div>
 
     <!--
       抽屉(三处基本动效之三:滑出)。**非模态**:开着它照样能看表、能接着点别的行

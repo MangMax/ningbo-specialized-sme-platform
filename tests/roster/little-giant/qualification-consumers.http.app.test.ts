@@ -75,7 +75,7 @@ it('retains complete inherited evidence and versions across page sizes and later
   expect(f.businessDigest()).toBe(digest)
 }, 90000)
 
-it('specialized-only qualification enters innovative HTTP filters statistics and XLSX with its actual period and no invented history', async () => {
+it('specialized-only qualification enters innovative HTTP filters and XLSX with its actual period and no invented history', async () => {
  const c=f.candidate('specialized-only',[{eventType:'award',year:2025,batchSeq:1}],'specialized_sme')
  const before=f.businessDigest()
  const list=await fetch(f.url('/api/roster/current-enterprises?titleCode=innovative_sme&q=specialized-only&district=鄞州区')).then(r=>r.json())
@@ -86,8 +86,6 @@ it('specialized-only qualification enters innovative HTTP filters statistics and
  expect(lower.evidence).toEqual([]);expect(lower.cycles).toEqual([])
  expect(lower.effectiveQualification.localRuleBasis.join(' ')).toContain('实际支撑称号：专精特新中小企业')
  expect(lower.effectiveQualification.presentationBasis.join(' ')).toContain('2028')
- const stats=await fetch(f.url('/api/statistics/districts?title=innovative_sme&district=鄞州区')).then(r=>r.json())
- expect(stats.total).toBe(6)
  const submitted=await fetch(f.url('/api/roster/exports/current/innovative-sme'),{method:'POST',headers:f.headers,body:JSON.stringify({clientRequestId:'specialized-only'})})
  expect(submitted.status).toBe(202)
  const job=await f.terminal((await submitted.json()).jobId);expect(job.state,JSON.stringify(job)).toBe('done')

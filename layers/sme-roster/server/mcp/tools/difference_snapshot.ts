@@ -1,7 +1,7 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { useDb } from '@db'
 import { z } from 'zod'
-import { snapshotOperation } from '../../utils/difference-snapshot'
+import { snapshotRuntimeOperation } from '../../utils/difference-snapshot'
 import { writeGuard } from '../../../../core/server/utils/mcp-guard'
 export default defineMcpTool({
   name: 'difference_snapshot', title: '公布企业业务采集任务',
@@ -9,7 +9,7 @@ export default defineMcpTool({
   enabled: writeGuard,
   inputSchema: { action: z.enum(['create', 'read', 'retry']), clientRequestId: z.string().optional(), jobId: z.string().optional(), enterpriseIds: z.array(z.number().int().positive()).min(1).max(200).optional() },
   handler: async input => {
-    const row = await snapshotOperation(useDb(), useRuntimeConfig().filesDir, input)
+    const row = await snapshotRuntimeOperation(useDb, useRuntimeConfig().filesDir, input)
     return { content: [{ type: 'text' as const, text: JSON.stringify(row) }] }
   },
 })

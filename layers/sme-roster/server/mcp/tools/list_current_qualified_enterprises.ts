@@ -11,7 +11,11 @@ export default defineMcpTool({
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   inputSchema: currentQualifiedFilterSchema.shape,
   handler: async (input, extra) => {
-    const result = await enterpriseReads.currentQualifiedJson(useDb().$client.name, currentQualifiedFilterSchema.parse(input), extra?.signal, (extra as typeof extra & { logContext?: LogContext })?.logContext)
+    const filter = currentQualifiedFilterSchema.parse(input)
+    const context = (extra as typeof extra & { logContext?: LogContext })?.logContext
+    const result = process.env.NUXT_POSTGRES_ROSTER_READ === '1'
+      ? await enterpriseReads.postgresCurrentQualifiedJson(filter, extra?.signal, context)
+      : await enterpriseReads.currentQualifiedJson(useDb().$client.name, filter, extra?.signal, context)
     return result.body.toString('utf8')
   },
 })

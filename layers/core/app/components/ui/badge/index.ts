@@ -26,6 +26,11 @@ export const badgeVariants = cva(
         outline:
           "text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
 
+        success: "border-success/25 bg-[color-mix(in_oklab,var(--success)_10%,var(--card))] text-success",
+        warning: "border-warning/25 bg-[color-mix(in_oklab,var(--warning)_10%,var(--card))] text-warning",
+        info: "border-info/25 bg-[color-mix(in_oklab,var(--primary)_10%,var(--card))] text-info",
+        error: "border-destructive/25 bg-[color-mix(in_oklab,var(--destructive)_8%,var(--card))] text-destructive dark:bg-card",
+
         /* 称号梯度:小巨人 → 专精特新中小企业 → 创新型中小企业。
            实心 → 浅底描边 → 中性描边,由高到低一路退下去。 */
         "tier-1": "border-transparent bg-tier-1-surface text-tier-1-on",

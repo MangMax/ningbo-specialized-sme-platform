@@ -6,6 +6,7 @@ import { z } from 'zod'
 import * as s from '../../../../db/schema'
 import { normalizeEnterpriseName } from '../../lib/enterprise-name'
 import { normalizeReviewedUscc, usccFormatVerdict } from '../../lib/enterprise-uscc'
+import { directoryColumns, directoryOrder, directorySource, enterpriseSourcesSelection, type DirectoryQuery, type DirectoryRow } from './enterprise-directory-query'
 import { currentEnterpriseIdentity } from './enterprise-identity'
 
 type Db = BetterSQLite3Database<typeof s> & { $client: Database.Database }
@@ -61,18 +62,8 @@ export const enterpriseFieldsSchema = z.strictObject({
 export type EnterpriseFields = z.infer<typeof enterpriseFieldsSchema>
 
 function directory(db: Db, id: number) {
-  return db.$client.prepare(`SELECT e.id,e.name,e.uscc_norm AS uscc,e.city,e.district,
-    d.district_code AS districtCode,d.township_code AS townshipCode,d.industry_code AS industryCode,
-    major.parent_code AS industryDivisionCode,d.removed_reason AS removedReason,coalesce(d.revision,1) AS revision,
-    m.into_enterprise_id AS mergedInto
-    FROM enterprise e LEFT JOIN enterprise_directory d ON d.enterprise_id=e.id
-    LEFT JOIN enterprise_industry detail ON detail.code=d.industry_code
-    LEFT JOIN enterprise_industry major ON major.code=detail.parent_code
-    LEFT JOIN enterprise_merge m ON m.from_enterprise_id=e.id WHERE e.id=?`).get(id) as {
-      id: number; name: string; uscc: string | null; city: string | null; district: string | null;
-      districtCode: string | null; townshipCode: string | null; industryCode: string | null;
-      industryDivisionCode: string | null; removedReason: string | null; revision: number; mergedInto: number | null;
-    } | undefined
+  return db.$client.prepare(`SELECT ${directoryColumns} ${directorySource} WHERE e.id=?`)
+    .get(id) as DirectoryRow | undefined
 }
 
 function validateCodes(db: Db, values: Pick<EnterpriseFields, 'districtCode' | 'townshipCode' | 'industryCode'>) {
@@ -107,7 +98,9 @@ export function enterpriseProfileState(db: Pick<Db, 'select'>, enterpriseId: num
   const profile: EnterpriseProfile = { enterpriseId, name: row.name, city: row.city, district: row.district }
   return { profile, row, key: last?.key ?? null }
 }
-export function enterpriseProfileVersion({ profile, row, key }: ReturnType<typeof enterpriseProfileState>) {
+export function enterpriseProfileVersion({ profile, row, key }: {
+  profile: EnterpriseProfile; row: { usccNorm: string | null; nameNorm: string }; key: string | null
+}) {
   return createHash('sha256').update(JSON.stringify({ profile, uscc: row.usccNorm, nameNorm: row.nameNorm, lastWrite: key })).digest('hex')
 }
 
@@ -206,11 +199,47 @@ export function applyReviewedEnterprise(db: Db, subject: ReviewedSubject) {
   const auditId = Object.keys(changes).length ? applyEnterpriseProfileChange(db, enterpriseProfileState(db, before.id), changes, {
     ...subject.audit, previousName: changes.name === undefined ? undefined : before.name,
   }).id : null
+  writeDirectoryFields(db, before.id, before.revision + 1, next)
+  return { id: before.id, created: false, auditId }
+}
+
+function writeDirectoryFields(db: Db, id: number, revision: number, fields: Pick<EnterpriseFields, 'districtCode' | 'townshipCode' | 'industryCode'>) {
   db.$client.prepare(`INSERT INTO enterprise_directory(enterprise_id,district_code,township_code,industry_code,revision)
     VALUES (?,?,?,?,?) ON CONFLICT(enterprise_id) DO UPDATE SET district_code=excluded.district_code,
     township_code=excluded.township_code,industry_code=excluded.industry_code,revision=excluded.revision`)
-    .run(before.id, next.districtCode, next.townshipCode, next.industryCode, before.revision + 1)
-  return { id: before.id, created: false, auditId }
+    .run(id, fields.districtCode, fields.townshipCode, fields.industryCode, revision)
+}
+
+export const enterpriseDetailsSchema = enterpriseFieldsSchema.pick({ districtCode: true, townshipCode: true, industryCode: true }).extend({
+  expectedRevision: z.number().int().positive(),
+  registeredAddress: text(500).nullable(),
+  operatingAddress: text(500).nullable(),
+})
+
+export function readEnterpriseDetails(db: Db, id: number) {
+  const row = directory(db, id)
+  if (!row) throw new EnterpriseKernelError(404, 'enterprise_not_found', '未找到企业。')
+  return row
+}
+
+export function saveEnterpriseDetails(db: Db, id: number, input: z.infer<typeof enterpriseDetailsSchema>) {
+  return db.$client.transaction(() => {
+    const before = readEnterpriseDetails(db, id)
+    const { expectedRevision, registeredAddress, operatingAddress, ...fields } = input
+    if (before.mergedInto !== null || before.revision !== expectedRevision) {
+      conflict('enterprise_changed', '企业资料已变更，请重新打开后再编辑。')
+    }
+    if (before.removedReason !== null) conflict('enterprise_removed', '企业已移出基础库。')
+    const next = { ...before, ...fields }
+    validateCodes(db, next)
+    writeDirectoryFields(db, id, before.revision + 1, next)
+    db.delete(s.enterpriseAddress).where(eq(s.enterpriseAddress.enterpriseId, id)).run()
+    const rows: typeof s.enterpriseAddress.$inferInsert[] = []
+    if (registeredAddress) rows.push({ enterpriseId: id, kind: 'registered', address: registeredAddress })
+    if (operatingAddress) rows.push({ enterpriseId: id, kind: 'operating', address: operatingAddress })
+    if (rows.length) db.insert(s.enterpriseAddress).values(rows).run()
+    return readEnterpriseDetails(db, id)
+  }).immediate()
 }
 
 export type EnterpriseSource = {
@@ -257,24 +286,40 @@ export function setEnterpriseRemoved(db: Db, id: number, expectedRevision: numbe
   }).immediate()
 }
 
-export function listDirectoryEnterprises(db: Db, query: { name?: string; districtCode?: string; industryCode?: string; sourceId?: number; includeRemoved?: boolean; after: number; limit: number }) {
-  const predicates = ['e.id > @after', 'm.from_enterprise_id IS NULL']
+export function listDirectoryEnterprises(db: Db, query: DirectoryQuery) {
+  const predicates = ['m.from_enterprise_id IS NULL']
   if (query.name !== undefined) predicates.push('instr(e.name_norm,@name)>0')
+  if (query.uscc !== undefined) predicates.push('e.uscc_norm=@uscc')
   if (query.districtCode !== undefined) predicates.push('d.district_code=@districtCode')
+  if (query.townshipCode !== undefined) predicates.push('d.township_code=@townshipCode')
+  if (query.industryDivisionCode !== undefined) predicates.push('ig.parent_code=@industryDivisionCode')
   if (query.industryCode !== undefined) predicates.push('d.industry_code=@industryCode')
+  if (query.registeredAddress !== undefined) predicates.push('instr(ra.address,@registeredAddress)>0')
+  if (query.operatingAddress !== undefined) predicates.push('instr(oa.address,@operatingAddress)>0')
   if (query.sourceId !== undefined) predicates.push('EXISTS (SELECT 1 FROM enterprise_source_link l WHERE l.enterprise_id=e.id AND l.source_id=@sourceId)')
   if (!query.includeRemoved) predicates.push('d.removed_reason IS NULL')
-  const ids = db.$client.prepare(`SELECT e.id FROM enterprise e
-    LEFT JOIN enterprise_directory d ON d.enterprise_id=e.id LEFT JOIN enterprise_merge m ON m.from_enterprise_id=e.id
-    WHERE ${predicates.join(' AND ')} ORDER BY e.id LIMIT @limit`)
-    .pluck().all({ ...query, name: query.name === undefined ? null : normalizeEnterpriseName(query.name), limit: query.limit + 1 }) as number[]
-  return { rows: ids.slice(0, query.limit).map(id => directory(db, id)!), nextAfter: ids.length > query.limit ? ids[query.limit - 1] : null }
+
+  const conditions = `${directorySource} WHERE ${predicates.join(' AND ')}`
+  const values = { ...query, name: query.name === undefined ? null : normalizeEnterpriseName(query.name) }
+  if (query.page !== undefined || query.sorts?.length) {
+    const requestedPage = query.page ?? 1
+    const orderedColumns = (query.sorts ?? []).map(({ field, direction }) =>
+      `${directoryOrder[field]} COLLATE NOCASE ${direction === 'desc' ? 'DESC' : 'ASC'} NULLS LAST`)
+    const order = [...orderedColumns, 'e.id'].join(', ')
+    return db.$client.transaction(() => {
+      const total = db.$client.prepare(`SELECT count(*) ${conditions}`).pluck().get(values) as number
+      const page = Math.min(requestedPage, Math.max(1, Math.ceil(total / query.limit)))
+      const rows = db.$client.prepare(`SELECT ${directoryColumns}
+        ${conditions} ORDER BY ${order} LIMIT @limit OFFSET @offset`)
+        .all({ ...values, offset: (page - 1) * query.limit }) as DirectoryRow[]
+      return { rows, page, total }
+    })()
+  }
+  const rows = db.$client.prepare(`SELECT ${directoryColumns} ${conditions} AND e.id > @after ORDER BY e.id LIMIT @limit`)
+    .all({ ...values, after: query.after ?? 0, limit: query.limit + 1 }) as DirectoryRow[]
+  return { rows: rows.slice(0, query.limit), nextAfter: rows.length > query.limit ? rows[query.limit - 1]!.id : null }
 }
 
 export function listEnterpriseSources(db: Db, id: number) {
-  return db.$client.prepare(`SELECT s.id,s.module,s.business_table AS businessTable,s.version_key AS versionKey,
-    c.name AS channel,t.name AS listType,s.acquired_on AS acquiredOn,s.series,s.file_id AS fileId,s.sha256
-    FROM enterprise_source_link l JOIN enterprise_source s ON s.id=l.source_id
-    JOIN enterprise_source_channel c ON c.code=s.channel_code JOIN enterprise_source_list_type t ON t.code=s.list_type_code
-    WHERE l.enterprise_id=? ORDER BY s.id`).all(id)
+  return db.$client.prepare(`${enterpriseSourcesSelection} WHERE l.enterprise_id=? ORDER BY s.id`).all(id)
 }

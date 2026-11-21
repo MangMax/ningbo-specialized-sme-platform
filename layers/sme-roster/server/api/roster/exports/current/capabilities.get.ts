@@ -1,4 +1,5 @@
 import routes from '#current-export-routes'
+import { postgresJobsEnabled } from '../../../../../../core/server/utils/postgres-jobs'
 import { getJobSpec } from '../../../../../../core/server/utils/job-runner'
 import { registerJobSpecs } from '../../../../../../../server/utils/job-specs'
 defineRouteMeta({ openAPI: {
@@ -9,6 +10,8 @@ defineRouteMeta({ openAPI: {
 export default defineEventHandler(event => {
   setHeader(event, 'cache-control', 'no-store')
   registerJobSpecs()
-  const ready = getJobSpec('current-roster-export')?.status === 'ready'
+  const spec = getJobSpec('current-roster-export')
+  const ready = spec?.status === 'ready' && (process.env.NUXT_POSTGRES_ROSTER_READ !== '1' ||
+    postgresJobsEnabled() && Boolean(spec.postgres))
   return { exports: routes.map(route => ({ ...route, ready })) }
 })

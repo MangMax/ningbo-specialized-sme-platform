@@ -1,6 +1,8 @@
 import { defineEventHandler, getQuery, getRouterParam, setHeader } from 'h3'
 import { useDb } from '@db'
 import { readPlatformQueryEvidence, type PlatformEvidenceInput } from '../../../../../lib/platform/evidence-read'
+import { readPostgresPlatformEvidence } from '../../../../../lib/platform/postgres-evidence-read'
+import { usePostgresDirectoryDb } from '../../../../../../../db/postgresql/client'
 
 defineRouteMeta({
   openAPI: {
@@ -25,8 +27,10 @@ export default defineEventHandler(event => {
   setHeader(event, 'cache-control', 'no-store')
   const q = getQuery(event)
   const num = (key: string) => q[key] === undefined ? undefined : Number(q[key])
-  return readPlatformQueryEvidence(useDb(), {
+  const input: PlatformEvidenceInput = {
     queryId: Number(getRouterParam(event, 'queryId')), field: q.field as PlatformEvidenceInput['field'],
     relationId: num('relationId'), offset: num('offset'), length: num('length'), page: num('page'), pageSize: num('pageSize'),
-  })
+  }
+  const postgres = usePostgresDirectoryDb()
+  return postgres ? readPostgresPlatformEvidence(postgres, input) : readPlatformQueryEvidence(useDb(), input)
 })

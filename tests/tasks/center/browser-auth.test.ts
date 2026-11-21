@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { taskCenterBrowserAllowed } from '../../../layers/core/server/utils/task-center-browser-auth'
+import { browserPageAllowed } from '../../../layers/core/server/utils/browser-page-request'
 
 const origin = 'http://127.0.0.1:3474'
 const input = () => ({
   method: 'POST', serverOrigin: origin,
   headers: { 'x-task-center-browser': '1', 'sec-fetch-site': 'same-origin', origin, referer: `${origin}/tasks`, 'content-type': 'application/json' } as Record<string, string | undefined>,
 })
+const taskCenterBrowserAllowed = (request: ReturnType<typeof input>) => browserPageAllowed(request, 'x-task-center-browser')
 describe('task page same-origin requests', () => {
   it('allows same-origin JSON commands without deployment config or API token', () => {
     expect(taskCenterBrowserAllowed(input())).toBe(true)

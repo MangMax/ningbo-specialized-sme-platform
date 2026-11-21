@@ -1,3 +1,4 @@
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 /** Candidate-specific structured selection. External query/relation IDs never stand for PKs. */
 import { and,count,eq,inArray,max,or,sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -75,6 +76,16 @@ export function candidateTargetSourceBytes(db: Db, relationId: number) {
   const row = db.select({ n: sql<number>`coalesce(sum(${v.byteLength}),0)` }).from(rr).innerJoin(v, eq(v.id, rr.archiveId))
     .where(and(eq(rr.ownerId, owner.observationId), eq(rr.field, 'rawFields'))).get()!.n
   return collection + row
+}
+
+export async function readPostgresCandidateSourceBytes(db: Pick<NodePgDatabase, 'execute'>, relationId: number) {
+  const { rows: [source] } = await db.execute<{ bytes: string }>(sql`
+    SELECT (coalesce((SELECT sum(v.byte_length) FROM platform_collection_archive_ref r JOIN platform_archive_value v ON v.id=r.archive_id
+          WHERE r.owner_id=o.collection_id AND r.field IN ('rawResponse','collectionEvidence')),0)
+      + coalesce((SELECT sum(v.byte_length) FROM platform_observation_archive_ref r JOIN platform_archive_value v ON v.id=r.archive_id
+          WHERE r.owner_id=o.id AND r.field='rawFields'),0)) AS bytes
+    FROM platform_legacy_relation_alias a JOIN platform_business_observation o ON o.id=a.observation_id WHERE a.old_id=${relationId}`)
+  return source ? Number(source.bytes) : undefined
 }
 
 /** Generic candidates group business versions, while event discovery pages observations.

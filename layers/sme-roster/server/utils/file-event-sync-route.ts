@@ -4,6 +4,8 @@ import { useDb } from '@db'
 import { requireApiToken } from '../../../core/server/utils/api-guard'
 import { checkBrowserReviewRequest } from './browser-review-102'
 import { syncRequestSchema, preflightFileEventSync, commitFileEventSync } from './file-event-sync'
+import { preflightPostgresFileEventSync, commitPostgresFileEventSync } from './file-event-sync-postgres'
+import { usePostgresRosterDb } from './postgres-roster-db'
 const business = syncRequestSchema.omit({ actor: true })
 const hash = z.string().regex(/^[a-f0-9]{64}$/),
   chunk = z.number().int().min(0).max(29)
@@ -50,6 +52,10 @@ export function fileEventSyncRoute(action: 'preflight' | 'commit', browser = fal
         })
       const input = parsed.data,
         request = 'request' in input ? input.request : input
+      const pg = usePostgresRosterDb(true)
+      if (pg) return 'request' in input
+        ? await commitPostgresFileEventSync(pg,id,request,input.planHash,input.chunk,config.filesDir)
+        : await preflightPostgresFileEventSync(pg,id,request,config.filesDir)
       return 'request' in input
         ? await commitFileEventSync(
             useDb(),

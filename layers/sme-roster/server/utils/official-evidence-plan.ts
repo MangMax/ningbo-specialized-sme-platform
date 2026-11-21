@@ -83,14 +83,21 @@ export function readOfficialFile(filesDir: string | undefined, path: string) {
     return officialFactFailure('file_unavailable', 'Original file unavailable or unsafe')
   }
 }
-function declarationIdentity(db: Executor, declaration: OfficialDeclaration) {
+export function projectOfficialDeclaration(declaration: OfficialDeclaration, document?: typeof schema.sourceDocument.$inferSelect) {
   if (declaration.kind === 'independent') return { id: `independent:${officialPlanJson(declaration)}`, document: declaration.sourceDocument }
-  const document = db.select().from(schema.sourceDocument).where(eq(schema.sourceDocument.id, declaration.sourceDocumentId)).get()
   if (!document || document.source !== 'jxj') return officialFactFailure('source_binding_conflict', 'Explicit existing official declaration not found', 409)
   return { id: document.id, document }
 }
+function declarationIdentity(db: Executor, declaration: OfficialDeclaration) {
+  return projectOfficialDeclaration(declaration, declaration.kind === 'existing'
+    ? db.select().from(schema.sourceDocument).where(eq(schema.sourceDocument.id, declaration.sourceDocumentId)).get() : undefined)
+}
 export function verifyOfficialDeclaration(db: Executor, row: OfficialPublishedRow, outer?: { source: string; title: string; docNumber?: string | null; issueDate?: string | null }) {
   const identity = declarationIdentity(db, row.declaration)
+  return checkOfficialOuterDocument(identity, outer)
+}
+export function checkOfficialOuterDocument(identity: ReturnType<typeof projectOfficialDeclaration>,
+  outer?: { source: string; title: string; docNumber?: string | null; issueDate?: string | null }) {
   if (outer) for (const key of ['source', 'title', 'docNumber', 'issueDate'] as const) {
     if (outer[key] !== undefined && (outer[key] ?? null) !== (identity.document[key] ?? null)) failBinding(`Outer sourceDocument.${key} disagrees with explicit declaration`)
   }
@@ -106,9 +113,65 @@ export function sameOfficialRow(before: OfficialEvidenceRow | null, row: Officia
 
 /** One narrowly scoped final-set check shared by import and exact corrections. No SQL for A's table lives here. */
 export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaimChange[], filesDir: string | undefined, finalOwner: (owner: string | null) => string | null = value => value, newUnknownClaims: readonly { ref: string; coordinate: OfficialCoordinate }[] = [], locatorMoves: readonly OfficialEvidenceLocatorMove[] = []) {
+  const query = projectOfficialEvidenceChanges(changes, filesDir, finalOwner, newUnknownClaims, locatorMoves)
+  let next = query.next()
+  while (!next.done) next = query.next(readOfficialPlanInput(db, next.value))
+  return next.value
+}
+
+type SourceFile = Pick<typeof schema.storedFile.$inferSelect, 'id' | 'relPath' | 'bytes' | 'sha256' | 'removedAt'>
+  & Pick<typeof schema.rosterFileClassification.$inferSelect, 'source' | 'kind' | 'titleCode'>
+type RepointReference = {
+  evidence: typeof schema.recordEvidence.$inferSelect; event: typeof schema.recordEvent.$inferSelect
+  recordId: number; enterpriseId: number | null
+}
+type PlanInput = { type: 'count'; eventId: number } | { type: 'declaration'; declaration: OfficialDeclaration }
+  | { type: 'file'; id: number } | { type: 'latest'; id: number }
+  | { type: 'repoint'; id: number } | { type: 'candidates'; key: OfficialEvidenceSourceKey }
+  | { type: 'overlaps'; coordinate: OfficialCoordinate }
+type PlanResponses = {
+  count: number
+  declaration: ReturnType<typeof projectOfficialDeclaration>
+  file: SourceFile | undefined
+  latest: OfficialEvidenceRow | null
+  repoint: RepointReference | undefined
+  candidates: ReturnType<typeof readOfficialEvidenceCandidates>['candidates']
+  overlaps: (typeof schema.recordEvidence.$inferSelect)[]
+}
+function* planInput<T extends PlanInput['type']>(input: Extract<PlanInput, { type: T }>): Generator<PlanInput, PlanResponses[T], unknown> {
+  return (yield input) as PlanResponses[T]
+}
+
+function readOfficialPlanInput(db: Executor, input: PlanInput) {
+  if (input.type === 'count') return db.select({ id: schema.recordEvidence.id }).from(schema.recordEvidence)
+    .where(eq(schema.recordEvidence.recordEventId, input.eventId)).limit(301).all().length
+  if (input.type === 'declaration') return declarationIdentity(db, input.declaration)
+  if (input.type === 'latest') return readLatestOfficialEvidence(db, input.id, { maxBytes: 65536 }).row
+  if (input.type === 'candidates') return readOfficialEvidenceCandidates(db, input.key, { maxBytes: 65536 }).candidates
+  if (input.type === 'file') return db.select({
+    id: schema.storedFile.id, relPath: schema.storedFile.relPath, bytes: schema.storedFile.bytes,
+    sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt,
+    source: schema.rosterFileClassification.source, kind: schema.rosterFileClassification.kind, titleCode: schema.rosterFileClassification.titleCode,
+  }).from(schema.storedFile).innerJoin(schema.rosterFileClassification, fileClassificationJoin)
+    .where(eq(schema.storedFile.id, input.id)).get()
+  if (input.type === 'repoint') return db.select({
+    evidence: schema.recordEvidence, event: schema.recordEvent, recordId: schema.record.id, enterpriseId: schema.enterprise.id,
+  }).from(schema.recordEvidence).innerJoin(schema.recordEvent, eq(schema.recordEvent.id, schema.recordEvidence.recordEventId))
+    .innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId)).leftJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
+    .where(eq(schema.recordEvidence.id, input.id)).get()
+  const c = input.coordinate
+  return db.select().from(schema.recordEvidence).where(and(eq(schema.recordEvidence.sourceFile, c.sourceFile),
+    eq(schema.recordEvidence.listNo, c.listNo!), c.attachment === null ? isNull(schema.recordEvidence.attachment) : eq(schema.recordEvidence.attachment, c.attachment))).limit(101).all()
+}
+
+export function* projectOfficialEvidenceChanges(changes: OfficialClaimChange[], filesDir: string | undefined,
+  finalOwner: (owner: string | null) => string | null = value => value,
+  newUnknownClaims: readonly { ref: string; coordinate: OfficialCoordinate }[] = [],
+  locatorMoves: readonly OfficialEvidenceLocatorMove[] = [],
+) {
   if (changes.length > 100) officialFactFailure('input_limit', 'At most 100 new official fact operations', 400)
   for (const eventId of new Set([...changes.map(change => change.eventId).filter((id): id is number => typeof id === 'number'), ...locatorMoves.map(move => move.recordEventId)])) {
-    if (db.select({ id: schema.recordEvidence.id }).from(schema.recordEvidence).where(eq(schema.recordEvidence.recordEventId, eventId)).limit(301).all().length > 300) officialFactFailure('source_limit', 'Event evidence exceeds 300', 413)
+    if ((yield* planInput<'count'>({ type: 'count', eventId })) > 300) officialFactFailure('source_limit', 'Event evidence exceeds 300', 413)
   }
   const seen = new Set<number | string>(), keys = new Map<string, { key: OfficialEvidenceSourceKey; sourceId: number | string }>()
   const sourceStates: unknown[] = []
@@ -123,21 +186,14 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
     for (const [field, value] of Object.entries({ path: coordinate.sourceFile, attachment: coordinate.attachment, listNo: coordinate.listNo, page: coordinate.page })) {
       if (row[field as 'path' | 'attachment' | 'listNo' | 'page'] !== value) failBinding(`publishedRow.${field} disagrees with outer coordinate`)
     }
-    const source = declarationIdentity(db, row.declaration); sourceFor.set(change, source.id)
-    const file = row.storedFileId === null ? null : db.select({
-      id: schema.storedFile.id, relPath: schema.storedFile.relPath, bytes: schema.storedFile.bytes,
-      sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt,
-      source: schema.rosterFileClassification.source,
-      kind: schema.rosterFileClassification.kind, titleCode: schema.rosterFileClassification.titleCode,
-    }).from(schema.storedFile)
-      .innerJoin(schema.rosterFileClassification, fileClassificationJoin)
-      .where(eq(schema.storedFile.id, row.storedFileId)).get()
+    const source = (yield* planInput<'declaration'>({ type: 'declaration', declaration: row.declaration })); sourceFor.set(change, source.id)
+    const file = row.storedFileId === null ? null : (yield* planInput<'file'>({ type: 'file', id: row.storedFileId }))
     if (row.storedFileId !== null && (!file || file.removedAt || file.source !== 'jxj' || file.kind !== 'announcement' || file.titleCode && file.titleCode !== change.titleCode || file.relPath !== row.path)) failBinding('Selected storedFile must be the active official source of this title and path')
     const actual = readOfficialFile(filesDir, coordinate.sourceFile)
     if (file && (file.sha256 !== actual.sha256 || file.bytes !== actual.bytes) || row.sha256 !== null && row.sha256 !== actual.sha256 || row.bytes !== null && row.bytes !== actual.bytes) officialFactFailure('file_changed', 'Explicit and registered file identities must match actual bytes', 409)
     if (row.sourceBindingKnown && (row.sha256 === null || row.bytes === null || !row.sectionKey?.length || row.listNo === null)) officialFactFailure('ambiguity', 'Confirmed source binding requires verified content and section/row')
     if (typeof change.evidenceId === 'number') {
-      change.before = readLatestOfficialEvidence(db, change.evidenceId, { maxBytes: 65536 }).row
+      change.before = (yield* planInput<'latest'>({ type: 'latest', id: change.evidenceId }))
       if ((change.before?.revision ?? 0) !== change.expectedRowRevision) officialFactFailure('revision_conflict', 'Published row revision changed', 409)
     }
     change.changed = !sameOfficialRow(change.before ?? null, row, source.id)
@@ -150,14 +206,13 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
     }
   }
   const movedIds = new Set<number>()
-  const moves = locatorMoves.map(target => {
+  const moves: { target: OfficialEvidenceLocatorMove; before: OfficialCoordinate; coordinate: OfficialCoordinate; latest: OfficialEvidenceRow | null }[] = []
+  for (const target of locatorMoves) {
     if (seen.has(target.id) || movedIds.has(target.id)) officialFactFailure('ambiguous_target', 'Each evidence may be changed only once per batch')
     movedIds.add(target.id)
-    const reference = db.select({ evidence: schema.recordEvidence, event: schema.recordEvent, recordId: schema.record.id, enterpriseId: schema.enterprise.id }).from(schema.recordEvidence)
-      .innerJoin(schema.recordEvent, eq(schema.recordEvent.id, schema.recordEvidence.recordEventId)).innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId))
-      .leftJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId)).where(eq(schema.recordEvidence.id, target.id)).get()
+    const reference = yield* planInput<'repoint'>({ type: 'repoint', id: target.id })
     if (!reference || reference.event.id !== target.recordEventId || reference.recordId !== target.recordId || reference.evidence.sourceFile !== target.fromSourceFile) officialFactFailure('stale_version', 'Frozen evidence repoint target changed', 409)
-    const latest = readLatestOfficialEvidence(db, target.id, { maxBytes: 65536 }).row
+    const latest = (yield* planInput<'latest'>({ type: 'latest', id: target.id }))
     const fromFile = readOfficialFile(filesDir, target.fromSourceFile), toFile = readOfficialFile(filesDir, target.sourceFile)
     if (fromFile.sha256 !== toFile.sha256 || fromFile.bytes !== toFile.bytes) officialFactFailure('file_changed', 'Frozen equal-content repoint differs from actual source bytes', 409)
     const before: OfficialCoordinate = { sourceFile: reference.evidence.sourceFile, attachment: reference.evidence.attachment, listNo: reference.evidence.listNo, page: reference.evidence.page }
@@ -165,8 +220,8 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
     const sourceKey = latest ? keyOf(latest) : null
     if (sourceKey) keys.set(officialPlanJson(sourceKey), { key: sourceKey, sourceId: sourceKey.sourceDocumentId })
     sourceStates.push({ target, before, event: reference.event, owner: finalOwner(reference.enterpriseId === null ? null : `enterprise:${reference.enterpriseId}`), latest: officialPlanDigest(latest), fromFile, toFile })
-    return { target, before, coordinate, latest }
-  })
+    moves.push({ target, before, coordinate, latest })
+  }
   const overlapsCoordinate = (a: OfficialCoordinate, b: OfficialCoordinate) => a.listNo !== null && a.sourceFile === b.sourceFile && a.attachment === b.attachment && a.listNo === b.listNo
   for (let i = 0; i < changes.length; i++) for (let j = i + 1; j < changes.length; j++) {
     const a = changes[i]!, b = changes[j]!, ac = a.coordinate, bc = b.coordinate
@@ -176,10 +231,10 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
   const receipts: unknown[] = []
   // Only one K's original candidates are retained at a time; the plan retains digests, not all raw scopes.
   for (const [token, { key, sourceId }] of [...keys].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
-    const original = typeof sourceId === 'number' ? readOfficialEvidenceCandidates(db, key, { maxBytes: 65536 }).candidates : []
+    const original = typeof sourceId === 'number' ? (yield* planInput<'candidates'>({ type: 'candidates', key })) : []
     const storedRows = new Map<number, OfficialEvidenceRow | null>()
-    const storedRow = (id: number) => {
-      if (!storedRows.has(id)) storedRows.set(id, readLatestOfficialEvidence(db, id, { maxBytes: 65536 }).row)
+    function* storedRow(id: number) {
+      if (!storedRows.has(id)) storedRows.set(id, yield* planInput<'latest'>({ type: 'latest', id }))
       return storedRows.get(id) ?? null
     }
     type Claim = { eventId: number | string; owner: string | null; nameRaw: string | null; usccRaw: string | null; districtRaw: string | null } & (
@@ -194,7 +249,7 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
       const row = change.publishedRow
       const existing = final.find((claim): claim is Extract<Claim, { origin: 'stored' }> => claim.origin === 'stored' && claim.eventId === change.eventId)
       if (typeof change.evidenceId === 'string' && existing && existing.owner !== null && existing.owner === finalOwner(change.owner) && ['nameRaw', 'usccRaw', 'districtRaw'].every(field => row[field as 'nameRaw'] !== null && row[field as 'nameRaw'] === existing[field as 'nameRaw'])) {
-        const stored = storedRow(existing.evidenceId)
+        const stored = yield* storedRow(existing.evidenceId)
         if (sameOfficialRow(stored, row, sourceId)) { change.noOpEvidenceId = existing.evidenceId; continue }
       }
       if (typeof change.evidenceId === 'string') {
@@ -222,7 +277,7 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
         if (a.origin === 'stored' && b.origin === 'stored') {
           // These retained IDs were already accepted. Preserve them only after
           // verifying their complete latest facts, not merely the shared K/raw.
-          const left = storedRow(a.evidenceId), right = storedRow(b.evidenceId)
+          const left = yield* storedRow(a.evidenceId), right = yield* storedRow(b.evidenceId)
           if (!left || !right || left.sourceDocumentId !== sourceId || right.sourceDocumentId !== sourceId || !factFields.every(field => left[field] === right[field])) officialFactFailure('ambiguity', 'Existing event association differs; use exact correction', 409)
           continue
         }
@@ -233,7 +288,7 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
         // Replaced numeric IDs are proposals too: compare their complete final
         // facts, never the old latest that this batch has already removed.
         const equivalent = other.origin === 'stored'
-          ? sameOfficialRow(storedRow(other.evidenceId), proposed.change.publishedRow, sourceId)
+          ? sameOfficialRow(yield* storedRow(other.evidenceId), proposed.change.publishedRow, sourceId)
           : sourceFor.get(other.change) === sourceFor.get(proposed.change) && factFields.every(field => other.change.publishedRow[field] === proposed.change.publishedRow[field])
         if (!equivalent) officialFactFailure('ambiguity', 'Existing event association differs; use exact correction', 409)
         // Numeric corrections still write their named evidence, even when another
@@ -259,14 +314,19 @@ export function planOfficialEvidenceChanges(db: Executor, changes: OfficialClaim
   for (const move of moves) for (const c of [move.before, move.coordinate]) affectedCoordinates.set(officialPlanJson(c), c)
   for (const c of affectedCoordinates.values()) {
     if (c.listNo === null) continue
-    const overlaps = db.select({ evidence: schema.recordEvidence }).from(schema.recordEvidence).where(and(eq(schema.recordEvidence.sourceFile, c.sourceFile), eq(schema.recordEvidence.listNo, c.listNo), c.attachment === null ? isNull(schema.recordEvidence.attachment) : eq(schema.recordEvidence.attachment, c.attachment))).limit(101).all()
+    const overlaps = yield* planInput<'overlaps'>({ type: 'overlaps', coordinate: c })
     if (overlaps.length > 100) officialFactFailure('source_limit', 'Coordinate source scope exceeds 100 claims', 413)
-    const remaining = overlaps.filter(overlap => !seen.has(overlap.evidence.id) && !movedIds.has(overlap.evidence.id))
+    const remaining = overlaps.filter(overlap => !seen.has(overlap.id) && !movedIds.has(overlap.id))
     const incoming = newUnknownClaims.filter(claim => overlapsCoordinate(c, claim.coordinate))
     const proposed = changes.filter(claim => claim.noOpEvidenceId === undefined && overlapsCoordinate(c, claim.coordinate))
     const relocated = moves.filter(move => overlapsCoordinate(c, move.coordinate))
     if (remaining.length + incoming.length + proposed.length + relocated.length > 100) officialFactFailure('source_limit', 'Final coordinate source scope exceeds 100 claims', 413)
-    const bindings = [...remaining.map(overlap => readLatestOfficialEvidence(db, overlap.evidence.id, { maxBytes: 65536 }).row?.sourceBindingKnown === true), ...incoming.map(() => false), ...proposed.map(claim => claim.publishedRow.sourceBindingKnown), ...relocated.map(move => move.latest?.sourceBindingKnown === true)]
+    const bindings: boolean[] = []
+    for (const overlap of remaining) {
+      const latest = yield* planInput<'latest'>({ type: 'latest', id: overlap.id })
+      bindings.push(latest?.sourceBindingKnown === true)
+    }
+    bindings.push(...incoming.map(() => false), ...proposed.map(claim => claim.publishedRow.sourceBindingKnown), ...relocated.map(move => move.latest?.sourceBindingKnown === true))
     if (bindings.length > 1 && bindings.some(known => !known)) officialFactFailure('ambiguity', 'Overlapping legacy source claim has unknown declaration or binding', 409)
   }
   return { changes, planHash: officialPlanDigest({ changes: changes.map(({ before, ...change }) => change), newUnknownClaims, sourceStates, receipts }) }

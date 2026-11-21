@@ -34,8 +34,8 @@ export const supplementSchema = z.strictObject({
   ])).min(1),
 }).refine(input => !input.preflight || input.officialEvidencePlanHash === undefined, 'A supplement preflight cannot include its own plan hash')
 
-const digestOf = (value: unknown) => createHash('sha256').update(canonicalImportJson(value)).digest('hex')
-type IntakeRow = { id: number; digest: string; request: string; removed_reason: string | null; supplement_digest: string | null; reviewed_request: string | null; receipt: string | null }
+export const announcementIntakeDigest = (value: unknown) => createHash('sha256').update(canonicalImportJson(value)).digest('hex')
+export type IntakeRow = { id: number; digest: string; request: string; removed_reason: string | null; supplement_digest: string | null; reviewed_request: string | null; receipt: string | null }
 
 function loadIntake(db: Db, id: number) {
   const row = db.$client.prepare('SELECT * FROM roster_announcement_intake WHERE id=?').get(id) as IntakeRow | undefined
@@ -43,9 +43,9 @@ function loadIntake(db: Db, id: number) {
   return row
 }
 
-export function stageAnnouncement(db: Db, request: RosterImportRequest, pageErrors: readonly RosterImportItemResult[]) {
-  const announcement = request.payload.announcement!
-  if (!Array.isArray(announcement.records)
+export function validateAnnouncementIntakeRows(request: RosterImportRequest, pageErrors: readonly RosterImportItemResult[]) {
+  const announcement = request.payload.announcement
+  if (!Array.isArray(announcement?.records)
     || !['jxj', 'miit'].includes(announcement.sourceDocument?.source)) {
     throw new ImportReceiptError(400, 'invalid_intake', 'Provide an announcement version with its original rows')
   }
@@ -54,7 +54,17 @@ export function stageAnnouncement(db: Db, request: RosterImportRequest, pageErro
   }
   const items = [...validateAnnouncementIdentityAndEvidence(announcement), ...pageErrors]
   if (items.length) return { batchId: null, error: 'Original announcement rows failed validation', status: 'failed' as const, items, summary: { written: 0, skipped: 0, failed: items.length, evidenceRepointed: 0 } }
-  const digest = digestOf(request)
+}
+
+export function stagedAnnouncement(request: RosterImportRequest, id: number, digest: string) {
+  return { status: 'staged' as const, intakeId: id, sourceDigest: digest, rowCount: request.payload.announcement!.records.length,
+    ...(hasOfficialFactInput(request) ? { officialEvidencePreflightRequired: true as const } : {}) }
+}
+
+export function stageAnnouncement(db: Db, request: RosterImportRequest, pageErrors: readonly RosterImportItemResult[]) {
+  const invalid = validateAnnouncementIntakeRows(request, pageErrors)
+  if (invalid) return invalid
+  const digest = announcementIntakeDigest(request)
   return db.$client.transaction(() => {
     const previous = db.$client.prepare('SELECT * FROM roster_announcement_intake WHERE idempotency_key=?').get(request.idempotencyKey) as IntakeRow | undefined
     if (previous && previous.digest !== digest) throw new ImportReceiptError(409, 'idempotency_conflict', 'The key already identifies different source rows')
@@ -66,28 +76,35 @@ export function stageAnnouncement(db: Db, request: RosterImportRequest, pageErro
     if (!previous && batch?.status === 'committed') return null
     const { id } = previous ?? db.$client.prepare(`INSERT INTO roster_announcement_intake(idempotency_key,digest,request)
       VALUES (?,?,?) RETURNING id`).get(request.idempotencyKey, digest, JSON.stringify(request)) as { id: number }
-    return { status: 'staged' as const, intakeId: id, sourceDigest: digest, rowCount: announcement.records.length,
-      ...(hasOfficialFactInput(request) ? { officialEvidencePreflightRequired: true as const } : {}) }
+    return stagedAnnouncement(request, id, digest)
   }).immediate()
 }
 
 export function readAnnouncementIntake(db: Db, id: number): RosterAnnouncementIntake {
-  const row = loadIntake(db, id)
+  return projectAnnouncementIntake(loadIntake(db, id))
+}
+
+export function projectAnnouncementIntake(row: IntakeRow): RosterAnnouncementIntake {
   const request = JSON.parse(row.request) as RosterImportRequest
-  return { intakeId: id, sourceDigest: row.digest, status: row.removed_reason ? 'removed' : row.receipt ? 'supplemented' : 'staged',
+  return { intakeId: row.id, sourceDigest: row.digest, status: row.removed_reason ? 'removed' : row.receipt ? 'supplemented' : 'staged',
     removedReason: row.removed_reason, sourceIdentity: request.sourceIdentity, sourceSha256: request.sourceSha256,
     announcement: request.payload.announcement!, ...(hasOfficialFactInput(request) ? { officialEvidencePreflightRequired: true as const } : {}),
     review: row.reviewed_request ? JSON.parse(row.reviewed_request) : null,
     receipt: row.receipt ? JSON.parse(row.receipt) : null }
 }
 
+export function checkAnnouncementRemoval(row: IntakeRow, sourceDigest: string, reason: string) {
+  if (row.digest !== sourceDigest) throw new ImportReceiptError(409, 'source_changed', 'Announcement version changed')
+  if (row.removed_reason !== null && row.removed_reason !== reason) throw new ImportReceiptError(409, 'already_removed', 'Announcement intake was already removed')
+  return { intakeId: row.id, status: 'removed', removedReason: reason }
+}
+
 export function removeAnnouncementIntake(db: Db, id: number, sourceDigest: string, reason: string) {
   return db.$client.transaction(() => {
     const row = loadIntake(db, id)
-    if (row.digest !== sourceDigest) throw new ImportReceiptError(409, 'source_changed', 'Announcement version changed')
-    if (row.removed_reason !== null && row.removed_reason !== reason) throw new ImportReceiptError(409, 'already_removed', 'Announcement intake was already removed')
+    const removed = checkAnnouncementRemoval(row, sourceDigest, reason)
     db.$client.prepare('UPDATE roster_announcement_intake SET removed_reason=? WHERE id=?').run(reason, id)
-    return { intakeId: id, status: 'removed', removedReason: reason }
+    return removed
   }).immediate()
 }
 
@@ -201,7 +218,7 @@ export async function supplementAnnouncement(db: Db, id: number, input: z.infer<
   const supplement = db.$client.transaction((): SupplementAnnouncementResponse => {
     const row = loadIntake(db, id)
     if (row.digest !== input.sourceDigest) throw new ImportReceiptError(409, 'source_changed', 'Announcement version changed')
-    const decision = digestOf(review)
+    const decision = announcementIntakeDigest(review)
     if (row.supplement_digest !== null) {
       if (row.supplement_digest !== decision) throw new ImportReceiptError(409, 'supplement_conflict', 'Announcement already has a different reviewed supplement')
       if (preflight) throw new ImportReceiptError(409, 'already_supplemented', 'Announcement already has a reviewed supplement')

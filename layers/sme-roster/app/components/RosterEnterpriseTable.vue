@@ -126,7 +126,7 @@ function firstRecognitionTitle(row: EnterpriseRow): string {
 }
 
 const COLUMNS = 4
-const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs font-medium'
+const TH_CLASS = 'text-muted-foreground h-9 text-xs font-medium'
 </script>
 
 <template>
@@ -146,14 +146,9 @@ const TH_CLASS = 'bg-muted text-muted-foreground sticky top-0 z-20 h-9 text-xs f
 
     `table-fixed` + 只给后面三列写死宽度:名称列自动吃掉剩余空间,长名字拿到最宽的一份。
   -->
-  <!--
-    自己的滚动容器:表头 `sticky top-0` 要有一个**最近的可滚动祖先**才吸得住
-    (否则它会贴着页面滚、钻到顶栏底下),窄屏的横向滚动也由这同一层管
-    (`table-container` 的默认 `overflow-auto` 会另起一个滚动上下文,这里放开)。
-  -->
   <div
     data-evidence-return-scroll-container
-    class="max-h-[max(360px,calc(100dvh-22rem))] overflow-auto [&_[data-slot=table-container]]:overflow-visible"
+    class="data-table-scroll [--table-budget:22rem]"
   >
     <Table class="min-w-[1000px] table-fixed">
     <TableHeader>
