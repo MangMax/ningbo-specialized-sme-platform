@@ -5,7 +5,7 @@ import { matrices } from '../../../scripts/business-test-groups.mjs'
 it('selects the owning business for a test without running unrelated groups', () => {
   const result = selectBusinessTests(['tests/logging/core/foundation.test.ts'])
   expect(result.full).toBe(false)
-  expect(result.native.map(row => row.business)).toEqual(['日志 · 审计'])
+  expect(result.native).toMatchObject([{ business: '日志 · 审计' }])
   expect(result.app.map(row => row.business)).toEqual(['日志 · 审计'])
   expect(result.upgrade).toBe(false)
 })
@@ -13,7 +13,7 @@ it('selects the owning business for a test without running unrelated groups', ()
 it('keeps platform qualification facts in the existing qualification business group', () => {
   const result = selectBusinessTests(['tests/roster/platform-qualification/facts.test.ts'])
   expect(result.full).toBe(false)
-  expect(result.native.map(row => row.business)).toEqual(['名录 · 资格与认定读取'])
+  expect(result.native).toMatchObject([{ business: '名录 · 资格与认定读取' }])
   expect(result.app.map(row => row.business)).toEqual(['名录 · 资格与认定读取'])
 })
 
