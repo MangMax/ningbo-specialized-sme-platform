@@ -1,13 +1,14 @@
-import { sql } from 'drizzle-orm'
+import { and, eq, exists, getTableColumns } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { isDeepStrictEqual } from 'node:util'
-import { platformCollection } from '../../../../db/schema'
+import { alias } from 'drizzle-orm/pg-core'
+import { platformBusinessObservation, platformCollection, platformLegacyQueryAlias, platformLegacyRelationAlias } from '../../../../db/postgresql/platform-tables'
+import { platformArchiveValue, platformCollectionArchiveRef, platformCollectionLegacyProvenance as provenance, platformObservationArchiveRef } from '../../../../db/postgresql/platform-archive-tables'
 import { writePostgresArchiveValue } from '../../lib/platform/postgres-archive-write'
-import { legacyEnvelopeCollection, readPlatformArchiveBytes, type PostgresPlatformArchive } from '../../lib/platform/postgres-evidence-read'
+import { legacyEnvelopeCollection, readPlatformArchiveBytes } from '../../lib/platform/postgres-evidence-read'
 import { rejectLegacyProvenance as reject, type originalLegacyProvenanceInput } from '../../lib/platform/legacy-provenance-command'
 import type { LegacyPlatformProvenanceInput } from '../../lib/platform/legacy-provenance'
 import { snapshotSchema } from '../../lib/platform/target-evidence-read'
-import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { legacyProvenanceFingerprint } from './platform-legacy-provenance'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -22,31 +23,38 @@ function originalValue({storage,bytes}: ArchiveValue) {
 const sourceDrift = (message: string): never => reject('legacy_source_drift',message)
 
 async function readOriginal(tx: Tx, queryId: number): Promise<Original> {
-  const { rows:[entry] } = await tx.execute<{ collection:typeof platformCollection.$inferSelect;
-    raw:Buffer | null; storage:string; evidence:Buffer | null }>(sql`
-    SELECT ${postgresRosterRow(platformCollection,'p')} AS collection,a.bytes AS raw,a.storage_class AS storage,v.bytes AS evidence
-    FROM platform_legacy_query_alias q JOIN platform_collection p ON p.id=q.collection_id
-    JOIN platform_collection_archive_ref s ON s.owner_id=p.id AND s.field='rawResponse' AND s.sealed=1
-    JOIN platform_archive_value a ON a.id=s.archive_id
-    JOIN platform_collection_archive_ref r ON r.owner_id=p.id AND r.field='collectionEvidence' AND r.sealed=1
-    JOIN platform_archive_value v ON v.id=r.archive_id WHERE q.old_id=${queryId}`)
+  const rawRef = alias(platformCollectionArchiveRef, 'raw_ref')
+  const evidenceRef = alias(platformCollectionArchiveRef, 'evidence_ref')
+  const rawValue = alias(platformArchiveValue, 'raw_value')
+  const evidenceValue = alias(platformArchiveValue, 'evidence_value')
+  const [entry] = await tx.select({
+    collection: getTableColumns(platformCollection), raw: rawValue.bytes, storage: rawValue.storageClass, evidence: evidenceValue.bytes,
+  }).from(platformLegacyQueryAlias).innerJoin(platformCollection, eq(platformCollection.id, platformLegacyQueryAlias.collectionId))
+    .innerJoin(rawRef, and(eq(rawRef.ownerId, platformCollection.id), eq(rawRef.field, 'rawResponse'), eq(rawRef.sealed, 1)))
+    .innerJoin(rawValue, eq(rawValue.id, rawRef.archiveId))
+    .innerJoin(evidenceRef, and(eq(evidenceRef.ownerId, platformCollection.id), eq(evidenceRef.field, 'collectionEvidence'), eq(evidenceRef.sealed, 1)))
+    .innerJoin(evidenceValue, eq(evidenceValue.id, evidenceRef.archiveId))
+    .where(eq(platformLegacyQueryAlias.oldId, queryId))
   if (!entry) return reject('legacy_query_missing','Original query does not exist')
   const c = entry.collection
   const query:Original['query'] = { id:queryId,interface:c.interface,queryKey:c.queryKey,rdjb:c.rdjb,titleCode:c.titleCode,
     queriedAt:c.queriedAt,lastCollectedAt:c.lastCollectedAt,status:c.status,failureReason:c.failureReason,
     rawResponse:originalValue({storage:entry.storage,bytes:entry.raw}),
     collectionEvidence:entry.evidence ? JSON.parse(entry.evidence.toString('utf8')) : null,createdAt:c.createdAt }
-  const { rows:observed } = await tx.execute<{ id:number; sequenceNo:number; key:string | null;
-    raw:Buffer | null; storage:string; snapshot:Buffer | null }>(sql`
-    SELECT a.old_id::float8 AS id,o.sequence_no::float8 AS "sequenceNo",o.source_relation_key AS key,
-      v.bytes AS raw,v.storage_class AS storage,s.bytes AS snapshot
-    FROM platform_business_observation o
-    LEFT JOIN platform_legacy_relation_alias a ON a.observation_id=o.id
-    LEFT JOIN platform_observation_archive_ref r ON r.owner_id=o.id AND r.field='rawFields' AND r.sealed=1
-    LEFT JOIN platform_archive_value v ON v.id=r.archive_id
-    LEFT JOIN platform_observation_archive_ref b ON b.owner_id=o.id AND b.field='legacyRowSnapshot' AND b.sealed=1
-    LEFT JOIN platform_archive_value s ON s.id=b.archive_id AND s.storage_class='blob'
-    WHERE o.collection_id=${c.id} ORDER BY o.sequence_no,a.old_id LIMIT 5001`)
+  const o = platformBusinessObservation
+  const a = platformLegacyRelationAlias
+  const rawRowRef = alias(platformObservationArchiveRef, 'raw_row_ref')
+  const snapshotRef = alias(platformObservationArchiveRef, 'snapshot_ref')
+  const snapshot = alias(platformArchiveValue, 'snapshot_value')
+  const observed = await tx.select({
+    id: a.oldId, sequenceNo: o.sequenceNo, key: o.sourceRelationKey, raw: rawValue.bytes,
+    storage: rawValue.storageClass, snapshot: snapshot.bytes,
+  }).from(o).leftJoin(a, eq(a.observationId, o.id))
+    .leftJoin(rawRowRef, and(eq(rawRowRef.ownerId, o.id), eq(rawRowRef.field, 'rawFields'), eq(rawRowRef.sealed, 1)))
+    .leftJoin(rawValue, eq(rawValue.id, rawRowRef.archiveId))
+    .leftJoin(snapshotRef, and(eq(snapshotRef.ownerId, o.id), eq(snapshotRef.field, 'legacyRowSnapshot'), eq(snapshotRef.sealed, 1)))
+    .leftJoin(snapshot, and(eq(snapshot.id, snapshotRef.archiveId), eq(snapshot.storageClass, 'blob')))
+    .where(eq(o.collectionId, c.id)).orderBy(o.sequenceNo, a.oldId).limit(5001)
   const rows = observed.map(row=>{
     if (row.id==null) return reject('legacy_query_missing','Original relation alias missing')
     if (!row.snapshot || !row.storage) return sourceDrift('Missing sealed original relation cells')
@@ -67,13 +75,16 @@ async function readOriginal(tx: Tx, queryId: number): Promise<Original> {
 }
 
 async function existing(tx: Tx, collectionId: number, queryId: number) {
-  const { rows:[row] } = await tx.execute<PostgresPlatformArchive & { origin:string; identity:string; sha256:string;
-    segment:number; fingerprint:string }>(sql`
-    SELECT a.id,a.storage_class AS "storageClass",a.byte_length AS "byteLength",p.origin,p.source_identity AS identity,
-      p.source_sha256 AS sha256,p.segment_index::float8 AS segment,p.input_fingerprint AS fingerprint,
-      EXISTS(SELECT 1 FROM platform_collection_archive_ref r WHERE r.owner_id=p.collection_id
-        AND r.field='legacyProvenance' AND r.archive_id=a.id AND r.sealed=1) AS sealed
-    FROM platform_collection_legacy_provenance p JOIN platform_archive_value a ON a.id=p.archive_id WHERE p.collection_id=${collectionId}`)
+  const a = platformArchiveValue
+  const r = platformCollectionArchiveRef
+  const [stored] = await tx.select({
+    id: a.id, storageClass: a.storageClass, byteLength: a.byteLength, origin: provenance.origin,
+    identity: provenance.sourceIdentity, sha256: provenance.sourceSha256, segment: provenance.segmentIndex,
+    fingerprint: provenance.inputFingerprint,
+    sealed: exists(tx.select({ id: r.archiveId }).from(r).where(and(eq(r.ownerId, provenance.collectionId),
+      eq(r.field, 'legacyProvenance'), eq(r.archiveId, a.id), eq(r.sealed, 1)))),
+  }).from(provenance).innerJoin(a, eq(a.id, provenance.archiveId)).where(eq(provenance.collectionId, collectionId))
+  const row = stored ? { ...stored, id: String(stored.id), byteLength: stored.byteLength === null ? null : String(stored.byteLength) } : null
   if (!row) return null
   if (row.byteLength===null || (row.origin==='t04_envelope' ? !row.sealed || row.storageClass!=='blob' : row.storageClass!=='text')) {
     return sourceDrift('Original provenance index owner conflict')
@@ -91,8 +102,8 @@ export async function inspectPostgresLegacyProvenance(tx: Tx,input:LegacyPlatfor
     || stored.fingerprint!==fingerprint || !isDeepStrictEqual(stored.collection,input.collection))) {
     return reject('legacy_provenance_conflict','Query already has different immutable legacy provenance')
   }
-  const { rows:[owner] } = await tx.execute<{ id:number }>(sql`SELECT collection_id::float8 AS id FROM platform_collection_legacy_provenance
-    WHERE source_sha256=${input.sourceSha256} AND segment_index=${input.segmentIndex}`)
+  const [owner] = await tx.select({ id: provenance.collectionId }).from(provenance)
+    .where(and(eq(provenance.sourceSha256, input.sourceSha256), eq(provenance.segmentIndex, input.segmentIndex)))
   if (owner && owner.id!==original.collectionId) return reject('legacy_source_identity_conflict','Original source file/segment already belongs to another query')
   return { input,fingerprint,collectionId:original.collectionId,relationCount:original.rows.length,exists:!!stored }
 }
@@ -102,10 +113,11 @@ export async function writePostgresLegacyProvenance(tx: Tx,plan:Awaited<ReturnTy
     const now = new Date().toISOString()
     const { input } = plan
     const archive = await writePostgresArchiveValue(tx,JSON.stringify(input.collection),now)
-    await tx.execute(sql`INSERT INTO platform_collection_legacy_provenance
-      (collection_id,origin,source_identity,source_sha256,segment_index,input_fingerprint,import_batch_id,created_at,archive_id)
-      VALUES(${plan.collectionId},'supplement',${input.sourceIdentity},${input.sourceSha256},${input.segmentIndex},${plan.fingerprint},
-        ${batchId},${now},${archive.id})`)
+    await tx.insert(provenance).values({
+      collectionId: plan.collectionId, origin: 'supplement', sourceIdentity: input.sourceIdentity,
+      sourceSha256: input.sourceSha256, segmentIndex: input.segmentIndex, inputFingerprint: plan.fingerprint,
+      importBatchId: batchId, createdAt: now, archiveId: BigInt(archive.id),
+    })
   }
   return { queryId:plan.input.queryId,provenanceKind:'legacy_pagination',typedState:'unknown',
     relationCount:plan.relationCount,rowsWritten:plan.exists ? 0 : 1 }

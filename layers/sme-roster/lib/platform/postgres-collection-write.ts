@@ -1,10 +1,11 @@
-import { sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import * as schema from '../../../../db/schema'
+import * as schema from '../../../../db/postgresql/platform-tables'
+import { platformQueryTitleScope } from '../../../../db/postgresql/platform-archive-tables'
 import { collectionInsertValues, parseNewCollectionInput, type NewCollectionTargetCommand } from './collection-target-command'
 import type { ApplyTargetInput } from './apply-target-writer'
 import { allocatePostgresPlatformAlias, bindPostgresArchive, sealPostgresArchive, writePostgresArchiveValue } from './postgres-archive-write'
-import { encodePlatformExactCell, insertPostgresPlatformRow, postgresPlatformInsert } from './postgres-platform-insert'
+import { encodePlatformExactCell } from './postgres-platform-insert'
 import { witnessConditionNames, WITNESS_RULE, captureWitnessPosition, type captureWitnessInputs } from './recognized-witness-capture'
 import { CANDIDATE_SCOPE_RULE } from './candidate-scope-capture'
 import { RDJB_TITLE_CODES } from './recognized-evidence'
@@ -28,7 +29,8 @@ export async function writePostgresCollectionHeader(tx: Tx, command: NewCollecti
   const query = parseNewCollectionInput(command)
   const evidence = query.collectionEvidence
   const columns = collectionInsertValues(query,command.createdAt)
-  const collectionId = await insertPostgresPlatformRow(tx,schema.platformCollection,columns)
+  const [collection] = await tx.insert(schema.platformCollection).values(columns).returning({ id: schema.platformCollection.id })
+  const collectionId = collection!.id
   const archive = new Map<string, Awaited<ReturnType<typeof writePostgresArchiveValue>>>()
   for (const [field, value] of [['request',command.queryText],['rawResponse',query.rawResponse ?? null],['collectionEvidence',command.evidenceText]] as const) {
     const stored = await writePostgresArchiveValue(tx,value,command.createdAt)
@@ -39,28 +41,31 @@ export async function writePostgresCollectionHeader(tx: Tx, command: NewCollecti
   const evidenceArchive = archive.get('collectionEvidence')!
   const witness = query.interface === 'recognized_list' && evidence ? witnessInput(evidence) : null
   if (witness) {
-    await tx.execute(sql`UPDATE platform_collection SET witness_rule=${WITNESS_RULE},witness_state='captured',
-      witness_archive_id=${evidenceArchive.id},witness_sha256=${evidenceArchive.sha256},witness_gate=${witness.gate}
-      WHERE id=${collectionId}`)
+    await tx.update(schema.platformCollection).set({
+      witnessRule: WITNESS_RULE, witnessState: 'captured', witnessArchiveId: evidenceArchive.id,
+      witnessSha256: evidenceArchive.sha256, witnessGate: witness.gate,
+    }).where(eq(schema.platformCollection.id, collectionId))
   }
   for (const name of conditionNames) {
     const value = evidence?.effectiveConditions[name]
     const w = witness?.conditions[name as typeof witnessConditionNames[number]]
-    await tx.execute(postgresPlatformInsert(schema.platformCollectionCondition,
-      { collectionId, name, valueKind: value === undefined ? 'absent' : 'text', textValue: value ?? null },
-      w ? { witness_kind: w.kind, ...encodePlatformExactCell('witness_value', w.value) } : {}))
+    await tx.insert(schema.platformCollectionCondition).values({
+      collectionId, name, valueKind: value === undefined ? 'absent' : 'text', textValue: value ?? null,
+      ...(w ? { witnessKind: w.kind, ...encodePlatformExactCell('witnessValue', w.value) } : {}),
+    })
   }
   const positions = new Map<number, Position>()
   const pageTitles = new Map<number, string | null>()
   let offset = 0
   for (const [ordinal,page] of (evidence?.pages ?? []).entries()) {
     const count = page.status === 'success' ? page.fetchedCount : 0
-    const pageId = await insertPostgresPlatformRow(tx,schema.platformCollectionPage,{
+    const [savedPage] = await tx.insert(schema.platformCollectionPage).values({
       collectionId,ordinal,source:page.source,rdjb:page.rdjb,pageNo:page.page,maxPage:page.maxPage ?? null,
       maxPagePresent: Object.hasOwn(page,'maxPage') ? 1 : 0,fetchedCount:page.fetchedCount,declaredTotal:page.declaredTotal,
       status:page.status,errorCode:page.error?.code ?? null,errorMessage:page.error?.message ?? null,
       sequenceStart:count ? offset+1 : null,sequenceEnd:count ? offset+count : null,positionState:'verified',
-    })
+    }).returning({ id: schema.platformCollectionPage.id })
+    const pageId = savedPage!.id
     for (let row = 1; row <= count; row++) {
       const sequenceNo = offset+row
       positions.set(sequenceNo,{ sequenceNo,pageId,pageRowNo:row,positionState:'verified' })
@@ -69,11 +74,12 @@ export async function writePostgresCollectionHeader(tx: Tx, command: NewCollecti
     offset += count
   }
   for (const [ordinal,unfinished] of (evidence?.unfinished ?? []).entries()) {
-    await tx.execute(postgresPlatformInsert(schema.platformCollectionUnfinished,
-      { collectionId,ordinal,source:unfinished.source,rdjb:unfinished.rdjb,pageNo:unfinished.page }))
+    await tx.insert(schema.platformCollectionUnfinished).values({
+      collectionId,ordinal,source:unfinished.source,rdjb:unfinished.rdjb,pageNo:unfinished.page,
+    })
   }
   for (const rdjb of new Set(evidence?.titleScope.rdjb ?? [])) {
-    await tx.execute(postgresPlatformInsert(schema.platformQueryTitleScope,{ collectionId,rdjb }))
+    await tx.insert(platformQueryTitleScope).values({ collectionId,rdjb })
   }
   const queryAlias = await allocatePostgresPlatformAlias(tx,'query',collectionId)
   const placement = (sequenceNo: number) => {
@@ -94,8 +100,8 @@ export async function writePostgresCollectionHeader(tx: Tx, command: NewCollecti
       witnessRdjbKey:matched && capture.rdjbKey !== null ? Buffer.from(capture.rdjbKey,'utf16le').toString('hex') : null,
       witnessPageKind:matched ? capture.page.kind : null,witnessErrorName:capture.errorName,witnessError:capture.error,
     } : {}
-    const exact = capture ? { ...encodePlatformExactCell('witness_rdjb_value',matched ? capture.rdjb.value : null),
-      ...encodePlatformExactCell('witness_page_value',matched ? capture.page.value : null) } : {}
+    const exact = capture ? { ...encodePlatformExactCell('witnessRdjbValue',matched ? capture.rdjb.value : null),
+      ...encodePlatformExactCell('witnessPageValue',matched ? capture.page.value : null) } : {}
     return { position,candidate,witnessFields,exact }
   }
   return { collectionId,queryAlias,query,placement,columns,rawArchive:archive.get('rawResponse')! }

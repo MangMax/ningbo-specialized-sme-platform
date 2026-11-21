@@ -1,4 +1,9 @@
-import { sql } from 'drizzle-orm'
+import { evidenceRevisionEvent113, evidenceSemanticHead113 } from '../../../../db/postgresql/evidence-review-tables'
+import { record, recordEvent } from '../../../../db/postgresql/ledger-tables'
+import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
+import { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import { platformBusinessObservation, platformCollection, platformLegacyQueryAlias, platformLegacyRelationAlias } from '../../../../db/postgresql/platform-tables'
+import { and, eq, exists, max, or, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { RELATION_DECLARE_KIND_ORDER } from '../../lib/labels'
 import { normalizeUscc } from '../../lib/domain'
@@ -31,10 +36,10 @@ const itemError = (ref: string, code: string, message: string, field?: string): 
   ({ ok:false,kind:'platform_query',ref,error:{code,message,...(field ? {field} : {})} })
 
 async function archivedSource(tx: Tx, query: RosterImportPlatformQuery): Promise<{ id: number; source: PlatformQueryReplaySource } | null> {
-  const { rows: [entry] } = await tx.execute<{ id: number }>(sql`SELECT a.old_id::float8 AS id
-    FROM platform_collection c JOIN platform_legacy_query_alias a ON a.collection_id=c.id
-    WHERE c.interface=${query.interface} AND c.query_key=${query.queryKey.trim()} AND c.rdjb=${query.rdjb?.trim() ?? ''}
-      AND c.queried_at=${query.queriedAt.trim()}`)
+  const [entry] = await tx.select({ id: platformLegacyQueryAlias.oldId }).from(platformCollection)
+    .innerJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformCollection.id))
+    .where(and(eq(platformCollection.interface, query.interface), eq(platformCollection.queryKey, query.queryKey.trim()),
+      eq(platformCollection.rdjb, query.rdjb?.trim() ?? ''), eq(platformCollection.queriedAt, query.queriedAt.trim())))
   if (!entry) return null
   const { query: stored } = (await readPostgresFingerprintQueries(tx,[entry.id])).get(entry.id)!
   const originals = await readPostgresRelationFingerprints(tx,{queryId:entry.id,archiveReplay:true})
@@ -55,6 +60,7 @@ async function planQuery(tx: Tx, query: RosterImportPlatformQuery, index: number
   const normalized = relations.map(row => normalizePlatformRelation(query.interface,row))
   const codes = [...new Set(normalized.map(row => normalizeUscc(row.usccRaw)).filter(Boolean))]
   const ids = [...new Set(normalized.flatMap(row => row.enterpriseId == null ? [] : [row.enterpriseId]))]
+  // Drizzle has no recursive CTE or CYCLE builder for canonical owner traversal.
   const { rows: owners } = await tx.execute<{ id: number; usccNorm: string | null; canonical: number }>(sql`
     WITH RECURSIVE requested(id,uscc_norm,canonical) AS (
       SELECT id,uscc_norm,id FROM enterprise WHERE id=ANY(${sql.param(ids)}::bigint[]) OR uscc_norm=ANY(${sql.param(codes)}::text[])
@@ -86,8 +92,9 @@ async function recordQueryEvidence(tx: Tx, header: Collection, observations: Obs
   const { query, columns } = header
   const envelope = query.collectionEvidence
   const ownsName = columns.queryKey.startsWith('name:')
-  const { rows: owners } = await tx.execute<{ id: number }>(sql`SELECT id::float8 AS id FROM enterprise
-    WHERE ${ownsName ? sql`name_norm=${columns.queryKey.slice(5)}` : sql`uscc_norm=${columns.queryKey}`} ORDER BY id LIMIT 2`)
+  const owners = await tx.select({ id: enterprise.id }).from(enterprise)
+    .where(ownsName ? eq(enterprise.nameNorm, columns.queryKey.slice(5)) : eq(enterprise.usccNorm, columns.queryKey))
+    .orderBy(enterprise.id).limit(2)
   const revisions = projectQueryEvidenceRevisions({
     ...columns,id:header.queryAlias,completeness:envelope?.completeness ?? null,conditions:JSON.stringify(envelope?.effectiveConditions ?? {}),
     pages:JSON.stringify((envelope?.pages ?? []).map(p=>({rdjb:p.rdjb,page:p.page,status:p.status,fetchedCount:p.fetchedCount,
@@ -95,16 +102,24 @@ async function recordQueryEvidence(tx: Tx, header: Collection, observations: Obs
     unfinished:JSON.stringify((envelope?.unfinished ?? []).map(p=>({rdjb:p.rdjb,page:p.page}))),
   },owners.length === 1 ? owners[0]!.id : null,observations.map(row=>row.evidence))
   for (const revision of revisions) {
-    const fact = revision.preserveFacts ? (await tx.execute<{ digest: string }>(sql`SELECT fact_digest AS digest FROM evidence_semantic_head_113
-      WHERE source_key=${revision.sourceKind+':'+revision.sourceKey}`)).rows[0]?.digest ?? evidenceDigest113([]) : revision.factDigest
+    const previous = revision.preserveFacts
+      ? (await tx.select({ digest: evidenceSemanticHead113.factDigest }).from(evidenceSemanticHead113)
+          .where(eq(evidenceSemanticHead113.sourceKey, revision.sourceKind+':'+revision.sourceKey)))[0]?.digest
+      : undefined
+    const fact = revision.preserveFacts ? previous ?? evidenceDigest113([]) : revision.factDigest
     const id = await appendPostgresEvidenceRevision(tx,{ ...revision,enterpriseId:revision.enterpriseId ?? undefined,
       titleCode:revision.titleCode ?? undefined,direction:revision.direction ?? undefined,eventId:revision.eventId ?? undefined,factDigest:fact })
-    if (id === null) continue
-    await tx.execute(sql`INSERT INTO evidence_revision_event_113(revision_id,event_id,enterprise_id,title_code)
-      SELECT ${id},e.id,r.enterprise_id,r.title_code FROM record r JOIN record_event e ON e.record_id=r.id
-      WHERE r.enterprise_id=${revision.enterpriseId ?? null} AND ${revision.titleCode == null ? sql`true` : sql`r.title_code=${revision.titleCode}`}
-      AND EXISTS(SELECT 1 FROM record_correspondence c WHERE c.status='confirmed' AND (c.event_id=e.id OR c.predecessor_event_id=e.id))
-      ON CONFLICT DO NOTHING`)
+    if (id === null || revision.enterpriseId == null) continue
+    await tx.insert(evidenceRevisionEvent113).select(tx.select({
+      revisionId: sql<number>`${id}::bigint`.as('revision_id'), eventId: recordEvent.id,
+      enterpriseId: record.enterpriseId, titleCode: record.titleCode,
+    }).from(record).innerJoin(recordEvent, eq(recordEvent.recordId, record.id))
+      .where(and(eq(record.enterpriseId, revision.enterpriseId),
+        revision.titleCode == null ? undefined : eq(record.titleCode, revision.titleCode),
+        exists(tx.select({ id: recordCorrespondence.id }).from(recordCorrespondence)
+          .where(and(eq(recordCorrespondence.status, 'confirmed'),
+            or(eq(recordCorrespondence.eventId, recordEvent.id), eq(recordCorrespondence.predecessorEventId, recordEvent.id))))),
+      ))).onConflictDoNothing()
   }
 }
 
@@ -143,9 +158,10 @@ async function writeQuery(tx: Tx, plan: QueryPlan, batchId: number): Promise<Ros
   const slot = captureReconcileSlot({query:{id:header.queryAlias,...header.columns},
     rawResponse:{storageClass:raw === null ? 'null' : 'text',byteLength:raw === null ? null : Buffer.byteLength(raw),sha256:header.rawArchive.sha256},
     relations:observations.map(row=>row.slotInput)},header.rawArchive.id,raw,{rows:observations.map(row=>row.slot)})
-  await tx.execute(sql`UPDATE platform_collection SET reconcile_slot_state=${slot.state},reconcile_slot_rule=${slot.rule},
-    reconcile_slot_raw_archive_id=${slot.rawArchiveId},reconcile_slot_row_count=${slot.rowCount},reconcile_slot_input_sha256=${slot.inputSha256},
-    reconcile_slot_reason=${slot.reason} WHERE id=${header.collectionId}`)
+  await tx.update(platformCollection).set({
+    reconcileSlotState: slot.state, reconcileSlotRule: slot.rule, reconcileSlotRawArchiveId: slot.rawArchiveId,
+    reconcileSlotRowCount: slot.rowCount, reconcileSlotInputSha256: slot.inputSha256, reconcileSlotReason: slot.reason,
+  }).where(eq(platformCollection.id, header.collectionId))
   await recordQueryEvidence(tx,header,observations)
   return { ok:true,kind:'platform_query',ref:'query:'+header.queryAlias,detail:{ relations:observations.map(row=>row.projection.relationId),
     skipped:0,canonicalProjection:observations.map(row=>row.projection),rowsWritten:1+observations.length } }
@@ -207,6 +223,7 @@ export async function executePostgresPlatformItems(tx: Tx,batch: PostgresImportB
   const queries = Array.isArray(request.payload.platformQueries) ? request.payload.platformQueries : []
   const requestedObservations = request.payload.platformRecordObservations ?? []
   const provenance = request.payload.platformLegacyProvenance ?? []
+  // Drizzle has no transaction-scoped PostgreSQL advisory lock API.
   if (action === 'commit') await tx.execute(sql`SELECT pg_advisory_xact_lock(21785,0)`)
   const { plans, conflicts } = await planPostgresPlatformQueries(tx,queries)
   const canonicalProjection: NonNullable<RosterImportPreflight['canonicalProjection']> = []
@@ -300,11 +317,11 @@ export async function executePostgresPlatformItems(tx: Tx,batch: PostgresImportB
   else if (stageCandidateJobs && process.env.NUXT_POSTGRES_JOBS === '1') {
     for (const item of items.filter(item=>item.kind==='platform_query')) {
       const queryId = Number(item.ref.slice('query:'.length))
-      const { rows: [row] } = await tx.execute<{ last: number }>(sql`
-        SELECT coalesce(max(a.old_id),0)::float8 AS last FROM platform_legacy_query_alias q
-        JOIN platform_business_observation o ON o.collection_id=q.collection_id
-        JOIN platform_legacy_relation_alias a ON a.observation_id=o.id WHERE q.old_id=${queryId}`)
-      const clientRequestId = 'archive:'+queryId+':'+row!.last+':'+EVENT_ARCHIVE_RULE_VERSION
+      const [row] = await tx.select({ last: max(platformLegacyRelationAlias.oldId) }).from(platformLegacyQueryAlias)
+        .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.collectionId, platformLegacyQueryAlias.collectionId))
+        .innerJoin(platformLegacyRelationAlias, eq(platformLegacyRelationAlias.observationId, platformBusinessObservation.id))
+        .where(eq(platformLegacyQueryAlias.oldId, queryId))
+      const clientRequestId = 'archive:'+queryId+':'+(row?.last ?? 0)+':'+EVENT_ARCHIVE_RULE_VERSION
       const { row: job } = await stagePostgresJob(tx,{kind:CANDIDATE_JOB_KIND,params:candidateJobParams.parse({queryId,clientRequestId})})
       candidateTaskIds.push(job.id)
     }
