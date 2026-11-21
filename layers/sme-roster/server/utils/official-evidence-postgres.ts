@@ -1,12 +1,12 @@
-import { and, asc, count, eq, gt, lte, notExists, sql, type SQL } from 'drizzle-orm'
+import { and, asc, count, desc, eq, gt, inArray, lte, notExists, sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
-import { officialEvidenceRowRevision } from '../../../../db/postgresql/official-evidence-tables'
-import * as schema from '../../../../db/schema'
+import { storedFile } from '../../../../db/postgresql/file-tables'
+import { rosterFileClassification } from '../../../../db/postgresql/roster-file-tables'
+import { evidenceCorrectionAudit, officialEvidenceRowRevision } from '../../../../db/postgresql/official-evidence-tables'
 import { computeTitleLifecycle } from '../../lib/roster/lifecycle'
-import { postgresRosterRow, readPostgresRosterRowsById } from '../../lib/roster/postgres-rows'
 import { projectExactEvidence } from './roster-evidence-correction'
 import { checkOfficialEvidenceFields, OfficialEvidenceError, type OfficialEvidenceRow, type OfficialEvidenceSourceKey, type OfficialEvidenceCandidate, type OfficialEvidencePageRequest, type OfficialEvidencePageResult } from './official-evidence'
 import { officialProjectionBudget, officialProjectionResponse, type EvidenceRead, type EventRead } from './official-evidence-read'
@@ -18,45 +18,60 @@ function notFound(message: string): never {
   throw Object.assign(new Error(message), { statusCode: 404, code: 'not_found' })
 }
 
-const evidenceFile = sql`json_build_object('id', f.id, 'relPath', f.rel_path, 'sha256', f.sha256,
-  'bytes', f.bytes, 'removedAt', f.removed_at)`
-
-export async function readPostgresExactEvidence(db: Db, id: number) {
-  const { rows: [result] } = await db.execute<{
-    row: Parameters<typeof projectExactEvidence>[0]; file: Parameters<typeof projectExactEvidence>[1]; revision: number
-  }>(sql`
-    SELECT json_build_object('evidence', ${postgresRosterRow(schema.recordEvidence, 'ev')},
-        'event', ${postgresRosterRow(schema.recordEvent, 'e')},
-        'recordId', r.id, 'enterpriseId', r.enterprise_id, 'titleCode', r.title_code, 'source', r.source) AS row,
-      CASE WHEN c.file_id IS NOT NULL THEN
-        json_build_object('id', f.id, 'relPath', f.rel_path, 'sha256', f.sha256, 'bytes', f.bytes, 'removedAt', f.removed_at,
-          'source', c.source, 'kind', c.kind, 'titleCode', c.title_code) END AS file,
-      coalesce((SELECT max(id) FROM evidence_correction_audit a WHERE a.evidence_id = ev.id),0)::float8 AS revision
-    FROM record_evidence ev JOIN record_event e ON e.id = ev.record_event_id JOIN record r ON r.id = e.record_id
-    LEFT JOIN stored_file f ON f.rel_path = ev.source_file LEFT JOIN roster_file_classification c ON c.file_id = f.id
-    WHERE ev.id = ${id}`)
-  if (!result) return notFound('Evidence not found')
-  return projectExactEvidence(result.row, result.file, result.revision)
+const evidenceFile = {
+  id: storedFile.id, relPath: storedFile.relPath, sha256: storedFile.sha256, bytes: storedFile.bytes, removedAt: storedFile.removedAt,
 }
 
-export async function readPostgresOfficialEvent(db: Db, id: number) {
-  const { rows: [source] } = await db.execute<{
-    event: typeof schema.recordEvent.$inferSelect; record: typeof schema.record.$inferSelect
-  }>(sql`
-    SELECT ${postgresRosterRow(schema.recordEvent, 'e')} AS event, ${postgresRosterRow(schema.record, 'r')} AS record
-    FROM record_event e JOIN record r ON r.id = e.record_id WHERE e.id = ${id} AND r.source = 'jxj'`)
+// Exact evidence fingerprints include the JSON property order of the SQLite event projection.
+function readEventFields({ revision, formalValidity, ...event }: typeof recordEvent.$inferSelect) {
+  return { ...event, formalValidity: formalValidity === null ? null : JSON.parse(formalValidity), revision }
+}
+
+export async function readPostgresExactEvidence(db: Pick<NodePgDatabase, 'select'>, id: number) {
+  const latestAudit = db.select({ id: evidenceCorrectionAudit.id, evidenceId: evidenceCorrectionAudit.evidenceId })
+    .from(evidenceCorrectionAudit)
+    .where(eq(evidenceCorrectionAudit.evidenceId, id)).orderBy(desc(evidenceCorrectionAudit.id)).limit(1).as('latest_audit')
+  const [result] = await db.select({
+    evidence: recordEvidence, event: recordEvent, recordId: record.id, enterpriseId: record.enterpriseId,
+    titleCode: record.titleCode, source: record.source,
+    file: evidenceFile, classification: {
+      fileId: rosterFileClassification.fileId, source: rosterFileClassification.source,
+      kind: rosterFileClassification.kind, titleCode: rosterFileClassification.titleCode,
+    },
+    revision: latestAudit.id,
+  }).from(recordEvidence).innerJoin(recordEvent, eq(recordEvent.id, recordEvidence.recordEventId))
+    .innerJoin(record, eq(record.id, recordEvent.recordId))
+    .leftJoin(storedFile, eq(storedFile.relPath, recordEvidence.sourceFile))
+    .leftJoin(rosterFileClassification, eq(rosterFileClassification.fileId, storedFile.id))
+    .leftJoin(latestAudit, eq(latestAudit.evidenceId, recordEvidence.id)).where(eq(recordEvidence.id, id))
+  if (!result) return notFound('Evidence not found')
+  const { evidence, event, recordId, enterpriseId, titleCode, source, file, classification, revision } = result
+  const identity = file && classification ? {
+    ...file, bytes: Number(file.bytes), source: classification.source, kind: classification.kind, titleCode: classification.titleCode,
+  } : null
+  return projectExactEvidence({ evidence, event: readEventFields(event), recordId, enterpriseId, titleCode, source }, identity, revision ?? 0)
+}
+
+export async function readPostgresOfficialEvent(db: Pick<NodePgDatabase, 'select'>, id: number) {
+  const [source] = await db.select({ event: recordEvent, record }).from(recordEvent)
+    .innerJoin(record, eq(record.id, recordEvent.recordId)).where(and(eq(recordEvent.id, id), eq(record.source, 'jxj')))
   if (!source) return notFound('Official jxj event not found')
-  const { record } = source
-  const evidence = await readPostgresRosterRowsById(db, schema.recordEvidence, sql`
-    FROM (SELECT * FROM record_evidence WHERE record_event_id = ${id} ORDER BY id LIMIT 301) p`)
+  const evidence = await db.select().from(recordEvidence).where(eq(recordEvidence.recordEventId, id))
+    .orderBy(asc(recordEvidence.id)).limit(301)
   if (evidence.length > 300) throw new OfficialEvidenceError(413, 'source_limit', 'Event has more than 300 evidence references; narrow source maintenance required')
   const paths = [...new Set(evidence.map(row => row.sourceFile))]
-  const files = paths.length ? (await db.execute<{ file: { id: number; relPath: string; sha256: string; bytes: number; removedAt: string | null } }>(sql`
-    SELECT ${evidenceFile} AS file FROM stored_file f WHERE rel_path = ANY(${sql.param(paths)}::text[]) ORDER BY id`)).rows.map(row => row.file) : []
-  const events = await readPostgresRosterRowsById(db, schema.recordEvent, sql`
-    FROM record_event p JOIN record r ON r.id = p.record_id
-    WHERE r.enterprise_id = ${record.enterpriseId} AND r.title_code = ${record.titleCode} AND r.source = 'jxj'`)
-  return { ...source, evidence, files, lifecycle: computeTitleLifecycle(events) }
+  const files = paths.length ? await db.select(evidenceFile).from(storedFile)
+    .where(inArray(storedFile.relPath, paths)).orderBy(asc(storedFile.id)) : []
+  const events = await db.select({ event: recordEvent }).from(recordEvent)
+    .innerJoin(record, eq(record.id, recordEvent.recordId)).where(and(
+      eq(record.enterpriseId, source.record.enterpriseId), eq(record.titleCode, source.record.titleCode), eq(record.source, 'jxj'),
+    )).orderBy(asc(recordEvent.id))
+  const { qualityFlags } = source.record
+  return {
+    event: readEventFields(source.event), record: { ...source.record, qualityFlags: qualityFlags === null ? null : JSON.parse(qualityFlags) },
+    evidence, files: files.map(file => ({ ...file, bytes: Number(file.bytes) })),
+    lifecycle: computeTitleLifecycle(events.map(row => readEventFields(row.event))),
+  }
 }
 
 const capturedShape = sql`json_build_object('formatVersion', r.format_version, 'evidenceId', r.evidence_id,
