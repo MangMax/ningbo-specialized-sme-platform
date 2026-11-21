@@ -1,5 +1,6 @@
-import { sql } from 'drizzle-orm'
+import { inArray, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { chunk } from 'es-toolkit'
 import { normalizeUscc } from './domain'
 import { readCuration, projectCuratedComparison } from './curation'
 import { getPostgresComparison } from './comparison'
@@ -7,6 +8,7 @@ import type { ComparisonRowFilter } from './comparison-filter'
 import { attachReconcile, readReconcile } from './reconcile'
 import { filterCuratedComparison, projectComparisonSummary, selectComparisonSummaryPage, type SummaryDisposition } from './comparison-summary'
 import * as schema from '../../../db/schema'
+import { enterprise, enterpriseAlias } from '../../../db/postgresql/enterprise-tables'
 import { postgresRosterRow } from './roster/postgres-rows'
 import { projectPlatformComparisonEvidence, type ComparisonObservation } from './comparison-platform'
 import { readPostgresFingerprintQueries, readPostgresRelationFingerprints } from '../server/utils/postgres-platform-fingerprint'
@@ -16,9 +18,12 @@ import { readPostgresQueryAssessments } from './roster/query-assessment-postgres
 import type { ComparisonSummaryOptions } from './comparison-summary-read'
 
 type Reader = Pick<NodePgDatabase,'execute'>
+type ComparisonReader = Pick<NodePgDatabase, 'execute' | 'select'>
 type Subject = { id: number; nameNorm: string; uscc: string | null }
 type Membership = { enterpriseId: number; queryId: number; collectionId: number; owned: boolean }
 const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
+// inArray binds each ID separately. Keep queries below PostgreSQL's 65,535-parameter limit.
+const ownerBatchSize = 32_768
 
 async function readMemberships(db: Reader, subjects: Subject[]) {
   if (!subjects.length) return []
@@ -44,20 +49,31 @@ async function readMemberships(db: Reader, subjects: Subject[]) {
     FROM membership GROUP BY enterprise_id,query_id,collection_id`)).rows
 }
 
-async function readPostgresCuratedComparison(db: Reader, curatedPath: string) {
+async function readPostgresCuratedComparison(db: ComparisonReader, curatedPath: string) {
   const base = await getPostgresComparison(db)
-  const { rows: enterprises } = await db.execute<Subject>(sql`
-    SELECT id::float8 AS id,name_norm AS "nameNorm",uscc_norm AS uscc FROM enterprise
-    WHERE id=ANY(${ids([...new Set(base.rows.map(row => row.enterpriseId))])})`)
+  const ownerIds = [...new Set(base.rows.map(row => row.enterpriseId))]
+  const enterprises: Subject[] = []
+  for (const batch of chunk(ownerIds, ownerBatchSize)) {
+    enterprises.push(...await db.select({
+      id: enterprise.id,
+      nameNorm: enterprise.nameNorm,
+      uscc: enterprise.usccNorm,
+    }).from(enterprise).where(inArray(enterprise.id, batch)))
+  }
   const names = new Map(enterprises.map(row => [row.id, row.nameNorm]))
   return { curated: projectCuratedComparison(base, readCuration(curatedPath), names), enterprises }
 }
 
-async function readPostgresComparisonAliases(db: Reader, owners: number[]) {
-  if (!owners.length) return new Map()
-  const { rows } = await db.execute<{ enterpriseId: number; name: string; verificationStatus: string }>(sql`
-    SELECT enterprise_id::float8 AS "enterpriseId",name,verification_status AS "verificationStatus"
-    FROM enterprise_alias WHERE enterprise_id=ANY(${ids(owners)})`)
+async function readPostgresComparisonAliases(db: Pick<NodePgDatabase, 'select'>, owners: number[]) {
+  const rows: Pick<typeof enterpriseAlias.$inferSelect, 'enterpriseId' | 'name' | 'verificationStatus'>[] = []
+  for (const batch of chunk([...new Set(owners)], ownerBatchSize)) {
+    const aliases = await db.select({
+      enterpriseId: enterpriseAlias.enterpriseId,
+      name: enterpriseAlias.name,
+      verificationStatus: enterpriseAlias.verificationStatus,
+    }).from(enterpriseAlias).where(inArray(enterpriseAlias.enterpriseId, batch))
+    for (const alias of aliases) rows.push(alias)
+  }
   return Map.groupBy(rows, row => row.enterpriseId)
 }
 
