@@ -3,7 +3,9 @@ import { reviewPostgresFixtureRows } from './fixtures/reviewed-announcement-post
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { minimalPdf } from '../../support/minimal-pdf'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -13,6 +15,7 @@ import { eq, sql } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
 import { importBatch, importReceipt } from '../../../db/postgresql/import-tables'
+import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
 import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { rosterAnnouncementIntake } from '../../../db/postgresql/roster-selection-tables'
 import { sourceDocument } from '../../../db/postgresql/official-evidence-tables'
@@ -161,6 +164,77 @@ describe('import receipts through real HTTP and MCP on isolated PostgreSQL', () 
     expect(await (await get(`/history${selector}&pageSize=1`)).json()).toMatchObject({ total: 1, rows: [{ receiptId: receipt.receiptId, status: 'committed' }] })
     expect((await post('commit', { request: submitted, planHash: 'not-the-import-protocol' })).status).toBe(400)
   })
+  it('repoints evidence through explicit replay, keeps the internal targets private and resolves a changed default source', async () => {
+    const idempotencyKey = 'explicit-replay/repoint'
+    const pdf = minimalPdf({ pages: 7 })
+    const sha256 = createHash('sha256').update(pdf).digest('hex')
+    const name = '显式重放出处企业'
+    const original = 'synthetic/replay-A.pdf'
+    const moved = 'synthetic/replay-B.pdf'
+    mkdirSync(join(dir, 'files', 'synthetic'), { recursive: true })
+    for (const path of [original, moved]) writeFileSync(join(dir, 'files', path), pdf)
+    function announcement(key: string, sourceFile: string, source: 'jxj' | 'miit'): RosterImportRequest {
+      return { idempotencyKey: key, sourceKind: 'announcement', sourceIdentity: sourceFile, sourceSha256: sha256,
+        payload: { announcement: { sourceDocument: { source, title: '合成重放公告' }, records: [{
+          enterprise: { name }, titleCode: 'specialized_sme',
+          events: [{ eventType: 'award', year: 2026, batchSeq: 1,
+            evidence: [{ sourceFile, attachment: '附件1', listNo: 1, page: 7 }] }],
+        }] } },
+      }
+    }
+    const assertEvidence = async (jxj: string, miit: string) => {
+      expect(await db.select({ source: record.source, path: recordEvidence.sourceFile, page: recordEvidence.page })
+        .from(recordEvidence)
+        .innerJoin(recordEvent, eq(recordEvent.id, recordEvidence.recordEventId))
+        .innerJoin(record, eq(record.id, recordEvent.recordId))
+        .innerJoin(enterprise, eq(enterprise.id, record.enterpriseId))
+        .where(eq(enterprise.name, name)).orderBy(record.source)).toEqual([
+        { source: 'jxj', path: jxj, page: 7 },
+        { source: 'miit', path: miit, page: 7 },
+      ])
+    }
+    for (const source of ['jxj', 'miit'] as const) {
+      expect(await supplement(announcement('explicit-replay/base-' + source, original, source)))
+        .toMatchObject({ status: 'supplemented' })
+    }
+    const repoint = announcement(idempotencyKey, moved, 'jxj')
+    const committed = await supplement(repoint)
+    expect(committed).toMatchObject({ status: 'supplemented', summary: { evidenceRepointed: 1 } })
+    expect(JSON.stringify(committed)).not.toMatch(/evidenceRepointTargets|evidenceRepointPlanFingerprint/)
+    const [originalBatch] = await db.select().from(importBatch).where(eq(importBatch.idempotencyKey, idempotencyKey))
+    expect(JSON.parse(originalBatch!.itemResults!)).toMatchObject([{
+      detail: { evidenceRepointTargets: [{ fromSourceFile: original, sourceFile: moved }],
+        evidenceRepointPlanFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) },
+    }])
+    await assertEvidence(moved, original)
+
+    // Same batch and file, but the announcement's default source selects the other record.
+    const replay = await post('replay', announcement(idempotencyKey, moved, 'miit'))
+    const body = await replay.json()
+    expect(replay.status, JSON.stringify(body)).toBe(200)
+    expect(body).toMatchObject({ status: 'replayed', update: 1, evidenceRepointed: 1,
+      items: [{ ok: true, kind: 'record', detail: { evidenceRepointed: 1 } }] })
+    expect(body.items[0].detail).not.toHaveProperty('evidenceRepointTargets')
+    expect(body.items[0].detail).not.toHaveProperty('evidenceRepointPlanFingerprint')
+    await assertEvidence(moved, moved)
+
+    const [batch] = await db.select().from(importBatch).where(eq(importBatch.id, body.batchId))
+    expect(batch).toMatchObject({ idempotencyKey: idempotencyKey + '#repoint', status: 'committed' })
+    const [internal] = JSON.parse(batch!.itemResults!)
+    expect(internal.detail.evidenceRepointTargets).toMatchObject([{ fromSourceFile: original, sourceFile: moved }])
+    expect(internal.detail.evidenceRepointPlanFingerprint).toMatch(/^[a-f0-9]{64}$/)
+    const receipt = await (await get(`/items?batchId=${body.batchId}`)).json()
+    expect(receipt).toMatchObject({ total: 1, rows: [{ ok: true, ref: body.items[0].ref }] })
+    expect(JSON.stringify(receipt)).not.toMatch(/evidenceRepointTargets|evidenceRepointPlanFingerprint/)
+    expect(await (await get(`/history?batchId=${body.batchId}`)).json())
+      .toMatchObject({ total: 1, rows: [{ operation: 'replay', status: 'committed' }] })
+
+    const repeated = await post('replay', announcement(idempotencyKey, moved, 'miit'))
+    expect(repeated.status).toBe(200)
+    expect(await repeated.json()).toMatchObject({ batchId: body.batchId, status: 'replayed', evidenceRepointed: 0 })
+    await assertEvidence(moved, moved)
+  })
+
   it('preserves immutable failed history when corrected source rows use a new key', async () => {
     const submitted = request('retry-history')
     submitted.payload.announcement.records[0]!.titleCode = 'invalid_title'
