@@ -1,8 +1,7 @@
-import { describeFileRead, describeFileReadAtLocator } from '../../../../core/server/utils/file-read-identity'
+import { describeFileReadAtLocator } from '../../../../core/server/utils/file-read'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { fileRefShape, requireFileRef, requirePostgresFileRef } from '../../../../core/server/utils/file-agent-reference'
+import { fileRefShape, requirePostgresFileRef } from '../../../../core/server/utils/file-agent-reference'
 import { readPostgresFileIdentity, usePostgresFileDb } from '../../../../core/server/utils/file-store-postgres'
-import { openFileStore } from '../../../../../server/mcp-file-store'
 import type { RosterFileFields } from '../../modules/sme-roster/files'
 import { completePostgresFileParts } from '../../utils/roster-file-postgres'
 
@@ -29,18 +28,13 @@ export default defineMcpTool({
   inputSchema: fileRefShape,
   handler: async (input) => {
     const pg = usePostgresFileDb()
-    if (pg) {
-      const result = await pg.transaction(async tx => {
-        const row = await requirePostgresFileRef(tx, input, { allowRemoved: true })
-        const { id, relPath, filename, parts, partsBinding } = row as typeof row & Partial<RosterFileFields>
-        return { file: { id, relPath, filename },
-          parts: parts && await completePostgresFileParts(tx, relPath, parts), partsBinding }
-      }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
-      const contentIdentity = await describeFileReadAtLocator(useRuntimeConfig().filesDir, result.file.relPath, path => readPostgresFileIdentity(pg, path))
-      return { ...result, contentIdentity }
-    }
-    const { db, root } = await openFileStore()
-    const { id, relPath, filename, parts, partsBinding } = requireFileRef(db, input, { allowRemoved: true })
-    return { file: { id, relPath, filename }, parts, partsBinding, contentIdentity: await describeFileRead(db, root, relPath) }
+    const result = await pg.transaction(async tx => {
+      const row = await requirePostgresFileRef(tx, input, { allowRemoved: true })
+      const { id, relPath, filename, parts, partsBinding } = row as typeof row & Partial<RosterFileFields>
+      return { file: { id, relPath, filename },
+        parts: parts && await completePostgresFileParts(tx, relPath, parts), partsBinding }
+    }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
+    const contentIdentity = await describeFileReadAtLocator(useRuntimeConfig().filesDir, result.file.relPath, path => readPostgresFileIdentity(pg, path))
+    return { ...result, contentIdentity }
   },
 })

@@ -31,14 +31,11 @@ import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import RosterFileEventSync from '#sme-roster/app/components/files/FileEventSync.vue'
 import { TITLES, TITLE_ORDER, EVENTS, EVENT_ORDER } from '#sme-roster/lib/labels'
 import { describeFetchError } from '../../../../core/lib/file-content-status'
-import type {
-  getParse105,
-  preflightParse310,
-  parsePart105,
-} from '#sme-roster/server/utils/parse-maintenance-105'
-import type { StoredFileRow } from '#core/server/utils/stored-files'
+import type { getPostgresParseState, preflightPostgresParse } from '#sme-roster/server/utils/parse-maintenance-postgres'
+import type { parsePart105 } from '#sme-roster/server/utils/parse-maintenance-contract'
+import type { FileRow } from '#core/server/utils/file-store-contract'
 import type { RosterFileFields } from '#sme-roster/server/modules/sme-roster/files'
-type State = ReturnType<typeof getParse105>
+type State = Awaited<ReturnType<typeof getPostgresParseState>>
 type Declaration = State['declarations'][number]
 type Draft = {
   declarationId?: string
@@ -52,7 +49,7 @@ type Draft = {
   rangesEdited: boolean
 }
 const props = defineProps<{
-  file: (StoredFileRow & Partial<RosterFileFields>) | null
+  file: (FileRow & Partial<RosterFileFields>) | null
   refreshList: () => Promise<unknown>
 }>()
 const open = defineModel<boolean>('open', { default: false })
@@ -81,7 +78,7 @@ const locked = computed(
     !enabled.value ||
     !state.value,
 )
-type Submission = ReturnType<typeof preflightParse310> & {
+type Submission = Awaited<ReturnType<typeof preflightPostgresParse>> & {
   parts: Infer<typeof parsePart105>[]
   parseState: string
   idempotencyKey: string
@@ -305,7 +302,7 @@ async function save() {
     const fingerprint = JSON.stringify({ parts, version: state.value.version })
     if (!attempt || attempt.fingerprint !== fingerprint) {
       const plan = await $fetch<
-        ReturnType<typeof preflightParse310> & { parseState: string }
+        Awaited<ReturnType<typeof preflightPostgresParse>> & { parseState: string }
       >(url() + '/preflight', {
         method: 'POST',
         body: {

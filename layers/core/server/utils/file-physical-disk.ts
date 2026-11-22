@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
 import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, renameSync, fstatSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
-import { compareFileContentIdentity, type StoredFileContentIdentity } from './file-content-identity'
-import { FileMaintenanceError, resolveInsideRoot } from './file-store'
+import { compareFileContentIdentity, type StoredFileContentIdentity } from './file-identity'
+import { FileMaintenanceError, resolveInsideRoot } from './file-store-contract'
 
 type Intent = StoredFileContentIdentity & { id: string }
 const fail = (message: string): never => { throw new FileMaintenanceError(409, message) }

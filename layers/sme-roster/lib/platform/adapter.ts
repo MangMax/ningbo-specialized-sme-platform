@@ -169,6 +169,12 @@ function gridOf(payload: unknown, gridName: string): Record<string, unknown> | n
 }
 
 /** 把任意标量字符串化(与 pipeline 的 `rowsFromGrid` 同规则),空值 → 空串。 */
+export function platformDataRowStringProjection(row: PlatformRawRow): PlatformRow {
+  return Object.fromEntries(Object.entries(row).map(([key, value]) => [
+    key, value === null ? '' : typeof value === 'string' ? value : typeof value === 'object' ? JSON.stringify(value) : String(value),
+  ]))
+}
+
 function normalizeRow(row: Record<string, unknown>): PlatformRow {
   const out: PlatformRow = {}
   for (const [key, value] of Object.entries(row)) {

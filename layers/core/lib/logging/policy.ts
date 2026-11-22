@@ -3,8 +3,8 @@ import { LOG_LEVELS, LOG_SOURCES, LOG_SUPPORTED_INTEGRATIONS, type LogCollection
 
 export function defaultLogCollection(): LogCollection {
   return {
-    sources: Object.fromEntries(LOG_SOURCES.map(key => [key, { enabled: true, minLevel: 'debug' }])) as LogCollection['sources'],
-    integrations: Object.fromEntries(LOG_SUPPORTED_INTEGRATIONS.map(key => [key, { enabled: true, minLevel: 'debug' }])) as LogCollection['integrations'],
+    sources: Object.fromEntries(LOG_SOURCES.map(key => [key, { enabled: true, minLevel: 'info' }])) as LogCollection['sources'],
+    integrations: Object.fromEntries(LOG_SUPPORTED_INTEGRATIONS.map(key => [key, { enabled: true, minLevel: 'info' }])) as LogCollection['integrations'],
   }
 }
 /** Strict own-key projection. Never spread untrusted dictionaries into policy. */
@@ -31,7 +31,7 @@ export function validateCollectionWithCatalog(value: unknown, sources: typeof LO
   }
   return result as NonNullable<LogPolicyPatch['collection']>
 }
-/** Shared, pure decision serialized into the SQLite worker; no process-local policy cache. */
+/** Evaluate the effective collection policy for an event. */
 export function collectionAllows(event: LogEvent, collection: LogCollection): boolean {
   return collectionAllowsAtLevels(event, collection, LOG_LEVELS)
 }

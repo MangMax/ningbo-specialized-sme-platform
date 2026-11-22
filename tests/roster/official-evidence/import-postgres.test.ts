@@ -1,15 +1,10 @@
-import { execFileSync } from 'node:child_process'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import Database from 'better-sqlite3'
-import { drizzle as sqliteDrizzle } from 'drizzle-orm/better-sqlite3'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createRuntimeSchema } from '../../../db/create-runtime'
-import * as schema from '../../../db/schema'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import type { OfficialPublishedRow, RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { planPostgresAnnouncement } from '../../../layers/sme-roster/server/utils/announcement-plan-postgres'
 import { writePostgresAnnouncement } from '../../../layers/sme-roster/server/utils/announcement-write-postgres'
@@ -19,10 +14,7 @@ import {
 import {
   readPostgresExactEvidence, readPostgresOfficialPlanFacts,
 } from '../../../layers/sme-roster/server/utils/official-evidence-postgres'
-import { readExactEvidence } from '../../../layers/sme-roster/server/utils/roster-evidence-correction'
-import { preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 
-const pgBin = process.env.TEST_IMPORT_RECEIPTS_PG_BIN
 const source = 'synthetic official publication\n'
 const sha256 = createHash('sha256').update(source).digest('hex')
 const published = (listNo: number): OfficialPublishedRow => ({
@@ -40,24 +32,19 @@ const append = (listNo: number, expectedVersion = 1) => ({
 const request = (payload: RosterImportRequest['payload'], idempotencyKey = 'official-import'): RosterImportRequest =>
   ({ idempotencyKey, sourceKind: 'alias_evidence', sourceIdentity: 'synthetic-official', payload })
 
-describe.runIf(Boolean(pgBin))('PostgreSQL official evidence import transaction', () => {
+describe('PostgreSQL official evidence import transaction', () => {
   let dir: string
-  let sqlite: Database.Database
   let pool: pg.Pool
   let db: NodePgDatabase
-  let started = false
+  let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 
-  const run = (command: string, args: string[], env = process.env) =>
-    execFileSync(join(pgBin!, command), args, { env, stdio: 'pipe' })
-
-  beforeAll(() => {
+  beforeAll(async () => {
     dir = mkdtempSync('/tmp/official-import-')
     writeFileSync(join(dir, 'notice.txt'), source)
-    const snapshot = join(dir, 'fixture.sqlite')
-    sqlite = new Database(snapshot)
-    createRuntimeSchema(sqlite)
-    installLeadListSchema(sqlite)
-    sqlite.exec(`
+    postgres = await postgresRuntimeFixture({ dir })
+    pool = new pg.Pool({ connectionString: postgres.url, options: '-c search_path=business,public' })
+    db = drizzle({ client: pool })
+    await pool.query(`
       INSERT INTO enterprise(id,name,name_norm) VALUES(1,'企业甲','企业甲'),(2,'企业乙','企业乙');
       INSERT INTO record(id,enterprise_id,title_code,source) VALUES(1,1,'specialized_sme','jxj'),(2,2,'specialized_sme','jxj');
       INSERT INTO record_event(id,record_id,event_type,year) VALUES(1,1,'award',2024),(2,2,'award',2024);
@@ -68,40 +55,29 @@ describe.runIf(Boolean(pgBin))('PostgreSQL official evidence import transaction'
       INSERT INTO roster_file_classification(file_id,source,kind,title_code) VALUES(1,'jxj','announcement','specialized_sme');
       INSERT INTO import_batch(id,idempotency_key,source_kind,source_identity,created_at)
         VALUES(1,'official-import','alias_evidence','synthetic-official','2025-01-01');
+      SELECT setval(pg_get_serial_sequence('record_evidence', 'id'), 10);
+      SELECT setval(pg_get_serial_sequence('record_event', 'id'), 2);
     `)
-    const env = { PATH: process.env.PATH, LANG: 'C', PGHOST: dir, PGPORT: '5432', PGUSER: 'official_fixture',
-      PGDATABASE: 'postgres', PGSQL_BIN: join(pgBin!, 'psql') }
-    run('initdb', ['-A','trust','-E','UTF8','--locale=C','-U',env.PGUSER,'-D',join(dir,'pg')], env)
-    run('pg_ctl', ['-w','-D',join(dir,'pg'),'-l',join(dir,'pg.log'),'-o',"-c listen_addresses='' -k " + dir,'start'], env)
-    started = true
-    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', snapshot, 'staged'], { env, stdio: 'pipe' })
-    for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
-      run('psql', ['-X','-w','-q','-v','staging=staged','-f','upgrade/postgresql/materialize-' + name + '.sql'], env)
-    }
-    pool = new pg.Pool({ host: dir, user: env.PGUSER, database: env.PGDATABASE, options: '-c search_path=business,public' })
-    db = drizzle({ client: pool })
   }, 60_000)
 
   afterAll(async () => {
     try {
-      sqlite?.close()
       await pool?.end()
     } finally {
-      if (started) run('pg_ctl', ['-w','-D',join(dir,'pg'),'-m','fast','stop'])
-      if (dir) rmSync(dir, { recursive: true, force: true })
+      try { postgres?.close() }
+      finally { if (dir) rmSync(dir, { recursive: true, force: true }) }
     }
   })
 
-  it('binds an append to the SQLite preflight hash and preserves the original row and import provenance', async () => {
+  it('binds an append to the preflight hash and preserves the original row and import provenance', async () => {
     const input = request({ officialEvidenceAppends: [append(2)] })
-    const sqlitePlan = preflightRosterImport(sqliteDrizzle(sqlite, { schema }), input, [], { filesDir: dir })
-    expect(sqlitePlan.preflight.conflicts).toEqual([])
-    const hash = sqlitePlan.preflight.officialEvidencePlanHash!
+    const hash = (await db.transaction(tx => planPostgresOfficialImport(tx, input, { filesDir: dir }),
+      { isolationLevel: 'repeatable read' }))?.planHash
     expect(hash).toMatch(/^[a-f0-9]{64}$/)
     const result = await db.transaction(async tx => {
       const plan = await planPostgresOfficialImport(tx, input, { filesDir: dir })
       expect(plan?.planHash).toBe(hash)
-      return applyPostgresOfficialImport(tx, plan!, 1, hash)
+      return applyPostgresOfficialImport(tx, plan!, 1, hash!)
     }, { isolationLevel: 'serializable' })
     expect(result).toMatchObject({ ok: true, kind: 'official_evidence', detail: {
       evidence: [{ evidenceId: 11, eventId: 1, revision: 1 }], rowsWritten: 1,
@@ -116,8 +92,6 @@ describe.runIf(Boolean(pgBin))('PostgreSQL official evidence import transaction'
 
   it('resolves an append and correction together, rejects a stale plan, and rolls back staged facts with its caller', async () => {
     const before = await readPostgresExactEvidence(db, 10)
-    const sqliteDb = sqliteDrizzle(sqlite, { schema })
-    expect(before.version).toBe(readExactEvidence(sqliteDb, 10).version)
     const correction = {
       evidenceId: 10, eventId: 2, recordId: 2, enterpriseId: 2, expectedVersion: before.version,
       coordinate: coordinate(4), expectedRowRevision: 0, publishedRow: published(4),
@@ -126,9 +100,8 @@ describe.runIf(Boolean(pgBin))('PostgreSQL official evidence import transaction'
       officialEvidenceAppends: [{ ...append(4), eventId: 2, recordId: 2, enterpriseId: 2 }],
       officialEvidenceCorrections: { actor: { type: 'user', id: 'coordinate-reviewer' }, basis: 'original row 4', operations: [correction] },
     })
-    const sqlitePlan = preflightRosterImport(sqliteDb, input, [], { filesDir: dir })
-    expect(sqlitePlan.preflight.conflicts).toEqual([])
-    const hash = sqlitePlan.preflight.officialEvidencePlanHash!
+    const hash = (await db.transaction(tx => planPostgresOfficialImport(tx, input, { filesDir: dir }),
+      { isolationLevel: 'repeatable read' }))?.planHash
     expect(hash).toMatch(/^[a-f0-9]{64}$/)
     const runImport = (submittedHash: string, rejectAfterWrite?: Error) => db.transaction(async tx => {
       const plan = await planPostgresOfficialImport(tx, input, { filesDir: dir })
@@ -143,10 +116,10 @@ describe.runIf(Boolean(pgBin))('PostgreSQL official evidence import transaction'
 
     await expect(runImport('f'.repeat(64))).rejects.toMatchObject({ code: 'plan_mismatch' })
     const laterFailure = new Error('A later import item failed')
-    await expect(runImport(hash, laterFailure)).rejects.toBe(laterFailure)
+    await expect(runImport(hash!, laterFailure)).rejects.toBe(laterFailure)
     expect(await readPostgresExactEvidence(db, 10)).toEqual(before)
     expect(await readPostgresOfficialPlanFacts(db, { id: 10 })).toBeNull()
-    await expect(runImport(hash)).resolves.toMatchObject({ ok: true, detail: {
+    await expect(runImport(hash!)).resolves.toMatchObject({ ok: true, detail: {
       evidence: [{ evidenceId: 10, eventId: 2, unchanged: true }, { evidenceId: 10, eventId: 2, revision: 1 }], rowsWritten: 0,
     } })
     expect(await readPostgresExactEvidence(db, 10)).toMatchObject({ coordinate: coordinate(4), event: { revision: 2 } })

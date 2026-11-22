@@ -1,8 +1,6 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
-import { fileRefShape, requireFileRef, requirePostgresFileRef } from '../../utils/file-agent-reference'
-import { readFileMaintenance } from '../../utils/file-maintenance'
+import { fileRefShape, requirePostgresFileRef } from '../../utils/file-agent-reference'
 import { readPostgresFileMaintenance } from '../../utils/file-maintenance-postgres'
 import { usePostgresFileDb } from '../../utils/file-store-postgres'
 export default defineMcpTool({
@@ -12,12 +10,7 @@ export default defineMcpTool({
   inputSchema: { ...fileRefShape, page: z.number().int().positive().optional(), pageSize: z.number().int().positive().max(100).optional() },
   handler: async input => {
     const pg = usePostgresFileDb()
-    if (pg) {
-      const file = await requirePostgresFileRef(pg, input, { allowRemoved: true })
-      return readPostgresFileMaintenance(pg, file.id, input.page ?? 1, input.pageSize ?? 50)
-    }
-    const db = useDb()
-    const file = requireFileRef(db, input, { allowRemoved: true })
-    return readFileMaintenance(db, file.id, input.page, input.pageSize)
+    const file = await requirePostgresFileRef(pg, input, { allowRemoved: true })
+    return readPostgresFileMaintenance(pg, file.id, input.page ?? 1, input.pageSize ?? 50)
   },
 })

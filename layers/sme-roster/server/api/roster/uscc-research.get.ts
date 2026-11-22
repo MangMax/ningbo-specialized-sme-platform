@@ -1,9 +1,5 @@
 import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 import { readPostgresUsccResearch } from '../../utils/identity-discovery-postgres'
-import { createReadTurns } from '../../../../core/server/utils/read-turn'
-import { withReadTurn } from '../../../../core/server/utils/read-turn-http'
-import { useDb } from '@db'
-import { collectUsccTargets, pageUsccChecklist, planUsccResearch } from '#sme-roster/server/utils/uscc-research'
 import { parseUsccChecklistQuery } from '#sme-roster/server/utils/uscc-research-query'
 
 /**
@@ -45,26 +41,9 @@ defineRouteMeta({
   },
 })
 
-type ResearchOptions = Extract<ReturnType<typeof parseUsccChecklistQuery>, { ok: true }>
-function readResearch(parsed: ResearchOptions) {
-  const db = useDb()
-  // **一次全表扫描**：清单与计划共用同一份目标行（见 `collectUsccTargets` 的注释）。
-  const targets = collectUsccTargets(db, parsed.planFilter)
-  return {
-    checklist: pageUsccChecklist(targets, parsed.filter),
-    plan: planUsccResearch(db, { filter: parsed.planFilter, targets }),
-  }
-}
-const researchReads = createReadTurns((input: { options: string }) =>
-  readResearch(JSON.parse(input.options) as ResearchOptions))
-
 export default defineEventHandler((event) => {
   const parsed = parseUsccChecklistQuery(getQuery(event))
   if (!parsed.ok) throw createError({ statusCode: 400, statusMessage: parsed.message })
   const postgres = usePostgresRosterDb()
-  if (postgres) return readPostgresUsccResearch(postgres, parsed)
-  useDb()
-  // The parser projects named primitive options/claims. No raw body, event,
-  // request or runtime config is captured by the fixed reader.
-  return withReadTurn(event, researchReads, { options: JSON.stringify(parsed) })
+  return readPostgresUsccResearch(postgres, parsed)
 })

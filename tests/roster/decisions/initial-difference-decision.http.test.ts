@@ -1,36 +1,49 @@
-import { readOwnerArchive } from '../../../layers/sme-roster/lib/platform/target-archive'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createApp, defineEventHandler, toNodeListener } from 'h3'
 import { createServer, type Server } from 'node:http'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initializeDb, schema } from '../../../db/client'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { sql } from 'drizzle-orm'
-const state = vi.hoisted(() => ({ db: null as any }))
-vi.mock('@db', () => ({ useDb: () => state.db }))
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 const dir = mkdtempSync(join(tmpdir(), 'initial-274-'))
-const db = initializeDb({ create: true,  dbPath: join(dir, 'synthetic.db') })
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let server: Server, base: string
 const scope = { enterpriseId: 1, titleCode: 'specialized_sme', direction: 'missing_in_miit' }
 const body = (key: string, expectedCurrentId: number | null = null) => ({ ...scope, action: 'replace', expectedCurrentId, idempotencyKey: key, basis: '人工核对保留公布历史', effectiveAt: '2026-10-24T00:00:00Z', decision: { status: 'confirmed_reason', reasonCode: 'other', measureCode: 'keep_history', verificationStatus: 'confirmed' } })
 beforeAll(async () => {
-  state.db = db
-  db.insert(schema.enterprise).values({ id: 1, name: '274合成', nameNorm: '274合成' }).run()
-  submitNativePlatformQuery(db, { queryKey: 'name:274合成', interface: 'apply_list', rdjb: '2', status: 'success', queriedAt: '2026-10-24T00:00:00Z', rawResponse: '{"synthetic":"unaltered"}' })
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  const db = usePostgresDirectoryDb()
+  await db.insert(enterprise).values({ name: '274合成', nameNorm: '274合成' })
+  await seedPostgresPlatformQuery(db, {
+    queryKey: 'name:274合成', interface: 'apply_list', rdjb: '2', status: 'success',
+    queriedAt: '2026-10-24T00:00:00Z', rawResponse: '{"synthetic":"unaltered"}',
+  })
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-only', }))
-  const command = (await import('../../../layers/sme-roster/server/api/roster/evidence-review/browser-commands.post')).default
+  const command = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/browser-commands.post')).default
   const current = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/current.get')).default
   const history = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/history.get')).default
   const app = createApp().use('/command', command).use('/current', current).use('/history', history)
   server = createServer(toNodeListener(app)); await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+}, 30_000)
+afterAll(async () => {
+  if (server) await new Promise<void>(resolve => server.close(() => resolve()))
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  rmSync(dir, { recursive: true, force: true })
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
 })
-afterAll(async () => { if (server) await new Promise<void>(resolve => server.close(() => resolve())); db.$client.close(); rmSync(dir, { recursive: true, force: true }); vi.unstubAllGlobals() })
 const post = (value: unknown) => fetch(base + '/command', { method: 'POST', headers: { 'content-type': 'application/json', origin: base, 'sec-fetch-site': 'same-origin' }, body: JSON.stringify(value) })
-it('first browser registration roundtrips null metadata and history while stale concurrent writes and retries preserve raw facts', async () => {
+it('first browser registration roundtrips null metadata and history while stale concurrent writes and retries preserve query provenance', async () => {
   const query = new URLSearchParams(Object.entries(scope).map(([k,v]) => [k,String(v)]))
   expect(await (await fetch(base + '/current?' + query)).json()).toMatchObject({ versionId: null, current: null })
   const first = body('first'); const ok = await post(first); expect(ok.status).toBe(200)
@@ -41,6 +54,10 @@ it('first browser registration roundtrips null metadata and history while stale 
   const correction = await post(body('correction', receipt.versionId)); expect(correction.status).toBe(200)
   const history = await (await fetch(base + '/history?' + query)).json()
   expect(history.total).toBe(2); expect(history.rows[0]).toMatchObject({ previousId: receipt.versionId, actor: null, ruleVersion: null })
-  expect(Buffer.from(readOwnerArchive(db, { kind: 'collection', ownerId: 1, field: 'rawResponse' })!.data, 'base64').toString()).toBe('{"synthetic":"unaltered"}')
-  expect(db.all(sql`select * from evidence_review_receipt_114`)).toHaveLength(0)
+  const db = usePostgresDirectoryDb()
+  const { rows } = await db.execute<{ digest: string }>(sql`
+    SELECT raw_response_sha256 AS digest FROM platform_collection WHERE id = 1
+  `)
+  expect(rows).toEqual([{ digest: createHash('sha256').update('{"synthetic":"unaltered"}').digest('hex') }])
+  expect((await db.execute(sql`SELECT * FROM evidence_review_receipt_114`)).rows).toHaveLength(0)
 })

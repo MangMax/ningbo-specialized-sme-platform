@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { createHash } from 'node:crypto'
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -8,10 +8,10 @@ import { createMemoryHistory, createRouter, RouterLink, useRoute, useRouter } fr
 import Page from '../../../layers/sme-roster/app/pages/current-enterprises.vue'
 import TablePagination from '../../../layers/core/app/components/TablePagination.vue'
 import type { CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-titles'
-import type { CurrentQualificationAssessment, CurrentQualificationSnapshot } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import type { CurrentQualificationAssessment, CurrentQualificationSnapshot } from '../../../layers/sme-roster/lib/roster/current-qualification-model'
 import { Select } from '../../../layers/core/app/components/ui/select'
 import type { CurrentStatus } from '../../../layers/sme-roster/lib/roster/current-status'
-import type { CurrentQualifiedResult, CurrentQualifiedRow } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import type { CurrentQualifiedResult, CurrentQualifiedRow } from '../../../layers/sme-roster/lib/roster/current-qualified-page'
 
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const asOf = '2026-06-01T00:00:00.000Z'

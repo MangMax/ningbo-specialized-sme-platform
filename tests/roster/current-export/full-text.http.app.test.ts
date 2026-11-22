@@ -1,14 +1,15 @@
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { recordEvidence } from '../../../db/postgresql/ledger-tables'
+import { afterAll, expect, it } from 'vitest'
 import { qualificationExportFixture } from './fixtures/qualification-export'
 
 const f = qualificationExportFixture()
 afterAll(() => f.close())
-beforeAll(async () => { await f.start() }, 60000)
 it('publishes and downloads complete multiple-source text through the HTTP export job', async () => {
-  f.candidate('synthetic-full-text')
+  await f.candidate('synthetic-full-text')
   const attachment = 'literal first source\n'.repeat(24) + 'literal second source😀'.repeat(90)
-  f.db.$client.prepare('update record_evidence set attachment=?').run(attachment)
-  const digest = f.businessDigest()
+  await f.db.update(recordEvidence).set({ attachment })
+  await f.start()
+  const original = await f.runtimeBusinessRows(['enterprise', 'record', 'record_event', 'record_evidence'])
   const { wb, job, response } = await f.workbook('full-text-public-artifact')
   expect(job.state).toBe('done')
   expect(response.status).toBe(200)
@@ -20,5 +21,5 @@ it('publishes and downloads complete multiple-source text through the HTTP expor
   const chunks: string[] = []
   wb.getWorksheet('长文本全文')!.eachRow((row,n)=>{if(n>1){expect(row.getCell(2).value).toBe('L2');expect(row.height).toBeLessThanOrEqual(409);chunks.push(String(row.getCell(12).value))}})
   expect(chunks.join('')).toContain(attachment)
-  expect(f.businessDigest()).toBe(digest)
-})
+  expect(await f.runtimeBusinessRows(['enterprise', 'record', 'record_event', 'record_evidence'])).toEqual(original)
+}, 60_000)

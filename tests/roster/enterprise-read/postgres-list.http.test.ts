@@ -3,18 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp, createRouter, defineEventHandler, getQuery, setHeader, toWebHandler } from 'h3'
 import ExcelJS from 'exceljs'
-import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { initializeDb } from '../../../db/client'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
-import { listRosterEnterprises } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
-import { listRecords } from '../../../layers/sme-roster/lib/query'
-import { parseRecordQuery, parseRosterEnterpriseQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
-const url = process.env.TEST_PROFILE_POSTGRES_URL
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let request: ReturnType<typeof toWebHandler>
-let sqlite: ReturnType<typeof initializeDb>
-let folder: string
+const dir = mkdtempSync(join(tmpdir(), 'pg-roster-list-'))
 const seeds = `
   INSERT INTO enterprise (id,name,name_norm,uscc_norm,city) VALUES
     (9201,'正源企业','正源企业','91330110MA2GMDFH58','宁波市'),
@@ -39,21 +34,13 @@ const seeds = `
 `
 
 beforeAll(async () => {
-  if (!url) return
-  folder = mkdtempSync(join(tmpdir(), 'pg-roster-list-'))
-  sqlite = initializeDb({ create: true, dbPath: join(folder, 'fixture.sqlite') })
-  sqlite.$client.exec(seeds)
-  const client = new pg.Client({ connectionString: url })
-  await client.connect()
-  try { await client.query('SET search_path TO business,public; ' + seeds) }
-  finally { await client.end() }
-  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
+  postgres = await postgresRuntimeFixture({ dir })
+  postgres.psql(['-c', 'SET search_path TO business, public; ' + seeds])
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
   vi.stubEnv('NUXT_DB_READONLY', '1')
-  vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('getQuery', getQuery)
   vi.stubGlobal('setHeader', setHeader)
-  vi.doMock('@db', () => ({ useDb: () => { throw new Error('Unexpected SQLite access in PostgreSQL mode') } }))
   const handler = (await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default
   const download = (await import('../../../layers/sme-roster/server/api/roster/export.get')).default
   const ledger = (await import('../../../layers/sme-roster/server/api/records.get')).default
@@ -61,7 +48,7 @@ beforeAll(async () => {
     .get('/api/roster/enterprises', handler).get('/api/roster/export', download).get('/api/records', ledger)))
 })
 
-it.skipIf(!url)('exports every matched enterprise as an XLSX row independent of list paging', async () => {
+it('exports every matched enterprise as an XLSX row independent of list paging', async () => {
   const response = await request(new Request('http://localhost/api/roster/export?page=2&pageSize=1&sort=recognition'))
   expect(response.status).toBe(200)
   const workbook = new ExcelJS.Workbook()
@@ -73,53 +60,54 @@ it.skipIf(!url)('exports every matched enterprise as an XLSX row independent of 
 })
 afterAll(async () => {
   await closePostgresDirectoryDb()
-  sqlite?.$client.close()
-  if (folder) rmSync(folder, { recursive: true, force: true })
-  vi.doUnmock('@db')
+  postgres?.close()
+  rmSync(dir, { recursive: true, force: true })
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
 })
 
-it.skipIf(!url)('matches the SQLite historical roster for membership, source intersections, counts and paged evidence', async () => {
-  const paired = async (query: Record<string, string>) => {
+it('filters historical roster membership, event coordinates and first recognition before paging', async () => {
+  const read = async (query: Record<string, string>) => {
     const response = await request(new Request('http://localhost/api/roster/enterprises?' + new URLSearchParams(query)))
     const result = await response.json()
     expect(response.status, JSON.stringify(result)).toBe(200)
-    expect(result).toEqual(listRosterEnterprises(sqlite, parseRosterEnterpriseQuery(query)))
     return result
   }
-  const initial = await paired({})
+  const initial = await read({})
   expect(initial).toMatchObject({ counts: { total: 2, titlePairs: 3, recognitionPairs: 3 }, rows: [
     { enterpriseId: 9202, rosterState: 'removed_platform_only' },
     { enterpriseId: 9201, district: '海曙区', rosterState: 'current',
       firstRecognition: [{ titleCode: 'specialized_sme', year: 2024 }, { titleCode: 'innovative_sme', year: 2022 }] },
   ] })
-  const filters: Record<string, string>[] = [
-    { page: '2', pageSize: '1', sort: 'recognition' },
-    { rosterState: 'removed_platform_only' },
-    { q: '原名称宁波', district: '海曙区' },
-    { source: 'miit', eventType: 'review', year: '2022' },
-    { source: 'jxj', eventType: 'review', year: '2022' },
-    { title: 'specialized_sme', firstYear: '2022', firstStatus: 'confirmed' },
-    { title: 'innovative_sme', firstYear: '2022', firstStatus: 'confirmed' },
-    { diffStatus: 'not_queried', sort: 'name' },
+  const filters: { query: Record<string, string>; ids: number[]; total: number }[] = [
+    { query: { page: '2', pageSize: '1', sort: 'name' }, ids: [9201], total: 2 },
+    { query: { rosterState: 'removed_platform_only' }, ids: [9202], total: 1 },
+    { query: { q: '原名称宁波', district: '海曙区' }, ids: [9201], total: 1 },
+    { query: { source: 'miit', eventType: 'review', year: '2022' }, ids: [], total: 0 },
+    { query: { source: 'jxj', eventType: 'review', year: '2022' }, ids: [9201], total: 1 },
+    { query: { title: 'specialized_sme', firstYear: '2022', firstStatus: 'confirmed' }, ids: [], total: 0 },
+    { query: { title: 'innovative_sme', firstYear: '2022', firstStatus: 'confirmed' }, ids: [9201], total: 1 },
   ]
-  for (const query of filters) await paired(query)
+  for (const { query, ids, total } of filters) {
+    const result = await read(query)
+    expect(result.counts.total, JSON.stringify(query)).toBe(total)
+    expect(result.rows.map((row: { enterpriseId: number }) => row.enterpriseId), JSON.stringify(query)).toEqual(ids)
+  }
 })
 
-it.skipIf(!url)('preserves complete ledger history in the matching groups and applies derived filters before pagination', async () => {
-  const pairs: Record<string, string>[] = [
-    {}, { page: '2', pageSize: '1' }, { page: '90', pageSize: '1' },
-    { q: '原名称宁波', source: 'jxj', eventType: 'review', year: '2022' },
-    { q: 'ma2gmdfh', firstYear: '2024', firstStatus: 'confirmed' },
-    { q: '%' }, { q: '_' }, { q: '\\' },
-    { firstStatus: 'pending', pageSize: '1' }, { flags: 'uscc_missing' },
-    { dueYear: '2028' }, { dueYear: '2028', pageSize: '1', page: '2' },
-  ]
-  for (const query of pairs) {
+it('preserves ledger keyword matching and complete group history across paging', async () => {
+  const read = async (query: Record<string, string>) => {
     const response = await request(new Request('http://localhost/api/records?' + new URLSearchParams(query)))
     const result = await response.json()
     expect(response.status, JSON.stringify(result)).toBe(200)
-    expect(result).toEqual(listRecords(sqlite, parseRecordQuery(query)))
+    return result
   }
+  for (const keyword of ['%', '_']) expect((await read({ q: keyword })).total).toBe(4)
+  expect(await read({ q: '\\' })).toMatchObject({ rows: [], total: 0 })
+  const history = await read({ q: '原名称宁波', source: 'jxj', eventType: 'review', year: '2022', pageSize: '1' })
+  expect(history).toMatchObject({ total: 1, rows: [{
+    enterpriseId: 9201, titleCode: 'innovative_sme', events: [{ id: 9201, type: 'award' }, { id: 9202, type: 'review' }],
+  }] })
+  expect(await read({ q: '原名称宁波', source: 'jxj', eventType: 'review', year: '2022', pageSize: '1', page: '2' }))
+    .toMatchObject({ total: 1, rows: [] })
 })

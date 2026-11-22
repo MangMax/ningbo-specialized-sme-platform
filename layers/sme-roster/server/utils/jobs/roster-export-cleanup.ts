@@ -1,26 +1,24 @@
 import { readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { resolveDbPath } from '../../../../../db/client'
 import { isJobId } from '../../../../core/lib/job'
 import { appLog, type LogContext } from '../../../../core/lib/logging'
 import { getPostgresJob, type JobCompletion, type JobSpec } from '../../../../core/server/public'
-import { getJob, type JobRow } from '../../../../core/server/utils/job-store'
-import { currentExportDbPath, currentExportReceipt, exportDirectory, isExportArtifactExpired } from '../current-export-artifact'
+import type { JobRow } from '../../../../core/server/utils/job-contract'
+import { currentExportReceipt, isExportArtifactExpired, postgresExportDirectory } from '../current-export-artifact'
 
 const paramsSchema = z.strictObject({
   clientRequestId: z.string().trim().min(1).max(128).refine(value => !value.includes('\0')),
 })
 
 async function sweepExpiredExports(
-  dbPath: string,
+  directory: string | undefined,
   readJob: (id: string) => JobRow | null | undefined | Promise<JobRow | null | undefined>,
   ctx: { cancelled(): boolean | Promise<boolean>; logContext?: Readonly<LogContext> },
 ): Promise<JobCompletion> {
   const result = { removed: 0, failed: 0 }
-  if (!dbPath) return { result, error: '清理需要持久化的名录导出目录' }
+  if (!directory) return { result, error: '清理需要持久化的名录导出目录' }
 
-  const directory = exportDirectory(dbPath)
   const cutoff = Date.now()
   let entries: string[]
   try {
@@ -76,12 +74,9 @@ export const rosterExportCleanupSpec: JobSpec = {
       ? { ok: true, params: parsed.data }
       : { ok: false, message: '需要有效的 clientRequestId' }
   },
-  run(ctx) {
-    return sweepExpiredExports(currentExportDbPath(ctx.db), id => getJob(ctx.db, id), ctx)
-  },
   postgres: {
     run(ctx) {
-      return sweepExpiredExports(resolveDbPath(), async id => (await getPostgresJob(ctx.db, id))?.row, ctx)
+      return sweepExpiredExports(postgresExportDirectory(), async id => (await getPostgresJob(ctx.db, id))?.row, ctx)
     },
   },
 }

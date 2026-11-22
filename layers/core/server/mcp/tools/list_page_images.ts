@@ -1,14 +1,13 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { DEFAULT_DPI } from '#core/lib/pdf-page'
-import { fileRefShape, pageImagesForAgent, postgresPageImagesForAgent } from '../../utils/file-agent-reference'
-import { openOcrFileStore } from '../../utils/ocr-files'
+import { fileRefShape, postgresPageImagesForAgent } from '../../utils/file-agent-reference'
 import { usePostgresFileDb } from '../../utils/file-store-postgres'
 
 /**
  * `list_page_images` —— 一份 PDF 的页图(票 18,只读;产物来自票 13)。
  *
- * 与 `GET /api/pdf-pages?file=…` **同一实现**(`pageImagesForAgent` → `listPdfPages`),
+ * 与 `GET /api/pdf-pages?file=…` **同一实现**(`listPdfPages`),
  * 连错误状态码都逐条对齐(404 文件不存在 / 415 不是 PDF / 400 分辨率 / 403 路径越界),
  * 所以同一件事从两个入口看是一致的。
  *
@@ -41,9 +40,7 @@ export default defineMcpTool({
   },
   handler: async (input) => {
     const pg = usePostgresFileDb()
-    const result = pg
-      ? await postgresPageImagesForAgent(pg, useRuntimeConfig().filesDir, input)
-      : await openOcrFileStore().then(({ db, root }) => pageImagesForAgent(db, root, input))
+    const result = await postgresPageImagesForAgent(pg, useRuntimeConfig().filesDir, input)
     if (!result.ok) throw createError({ statusCode: result.statusCode, message: result.message })
     return { ...result.value, defaultDpi: DEFAULT_DPI }
   },

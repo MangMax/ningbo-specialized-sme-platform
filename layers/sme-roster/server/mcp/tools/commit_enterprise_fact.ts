@@ -2,7 +2,7 @@ import { commitRuntimeEnterpriseFact } from '../../utils/enterprise-facts-runtim
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { writeGuard } from '../../../../core/server/utils/mcp-guard'
-import { enterpriseFactCommitSchema } from '../../utils/enterprise-facts'
+import { enterpriseFactCommitSchema } from '../../utils/enterprise-fact-model'
 export default defineMcpTool({
  name: 'commit_enterprise_fact', title: 'commit enterprise assertions',
  description: 'Equivalent to POST facts/commit. Independent sourced assertions, immutable lifecycle audit; no legacy promotion. Assert/replace starts pending; confirm is explicit; terminal facts cannot revive. Read version, preflight full command, commit {request,planHash}.',

@@ -8,7 +8,7 @@ import { boundedLogOutput } from './output'
 import { collectionAllows, decodeStoredLogCollection, defaultLogCollection, validateCollection } from './policy'
 
 type Filter = LogFilter & { limit: number; beforeSeq?: number }
-const accounting = 'UTF-8 bytes of stored event summary and detail JSON; excludes duplicated filter columns, indexes, PostgreSQL storage overhead and container stdout'
+const accounting = 'UTF-8 bytes of stored event JSON; excludes duplicated filter columns, indexes, PostgreSQL storage overhead and container stdout'
 const profiles = LOG_FIELD_PROFILES
 const dayMs = 86400000
 const policyId = BigInt(1)
@@ -29,8 +29,7 @@ function count(value: bigint | string) {
 }
 
 function parseFileId(value: string | number) {
-  // SQLite compares an INTEGER column using numeric affinity when the filter
-  // text denotes a number. Other permitted filter tokens match no rows.
+  // File ID filters accept integral values in decimal or scientific notation.
   const text = String(value)
   if (/^[0-9]+$/.test(text)) {
     const integer = BigInt(text)
@@ -88,7 +87,7 @@ async function deleteOldest(tx: LogTransaction, { events, policy }: LogTables, w
     .orderBy(events.seq).limit(LOG_DEFAULTS.clearBatchSize)
   const removed = tx.$with('removed').as(tx.delete(events).where(inArray(events.seq, oldest)).returning({
     // Drizzle 0.45.4 has no octet length or arithmetic expression builders.
-    bytes: sql<bigint>`octet_length(${events.summary})::bigint + octet_length(${events.detail})`.as('bytes'),
+    bytes: sql<bigint>`octet_length(${events.detail})::bigint`.as('bytes'),
   }))
   const totals = tx.$with('totals').as(tx.select({
     deleted: countRows().as('deleted'),
@@ -186,7 +185,7 @@ export function createPostgresLogStorage(connectionString: string, maxEventBytes
             const input = data as Filter
             const filter = predicate(logEvents, input)
             if (!filter.matches) { result = { rows: [], nextSeq: null }; break }
-            const rows = await tx.select({ seq: logEvents.seq, module: logEvents.module, summary: logEvents.summary })
+            const rows = await tx.select({ seq: logEvents.seq, module: logEvents.module, detail: logEvents.detail })
               .from(logEvents).where(and(
                 filter.where,
                 gte(logEvents.timestamp, cutoff),
@@ -195,7 +194,10 @@ export function createPostgresLogStorage(connectionString: string, maxEventBytes
             const more = rows.length > input.limit
             if (more) rows.pop()
             result = {
-              rows: rows.map(row => ({ ...JSON.parse(row.summary), module: row.module })),
+              rows: rows.map(row => {
+                const { auditId, receiptId, parentEventId, ...summary } = JSON.parse(row.detail) as LogEvent
+                return { ...summary, module: row.module }
+              }),
               nextSeq: more ? count(rows.at(-1)!.seq) : null,
             }
             break
@@ -213,24 +215,23 @@ export function createPostgresLogStorage(connectionString: string, maxEventBytes
             const allowed = projected.flatMap(event => {
               const detail = JSON.stringify(event)
               if (Buffer.byteLength(detail) > maxEventBytes) return []
-              const { auditId, receiptId, parentEventId, ...summary } = event
-              return [{ event, detail, summary: JSON.stringify(summary) }]
+              return [{ event, detail }]
             })
-            const added = allowed.reduce((sum, row) => sum + Buffer.byteLength(row.summary) + Buffer.byteLength(row.detail), 0)
+            const added = allowed.reduce((sum, row) => sum + Buffer.byteLength(row.detail), 0)
             const bytes = await maintain(tx, tables, now, policy.retentionDays, policy.maxBytes - added, policy.storageBytes)
             let stored = 0
             let code: string | undefined
             if (allowed.length && bytes + added <= policy.maxBytes) {
               try {
                 await tx.transaction(async batch => {
-                  await batch.insert(logEvents).values(allowed.map(({ event, summary, detail }) => ({
+                  await batch.insert(logEvents).values(allowed.map(({ event, detail }) => ({
                     id: event.id, timestamp: event.timestamp, level: event.level, source: event.source,
                     module: event.module ?? null, operation: event.operation, outcome: event.outcome,
                     requestId: event.requestId ?? null, traceId: event.traceId ?? null, taskId: event.taskId ?? null,
                     fileId: event.fileId == null ? null : BigInt(event.fileId),
                     batchId: event.batchId === undefined ? null : String(event.batchId),
                     resourceId: event.resourceId === undefined ? null : String(event.resourceId),
-                    summary, detail,
+                    detail,
                   })))
                   await batch.update(logPolicy).set({ logicalBytes: BigInt(bytes + added) }).where(eq(logPolicy.id, policyId))
                 })

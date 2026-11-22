@@ -1,9 +1,8 @@
 import { z } from 'zod'
-import { useDb } from '@db'
 import { editableDictionaryKinds } from '#core/lib/dictionaries'
 import { sameOriginBrowserAccess } from '../../../utils/browser-page-access'
 import { directoryResult, usePostgresDirectoryWriteDb } from '../../../utils/enterprise-directory-route'
-import { saveDictionaryEntry, savePostgresDictionaryEntry } from '../../../utils/dictionaries'
+import { savePostgresDictionaryEntry } from '../../../utils/dictionaries'
 
 const name = z.string().trim().min(1).max(120).refine(value => value.isWellFormed() && !value.includes('\0') && !!value.normalize('NFKC').trim())
 const entry = z.union([
@@ -30,7 +29,7 @@ export default defineEventHandler(async event => {
   if (!parsed.success) throw createError({ statusCode: 400, message: '请检查字典项名称和原值。' })
   const result = await directoryResult(() => {
     const postgres = usePostgresDirectoryWriteDb()
-    return postgres ? savePostgresDictionaryEntry(postgres, kind.data, parsed.data) : saveDictionaryEntry(useDb(), kind.data, parsed.data)
+    return savePostgresDictionaryEntry(postgres, kind.data, parsed.data)
   })
   if ('message' in result) throw createError({ statusCode: result.status, message: result.message })
   return result.entry

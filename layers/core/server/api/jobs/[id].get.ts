@@ -1,11 +1,7 @@
 import { postgresJobReadProjector } from '../../utils/job-read-postgres'
 import { usePostgresJobsDb } from '../../utils/postgres-jobs'
 import { getPostgresJobDetail, getPostgresJobSummary } from '../../utils/job-store-postgres'
-import { useDb } from '@db'
 import { isJobId } from '#core/lib/job'
-import { ensureJobRunnerReady } from '../../utils/job-runner'
-import { getJob, getJobSummary } from '../../utils/job-store'
-import { jobRuntime } from '../../../../../server/job-runtime'
 import { registerJobSpecs } from '../../../../../server/utils/job-specs'
 
 /**
@@ -89,30 +85,14 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: 'view 必须是 full 或 summary' })
   }
 
-  const postgres = usePostgresJobsDb()
-  if (postgres) {
-    const config = useRuntimeConfig(event)
-    const db = postgres
-    if (q.view === 'summary') {
-      const summary = await getPostgresJobSummary(db, id)
-      if (!summary) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
-      return summary
-    }
-    const job = await getPostgresJobDetail(db, id)
-    if (!job) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
-    return (await postgresJobReadProjector(db, config))(job)
-  }
-
-  const db = useDb()
-  ensureJobRunnerReady(db)
-
+  const db = usePostgresJobsDb()
+  const config = useRuntimeConfig(event)
   if (q.view === 'summary') {
-    const summary = getJobSummary(db, id)
+    const summary = await getPostgresJobSummary(db, id)
     if (!summary) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
     return summary
   }
-
-  const row = getJob(db, id)
-  if (!row) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
-  return jobRuntime.readProjector(db)(row)
+  const job = await getPostgresJobDetail(db, id)
+  if (!job) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
+  return (await postgresJobReadProjector(db, config))(job)
 })

@@ -1,11 +1,9 @@
-import { useDb } from '@db'
 import { usePostgresRosterDb } from './postgres-roster-db'
 import { importPostgresReceiptRedactor } from './import-receipt-redaction'
-import { sanitizeEvidence } from './record-correspondence-read'
+import { sanitizeEvidence } from './evidence-redaction'
 import { readPostgresDispositions, preflightPostgresDisposition, commitPostgresDisposition } from './title-cycle-disposition-postgres'
 import { z } from 'zod'
-import { dispositionRequestSchema, DispositionError, preflightDisposition, commitDisposition, currentDispositions, historyDispositions } from './title-cycle-disposition'
-import { decisionOutput102 } from './decision-lifecycle-102-output'
+import { dispositionRequestSchema, DispositionError } from './title-cycle-disposition-model'
 const scope = z.strictObject({ enterpriseIds: z.array(z.number().int().positive().max(Number.MAX_SAFE_INTEGER)).min(1).max(500) })
 export const dispositionSchemas = {
  preflight: dispositionRequestSchema,
@@ -18,20 +16,8 @@ export function dispositionFailure(error: unknown) {
  const code = status === 400 ? 'invalid_request' : error instanceof DispositionError ? error.code : 'transaction_failed'
  return {status, body:{error:{code,message: status === 409 ? code : status === 400 ? 'Invalid disposition request' : 'Disposition operation failed'}}}
 }
-export function dispositionOperation(db: Parameters<typeof preflightDisposition>[0], action: DispositionAction, body: unknown) {
- // Prepare credential redactors before any possible transaction commit. The
- // stored receipt and source facts remain immutable; only this response is redacted.
- const output = decisionOutput102(db)
- const input = dispositionSchemas[action].parse(body)
- const value = action === 'preflight' ? preflightDisposition(db,input)
- : action === 'commit' ? commitDisposition(db,input)
- : action === 'current' ? currentDispositions(db,scope.parse(input).enterpriseIds)
- : {rows:historyDispositions(db,scope.parse(input).enterpriseIds)}
- return output(value)
-}
 export async function runtimeDispositionOperation(action: DispositionAction, body: unknown) {
  const db = usePostgresRosterDb(action === 'preflight' || action === 'commit')
- if (!db) return dispositionOperation(useDb(), action, body)
  const redactor = await importPostgresReceiptRedactor(db)
  if (action === 'commit') {
   const input = dispositionSchemas.commit.parse(body)

@@ -1,49 +1,53 @@
+import { readPostgresOfficialPlanFacts } from '../../../layers/sme-roster/server/utils/official-evidence-postgres'
 import { execFileSync } from 'node:child_process'
 import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
 import { recognizedResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
-import { readLatestOfficialEvidence } from '../../../layers/sme-roster/server/utils/official-evidence'
 import { nativeAppAdapter } from '../../support/native-app'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
-import { reviewFixtureRows } from '../imports/fixtures/reviewed-announcement'
+import { reviewPostgresFixtureRows } from '../imports/fixtures/reviewed-announcement-postgres'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import pg from 'pg'
+import { drizzle as drizzlePostgres } from 'drizzle-orm/node-postgres'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
-import { createRuntimeSchema } from '../../../db/create-runtime'
 import { createHash } from 'node:crypto'
 import ExcelJS from 'exceljs'
 import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { z } from 'zod'
-import * as schema from '../../../db/schema'
 import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } from '../../../layers/sme-roster/lib/roster-import-client'
 import { usccFormatVerdict } from '../../../layers/sme-roster/lib/roster/uscc-research'
 import { spawnOwnedChild, spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 // Actual Nuxt routes/toolkit/middleware/JSON-RPC and real import process. Execute only
 // with the parent's heavy slot; this suite never uses the SDK's in-memory bridge.
-const dir=mkdtempSync('/tmp/issue351-transport-'),filesDir=join(dir,'files'),dbPath=join(dir,'synthetic.sqlite')
+const dir=mkdtempSync('/tmp/issue351-transport-'),filesDir=join(dir,'files')
 for(const name of ['files','incoming','logs','tmp']) mkdirSync(join(dir,name))
 writeFileSync(join(dir,'emptydotenv'),'')
 const text='synthetic transport official source\n',sha256=createHash('sha256').update(text).digest('hex')
 writeFileSync(join(filesDir,'notice.txt'),text)
-const sqlite=new Database(dbPath);sqlite.pragma('foreign_keys=ON')
-const db=drizzle(sqlite,{schema});createRuntimeSchema(sqlite)
-// Infrastructure catalog only; all business fixtures are formed through public commands.
-sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(1,'notice.txt','notice.txt','txt',?,?,'synthetic')").run(Buffer.byteLength(text),sha256)
-sqlite.exec("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (1, 'jxj', 'announcement', 'specialized_sme')")
 const apiToken='synthetic-c-api',mcpToken='synthetic-c-mcp',trace:unknown[]=[]
 let discovery: unknown
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+let pgPool: pg.Pool
+const rows = async <T extends pg.QueryResultRow>(sql: string, ...parameters: unknown[]) =>
+  (await pgPool.query<T>(sql, parameters)).rows
+const firstRow = async <T extends pg.QueryResultRow>(sql: string, ...parameters: unknown[]) =>
+  (await rows<T>(sql, ...parameters))[0]
 let base='',child:ReturnType<typeof spawnOwnedChild>|undefined,sequence=0,seedSequence=0
 // Synthetic identities with independently precomputed valid check digits, not registered entities.
-const seedUsccs=['913302110000001015','913302110000001028','91330211000000103B','91330211000000104E','91330211000000105H','91330211000000106L'] as const
+const seedUsccs=['913302110000001015','913302110000001028','91330211000000103B','91330211000000104E','91330211000000105H','91330211000000106L','91330211000000107P'] as const
 const usedSeedUsccs=new Set<string>()
 beforeAll(async()=>{
+  postgres = await postgresRuntimeFixture({ dir })
+  pgPool = new pg.Pool({ connectionString: postgres.url, options: '-c search_path=business,public' })
+  // Seed the file catalog; roster and evidence data enter through public commands.
+  await rows("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(1,'notice.txt','notice.txt','txt',$1,$2,'synthetic')", Buffer.byteLength(text), sha256)
+  await rows("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (1, 'jxj', 'announcement', 'specialized_sme')")
   discovery = await readDevelopmentDiscovery()
   const cwd=resolve(import.meta.dirname,'../../..'),port=await reserveLoopbackPort()
   const env:Record<string,string>={}
   for(const key of ['PATH','HOME','USER','LOGNAME','SHELL','LANG','LC_ALL']) if(process.env[key]!==undefined) env[key]=process.env[key]!
-  Object.assign(env,{TMPDIR:join(dir,'tmp'),NUXT_DB_PATH:dbPath,NUXT_FILES_DIR:filesDir,NUXT_INCOMING_DIR:join(dir,'incoming'),NUXT_LOG_DIR:join(dir,'logs'),NUXT_CURATED_PATH:join(dir,'curated.json'),NUXT_RECONCILE_PATH:join(dir,'reconcile.json'),NUXT_API_TOKEN:apiToken,NUXT_MCP_TOKEN:mcpToken,CI:'1'})
+  Object.assign(env,{TMPDIR:join(dir,'tmp'),...postgres.env,NUXT_FILES_DIR:filesDir,NUXT_INCOMING_DIR:join(dir,'incoming'),NUXT_LOG_DIR:join(dir,'logs'),NUXT_CURATED_PATH:join(dir,'curated.json'),NUXT_RECONCILE_PATH:join(dir,'reconcile.json'),NUXT_API_TOKEN:apiToken,NUXT_MCP_TOKEN:mcpToken,CI:'1'})
   child=spawnCompiledApp(port,{cwd,stdio:['ignore','pipe','pipe'],env})
   let output='';for(const stream of [child.stdout,child.stderr]) stream?.on('data',data=>{output+=String(data);writeFileSync(join(dir,'nuxt.log'),output)})
   base=`http://127.0.0.1:${port}`
@@ -51,9 +55,16 @@ beforeAll(async()=>{
   await waitForHttp(base+'/api/health',{timeoutMs:60000,child})
 },90000)
 afterAll(async()=>{
-  // Awaited commits leave no queued jobs. Stop the owned service before closing SQLite.
-  try {expect(sqlite.prepare("SELECT count(*) n FROM job WHERE state IN ('queued','running')").get()).toEqual({n:0})}
-  finally {if(child) await stopOwnedChild(child);writeFileSync(join(dir,'public-commands.json'),JSON.stringify(trace,null,2));sqlite.close()}
+  try {
+    if (pgPool) expect(await firstRow("SELECT count(*)::integer n FROM job WHERE state IN ('queued','running')")).toEqual({n:0})
+  } finally {
+    try { if (child) await stopOwnedChild(child) }
+    finally {
+      await pgPool?.end()
+      postgres?.close()
+      writeFileSync(join(dir,'public-commands.json'),JSON.stringify(trace,null,2))
+    }
+  }
 })
 async function http(path:string,body?:unknown,token:string|null=apiToken) {
   const r=await fetch(base+path,{method:body===undefined?'GET':'POST',headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})})
@@ -81,7 +92,7 @@ async function commit(payload:RosterImportPayload,key:string,transport:'http'|'m
   const staged = z.object({ status: z.literal('staged'), intakeId: z.number(), sourceDigest: z.string(), officialEvidencePreflightRequired: z.literal(true).optional() }).safeParse(saved)
   if (staged.success) {
     const path = `/api/roster/import/intake/${staged.data.intakeId}/supplement`
-    const review = reviewFixtureRows({ $client: sqlite }, staged.data.sourceDigest, bound)
+    const review = await reviewPostgresFixtureRows(drizzlePostgres({ client: pgPool }), staged.data.sourceDigest, bound)
     const preview = staged.data.officialEvidencePreflightRequired ? await http(path, { ...review, preflight: true }) : undefined
     let officialEvidencePlanHash: string | undefined
     if (preview) {
@@ -104,16 +115,16 @@ async function seed(merge=false,transport:'http'|'mcp'='http') {
   const marker='source-'+ordinal,row=(nameRaw:string,listNo:number):OfficialPublishedRow=>({nameRaw,usccRaw:null,districtRaw:'原属地',declaration:{kind:'independent',sourceDocument:{source:'jxj',title:marker,docNumber:null,issueDate:null,path:'notice.txt'},basis:'Explicit separate publication verified'},storedFileId:1,path:'notice.txt',sha256,bytes:Buffer.byteLength(text),attachment:null,sectionKey:'名单',listNo,page:null,sourceBindingKnown:true,actor:{type:'agent',id:'synthetic-c'},basis:'Verified exact source row'})
   const records:RosterImportRecord[]=[{enterprise:{name:marker+'旧名'},titleCode:'specialized_sme',events:[{eventType:'award',year:2021,evidence:[{sourceFile:'notice.txt',attachment:null,listNo:1,page:null,publishedRow:row('2021旧名',1)}]}]},{enterprise:{name:marker+'现名',uscc:targetUscc},titleCode:'specialized_sme',events:[{eventType:'award',year:2024,evidence:[{sourceFile:'notice.txt',attachment:null,listNo:2,page:null,publishedRow:row('2024新名',2)}]}]}]
   const initial=await commit({announcement:{sourceDocument:{source:'jxj',title:marker},records}},marker,transport)
-  const captures=z.array(z.object({evidence_id:z.number(),event_id:z.number(),captured_record_id:z.number(),captured_enterprise_id:z.number()})).parse(sqlite.prepare("SELECT evidence_id,event_id,captured_record_id,captured_enterprise_id FROM official_evidence_row_revision WHERE import_batch_id=? AND command_kind='import' AND name_raw=? AND list_no=? AND revision=1 LIMIT 2").all(initial.saved.batchId,'2021旧名',1))
+  const captures=z.array(z.object({evidence_id:z.number(),event_id:z.number(),captured_record_id:z.number(),captured_enterprise_id:z.number()})).parse(await rows("SELECT evidence_id::int,event_id::int,captured_record_id::int,captured_enterprise_id::int FROM official_evidence_row_revision WHERE import_batch_id=$1 AND command_kind='import' AND name_raw=$2 AND list_no=$3 AND revision=1 LIMIT 2", initial.saved.batchId,'2021旧名',1))
   expect(captures).toHaveLength(1)
   const captured=captures[0]!
   const old=exact.parse((await http('/api/roster/evidence/'+captured.evidence_id)).body)
   expect(old).toEqual({evidenceId:captured.evidence_id,eventId:captured.event_id,recordId:captured.captured_record_id,enterpriseId:captured.captured_enterprise_id})
-  if(!merge) return {old,oldName:marker+'旧名'}
+  if(!merge) return {old,oldName:marker+'旧名',marker,grantBatchId:initial.saved.batchId}
   const saved=await commit({merges:[{fromEnterpriseId:old.enterpriseId,intoUscc:targetUscc,note:'Verified same legal enterprise'}]},marker+'-merge',transport)
   const itemIndex=saved.saved.items.findIndex(item=>item.kind==='merge'),batchId=saved.saved.batchId
-  const receipt=z.object({id:z.number()}).parse(sqlite.prepare('SELECT id FROM import_receipt WHERE batch_id=? ORDER BY id DESC LIMIT 1').get(batchId))
-  return {old,oldName:marker+'旧名',merged:{...saved,batchId,itemIndex,receiptId:receipt.id,oldRecordId:old.recordId}}
+  const receipt=z.object({id:z.number()}).parse(await firstRow('SELECT id::int FROM import_receipt WHERE batch_id=$1 ORDER BY id DESC LIMIT 1', batchId))
+  return {old,oldName:marker+'旧名',marker,grantBatchId:initial.saved.batchId,merged:{...saved,batchId,itemIndex,receiptId:receipt.id,oldRecordId:old.recordId}}
 }
 function query(args:Record<string,string|number>) {return new URLSearchParams(Object.entries(args).map(([k,v])=>[k,String(v)])).toString()}
 
@@ -165,7 +176,7 @@ it('preflights and captures a no-USCC official row for the manually selected sam
   expect(receipt.status).toBe(200)
   expect(receipt.body).toMatchObject({ status: 'supplemented', owners: [owner.id] })
   const captured = z.object({ evidence_id: z.number(), captured_enterprise_id: z.number(), name_raw: z.string(), uscc_raw: z.null() })
-    .parse(sqlite.prepare('SELECT evidence_id,captured_enterprise_id,name_raw,uscc_raw FROM official_evidence_row_revision WHERE section_key=?').get(row.sectionKey))
+    .parse(await firstRow('SELECT evidence_id::int,captured_enterprise_id::int,name_raw,uscc_raw FROM official_evidence_row_revision WHERE section_key=$1', row.sectionKey))
   expect(captured).toMatchObject({ captured_enterprise_id: owner.id, name_raw: row.nameRaw, uscc_raw: null })
   const published = await http(`/api/roster/evidence/${captured.evidence_id}?official=latest`)
   expect(published.body).toMatchObject({ enterpriseId: owner.id, official: { row: { nameRaw: row.nameRaw, usccRaw: null } } })
@@ -185,7 +196,7 @@ it('rejects unknown fields wrong combinations and invalid bounds through origina
 })
 it('selects private merge origin and paged event IDs with transport parity and no first-retry-outcome leakage',async()=>{
   const s=await seed(true,'mcp');expect(s.merged).toBeDefined();const m=s.merged!,selector={source:'private_batch',batchId:m.batchId,itemIndex:m.itemIndex,oldRecordId:m.oldRecordId}
-  const before=sqlite.prepare('SELECT item_results FROM import_batch WHERE id=?').get(m.batchId)
+  const before=await firstRow('SELECT item_results FROM import_batch WHERE id=$1', m.batchId)
   for(const projection of ['snapshot','eventIds']) {
     const args={...selector,projection},rest=await http('/api/roster/import/receipts/items?'+query(args));expect(rest.status).toBe(200)
     expect(rpcValue(await rpc('list_roster_import_items',args)).body).toEqual(rest.body)
@@ -194,7 +205,7 @@ it('selects private merge origin and paged event IDs with transport parity and n
   }
   const first=JSON.stringify(m.saved),retry=JSON.stringify(rpcValue(await rpc('save_roster_batch',m.bound)).body)
   for(const output of [first,retry]){expect(output).not.toContain('fromRecordSnapshot');expect(output).not.toContain('eventIds');expect(output).toContain('snapshotRef')}
-  expect(sqlite.prepare('SELECT item_results FROM import_batch WHERE id=?').get(m.batchId)).toEqual(before)
+  expect(await firstRow('SELECT item_results FROM import_batch WHERE id=$1', m.batchId)).toEqual(before)
 })
 it('reports explicitly unretained receipt snapshots without batch fallback on both real transports',async()=>{
   const s=await seed(true),m=s.merged!,args={projection:'snapshot',source:'redacted_receipt',receiptId:m.receiptId,itemIndex:m.itemIndex,oldRecordId:m.oldRecordId}
@@ -217,18 +228,17 @@ it('rejects out of range and mismatched event cursors with real transport error 
   }
 })
 it('enforces the 300 and 301 event source boundary over real HTTP and MCP without cursor bypass',async()=>{
-  const s=await seed(),insert=sqlite.prepare("INSERT INTO record_evidence(record_event_id,source_file,list_no) VALUES(?,'notice.txt',?)")
+  const s=await seed()
   // Explicit oversized historical fixture, after genuine public command setup.
-  for(let i=2;i<=300;i++) insert.run(s.old.eventId,10000+i)
+  await rows("INSERT INTO record_evidence(record_event_id,source_file,list_no) SELECT $1,'notice.txt',n FROM generate_series(10002,10300) n", s.old.eventId)
   const args={eventId:s.old.eventId,official:'latest',afterEvidenceId:999999},path=`/api/roster/events/${s.old.eventId}?official=latest&afterEvidenceId=999999`
   const at=await http(path);expect(at.status).toBe(200);expect(at.body).toMatchObject({official:{rows:[]}});expect(rpcValue(await rpc('get_official_event',args)).body).toEqual(at.body)
-  insert.run(s.old.eventId,10301)
+  await rows("INSERT INTO record_evidence(record_event_id,source_file,list_no) VALUES($1,'notice.txt',10301)", s.old.eventId)
   const over=await http(path);expect(over.status).toBe(413);expect(over.body).toMatchObject({error:{code:'source_limit'}})
   const mcp=rpcValue(await rpc('get_official_event',args));expect(mcp.isError).toBe(true);expect(mcp.body).toEqual(over.body)
 })
 
-// #399: Nuxt dev + fetch regressions. Added for the parent's heavy lane;
-// these are not compiled-server/SDK-client evidence and are UNRUN in this change.
+// The compiled application's legacy SDK envelopes remain byte-compatible.
 it('transport legacy SDK field errors retain HTTP200 tool results', async () => {
   for (const args of [{ batchId: 1, page: 0 }, { batchId: 1, page: 1000001 }, { batchId: 1, pageSize: 0 }, { batchId: 1, pageSize: 51 }, { batchId: 1, pageSize: 2.5 }, { batchId: null }, { batchId: '1' }, { batchId: 1, pageSize: null }, { batchId: 1, pageSize: true }]) {
     const result = await rpc('list_roster_import_items', args)
@@ -264,7 +274,7 @@ it('transport three legacy selectors and explicit defaults preserve content byte
   const key = '399-legacy-normal'
   const saved = await commit({ announcement: { sourceDocument: { source: 'jxj', title: key }, records: [{ enterprise: { name: key }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2021, evidence: [{ sourceFile: 'notice.txt', listNo: 399 }] }] }] } }, key)
   const batchId = saved.saved.batchId
-  const receiptId = z.object({ id: z.number() }).parse(sqlite.prepare('SELECT id FROM import_receipt WHERE batch_id=? ORDER BY id DESC LIMIT 1').get(batchId)).id
+  const receiptId = z.object({ id: z.number() }).parse(await firstRow('SELECT id::int FROM import_receipt WHERE batch_id=$1 ORDER BY id DESC LIMIT 1', batchId)).id
   const rest = await http('/api/roster/import/receipts/items?batchId=' + batchId)
   expect(rest.status).toBe(200); expect(rest.body).toMatchObject({ batchId, receiptId, page: 1, pageSize: 20 })
   const expectedText = JSON.stringify(rest.body)
@@ -280,19 +290,31 @@ it('transport other legacy receipt tools retain SDK field errors', async () => {
     const result = await rpc('list_roster_import_receipts', args)
     expect(result.status).toBe(200); expect(result.body).not.toHaveProperty('error'); expect(rpcResult.parse(result.body).result.isError).toBe(true)
   }
-  const result = await rpc('get_roster_import_request', { batchId: 1, maxBytes: 65537 })
-  expect(result.status).toBe(200); expect(result.body).not.toHaveProperty('error'); expect(rpcResult.parse(result.body).result.isError).toBe(true)
 })
 
 const pgBin = process.env.TEST_IMPORT_RECEIPTS_PG_BIN
-it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projections with HTTP and MCP parity', async () => {
+// This starts a second PostgreSQL 19 instance from a logical dump of the
+// first one.
+it.runIf(!!pgBin)('restores import receipts and exact immutable projections with HTTP and MCP parity', async () => {
   const pgDir = mkdtempSync('/tmp/receipt-pg-')
   const url = 'postgresql://receipt_fixture@localhost/postgres?host=' + encodeURIComponent(pgDir)
+  const provider = join(pgDir,'snapshot-provider.mjs')
+  writeFileSync(provider,`
+    const native = globalThis.fetch
+    globalThis.fetch = (input, init) => {
+      const url = new URL(String(input))
+      if (url.hostname !== 'zjtx.miit.gov.cn') return native(input,init)
+      const grid = url.pathname.endsWith('/queryList') ? 'applyGrid'
+        : url.pathname.endsWith('/queryBusList') ? 'businessGrid' : 'businessListGrid'
+      return Promise.resolve(Response.json({zrarData:{grid:{[grid]:{pageSet:[],page:1,pageSize:50,maxCount:0,maxPage:1}}}}))
+    }
+  `)
   const app = nativeAppAdapter({ dir: pgDir, token: apiToken, launch: ({ cwd, port }) => ({
-    args: [join(cwd, '.output/server/index.mjs')],
+    args: ['--import', provider, join(cwd, '.output/server/index.mjs')],
     env: { NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_MCP_TOKEN: mcpToken,
-      NUXT_DB_READONLY: '1', NUXT_POSTGRES_ROSTER_READ: '1', NUXT_POSTGRES_DIRECTORY_URL: url,
-      NUXT_POSTGRES_DIRECTORY_WRITE: '1', NUXT_FILES_DIR: filesDir,
+      MIIT_COOKIE: 'sid=synthetic-snapshot-cookie', NUXT_POSTGRES_BIN: pgBin,
+      NUXT_DB_READONLY: '0', NUXT_POSTGRES_DIRECTORY_URL: url,
+      NUXT_FILES_DIR: filesDir,
       NUXT_CURATED_PATH: join(pgDir, 'curated.json'), NUXT_RECONCILE_PATH: join(pgDir, 'reconcile.json') },
   }) })
   const env = {
@@ -302,11 +324,14 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
   const run = (command: string, args: string[]) => execFileSync(join(pgBin!, command), args, { env, stdio: 'pipe' })
   let started = false
   try {
-    const event = sqlite.prepare(`
-      SELECT ev.id, e.uscc_norm AS uscc FROM record_event ev
+    const seeded = await seed(true)
+    const event = (await firstRow<{ id: number; uscc: string }>(`
+      SELECT ev.id::integer, e.uscc_norm AS uscc FROM record_event ev
       JOIN record r ON r.id=ev.record_id JOIN enterprise e ON e.id=r.enterprise_id
-      WHERE r.source='jxj' AND r.title_code='specialized_sme' AND e.uscc_norm IS NOT NULL ORDER BY ev.id LIMIT 1
-    `).get() as { id: number; uscc: string }
+      JOIN record_event corrected_later ON corrected_later.id=$1 AND corrected_later.record_id=ev.record_id
+      WHERE r.source='jxj' AND r.title_code='specialized_sme' AND e.uscc_norm IS NOT NULL AND ev.id<>$1
+      ORDER BY ev.id LIMIT 1
+    `, seeded.old.eventId))!
     const snapshot = {
       idempotencyKey: 'correspondence-source', sourceKind: 'platform_export', sourceIdentity: 'history-test.xlsx',
       payload: { exportSnapshot: {
@@ -316,7 +341,7 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     }
     const imported = await http('/api/roster/import/commit', snapshot)
     expect(imported.body).toMatchObject({ status: 'committed' })
-    const { id: exportRowId } = sqlite.prepare("SELECT id FROM platform_export_row ORDER BY id DESC LIMIT 1").get() as { id: number }
+    const { id: exportRowId } = (await firstRow<{ id: number }>('SELECT id::int FROM platform_export_row ORDER BY id DESC LIMIT 1'))!
     const decision = {
       idempotencyKey: 'correspondence-history', sourceIdentity: 'history-test.xlsx',
       actor: { type: 'agent', id: 'tester' }, basis: '测试审计依据', ruleId: 'manual-review', ruleVersion: '1',
@@ -331,7 +356,7 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     expect(saved.status).toBe(200)
     const { correspondenceIds: [correspondenceId] } = z.object({ correspondenceIds: z.array(z.number()).length(1) }).parse(saved.body)
 
-    const firstOwner = sqlite.prepare('SELECT r.enterprise_id AS id FROM record_event e JOIN record r ON r.id=e.record_id WHERE e.id=?').get(event.id) as { id: number }
+    const firstOwner = (await firstRow<{ id: number }>('SELECT r.enterprise_id::int AS id FROM record_event e JOIN record r ON r.id=e.record_id WHERE e.id=$1', event.id))!
     const scope = { enterpriseId: firstOwner.id, titleCode: 'specialized_sme', direction: 'missing_in_miit' }
     const legacyDecision = { ...scope, action: 'replace', expectedCurrentId: null, idempotencyKey: 'native-decision-read',
       actor: { type: 'agent', id: 'decision-fixture' }, basis: 'Synthetic source decision', ruleVersion: 'fixture', effectiveAt: '2026-10-18T00:00:00Z',
@@ -346,14 +371,10 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     expect(withdrawal.status, JSON.stringify(withdrawal.body)).toBe(200)
 
     const activeScope = { ...scope, direction: 'extra_in_miit' }
-    const active = await http('/api/roster/decision-lifecycle/commands', { ...legacyDecision, ...activeScope, idempotencyKey: 'native-impact-decision' })
+    const active = await http('/api/roster/decision-lifecycle/commands', { ...legacyDecision, ...activeScope, idempotencyKey: 'native-active-decision' })
     expect(active.status, JSON.stringify(active.body)).toBe(200)
     const activeDecisionId = z.object({ versionId: z.number() }).parse(active.body).versionId
 
-    const secondScope = { ...activeScope, titleCode: 'little_giant' }
-    const second = await http('/api/roster/decision-lifecycle/commands', { ...legacyDecision, ...secondScope, idempotencyKey: 'native-second-impact' })
-    expect(second.status, JSON.stringify(second.body)).toBe(200)
-    const secondDecisionId = z.object({ versionId: z.number() }).parse(second.body).versionId
     const archivedAt = '2026-10-09T01:08:28Z'
     const archived = await http('/api/roster/import/commit', {
       idempotencyKey: 'native-qualification-source', sourceKind: 'alias_evidence', sourceIdentity: '合成工信部来源',
@@ -363,22 +384,20 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     })
     expect(archived.status, JSON.stringify(archived.body)).toBe(200)
     expect(archived.body).toMatchObject({ status: 'committed' })
-    const archiveCoordinates = sqlite.prepare(`SELECT q.old_id AS queryId,r.old_id AS relationId FROM platform_legacy_query_alias q
-      JOIN platform_collection c ON c.id=q.collection_id JOIN platform_business_observation o ON o.collection_id=c.id
-      JOIN platform_legacy_relation_alias r ON r.observation_id=o.id WHERE c.query_key=? AND c.queried_at=?`)
-      .get(event.uscc, archivedAt) as { queryId: number; relationId: number }
-    expect(archiveCoordinates).toMatchObject({ queryId: expect.any(Number), relationId: expect.any(Number) })
+    const archiveCoordinates = z.object({ queryId: z.number().int().positive(), relationId: z.number().int().positive() })
+      .parse(await firstRow(`SELECT c.public_id::int AS "queryId",o.public_id::int AS "relationId" FROM platform_collection c
+        JOIN platform_business_observation o ON o.collection_id=c.id WHERE c.query_key=$1 AND c.queried_at=$2`, event.uscc, archivedAt))
 
     const refresh = await http('/api/roster/differences/refresh', { enterpriseIds: [firstOwner.id] })
     expect(refresh.status, JSON.stringify(refresh.body)).toBe(200)
-    installLeadListSchema(sqlite)
     run('initdb', ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', 'receipt_fixture', '-D', join(pgDir, 'pg')])
     run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-l', join(pgDir, 'pg.log'), '-o', "-c listen_addresses='' -k " + pgDir, 'start'])
     started = true
-    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', dbPath, 'staged'], { env, stdio: 'pipe' })
-    for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
-      run('psql', ['-X', '-w', '-q', '-v', 'staging=staged', '-f', 'upgrade/postgresql/materialize-' + name + '.sql'])
-    }
+    const dump = join(pgDir, 'source-postgres.dump')
+    run('pg_dump', ['-w', '--format=custom', '--no-owner', '--no-acl', '--schema=business', '--schema=runtime_logs',
+      '--file=' + dump, '--dbname=' + postgres!.url])
+    run('psql', ['-X', '-w', '-v', 'ON_ERROR_STOP=1', '-c', 'CREATE EXTENSION pg_trgm'])
+    run('pg_restore', ['-w', '--exit-on-error', '--no-owner', '--no-acl', '--dbname=' + url, dump])
     await app.start()
     const ledgerDetailPath = '/api/enterprises/' + firstOwner.id
     const nativeLedgerDetail = await app.request(ledgerDetailPath)
@@ -389,8 +408,8 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     const rosterResponse = await app.request(rosterDetailPath)
     const rosterNative = await rosterResponse.json()
     expect(rosterResponse.status, JSON.stringify(rosterNative)).toBe(200)
-    const rosterSqlite = await http(rosterDetailPath)
-    expect(rosterSqlite.status).toBe(200)
+    const rosterSource = await http(rosterDetailPath)
+    expect(rosterSource.status).toBe(200)
     const detailShape = z.object({
       businessTimeline: z.object({ asOf: z.string() }).passthrough(),
       qualificationAssessment: z.object({ asOf: z.string(), snapshotId: z.string() }).passthrough(),
@@ -401,7 +420,7 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
       const { asOf: _timelineTimestamp, ...timeline } = same.businessTimeline
       return { ...same,qualificationAssessment:assessment,businessTimeline:timeline }
     }
-    expect(comparable(rosterNative)).toEqual(comparable(rosterSqlite.body))
+    expect(comparable(rosterNative)).toEqual(comparable(rosterSource.body))
     const entries = new URLSearchParams(Object.entries(scope).map(([key, value]) => [key, String(value)]))
     const decisionReads = [
       ['/api/roster/decision-lifecycle/current?' + entries, 'get_current_difference_decision', scope],
@@ -421,27 +440,6 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     const mcpDetail = await nativeTool('get_enterprise_detail',{enterpriseId:firstOwner.id})
     expect(mcpDetail.isError).toBe(false)
     expect(comparable(mcpDetail.body)).toEqual(comparable(rosterNative))
-    const curatedPath = join(pgDir,'curated.json')
-    const legacyCuratedPath = join(dir,'curated.json')
-    const legacyKey = JSON.stringify([event.uscc,scope.titleCode,scope.direction])
-    const annotations = JSON.stringify({[legacyKey]:{note:'合成旧标注',by:'核对人员'},invalid:{note:'旧键待核'}})
-    writeFileSync(curatedPath,annotations)
-    writeFileSync(legacyCuratedPath,annotations)
-    try {
-      const previewPath = '/api/roster/decision-lifecycle/legacy-preview'
-      const legacy = await http(previewPath)
-      const native = await app.request(previewPath)
-      expect(legacy.status).toBe(200)
-      expect(native.status).toBe(200)
-      expect(await native.json()).toEqual(legacy.body)
-      expect(await nativeTool('preview_legacy_difference_decisions',{})).toEqual({body:legacy.body,isError:false})
-      expect(legacy.body).toMatchObject({total:2,rows:expect.arrayContaining([
-        expect.objectContaining({legacyKey,enterpriseId:firstOwner.id,conflicts:expect.arrayContaining(['formal_withdrawal_exists'])}),
-      ])})
-    } finally {
-      rmSync(curatedPath,{force:true})
-      rmSync(legacyCuratedPath,{force:true})
-    }
     for (const [path, name, args] of decisionReads) {
       const source = await http(path), native = await app.request(path)
       expect(source.status, JSON.stringify(source.body)).toBe(200)
@@ -476,18 +474,20 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     expect(await nativeRefresh.json()).toEqual(refreshState.body)
     expect(await nativeTool('list_enterprise_difference_comparisons', { enterpriseIds: [firstOwner.id] })).toEqual({ body: refreshState.body, isError: false })
 
-    const batch = sqlite.prepare("SELECT id,item_results FROM import_batch WHERE idempotency_key LIKE '%-merge' AND status='committed' ORDER BY id LIMIT 1").get() as { id: number; item_results: string }
+    const batch = (await firstRow<{ id: number; item_results: string }>(
+      "SELECT id::int,item_results FROM import_batch WHERE id=$1 AND status='committed'", seeded.merged!.batchId))!
     const items = JSON.parse(batch.item_results)
     const itemIndex = items.findIndex((item: { kind: string }) => item.kind === 'merge')
     const { fromRecordId: oldRecordId } = items[itemIndex].detail.lineage.recordsFolded[0]
-    const { id: receiptId } = sqlite.prepare("SELECT id FROM import_receipt WHERE batch_id=? ORDER BY id DESC LIMIT 1").get(batch.id) as { id: number }
-    const { id: grantBatchId, item_results: grantItems } = sqlite.prepare("SELECT id,item_results FROM import_batch WHERE status='committed' AND idempotency_key NOT LIKE '%-merge' ORDER BY id LIMIT 1").get() as { id: number; item_results: string }
+    const receiptId = seeded.merged!.receiptId
+    const grantBatchId = seeded.grantBatchId
+    const { item_results: grantItems } = (await firstRow<{ item_results: string }>(
+      "SELECT item_results FROM import_batch WHERE id=$1 AND status='committed'", grantBatchId))!
     const grantIndex = JSON.parse(grantItems).findIndex((item: { kind: string }) => item.kind === 'record_event')
     const selector = { batchId: batch.id, source: 'private_batch', itemIndex, oldRecordId }
     const calls = [
       ['', 'get_roster_import_receipt', { receiptId }],
       ['/history', 'list_roster_import_receipts', { batchId: batch.id, pageSize: 1 }],
-      ['/request', 'get_roster_import_request', { receiptId, offset: 3, maxBytes: 17 }],
       ['/items', 'list_roster_import_items', { batchId: batch.id, pageSize: 1 }],
       ['/items', 'list_roster_import_items', { ...selector, projection: 'snapshot' }],
       ['/items', 'list_roster_import_items', { ...selector, projection: 'eventIds', pageSize: 1 }],
@@ -535,7 +535,7 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     expect(response.status).toBe(413)
     expect(await response.json()).toEqual(expected.body)
 
-    const exportPath = '/api/export?title=specialized_sme&q=source-1'
+    const exportPath = '/api/export?title=specialized_sme&q=' + encodeURIComponent(seeded.marker)
     const workbookRows = async (response: Response) => {
       expect(response.status).toBe(200)
       const workbook = new ExcelJS.Workbook()
@@ -548,12 +548,12 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     expect(nativeRows).toEqual(legacyRows)
     expect(JSON.stringify(nativeRows)).toContain('2021旧名')
 
-    const { evidenceId } = sqlite.prepare('SELECT evidence_id AS evidenceId FROM official_evidence_row_revision WHERE source_binding_known=1 ORDER BY evidence_id LIMIT 1').get() as { evidenceId: number }
+    const evidenceId = seeded.old.evidenceId
     const exactPath = '/api/roster/evidence/' + evidenceId
     const row = await (await app.request(exactPath)).json()
     expect(row).toEqual((await http(exactPath)).body)
     const { sourceDocumentId, revision, nameRaw, usccRaw, districtRaw, storedFileId, path, sha256: sourceHash, bytes, attachment, sectionKey, listNo, page, sourceBindingKnown } =
-      readLatestOfficialEvidence(db, evidenceId).row!
+      (await readPostgresOfficialPlanFacts(drizzlePostgres({ client: pgPool }), { id: evidenceId }))!
     const actor = { type: 'agent', id: 'native-evidence-review' }, basis = '按原件更正原文'
     const change = { idempotencyKey: 'native-exact-evidence', actor, basis, operations: [{
       evidenceId, eventId: row.eventId, recordId: row.recordId, enterpriseId: row.enterpriseId,
@@ -581,8 +581,13 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     expect(audit.rows.at(-1)).toMatchObject({ before: { row: { revision, nameRaw } }, after: { rowRevision: revision + 1 } })
     expect(await (await app.request('/api/roster/evidence/corrections/batches/' + change.idempotencyKey)).json()).toEqual(receipts[0])
     expect((await http(exactPath)).body).toEqual(row)
+    // Match the source state again for later qualification parity on this owner.
+    const sourceCorrection = await http('/api/roster/evidence/corrections/commit', command)
+    expect(sourceCorrection.status, JSON.stringify(sourceCorrection.body)).toBe(200)
+    expect(sourceCorrection.body).toMatchObject({ status: 'committed', evidenceIds: [evidenceId] })
 
-    const intake = sqlite.prepare('SELECT id,digest FROM roster_announcement_intake WHERE removed_reason IS NULL AND receipt IS NOT NULL ORDER BY id LIMIT 1').get() as { id: number; digest: string }
+    const intake = (await firstRow<{ id: number; digest: string }>(
+      'SELECT id::int,digest FROM roster_announcement_intake WHERE idempotency_key=$1 AND removed_reason IS NULL AND receipt IS NOT NULL', seeded.marker))!
     const intakePath = `/api/roster/import/intake/${intake.id}`
     const sourceIntake = await http(intakePath)
     expect(sourceIntake.status).toBe(200)
@@ -608,13 +613,13 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     const stage = (request: unknown = stagedRequest) => app.request('/api/roster/import/commit', {
       method: 'POST', body: JSON.stringify(request),
     })
-    const sqliteStage = await http('/api/roster/import/commit', stagedRequest)
-    expect(sqliteStage.status, JSON.stringify(sqliteStage.body)).toBe(200)
-    expect(sqliteStage.body).toMatchObject({ status: 'staged', rowCount: 1 })
+    const sourceStage = await http('/api/roster/import/commit', stagedRequest)
+    expect(sourceStage.status, JSON.stringify(sourceStage.body)).toBe(200)
+    expect(sourceStage.body).toMatchObject({ status: 'staged', rowCount: 1 })
     const stagedResponses = await Promise.all([stage(), stage()])
     expect(stagedResponses.map(response => response.status)).toEqual([200, 200])
     const staged = await Promise.all(stagedResponses.map(response => response.json()))
-    expect(staged[0]).toEqual(sqliteStage.body)
+    expect(staged[0]).toEqual(sourceStage.body)
     expect(staged[1]).toEqual(staged[0])
     const newIntakePath = '/api/roster/import/intake/' + staged[0].intakeId
     expect(await (await app.request(newIntakePath)).json()).toEqual((await http(newIntakePath)).body)
@@ -649,16 +654,16 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     const typedIntake = await nativeTypedStage.json()
     expect(nativeTypedStage.status, JSON.stringify(typedIntake)).toBe(200)
     expect(typedIntake).toMatchObject({ officialEvidencePreflightRequired: true, status: 'staged' })
-    const sqliteTypedStage = await http('/api/roster/import/commit', typedRequest)
-    expect(sqliteTypedStage.status, JSON.stringify(sqliteTypedStage.body)).toBe(200)
-    const sqliteTyped = z.object({ intakeId: z.number(), sourceDigest: z.string() }).parse(sqliteTypedStage.body)
+    const sourceTypedStage = await http('/api/roster/import/commit', typedRequest)
+    expect(sourceTypedStage.status, JSON.stringify(sourceTypedStage.body)).toBe(200)
+    const sourceTyped = z.object({ intakeId: z.number(), sourceDigest: z.string() }).parse(sourceTypedStage.body)
     const typedPath = '/api/roster/import/intake/' + typedIntake.intakeId
     const typedReview = { sourceDigest: typedIntake.sourceDigest, basis, rows: [{ action: 'create', fields: { name: typedName } }] }
     const typedBefore = await reviewStaged(typedPath, { ...typedReview, preflight: true })
     const typedPlan = await typedBefore.json()
     expect(typedBefore.status, JSON.stringify(typedPlan)).toBe(200)
     expect(typedPlan).toMatchObject({ conflicts: [], officialEvidencePlanHash: expect.stringMatching(/^[a-f0-9]{64}$/) })
-    expect((await http('/api/roster/import/intake/' + sqliteTyped.intakeId + '/supplement', { ...typedReview, preflight: true })).body).toEqual(typedPlan)
+    expect((await http('/api/roster/import/intake/' + sourceTyped.intakeId + '/supplement', { ...typedReview, preflight: true })).body).toEqual(typedPlan)
     expect((await (await app.request(typedPath)).json())).toMatchObject({ status: 'staged', receipt: null })
     const rejected = await reviewStaged(typedPath, { ...typedReview, officialEvidencePlanHash: 'a'.repeat(64) })
     const rejectedBody = await rejected.json()
@@ -693,8 +698,7 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     expect(attempts.map(response => response.status), JSON.stringify(committed)).toEqual([200, 200])
     expect(committed[0]).toEqual(committed[1])
     expect(committed[0]).toMatchObject({ status: 'committed', summary: { written: 2, skipped: 0, failed: 0 }, items: [{ detail: { rows: [expect.any(Number)] } }] })
-    expect(JSON.parse(run('psql', ['-X', '-w', '-Atc', `SELECT json_build_object('count',(SELECT count(*) FROM business.platform_export_batch WHERE year=2027),
-      'revision',(SELECT count(*) FROM business.evidence_revision_113 WHERE source_kind='selected_snapshot' AND metadata::json#>>'{after,year}'='2027'))`]).toString())).toEqual({ count: 1, revision: 1 })
+    expect(run('psql', ['-X', '-w', '-Atc', 'SELECT count(*) FROM business.platform_export_batch WHERE year=2027']).toString().trim()).toBe('1')
     const receipt = await app.request(`/api/roster/import/receipts/history?batchId=${committed[0].batchId}`)
     expect(receipt.status).toBe(200)
     expect(await receipt.json()).toMatchObject({ rows: expect.arrayContaining([expect.objectContaining({ status: 'committed' })]) })
@@ -748,78 +752,8 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     const eventAudit = await (await app.request(eventPath + '/audit')).json()
     expect(eventAudit.rows).toEqual([expect.objectContaining({ eventId: event.id, before: priorNative.event, after: corrected.event })])
 
-
-    const workPath = '/api/roster/evidence-impacts/commands'
-    const evidenceWork = (body: unknown) => app.request(workPath, { method: 'POST', body: JSON.stringify(body) })
-    const rule = { action: 'release_rule', idempotencyKey: 'native-impact-release', actor, basis, ruleId: 'fixture-source-rule', version: '2',
-      scopes: [activeScope, secondScope].map(target => ({ ...target, previousEvaluationDigest: 'a'.repeat(64), evaluationDigest: 'b'.repeat(64) })) }
-    const releaseResponses = await Promise.all([evidenceWork(rule), evidenceWork(rule)])
-    const releases = await Promise.all(releaseResponses.map(response => response.json()))
-    expect(releaseResponses.map(response => response.status), JSON.stringify(releases)).toEqual([200, 200])
-    expect(releases[0]).toEqual(releases[1])
-    expect(releases[0]).toMatchObject({ unchanged: 0, revisionIds: [expect.any(Number), expect.any(Number)] })
-    expect(await nativeTool('release_evidence_rule', rule)).toEqual({ body: releases[0], isError: false })
-    expect((await evidenceWork({ ...rule, idempotencyKey: 'different-rule-request', scopes: [{ ...rule.scopes[0], evaluationDigest: 'c'.repeat(64) }] })).status).toBe(409)
-    const processCommand = { action: 'process', idempotencyKey: 'native-impact-process', limit: 100, actor, basis }
-    const applied = await evidenceWork(processCommand)
-    const workReceipt = await applied.json()
-    expect(applied.status, JSON.stringify(workReceipt)).toBe(200)
-    expect(workReceipt).toMatchObject({ processed: expect.any(Number), unfinished: false })
-    expect(workReceipt.processed).toBeGreaterThan(0)
-    expect(workReceipt.watermark).toBeGreaterThanOrEqual(releases[0].revisionIds[0])
-    expect(await nativeTool('process_evidence_impacts', processCommand)).toEqual({ body: workReceipt, isError: false })
-    const link = run('psql', ['-X', '-w', '-Atc', `SELECT l.classification,i.decision_id FROM business.evidence_impact_link_113 l
-      JOIN business.explanation_impact_113 i ON i.id=l.impact_id WHERE l.revision_id=${releases[0].revisionIds[0]}`]).toString().trim()
-    expect(link).toEqual('evidence_changed|' + activeDecisionId)
-    const pending = run('psql', ['-X', '-w', '-Atc', 'SELECT sum(pending_count) FROM business.evidence_scope_version_113']).toString().trim()
-    expect(pending).toBe('0')
-
-
-    const impactsPath = '/api/roster/evidence-impacts'
-    const impacted = await app.request(impactsPath + '?limit=1&enterpriseId=' + firstOwner.id)
-    const firstImpact = await impacted.json()
-    expect(impacted.status, JSON.stringify(firstImpact)).toBe(200)
-    expect(firstImpact).toMatchObject({ rows: [expect.objectContaining({ decisionId: activeDecisionId, pending: true })],
-      nextCursor: expect.any(String), projectionReady: true })
-    const impactId = firstImpact.rows[0].id
-    const impactRead = await app.request(impactsPath + '/' + impactId)
-    const impactDetail = await impactRead.json()
-    expect(impactRead.status, JSON.stringify(impactDetail)).toBe(200)
-    expect(impactDetail).toMatchObject({ decisionId: activeDecisionId, oldDecision: { id: activeDecisionId },
-      evidenceToken: { latestRevisionId: releases[0].revisionIds[0], projectionReady: true } })
-    expect(await nativeTool('get_evidence_impact', { id: impactId })).toEqual({ body: impactDetail, isError: false })
-    const sources = await app.request(impactsPath + '/' + impactId + '/sources')
-    expect(sources.status).toBe(200)
-    expect(await sources.json()).toMatchObject({ rows: expect.arrayContaining([expect.objectContaining({
-      revisionId: releases[0].revisionIds[0], sourceKind: 'rule_release', classification: 'evidence_changed',
-    })]) })
-    const impactPreview = await nativeTool('preview_evidence_impacts', { revisionId: releases[0].revisionIds[1] })
-    expect(impactPreview).toMatchObject({ isError: false, body: { rows: [expect.objectContaining({ id: secondDecisionId, classification: 'evidence_changed' })] } })
-    const eventRevision = Number(run('psql', ['-X', '-w', '-Atc',
-      'SELECT max(id) FROM business.evidence_revision_113 WHERE event_id=' + event.id]).toString().trim())
-    expect(await nativeTool('list_evidence_revision_events', { revisionId: eventRevision })).toMatchObject({
-      isError: false, body: { rows: [expect.objectContaining({ eventId: event.id, enterpriseId: firstOwner.id })] },
-    })
-
     const decisionRoot = '/api/roster/decision-lifecycle/'
     const decide = (action: string, body: unknown) => app.request(decisionRoot + action, { method: 'POST', body: JSON.stringify(body) })
-    const maintain = { ...activeScope, action: 'maintain', expectedCurrentId: activeDecisionId,
-      idempotencyKey: 'native-scope-review', basis, effectiveAt: '2026-10-18T00:00:00Z',
-      reviewedEvidence: { latestRevisionId: releases[0].revisionIds[0], projectionReady: true } }
-    const reviewPath = '/api/roster/evidence-review/browser-commands'
-    const reviewResponse = await app.request(reviewPath, {
-      method: 'POST', headers: { origin: new URL(app.url(reviewPath)).origin, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
-      body: JSON.stringify(maintain),
-    })
-    const reviewed = await reviewResponse.json()
-    expect(reviewResponse.status, JSON.stringify(reviewed)).toBe(200)
-    expect(reviewed).toMatchObject({ action: 'maintain', versionId: activeDecisionId, reviewedRevisionId: releases[0].revisionIds[0] })
-    const secondPage = await app.request(impactsPath + '?limit=1&enterpriseId=' + firstOwner.id + '&cursor=' + encodeURIComponent(firstImpact.nextCursor))
-    expect(secondPage.status).toBe(200)
-    expect(await secondPage.json()).toMatchObject({ asOf: firstImpact.asOf,
-      rows: [expect.objectContaining({ decisionId: secondDecisionId, pending: true })] })
-    const nowReviewed = await app.request(impactsPath + '/' + impactId)
-    expect(await nowReviewed.json()).toMatchObject({ pending: false, reviewedBaseline: { actor: null, ruleVersion: null } })
     const migration = { ...legacyDecision, ...activeScope, expectedCurrentId: activeDecisionId, idempotencyKey: 'native-qualification-decision',
       decision: { status: 'confirmed_reason', reasonCode: 'moved_in', measureCode: 'record_moved_in', verificationStatus: 'confirmed',
         evidenceQueryId: archiveCoordinates.queryId, evidenceRelationId: archiveCoordinates.relationId, movedIn: { city: '南通' },
@@ -874,21 +808,20 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     expect(savedArchive.status, JSON.stringify(archiveReceipt) + (savedArchive.ok ? '' : readFileSync(join(pgDir, 'pg.log'), 'utf8').slice(-5000))).toBe(200)
     expect(archiveReceipt).toMatchObject({ status: 'committed', summary: { written: 6,
       platformFields: { status: 'ready', eligibleVersions: 3, observationsChecked: 3 } } })
-    const sqliteArchive = await http('/api/roster/import/commit', archiveRequest)
-    expect(sqliteArchive.status, JSON.stringify(sqliteArchive.body)).toBe(200)
-    expect(sqliteArchive.body).toMatchObject({ status: 'committed', summary: archiveReceipt.summary })
-    const originalRows = run('psql', ['-X','-w','-Atc', `SELECT c.interface, q.old_id, a.old_id, octet_length(v.bytes)
-      FROM business.platform_collection c JOIN business.platform_legacy_query_alias q ON q.collection_id=c.id
-      JOIN business.platform_business_observation o ON o.collection_id=c.id JOIN business.platform_legacy_relation_alias a ON a.observation_id=o.id
-      JOIN business.platform_observation_archive_ref r ON r.owner_id=o.id AND r.field='rawFields' AND r.sealed=1
-      JOIN business.platform_archive_value v ON v.id=r.archive_id WHERE o.source_relation_key LIKE 'pg-new-%' ORDER BY c.interface`]).toString().trim().split('\n')
-    expect(originalRows.map(row => row.split('|')[0])).toEqual(['apply_list', 'business_list', 'recognized_list'])
+    const sourceArchive = await http('/api/roster/import/commit', archiveRequest)
+    expect(sourceArchive.status, JSON.stringify(sourceArchive.body)).toBe(200)
+    expect(sourceArchive.body).toMatchObject({ status: 'committed', summary: archiveReceipt.summary })
+    const sourceIdentities = run('psql', ['-X','-w','-Atc', `SELECT c.interface, c.public_id, o.public_id
+      FROM business.platform_collection c JOIN business.platform_business_observation o ON o.collection_id=c.id
+      WHERE o.source_relation_key LIKE 'pg-new-%' ORDER BY c.interface`]).toString().trim().split('\n')
+    expect(sourceIdentities.map(row => row.split('|')[0])).toEqual(['apply_list', 'business_list', 'recognized_list'])
     const conflict = structuredClone(archiveRequest)
     conflict.idempotencyKey = 'native-conflicting-archive'
-    conflict.payload.platformQueries[0]!.rawResponse = '{"replacement":true}'
+    const conflictingQuery = { ...conflict.payload.platformQueries[0]!, rawResponse: '{"replacement":true}' }
+    conflict.payload.platformQueries = [conflictingQuery]
     const rejectedArchive = await stage(conflict)
     expect(await rejectedArchive.json()).toMatchObject({ status: 'failed', items: [expect.objectContaining({
-      error: expect.objectContaining({ code: 'query_payload_conflict' }),
+      error: expect.objectContaining({ code: 'query_replay_offline' }),
     })] })
     expect(await nativeTool('save_roster_batch', archiveRequest)).toMatchObject({ isError: false, body: { status:'committed', batchId: archiveReceipt.batchId } })
 
@@ -903,22 +836,11 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
 
     const snapshotFiles = join(pgDir,'snapshot-files')
     mkdirSync(snapshotFiles)
-    const provider = join(pgDir,'snapshot-provider.mjs')
-    writeFileSync(provider,`
-      const native = globalThis.fetch
-      globalThis.fetch = (input, init) => {
-        const url = new URL(String(input))
-        if (url.hostname !== 'zjtx.miit.gov.cn') return native(input,init)
-        const grid = url.pathname.endsWith('/queryList') ? 'applyGrid'
-          : url.pathname.endsWith('/queryBusList') ? 'businessGrid' : 'businessListGrid'
-        return Promise.resolve(Response.json({zrarData:{grid:{[grid]:{pageSet:[],page:1,pageSize:50,maxCount:0,maxPage:1}}}}))
-      }
-    `)
     const snapshotApp = nativeAppAdapter({ dir:pgDir,token:apiToken,launch:({cwd,port})=>({
       args:['--import',provider,join(cwd,'.output/server/index.mjs')],
       env:{ NODE_ENV:'production',HOST:'127.0.0.1',PORT:String(port),MIIT_COOKIE:'sid=synthetic-snapshot-cookie',
-        NUXT_DB_READONLY:'1',NUXT_POSTGRES_ROSTER_READ:'1',NUXT_POSTGRES_DIRECTORY_URL:url,
-        NUXT_POSTGRES_DIRECTORY_WRITE:'1',NUXT_POSTGRES_JOBS:'1',NUXT_POSTGRES_BIN:pgBin,
+        NUXT_DB_READONLY:'0',NUXT_POSTGRES_DIRECTORY_URL:url,
+        NUXT_POSTGRES_BIN:pgBin,
         NUXT_FILES_DIR:snapshotFiles,NUXT_INCOMING_DIR:join(pgDir,'incoming') },
     }) })
     try {
@@ -1063,17 +985,11 @@ it.runIf(!!pgBin)('reads migrated import receipts and exact immutable projection
     const provenance = { idempotencyKey:'native-legacy-page-provenance',sourceKind:'platform_archive',
       sourceIdentity:'synthetic-legacy-pages.json',payload:{platformLegacyProvenance:[provenanceInput]} }
     const legacyPlanResponse = await app.request('/api/roster/import/preflight',{method:'POST',body:JSON.stringify(provenance)})
-    expect(await legacyPlanResponse.json()).toMatchObject({ status:'preflight',preflight:{add:1,conflicts:[],
-      platformLegacyProvenanceSources:[{queryId,inputFingerprint:expect.stringMatching(/^[a-f0-9]{64}$/)}],
-    } })
-    const provenanceResponse = await stage(provenance)
-    const provenanceReceipt = await provenanceResponse.json()
-    expect(provenanceReceipt).toMatchObject({status:'committed',summary:{written:1},
-      items:[{kind:'platform_legacy_provenance',detail:{typedState:'unknown',relationCount:1}}] })
-    const legacyArchive = await nativeTool('get_platform_query_evidence',{queryId,field:'legacyProvenance'})
-    expect(legacyArchive).toMatchObject({isError:false,body:{data:Buffer.from(JSON.stringify(pagination)).toString('base64'),hasMore:false}})
-    const repeatProvenance = await stage({...provenance,idempotencyKey:'native-legacy-page-repeat'})
-    expect(await repeatProvenance.json()).toMatchObject({status:'committed',summary:{written:0,skipped:1}})
+    expect(legacyPlanResponse.status).toBe(400)
+    expect(await legacyPlanResponse.text()).toContain('platformLegacyProvenance 已停用')
+    expect((await stage(provenance)).status).toBe(400)
+    const history = await nativeTool('list_platform_queries', { queryId })
+    expect(history).toMatchObject({ isError: false, body: { rows: [{ query: { id: queryId }, relations: [{ relationKey: legacyRow.id }] }] } })
 
   } finally {
     await app.close()

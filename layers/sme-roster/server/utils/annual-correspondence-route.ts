@@ -1,13 +1,14 @@
 import { createError, defineEventHandler, getHeader, getMethod, getRouterParam, readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { z } from 'zod'
 import { requestLogContext } from '../../../core/lib/logging'
-import { checkBrowserReviewRequest } from './browser-review-102'
+import { checkBrowserReviewRequest } from './browser-review-access'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
-import { handleAnnualTaskRequest, type AnnualTaskAction, type AnnualTaskContext } from './annual-correspondence-api'
+import { handlePostgresAnnualTaskRequest } from './annual-correspondence-runtime'
+import type { AnnualTaskAction, AnnualRuntimeContext } from './annual-correspondence-api'
 
 /** The context supplies the shared reader. Browser calls carry no token; exact
  * same-origin capability is checked before body parsing or database access. */
-export function annualTaskRoute(action: AnnualTaskAction, context: () => Omit<AnnualTaskContext,'apiToken'|'browserAuthorized'> & {config:{apiToken?:string}}, options: {eventScoped?:boolean} = {}) {
+export function annualTaskRoute(action: AnnualTaskAction, context: () => AnnualRuntimeContext & {config:{apiToken?:string}}, options: {eventScoped?:boolean} = {}) {
   return defineEventHandler(async (event: H3Event) => {
     setHeader(event,'cache-control','no-store')
     const runtime = context(), config = runtime.config
@@ -31,8 +32,8 @@ export function annualTaskRoute(action: AnnualTaskAction, context: () => Omit<An
       if (!parsed.success || !Number.isSafeInteger(id) || id <= 0) {setResponseStatus(event,400);return {error:{code:'invalid_annual_task_request'}}}
       body={clientRequestId:parsed.data.clientRequestId,eventIds:[id]}
     }
-    const output = await handleAnnualTaskRequest(action,{method:getMethod(event),headers,body,id:getRouterParam(event,'id')},{
-      get db(){return runtime.db},readScope:runtime.readScope,filesDir:runtime.filesDir,apiToken:config.apiToken,
+    const output = await handlePostgresAnnualTaskRequest(action,{method:getMethod(event),headers,body,id:getRouterParam(event,'id')},{
+      ...runtime, apiToken:config.apiToken,
       browserAuthorized:browserAuthorized || action === 'detail',
       logContext: requestLogContext(event),
     })

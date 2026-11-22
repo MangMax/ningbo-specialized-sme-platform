@@ -12,7 +12,7 @@ import {
 import { OCR_CHANNELS } from '#core/lib/ocr-labels'
 import { pageLabel } from '#core/lib/page-gallery'
 import { describeFetchError } from '../../lib/file-content-status'
-import type { OcrResultRow } from '#core/server/utils/ocr-result'
+import type { OcrResultRow } from '#core/server/utils/ocr-result-contract'
 import type { PdfPagesState, RenderOutcome } from '#core/server/utils/pdf-pages'
 import type { FileSourceOption } from '#core/lib/core/file-categories'
 import { ocrFileSources } from '~~/lib/app-modules'

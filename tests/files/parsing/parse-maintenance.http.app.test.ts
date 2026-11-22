@@ -1,4 +1,3 @@
-import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { assertEnterpriseDetailSnapshotEqual } from '../../roster/assertions/enterprise-detail-snapshot'
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
@@ -7,18 +6,57 @@ import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { initializeDb, schema } from '../../../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { eq, sql } from 'drizzle-orm'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import pg from 'pg'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { ocrResult, storedFile } from '../../../db/postgresql/file-tables'
+import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
+import { fileDeclaration669, fileParseAudit105, rosterFileClassification, storedFilePart } from '../../../db/postgresql/roster-file-tables'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync('/tmp/issue310-http-')
-const dbPath = join(dir, 'roster.db')
-const db = initializeDb({ create: true,  dbPath })
+const recordedAt = '2026-10-19T00:00:00Z'
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
+let pool: pg.Pool
+let db: ReturnType<typeof drizzle>
 const token = 'synthetic-105-token'
 let service: { baseUrl: string; stop: () => Promise<void> }
 let serial = 0
+async function seedFile(relPath: string, ext: string, bytes: number, sha256: string) {
+  return db.transaction(async tx => {
+    const [stored] = await tx.insert(storedFile).values({
+      relPath, filename: relPath, ext, bytes: BigInt(bytes), sha256, createdAt: recordedAt,
+    }).returning()
+    await tx.insert(rosterFileClassification).values({ fileId: stored!.id })
+    return { ...stored!, bytes }
+  })
+}
 function file() {
   serial++
-  return createClassifiedFile(db, { relPath: `synthetic-${serial}.pdf`, filename: `synthetic-${serial}.pdf`, ext: 'pdf', bytes: 9, sha256: 'synthetic' }, { categoryState: 'unset' })
+  return seedFile(`synthetic-${serial}.pdf`, 'pdf', 9, 'synthetic')
+}
+async function seedLedger(name: string) {
+  const [owner] = await db.insert(enterprise).values({ name, nameNorm: name }).returning()
+  const [ledger] = await db.insert(record).values({
+    enterpriseId: owner!.id, source: 'jxj', titleCode: 'specialized_sme',
+  }).returning()
+  return { owner: owner!, ledger: ledger! }
+}
+async function rejectParseAudit() {
+  await db.execute(sql`
+    CREATE FUNCTION business.reject_test_parse_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'synthetic parse audit failure'; END; $$;
+    CREATE TRIGGER reject_test_parse_audit BEFORE INSERT ON business.file_parse_audit_105
+    FOR EACH ROW EXECUTE FUNCTION business.reject_test_parse_audit();
+  `)
+}
+async function allowParseAudit() {
+  await db.execute(sql`
+    DROP TRIGGER reject_test_parse_audit ON business.file_parse_audit_105;
+    DROP FUNCTION business.reject_test_parse_audit();
+  `)
 }
 const part = { titleCode: 'specialized_sme', eventKind: 'award', year: 2024, batch: 2, attachment: '附 件 1', rowCount: 3 }
 const actor = { type: 'agent', id: 'test-105' }
@@ -46,23 +84,38 @@ async function call(name: string, args: object) {
   return JSON.parse(response.body.result.content[0].text)
 }
 async function startService() {
-  await readDevelopmentDiscovery()
   const cwd = resolve(import.meta.dirname, '../../..')
   const port = await reserveLoopbackPort()
   mkdirSync(join(dir, 'files'), { recursive: true })
   writeFileSync(join(dir, 'empty.env'), '')
-  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_LOG_DIR: join(dir, 'logs'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_LOG_DIR: join(dir, 'logs'), ...runtime.env, NUXT_DB_READONLY: '0', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token } })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { output = (output + chunk).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) }
   catch (error) { await service.stop(); throw new Error(`${error}\n${output}`) }
 }
-beforeAll(startService, 90000)
-afterAll(async () => { if (service) await service.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+beforeAll(async () => {
+  await readDevelopmentDiscovery()
+  runtime = await postgresRuntimeFixture({ dir })
+  pool = new pg.Pool({ connectionString: runtime.url })
+  db = drizzle({ client: pool })
+  await startService()
+}, 90000)
+afterAll(async () => {
+  try {
+    if (service) await service.stop()
+  } finally {
+    try { await pool?.end() }
+    finally {
+      try { runtime?.close() }
+      finally { rmSync(dir, { recursive: true, force: true }) }
+    }
+  }
+})
 
 it('replaces agent segments by stable file ID and reads identical state through REST and MCP', async () => {
-  const f = file()
+  const f = await file()
   const before = await state(f.id)
   expect(before).toMatchObject({ fileId: f.id, parseState: 'unparsed', parts: [] })
   const saved = await http(f.id, 'PUT', write(before.version, 'replace-first', { parts: [part] }))
@@ -75,19 +128,18 @@ it('replaces agent segments by stable file ID and reads identical state through 
 })
 
 it('state-only PATCH preserves segments while empty replacement restores derived conflicts without side effects', async () => {
-  const f = file()
-  const enterprise = db.insert(schema.enterprise).values({ name: '解析边界企业105', nameNorm: '解析边界企业105' }).returning().get()
-  const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
-  const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024, batchSeq: 2 }).returning().get()
-  const review = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'review', year: 2021, batchSeq: 2 }).returning().get()
-  db.insert(schema.recordEvidence).values([
-    { recordEventId: event.id, sourceFile: f.relPath, attachment: '附件1', page: 1 },
-    { recordEventId: review.id, sourceFile: f.relPath, attachment: '附件2', page: 2 },
-  ]).run()
-  db.insert(schema.ocrResult).values({ fileId: f.id, pageNo: 1, markdown: '原始 OCR 正文105', raw: { preserved: true }, channel: 'upload' }).run()
+  const f = await file()
+  const { owner, ledger } = await seedLedger('解析边界企业105')
+  const [event] = await db.insert(recordEvent).values({ recordId: ledger.id, eventType: 'award', year: 2024, batchSeq: 2 }).returning()
+  const [review] = await db.insert(recordEvent).values({ recordId: ledger.id, eventType: 'review', year: 2021, batchSeq: 2 }).returning()
+  await db.insert(recordEvidence).values([
+    { recordEventId: event!.id, sourceFile: f.relPath, attachment: '附件1', page: 1 },
+    { recordEventId: review!.id, sourceFile: f.relPath, attachment: '附件2', page: 2 },
+  ])
+  await db.insert(ocrResult).values({ fileId: f.id, page: 1, markdown: '原始 OCR 正文105', raw: JSON.stringify({ preserved: true }), channel: 'upload', createdAt: recordedAt })
   const fileBefore = await call('get_file', { fileId: f.id })
   const ocrBefore = await call('get_ocr_result', { fileId: f.id })
-  const detailUrl = `${service.baseUrl}/api/roster/enterprises/${enterprise.id}`
+  const detailUrl = `${service.baseUrl}/api/roster/enterprises/${owner.id}`
   const enterpriseBeforeResponse = await fetch(detailUrl)
   expect(enterpriseBeforeResponse.status).toBe(200)
   const enterpriseBefore = await enterpriseBeforeResponse.json()
@@ -123,7 +175,7 @@ it('state-only PATCH preserves segments while empty replacement restores derived
 })
 
 it('rejects duplicate normalized coordinates and illegal batches atomically through both public transports', async () => {
-  const f = file()
+  const f = await file()
   const before = await state(f.id)
   const invalid = [
     { parts: [part, { ...part, attachment: '附件1' }] },
@@ -165,7 +217,7 @@ it('rejects duplicate normalized coordinates and illegal batches atomically thro
 })
 
 it('rejects stale parallel edits and recovers the original idempotent receipt without overwriting later state', async () => {
-  const f = file()
+  const f = await file()
   const before = await state(f.id)
   const body = write(before.version, 'once', { parts: [part] })
   const savedResponse = await http(f.id, 'PUT', body)
@@ -193,13 +245,13 @@ it('rejects stale parallel edits and recovers the original idempotent receipt wi
 })
 
 it('rolls back segment and status writes when audit persistence fails and permits a clean retry', async () => {
-  const f = file()
+  const f = await file()
   const initial = await state(f.id)
   const seeded = await call('save_parse_result', { fileId: f.id, ...write(initial.version, 'before-storage-fault', { parts: [part] }) })
   const before = seeded.state
   const historyBefore = await call('get_file_parse_history', { fileId: f.id })
   // Storage fault injection at the boundary; all behavioral verification remains HTTP/MCP.
-  db.$client.exec(`CREATE TRIGGER fail_parse_105 BEFORE INSERT ON file_parse_audit_105 WHEN NEW.file_id = ${f.id} BEGIN SELECT RAISE(ABORT, 'synthetic receipt failure'); END`)
+  await rejectParseAudit()
   const body = write(before.version, 'retry-after-fault', { parts: [{ ...part, year: 2023, rowCount: 9 }], parseState: 'failed' })
   try {
     expect((await http(f.id, 'PUT', body)).status).toBe(500)
@@ -207,7 +259,7 @@ it('rolls back segment and status writes when audit persistence fails and permit
     expect(legacyFailure.body.result.isError).toBe(true)
     expect(await state(f.id)).toEqual(before)
     expect(await call('get_file_parse_history', { fileId: f.id })).toEqual(historyBefore)
-  } finally { db.$client.exec('DROP TRIGGER fail_parse_105') }
+  } finally { await allowParseAudit() }
   const retryResponse = await http(f.id, 'PUT', body)
   expect(retryResponse.status).toBe(200)
   const retry = await retryResponse.json()
@@ -216,7 +268,7 @@ it('rolls back segment and status writes when audit persistence fails and permit
 })
 
 it('pages audit summaries without snapshots and point-reads immutable receipts with REST MCP parity', async () => {
-  const f = file()
+  const f = await file()
   let current = await state(f.id)
   const snapshots = []
   const receipts = []
@@ -245,7 +297,7 @@ it('pages audit summaries without snapshots and point-reads immutable receipts w
   expect(exact).toMatchObject({ id: receipts[0], fileId: f.id, operation: 'replace', actor, reason: '纠正解析声明', before: snapshots[0], after: { parseState: 'parsed', parts: [{ rowCount: 0 }] } })
   expect(exact.after).toEqual(snapshots[1])
   expect(await call('get_file_parse_history', { fileId: f.id, receiptId: receipts[0] })).toEqual(exact)
-  const other = file()
+  const other = await file()
   expect((await http(other.id, 'GET', undefined, `/history?receiptId=${receipts[0]}`)).status).toBe(404)
   for (const suffix of ['/history?limit=0', '/history?limit=51', '/history?afterId=-1', '/history?receiptId=1&limit=1', '/history?raw=true', '?raw=true']) {
     expect((await http(f.id, 'GET', undefined, suffix)).status).toBe(400)
@@ -253,7 +305,7 @@ it('pages audit summaries without snapshots and point-reads immutable receipts w
 })
 
 it('enforces authentication stable IDs and removed-file writes while exposing discoverable contracts', async () => {
-  const f = file()
+  const f = await file()
   const before = await state(f.id)
   expect((await http(f.id, 'PUT', write(before.version, 'no-auth', { parts: [] }), '', false)).status).toBe(401)
   expect((await rpc('tools/call', { name: 'save_parse_result', arguments: { fileId: f.id, ...write(before.version, 'mcp-no-auth', { parts: [] }) } }, false)).status).toBe(401)
@@ -286,7 +338,7 @@ it('enforces authentication stable IDs and removed-file writes while exposing di
 })
 
 it('recovers a committed receipt after an application restart without requiring the old version to remain current', async () => {
-  const f = file()
+  const f = await file()
   const initial = await state(f.id)
   const body = write(initial.version, 'durable-receipt', { parts: [part] })
   const response = await http(f.id, 'PUT', body)
@@ -303,7 +355,7 @@ it('recovers a committed receipt after an application restart without requiring 
 }, 90000)
 
 it('preserves the existing MCP exact path reference while binding concurrency and receipts to the stable file ID', async () => {
-  const f = file()
+  const f = await file()
   const before = await state(f.id)
   const body = write(before.version, 'path-compatible', { parts: [part] })
   const saved = await call('save_parse_result', { relPath: f.relPath, ...body })
@@ -317,14 +369,13 @@ it('preserves the existing MCP exact path reference while binding concurrency an
 })
 
 it('invalidates an edit version when source-derived coordinates change and refreshes the visible conflict', async () => {
-  const f = file()
-  const e = db.insert(schema.enterprise).values({ name: '来源并发105', nameNorm: '来源并发105' }).returning().get()
-  const r = db.insert(schema.record).values({ enterpriseId: e.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
-  const ev = db.insert(schema.recordEvent).values({ recordId: r.id, eventType: 'award', year: 2024, batchSeq: 2 }).returning().get()
+  const f = await file()
+  const { ledger } = await seedLedger('来源并发105')
+  const [ev] = await db.insert(recordEvent).values({ recordId: ledger.id, eventType: 'award', year: 2024, batchSeq: 2 }).returning()
   const initial = await state(f.id)
   const saved = await call('save_parse_result', { fileId: f.id, ...write(initial.version, 'source-concurrency-first', { parts: [part] }) })
   // An independent pipeline changes source facts, without rebuilding the stored derived cache.
-  db.insert(schema.recordEvidence).values({ recordEventId: ev.id, sourceFile: f.relPath, attachment: '附件1' }).run()
+  await db.insert(recordEvidence).values({ recordEventId: ev!.id, sourceFile: f.relPath, attachment: '附件1' })
   expect((await http(f.id, 'PUT', write(saved.state.version, 'stale-source', { parts: [] }))).status).toBe(409)
   const refreshed = await state(f.id)
   expect(refreshed.version).not.toBe(saved.state.version)
@@ -334,8 +385,8 @@ it('invalidates an edit version when source-derived coordinates change and refre
 })
 
 it('keeps fixed-ID reads and history pages unchanged as unrelated evidence OCR and receipts grow', async () => {
-  const f = file()
-  const unrelated = file()
+  const f = await file()
+  const unrelated = await file()
   let current = await state(f.id)
   for (let i = 0; i < 3; i++) {
     const response = await http(f.id, 'PUT', write(current.version, `scale-target-${i}`, { parts: [part] }))
@@ -343,25 +394,28 @@ it('keeps fixed-ID reads and history pages unchanged as unrelated evidence OCR a
     current = (await response.json()).state
   }
   const page = await (await http(f.id, 'GET', undefined, '/history?limit=2')).json()
-  const e = db.insert(schema.enterprise).values({ name: '无关样本105', nameNorm: '无关样本105' }).returning().get()
-  const r = db.insert(schema.record).values({ enterpriseId: e.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
-  const ev = db.insert(schema.recordEvent).values({ recordId: r.id, eventType: 'award', year: 2023 }).returning().get()
-  const evidenceInsert = db.$client.prepare('INSERT INTO record_evidence (record_event_id,source_file) VALUES (?,?)')
-  const auditInsert = db.$client.prepare('INSERT INTO file_parse_audit_105 (file_id,idempotency_key,request_hash,operation,actor,reason,before,after,created_at) VALUES (?,?,?,\'replace\',?,\'unrelated fixture\',?,?,?)')
-  const ocrInsert = db.$client.prepare('INSERT INTO ocr_result (file_id,page_no,markdown,raw,engine,channel,created_at) VALUES (?,?,?,?,\'synthetic\',\'upload\',?)')
+  const { ledger } = await seedLedger('无关样本105')
+  const [ev] = await db.insert(recordEvent).values({ recordId: ledger.id, eventType: 'award', year: 2023 }).returning()
   const raw = JSON.stringify({ privateUnrelatedRaw: 'X'.repeat(8192) })
   let count = 0
   for (const target of [1000, 5000]) {
-    db.$client.transaction(() => {
-      while (count < target) {
-        evidenceInsert.run(ev.id, `unrelated-${count}.pdf`)
-        if (count % 10 === 0) {
-          auditInsert.run(unrelated.id, `unrelated-${count}`, 'unused-fixture-hash', JSON.stringify(actor), raw, raw, '2026-10-19T00:00:00Z')
-          ocrInsert.run(unrelated.id, count + 1, 'UNRELATED_OCR', raw, '2026-10-19T00:00:00Z')
-        }
-        count++
-      }
-    })()
+    const members = Array.from({ length: target - count }, (_, index) => index + count)
+    const payloads = members.filter(index => index % 10 === 0)
+    await db.transaction(async tx => {
+      await tx.insert(recordEvidence).values(members.map(index => ({
+        recordEventId: ev!.id, sourceFile: `unrelated-${index}.pdf`,
+      })))
+      await tx.insert(fileParseAudit105).values(payloads.map<typeof fileParseAudit105.$inferInsert>(index => ({
+        fileId: unrelated.id, idempotencyKey: `unrelated-${index}`, requestHash: 'unused-fixture-hash',
+        operation: 'replace', actor: JSON.stringify(actor), reason: 'unrelated fixture',
+        before: raw, after: raw, createdAt: recordedAt,
+      })))
+      await tx.insert(ocrResult).values(payloads.map(index => ({
+        fileId: unrelated.id, page: index + 1, markdown: 'UNRELATED_OCR', raw,
+        engine: 'synthetic', channel: 'upload', createdAt: recordedAt,
+      })))
+    })
+    count = target
     for (let n = 0; n < 5; n++) {
       expect(await state(f.id)).toEqual(current)
       const response = await http(f.id, 'GET', undefined, '/history?limit=2')
@@ -377,7 +431,7 @@ it('keeps fixed-ID reads and history pages unchanged as unrelated evidence OCR a
 })
 
 it('accepts the complete segment limit and rejects over-limit replacements without truncation', async () => {
-  const f = file()
+  const f = await file()
   const before = await state(f.id)
   const parts = Array.from({ length: 1000 }, (_, i) => ({ ...part, batch: i + 1 }))
   const response = await http(f.id, 'PUT', write(before.version, 'limit-exact', { parts }))
@@ -395,7 +449,7 @@ it('accepts the complete segment limit and rejects over-limit replacements witho
 })
 
 it('coalesces simultaneous same-key retries into one durable parse receipt', async () => {
-  const f = file()
+  const f = await file()
   const before = await state(f.id)
   const body = write(before.version, 'simultaneous-retry', { parts: [part] })
   const responses = await Promise.all([http(f.id, 'PUT', body), http(f.id, 'PUT', body)])
@@ -409,7 +463,7 @@ it('coalesces simultaneous same-key retries into one durable parse receipt', asy
 })
 
 it('accepts exact baseline MCP payloads and returns the exact legacy envelope for ID path empty and status-only writes', async () => {
-  const f = file()
+  const f = await file()
   const initial = await state(f.id)
   const normalized = { ...part, attachment: '附件1' }
   const expectedFile = {
@@ -443,7 +497,7 @@ it('accepts exact baseline MCP payloads and returns the exact legacy envelope fo
 })
 
 it('protects exact baseline MCP calls with auth and rejects partial modern envelopes without legacy downgrade', async () => {
-  const f = file()
+  const f = await file()
   const before = await state(f.id)
   const baseline = { relPath: f.relPath, parts: [part] }
   expect((await rpc('tools/call', { name: 'save_parse_result', arguments: baseline }, false)).status).toBe(401)
@@ -464,7 +518,7 @@ it('protects exact baseline MCP calls with auth and rejects partial modern envel
 })
 
 it('rejects legacy capacity overflow explicitly without truncation or adapter audit and retains duplicate atomicity', async () => {
-  const f = file()
+  const f = await file()
   const before = await state(f.id)
   const tooMany = { fileId: f.id, parts: Array.from({ length: 1001 }, (_, i) => ({ ...part, batch: i + 1 })) }
   const longAttachment = { relPath: f.relPath, parts: [{ ...part, attachment: 'X'.repeat(501) }] }
@@ -486,7 +540,7 @@ function inputFile310() {
   const relPath = `input-310-${serial}.pdf`
   const bytes = Buffer.from('synthetic parse source 310')
   writeFileSync(join(dir, 'files', relPath), bytes)
-  return createClassifiedFile(db, { relPath, filename: relPath, ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }, {})
+  return seedFile(relPath, 'pdf', bytes.length, createHash('sha256').update(bytes).digest('hex'))
 }
 async function ocr310(id: number, text: string) {
   const result = await call('save_ocr_result', { fileId: id, markdown: `<!-- page: 1 -->\n${text}` })
@@ -497,12 +551,11 @@ async function ocr310(id: number, text: string) {
 }
 
 it('freezes actual file and observed OCR inputs with HTTP MCP parity and preserves formal evidence on drift', async () => {
-  const f = inputFile310()
+  const f = await inputFile310()
   const pages = await ocr310(f.id, 'first OCR input')
-  const e = db.insert(schema.enterprise).values({ name: '人工确认310', nameNorm: '人工确认310' }).returning().get()
-  const r = db.insert(schema.record).values({ enterpriseId: e.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
-  const ev = db.insert(schema.recordEvent).values({ recordId: r.id, eventType: 'award', year: 2024 }).returning().get()
-  const evidence = db.insert(schema.recordEvidence).values({ recordEventId: ev.id, sourceFile: f.relPath, page: 7, attachment: '人工确认分节乙', listNo: 12 }).returning().get()
+  const { ledger } = await seedLedger('人工确认310')
+  const [ev] = await db.insert(recordEvent).values({ recordId: ledger.id, eventType: 'award', year: 2024 }).returning()
+  const [evidence] = await db.insert(recordEvidence).values({ recordEventId: ev!.id, sourceFile: f.relPath, page: 7, attachment: '人工确认分节乙', listNo: 12 }).returning()
   const before = await state(f.id)
   const response = await http(f.id, 'POST', { kind: 'ocr', pages }, '/preflight')
   expect(response.status).toBe(200)
@@ -523,18 +576,18 @@ it('freezes actual file and observed OCR inputs with HTTP MCP parity and preserv
   expect((await http(f.id, 'POST', { kind: 'ocr', pages }, '/preflight')).status).toBe(409)
   expect(await state(f.id)).toEqual(before)
   expect((await call('get_file_parse_history', { fileId: f.id })).rows).toEqual([])
-  expect(db.select().from(schema.recordEvidence).all().find(row => row.id === evidence.id)).toEqual(evidence)
-  expect(db.select().from(schema.recordEvent).all().find(row => row.id === ev.id)).toEqual(ev)
+  expect((await db.select().from(recordEvidence).where(eq(recordEvidence.id, evidence!.id)))[0]).toEqual(evidence)
+  expect((await db.select().from(recordEvent).where(eq(recordEvent.id, ev!.id)))[0]).toEqual(ev)
   const fresh = await call('preflight_file_parse_result', { fileId: f.id, kind: 'ocr', pages: newerPages })
   const freshBody = { ...write(fresh.expectedVersion, '310-fresh-ocr', { parts: [part] }), inputRef: fresh.inputRef }
   const accepted = await call('commit_file_parse_result', { fileId: f.id, ...freshBody })
   expect(accepted.state.inputLineage).toEqual({ status: 'bound', inputRef: fresh.inputRef })
   expect(await state(f.id)).toEqual(accepted.state)
-  expect(db.select().from(schema.recordEvidence).all().find(row => row.id === evidence.id)).toEqual(evidence)
+  expect((await db.select().from(recordEvidence).where(eq(recordEvidence.id, evidence!.id)))[0]).toEqual(evidence)
   expect(await call('get_file_parse_history', { fileId: f.id, receiptId: accepted.receiptId })).toMatchObject({ inputLineage: accepted.state.inputLineage, after: { inputLineage: accepted.state.inputLineage } })
   await ocr310(f.id, 'third OCR input after bound result')
-  const audits = db.select().from(schema.fileParseAudit105).all().filter(row => row.fileId === f.id)
-  const ocrRows = db.select().from(schema.ocrResult).all().filter(row => row.fileId === f.id)
+  const audits = await db.select().from(fileParseAudit105).where(eq(fileParseAudit105.fileId, f.id)).orderBy(fileParseAudit105.id)
+  const ocrRows = await db.select().from(ocrResult).where(eq(ocrResult.fileId, f.id)).orderBy(ocrResult.id)
   expect((await state(f.id)).version).toBe(accepted.state.version)
   for (const version of [plan.expectedVersion, accepted.state.version]) {
     const downgrade = write(version, `310-no-ref-${version}`, { parts: [] })
@@ -548,9 +601,9 @@ it('freezes actual file and observed OCR inputs with HTTP MCP parity and preserv
   expect(legacyMcp.body.result.isError).toBe(true)
   expect(JSON.stringify(legacyMcp.body)).toContain('预检')
   expect(await state(f.id)).toEqual(accepted.state)
-  expect(db.select().from(schema.fileParseAudit105).all().filter(row => row.fileId === f.id)).toEqual(audits)
-  expect(db.select().from(schema.ocrResult).all().filter(row => row.fileId === f.id)).toEqual(ocrRows)
-  expect(db.select().from(schema.recordEvidence).all().find(row => row.id === evidence.id)).toEqual(evidence)
+  expect(await db.select().from(fileParseAudit105).where(eq(fileParseAudit105.fileId, f.id)).orderBy(fileParseAudit105.id)).toEqual(audits)
+  expect(await db.select().from(ocrResult).where(eq(ocrResult.fileId, f.id)).orderBy(ocrResult.id)).toEqual(ocrRows)
+  expect((await db.select().from(recordEvidence).where(eq(recordEvidence.id, evidence!.id)))[0]).toEqual(evidence)
   const status = await http(f.id, 'PATCH', write(accepted.state.version, '310-bound-status', { parseState: 'failed' }))
   expect(status.status).toBe(200)
   const statusSaved = await status.json()
@@ -561,16 +614,16 @@ it('freezes actual file and observed OCR inputs with HTTP MCP parity and preserv
 })
 
 it('keeps frozen receipts stable after disk drift and rolls back parse and audit on failure', async () => {
-  const f = inputFile310()
+  const f = await inputFile310()
   const plan = await call('preflight_file_parse_result', { fileId: f.id, kind: 'file' })
   const before = await state(f.id)
   const body = { ...write(plan.expectedVersion, '310-fault-retry', { parts: [part] }), inputRef: plan.inputRef }
-  db.$client.exec(`CREATE TRIGGER fail_parse310_http BEFORE INSERT ON file_parse_audit_105 WHEN NEW.file_id = ${f.id} BEGIN SELECT RAISE(ABORT, 'synthetic parse310 fault'); END`)
+  await rejectParseAudit()
   try {
     expect((await http(f.id, 'POST', body, '/commit')).status).toBe(500)
     expect(await state(f.id)).toEqual(before)
     expect((await call('get_file_parse_history', { fileId: f.id })).rows).toEqual([])
-  } finally { db.$client.exec('DROP TRIGGER fail_parse310_http') }
+  } finally { await allowParseAudit() }
   const accepted = await http(f.id, 'POST', body, '/commit')
   expect(accepted.status).toBe(200)
   const saved = await accepted.json()
@@ -590,7 +643,7 @@ it('keeps frozen receipts stable after disk drift and rolls back parse and audit
 })
 
 it('exposes frozen contracts and cannot downgrade missing input while retaining explicit legacy unknown', async () => {
-  const f = inputFile310()
+  const f = await inputFile310()
   const before = await state(f.id)
   const body = write(before.version, '310-no-input', { parts: [part] })
   expect((await http(f.id, 'POST', body, '/commit')).status).toBe(400)
@@ -632,7 +685,7 @@ function rangeFile669(ext = 'pdf') {
   pdf += `xref\n0 7\n0000000000 65535 f \n${offsets.slice(1).map(n => `${String(n).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
   const relPath = `range-669-${serial}.${ext}`
   writeFileSync(join(dir, 'files', relPath), pdf)
-  return createClassifiedFile(db, { relPath, filename: relPath, ext, bytes: Buffer.byteLength(pdf), sha256: createHash('sha256').update(pdf).digest('hex') }, {})
+  return seedFile(relPath, ext, Buffer.byteLength(pdf), createHash('sha256').update(pdf).digest('hex'))
 }
 async function rangePlan669(id: number) {
   const response = await http(id, 'POST', { kind: 'file', verifyPhysicalPages: true }, '/preflight')
@@ -640,7 +693,7 @@ async function rangePlan669(id: number) {
   return response.json()
 }
 it('persists normalized physical ranges with stable declaration identity and immutable replay', async () => {
-  const f = rangeFile669()
+  const f = await rangeFile669()
   const plan = await rangePlan669(f.id)
   const body = { ...write(plan.expectedVersion, '669-create', { parts: [{ ...part, pageRanges: [{ start: 4, end: 4 }, { start: 1, end: 2 }, { start: 2, end: 2 }] }], parseState: 'unparsed' }), inputRef: plan.inputRef }
   const response = await http(f.id, 'POST', body, '/commit')
@@ -654,7 +707,7 @@ it('persists normalized physical ranges with stable declaration identity and imm
 })
 
 it('preserves omitted ranges across coordinate edits clears explicitly and invalidates ABA and withdrawal plans', async () => {
-  const f = rangeFile669()
+  const f = await rangeFile669()
   async function commit(key: string, parts: object[], plan?: any) {
     plan ??= await rangePlan669(f.id)
     const response = await http(f.id, 'POST', { ...write(plan.expectedVersion, key, { parts, parseState: 'failed' }), inputRef: plan.inputRef }, '/commit')
@@ -680,7 +733,7 @@ it('preserves omitted ranges across coordinate edits clears explicitly and inval
 })
 
 it('rejects invalid unverified cross-file and removed ranges atomically without inventing OCR lineage', async () => {
-  const f = rangeFile669()
+  const f = await rangeFile669()
   const plan = await rangePlan669(f.id)
   expect(plan.inputRef).toMatchObject({ kind: 'file', pages: [], physicalSource: { pageCount: 4 } })
   const before = await state(f.id)
@@ -693,21 +746,21 @@ it('rejects invalid unverified cross-file and removed ranges atomically without 
   expect((await http(f.id, 'POST', { ...write(unverified.expectedVersion, '669-no-count', { parts: [{ ...part, pageRanges: [{ start: 1, end: 1 }] }] }), inputRef: unverified.inputRef }, '/commit')).status).toBe(409)
   const body = { ...write(plan.expectedVersion, '669-source', { parts: [{ ...part, pageRanges: [{ start: 1, end: 1 }] }] }), inputRef: plan.inputRef }
   const saved = await (await http(f.id, 'POST', body, '/commit')).json()
-  const other = rangeFile669()
+  const other = await rangeFile669()
   const otherPlan = await rangePlan669(other.id)
   const cross = { ...write(otherPlan.expectedVersion, '669-cross-file', { parts: [{ ...part, declarationId: saved.state.declarations[0].declarationId }] }), inputRef: otherPlan.inputRef }
   expect((await http(other.id, 'POST', cross, '/commit')).status).toBe(409)
-  const office = rangeFile669('docx')
+  const office = await rangeFile669('docx')
   const officeResponse = await http(office.id, 'POST', { kind: 'file', verifyPhysicalPages: true }, '/preflight')
   expect(officeResponse.status).toBe(409)
   expect(await officeResponse.text()).toContain('不支持页码定位')
-  db.$client.prepare('UPDATE stored_file SET removed_at = ? WHERE id = ?').run('2026-11-09', other.id)
+  await db.update(storedFile).set({ removedAt: '2026-11-09' }).where(eq(storedFile.id, other.id))
   expect((await http(other.id, 'POST', cross, '/commit')).status).toBe(409)
   expect((await call('get_file_parse_history', { fileId: other.id })).rows).toEqual([])
 })
 
 it('rejects physical content ABA and preserves frozen receipts after source replacement', async () => {
-  const f = rangeFile669()
+  const f = await rangeFile669()
   const plan = await rangePlan669(f.id)
   const body = { ...write(plan.expectedVersion, '669-before-disk-aba', { parts: [{ ...part, pageRanges: [{ start: 1, end: 2 }] }] }), inputRef: plan.inputRef }
   const saved = await (await http(f.id, 'POST', body, '/commit')).json()
@@ -724,7 +777,7 @@ it('rejects physical content ABA and preserves frozen receipts after source repl
 })
 
 it('verifies supplied counts edits ranges and keeps omission compatibility without false source rebinding', async () => {
-  const f = rangeFile669()
+  const f = await rangeFile669()
   const plan = await rangePlan669(f.id)
   const fields = { parts: [{ ...part, pageRanges: [{ start: 1, end: 2 }] }], parseState: 'unparsed' }
   const forged = { ...write(plan.expectedVersion, '669-forged-count', fields), inputRef: { ...plan.inputRef, physicalSource: { ...plan.inputRef.physicalSource, pageCount: 999 } } }
@@ -753,16 +806,23 @@ it('verifies supplied counts edits ranges and keeps omission compatibility witho
 })
 
 it("list and expanded registered summaries agree without deriving declarations from 489 events", async () => {
-  const f = file()
+  const f = await file()
   // Explicit source facts fixture: an empty registration must stay empty.
-  const e = db.insert(schema.enterprise).values({ name: 'controlled681', nameNorm: 'controlled681' }).returning().get()
-  const r = db.insert(schema.record).values({ enterpriseId: e.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
-  for (let i = 0; i < 489; i++) {
-    const event = db.insert(schema.recordEvent).values({ recordId: r.id, eventType: 'award', year: i < 484 ? 2023 : null, batchSeq: i < 484 ? 1 : null }).returning().get()
-    db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: f.relPath }).run()
-  }
-  const facts = () => [db.select().from(schema.storedFile).all(), db.select().from(schema.storedFilePart).all(), db.select().from(schema.fileDeclaration669).all(), db.select().from(schema.recordEvent).all(), db.select().from(schema.recordEvidence).all()]
-  const before = facts()
+  const { ledger } = await seedLedger('controlled681')
+  const events = await db.insert(recordEvent).values(
+    Array.from({ length: 489 }, (_, i): typeof recordEvent.$inferInsert => ({
+      recordId: ledger.id, eventType: 'award', year: i < 484 ? 2023 : null, batchSeq: i < 484 ? 1 : null,
+    })),
+  ).returning()
+  await db.insert(recordEvidence).values(events.map(event => ({ recordEventId: event.id, sourceFile: f.relPath })))
+  const facts = () => Promise.all([
+    db.select().from(storedFile).orderBy(storedFile.id),
+    db.select().from(storedFilePart).orderBy(storedFilePart.id),
+    db.select().from(fileDeclaration669).orderBy(fileDeclaration669.declarationId),
+    db.select().from(recordEvent).orderBy(recordEvent.id),
+    db.select().from(recordEvidence).orderBy(recordEvidence.id),
+  ])
+  const before = await facts()
   const expanded = await state(f.id)
   expect(expanded.declarations).toEqual([])
   expect(expanded.registeredSummary).toEqual({ count: 0, declarations: [] })
@@ -770,7 +830,7 @@ it("list and expanded registered summaries agree without deriving declarations f
   expect(response.status).toBe(200)
   const list = await response.json()
   expect(list.rows.find((row: {id: number}) => row.id === f.id)).toMatchObject({ referenceCount: 489, registeredSummary: expanded.registeredSummary })
-  expect(facts()).toEqual(before)
+  expect(await facts()).toEqual(before)
   const tools = (await rpc('tools/list', {})).body.result.tools
   expect(tools.find((t: {name: string}) => t.name === 'get_file_parse_result').description).toContain('displaySequence')
   const spec = await (await Promise.resolve(new Response(JSON.stringify(await readDevelopmentDiscovery())))).json()

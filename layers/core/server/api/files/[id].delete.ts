@@ -3,9 +3,7 @@ import { maintainPostgresFile } from '../../utils/file-maintenance-postgres'
 import { quarantinePostgresFile } from '../../utils/file-physical-postgres'
 import { appLog, requestLogContext } from '../../../lib/logging'
 import { requireApiToken } from '../../utils/api-guard'
-import { quarantineStoredFile } from '../../utils/file-physical'
-import { useDb } from '@db'
-import { hasFileMaintenanceControls, maintainStoredFileSync, splitFileMaintenanceBody } from '../../utils/file-maintenance'
+import { hasFileMaintenanceControls, splitFileMaintenanceBody } from '../../utils/file-maintenance-shared'
 
 /**
  * 把一个文件移出库与索引。`DELETE /api/files/:id`
@@ -65,15 +63,13 @@ export default defineEventHandler(async (event) => {
     if (deleteDisk) {
       const { options } = splitFileMaintenanceBody(body, 'remove')
       requireApiToken(event)
-      const receipt = pg ? await quarantinePostgresFile(pg, root, id, options) : quarantineStoredFile(useDb(), root, id, options)
+      const receipt = await quarantinePostgresFile(pg, root, id, options)
       appLog({ module: 'core', source: 'file', operation: 'file.disk.remove', outcome: 'success', fileId: id }, requestLogContext(event))
       return receipt
     }
     else {
       const { options } = splitFileMaintenanceBody(body, 'remove')
-      const row = pg
-        ? await maintainPostgresFile(pg, root, id, 'remove', {}, options)
-        : maintainStoredFileSync(useDb(), id, 'remove', {}, options)
+      const row = await maintainPostgresFile(pg, root, id, 'remove', {}, options)
       result = { row, diskDeleted: false, referenceCount: row.referenceCount }
     }
   } catch (error) {

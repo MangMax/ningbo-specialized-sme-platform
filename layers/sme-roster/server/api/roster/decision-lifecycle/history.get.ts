@@ -1,3 +1,3 @@
-import { decisionRoute102 } from '../../../utils/decision-lifecycle-102-route'
+import { decisionRoute102 } from '../../../utils/decision-lifecycle-route'
 defineRouteMeta({ openAPI: { tags: ['差异决定'], summary: '有界分页差异决定历史', description: '必须给 id 或完整 enterpriseId/titleCode/direction；page>=1，pageSize<=50；按 recordedAt DESC,id DESC。没有平台原文。', parameters: [{ name: 'id', in: 'query', schema: { type: 'integer' } }, { name: 'enterpriseId', in: 'query', schema: { type: 'integer' } }, { name: 'titleCode', in: 'query', schema: { type: 'string' } }, { name: 'direction', in: 'query', schema: { type: 'string' } }, { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } }, { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 50, maximum: 50 } }], responses: { 200: { description: 'rows/total/page/pageSize' }, 400: { description: '范围或分页非法' }, 404: { description: '目标不存在' } } } })
 export default decisionRoute102('history')

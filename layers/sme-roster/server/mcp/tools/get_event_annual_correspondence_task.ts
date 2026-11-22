@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { JOB_ID_RE } from '../../../../core/lib/job'
-import { annualTaskContext } from '../../utils/annual-correspondence-read'
+import { annualTaskContext } from '../../utils/annual-correspondence-projection'
 import { annualTaskMcpRequest } from '../../utils/annual-correspondence-mcp'
 export default defineMcpTool({
   name: 'get_event_annual_correspondence_task',
@@ -11,6 +11,6 @@ export default defineMcpTool({
   inputSchema: { id: z.string().regex(JOB_ID_RE) },
   handler: async (input, extra) => {
     const context = annualTaskContext()
-    return annualTaskMcpRequest('detail', input, extra, { get db() { return context.db }, readScope: context.readScope, filesDir: context.filesDir, mcpToken: useRuntimeConfig().mcpToken })
+    return annualTaskMcpRequest('detail', input, extra, { filesDir: context.filesDir, mcpToken: useRuntimeConfig().mcpToken })
   },
 })

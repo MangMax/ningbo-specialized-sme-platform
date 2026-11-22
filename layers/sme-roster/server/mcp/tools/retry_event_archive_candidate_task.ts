@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
-import { dispatchCandidateJobMcp } from '../../utils/candidate-job-api'
+import { dispatchPostgresCandidateJobMcp } from '../../utils/candidate-job-runtime'
 import { writeGuard } from '../../../../core/server/utils/mcp-guard'
 export default defineMcpTool({
   name: 'retry_event_archive_candidate_task',
@@ -17,10 +16,7 @@ export default defineMcpTool({
   enabled: writeGuard,
   inputSchema: { id: z.string().length(26) },
   handler: async (input) =>
-    dispatchCandidateJobMcp('retry', input, {
-      get db() {
-        return useDb()
-      },
+    dispatchPostgresCandidateJobMcp('retry', input, {
       filesDir: useRuntimeConfig().filesDir,
       authorized: true,
     }),

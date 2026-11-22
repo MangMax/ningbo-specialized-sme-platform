@@ -1,8 +1,7 @@
 import { maintainPostgresFile } from '../../../utils/file-maintenance-postgres'
 import { usePostgresFileDb } from '../../../utils/file-store-postgres'
 import { requestLogContext } from '../../../../lib/logging'
-import { useDb } from '@db'
-import { maintainStoredFile, splitFileMaintenanceBody, requireVersionedFileMaintenanceOptions } from '../../../utils/file-maintenance'
+import { splitFileMaintenanceBody, requireVersionedFileMaintenanceOptions } from '../../../utils/file-maintenance-shared'
 import { requireApiToken } from '../../../utils/api-guard'
 
 defineRouteMeta({ openAPI: {
@@ -30,9 +29,7 @@ export default defineEventHandler(async (event) => {
     const pg = usePostgresFileDb()
     const root = useRuntimeConfig().filesDir
     const context = requestLogContext(event)
-    return pg
-      ? await maintainPostgresFile(pg, root, id, 'restore', {}, parsed, context)
-      : await maintainStoredFile(useDb(), root, id, 'restore', {}, parsed, context)
+    return await maintainPostgresFile(pg, root, id, 'restore', {}, parsed, context)
   }
   catch (error) { throw createError({ statusCode: (error as { statusCode?: number }).statusCode ?? 500, message: (error as Error).message }) }
 })

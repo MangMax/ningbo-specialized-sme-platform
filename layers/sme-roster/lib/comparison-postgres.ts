@@ -2,19 +2,20 @@ import { and, count, desc, eq, getTableColumns, gt, inArray, notExists, or, sql 
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
 import { chunk } from 'es-toolkit'
+import { isCurrentPlatformCollection, isCurrentPlatformCaptureRow } from './platform/current-observation-postgres'
 import { normalizeUscc } from './domain'
-import { readCuration, projectCuratedComparison } from './curation'
-import { getPostgresComparison } from './comparison'
+import { readCuration, projectCuratedComparison } from './curation-model'
+import { getPostgresComparison } from './comparison-heads-postgres'
 import type { ComparisonRowFilter } from './comparison-filter'
 import { attachReconcile, readReconcile } from './reconcile'
-import { filterCuratedComparison, projectComparisonSummary, selectComparisonSummaryPage, type SummaryDisposition } from './comparison-summary'
+import { filterCuratedComparison, projectComparisonSummary, selectComparisonSummaryPage, type SummaryDisposition } from './comparison-summary-projection'
 import { enterprise, enterpriseAlias } from '../../../db/postgresql/enterprise-tables'
 import {
-  platformBusinessObservation, platformCollection, platformLegacyQueryAlias, platformLegacyRelationAlias,
+  platformBusinessObservation, platformCollection,
   platformObservationAssignment,
 } from '../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../db/postgresql/roster-selection-tables'
-import { projectPlatformComparisonEvidence, type ComparisonObservation } from './comparison-platform'
+import { projectPlatformComparisonEvidence, type ComparisonObservation } from './comparison-platform-projection'
 import { readPostgresFingerprintQueries, readPostgresRelationFingerprints } from '../server/utils/postgres-platform-fingerprint'
 import { readPostgresObservationComparisonFacts } from '../server/utils/record-correspondence-target-postgres'
 import { readPostgresQueryAssessments } from './roster/query-assessment-postgres'
@@ -47,12 +48,11 @@ async function readMemberships(db: Pick<NodePgDatabase, 'select' | 'selectDistin
     const owned = await db.selectDistinct({
       enterpriseId: platformObservationAssignment.enterpriseId,
       collectionId: platformCollection.id,
-      queryId: platformLegacyQueryAlias.oldId,
+      queryId: platformCollection.publicId,
     }).from(platformObservationAssignment)
       .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.id, platformObservationAssignment.observationId))
       .innerJoin(platformCollection, eq(platformCollection.id, platformBusinessObservation.collectionId))
-      .innerJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformCollection.id))
-      .where(and(inArray(platformObservationAssignment.enterpriseId, subjectIds), notExists(
+      .where(and(inArray(platformObservationAssignment.enterpriseId, subjectIds), isCurrentPlatformCaptureRow(db), notExists(
         db.select({ revision: latest.revision }).from(latest).where(and(
           eq(latest.observationId, platformObservationAssignment.observationId),
           gt(latest.revision, platformObservationAssignment.revision),
@@ -68,10 +68,9 @@ async function readMemberships(db: Pick<NodePgDatabase, 'select' | 'selectDistin
   const queriedOwners = queriedEnterpriseIds(subjects)
   for (const keys of chunk([...queriedOwners.keys()], ownerBatchSize)) {
     const queried = await db.select({
-      key: platformCollection.queryKey, collectionId: platformCollection.id, queryId: platformLegacyQueryAlias.oldId,
+      key: platformCollection.queryKey, collectionId: platformCollection.id, queryId: platformCollection.publicId,
     }).from(platformCollection)
-      .innerJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformCollection.id))
-      .where(inArray(platformCollection.queryKey, keys))
+      .where(and(inArray(platformCollection.queryKey, keys), isCurrentPlatformCollection(db)))
     for (const row of queried) {
       for (const enterpriseId of queriedOwners.get(row.key) ?? []) {
         const member = { enterpriseId, collectionId: row.collectionId, queryId: row.queryId, owned: false }
@@ -142,11 +141,11 @@ export function readPostgresWholeComparison(db: NodePgDatabase, input: Compariso
         measureCode: differenceReason.measureCode,
         verificationStatus: differenceReason.verificationStatus,
         recordedAt: differenceReason.recordedAt,
-        evidenceQueryId: platformLegacyQueryAlias.oldId,
-        evidenceRelationId: platformLegacyRelationAlias.oldId,
+        evidenceQueryId: platformCollection.publicId,
+        evidenceRelationId: platformBusinessObservation.publicId,
       }).from(differenceReason)
-        .leftJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, differenceReason.evidenceQueryId))
-        .leftJoin(platformLegacyRelationAlias, eq(platformLegacyRelationAlias.observationId, differenceReason.evidenceRelationId))
+        .leftJoin(platformCollection, eq(platformCollection.id, differenceReason.evidenceQueryId))
+        .leftJoin(platformBusinessObservation, eq(platformBusinessObservation.id, differenceReason.evidenceRelationId))
         .where(inArray(differenceReason.enterpriseId, owners))
         .orderBy(...coordinates, desc(differenceReason.recordedAt), desc(differenceReason.id))
       for (const row of batch) dispositions.push(row)
@@ -154,10 +153,10 @@ export function readPostgresWholeComparison(db: NodePgDatabase, input: Compariso
     const selectedQueryIds = [...new Set(selected.flatMap(row => byOwner.get(row.enterpriseId) ?? []))]
     const counts = new Map<number, number>()
     for (const queryIds of chunk(selectedQueryIds, ownerBatchSize)) {
-      const batch = await tx.select({ queryId: platformLegacyQueryAlias.oldId, count: count() })
-        .from(platformLegacyQueryAlias)
-        .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.collectionId, platformLegacyQueryAlias.collectionId))
-        .where(inArray(platformLegacyQueryAlias.oldId, queryIds)).groupBy(platformLegacyQueryAlias.oldId)
+      const batch = await tx.select({ queryId: platformCollection.publicId, count: count() })
+        .from(platformCollection)
+        .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.collectionId, platformCollection.id))
+        .where(and(inArray(platformCollection.publicId, queryIds), isCurrentPlatformCaptureRow(tx))).groupBy(platformCollection.publicId)
       for (const row of batch) counts.set(row.queryId, row.count)
     }
     const assessment = await readPostgresQueryAssessments(tx, selected)
@@ -192,10 +191,10 @@ async function readPostgresComparisonEvidence<T extends Parameters<typeof projec
       .orderBy(sql`${enterpriseAlias.nameNorm} COLLATE "C"`, enterpriseAlias.id)
     for (const row of aliasBatch) aliases.push(row)
     const dispositionBatch = await tx.select({
-      ...stored, evidenceQueryId: platformLegacyQueryAlias.oldId, evidenceRelationId: platformLegacyRelationAlias.oldId,
+      ...stored, evidenceQueryId: platformCollection.publicId, evidenceRelationId: platformBusinessObservation.publicId,
     }).from(differenceReason)
-      .leftJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, stored.evidenceQueryId))
-      .leftJoin(platformLegacyRelationAlias, eq(platformLegacyRelationAlias.observationId, stored.evidenceRelationId))
+      .leftJoin(platformCollection, eq(platformCollection.id, stored.evidenceQueryId))
+      .leftJoin(platformBusinessObservation, eq(platformBusinessObservation.id, stored.evidenceRelationId))
       .where(inArray(stored.enterpriseId, owners)).orderBy(desc(stored.recordedAt), desc(stored.id))
     for (const row of dispositionBatch) {
       dispositions.push({
@@ -206,7 +205,7 @@ async function readPostgresComparisonEvidence<T extends Parameters<typeof projec
       })
     }
   }
-  const queries = [...(await readPostgresFingerprintQueries(tx, [...new Set(membership.map(row => row.queryId))], false)).values()]
+  const queries = [...(await readPostgresFingerprintQueries(tx, [...new Set(membership.map(row => row.queryId))])).values()]
     .map(row => row.query).sort((a,b) => a.id - b.id)
   const collections = [...new Set(membership.filter(row => row.owned).map(row => row.collectionId))]
   const recognized = queries.filter(query => query.interface === 'recognized_list').map(query => query.id)
@@ -214,13 +213,12 @@ async function readPostgresComparisonEvidence<T extends Parameters<typeof projec
   const collectionBatches = chunk(collections, ownerBatchSize - 1)
   const recognizedBatches = chunk(recognized, ownerBatchSize - 1)
   for (let index = 0; index < Math.max(collectionBatches.length, recognizedBatches.length); index++) {
-    const batch = await tx.select({ id: platformLegacyRelationAlias.oldId }).from(platformBusinessObservation)
-      .innerJoin(platformLegacyRelationAlias, eq(platformLegacyRelationAlias.observationId, platformBusinessObservation.id))
-      .innerJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformBusinessObservation.collectionId))
-      .where(or(
+    const batch = await tx.select({ id: platformBusinessObservation.publicId }).from(platformBusinessObservation)
+      .innerJoin(platformCollection, eq(platformCollection.id, platformBusinessObservation.collectionId))
+      .where(and(isCurrentPlatformCaptureRow(tx), or(
         inArray(platformBusinessObservation.collectionId, collectionBatches[index] ?? []),
-        inArray(platformLegacyQueryAlias.oldId, recognizedBatches[index] ?? []),
-      ))
+        inArray(platformCollection.publicId, recognizedBatches[index] ?? []),
+      )))
     for (const row of batch) relationIds.add(row.id)
   }
   const originals = await readPostgresRelationFingerprints(tx, { relationIds: [...relationIds] })
@@ -231,7 +229,7 @@ async function readPostgresComparisonEvidence<T extends Parameters<typeof projec
   for (const { relation, observationId } of originals) {
     const stored = archive.get(observationId)
     if (!stored) continue
-    const { rawFields: _raw, normalizationConflicts, ...archiveProcessFacts } = stored
+    const { rawFields: _raw, sqlFactTitle: _title, normalizationConflicts, ...archiveProcessFacts } = stored
     facts.set(relation.id, { normalizationConflicts, archiveProcessFacts })
   }
   return projectPlatformComparisonEvidence(rows, aliases, dispositions, queriedEnterpriseIds(subjects), queries, originals.map(row => row.relation)

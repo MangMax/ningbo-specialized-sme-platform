@@ -1,38 +1,29 @@
-import { reviewFixtureRows } from '../imports/fixtures/reviewed-announcement'
-import { supplementAnnouncement } from '../../../layers/sme-roster/server/utils/announcement-intake'
-import { createRuntimeSchema } from '../../../db/create-runtime'
+import { reviewPostgresFixtureRows } from '../imports/fixtures/reviewed-announcement-postgres'
+import { supplementPostgresAnnouncement } from '../../../layers/sme-roster/server/utils/announcement-supplement-postgres'
+import { useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, defineEventHandler } from 'h3'
-import Database from 'better-sqlite3'
-import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import pg from 'pg'
+import { sql as pgSql } from 'drizzle-orm'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv'
-import * as schema from '../../../db/schema'
 import type { OfficialPublishedRow, RosterImportPayload, RosterImportRequest, RosterImportRecord } from '../../../layers/sme-roster/lib/roster-import-client'
 import { minimalPdf } from '../../support/minimal-pdf'
-import { commitRosterImport, preflightRosterImport, readImportBatchOutcome } from '../../../layers/sme-roster/server/utils/roster-import'
 
-const current = vi.hoisted((): { db?: BetterSQLite3Database<typeof schema>; filesDir: string } => ({ filesDir: '' }))
-vi.mock('@db', () => ({ useDb: () => { if (!current.db) throw new Error('Synthetic database unavailable'); return current.db } }))
-type Execute = typeof import('../../../layers/sme-roster/server/utils/import-execution')['importExecutor']['execute']
-// Only off-process admission is replaced; production H3 routes, commands and SQLite run unchanged.
-vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: {
-  stage: async (db: Parameters<Execute>[0], request: Parameters<Execute>[2], errors: NonNullable<Parameters<Execute>[3]>) => {
-    const { stageAnnouncement } = await import('../../../layers/sme-roster/server/utils/announcement-intake')
-    return stageAnnouncement(db as Parameters<typeof stageAnnouncement>[0], request, errors)
-  },
-  execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
+const current = { filesDir: '' }
+const createDatabase = useIsolatedPostgresCases()
 const closes: (() => void | Promise<void>)[] = []
-afterEach(async () => { for (const close of closes.splice(0).reverse()) await close() })
+afterEach(async () => { vi.restoreAllMocks(); for (const close of closes.splice(0).reverse()) await close() })
 afterAll(() => vi.unstubAllGlobals())
 const router = createRouter()
 let itemsMetadata: unknown
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
+  vi.stubGlobal('defineRouteMeta', (meta: unknown) => meta)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-c-api', mcpToken: 'synthetic-c-mcp', filesDir: current.filesDir }))
   router.post('/api/roster/import/preflight', (await import('../../../layers/sme-roster/server/api/roster/import/preflight.post')).default)
   router.post('/api/roster/import/commit', (await import('../../../layers/sme-roster/server/api/roster/import/commit.post')).default)
@@ -54,15 +45,29 @@ const bytes = 'synthetic official source\n', digest = createHash('sha256').updat
 async function fixture() {
   const dir = mkdtempSync('/tmp/issue351-h3-'), filesDir = join(dir, 'files'); mkdirSync(filesDir)
   writeFileSync(join(filesDir, 'notice.txt'), bytes); writeFileSync(join(filesDir, 'other.txt'), 'different content\n')
-  const sqlite = new Database(join(dir, 'synthetic.sqlite')); sqlite.pragma('foreign_keys=ON')
-  closes.push(() => { expect(sqlite.pragma('foreign_keys', { simple: true })).toBe(1); sqlite.close() })
-  const db = drizzle(sqlite, { schema }); createRuntimeSchema(sqlite)
+  const db = createDatabase()
+  const query = async <T extends pg.QueryResultRow = pg.QueryResultRow>(sql: string, ...args: unknown[]) =>
+    (await db.$client.query<T>(sql, args)).rows
+  const readOne = async <T extends pg.QueryResultRow = pg.QueryResultRow>(sql: string, ...args: unknown[]) =>
+    (await query<T>(sql, ...args))[0]
+  const editBatch = async (batchId: number, edit: (items: any[]) => void) => {
+    const batch = await readOne<{ item_results: string }>('SELECT item_results FROM import_batch WHERE id=$1', batchId)
+    const items = JSON.parse(batch!.item_results)
+    edit(items)
+    await query('UPDATE import_batch SET item_results=$1 WHERE id=$2', JSON.stringify(items), batchId)
+  }
+  const seedRetainedPath = (id: number, path: string) => db.transaction(async tx => {
+    await tx.execute(pgSql`ALTER TABLE official_evidence_row_revision DISABLE TRIGGER official_evidence_revision_append_only`)
+    await tx.execute(pgSql`UPDATE official_evidence_row_revision SET path=${path} WHERE evidence_id=${id}`)
+    await tx.execute(pgSql`ALTER TABLE official_evidence_row_revision ENABLE TRIGGER official_evidence_revision_append_only`)
+  })
   // Only infrastructure catalog uses SQL. Domain state is established through public commands below.
   for (const [id, path, body] of [[1,'notice.txt',bytes],[2,'other.txt','different content\n']] as const) {
-    sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(?,?,?,'txt',?,?,'synthetic')").run(id,path,path,Buffer.byteLength(body),createHash('sha256').update(body).digest('hex'))
-    sqlite.prepare("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (?, 'jxj', 'announcement', 'specialized_sme')").run(id)
+    await query("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES($1,$2,$3,'txt',$4,$5,'synthetic')", id,path,path,Buffer.byteLength(body),createHash('sha256').update(body).digest('hex'))
+    await query("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES ($1, 'jxj', 'announcement', 'specialized_sme')", id)
   }
-  current.db = db; current.filesDir = filesDir
+  current.filesDir = filesDir
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-c-api', mcpToken: 'synthetic-c-mcp', filesDir }))
   const server = createServer(toNodeListener(createApp().use(router)))
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0,'127.0.0.1',resolve) })
   closes.push(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())))
@@ -75,18 +80,19 @@ async function fixture() {
   }
   const request = (payload: RosterImportPayload,key: string): RosterImportRequest => ({idempotencyKey:key,sourceKind:'announcement',sourceIdentity:'synthetic-c',payload})
   const commit = async (payload: RosterImportPayload,key: string) => {
-    const input=request(payload,key),plan=await http('/api/roster/import/preflight',input); expect(plan.status).toBe(200)
+    const input=request(payload,key),plan=await http('/api/roster/import/preflight',input); expect(plan.status, JSON.stringify(plan.body)).toBe(200)
     const parsed=resultSchema.parse(plan.body); expect(parsed.preflight?.conflicts).toEqual([])
     const bound=parsed.preflight?.officialEvidencePlanHash ? {...input,payload:{...payload,officialEvidencePlanHash:parsed.preflight.officialEvidencePlanHash}} : input
-    const result=await http('/api/roster/import/commit',bound); expect(result.status).toBe(200)
+    const result=await http('/api/roster/import/commit',bound); expect(result.status, JSON.stringify(result.body)).toBe(200)
     const stage = z.object({ status: z.literal('staged'), intakeId: z.number(), sourceDigest: z.string(), officialEvidencePreflightRequired: z.literal(true).optional() }).safeParse(result.body)
     let receipt = result.body
     if (stage.success) {
-      const review = reviewFixtureRows(db, stage.data.sourceDigest, bound)
+      const review = await reviewPostgresFixtureRows(db, stage.data.sourceDigest, bound)
       const preview = stage.data.officialEvidencePreflightRequired
-        ? await supplementAnnouncement(db, stage.data.intakeId, { ...review, preflight: true }, filesDir)
+        ? await supplementPostgresAnnouncement(db, stage.data.intakeId, { ...review, preflight: true }, filesDir)
         : undefined
-      receipt = await supplementAnnouncement(db, stage.data.intakeId, { ...review, officialEvidencePlanHash: preview?.officialEvidencePlanHash }, filesDir)
+      if (preview && preview.status !== 'preflighted') throw new Error('Expected announcement preflight')
+      receipt = await supplementPostgresAnnouncement(db, stage.data.intakeId, { ...review, officialEvidencePlanHash: preview?.officialEvidencePlanHash }, filesDir)
     }
     const committed = resultSchema.parse(receipt)
     expect(committed.status, JSON.stringify(committed)).toBe(stage.success ? 'supplemented' : 'committed')
@@ -95,11 +101,11 @@ async function fixture() {
   const row = (nameRaw: string | null,listNo=1): OfficialPublishedRow => ({nameRaw,usccRaw:'原统代',districtRaw:'原属地',declaration:{kind:'independent',sourceDocument:{source:'jxj',title:'Declared publication',docNumber:null,issueDate:null,path:'notice.txt'},basis:'Independent publication verified'},storedFileId:1,path:'notice.txt',sha256:digest,bytes:Buffer.byteLength(bytes),attachment:null,sectionKey:'名单',listNo,page:null,sourceBindingKnown:true,actor:{type:'agent',id:'synthetic-c'},basis:'Exact published row'})
   const record = (name:string,year:number,publishedRow?:OfficialPublishedRow,uscc?:string): RosterImportRecord => ({enterprise:{name,...(uscc?{uscc}:{})},titleCode:'specialized_sme',events:[{eventType:'award',year,evidence:[{sourceFile:'notice.txt',attachment:null,listNo:publishedRow?.listNo??year,page:null,...(publishedRow?{publishedRow}:{})}]}]})
   const announcement = (records:RosterImportRecord[]):RosterImportPayload => ({announcement:{sourceDocument:{source:'jxj',title:'Declared publication'},records}})
-  const evidenceIds = () => z.array(z.object({id:z.number(),record_event_id:z.number(),list_no:z.number()})).parse(sqlite.prepare('SELECT id,record_event_id,list_no FROM record_evidence ORDER BY id').all())
+  const evidenceIds = () => query<{ id: number; record_event_id: number; list_no: number }>('SELECT id::int,record_event_id::int,list_no::int FROM record_evidence ORDER BY id')
   const exact = async(id:number) => {const r=await http('/api/roster/evidence/'+id);expect(r.status).toBe(200);return exactSchema.parse(r.body)}
   const correct = async(id:number,publishedRow:OfficialPublishedRow|undefined,key:string) => {
     const target=await exact(id)
-    const stored=z.object({n:z.number()}).parse(sqlite.prepare('SELECT coalesce(max(revision),0) n FROM official_evidence_row_revision WHERE evidence_id=?').get(id))
+    const stored=z.object({n:z.number()}).parse(await readOne('SELECT coalesce(max(revision),0)::int n FROM official_evidence_row_revision WHERE evidence_id=$1', id))
     const command={idempotencyKey:key,actor:{type:'agent',id:'synthetic-c'},basis:'Verified correction',operations:[{evidenceId:id,eventId:target.eventId,recordId:target.recordId,enterpriseId:target.enterpriseId,expectedVersion:target.version,coordinate:{sourceFile:publishedRow?.path??'other.txt',attachment:null,listNo:publishedRow?.listNo??1,page:null},...(publishedRow?{publishedRow,expectedRowRevision:stored.n}:{})}]}
     const pre=await http('/api/roster/evidence/corrections/preflight',command);expect(pre.status,JSON.stringify(pre.body)).toBe(200)
     const hash=z.object({planHash:z.string()}).parse(pre.body).planHash
@@ -109,35 +115,35 @@ async function fixture() {
   const seedMerge = async () => {
     await commit(announcement([record('2021旧名',2021,row('2021旧名'),undefined)]),'old')
     await commit(announcement([record('2024现名',2024,row('2024新名',2),'91330211255994457P')]),'new')
-    const old=evidenceIds()[0]!,origin=await exact(old.id)
+    const old=(await evidenceIds())[0]!,origin=await exact(old.id)
     const merge=await commit({merges:[{fromEnterpriseId:origin.enterpriseId,intoUscc:'91330211255994457P',note:'Verified historical legal merge'}]},'merge')
     const index=merge.result.items!.findIndex(i=>i.kind==='merge')
     const batchId=merge.result.batchId!
-    const receipt=z.object({id:z.number()}).parse(sqlite.prepare('SELECT id FROM import_receipt WHERE batch_id=? ORDER BY id DESC LIMIT 1').get(batchId))
+    const receipt=z.object({id:z.number()}).parse(await readOne('SELECT id::int FROM import_receipt WHERE batch_id=$1 ORDER BY id DESC LIMIT 1', batchId))
     return {old,origin,merge,index,batchId,receiptId:receipt.id,selector:`source=private_batch&batchId=${batchId}&itemIndex=${index}&oldRecordId=${origin.recordId}`}
   }
-  return {dir,db,sqlite,http,commit,row,record,announcement,evidenceIds,exact,correct,seedMerge}
+  return {dir,query,readOne,editBatch,seedRetainedPath,http,commit,row,record,announcement,evidenceIds,exact,correct,seedMerge}
 }
 
 it('reads 2021 old and 2024 new published names independently through exact public evidence and event',async()=>{
   const f=await fixture();await f.commit(f.announcement([f.record('现用名',2021,f.row(' 2021旧名\u0000🙂 ')),f.record('现用名',2024,f.row('2024新名',2))]),'years')
-  const ids=f.evidenceIds();const old=await f.http(`/api/roster/evidence/${ids[0]!.id}?official=latest`),newer=await f.http(`/api/roster/evidence/${ids[1]!.id}?official=latest`)
+  const ids=await f.evidenceIds();const old=await f.http(`/api/roster/evidence/${ids[0]!.id}?official=latest`),newer=await f.http(`/api/roster/evidence/${ids[1]!.id}?official=latest`)
   expect(old.status).toBe(200);expect(newer.status).toBe(200)
   expect(latestSchema.parse(old.body).official.row).toMatchObject({nameRaw:' 2021旧名\u0000🙂 ',usccRaw:'原统代',districtRaw:'原属地',path:'notice.txt',sha256:digest,bytes:Buffer.byteLength(bytes),sectionKey:'名单',listNo:1})
   expect(latestSchema.parse(newer.body).official.row).toMatchObject({nameRaw:'2024新名',listNo:2})
   expect(eventSchema.parse((await f.http(`/api/roster/events/${ids[0]!.record_event_id}?official=latest`)).body).official.rows).toMatchObject([{nameRaw:' 2021旧名\u0000🙂 '}])
 })
 it('keeps legacy anonymous reads unchanged and rejects sensitive opt-in before any database read',async()=>{
-  const f=await fixture();await f.commit(f.announcement([f.record('Canonical',2021)]),'legacy');const id=f.evidenceIds()[0]!.id
+  const f=await fixture();await f.commit(f.announcement([f.record('Canonical',2021)]),'legacy');const id=(await f.evidenceIds())[0]!.id
   const original=await f.http('/api/roster/evidence/'+id,undefined,null);expect(original.status).toBe(200);expect(original.body).not.toHaveProperty('official')
-  f.sqlite.pragma('query_only=ON');const spy=vi.spyOn(f.db,'transaction'),get=vi.spyOn(f.db,'get'),all=vi.spyOn(f.db,'all')
+  const observer=observeDriver()
   for(const path of [`/api/roster/evidence/${id}?official=latest`,`/api/roster/events/1?official=latest`,'/api/roster/import/receipts/items?projection=snapshot&source=private_batch&batchId=1&itemIndex=0&oldRecordId=1']){const r=await f.http(path,undefined,null);expect(r.status).toBe(401);expect(r.body).toMatchObject({error:{code:'unauthorized'}})}
-  expect(spy).not.toHaveBeenCalled();expect(get).not.toHaveBeenCalled();expect(all).not.toHaveBeenCalled();spy.mockRestore();get.mockRestore();all.mockRestore()
+  observer.restore();expect(observer.results).toEqual([])
   const legacy=await f.http(`/api/roster/evidence/${id}?official=latest`);expect(latestSchema.parse(legacy.body).official).toMatchObject({availability:'unknown_legacy',row:null})
   expect(eventSchema.parse((await f.http('/api/roster/events/1?official=latest')).body).official).toMatchObject({rows:[],uncaptured:'unknown_legacy'})
 })
 it('reads descending revision pages and never inherits raw on cross-content correction',async()=>{
-  const f=await fixture();await f.commit(f.announcement([f.record('Canonical',2021,f.row('旧名'))]),'seed');const id=f.evidenceIds()[0]!.id
+  const f=await fixture();await f.commit(f.announcement([f.record('Canonical',2021,f.row('旧名'))]),'seed');const id=(await f.evidenceIds())[0]!.id
   const original=latestSchema.parse((await f.http(`/api/roster/evidence/${id}?official=latest`)).body).official.row!
   await f.correct(id,{...f.row('新核旧名'),declaration:{kind:'existing',sourceDocumentId:original.sourceDocumentId!,basis:'Same declaration verified'}},'rev2')
   const first=historySchema.parse((await f.http(`/api/roster/evidence/${id}?official=history&pageSize=1`)).body).official
@@ -147,15 +153,16 @@ it('reads descending revision pages and never inherits raw on cross-content corr
   await f.correct(id,{...f.row(null),usccRaw:null,districtRaw:null,declaration:{kind:'existing',sourceDocumentId:original.sourceDocumentId!,basis:'New content explicitly verified'},storedFileId:2,path:'other.txt',sha256:createHash('sha256').update('different content\n').digest('hex'),bytes:Buffer.byteLength('different content\n')},'cross-content');expect(latestSchema.parse((await f.http(`/api/roster/evidence/${id}?official=latest`)).body).official.row).toMatchObject({revision:3,nameRaw:null,usccRaw:null,districtRaw:null,path:'other.txt'})
 })
 it('selects the exact private merge snapshot with captured origin after the old live owners are deleted',async()=>{
-  const f=await fixture(),s=await f.seedMerge(),before=f.sqlite.prepare('SELECT item_results FROM import_batch WHERE id=?').get(s.batchId)
+  const f=await fixture(),s=await f.seedMerge(),before=await f.readOne('SELECT item_results FROM import_batch WHERE id=$1',s.batchId)
   const result=await f.http('/api/roster/import/receipts/items?projection=snapshot&'+s.selector);expect(result.status).toBe(200)
   expect(snapshotSchema.parse(result.body)).toMatchObject({source:'private_batch',batchId:s.batchId,receiptId:null,itemIndex:s.index,oldRecordId:s.origin.recordId,storedRedacted:false,responseRedacted:true,availability:'available',snapshot:{id:s.origin.recordId,enterpriseId:s.origin.enterpriseId,nameRaw:'2021旧名'}})
-  expect(result.body).not.toHaveProperty('eventIds');expect(f.sqlite.prepare('SELECT id FROM record WHERE id=?').get(s.origin.recordId)).toBeUndefined()
+  expect(result.body).not.toHaveProperty('eventIds');expect(await f.readOne('SELECT id FROM record WHERE id=$1',s.origin.recordId)).toBeUndefined()
   const fact=latestSchema.parse((await f.http(`/api/roster/evidence/${s.old.id}?official=latest`)).body).official.row!
   expect(fact.capturedRecordId).toBe(s.origin.recordId);expect(fact.currentOwner?.recordId).not.toBe(s.origin.recordId)
-  expect(f.sqlite.prepare('SELECT item_results FROM import_batch WHERE id=?').get(s.batchId)).toEqual(before)
-  const publicOutputs=[s.merge.result,(await f.http('/api/roster/import/commit',s.merge.bound)).body,readImportBatchOutcome(f.db,'merge')]
+  expect(await f.readOne('SELECT item_results FROM import_batch WHERE id=$1',s.batchId)).toEqual(before)
+  const publicOutputs=[s.merge.result,(await f.http('/api/roster/import/commit',s.merge.bound)).body]
   for(const output of publicOutputs){expect(JSON.stringify(output)).not.toContain('fromRecordSnapshot');expect(JSON.stringify(output)).not.toContain('eventIds');expect(JSON.stringify(output)).toContain('snapshotRef')}
+  expect((await f.http('/api/roster/import/receipts/items?batchId='+s.batchId)).body).toMatchObject({rows:[{kind:'merge',ok:true}]})
 })
 it('does not fallback from an explicitly redacted receipt to the retained private batch',async()=>{
   const f=await fixture(),s=await f.seedMerge()
@@ -164,24 +171,39 @@ it('does not fallback from an explicitly redacted receipt to the retained privat
 })
 it.each(['source=private_batch&batchId=1&receiptId=1&itemIndex=0&oldRecordId=1','source=private_batch&batchId=1&oldRecordId=1','source=redacted_receipt&batchId=1&itemIndex=0&oldRecordId=1','source=private_batch&batchId=1&itemIndex=-1&oldRecordId=1','source=private_batch&batchId=1&itemIndex=0&oldRecordId=1&pageSize=51','source=private_batch&batchId=1&itemIndex=0&oldRecordId=1&maxBytes=65537','source=private_batch&batchId=1&itemIndex=0&oldRecordId=1&extra=1'])('rejects invalid exact snapshot selector case %s',async query=>{const f=await fixture();const r=await f.http('/api/roster/import/receipts/items?projection=snapshot&'+query);expect(r.status).toBe(400);expect(r.body).toMatchObject({error:{code:'invalid_query'}})})
 
-/** Instruments values actually returned by the native driver, not helper stubs. */
-function observeDriver(sqlite:Database.Database) {
-  const results:{sql:string;params:unknown[];result:unknown}[]=[],prepare=sqlite.prepare.bind(sqlite)
-  const spy=vi.spyOn(sqlite,'prepare').mockImplementation((query:string)=>{
-    const statement=prepare(query),get=statement.get.bind(statement),all=statement.all.bind(statement)
-    statement.get=(...params:unknown[])=>{const result=get(...params);results.push({sql:query,params,result});return result}
-    statement.all=(...params:unknown[])=>{const result=all(...params);results.push({sql:query,params,result});return result}
-    return statement
+/** Observe the actual projection crossing the PostgreSQL wire. */
+function observeDriver() {
+  const results: { sql: string; params: unknown[]; result: unknown }[] = []
+  const query = pg.Client.prototype.query
+  const spy = vi.spyOn(pg.Client.prototype, 'query').mockImplementation(function (this: pg.Client, ...args: unknown[]) {
+    const pending = Reflect.apply(query, this, args)
+    if (!(pending instanceof Promise)) return pending
+    const input = args[0] as string | pg.QueryConfig
+    return pending.then((output: pg.QueryResult) => {
+      const row = output.rows?.[0]
+      const result = Array.isArray(row) ? Object.fromEntries(output.fields.map((field, index) => [field.name, row[index]])) : row
+      results.push({ sql: typeof input === 'string' ? input : input.text, params: (args[1] ?? []) as unknown[], result })
+      return output
+    })
   })
-  return {results,restore:()=>spy.mockRestore()}
+  return { results, restore: () => spy.mockRestore() }
 }
+
+function setFixtureField(target: Record<string, any>, path: string, value: unknown) {
+  const keys = path.split('.')
+  const field = keys.pop()!
+  for (const key of keys) target = target[key]
+  target[field] = value
+}
+
+const mergeProjection = (entry: { sql: string }) => entry.sql.startsWith('with "lineage_row"')
 
 it('paginates multiple independent evidence captures at default twenty and maximum fifty without nested histories',async()=>{
   const f=await fixture(),record=f.record('Canonical',2021)
   record.events![0]!.evidence=Array.from({length:51},(_,i)=>({sourceFile:'notice.txt',attachment:null,listNo:i+1,page:null,publishedRow:f.row('row '+(i+1),i+1)}))
   record.events![0]!.evidence!.push({sourceFile:'notice.txt',attachment:null,listNo:999,page:null})
   await f.commit(f.announcement([record]),'multiple')
-  const eventId=f.evidenceIds()[0]!.record_event_id
+  const eventId=(await f.evidenceIds())[0]!.record_event_id
   const first=await f.http(`/api/roster/events/${eventId}?official=latest&maxBytes=65536`);expect(first.status).toBe(200)
   const page=eventSchema.parse(first.body).official;expect(page.rows.map(r=>r.nameRaw)).toEqual(Array.from({length:20},(_,i)=>'row '+(i+1)));expect(page.nextAfterEvidenceId).toBe(20);expect(page.uncaptured).toBe('unknown_legacy')
   const second=eventSchema.parse((await f.http(`/api/roster/events/${eventId}?official=latest&pageSize=50&afterEvidenceId=20&maxBytes=65536`)).body).official
@@ -194,44 +216,39 @@ it('paginates multiple independent evidence captures at default twenty and maxim
 })
 it('paginates fifty-one genuine published revisions with independent descending boundary oracles',async()=>{
   const f=await fixture();await f.commit(f.announcement([f.record('Canonical',2021,f.row('revision 1'))]),'seed')
-  const id=f.evidenceIds()[0]!.id,origin=latestSchema.parse((await f.http(`/api/roster/evidence/${id}?official=latest`)).body).official.row!
+  const id=(await f.evidenceIds())[0]!.id,origin=latestSchema.parse((await f.http(`/api/roster/evidence/${id}?official=latest`)).body).official.row!
   for(let revision=2;revision<=51;revision++) await f.correct(id,{...f.row('revision '+revision),declaration:{kind:'existing',sourceDocumentId:origin.sourceDocumentId!,basis:'Same declaration'}},'revision-'+revision)
   const first=historySchema.parse((await f.http(`/api/roster/evidence/${id}?official=history&maxBytes=65536`)).body).official
   expect(first.rows.map(r=>r.revision)).toEqual(Array.from({length:20},(_,i)=>51-i));expect(first.nextBeforeRevision).toBe(32)
   const max=historySchema.parse((await f.http(`/api/roster/evidence/${id}?official=history&pageSize=50&maxBytes=65536`)).body).official
   expect(max.rows.map(r=>r.revision)).toEqual(Array.from({length:50},(_,i)=>51-i));expect(max.nextBeforeRevision).toBe(2)
   const last=historySchema.parse((await f.http(`/api/roster/evidence/${id}?official=history&beforeRevision=2`)).body).official;expect(last.rows).toMatchObject([{revision:1,nameRaw:'revision 1'}]);expect(last.nextBeforeRevision).toBeNull()
-})
+}, 30_000)
 
 it('pages a gigantic retained event array by bound index without loading arrays or unrelated batch JSON into JS',async()=>{
   const f=await fixture(),s=await f.seedMerge()
   // Explicit extreme legacy fixture, extending the already genuine command-produced fold.
   const array=Array.from({length:20001},(_,i)=>100001+i)
-  const eventPath=`$[${s.index}].detail.lineage.recordsFolded[0].eventIds`
-  f.sqlite.prepare('UPDATE import_batch SET item_results=json_set(item_results,?,json(?)) WHERE id=?').run(eventPath,JSON.stringify(array),s.batchId)
-  const observer=observeDriver(f.sqlite)
+  await f.editBatch(s.batchId, items => { items[s.index].detail.lineage.recordsFolded[0].eventIds = array })
+  const observer=observeDriver()
   const first=await f.http('/api/roster/import/receipts/items?projection=eventIds&'+s.selector);expect(first.status).toBe(200)
   const page=snapshotSchema.parse(first.body);expect(page.eventIds).toEqual(Array.from({length:20},(_,i)=>100001+i));expect(page.nextCursor).toEqual(expect.any(String));expect(first.body).not.toHaveProperty('snapshot')
   const second=await f.http('/api/roster/import/receipts/items?projection=eventIds&pageSize=50&'+s.selector+'&cursor='+page.nextCursor)
   expect(snapshotSchema.parse(second.body).eventIds).toEqual(Array.from({length:50},(_,i)=>100021+i))
   observer.restore()
-  const native=observer.results.filter(r=>r.sql.includes('WITH source_row'))
+  const native=observer.results.filter(mergeProjection)
   expect(native).toHaveLength(2)
   for(const result of native){expect(Buffer.byteLength(JSON.stringify(result.result))).toBeLessThan(2000);expect(result.result).not.toHaveProperty('items');expect(result.result).not.toHaveProperty('fold');expect(result.result).not.toHaveProperty('selected_json')}
-  const query=native[0]!,plan=f.sqlite.prepare('EXPLAIN QUERY PLAN '+query.sql).all(...query.params)
-  expect(JSON.stringify(plan)).toMatch(/SEARCH b USING INTEGER PRIMARY KEY/)
-  expect(query.sql).toMatch(/LIMIT 2/);expect(query.sql).toMatch(/ORDER BY CAST\(key AS INTEGER\)/)
-  expect(query.sql).not.toMatch(/substr\(/i)
-  // Unrelated giant batch stays inside SQLite and cannot affect this exact response.
-  f.sqlite.prepare("INSERT INTO import_batch(idempotency_key,source_kind,source_identity,status,item_results,created_at) VALUES('extreme-unrelated','announcement','synthetic','committed',?,'synthetic')").run(JSON.stringify([{detail:{huge:'UNRELATED'.repeat(700000)}}]))
+  // PostgreSQL's database work stays bounded at the driver even with unrelated private payloads.
+  await f.query("INSERT INTO import_batch(idempotency_key,source_kind,source_identity,status,item_results,created_at) VALUES('extreme-unrelated','announcement','synthetic','committed',$1,'synthetic')", JSON.stringify([{detail:{huge:'UNRELATED'.repeat(700000)}}]))
   expect((await f.http('/api/roster/import/receipts/items?projection=eventIds&'+s.selector)).body).toEqual(first.body)
-  writeFileSync(join(f.dir,'sql-observations.json'),JSON.stringify({native,plan},null,2))
-})
+  writeFileSync(join(f.dir,'sql-observations.json'),JSON.stringify(native,null,2))
+}, 30_000)
 it('rejects cursor reuse across source source-ID item and old-record bindings before querying',async()=>{
-  const f=await fixture(),s=await f.seedMerge(),eventPath=`$[${s.index}].detail.lineage.recordsFolded[0].eventIds`
-  f.sqlite.prepare('UPDATE import_batch SET item_results=json_set(item_results,?,json(?)) WHERE id=?').run(eventPath,'[1,2,3]',s.batchId)
+  const f=await fixture(),s=await f.seedMerge()
+  await f.editBatch(s.batchId, items => { items[s.index].detail.lineage.recordsFolded[0].eventIds = [1, 2, 3] })
   const first=snapshotSchema.parse((await f.http('/api/roster/import/receipts/items?projection=eventIds&pageSize=1&'+s.selector)).body)
-  const observer=observeDriver(f.sqlite)
+  const observer=observeDriver()
   for(const selector of [`source=redacted_receipt&receiptId=${s.receiptId}&itemIndex=${s.index}&oldRecordId=${s.origin.recordId}`,s.selector.replace('batchId='+s.batchId,'batchId=999999'),s.selector.replace('itemIndex='+s.index,'itemIndex=999'),s.selector.replace('oldRecordId='+s.origin.recordId,'oldRecordId=999')]) {
     const result=await f.http('/api/roster/import/receipts/items?projection=eventIds&'+selector+'&cursor='+first.nextCursor);expect(result.status).toBe(400);expect(result.body).toMatchObject({error:{code:'invalid_query'}})
   }
@@ -253,15 +270,15 @@ for(const [label,path,value,code,status] of [
   ['UTF16 oversized field','fromRecordSnapshot.nameRaw','🙂'.repeat(2001),'field_limit',413],
   ['NUL oversized field','fromRecordSnapshot.nameRaw','\0'+'X'.repeat(4000),'field_limit',413],
 ] as const) it('rejects explicit historical corruption '+label,async()=>{
-  const f=await fixture(),s=await f.seedMerge(),jsonPath=`$[${s.index}].detail.lineage.recordsFolded[0].${path}`
-  f.sqlite.prepare('UPDATE import_batch SET item_results=json_set(item_results,?,json(?)) WHERE id=?').run(jsonPath,JSON.stringify(value),s.batchId)
-  const observer=observeDriver(f.sqlite),r=await f.http('/api/roster/import/receipts/items?projection=snapshot&'+s.selector);observer.restore()
+  const f=await fixture(),s=await f.seedMerge()
+  await f.editBatch(s.batchId, items => setFixtureField(items[s.index].detail.lineage.recordsFolded[0], path, value))
+  const observer=observeDriver(),r=await f.http('/api/roster/import/receipts/items?projection=snapshot&'+s.selector);observer.restore()
   expect(r.status).toBe(status);expect(r.body).toMatchObject({error:{code}})
-  const rows=observer.results.filter(r=>r.sql.includes('WITH source_row'));expect(rows).toHaveLength(1)
-  if(label==='oversized field') expect(rows[0]!.result).toMatchObject({availability:'field_limit',projection:null})
+  const rows=observer.results.filter(mergeProjection);expect(rows).toHaveLength(1)
+  if(label==='oversized field') expect(rows[0]!.result).toMatchObject({availability:'field_limit',case:null})
 })
 for(const [label,path,value] of [['failed item','ok',false],['non merge','kind','announcement'],['invalid old enterprise','detail.lineage.fromEnterpriseId',0],['invalid target enterprise','detail.lineage.intoEnterpriseId','2']] as const) it('rejects exact selector for '+label,async()=>{
-  const f=await fixture(),s=await f.seedMerge();f.sqlite.prepare('UPDATE import_batch SET item_results=json_set(item_results,?,json(?)) WHERE id=?').run(`$[${s.index}].${path}`,JSON.stringify(value),s.batchId)
+  const f=await fixture(),s=await f.seedMerge();await f.editBatch(s.batchId, items => setFixtureField(items[s.index], path, value))
   const r=await f.http('/api/roster/import/receipts/items?projection=snapshot&'+s.selector);expect(r.status).toBe(409);expect(r.body).toMatchObject({error:{code:'selector_mismatch'}})
 })
 it('distinguishes missing source wrong item wrong fold duplicate fold and unretained historical snapshot',async()=>{
@@ -269,108 +286,127 @@ it('distinguishes missing source wrong item wrong fold duplicate fold and unreta
   expect(await f.http(url+s.selector.replace('batchId='+s.batchId,'batchId=999999'))).toMatchObject({status:404,body:{error:{code:'missing'}}})
   expect(await f.http(url+s.selector.replace('itemIndex='+s.index,'itemIndex=999'))).toMatchObject({status:409,body:{error:{code:'selector_mismatch'}}})
   expect(await f.http(url+s.selector.replace('oldRecordId='+s.origin.recordId,'oldRecordId=999'))).toMatchObject({status:409,body:{error:{code:'selector_mismatch'}}})
-  const path=`$[${s.index}].detail.lineage.recordsFolded`
-  f.sqlite.prepare("UPDATE import_batch SET item_results=json_insert(item_results,?,json_extract(item_results,?)) WHERE id=?").run(path+'[#]',path+'[0]',s.batchId)
+  await f.editBatch(s.batchId, items => { const folds = items[s.index].detail.lineage.recordsFolded; folds.push(folds[0]) })
   expect(await f.http(url+s.selector)).toMatchObject({status:409,body:{error:{code:'ambiguity'}}})
-  f.sqlite.prepare('UPDATE import_batch SET item_results=json_remove(item_results,?,?) WHERE id=?').run(path+'[1]',path+'[0].fromRecordSnapshot',s.batchId)
+  await f.editBatch(s.batchId, items => { const folds = items[s.index].detail.lineage.recordsFolded; folds.pop(); delete folds[0].fromRecordSnapshot })
   expect(snapshotSchema.parse((await f.http(url+s.selector)).body)).toMatchObject({availability:'not_retained',storedRedacted:false})
   const events=await f.http('/api/roster/import/receipts/items?projection=eventIds&'+s.selector);expect(snapshotSchema.parse(events.body).availability).toBe('not_retained')
 })
 it.each(['[]','null','[1,0]','[1,"2"]','[1,9007199254740992]','{"0":1}'])('validates the complete retained event array shape %s without rebuilding live events',async value=>{
-  const f=await fixture(),s=await f.seedMerge(),path=`$[${s.index}].detail.lineage.recordsFolded[0].eventIds`
-  f.sqlite.prepare('UPDATE import_batch SET item_results=json_set(item_results,?,json(?)) WHERE id=?').run(path,value,s.batchId)
+  const f=await fixture(),s=await f.seedMerge()
+  await f.editBatch(s.batchId, items => { items[s.index].detail.lineage.recordsFolded[0].eventIds = JSON.parse(value) })
   const r=await f.http('/api/roster/import/receipts/items?projection=eventIds&pageSize=1&'+s.selector)
   if(value==='[]') {expect(r.status).toBe(200);expect(snapshotSchema.parse(r.body)).toMatchObject({eventIds:[],nextCursor:null})}
   else if(value==='null') {expect(r.status).toBe(200);expect(snapshotSchema.parse(r.body).availability).toBe('not_retained')}
   else {expect(r.status).toBe(409);expect(r.body).toMatchObject({error:{code:'selector_mismatch'}})}
 })
+it('preserves archived NUL and literal escape spelling in a bounded snapshot', async () => {
+  const f = await fixture(), s = await f.seedMerge()
+  const name = '原值' + String.fromCharCode(0, 1, 2, 1, 0) + String.fromCharCode(92) + 'u0000🙂'
+  await f.editBatch(s.batchId, items => { items[s.index].detail.lineage.recordsFolded[0].fromRecordSnapshot.nameRaw = name })
+  const url = '/api/roster/import/receipts/items?projection=snapshot&' + s.selector
+  const result = await f.http(url)
+  expect(result.status).toBe(200)
+  expect(snapshotSchema.parse(result.body).snapshot?.nameRaw).toBe(name)
+  const required = Buffer.byteLength(JSON.stringify(result.body))
+  expect((await f.http(url + '&maxBytes=' + required)).body).toEqual(result.body)
+  expect(await f.http(url + '&maxBytes=' + (required - 1))).toMatchObject({
+    status: 413, body: { error: { code: 'response_limit', requiredBytes: required } },
+  })
+})
+
 it('checks UTF8 full snapshot envelope bytes in SQL and rejects over-budget values without truncation',async()=>{
   const f=await fixture(),s=await f.seedMerge(),url='/api/roster/import/receipts/items?projection=snapshot&'+s.selector
-  const initial=observeDriver(f.sqlite),baseline=await f.http(url),required=Buffer.byteLength(JSON.stringify(baseline.body));initial.restore();writeFileSync(join(f.dir,'budget-observation.json'),JSON.stringify(initial.results,null,2));expect(baseline.status).toBe(200)
+  const initial=observeDriver(),baseline=await f.http(url),required=Buffer.byteLength(JSON.stringify(baseline.body));initial.restore();writeFileSync(join(f.dir,'budget-observation.json'),JSON.stringify(initial.results,null,2));expect(baseline.status).toBe(200)
   expect((await f.http(url+'&maxBytes='+required)).body).toEqual(baseline.body)
-  const observer=observeDriver(f.sqlite),small=await f.http(url+'&maxBytes='+(required-1));observer.restore()
+  const observer=observeDriver(),small=await f.http(url+'&maxBytes='+(required-1));observer.restore()
   expect(small.status).toBe(413);expect(small.body).toMatchObject({error:{code:'response_limit',requiredBytes:required}})
-  expect(observer.results.filter(r=>r.sql.includes('WITH source_row'))[0]!.result).toMatchObject({requiredBytes:required,projection:null})
-  const prefix=`$[${s.index}].detail.lineage.recordsFolded[0].fromRecordSnapshot`
+  expect(observer.results.filter(mergeProjection)[0]!.result).toMatchObject({octet_length:required,case:null})
   // Explicit extreme retained historical data: legal individual fields, oversized aggregate.
-  f.sqlite.prepare('UPDATE import_batch SET item_results=json_set(item_results,?,json(?)) WHERE id=?').run(prefix+'.qualityFlags',JSON.stringify(Array.from({length:6},()=> '中'.repeat(4000))),s.batchId)
+  await f.editBatch(s.batchId, items => { items[s.index].detail.lineage.recordsFolded[0].fromRecordSnapshot.qualityFlags = Array.from({length:6},()=> '中'.repeat(4000)) })
   expect((await f.http(url+'&maxBytes=65536')).status).toBe(413)
   expect(JSON.stringify((await f.http(url+'&maxBytes=65536')).body)).not.toContain('中')
 })
 it('redacts captured raw actor basis and path in the new projection while preserving private storage',async()=>{
   const f=await fixture();await f.commit(f.announcement([f.record('Canonical',2021,{...f.row('Bearer synthetic-c-api'),actor:{type:'agent',id:'synthetic-c-mcp'},basis:'synthetic-c-api'})]),'redact')
-  const id=f.evidenceIds()[0]!.id
+  const id=(await f.evidenceIds())[0]!.id
   // Adversarial retained path value; reading does not consult or open this path.
-  f.sqlite.prepare('UPDATE official_evidence_row_revision SET path=? WHERE evidence_id=?').run('synthetic-c-api/private.txt',id)
-  const stored=f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=?').get(id)
+  await f.seedRetainedPath(id, 'synthetic-c-api/private.txt')
+  const stored=await f.readOne('SELECT * FROM official_evidence_row_revision WHERE evidence_id=$1',id)
   const r=await f.http(`/api/roster/evidence/${id}?official=latest`);expect(r.status).toBe(200)
   const row=latestSchema.parse(r.body).official.row!
   expect(JSON.stringify(row)).not.toContain('synthetic-c-api');expect(JSON.stringify(row)).not.toContain('synthetic-c-mcp');expect(row.nameRaw).toContain('[REDACTED]')
-  expect(f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=?').get(id)).toEqual(stored)
+  expect(await f.readOne('SELECT * FROM official_evidence_row_revision WHERE evidence_id=$1',id)).toEqual(stored)
 })
 
 it('preserves a declared captured attachment section page and file ID without reading current file bytes',async()=>{
   const f=await fixture(),pdf=minimalPdf({pages:3}),sha256=createHash('sha256').update(pdf).digest('hex')
   writeFileSync(join(f.dir,'files','notice.pdf'),pdf)
-  f.sqlite.prepare("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(3,'notice.pdf','notice.pdf','pdf',?,?,'synthetic')").run(pdf.length,sha256)
-  f.sqlite.exec("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (3, 'jxj', 'announcement', 'specialized_sme')")
+  await f.query("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(3,'notice.pdf','notice.pdf','pdf',$1,$2,'synthetic')",pdf.length,sha256)
+  await f.query("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (3, 'jxj', 'announcement', 'specialized_sme')")
   const published={...f.row(' 原名 '),storedFileId:3,path:'notice.pdf',sha256,bytes:pdf.length,attachment:'附件 二',sectionKey:'2021 认定名单',page:2,declaration:{kind:'independent' as const,sourceDocument:{source:'jxj' as const,title:'Declared publication',docNumber:null,issueDate:null,path:'notice.pdf'},basis:'Actual PDF publication'}}
   const record=f.record('Canonical',2021,published);record.events![0]!.evidence![0]={sourceFile:'notice.pdf',attachment:published.attachment,listNo:1,page:2,publishedRow:published}
   await f.commit(f.announcement([record]),'coordinates')
-  const id=f.evidenceIds()[0]!.id,r=await f.http(`/api/roster/evidence/${id}?official=latest`)
+  const id=(await f.evidenceIds())[0]!.id,r=await f.http(`/api/roster/evidence/${id}?official=latest`)
   expect(latestSchema.parse(r.body).official.row).toMatchObject({nameRaw:' 原名 ',storedFileId:3,path:'notice.pdf',sha256,bytes:pdf.length,attachment:'附件 二',sectionKey:'2021 认定名单',page:2,listNo:1})
 })
 it('rejects event scope 301 even when the cursor skips all old evidence and accepts scope 300',async()=>{
   const f=await fixture();await f.commit(f.announcement([f.record('Canonical',2021,f.row('Known'))]),'seed')
-  const eventId=f.evidenceIds()[0]!.record_event_id
+  const eventId=(await f.evidenceIds())[0]!.record_event_id
   // Explicit oversized legacy source fixture, not an upstream public happy path.
-  const insert=f.sqlite.prepare("INSERT INTO record_evidence(record_event_id,source_file,list_no) VALUES(?,'notice.txt',?)")
-  for(let i=2;i<=300;i++) insert.run(eventId,10000+i)
+  await f.query("INSERT INTO record_evidence(record_event_id,source_file,list_no) SELECT $1,'notice.txt',n FROM generate_series(10002,10300) n", eventId)
   const at=await f.http(`/api/roster/events/${eventId}?official=latest&afterEvidenceId=999999`);expect(at.status).toBe(200);expect(eventSchema.parse(at.body).official.rows).toEqual([])
-  insert.run(eventId,10301)
+  await f.query("INSERT INTO record_evidence(record_event_id,source_file,list_no) VALUES($1,'notice.txt',10301)", eventId)
   const over=await f.http(`/api/roster/events/${eventId}?official=latest&afterEvidenceId=999999`);expect(over.status).toBe(413);expect(over.body).toMatchObject({error:{code:'source_limit'}})
 })
 it.each(['official=latest&pageSize=2','official=latest&beforeRevision=2','official=history&beforeRevision=0','official=history&pageSize=51','official=history&maxBytes=65537','official=latest&extra=x','official=latest&maxBytes=1&maxBytes=2','official=latest&maxBytes=true'])('rejects strict new evidence query %s',async query=>{
   const f=await fixture();await f.commit(f.announcement([f.record('Canonical',2021)]),'legacy')
-  const r=await f.http('/api/roster/evidence/'+f.evidenceIds()[0]!.id+'?'+query);expect(r.status).toBe(400);expect(r.body).toMatchObject({error:{code:'invalid_query'}})
+  const r=await f.http('/api/roster/evidence/'+(await f.evidenceIds())[0]!.id+'?'+query);expect(r.status).toBe(400);expect(r.body).toMatchObject({error:{code:'invalid_query'}})
 })
 it('rejects over-budget official facts in SQL and preserves legacy fields instead of clipping them',async()=>{
   const f=await fixture();await f.commit(f.announcement([f.record('Canonical',2021,f.row('中'.repeat(4000)))]),'wide')
-  const id=f.evidenceIds()[0]!.id,legacy=await f.http('/api/roster/evidence/'+id)
-  const observer=observeDriver(f.sqlite),small=await f.http(`/api/roster/evidence/${id}?official=latest&maxBytes=1024`);observer.restore()
+  const id=(await f.evidenceIds())[0]!.id,legacy=await f.http('/api/roster/evidence/'+id)
+  const observer=observeDriver(),small=await f.http(`/api/roster/evidence/${id}?official=latest&maxBytes=1024`);observer.restore()
   expect(small.status).toBe(413);expect(small.body).toMatchObject({error:{code:'response_limit'}})
   const native=observer.results.filter(r=>r.sql.includes('WITH selected AS'))
-  expect(native).toHaveLength(1);expect(native[0]!.result).toMatchObject({projection:null});expect(JSON.stringify(native[0]!.result)).not.toContain('中')
+  expect(native).toHaveLength(1);expect(native[0]!.result).toMatchObject({rows:null});expect(JSON.stringify(native[0]!.result)).not.toContain('中')
   const large=await f.http(`/api/roster/evidence/${id}?official=latest&maxBytes=65536`);expect(large.status).toBe(200);expect(latestSchema.parse(large.body).official.row?.nameRaw).toBe('中'.repeat(4000))
   const {official:_official,...oldFields}=z.record(z.string(),z.unknown()).parse(large.body);expect(oldFields).toEqual(legacy.body)
 })
 it('reads explicitly retained redacted receipt snapshots from that receipt without selecting another source',async()=>{
   const f=await fixture(),s=await f.seedMerge()
   // Historical receipt retained fields are a targeted legacy fixture. New B receipts omit them.
-  f.sqlite.prepare('UPDATE import_receipt SET item_results=(SELECT item_results FROM import_batch WHERE id=?) WHERE id=?').run(s.batchId,s.receiptId)
+  await f.query('UPDATE import_receipt SET item_results=(SELECT item_results FROM import_batch WHERE id=$1) WHERE id=$2',s.batchId,s.receiptId)
   const receipt='/api/roster/import/receipts/items?projection=snapshot&source=redacted_receipt&receiptId='+s.receiptId+'&itemIndex='+s.index+'&oldRecordId='+s.origin.recordId
   const result=await f.http(receipt);expect(result.status).toBe(200);expect(snapshotSchema.parse(result.body)).toMatchObject({source:'redacted_receipt',storedRedacted:true,availability:'available',snapshot:{nameRaw:'2021旧名'}})
-  f.sqlite.prepare("UPDATE import_batch SET item_results='[]' WHERE id=?").run(s.batchId)
+  await f.query("UPDATE import_batch SET item_results='[]' WHERE id=$1",s.batchId)
   expect((await f.http(receipt)).body).toEqual(result.body)
-  f.sqlite.prepare("UPDATE import_receipt SET status='failed' WHERE id=?").run(s.receiptId)
+  await f.query("UPDATE import_receipt SET status='failed' WHERE id=$1",s.receiptId)
   expect(await f.http(receipt)).toMatchObject({status:409,body:{error:{code:'selector_mismatch'}}})
 })
 it('does not expose raw SQL or secret-bearing database errors through the new selector',async()=>{
   const f=await fixture(),s=await f.seedMerge()
-  const spy=vi.spyOn(f.db,'get').mockImplementation(()=>{throw new Error('secret=synthetic-c-api SELECT huge_private_payload')})
+  const query = pg.Client.prototype.query
+  const spy=vi.spyOn(pg.Client.prototype,'query').mockImplementation(function (this: pg.Client, ...args: unknown[]) {
+    const input = args[0] as string | pg.QueryConfig
+    if (mergeProjection({ sql: typeof input === 'string' ? input : input.text })) {
+      return Promise.reject(new Error('secret=synthetic-c-api SELECT huge_private_payload'))
+    }
+    return Reflect.apply(query, this, args)
+  })
   const r=await f.http('/api/roster/import/receipts/items?projection=snapshot&'+s.selector);spy.mockRestore()
   expect(r).toMatchObject({status:500,body:{error:{code:'internal_error',message:'Exact snapshot read failed'}}});expect(JSON.stringify(r.body)).not.toContain('synthetic-c-api');expect(JSON.stringify(r.body)).not.toContain('SELECT')
 })
 
 it('checks redaction expansion against the final full envelope budget',async()=>{
-  const f=await fixture(),s=await f.seedMerge(),path=`$[${s.index}].detail.lineage.recordsFolded[0].fromRecordSnapshot.nameRaw`
-  f.sqlite.prepare('UPDATE import_batch SET item_results=json_set(item_results,?,?) WHERE id=?').run(path,'x',s.batchId)
+  const f=await fixture(),s=await f.seedMerge()
+  await f.editBatch(s.batchId, items => { items[s.index].detail.lineage.recordsFolded[0].fromRecordSnapshot.nameRaw = 'x' })
   const url='/api/roster/import/receipts/items?projection=snapshot&'+s.selector
   const baseline=await f.http(url),required=Buffer.byteLength(JSON.stringify(baseline.body))
   vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'x',mcpToken:'synthetic-c-mcp',filesDir:current.filesDir}))
   try {
-    const observer=observeDriver(f.sqlite),r=await f.http(url+'&maxBytes='+required,undefined,'x');observer.restore()
-    expect(observer.results.filter(r=>r.sql.includes('WITH source_row'))[0]!.result).toMatchObject({requiredBytes:required,availability:'available',projection:expect.any(String)})
+    const observer=observeDriver(),r=await f.http(url+'&maxBytes='+required,undefined,'x');observer.restore()
+    expect(observer.results.filter(mergeProjection)[0]!.result).toMatchObject({octet_length:required,availability:'available',case:expect.any(String)})
     expect(r.status).toBe(413);expect(r.body).toMatchObject({error:{code:'response_limit',requiredBytes:required+9}})
   } finally {vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'synthetic-c-api',mcpToken:'synthetic-c-mcp',filesDir:current.filesDir}))}
 })
@@ -392,7 +428,7 @@ it('closes sensitive HTTP reads when the token is unconfigured without changing 
   const f=await fixture();await f.commit(f.announcement([f.record('Canonical',2021)]),'legacy')
   vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'',mcpToken:'',filesDir:current.filesDir}))
   try {
-    const observer=observeDriver(f.sqlite)
+    const observer=observeDriver()
     const r=await f.http('/api/roster/evidence/1?official=latest');expect(r.status).toBe(401)
     observer.restore();expect(observer.results).toEqual([])
     expect((await f.http('/api/roster/evidence/1?legacyIgnored=1',undefined,null)).status).toBe(200)
@@ -400,25 +436,25 @@ it('closes sensitive HTTP reads when the token is unconfigured without changing 
 })
 
 it('returns not retained for a missing event array despite the live moved events remaining available',async()=>{
-  const f=await fixture(),s=await f.seedMerge(),path=`$[${s.index}].detail.lineage.recordsFolded[0].eventIds`
-  f.sqlite.prepare('UPDATE import_batch SET item_results=json_remove(item_results,?) WHERE id=?').run(path,s.batchId)
-  expect(f.sqlite.prepare('SELECT id FROM record_event WHERE id=?').get(s.old.record_event_id)).toEqual({id:s.old.record_event_id})
+  const f=await fixture(),s=await f.seedMerge()
+  await f.editBatch(s.batchId, items => { delete items[s.index].detail.lineage.recordsFolded[0].eventIds })
+  expect(await f.readOne('SELECT id::int FROM record_event WHERE id=$1',s.old.record_event_id)).toEqual({id:s.old.record_event_id})
   const r=await f.http('/api/roster/import/receipts/items?projection=eventIds&'+s.selector);expect(r.status).toBe(200);expect(snapshotSchema.parse(r.body).availability).toBe('not_retained');expect(r.body).not.toHaveProperty('eventIds')
 })
 it('projects only the fixed eight snapshot fields even when the selected historical fold contains a giant extra blob',async()=>{
-  const f=await fixture(),s=await f.seedMerge(),path=`$[${s.index}].detail.lineage.recordsFolded[0].fromRecordSnapshot.privateExtra`
-  f.sqlite.prepare('UPDATE import_batch SET item_results=json_set(item_results,?,?) WHERE id=?').run(path,'PRIVATE_EXTRA'.repeat(200000),s.batchId)
-  const observer=observeDriver(f.sqlite),r=await f.http('/api/roster/import/receipts/items?projection=snapshot&'+s.selector);observer.restore()
+  const f=await fixture(),s=await f.seedMerge()
+  await f.editBatch(s.batchId, items => { items[s.index].detail.lineage.recordsFolded[0].fromRecordSnapshot.privateExtra = 'PRIVATE_EXTRA'.repeat(200000) })
+  const observer=observeDriver(),r=await f.http('/api/roster/import/receipts/items?projection=snapshot&'+s.selector);observer.restore()
   expect(r.status).toBe(200)
   const snapshot=z.object({snapshot:z.record(z.string(),z.unknown())}).parse(r.body).snapshot
   expect(Object.keys(snapshot).sort()).toEqual(['district','enterpriseId','id','nameRaw','qualityFlags','source','titleCode','usccRaw'])
-  expect(JSON.stringify(observer.results.filter(r=>r.sql.includes('WITH source_row')))).not.toContain('PRIVATE_EXTRA')
+  expect(JSON.stringify(observer.results.filter(mergeProjection))).not.toContain('PRIVATE_EXTRA')
   expect(Buffer.byteLength(JSON.stringify(r.body))).toBeLessThan(1024)
 })
 
 it('applies the official event redactor once and enforces its final UTF8 envelope budget',async()=>{
   const f=await fixture();await f.commit(f.announcement([f.record('Canonical',2021,f.row('REDACTED'))]),'redaction-once')
-  const eventId=f.evidenceIds()[0]!.record_event_id,url=`/api/roster/events/${eventId}?official=latest`
+  const eventId=(await f.evidenceIds())[0]!.record_event_id,url=`/api/roster/events/${eventId}?official=latest`
   vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'REDACTED',mcpToken:'synthetic-c-mcp',filesDir:current.filesDir}))
   try {
     const first=await f.http(url,undefined,'REDACTED');expect(first.status).toBe(200)
@@ -464,7 +500,7 @@ it.each(['legacy list', 'private snapshot', 'receipt not retained', 'event IDs']
   }
 })
 
-// #399 small lane: no fixture(), listener, SQLite instance or SDK transport.
+// #399 small lane: no fixture(), listener, database instance or SDK transport.
 // Literal partitions come from the approved five-key compatibility boundary.
 function rpc399(args: unknown) {
   return { jsonrpc: '2.0', id: 399, method: 'tools/call', params: { name: 'list_roster_import_items', arguments: args } }
@@ -591,7 +627,7 @@ it('raw auth precedes legacy strict malformed and batch dispatch', async () => {
 })
 it('raw other tools retain their original dispatch and strict opt-in', async () => {
   const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
-  for (const [name, args] of [['get_roster_evidence', { id: 1, legacyIgnored: 1 }], ['get_official_event', { eventId: 1 }], ['list_roster_import_receipts', { batchId: 1, pageSize: 51 }], ['get_roster_import_request', { batchId: 1, maxBytes: 65537 }]] as const) {
+  for (const [name, args] of [['get_roster_evidence', { id: 1, legacyIgnored: 1 }], ['get_official_event', { eventId: 1 }], ['list_roster_import_receipts', { batchId: 1, pageSize: 51 }]] as const) {
     expect(officialEvidenceRpcError({ ...rpc399(args), params: { name, arguments: args } }, false)).toBeNull()
   }
   for (const [name, args] of [['get_roster_evidence', { id: 1, official: 'latest', extra: 1 }], ['get_official_event', { eventId: 1, official: 'latest', pageSize: 51 }]] as const) {
@@ -604,10 +640,10 @@ async function handler399() {
   // importReceiptMcpResult are real. This is not toolkit/SDK transport evidence.
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
   const tool = (await import('../../../layers/sme-roster/server/mcp/tools/list_roster_import_items')).default
-  const dbModule = await import('@db'), receipts = await import('../../../layers/sme-roster/server/utils/import-receipts')
-  const db = {} as ReturnType<typeof dbModule.useDb>
-  const acquire = vi.spyOn(dbModule, 'useDb').mockReturnValue(db)
-  const read = vi.spyOn(receipts, 'readImportReceipt').mockReturnValue({ batchId: 1, receiptId: null, status: 'committed', page: 1, pageSize: 20, total: 0, rows: [] })
+  const dbModule = await import('../../../layers/sme-roster/server/utils/postgres-roster-db'), receipts = await import('../../../layers/sme-roster/server/utils/import-receipts-postgres')
+  const db = {} as ReturnType<typeof dbModule.usePostgresRosterDb>
+  const acquire = vi.spyOn(dbModule, 'usePostgresRosterDb').mockReturnValue(db)
+  const read = vi.spyOn(receipts, 'readPostgresImportReceipt').mockResolvedValue({ batchId: 1, receiptId: null, status: 'committed', page: 1, pageSize: 20, total: 0, rows: [] })
   return { tool, db, acquire, read, restore: () => { acquire.mockRestore(); read.mockRestore() } }
 }
 it.each([
@@ -646,7 +682,7 @@ it('handler preserves accepted selectors undefined normalization and content byt
       expect(await f.tool.handler(args as never, {} as never)).toEqual({ content: [{ type: 'text', text: '{"batchId":1,"receiptId":null,"status":"committed","page":1,"pageSize":20,"total":0,"rows":[]}' }] })
       expect(f.acquire).toHaveBeenCalledOnce(); expect(f.read).toHaveBeenCalledExactlyOnceWith(f.db, 'items', expected)
     }
-    const { ImportReceiptError } = await import('../../../layers/sme-roster/server/utils/import-receipts')
+    const { ImportReceiptError } = await import('../../../layers/sme-roster/server/utils/import-receipt-model')
     f.read.mockImplementationOnce(() => { throw new ImportReceiptError(404, 'not_found', 'Import batch or receipt not found') })
     expect(await f.tool.handler({ batchId: 1 } as never, {} as never)).toEqual({ isError: true, structuredContent: { error: { code: 'not_found', message: 'Import batch or receipt not found' } } })
   } finally { f.restore() }

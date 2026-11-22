@@ -1,10 +1,6 @@
 import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 import { readPostgresUsccResearch } from '../../utils/identity-discovery-postgres'
-import { createReadTurns } from '../../../../core/server/utils/read-turn'
-import { withReadTurn } from '../../../../core/server/utils/read-turn-http'
-import { useDb } from '@db'
-import { collectUsccTargets, pageUsccChecklist, planUsccResearch } from '#sme-roster/server/utils/uscc-research'
-import { parseUsccResearchBody, prepareUsccClaims } from '#sme-roster/server/utils/uscc-research-query'
+import { parseUsccResearchBody } from '#sme-roster/server/utils/uscc-research-query'
 
 /**
  * 与 `GET` 同一份清单与计划，但**多收一批公开来源查证结果**（票面路径二）。
@@ -70,35 +66,9 @@ defineRouteMeta({
   },
 })
 
-type ResearchOptions = Extract<ReturnType<typeof parseUsccResearchBody>, { ok: true }>
-function readResearch(parsed: ResearchOptions) {
-  const db = useDb()
-  // **一次全表扫描**：清单与计划共用同一份目标行（见 `collectUsccTargets` 的注释）。
-  const targets = collectUsccTargets(db, parsed.planFilter)
-  const { claims, verdicts } = prepareUsccClaims(parsed)
-  return {
-    checklist: pageUsccChecklist(targets, parsed.filter),
-    plan: planUsccResearch(db, { targets, ...claims }),
-    ...(verdicts ? { verdicts } : {}),
-  }
-}
-const researchReads = createReadTurns((input: { options: string }) =>
-  readResearch(JSON.parse(input.options) as ResearchOptions))
-
 export default defineEventHandler(async (event) => {
   const parsed = parseUsccResearchBody(await readBody(event))
   if (!parsed.ok) throw createError({ statusCode: 400, statusMessage: parsed.message })
   const postgres = usePostgresRosterDb()
-  if (postgres) return readPostgresUsccResearch(postgres, parsed)
-  useDb()
-  // Verdict files contain arbitrary original objects. Never retain them in
-  // the FIFO; preserve the original synchronous read/error path for these inputs.
-  // Non-finite JSON numbers likewise cannot round-trip without changing meaning.
-  if (parsed.verdictFiles.length || parsed.claims.some(claim => claim.enterpriseId != null && !Number.isFinite(claim.enterpriseId)) ||
-    parsed.platformClaims.some(claim => claim.enterpriseId != null && !Number.isFinite(claim.enterpriseId))) {
-    return readResearch(parsed)
-  }
-  // The parser projects named primitive options/claims. No raw body, event,
-  // request or runtime config is captured by the fixed reader.
-  return withReadTurn(event, researchReads, { options: JSON.stringify(parsed) })
+  return readPostgresUsccResearch(postgres, parsed)
 })

@@ -3,17 +3,15 @@ import { resolve } from 'node:path'
 import { isJobId } from '../../../lib/job'
 import { appLog } from '../../../lib/logging'
 import { DEFAULT_DPI, isPdfPath } from '../../../lib/pdf-page'
-import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../job-runner'
-import { setJobResult } from '../job-store'
-import { acquireOcrAttempt, checkpointOriginalOcrAttempt, fenceOriginalOcrPublication, ocrProviderFingerprint, prepareOcrPublication, recordSharedOcrPublication, sharedOcrPublication, updateOcrAttempt, verifyOcrInput, type OcrAttemptUpdate, type OcrCapture, type OcrPublication, type OcrPublicationFile, type PublicationReceipt, type SharedOcrAttempt } from '../ocr-publication'
+import type { JobCompletion, JobParseResult, JobSpec } from '../job-contract'
+import type { PostgresJobContext } from '../job-runner-postgres'
+import { ocrProviderFingerprint, type OcrAttemptUpdate, type OcrCapture, type OcrPublication, type OcrPublicationFile } from '../ocr-publication-contract'
 import { postgresOcrStorage, preparePostgresOcrPublication } from '../ocr-publication-postgres'
-import { listOcrResults, writeOcrResult, type OcrWriteInput } from '../ocr-result'
 import {
   MAX_CONCURRENT_PADDLE_JOBS,
   OcrApiError,
   ocrImageFile,
   ocrRequestVariant,
-  resolveOcrConfig,
   resolvePostgresOcrConfig,
   type OcrPageOut,
 } from '../ocr-api'
@@ -79,7 +77,7 @@ export interface OcrJobResult {
 const MAX_CONCURRENT_OCR_FILES_PER_JOB = 2
 
 /** 已校验的参数。 */
-interface OcrParams {
+export interface OcrParams {
   files: string[]
   model: string | null
   resumeJobId?: string
@@ -171,63 +169,6 @@ async function currentPageImages(filesDir: string, relPath: string): Promise<Pag
   return state.pages
 }
 
-type OcrStorage = {
-  cancelled(): boolean | Promise<boolean>
-  progress(done: number, total: number): void | Promise<void>
-  checkpoint(snapshot: () => unknown): void | Promise<void>
-  verifyInput(file: OcrPublicationFile): void | Promise<void>
-  sharedPublication(publication: OcrPublication, file: OcrPublicationFile): PublicationReceipt | null | Promise<PublicationReceipt | null>
-  acquire(publication: OcrPublication, file: OcrPublicationFile, page: number): SharedOcrAttempt | Promise<SharedOcrAttempt>
-  persistAttempt(publication: OcrPublication, file: OcrPublicationFile, page: number, shared: SharedOcrAttempt | null,
-    update: OcrAttemptUpdate, snapshot: () => unknown): OcrCapture | undefined | Promise<OcrCapture | undefined>
-  publish(publication: OcrPublication, file: OcrPublicationFile, input: OcrWriteInput, snapshot: () => unknown): boolean | Promise<boolean>
-}
-
-function sqliteOcrStorage(ctx: JobContext): OcrStorage {
-  return {
-    cancelled: () => ctx.cancelled(),
-    progress: (done, total) => ctx.progress(done, total),
-    checkpoint: snapshot => { setJobResult(ctx.db, ctx.jobId, snapshot()) },
-    verifyInput: file => verifyOcrInput(ctx.db, ctx.filesDir, file),
-    sharedPublication: (publication, file) => sharedOcrPublication(ctx.db, publication, file),
-    acquire: (publication, file, page) => acquireOcrAttempt(ctx.db, publication, file, page, ctx.jobId),
-    persistAttempt: (publication, file, page, shared, update, snapshot) => shared
-      ? updateOcrAttempt(ctx.db, publication, file, shared, update).capture
-      : checkpointOriginalOcrAttempt(ctx.db, publication, file, page, ctx.jobId, update, snapshot),
-    publish: (publication, file, input, snapshot) => ctx.db.transaction(tx => {
-      fenceOriginalOcrPublication(tx, publication, ctx.jobId)
-      verifyOcrInput(tx, ctx.filesDir, file)
-      const committed = sharedOcrPublication(tx, publication, file)
-      if (committed) {
-        file.state = 'published'
-        file.publishedVersions = committed.versions
-        setJobResult(tx, ctx.jobId, snapshot())
-        return true
-      }
-      const written = writeOcrResult(tx, input)
-      if (!written.ok) throw new Error(written.message)
-      file.state = 'published'
-      file.publishedVersions = Object.fromEntries(listOcrResults(tx, input.fileId)
-        .filter(row => row.page in file.targets).map(row => [row.page, row.version]))
-      recordSharedOcrPublication(tx, publication, file, ctx.jobId)
-      setJobResult(tx, ctx.jobId, snapshot())
-      return false
-    }, { behavior: 'immediate' }),
-  }
-}
-
-export async function runOcr(
-  ctx: JobContext,
-  params: Record<string, unknown>,
-  config = resolveOcrConfig(),
-  prepared?: OcrPublication,
-): Promise<JobCompletion> {
-  const { files, model, resumeJobId } = params as unknown as OcrParams
-  const effectiveModel = model ?? config.model
-  const publication = prepared ?? prepareOcrPublication(ctx.db, ctx.filesDir, files, effectiveModel, ocrRequestVariant(effectiveModel), config.baseUrl, resumeJobId)
-  return executeOcr(ctx, params, config, publication, sqliteOcrStorage(ctx))
-}
-
 /** Two files at a time; failed/cancelled files keep individual page receipts. */
 async function finishConcurrentOcr(workers: Promise<void>[]): Promise<void> {
   const failed = (await Promise.allSettled(workers)).find(result => result.status === 'rejected')
@@ -235,11 +176,11 @@ async function finishConcurrentOcr(workers: Promise<void>[]): Promise<void> {
 }
 
 async function executeOcr(
-  ctx: Pick<JobContext, 'jobId' | 'filesDir' | 'logContext'>,
+  ctx: Pick<PostgresJobContext, 'jobId' | 'filesDir' | 'logContext'>,
   params: Record<string, unknown>,
-  config: ReturnType<typeof resolveOcrConfig>,
+  config: Awaited<ReturnType<typeof resolvePostgresOcrConfig>>,
   publication: OcrPublication,
-  storage: OcrStorage,
+  storage: ReturnType<typeof postgresOcrStorage>,
 ): Promise<JobCompletion> {
   const { files, model } = params as unknown as OcrParams
   const effectiveModel = model ?? config.model
@@ -542,15 +483,6 @@ export const ocrSpec: JobSpec = {
   parse: parseOcrParams,
   // 分母提交时就知道 —— 轮询方一上来就能看到「一共 3 份」。
   total: (params) => (params.files as string[]).length,
-  prepare: (params, db) => {
-    const config = resolveOcrConfig()
-    const { files, model, resumeJobId } = params as unknown as OcrParams
-    const root = typeof useRuntimeConfig === 'function' ? useRuntimeConfig().filesDir : resolve(process.env.NUXT_FILES_DIR || 'files')
-    const effectiveModel = model ?? config.model
-    const prepared = prepareOcrPublication(db, root, files, effectiveModel, ocrRequestVariant(effectiveModel), config.baseUrl, resumeJobId)
-    return (ctx, input) => runOcr(ctx, input, config, prepared)
-  },
-  run: runOcr,
   postgres: {
     taskCenter: { summaries: summarizePostgresOcrJobs },
     async prepare(tx, params) {

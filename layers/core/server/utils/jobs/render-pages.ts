@@ -1,12 +1,13 @@
 import { summarizePostgresRenderJobs } from './ocr-summary'
 import { appLog } from '../../../lib/logging'
-import { registeredFileAtLocator, verifyFileReadAtLocator, verifyRenderedPageRead } from '../file-read-identity'
+import { verifyFileReadAtLocator, verifyRenderedPageRead } from '../file-read'
 import { readPostgresFileIdentities, readPostgresFileIdentity } from '../file-store-postgres'
-import type { StoredFileContentIdentity } from '../file-content-identity'
+import type { StoredFileContentIdentity } from '../file-identity'
 import { isPdfPath, normalizeDpi } from '../../../lib/pdf-page'
 import type { RenderOutcome } from '../pdf-pages'
 import { renderPdfPages } from '../pdf-pages'
-import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../job-runner'
+import type { JobCompletion, JobParseResult, JobSpec } from '../job-contract'
+import type { PostgresJobContext } from '../job-runner-postgres'
 
 /**
  * `render-pages` —— **批量**把 PDF 逐页渲染成 PNG。
@@ -118,21 +119,8 @@ export function parseRenderPagesParams(raw: Record<string, unknown>): JobParseRe
  * 粒度是**一份文件** —— 一份 97 页的 PDF 实测 3.3 s(票 13),不做页级取消
  * (页级要在 `renderPdfPages` 内部插回调,那是票 13 的文件,本票不动它)。
  */
-export function runRenderPages(
-  ctx: JobContext,
-  params: Record<string, unknown>,
-  registeredInputs?: Array<StoredFileContentIdentity | null>,
-): Promise<JobCompletion> {
-  const lookup = (path: string) => registeredFileAtLocator(ctx.db, path)
-  const inputs = registeredInputs ?? (params.files as string[]).map(lookup)
-  return renderFiles(ctx, params, inputs, lookup)
-}
-
 async function renderFiles(
-  ctx: Pick<JobContext, 'jobId' | 'filesDir' | 'logContext'> & {
-    cancelled(): boolean | Promise<boolean>
-    progress(done: number, total: number): void | Promise<void>
-  },
+  ctx: Pick<PostgresJobContext, 'jobId' | 'filesDir' | 'logContext' | 'cancelled' | 'progress'>,
   params: Record<string, unknown>,
   inputs: Array<StoredFileContentIdentity | null>,
   lookup: Parameters<typeof verifyFileReadAtLocator>[2],
@@ -219,11 +207,6 @@ export const renderPagesSpec: JobSpec = {
   parse: parseRenderPagesParams,
   // 分母提交时就知道 —— 轮询方一上来就能看到「一共 3 份」。
   total: (params) => (params.files as string[]).length,
-  prepare: (params, db) => {
-    const inputs = (params.files as string[]).map(file => registeredFileAtLocator(db, file))
-    return (ctx, input) => runRenderPages(ctx, input, inputs)
-  },
-  run: runRenderPages,
   postgres: {
     taskCenter: { summaries: summarizePostgresRenderJobs },
     prepare: (tx, params) => readPostgresFileIdentities(tx, params.files as string[]),

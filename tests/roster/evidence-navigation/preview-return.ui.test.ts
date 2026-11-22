@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h, ref, type Ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -803,7 +803,7 @@ describe('出处预览返回滚动恢复', () => {
     expect(frames).toHaveLength(1)
     frames[0]!(0)
     expect(scrollTo).toHaveBeenCalledWith({ top: windowTop, behavior: 'instant' })
-    expect(returned.find('[aria-label="正式公布文件"]').exists()).toBe(true)
+    expect(returned.find('[aria-label="公布名单"]').exists()).toBe(true)
     await flushPromises()
     mocks.setDetail?.(structuredClone(fullDetail))
     await flushPromises()
@@ -828,7 +828,7 @@ describe('出处预览返回滚动恢复', () => {
     vi.stubGlobal('$fetch', fetch)
     const page = mount(EnterprisePage, { attachTo: document.body, global: { stubs: globalStubs } })
     await flushPromises()
-    expect(page.find('[aria-label="正式公布文件"]').exists()).toBe(true)
+    expect(page.find('[aria-label="公布名单"]').exists()).toBe(true)
     expect(fetch).not.toHaveBeenCalled()
     expect(frames).toHaveLength(1)
     frames[0]!(0)

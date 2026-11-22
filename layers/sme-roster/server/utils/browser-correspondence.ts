@@ -1,8 +1,8 @@
 import { readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { z } from 'zod'
-import { useDb } from '@db'
-import { checkBrowserReviewRequest } from './browser-review-102'
-import { handlePostgresCorrespondenceRequest, handleRecordCorrespondenceRequest, type CorrespondenceApiInput } from './record-correspondence-api'
+import { checkBrowserReviewRequest } from './browser-review-access'
+import type { CorrespondenceApiInput, CorrespondenceApiOutput } from './record-correspondence-runtime'
+import { handlePostgresCorrespondenceRequest } from './record-correspondence-runtime'
 
 const requestSchema = z.strictObject({
   idempotencyKey: z.string().trim().min(1).max(200),
@@ -12,10 +12,9 @@ const requestSchema = z.strictObject({
 const commitSchema = z.strictObject({ request: requestSchema, planHash: z.string().regex(/^[0-9a-f]{64}$/) })
 
 /** Capability gate is not personal authentication. Audit names this actual adapter. */
-export function browserCorrespondenceRoute(action: 'preflight' | 'commit', context: () => { db: ReturnType<typeof useDb> } = () => ({ get db() { return useDb() } })) {
+export function browserCorrespondenceRoute(action: 'preflight' | 'commit', execute: (input: CorrespondenceApiInput) => CorrespondenceApiOutput | Promise<CorrespondenceApiOutput> = input => handlePostgresCorrespondenceRequest(input, undefined, true)) {
   return defineEventHandler(async (event: H3Event) => {
     setHeader(event, 'cache-control', 'no-store')
-    const runtime = context()
     const gate = checkBrowserReviewRequest(event, { write: true })
     if (!gate.ok) { setResponseStatus(event, gate.status); return { error: { code: gate.code, message: gate.message } } }
     let body: unknown
@@ -26,8 +25,7 @@ export function browserCorrespondenceRoute(action: 'preflight' | 'commit', conte
     const business = 'request' in envelope ? envelope.request : envelope
     const request = { ...business, sourceIdentity: 'same-origin-correspondence', actor: { type: 'agent', id: 'same-origin-correspondence-adapter' }, ruleId: 'manual-source-row-review', ruleVersion: '1' }
     const input: CorrespondenceApiInput = { action, method: 'POST', body: 'request' in envelope ? { request, planHash: envelope.planHash } : request }
-    const output = await handlePostgresCorrespondenceRequest(input, undefined, true)
-      ?? handleRecordCorrespondenceRequest(input, { db: runtime.db, browserAuthorized: true })
+    const output = await execute(input)
     setResponseStatus(event, output.status)
     return output.body
   })

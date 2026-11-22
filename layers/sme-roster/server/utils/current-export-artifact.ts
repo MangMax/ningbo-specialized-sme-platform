@@ -1,15 +1,15 @@
-import { getJob, toJobDto } from '../../../core/server/utils/job-store'
-import { sql } from 'drizzle-orm'
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import type * as schema from '../../../../db/schema'
 import { createReadStream } from 'node:fs'
 import { stat, unlink, realpath, readdir } from 'node:fs/promises'
-import { join, dirname } from 'node:path'
-import type { JobRow } from '../../../core/server/utils/job-store'
+import { join, dirname, resolve } from 'node:path'
+import type { JobRow } from '../../../core/server/utils/job-contract'
 import { appLog, type LogContext } from '../../../core/lib/logging'
 export const EXPORT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 export const EXPORT_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-export const exportDirectory = (dbPath: string) => dbPath + '.exports'
+
+export function postgresExportDirectory() {
+  const directory = process.env.NUXT_ROSTER_EXPORT_DIR
+  return directory?.trim() ? resolve(directory) : undefined
+}
 export interface ExportArtifact { id: string; filename: string; size: number; sha256: string; generatedAt: string; expiresAt: string; downloadUrl: string; availability: 'available'|'expired'|'missing' }
 type ExportJobRecord = Pick<JobRow, 'id' | 'kind' | 'state' | 'result'>
 export function currentExportReceipt(row: ExportJobRecord | null | undefined): ExportArtifact | null {
@@ -19,11 +19,13 @@ export function currentExportReceipt(row: ExportJobRecord | null | undefined): E
 }
 export const isExportArtifactExpired = (artifact: ExportArtifact, cutoff = Date.now()) => cutoff >= Date.parse(artifact.expiresAt)
 
-export async function currentArtifact(row: ExportJobRecord, dbPath: string, logContext?: LogContext): Promise<ExportArtifact | null> {
+export async function currentArtifact(row: ExportJobRecord, directory: string | undefined, logContext?: LogContext): Promise<ExportArtifact | null> {
   const artifact = currentExportReceipt(row)
   if (!artifact) return null
-  const path = join(exportDirectory(dbPath), row.id + '.xlsx')
-  if (isExportArtifactExpired(artifact)) {
+  const expired = isExportArtifactExpired(artifact)
+  if (!directory) return { ...artifact, availability: expired ? 'expired' : 'missing' }
+  const path = join(directory, row.id + '.xlsx')
+  if (expired) {
     await unlink(path).then(() => {
       appLog({ module: 'sme-roster', source: 'export', operation: 'export.artifact.expire', outcome: 'success', taskId: row.id, resourceType: 'export_artifact', resourceId: artifact.id }, logContext)
     }).catch((error: NodeJS.ErrnoException) => {
@@ -32,37 +34,23 @@ export async function currentArtifact(row: ExportJobRecord, dbPath: string, logC
     return { ...artifact, availability: 'expired' }
   }
   try {
-    if (dirname(await realpath(path)) !== await realpath(exportDirectory(dbPath)) || (await stat(path)).size !== artifact.size) return { ...artifact, availability: 'missing' }
+    if (dirname(await realpath(path)) !== await realpath(directory) || (await stat(path)).size !== artifact.size) return { ...artifact, availability: 'missing' }
     return { ...artifact, availability: 'available' }
   } catch { return { ...artifact, availability: 'missing' } }
 }
-export function artifactStream(dbPath: string, id: string) { return createReadStream(join(exportDirectory(dbPath), id + '.xlsx')) }
+export function artifactStream(directory: string, id: string) { return createReadStream(join(directory, id + '.xlsx')) }
 
-export const currentExportDbPath = (db: BetterSQLite3Database<typeof schema>) => db.all<{name:string;file:string}>(sql`pragma database_list`).find(row => row.name === 'main')!.file
-/** Availability is evaluated on every history read; expired task history persists. */
-export async function currentJobDto(row: JobRow, dbPath: string) {
-  const dto = toJobDto(row)
-  const artifact = await currentArtifact(row,dbPath)
-  return artifact ? {...dto,result:{...(row.result as object),artifact}} : dto
-}
-
-/** Lazy startup/submission sweep. Only export-owned IDs are considered; active
- * executions and completed unexpired artifacts are never removed by another job. */
-export function cleanupCurrentExports(db: BetterSQLite3Database<typeof schema>, logContext?: LogContext) {
-  return cleanupExportArtifacts(currentExportDbPath(db), id => getJob(db, id) ?? undefined, logContext)
-}
-
-export async function cleanupExportArtifacts(dbPath: string, readJob: (id: string) => JobRow | undefined | Promise<JobRow | undefined>, logContext?: LogContext) {
-  if (!dbPath) return
-  const dir=exportDirectory(dbPath)
-  for (const name of await readdir(dir).catch(() => [] as string[])) {
+/** Only export-owned files from inactive jobs are eligible for removal. */
+export async function cleanupExportArtifacts(directory: string | undefined, readJob: (id: string) => JobRow | undefined | Promise<JobRow | undefined>, logContext?: LogContext) {
+  if (!directory) return
+  for (const name of await readdir(directory).catch(() => [] as string[])) {
     if (!/^[0-9A-HJKMNP-TV-Z]{26}\.(part|xlsx)$/.test(name)) continue
     const row=await readJob(name.slice(0,26))
     if (row?.kind !== 'current-roster-export' || ['queued','running'].includes(row.state)) continue
-    const artifact=row.state === 'done' ? await currentArtifact(row,dbPath) : null
+    const artifact=row.state === 'done' ? await currentArtifact(row,directory) : null
     if (name.endsWith('.part') || !artifact || artifact.availability !== 'available') {
       const resourceId = name.slice(0,26)
-      await unlink(join(dir,name)).then(() => {
+      await unlink(join(directory,name)).then(() => {
         appLog({ module: 'sme-roster', source: 'export', operation: 'export.artifact.cleanup', outcome: 'success', resourceType: 'export_artifact', resourceId, taskId: row.id }, logContext)
       }).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') appLog({ module: 'sme-roster', source: 'export', operation: 'export.artifact.cleanup', outcome: 'failure', level: 'error', errorCode: 'artifact_cleanup_failed', resourceType: 'export_artifact', resourceId, taskId: row.id }, logContext)

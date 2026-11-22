@@ -4,6 +4,6 @@ export function decodeJsonRead<T>(handler: (event: never) => unknown): (event: u
   return (event) => {
     // Preserve synchronous parameter guards while awaiting successful IO.
     const result = handler(event as never)
-    return Promise.resolve(result).then(value => JSON.parse(Buffer.isBuffer(value) ? value.toString('utf8') : String(value)) as T)
+    return Promise.resolve(result).then(value => (Buffer.isBuffer(value) ? JSON.parse(value.toString('utf8')) : typeof value === 'string' ? JSON.parse(value) : value) as T)
   }
 }

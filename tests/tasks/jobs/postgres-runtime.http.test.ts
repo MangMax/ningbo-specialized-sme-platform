@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -7,13 +6,13 @@ import { join } from 'node:path'
 import * as h3 from 'h3'
 import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { registerJob } from '../../../layers/core/server/utils/job-runner'
+import { registerJob } from '../../../layers/core/server/utils/job-spec-registry'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
-import { initializeDb } from '../../../db/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
-const bin = process.env.TEST_POSTGRES_JOBS_BIN
+const bin = process.env.TEST_POSTGRES_JOBS_BIN || process.env.ROSTER_TEST_POSTGRES_BIN
 let dir: string, base: string, server: ReturnType<typeof createServer>, pool: pg.Pool
-let started = false
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 const token = 'fixture-job-api-secret'
 const exportKind = 'current-roster-export'
 const historicalExports = [
@@ -38,32 +37,19 @@ const submit = (kind: string, params = {}) => request('/api/jobs', {
 beforeAll(async () => {
   if (!bin) return
   dir = mkdtempSync(join(tmpdir(), 'pg-job-'))
-  const pgCommand = (name: string, args: string[], input?: string) => execFileSync(join(bin, name), args, { input, stdio: ['pipe', 'pipe', 'pipe'] })
-  pgCommand('initdb', ['-D', join(dir, 'data'), '-A', 'trust', '-U', 'fixture', '--no-locale', '-E', 'UTF8'])
-  pgCommand('pg_ctl', ['-D', join(dir, 'data'), '-l', join(dir, 'postgres.log'), '-o', `-h '' -k ${dir}`, '-w', 'start'])
-  started = true
-  const url = 'postgresql://fixture@localhost/postgres?host=' + encodeURIComponent(dir)
-  const dbPath = join(dir, 'fixture.sqlite')
-  const source = initializeDb({ create: true, dbPath })
-  source.$client.prepare('INSERT INTO service_credential (key,value,updated_at) VALUES (?,?,?)')
-    .run('core.ocrToken', 'fixture-saved-ocr-secret', '2026-11-20T00:00:00Z')
-  const insertExport = source.$client.prepare(
-    "INSERT INTO job (id, kind, params, state, created_at) VALUES (?, ?, ?, 'cancelled', '2026-01-01T00:00:00Z')",
-  )
-  for (const { id, params } of historicalExports) insertExport.run(id, exportKind, params)
-  source.$client.close()
-  execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', dbPath, 'staged'], {
-    env: { ...process.env, PGHOST: dir, PGPORT: '5432', PGDATABASE: 'postgres', PGUSER: 'fixture', PGSQL_BIN: join(bin, 'psql') },
-  })
-  for (const part of ['enterprise-directory', 'jobs']) {
-    pgCommand('psql', ['-Xqw', '-v', 'staging=staged', url, '-f', `upgrade/postgresql/materialize-${part}.sql`])
+  postgres = await postgresRuntimeFixture({ dir, bin })
+  pool = new pg.Pool({ connectionString: postgres.url })
+  await pool.query('INSERT INTO business.service_credential (key,value,updated_at) VALUES ($1,$2,$3)',
+    ['core.ocrToken', 'fixture-saved-ocr-secret', '2026-11-20T00:00:00Z'])
+  for (const { id, params } of historicalExports) {
+    await pool.query(
+      "INSERT INTO business.job (id, kind, params, state, created_at) VALUES ($1, $2, $3, 'cancelled', '2026-01-01T00:00:00Z')",
+      [id, exportKind, params],
+    )
   }
-  pool = new pg.Pool({ connectionString: url })
-  vi.stubEnv('NUXT_DB_PATH', join(dir, 'must-not-open.sqlite'))
-  vi.stubEnv('NUXT_DB_READONLY', '1')
-  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
-  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_WRITE', '1')
-  vi.stubEnv('NUXT_POSTGRES_JOBS', '1')
+  for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
+  vi.stubEnv('NUXT_ROSTER_EXPORT_DIR', join(dir, 'roster-workbooks'))
+  vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: token, filesDir: dir }))
   for (const name of ['defineEventHandler', 'getQuery', 'getRouterParam', 'createError', 'readBody', 'setResponseStatus', 'setHeader', 'getRequestURL', 'getHeader'] as const) {
     vi.stubGlobal(name, h3[name])
@@ -84,6 +70,7 @@ beforeAll(async () => {
     .get('/api/jobs', (await import('../../../layers/core/server/api/jobs/index.get')).default)
     .get('/api/jobs/kinds', (await import('../../../layers/core/server/api/jobs/kinds.get')).default)
     .get('/api/jobs/:id', (await import('../../../layers/core/server/api/jobs/[id].get')).default)
+    .get('/api/job-artifacts/:id', (await import('../../../layers/sme-roster/server/api/job-artifacts/[id].get')).default)
     .delete('/api/jobs/:id', (await import('../../../layers/core/server/api/jobs/[id].delete')).default)
     .post('/api/jobs', (await import('../../../layers/core/server/api/jobs/index.post')).default)
     .get('/api/task-center', (await import('../../../layers/core/server/api/task-center/index.get')).default)
@@ -94,43 +81,43 @@ beforeAll(async () => {
   server = createServer(h3.toNodeListener(h3.createApp({ debug: false }).use(router)))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
-}, 15_000)
+}, 30_000)
 
 afterAll(async () => {
   try {
     if (server) await new Promise<void>(resolve => server.close(() => resolve()))
     await (await import("../../../layers/core/server/utils/postgres-jobs")).stopPostgresJobs()
+    await (await import('../../../layers/core/lib/logging')).closeApplicationLogging()
     await closePostgresDirectoryDb()
     await pool?.end()
   } finally {
     vi.unstubAllGlobals()
     vi.unstubAllEnvs()
-    if (started) execFileSync(join(bin!, 'pg_ctl'), ['-D', join(dir, 'data'), '-m', 'immediate', '-w', 'stop'])
+    postgres?.close()
     if (dir) rmSync(dir, { recursive: true, force: true })
   }
 })
 
-it.runIf(!!bin)('uses task storage to enable streaming and signals SQLite clients to keep polling', async () => {
-  const events = await request('/api/task-center/events', { signal: AbortSignal.timeout(5_000) })
-  expect(events.status).toBe(200)
-  const reader = events.body!.pipeThrough(new TextDecoderStream()).getReader()
+it.runIf(!!bin)('streams PostgreSQL task notifications with both writable and read-only storage', async () => {
   try {
-    let frames = ''
-    while (!frames.includes('event: ready\ndata:\n\n')) {
-      const chunk = await reader.read()
-      expect(chunk.done).toBe(false)
-      frames += chunk.value
+    for (const readOnly of ['0', '1']) {
+      vi.stubEnv('NUXT_DB_READONLY', readOnly)
+      const events = await request('/api/task-center/events', { signal: AbortSignal.timeout(5_000) })
+      expect(events.status).toBe(200)
+      const reader = events.body!.pipeThrough(new TextDecoderStream()).getReader()
+      try {
+        let frames = ''
+        while (!frames.includes('event: ready\ndata:\n\n')) {
+          const chunk = await reader.read()
+          expect(chunk.done).toBe(false)
+          frames += chunk.value
+        }
+      } finally {
+        await reader.cancel()
+      }
     }
   } finally {
-    await reader.cancel()
-  }
-  vi.stubEnv('NUXT_POSTGRES_JOBS', '0')
-  try {
-    const sqlite = await request('/api/task-center/events')
-    expect(sqlite.status).toBe(204)
-    expect(await sqlite.text()).toBe('')
-  } finally {
-    vi.stubEnv('NUXT_POSTGRES_JOBS', '1')
+    vi.stubEnv('NUXT_DB_READONLY', '0')
   }
 })
 
@@ -310,7 +297,7 @@ it.runIf(!!bin)('rejects invalid completion while keeping the last checkpoint an
 it.runIf(!!bin)('uses the PostgreSQL capability catalog and keeps private task data off public responses', async () => {
   registerJob({
     kind: 'fixture-private', status: 'ready', summary: 'Private output fixture',
-    parse: () => ({ ok: false, message: 'SQLite parser must not run' }),
+    parse: params => ({ ok: true, params }),
     postgres: {
       parse: params => ({ ok: true, params }),
       async run() {
@@ -323,18 +310,17 @@ it.runIf(!!bin)('uses the PostgreSQL capability catalog and keeps private task d
     },
   })
   registerJob({
-    kind: 'fixture-sqlite-only', status: 'ready', summary: 'SQLite handler fixture',
+    kind: 'fixture-unimplemented', status: 'todo', summary: 'Unimplemented handler fixture',
     parse: () => ({ ok: true, params: {} }),
-    async run() { return { result: null } },
   })
   const kinds = await (await request('/api/jobs/kinds')).json()
   expect(kinds.kinds).toEqual(expect.arrayContaining([
     expect.objectContaining({ kind: 'render-pages', status: 'ready' }),
     expect.objectContaining({ kind: 'reconcile', status: 'ready' }),
-    expect.objectContaining({ kind: 'fixture-sqlite-only', status: 'todo' }),
+    expect.objectContaining({ kind: 'fixture-unimplemented', status: 'todo' }),
     expect.objectContaining({ kind: 'fixture-private', status: 'ready' }),
   ]))
-  expect((await submit('fixture-sqlite-only')).status).toBe(501)
+  expect((await submit('fixture-unimplemented')).status).toBe(501)
   const response = await submit('fixture-private')
   expect(response.status).toBe(202)
   const { jobId } = await response.json()
@@ -355,7 +341,7 @@ it.runIf(!!bin)('uses the PostgreSQL capability catalog and keeps private task d
   }
 })
 
-it.runIf(!!bin)('reads migrated settings and rolls back a failed mixed credential update', async () => {
+it.runIf(!!bin)('reads stored settings and rolls back a failed mixed credential update', async () => {
   const route = '/api/settings/credentials'
   const payload = (method: string, body: unknown) => ({
     method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -396,6 +382,7 @@ it.runIf(!!bin)('retries only an unfinished platform page in PostgreSQL and pres
   const networkFetch = globalThis.fetch
   const pages: number[] = []
   let rejectPageTwo = true
+  let rowName = '合成企业'
   vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
     if (url.startsWith(base)) return networkFetch(url, init)
     expect(url).toMatch(/^https:\/\/zjtx\.miit\.gov\.cn\/zxqy\//)
@@ -403,7 +390,7 @@ it.runIf(!!bin)('retries only an unfinished platform page in PostgreSQL and pres
     const page = Number(new URLSearchParams(init?.body as string).get('pageNum'))
     pages.push(page)
     if (page === 2 && rejectPageTwo) return new Response('', { status: 503 })
-    return Response.json({ zrarData: { grid: { applyGrid: { pageSet: [{ qymc: '合成企业', relation: String(page) }], page, maxCount: 2 } } } })
+    return Response.json({ zrarData: { grid: { applyGrid: { pageSet: [{ qymc: rowName, relation: String(page) }], page, maxCount: 2 } } } })
   })
   const post = (path: string, body: unknown) => request(path, { method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify(body) })
@@ -417,6 +404,18 @@ it.runIf(!!bin)('retries only an unfinished platform page in PostgreSQL and pres
     const prior = await status()
     expect(prior).toMatchObject({ attempt: 1, items: [{ itemId: itemIds[0], unfinished: [{ page: 2 }] }] })
     expect(prior.items[0].segments[0].rows).toEqual([{ qymc: '合成企业', relation: '1' }])
+    expect(prior.items[0].segments[0].pages.map((page: { status: string }) => page.status)).toEqual(['success', 'failed'])
+    const generic = await (await request('/api/jobs/' + batchId)).json()
+    expect(generic).toMatchObject({
+      state: 'failed', progress: { done: 0, total: 1 },
+      result: { attempt: 1, usage: { requests: 2, rows: 1 }, items: [{
+        itemId: itemIds[0], status: 'partial', completeness: 'partial',
+        unfinished: [{ source: 'queryList', rdjb: null, page: 2 }],
+        error: { code: 'upstream_failed' },
+      }] },
+    })
+    expect(generic.result.items[0]).not.toHaveProperty('segments')
+    expect(JSON.stringify(generic.result)).not.toContain('合成企业')
     expect(pages).toEqual([1, 2])
     const taskPath = '/api/task-center/' + batchId
     const task = await (await request(taskPath)).json()
@@ -438,9 +437,31 @@ it.runIf(!!bin)('retries only an unfinished platform page in PostgreSQL and pres
     expect(item.segments[0]).toEqual(prior.items[0].segments[0])
     expect(item.segments[1].rows).toEqual([{ qymc: '合成企业', relation: '2' }])
     expect(item.unfinished).toEqual([])
+    expect((await status()).items).toEqual([item])
     const persisted = await pool.query('SELECT params,result,input_snapshot FROM business.job WHERE id=$1', [batchId])
     expect(JSON.stringify(persisted.rows[0])).not.toContain(credential)
+    expect(JSON.parse(persisted.rows[0].result)).toMatchObject({
+      attempt: 2, items: [{ itemId: itemIds[0], status: 'success', error: null, unfinished: [] }],
+    })
+    expect(JSON.parse(persisted.rows[0].result).items[0]).not.toHaveProperty('segments')
     expect((await post(path + '/retry', { itemIds })).status).toBe(409)
+
+    // Force the segment write to fail after the new job checkpoint has been proposed.
+    rowName = '合成失败写入'
+    await pool.query("ALTER TABLE business.platform_batch_segment ADD CONSTRAINT reject_test_segment CHECK (position('合成失败写入' in payload) = 0)")
+    try {
+      const receipt = await (await post('/api/platform/batches', {
+        items: [{ query: { source: 'queryList', name: '合成', pageSize: 1 } }],
+      })).json()
+      const rejectedStatus = async () => (await request('/api/platform/batches/' + receipt.batchId)).json()
+      await expect.poll(async () => (await rejectedStatus()).state).toBe('failed')
+      expect(await rejectedStatus()).toMatchObject({
+        attempt: 1, usage: { requests: 0, rows: 0 },
+        items: [{ itemId: receipt.itemIds[0], status: 'not_queried', segments: [], unfinished: [{ page: 1 }] }],
+      })
+    } finally {
+      await pool.query('ALTER TABLE business.platform_batch_segment DROP CONSTRAINT reject_test_segment')
+    }
   } finally {
     vi.stubGlobal('fetch', networkFetch)
     await pool.query("DELETE FROM business.service_credential WHERE key='sme-roster.miitCookie'")
@@ -493,7 +514,6 @@ it.runIf(!!bin)('skips a row locked by a transaction and picks it up after the l
 })
 
 it.runIf(!!bin)('filters roster exports by title before counting and reports progress only in the workbook phase', async () => {
-  vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
   const { newJobId } = await import('../../../layers/core/lib/job')
   const kind = 'current-roster-export'
   const growing = newJobId(), preparing = newJobId(), otherTitle = newJobId(), otherKind = newJobId()
@@ -531,18 +551,19 @@ it.runIf(!!bin)('filters roster exports by title before counting and reports pro
   expect((await submit(kind, { clientRequestId: 'regenerate-running', titleCode: 'little_giant', regenerateOf: growing })).status).toBe(409)
 })
 
-it.runIf(!!bin)('keeps authorized export downloads available in readonly task summaries and disables mutations', async () => {
+it.runIf(!!bin)('serves configured export files through readonly history and authorized downloads', async () => {
   const { newJobId } = await import('../../../layers/core/lib/job')
   const id = newJobId()
   const bytes = Buffer.from('fixture workbook')
   const artifact = {
     id,
+    filename: 'current-little_giant.xlsx',
     size: bytes.length,
     sha256: createHash('sha256').update(bytes).digest('hex'),
     generatedAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
   }
-  const artifactDir = join(dir, 'must-not-open.sqlite.exports')
+  const artifactDir = join(dir, 'roster-workbooks')
   mkdirSync(artifactDir, { recursive: true })
   writeFileSync(join(artifactDir, id + '.xlsx'), bytes)
   await pool.query(`INSERT INTO business.job (id, kind, state, params, result, created_at, finished_at)
@@ -556,8 +577,7 @@ it.runIf(!!bin)('keeps authorized export downloads available in readonly task su
     id, export: { canDownload: true, canRegenerate: true },
   })
 
-  vi.stubEnv('NUXT_DB_MODE', 'postgresql')
-  vi.stubEnv('NUXT_POSTGRES_JOBS', '0')
+  vi.stubEnv('NUXT_DB_READONLY', '1')
   try {
     const expected = {
       id, export: { canDownload: true, canRegenerate: false, artifact: { availability: 'available' } },
@@ -570,9 +590,16 @@ it.runIf(!!bin)('keeps authorized export downloads available in readonly task su
     expect(await (await request(detail)).json()).toMatchObject({
       id, export: { canDownload: false, canRegenerate: false },
     })
+    expect(await (await request('/api/jobs/' + id, { headers: auth })).json()).toMatchObject({
+      result: { artifact: { id, availability: 'available' } },
+    })
+    const download = await request('/api/job-artifacts/' + id, { headers: auth })
+    expect(download.status).toBe(200)
+    expect(download.headers.get('etag')).toBe('"' + artifact.sha256 + '"')
+    expect(Buffer.from(await download.arrayBuffer())).toEqual(bytes)
+    expect((await request('/api/job-artifacts/' + id)).status).toBe(401)
   } finally {
-    vi.stubEnv('NUXT_POSTGRES_JOBS', '1')
-    vi.stubEnv('NUXT_DB_MODE', undefined)
+    vi.stubEnv('NUXT_DB_READONLY', '0')
   }
 })
 
@@ -580,10 +607,14 @@ it.runIf(!!bin)('cleans expired roster workbooks from PostgreSQL task records wi
   const { newJobId } = await import('../../../layers/core/lib/job')
   const id = newJobId()
   const expiresAt = '2000-01-01T00:00:00Z'
-  const artifactDir = join(dir, 'must-not-open.sqlite.exports')
+  const artifactDir = join(dir, 'roster-workbooks')
   mkdirSync(artifactDir, { recursive: true })
   const workbook = join(artifactDir, id + '.xlsx')
   writeFileSync(workbook, 'expired fixture workbook')
+  const oldDerivedDir = join(dir, 'unconfigured-exports')
+  mkdirSync(oldDerivedDir, { recursive: true })
+  const unrelatedFile = join(oldDerivedDir, id + '.xlsx')
+  writeFileSync(unrelatedFile, 'file outside configured storage')
   await pool.query(`INSERT INTO business.job (id, kind, state, params, result, created_at, finished_at)
     VALUES ($1, 'current-roster-export', 'done', '{"titleCode":"little_giant"}', $2, $3, $3)`,
   [id, JSON.stringify({ artifact: { id, expiresAt } }), expiresAt])
@@ -598,59 +629,55 @@ it.runIf(!!bin)('cleans expired roster workbooks from PostgreSQL task records wi
     kind, result: { removed: 1, failed: 0 },
   })
   expect(existsSync(workbook)).toBe(false)
+  expect(existsSync(unrelatedFile)).toBe(true)
   expect(await pool.query('SELECT state FROM business.job WHERE id = $1', [id]))
     .toMatchObject({ rows: [{ state: 'done' }] })
   expect(await (await submit(kind, params)).json()).toMatchObject({ jobId })
 })
 
-it.runIf(!!bin)('preserves historical export request identifiers across migration and HTTP replay', async () => {
-  vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
-  try {
-    const migrated = await pool.query('SELECT id, params FROM business.job WHERE id = ANY($1) ORDER BY id',
-      [historicalExports.map(row => row.id)])
-    expect(migrated.rows).toEqual(historicalExports.map(({ id, params }) => ({ id, params })))
+it.runIf(!!bin)('preserves historical export request identifiers during HTTP replay', async () => {
+  const stored = await pool.query('SELECT id, params FROM business.job WHERE id = ANY($1) ORDER BY id',
+    [historicalExports.map(row => row.id)])
+  expect(stored.rows).toEqual(historicalExports.map(({ id, params }) => ({ id, params })))
 
-    for (const { id, key } of historicalExports) {
-      const replay = await submit(exportKind, { clientRequestId: key, titleCode: 'little_giant' })
-      expect(replay.status).toBe(202)
-      expect(await replay.json()).toMatchObject({ jobId: id, state: 'cancelled' })
-      const conflict = await submit(exportKind, { clientRequestId: key, titleCode: 'innovative_sme' })
-      expect(conflict.status).toBe(409)
-      await expect(pool.query(
-        "INSERT INTO business.job (id, kind, params, created_at) VALUES ('fixture-duplicate-export', $1, $2, now()::text)",
-        [exportKind, JSON.stringify({ clientRequestId: key, titleCode: 'little_giant' })],
-      )).rejects.toMatchObject({ code: '23505' })
-    }
-
-    const page = await request('/api/task-center?tab=sme-roster&group=export&titleCode=little_giant&state=cancelled', {
-      headers: { authorization: 'Bearer ' + token },
-    })
-    expect(page.status).toBe(200)
-    const expectedSummary = {
-      label: '专精特新“小巨人”导出',
-      module: 'sme-roster',
-      progress: { done: 0, total: null, unit: '家企业', stage: '执行结束' },
-      capabilities: { cancel: false, retry: false, reason: '导出不重放任务；请显式重新生成，新任务保留原任务关联。' },
-      export: { titleCode: 'little_giant', canRegenerate: true },
-    }
-    const { total, rows } = await page.json()
-    expect(total).toBe(historicalExports.length)
-    expect(rows.map((row: { id: string }) => row.id).sort()).toEqual(historicalExports.map(({ id }) => id))
-    for (const row of rows) {
-      expect(row).toMatchObject(expectedSummary)
-      expect(row).not.toHaveProperty('items')
-    }
-    const detail = await request('/api/task-center/' + historicalExports[0]!.id)
-    expect(detail.status).toBe(200)
-    expect(await detail.json()).toMatchObject({
-      ...expectedSummary,
-      items: [],
-      capabilities: { cancel: false, retry: false, reason: '当前请求仅可查看任务。' },
-      export: { titleCode: 'little_giant', canRegenerate: false, canDownload: false },
-    })
-  } finally {
-    vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', undefined)
+  for (const { id, key } of historicalExports) {
+    const replay = await submit(exportKind, { clientRequestId: key, titleCode: 'little_giant' })
+    expect(replay.status).toBe(202)
+    expect(await replay.json()).toMatchObject({ jobId: id, state: 'cancelled' })
+    const conflict = await submit(exportKind, { clientRequestId: key, titleCode: 'innovative_sme' })
+    expect(conflict.status).toBe(409)
+    await expect(pool.query(
+      "INSERT INTO business.job (id, kind, params, created_at) VALUES ('fixture-duplicate-export', $1, $2, now()::text)",
+      [exportKind, JSON.stringify({ clientRequestId: key, titleCode: 'little_giant' })],
+    )).rejects.toMatchObject({ code: '23505' })
   }
+
+  const page = await request('/api/task-center?tab=sme-roster&group=export&titleCode=little_giant&state=cancelled', {
+    headers: { authorization: 'Bearer ' + token },
+  })
+  expect(page.status).toBe(200)
+  const expectedSummary = {
+    label: '专精特新“小巨人”导出',
+    module: 'sme-roster',
+    progress: { done: 0, total: null, unit: '家企业', stage: '执行结束' },
+    capabilities: { cancel: false, retry: false, reason: '导出不重放任务；请显式重新生成，新任务保留原任务关联。' },
+    export: { titleCode: 'little_giant', canRegenerate: true },
+  }
+  const { total, rows } = await page.json()
+  expect(total).toBe(historicalExports.length)
+  expect(rows.map((row: { id: string }) => row.id).sort()).toEqual(historicalExports.map(({ id }) => id))
+  for (const row of rows) {
+    expect(row).toMatchObject(expectedSummary)
+    expect(row).not.toHaveProperty('items')
+  }
+  const detail = await request('/api/task-center/' + historicalExports[0]!.id)
+  expect(detail.status).toBe(200)
+  expect(await detail.json()).toMatchObject({
+    ...expectedSummary,
+    items: [],
+    capabilities: { cancel: false, retry: false, reason: '当前请求仅可查看任务。' },
+    export: { titleCode: 'little_giant', canRegenerate: false, canDownload: false },
+  })
 })
 
 it.runIf(!!bin)('deduplicates newly submitted Unicode edge-case request identifiers independently', async () => {
@@ -691,8 +718,7 @@ it.runIf(!!bin)('reports one run per scheduled hour and keeps the last result vi
   expect(concurrent).toEqual(first)
   await expect.poll(async () => (await schedules()).items.find((item: { id: string }) => item.id === kind)?.lastRun)
     .toMatchObject({ id: first.jobId, status: 'done', finishedAt: expect.any(Number) })
-  vi.stubEnv('NUXT_DB_MODE', 'postgresql')
-  vi.stubEnv('NUXT_POSTGRES_JOBS', '0')
+  vi.stubEnv('NUXT_DB_READONLY', '1')
   try {
     expect(await dispatchScheduledJob(kind, dir, new Date(at.getTime() + 3600000))).toEqual({ skipped: true })
     const readOnly = await schedules()
@@ -700,16 +726,13 @@ it.runIf(!!bin)('reports one run per scheduled hour and keeps the last result vi
     expect(readOnly.items.find((item: { id: string }) => item.id === kind))
       .toMatchObject({ nextRunAt: null, lastRun: { id: first.jobId } })
   } finally {
-    vi.stubEnv('NUXT_POSTGRES_JOBS', '1')
-    vi.stubEnv('NUXT_DB_MODE', undefined)
+    vi.stubEnv('NUXT_DB_READONLY', '0')
   }
 })
 
-it.runIf(!!bin)('keeps task-center list and detail semantics across PostgreSQL and SQLite', async () => {
+it.runIf(!!bin)('keeps task-center list and detail summaries scoped, public and actionable', async () => {
   const { newJobId } = await import('../../../layers/core/lib/job')
-  const { handleTaskCenterRequest } = await import('../../../layers/sme-roster/server/utils/task-center-http')
   await (await import('../../../layers/core/server/utils/postgres-jobs')).stopPostgresJobs()
-  const sqlite = initializeDb({ create: true, readOnly: false, dbPath: join(dir, 'task-summary-parity.sqlite') })
   const createdAt = '2027-01-01T00:00:00Z'
   const rawError = 'PRIVATE_FAILURE /private/workbook.xlsx'
   const file = { id: 891, path: 'synthetic/ocr.pdf' }
@@ -752,26 +775,28 @@ it.runIf(!!bin)('keeps task-center list and detail semantics across PostgreSQL a
   const fileSql = 'INSERT INTO stored_file (id, rel_path, filename, ext, bytes, sha256, created_at) VALUES'
   const fileValues = [file.id, file.path, 'ocr.pdf', 'pdf', 1, createHash('sha256').update(file.path).digest('hex'), createdAt]
   const jobSql = 'INSERT INTO job (id, kind, state, params, progress, result, error, created_at) VALUES'
-  vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
   try {
     await pool.query(`${fileSql.replace('stored_file', 'business.stored_file')} ($1,$2,$3,$4,$5,$6,$7)`, fileValues)
-    sqlite.$client.prepare(`${fileSql} (?,?,?,?,?,?,?)`).run(...fileValues)
     for (const { id, kind, state, params = {}, result = null, error = null } of scenarios) {
       const values = [id, kind, state, JSON.stringify(params), '{"done":1,"total":3}', JSON.stringify(result), error, createdAt]
       await pool.query(`${jobSql.replace('job', 'business.job')} ($1,$2,$3,$4,$5,$6,$7,$8)`, values)
-      sqlite.$client.prepare(`${jobSql} (?,?,?,?,?,?,?,?)`).run(...values)
     }
     const headers = { authorization: 'Bearer ' + token }
-    const context = { db: sqlite, apiToken: token, filesDir: dir }
-    for (const query of ['tab=sme-roster&group=platform', 'tab=sme-roster&group=export', 'tab=core&group=ocr', 'tab=all']) {
+    const scopes = [
+      { query: 'tab=sme-roster&group=platform', kinds: ['platform-query-batch', 'reconcile', 'difference-snapshot', 'event-archive-candidates', 'event-annual-correspondence'] },
+      { query: 'tab=sme-roster&group=export', kinds: ['current-roster-export'] },
+      { query: 'tab=core&group=ocr', kinds: ['ocr', 'render-pages'] },
+      { query: 'tab=all', kinds: scenarios.map(({ kind }) => kind) },
+    ]
+    for (const { query, kinds } of scopes) {
       const path = '/api/task-center?pageSize=200&' + query
-      const url = new URL(path, base)
       const pgResponse = await request(path, { headers })
       expect(pgResponse.status).toBe(200)
       const pgRows = (await pgResponse.json()).rows.filter((row: { createdAt: string }) => row.createdAt === createdAt)
-      const legacy = await handleTaskCenterRequest('list', { method: 'GET', path: url.pathname, query: Object.fromEntries(url.searchParams), headers }, context)
-      expect(pgRows.length).toBeGreaterThan(0)
-      expect(pgRows).toEqual((legacy.body as { rows: unknown[] }).rows)
+      expect(pgRows.map((row: { id: string }) => row.id).sort()).toEqual(
+        scenarios.filter(({ kind }) => kinds.includes(kind)).map(({ id }) => id).sort(),
+      )
+      expect(JSON.stringify(pgRows)).not.toMatch(/PRIVATE_FAILURE|\/private\//)
     }
     for (const { id, kind, state } of scenarios) {
       const path = '/api/task-center/' + id
@@ -779,8 +804,7 @@ it.runIf(!!bin)('keeps task-center list and detail semantics across PostgreSQL a
       expect(pgResponse.status, kind + '/' + state).toBe(200)
       const text = await pgResponse.text()
       expect(text).not.toMatch(/PRIVATE_FAILURE|\/private\//)
-      const legacy = await handleTaskCenterRequest('detail', { method: 'GET', path, headers }, context)
-      expect(JSON.parse(text), kind + '/' + state).toEqual(legacy.body)
+      expect(JSON.parse(text), kind + '/' + state).toMatchObject({ id, kind, state })
     }
     const failed = await (await request('/api/task-center/' + scenarios[0]!.id, { headers })).json()
     expect(failed.error).toBe('导出失败；请检查数据与产物存储后显式重新生成。原始错误不展示。')
@@ -793,8 +817,6 @@ it.runIf(!!bin)('keeps task-center list and detail semantics across PostgreSQL a
       capabilities: { retry: false, reason: '请通过年度专属接口核对当前来源代次与重试资格；此处不重放年度任务。' },
     })
   } finally {
-    vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', undefined)
-    sqlite.$client.close()
     await pool.query('DELETE FROM business.job WHERE id = ANY($1)', [scenarios.map(({ id }) => id)])
     await pool.query('DELETE FROM business.stored_file WHERE id = $1', [file.id])
   }

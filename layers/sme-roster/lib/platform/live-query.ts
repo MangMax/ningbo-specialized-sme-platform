@@ -98,8 +98,8 @@ export interface PlatformLiveQueryResult {
 }
 export const platformQueryCapabilities = {
   version: 3,
-  rawData: { request: { rawDataVersion: 1 }, version: 1, rows: 'typed_json', pages: 'unmodified_accepted_responses', legacyRows: 'string_projection', historicalAbsent: 'unknown', maxSingleResultBytes: 8388608, archiveRelationHash: 'rawData_v1_or_explicit_legacy_rows' },
-  batch: { available: true, submit: '/api/platform/batches', status: '/api/platform/batches/{batchId}', item: '/api/platform/batches/{batchId}/items/{itemId}', retry: '/api/platform/batches/{batchId}/retry', maxItems: 50, maxAttempts: 10, maxRequests: 200, maxRows: 5000, maxDurationMs: 120000, maxResultBytes: 8388608, defaultResultBytes: 2097152, submissionAuth: 'task_token', restart: 'failed_no_auto_resume', cache: 'no-store' },
+  rawData: { scope: 'single_query', request: { rawDataVersion: 1 }, version: 1, rows: 'typed_json', pages: 'unmodified_accepted_responses', legacyRows: 'string_projection', historicalAbsent: 'unknown', maxSingleResultBytes: 8388608, archiveRelationHash: 'rawData_v1_or_explicit_legacy_rows' },
+  batch: { available: true, rawPageBodies: false, typedBusinessRows: true, submit: '/api/platform/batches', status: '/api/platform/batches/{batchId}', item: '/api/platform/batches/{batchId}/items/{itemId}', retry: '/api/platform/batches/{batchId}/retry', maxItems: 50, maxAttempts: 10, maxRequests: 200, maxRows: 5000, maxDurationMs: 120000, maxResultBytes: 8388608, defaultResultBytes: 2097152, submissionAuth: 'task_token', restart: 'failed_no_auto_resume', cache: 'no-store' },
   sources: {
     queryList: { available: true, meaning: '申报记录', conditions: ['name', 'uscc'], combination: 'and', nameMatch: 'platform_keyword', titleSelection: false, defaultRestrictions: [], pagination: true },
     businessList: { available: true, meaning: '关联记录', conditions: ['uscc'], titleSelection: true, rdjb: ['1', '2', '3', 'all'], titleMeaning: { '1': '创新型中小企业', '2': '专精特新中小企业', '3': '小巨人' }, defaultRestrictions: [], pagination: true },

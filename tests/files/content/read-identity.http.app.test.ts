@@ -1,31 +1,30 @@
-import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { minimalPdf } from '../../support/minimal-pdf'
-import { initializeDb } from '../../../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'read-311b-http-'))
 const root = join(dir, 'files')
 mkdirSync(root)
-const dbPath = join(dir, 'fixture.sqlite')
-const db = initializeDb({ create: true,  dbPath })
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 let service: { baseUrl: string; stop(): Promise<void> }
 let output = ''
 beforeAll(async () => {
+  runtime = await postgresRuntimeFixture({ dir })
   const port = await reserveLoopbackPort()
   const child = spawnCompiledApp(port, {
     cwd: resolve('.'), stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: root, NUXT_INCOMING_DIR: join(dir, 'incoming') },
+    env: { ...process.env, ...runtime.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_FILES_DIR: root, NUXT_INCOMING_DIR: join(dir, 'incoming') },
   })
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-10000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) }
   catch (error) { await service.stop(); throw new Error(`${error}\n${output}`) }
 }, 90000)
-afterAll(async () => { await service?.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => { await service?.stop(); runtime?.close(); rmSync(dir, { recursive: true, force: true }) })
 const rest = (url: string, init?: RequestInit) => fetch(service.baseUrl + url, init)
 async function rpc(name: string, args: unknown) {
   const res = await rest('/mcp', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) })

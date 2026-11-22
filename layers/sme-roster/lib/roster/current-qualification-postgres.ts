@@ -1,4 +1,3 @@
-import { decodePostgresExactCell } from '../../../../db/postgresql/exact-cell'
 import { and, desc, eq, getTableColumns, inArray, isNotNull, isNull, max, or, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
@@ -8,19 +7,19 @@ import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/l
 import { officialEvidenceRowRevision } from '../../../../db/postgresql/official-evidence-tables'
 import {
   platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformCollection,
-  platformCollectionPage, platformLegacyQueryAlias, platformLegacyRelationAlias, platformObservationAssignment,
-  platformRecognizedProjection,
+  platformCollectionPage, platformObservationAssignment,
 } from '../../../../db/postgresql/platform-tables'
 import { enterpriseFactRevision, titleCycleDispositionRevision } from '../../../../db/postgresql/qualification-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import {
   assessCurrentQualificationInputs, assessLegacyQualificationInputs, currentQualificationSnapshot, evaluateLoadedCurrentQualification, formatQualificationCorrespondence,
   type CandidateEvent, type CandidateFile, type CurrentQualificationInput, type LoadedCurrentQualificationInput, type LegacyQualificationInput, type QualificationDisposition,
-} from './current-qualification'
+} from './current-qualification-model'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
 import { evaluateEnterpriseFactEffects, type EnterpriseFactEffectRow } from './enterprise-fact-effects'
 import { qualificationUsccCandidate, createPostgresPlatformQualificationReader, type PostgresPlatformQualificationReader } from './platform-qualification-postgres'
-import { platformEffectsForTitle } from './difference-platform-effects'
+import { isCurrentPlatformObservation } from '../platform/current-observation-postgres'
+import { platformEffectsForTitle } from './difference-platform-scope'
 import { currentCandidateIdBlocks } from './current-candidate-reader'
 import type { PlatformInterface } from '../labels'
 import { normalizeUscc } from '../domain'
@@ -31,10 +30,11 @@ import { createPostgresPublishedPresentationReader } from './official-published-
 import { officialPublishedError, projectOfficialPublishedNames, type OfficialPublishedScope, type OfficialPublishedFact } from './official-published-presentation'
 import type { PublishedPresentation } from './correspondence-view'
 import { importPostgresReceiptRedactor } from '../../server/utils/import-receipt-redaction'
-import { CANDIDATE_SCOPE_RULE } from '../platform/candidate-scope-capture'
+import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
+import { platformObservationSourceValue, platformObservationVersionDefaults } from '../platform/postgres-observation-facts'
 import { readPostgresCorrespondenceRefs } from '../../server/utils/record-correspondence-postgres-refs'
 
-import { readPostgresQualificationDecisionHeads } from '../../server/utils/decision-lifecycle-102/postgres-reads'
+import { readPostgresQualificationDecisionHeads } from '../../server/utils/decision-lifecycle/postgres-reads'
 import { readPostgresDifferenceObservations } from '../platform/difference-sources-postgres'
 import { readPostgresQueryAssessments } from './query-assessment-postgres'
 
@@ -112,7 +112,7 @@ const titleScopeBits = { innovative_sme: 1, specialized_sme: 2, little_giant: 4 
 
 async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], scope: 'references' | 'roster-detail' | 'hydration') {
   const hydrated = scope === 'hydration'
-  const readCells = scope !== 'references'
+  const readFacts = scope !== 'references'
   const byUscc = Map.groupBy(subjects, owner => normalizeUscc(owner.uscc_norm))
   byUscc.delete('')
   const codes = [...byUscc.keys()]
@@ -122,39 +122,32 @@ async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], 
   const assignment = platformObservationAssignment
   const first = alias(assignment, 'first_assignment')
   const head = alias(assignment, 'head_assignment')
-  const relationAlias = platformLegacyRelationAlias
-  const queryAlias = platformLegacyQueryAlias
+
+
   const apply = platformApplyProjection
-  const recognized = platformRecognizedProjection
   const business = platformBusinessProjection
   const uscc = hydrated ? assignment.usccRaw : first.usccRaw
   const latestRevision = db.select({ revision: max(head.revision) }).from(head).where(eq(head.observationId, observation.id))
   const query = db.select({
-    id: relationAlias.oldId, queryId: queryAlias.oldId, interface: collection.interface, queriedAt: collection.queriedAt,
+    id: observation.publicId, queryId: collection.publicId, interface: collection.interface, queriedAt: collection.queriedAt,
     collectionId: collection.id, sequenceNo: observation.sequenceNo, titleCode: collection.titleCode, rdjb: collection.rdjb,
     owner: assignment.enterpriseId, uscc,
-    state: observation.candidateScopeState, rule: observation.candidateScopeRule, mask: observation.candidateScopeMask,
-    ...(readCells ? {
-      applyStatus: apply.storedStatus, recognizedStatus: recognized.storedStatus,
-      applyYear: apply.storedYear, recognizedYear: recognized.storedYear,
-      applyBatch: apply.storedBatch, recognizedBatch: recognized.storedBatch,
-      processStatus: business.exactStatus, statusStorage: business.exactStatusSqliteStorage,
-      processYear: business.exactYear, yearStorage: business.exactYearSqliteStorage,
-      processBatch: business.exactBatch, batchStorage: business.exactBatchSqliteStorage,
+    mask: observation.candidateScopeMask,
+    ...(readFacts ? {
+      sourceValues: observation.sourceValues,
+      applyVersion: { id: apply.id, status: apply.status, declarationYear: apply.declarationYear },
+      businessVersion: { id: business.id, status: business.status, businessYear: business.businessYear, batch: business.batch },
     } : {}),
   }).from(observation)
-    .innerJoin(relationAlias, eq(relationAlias.observationId, observation.id))
     .innerJoin(collection, eq(collection.id, observation.collectionId))
-    .innerJoin(queryAlias, eq(queryAlias.collectionId, collection.id))
     .innerJoin(first, and(eq(first.observationId, observation.id), eq(first.revision, 1)))
     .innerJoin(assignment, and(eq(assignment.observationId, observation.id), eq(assignment.revision, latestRevision)))
-    .where(or(inArray(assignment.enterpriseId, ids), codes.length
-      ? and(isNull(assignment.enterpriseId), qualificationUsccCandidate(sql`${uscc}`, codes)) : undefined))
-    .orderBy(relationAlias.oldId)
-  const rows = await (readCells ? query
-    .leftJoin(business, eq(business.observationId, observation.id))
-    .leftJoin(apply, eq(apply.observationId, observation.id))
-    .leftJoin(recognized, eq(recognized.observationId, observation.id)) : query)
+    .where(and(isCurrentPlatformObservation(db), or(inArray(assignment.enterpriseId, ids), codes.length
+      ? and(isNull(assignment.enterpriseId), qualificationUsccCandidate(sql`${uscc}`, codes)) : undefined)))
+    .orderBy(observation.publicId)
+  const rows = await (readFacts ? query
+    .leftJoin(business, eq(business.versionId, observation.versionId))
+    .leftJoin(apply, eq(apply.versionId, observation.versionId)) : query)
   const exact = rows.flatMap(row => {
     const owners = row.owner !== null ? [row.owner] : (byUscc.get(normalizeUscc(row.uscc)) ?? []).map(item => item.id)
     return owners.map(owner => ({ ...row, owner }))
@@ -170,15 +163,21 @@ async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], 
   return (owner: number, title: CurrentTitle): PlatformEffect[] => {
     const available = byOwner.get(owner) ?? []
     const selected = hydrated ? available.filter(row => {
-      if (row.state !== 'captured' || row.rule !== CANDIDATE_SCOPE_RULE || row.mask === null) throw new Error('Current hydration candidate capture unavailable')
+      if (row.mask === null) throw new Error('Current hydration candidate capture unavailable')
       return Boolean(row.mask & titleScopeBits[title])
     }) : platformEffectsForTitle(available, pages, title)
-    return selected.map(row => ({
-      id: row.id, queryId: row.queryId, interface: row.interface as PlatformInterface, queriedAt: row.queriedAt,
-      year: row.processYear == null ? row.applyYear ?? row.recognizedYear ?? null : decodePostgresExactCell(row.processYear, row.yearStorage ?? null) as number | null,
-      batch: row.processBatch == null ? row.applyBatch ?? row.recognizedBatch ?? null : decodePostgresExactCell(row.processBatch, row.batchStorage ?? null) as string | null,
-      status: row.processStatus == null ? row.applyStatus ?? row.recognizedStatus ?? null : decodePostgresExactCell(row.processStatus, row.statusStorage ?? null) as string | null,
-    }))
+    return selected.map(row => {
+      const source = row.interface as PlatformInterface
+      const version = source === 'apply_list' ? row.applyVersion : row.businessVersion
+      const defaults = platformObservationVersionDefaults(source, version ?? null)
+      const values = row.sourceValues ?? null
+      return {
+        id: row.id, queryId: row.queryId, interface: source, queriedAt: row.queriedAt,
+        year: platformObservationSourceValue(values, defaults, 'year') as number | null,
+        batch: platformObservationSourceValue(values, defaults, 'batch') as string | null,
+        status: platformObservationSourceValue(values, defaults, 'status') as string | null,
+      }
+    })
   }
 }
 
@@ -309,13 +308,13 @@ export async function readPostgresCurrentStatusBatch(tx: PostgresQualificationTr
 }
 
 async function prepareDetailedQualificationSources(tx: PostgresQualificationTransaction,
-  loaded: Awaited<ReturnType<typeof readQualificationInputs>>, titles: readonly CurrentTitle[]) {
+  loaded: Awaited<ReturnType<typeof readQualificationInputs>>, titles: readonly CurrentTitle[], receiptRuntime?: ReceiptRuntimeContext) {
   const owners = [...new Map(loaded.map(([, inputs]) => {
     const subject = inputs.get(titles[0]!)!.enterprise
     return [subject.id, subject] as const
   })).values()]
   const coverage = await readPostgresQueryCoverage(tx, owners, titles)
-  const redact = await importPostgresReceiptRedactor(tx)
+  const redact = await importPostgresReceiptRedactor(tx, {}, receiptRuntime)
   const eventIds = [...new Set(loaded.flatMap(([, inputs]) => titles.flatMap(title => inputs.get(title)!.evidence.map(row => row.eventId))))]
   const readPublished = createPostgresPublishedPresentationReader(tx, redact, eventIds)
   for (const [, inputs] of loaded) {
@@ -334,14 +333,14 @@ async function prepareDetailedQualificationSources(tx: PostgresQualificationTran
   return { coverage, readPublished }
 }
 
-async function readPostgresDetailedAssessments(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, mode: 'detail' | 'workbook', readPlatform?: PostgresPlatformQualificationReader) {
+async function readPostgresDetailedAssessments(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, mode: 'detail' | 'workbook', readPlatform?: PostgresPlatformQualificationReader, receiptRuntime?: ReceiptRuntimeContext) {
   const hydrated: [number, { rows: import('./current-qualification').CurrentRow[];
     snapshot: ReturnType<typeof currentQualificationSnapshot>; publishedPresentation?: PublishedPresentation;
     workbookPublished: Map<number, OfficialPublishedFact> }][] = []
   if (!ids.length) return new Map(hydrated)
   const loaded = await readQualificationInputs(tx, ids, asOf, { mode, title }, readPlatform)
   const titles = mode === 'workbook' ? CURRENT_TITLES.slice(0, CURRENT_TITLES.indexOf(title) + 1) : CURRENT_TITLES
-  const { readPublished } = await prepareDetailedQualificationSources(tx, loaded, titles)
+  const { readPublished } = await prepareDetailedQualificationSources(tx, loaded, titles, receiptRuntime)
   for (const [id, inputs] of loaded) {
     let presentationScope: readonly OfficialPublishedScope[] | undefined
     let presentationFacts: readonly OfficialPublishedFact[] | undefined
@@ -381,8 +380,8 @@ export function readPostgresCurrentDetailBatch(tx: PostgresQualificationTransact
   return readPostgresDetailedAssessments(tx, ids, title, asOf, 'detail', readPlatform)
 }
 
-export function readPostgresCurrentWorkbookBatch(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, readPlatform?: PostgresPlatformQualificationReader) {
-  return readPostgresDetailedAssessments(tx, ids, title, asOf, 'workbook', readPlatform)
+export function readPostgresCurrentWorkbookBatch(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, readPlatform?: PostgresPlatformQualificationReader, receiptRuntime?: ReceiptRuntimeContext) {
+  return readPostgresDetailedAssessments(tx, ids, title, asOf, 'workbook', readPlatform, receiptRuntime)
 }
 
 export async function readPostgresEffectiveQualificationsBatch(tx: PostgresQualificationTransaction, enterpriseIds: readonly number[], asOf: number) {
@@ -406,8 +405,9 @@ export async function readPostgresEffectiveQualifications(tx: PostgresQualificat
 
 export async function readPostgresDifferenceQualifications(tx: PostgresQualificationTransaction, ids: readonly number[], asOf: number) {
   const loaded = await readQualificationInputs(tx, ids, asOf, { mode: 'detail', title: 'specialized_sme' })
-  await prepareDetailedQualificationSources(tx, loaded, CURRENT_TITLES)
+  const { coverage } = await prepareDetailedQualificationSources(tx, loaded, CURRENT_TITLES)
   return {
+    coverage,
     assessed: loaded.flatMap(([enterpriseId, inputs]) =>
       [...evaluateLoadedCurrentQualification(asOf, inputs).values()].map(result => ({ enterpriseId, assessment: result.row.assessment! }))),
     facts: loaded.flatMap(([, inputs]) => inputs.get('specialized_sme')!.readPlatformFacts()),

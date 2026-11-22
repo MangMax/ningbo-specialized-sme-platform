@@ -1,10 +1,9 @@
 import { postgresJobHandler } from '../../utils/job-runner-postgres'
-import { postgresJobStorageEnabled, requirePostgresJobsWritable, startPostgresJobs } from '../../utils/postgres-jobs'
+import { requirePostgresJobsWritable, submitWritablePostgresJob } from '../../utils/postgres-jobs'
 import { requestLogContext } from '../../../lib/logging'
-import { useDb } from '@db'
 import { normalizeJobParams } from '#core/lib/job'
 import { requireApiToken } from '../../utils/api-guard'
-import { ensureJobRunnerReady, getJobSpec, jobSpecs, submitJob } from '../../utils/job-runner'
+import { getJobSpec, jobSpecs } from '../../utils/job-spec-registry'
 import { registerJobSpecs } from '../../../../../server/utils/job-specs'
 
 defineRouteMeta({
@@ -96,10 +95,9 @@ export default defineEventHandler(async (event) => {
       message: `未知的任务种类:${kind}。已登记:${known || '(无)'}`,
     })
   }
-  const postgres = postgresJobStorageEnabled()
-  if (postgres) requirePostgresJobsWritable()
-  const handler = postgres ? postgresJobHandler(kind) : undefined
-  if (spec.status !== 'ready' || !(postgres ? handler : spec.run)) {
+  requirePostgresJobsWritable()
+  const handler = postgresJobHandler(kind)
+  if (!handler) {
     // **501 而不是 400**:名字是对的,只是活还没接。这个区分对代理很要紧 ——
     // 400 会让它去改名字,501 才让它知道「这条路现在走不通」。
     throw createError({
@@ -111,24 +109,15 @@ export default defineEventHandler(async (event) => {
   const params = normalizeJobParams(raw.params)
   if (!params.ok) throw createError({ statusCode: 400, message: params.message })
 
-  const parsed = (handler?.parse ?? spec.parse)(params.params)
+  const parsed = (handler.parse ?? spec.parse)(params.params)
   if (!parsed.ok) throw createError({ statusCode: 400, message: parsed.message })
 
   const input = {
     kind,
     logContext: requestLogContext(event),
     params: parsed.params,
-    filesDir: useRuntimeConfig(event).filesDir,
   }
-  const runtime = startPostgresJobs(input.filesDir)
-  let row
-  if (runtime) {
-    row = await runtime.runner.submit(input)
-  } else {
-    const db = useDb()
-    ensureJobRunnerReady(db)
-    row = submitJob(db, input)
-  }
+  const row = await submitWritablePostgresJob(useRuntimeConfig(event).filesDir, input)
 
   setResponseStatus(event, 202)
   setHeader(event, 'location', `/api/jobs/${row.id}`)

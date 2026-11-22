@@ -1,43 +1,40 @@
-import '../../support/compiled-enterprise-reader'
-import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
-import { initializeDb } from '../../../db/client'
+import { readPostgresRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-detail-postgres'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { assertEnterpriseDetailSnapshotEqual } from '../assertions/enterprise-detail-snapshot'
 import { decodeJsonRead } from '../../support/json-read'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { schema, useDb } from '../../../db'
-import { listRecords } from '../../../layers/sme-roster/lib/query'
-import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import * as schema from '../fixtures/postgres-tables'
+import { listPostgresLedgerRecords } from '../../../layers/sme-roster/lib/query-postgres'
 import { parseRecordQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-record-query-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'records.db') })
+let db: ReturnType<typeof usePostgresDirectoryDb>
 
-function enterprise(name: string, uscc: string | null): number {
-  const id = db
+async function enterprise(name: string, uscc: string | null): Promise<number> {
+  const id = (await db
     .insert(schema.enterprise)
     .values({ name, nameNorm: name, usccNorm: uscc, district: '海曙区' })
-    .returning({ id: schema.enterprise.id })
-    .get().id
-  db.insert(schema.rosterLegacyMember).values({ enterpriseId: id }).run()
+    .returning({ id: schema.enterprise.id }))[0]!.id
+  await db.insert(schema.rosterLegacyMember).values({ enterpriseId: id })
   return id
 }
 
-function record(
+async function record(
   enterpriseId: number,
   source: 'jxj' | 'miit' = 'jxj',
   titleCode = 'specialized_sme',
-): number {
-  return db
+): Promise<number> {
+  return (await db
     .insert(schema.record)
     .values({ enterpriseId, titleCode, source, district: '海曙区' })
-    .returning({ id: schema.record.id })
-    .get().id
+    .returning({ id: schema.record.id }))[0]!.id
 }
 
-function event(
+async function event(
   recordId: number,
   input: {
     type: 'award' | 'review' | 'maintain' | 'nurture'
@@ -47,8 +44,8 @@ function event(
     seq?: number | null
     sortKey?: number
   },
-): number {
-  return db
+): Promise<number> {
+  return (await db
     .insert(schema.recordEvent)
     .values({
       recordId,
@@ -59,111 +56,126 @@ function event(
       batchSeq: input.seq ?? null,
       sortKey: input.sortKey ?? input.decidedYear ?? input.year ?? 0,
     })
-    .returning({ id: schema.recordEvent.id })
-    .get().id
+    .returning({ id: schema.recordEvent.id }))[0]!.id
 }
 
-function evidence(recordEventId: number, sourceFile: string, page: number | null = null) {
-  return db.insert(schema.recordEvidence)
+async function evidence(recordEventId: number, sourceFile: string, page: number | null = null) {
+  return (await db.insert(schema.recordEvidence)
     .values({ recordEventId, sourceFile, attachment: '附件2', listNo: 19, page })
-    .returning({ id: schema.recordEvidence.id }).get().id
+    .returning({ id: schema.recordEvidence.id }))[0]!.id
 }
 
-const reassessed = enterprise('宁波重授科技有限公司', '91330200555001234A')
-const reassessedRecord = record(reassessed)
-const firstAward = event(reassessedRecord, {
-  type: 'award',
-  year: 2021,
-  decidedYear: 2021,
-  seq: 1,
-  sortKey: 2021,
-})
-evidence(firstAward, 'jxj/announcement/2021/award.pdf', 7)
-const failedReview = event(reassessedRecord, {
-  type: 'review',
-  year: 2021,
-  decidedYear: 2022,
-  reviewOutcome: 'failed',
-  seq: 2,
-  sortKey: 2022,
-})
-evidence(failedReview, 'jxj/announcement/2022/review.pdf', 8)
-const reaward = event(reassessedRecord, {
-  type: 'award',
-  year: 2024,
-  decidedYear: 2024,
-  sortKey: 2024,
-})
-const reassessedInnovativeRecord = record(reassessed, 'jxj', 'innovative_sme')
-const reassessedInnovativeAward = event(reassessedInnovativeRecord, {
-  type: 'award',
-  year: 2022,
-  decidedYear: 2022,
-})
-evidence(reassessedInnovativeAward, 'jxj/announcement/2022/innovative-award.pdf')
-const otherSource = record(reassessed, 'miit')
-event(otherSource, { type: 'maintain', year: 2025, seq: 3, sortKey: 2025 })
-db.insert(schema.enterpriseAlias)
-  .values({
-    enterpriseId: reassessed,
-    name: '宁波重授旧名有限公司',
-    nameNorm: '宁波重授旧名有限公司',
-    sourceKind: 'manual',
-    sourceRefId: 1,
-    verificationStatus: 'confirmed',
+let reassessed: number
+let firstAward: number
+let reaward: number
+let passed: number
+let passedReview: number
+let pending: number
+let undatable: number
+let terminated: number
+let nurtureOnly: number
+let legacyDocx: number
+let legacyDocxEvidence: number
+let legacyXlsx: number
+let legacyXlsxEvidence: number
+
+async function seed() {
+  reassessed = await enterprise('宁波重授科技有限公司', '91330200555001234A')
+  const reassessedRecord = await record(reassessed)
+  firstAward = await event(reassessedRecord, {
+    type: 'award',
+    year: 2021,
+    decidedYear: 2021,
+    seq: 1,
+    sortKey: 2021,
   })
-  .run()
-
-const passed = enterprise('宁波复核通过企业', '91330200555001235B')
-const passedRecord = record(passed)
-event(passedRecord, { type: 'award', year: 2021, decidedYear: 2021, seq: 1, sortKey: 2021 })
-const passedReview = event(passedRecord, {
-  type: 'review',
-  year: 2021,
-  decidedYear: 2025,
-  reviewOutcome: 'passed',
-  seq: 1,
-  sortKey: 2025,
-})
-evidence(passedReview, 'jxj/announcement/2025/review.pdf', 14)
-
-const pending = enterprise('宁波待核企业', null)
-const pendingRecord = record(pending)
-event(pendingRecord, { type: 'award', year: 2021 })
-event(pendingRecord, { type: 'review', year: 2021, decidedYear: 2024 })
-db.insert(schema.enterpriseAlias)
-  .values({
-    enterpriseId: pending,
-    name: '宁波待核旧名有限公司',
-    nameNorm: '宁波待核旧名有限公司',
-    sourceKind: 'manual',
-    sourceRefId: 2,
-    verificationStatus: 'pending',
+  await evidence(firstAward, 'jxj/announcement/2021/award.pdf', 7)
+  const failedReview = await event(reassessedRecord, {
+    type: 'review',
+    year: 2021,
+    decidedYear: 2022,
+    reviewOutcome: 'failed',
+    seq: 2,
+    sortKey: 2022,
   })
-  .run()
+  await evidence(failedReview, 'jxj/announcement/2022/review.pdf', 8)
+  reaward = await event(reassessedRecord, {
+    type: 'award',
+    year: 2024,
+    decidedYear: 2024,
+    sortKey: 2024,
+  })
+  const reassessedInnovativeRecord = await record(reassessed, 'jxj', 'innovative_sme')
+  const reassessedInnovativeAward = await event(reassessedInnovativeRecord, {
+    type: 'award',
+    year: 2022,
+    decidedYear: 2022,
+  })
+  await evidence(reassessedInnovativeAward, 'jxj/announcement/2022/innovative-award.pdf')
+  const otherSource = await record(reassessed, 'miit')
+  await event(otherSource, { type: 'maintain', year: 2025, seq: 3, sortKey: 2025 })
+  await db.insert(schema.enterpriseAlias)
+    .values({
+      enterpriseId: reassessed,
+      name: '宁波重授旧名有限公司',
+      nameNorm: '宁波重授旧名有限公司',
+      sourceKind: 'manual',
+      createdAt: '2026-10-14T00:00:00Z',
+      sourceRefId: 1,
+      verificationStatus: 'confirmed',
+    })
 
-const undatable = enterprise('宁波无法定年企业', null)
-const undatableRecord = record(undatable)
-event(undatableRecord, { type: 'award', year: null })
+  passed = await enterprise('宁波复核通过企业', '91330200555001235B')
+  const passedRecord = await record(passed)
+  await event(passedRecord, { type: 'award', year: 2021, decidedYear: 2021, seq: 1, sortKey: 2021 })
+  passedReview = await event(passedRecord, {
+    type: 'review',
+    year: 2021,
+    decidedYear: 2025,
+    reviewOutcome: 'passed',
+    seq: 1,
+    sortKey: 2025,
+  })
+  await evidence(passedReview, 'jxj/announcement/2025/review.pdf', 14)
 
-const terminated = enterprise('宁波复核未通过企业', null)
-const terminatedRecord = record(terminated)
-event(terminatedRecord, { type: 'award', year: 2021, decidedYear: 2021, seq: 1 })
-event(terminatedRecord, { type: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'failed', seq: 1 })
+  pending = await enterprise('宁波待核企业', null)
+  const pendingRecord = await record(pending)
+  await event(pendingRecord, { type: 'award', year: 2021 })
+  await event(pendingRecord, { type: 'review', year: 2021, decidedYear: 2024 })
+  await db.insert(schema.enterpriseAlias)
+    .values({
+      enterpriseId: pending,
+      name: '宁波待核旧名有限公司',
+      nameNorm: '宁波待核旧名有限公司',
+      sourceKind: 'manual',
+      sourceRefId: 2,
+      createdAt: '2026-10-14T00:00:00Z',
+      verificationStatus: 'pending',
+    })
 
-const nurtureOnly = enterprise('宁波仅培育企业', null)
-const nurtureRecord = record(nurtureOnly)
-event(nurtureRecord, { type: 'nurture', year: 2024, seq: 1 })
+  undatable = await enterprise('宁波无法定年企业', null)
+  const undatableRecord = await record(undatable)
+  await event(undatableRecord, { type: 'award', year: null })
 
-// Legacy rows can contain page numbers for formats without stable pagination.
-const legacyDocx = enterprise('宁波旧版 Word 页码企业', null)
-const legacyDocxRecord = record(legacyDocx)
-const legacyDocxEvent = event(legacyDocxRecord, { type: 'award', year: 2020, seq: 1 })
-const legacyDocxEvidence = evidence(legacyDocxEvent, 'jxj/announcement/legacy.docx', 12)
-const legacyXlsx = enterprise('宁波旧版 Excel 页码企业', null)
-const legacyXlsxRecord = record(legacyXlsx)
-const legacyXlsxEvent = event(legacyXlsxRecord, { type: 'award', year: 2020, seq: 1 })
-const legacyXlsxEvidence = evidence(legacyXlsxEvent, 'jxj/announcement/legacy.xlsx', 9)
+  terminated = await enterprise('宁波复核未通过企业', null)
+  const terminatedRecord = await record(terminated)
+  await event(terminatedRecord, { type: 'award', year: 2021, decidedYear: 2021, seq: 1 })
+  await event(terminatedRecord, { type: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'failed', seq: 1 })
+
+  nurtureOnly = await enterprise('宁波仅培育企业', null)
+  const nurtureRecord = await record(nurtureOnly)
+  await event(nurtureRecord, { type: 'nurture', year: 2024, seq: 1 })
+
+  // Legacy rows can contain page numbers for formats without stable pagination.
+  legacyDocx = await enterprise('宁波旧版 Word 页码企业', null)
+  const legacyDocxRecord = await record(legacyDocx)
+  const legacyDocxEvent = await event(legacyDocxRecord, { type: 'award', year: 2020, seq: 1 })
+  legacyDocxEvidence = await evidence(legacyDocxEvent, 'jxj/announcement/legacy.docx', 12)
+  legacyXlsx = await enterprise('宁波旧版 Excel 页码企业', null)
+  const legacyXlsxRecord = await record(legacyXlsx)
+  const legacyXlsxEvent = await event(legacyXlsxRecord, { type: 'award', year: 2020, seq: 1 })
+  legacyXlsxEvidence = await evidence(legacyXlsxEvent, 'jxj/announcement/legacy.xlsx', 9)
+}
 
 let routeQuery: Record<string, unknown> = {}
 let routeId: unknown = null
@@ -194,7 +206,13 @@ let listEnterprisesTool: {
 }
 let enterpriseDetailTool: { handler: (input: { enterpriseId: number }) => Promise<unknown> }
 
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 beforeAll(async () => {
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  db = usePostgresDirectoryDb()
+  await seed()
   vi.stubGlobal('defineRouteMeta', (meta: typeof recordsRouteMeta) => {
     if (meta.openAPI?.summary === '查台账记录') {
       recordsRouteMeta = meta
@@ -217,8 +235,9 @@ beforeAll(async () => {
   vi.stubGlobal('createError', (options: { statusCode?: number; statusMessage?: string }) =>
     Object.assign(new Error(options.statusMessage), options),
   )
-  vi.doMock('@db', () => ({ useDb: () => db }))
+
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
+
   recordsHandler = (await import('../../../layers/sme-roster/server/api/records.get')).default as unknown as typeof recordsHandler
   enterpriseDetailHandler = (await import('../../../layers/sme-roster/server/api/enterprises/[id].get')).default as unknown as typeof enterpriseDetailHandler
   queryRecordsTool = (await import('../../../layers/sme-roster/server/mcp/tools/query_records')).default as unknown as typeof queryRecordsTool
@@ -230,9 +249,9 @@ beforeAll(async () => {
   listEnterprisesTool = { ...listTool,handler: decodeJsonRead(listTool.handler as never) } as unknown as typeof listEnterprisesTool
   const detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_enterprise_detail')).default
   enterpriseDetailTool = { ...detailTool,handler: decodeJsonRead(detailTool.handler as never) } as unknown as typeof enterpriseDetailTool
-})
+}, 60_000)
 
-afterAll(async () => { await enterpriseReads.close(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => { await closePostgresDirectoryDb(); postgres?.close(); vi.unstubAllEnvs(); rmSync(dir, { recursive: true, force: true }) })
 
 describe('通用记录查询的生命周期投影', () => {
   it('REST OpenAPI 将 firstStatus 声明为逗号分隔的枚举数组', () => {
@@ -296,8 +315,8 @@ describe('通用记录查询的生命周期投影', () => {
     expect(rosterExportRouteMeta?.openAPI?.responses?.[400]?.description).toContain('firstStatus')
   })
 
-  it('failed review 后重新 award 保留首次认定，并把新认定作为到期锚点', () => {
-    const row = listRecords(db, { dueYear: 2027, pageSize: 200 }).rows.find((r) => r.enterpriseId === reassessed)!
+  it('failed review 后重新 award 保留首次认定，并把新认定作为到期锚点', async () => {
+    const row = (await listPostgresLedgerRecords(db, { dueYear: 2027, pageSize: 200 })).rows.find((r) => r.enterpriseId === reassessed)!
     expect(row.lifecycle).toMatchObject({
       firstRecognitionYear: 2021,
       firstRecognitionEventId: firstAward,
@@ -318,9 +337,9 @@ describe('通用记录查询的生命周期投影', () => {
     expect(row.lifecycle.flags.map((flag) => flag.code)).toEqual(['no_batch', 'no_evidence'])
   })
 
-  it('year 筛事件年份，dueYear 筛到期年份，复核通过用结论年份刷新锚点', () => {
-    expect(listRecords(db, { year: [2021], pageSize: 200 }).rows.map((r) => r.enterpriseId)).toContain(passed)
-    const due = listRecords(db, { dueYear: 2028, pageSize: 200 }).rows.find((r) => r.enterpriseId === passed)!
+  it('year 筛事件年份，dueYear 筛到期年份，复核通过用结论年份刷新锚点', async () => {
+    expect((await listPostgresLedgerRecords(db, { year: [2021], pageSize: 200 })).rows.map((r) => r.enterpriseId)).toContain(passed)
+    const due = (await listPostgresLedgerRecords(db, { dueYear: 2028, pageSize: 200 })).rows.find((r) => r.enterpriseId === passed)!
     expect(due.lifecycle).toMatchObject({
       anchorYear: 2025,
       anchorEventId: passedReview,
@@ -332,12 +351,12 @@ describe('通用记录查询的生命周期投影', () => {
       decidedYear: 2025,
       reviewOutcome: 'passed',
     })
-    expect(listRecords(db, { dueYear: 2021 }).total).toBe(0)
-    expect(listRecords(db, { dueYear: 2024 }).rows.map((r) => r.enterpriseId)).not.toContain(pending)
+    expect((await listPostgresLedgerRecords(db, { dueYear: 2021 })).total).toBe(0)
+    expect((await listPostgresLedgerRecords(db, { dueYear: 2024 })).rows.map((r) => r.enterpriseId)).not.toContain(pending)
   })
 
-  it('证据缺口和未知复核结论保留在结果里，并给出逐项原因', () => {
-    const row = listRecords(db, { pageSize: 200 }).rows.find((r) => r.enterpriseId === pending)!
+  it('证据缺口和未知复核结论保留在结果里，并给出逐项原因', async () => {
+    const row = (await listPostgresLedgerRecords(db, { pageSize: 200 })).rows.find((r) => r.enterpriseId === pending)!
     expect(row.lifecycle.flags).toEqual([
       { code: 'decided_year_missing', reason: expect.any(String) },
       { code: 'review_outcome_unknown', reason: expect.any(String) },
@@ -345,13 +364,13 @@ describe('通用记录查询的生命周期投影', () => {
       { code: 'no_evidence', reason: expect.any(String) },
     ])
     expect(row.lifecycle).toMatchObject({ dueYear: null, status: 'needs_review' })
-    const unresolved = listRecords(db, { pageSize: 200 }).rows.find((r) => r.enterpriseId === undatable)!
+    const unresolved = (await listPostgresLedgerRecords(db, { pageSize: 200 })).rows.find((r) => r.enterpriseId === undatable)!
     expect(unresolved.lifecycle).toMatchObject({ dueYear: null, status: 'needs_review' })
     expect(unresolved.lifecycle.flags.map((flag) => flag.code)).toContain('no_anchor_year')
   })
 
-  it('已明确未通过的复核终止资格；只有培育事件不构成称号生命周期', () => {
-    const allRows = listRecords(db, { pageSize: 200 }).rows
+  it('已明确未通过的复核终止资格；只有培育事件不构成称号生命周期', async () => {
+    const allRows = (await listPostgresLedgerRecords(db, { pageSize: 200 })).rows
     expect(allRows.find((r) => r.enterpriseId === terminated)?.lifecycle).toMatchObject({
       state: 'terminated',
       status: 'terminated',
@@ -362,17 +381,17 @@ describe('通用记录查询的生命周期投影', () => {
       status: 'not_applicable',
       dueYear: null,
     })
-    expect(listRecords(db, { dueYear: 2024, pageSize: 200 }).rows.map((r) => r.enterpriseId)).not.toContain(terminated)
+    expect((await listPostgresLedgerRecords(db, { dueYear: 2024, pageSize: 200 })).rows.map((r) => r.enterpriseId)).not.toContain(terminated)
   })
 
-  it('q 搜现名、已确认曾用名和 USCC，不搜索待核曾用名', () => {
-    expect(listRecords(db, { q: '重授旧名', title: ['specialized_sme'] }).rows.map((r) => r.enterpriseId)).toEqual([reassessed])
-    expect(listRecords(db, { q: '91330200555001235' }).rows.map((r) => r.enterpriseId)).toEqual([passed])
-    expect(listRecords(db, { q: '待核旧名' }).rows).toEqual([])
+  it('q 搜现名、已确认曾用名和 USCC，不搜索待核曾用名', async () => {
+    expect((await listPostgresLedgerRecords(db, { q: '重授旧名', title: ['specialized_sme'] })).rows.map((r) => r.enterpriseId)).toEqual([reassessed])
+    expect((await listPostgresLedgerRecords(db, { q: '91330200555001235' })).rows.map((r) => r.enterpriseId)).toEqual([passed])
+    expect((await listPostgresLedgerRecords(db, { q: '待核旧名' })).rows).toEqual([])
   })
 
-  it('按事件过滤只选行，不裁掉该企业×称号的其他事件或来源', () => {
-    const row = listRecords(db, { eventType: ['award'], q: '重授旧名', title: ['specialized_sme'] }).rows[0]!
+  it('按事件过滤只选行，不裁掉该企业×称号的其他事件或来源', async () => {
+    const row = (await listPostgresLedgerRecords(db, { eventType: ['award'], q: '重授旧名', title: ['specialized_sme'] })).rows[0]!
     expect(row.sources).toEqual(['jxj', 'miit'])
     expect(row.events.map((e) => e.type)).toEqual(['award', 'review', 'award', 'maintain'])
   })
@@ -381,13 +400,13 @@ describe('通用记录查询的生命周期投影', () => {
 describe('REST / MCP 共用记录查询与企业详情读模型', () => {
   it('firstYear 按首次 award 年筛选且先于分页；事件 year 仍是独立口径', async () => {
     routeQuery = { firstYear: '2021', pageSize: '1' }
-    const paged = recordsHandler({}) as { rows: { enterpriseId: number }[]; total: number }
+    const paged = await recordsHandler({}) as { rows: { enterpriseId: number }[]; total: number }
     expect(paged.total).toBe(4)
     expect(paged.rows).toHaveLength(1)
 
     // 重授企业有 2024 年重新获批事件，但首次认定仍是 2021；过滤不裁掉它的完整历史。
     routeQuery = { year: '2024', firstYear: '2021', q: '重授旧名', pageSize: '5' }
-    const rest = recordsHandler({}) as {
+    const rest = await recordsHandler({}) as {
       rows: {
         enterpriseId: number
         lifecycle: { firstRecognitionYear: number | null }
@@ -416,17 +435,17 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
 
     // 2024 是事件年份，但不是这组的首次认定年份。
     routeQuery = { year: '2024', firstYear: '2024', q: '重授旧名' }
-    expect((recordsHandler({}) as { total: number }).total).toBe(0)
+    expect((await recordsHandler({}) as { total: number }).total).toBe(0)
   })
 
   it('firstStatus 使用首次认定共享判定，并在 REST 与 MCP 中先筛后分页', async () => {
     routeQuery = { firstYear: '2021', firstStatus: 'confirmed', pageSize: '1' }
-    const confirmed = recordsHandler({}) as { rows: { enterpriseId: number }[]; total: number }
+    const confirmed = await recordsHandler({}) as { rows: { enterpriseId: number }[]; total: number }
     expect(confirmed.total).toBe(1)
     expect(confirmed.rows.map((row) => row.enterpriseId)).toEqual([reassessed])
 
     routeQuery = { firstYear: '2021', firstStatus: 'pending', pageSize: '1' }
-    const pending = recordsHandler({}) as { rows: { enterpriseId: number }[]; total: number }
+    const pending = await recordsHandler({}) as { rows: { enterpriseId: number }[]; total: number }
     const pendingMcp = await queryRecordsTool.handler({
       firstYear: [2021],
       firstStatus: ['pending'],
@@ -481,7 +500,7 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
       firstStatus: 'confirmed',
       pageSize: '1',
     }
-    const rest = (await rosterEnterprisesHandler({}))
+    const rest = await rosterEnterprisesHandler({})
     const mcp = await listEnterprisesTool.handler({
       q: '宁波重授旧名有限公司',
       title: ['specialized_sme', 'innovative_sme'],
@@ -507,12 +526,12 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
 
   it('GET /api/records 与 query_records 返回完全相同的结果', async () => {
     routeQuery = { dueYear: '2027', q: '重授旧名', pageSize: '20' }
-    const rest = recordsHandler({})
+    const rest = await recordsHandler({})
     const mcp = await queryRecordsTool.handler({ dueYear: 2027, q: '重授旧名', pageSize: 20 })
     expect(mcp).toEqual(rest)
 
     routeQuery = { year: '2021', dueYear: '2028' }
-    const yearAndDueYearRest = recordsHandler({})
+    const yearAndDueYearRest = await recordsHandler({})
     const yearAndDueYearMcp = await queryRecordsTool.handler({ year: [2021], dueYear: 2028 })
     expect(yearAndDueYearMcp).toEqual(yearAndDueYearRest)
     expect((yearAndDueYearRest as { rows: { enterpriseId: number }[] }).rows.map((r) => r.enterpriseId)).toContain(passed)
@@ -520,7 +539,7 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
 
   it('详情与 GET /api/records 对 legacy DOCX/XLSX 隐藏不可靠的数字页码', async () => {
     routeQuery = {}
-    const result = recordsHandler({}) as {
+    const result = await recordsHandler({}) as {
       rows: { enterpriseId: number; events: { evidence: { sourceFile: string; page: number | null }[] }[] }[]
     }
     const docxRecord = result.rows.find((row) => row.enterpriseId === legacyDocx)!
@@ -557,12 +576,9 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
   })
 
   it('MCP 企业详情复用 REST 使用的详情读模型', async () => {
-    const restReadModel = getRosterEnterpriseDetail(db, reassessed)
+    const restReadModel = await readPostgresRosterEnterpriseDetail(db, reassessed)
     const mcp = await enterpriseDetailTool.handler({ enterpriseId: reassessed })
     assertEnterpriseDetailSnapshotEqual(mcp, restReadModel)
     await expect(enterpriseDetailTool.handler({ enterpriseId: 999999 })).rejects.toMatchObject({ statusCode: 404 })
   })
 })
-
-// Native reader readiness is setup; each business case retains its default budget.
-beforeAll(async () => { await enterpriseReads.start() }, 30000)

@@ -3,15 +3,16 @@ import { computed } from 'vue'
 import { PLATFORM_QUERY_STATUSES, PLATFORM_RDJBS } from '#sme-roster/lib/labels'
 import { formatFetchTime } from '#sme-roster/lib/reconcile-time'
 import { platformFailureForDisplay } from '#sme-roster/lib/roster/platform-records'
-import type { PlatformRecordQuery } from '#sme-roster/lib/roster/platform-records'
+import type { PlatformQueryRow } from '#sme-roster/lib/platform/read'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
-const props = defineProps<{ queries: PlatformRecordQuery[]; sourceLabel: string }>()
+type DisplayQuery = Pick<PlatformQueryRow['query'], 'id' | 'interface' | 'queryKey' | 'rdjb' | 'queriedAt' | 'status' | 'failureReason' | 'relationCount' | 'collectionEvidence'>
+const props = defineProps<{ queries: DisplayQuery[]; sourceLabel: string }>()
 const time = (value: string) => formatFetchTime(value) ?? value
 const title = (value: string | null) => PLATFORM_RDJBS[value ?? ''] ?? '称号未标注'
 const conditions: Record<string, string> = { name: '企业名称条件', uscc: '信用代码条件', sqsj: '申报时间范围', rddqrq: '有效年份条件', whpcyear: '维护年份条件', whpc: '维护批次条件', szq: '属地筛选代码（原值）', orderField: '排序字段', orderDirection: '排序方向' }
 const conditionValue = (key: string, value: string) => key === 'orderField' && value === 'qymc' ? '企业名称' : key === 'orderDirection' ? ({asc:'升序',desc:'降序'}[value] ?? value) : value
 const history = computed(() => [...props.queries].sort((a,b) => b.queriedAt.localeCompare(a.queriedAt) || b.id - a.id).map(query => {
-  const evidence = query.collectionEvidence ?? query.legacyProvenance?.collection
+  const evidence = query.collectionEvidence
   const failures = [...new Set([...(evidence?.pages.map(page => page.error?.message) ?? []), evidence?.error?.message, query.failureReason]
     .map(platformFailureForDisplay).filter((message): message is string => !!message))]
   const samePosition = (a: {rdjb: string | null; page: number}, b: {rdjb: string | null; page: number}) => a.rdjb === b.rdjb && a.page === b.page
@@ -34,7 +35,6 @@ const history = computed(() => [...props.queries].sort((a,b) => b.queriedAt.loca
       <article v-for="item in history" :key="item.query.id" class="mt-3 min-w-0 border-t pt-3 break-words [overflow-wrap:anywhere]" data-testid="platform-query-provenance">
         <p class="font-medium">查询 #{{ item.query.id }} · {{ sourceLabel }} · {{ PLATFORM_QUERY_STATUSES[item.query.status] ?? '状态待核' }} · {{ item.query.relationCount }} 条来源行</p>
         <p>原查询时点：{{ time(item.query.queriedAt) }}</p>
-        <p v-if="item.query.legacyProvenance" class="text-muted-foreground">旧采集分页来源已补证；原始字段类型仍未记录。</p>
         <template v-if="item.evidence">
           <p>完成时点：{{ time(item.evidence.completedAt) }}</p>
           <p>完整性：{{ { complete: '所请求范围完整', partial: '部分', not_queried: '未查询' }[item.evidence.completeness] }} · {{ item.evidence.fullRange ? '从首页查询' : '续页范围，非全范围' }}</p>

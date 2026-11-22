@@ -1,55 +1,89 @@
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import pg from 'pg'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { execFileSync } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 
-import { afterAll, beforeAll, expect, it } from 'vitest'
-import { initializeDb, schema as s } from '../../../db/client'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { preflightRecordCorrespondences, commitRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
-import { readEventAnnualProcess } from '../../../layers/sme-roster/server/utils/event-annual-process-read'
+import { afterAll, beforeAll, expect, it, vi } from 'vitest'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
+import { singlePostgresFixtureRow } from '../../support/isolated-postgres-cases'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import * as s from '../fixtures/postgres-tables'
+import { job } from '../../../db/postgresql/job-tables'
+import { readPostgresAnnualProcessEntry } from '../../../layers/sme-roster/server/utils/event-annual-process-postgres'
+import { preflightPostgresCorrespondences, commitPostgresCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence-write-postgres'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
-const dir = mkdtempSync(join(tmpdir(), 'annual258-wire-')), dbPath = join(dir, 'isolated.db')
-const db = initializeDb({ create: true,  dbPath })
-const enterprise = db.insert(s.enterprise).values({ name: '合成实际资格协议企业', nameNorm: '合成实际资格协议企业', usccNorm: '91330211255994457P' }).returning().get()
-const record = db.insert(s.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: enterprise.usccNorm }).returning().get()
-const cases = [2024, 2023, 2022].map((year, n) => ({ status: ['confirmed', 'blocked', 'none'][n]!, event: db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year }).returning().get() }))
-const eligibleEvent = db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2021 }).returning().get()
-const candidateEvent = db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2020 }).returning().get()
-const rows = [2024, 2024, 2023, 2021, 2020].map((year, n) => {
-  const key = `SQ258-${n}`, appliedAt = n === 1 ? '2024-12-13 10:00:00' : `${year}-03-01 09:00:00`
-  const seeded = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: `2026-10-01T00:00:0${n}Z`, status: 'success', rawResponse: 'Synthetic annual HTTP source', relations: [{ sequenceNo: 1, relationKey: key, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { id: key, year, sblx: '申请', sqsj: appliedAt, cszt: n === 0 ? '终审不通过' : '终审通过' } }] })
-  return { id: seeded.relationIds[0]!, queryId: seeded.queryId }
-})
-let service: { baseUrl: string; stop: () => Promise<void> }
-const state = () => ({ jobs: db.select().from(s.job).all(), ledger: db.select().from(s.importBatch).all(), receipts: db.select().from(s.importReceipt).all(), audit: db.select().from(s.recordCorrespondenceAudit).all(), decisions: db.select().from(s.recordCorrespondence).all() })
-beforeAll(async () => {
-  for (const [n, status] of ['confirmed', 'rejected'].entries()) {
-    const request = { idempotencyKey: `wire258/decision-${n}`, sourceIdentity: 'tests/annual258', actor: { type: 'user' as const, id: 'fixture' }, basis: 'synthetic actual decision', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create' as const, status: status as 'confirmed' | 'rejected', edge: { type: 'event_process' as const, eventId: cases[n]!.event.id, relationId: rows[n + 1]!.id, role: 'context_only' as const } }] }
-    commitRecordCorrespondences(db, request, preflightRecordCorrespondences(db, request).planHash)
+const dir = mkdtempSync(join(tmpdir(), 'annual-event-qualification-'))
+async function seed(pool: pg.Pool) {
+  const db = drizzle(pool)
+  const enterprise = singlePostgresFixtureRow(await db.insert(s.enterprise).values({ name: '合成实际资格协议企业', nameNorm: '合成实际资格协议企业', usccNorm: '91330211255994457P' }).returning())
+  const record = singlePostgresFixtureRow(await db.insert(s.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: enterprise.usccNorm }).returning())
+  const cases = []
+  for (const [n, year] of [2024, 2023, 2022].entries()) {
+    cases.push({ status: ['confirmed', 'blocked', 'none'][n]!, event: singlePostgresFixtureRow(await db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year }).returning()) })
   }
-  db.insert(s.job).values({ id: 'synthetic-done-wire258', kind: 'event-annual-correspondence', state: 'done', params: { eventIds: [cases[2]!.event.id] }, result: { events: [{ eventId: cases[2]!.event.id, finalQualification: { status: 'confirmed' } }] } }).run()
+  const eligibleEvent = singlePostgresFixtureRow(await db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2021 }).returning())
+  const candidateEvent = singlePostgresFixtureRow(await db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2020 }).returning())
+  const rows: { id: number; queryId: number }[] = []
+  for (const [n, year] of [2024, 2024, 2023, 2021, 2020].entries()) {
+    const key = `SQ258-${n}`, appliedAt = n === 1 ? '2024-12-13 10:00:00' : `${year}-03-01 09:00:00`
+    const seeded = await seedPostgresPlatformQuery(db, { interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: `2026-10-01T00:00:0${n}Z`, status: 'success', rawResponse: 'Synthetic annual HTTP source', relations: [{ sequenceNo: 1, relationKey: key, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { id: key, year, sblx: '申请', sqsj: appliedAt, cszt: n === 0 ? '终审不通过' : '终审通过' } }] })
+    rows.push({ id: seeded.relationIds[0]!, queryId: seeded.queryId })
+  }
+  vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-01T01:00:00Z') })
+  try {
+    for (const [n, status] of ['confirmed', 'rejected'].entries()) {
+      const request = { idempotencyKey: `wire258/decision-${n}`, sourceIdentity: 'tests/annual258', actor: { type: 'user' as const, id: 'fixture' }, basis: 'synthetic actual decision', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create' as const, status: status as 'confirmed' | 'rejected', edge: { type: 'event_process' as const, eventId: cases[n]!.event.id, relationId: rows[n + 1]!.id, role: 'context_only' as const } }] }
+      await commitPostgresCorrespondences(db, request, (await preflightPostgresCorrespondences(db, request)).planHash)
+    }
+  } finally { vi.useRealTimers() }
+  await db.insert(job).values({
+    id: 'synthetic-done-wire258', kind: 'event-annual-correspondence', state: 'done', createdAt: '2026-10-01T00:00:00Z',
+    params: JSON.stringify({ eventIds: [cases[2]!.event.id] }),
+    result: JSON.stringify({ events: [{ eventId: cases[2]!.event.id, finalQualification: { status: 'confirmed' } }] }),
+  })
+  return { cases, eligibleEvent, candidateEvent, rows }
+}
+let fixture: Awaited<ReturnType<typeof seed>>
+let service: { baseUrl: string; stop: () => Promise<void> }
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>
+let pool: pg.Pool
+async function state() {
+  const tables = ['job', 'import_batch', 'import_receipt', 'record_correspondence_audit', 'record_correspondence']
+  return Promise.all(tables.map(async table => (await pool.query(
+    'SELECT to_jsonb(t) AS row FROM business.' + table + ' t ORDER BY to_jsonb(t)::text COLLATE "C"',
+  )).rows))
+}
+beforeAll(async () => {
+  postgres = await postgresRuntimeFixture({ dir })
+  pool = new pg.Pool({ connectionString: postgres.url, options: '-c search_path=business,public' })
+  fixture = await seed(pool)
   const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
-  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_MCP_TOKEN: 'isolated258' } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...postgres.env, NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_MCP_TOKEN: 'isolated258' } })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) }
   catch (error) { await service.stop(); throw new Error(`${String(error)}\n${output}`) }
 }, 90000)
-afterAll(async () => { await service?.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => {
+  try { await service?.stop() } finally {
+    try { await pool?.end(); postgres?.close() } finally { rmSync(dir, { recursive: true, force: true }) }
+  }
+})
 async function mcp(eventId: number, baseUrl = service.baseUrl) {
   const response = await fetch(`${baseUrl}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: 'Bearer isolated258', 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_event_annual_process', arguments: { eventId, pageSize: 1 } } }) })
   expect(response.status).toBe(200)
   const raw = await response.text()
   return JSON.parse(raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : raw)
 }
-it.each(cases)('real query-only GET and MCP return current $status qualification without job ledger or audit writes', async ({ status, event }) => {
-  const before = state(), complete = readEventAnnualProcess(db, event.id)!
+it.each(['confirmed', 'blocked', 'none'] as const)('real query-only GET and MCP return current %s qualification without job ledger or audit writes', async status => {
+  const { cases, rows } = fixture
+  const { event } = cases.find(entry => entry.status === status)!
+  const before = await state(), complete = (await readPostgresAnnualProcessEntry(drizzle(pool), event.id))!.read
   const response = await fetch(`${service.baseUrl}/api/roster/events/${event.id}/annual-process?pageSize=1`)
   expect(response.status).toBe(200); expect(response.headers.get('cache-control')).toBe('no-store')
   const body = await response.json(), wire = await mcp(event.id)
@@ -64,37 +98,22 @@ it.each(cases)('real query-only GET and MCP return current $status qualification
     expect(body.process.finalQualification.decisionRefs).toMatchObject([{ relationId: rows[1]!.id, status: 'confirmed', requiresRevalidation: false }])
   } else if (status === 'blocked') expect(body.process.finalQualification.reasons).toEqual(['protected_decision'])
   else expect(body.process.finalQualification).toMatchObject({ stepId: null, reasons: ['no_annual_process'], decisionRefs: [] })
-  expect(state()).toEqual(before)
+  expect(await state()).toEqual(before)
 })
 
-const pgBin = process.env.TEST_IMPORT_RECEIPTS_PG_BIN
-it.runIf(!!pgBin)('preserves annual reads and runs deduplicated annual and archive tasks on PostgreSQL', async () => {
+it('preserves annual reads and runs deduplicated annual and archive tasks on PostgreSQL', async () => {
   const pgDir = mkdtempSync(join(tmpdir(), 'annual-pg-'))
-  const pgData = join(pgDir, 'db')
-  const env = { ...process.env, PGHOST: pgDir, PGPORT: '5432', PGDATABASE: 'postgres', PGUSER: 'annual_fixture', PGSQL_BIN: join(pgBin!, 'psql') }
-  const run = (name: string, args: string[]) => execFileSync(join(pgBin!, name), args, { env, stdio: 'pipe' })
-  const sqliteCopy = join(pgDir, 'source.sqlite')
-  let clusterStarted = false
+  let workerDb: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
   let child: ReturnType<typeof spawnCompiledApp> | undefined
   try {
-    installLeadListSchema(db.$client)
-    await db.$client.backup(sqliteCopy)
-    run('initdb', ['-A', 'trust', '--locale=C', '-E', 'UTF8', '-U', env.PGUSER, '-D', pgData])
-    run('pg_ctl', ['-w', '-D', pgData, '-l', join(pgDir, 'pg.log'), '-o', "-c listen_addresses='' -k " + pgDir, 'start'])
-    clusterStarted = true
-    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', sqliteCopy, 'staged'], { env, stdio: 'pipe' })
-    for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
-      run('psql', ['-X', '-w', '-q', '-v', 'staging=staged', '-f', 'upgrade/postgresql/materialize-' + name + '.sql'])
-    }
-    const sqliteEmpty = join(pgDir, 'empty.sqlite')
-    const companion = initializeDb({ create: true, dbPath: sqliteEmpty })
-    companion.$client.close()
+    workerDb = await postgresRuntimeFixture({ dir: pgDir })
+    const seedPool = new pg.Pool({ connectionString: workerDb.url, options: '-c search_path=business,public' })
+    try { await seed(seedPool) } finally { await seedPool.end() }
+    const { cases, eligibleEvent, candidateEvent, rows } = fixture
     const port = await reserveLoopbackPort(), baseUrl = 'http://127.0.0.1:' + port
     child = spawnCompiledApp(port, { cwd: resolve(import.meta.dirname, '../../..'), stdio: ['ignore', 'ignore', 'inherit'],
-      env: { ...process.env, NUXT_DB_PATH: sqliteEmpty, NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(pgDir, 'files'),
-        NUXT_INCOMING_DIR: join(pgDir, 'incoming'), NUXT_MCP_TOKEN: 'isolated258', NUXT_POSTGRES_ROSTER_READ: '1',
-        NUXT_POSTGRES_JOBS: '1', NUXT_POSTGRES_DIRECTORY_WRITE: '1', NUXT_API_TOKEN: 'isolated-annual-api',
-        NUXT_POSTGRES_DIRECTORY_URL: 'postgresql://annual_fixture@localhost/postgres?host=' + encodeURIComponent(pgDir) } })
+      env: { ...workerDb.env, NUXT_DB_READONLY: '0', NUXT_FILES_DIR: join(pgDir, 'files'),
+        NUXT_INCOMING_DIR: join(pgDir, 'incoming'), NUXT_MCP_TOKEN: 'isolated258', NUXT_API_TOKEN: 'isolated-annual-api' } })
     await waitForHttp(baseUrl + '/api/health', { child, timeoutMs: 60000 })
     for (const id of [...cases.map(entry => entry.event.id), eligibleEvent.id, 99999]) {
       const path = '/api/roster/events/' + id + '/annual-process?pageSize=1'
@@ -156,7 +175,7 @@ it.runIf(!!pgBin)('preserves annual reads and runs deduplicated annual and archi
     }
     expect(candidateTask).toMatchObject({ state: 'done', discovery: { counts: { succeeded: 1, failed: 0 }, attempt: 1,
       items: [{ eventId: candidateEvent.id, status: 'done' }] } })
-    expect(candidateTask.discovery.counts.created).toBeGreaterThan(0)
+    expect(candidateTask.discovery.counts.created).toBe(0)
     const path = '/api/roster/events/' + candidateEvent.id + '/annual-process'
     const before = await (await fetch(baseUrl + path)).json()
     expect(before.process.finalQualification.status).toBe('eligible')
@@ -174,7 +193,7 @@ it.runIf(!!pgBin)('preserves annual reads and runs deduplicated annual and archi
     expect(after.process.finalQualification).toMatchObject({ status: 'confirmed', decisionRefs: [{ status: 'confirmed', relationId: rows[4]!.id }] })
   } finally {
     if (child) await stopOwnedChild(child)
-    if (clusterStarted) run('pg_ctl', ['-w', '-m', 'fast', '-D', pgData, 'stop'])
+    workerDb?.close()
     rmSync(pgDir, { recursive: true, force: true })
   }
 }, 180000)

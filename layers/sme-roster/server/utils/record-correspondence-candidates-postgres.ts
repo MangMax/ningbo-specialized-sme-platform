@@ -1,25 +1,27 @@
-import { and, between, desc, eq, exists, inArray, isNotNull, ne, sql } from 'drizzle-orm'
+import { isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
+import { and, between, desc, eq, exists, inArray, isNotNull, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { record, recordEvent } from '../../../../db/postgresql/ledger-tables'
 import {
-  platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformCollection, platformCollectionPage,
-  platformExportBatch, platformExportRow, platformLegacyQueryAlias, platformLegacyRelationAlias,
+  platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformBusinessRecordVersion, platformCollection, platformCollectionPage,
+  platformExportBatch, platformExportRow,
   platformObservationAssignment, platformRecognizedProjection,
 } from '../../../../db/postgresql/platform-tables'
 import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
-import { platformArchiveValue, platformCollectionArchiveRef } from '../../../../db/postgresql/platform-archive-tables'
 import { title } from '../../../../db/postgresql/title-table'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import * as schema from '../../../../db/schema'
+import type { enterprise as EnterpriseTable } from '../../../../db/postgresql/enterprise-tables'
+import type { platformExportBatch as PlatformExportBatchTable } from '../../../../db/postgresql/platform-tables'
 import { normalizeUscc } from '../../lib/domain'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
-import { EVENT_ARCHIVE_RULE_VERSION, normalizedUscc, type EventArchiveInput } from './event-archive-discovery'
+import { type EventArchiveInput } from './event-archive-discovery'
+import { EVENT_ARCHIVE_RULE_VERSION, normalizedUscc } from './event-archive-discovery-model'
 import { readPostgresCorrespondenceSources } from './record-correspondence-postgres'
-import { safeCollectionEvidence } from './record-correspondence-read'
+import { safeCollectionEvidence } from './evidence-redaction'
 import type { ReceiptRedactor } from './import-receipt-redaction'
-import { readPostgresPlatformBusinessGroups } from './platform-business-record-read'
-import { projectCandidateRows, type CandidateInput } from './record-correspondence-candidates'
+import { readPostgresPlatformBusinessGroups } from './platform-business-record-postgres'
+import { projectCandidateRows, type CandidateInput } from './record-correspondence-candidate-projection'
 import { readPostgresObservationComparisonFacts } from './record-correspondence-target-postgres'
 
 type Reader = Pick<NodePgDatabase, 'execute' | 'select'>
@@ -29,16 +31,15 @@ const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
 const offset = (page: number, size: number) => Math.min(Number.MAX_SAFE_INTEGER, (page - 1) * size)
 
 const sourceRows = sql`
-  FROM platform_legacy_query_alias q JOIN platform_collection c ON c.id=q.collection_id
-  JOIN platform_business_observation o ON o.collection_id=c.id JOIN platform_legacy_relation_alias ra ON ra.observation_id=o.id
+  FROM platform_collection c
+  JOIN platform_business_observation o ON o.collection_id=c.id
   JOIN platform_observation_assignment original ON original.observation_id=o.id AND original.revision=1
   JOIN LATERAL (SELECT enterprise_id,match_basis,verification_status FROM platform_observation_assignment
-    WHERE observation_id=o.id ORDER BY revision DESC LIMIT 1) a ON true
-  LEFT JOIN platform_apply_projection ap ON ap.observation_id=o.id
-  LEFT JOIN platform_business_projection bp ON bp.observation_id=o.id`
-const rawTitle = sql`CASE coalesce(ap.source_title_kind,bp.source_title_kind)
-  WHEN 'text' THEN coalesce(ap.source_title_text,bp.source_title_text)
-  WHEN 'number' THEN coalesce(ap.source_title_number_text,bp.source_title_number_text) END`
+    WHERE observation_id=o.id ORDER BY revision DESC LIMIT 1) a ON true`
+// Drizzle has no JSON accessors. Retain text and numeric source titles only.
+const titleCell = sql`coalesce(v.business_fields,o.business_fields)->'rdjb'`
+const rawTitle = sql`CASE WHEN c.interface IN ('apply_list','business_list') AND jsonb_typeof(${titleCell}) IN ('string','number')
+  THEN ${titleCell} #>> '{}' END`
 const sourceTitle = (value: ReturnType<typeof sql>) => sql`CASE ${value}
   WHEN '1' THEN 'innovative_sme' WHEN '2' THEN 'specialized_sme' WHEN '3' THEN 'little_giant' END`
 const recognizedTitle = sql`coalesce((SELECT ${sourceTitle(sql`p.rdjb`)} FROM platform_collection_page p
@@ -52,10 +53,11 @@ async function pageCandidateGroups(db: Reader, input: CandidateInput, enterprise
   // pagination. The CTE hint is outside Drizzle's query builder.
   const { rows: [result] } = await db.execute<{ total: number; ids: number[] }>(sql`
     WITH eligible AS MATERIALIZED (
-      SELECT ra.old_id AS id,row_number() OVER (ORDER BY q.old_id,o.sequence_no,ra.old_id) AS ordinal,
+      SELECT o.public_id AS id,row_number() OVER (ORDER BY c.public_id,o.sequence_no,o.public_id) AS ordinal,
         CASE WHEN o.identity_state='resolved' AND o.content_state='verified' AND o.record_id IS NOT NULL AND o.version_id IS NOT NULL
           THEN 'version:' || o.record_id || ':' || o.version_id ELSE 'observation:' || o.id END AS key
-      ${sourceRows} WHERE q.old_id=ANY(${ids(input.queryIds)}) AND c.status IN ('success','partial')
+      ${sourceRows} LEFT JOIN platform_business_record_version v ON v.id=o.version_id
+      WHERE c.public_id=ANY(${ids(input.queryIds)}) AND c.status IN ('success','partial')
         AND (a.enterprise_id IS NULL OR a.enterprise_id=${enterpriseId}) AND ${identity ? sql`${normalizedUscc(sql`original.uscc_raw`)}=${identity}` : sql`false`}
         AND ${genericTitle}=${titleCode} ${input.eventId === undefined ? sql`AND c.interface<>'recognized_list'` : sql.empty()}
     ), groups AS (SELECT key,min(ordinal) AS first FROM eligible GROUP BY key),
@@ -66,56 +68,39 @@ async function pageCandidateGroups(db: Reader, input: CandidateInput, enterprise
 }
 
 async function readPostgresCandidateQueries(db: Reader, queryIds: readonly number[]): Promise<Sources['queries']> {
-  const q = platformLegacyQueryAlias, c = platformCollection
-  const archiveRef = platformCollectionArchiveRef, archive = platformArchiveValue
-  const jsonObject = sql`convert_from(${archive.bytes},'UTF8')::json`
-  const fields = db.select({ value: sql`coalesce(json_object_agg(f.key,f.value ORDER BY f.ordinal),'{}'::json)` })
-    .from(sql`json_each(${jsonObject}) WITH ORDINALITY f(key,value,ordinal)`)
-    .where(ne(sql<string>`f.key`, 'rows'))
-  const evidence = db.select({
-    value: sql`CASE WHEN json_typeof(${jsonObject})='object' THEN (${fields}) END`,
-  }).from(archiveRef).innerJoin(archive, eq(archive.id, archiveRef.archiveId))
-    .where(and(eq(archiveRef.ownerId, c.id), eq(archiveRef.field, 'collectionEvidence')))
+  const c = platformCollection
   const rows = await db.select({
-    id: q.oldId, interface: c.interface, queryKey: c.queryKey, rdjb: c.rdjb, titleCode: c.titleCode, queriedAt: c.queriedAt,
+    id: c.publicId, interface: c.interface, queryKey: c.queryKey, rdjb: c.rdjb, titleCode: c.titleCode, queriedAt: c.queriedAt,
     lastCollectedAt: c.lastCollectedAt, status: c.status, failureReason: c.failureReason, createdAt: c.createdAt,
-    collectionEvidence: sql<Sources['queries'][number]['collectionEvidence']>`(${evidence})`,
-  }).from(q).innerJoin(c, eq(c.id, q.collectionId)).where(eq(q.oldId, sql`ANY(${ids(queryIds)})`)).orderBy(q.oldId)
+    collectionEvidence: c.sourceCoverage,
+  }).from(c).where(eq(c.publicId, sql`ANY(${ids(queryIds)})`)).orderBy(c.publicId)
   return rows as Sources['queries']
 }
 
 async function factsForCandidates(db: Reader, relations: (Sources['relevantRelations'][number] & { observationId: number; interface: Sources['queries'][number]['interface'] })[]) {
   const result = new Map<number, Sources['factsByRelation'] extends ReadonlyMap<number,infer V> ? V : never>()
-  const normalized = await readPostgresObservationComparisonFacts(db, relations)
+  const comparisonFacts = await readPostgresObservationComparisonFacts(db, relations, 'version')
   const tables = { apply_list: platformApplyProjection, business_list: platformBusinessProjection, recognized_list: platformRecognizedProjection }
   for (const [source, group] of Map.groupBy(relations, row => row.interface)) {
-    const process = source !== 'recognized_list'
-    const o = platformBusinessObservation, p = alias(tables[source], 'observed'), v = alias(tables[source], 'version')
+    const o = platformBusinessObservation, v = alias(tables[source], 'version')
     const rows = await db.select({
       id: o.id, typed: isNotNull(v.versionId).mapWith(Boolean), usccRaw: v.usccRaw,
-      titleRaw: 'sqlFactTitle' in p ? p.sqlFactTitle : v.titleRaw,
-      declareKind: 'declareKind' in v ? v.declareKind : sql<null>`NULL`,
-      year: 'declarationYear' in v ? v.declarationYear : 'businessYear' in v ? v.businessYear : sql<null>`NULL`,
-      status: 'status' in v ? v.status : sql<null>`NULL`,
-      appliedAt: 'appliedAt' in v ? v.appliedAt : sql<null>`NULL`,
-      batch: 'businessYear' in v ? v.batch : sql<null>`NULL`,
-      awardBatchLabel: 'businessYear' in v ? v.awardBatchLabel : sql<null>`NULL`,
-    }).from(o).innerJoin(p, eq(p.observationId, o.id))
+      titleRaw: v.titleRaw,
+    }).from(o)
       .leftJoin(v, and(eq(v.versionId, o.versionId), eq(v.recordId, o.recordId)))
       .where(eq(o.id, sql`ANY(${ids(group.map(row => row.observationId))})`))
     const typed = new Map(rows.map(row => [row.id,row]))
     for (const relation of group) {
-      const base = normalized.get(relation.observationId), fact = typed.get(relation.observationId)
+      const base = comparisonFacts.get(relation.observationId), fact = typed.get(relation.observationId)
       if (!base || !fact) continue
-      const recognizedTitle = typeof base.rawFields?.rdjb === 'string' && base.rawFields.rdjb.trim() || null
-      result.set(relation.id, { normalizationConflicts: base.normalizationConflicts,
-        titleRaw: process ? fact.titleRaw : fact.titleRaw ?? recognizedTitle,
+      const observedTitle = typeof base.rawFields?.rdjb === 'string' ? base.rawFields.rdjb.trim() || null : null
+      result.set(relation.id, {
+        normalizationConflicts: base.normalizationConflicts,
+        titleRaw: source === 'recognized_list' ? fact.titleRaw ?? observedTitle : base.sqlFactTitle,
         usccRaw: fact.typed ? fact.usccRaw : relation.usccRaw,
-        declareKind: process && fact.typed ? fact.declareKind : base.declareKind,
-        year: process && fact.typed ? fact.year : base.year, status: process && fact.typed ? fact.status : base.status,
-        appliedAt: process && fact.typed ? fact.appliedAt : base.appliedAt,
-        batch: source === 'business_list' && fact.typed ? fact.batch : base.batch,
-        awardBatchLabel: source === 'business_list' && fact.typed ? fact.awardBatchLabel : base.awardBatchLabel })
+        declareKind: base.declareKind, year: base.year, status: base.status, appliedAt: base.appliedAt,
+        batch: base.batch, awardBatchLabel: base.awardBatchLabel,
+      })
     }
   }
   return result
@@ -125,26 +110,26 @@ export async function generatePostgresCandidates(db: Reader, input: CandidateInp
   const e = alias(recordEvent, 'e'), r = alias(record, 'r')
   type Event = NonNullable<Sources['event']>
   const event = input.eventId ? (await db.select({
-    event: sql<Event['event']>`${postgresRosterRow(schema.recordEvent,'e')}`,
-    record: sql<Event['record']>`${postgresRosterRow(schema.record,'r')}`,
+    event: sql<Event['event']>`${postgresRosterRow(recordEvent,'e')}`,
+    record: sql<Event['record']>`${postgresRosterRow(record,'r')}`,
   }).from(e).innerJoin(r, eq(r.id, e.recordId)).where(and(eq(e.id, input.eventId), eq(r.source, 'jxj'))))[0] : null
   if (input.eventId && !event) return null
   const enterpriseId = event?.record.enterpriseId ?? input.enterpriseId!, titleCode = event?.record.titleCode ?? input.titleCode!
   const owner = alias(enterprise, 'p')
-  const [ownerRow] = await db.select({ row: sql<typeof schema.enterprise.$inferSelect>`${postgresRosterRow(schema.enterprise,'p')}` })
+  const [ownerRow] = await db.select({ row: sql<typeof EnterpriseTable.$inferSelect>`${postgresRosterRow(enterprise,'p')}` })
     .from(owner).where(and(eq(owner.id, enterpriseId), exists(db.select({ code: title.code }).from(title).where(eq(title.code, titleCode)))))
   if (!ownerRow) return null
   const identity = normalizeUscc(event?.record.usccRaw ?? ownerRow.row.usccNorm)
   const queries = await readPostgresCandidateQueries(db,input.queryIds)
   const b = alias(platformExportBatch, 'p')
   const batches = (await db.select({
-    row: sql<typeof schema.platformExportBatch.$inferSelect>`${postgresRosterRow(schema.platformExportBatch,'p')}`,
+    row: sql<typeof PlatformExportBatchTable.$inferSelect>`${postgresRosterRow(platformExportBatch,'p')}`,
   }).from(b).where(eq(b.id, sql`ANY(${ids(input.exportBatchIds)})`)).orderBy(b.id)).map(({ row }) => row)
   if (queries.length !== new Set(input.queryIds).size || batches.length !== new Set(input.exportBatchIds).size) return null
   const targetPage = selection ? null : await pageCandidateGroups(db,input,enterpriseId,identity,titleCode)
-  const q = platformLegacyQueryAlias, c = platformCollection, o = platformBusinessObservation, ra = platformLegacyRelationAlias
+  const c = alias(platformCollection, 'c'), o = alias(platformBusinessObservation, 'o')
   const original = alias(platformObservationAssignment, 'original'), a = platformObservationAssignment
-  const ap = alias(platformApplyProjection, 'ap'), bp = alias(platformBusinessProjection, 'bp'), page = platformCollectionPage
+  const v = alias(platformBusinessRecordVersion, 'v'), page = platformCollectionPage
   const assignment = db.select({ enterpriseId: a.enterpriseId, matchBasis: a.matchBasis, verificationStatus: a.verificationStatus })
     .from(a).where(eq(a.observationId, o.id)).orderBy(desc(a.revision)).limit(1).as('assignment')
   const coverage = db.select({ rdjb: page.rdjb, pageNo: page.pageNo }).from(page).where(and(
@@ -154,15 +139,14 @@ export async function generatePostgresCandidates(db: Reader, input: CandidateInp
     observationId: number; interface: Sources['queries'][number]['interface']; sourceRdjb: string | null; sourcePage: number | null
   }
   const relations = await db.select({
-    id: ra.oldId, queryId: q.oldId, collectionId: c.id, sequenceNo: o.sequenceNo, relationKey: o.sourceRelationKey,
+    id: o.publicId, queryId: c.publicId, collectionId: c.id, sequenceNo: o.sequenceNo, relationKey: o.sourceRelationKey,
     enterpriseId: assignment.enterpriseId, usccRaw: original.usccRaw, nameRaw: original.nameRaw,
     matchBasis: assignment.matchBasis, verificationStatus: assignment.verificationStatus, rowTitleRaw: sql<string | null>`${rawTitle}`,
     observationId: o.id, interface: c.interface, sourceRdjb: coverage.rdjb, sourcePage: coverage.pageNo,
-  }).from(q).innerJoin(c, eq(c.id, q.collectionId)).innerJoin(o, eq(o.collectionId, c.id))
-    .innerJoin(ra, eq(ra.observationId, o.id)).innerJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1)))
-    .innerJoinLateral(assignment, sql`true`).leftJoin(ap, eq(ap.observationId, o.id)).leftJoin(bp, eq(bp.observationId, o.id))
-    .leftJoinLateral(coverage, sql`true`).where(and(eq(ra.oldId, sql`ANY(${ids(selection?.relationIds ?? targetPage!.ids)})`),
-      inArray(c.status, ['success', 'partial']))).orderBy(q.oldId, o.sequenceNo, ra.oldId) as Relevant[]
+  }).from(c).innerJoin(o, eq(o.collectionId, c.id)).innerJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1)))
+    .innerJoinLateral(assignment, sql`true`).leftJoin(v, eq(v.id, o.versionId))
+    .leftJoinLateral(coverage, sql`true`).where(and(isCurrentPlatformObservation(db, o), eq(o.publicId, sql`ANY(${ids(selection?.relationIds ?? targetPage!.ids)})`),
+      inArray(c.status, ['success', 'partial']))).orderBy(c.publicId, o.sequenceNo, o.publicId) as Relevant[]
   const relevantRelations = relations.filter(r => (!r.enterpriseId || r.enterpriseId === enterpriseId) &&
     ((identity && normalizeUscc(r.usccRaw) === identity) || (selection && !normalizeUscc(r.usccRaw) && r.enterpriseId === enterpriseId && r.verificationStatus === 'confirmed')))
   const factsByRelation = await factsForCandidates(db,relevantRelations)
@@ -193,18 +177,17 @@ export async function discoverPostgresEventArchives(db: NodePgDatabase, input: E
   const rowKey = normalizedUscc(sql`original.uscc_raw`)
   const scope = sql`
     WITH matched AS MATERIALIZED (
-      SELECT q.old_id AS query_id,ra.old_id AS id,o.sequence_no,c.interface,c.status,
+      SELECT c.public_id AS query_id,o.public_id AS id,o.sequence_no,c.interface,c.status,
         CASE WHEN c.interface='recognized_list' THEN ${recognizedTitle} ELSE coalesce(c.title_code,${sourceTitle(sql`c.rdjb`)}) END AS row_title
       ${sourceRows}
       WHERE (a.enterprise_id IS NULL OR a.enterprise_id=${owner.id}) AND (
         (${Boolean(identity)} AND ${rowKey}=${identity}) OR
         (a.enterprise_id=${owner.id} AND a.verification_status='confirmed' AND ${rowKey}=''))
     ), related AS MATERIALIZED (
-      SELECT q.old_id AS id,c.id AS collection_id,c.interface,c.status FROM platform_legacy_query_alias q
-      JOIN platform_collection c ON c.id=q.collection_id
+      SELECT c.public_id AS id,c.id AS collection_id,c.interface,c.status FROM platform_collection c
       WHERE c.query_key=ANY(${sql.param([...(identity ? [identity] : []),`name:${owner.name}`])}::text[])
         OR c.query_key IN (SELECT 'name:' || name_norm FROM enterprise_alias WHERE enterprise_id=${owner.id} AND verification_status='confirmed')
-        OR q.old_id IN (SELECT query_id FROM matched)
+        OR c.public_id IN (SELECT query_id FROM matched)
     ), eligible AS MATERIALIZED (
       SELECT id,query_id,sequence_no FROM matched WHERE status IN ('success','partial') AND row_title=${owner.title}
     )`

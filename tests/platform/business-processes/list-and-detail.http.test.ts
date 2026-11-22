@@ -1,5 +1,6 @@
-import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
-import { sql } from 'drizzle-orm'
+import assert from 'node:assert/strict'
+import { closeApplicationLogging } from '../../../layers/core/lib/logging'
+import { eq, and } from 'drizzle-orm'
 import { createApp,createError,createRouter,defineEventHandler,getHeader,getQuery,getRouterParam,readBody,setHeader,setResponseStatus,toNodeListener } from 'h3'
 import { mkdtempSync,rmSync } from 'node:fs'
 import { createServer } from 'node:http'
@@ -7,16 +8,17 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll,beforeAll,expect,it,vi } from 'vitest'
-import { schema } from '../../../db'
-import { initializeDb } from '../../../db/client'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { platformBusinessRecord, platformCollection } from '../../../db/postgresql/platform-tables'
+import { platformQueryTitleScope } from '../../../db/postgresql/platform-query-scope-tables'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import type { RosterImportPlatformQuery,RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
-import { whenIdle } from '../../../layers/core/server/utils/job-runner'
-import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
+import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
 
 const dir = mkdtempSync(join(tmpdir(), 'business-processes-http-'))
-const dbPath = join(dir, 'business.sqlite')
-vi.stubEnv('NUXT_DB_PATH', dbPath)
-const db = initializeDb({ create: true, dbPath })
+let db: ReturnType<typeof usePostgresDirectoryDb>
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 const token = 'synthetic-business-process-token'
 let server: ReturnType<typeof createServer>, base: string
 
@@ -52,23 +54,22 @@ async function get(path: string) {
   const response = await fetch(base + path)
   return { http: response.status, ...(await response.json() as any) }
 }
-function addTitleScopes(queryKey: string, queriedAt: string, values: string[]) {
-  const query = db.select().from(schema.platformCollection).all().find(row => row.queryKey === queryKey && row.queriedAt === queriedAt)!
-  for (const rdjb of values) db.insert(schema.platformQueryTitleScope).values({ collectionId: query.id, rdjb }).onConflictDoNothing().run()
+async function addTitleScopes(queryKey: string, queriedAt: string, values: string[]) {
+  const [query] = await db.select({ id: platformCollection.id }).from(platformCollection)
+    .where(and(eq(platformCollection.queryKey, queryKey), eq(platformCollection.queriedAt, queriedAt)))
+  expect(query).toBeDefined()
+  await db.insert(platformQueryTitleScope).values(values.map(rdjb => ({ collectionId: query!.id, rdjb }))).onConflictDoNothing()
 }
 
 beforeAll(async () => {
-  vi.stubEnv('NUXT_API_TOKEN', token)
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_POSTGRES_LOG_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  db = usePostgresDirectoryDb()
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: token, filesDir: dir }))
   for (const [key, value] of Object.entries({ defineEventHandler, readBody, setHeader, setResponseStatus, getQuery, getRouterParam, getHeader, createError })) vi.stubGlobal(key, value)
-  vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (value: unknown) => value }))
-  const importRoute = defineEventHandler(async event => {
-    const out = await handleRosterImportRequest('commit', {
-      method: 'POST', headers: { authorization: getHeader(event, 'authorization') }, body: await readBody(event),
-    }, { db, apiToken: token, executeImport: executeNativeImport })
-    setResponseStatus(event, out.status)
-    for (const [name, value] of Object.entries(out.headers)) setHeader(event, name, value)
-    return out.body
-  })
+  const importRoute = (await import('../../../layers/sme-roster/server/api/roster/import/commit.post')).default
   const listRoute = (await import('../../../layers/sme-roster/server/api/platform/business-processes.get')).default
   const detailRoute = (await import('../../../layers/sme-roster/server/api/platform/business-processes/[recordId].get')).default
   const router = createRouter()
@@ -81,22 +82,25 @@ beforeAll(async () => {
 }, 60000)
 
 afterAll(async () => {
-  // Archive commits can enqueue candidate jobs; let the serial runner finish before
-  // closing the isolated database, otherwise the queue drains against a closed handle.
-  await whenIdle()
-  if (server) await new Promise<void>(resolve => server.close(() => resolve()))
-  vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true })
+  await stopPostgresJobs()
+  await closeApplicationLogging()
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+  rmSync(dir, { recursive: true, force: true })
 })
 
 it('filters by enterprise, 办理编号, explicit title scope, 事项, year, status and batch without raw JSON', async () => {
-  const enterpriseA = db.insert(schema.enterprise).values({ name: '甲办理企业', nameNorm: '甲办理企业', usccNorm: '91330211255994457P' }).returning().get()
-  const enterpriseB = db.insert(schema.enterprise).values({ name: '乙办理企业', nameNorm: '乙办理企业', usccNorm: '91330211255994458Q' }).returning().get()
+  const [enterpriseA] = await db.insert(enterprise).values({ name: '甲办理企业', nameNorm: '甲办理企业', usccNorm: '91330211255994457P' }).returning()
+  const [enterpriseB] = await db.insert(enterprise).values({ name: '乙办理企业', nameNorm: '乙办理企业', usccNorm: '91330211255994458Q' }).returning()
+  assert.ok(enterpriseA && enterpriseB, 'Expected both fixture owners')
   const rawA = { id: 'SQ-B-A', qymc: '甲办理企业', tyshxydm: enterpriseA.usccNorm, sblx: '复核', year: 2023, sqsj: '2023-02-01 09:00:00', cszt: '终审通过', whpc: '2023-2', personuuid: '第三批', szsfmc: '浙江省', secretRaw: 'UNEXPOSED_BUSINESS_RAW' }
   const rawB = { id: 'SQ-B-B', qymc: '乙办理企业', tyshxydm: enterpriseB.usccNorm, sblx: '申请', year: 2022, sqsj: '2022-03-01 09:00:00', cszt: '待审核', whpc: '2022-1' }
   const rawApply = { id: 'SQ-B-A', qymc: '甲办理企业', tyshxydm: enterpriseA.usccNorm, sblx: '申请', year: 2024 }
   const first = await post('/api/roster/import/commit', request('seed-business', [businessQuery('2026-10-01T00:00:00Z', rawA), businessQuery('2026-10-01T00:00:01Z', rawB, '1', enterpriseB.usccNorm!), applyQuery('2026-10-01T00:00:02Z', rawApply)]))
   expect(first.http).toBe(200); expect(first.status, JSON.stringify(first)).toBe('committed')
-  addTitleScopes(enterpriseB.usccNorm!, '2026-10-01T00:00:01Z', ['3'])
+  await addTitleScopes(enterpriseB.usccNorm!, '2026-10-01T00:00:01Z', ['3'])
 
   const all = await get('/api/platform/business-processes')
   expect(all.http).toBe(200)
@@ -156,7 +160,7 @@ it('isolates missing-key observations and rejects invalid filters', async () => 
   expect((await get('/api/platform/business-processes/999999')).http).toBe(404)
 })
 
-it('restricts the matched version and its count to the selected explicit title scope', async () => {
+it('uses the newest capture for filtering even when its content matches an older capture', async () => {
   const rawOld = { id: 'SQ-B-SCOPE', qymc: '称号范围企业', tyshxydm: '91330211255994459R', sblx: '申请', year: 2023, sqsj: '2023-01-01 09:00:00', cszt: '通过', whpc: '2023-1' }
   const rawNew = { ...rawOld, sblx: '复核', year: 2024, sqsj: '2024-01-01 09:00:00', cszt: '待审核', whpc: '2024-1' }
   const saved = await post('/api/roster/import/commit', request('seed-scope', [
@@ -164,19 +168,33 @@ it('restricts the matched version and its count to the selected explicit title s
     businessQuery('2026-11-02T00:00:00Z', rawNew, '1', '91330211255994459R'),
   ]))
   expect(saved.status, JSON.stringify(saved)).toBe('committed')
-  addTitleScopes('91330211255994459R', '2026-11-01T00:00:00Z', ['2'])
-  addTitleScopes('91330211255994459R', '2026-11-02T00:00:00Z', ['1'])
+  await addTitleScopes('91330211255994459R', '2026-11-01T00:00:00Z', ['2'])
+  await addTitleScopes('91330211255994459R', '2026-11-02T00:00:00Z', ['1'])
 
   const scopeTwo = await get('/api/platform/business-processes?platformKey=SQ-B-SCOPE&rdjb=2')
-  expect(scopeTwo.rows).toHaveLength(1)
-  expect(scopeTwo.rows[0]).toMatchObject({ matchedVersion: { status: '通过', businessYear: 2023, declareKind: 'apply' }, matchedVersionCount: 1, versionCount: 2 })
+  expect(scopeTwo.rows).toEqual([])
   const scopeOne = await get('/api/platform/business-processes?platformKey=SQ-B-SCOPE&rdjb=1')
   expect(scopeOne.rows[0]).toMatchObject({ matchedVersion: { status: '待审核', businessYear: 2024, declareKind: 'review' }, matchedVersionCount: 1, versionCount: 2 })
   const allScopes = await get('/api/platform/business-processes?platformKey=SQ-B-SCOPE')
-  expect(allScopes.rows[0]).toMatchObject({ matchedVersion: { status: '待审核', businessYear: 2024 }, matchedVersionCount: 2, versionCount: 2, titleScopes: ['1', '2'] })
+  expect(allScopes.rows[0]).toMatchObject({ matchedVersion: { status: '待审核', businessYear: 2024 }, matchedVersionCount: 1, versionCount: 2, titleScopes: ['1'] })
+  const { id } = allScopes.rows[0].record
+  const returnedToOld = await post('/api/roster/import/commit', request('scope-recaught', [
+    businessQuery('2026-11-03T00:00:00Z', rawOld, '2', '91330211255994459R'),
+  ]))
+  expect(returnedToOld.status).toBe('committed')
+  const lateArchive = await post('/api/roster/import/commit', request('scope-late-archive', [
+    businessQuery('2026-10-31T00:00:00Z', rawNew, '1', '91330211255994459R'),
+  ]))
+  expect(lateArchive.status).toBe('committed')
+  const updated = await get('/api/platform/business-processes?platformKey=SQ-B-SCOPE')
+  expect(updated.rows).toHaveLength(1)
+  expect(updated.rows[0]).toMatchObject({ record: { id }, matchedVersion: { status: '通过' }, versionCount: 2 })
+  expect((await get('/api/platform/business-processes?platformKey=SQ-B-SCOPE&year=2024')).rows).toEqual([])
+  expect(await get('/api/platform/business-processes/' + id)).toMatchObject({ current: { status: '通过' } })
+
 })
 
-it('bounds detail history and observation reads explicitly', async () => {
+it('shows only the current capture after a series of business updates', async () => {
   const raw = { id: 'SQ-B-BIG', qymc: '大量版本企业', sblx: '申请', year: 2020, cszt: '待审核', whpc: '2020-1' }
   const queries: RosterImportPlatformQuery[] = []
   for (let index = 0; index < 101; index++) {
@@ -185,15 +203,17 @@ it('bounds detail history and observation reads explicitly', async () => {
   }
   const saved = await post('/api/roster/import/commit', request('seed-big', queries))
   expect(saved.status, JSON.stringify(saved)).toBe('committed')
-  const record = db.get<{ id: number }>(sql`select id from platform_business_record where interface = 'business_list' and platform_key = 'SQ-B-BIG'`)!
+  const [record] = await db.select({ id: platformBusinessRecord.id }).from(platformBusinessRecord)
+    .where(and(eq(platformBusinessRecord.interface, 'business_list'), eq(platformBusinessRecord.platformKey, 'SQ-B-BIG')))
+  assert.ok(record, 'Expected the archived business record')
   const detail = await get(`/api/platform/business-processes/${record.id}`)
   expect(detail.http).toBe(200)
-  expect(detail.counts.versions).toBe(101)
-  expect(detail.counts.versionsTruncated).toBe(true)
-  expect(detail.versions).toHaveLength(100)
-  expect(detail.counts.observations).toBe(101)
+  expect(detail.counts.versions).toBe(1)
+  expect(detail.counts.versionsTruncated).toBe(false)
+  expect(detail.versions).toHaveLength(1)
+  expect(detail.counts.observations).toBe(1)
   expect(detail.counts.observationsTruncated).toBe(false)
-  expect(detail.observations).toHaveLength(101)
+  expect(detail.observations).toHaveLength(1)
   expect(JSON.stringify(detail).length).toBeLessThan(900_000)
 
   const extra: RosterImportPlatformQuery[] = []
@@ -204,8 +224,8 @@ it('bounds detail history and observation reads explicitly', async () => {
   const replayed = await post('/api/roster/import/commit', request('seed-big-observations', extra))
   expect(replayed.status).toBe('committed')
   const bounded = await get(`/api/platform/business-processes/${record.id}`)
-  expect(bounded.counts.observations).toBe(201)
-  expect(bounded.counts.observationsTruncated).toBe(true)
-  expect(bounded.observations).toHaveLength(200)
+  expect(bounded.counts.observations).toBe(1)
+  expect(bounded.counts.observationsTruncated).toBe(false)
+  expect(bounded.observations).toHaveLength(1)
   expect(JSON.stringify(bounded).length).toBeLessThan(900_000)
 }, 60000)

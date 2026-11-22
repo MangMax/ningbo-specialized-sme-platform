@@ -24,12 +24,6 @@
  * 定得下来的写,定不下来的**一行不改**并在响应里逐条报原因。绝不会出现「猜一个填上」。
  */
 
-import { eq, inArray, sql } from 'drizzle-orm'
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { enterprise } from '../../../../db/postgresql/enterprise-tables'
-import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
-import * as schema from '../../../../db/schema'
 import {
   isPageCapable,
   planEvidencePages,
@@ -39,10 +33,13 @@ import {
 } from '../../lib/roster/evidence-page'
 import { authorizeRosterWrite } from './roster-import-http'
 import { readPdfPageCount } from '../../../core/server/utils/pdf-pages'
-import { createLegacyEvidencePageAdapter, EvidenceCorrectionError } from './roster-evidence-correction'
-import { createPostgresLegacyEvidencePageAdapter } from './roster-evidence-correction-postgres'
+import { EvidenceCorrectionError, type LegacyEvidencePageInput } from './roster-evidence-correction-model'
 
-type Db = BetterSQLite3Database<typeof schema>
+export type EvidencePageContext = { apiToken: string | null | undefined; filesDir?: string }
+export type EvidencePageStore = {
+  candidates(paths: string[]): EvidencePageCandidate[] | Promise<EvidencePageCandidate[]>
+  applyPage(input: LegacyEvidencePageInput & { candidate: EvidencePageCandidate }): Promise<boolean>
+}
 
 export interface EvidencePagesHttpRequest {
   /** 大写 HTTP 方法;仅 POST 被接受。 */
@@ -67,46 +64,6 @@ const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache
  * 一两份来源文件做的,而整库 `record_evidence` 有两万行 —— 逐个 `.all().filter()` 是把
  * 一次索引命中换成一次全表扫(与 `planExportSnapshot` 那处被点名的写法同一类)。
  */
-export function readEvidencePageCandidates(db: Db, sourceFiles: readonly string[]): EvidencePageCandidate[] {
-  const wanted = [...new Set(sourceFiles.filter((f) => typeof f === 'string' && f !== ''))]
-  if (wanted.length === 0) return []
-
-  return db
-    .select({
-      evidenceId: schema.recordEvidence.id,
-      sourceFile: schema.recordEvidence.sourceFile,
-      listNo: schema.recordEvidence.listNo,
-      page: schema.recordEvidence.page,
-      enterpriseId: schema.enterprise.id,
-      enterpriseName: schema.enterprise.name,
-      district: schema.record.district,
-      // 企业自身属地也带上:界面上显示的有效属地是它优先(见 `EvidencePageCandidate`)。
-      enterpriseDistrict: schema.enterprise.district,
-    })
-    .from(schema.recordEvidence)
-    .innerJoin(schema.recordEvent, eq(schema.recordEvent.id, schema.recordEvidence.recordEventId))
-    .innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId))
-    .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
-    .where(inArray(schema.recordEvidence.sourceFile, wanted))
-    .all()
-}
-
-async function readPostgresEvidencePageCandidates(db: NodePgDatabase, sourceFiles: string[]): Promise<EvidencePageCandidate[]> {
-  const wanted = sourceFiles.filter(path => !path.includes('\0') && path.isWellFormed())
-  if (wanted.length === 0) return []
-  return db.select({ evidenceId: recordEvidence.id, sourceFile: recordEvidence.sourceFile, listNo: recordEvidence.listNo,
-    page: recordEvidence.page, enterpriseId: enterprise.id, enterpriseName: enterprise.name, district: record.district,
-    enterpriseDistrict: enterprise.district,
-  }).from(recordEvidence)
-    .innerJoin(recordEvent, eq(recordEvent.id, recordEvidence.recordEventId))
-    .innerJoin(record, eq(record.id, recordEvent.recordId))
-    .innerJoin(enterprise, eq(enterprise.id, record.enterpriseId))
-    // Drizzle inArray binds each path separately. Retain one bound array for an unrestricted import batch.
-    .where(sql`${recordEvidence.sourceFile} = ANY(${sql.param(wanted)}::text[])`)
-    .orderBy(recordEvidence.sourceFile, recordEvidence.id)
-}
-
-/** 入参里那些**来源文件**。用于把候选读窄,顺带做输入校验(非字符串/空的丢掉)。 */
 function sourceFilesOf(entries: readonly EvidencePageEntry[]): string[] {
   const out = new Set<string>()
   for (const e of entries) {
@@ -152,12 +109,12 @@ function summarize(plan: EvidencePagePlan, written: number, requested: number) {
 }
 
 /**
- * 处理一次补录请求。`db` 由调用方给(路由用 `useDb()`;测试用临时库),
- * `apiToken` 从运行时配置读(Nuxt:`useRuntimeConfig().apiToken`)。
+ * 验证请求并补录出处页码。
  */
 export async function handleEvidencePagesRequest(
   request: EvidencePagesHttpRequest,
-  ctx: { db: Db; postgres?: (write: boolean) => NodePgDatabase | undefined; apiToken: string | null | undefined; filesDir?: string },
+  ctx: EvidencePageContext,
+  prepare: (write: boolean) => EvidencePageStore,
 ): Promise<EvidencePagesHttpResponse> {
   if (request.method !== 'POST') {
     return { status: 405, headers: { ...JSON_HEADERS, allow: 'POST' }, body: { message: '只接受 POST。' } }
@@ -171,9 +128,9 @@ export async function handleEvidencePagesRequest(
     return { status: 400, headers: JSON_HEADERS, body: { message: parsed.error } }
   }
 
-  const postgres = ctx.postgres?.(!parsed.dryRun)
+  const store = prepare(!parsed.dryRun)
   const paths = sourceFilesOf(parsed.entries)
-  const candidates = postgres ? await readPostgresEvidencePageCandidates(postgres, paths) : readEvidencePageCandidates(ctx.db, paths)
+  const candidates = await store.candidates(paths)
   const sourceFiles = paths.filter(isPageCapable)
   const pageCounts = new Map<string, number | null>(
     await Promise.all(
@@ -187,13 +144,12 @@ export async function handleEvidencePagesRequest(
 
   let written = 0
   const failed = new Set<number>()
-  const applyPage = postgres ? createPostgresLegacyEvidencePageAdapter(postgres, ctx.filesDir) : createLegacyEvidencePageAdapter(ctx.db, ctx.filesDir)
   const candidatesById = new Map(candidates.map(candidate => [candidate.evidenceId, candidate]))
   const writtenEvidence = new Set<number>()
   for (const a of plan.assignments) {
     if (a.previous === a.page || writtenEvidence.has(a.evidenceId)) continue
     try {
-      const changed = await applyPage({
+      const changed = await store.applyPage({
         evidenceId: a.evidenceId, previous: a.previous, page: a.page, basis: a.entry.basis, dryRun: parsed.dryRun,
         candidate: candidatesById.get(a.evidenceId)!,
       })

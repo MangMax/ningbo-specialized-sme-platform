@@ -1,7 +1,5 @@
-import { useDb } from '@db'
 import { createCoreRouteHandler } from '../../../../../core/server/utils/core-route'
-import { handleEvidencePagesRequest } from '../../../utils/roster-evidence-pages'
-import { usePostgresRosterDb } from '../../../utils/postgres-roster-db'
+import { handlePostgresEvidencePagesRequest } from '../../../utils/roster-evidence-pages-postgres'
 
 /**
  * **出处页码补录**:`POST /api/roster/evidence/pages`(RL-10)。
@@ -31,7 +29,7 @@ defineRouteMeta({
     description:
       '把已核对的 **PDF 实际页序**写到既有 `record_evidence` 行上:只更新 `page` 一列,' +
       '不新建/删除企业、记录、事件或出处行；逐行部分应用，追加审计与事件来源修订，关联确认需显式重核。**每条必须带 `enterpriseId` 或 `enterpriseName`(可加 `district`)定位** —— ' +
-      '同一份公布文件里可以并置多张「序号各自从 1 起算」的分节名单(如 145号 的三张),' +
+      '同一份公布名单原件里可以并置多张「序号各自从 1 起算」的分节名单(如 145号 的三张),' +
       '裸序号会定位到错的企业。定不下来的条目**一行不改**,在 `pending[]` 里带原因回报' +
       '(`entry_incomplete` / `page_invalid` / `page_count_unknown` / `not_page_capable` / `no_match` / `ambiguous`)。' +
       '`dryRun: true` 只报结论不写库。需要 token:`Authorization: Bearer <NUXT_API_TOKEN>`(或 `X-API-Token`);' +
@@ -108,7 +106,7 @@ defineRouteMeta({
   },
 })
 
-export default createCoreRouteHandler(handleEvidencePagesRequest, () => {
+export default createCoreRouteHandler(handlePostgresEvidencePagesRequest, () => {
   const config = useRuntimeConfig()
-  return { get db() { return useDb() }, postgres: usePostgresRosterDb, apiToken: config.apiToken, filesDir: config.filesDir }
+  return { apiToken: config.apiToken, filesDir: config.filesDir }
 })

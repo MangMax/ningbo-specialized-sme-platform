@@ -5,9 +5,9 @@ import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { storedFile } from '../../../../db/postgresql/file-tables'
 import { rosterFileClassification } from '../../../../db/postgresql/roster-file-tables'
-import { evidenceCorrectionAudit, officialEvidenceRowRevision } from '../../../../db/postgresql/official-evidence-tables'
+import { evidenceCorrectionAudit, officialEvidenceRowRevision, postgresOfficialRawField } from '../../../../db/postgresql/official-evidence-tables'
 import { computeTitleLifecycle } from '../../lib/roster/lifecycle'
-import { projectExactEvidence } from './roster-evidence-correction'
+import { projectExactEvidence } from './roster-evidence-correction-model'
 import { checkOfficialEvidenceFields, OfficialEvidenceError, type OfficialEvidenceRow, type OfficialEvidenceSourceKey, type OfficialEvidenceCandidate, type OfficialEvidencePageRequest, type OfficialEvidencePageResult } from './official-evidence'
 import { officialProjectionBudget, officialProjectionResponse, type EvidenceRead, type EventRead } from './official-evidence-read'
 import { importPostgresReceiptRedactor } from './import-receipt-redaction'
@@ -76,7 +76,8 @@ export async function readPostgresOfficialEvent(db: Pick<NodePgDatabase, 'select
 
 const capturedShape = sql`json_build_object('formatVersion', r.format_version, 'evidenceId', r.evidence_id,
   'eventId', r.event_id, 'revision', r.revision, 'capturedRecordId', r.captured_record_id, 'capturedEnterpriseId', r.captured_enterprise_id,
-  'nameRaw', r.name_raw, 'usccRaw', r.uscc_raw, 'districtRaw', r.district_raw, 'sourceDocumentId', r.source_document_id,
+  'nameRaw', ${postgresOfficialRawField('r', 'nameRaw')}, 'usccRaw', ${postgresOfficialRawField('r', 'usccRaw')},
+  'districtRaw', ${postgresOfficialRawField('r', 'districtRaw')}, 'sourceDocumentId', r.source_document_id,
   'storedFileId', r.stored_file_id, 'path', r.path, 'sha256', r.sha256, 'bytes', r.bytes, 'attachment', r.attachment,
   'sectionKey', r.section_key, 'listNo', r.list_no, 'page', r.page, 'sourceBindingKnown', r.source_binding_known = 1,
   'actor', r.actor::json, 'basis', r.basis, 'command', CASE r.command_kind WHEN 'import' THEN
@@ -85,7 +86,13 @@ const capturedShape = sql`json_build_object('formatVersion', r.format_version, '
   'createdAt', r.created_at, 'currentOwner', CASE WHEN owner.id IS NOT NULL THEN
     json_build_object('recordId', rec.id, 'enterpriseId', owner.id) END)`
 
-const oversizedField = sql`greatest(length(r.name_raw),length(r.uscc_raw),length(r.district_raw),length(r.path),length(r.sha256),
+// Replacing escaped NUL with another one-character control lets PostgreSQL
+// measure retained text without decoding a U+0000 into its text type.
+const capturedRawLength = sql`greatest(length(r.name_raw),length(r.uscc_raw),length(r.district_raw),
+  length(replace(r.name_raw_json,chr(92)||'u0000',chr(92)||'u0001')::json #>> '{}'),
+  length(replace(r.uscc_raw_json,chr(92)||'u0000',chr(92)||'u0001')::json #>> '{}'),
+  length(replace(r.district_raw_json,chr(92)||'u0000',chr(92)||'u0001')::json #>> '{}'))`
+const oversizedField = sql`greatest(${capturedRawLength},length(r.path),length(r.sha256),
   length(r.attachment),length(r.section_key),length(r.basis),length(r.actor::json ->> 'id'),
   length(r.correction_batch_key),length(r.created_at)) > 4000`
 
@@ -104,9 +111,10 @@ export async function readPostgresOfficialPlanFacts(db: Db, input: FactRead) {
       ORDER BY r.evidence_id LIMIT 101`
     shape = sql`json_build_object('evidenceId',r.evidence_id,'eventId',r.event_id,'revision',r.revision,
       'capturedRecordId',r.captured_record_id,'capturedEnterpriseId',r.captured_enterprise_id,
-      'nameRaw',r.name_raw,'usccRaw',r.uscc_raw,'districtRaw',r.district_raw,'currentOwner',
+      'nameRaw',${postgresOfficialRawField('r', 'nameRaw')}, 'usccRaw',${postgresOfficialRawField('r', 'usccRaw')},
+      'districtRaw',${postgresOfficialRawField('r', 'districtRaw')},'currentOwner',
       CASE WHEN owner.id IS NOT NULL THEN json_build_object('recordId',rec.id,'enterpriseId',owner.id) END)`
-    guard = sql`greatest(length(r.name_raw),length(r.uscc_raw),length(r.district_raw))>4000`
+    guard = sql`${capturedRawLength}>4000`
   } else {
     select = sql`SELECT * FROM official_evidence_row_revision WHERE evidence_id=${input.id} ORDER BY revision DESC LIMIT 1`
     shape = capturedShape

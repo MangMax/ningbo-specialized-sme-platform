@@ -1,11 +1,14 @@
+import { setTimeout as delay } from 'node:timers/promises'
 import { and, eq, getTableColumns, inArray, or, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
 import { importBatch } from '../../../../db/postgresql/import-tables'
-import { platformLegacyRelationAlias } from '../../../../db/postgresql/platform-tables'
+import { platformBusinessObservation } from '../../../../db/postgresql/platform-tables'
 import { recordCorrespondence, recordCorrespondenceAudit } from '../../../../db/postgresql/qualification-tables'
-import { buildRecordCorrespondencePlan, correspondenceEdgeKey, correspondenceHash, CorrespondenceError, recordCorrespondenceMutations, requestedCorrespondenceSources, type CorrespondencePlan, type CorrespondenceReceipt, type CorrespondenceRequest, type StoredCorrespondence } from './record-correspondence'
+import { buildRecordCorrespondencePlan, correspondenceEdgeKey, correspondenceHash, CorrespondenceError, recordCorrespondenceMutations, requestedCorrespondenceSources, type CorrespondencePlan, type CorrespondenceReceipt, type CorrespondenceRequest, type StoredCorrespondence } from './record-correspondence-model'
 import { observePostgresCorrespondences } from './record-correspondence-postgres'
+import { lockPostgresCurrentCapture } from './platform-capture-retention-postgres'
+import { postgresCorrespondenceProvenance } from './record-correspondence-postgres-refs'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Batch = {
@@ -14,7 +17,9 @@ type Batch = {
 }
 const fail = (code: CorrespondenceError['code'], message: string): never => { throw new CorrespondenceError(code, message) }
 
-export async function runPostgresCorrespondenceTransaction<T>(db: NodePgDatabase, run: (tx: Tx) => Promise<T>) {
+export async function runPostgresCorrespondenceTransaction<T>(
+  db: NodePgDatabase, run: (tx: Tx) => Promise<T>, retryDelays: readonly number[] = [0, 0],
+) {
   for (let attempt = 0; ; attempt++) {
     try { return await db.transaction(run, { isolationLevel: 'serializable' }) }
     catch (error) {
@@ -22,8 +27,11 @@ export async function runPostgresCorrespondenceTransaction<T>(db: NodePgDatabase
       const code = cause.code ?? cause.cause?.code
       const constraint = cause.constraint ?? cause.cause?.constraint
       if (code === '23505' && constraint === 'record_correspondence_edge_uq') fail('plan_mismatch', 'Another request committed this edge; preflight again')
-      if (code !== '40001') throw error
-      if (attempt === 2) fail('plan_mismatch', 'Concurrent source change; preflight again')
+      if (code === '23503' && constraint === 'record_correspondence_observation_id_fkey') fail('plan_mismatch', 'Platform evidence changed; preflight again')
+      if (code !== '40001' && !(code === '23503' && constraint === 'difference_reason_evidence_relation_id_fkey')) throw error
+      const wait = retryDelays[attempt]
+      if (wait === undefined) fail('plan_mismatch', 'Concurrent source change; preflight again')
+      if (wait) await delay(wait)
     }
   }
 }
@@ -46,28 +54,18 @@ async function readBatch(tx: Tx, request: CorrespondenceRequest) {
 async function loadPlan(tx: Tx, request: CorrespondenceRequest, lock: boolean) {
   const ids = request.operations.flatMap(op => 'correspondenceId' in op ? [op.correspondenceId] : [])
   const keys = request.operations.flatMap(op => 'edge' in op ? [correspondenceEdgeKey(op.edge)] : [])
-  const edge = alias(recordCorrespondence, 'edge'), relation = platformLegacyRelationAlias
-  const { provenance, targetIdentity, observationId: _observationId, ...columns } = getTableColumns(edge)
+  const edge = alias(recordCorrespondence, 'edge'), relation = platformBusinessObservation
+  const { provenance: _provenance, targetIdentity, observationId: _observationId, platformEvidenceReboundRevision: _rebound, ...columns } = getTableColumns(edge)
   const query = tx.select({
-    ...columns, relationId: relation.oldId,
+    ...columns, relationId: relation.publicId,
     targetIdentity: sql<StoredCorrespondence['targetIdentity']>`${targetIdentity}::json`,
-    provenance: sql<StoredCorrespondence['provenance']>`${provenance}::json`,
-  }).from(edge).leftJoin(relation, eq(relation.observationId, edge.observationId))
+    provenance: postgresCorrespondenceProvenance(tx, edge),
+  }).from(edge).leftJoin(relation, eq(relation.id, edge.observationId))
     .where(or(inArray(edge.id, ids), inArray(edge.edgeKey, keys))).orderBy(edge.id)
   const stored = await (lock ? query.for('update', { of: edge }) : query)
   const byId = new Map(stored.map(row => [row.id, row]))
   const byEdge = new Map(stored.map(row => [row.edgeKey, row]))
-  const proofs = request.operations.flatMap(op => {
-    if ('edge' in op && op.edge.type === 'recognized_export') return [{
-      relationId: op.edge.relationId, exportRowId: op.edge.exportRowId, ids: request.proofIds ?? [],
-    }]
-    if (op.action !== 'decide' || op.status !== 'confirmed') return []
-    const row = byId.get(op.correspondenceId)
-    return row?.type === 'recognized_export' && row.relationId !== null && row.exportRowId !== null
-      ? [{ relationId: row.relationId, exportRowId: row.exportRowId, ids: request.proofIds ?? row.provenance.comparisonProofIds as number[] ?? [] }]
-      : []
-  })
-  const observed = await observePostgresCorrespondences(tx, requestedCorrespondenceSources(request, stored), proofs)
+  const observed = await observePostgresCorrespondences(tx, requestedCorrespondenceSources(request, stored), stored.map(row => row.id))
   const lookup = { byId: (id: number) => byId.get(id), byEdge: (key: string) => byEdge.get(key) }
   return { lookup, observed, plan: buildRecordCorrespondencePlan(lookup, request, observed) }
 }
@@ -97,10 +95,14 @@ async function preflightInTransaction(tx: Tx, request: CorrespondenceRequest) {
 }
 
 export function commitPostgresCorrespondences(db: NodePgDatabase, request: CorrespondenceRequest, planHash: string) {
-  return runPostgresCorrespondenceTransaction(db, tx => commitInTransaction(tx, request, planHash))
+  return runPostgresCorrespondenceTransaction(db, async tx => {
+    await lockPostgresCurrentCapture(tx)
+    return commitInTransaction(tx, request, planHash)
+  })
 }
 
 export async function commitPostgresCorrespondenceDecision(tx: Tx, request: CorrespondenceRequest) {
+  await lockPostgresCurrentCapture(tx)
   const { planHash } = await preflightInTransaction(tx, request)
   return commitInTransaction(tx, request, planHash)
 }
@@ -116,18 +118,19 @@ async function commitInTransaction(tx: Tx, request: CorrespondenceRequest, planH
     const edge = recordCorrespondence
     let id: number
     if (mutation.type === 'insert') {
-      const { targetIdentity, provenance, ...changes } = mutation.changes
+      const { targetIdentity, provenance: _provenance, ...changes } = mutation.changes
       const [created] = await tx.insert(edge).values({
-        ...changes, targetIdentity: JSON.stringify(targetIdentity), provenance: JSON.stringify(provenance),
+        ...changes, targetIdentity: JSON.stringify(targetIdentity),
       }).returning({ id: edge.id })
       id = created!.id
     } else {
       id = mutation.row.id
-      const { targetIdentity, provenance, ...changes } = mutation.changes
+      const { targetIdentity, provenance: _provenance, ...changes } = mutation.changes
       const result = await tx.update(edge).set({
         ...changes,
         targetIdentity: targetIdentity === undefined ? undefined : JSON.stringify(targetIdentity),
-        provenance: provenance === undefined ? undefined : JSON.stringify(provenance),
+        provenance: null,
+        platformEvidenceReboundRevision: changes.sourceFingerprint === undefined ? undefined : null,
       }).where(and(
         eq(edge.id, id), eq(edge.revision, mutation.row.revision),
         mutation.candidateOnly ? eq(edge.status, 'candidate') : undefined,

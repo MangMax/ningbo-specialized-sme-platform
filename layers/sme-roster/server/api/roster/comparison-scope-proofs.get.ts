@@ -1,3 +1,0 @@
-import { comparisonScopeProofRoute } from '#sme-roster/server/utils/comparison-scope-proof-route'
-defineRouteMeta({ openAPI: { tags: ['对比范围证明'], summary: '列出已归档范围证明及当前来源有效性', parameters: [{ name: 'kind', in: 'query', schema: { type: 'string', enum: ['official_coverage', 'current_source_equivalence'] } }, { name: 'status', in: 'query', schema: { type: 'string', enum: ['candidate', 'confirmed', 'revoked'] } }, { name: 'page', in: 'query', schema: { type: 'integer' } }, { name: 'pageSize', in: 'query', schema: { type: 'integer', maximum: 200 } }], responses: { 200: { description: 'Proof rows with current validity and pagination' }, 400: { description: 'Invalid filter' } } } })
-export default comparisonScopeProofRoute('list')

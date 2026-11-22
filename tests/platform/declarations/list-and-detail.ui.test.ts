@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import PlatformDeclarationTable from '../../../layers/sme-roster/app/components/PlatformDeclarationTable.vue'
@@ -43,10 +43,10 @@ describe('申报记录表格', () => {
       expect(row.text()).toContain('2024')
       expect(row.text()).toContain('终审通过')
       expect(row.text()).not.toContain('2 / 3')
-      expect(row.text()).toContain('版本详情')
-      expect(row.text()).toContain('匹配 2 个版本')
+      expect(row.text()).toContain('查看详情')
+      expect(row.text()).not.toContain('版本')
       expect(row.text()).toContain('企业归属冲突')
-      await row.findAll('button').find(button => button.text().includes('版本详情'))!.trigger('click')
+      await row.findAll('button').find(button => button.text().includes('查看详情'))!.trigger('click')
       expect(view.emitted('open-record')).toEqual([[7]])
     } finally { view.unmount() }
   })
@@ -86,7 +86,7 @@ describe('申报记录表格', () => {
 })
 
 describe('申报记录详情', () => {
-  it('shows each declaration version with its business facts and without capture metadata', async () => {
+  it('shows only the current declaration with its business facts', async () => {
     const detail = {
       record: { id: 7, platformKey: 'SQ-2024-1', interface: 'apply_list', identityRuleVersion: 'platform-observation-v1', createdAt: '2026-10-01T00:00:00Z' },
       versions: [
@@ -98,21 +98,20 @@ describe('申报记录详情', () => {
       ],
       counts: { versions: 2, observations: 1, versionsTruncated: false, observationsTruncated: false },
     }
-    const fetch = vi.fn(async () => detail)
+    const fetch = vi.fn(async () => ({ ...detail, current: detail.versions[0] }))
     vi.stubGlobal('$fetch', fetch)
     const view = mount(PlatformDeclarationDetailDialog, { attachTo: document.body, props: { recordId: 7, open: true } })
     try {
       await flushPromises()
       const dialog = new DOMWrapper(document.body).get('[data-testid="platform-declaration-detail"]')
       expect(fetch).toHaveBeenCalledWith('/api/platform/declarations/7', { retry: 0 })
-      expect(dialog.text()).toContain('申报记录 · 版本详情')
+      expect(dialog.text()).toContain('申报记录 · 详情')
       expect(dialog.text()).not.toContain('申报编号')
       expect(dialog.text()).not.toContain('SQ-2024-1')
-      const cards = dialog.findAll('[data-testid="platform-declaration-version"]')
-      expect(cards).toHaveLength(2)
+      const cards = dialog.findAll('[data-testid="platform-declaration-current"]')
+      expect(cards).toHaveLength(1)
       expect(cards[0]!.text()).toContain('申请')
       expect(cards[0]!.text()).toContain('2024-03-01')
-      expect(cards[1]!.text()).toBe('该版本暂无可核对的业务内容')
       expect(dialog.text()).not.toMatch(/版本 #|采集时间|2026-10-02|内容哈希|规则版本|apply_list/)
       expect(dialog.text()).not.toContain('行 #21 · 查询 #31')
       expect(dialog.text()).toContain('甲合成企业')

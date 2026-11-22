@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { annualTaskContext } from '../../utils/annual-correspondence-read'
+import { annualTaskContext } from '../../utils/annual-correspondence-projection'
 import { annualTaskMcpRequest } from '../../utils/annual-correspondence-mcp'
 import { writeGuard } from '../../../../core/server/utils/mcp-guard'
 export default defineMcpTool({
@@ -12,6 +12,6 @@ export default defineMcpTool({
   inputSchema: { clientRequestId: z.string().trim().min(1).max(120), eventIds: z.array(z.number().int().positive()).min(1).max(200) },
   handler: async (input, extra) => {
     const context = annualTaskContext()
-    return annualTaskMcpRequest('submit', input, extra, { get db() { return context.db }, readScope: context.readScope, filesDir: context.filesDir, mcpToken: useRuntimeConfig().mcpToken })
+    return annualTaskMcpRequest('submit', input, extra, { filesDir: context.filesDir, mcpToken: useRuntimeConfig().mcpToken })
   },
 })

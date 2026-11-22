@@ -1,0 +1,16 @@
+name: Install PostgreSQL 19 for temporary test clusters
+description: Install PostgreSQL 19 binaries and expose their path to repository fixtures.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        sudo install -d /usr/share/postgresql-common/pgdg
+        sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+        echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' | sudo tee /etc/apt/sources.list.d/ci-pgdg.list
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends postgresql-19 postgresql-client-19
+        bin=/usr/lib/postgresql/19/bin
+        "$bin/postgres" --version
+        echo "ROSTER_TEST_POSTGRES_BIN=$bin" >> "$GITHUB_ENV"
+        echo "TEST_ROSTER_COMPARISON_PG_BIN=$bin" >> "$GITHUB_ENV"

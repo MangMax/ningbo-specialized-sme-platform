@@ -1,18 +1,28 @@
 import { createHash } from 'node:crypto'
+import assert from 'node:assert/strict'
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { initializeDb, schema } from '../../../db/client'
+import { sql } from 'drizzle-orm'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import pg from 'pg'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { fileMaintenanceAudit, ocrResult, storedFile } from '../../../db/postgresql/file-tables'
+import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
+import { storedFilePart } from '../../../db/postgresql/roster-file-tables'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 import { minimalPdf } from '../../support/minimal-pdf'
 
 const dir = mkdtempSync(join(tmpdir(), 'file-maintenance-104-'))
 const root = join(dir, 'files')
-const dbPath = join(dir, 'synthetic.db')
-const db = initializeDb({ create: true, dbPath })
+const recordedAt = '2025-01-01T00:00:00Z'
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
+let pool: pg.Pool
+let db: ReturnType<typeof drizzle>
 let service: { baseUrl: string; stop(): Promise<void> }
 let serverOutput = ''
 let seq = 0
@@ -52,14 +62,27 @@ async function file() {
 let discovery: any
 beforeAll(async () => {
   discovery = await readDevelopmentDiscovery()
+  runtime = await postgresRuntimeFixture({ dir })
+  pool = new pg.Pool({ connectionString: runtime.url })
+  db = drizzle({ client: pool })
   const cwd = resolve(import.meta.dirname, '../../..')
   const port = await reserveLoopbackPort()
-  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt-build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: root, NUXT_INCOMING_DIR: join(dir, 'incoming') } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt-build'), ...runtime.env, NUXT_DB_READONLY: '0', NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: root, NUXT_INCOMING_DIR: join(dir, 'incoming') } })
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { serverOutput = (serverOutput + data).slice(-12000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) } catch (error) { await service.stop(); throw new Error(`${String(error)}\n${serverOutput}`) }
 }, 90000)
-afterAll(async () => { if (service) await service.stop(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => {
+  try {
+    if (service) await service.stop()
+  } finally {
+    try { await pool?.end() }
+    finally {
+      try { runtime?.close() }
+      finally { rmSync(dir, { recursive: true, force: true }) }
+    }
+  }
+})
 
 describe("file maintenance public transports", () => {
   it('exposes common files through list and detail, and only scopes the list when a category filter is selected', async () => {
@@ -68,10 +91,12 @@ describe("file maintenance public transports", () => {
     const text = 'fixture-owned reference'
     mkdirSync(join(root, 'shared'), { recursive: true })
     writeFileSync(join(root, relPath), text)
-    const { id } = db.insert(schema.storedFile).values({
-      relPath, filename: 'common-reference.txt', ext: 'txt', bytes: Buffer.byteLength(text),
-      sha256: createHash('sha256').update(text).digest('hex'),
-    }).returning({ id: schema.storedFile.id }).get()
+    const [stored] = await db.insert(storedFile).values({
+      relPath, filename: 'common-reference.txt', ext: 'txt', bytes: BigInt(Buffer.byteLength(text)),
+      sha256: createHash('sha256').update(text).digest('hex'), createdAt: recordedAt,
+    }).returning({ id: storedFile.id })
+    assert.ok(stored, 'Expected the reference file to be inserted')
+    const { id } = stored
     const getList = async (query = '') => {
       const res = await fetch(service.baseUrl + '/api/files' + query)
       expect(res.status).toBe(200)
@@ -103,7 +128,7 @@ describe("file maintenance public transports", () => {
   it('publishes the same list query parameters from the enabled categories in development OpenAPI', () => {
     const list = discovery.paths['/api/files'].get
     expect(list.parameters.map((param: { name: string }) => param.name))
-      .toEqual(['source', 'categoryState', 'parseState', 'leadListUsage', 'q', 'page', 'pageSize', 'rescan'])
+      .toEqual(['source', 'categoryState', 'parseState', 'leadListUsage', 'q', 'page', 'pageSize'])
     expect(list.parameters.slice(0, 3)).toEqual([
       { name: 'source', in: 'query', schema: { type: 'string' }, description: '来源,多值:`jxj` / `miit`。' },
       { name: 'categoryState', in: 'query', schema: { type: 'string' }, description: '分类状态,多值:`set`(已定)/ `inferred`(程序推的)/ `unset`(未定)。' },
@@ -235,9 +260,23 @@ describe("file maintenance public transports", () => {
     for (let n = 0; n < 5; n++) expect((await rest(`${f.id}`, 'PATCH', { batch: n + 2 })).status).toBe(200)
     const before = await rest(`${f.id}/maintenance?pageSize=2`)
     const unrelated = await file()
-    db.transaction(tx => {
-      for (let n = 1; n <= 500; n++) tx.insert(schema.fileMaintenanceAudit).values({ fileId: unrelated.id, revision: n, action: 'update', mode: 'versioned', requestHash: 'synthetic', actor: 'noise-fixture', basis: 'N'.repeat(2000), before: {}, after: {} }).run()
-      tx.insert(schema.ocrResult).values({ fileId: unrelated.id, pageNo: 1, markdown: 'unrelated raw OCR '.repeat(32768), channel: 'upload' }).run()
+    await db.transaction(async tx => {
+      const noise = 'N'.repeat(2000)
+      await tx.insert(fileMaintenanceAudit).values(Array.from({ length: 500 }, (_, index): typeof fileMaintenanceAudit.$inferInsert => ({
+        fileId: unrelated.id,
+        revision: index + 1,
+        action: 'update',
+        mode: 'versioned',
+        requestHash: 'synthetic',
+        actor: 'noise-fixture',
+        basis: noise,
+        before: '{}',
+        after: '{}',
+        createdAt: recordedAt,
+      })))
+      await tx.insert(ocrResult).values({
+        fileId: unrelated.id, page: 1, markdown: 'unrelated raw OCR '.repeat(32768), channel: 'upload', createdAt: recordedAt,
+      })
     })
     for (let n = 0; n < 10; n++) {
       const after = await rest(`${f.id}/maintenance?pageSize=2`)
@@ -280,23 +319,46 @@ describe("file maintenance public transports", () => {
     expect((await rest('not-an-id/restore', 'POST', {})).status).toBe(400)
     expect((await modernRest(`${f.id}/restore`, 'POST', { deleteDisk: true })).status).toBe(400)
     expect((await writeRpc('update_file', { fileId: f.id, relPath: f.relPath, patch: { year: 2025 } })).body.result.isError).toBe(true)
-    db.$client.exec(`CREATE TRIGGER reject_file_maintenance_${f.id} BEFORE INSERT ON file_maintenance_audit WHEN NEW.file_id = ${f.id} BEGIN SELECT RAISE(ABORT, 'synthetic audit failure'); END`)
-    expect((await rest(`${f.id}`, 'PATCH', { displayName: 'must roll back' })).status).toBe(500)
-    expect((await rest(`${f.id}/maintenance`)).body).toEqual(before)
-    db.$client.exec(`DROP TRIGGER reject_file_maintenance_${f.id}`)
+    await db.execute(sql`
+      CREATE FUNCTION business.reject_test_file_maintenance() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'synthetic maintenance audit failure'; END; $$;
+      CREATE TRIGGER reject_test_file_maintenance BEFORE INSERT ON business.file_maintenance_audit
+      FOR EACH ROW EXECUTE FUNCTION business.reject_test_file_maintenance();
+    `)
+    try {
+      expect((await rest(`${f.id}`, 'PATCH', { displayName: 'must roll back' })).status).toBe(500)
+      expect((await rest(`${f.id}/maintenance`)).body).toEqual(before)
+    } finally {
+      await db.execute(sql`
+        DROP TRIGGER reject_test_file_maintenance ON business.file_maintenance_audit;
+        DROP FUNCTION business.reject_test_file_maintenance();
+      `)
+    }
     expect((await rest(`${f.id}`, 'PATCH', { displayName: 'committed name' })).status).toBe(200)
     expect((await rest(`${f.id}/maintenance`)).body).toMatchObject({ revision: 1, total: 1, file: { displayName: 'committed name' } })
   })
   it('protects referenced disk bytes and preserves formal evidence, OCR and file parts across the lifecycle', async () => {
     const f = await file()
-    const enterprise = db.insert(schema.enterprise).values({ name: `引用企业${f.id}`, nameNorm: `引用企业${f.id}` }).returning().get()
-    const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
-    const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
-    db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: f.relPath, attachment: '附件1', listNo: 1, page: 1 }).run()
-    db.insert(schema.ocrResult).values({ fileId: f.id, pageNo: 1, markdown: 'preserved original OCR', channel: 'upload' }).run()
-    db.insert(schema.storedFilePart).values({ fileId: f.id, titleCode: 'specialized_sme', eventKind: 'award', year: 2024, batch: 1, attachment: '附件1', rowCount: 1, origin: 'agent' }).run()
+    const name = `引用企业${f.id}`
+    const [owner] = await db.insert(enterprise).values({ name, nameNorm: name }).returning()
+    const [ledger] = await db.insert(record).values({
+      enterpriseId: owner!.id, titleCode: 'specialized_sme', source: 'jxj',
+    }).returning()
+    const [event] = await db.insert(recordEvent).values({
+      recordId: ledger!.id, eventType: 'award', year: 2024,
+    }).returning()
+    await db.insert(recordEvidence).values({
+      recordEventId: event!.id, sourceFile: f.relPath, attachment: '附件1', listNo: 1, page: 1,
+    })
+    await db.insert(ocrResult).values({
+      fileId: f.id, page: 1, markdown: 'preserved original OCR', channel: 'upload', createdAt: recordedAt,
+    })
+    await db.insert(storedFilePart).values({
+      fileId: f.id, titleCode: 'specialized_sme', eventKind: 'award', year: 2024, batch: 1,
+      attachment: '附件1', rowCount: 1, origin: 'agent',
+    })
     const publicJson = async (path: string) => (await fetch(`${service.baseUrl}${path}`)).json()
-    const detailBefore = await publicJson(`/api/enterprises/${enterprise.id}`)
+    const detailBefore = await publicJson(`/api/enterprises/${owner!.id}`)
     const ocrBefore = await publicJson(`/api/ocr-results?fileId=${f.id}&markdown=1`)
     const before = (await rest(`${f.id}/maintenance`)).body.file
     expect((await modernRest(`${f.id}?deleteDisk=1`, 'DELETE')).status).toBe(409)
@@ -306,7 +368,7 @@ describe("file maintenance public transports", () => {
     expect((await modernRest(`${f.id}/restore`, 'POST', {})).status).toBe(200)
     const after = (await rest(`${f.id}/maintenance`)).body.file
     expect(after).toMatchObject({ id: before.id, relPath: before.relPath, filename: before.filename, bytes: before.bytes, sha256: before.sha256, referenceCount: 1, parts: before.parts })
-    expect(await publicJson(`/api/enterprises/${enterprise.id}`)).toEqual(detailBefore)
+    expect(await publicJson(`/api/enterprises/${owner!.id}`)).toEqual(detailBefore)
     expect(await publicJson(`/api/ocr-results?fileId=${f.id}&markdown=1`)).toEqual(ocrBefore)
     const preview = await fetch(`${service.baseUrl}/api/files/${f.relPath}`)
     expect(await preview.text()).toBe('original synthetic file bytes')

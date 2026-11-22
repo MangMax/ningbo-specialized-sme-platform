@@ -78,7 +78,7 @@ const details = computed(() => [
     <span v-else class="text-muted-foreground text-xs">—</span>
   </TableCell>
   <TableCell class="text-muted-foreground text-xs">
-    <!-- 类别是低信息量的属性(公布文件/导出表),写成正文色小字即可。
+    <!-- 类别是低信息量的属性(公布名单/导出表),写成正文色小字即可。
          一行里已经有来源方标 + 两个状态徽章,再挂一个同形的徽章只是噪音。 -->
     <span class="block truncate">{{ row.kind ? KINDS[row.kind] : '—' }}</span>
   </TableCell>

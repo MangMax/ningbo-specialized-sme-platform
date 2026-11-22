@@ -7,10 +7,8 @@ import {
   applyPostgresEnterpriseProfileChange, enterpriseProfileVersion, lockPostgresReviewedEnterpriseBatch,
   postgresCanonicalEnterpriseId, postgresEnterpriseProfileState, type EnterpriseProfile,
 } from '../../../core/server/public'
-import {
-  boundedEnterpriseProfileHistory, EnterpriseProfileError, enterpriseProfilePatchSchema, parseEnterpriseProfileHistoryQuery,
-} from './enterprise-profile'
-import { capturePostgresIdentityChange, readPostgresIdentityMaterial } from './postgres-identity-evidence'
+import { EnterpriseProfileError } from './enterprise-profile-model'
+import { boundedEnterpriseProfileHistory, enterpriseProfilePatchSchema, parseEnterpriseProfileHistoryQuery } from './enterprise-profile-model'
 
 export function getPostgresEnterpriseProfile(db: NodePgDatabase, enterpriseId: number) {
   return db.transaction(async tx => {
@@ -26,7 +24,7 @@ function profileAudit(row: typeof audit.$inferSelect) {
 }
 
 export function patchPostgresEnterpriseProfile(db: NodePgDatabase, enterpriseId: number, body: unknown) {
-  if (process.env.NUXT_POSTGRES_DIRECTORY_WRITE !== '1') {
+  if (process.env.NUXT_DB_READONLY === '1') {
     throw new EnterpriseProfileError(503, 'write_unavailable', 'PostgreSQL 企业资料处于只读模式')
   }
   const parsed = enterpriseProfilePatchSchema.safeParse(body)
@@ -54,12 +52,9 @@ export function patchPostgresEnterpriseProfile(db: NodePgDatabase, enterpriseId:
     for (const [key, value] of Object.entries(input.expectedValues ?? {})) {
       if (current.profile[key as keyof EnterpriseProfile] !== value) throw new EnterpriseProfileError(409, 'old_value_conflict', `Unexpected old ${key}`)
     }
-    const renamed = input.changes.name !== undefined && input.changes.name !== current.profile.name
-    const before = renamed ? await readPostgresIdentityMaterial(tx, owner) : null
     const result = await applyPostgresEnterpriseProfileChange(tx, current, input.changes, {
       idempotencyKey: input.idempotencyKey, requestHash, actor: input.actor, basis: input.basis, previousName: input.previousName?.name,
     })
-    if (before !== null) await capturePostgresIdentityChange(tx, owner, `profile:${result.auditId}`, before)
     return result
   })
 }

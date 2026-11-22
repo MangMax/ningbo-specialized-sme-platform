@@ -1,16 +1,19 @@
-import { APPLY_GRID, APPLY_LIST_PATH, BUSINESS_GRID, BUSINESS_LIST_PATH, RECOGNIZED_GRID, RECOGNIZED_LIST_PATH, PlatformSessionExpiredError, parsePlatformPage } from '../../lib/platform/adapter'
+import { APPLY_GRID, APPLY_LIST_PATH, BUSINESS_GRID, BUSINESS_LIST_PATH, RECOGNIZED_GRID, RECOGNIZED_LIST_PATH, PlatformSessionExpiredError, parsePlatformPage, platformDataRowStringProjection } from '../../lib/platform/adapter'
 import { cookieRedactor, PlatformHttpError, postPlatformRequest, type PlatformQueryOptions } from '../../lib/platform/client'
 import { platformQueryInputSchema, platformQueryTitles, recognizedConditionShape, type PlatformLiveQueryResult, type PlatformQueryPage, type PlatformQueryError } from '../../lib/platform/live-query'
-import type { CredentialContext } from '../../../core/server/utils/credential-state'
+import type { CredentialReadContext } from '../../../core/server/utils/credential-resolution'
 import { resolveRuntimeCredential } from '../../../core/server/utils/credential-state-postgres'
 import { newLogContext, type LogContext } from '../../../core/lib/logging'
 import { logPlatformResult, platformOperation, platformQueryOperation } from '../../lib/platform/logging'
+import { platformBatchBusinessRow } from '../../lib/platform/batch-business-row'
 
 export interface PlatformLiveQueryContext {
   logContext?: LogContext
   onProgress?: (result: PlatformLiveQueryResult) => void | Promise<void>
   maxResultBytes?: number
-  credentials?: CredentialContext
+  /** Keep typed business fields and omit upstream transport material. */
+  businessRowsOnly?: boolean
+  credentials?: CredentialReadContext
   /** In-memory snapshot for batch consumers; never put this context in persistent job params. */
   cookie?: string
   /** Previously observed per-title totals constrain explicit batch continuations. */
@@ -37,6 +40,8 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
   // Fixed error text: never echo unknown input, upstream body or credential storage errors.
   if (!parsed.success) throw Object.assign(new Error('Invalid platform query parameters'), { statusCode: 400, code: 'invalid_input' })
   const q = parsed.data
+  const keepRawData = q.rawDataVersion === 1 && !ctx.businessRowsOnly
+  const inspectOriginal = keepRawData || ctx.businessRowsOnly
   if (!q.name && !q.uscc) throw Object.assign(new Error('Provide name or uscc'), { statusCode: 400, code: 'invalid_input' })
   const titles = platformQueryTitles(q)
   const totals = new Map<string | null, number | null>(titles.filter(title => ctx.declaredTotals?.has(title)).map(title => [title, ctx.declaredTotals!.get(title)!]))
@@ -46,7 +51,8 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
   const result: PlatformLiveQueryResult = {
     source: q.source, status: 'not_queried', effectiveConditions: { ...(q.name ? { name: q.name } : {}), ...(q.uscc ? { uscc: q.uscc } : {}), combination: 'and', ...Object.fromEntries(Object.keys(recognizedConditionShape).filter(key => q[key as keyof typeof q] !== undefined).map(key => [key, q[key as keyof typeof q]])) },
     titleScope: q.source !== 'queryList' ? { mode: 'selected', rdjb: titles as string[] } : { mode: 'source_default', rdjb: [] }, queriedAt: new Date(started).toISOString(), completedAt: '', rows: [], pages: [], fetchedCount: 0, declaredTotal: declaredTotal(),
-    ...(q.rawDataVersion === 1 ? { rawData: { version: 1 as const, rows: [], pages: [] } } : {}),
+    ...(keepRawData ? { rawData: { version: 1 as const, rows: [], pages: [] } } : {}),
+    ...(ctx.businessRowsOnly ? { dataRows: [] } : {}),
     completeness: 'not_queried', fullRange: q.startPage === 1, unfinished: [], error: null,
     limits: { maxRequests: q.maxRequests, maxRows: q.maxRows, maxDurationMs: q.maxDurationMs, pageSize: Math.min(q.pageSize, q.maxRows) },
   }
@@ -108,14 +114,16 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
         })
         const parsedPage = parsePlatformPage(raw, q.source === 'businessList' ? BUSINESS_GRID : q.source === 'queryBusList' ? RECOGNIZED_GRID : APPLY_GRID)
         const serialized = JSON.stringify(parsedPage.rows)
-        const sourceEnvelope = q.rawDataVersion === 1 && parsedPage.source === 'json' ? JSON.parse(raw) : null
+        const sourceEnvelope = inspectOriginal && parsedPage.source === 'json' ? JSON.parse(raw) : null
         const sensitiveLegacyRows = JSON.stringify(sanitize(parsedPage.rows)) !== serialized || parsedPage.rows.some(row => Object.keys(row).some(key => sensitiveKey.test(key)))
-        const wireText = q.rawDataVersion === 1 ? credentialText(raw) : ''
-        const sensitiveOriginal = q.rawDataVersion === 1 && (redactString(wireText) !== wireText
+        const wireText = inspectOriginal ? credentialText(raw) : ''
+        // A discarded envelope can include ordinary pagination values matching a
+        // short credential component. Check exact envelope echoes only when returned.
+        const sensitiveOriginal = inspectOriginal && ((keepRawData && (redactString(wireText) !== wireText
+          || JSON.stringify(sanitize(sourceEnvelope)) !== JSON.stringify(sourceEnvelope)))
           || /["'][^"']*(?:cookie|token|session|password|authorization|account|username)[^"']*["']\s*:/i.test(wireText)
           || /\b(?:name|id)\s*=\s*["']?[^"'\s>]*(?:cookie|token|session|password|authorization|account|username)/i.test(wireText)
           || hasSensitiveKey(sourceEnvelope) || hasSensitiveKey(parsedPage.rawRows)
-          || JSON.stringify(sanitize(sourceEnvelope)) !== JSON.stringify(sourceEnvelope)
           || JSON.stringify(sanitize(parsedPage.rawRows)) !== JSON.stringify(parsedPage.rawRows))
         if (sensitiveLegacyRows || sensitiveOriginal) {
           throw error('sensitive_response', '平台响应含会话凭据或敏感字段，已阻止返回。')
@@ -140,9 +148,15 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
           }
           maxPageForTitle = maxPage
         }
-        const rawPage = { ...pos, format: parsedPage.source, body: raw }
-        const rawData = result.rawData ? { version: 1 as const, rows: [...result.rawData.rows, ...parsedPage.rawRows], pages: [...result.rawData.pages, rawPage] } : undefined
-        if (result.rows.length + parsedPage.rows.length > q.maxRows || Buffer.byteLength(JSON.stringify({ ...result, rows: [...result.rows, ...parsedPage.rows], ...(rawData ? { rawData } : {}) }), 'utf8') + 2048 > (ctx.maxResultBytes ?? (rawData ? 8388608 : Infinity))) {
+        const pageDataRows = ctx.businessRowsOnly ? parsedPage.rawRows.map(platformBatchBusinessRow) : undefined
+        const pageRows = pageDataRows ? pageDataRows.map(platformDataRowStringProjection) : parsedPage.rows
+        const dataRows = result.dataRows && pageDataRows ? [...result.dataRows, ...pageDataRows] : undefined
+        const rawData = result.rawData ? {
+          version: 1 as const, rows: [...result.rawData.rows, ...parsedPage.rawRows],
+          pages: [...result.rawData.pages, { ...pos, format: parsedPage.source, body: raw }],
+        } : undefined
+        const candidate = { ...result, rows: [...result.rows, ...pageRows], dataRows, rawData }
+        if (candidate.rows.length > q.maxRows || Buffer.byteLength(JSON.stringify(candidate), 'utf8') + 2048 > (ctx.maxResultBytes ?? (rawData ? 8388608 : Infinity))) {
           result.status = 'partial'; result.completeness = 'partial'
           result.error = error('safety_limit', '记录数量达到安全上限，此页未纳入结果。')
           recordPage({ ...pos, status: 'failed', fetchedCount: 0, declaredTotal: parsedPage.declaredTotal, error: result.error }, pageStarted)
@@ -155,7 +169,8 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
         recordPage({ ...pos, ...(q.source === 'queryBusList' ? { maxPage: parsedPage.responseMaxPage } : {}), status: 'success', fetchedCount: parsedPage.rows.length, declaredTotal: parsedPage.declaredTotal, error: null }, pageStarted)
         totals.set(title, total)
         result.declaredTotal = declaredTotal()
-        result.rows.push(...parsedPage.rows)
+        result.rows.push(...pageRows)
+        if (dataRows) result.dataRows = dataRows
         if (rawData) result.rawData = rawData
         fetchedForTitle += parsedPage.rows.length
         const consumed = priorCoverage === null ? null : priorCoverage + fetchedForTitle

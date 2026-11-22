@@ -12,9 +12,9 @@ import {
   validateOcrRecoverySource, validateOcrResume, verifyFrozenOcrInput,
   type OcrAttemptUpdate, type OcrPublication, type OcrPublicationFile, type OcrRegisteredInput,
   type PageClaims, type PublicationReceipt, type RecoveryMetadata, type SharedOcrAttempt,
-} from './ocr-publication'
+} from './ocr-publication-contract'
 import { writePostgresOcrResult } from './ocr-result-postgres'
-import type { OcrWriteInput } from './ocr-result'
+import type { OcrWriteInput } from './ocr-result-contract'
 
 async function registeredInput(db: NodePgDatabase, path: string): Promise<OcrRegisteredInput | null> {
   if (path.includes('\0')) return null

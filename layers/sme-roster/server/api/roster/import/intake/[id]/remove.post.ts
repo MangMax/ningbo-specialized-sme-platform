@@ -1,6 +1,4 @@
-import { useDb } from '@db'
 import { z } from 'zod'
-import { removeAnnouncementIntake } from '../../../../../utils/announcement-intake'
 import { intakeRoute } from '../../../../../utils/announcement-intake-route'
 import { removePostgresAnnouncementIntake } from '../../../../../utils/announcement-intake-postgres'
 import { usePostgresRosterDb } from '../../../../../utils/postgres-roster-db'
@@ -16,6 +14,5 @@ defineRouteMeta({ openAPI: {
 const input = z.strictObject({ sourceDigest: z.string().regex(/^[0-9a-f]{64}$/), reason: z.string().trim().min(1).max(4000) })
 export default intakeRoute((id, body) => {
   const pg = usePostgresRosterDb(true)
-  return pg ? removePostgresAnnouncementIntake(pg, id, body.sourceDigest, body.reason)
-    : removeAnnouncementIntake(useDb(), id, body.sourceDigest, body.reason)
+  return removePostgresAnnouncementIntake(pg, id, body.sourceDigest, body.reason)
 }, input)

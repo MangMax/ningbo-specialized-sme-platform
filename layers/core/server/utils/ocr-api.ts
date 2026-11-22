@@ -1,4 +1,3 @@
-import { credentialContext, resolveCredential } from './credential-state'
 import { resolvePostgresCredential } from './credential-state-postgres'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 /**
@@ -623,17 +622,12 @@ async function safeJson(res: Response, what: string): Promise<unknown> {
  * `useRuntimeConfig` 在 nitro 之外(裸 node 跑测试)不存在,所以用 `typeof` 探一下 ——
  * 这不是给生产写的兼容层,而是让这个函数能被单测直接调。
  */
-export function resolveOcrConfig(override: { token?: string } = {}) {
-  const token = resolveCredential('core.ocrToken', credentialContext(), override.token).value
-  return { ...ocrProviderOptions(), token }
-}
-
 export async function resolvePostgresOcrConfig(db: NodePgDatabase) {
   const token = (await resolvePostgresCredential(db, 'core.ocrToken')).value
   return { ...ocrProviderOptions(), token }
 }
 
-function ocrProviderOptions() {
+export function ocrProviderOptions() {
   const config = (
     typeof useRuntimeConfig === 'function'
       ? (useRuntimeConfig() as {

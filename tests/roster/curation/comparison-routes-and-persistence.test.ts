@@ -1,22 +1,32 @@
-import { initializeDb } from '../../../db/client'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { schema, useDb } from '../../../db'
-import { getCuratedComparison } from '../../../layers/sme-roster/lib/curation'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { record } from '../../../db/postgresql/ledger-tables'
+import type { readPostgresWholeComparison } from '../../../layers/sme-roster/lib/comparison-postgres'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-curation-'))
 const path = join(dir, 'nested', 'annotations.json')
-const db = initializeDb({ create: true, dbPath: join(dir, 'test.db') })
-vi.doMock('@db', () => ({ useDb: () => db }))
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let query: Record<string, unknown> = {}
 let body: unknown
-let get: (event: unknown) => ReturnType<typeof getCuratedComparison> & { total: number }
+let comparison: (event: unknown) => ReturnType<typeof readPostgresWholeComparison>
+async function get(event: unknown) {
+  const result = await comparison(event)
+  if ('view' in result) throw new Error('Expected the full comparison view')
+  return result
+}
 let patch: (event: unknown) => Promise<{ curated: boolean }>
 const identity = { uscc: 'CODE', nameNorm: 'ignored', titleCode: 'specialized_sme', direction: 'missing_in_miit' }
 
 beforeAll(async () => {
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  const db = usePostgresDirectoryDb()
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
   vi.stubGlobal('setHeader', () => {})
   vi.stubGlobal('setResponseStatus', () => {})
@@ -24,7 +34,7 @@ beforeAll(async () => {
   vi.stubGlobal('readBody', async () => body)
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: path }))
   vi.stubGlobal('createError', (opts: object) => Object.assign(new Error('Bad request'), opts))
-  get = (await import('../../../layers/sme-roster/server/api/comparison.get')).default as unknown as typeof get
+  comparison = (await import('../../../layers/sme-roster/server/api/comparison.get')).default as unknown as typeof comparison
   patch = (await import('../../../layers/sme-roster/server/api/comparison/curated.patch')).default as unknown as typeof patch
   for (const [name, nameNorm, usccNorm, source, titleCode] of [
     ['甲公司', '甲公司', 'CODE', 'jxj', 'specialized_sme'],
@@ -32,17 +42,23 @@ beforeAll(async () => {
     ['反向', '反向', 'REVERSE', 'miit', 'specialized_sme'],
     ['另一称号', '另一称号', 'OTHER', 'jxj', 'innovative_sme'],
   ] as const) {
-    const enterpriseId = db.insert(schema.enterprise).values({ name, nameNorm, usccNorm }).returning({ id: schema.enterprise.id }).get().id
-    db.insert(schema.record).values({ enterpriseId, source, titleCode }).run()
+    const [saved] = await db.insert(enterprise).values({ name, nameNorm, usccNorm }).returning({ id: enterprise.id })
+    await db.insert(record).values({ enterpriseId: saved!.id, source, titleCode })
   }
-})
+}, 30_000)
 beforeEach(() => { rmSync(path, { force: true }); query = {}; body = undefined })
-afterAll(() => { vi.unstubAllGlobals(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => {
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+  rmSync(dir, { recursive: true, force: true })
+})
 const send = (value: unknown) => { body = value; return patch({}) }
 
 describe('comparison curation routes and local JSON', () => {
-  it('returns all rows uncurated when the file is absent without creating it', () => {
-    const result = get({})
+  it('returns all rows uncurated when the file is absent without creating it', async () => {
+    const result = await get({})
     expect(result.total).toBe(4)
     expect(result.rows.every(row => !row.curated && row.note === undefined)).toBe(true)
     expect(Object.values(result.curatedCounts).flatMap(x => Object.values(x))).toEqual([0, 0, 0, 0, 0, 0])
@@ -53,21 +69,21 @@ describe('comparison curation routes and local JSON', () => {
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
       '["CODE","specialized_sme","missing_in_miit"]': { note: '已电话核实', at: expect.any(String) },
     })
-    expect(get({}).rows.some(row => row.uscc === 'CODE')).toBe(false)
+    expect((await get({})).rows.some(row => row.uscc === 'CODE')).toBe(false)
     query = { showCurated: 'true' }
-    expect(get({}).rows.find(row => row.uscc === 'CODE')).toMatchObject({ curated: true, note: '已电话核实' })
+    expect((await get({})).rows.find(row => row.uscc === 'CODE')).toMatchObject({ curated: true, note: '已电话核实' })
     await send({ ...identity, curated: false })
     query = {}
-    expect(get({}).rows.find(row => row.uscc === 'CODE')).toMatchObject({ curated: false })
-    expect(get({}).rows.find(row => row.uscc === 'CODE')?.note).toBeUndefined()
+    expect((await get({})).rows.find(row => row.uscc === 'CODE')).toMatchObject({ curated: false })
+    expect((await get({})).rows.find(row => row.uscc === 'CODE')?.note).toBeUndefined()
   })
   it('uses stored name_norm for missing USCC and isolates title and direction keys', async () => {
     await send({ nameNorm: '乙公司旧', titleCode: 'specialized_sme', direction: 'missing_in_miit', curated: true, note: '无统代核实' })
     await send({ ...identity, direction: 'extra_in_miit', curated: true })
     await send({ ...identity, titleCode: 'innovative_sme', curated: true })
     query = { showCurated: 'true' }
-    expect(get({}).rows.find(row => row.uscc === null)).toMatchObject({ curated: true, note: '无统代核实', nameNorm: '乙公司旧' })
-    expect(get({}).rows.find(row => row.uscc === 'CODE')?.curated).toBe(false)
+    expect((await get({})).rows.find(row => row.uscc === null)).toMatchObject({ curated: true, note: '无统代核实', nameNorm: '乙公司旧' })
+    expect((await get({})).rows.find(row => row.uscc === 'CODE')?.curated).toBe(false)
   })
   it('is idempotent for repeated PATCH and preserves omitted notes', async () => {
     await send({ ...identity, curated: true, note: '备注' })
@@ -77,7 +93,7 @@ describe('comparison curation routes and local JSON', () => {
     expect(readFileSync(path, 'utf8')).toBe(first)
     await send({ ...identity, curated: true, note: '' })
     query = { showCurated: 'true' }
-    expect(get({}).rows.find(row => row.uscc === 'CODE')?.note).toBe('')
+    expect((await get({})).rows.find(row => row.uscc === 'CODE')?.note).toBe('')
     await send({ ...identity, curated: false })
     await send({ ...identity, curated: false })
     expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({})
@@ -85,9 +101,9 @@ describe('comparison curation routes and local JSON', () => {
   it('keeps global counts and curatedCounts independent of visibility, filters and pagination', async () => {
     await send({ ...identity, curated: true })
     await send({ uscc: 'OTHER', titleCode: 'innovative_sme', direction: 'missing_in_miit', curated: true })
-    const hidden = get({})
+    const hidden = await get({})
     query = { showCurated: 'true', title: 'specialized_sme', direction: 'missing_in_miit', page: '2', pageSize: '1' }
-    const visible = get({})
+    const visible = await get({})
     expect(hidden.total).toBe(2)
     expect(visible.total).toBe(2)
     expect(visible.rows).toHaveLength(1)

@@ -1,36 +1,61 @@
-import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
-import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
+import { readPostgresCurrentDetailBatch } from '../../../layers/sme-roster/lib/roster/current-qualification-postgres'
+import { syntheticRecognizedQuery } from '../fixtures/recognized-source'
+import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
 import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { schema as s } from '../../../db/client'
+import * as s from '../fixtures/postgres-tables'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 
-// Process acceptance readiness: synthetic SQLite only; parent builds the exact candidate.
 const f = qualificationExportFixture()
 beforeAll(async () => {
  const discovery = await readDevelopmentDiscovery()
  expect(JSON.stringify(discovery)).toContain('/api/roster/decision-lifecycle/qualification-preflight')
- await f.start()
 }, 90000)
 afterAll(() => f.close())
 it('public source-bound own qualification reaches query detail filters and downloaded identities without formal history', async () => {
- const enterprise = f.db.insert(s.enterprise).values({ name:'合成迁入资格验收',nameNorm:'合成迁入资格验收',usccNorm:'91330211255994457P',city:'宁波市',district:'余姚市' }).returning().get()
- const source = submitNativePlatformQuery(f.db, { interface:'business_list',queryKey:enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:'2026-11-16T00:00:00Z',status:'success',rawResponse:'{}',relations:[{sequenceNo:1,enterpriseId:enterprise.id,usccRaw:enterprise.usccNorm!,nameRaw:enterprise.name,verificationStatus:'confirmed',matchBasis:'uscc'}] })
- const facts = (raw: Record<string, unknown> = {}) => submitSyntheticRecognizedCollection(f.db, { rdjb:'2',queriedAt:new Date(Date.now() + (++observation)*1000).toISOString(),rows:[{enterpriseId:null,raw:{id:'managed-source',qymc:'平台曾用名',tyshxydm:enterprise.usccNorm,rdjb:'2',rdtime:'2025-07-22',rddqrq:'2028-07-22',sfyx:'1',szsmc:'宁波市',...raw}}] })
+ await f.prepare()
+ const enterprise = (await f.db.insert(s.enterprise).values({ name:'合成迁入资格验收',nameNorm:'合成迁入资格验收',usccNorm:'91330211255994457P',city:'宁波市',district:'余姚市' }).returning())[0]!
+ const source = await seedPostgresPlatformQuery(f.db, { interface:'business_list',queryKey:enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:'2026-11-16T00:00:00Z',status:'success',rawResponse:'{}',relations:[{sequenceNo:1,enterpriseId:enterprise.id,usccRaw:enterprise.usccNorm!,nameRaw:enterprise.name,verificationStatus:'confirmed',matchBasis:'uscc'}] })
  let observation = 0
- facts()
- const current = async () => fetch(f.url('/api/roster/current-enterprises?titleCode=specialized_sme')).then(r=>r.json())
+ const query = (raw: Record<string, unknown> = {}) => syntheticRecognizedQuery({ rdjb:'2',queriedAt:new Date(Date.now() + (++observation)*1000).toISOString(),rows:[{enterpriseId:null,raw:{id:'managed-source',qymc:'平台曾用名',tyshxydm:enterprise.usccNorm,rdjb:'2',rdtime:'2025-07-22',rddqrq:'2028-07-22',sfyx:'1',szsmc:'宁波市',...raw}}] })
+ await seedPostgresPlatformQuery(f.db, query())
+ await f.start()
+ const client = createRosterImportClient({ baseUrl: f.url(''), token: f.token })
+ async function facts(raw: Record<string, unknown> = {}) {
+   const input = query(raw)
+   const request = {
+     idempotencyKey: 'managed-inbound-source-' + observation, sourceKind: 'alias_evidence' as const, sourceIdentity: 'managed-inbound',
+     payload: { platformQueries: [input] },
+   }
+   const receipt = await client.commit(request)
+   expect(receipt).toMatchObject({ status: 'committed', summary: { failed: 0 } })
+   if (receipt.status !== 'committed') throw new Error('The recognized collection was not committed')
+   const item = receipt.items.find(item => item.kind === 'platform_query')!
+   const id = item.ref.split(':')[1]
+   const [relationId] = item.detail?.relations as number[]
+   const path = '/api/platform/queries?queryId=' + id
+   const evidence = await fetch(f.url(path))
+   expect(evidence.status, await evidence.clone().text()).toBe(200)
+   const history = await evidence.json()
+   expect(history.rows[0].relations[0]).toMatchObject({
+     id: relationId, enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending',
+   })
+ }
+ const current = async () => {
+  const response = await fetch(f.url('/api/roster/current-enterprises?titleCode=specialized_sme'))
+  expect(response.status, await response.clone().text()).toBe(200)
+  return response.json()
+ }
  expect((await current()).rows.map((r:any)=>r.uscc)).toEqual(['91330211255994457P'])
- const read = createCurrentQualificationAssessmentReader(f.db.$client)
  for (const [at, expected] of [
   ['2025-07-21T15:59:59Z','unrecognized'],
   ['2025-07-21T16:00:00Z','effective'],
   ['2028-07-22T15:59:59Z','effective'],
   ['2028-07-22T16:00:00Z','unrecognized'],
  ] as const) {
-  expect(read.read(enterprise.id,Date.parse(at)).snapshot.titles.find(t=>t.titleCode==='specialized_sme')!.effectiveQualification?.status,at).toBe(expected)
+  expect((await f.db.transaction(async tx => (await readPostgresCurrentDetailBatch(tx, [enterprise.id], 'specialized_sme', Date.parse(at))).get(enterprise.id)?.snapshot, { isolationLevel: 'repeatable read' }))!.titles.find(t=>t.titleCode==='specialized_sme')!.effectiveQualification?.status,at).toBe(expected)
  }
  const qualification = { titleCode:'specialized_sme',awardYear:2025,validFrom:'2025-07-22T00:00:00Z',validUntil:'2028-07-22T00:00:00Z',basis:'合成独立资格来源',publicationCheck:{status:'not_found',scope:'合成宁波公布核对范围'} }
  const command = { enterpriseId:enterprise.id,titleCode:'specialized_sme',direction:'extra_in_miit',action:'replace',expectedCurrentId:null,idempotencyKey:'synthetic-inbound',actor:{type:'agent',id:'synthetic'},basis:'合成核实',ruleVersion:'manual',effectiveAt:'2025-07-22T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'moved_in',measureCode:'record_moved_in',verificationStatus:'confirmed',evidenceQueryId:source.queryId,evidenceRelationId:source.relationIds[0],movedIn:{city:'南通'},currentQualification:qualification} }
@@ -70,10 +95,10 @@ it('public source-bound own qualification reaches query detail filters and downl
  const partial = await fetch(f.url('/api/roster/current-enterprises?titleCode=specialized_sme&recognitionFrom=2025-07-22&recognitionTo=2025-07-22')).then(r=>r.json())
  expect(partial).toMatchObject({total:0,uncertainTotal:1,rows:[]})
  // Current content versions and source locality control qualification, not the withdrawn receipt.
- facts({szsmc:'南通市'})
+ await facts({szsmc:'南通市'})
  expect((await current()).rows).toEqual([])
- facts({sfyx:'0'})
+ await facts({sfyx:'0'})
  expect((await current()).rows).toEqual([])
- facts()
+ await facts()
  expect((await current()).rows.map((r:any)=>r.uscc)).toEqual(['91330211255994457P'])
 },60000)

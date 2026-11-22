@@ -7,12 +7,7 @@ import { recordCorrespondence } from '../../../../db/postgresql/qualification-ta
 import { rosterFileClassification, storedFilePart } from '../../../../db/postgresql/roster-file-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { EvidencePageCandidate } from '../../lib/roster/evidence-page'
-import {
-  createLegacyEvidencePageInspection, legacyEvidencePageAudit, legacyEvidencePageFile, type LegacyEvidencePageInput,
-  evidenceCorrectionAuditValues, evidenceCorrectionDigest, evidenceCorrectionError, EvidenceCorrectionError,
-  inspectEvidenceCorrectionRequest, projectEvidenceCorrectionPlan, projectEvidenceCorrectionPreview,
-  projectEvidenceCorrectionTargets, type EvidenceCorrectionRequest,
-} from './roster-evidence-correction'
+import { createLegacyEvidencePageInspection, legacyEvidencePageAudit, legacyEvidencePageFile, type LegacyEvidencePageInput, evidenceCorrectionAuditValues, evidenceCorrectionDigest, evidenceCorrectionError, EvidenceCorrectionError, inspectEvidenceCorrectionRequest, projectEvidenceCorrectionPlan, projectEvidenceCorrectionPreview, projectEvidenceCorrectionTargets, type EvidenceCorrectionRequest } from './roster-evidence-correction-model'
 import type { OfficialEvidenceCommand } from './official-evidence'
 import { readPostgresExactEvidence } from './official-evidence-postgres'
 import { planPostgresOfficialEvidenceChanges } from './official-evidence-plan-postgres'

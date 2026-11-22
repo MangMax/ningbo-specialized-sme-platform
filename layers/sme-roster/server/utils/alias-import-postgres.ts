@@ -5,7 +5,6 @@ import { insertPostgresEnterpriseAlias, lockPostgresReviewedEnterpriseBatch, pos
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import type { RosterImportAlias, RosterImportItemResult } from '../../lib/roster-import-client'
 import { replayOptionalString as text } from '../../lib/platform/query-replay'
-import { capturePostgresIdentityChange, readPostgresIdentityMaterial } from './postgres-identity-evidence'
 import { findPostgresImportRelation, findPostgresImportRelationById } from './roster-import-references-postgres'
 import type { NativeImportExecution, PostgresImportAction, PostgresImportBatch } from './roster-export-import-postgres'
 
@@ -106,13 +105,11 @@ export async function executePostgresAliasItems(tx: Tx,batch:PostgresImportBatch
   let written = 0
   const items: RosterImportItemResult[] = []
   for (const {enterpriseId,name,nameNorm,sourceRefId,input} of ready) {
-    const before = await readPostgresIdentityMaterial(tx,enterpriseId)
     const { id,created } = await insertPostgresEnterpriseAlias(tx,{
       enterpriseId,name,nameNorm,sourceKind:input.sourceKind,sourceRefId,
       validFrom:text(input.validFrom),validTo:text(input.validTo),verificationStatus:input.verificationStatus ?? 'pending',note:text(input.note),
     })
     if (created) {
-      await capturePostgresIdentityChange(tx,enterpriseId,'alias-import:'+id,before)
       written++
     }
     items.push({ok:true,kind:'alias',ref:'alias:'+id,detail:{enterpriseId,rowsWritten:Number(created),...(created ? {sourceRefId} : {})}})

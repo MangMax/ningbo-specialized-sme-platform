@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { mount, flushPromises } from '@vue/test-utils'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import CredentialSettings from '../../../layers/core/app/components/settings/CredentialSettings.vue'

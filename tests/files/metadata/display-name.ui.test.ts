@@ -1,12 +1,12 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import FileDisplayNameEditor from '../../../layers/core/app/components/files/FileDisplayNameEditor.vue'
-import type { StoredFileRow } from '../../../layers/core/server/utils/stored-files'
+import type { FileRow } from '../../../layers/core/server/utils/file-store-contract'
 
 const mounted: ReturnType<typeof mount>[] = []
 
-function file(): StoredFileRow {
+function file(): FileRow {
   return {
     id: 41,
     relPath: 'jxj/announcement/2024/1/original-notice.pdf',
@@ -15,17 +15,9 @@ function file(): StoredFileRow {
     ext: 'pdf',
     bytes: 123,
     sha256: 'a'.repeat(64),
-    source: 'jxj',
-    kind: 'announcement',
-    year: 2024,
-    batch: 1,
-    titleCode: null,
-    categoryState: 'set',
-    parseState: 'unparsed',
     createdAt: '2026-10-17T00:00:00.000Z',
     removedAt: null,
     referenceCount: 1,
-    parts: [],
   }
 }
 

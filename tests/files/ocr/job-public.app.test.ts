@@ -1,34 +1,37 @@
-import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
-import { spawnCompiledApp } from '../../support/owned-process.mjs'
-import { initializeDb } from '../../../db/client'
+import pg from 'pg'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { useDb, schema } from '../../../db'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { DEFAULT_DPI } from '../../../layers/core/lib/pdf-page'
 import { renderPdfPages } from '../../../layers/core/server/utils/pdf-pages'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
+import { spawnCompiledApp, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
 import { minimalPdf } from '../../support/minimal-pdf'
 import { startMiniOcrApi } from './fixtures/provider-api'
 
 it('公开任务 HTTP 受文件级背压约束,完成结果经 OCR REST/MCP 原样读回', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'ocr-public-bound-'))
-  const dbPath = join(dir, 'synthetic.sqlite')
   const filesDir = join(dir, 'files')
   mkdirSync(filesDir)
-  const db = initializeDb({ create: true, dbPath })
   const files = ['甲.pdf', '乙.pdf', '丙.pdf']
   const ids: number[] = []
-  let child: ReturnType<typeof spawn> | undefined
+  let child: ReturnType<typeof spawnCompiledApp> | undefined
+  let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+  let pool: pg.Pool | undefined
   let api: Awaited<ReturnType<typeof startMiniOcrApi>> | undefined
   let releasePoll: (() => void) | undefined
   try {
+    runtime = await postgresRuntimeFixture({ dir })
+    pool = new pg.Pool({ connectionString: runtime.url })
     for (const file of files) {
       const bytes = minimalPdf({ pages: 1 })
       writeFileSync(join(filesDir, file), bytes)
-      ids.push(createClassifiedFile(db, { relPath: file, filename: file, ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }, {}).id)
+      const { rows: [row] } = await pool.query<{ id: string }>(`INSERT INTO business.stored_file
+        (rel_path, filename, ext, bytes, sha256, created_at) VALUES ($1, $1, 'pdf', $2, $3, $4) RETURNING id`,
+      [file, bytes.length, createHash('sha256').update(bytes).digest('hex'), new Date().toISOString()])
+      ids.push(Number(row!.id))
       await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
     }
     const gate = new Promise<void>(resolve => { releasePoll = resolve })
@@ -36,7 +39,7 @@ it('公开任务 HTTP 受文件级背压约束,完成结果经 OCR REST/MCP 原�
     const port = await reserveLoopbackPort()
     const baseUrl = `http://127.0.0.1:${port}`
     child = spawnCompiledApp(port, {
-      env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: filesDir, NUXT_API_TOKEN: 'synthetic-api', NUXT_MCP_TOKEN: 'synthetic-mcp', NUXT_OCR_TOKEN: 'synthetic-ocr', NUXT_OCR_BASE_URL: api.origin, PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: '' },
+      env: { ...process.env, ...runtime.env, NUXT_BUILD_DIR: join(dir, 'nuxt'), NUXT_FILES_DIR: filesDir, NUXT_API_TOKEN: 'synthetic-api', NUXT_MCP_TOKEN: 'synthetic-mcp', NUXT_OCR_TOKEN: 'synthetic-ocr', NUXT_OCR_BASE_URL: api.origin, PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: '' },
       stdio: 'ignore',
     })
     await waitForHttp(`${baseUrl}/api/health`, { child })
@@ -70,7 +73,8 @@ it('公开任务 HTTP 受文件级背压约束,完成结果经 OCR REST/MCP 原�
     releasePoll?.()
     await stopOwnedChild(child)
     await api?.close()
-    db.$client.close()
+    await pool?.end()
+    runtime?.close()
     rmSync(dir, { recursive: true, force: true })
   }
 }, 120_000)

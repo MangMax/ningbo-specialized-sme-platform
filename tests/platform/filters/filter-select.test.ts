@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { expect, it } from 'vitest'
 import PlatformFilterSelect from '../../../layers/sme-roster/app/components/PlatformFilterSelect.vue'

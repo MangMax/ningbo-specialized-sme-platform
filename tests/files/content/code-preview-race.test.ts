@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { mount, flushPromises } from '@vue/test-utils'
 import { expect, it, vi } from 'vitest'
 const state = vi.hoisted(() => ({ waiting: false, release: () => {} }))

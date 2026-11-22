@@ -1,9 +1,9 @@
 import { readHttpFileIdentity, verifyHttpFileRead } from '../../utils/file-content-http'
-import { verifyRenderedPageRead } from '../../utils/file-read-identity'
+import { verifyRenderedPageRead } from '../../utils/file-read'
 import { createReadStream, statSync } from 'node:fs'
 import { extname, normalize, resolve, sep } from 'node:path'
 import { resolvePreviewKind } from '../../../lib/preview'
-import { resolveInsideRoot } from '../../utils/file-store'
+import { resolveInsideRoot } from '../../utils/file-store-contract'
 
 /**
  * 按台账「出处」路径读取来源文件,供预览组件使用。

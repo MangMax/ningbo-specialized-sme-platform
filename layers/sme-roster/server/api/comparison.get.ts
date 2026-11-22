@@ -1,11 +1,6 @@
-import { requestLogContext } from '../../../core/lib/logging'
-import { readSummary } from '../utils/comparison-summary-read'
-import { withEnterpriseReadSignal } from '../../../core/server/utils/enterprise-read-signal'
-import { useDb } from '@db'
-import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '#sme-roster/lib/comparison'
-import { readWholeComparisonFull } from '#sme-roster/lib/comparison-full'
+import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '#sme-roster/lib/comparison-model'
 import { TITLE_ORDER } from '#sme-roster/lib/labels'
-import { MAX_PAGE_SIZE } from '#sme-roster/lib/query'
+import { MAX_PAGE_SIZE } from '#sme-roster/lib/query-limits'
 
 import { readPostgresWholeComparison } from '#sme-roster/lib/comparison-postgres'
 import { usePostgresRosterDb } from '../utils/postgres-roster-db'
@@ -28,7 +23,7 @@ defineRouteMeta({
     tags: ['比对'],
     summary: '查比对结果',
     description:
-      '按称号 / 方向过滤,分页返回。默认/full 保留人工标注、platform 全部关系与旧 explanation 原文；view=summary 显式返回标量列表，不加载平台原档，summary 行 evidenceIncluded:false，detailUrl 为精确企业×称号×方向完整读取；平台原档可用 /api/platform/queries/{queryId}/evidence 分段读取。summary 的 sourceRelationCount 是所含查询全部来源行数，不代表确认归属。已认定查询原始行 enterpriseId 可为 null。',
+      '按称号 / 方向过滤,分页返回。默认/full 返回人工标注、提取后的平台记录和旧解释；view=summary 返回标量列表，evidenceIncluded:false，detailUrl 可按企业、称号及方向读取详情。summary 的 sourceRelationCount 是所含查询全部来源行数，不代表确认归属。已认定查询原始行 enterpriseId 可为 null。',
     parameters: [
       {
         name: 'title',
@@ -40,7 +35,7 @@ defineRouteMeta({
         name: 'direction',
         in: 'query',
         schema: { type: 'string', enum: ['missing_in_miit', 'extra_in_miit'] },
-        description: '比对方向:公布文件有而平台导出无 / 反方向。',
+        description: '比对方向:公布名单有而平台导出无 / 反方向。',
       },
       {
         name: 'showCurated',
@@ -117,15 +112,5 @@ export default defineEventHandler((event) => {
     page: Math.max(1, Math.floor(num(q.page, 1))),
     pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25)))),
   }
-  const postgres = usePostgresRosterDb()
-  if (postgres) return readPostgresWholeComparison(postgres, options, q.view === 'summary' ? 'summary' : 'full')
-  const db = useDb()
-  if (q.view === 'summary') {
-    return withEnterpriseReadSignal(event, async signal => {
-      const result = await readSummary(db, options, signal, undefined, requestLogContext(event))
-      if (Buffer.isBuffer(result)) setHeader(event, 'content-type', 'application/json')
-      return result
-    })
-  }
-  return readWholeComparisonFull(db, options)
+  return readPostgresWholeComparison(usePostgresRosterDb(), options, q.view === 'summary' ? 'summary' : 'full')
 })

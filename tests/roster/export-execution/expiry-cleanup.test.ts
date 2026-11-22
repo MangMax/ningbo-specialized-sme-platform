@@ -1,63 +1,77 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, expect, it } from 'vitest'
-import { initializeDb, schema } from '../../../db/client'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
+import { job } from '../../../db/postgresql/job-tables'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { newJobId } from '../../../layers/core/lib/job'
-import { submitJob, whenIdle } from '../../../layers/core/server/utils/job-runner'
-import { getJob } from '../../../layers/core/server/utils/job-store'
+import { createPostgresJobRunner } from '../../../layers/core/server/utils/job-runner-postgres'
+import { getPostgresJob } from '../../../layers/core/server/utils/job-store-postgres'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 let dir: string
 let exportsDir: string
-let db: ReturnType<typeof initializeDb>
+let db: ReturnType<typeof usePostgresDirectoryDb>
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 const expired = '2000-01-01T00:00:00Z'
 
-beforeEach(() => {
+beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'roster-export-cleanup-'))
-  const dbPath = join(dir, 'roster.db')
-  db = initializeDb({ dbPath, create: true })
-  exportsDir = dbPath + '.exports'
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  exportsDir = join(dir, 'exports')
+  vi.stubEnv('NUXT_ROSTER_EXPORT_DIR', exportsDir)
+  db = usePostgresDirectoryDb()
+}, 30_000)
+
+beforeEach(async () => {
+  await db.delete(job)
   mkdirSync(exportsDir)
 })
-
-afterEach(async () => {
-  await whenIdle()
-  db.$client.close()
-  rmSync(dir, { recursive: true, force: true })
+afterEach(() => rmSync(exportsDir, { recursive: true, force: true }))
+afterAll(async () => {
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  if (dir) rmSync(dir, { recursive: true, force: true })
+  vi.unstubAllEnvs()
 })
 
-function seedExport({
+async function seedExport({
   state = 'done', expiresAt = expired, kind = 'current-roster-export',
 }: {
-  state?: typeof schema.job.$inferInsert.state
+  state?: typeof job.$inferInsert.state
   expiresAt?: string
   kind?: string
 } = {}) {
   const id = newJobId()
   const artifact = { id, expiresAt }
-  db.insert(schema.job).values({
-    id, kind, state, params: {}, progress: { done: 1, total: 1 },
-    result: { artifact }, createdAt: expired,
-  }).run()
+  await db.insert(job).values({
+    id, kind, state, params: '{}', progress: '{"done":1,"total":1}',
+    result: JSON.stringify({ artifact }), createdAt: expired,
+  })
   return { id, artifact, xlsx: join(exportsDir, id + '.xlsx') }
 }
 
 async function sweep(clientRequestId: string) {
-  const queued = submitJob(db, {
-    kind: 'roster_export_cleanup', params: { clientRequestId }, filesDir: dir,
-  })
-  await whenIdle()
-  return getJob(db, queued.id)
+  const runner = createPostgresJobRunner(db, dir)
+  try {
+    const queued = await runner.submit({ kind: 'roster_export_cleanup', params: { clientRequestId } })
+    await runner.wake()
+    return (await getPostgresJob(db, queued.id))?.row
+  } finally {
+    await runner.stop()
+  }
 }
 
 it('removes only expired completed roster workbooks and preserves export history', async () => {
-  const old = seedExport()
-  const live = seedExport({ expiresAt: '2999-01-01T00:00:00Z' })
-  const running = seedExport({ state: 'running' })
-  const failed = seedExport({ state: 'failed' })
-  const malformed = seedExport({ expiresAt: 'unknown' })
-  const other = seedExport({ kind: 'lead-lists-version-export' })
-  const missing = seedExport()
+  const old = await seedExport()
+  const live = await seedExport({ expiresAt: '2999-01-01T00:00:00Z' })
+  const running = await seedExport({ state: 'running' })
+  const failed = await seedExport({ state: 'failed' })
+  const malformed = await seedExport({ expiresAt: 'unknown' })
+  const other = await seedExport({ kind: 'lead-lists-version-export' })
+  const missing = await seedExport()
   const keep = [
     live.xlsx, running.xlsx, failed.xlsx, malformed.xlsx, other.xlsx,
     join(exportsDir, newJobId() + '.xlsx'),
@@ -69,14 +83,14 @@ it('removes only expired completed roster workbooks and preserves export history
   expect(await sweep('hour-1')).toMatchObject({ state: 'done', result: { removed: 1, failed: 0 } })
   expect(existsSync(old.xlsx)).toBe(false)
   for (const path of keep) expect(existsSync(path), path).toBe(true)
-  expect(getJob(db, old.id)).toMatchObject({ state: 'done', result: { artifact: old.artifact } })
-  expect(getJob(db, missing.id)).toMatchObject({ state: 'done' })
+  expect((await getPostgresJob(db, old.id))?.row).toMatchObject({ state: 'done', result: { artifact: old.artifact } })
+  expect((await getPostgresJob(db, missing.id))?.row).toMatchObject({ state: 'done' })
   expect(await sweep('hour-2')).toMatchObject({ state: 'done', result: { removed: 0, failed: 0 } })
 })
 
 it('records partial deletion and fails when an expired workbook cannot be unlinked', async () => {
-  const blocked = seedExport()
-  const removable = seedExport()
+  const blocked = await seedExport()
+  const removable = await seedExport()
   mkdirSync(blocked.xlsx)
   writeFileSync(removable.xlsx, 'fixture')
 

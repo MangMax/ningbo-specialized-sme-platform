@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { effectScope } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useRosterInitialDifferenceDecision } from '../../../layers/sme-roster/app/composables/useRosterInitialDifferenceDecision'

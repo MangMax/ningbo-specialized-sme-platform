@@ -5,23 +5,16 @@ import { sourceDocument } from '../../../../db/postgresql/official-evidence-tabl
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
-import { diagnoseOfficialEventFields } from '../../lib/roster/current-qualification'
+import { diagnoseOfficialEventFields } from '../../lib/roster/current-qualification-model'
 import { readPostgresLegacyQualification } from '../../lib/roster/current-qualification-postgres'
 import { announcementValues, readPostgresAnnouncementEvents, readPostgresAnnouncementEvidenceHashes } from './announcement-evidence-postgres'
 import { usccFormatVerdict } from '../../lib/roster/uscc-research'
 import type {
   RosterImportEvent, RosterImportItemResult, RosterImportPreflight, RosterImportQualificationDiagnostic, RosterImportRequest,
 } from '../../lib/roster-import-client'
-import {
-  checkOfficialOuterDocument, officialFactFailure, officialPlanDigest, officialPublishedRowSchema,
-  projectOfficialDeclaration, type OfficialClaimChange, type OfficialCoordinate, type OfficialEvidenceLocatorMove,
-} from './official-evidence-plan'
+import { checkOfficialOuterDocument, officialFactFailure, officialPlanDigest, officialPublishedRowSchema, projectOfficialDeclaration, type OfficialClaimChange, type OfficialCoordinate, type OfficialEvidenceLocatorMove } from './official-evidence-claim-model'
 import { planPostgresOfficialEvidenceChanges } from './official-evidence-plan-postgres'
-import {
-  ambiguousAnnouncementRepoints, announcementEvidenceCoordinate, eventCoordinates, groupNewAnnouncementEvidence,
-  hasOfficialFactInput, indexedEvidenceHashes, matchesEventCoordinates, projectAnnouncementRepoints,
-  validateAnnouncementIdentityAndEvidence, validateAnnouncementRecord,
-} from './roster-import'
+import { ambiguousAnnouncementRepoints, announcementEvidenceCoordinate, eventCoordinates, groupNewAnnouncementEvidence, hasOfficialFactInput, indexedEvidenceHashes, matchesEventCoordinates, projectAnnouncementRepoints, validateAnnouncementIdentityAndEvidence, validateAnnouncementRecord } from './roster-import-model'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]

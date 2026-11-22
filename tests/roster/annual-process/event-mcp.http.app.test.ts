@@ -1,37 +1,52 @@
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
-import { initializeDb } from '../../../db/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import pg from 'pg'
+import { drizzle } from 'drizzle-orm/node-postgres'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { schema } from '../../../db'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
+import * as schema from '../fixtures/postgres-tables'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
+import { singlePostgresFixtureRow } from '../../support/isolated-postgres-cases'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'annual250-mcp-http-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
-const enterprise = db.insert(schema.enterprise).values({ name: '合成年度只读接口', nameNorm: '合成年度只读接口', usccNorm: '91330211255994457P' }).returning().get()
-const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: enterprise.usccNorm }).returning().get()
-const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
-const relations = [1, 2].map(n => {
-  const seeded=submitNativePlatformQuery(db,{interface:'business_list',queryKey:enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:`2026-10-0${n}T00:00:00Z`,status:'success',rawResponse:'PRIVATE-RESPONSE',relations:[{sequenceNo:1,relationKey:`SQ-${n}`,enterpriseId:enterprise.id,usccRaw:enterprise.usccNorm,verificationStatus:'confirmed',matchBasis:'uscc',rawFields:{id:`SQ-${n}`,year:2024,sblx:'申请',sqsj:n===1?'2024-03-01 09:00:00':'2024-12-13 10:00:00',cszt:n===1?'终审不通过':'终审通过',cookie:'PRIVATE-COOKIE'}}]})
-  return {id:seeded.relationIds[0]!}
-})
+async function seed(pool: pg.Pool) {
+  const db = drizzle(pool)
+  const enterprise = singlePostgresFixtureRow(await db.insert(schema.enterprise).values({ name: '合成年度只读接口', nameNorm: '合成年度只读接口', usccNorm: '91330211255994457P' }).returning())
+  const record = singlePostgresFixtureRow(await db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: enterprise.usccNorm }).returning())
+  const event = singlePostgresFixtureRow(await db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning())
+  for (const n of [1, 2]) {
+    await seedPostgresPlatformQuery(db,{interface:'business_list',queryKey:enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:`2026-10-0${n}T00:00:00Z`,status:'success',rawResponse:'PRIVATE-RESPONSE',relations:[{sequenceNo:1,relationKey:`SQ-${n}`,enterpriseId:enterprise.id,usccRaw:enterprise.usccNorm,verificationStatus:'confirmed',matchBasis:'uscc',rawFields:{id:`SQ-${n}`,year:2024,sblx:'申请',sqsj:n===1?'2024-03-01 09:00:00':'2024-12-13 10:00:00',cszt:n===1?'终审不通过':'终审通过',cookie:'PRIVATE-COOKIE'}}]})
+  }
+  return event
+}
+let event: Awaited<ReturnType<typeof seed>>
 let service: { baseUrl: string; stop: () => Promise<void> }
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>
+let pool: pg.Pool
 let developmentSpec: any
 beforeAll(async () => {
   developmentSpec = await readDevelopmentDiscovery()
+  postgres = await postgresRuntimeFixture({ dir })
+  pool = new pg.Pool({ connectionString: postgres.url, options: '-c search_path=business,public' })
+  event = await seed(pool)
   const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
-  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: join(dir, 'roster.db'), NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_MCP_TOKEN: 'isolated250' } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...postgres.env, NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_MCP_TOKEN: 'isolated250' } })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) }
   catch (error) { await service.stop(); throw new Error(`${String(error)}\n${output}`) }
 }, 90000)
-afterAll(async () => { await service?.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => {
+  try { await service?.stop() } finally {
+    try { await pool?.end(); postgres?.close() } finally { rmSync(dir, { recursive: true, force: true }) }
+  }
+})
 async function rpc(method: string, params: unknown) {
   const response = await fetch(`${service.baseUrl}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: 'Bearer isolated250', 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) })
   expect(response.status).toBe(200)
@@ -50,8 +65,8 @@ it('real GET and MCP return the same full-scope qualification with off-page summ
   expect(body.process.finalCandidateStepId).toBe(body.process.latestStepSummary.id)
   expect(body.process.steps[0].id).not.toBe(body.process.latestStepSummary.id)
   expect(JSON.stringify(body)).not.toContain('PRIVATE')
-  expect(db.select().from(schema.recordCorrespondence).all()).toEqual([])
-  expect(db.select().from(schema.recordCorrespondenceAudit).all()).toEqual([])
+  expect((await pool.query('SELECT id FROM business.record_correspondence')).rows).toEqual([])
+  expect((await pool.query('SELECT id FROM business.record_correspondence_audit')).rows).toEqual([])
 })
 it('publishes read-only REST and MCP schema with annual facts generation and bounded pagination', async () => {
   const spec = developmentSpec

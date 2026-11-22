@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import PageImageGallery from '../../../layers/core/app/components/preview/PageImageGallery.vue'
@@ -61,7 +61,7 @@ afterEach(() => {
 /**
  * 打开下拉并读选项。
  *
- * reka-ui 的 `SelectTrigger` 是 **`pointerdown`** 打开的(via `click` 在 happy-dom 下不会展开),
+ * reka-ui 的 `SelectTrigger` 是 **`pointerdown`** 打开的(via `click` 在 jsdom 下不会展开),
  * 而且内容在 portal 里 —— 所以要 `attachTo` 到 body,再查**文档**而不是组件包装器。
  */
 async function openSelect(gallery: Awaited<ReturnType<typeof openGallery>>) {

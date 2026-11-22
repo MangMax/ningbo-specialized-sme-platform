@@ -88,7 +88,7 @@ export interface BusinessProcessRecordRow {
   kind: 'record'
   record: { id: number; platformKey: string; interface: 'business_list' }
   matchedVersion: BusinessProcessVersionFields
-  /** Number of content versions matching the current year/kind/status/batch/title conditions. */
+  /** One for each returned current record. */
   matchedVersionCount: number
   /** All content versions for this business identity, including non-matching history. */
   versionCount: number
@@ -176,10 +176,10 @@ export interface BusinessProcessVersion extends BusinessProcessVersionFields {
 
 export interface BusinessProcessDetail {
   record: { id: number; platformKey: string; interface: 'business_list'; identityRuleVersion: string; createdAt: string }
+  current: BusinessProcessVersionFields | null
   versions: BusinessProcessVersion[]
   observations: BusinessProcessObservation[]
   counts: { versions: number; observations: number; versionsTruncated: boolean; observationsTruncated: boolean }
 }
 
-export const BUSINESS_PROCESS_VERSION_LIMIT = 100
 export const BUSINESS_PROCESS_OBSERVATION_LIMIT = 200

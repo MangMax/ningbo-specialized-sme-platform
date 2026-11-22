@@ -1,7 +1,5 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
-import { getEnterpriseProfile } from '../../utils/enterprise-profile'
 import { getPostgresEnterpriseProfile } from '../../utils/enterprise-profile-postgres'
 import { usePostgresDirectoryDb } from '../../../../../db/postgresql/client'
 export default defineMcpTool({
@@ -11,6 +9,6 @@ export default defineMcpTool({
   inputSchema: { enterpriseId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) },
   handler: async ({ enterpriseId }) => {
     const pg = usePostgresDirectoryDb()
-    return pg ? getPostgresEnterpriseProfile(pg, enterpriseId) : getEnterpriseProfile(useDb(), enterpriseId)
+    return getPostgresEnterpriseProfile(pg, enterpriseId)
   },
 })

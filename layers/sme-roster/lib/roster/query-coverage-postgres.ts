@@ -1,15 +1,16 @@
 import { and, eq, gt, isNotNull, isNull, lte, notExists, or, sql, type SQLWrapper } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { platformQueryTitleScope as title } from '../../../../db/postgresql/platform-archive-tables'
-import { platformBusinessObservation as observation, platformCollection as collection, platformCollectionCondition as condition,
-  platformCollectionPage as page, platformCollectionUnfinished as uncollected, platformLegacyQueryAlias as legacy,
+import { platformQueryTitleScope as title } from '../../../../db/postgresql/platform-query-scope-tables'
+import { platformBusinessObservation as observation, platformCollection as collection, platformCollectionPage as page,
   platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { normalizeUscc } from '../domain'
-import { projectDifferenceCollectionScope, type DifferenceCollectionScopeRows } from '../platform/difference-sources'
+import { projectDifferenceCollectionScope, type DifferenceCollectionScopeRows } from '../platform/difference-collection-scope'
+import { postgresCollectionConditionValues, projectPostgresConditionRows, projectPostgresUnfinishedPositions } from '../platform/postgres-collection-scope'
+import { isCurrentPlatformCollection, isCurrentPlatformObservation } from '../platform/current-observation-postgres'
 import { TITLE_RDJB_CODES } from '../platform/recognized-evidence'
 import { qualificationUsccCandidate } from './platform-qualification-postgres'
-import { projectQueryCoverage } from './query-assessment'
+import { projectQueryCoverage } from './query-assessment-projection'
 
 type ScopeReader = Pick<NodePgDatabase, 'select'>
 type Reader = Pick<NodePgDatabase, '$with' | 'with' | 'select' | 'selectDistinct'>
@@ -62,7 +63,7 @@ export async function readPostgresQueryCoverageInputs(db: Reader, subjects: read
   const owners = db.$with('owners').as(db.selectDistinct({
     enterpriseId: assignment.enterpriseId, collectionId: observation.collectionId,
   }).from(assignment).innerJoin(observation, eq(observation.id, assignment.observationId))
-    .where(and(matchesIds(assignment.enterpriseId, subjects.map(subject => subject.id)),
+    .where(and(isCurrentPlatformObservation(db), matchesIds(assignment.enterpriseId, subjects.map(subject => subject.id)),
       notExists(db.select({ revision: newer.revision }).from(newer)
         .where(and(eq(newer.observationId, assignment.observationId), gt(newer.revision, assignment.revision)))))))
   // Drizzle cannot express column = ANY(array) or split the stored title list.
@@ -74,18 +75,26 @@ export async function readPostgresQueryCoverageInputs(db: Reader, subjects: read
     .innerJoin(owners, eq(owners.enterpriseId, wanted.enterpriseId))
   const candidates = db.$with('candidates').as(byKey.union(byOwner))
   const ranked = db.$with('ranked').as(db.select({
-    slot: wanted.slot, id: legacy.oldId, collectionId: collection.id,
+    slot: wanted.slot, id: collection.publicId, collectionId: collection.id,
     matched: sql<boolean>`${isNotNull(owners.enterpriseId)}`.as('matched'),
-    rank: sql<number>`row_number() OVER (PARTITION BY ${wanted.slot} ORDER BY ${collection.queriedAt} COLLATE "C" DESC, ${legacy.oldId} DESC)`.as('rank'),
+    rank: sql<number>`row_number() OVER (PARTITION BY ${wanted.slot} ORDER BY ${collection.queriedAt} COLLATE "C" DESC, ${collection.publicId} DESC)`.as('rank'),
   }).from(candidates).innerJoin(wanted, eq(wanted.slot, candidates.slot))
     .innerJoin(collection, eq(collection.id, candidates.collectionId))
-    .innerJoin(legacy, eq(legacy.collectionId, collection.id))
     .leftJoin(owners, and(eq(owners.enterpriseId, wanted.enterpriseId), eq(owners.collectionId, collection.id)))
-    .where(or(eq(collection.interface, 'apply_list'), eq(collection.titleCode, wanted.titleCode),
+    .where(and(isCurrentPlatformCollection(db), or(eq(collection.interface, 'apply_list'), eq(collection.titleCode, wanted.titleCode),
       sql`${wanted.rdjb} = ANY(string_to_array(${collection.rdjb}, ','))`,
-      and(eq(collection.rdjb, ''), isNull(collection.titleCode)))))
+      and(eq(collection.rdjb, ''), isNull(collection.titleCode))))))
   const rows = await db.with(wanted, owners, candidates, ranked).select({
-    slot: ranked.slot, id: ranked.id, matched: ranked.matched, collection,
+    slot: ranked.slot, id: ranked.id, matched: ranked.matched,
+    collection: {
+      id: collection.id, interface: collection.interface, queryKey: collection.queryKey, titleCode: collection.titleCode,
+      rdjb: collection.rdjb, queriedAt: collection.queriedAt, status: collection.status,
+      provenanceState: collection.provenanceState, parseState: collection.parseState, source: collection.source,
+      evidenceStatus: collection.evidenceStatus, scopeMode: collection.scopeMode, completeness: collection.completeness,
+      fullRange: collection.fullRange, errorCode: collection.errorCode, errorMessage: collection.errorMessage,
+      maxRequests: collection.maxRequests, maxRows: collection.maxRows, maxDurationMs: collection.maxDurationMs,
+      pageSize: collection.pageSize, fetchedCount: collection.fetchedCount, declaredTotal: collection.declaredTotal,
+    },
   }).from(ranked).innerJoin(collection, eq(collection.id, ranked.collectionId))
     .where(lte(ranked.rank, 51)).orderBy(ranked.slot, ranked.rank)
   const byTarget = Map.groupBy(rows, row => row.slot)
@@ -109,21 +118,19 @@ const matchesIds = (column: SQLWrapper, ids: readonly number[]) => sql`${column}
 export async function readPostgresCollectionScopes(db: ScopeReader, collections: DifferenceCollectionScopeRows['collection'][]) {
   const ids = collections.map(collection => collection.id)
   if (!ids.length) return new Map<number, ReturnType<typeof projectDifferenceCollectionScope>>()
-  const conditionRows = await db.select({ collectionId: condition.collectionId, name: condition.name,
-    valueKind: condition.valueKind, textValue: condition.textValue, integerValue: condition.integerValue })
-    .from(condition).where(matchesIds(condition.collectionId, ids))
-    // Drizzle has no COLLATE builder. Preserve deterministic metadata key and title order.
-    .orderBy(condition.collectionId, sql`${condition.name} COLLATE "C"`)
-  const conditions = Map.groupBy(conditionRows, row => row.collectionId)
+  const parts = await db.select({
+    id: collection.id, conditions: postgresCollectionConditionValues(collection.conditionFacts),
+    unfinished: collection.unfinishedPositions,
+  }).from(collection).where(matchesIds(collection.id, ids))
+  const byId = new Map(parts.map(row => [row.id, row]))
   const pageRows = await db.select().from(page).where(matchesIds(page.collectionId, ids)).orderBy(page.collectionId, page.ordinal)
   const pages = Map.groupBy(pageRows, row => row.collectionId)
-  const unfinished = Map.groupBy(await db.select().from(uncollected).where(matchesIds(uncollected.collectionId, ids))
-    .orderBy(uncollected.collectionId, uncollected.ordinal), row => row.collectionId)
   const titles = Map.groupBy(await db.select().from(title).where(matchesIds(title.collectionId, ids))
     .orderBy(title.collectionId, sql`${title.rdjb} COLLATE "C"`), row => row.collectionId)
   return new Map(collections.map(collection => [collection.id, projectDifferenceCollectionScope({
-    collection, conditions: (conditions.get(collection.id) ?? []) as DifferenceCollectionScopeRows['conditions'],
+    collection, conditions: projectPostgresConditionRows(byId.get(collection.id)!.conditions),
     pages: (pages.get(collection.id) ?? []) as DifferenceCollectionScopeRows['pages'],
-    unfinished: unfinished.get(collection.id) ?? [], titles: (titles.get(collection.id) ?? []).map(row => row.rdjb),
+    unfinished: projectPostgresUnfinishedPositions(collection.id, byId.get(collection.id)!.unfinished),
+    titles: (titles.get(collection.id) ?? []).map(row => row.rdjb),
   })]))
 }

@@ -5,18 +5,26 @@ import type { Pool } from 'pg'
 import { appLog, type LogContext } from '../../lib/logging'
 import { jobLogModule } from '../../lib/logging/module'
 import { makeProgress, newJobId } from '../../lib/job'
-import { getJobSpec, jobSpecs, type JobCompletion, type JobSpec, type SubmitInput } from './job-runner'
+import { getJobSpec, jobSpecs } from './job-spec-registry'
 import {
   claimNextPostgresJob, completePostgresJob, createPostgresJob, postgresJobCancellationRequested, recoverPostgresJobs,
-  countActivePostgresJobs, findPostgresJobRequest, lockPostgresJobAdmission,
+  countActivePostgresJobs, findPostgresJobRequest, lockPostgresJobAdmission, queuedPostgresJobIds,
   setPostgresJobProgress, setPostgresJobResult, type PostgresJobSnapshot,
 } from './job-store-postgres'
-import type { JobDto } from './job-store'
+import type { JobCompletion, JobDto, JobParseResult } from './job-contract'
 import type { TaskSummary, TaskSummaryProjection } from '../../lib/task-center'
 
 export type PostgresJobDb = NodePgDatabase & { $client: Pool }
 export type PostgresJobTransaction = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
-type SubmitPostgresJobInput = Omit<SubmitInput, 'filesDir'>
+interface SubmitPostgresJobInput {
+  kind: string
+  params: Record<string, unknown>
+  id?: string
+  /** Captured IDs only. They are never persisted in params or receipts. */
+  logContext?: LogContext
+}
+type QueuedJob = { id: string; kind: string }
+type TrackSubmissions<T> = (remember: (jobs: readonly QueuedJob[]) => void) => Promise<T>
 
 export interface PostgresJobContext {
   readonly db: NodePgDatabase
@@ -27,6 +35,7 @@ export interface PostgresJobContext {
   progress(done: number, total: number): Promise<void>
   checkpoint(result: unknown, transaction?: NodePgDatabase): Promise<void>
   cancelled(): Promise<boolean>
+  trackSubmissions<T>(run: TrackSubmissions<T>): Promise<T>
 }
 
 export interface TaskSummaryAccess {
@@ -36,7 +45,7 @@ export interface TaskSummaryAccess {
 
 export interface PostgresJobSpec {
   allowBrowserCancel?: boolean
-  parse?: JobSpec['parse']
+  parse?: (raw: Record<string, unknown>) => JobParseResult
   validateSubmission?(tx: PostgresJobTransaction, params: Record<string, unknown>): Promise<void>
   projectResult?(db: NodePgDatabase, job: JobDto): Promise<unknown>
   taskCenter?: {
@@ -95,16 +104,21 @@ export function createPostgresJobRunner(db: PostgresJobDb, filesDir: string) {
   let inFlight: Promise<void> | undefined
   let timer: ReturnType<typeof setInterval> | undefined
   let stopping = false
+  let admissionSequence = 0
+  const admitted = new Map<string, { context: Readonly<LogContext>; committedAt?: number }>()
 
   async function runJob(connection: NodePgDatabase, job: PostgresJobSnapshot, signal: AbortSignal) {
     const { row, claimToken } = job
     if (!claimToken) throw new Error('缺少 PostgreSQL 任务领取令牌')
     const { id, kind, params } = row
-    const logContext = Object.freeze({ module: jobLogModule(kind), taskId: id })
+    const admission = admitted.get(id)
+    admitted.delete(id)
+    const logContext = Object.freeze({ ...admission?.context, module: jobLogModule(kind), taskId: id })
     const expected = { state: 'running', claimToken } as const
     let lastProgress = -Infinity
     const ctx: PostgresJobContext = {
       db: connection, jobId: id, filesDir, signal, logContext,
+      trackSubmissions: run => trackSubmission(run, logContext),
       async progress(done, total) {
         if (!await setPostgresJobProgress(connection, id, expected, { done, total })) throw new Error('任务领取已失效')
         if (performance.now() - lastProgress >= 1000) {
@@ -165,8 +179,17 @@ export function createPostgresJobRunner(db: PostgresJobDb, filesDir: string) {
       }
       while (!stopping && !abort.signal.aborted) {
         const kinds = jobSpecs().filter(spec => postgresJobHandler(spec.kind)).map(spec => spec.kind)
+        const visibleAdmissions = admissionSequence
         const job = await claimNextPostgresJob(connection, kinds)
-        if (!job) return
+        if (!job) {
+          // SKIP LOCKED can miss a queued row. A snapshot read distinguishes
+          // those rows from jobs cancelled or already handled by another instance.
+          const visibleIds = [...admitted].filter(([, entry]) =>
+            entry.committedAt !== undefined && entry.committedAt <= visibleAdmissions).map(([id]) => id)
+          const queued = await queuedPostgresJobIds(connection, visibleIds)
+          for (const id of visibleIds) if (!queued.has(id)) admitted.delete(id)
+          return
+        }
         await runJob(connection, job, abort.signal)
       }
     } finally {
@@ -197,6 +220,30 @@ export function createPostgresJobRunner(db: PostgresJobDb, filesDir: string) {
     })
   }
 
+  async function trackSubmission<T>(run: TrackSubmissions<T>, context?: LogContext) {
+    let queued: readonly QueuedJob[] = []
+    const forget = () => { for (const { id } of queued) admitted.delete(id) }
+    try {
+      const receipt = await run(jobs => {
+        forget()
+        queued = jobs
+        // Register before commit so a local poll cannot claim first. A retry
+        // clears the rolled-back admissions before recording new jobs.
+        if (context) for (const { id } of jobs) admitted.set(id, { context: Object.freeze({ ...context }) })
+      })
+      for (const { id, kind } of queued) {
+        const admission = admitted.get(id)
+        if (admission) admission.committedAt = ++admissionSequence
+        appLog({ module: jobLogModule(kind), source: 'task', operation: 'task.queued', outcome: 'started', taskId: id }, context)
+      }
+      nudge()
+      return receipt
+    } catch (error) {
+      forget()
+      throw error
+    }
+  }
+
   return {
     start() {
       if (!timer && !stopping) {
@@ -209,13 +256,16 @@ export function createPostgresJobRunner(db: PostgresJobDb, filesDir: string) {
     async stop() {
       stopping = true
       clearInterval(timer)
-      await inFlight
+      try { await inFlight }
+      finally { admitted.clear() }
     },
+    trackSubmission,
     async submit(input: SubmitPostgresJobInput) {
-      const { row, inserted } = await db.transaction(tx => stagePostgresJob(tx, input))
-      if (inserted) appLog({ module: jobLogModule(row.kind), source: 'task', operation: 'task.queued', outcome: 'started', taskId: row.id }, input.logContext)
-      nudge()
-      return row
+      return trackSubmission(remember => db.transaction(async tx => {
+        const { row, inserted } = await stagePostgresJob(tx, input)
+        if (inserted) remember([row])
+        return row
+      }), input.logContext)
     },
   }
 }

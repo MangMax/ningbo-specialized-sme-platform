@@ -1,15 +1,12 @@
 /** Collection/observation evidence read model; public IDs use retained aliases. */
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import type * as schema from '../../../../db/schema'
+import type * as schema from '../../../../db/postgresql/platform-tables'
 import type { PlatformInterface } from '../labels'
 import type { PlatformNormalizationConflict } from './normalization'
-import type { LegacyProvenanceDisplay } from './legacy-provenance'
-import { listTargetPlatformQueries } from './target-query-read'
 export { MAX_FULL_QUERY_BYTES, MAX_FULL_PAGE_BYTES } from './evidence-contract'
 
 export interface PlatformQueryFilter {
   queryId?: number
-  /** Explicit opt-in: metadata/counts only; use exact evidence reads for payloads. */
+  /** Use summary for metadata and counts without observations. */
   view?: 'full' | 'summary'
   interface?: PlatformInterface
   queryKey?: string
@@ -26,9 +23,10 @@ export interface PlatformQueryFilter {
 
 /** Stable public source snapshot. IDs are external aliases, never runtime table keys. */
 export type PlatformStoredQuery = Pick<typeof schema.platformCollection.$inferSelect,
-  'id'|'interface'|'queryKey'|'rdjb'|'titleCode'|'queriedAt'|'lastCollectedAt'|'status'|'failureReason'|'createdAt'> & {
+  'id'|'queryKey'|'rdjb'|'titleCode'|'queriedAt'|'lastCollectedAt'|'status'|'failureReason'|'createdAt'> & {
+  interface: PlatformInterface
   rawResponse: string | null
-  collectionEvidence: import('./live-query').PlatformLiveQueryResult | null
+  collectionEvidence: PlatformCollectionCoverage | null
 }
 export interface PlatformStoredRelation {
   id: number; queryId: number; sequenceNo: number; relationKey: string | null; enterpriseId: number | null
@@ -36,8 +34,8 @@ export interface PlatformStoredRelation {
   usccRaw: string | null; nameRaw: string | null; aliasNameRaw: string | null; province: string | null
   status: string | Buffer | null; batch: string | null; declareKind: string | null; appliedAt: string | null
   awardBatchLabel: string | null; year: number | null
-  matchBasis: typeof schema.platformObservationAssignment.$inferSelect.matchBasis
-  verificationStatus: typeof schema.platformObservationAssignment.$inferSelect.verificationStatus
+  matchBasis: 'uscc' | 'alias' | 'manual' | 'none'
+  verificationStatus: 'confirmed' | 'pending'
   createdAt: string
 }
 
@@ -69,6 +67,8 @@ export interface PlatformRelationRow<I extends PlatformInterface = PlatformInter
   rawFields: Record<string, unknown> | null
 }
 
+export type PlatformCollectionCoverage = Omit<import('./live-query').PlatformLiveQueryResult, 'rows' | 'dataRows' | 'rawData'>
+
 export interface PlatformQueryRow {
   /** false only in the explicitly requested summary view; [] does not mean no relations. */
   relationsIncluded?: false
@@ -82,8 +82,7 @@ export interface PlatformQueryRow {
     status: string
     failureReason: string | null
     rawResponse?: string | null
-    collectionEvidence?: import('./live-query').PlatformLiveQueryResult | null
-    legacyProvenance?: LegacyProvenanceDisplay
+    collectionEvidence?: PlatformCollectionCoverage | null
     createdAt: string
     relationCount: number
   }
@@ -96,8 +95,4 @@ export interface PlatformQueriesResult {
   page: number
   pageSize: number
   counts: Record<string, number>
-}
-
-export function listPlatformQueries(db: BetterSQLite3Database<typeof schema>, filter: PlatformQueryFilter = {}): PlatformQueriesResult {
-  return listTargetPlatformQueries(db, filter)
 }

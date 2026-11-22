@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import type { FileRow } from '../../server/utils/file-store'
+import type { FileRow } from '../../server/utils/file-store-contract'
 import type { FileCategory } from './file-categories'
 
 export interface FileCategoryUi extends Pick<FileCategory, 'filters' | 'columns'> {

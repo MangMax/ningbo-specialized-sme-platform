@@ -1,7 +1,6 @@
-import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
 import { publishedNameText, type PublishedPresentation } from './correspondence-view'
-import { listEventsOfficialEvidencePages, OfficialEvidenceError, type OfficialEvidencePageRequest, type OfficialEvidencePageResult } from '../../server/utils/official-evidence'
-import { importReceiptRedactor, type OfficialPublishedNameInput, type ReceiptRedactor } from '../../server/utils/import-receipt-redaction'
+import { OfficialEvidenceError, type OfficialEvidencePageRequest, type OfficialEvidencePageResult } from '../../server/utils/official-evidence'
+import { type OfficialPublishedNameInput, type ReceiptRedactor } from '../../server/utils/import-receipt-redaction'
 
 /** Minimal display facts only. Locators stay on the caller's existing evidence. */
 export type OfficialPublishedFact = {
@@ -21,16 +20,6 @@ export function assertOfficialPublishedBudget(facts: Iterable<OfficialPublishedF
   if (Buffer.byteLength(JSON.stringify([...facts])) + Buffer.byteLength(JSON.stringify(texts)) > 65536) {
     throw new OfficialPublishedPresentationError('response_limit')
   }
-}
-
-/** Same caller snapshot across bounded event chunks and active cursor waves. */
-export function readOfficialPublishedPresentation(db: Parameters<typeof importReceiptRedactor>[0], scope: readonly OfficialPublishedScope[], redactor?: ReceiptRedactor, receiptRuntime?: ReceiptRuntimeContext): ReadonlyMap<number, OfficialPublishedFact> {
-  try {
-    const steps = officialPublishedPresentationSteps(scope, () => redactor ?? importReceiptRedactor(db, {}, receiptRuntime))
-    let step = steps.next()
-    while (!step.done) step = steps.next(listEventsOfficialEvidencePages(db, step.value, { pageSize: 50, maxBytes: 65536 }))
-    return step.value
-  } catch (error) { throw officialPublishedError(error) }
 }
 
 export function* officialPublishedPresentationSteps(scope: readonly OfficialPublishedScope[], loadRedactor: () => ReceiptRedactor):
@@ -124,15 +113,4 @@ export function projectOfficialPublishedNames(facts: readonly OfficialPublishedF
     + projected.length * Buffer.byteLength(JSON.stringify({ publishedName: null }))
   if (bytes > 65536) throw new OfficialPublishedPresentationError('response_limit')
   return { availability: 'available', error: null, facts: [...facts] }
-}
-
-/** Anonymous name sidecar only, after the caller has selected and verified ownership.
- * DTO copies and rendered text copies are budgeted separately; no request data is cached. */
-export function readPublicPublishedNames(db: Parameters<typeof readOfficialPublishedPresentation>[0], scope: readonly OfficialPublishedScope[], copies: readonly OfficialPublishedScope[] = scope, envelopeCount = 1, textCopies = 1, redactor?: ReceiptRedactor): PublishedPresentation {
-  try {
-    const facts = readOfficialPublishedPresentation(db, scope, redactor)
-    return projectOfficialPublishedNames([...facts.values()], copies, envelopeCount, textCopies)
-  } catch (error) {
-    return { availability: 'unavailable', error: error instanceof OfficialPublishedPresentationError ? error.code : 'read_failed', facts: [] }
-  }
 }

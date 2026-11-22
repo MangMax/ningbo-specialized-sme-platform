@@ -1,4 +1,4 @@
-import { parseRoute105 } from '../../../../utils/parse-maintenance-105-route'
+import { parseRoute105 } from '../../../../utils/parse-maintenance-route'
 defineRouteMeta({ openAPI: {
   tags: ['Files'], summary: '#310 冻结解析实际输入',
   description: '需NUXT_API_TOKEN。kind=file核实实际磁盘sha256与登记一致;kind=ocr还须提供实际读过的页号及OCR version(id:revision),不自动选最新页。只核所选页、不修改文件/OCR/正式出处。返回expectedVersion(输出CAS)及inputRef(独立输入依据),解析后原样交commit。',

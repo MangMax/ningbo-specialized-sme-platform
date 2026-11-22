@@ -3,21 +3,18 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { createError } from 'h3'
 import { usePostgresDirectoryDb } from '../../../../db/postgresql/client'
 import { filePhysicalIntent, storedFile } from '../../../../db/postgresql/file-tables'
-import { checkAdmission, resolveFileRegistration, serverFileCategories } from '../../../../server/file-store'
+import { postgresFileCategoryRules, serverFileCategories } from './file-category-runtime'
 import type { LogContext } from '../../lib/logging'
-import { FileMaintenanceError, MAX_PAGE_SIZE, registerLandedFile, selectedFileFilters, UploadRegistrationError, type FileCategoryServer, type FileQuery, type FileRow, type ScannedFile } from './file-store'
+import { FileMaintenanceError, MAX_PAGE_SIZE, registerLandedFile, selectedFileFilters, type FileCategoryServer, type FileQuery, type FileRow, type ScannedFile } from './file-store-contract'
 
 export type PostgresFileDb = NodePgDatabase
 
 export function usePostgresFileDb() {
-  if (process.env.NUXT_POSTGRES_FILE_LIBRARY !== '1') return
-  const db = usePostgresDirectoryDb()
-  if (!db) throw createError({ statusCode: 503, message: '文件库 PostgreSQL 验收未配置' })
-  return db
+  return usePostgresDirectoryDb()
 }
 
 export function requirePostgresFileWrite() {
-  if (process.env.NUXT_POSTGRES_DIRECTORY_WRITE !== '1') {
+  if (process.env.NUXT_DB_READONLY === '1') {
     throw new FileMaintenanceError(503, 'PostgreSQL 文件库处于只读模式')
   }
 }
@@ -81,7 +78,7 @@ async function withFileReferences(db: PostgresFileDb, files: FileRow[], categori
   return files.map(file => ({ ...file, referenceCount: counts.get(file.id) ?? 0 }))
 }
 
-async function withFileFields(db: PostgresFileDb, files: FileRow[], categories: readonly FileCategoryServer[]) {
+async function withFileFields(db: PostgresFileDb, files: FileRow[], categories: readonly FileCategoryServer[]): Promise<Array<FileRow & Record<string, unknown>>> {
   const ids = files.map(file => file.id)
   const fields: ReadonlyMap<number, object>[] = []
   for (const category of categories) {
@@ -99,8 +96,7 @@ export function listPostgresFiles(
   const page = params.page ?? 1
   const pageSize = Math.min(MAX_PAGE_SIZE, params.pageSize ?? 50)
   const offset = (BigInt(page) - BigInt(1)) * BigInt(pageSize)
-  // Drizzle has no translate or COLLATE API. SQLite LIKE folds ASCII case only
-  // and treats backslashes literally. Escape backslashes for PostgreSQL's LIKE.
+  // Search folds ASCII case only and treats backslashes in the query literally.
   const foldAscii = (column: typeof storedFile.filename | typeof storedFile.displayName) =>
     sql`translate(${column}, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') COLLATE "C"`
   const pattern = params.q ? `%${params.q.replace(/[A-Z]/g, letter => letter.toLowerCase()).replaceAll('\\', '\\\\')}%` : undefined
@@ -156,10 +152,8 @@ export async function lockOrRegisterPostgresFile(db: PostgresFileDb, facts: Scan
 
 export async function registerPostgresFile(db: PostgresFileDb, root: string, body: unknown, context: LogContext) {
   requirePostgresFileWrite()
+  const { checkAdmission, resolveFileRegistration } = postgresFileCategoryRules
   const { registration: { preparePostgres }, relPath, input } = resolveFileRegistration(body)
-  if (!preparePostgres) {
-    throw new UploadRegistrationError('此文件分类尚未接入 PostgreSQL 文件库', 503)
-  }
   return registerLandedFile(root, relPath, async () => {
     const writer = await preparePostgres(input)
     return file => writer(db, file)

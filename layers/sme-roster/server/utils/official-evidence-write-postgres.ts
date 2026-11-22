@@ -5,7 +5,7 @@ import { officialEvidenceRowRevision as revisions, sourceDocument } from '../../
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { PgColumn } from 'drizzle-orm/pg-core'
 import type { OfficialDeclaration, OfficialPublishedRow } from '../../lib/roster-import-client'
-import { officialPlanJson, officialFactFailure } from './official-evidence-plan'
+import { officialPlanJson, officialFactFailure } from './official-evidence-claim-model'
 import { OfficialEvidenceError, validateOfficialEvidenceRevision, type OfficialEvidenceCapture, type OfficialEvidenceCommand } from './official-evidence'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -38,15 +38,19 @@ async function appendPostgresOfficialEvidence(tx: Tx, capture: OfficialEvidenceC
   )))
   // Drizzle has no literal projection helper. Bind values in INSERT SELECT to keep the ownership check and CAS atomic.
   const bound = <T>(column: PgColumn, value: T) => sql<T>`${value}`.as(column.name)
+  const native = (value: string | null) => value?.includes('\0') ? null : value
+  const escaped = (value: string | null) => value?.includes('\0') ? JSON.stringify(value) : null
   const insert = tx.select({
     evidenceId: recordEvidence.id, revision: bound(revisions.revision, revision), formatVersion: bound(revisions.formatVersion, 1), eventId: recordEvent.id,
-    capturedRecordId: record.id, capturedEnterpriseId: record.enterpriseId, nameRaw: bound(revisions.nameRaw, capture.nameRaw),
-    usccRaw: bound(revisions.usccRaw, capture.usccRaw), districtRaw: bound(revisions.districtRaw, capture.districtRaw), sourceDocumentId: bound(revisions.sourceDocumentId, capture.sourceDocumentId),
+    capturedRecordId: record.id, capturedEnterpriseId: record.enterpriseId, nameRaw: bound(revisions.nameRaw, native(capture.nameRaw)),
+    usccRaw: bound(revisions.usccRaw, native(capture.usccRaw)), districtRaw: bound(revisions.districtRaw, native(capture.districtRaw)), sourceDocumentId: bound(revisions.sourceDocumentId, capture.sourceDocumentId),
     storedFileId: bound(revisions.storedFileId, capture.storedFileId), path: bound(revisions.path, capture.path), sha256: bound(revisions.sha256, capture.sha256), bytes: bound(revisions.bytes, capture.bytes),
     attachment: bound(revisions.attachment, capture.attachment), sectionKey: bound(revisions.sectionKey, capture.sectionKey), listNo: bound(revisions.listNo, capture.listNo), page: bound(revisions.page, capture.page),
     sourceBindingKnown: bound(revisions.sourceBindingKnown, Number(capture.sourceBindingKnown)), actor: bound(revisions.actor, JSON.stringify(capture.actor)), basis: bound(revisions.basis, capture.basis),
     commandKind: bound(revisions.commandKind, capture.command.kind), importBatchId: bound(revisions.importBatchId, capture.command.kind === 'import' ? capture.command.batchId : null),
     correctionBatchKey: bound(revisions.correctionBatchKey, capture.command.kind === 'evidence_correction' ? capture.command.batchKey : null), createdAt: bound(revisions.createdAt, createdAt),
+    nameRawJson: bound(revisions.nameRawJson, escaped(capture.nameRaw)), usccRawJson: bound(revisions.usccRawJson, escaped(capture.usccRaw)),
+    districtRawJson: bound(revisions.districtRawJson, escaped(capture.districtRaw)),
   }).from(recordEvidence)
     .innerJoin(recordEvent, eq(recordEvent.id, recordEvidence.recordEventId))
     .innerJoin(record, eq(record.id, recordEvent.recordId))

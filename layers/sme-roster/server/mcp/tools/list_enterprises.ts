@@ -1,11 +1,8 @@
-import type { LogContext } from '../../../../core/lib/logging'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
 import { TITLE_ORDER } from '#sme-roster/lib/labels'
 import { FIRST_RECOGNITION_STATUS_VALUES } from '#sme-roster/lib/roster/first-recognition'
-import { enterpriseListFilter } from '../../utils/mcp-roster'
-import { enterpriseReads } from '../../utils/enterprise-read'
+import { enterpriseListFilter } from '../../utils/mcp-roster-postgres'
 import { listPostgresRosterEnterprises } from '../../../lib/roster/enterprise-list-postgres'
 import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 
@@ -52,11 +49,5 @@ export default defineMcpTool({
     page: z.number().int().min(1).optional().describe('页码，默认 1'),
     pageSize: z.number().int().min(1).max(200).optional().describe('每页数量，默认 50，上限 200'),
   },
-  handler: async (input, extra) => {
-    const filter = enterpriseListFilter(input)
-    const pg = usePostgresRosterDb()
-    if (pg) return JSON.stringify(await listPostgresRosterEnterprises(pg, filter))
-    const result = await enterpriseReads.json(useDb().$client.name, { operation: 'list',filter }, extra?.signal, (extra as typeof extra & { logContext?: LogContext })?.logContext)
-    return result.body.toString('utf8')
-  },
+  handler: async input => JSON.stringify(await listPostgresRosterEnterprises(usePostgresRosterDb(), enterpriseListFilter(input))),
 })

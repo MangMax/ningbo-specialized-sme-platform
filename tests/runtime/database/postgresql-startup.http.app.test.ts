@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { once } from 'node:events'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import pg from 'pg'
@@ -7,11 +8,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { expect, it, vi } from 'vitest'
 import { reserveLoopbackPort, spawnCompiledApp, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
-import { defaultLogCollection } from '../../../layers/core/lib/logging/policy'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import coreManifest from '../../../layers/core/lib/core/manifest'
 import rosterManifest from '../../../layers/sme-roster/manifest'
 
-const bin = process.env.TEST_POSTGRES_STARTUP_BIN
+const bin = process.env.TEST_POSTGRES_STARTUP_BIN || process.env.ROSTER_TEST_POSTGRES_BIN
 
 vi.mock('../../../server/install-application', () => ({ installApplicationServer() {} }))
 
@@ -42,75 +43,39 @@ async function openTaskEvents(base: string) {
 
 it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, committed SSE and two-schema restore', async () => {
   const dir = mkdtempSync('/tmp/pg-startup-')
-  const data = join(dir, 'cluster')
-  const dbPath = join(dir, 'legacy', 'roster.db')
-  const logsPath = join(dir, 'legacy-logs')
-  const pgEnv = {
-    PATH: process.env.PATH, LC_ALL: 'C', PGHOST: dir, PGPORT: '5432',
-    PGUSER: 'fixture', PGDATABASE: 'roster', PGSQL_BIN: bin!,
-  }
-  const command = (name: string, args: string[]) => execFileSync(join(bin!, name), args, { env: pgEnv, encoding: 'utf8' })
-  const query = (sql: string) => command('psql', ['-X', '-w', '-At', '-v', 'ON_ERROR_STOP=1', '-c', sql]).trim()
-  let started = false
+  let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
   try {
-    command('initdb', ['-D', data, '-A', 'trust', '-U', 'fixture', '--locale=C', '-E', 'UTF8'])
-    const logPath = join(dir, 'server.log')
-    try {
-      command('pg_ctl', ['-D', data, '-l', logPath, '-o', `-h '' -k '${dir}'`, '-w', 'start'])
-    } catch (cause) {
-      throw new Error(existsSync(logPath) ? readFileSync(logPath, 'utf8') : 'PostgreSQL did not start', { cause })
+    const fixture = await postgresRuntimeFixture({ dir, bin })
+    runtime = fixture
+    const url = new URL(fixture.url)
+    const pgEnv = {
+      PATH: process.env.PATH, LC_ALL: 'C', PGHOST: url.searchParams.get('host')!,
+      PGPORT: url.port || '5432', PGUSER: url.username, PGDATABASE: url.pathname.slice(1), PGSQL_BIN: bin!,
     }
-    started = true
-    command('createdb', ['--maintenance-db=postgres', '--template=template0', '--locale-provider=builtin', '--builtin-locale=C.UTF-8', 'roster'])
-
+    const query = (sql: string) => fixture.psql(['-At', '-c', sql]).trim()
     query(`
-      CREATE EXTENSION pg_trgm;
-      CREATE SCHEMA business;
-      CREATE TABLE business.title (code text PRIMARY KEY, name_zh text, level text, rank bigint);
-      INSERT INTO business.title VALUES ('innovative_sme', '创新型中小企业', 'municipal', 30);
-      CREATE TABLE business.record (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, evidence bytea);
-      INSERT INTO business.record (evidence) VALUES (decode('00ff0a', 'hex'));
+      INSERT INTO business.enterprise (name, name_norm) VALUES ('启动验证企业', '启动验证企业');
+      INSERT INTO business.record (enterprise_id, title_code, source) VALUES (1, 'innovative_sme', 'jxj');
       SELECT setval('business.record_id_seq', 33);
-      CREATE TABLE business.record_link (revision bigint NOT NULL, event bigint NOT NULL, UNIQUE (revision, event));
-      INSERT INTO business.record_link VALUES (1, 2), (1, 1);
-      CREATE TABLE business.service_credential (key text PRIMARY KEY, value text, updated_at text);
-
-      CREATE SCHEMA staged;
-      CREATE TABLE staged.job (id text, kind text, params text, state text, progress text,
-        result text, error text, created_at text, started_at text, finished_at text);
-      CREATE TABLE staged.log_policy (id bigint, "retentionDays" bigint, "maxBytes" bigint, pruned bigint, cleared bigint);
-      INSERT INTO staged.log_policy VALUES (1, 30, 1048576, 0, 0);
-      CREATE TABLE staged.log_collection (id bigint, collection text, revision bigint);
-      INSERT INTO staged.log_collection VALUES (1, '${JSON.stringify(defaultLogCollection())}', 0);
-      CREATE TABLE staged.log_events (seq bigint, id text, timestamp text, level text, source text,
-        operation text, outcome text, "requestId" text, "traceId" text, "taskId" text, "fileId" bigint,
-        "batchId" text, "resourceId" text, summary text, detail text);
-      CREATE TABLE staged.sqlite_sequence (name text, seq bigint);
-      INSERT INTO staged.sqlite_sequence VALUES ('log_events', 101);
-    `)
-    for (const file of ['materialize-jobs.sql', 'materialize-runtime-logs.sql']) {
-      command('psql', ['-X', '-w', '-v', 'ON_ERROR_STOP=1', '-v', 'staging=staged', '-f', join('upgrade/postgresql', file)])
-    }
-    query(`
+      UPDATE runtime_logs.log_policy SET "retentionDays" = 30, "maxBytes" = 1048576 WHERE id = 1;
       CREATE ROLE fixture_logs LOGIN;
       GRANT USAGE ON SCHEMA runtime_logs TO fixture_logs;
       GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA runtime_logs TO fixture_logs;
       GRANT SELECT, USAGE ON ALL SEQUENCES IN SCHEMA runtime_logs TO fixture_logs;
     `)
 
-    const logsUrl = `postgresql://fixture_logs@localhost/roster?host=${encodeURIComponent(dir)}`
+    const logConnection = new URL(fixture.url)
+    logConnection.username = 'fixture_logs'
     const apiToken = 'startup-fixture-token'
     async function withApp(readOnly: boolean, checks: (base: string) => Promise<void>) {
       const port = await reserveLoopbackPort()
       const child = spawnCompiledApp(port, {
         stdio: ['ignore', 'pipe', 'pipe'],
         env: {
-          NUXT_DB_MODE: 'postgresql',
-          NUXT_DB_PATH: dbPath,
           NUXT_DB_READONLY: readOnly ? '1' : '0',
-          NUXT_POSTGRES_DIRECTORY_URL: `postgresql://fixture@localhost/roster?host=${encodeURIComponent(dir)}`,
-          NUXT_POSTGRES_LOG_URL: readOnly ? logsUrl : undefined,
-          NUXT_LOG_DIR: logsPath,
+          NUXT_POSTGRES_DIRECTORY_URL: fixture.url,
+          NUXT_POSTGRES_LOG_URL: readOnly ? logConnection.href : undefined,
+          NUXT_ROSTER_EXPORT_DIR: join(dir, 'exports'),
           NUXT_FILES_DIR: join(dir, 'files'),
           NUXT_INCOMING_DIR: join(dir, 'incoming'),
           NUXT_API_TOKEN: apiToken,
@@ -128,13 +93,19 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
       } finally {
         await stopOwnedChild(child)
       }
-      expect(child.exitCode).toBe(0)
+      // The process group can become empty before Node reports the child's exit.
+      if (child.exitCode === null && child.signalCode === null) await once(child, 'exit')
+      expect(child.exitCode, `Compiled app shutdown: signal=${child.signalCode}\n${output}`).toBe(0)
     }
 
     await withApp(false, async base => {
       const healthUrl = `${base}/api/health`
       expect(await (await fetch(healthUrl)).json()).toEqual({
-        titles: [{ code: 'innovative_sme', nameZh: '创新型中小企业', level: 'municipal', rank: 30 }],
+        titles: [
+          { code: 'little_giant', nameZh: '专精特新“小巨人”', level: 'national', rank: 1 },
+          { code: 'specialized_sme', nameZh: '专精特新中小企业', level: 'municipal', rank: 2 },
+          { code: 'innovative_sme', nameZh: '创新型中小企业', level: 'municipal', rank: 3 },
+        ],
         recordCount: 1,
       })
       query('ALTER TABLE runtime_logs.log_policy RENAME TO offline_policy')
@@ -255,7 +226,7 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
             expect(await other.nextFrame()).toBe(ready)
             expect(listeners()).toHaveLength(2)
             const next = second.nextFrame()
-            const writer = new pg.Client({ host: dir, port: 5432, user: 'fixture', database: 'roster' })
+            const writer = new pg.Client({ connectionString: fixture.url })
             await writer.connect()
             try {
               await writer.query('BEGIN')
@@ -295,9 +266,7 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
         unavailable.close()
       }
 
-      for (let run = 0; run < 2; run++) {
-        command('psql', ['-Xqw', '-f', 'upgrade/postgresql/install-job-runtime.sql'])
-      }
+      fixture.psql(['-f', 'db/postgresql/job-notifications.sql'])
       query(`UPDATE business.job SET progress = '{"done":5,"total":8}' WHERE id = '${id}'`)
       const reconnected = await openTaskEvents(base)
       expect(await reconnected.nextFrame()).toBe(ready)
@@ -312,19 +281,19 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
     })
     await expect.poll(listeners).toEqual([])
     expect(query(`SELECT state FROM business.job WHERE id = '${id}'`)).toBe('queued')
-    expect(existsSync(join(dbPath, '..'))).toBe(false)
-    expect(existsSync(logsPath)).toBe(false)
 
+    const restoreRelationCount = query(`SELECT
+      (SELECT count(*) FROM information_schema.tables WHERE table_schema IN ('business', 'runtime_logs') AND table_type = 'BASE TABLE') +
+      (SELECT count(*) FROM pg_sequences WHERE schemaname IN ('business', 'runtime_logs'))`)
     for (let run = 0; run < 2; run++) {
-      const report = execFileSync('bash', ['upgrade/postgresql/rehearse-restore.sh'], {
+      const report = execFileSync('bash', ['upgrade/pg/2026-11-data-compaction/verify-restore.sh'], {
         env: { ...pgEnv, TMPDIR: dir }, encoding: 'utf8',
       })
-      expect(report).toContain('Matched table hashes and sequence states for 10 relations')
+      expect(report).toContain(`Matched table hashes and sequence states for ${restoreRelationCount} relations.`)
       expect(query("SELECT count(*) FROM pg_database WHERE datname LIKE 'restore_%'")).toBe('0')
       expect(query('SELECT last_value FROM business.record_id_seq')).toBe('33')
     }
   } finally {
-    if (started) command('pg_ctl', ['-D', data, '-m', 'fast', '-w', 'stop'])
-    rmSync(dir, { recursive: true, force: true })
+    try { runtime?.close() } finally { rmSync(dir, { recursive: true, force: true }) }
   }
 }, 90000)

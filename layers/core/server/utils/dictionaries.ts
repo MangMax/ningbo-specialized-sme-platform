@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { asc, eq, sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import {
   enterpriseIndustry as postgresIndustry,
   enterpriseRegion as postgresRegion,
@@ -9,14 +9,10 @@ import {
   enterpriseSourceListType as postgresListType,
 } from '../../../../db/postgresql/enterprise-source-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { enterpriseIndustry, enterpriseRegion, enterpriseSourceChannel, enterpriseSourceListType } from '@db/schema'
-import type { useDb } from '@db'
 import { coreDictionaryKinds, type DictionaryEntry, type EditableDictionaryKind } from '#core/lib/dictionaries'
 
-type Db = ReturnType<typeof useDb>
 type DictionaryKind = typeof coreDictionaryKinds[number]
 type DictionaryInput = { name: string } | { code: string; name: string; previousName: string }
-const businessTables = { 'list-sources': enterpriseSourceChannel, 'list-types': enterpriseSourceListType } as const
 const postgresTables = {
   'list-sources': postgresChannel, 'list-types': postgresListType,
 } as const
@@ -25,16 +21,6 @@ const normalizeName = (name: string) => name.normalize('NFKC').trim().toLowerCas
 function withParentDetail(rows: { code: string; name: string; level: number; parentCode: string | null }[]): DictionaryEntry[] {
   const names = new Map(rows.map(row => [row.code, row.name]))
   return rows.map(({ code, name, parentCode, level }) => ({ code, name, level, parentCode, detail: parentCode ? names.get(parentCode) ?? parentCode : undefined }))
-}
-
-export function readDictionary(db: Db, kind: DictionaryKind): DictionaryEntry[] {
-  if (kind === 'regions' || kind === 'industries') {
-    const table = kind === 'regions' ? enterpriseRegion : enterpriseIndustry
-    const rows = db.select({ code: table.code, name: table.name, parentCode: table.parentCode, level: table.level }).from(table).orderBy(asc(table.code)).all()
-    return withParentDetail(rows)
-  }
-  const table = businessTables[kind]
-  return db.select({ code: table.code, name: table.name }).from(table).orderBy(asc(table.code)).all()
 }
 
 function validateEntry(entries: DictionaryEntry[], input: DictionaryInput) {
@@ -51,17 +37,6 @@ function validateEntry(entries: DictionaryEntry[], input: DictionaryInput) {
     return { status: 409, message: '已有同名选项。' } as const
   }
   return { status: 200, entry: { code, name: input.name } } as const
-}
-
-export function saveDictionaryEntry(db: Db, kind: EditableDictionaryKind, input: DictionaryInput) {
-  return db.$client.transaction(() => {
-    const checked = validateEntry(readDictionary(db, kind), input)
-    if ('message' in checked) return checked
-    const table = businessTables[kind]
-    if ('code' in input) db.update(table).set({ name: input.name }).where(eq(table.code, checked.entry.code)).run()
-    else db.insert(table).values(checked.entry).run()
-    return checked
-  }).immediate()
 }
 
 export async function readPostgresDictionary(db: NodePgDatabase, kind: DictionaryKind): Promise<DictionaryEntry[]> {

@@ -1,47 +1,53 @@
-import { it, expect } from 'vitest'
+import { afterEach, it, expect, vi } from 'vitest'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { appLog, applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
-it('routes standalone worker events through the real evlog pipeline with safe explicit context', async () => {
-  const directory = mkdtempSync(join(tmpdir(),'evlog181-'))
-  const previous = process.env.NUXT_LOG_DIR; process.env.NUXT_LOG_DIR = directory
-  try {
-    initializeWorkerLogging()
-    appLog({ source:'worker',operation:'worker.fixture',outcome:'failure',error:new Error('PRIVATE181_ERROR /Users/private'), errorCode:'fixture_failure' }, { taskId:'task-181',requestId:'req-181',traceId:'trace-181' })
-    await applicationLogs().flush()
-    const { rows } = await applicationLogs().list({taskId:'task-181'})
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({requestId:'req-181',traceId:'trace-181',level:'error',outcome:'failure'})
-    const detail = await applicationLogs().detail(rows[0]!.id)
-    expect(detail?.errorCode).toBe('fixture_failure')
-    expect(JSON.stringify(detail)).not.toMatch(/PRIVATE181|\/Users\/|stack|message/)
-  } finally {
-    await closeApplicationLogging()
-    if(previous===undefined) delete process.env.NUXT_LOG_DIR; else process.env.NUXT_LOG_DIR=previous
-    rmSync(directory,{recursive:true,force:true})
+const live = it.skipIf(!process.env.ROSTER_TEST_POSTGRES_BIN)
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+let directory: string | undefined
+
+async function useRuntimeLogs() {
+  directory = mkdtempSync(join(tmpdir(), 'evlog-'))
+  runtime = await postgresRuntimeFixture({ dir: directory, logsOnly: true })
+  for (const [key, value] of Object.entries(runtime.env)) vi.stubEnv(key, value)
+  initializeWorkerLogging()
+}
+
+afterEach(async () => {
+  try { await closeApplicationLogging() }
+  finally {
+    vi.unstubAllEnvs()
+    try { runtime?.close() }
+    finally { if (directory) rmSync(directory, { recursive: true, force: true }) }
+    runtime = undefined
+    directory = undefined
   }
 })
 
-it('preserves generated UUIDs that resemble PII through production evlog without admitting raw fields', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'evlog180-uuid-'))
-  const previous = process.env.NUXT_LOG_DIR, previousMode = process.env.NODE_ENV
-  process.env.NUXT_LOG_DIR = directory; process.env.NODE_ENV = 'production'
+live('routes standalone worker events through the real evlog pipeline with safe explicit context', async () => {
+  await useRuntimeLogs()
+  appLog({ source:'worker',operation:'worker.fixture',outcome:'failure',error:new Error('PRIVATE181_ERROR /Users/private'), errorCode:'fixture_failure' }, { taskId:'task-181',requestId:'req-181',traceId:'trace-181' })
+  await applicationLogs().flush()
+  const { rows } = await applicationLogs().list({taskId:'task-181'})
+  expect(rows).toHaveLength(1)
+  expect(rows[0]).toMatchObject({requestId:'req-181',traceId:'trace-181',level:'error',outcome:'failure'})
+  const detail = await applicationLogs().detail(rows[0]!.id)
+  expect(detail?.errorCode).toBe('fixture_failure')
+  expect(JSON.stringify(detail)).not.toMatch(/PRIVATE181|\/Users\/|stack|message/)
+})
+
+live('preserves generated UUIDs that resemble PII through production evlog without admitting raw fields', async () => {
+  vi.stubEnv('NODE_ENV', 'production')
   const requestId = '12345678-1234-4123-8123-123456789012'
-  try {
-    initializeWorkerLogging()
-    appLog({ source: 'http', operation: 'maintenance.enterprise_profile.patch', outcome: 'failure', errorCode: 'invalid_request', body: { secret: 'PRIVATE_UUID180' } } as any, { requestId, traceId: '87654321-4321-4321-8321-210987654321' })
-    await applicationLogs().flush()
-    const rows = (await applicationLogs().list({ requestId })).rows
-    expect(rows).toHaveLength(1)
-    expect(await applicationLogs().detail(rows[0]!.id)).toMatchObject({ requestId, traceId: '87654321-4321-4321-8321-210987654321', errorCode: 'invalid_request' })
-    expect(JSON.stringify(await applicationLogs().detail(rows[0]!.id))).not.toContain('PRIVATE_UUID180')
-  } finally {
-    await closeApplicationLogging()
-    if (previous === undefined) delete process.env.NUXT_LOG_DIR; else process.env.NUXT_LOG_DIR = previous
-    if (previousMode === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previousMode
-    rmSync(directory, { recursive: true, force: true })
-  }
+  await useRuntimeLogs()
+  appLog({ source: 'http', operation: 'maintenance.enterprise_profile.patch', outcome: 'failure', errorCode: 'invalid_request', body: { secret: 'PRIVATE_UUID180' } } as any, { requestId, traceId: '87654321-4321-4321-8321-210987654321' })
+  await applicationLogs().flush()
+  const rows = (await applicationLogs().list({ requestId })).rows
+  expect(rows).toHaveLength(1)
+  expect(await applicationLogs().detail(rows[0]!.id)).toMatchObject({ requestId, traceId: '87654321-4321-4321-8321-210987654321', errorCode: 'invalid_request' })
+  expect(JSON.stringify(await applicationLogs().detail(rows[0]!.id))).not.toContain('PRIVATE_UUID180')
 })
 
 it('projects implicit request events before evlog output while retaining safe production correlation', async () => {
@@ -56,4 +62,27 @@ it('projects implicit request events before evlog output while retaining safe pr
   expect(events).toHaveLength(1)
   expect(events[0]!.applicationLog).toMatchObject({ source: 'http', operation: 'http.request', statusCode: 400, requestId: '12345678-1234-4123-8123-123456789012', traceId: '87654321-4321-4321-8321-210987654321' })
   expect(JSON.stringify(events)).not.toMatch(/PRIVATE_UUID180|headers|authorization|body|message|auditId|receiptId|path/)
+})
+
+live('keeps failed probes and business events while dropping successful polling and default SQL debug logs', async () => {
+  await useRuntimeLogs()
+  const { drainApplicationEvent } = await import('../../../layers/core/lib/logging')
+  const request = (httpRoute: string, status: number) => {
+    drainApplicationEvent({ path: httpRoute, httpRoute, method: 'GET', status })
+  }
+  request('/api/health', 200)
+  request('/api/health', 503)
+  request('/api/task-center', 200)
+  request('/api/task-center', 401)
+  request('/api/roster/enterprises', 200)
+  appLog({ source: 'system', operation: 'db.query.select', outcome: 'started', level: 'debug',
+    origin: { runtime: 'node', integration: 'drizzle', capture: 'framework' } })
+  await applicationLogs().flush()
+  const { rows } = await applicationLogs().list({})
+  expect(rows.map(row => [row.httpRoute, row.statusCode])).toEqual([
+    ['/api/roster/enterprises', 200], ['/api/task-center', 401], ['/api/health', 503],
+  ])
+  expect(await applicationLogs().detail(rows[0]!.id)).toMatchObject({
+    httpRoute: '/api/roster/enterprises', statusCode: 200,
+  })
 })

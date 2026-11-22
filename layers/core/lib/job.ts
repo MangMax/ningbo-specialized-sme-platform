@@ -2,7 +2,7 @@
  * 异步任务的**纯规则**:状态取值、进度形状、任务 id 的生成与校验、参数归一。
  *
  * 分工沿用本仓已有分法(见 `lib/pdf-page.ts` 顶部):`lib/job.ts` 放**规则**,
- * `server/utils/job-store.ts` 放**库读写**,`server/utils/job-runner.ts` 放**执行**。
+ * `server/utils/job-store-postgres.ts` 放**库读写**,`server/utils/job-runner-postgres.ts` 放**执行**。
  * 规则这一层零依赖、可单测 —— 任务 id 的形状、进度的取整、状态的终态判定
  * 都是「错了就很难在集成测试里看出来」的东西(比如 `percent` 少取一次整会让
  * 99% 永远不到 100),单独成文件是为了能在纯函数层面钉住。

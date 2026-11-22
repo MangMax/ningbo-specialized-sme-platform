@@ -1,9 +1,8 @@
 import type { LogContext } from '../../../../core/lib/logging'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
 import { usePostgresFileDb } from '../../../../core/server/utils/file-store-postgres'
 import { savePostgresParse } from '../../utils/parse-maintenance-postgres'
-import { parseCommitMcp310, commitRanges669 } from '../../utils/parse-maintenance-105'
+import { parseCommitMcp310 } from '../../utils/parse-maintenance-contract'
 import { writeGuard } from '../../../../core/server/utils/mcp-guard'
 export default defineMcpTool({
   name: 'commit_file_parse_result', title: '提交冻结输入的名单解析',
@@ -15,6 +14,6 @@ export default defineMcpTool({
     const pg = usePostgresFileDb()
     const root = useRuntimeConfig().filesDir
     const context = (extra as { logContext?: LogContext } | undefined)?.logContext
-    return pg ? savePostgresParse(pg, fileId, input, root, 'commit', context) : commitRanges669(useDb(), fileId, input, root, context)
+    return savePostgresParse(pg, fileId, input, root, 'commit', context)
   },
 })

@@ -1,10 +1,11 @@
+import { isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
 import { and, count, desc, eq, gt, lte, ne, notExists, or, sql, type SQLWrapper } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
 import { importBatch } from '../../../../db/postgresql/import-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { platformBusinessObservation, platformCollection, platformExportBatch, platformExportRow,
-  platformLegacyQueryAlias, platformLegacyRelationAlias, platformObservationAssignment } from '../../../../db/postgresql/platform-tables'
+  platformObservationAssignment } from '../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import { postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeUscc } from '../../lib/domain'
@@ -12,10 +13,10 @@ import { formerPlatformMembers } from '../../lib/roster/enterprise-list-postgres
 import { duplicateCandidatesFromBatch } from '../../lib/roster/duplicate-merge'
 import type { RosterImportItemResult, RosterImportPreflight } from '../../lib/roster-import-client'
 import { planPostgresPlatformQueries } from './collection-import-postgres'
-import { duplicateMergeSourceIdentity, findIndexedUsccEvidence, projectDuplicateMerge, type PlatformEvidenceIndex, type PlatformEvidenceQuery, type PlatformEvidenceRelation } from './roster-duplicate-merge'
+import { duplicateMergeSourceIdentity, findIndexedUsccEvidence, projectDuplicateMerge, type PlatformEvidenceIndex, type PlatformEvidenceQuery, type PlatformEvidenceRelation } from './roster-duplicate-merge-model'
 import { prepareUsccClaims, type UsccQueryParse } from './uscc-research-query'
-import { platformOnlyUsccTargets, selectUsccTargetRows } from './uscc-research-read'
-import { pageUsccChecklist, prepareUsccResearch, projectUsccDictionary, projectUsccResearch, projectUsccTargets, type UsccTargetSnapshot } from './uscc-research'
+import { platformOnlyUsccTargets, selectUsccTargetRows } from './uscc-target-selection'
+import { pageUsccChecklist, prepareUsccResearch, projectUsccDictionary, projectUsccResearch, projectUsccTargets, type UsccTargetSnapshot } from './uscc-research-model'
 
 type Reader = Pick<NodePgDatabase, 'select'>
 // Drizzle inArray binds each element separately. The checklist and its evidence
@@ -44,7 +45,7 @@ function potentiallyMatchingUscc(column: SQLWrapper, codes: string[]) {
 }
 
 const queryFields = {
-  id: platformLegacyQueryAlias.oldId,
+  id: platformCollection.publicId,
   interface: sql<PlatformEvidenceQuery['interface']>`${platformCollection.interface}`,
   queryKey: platformCollection.queryKey,
   rdjb: platformCollection.rdjb,
@@ -84,13 +85,12 @@ async function readTargets(db: NodePgDatabase, owners: Owner[], aliases: Alias[]
     reasonCode: differenceReason.reasonCode, reasonNote: differenceReason.reasonNote,
   }).from(differenceReason).where(containsIds(differenceReason.enterpriseId, [...selectedIds])).orderBy(differenceReason.id)
   const relationCount = db.select({ count: count() }).from(platformBusinessObservation)
-    .innerJoin(platformLegacyRelationAlias, eq(platformLegacyRelationAlias.observationId, platformBusinessObservation.id))
-    .innerJoin(platformObservationAssignment, initialAssignment).where(eq(platformBusinessObservation.collectionId, platformCollection.id))
+    .innerJoin(platformObservationAssignment, initialAssignment).where(and(eq(platformBusinessObservation.collectionId, platformCollection.id), isCurrentPlatformObservation(db)))
   const traces = await db.select({
     ...queryFields, status: sql<UsccTargetSnapshot['queries'][number]['status']>`${platformCollection.status}`,
     count: sql<number>`${relationCount}`.mapWith(Number),
-  }).from(platformCollection).innerJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformCollection.id))
-    .where(containsKeys(platformCollection.queryKey, keys)).orderBy(platformLegacyQueryAlias.oldId)
+  }).from(platformCollection)
+    .where(containsKeys(platformCollection.queryKey, keys)).orderBy(platformCollection.publicId)
   return { rows, enterprises, records: selectedRecords, events, evidence, differences,
     queries: traces, relationCounts: traces.map(row => ({ queryId: row.id, count: row.count })) }
 }
@@ -102,8 +102,7 @@ async function readEvidence(db: Reader, requested: string[]) {
   const exportNames = new Map<string, string>()
   if (codes.length) {
     const rows = await db.select(queryFields).from(platformCollection)
-      .innerJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformCollection.id))
-      .where(potentiallyMatchingUscc(platformCollection.queryKey, codes)).orderBy(platformLegacyQueryAlias.oldId)
+      .where(potentiallyMatchingUscc(platformCollection.queryKey, codes)).orderBy(platformCollection.publicId)
     const queryIds: number[] = []
     for (const query of rows) {
       const code = normalizeUscc(query.queryKey)
@@ -114,15 +113,14 @@ async function readEvidence(db: Reader, requested: string[]) {
       index.queriesByUscc.set(code, bucket)
     }
     const relations: PlatformEvidenceRelation[] = await db.select({
-      id: platformLegacyRelationAlias.oldId, queryId: platformLegacyQueryAlias.oldId,
+      id: platformBusinessObservation.publicId, queryId: platformCollection.publicId,
       sequenceNo: platformBusinessObservation.sequenceNo, relationKey: platformBusinessObservation.sourceRelationKey,
       nameRaw: platformObservationAssignment.nameRaw, usccRaw: platformObservationAssignment.usccRaw,
-    }).from(platformLegacyQueryAlias)
-      .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.collectionId, platformLegacyQueryAlias.collectionId))
-      .innerJoin(platformLegacyRelationAlias, eq(platformLegacyRelationAlias.observationId, platformBusinessObservation.id))
+    }).from(platformCollection)
+      .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.collectionId, platformCollection.id))
       .innerJoin(platformObservationAssignment, initialAssignment)
-      .where(containsIds(platformLegacyQueryAlias.oldId, queryIds))
-      .orderBy(platformLegacyQueryAlias.oldId, platformBusinessObservation.sequenceNo, platformLegacyRelationAlias.oldId)
+      .where(and(containsIds(platformCollection.publicId, queryIds), isCurrentPlatformObservation(db)))
+      .orderBy(platformCollection.publicId, platformBusinessObservation.sequenceNo, platformBusinessObservation.publicId)
     for (const relation of relations) {
       const bucket = index.relationsByQuery.get(relation.queryId) ?? []
       bucket.push(relation)

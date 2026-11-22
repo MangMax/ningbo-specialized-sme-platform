@@ -1,27 +1,23 @@
+import { prepareRuntimeLogs } from '../fixtures/runtime'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { appLog, applicationLogs, closeApplicationLogging, initializeWorkerLogging, requestLogContext } from '../../../layers/core/lib/logging'
+import { appLog, applicationLogs, requestLogContext } from '../../../layers/core/lib/logging'
 import { projectEvlog, safeLogEvent } from '../../../layers/core/lib/logging/privacy'
 import { safeHttpMethod, safeHttpRoute } from '../../../layers/core/lib/logging/http'
 
 /**
- * #180 runtime-log usability. Uses the real evlog -> allowlist -> SQLite drain;
+ * #180 runtime-log usability. Uses the real evlog -> allowlist -> PostgreSQL drain;
  * no test-only projection. The business side is untouched.
  */
 const directory = mkdtempSync(join(tmpdir(), 'log-usability-180-'))
-const previous = process.env.NUXT_LOG_DIR
+let runtime: Awaited<ReturnType<typeof prepareRuntimeLogs>>
 const PRIVATE = 'PRIVATE180_DO_NOT_PERSIST'
 
-beforeAll(() => {
-  process.env.NUXT_LOG_DIR = directory
-  initializeWorkerLogging()
-})
+beforeAll(async () => { runtime = await prepareRuntimeLogs(directory) })
 afterAll(async () => {
-  await closeApplicationLogging()
-  if (previous === undefined) delete process.env.NUXT_LOG_DIR
-  else process.env.NUXT_LOG_DIR = previous
+  await runtime?.close()
   rmSync(directory, { recursive: true, force: true })
 })
 
@@ -162,7 +158,7 @@ it('isolates malformed transport input without changing the stored outcome or av
   expect(applicationLogs().status().unavailable).toBe(false)
 })
 
-it('drops non-template applicationLog routes from stdout and SQLite while keeping real templates', async () => {
+it('drops non-template applicationLog routes from stdout and stored PostgreSQL events while keeping real templates', async () => {
   const rejected = ['/api/files/alice', '/api/files/bob-smith', '/api/private-secret']
   // The service's stdout fallback is bounded at 10 lines/second; earlier tests used the window.
   await new Promise(resolve => setTimeout(resolve, 1100))
@@ -183,9 +179,7 @@ it('drops non-template applicationLog routes from stdout and SQLite while keepin
       await new Promise(resolve => setTimeout(resolve, 10))
     }
     await applicationLogs().flush()
-    // SQLite completion and the Worker's forwarded stdout are separate
-    // observations. Keep the spy installed until the output being asserted
-    // actually reaches this process; do not infer pipe delivery from storage.
+    // Wait for the stdout write before removing the spy.
     await vi.waitFor(() => expect(writes.join('')).toContain('/api/files/:id'), { timeout: 1000, interval: 10 })
   } finally {
     output.mockRestore()
@@ -199,7 +193,7 @@ it('drops non-template applicationLog routes from stdout and SQLite while keepin
   }
   const known = (await applicationLogs().list({ operation: 'http.known_fixture', limit: 1 })).rows[0]!
   expect(known.httpRoute).toBe('/api/files/:id')
-  const db = readFileSync(join(directory, 'events.db')).toString()
+  const db = runtime.psql(['-c', 'SELECT row_to_json(event) FROM runtime_logs.log_events AS event'])
   const printed = writes.join('')
   for (const route of rejected) {
     expect(printed, route).not.toContain(route)
@@ -209,41 +203,24 @@ it('drops non-template applicationLog routes from stdout and SQLite while keepin
   expect(db).toContain('/api/files/:id')
 })
 
+
 it('still lists and reads rows written before the new fields and list counts existed', async () => {
-  const legacyDirectory = mkdtempSync(join(tmpdir(), 'log-usability-legacy-'))
-  const { createLogService } = await import('../../../layers/core/lib/logging/service')
-  const service = createLogService({ directory: legacyDirectory })
-  try {
-    service.emit({ source: 'worker', operation: 'legacy.fixture', outcome: 'failure', errorCode: 'old_code', counts: { done: 1 }, taskId: 'task-legacy' })
-    await service.flush()
-  } finally {
-    await service.close()
-  }
-  const { default: Database } = await import('better-sqlite3')
-  const db = new Database(join(legacyDirectory, 'events.db'))
-  try {
-    const row = db.prepare('SELECT id, summary, detail FROM log_events LIMIT 1').get() as { id: string; summary: string; detail: string }
-    const summary = JSON.parse(row.summary)
-    const detail = JSON.parse(row.detail)
-    for (const key of ['counts', 'errorCode', 'httpMethod', 'httpRoute']) { delete summary[key]; delete detail[key] }
-    db.prepare('UPDATE log_events SET summary=?, detail=? WHERE id=?').run(JSON.stringify(summary), JSON.stringify(detail), row.id)
-  } finally {
-    db.close()
-  }
-  const reopened = createLogService({ directory: legacyDirectory })
-  try {
-    const listed = await reopened.list({ taskId: 'task-legacy' })
-    expect(listed.rows).toHaveLength(1)
-    expect(listed.rows[0]).toMatchObject({ source: 'worker', operation: 'legacy.fixture', outcome: 'failure', taskId: 'task-legacy' })
-    expect(listed.rows[0]).not.toHaveProperty('counts')
-    expect(listed.rows[0]).not.toHaveProperty('errorCode')
-    expect(listed.rows[0]).not.toHaveProperty('httpMethod')
-    expect(listed.rows[0]).not.toHaveProperty('httpRoute')
-    const detail = await reopened.detail(listed.rows[0]!.id)
-    expect(detail).toMatchObject({ id: listed.rows[0]!.id, operation: 'legacy.fixture' })
-    expect(detail).not.toHaveProperty('httpMethod')
-  } finally {
-    await reopened.close()
-    rmSync(legacyDirectory, { recursive: true, force: true })
-  }
+  const reopened = applicationLogs()
+  runtime.psql(['-c', `
+    INSERT INTO runtime_logs.log_events (id, timestamp, level, source, operation, outcome, "taskId", detail)
+    VALUES ('b9843620-01d3-48ea-9342-23456ac83d34', '${new Date().toISOString()}', 'error', 'worker', 'legacy.fixture', 'failure', 'task-legacy',
+      '{"id":"b9843620-01d3-48ea-9342-23456ac83d34","source":"worker","operation":"legacy.fixture","outcome":"failure","taskId":"task-legacy"}');
+    UPDATE runtime_logs.log_policy SET logical_bytes =
+      (SELECT SUM(octet_length(detail)) FROM runtime_logs.log_events);
+  `])
+  const listed = await reopened.list({ taskId: 'task-legacy' })
+  expect(listed.rows).toHaveLength(1)
+  expect(listed.rows[0]).toMatchObject({ source: 'worker', operation: 'legacy.fixture', outcome: 'failure', taskId: 'task-legacy' })
+  expect(listed.rows[0]).not.toHaveProperty('counts')
+  expect(listed.rows[0]).not.toHaveProperty('errorCode')
+  expect(listed.rows[0]).not.toHaveProperty('httpMethod')
+  expect(listed.rows[0]).not.toHaveProperty('httpRoute')
+  const detail = await reopened.detail(listed.rows[0]!.id)
+  expect(detail).toMatchObject({ id: listed.rows[0]!.id, operation: 'legacy.fixture' })
+  expect(detail).not.toHaveProperty('httpMethod')
 }, 15000)

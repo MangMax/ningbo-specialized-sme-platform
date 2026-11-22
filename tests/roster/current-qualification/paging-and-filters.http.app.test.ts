@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { assertQualificationRowsSnapshotEqual } from '../fixtures/qualification-matrix'
+import { assertQualificationRowsSnapshotEqual } from '../assertions/current-qualified-rows'
 
 
 import { readDevelopmentDiscovery, specializedExportFixture } from '../current-export/fixtures/specialized-export'
@@ -7,7 +7,7 @@ import { readDevelopmentDiscovery, specializedExportFixture } from '../current-e
 let developmentSpec: any
 beforeAll(async () => { developmentSpec = await readDevelopmentDiscovery() }, 60000)
 const f = specializedExportFixture()
-beforeAll(async () => { f.candidate('甲企业'); f.candidate('乙企业'); await f.start() }, 90000)
+beforeAll(async () => { await f.candidate('甲企业'); await f.candidate('乙企业'); await f.start() }, 90000)
 afterAll(f.close)
 
 async function query(params: Record<string, string>) {

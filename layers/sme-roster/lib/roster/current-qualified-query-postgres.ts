@@ -3,7 +3,7 @@ import { createPostgresPlatformQualificationReader } from './platform-qualificat
 import { currentCandidateIdBlocks } from './current-candidate-reader'
 import { readPostgresCurrentCandidateIds } from './current-candidates-postgres'
 import { readPostgresCurrentDetailBatch, readPostgresCurrentFilterBatch } from './current-qualification-postgres'
-import { createCurrentQualifiedPage, projectCurrentQualifiedRow, type CurrentQualifiedFilter, type CurrentQualifiedRow } from './current-qualified-query'
+import { createCurrentQualifiedPage, projectCurrentQualifiedRow, type CurrentQualifiedFilter, type CurrentQualifiedRow } from './current-qualified-page'
 
 export function listPostgresCurrentQualified(db: NodePgDatabase, filter: CurrentQualifiedFilter, asOf = Date.now()) {
   return db.transaction(async tx => {

@@ -1,88 +1,75 @@
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 
 import { createHash } from 'node:crypto'
-import Database from 'better-sqlite3'
+import pg from 'pg'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { initializeDb } from '../../../db/client'
 import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
-import { spawnOwnedChild as spawn, spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { nativeAppAdapter } from '../../support/native-app'
 
-// Every business write uses the app API on a new isolated SQLite database.
+// Every business write uses the app API on isolated PostgreSQL.
 const dir = mkdtempSync(join(tmpdir(), 'declare-kind-249-'))
 const token = 'synthetic-declare-kind-249'
-let service: { baseUrl: string; stop: () => Promise<void> }
+const app = nativeAppAdapter({ dir, token })
+let pool: pg.Pool | undefined
+let baseUrl: string
 let client: ReturnType<typeof createRosterImportClient>
 beforeAll(async () => {
-  const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
-  initializeDb({ dbPath: join(dir, 'roster.db'), create: true }).$client.close()
-  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env,
-    NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: join(dir, 'roster.db'), NUXT_DB_READONLY: '0',
-    NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: token,
-  } })
-  let output = ''
-  for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-8000) })
-  service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
-  try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) }
-  catch (error) { await service.stop(); throw new Error(`${String(error)}\n${output}`) }
-  expect(output).toContain(service.baseUrl)
+  await app.start()
+  baseUrl = app.url('')
+  pool = new pg.Pool({ connectionString: app.postgresUrl!, options: '-c search_path=business,public -c default_transaction_read_only=on' })
   const contract = await readDevelopmentDiscovery()
   expect(contract.paths['/api/roster/import/preflight'].post).toBeDefined()
   expect(contract.paths['/api/roster/import/commit'].post).toBeDefined()
-  expect(contract.paths['/api/platform/queries/{queryId}/evidence'].get).toBeDefined()
-  client = createRosterImportClient({ baseUrl: service.baseUrl, token })
+  expect(contract.paths['/api/platform/queries'].get).toBeDefined()
+  expect(contract.paths['/api/platform/queries/{queryId}/evidence']).toBeUndefined()
+  expect(JSON.stringify(contract.paths['/api/platform/queries'].get)).not.toContain('includeRawResponse')
+  client = createRosterImportClient({ baseUrl: baseUrl, token })
 }, 90000)
-afterAll(async () => { await service?.stop(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => {
+  await pool?.end()
+  await app.close()
+  rmSync(dir, { recursive: true, force: true })
+})
 
 function input(label: string, source: 'apply_list' | 'business_list', relations: NonNullable<NonNullable<RosterImportRequest['payload']['platformQueries']>[number]['relations']>): RosterImportRequest {
   return { idempotencyKey: `249:${label}`, sourceKind: 'alias_evidence', sourceIdentity: `synthetic:249:${label}`, payload: { platformQueries: [{ interface: source, queryKey: `synthetic:249:${label}`, queriedAt: '2026-10-23T00:00:00.000Z', status: 'success', rawResponse: '原始响应 🙂\n', relations }] } }
 }
 async function read(label: string) {
-  const response = await fetch(`${service.baseUrl}/api/platform/queries?queryKey=${encodeURIComponent(`synthetic:249:${label}`)}&includeRawResponse=true`)
+  const response = await fetch(`${baseUrl}/api/platform/queries?queryKey=${encodeURIComponent(`synthetic:249:${label}`)}`)
   expect(response.status).toBe(200)
   return response.json()
 }
-async function original(queryId: number, relationId: number) {
-  const response = await fetch(`${service.baseUrl}/api/platform/queries/${queryId}/evidence?field=relation&relationId=${relationId}`)
-  expect(response.status).toBe(200)
-  const chunk = await response.json()
-  expect(chunk.hasMore).toBe(false)
-  return JSON.parse(Buffer.from(chunk.data, 'base64').toString('utf8'))
-}
 async function api(path: string, body?: unknown, method = 'POST') {
-  const response = await fetch(service.baseUrl + path, { method: body ? method : 'GET', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) })
+  const response = await fetch(baseUrl + path, { method: body ? method : 'GET', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) })
   expect(response.status).toBe(200)
   return response.json()
 }
 
-it.each(['apply_list', 'business_list'] as const)('equivalent declare kinds archive and replay over real HTTP without changing raw evidence: %s', async (source) => {
+it.each(['apply_list', 'business_list'] as const)('equivalent declare kinds remain stable on HTTP readback and import replay: %s', async (source) => {
   const pairs = [['申请', 'apply'], ['更新', 'update'], ['复核', 'review']] as const
   const relations = pairs.flatMap(([chinese, english], i) => [
-    { sequenceNo: i * 2 + 1, declareKind: chinese, rawFields: { sblx: english, cszt: '终审通过', sourceOnly: '留证 🙂\n' } },
-    { sequenceNo: i * 2 + 2, declareKind: english, rawFields: { sblx: chinese, cszt: '终审通过', sourceOnly: '留证 🙂\n' } },
+    { sequenceNo: i * 2 + 1, declareKind: chinese, rawFields: { sblx: english, cszt: '终审通过', sourceOnly: { note: '留证 🙂\n' } } },
+    { sequenceNo: i * 2 + 2, declareKind: english, rawFields: { sblx: chinese, cszt: '终审通过', sourceOnly: { note: '留证 🙂\n' } } },
   ])
   const request = input(source, source, relations)
   expect((await client.preflight(request)).preflight.conflicts).toEqual([])
   expect((await client.commit(request)).status).toBe('committed')
   const page = await read(source)
   const archived = page.rows[0]
-  expect(archived.query.rawResponse).toBe('原始响应 🙂\n')
+  expect(archived.query).not.toHaveProperty('rawResponse')
+  expect(JSON.stringify(archived)).not.toContain('留证')
   expect(archived.relations).toHaveLength(6)
-  const originals = []
   for (const [i, row] of archived.relations.entries()) {
-    expect(row).toMatchObject({ declareKind: pairs[Math.floor(i / 2)]![1], rawFields: relations[i]!.rawFields, normalizationConflicts: [] })
-    const evidence = await original(archived.query.id, row.id)
-    expect(evidence).toMatchObject({ declareKind: row.declareKind, rawFields: relations[i]!.rawFields })
-    originals.push(evidence)
+    expect(row).toMatchObject({ declareKind: pairs[Math.floor(i / 2)]![1], normalizationConflicts: [] })
   }
   expect((await client.commit(request)).status).toBe('committed')
   expect(await read(source)).toEqual(page)
-  for (const [i, row] of archived.relations.entries()) expect(await original(archived.query.id, row.id)).toEqual(originals[i])
-})
+}, 20_000)
 
-it('unknown and prototype-named declare kinds survive HTTP archive and exact evidence reads', async () => {
+it('unknown and prototype-named declare kinds survive extracted HTTP readback', async () => {
   const values = ['新事项', '__proto__', 'constructor', 'toString', 'APPLY']
   const relations = values.map((value, i) => ({ sequenceNo: i + 1, declareKind: value, rawFields: { sblx: value } }))
   const request = input('unknown', 'business_list', relations)
@@ -91,8 +78,7 @@ it('unknown and prototype-named declare kinds survive HTTP archive and exact evi
   const archived = (await read('unknown')).rows[0]
   expect(archived.relations).toHaveLength(values.length)
   for (const [i, row] of archived.relations.entries()) {
-    expect(row).toMatchObject({ declareKind: values[i], rawFields: relations[i]!.rawFields, normalizationConflicts: [] })
-    expect(await original(archived.query.id, row.id)).toMatchObject({ declareKind: values[i], rawFields: relations[i]!.rawFields })
+    expect(row).toMatchObject({ declareKind: values[i], normalizationConflicts: [] })
   }
 })
 
@@ -116,30 +102,31 @@ it('identical full raw reuses a content version across stored synonyms while cha
     input('content-second', 'apply_list', [{ sequenceNo: 1, relationKey: raw.id, declareKind: '申请', rawFields: raw }]),
     input('content-changed', 'apply_list', [{ sequenceNo: 1, relationKey: raw.id, declareKind: '申请', rawFields: { ...raw, sblx: 'apply' } }]),
   ]
-  for (const request of requests) {
+  for (const [index, request] of requests.entries()) {
     request.sourceKind = 'platform_archive'
     expect((await client.preflight(request)).preflight.conflicts).toEqual([])
     expect((await client.commit(request)).status).toBe('committed')
-  }
-  const db = new Database(join(dir, 'roster.db'), { readonly: true, fileMustExist: true })
-  try {
-    const versions = () => db.prepare('SELECT o.record_id, o.version_id FROM platform_business_observation o JOIN platform_business_record r ON r.id = o.record_id WHERE r.platform_key = ? ORDER BY o.id').all(raw.id)
-    const before = versions() as { record_id: number; version_id: number }[]
-    expect(before).toHaveLength(3)
-    expect(before[0]!.version_id).toBeGreaterThan(0)
-    expect(before[0]).toEqual(before[1])
-    expect(before[2]!.record_id).toBe(before[0]!.record_id)
-    expect(before[2]!.version_id).not.toBe(before[0]!.version_id)
-    for (const label of ['content-first', 'content-second', 'content-changed']) {
-      const archived = (await read(label)).rows[0], row = archived.relations[0]
-      expect(row).toMatchObject({ declareKind: 'apply', normalizationConflicts: [] })
-      expect((await original(archived.query.id, row.id)).rawFields).toEqual(label === 'content-changed' ? { ...raw, sblx: 'apply' } : raw)
+    if (index === 1) {
+      const [versionCount] = (await pool!.query<{ count: string }>(
+        'SELECT count(*) FROM platform_business_record_version v JOIN platform_business_record r ON r.id = v.record_id WHERE r.platform_key = $1', [raw.id],
+      )).rows
+      expect(Number(versionCount!.count)).toBe(1)
     }
-    expect(versions()).toEqual(before)
-  } finally { db.close() }
+  }
+  const versions = async () => (await pool!.query<{ record_id: string; version_id: string }>(
+    'SELECT o.record_id, o.version_id FROM platform_business_observation o JOIN platform_business_record r ON r.id = o.record_id WHERE r.platform_key = $1 ORDER BY o.id', [raw.id],
+  )).rows
+  const before = await versions()
+  expect(before).toHaveLength(2)
+  expect(Number(before[0]!.version_id)).toBeGreaterThan(0)
+  expect(before[1]!.record_id).toBe(before[0]!.record_id)
+  expect(before[1]!.version_id).not.toBe(before[0]!.version_id)
+  for (const label of ['content-first', 'content-second']) expect((await read(label)).rows[0].relations).toEqual([])
+  expect((await read('content-changed')).rows[0].relations).toEqual([expect.objectContaining({ declareKind: 'apply', normalizationConflicts: [] })])
+  expect(await versions()).toEqual(before)
 })
 
-it('synonym reads preserve full raw source fingerprints and cannot clear stale source qualification', async () => {
+it('synonym reads preserve decision fingerprints and cannot clear stale source qualification', async () => {
   const name = '合成同义来源资格企业', uscc = '91330211000000001F'
   const announcement: RosterImportRequest = { idempotencyKey: '249:official', sourceKind: 'announcement', sourceIdentity: 'synthetic:249:official', payload: { announcement: { sourceDocument: { source: 'jxj', title: '合成来源资格公告' }, records: [{ enterprise: { name, uscc }, titleCode: 'innovative_sme', events: [{ eventType: 'award', year: 2025 }] }] } } }
   const staged = await client.commit(announcement)
@@ -152,30 +139,34 @@ it('synonym reads preserve full raw source fingerprints and cannot clear stale s
   request.payload.platformQueries![0]!.titleCode = 'innovative_sme'
   expect((await client.commit(request)).status).toBe('committed')
   const archived = (await read('fingerprint')).rows[0], relationId = archived.relations[0].id
-  const db = new Database(join(dir, 'roster.db'), { readonly: true, fileMustExist: true })
-  try {
-    const event = db.prepare('SELECT e.id, r.enterprise_id AS enterpriseId FROM record_event e JOIN record r ON r.id = e.record_id').get() as { id: number; enterpriseId: number }
-    const decision = { idempotencyKey: '249:confirm', sourceIdentity: 'synthetic:249:confirm', actor: { type: 'agent', id: 'synthetic-249' }, basis: '合成流程同义与原档核对', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', role: 'supports_award', eventId: event.id, relationId } }] }
-    const plan = await api('/api/roster/correspondences/preflight', decision)
-    const receipt = await api('/api/roster/correspondences/commit', { request: decision, planHash: plan.planHash })
-    const id = receipt.correspondenceIds[0]
-    const persisted = () => db.prepare('SELECT source_fingerprint AS fingerprint, provenance FROM record_correspondence WHERE id = ?').get(id) as { fingerprint: string; provenance: string }
-    const before = persisted()
-    const { comparisonProofIds: _proofs, ...provenance } = JSON.parse(before.provenance)
-    expect(provenance.relation.rawFields).toEqual(request.payload.platformQueries![0]!.relations![0]!.rawFields)
-    expect(provenance.relation).not.toHaveProperty('normalizationConflicts')
-    expect(before.fingerprint).toBe(createHash('sha256').update(JSON.stringify(provenance)).digest('hex'))
-    expect(plan.targets[0].sourceFingerprint).toBe(before.fingerprint)
-    const originalBytes = await original(archived.query.id, relationId)
-    expect(await api(`/api/roster/correspondences/${id}`)).toMatchObject({ status: 'confirmed', requiresRevalidation: false })
-    expect((await api(`/api/roster/correspondences/relations/${relationId}`)).source).toMatchObject({ declareKind: 'apply', normalizationConflicts: [] })
-    expect(persisted()).toEqual(before)
-    const profile = await api(`/api/roster/enterprises/${event.enterpriseId}/profile`)
-    await api(`/api/roster/enterprises/${event.enterpriseId}`, { idempotencyKey: '249:source-change', expectedVersion: profile.version, changes: { city: '合成资料更正' }, actor: { type: 'agent', id: 'synthetic-249' }, basis: '合成来源变更资格反例' }, 'PATCH')
-    expect(await api(`/api/roster/correspondences/${id}`)).toMatchObject({ status: 'confirmed', requiresRevalidation: true })
-    expect((await api(`/api/roster/correspondences/relations/${relationId}`)).source).toMatchObject({ declareKind: 'apply', normalizationConflicts: [] })
-    expect(await api(`/api/roster/correspondences/${id}`)).toMatchObject({ requiresRevalidation: true })
-    expect(persisted()).toEqual(before)
-    expect(await original(archived.query.id, relationId)).toEqual(originalBytes)
-  } finally { db.close() }
-})
+  const { rows: [event] } = await pool!.query<{ id: number; enterpriseId: number }>(
+    'SELECT e.id::integer AS id, r.enterprise_id::integer AS "enterpriseId" FROM record_event e JOIN record r ON r.id = e.record_id',
+  )
+  expect(event).toBeDefined()
+  const decision = { idempotencyKey: '249:confirm', sourceIdentity: 'synthetic:249:confirm', actor: { type: 'agent', id: 'synthetic-249' }, basis: '合成流程同义与原档核对', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', role: 'supports_award', eventId: event!.id, relationId } }] }
+  const plan = await api('/api/roster/correspondences/preflight', decision)
+  const receipt = await api('/api/roster/correspondences/commit', { request: decision, planHash: plan.planHash })
+  const id = receipt.correspondenceIds[0]
+  const persisted = async () => (await pool!.query<{ fingerprint: string; provenance: string }>(
+    `SELECT edge.source_fingerprint AS fingerprint, audit.evidence AS provenance
+      FROM record_correspondence edge JOIN record_correspondence_audit audit
+        ON audit.correspondence_id = edge.id AND audit.resulting_revision = edge.revision
+      WHERE edge.id = $1`, [id],
+  )).rows[0]!
+  const before = await persisted()
+  const { comparisonProofIds: _proofs, ...provenance } = JSON.parse(before.provenance)
+  expect(provenance.relation).not.toHaveProperty('rawFields')
+  expect(provenance.relation).toMatchObject({ id: relationId })
+  expect(provenance.relation).not.toHaveProperty('normalizationConflicts')
+  expect(before.fingerprint).toBe(createHash('sha256').update(JSON.stringify(provenance)).digest('hex'))
+  expect(plan.targets[0].sourceFingerprint).toBe(before.fingerprint)
+  expect(await api(`/api/roster/correspondences/${id}`)).toMatchObject({ status: 'confirmed', requiresRevalidation: false })
+  expect((await api(`/api/roster/correspondences/relations/${relationId}`)).source).toMatchObject({ declareKind: 'apply', normalizationConflicts: [] })
+  expect(await persisted()).toEqual(before)
+  const profile = await api(`/api/roster/enterprises/${event!.enterpriseId}/profile`)
+  await api(`/api/roster/enterprises/${event!.enterpriseId}`, { idempotencyKey: '249:source-change', expectedVersion: profile.version, changes: { city: '合成资料更正' }, actor: { type: 'agent', id: 'synthetic-249' }, basis: '合成来源变更资格反例' }, 'PATCH')
+  expect(await api(`/api/roster/correspondences/${id}`)).toMatchObject({ status: 'confirmed', requiresRevalidation: true })
+  expect((await api(`/api/roster/correspondences/relations/${relationId}`)).source).toMatchObject({ declareKind: 'apply', normalizationConflicts: [] })
+  expect(await api(`/api/roster/correspondences/${id}`)).toMatchObject({ requiresRevalidation: true })
+  expect(await persisted()).toEqual(before)
+}, 20_000)

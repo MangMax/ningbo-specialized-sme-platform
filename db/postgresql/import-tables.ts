@@ -1,4 +1,4 @@
-import { bigint, text } from 'drizzle-orm/pg-core'
+import { bigint, boolean, text } from 'drizzle-orm/pg-core'
 import { businessSchema } from './business-schema'
 
 export const importBatch = businessSchema.table('import_batch', {
@@ -21,11 +21,10 @@ export const importReceipt = businessSchema.table('import_receipt', {
   batchId: bigint('batch_id', { mode: 'number' }).notNull(),
   operation: text('operation').notNull(),
   requestHash: text('request_hash').notNull(),
-  requestBody: text('request_body').notNull(),
+  historicalProjection: boolean('historical_projection').notNull().default(false),
   status: text('status').notNull(),
   summary: text('summary'),
   itemResults: text('item_results'),
   createdAt: text('created_at').notNull(),
   completedAt: text('completed_at'),
-  bodyReceiptId: bigint('body_receipt_id', { mode: 'number' }),
 })

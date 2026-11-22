@@ -1,8 +1,7 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
 import { usePostgresFileDb } from '../../../../core/server/utils/file-store-postgres'
 import { preflightPostgresParse } from '../../utils/parse-maintenance-postgres'
-import { parsePreflightMcp310, preflightRanges669 } from '../../utils/parse-maintenance-105'
+import { parsePreflightMcp310 } from '../../utils/parse-maintenance-contract'
 import { writeGuard } from '../../../../core/server/utils/mcp-guard'
 export default defineMcpTool({
   name: 'preflight_file_parse_result', title: '冻结名单解析文件/OCR输入',
@@ -13,6 +12,6 @@ export default defineMcpTool({
   handler: ({ fileId, ...input }) => {
     const pg = usePostgresFileDb()
     const root = useRuntimeConfig().filesDir
-    return pg ? preflightPostgresParse(pg, fileId, input, root) : preflightRanges669(useDb(), fileId, input, root)
+    return preflightPostgresParse(pg, fileId, input, root)
   },
 })

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import type { RecordComparisonResult } from '#sme-roster/lib/roster/record-comparison-view'
+import { comparisonQualificationText as qualificationText } from '#sme-roster/lib/roster/record-comparison-display'
 import { comparisonReasonText } from '#sme-roster/lib/roster/record-comparison-view'
 import { PLATFORM_INTERFACES, PLATFORM_QUERY_STATUSES, TITLES } from '#sme-roster/lib/labels'
 import { humanRecordTime } from '#sme-roster/lib/roster/record-ledger'
@@ -19,7 +20,6 @@ const observationLimit = ref(20)
 const exportLimit = ref(20)
 const unlinkedLimit = ref(20)
 function openSource(kind: 'relation' | 'export_row', id: number) { navigatingToEvent.value = false; sourceKind.value = kind; sourceId.value = id }
-const qualificationText = (value: string) => ({ matched: '同范围同版本一致', interface_only: '接口原行独有', export_only: '导出原行独有', field_conflict: '同范围同版本字段冲突', not_comparable: '范围或版本待核，暂不可比较' }[value] ?? '待核')
 const coverageTitle = (parts: { titleCode: string | null }[]) => parts.map(part => TITLES[part.titleCode ?? ''] ?? '未标注').join('、') || '未标注'
 const conditionNames: Record<string, string> = { name: '企业名称', uscc: '信用代码', sqsj: '申报时间', rddqrq: '有效年份', whpcyear: '维护年份', whpc: '维护批次', szq: '属地代码', combination: '条件关系' }
 const coverageConditions = (conditions: Record<string, unknown> | null) => conditions ? Object.entries(conditions).filter(([, value]) => value != null && value !== '').map(([key, value]) => `${conditionNames[key] ?? key} ${String(value)}`).join(' · ') || '无筛选条件' : '旧查询未保留条件'
@@ -37,7 +37,7 @@ const completenessText = (value: string) => ({ complete: '完整', partial: '部
       data-testid="record-comparison-coverage"
       :title="`所选来源的查询覆盖 · ${result.coverage.length} 次`"
     >
-      <p class="text-muted-foreground mt-2">正式文件覆盖资格：{{ result.officialCoverage.qualification === 'verified' ? '已验证' : '未知' }}。{{ result.officialCoverage.reasons.map(comparisonReasonText).join('；') }}</p>
+      <p class="text-muted-foreground mt-2">公布名单覆盖资格：未知。{{ result.officialCoverage.reasons.map(comparisonReasonText).join('；') }}</p>
       <ul class="mt-2 flex flex-col gap-2">
         <li v-for="item in result.coverage" :key="item.queryId" class="border-t pt-2">
           <strong>{{ PLATFORM_INTERFACES[item.interface] ?? '平台接口' }} · {{ PLATFORM_QUERY_STATUSES[item.status] ?? '状态待核' }}</strong>
@@ -55,7 +55,7 @@ const completenessText = (value: string) => ({ complete: '完整', partial: '部
       data-testid="record-current-consistency"
       title="已认定接口与导出版本"
     >
-      <p class="text-muted-foreground mt-2">比较资格：{{ result.currentSourceConsistency.qualification === 'comparable' ? '已验证同范围同版本' : '范围/版本未获证明，暂不可比较' }}。{{ result.currentSourceConsistency.reasons.map(comparisonReasonText).join('；') }}</p>
+      <p class="text-muted-foreground mt-2">比较资格：范围或版本待核，暂不可比较。{{ result.currentSourceConsistency.reasons.map(comparisonReasonText).join('；') }}</p>
       <h4 class="mt-3 font-medium">已认定接口原始行 · {{ result.currentSourceConsistency.recognizedObservations.length }} 条</h4>
       <ul v-if="result.currentSourceConsistency.recognizedObservations.length" class="mt-1 flex flex-col gap-2">
         <li v-for="observation in result.currentSourceConsistency.recognizedObservations.slice(0, observationLimit)" :key="observation.recognized.id" class="border-t pt-2">
@@ -93,11 +93,11 @@ const completenessText = (value: string) => ({ complete: '完整', partial: '部
       data-testid="record-platform-unlinked"
       :title="`未对应正式事件的接口原行 · ${result.platformWithoutOfficial.total} 条`"
     >
-      <p class="text-muted-foreground mt-2">无正式对应需要完整范围证明；资格未知的原行保持待核，不能直接称为正式文件遗漏。</p>
+      <p class="text-muted-foreground mt-2">无正式对应需要完整范围证明；资格未知的原行保持待核，不能直接称为公布名单遗漏。</p>
       <ul class="mt-2 flex flex-col gap-1.5">
         <li v-for="item in result.platformWithoutOfficial.rows.slice(0, unlinkedLimit)" :key="item.relation.id" class="flex flex-wrap items-center gap-1.5 border-t pt-1.5">
           <span>{{ item.relation.nameRaw ?? '原名未提供' }} · {{ PLATFORM_INTERFACES[item.relation.interface] ?? '平台接口' }} · 原状态 {{ item.relation.status ?? '未提供' }}</span>
-          <Badge variant="outline">{{ item.qualification === 'platform_without_official' ? '已证明范围无正式对应' : item.reasons.includes('row_identity_unverified') ? '主体身份待核' : '正式来源覆盖待核' }}</Badge>
+          <Badge variant="outline">{{ item.reasons.includes('row_identity_unverified') ? '主体身份待核' : '正式来源覆盖待核' }}</Badge>
           <DisclosurePanel compact content-class="pb-0" class="text-muted-foreground">
             <template #trigger><span>原行字段与查询条件</span></template>
             <p>查询 #{{ item.relation.queryId }} · 原行 {{ item.relation.sequenceNo }} · 记录 #{{ item.relation.id }}</p>

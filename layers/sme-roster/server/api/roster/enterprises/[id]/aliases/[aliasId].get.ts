@@ -1,8 +1,6 @@
 import { usePostgresDirectoryDb } from '../../../../../../../../db/postgresql/client'
 import { getPostgresEnterpriseAlias } from '../../../../../utils/alias-maintenance-postgres'
 import { semanticRouteHandler } from '../../../../../../../core/server/utils/core-route'
-import { useDb } from '@db'
-import { getEnterpriseAlias } from '../../../../../utils/alias-maintenance'
 defineRouteMeta({ openAPI: {
   tags: ['企业别名维护'], summary: '按企业和别名稳定ID精确查询',
   parameters: [
@@ -14,5 +12,5 @@ defineRouteMeta({ openAPI: {
 export default semanticRouteHandler('maintenance.alias.get', event => {
   setHeader(event, 'cache-control', 'no-store')
   const pg = usePostgresDirectoryDb()
-  return pg ? getPostgresEnterpriseAlias(pg, getRouterParam(event, 'id'), getRouterParam(event, 'aliasId')) : getEnterpriseAlias(useDb(), getRouterParam(event, 'id'), getRouterParam(event, 'aliasId'))
+  return getPostgresEnterpriseAlias(pg, getRouterParam(event, 'id'), getRouterParam(event, 'aliasId'))
 })

@@ -1,13 +1,10 @@
 import { eq, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import * as schema from '../../../../db/schema'
+import type { EnterpriseFactReceipt, EnterpriseFactRevision } from './enterprise-fact-model'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { enterpriseFactReceipt, enterpriseFactRevision } from '../../../../db/postgresql/qualification-tables'
-import { EnterpriseProfileError } from './enterprise-profile'
-import {
-  enterpriseFactCommandSchema, enterpriseFactCommitSchema, enterpriseFactHash, enterpriseFactRevisions,
-  parseEnterpriseFactInput, planEnterpriseFact, projectEnterpriseFactState,
-} from './enterprise-facts'
+import { EnterpriseProfileError } from './enterprise-profile-model'
+import { enterpriseFactCommandSchema, enterpriseFactCommitSchema, enterpriseFactHash, enterpriseFactRevisions, parseEnterpriseFactInput, planEnterpriseFact, projectEnterpriseFactState } from './enterprise-fact-model'
 
 type Executor = Pick<NodePgDatabase, 'execute' | 'select'>
 const readSnapshot = { isolationLevel: 'repeatable read', accessMode: 'read only' } as const
@@ -17,7 +14,7 @@ async function state(db: Executor, enterpriseId: number, lock = false) {
   if (!(await (lock ? subject.for('update') : subject)).length) throw new EnterpriseProfileError(404, 'not_found', 'Enterprise not found')
   const revisions = await db.select().from(enterpriseFactRevision).where(eq(enterpriseFactRevision.enterpriseId, enterpriseId)).orderBy(enterpriseFactRevision.id)
   return projectEnterpriseFactState(enterpriseId, revisions.map(row => ({
-    ...row, status: row.status as typeof schema.enterpriseFactRevision.$inferSelect['status'],
+    ...row, status: row.status as EnterpriseFactRevision['status'],
     fact: JSON.parse(row.fact), actor: JSON.parse(row.actor),
   })))
 }
@@ -32,7 +29,7 @@ async function prepare(db: Executor, enterpriseId: number, body: unknown, lock =
   if (lock) await db.execute(sql`SELECT pg_advisory_xact_lock(144815, hashtext(${'enterprise-fact:' + request.idempotencyKey}))`)
   const requestHash = enterpriseFactHash({ enterpriseId, request })
   const [stored] = await db.select().from(enterpriseFactReceipt).where(eq(enterpriseFactReceipt.idempotencyKey, request.idempotencyKey))
-  const prior = stored && { requestHash: stored.requestHash, receipt: JSON.parse(stored.receipt) as typeof schema.enterpriseFactReceipt.$inferSelect['receipt'] }
+  const prior = stored && { requestHash: stored.requestHash, receipt: JSON.parse(stored.receipt) as EnterpriseFactReceipt }
   if (prior && prior.requestHash !== requestHash) throw new EnterpriseProfileError(409, 'idempotency_conflict', 'Key already used for another fact command')
   return planEnterpriseFact(enterpriseId, request, requestHash, prior, await state(db, enterpriseId, lock))
 }

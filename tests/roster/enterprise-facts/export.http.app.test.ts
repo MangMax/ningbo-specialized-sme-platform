@@ -5,12 +5,17 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { initializeDb, schema as s } from '../../../db/client'
+import * as s from '../fixtures/postgres-tables'
+import pg from 'pg'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'facts-export-307-'))
-const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
+let pool: pg.Pool
+let db: ReturnType<typeof drizzle>
 let service: { baseUrl: string; stop: () => Promise<void> }
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 const token = 'synthetic-export-token'
 const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` }
 const url = (path: string) => service.baseUrl + path
@@ -46,29 +51,42 @@ async function workbook(key: string) {
   expect(wb.worksheets.map(sheet=>sheet.name)).toEqual(['有效企业','已到期','已注销（吊销）','已迁出','未认定','口径说明'])
   return { wb, job, bytes }
 }
-function candidate(name: string, events: Array<{ eventType: 'award'|'review'|'nurture'|'maintain'; year: number|null; decidedYear?: number|null; reviewOutcome?: 'passed'|'failed'|null; batchSeq?: number|null }> = [{ eventType: 'award', year: new Date().getFullYear(), batchSeq: 1 }], titleCode = 'little_giant') {
-  const enterprise = db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: 'TEST-' + name, district: '鄞州区', city: '宁波市' }).returning().get()
-  const record = db.insert(s.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode, nameRaw: name }).returning().get()
+async function candidate(name: string, events: Array<{ eventType: 'award'|'review'|'nurture'|'maintain'; year: number|null; decidedYear?: number|null; reviewOutcome?: 'passed'|'failed'|null; batchSeq?: number|null }> = [{ eventType: 'award', year: new Date().getFullYear(), batchSeq: 1 }], titleCode = 'little_giant') {
+  const enterprise = (await db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: 'TEST-' + name, district: '鄞州区', city: '宁波市' }).returning())[0]!
+  const record = (await db.insert(s.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode, nameRaw: name }).returning())[0]!
   for (const e of events) {
-    const event = db.insert(s.recordEvent).values({ recordId: record.id, ...e }).returning().get()
-    db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'jxj/announcement/synthetic.xlsx', attachment: '名单', listNo: enterprise.id }).run()
+    const event = (await db.insert(s.recordEvent).values({ recordId: record.id, ...e }).returning())[0]!
+    await db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'jxj/announcement/synthetic.xlsx', attachment: '名单', listNo: enterprise.id })
   }
   return { enterprise, record }
 }
 async function startService() {
   const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
-  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${join(dir,'clock.mjs')}`, NUXT_BUILD_DIR: join(dir,'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${join(dir,'clock.mjs')}`, NUXT_BUILD_DIR: join(dir,'build'), ...postgres.env, NUXT_DB_READONLY: '0', NUXT_ROSTER_EXPORT_DIR: join(dir, 'exports'), NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
   let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-12000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(url('/api/jobs/kinds'), { timeoutMs: 60000, child }) } catch (e) { await service.stop(); throw new Error(String(e) + output) }
 }
+const cases = ['已迁出','已注销','待确认事实','未知生效','未来生效','已撤回','已替换']
+const ids: number[] = []
 beforeAll(async () => {
   // Test-only process preload: same asOf in HTTP executors and export workers.
   // Timers still use real elapsed time; no application clock seam is introduced.
   writeFileSync(join(dir,'clock.mjs'), `const RealDate = Date; globalThis.Date = class extends RealDate { constructor(...args) { super(...(args.length ? args : ['2026-11-04T12:00:00.000Z'])) } static now() { return 1793793600000 } };`)
+  postgres = await postgresRuntimeFixture({ dir })
+  pool = new pg.Pool({ connectionString: postgres.url, options: '-c search_path=business,public' })
+  db = drizzle(pool)
+  for (const name of cases) ids.push((await candidate(name, [{eventType:'award',year:2026,batchSeq:1}])).enterprise.id)
   await startService()
 }, 90000)
-afterAll(async () => { if (service) await service.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => {
+  try { if (service) await service.stop() }
+  finally {
+    await pool?.end()
+    postgres?.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
 
 async function get(path: string) {
   const response = await fetch(url(path), { headers })
@@ -101,8 +119,6 @@ function contents(wb: ExcelJS.Workbook) {
   return Object.fromEntries(['有效企业','已到期','已注销（吊销）','已迁出','未认定'].map(name=>[name,sheetRows(wb,name).map(r=>({name:r[2],note:r[11]}))]))
 }
 it('native facts retain qualification effects and immutable lifecycle references through HTTP XLSX export and restart', async () => {
-  const cases = ['已迁出','已注销','待确认事实','未知生效','未来生效','已撤回','已替换']
-  const ids = cases.map(name=>candidate(name,[{eventType:'award',year:2026,batchSeq:1}]).enterprise.id)
   const before = await workbook('before-independent-facts')
   const baseline = await snapshot()
   expect(before.job.result.counts).toEqual({eligible:7,pending:0,excluded:0})

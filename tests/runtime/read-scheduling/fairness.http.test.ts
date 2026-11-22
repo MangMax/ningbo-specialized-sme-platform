@@ -1,50 +1,61 @@
-import { createReviewedFixtureImportClient } from '../../roster/imports/fixtures/reviewed-announcement'
+import * as h3 from 'h3'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp, createError, defineEventHandler, getQuery, readBody, setHeader, toNodeListener } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { initializeDb } from '../../../db/client'
-import { executeNativeImport, startRosterApi } from '../../roster/imports/fixtures/import-server'
-const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
-vi.mock('@db', () => ({ useDb: () => active.db }))
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 const dir = mkdtempSync(join(tmpdir(), 'read-fairness-'))
-const db = initializeDb({ create: true,  dbPath: join(dir, 'fixture.db') })
-active.db = db
-let imports: Awaited<ReturnType<typeof startRosterApi>>, server: Server, base: string
+let pg: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined, server: Server | undefined, base: string
 beforeAll(async () => {
-  imports = await startRosterApi({ db, apiToken: 'synthetic-fairness', executeImport: executeNativeImport })
+  pg = await postgresRuntimeFixture({ dir })
+  for (const [key, value] of Object.entries(pg.env)) vi.stubEnv(key, value)
+  for (const key of ['getHeader', 'getRequestHeaders', 'getRouterParam', 'setResponseStatus'] as const) vi.stubGlobal(key, h3[key])
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('getQuery', getQuery)
   vi.stubGlobal('setHeader', setHeader)
   vi.stubGlobal('createError', createError)
   vi.stubGlobal('readBody', readBody)
-  vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: join(dir, 'curated.json'), reconcilePath: join(dir, 'reconcile.json') }))
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-fairness', filesDir: dir, curatedPath: join(dir, 'curated.json'), reconcilePath: join(dir, 'reconcile.json') }))
   const handler = (await import('../../../layers/sme-roster/server/api/roster/differences.get')).default
   const recognitions = (await import('../../../layers/sme-roster/server/api/roster/recognitions.get')).default
   const comparison = (await import('../../../layers/sme-roster/server/api/comparison.get')).default
   const usccGet = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.get')).default
   const usccPost = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.post')).default
+  const commit = (await import('../../../layers/sme-roster/server/api/roster/import/commit.post')).default
+  const supplement = (await import('../../../layers/sme-roster/server/api/roster/import/intake/[id]/supplement.post')).default
+  const imports = h3.createRouter().post('/api/roster/import/commit', commit).post('/api/roster/import/intake/:id/supplement', supplement)
   const app = createApp().use('/api/roster/differences', handler)
     .use('/api/roster/recognitions', recognitions).use('/api/comparison', comparison)
-    .use('/api/roster/uscc-research', defineEventHandler(event => event.method === 'POST' ? usccPost(event) : usccGet(event)))
+    .use('/api/roster/uscc-research', defineEventHandler(event => event.method === 'POST' ? usccPost(event) : usccGet(event))).use(imports)
   server = createServer(toNodeListener(app))
-  await new Promise<void>(r => server.listen(0, '127.0.0.1', r))
+  await new Promise<void>(r => server!.listen(0, '127.0.0.1', r))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
-})
+}, 30_000)
 afterAll(async () => {
-  await new Promise<void>(r => server.close(() => r()))
-  await imports.close(); db.$client.close(); rmSync(dir, { recursive: true, force: true }); vi.unstubAllGlobals()
+  if (server) await new Promise<void>(r => server!.close(() => r()))
+  await closePostgresDirectoryDb()
+  pg?.close()
+  rmSync(dir, { recursive: true, force: true })
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
 })
 it('retains literal public differences and sees an API commit on every read after its acknowledgement', async () => {
   const read = async () => { const res = await fetch(base + '/api/roster/differences?pageSize=20'); expect(res.status).toBe(200); expect(res.headers.get('cache-control')).toBe('no-store'); return res.json() }
   expect(await read()).toMatchObject({ rows: [], total: 0 })
-  const client = createReviewedFixtureImportClient({ baseUrl: imports.baseUrl, token: 'synthetic-fairness' }, db)
+  const post = async (path: string, body: object) => {
+    const response = await fetch(base + path, { method: 'POST', headers: { authorization: 'Bearer synthetic-fairness', 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    const result = await response.json()
+    expect(response.ok, JSON.stringify(result)).toBe(true)
+    return result
+  }
   for (const [id, name] of [[1, '公平合成甲'], [2, '公平合成乙']] as const) {
-    const receipt = await client.commit({ idempotencyKey: `fairness-${id}`, sourceKind: 'announcement', sourceIdentity: `synthetic-fairness-${id}`, payload: { announcement: { sourceDocument: { source: 'jxj', title: `Synthetic ${id}` }, records: [{ enterprise: { name }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2022 }] }] } } })
-    expect(receipt).toMatchObject({ status: 'committed', summary: { failed: 0 } })
+    const staged = await post('/api/roster/import/commit', { idempotencyKey: `fairness-${id}`, sourceKind: 'announcement', sourceIdentity: `synthetic-fairness-${id}`, payload: { announcement: { sourceDocument: { source: 'jxj', title: `Synthetic ${id}` }, records: [{ enterprise: { name }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2022 }] }] } } })
+    const receipt = await post('/api/roster/import/intake/' + staged.intakeId + '/supplement', { sourceDigest: staged.sourceDigest, basis: 'Reviewed synthetic fixture identity', rows: [{ action: 'create', fields: { name } }] })
+    expect(receipt).toMatchObject({ status: 'supplemented', summary: { failed: 0 } })
     const results = await Promise.all(Array.from({ length: 5 }, read))
     for (const value of results) {
       expect(value.total).toBe(id)
@@ -101,7 +112,7 @@ it('preserves each scheduled route validation and the import authentication boun
   const response = await fetch(base + '/api/roster/uscc-research', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"claims":1}' })
   expect(response.status).toBe(400)
   expect(await response.json()).toMatchObject({ statusMessage: 'claims 必须是数组' })
-  const denied = await fetch(imports.baseUrl + '/api/roster/import/commit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+  const denied = await fetch(base + '/api/roster/import/commit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
   expect(denied.status).toBe(401)
 })
 
@@ -111,7 +122,7 @@ it('propagates the existing MCP cancellation reason instead of a domain response
   }
   const controller = new AbortController()
   const reason = new Error('synthetic SDK cancellation')
-  const pending = tool.handler({}, { signal: controller.signal })
   controller.abort(reason)
+  const pending = tool.handler({}, { signal: controller.signal })
   await expect(pending).rejects.toBe(reason)
 })

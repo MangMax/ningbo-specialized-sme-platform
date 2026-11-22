@@ -1,25 +1,34 @@
-import { afterEach, expect, it } from 'vitest'
-
-import { schema } from '../../../db/client'
+import { expect, it } from 'vitest'
+import { recordCorrespondenceAudit } from '../../../db/postgresql/qualification-tables'
 import { nativeCorrespondenceFixture } from '../correspondence/fixtures/native-correspondence'
-import { listRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
-const fixtures: ReturnType<typeof nativeCorrespondenceFixture>[] = []
-const fixture = () => { const f = nativeCorrespondenceFixture(); fixtures.push(f); return f }
-afterEach(() => { for (const f of fixtures.splice(0)) f.close() })
+import { listPostgresCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence-postgres'
+import { readPostgresQualifiedAnnualProcess } from '../../../layers/sme-roster/server/utils/event-annual-process-postgres'
+import { useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
+import { annualFixtureEvent, runAnnualFixtureTask, stageAnnualFixtureTask } from './fixtures/native-annual'
 
-import { readAnnualWriteScope } from '../../../layers/sme-roster/server/utils/annual-correspondence-read'
-import { qualifyAnnualFinal, reconcileAnnualStep } from '../../../layers/sme-roster/server/utils/annual-correspondence'
-it('native annual reconciliation confirms the actual endpoint and replays without duplicate audit', () => {
- const f=fixture(),row=f.add(),scope=readAnnualWriteScope(f.db,f.event.id)!
- const reconcile=()=>reconcileAnnualStep(f.db,readAnnualWriteScope,{eventId:f.event.id,generation:scope.generation,stepId:scope.finalCandidateStepId!})
- expect(reconcile()).toMatchObject({status:'created',relationId:row.id})
- const audit=f.db.select().from(schema.recordCorrespondenceAudit).all()
- expect(reconcile()).toMatchObject({status:'existing',relationId:row.id})
- expect(qualifyAnnualFinal(f.db,readAnnualWriteScope(f.db,f.event.id)!)).toMatchObject({status:'confirmed',decisionRefs:[{relationId:row.id}]})
- expect(f.db.select().from(schema.recordCorrespondenceAudit).all()).toEqual(audit)
+const createDb = useIsolatedPostgresCases()
+
+it('annual reconciliation confirms the actual endpoint and replays without duplicate audit', async () => {
+  const f = await nativeCorrespondenceFixture(createDb())
+  const source = await f.add()
+  const admitted = await stageAnnualFixtureTask(f.db, f.event.id, 'initial')
+  const event = annualFixtureEvent(await runAnnualFixtureTask(f.db, admitted.jobId))
+  expect(event.outcomes).toMatchObject([{ status: 'created', relationId: source.id }])
+  const audit = await f.db.select().from(recordCorrespondenceAudit).orderBy(recordCorrespondenceAudit.id)
+  const repeat = await stageAnnualFixtureTask(f.db, f.event.id, 'repeat')
+  expect(repeat.jobId).toBe(admitted.jobId)
+  expect((await readPostgresQualifiedAnnualProcess(f.db, f.event.id))?.process.finalQualification).toMatchObject({
+    status: 'confirmed', decisionRefs: [{ relationId: source.id }],
+  })
+  expect(await f.db.select().from(recordCorrespondenceAudit).orderBy(recordCorrespondenceAudit.id)).toEqual(audit)
 })
-it('native annual reconciliation rejects an admitted stale generation', () => {
- const f=fixture();f.add();const old=readAnnualWriteScope(f.db,f.event.id)!;f.add({key:'NEW'})
- expect(()=>reconcileAnnualStep(f.db,readAnnualWriteScope,{eventId:f.event.id,generation:old.generation,stepId:old.steps[0]!.stepId})).toThrowError(expect.objectContaining({code:'source_generation_changed'}))
- expect(listRecordCorrespondences(f.db)).toEqual([])
+
+it('annual reconciliation rejects an admitted stale generation', async () => {
+  const f = await nativeCorrespondenceFixture(createDb())
+  await f.add()
+  const admitted = await stageAnnualFixtureTask(f.db, f.event.id, 'stale')
+  await f.add({ key: 'NEW' })
+  const event = annualFixtureEvent(await runAnnualFixtureTask(f.db, admitted.jobId))
+  expect(event).toMatchObject({ status: 'failed', errorCode: 'source_generation_changed' })
+  expect(await listPostgresCorrespondences(f.db, {})).toEqual([])
 })

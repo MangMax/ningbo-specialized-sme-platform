@@ -2,21 +2,25 @@ import { randomUUID } from 'node:crypto'
 import { and, desc, eq, gt, inArray, max, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { z } from 'zod'
-import type { fileParseAudit105 } from '../../../../db/schema'
+import type { fileParseAudit105 } from '../../../../db/postgresql/roster-file-tables'
 import { ocrResult, storedFile } from '../../../../db/postgresql/file-tables'
 import { fileDeclaration669 as declaration, fileParseAudit105 as audit, rosterFileClassification, storedFilePart } from '../../../../db/postgresql/roster-file-tables'
 import { appLog, type LogContext } from '../../../core/lib/logging'
 import { activePostgresPhysicalIntent, readPostgresFile, requirePostgresFileWrite } from '../../../core/server/utils/file-store-postgres'
 import { readPdfPageCount } from '../../../core/server/utils/pdf-pages'
-import { mergeParseParts } from './parse-result'
+import { mergeParseParts } from './parse-result-model'
 import { derivedPostgresFileParts, readPostgresRosterFileFields } from './roster-file-postgres'
 import {
   equalParseInput, lineage310, modernEnvelope105, parseFrozenCommit310, parseHistory105, parsePreflight310,
   parseSave105, ParseMaintenanceError, planDeclarations669, prepareParseWrite105, projectParseState,
   readParseInput310, validateParseRevision, type InputRef310,
-} from './parse-maintenance-105'
+} from './parse-maintenance-contract'
 
-type Receipt = typeof fileParseAudit105.$inferSelect
+type Receipt = Omit<typeof fileParseAudit105.$inferSelect, 'actor' | 'before' | 'after'> & {
+  actor: { type: 'user' | 'agent'; id: string }
+  before: Record<string, unknown>
+  after: Record<string, unknown>
+}
 type Mode = 'replace' | 'status' | 'commit'
 const readOnlySnapshot = { isolationLevel: 'repeatable read', accessMode: 'read only' } as const
 function fail(status: number, message: string): never { throw new ParseMaintenanceError(status, message) }

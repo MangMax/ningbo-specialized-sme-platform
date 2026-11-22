@@ -7,12 +7,12 @@ import type { RelationSource } from './correspondence-view'
 import type { PlatformNormalizationConflict } from '../platform/normalization'
 import type { QueryCoverageSource } from './query-assessment'
 import type { PlatformLiveQueryResult } from '../platform/live-query'
-import type { readAnnualDecisionRefs } from '../../server/utils/annual-correspondence'
+import type { readPostgresAnnualDecisionRefs } from '../../server/utils/event-annual-process-postgres'
 
 type Immutable<T> = T extends readonly (infer E)[] ? readonly Immutable<E>[]
   : T extends object ? { readonly [K in keyof T]: Immutable<T[K]> } : T
 // Never import a DB reader as a value. Actual current validity comes from the existing reader.
-type CurrentProcessDecision = ReturnType<typeof readAnnualDecisionRefs>[number]
+type CurrentProcessDecision = Awaited<ReturnType<typeof readPostgresAnnualDecisionRefs>>[number]
 type FormalEvent = Assessment['evidence'][number]
 type FormalCycle = Assessment['cycles'][number]
 type NormalizedProcess = Pick<RelationSource, 'declareKind' | 'appliedAt' | 'status' | 'province'> & {

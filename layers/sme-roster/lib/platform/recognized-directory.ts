@@ -96,7 +96,7 @@ export interface RecognizedDirectoryRecordRow {
   kind: 'record'
   record: { id: number; platformKey: string; interface: 'recognized_list' }
   matchedVersion: RecognizedDirectoryVersionFields
-  /** Number of content versions matching the current validity/year/batch/district/title conditions. */
+  /** One for each returned current record. */
   matchedVersionCount: number
   /** All content versions for this directory business identity, including non-matching history. */
   versionCount: number
@@ -179,6 +179,7 @@ export interface RecognizedDirectoryVersion extends RecognizedDirectoryVersionFi
 
 export interface RecognizedDirectoryDetail {
   record: { id: number; platformKey: string; interface: 'recognized_list'; identityRuleVersion: string; createdAt: string }
+  current: RecognizedDirectoryVersionFields | null
   versions: RecognizedDirectoryVersion[]
   observations: RecognizedDirectoryObservation[]
   counts: { versions: number; observations: number; versionsTruncated: boolean; observationsTruncated: boolean }
@@ -186,5 +187,4 @@ export interface RecognizedDirectoryDetail {
   conflicts: string[]
 }
 
-export const RECOGNIZED_DIRECTORY_VERSION_LIMIT = 100
 export const RECOGNIZED_DIRECTORY_OBSERVATION_LIMIT = 200

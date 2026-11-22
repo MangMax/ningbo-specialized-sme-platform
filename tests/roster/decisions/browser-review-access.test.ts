@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { createServer } from 'node:http'
 import { createApp, defineEventHandler, setResponseStatus, toNodeListener } from 'h3'
-import { checkBrowserReviewRequest } from '../../../layers/sme-roster/server/utils/browser-review-102'
+import { checkBrowserReviewRequest } from '../../../layers/sme-roster/server/utils/browser-review-access'
 
 it('enables browser writes without configuration while retaining exact origin and JSON validation', async () => {
   const app = createApp().use(defineEventHandler(event => {

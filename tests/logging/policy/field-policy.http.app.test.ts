@@ -1,22 +1,25 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { request } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { initializeDb } from '../../../db/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { storedLogRows } from '../fixtures/runtime'
+import { businessDigest } from '../fixtures/business-state'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
 import { LOG_LEVELS } from '../../../layers/core/lib/logging/contract'
 import { LOG_FIELD_PROFILES, defaultFieldControls } from '../../../layers/core/lib/logging/field-controls'
 import { APPLICATION_LOG_ROUTES } from '../../../lib/logging-route-templates'
 
 const root = mkdtempSync(join(tmpdir(), 'field-policy-http-'))
-const logDir = join(root, 'logs'), boundaryLogs = join(root, 'boundary-logs'), dbPath = join(root, 'synthetic.db')
 const token = 'synthetic-field-api', mcpToken = 'synthetic-field-mcp', PRIVATE = 'PRIVATE_FIELD_POLICY_RAW_180'
 const api = { authorization: `Bearer ${token}` }, policyBase = { retentionDays: 7, maxBytes: 536870912 }
 const children: ChildProcess[] = [], observations: unknown[] = []
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
+let boundaryRuntime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 let baseUrl = '', boundaryUrl = '', output = '', boundaryOutput = '', beforeDbHash = ''
 const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')
 async function call(path: string, init: RequestInit = {}) {
@@ -54,20 +57,24 @@ function prefixRequest(base: string, authorized: boolean, prefix = '', observed?
 }
 
 beforeAll(async () => {
-  const db = initializeDb({ create: true,  dbPath }); db.$client.close(); beforeDbHash = hash(dbPath)
+  runtime = await postgresRuntimeFixture({ dir: root })
+  boundaryRuntime = await postgresRuntimeFixture({ dir: root })
+  beforeDbHash = businessDigest(runtime)
   for (const name of ['files', 'incoming']) mkdirSync(join(root, name))
   const port = await reserveLoopbackPort(); expect(port).not.toBe(50055); baseUrl = `http://127.0.0.1:${port}`
-  const child = spawn(process.execPath, ['.output/server/index.mjs'], { cwd: resolve('.'), stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_LOG_DIR: logDir, NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json') } }); children.push(child)
+  const child = spawn(process.execPath, ['.output/server/index.mjs'], { cwd: resolve('.'), stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...runtime.env, NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json') } }); children.push(child)
   child.stdout!.on('data', c => { output += c }); child.stderr!.on('data', c => { output += c })
   await waitForHttp(baseUrl + '/api/health', { child })
-  const boundaryChild = spawn(process.execPath, ['tests/logging/policy/fixtures/stream-boundary-server.mjs'], { cwd: resolve('.'), stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { ...process.env, NUXT_LOG_DIR: boundaryLogs } }); children.push(boundaryChild)
+  const boundaryChild = spawn(process.execPath, ['tests/logging/policy/fixtures/stream-boundary-server.mjs'], { cwd: resolve('.'), stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { ...process.env, ...boundaryRuntime.env } }); children.push(boundaryChild)
   boundaryChild.stdout!.on('data', c => { boundaryOutput += c }); boundaryChild.stderr!.on('data', c => { boundaryOutput += c })
   boundaryUrl = await new Promise<string>((resolve, reject) => { boundaryChild.once('error', reject); boundaryChild.once('exit', () => reject(new Error(boundaryOutput))); boundaryChild.once('message', (m: any) => resolve(`http://127.0.0.1:${m.port}`)) })
   observations.push({ root, baseUrl, boundaryUrl, children: children.map(c => c.pid), artifactHash: hash('.output/server/chunks/nitro/nitro.mjs'), beforeDbHash })
 }, 360000)
 afterAll(async () => {
   for (const child of children) await stopOwnedChild(child)
-  const afterDbHash = existsSync(dbPath) ? hash(dbPath) : null
+  const afterDbHash = runtime ? businessDigest(runtime) : null
+  boundaryRuntime?.close()
+  runtime?.close()
   observations.push({ afterDbHash, unchangedBusinessDb: afterDbHash === beforeDbHash, children: children.map(c => ({ pid: c.pid, exitCode: c.exitCode, signalCode: c.signalCode })), rawAbsent: !output.includes(PRIVATE) && !boundaryOutput.includes(PRIVATE) })
 
   rmSync(root, { recursive: true, force: true })
@@ -76,11 +83,11 @@ afterAll(async () => {
 })
 
 it('denies REST and MCP before policy execution and reads no unauthorized body or store', async () => {
-  expect(existsSync(join(boundaryLogs, 'events.db'))).toBe(false)
+  expect(storedLogRows(boundaryRuntime)).toBe('')
   const result = await boundary(JSON.stringify({ private: PRIVATE }), undefined, false)
   expect(result).toMatchObject({ status: 401, body: { error: { code: 'log_access_denied' } } })
   expect(result.headers.get('cache-control')).toBe('no-store'); expect(result.headers.get('x-fixture-data-readers')).toBe('0')
-  expect(existsSync(join(boundaryLogs, 'events.db'))).toBe(false)
+  expect(storedLogRows(boundaryRuntime)).toBe('')
   const beforeBody = await prefixRequest(baseUrl, false); expect(beforeBody.status).toBe(401); expect(beforeBody.headers['cache-control']).toBe('no-store')
   const denied = await patch({ private: PRIVATE }, false); expect(denied.status).toBe(401); expect(denied.headers.get('cache-control')).toBe('no-store')
   expect((await call('/api/logs/policy')).status).toBe(401)
@@ -110,8 +117,8 @@ for (const action of ['commit', 'preflight'] as const) it(`retains the parse-res
     expect(JSON.stringify({ rows, detail: detail.body })).not.toContain(fileId)
   }
   expect(output).not.toContain(fileId)
-  expect(readFileSync(join(logDir, 'events.db')).toString()).not.toContain(fileId)
-  expect(hash(dbPath)).toBe(beforeDbHash)
+  expect(storedLogRows(runtime)).not.toContain(fileId)
+  expect(businessDigest(runtime)).toBe(beforeDbHash)
 })
 
 it('returns protected HTTP catalog complete controls and increasing revision through REST', async () => {
@@ -132,9 +139,9 @@ for (const field of LOG_FIELD_PROFILES[0].fields) it(`real request hook omits ${
   // Existing stdout is intentionally limited to ten lines/second. Reserve a fresh
   // window before the specific request whose projection is compared with storage.
   await new Promise(resolve => setTimeout(resolve, 1050))
-  const health = await call('/api/health?private=' + PRIVATE); expect(health.status).toBe(200)
-  const event = (await logFor(health.requestId)).find(e => e.operation === 'http.request')
-  expect(event).toMatchObject({ source: 'http', outcome: 'success', level: 'info', requestId: health.requestId, fieldCapture: { profile: 'http', revision: saved.body.revision, disabled: [field.key] } })
+  const kinds = await call('/api/jobs/kinds?private=' + PRIVATE); expect(kinds.status).toBe(200)
+  const event = (await logFor(kinds.requestId)).find(e => e.operation === 'http.request')
+  expect(event).toMatchObject({ source: 'http', outcome: 'success', level: 'info', requestId: kinds.requestId, fieldCapture: { profile: 'http', revision: saved.body.revision, disabled: [field.key] } })
   expect(event).not.toHaveProperty(field.key)
   for (const retained of LOG_FIELD_PROFILES[0].fields.filter(f => f.key !== field.key)) expect(event).toHaveProperty(retained.key)
   const detail = await call('/api/logs/' + event.id, { headers: api }); expect(detail.status).toBe(200); expect(detail.body).toEqual(event)
@@ -279,8 +286,8 @@ it('uses policy argument budget rather than the JSONRPC envelope and preserves p
   const actual = [...new Set([...built.matchAll(/route: '([^']+)'/g)].map(m => m[1]!).filter(route => route === '/mcp' || route.startsWith('/api/')))].sort()
   expect(actual).toEqual([...APPLICATION_LOG_ROUTES].sort())
   expect(output + boundaryOutput).not.toContain(PRIVATE)
-  expect(readFileSync(join(logDir, 'events.db')).toString()).not.toContain(PRIVATE)
-  expect(hash(dbPath)).toBe(beforeDbHash)
+  expect(storedLogRows(runtime)).not.toContain(PRIVATE)
+  expect(businessDigest(runtime)).toBe(beforeDbHash)
 })
 
 

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { record } from '../../../../db/postgresql/ledger-tables'
@@ -9,6 +9,7 @@ import {
 import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import { normalizeUscc } from '../domain'
+import { isCurrentPlatformObservation } from '../platform/current-observation-postgres'
 import { TITLE_RDJB_CODES } from '../platform/recognized-evidence'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
 import { qualificationUsccCandidate } from './platform-qualification-postgres'
@@ -20,17 +21,18 @@ export async function readPostgresCurrentCandidateIds(db: Reader, title: Current
   const titles = CURRENT_TITLES.slice(0, CURRENT_TITLES.indexOf(title) + 1)
   const returnedTitles = titles.map(code => TITLE_RDJB_CODES[code]!)
   const returned = (table: typeof platformRecognizedProjection | typeof platformBusinessProjection | typeof platformApplyProjection) =>
-    db.select({ versionId: table.versionId, observationId: table.observationId }).from(table)
+    db.select({ versionId: table.versionId }).from(table)
       .where(inArray(table.titleRaw, returnedTitles))
 
-  // PostgreSQL materializes a CTE referenced more than once by default.
   const typedReturn = db.$with('typed_return').as(returned(platformRecognizedProjection)
     .union(returned(platformBusinessProjection)).union(returned(platformApplyProjection)))
-  const observations = db.$with('observations').as(db.select({
-    id: sql<number | null>`${platformBusinessObservation.id}`.as('id'),
-  }).from(typedReturn)
-    .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.versionId, typedReturn.versionId))
-    .union(db.select({ id: typedReturn.observationId }).from(typedReturn).where(isNotNull(typedReturn.observationId))))
+  const observation = platformBusinessObservation
+  // Drizzle has no JSON key extraction. Comparing JSON strings excludes numeric titles.
+  const observedTitle = sql<string>`${observation.sourceValues} -> 'titleRaw'`
+  const observations = db.$with('observations').as(db.select({ id: observation.id }).from(typedReturn)
+    .innerJoin(observation, eq(observation.versionId, typedReturn.versionId)).where(isCurrentPlatformObservation(db))
+    .union(db.select({ id: observation.id }).from(observation)
+      .where(and(isNull(observation.versionId), isCurrentPlatformObservation(db), inArray(observedTitle, returnedTitles.map(code => JSON.stringify(code)))))))
   const assignment = db.select({ enterpriseId: platformObservationAssignment.enterpriseId, uscc: platformObservationAssignment.usccRaw })
     .from(platformObservationAssignment).where(eq(platformObservationAssignment.observationId, observations.id))
     .orderBy(desc(platformObservationAssignment.revision)).limit(1).as('assignment')

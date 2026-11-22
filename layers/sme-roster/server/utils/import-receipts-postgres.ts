@@ -4,11 +4,7 @@ import { alias } from 'drizzle-orm/pg-core'
 import { importBatch, importReceipt } from '../../../../db/postgresql/import-tables'
 import { importItemsReadSchema, officialReadQuery, type ImportItemsRead } from './official-evidence-read'
 import { importPostgresReceiptRedactor, type ReceiptRedactor } from './import-receipt-redaction'
-import {
-  ImportReceiptError, importReceiptInteger, invalidImportReceiptQuery, mergeReceiptSelection,
-  parseImportReceiptSelector, projectImportReceiptMetadata, projectQualificationReceipt, projectMergeReceipt,
-  type ImportReceiptAction, type QualificationReceiptRow, type ReceiptRow,
-} from './import-receipts'
+import { ImportReceiptError, importReceiptInteger, invalidImportReceiptQuery, mergeReceiptSelection, parseImportReceiptSelector, projectImportReceiptMetadata, projectQualificationReceipt, projectMergeReceipt, type ImportReceiptAction, type QualificationReceiptRow, type ReceiptRow } from './import-receipt-model'
 
 type Reader = Pick<NodePgDatabase, 'select' | '$with' | 'with'>
 const kinds = ['announcement', 'platform_export', 'platform_archive', 'alias_evidence']
@@ -20,6 +16,34 @@ const array = (value: SQL) => sql`(CASE WHEN json_typeof(${value}) = 'array' THE
 const object = (value: SQL) => sql`(CASE WHEN json_typeof(${value}) = 'object' THEN ${value} ELSE '{}'::json END)`
 const parse = (value: SQL, defaultValue = 'null') =>
   sql`(CASE WHEN pg_input_is_valid(${value}, 'json') THEN ${value}::json ELSE ${defaultValue}::json END)`
+
+// JSON operators in PostgreSQL cannot traverse an escaped U+0000. Protect it
+// with a doubled escape, leaving literal backslashes and existing controls distinct.
+const archivedMarkerEscape = String.raw`(?<!\\)((?:\\\\)*)\\u0001`
+const archivedNulEscape = String.raw`(?<!\\)((?:\\\\)*)\\u0000`
+const archivedMarkerPair = String.raw`\1\\u0001\\u0001`
+const archivedNulPair = String.raw`\1\\u0001\\u0002`
+const archivedPairPattern = sql`(chr(1) || '[' || chr(1) || chr(2) || ']')`
+function protectArchivedMergeJson(value: SQL) {
+  return sql`CASE WHEN strpos(${value},chr(92)||'u0000') > 0 OR strpos(${value},chr(92)||'u0001') > 0
+    THEN regexp_replace(regexp_replace(${value},${archivedMarkerEscape},${archivedMarkerPair},'g'),
+      ${archivedNulEscape},${archivedNulPair},'g') ELSE ${value} END `
+}
+
+function archivedString(value: SQL) {
+  const decoded = sql`(${value} #>> '{}')`
+  const pattern = sql`('[^' || chr(1) || ']+' || '|' || ${archivedPairPattern})`
+  return sql`CASE WHEN ${decoded} IS NULL THEN 'null'
+    WHEN strpos(${decoded},chr(1))=0 THEN to_json(${decoded})::text
+    ELSE '"' || (SELECT string_agg(CASE
+      WHEN left(part[1],1)=chr(1) THEN chr(92) || CASE WHEN right(part[1],1)=chr(1) THEN 'u0001' ELSE 'u0000' END
+      ELSE substr(to_json(part[1])::text,2,length(to_json(part[1])::text)-2) END, '' ORDER BY ordinal)
+      FROM regexp_matches(${decoded}, ${pattern}, 'g') WITH ORDINALITY segments(part,ordinal)) || '"' END`
+}
+
+function archivedStringLength(value: SQL) {
+  return sql`length(regexp_replace(${value} #>> '{}', ${archivedPairPattern}, chr(1), 'g'))`
+}
 
 function integerValue(value: SQL) {
   return sql`(CASE WHEN json_typeof(${value}) = 'number' AND (${value})::text ~ '^[1-9][0-9]{0,15}$'
@@ -62,26 +86,6 @@ async function readStandardReceipt(db: Reader, action: ImportReceiptAction, args
     .where(and(match, inArray(importBatch.sourceKind, kinds)))
   if (!row) throw new ImportReceiptError(404, 'not_found', 'Import batch or receipt not found')
   if (action === 'get') return projectImportReceiptMetadata(row)
-  if (action === 'request') {
-    const offset = importReceiptInteger(args.offset, 'offset', 0, Number.MAX_SAFE_INTEGER - 1, 0)
-    const maxBytes = importReceiptInteger(args.maxBytes, 'maxBytes', 16384, 65536)
-    if (row.receiptId === null) throw new ImportReceiptError(404, 'not_retained', 'Original request was not retained')
-    const owner = alias(importReceipt, 'owner')
-    const source = db.select({
-      bytes: sql<Buffer>`convert_to(coalesce(${owner.requestBody},${importReceipt.requestBody}),'UTF8')`.as('bytes'),
-    }).from(importReceipt).leftJoin(owner, eq(owner.id, importReceipt.bodyReceiptId))
-      .where(eq(importReceipt.id, row.receiptId)).as('source')
-    const [stored] = await db.select({
-      totalBytes: sql<number>`octet_length(${source.bytes})`,
-      chunk: sql<Buffer | null>`CASE WHEN ${offset}::bigint <= octet_length(${source.bytes})
-        THEN substring(${source.bytes} FROM (${offset}::integer+1) FOR ${maxBytes}) END`,
-    }).from(source)
-    if (!stored?.chunk) return invalidImportReceiptQuery('offset exceeds request bytes')
-    const { totalBytes, chunk } = stored
-    return { batchId: row.batchId, receiptId: row.receiptId, redacted: true, encoding: 'base64',
-      contentType: 'application/json; charset=utf-8', offset, totalBytes, data: chunk.toString('base64'),
-      nextOffset: offset + chunk.length < totalBytes ? offset + chunk.length : null }
-  }
   const page = importReceiptInteger(args.page, 'page', 1, 1_000_000)
   const pageSize = importReceiptInteger(args.pageSize, 'pageSize', 20, 50)
   const offset = (page - 1) * pageSize
@@ -126,13 +130,14 @@ function exactSource(db: Reader, args: ImportItemsRead) {
       .where(eq(importReceipt.id, args.receiptId!))
 }
 
-function exactItem(db: Reader, args: ImportItemsRead) {
+function exactItem(db: Reader, args: ImportItemsRead, merge = false) {
   const index = args.itemIndex!
   const source = exactSource(db, args).as('source_row')
+  const items = merge ? protectArchivedMergeJson(sql`${source.itemResults}`) : sql`${source.itemResults}`
   return db.select({
     batchId: source.batchId, receiptId: source.receiptId, status: source.status, batchStatus: source.batchStatus,
     sourceKind: source.sourceKind, operation: source.operation, summary: source.summary,
-    item: (index > 2147483647 ? sql`NULL::json` : sql`${parse(sql`${source.itemResults}`)} -> ${index}::integer`).as('item'),
+    item: (index > 2147483647 ? sql`NULL::json` : sql`${parse(items)} -> ${index}::integer`).as('item'),
     savedSummary: parse(sql`${source.summary}`, 'false').as('saved_summary'),
   }).from(source).as('selected')
 }
@@ -183,11 +188,11 @@ function jsonFields(fields: Array<[key: string, value: SQL]>) {
   return sql.join(fields.map(([key, value]) => sql`${(JSON.stringify(key) + ':')} || coalesce(${value}::text,'null')`), sql` || ',' || `)
 }
 
-async function readMergeItem(db: Reader, args: ImportItemsRead, redact: ReceiptRedactor) {
-  const { binding, maxBytes, afterIndex, pageSize, nextCursor } = mergeReceiptSelection(args)
+async function readMergeItem(db: Reader, args: ImportItemsRead, selection: ReturnType<typeof mergeReceiptSelection>, redact: ReceiptRedactor) {
+  const { binding, maxBytes, afterIndex, pageSize, nextCursor } = selection
   const { oldRecordId, itemIndex, source } = binding
   const projectEvents = args.projection === 'eventIds'
-  const selected = exactItem(db, args)
+  const selected = exactItem(db, args, true)
   const lineage = db.$with('lineage_row').as(db.select({
     batchId: selected.batchId, receiptId: selected.receiptId, status: selected.status, batchStatus: selected.batchStatus,
     sourceKind: selected.sourceKind, item: selected.item,
@@ -215,7 +220,7 @@ async function readMergeItem(db: Reader, args: ImportItemsRead, redact: ReceiptR
       sql`json_typeof(${evidence.snapshot} -> ${field}::text)`, index >= 2 ? ['string', 'null'] : ['string'],
     )))
     const sizes = and(...snapshotColumns.map(field =>
-      lte(sql`coalesce(length(${evidence.snapshot} ->> ${field}::text),0)`, 4000)))
+      lte(sql`coalesce(${archivedStringLength(sql`${evidence.snapshot} -> ${field}::text`)},0)`, 4000)))
     const flagRows = sql`json_array_elements(${array(sql`${evidence.snapshot} -> 'qualityFlags'`)}) WITH ORDINALITY flag(value, ordinal)`
     const eventRows = sql`json_array_elements(${array(sql`${evidence.fold} -> 'eventIds'`)}) WITH ORDINALITY e(value, ordinal)`
     const eventCount = sql`json_array_length(${array(sql`${evidence.fold} -> 'eventIds'`)})`
@@ -227,13 +232,13 @@ async function readMergeItem(db: Reader, args: ImportItemsRead, redact: ReceiptR
       content: sql`'[' || coalesce(string_agg(${events.value}::text, ',' ORDER BY ${events.ordinal}),'') || ']'`,
     }).from(events)
     const flags = db.select({
-      content: sql`'[' || coalesce(string_agg(to_json(value #>> '{}')::text, ',' ORDER BY ordinal),'') || ']'`,
+      content: sql`'[' || coalesce(string_agg(${archivedString(sql`value`)}, ',' ORDER BY ordinal),'') || ']'`,
     }).from(flagRows)
     const flagList = sql`CASE WHEN json_typeof(${evidence.snapshot} -> 'qualityFlags')='array' THEN (${flags}) ELSE 'null' END`
     const literal = (value: unknown) => sql`${JSON.stringify(value)}::text`
     const snapshot = jsonFields([
       ['id', sql`${snapshotId}::bigint`], ['enterpriseId', sql`${snapshotEnterprise}::bigint`],
-      ...snapshotColumns.map(field => [field, sql`to_json(${evidence.snapshot} ->> ${field}::text)`] as [string, SQL]),
+      ...snapshotColumns.map(field => [field, archivedString(sql`${evidence.snapshot} -> ${field}::text`)] as [string, SQL]),
       ['qualityFlags', sql`(${flagList})`],
     ])
     const origin = jsonFields([
@@ -250,7 +255,7 @@ async function readMergeItem(db: Reader, args: ImportItemsRead, redact: ReceiptR
   const invalidFlags = db.select({ value: sql`value` }).from(flagRows)
     .where(ne(sql`json_typeof(value)`, 'string'))
   const oversizedFlags = db.select({ value: sql`value` }).from(flagRows)
-    .where(gt(sql`length(value #>> '{}')`, 4000))
+    .where(gt(archivedStringLength(sql`value`), 4000))
   const committedSource = and(eq(evidence.status, 'committed'), eq(evidence.batchStatus, 'committed'),
     inArray(evidence.sourceKind, kinds))
   const checked = db.select({
@@ -269,7 +274,7 @@ async function readMergeItem(db: Reader, args: ImportItemsRead, redact: ReceiptR
         OR ${snapshotEnterprise} IS DISTINCT FROM ${fromId}
         OR NOT coalesce(${types} AND (json_typeof(${evidence.snapshot} -> 'qualityFlags')='null' OR
           json_typeof(${evidence.snapshot} -> 'qualityFlags')='array' AND ${notExists(invalidFlags)}),false)
-        OR ${evidence.snapshot} ->> 'source' NOT IN ('jxj','miit') THEN 'selector_mismatch'
+        OR ${archivedString(sql`${evidence.snapshot} -> 'source'`)} NOT IN ('"jxj"','"miit"') THEN 'selector_mismatch'
       ${projectEvents ? sql`
         WHEN ${evidence.fold} -> 'eventIds' IS NULL OR json_typeof(${evidence.fold} -> 'eventIds')='null' THEN 'not_retained'
         WHEN json_typeof(${evidence.fold} -> 'eventIds')<>'array' OR ${exists(invalidEvents)} THEN 'selector_mismatch'
@@ -305,14 +310,16 @@ async function readMergeItem(db: Reader, args: ImportItemsRead, redact: ReceiptR
 }
 
 export async function readPostgresImportReceipt(db: NodePgDatabase, action: ImportReceiptAction, args: Record<string, unknown>) {
+  const exact = action === 'items' && args.projection !== undefined
+  const parsed = exact ? importItemsReadSchema.safeParse(officialReadQuery(args)) : undefined
+  if (parsed && !parsed.success) return invalidImportReceiptQuery('Invalid exact merge snapshot selector')
+  const selection = parsed?.success && parsed.data.projection !== 'qualification' ? mergeReceiptSelection(parsed.data) : undefined
   return db.transaction(async tx => {
     const redact = await importPostgresReceiptRedactor(tx)
-    if (action === 'items' && args.projection !== undefined) {
-      const parsed = importItemsReadSchema.safeParse(officialReadQuery(args))
-      if (!parsed.success) return invalidImportReceiptQuery('Invalid exact merge snapshot selector')
+    if (parsed?.success) {
       const qualification = parsed.data.projection === 'qualification'
       try {
-        return qualification ? await readQualificationItem(tx, parsed.data, redact) : await readMergeItem(tx, parsed.data, redact)
+        return selection ? await readMergeItem(tx, parsed.data, selection, redact) : await readQualificationItem(tx, parsed.data, redact)
       } catch (error) {
         if (error instanceof ImportReceiptError) throw error
         throw new ImportReceiptError(500, 'internal_error', qualification ? 'Exact qualification read failed' : 'Exact snapshot read failed')

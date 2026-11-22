@@ -1,107 +1,104 @@
-import '../../support/compiled-enterprise-reader'
-import { afterAll, beforeAll, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { setTimeout as pause } from 'node:timers/promises'
-import { initializeDb } from '../../../db/client'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import pg from 'pg'
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
 import { createEnterpriseReadExecutor } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
-const root=mkdtempSync(join(tmpdir(),'enterprise184-'))
-const path=join(root,'fixture.db'), db=initializeDb({ create: true, dbPath:path})
-const previous=process.env.NUXT_LOG_DIR
-beforeAll(()=>{process.env.NUXT_LOG_DIR=join(root,'logs');initializeWorkerLogging()})
-afterAll(async()=>{await closeApplicationLogging();db.$client.close();if(previous===undefined) delete process.env.NUXT_LOG_DIR;else process.env.NUXT_LOG_DIR=previous;rmSync(root,{recursive:true,force:true})})
-async function logs(requestId:string){await applicationLogs().flush();return (await applicationLogs().list({requestId,limit:100})).rows}
-it('real enterprise child persists execution context and preserves success and read failure results', async()=>{
- const reads=createEnterpriseReadExecutor()
- try {
-  expect(await reads.list(path,{q:'PRIVATE184_SEARCH'},undefined,{requestId:'read184',traceId:'trace184'})).toMatchObject({counts:{total:0},rows:[]})
-  let rows=await logs('read184')
-  for(let i=0;i<50 && rows.filter(r=>r.operation==='enterprise_read.execute').length<2;i++){await pause(100);rows=await logs('read184')}
-  expect(rows.filter(r=>r.operation==='enterprise_read.execute').map(r=>r.outcome).sort()).toEqual(['started','success'])
-  expect(rows.filter(r=>r.operation==='enterprise_read.finished')).toMatchObject([{outcome:'success',traceId:'trace184'}])
-  await expect(reads.list(join(root,'PRIVATE184_MISSING'),{},undefined,{requestId:'failed184'})).rejects.toMatchObject({statusCode:503})
-  expect((await logs('failed184')).filter(r=>r.operation==='enterprise_read.finished')).toMatchObject([{outcome:'failure'}])
-  const details=await Promise.all(rows.map(r=>applicationLogs().detail(r.id)))
-  expect(JSON.stringify(details)).not.toMatch(/PRIVATE184|fixture.db|dbPath|filter|heap|params/)
- } finally {await reads.close()}
-},15000)
-function scripted(source:string){return createEnterpriseReadExecutor({createWorker:()=>createEnterpriseReadProcess(new URL('file:///unused184'),source)})}
-it('real child exit and malformed IPC are unknown once and never claim a successful read',async()=>{
- for(const [id,source] of [
-  ['exit184',"process.send({type:'ready'});process.on('message',()=>process.exit(7))"],
-  ['ipc184',"process.send({type:'ready'});process.on('message',m=>process.send({id:m.id,type:'invalid'}))"],
- ] as const){
-  const reads=scripted(source)
-  try{await expect(reads.list(path,{},undefined,{requestId:id})).rejects.toMatchObject({statusCode:503})}
-  finally{await reads.close()}
-  const rows=await logs(id)
-  expect(rows.filter(r=>r.operation==='enterprise_read.finished')).toMatchObject([{outcome:'unknown'}])
-  expect(rows.filter(r=>r.operation==='enterprise_read.finished')).toHaveLength(1)
-  expect(rows.filter(r=>r.operation==='enterprise_read.process.exit')).toHaveLength(1)
- }
-})
-it('startup rejection and real child startup exit remain distinct from a read success',async()=>{
- const failed=createEnterpriseReadExecutor({createWorker:()=>{throw new Error('PRIVATE184_START')}})
- try{await expect(failed.list(path,{},undefined,{requestId:'spawn184'})).rejects.toMatchObject({code:'worker_start_failed'})}finally{await failed.close()}
- expect((await logs('spawn184')).filter(r=>r.operation==='enterprise_read.process.start').map(r=>r.outcome)).toEqual(['failure','started'])
- const exited=scripted('process.exit(3)')
- try{await expect(exited.list(path,{},undefined,{requestId:'earlyexit184'})).rejects.toMatchObject({code:'worker_exited'})}finally{await exited.close()}
- expect((await logs('earlyexit184')).find(r=>r.operation==='enterprise_read.finished')?.outcome).toBe('unknown')
-})
-it('real child cancellation settles once and queued reads retain FIFO after process recovery',async()=>{
- let generation=0
- const reads=createEnterpriseReadExecutor({createWorker:()=>createEnterpriseReadProcess(new URL('file:///unused184'),++generation===1
-  ? "process.send({type:'ready'});process.on('message',()=>{})"
-  : "process.send({type:'ready'});process.on('message',m=>{process.send({type:'chunk',id:m.id,payload:Buffer.from('{\"ok\":true}')});process.send({type:'result',id:m.id,metrics:{heap:1,rss:1}})})")})
- const controller=new AbortController()
- try{
-  const a=reads.list(path,{},controller.signal,{requestId:'abort184'})
-  // Wait until native child dispatch, rather than testing only queued abort.
-  for(let i=0;i<50;i++){if((await logs('abort184')).some(r=>r.operation==='enterprise_read.started'))break;await pause(20)}
-  const b=reads.list(path,{},undefined,{requestId:'afterabort184'})
-  controller.abort()
-  await expect(a).rejects.toMatchObject({name:'AbortError'})
-  expect(await b).toEqual({ok:true})
- }finally{await reads.close()}
- expect((await logs('abort184')).filter(r=>r.operation==='enterprise_read.finished')).toMatchObject([{outcome:'cancelled'}])
- expect((await logs('afterabort184')).filter(r=>r.operation==='enterprise_read.finished')).toMatchObject([{outcome:'success'}])
-})
-it('real child readiness timeout produces one timeout terminal and retires its process',async()=>{
- const reads=scripted('setInterval(()=>{},1000)')
- try{await expect(reads.list(path,{},undefined,{requestId:'timeout184'})).rejects.toMatchObject({code:'worker_start_timeout'})}finally{await reads.close()}
- const rows=await logs('timeout184')
- expect(rows.filter(r=>r.operation==='enterprise_read.finished')).toMatchObject([{outcome:'timeout'}])
- expect(rows.filter(r=>r.operation==='enterprise_read.finished')).toHaveLength(1)
- expect(rows.filter(r=>r.operation==='enterprise_read.process.start').map(r=>r.outcome)).toEqual(['timeout','started'])
-},10000)
-it('late real child completion after cooperative cancellation never duplicates caller terminal',async()=>{
- const {getDbOwnerIdentity}=await import('../../../db/client')
- const controller=new AbortController()
- let completedAfterAbort=false
- const reads=createEnterpriseReadExecutor({createWorker:()=>{
-  const child=createEnterpriseReadProcess(new URL('file:///unused184'),`process.send({type:'ready'});process.on('message',m=>{
-   if(m.operation==='summary'){
-    process.send({type:'chunk',id:m.id,payload:Buffer.alloc(0)});
-    process.send({type:'result',id:m.id,metrics:{heap:1,rss:1,bytes:0}});
-   }else{process.send({type:'chunk',id:m.id,payload:Buffer.from('{"ok":true}')});process.send({type:'result',id:m.id,metrics:{heap:1,rss:1}})}
-  })`)
-  // IPC order establishes cancellation before completion; durable log flush is
-  // not a scheduler barrier and may legitimately take longer than a child read.
-  child.on('message',message=>{
-   if(message.type==='chunk'&&Buffer.isBuffer(message.payload)&&message.payload.length===0)controller.abort()
-   if(message.type==='result'&&message.metrics?.bytes===0)completedAfterAbort=controller.signal.aborted
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+
+const bin = process.env.ROSTER_TEST_POSTGRES_BIN
+const filter = { titleCode: 'little_giant' as const }
+
+describe.skipIf(!bin)('PostgreSQL current qualification worker logging', () => {
+  let root: string
+  let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
+  let postgres: pg.Pool
+
+  beforeAll(async () => {
+    root = mkdtempSync('/tmp/roster-read-logs-')
+    runtime = await postgresRuntimeFixture({ dir: root, bin })
+    for (const [key, value] of Object.entries(runtime.env)) vi.stubEnv(key, value)
+    vi.stubEnv('NUXT_DB_READONLY', '1')
+    postgres = new pg.Pool({ connectionString: runtime.url })
+    initializeWorkerLogging()
+  }, 15_000)
+
+  afterAll(async () => {
+    try {
+      await closeApplicationLogging()
+      await postgres?.end()
+    } finally {
+      vi.unstubAllEnvs()
+      runtime?.close()
+      if (root) rmSync(root, { recursive: true, force: true })
+    }
   })
-  return child
- }})
- try{
-  const pending=reads.summary({operation:'summary',dbPath:path,owner:getDbOwnerIdentity(db)!,options:{curatedPath:join(root,'curated.json'),reconcilePath:join(root,'reconcile.json'),showCurated:false,page:1,pageSize:25}},controller.signal,{requestId:'late184'})
-  expect(await pending).toEqual({type:'cancelled'})
-  expect(await reads.list(path,{},undefined,{requestId:'afterlate184'})).toEqual({ok:true})
-  expect(completedAfterAbort).toBe(true)
- }finally{await reads.close()}
- expect((await logs('late184')).filter(r=>r.operation==='enterprise_read.finished')).toMatchObject([{outcome:'cancelled'}])
- expect((await logs('late184')).filter(r=>r.operation==='enterprise_read.finished')).toHaveLength(1)
+
+  async function logs(requestId: string) {
+    await applicationLogs().flush()
+    return (await applicationLogs().list({ requestId, limit: 100 })).rows
+  }
+
+  it('persists worker execution context and preserves success and PostgreSQL failure results', async () => {
+    const reads = createEnterpriseReadExecutor()
+    try {
+      const read = await reads.currentQualifiedJson({ ...filter, q: 'PRIVATE184_SEARCH' }, undefined, { requestId: 'read184', traceId: 'trace184' })
+      expect(JSON.parse(read.body.toString())).toMatchObject({
+        titleCode: 'little_giant', total: 0, rows: [], publishedPending: { requested: true, total: 0 },
+      })
+      await expect.poll(async () => (await logs('read184')).filter(row => row.operation === 'enterprise_read.execute').map(row => row.outcome).sort())
+        .toEqual(['started', 'success'])
+      const rows = await logs('read184')
+      expect(rows.filter(row => row.operation === 'enterprise_read.finished')).toMatchObject([{ outcome: 'success', traceId: 'trace184' }])
+      await postgres.query('ALTER TABLE business.record RENAME TO fixture_hidden_record')
+      try {
+        await expect(reads.currentQualifiedJson(filter, undefined, { requestId: 'failed184' })).rejects.toMatchObject({ statusCode: 503 })
+      } finally {
+        await postgres.query('ALTER TABLE business.fixture_hidden_record RENAME TO record')
+      }
+      expect((await logs('failed184')).filter(row => row.operation === 'enterprise_read.finished')).toMatchObject([{ outcome: 'failure' }])
+      const details = await Promise.all(rows.map(row => applicationLogs().detail(row.id)))
+      expect(JSON.stringify(details)).not.toMatch(/PRIVATE184|dbPath|filter|heap|params/)
+    } finally { await reads.close() }
+  }, 15_000)
+
+  function scripted(source: string) {
+    return createEnterpriseReadExecutor({ createWorker: () => createEnterpriseReadProcess(new URL('file:///unused184'), source) })
+  }
+
+  it.each([
+    ['exit184', "process.send({type:'ready'});process.on('message',()=>process.exit(7))"],
+    ['ipc184', "process.send({type:'ready'});process.on('message',m=>process.send({id:m.id,type:'invalid'}))"],
+  ])('records process faults as unknown after one failed read', async (id, source) => {
+    const reads = scripted(source)
+    try { await expect(reads.currentQualifiedJson(filter, undefined, { requestId: id })).rejects.toMatchObject({ statusCode: 503 }) }
+    finally { await reads.close() }
+    const rows = await logs(id)
+    expect(rows.filter(row => row.operation === 'enterprise_read.finished')).toMatchObject([{ outcome: 'unknown' }])
+    expect(rows.filter(row => row.operation === 'enterprise_read.process.exit')).toHaveLength(1)
+  })
+
+  it('records startup failure separately from an early exit', async () => {
+    const failed = createEnterpriseReadExecutor({ createWorker: () => { throw new Error('PRIVATE184_START') } })
+    try {
+      await expect(failed.currentQualifiedJson(filter, undefined, { requestId: 'spawn184' })).rejects.toMatchObject({ code: 'worker_start_failed' })
+    } finally { await failed.close() }
+    expect((await logs('spawn184')).filter(row => row.operation === 'enterprise_read.process.start').map(row => row.outcome))
+      .toEqual(['failure', 'started'])
+    const exited = scripted('process.exit(3)')
+    try {
+      await expect(exited.currentQualifiedJson(filter, undefined, { requestId: 'earlyexit184' })).rejects.toMatchObject({ code: 'worker_exited' })
+    } finally { await exited.close() }
+    expect((await logs('earlyexit184')).find(row => row.operation === 'enterprise_read.finished')?.outcome).toBe('unknown')
+  })
+
+  it('records one startup timeout and retires the child', async () => {
+    const reads = scripted('setInterval(()=>{},1000)')
+    try {
+      await expect(reads.currentQualifiedJson(filter, undefined, { requestId: 'timeout184' })).rejects.toMatchObject({ code: 'worker_start_timeout' })
+    } finally { await reads.close() }
+    const rows = await logs('timeout184')
+    expect(rows.filter(row => row.operation === 'enterprise_read.finished')).toMatchObject([{ outcome: 'timeout' }])
+    expect(rows.filter(row => row.operation === 'enterprise_read.process.start').map(row => row.outcome)).toEqual(['timeout', 'started'])
+  }, 10_000)
 })

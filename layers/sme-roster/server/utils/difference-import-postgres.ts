@@ -1,14 +1,16 @@
 import { and, eq, exists, gte, isNotNull, notExists, or, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { differenceReason } from '../../../../db/schema'
+import { differenceMeasures, differenceReasons, differenceStatuses } from '../../../../db/difference-codes'
+import { COMPARISON_DIRECTIONS } from '../../lib/comparison-model'
 import { enterprise, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
 import { differenceReason as d } from '../../../../db/postgresql/roster-selection-tables'
 import { evidenceReviewReceipt114 as receipt } from '../../../../db/postgresql/evidence-review-tables'
 import { platformBusinessObservation as observation, platformCollection, platformCollectionPage as page,
-  platformLegacyQueryAlias as queryAlias, platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
+  platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { TITLE_ORDER } from '../../lib/labels'
+import { isCurrentPlatformCollection, platformDecisionQueryMode } from '../../lib/platform/current-observation-postgres'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import type { RosterImportDifference, RosterImportItemResult } from '../../lib/roster-import-client'
 import { findPostgresImportQuery, findPostgresImportRelation, findPostgresImportRelationById, type PostgresImportRelation } from './roster-import-references-postgres'
@@ -47,13 +49,13 @@ async function locateEnterprise(tx: Tx, difference: RosterImportDifference, lock
   return owner
 }
 
-async function findCollection(tx: Tx, aliasId: number) {
+async function findCollection(tx: Tx, aliasId: number, mode?: ReturnType<typeof platformDecisionQueryMode>) {
   if (!Number.isSafeInteger(aliasId) || aliasId < 1) return undefined
   const [collection] = await tx.select({
-    id: queryAlias.oldId, nativeId: platformCollection.id, interface: platformCollection.interface,
+    id: platformCollection.publicId, nativeId: platformCollection.id, interface: platformCollection.interface,
     queryKey: platformCollection.queryKey, rdjb: platformCollection.rdjb,
-  }).from(platformCollection).innerJoin(queryAlias, eq(queryAlias.collectionId, platformCollection.id))
-    .where(eq(queryAlias.oldId, aliasId))
+  }).from(platformCollection)
+    .where(and(eq(platformCollection.publicId, aliasId), mode ? isCurrentPlatformCollection(tx, platformCollection, mode) : undefined))
   return collection
 }
 
@@ -105,17 +107,17 @@ async function planDifference(tx: Tx, difference: RosterImportDifference, index:
     item: { ok: false, kind: 'difference', ref, error: { code, message, field } },
   })
   if (!titleCodes.has(String(difference?.titleCode))) return reject('title_unknown', `称号不在字典内：${String(difference?.titleCode)}`, 'titleCode')
-  if (!differenceReason.direction.enumValues.includes(difference.direction)) {
+  if (!COMPARISON_DIRECTIONS.includes(difference.direction)) {
     return reject('direction_unknown', 'direction 必须是 missing_in_miit / extra_in_miit', 'direction')
   }
-  if (difference.status != null && !differenceReason.status.enumValues.includes(difference.status)) {
+  if (difference.status != null && !differenceStatuses.includes(difference.status)) {
     return reject('difference_status_unknown', `status 不在状态机内：${difference.status}`, 'status')
   }
-  const reasonCode = differenceReason.reasonCode.enumValues.find(code => code === difference.reasonCode) ?? null
+  const reasonCode = differenceReasons.find(code => code === difference.reasonCode) ?? null
   if (difference.reasonCode != null && reasonCode === null) {
     return reject('reason_unknown', `reasonCode 不在字典内：${difference.reasonCode}`, 'reasonCode')
   }
-  const measureCode = differenceReason.measureCode.enumValues.find(code => code === difference.measureCode) ?? null
+  const measureCode = differenceMeasures.find(code => code === difference.measureCode) ?? null
   if (difference.measureCode != null && measureCode === null) {
     return reject('measure_unknown', `measureCode 不在字典内：${difference.measureCode}`, 'measureCode')
   }
@@ -147,12 +149,13 @@ async function planDifference(tx: Tx, difference: RosterImportDifference, index:
   if (!enterprise) return reject('enterprise_not_found', '差异找不到归属企业：' +
     (optionalText(difference.enterpriseName) ?? (normalizeUscc(difference.uscc) || '(空)')), 'enterpriseName')
 
-  const query = queryId === null ? null : (await findCollection(tx, queryId) ?? null)
-  if (queryId !== null && !query) return reject('evidence_subject_mismatch', 'Query evidence not found', 'evidenceRelationRef')
   if (relationId !== null && Number.isSafeInteger(relationId) && relationId > 0) {
     relation = await findPostgresImportRelationById(tx, relationId)
   }
   if (relationId !== null && !relation) return reject('evidence_subject_mismatch', 'Relation evidence not found', 'evidenceRelationRef')
+  const queryMode = relation ? undefined : platformDecisionQueryMode(difference.status ?? 'not_queried', reasonCode)
+  const query = queryId === null ? null : (await findCollection(tx, queryId, queryMode) ?? null)
+  if (queryId !== null && !query) return reject('evidence_subject_mismatch', 'Current query evidence not found', 'evidenceQueryRef')
   if (query && relation && query.nativeId !== relation.collectionId) {
     return reject('evidence_subject_mismatch', 'Query and relation evidence must identify the same source query', 'evidenceRelationRef')
   }

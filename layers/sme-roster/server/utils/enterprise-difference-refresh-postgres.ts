@@ -5,7 +5,7 @@ import { differenceReason as d, enterpriseDifferenceComparison as c } from '../.
 import { createError } from 'h3'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
-import { parseEnterpriseDifferenceRefreshInput, projectRefreshComparison, refreshComparisonFailure } from './enterprise-difference-refresh'
+import { parseEnterpriseDifferenceRefreshInput, projectRefreshComparison, refreshComparisonFailure } from './enterprise-difference-refresh-contract'
 import { preparePostgresRefreshComparison } from './enterprise-difference-refresh-comparison-postgres'
 import { readPostgresRefreshFingerprints } from './enterprise-difference-refresh-fingerprint-postgres'
 
@@ -51,7 +51,7 @@ export async function readPostgresEnterpriseDifferenceComparisons(db: NodePgData
 }
 
 async function refreshBlock(tx: Tx, enterpriseIds: number[], now: string) {
-  const rows = await tx.select({ enterpriseId: c.enterpriseId, title: c.titleCode, fingerprint: c.businessFingerprint })
+  const rows = await tx.select({ enterpriseId: c.enterpriseId, title: c.titleCode, fingerprint: c.stateFingerprint })
     .from(c).where(inArray(c.enterpriseId, enterpriseIds))
   const previous = new Map(rows.map(row => [key(row.enterpriseId, row.title), row.fingerprint]))
   const pending: Pending[] = []
@@ -85,13 +85,13 @@ async function refreshBlock(tx: Tx, enterpriseIds: number[], now: string) {
       enterpriseId: row.enterpriseId, titleCode: row.title, comparisonState: row.comparison.state,
       reasons: JSON.stringify(row.comparison.reasons), comparisonError: row.comparison.error,
       decisionCutoffId: cutoffs.get(key(row.enterpriseId, row.title)) ?? 0,
-      businessFingerprint: row.fingerprint, changedAt: now, refreshedAt: now,
+      businessFingerprint: row.fingerprint, stateFingerprint: row.fingerprint, changedAt: now, refreshedAt: now,
     }))).onConflictDoUpdate({
       target: [c.enterpriseId, c.titleCode],
       set: {
         comparisonState: sql`excluded.comparison_state`, reasons: sql`excluded.reasons`,
         comparisonError: sql`excluded.comparison_error`, decisionCutoffId: sql`excluded.decision_cutoff_id`,
-        businessFingerprint: sql`excluded.business_fingerprint`, changedAt: now, refreshedAt: now,
+        businessFingerprint: sql`excluded.business_fingerprint`, stateFingerprint: sql`excluded.state_fingerprint`, changedAt: now, refreshedAt: now,
       },
     })
   }

@@ -4,7 +4,7 @@
 
 ## 背景与决定
 
-企业基础库将同时承接名录、线索名单和后续业务。选择部分升级：core 持有稳定企业 ID、通用资料及来源登记，业务模块保有各自的名单、资格、原始事实与历史。各模块通过 core 的公开命令补充企业，并用企业 ID 引用主体。沿用 Nuxt Layers、单 SQLite 和现有模块依赖方向。依据见[平台底座与业务模块边界](2026-11-17-platform-core-and-business-modules.md)及[保留 SQLite](2026-10-20-retain-sqlite.md)。
+企业基础库将同时承接名录、线索名单和后续业务。选择部分升级：core 持有稳定企业 ID、通用资料及来源登记，业务模块保有各自的名单、资格、原始事实与历史。各模块通过 core 的公开命令补充企业，并用企业 ID 引用主体。沿用 Nuxt Layers、业务单库 和现有模块依赖方向。依据见[平台底座与业务模块边界](2026-11-17-platform-core-and-business-modules.md)及[PostgreSQL 19](2026-11-20-postgresql-migration.md)。
 
 ## 数据与命令归属
 

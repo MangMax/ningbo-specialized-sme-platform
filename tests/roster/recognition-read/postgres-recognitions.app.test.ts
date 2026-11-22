@@ -1,70 +1,44 @@
-import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import pg from 'pg'
 import { nativeAppAdapter } from '../../support/native-app'
-import { reserveLoopbackPort } from '../../support/owned-process.mjs'
 
-const bin = process.env.ROSTER_TEST_POSTGRES_BIN
-
-describe.skipIf(!bin)('PostgreSQL first recognition and ledger years', () => {
-  let dir: string
-  let data: string
-  let started = false
-  let app: ReturnType<typeof nativeAppAdapter>
-  const command = (name: string, args: string[], input?: string) =>
-    execFileSync(join(bin!, name), args, { input, stdio: ['pipe', 'pipe', 'pipe'] })
+describe('PostgreSQL first recognition and ledger years', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'roster-recognitions-pg-'))
+  const app = nativeAppAdapter({ dir, token: 'native-first-recognitions' })
+  let postgres: pg.Pool
 
   beforeAll(async () => {
-    dir = mkdtempSync(join(tmpdir(), 'roster-recognitions-pg-'))
-    data = join(dir, 'pg')
-    const port = await reserveLoopbackPort()
-    const url = `postgresql://roster_fixture@127.0.0.1:${port}/postgres`
-    command('initdb', ['-D', data, '-U', 'roster_fixture', '-A', 'trust', '--no-locale', '-E', 'UTF8'])
-    command('pg_ctl', ['-D', data, '-l', join(dir, 'postgres.log'), '-o', `-h 127.0.0.1 -p ${port} -k ${dir}`, '-w', 'start'])
-    started = true
-    command('psql', ['-X', '-w', '-v', 'ON_ERROR_STOP=1', url], `
-      CREATE SCHEMA business;
-      SET search_path TO business;
-      CREATE TABLE enterprise (id bigint PRIMARY KEY, name text, uscc_norm text, district text);
-      CREATE TABLE record (id bigint PRIMARY KEY, enterprise_id bigint, title_code text, source text, district text);
-      CREATE TABLE record_event (id bigint PRIMARY KEY, record_id bigint, event_type text, year bigint, decided_year bigint, review_outcome text);
-      CREATE TABLE record_evidence (id bigint PRIMARY KEY, record_event_id bigint, source_file text, attachment text, list_no bigint, page bigint);
-      INSERT INTO enterprise VALUES (7,'宁波甲',NULL,''), (8,'宁波乙',NULL,NULL);
-      INSERT INTO record VALUES (1,7,'specialized_sme','jxj','海曙区'), (2,7,'little_giant','miit',NULL),
+    await app.prepare()
+    app.psql(['-c', `
+      SET search_path TO business, public;
+      INSERT INTO enterprise (id,name,name_norm,district) VALUES (7,'宁波甲','宁波甲',''), (8,'宁波乙','宁波乙',NULL);
+      INSERT INTO record (id,enterprise_id,title_code,source,district)
+      VALUES (1,7,'specialized_sme','jxj','海曙区'), (2,7,'little_giant','miit',NULL),
         (3,8,'specialized_sme','jxj',NULL), (4,8,'innovative_sme','jxj',NULL);
-      INSERT INTO record_event VALUES
+      INSERT INTO record_event (id,record_id,event_type,year,decided_year,review_outcome) VALUES
         (10,1,'award',2019,2020,NULL), (11,1,'award',2020,2020,NULL), (12,1,'review',2020,2023,'failed'),
         (13,1,'award',2024,2024,NULL), (14,2,'award',2022,NULL,NULL),
         (15,3,'award',NULL,NULL,NULL), (16,4,'nurture',2021,NULL,NULL);
-      INSERT INTO record_evidence VALUES (21,10,'公告.pdf','附件一',6,3), (22,10,'名单.xlsx',NULL,7,2),
-        (23,11,'同年后录.pdf',NULL,8,4);
-    `)
-    app = nativeAppAdapter({
-      dir, token: 'isolated-recognition-test',
-      launch: ({ cwd, port }) => ({
-        args: [join(cwd, '.output/server/index.mjs')],
-        env: {
-          NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port),
-          NUXT_DB_READONLY: '1', NUXT_POSTGRES_DIRECTORY_URL: url, NUXT_POSTGRES_ROSTER_READ: '1',
-        },
-      }),
-    })
+      INSERT INTO record_evidence (id,record_event_id,source_file,attachment,list_no,page) VALUES
+        (21,10,'公告.pdf','附件一',6,3), (22,10,'名单.xlsx',NULL,7,2), (23,11,'同年后录.pdf',NULL,8,4);
+    `])
     await app.start()
+    postgres = new pg.Pool({ connectionString: app.postgresUrl })
   }, 60_000)
 
   afterAll(async () => {
-    try {
-      await app?.close()
-    } finally {
-      if (started) command('pg_ctl', ['-D', data, '-w', '-m', 'fast', 'stop'])
-      if (dir) rmSync(dir, { recursive: true, force: true })
+    try { await postgres?.end() }
+    finally {
+      try { await app.close() }
+      finally { rmSync(dir, { recursive: true, force: true }) }
     }
   })
 
   async function read(path: string) {
-    const response = await app.request('/api/roster/' + path)
+    const response = await fetch(app.url('/api/roster/' + path), { signal: AbortSignal.timeout(5000) })
     expect(response.status, await response.clone().text()).toBe(200)
     return response.json()
   }
@@ -93,5 +67,35 @@ describe.skipIf(!bin)('PostgreSQL first recognition and ledger years', () => {
 
   it('returns distinct ledger event years and earliest recognition years from PostgreSQL', async () => {
     expect(await read('ledger-years')).toEqual({ eventYears: [2019, 2020, 2021, 2022, 2024], firstRecognitionYears: [2020, 2022] })
+  })
+
+  it('serves unrelated requests while PostgreSQL waits to read recognition evidence', async () => {
+    const path = 'recognitions?pageSize=1&title=specialized_sme&status=confirmed'
+    const expected = await read(path)
+    expect(expected.rows).toHaveLength(1)
+
+    const lock = await postgres.connect()
+    let completion: Promise<unknown> | undefined
+    try {
+      const { rows: [holder] } = await lock.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')
+      await lock.query('BEGIN')
+      await lock.query('LOCK TABLE business.record_evidence IN ACCESS EXCLUSIVE MODE')
+      completion = read(path)
+      void completion.catch(() => {})
+      await expect.poll(async () => {
+        const { rows } = await postgres.query<{ waiting: boolean }>(`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock'
+              AND $1 = ANY(pg_blocking_pids(pid))
+          ) AS waiting
+        `, [holder!.pid])
+        return rows[0]?.waiting
+      }).toBe(true)
+      const other = await fetch(app.url('/api/jobs/kinds'), { signal: AbortSignal.timeout(1000) })
+      expect(other.status).toBe(200)
+    } finally {
+      try { await lock.query('ROLLBACK') } finally { lock.release() }
+    }
+    expect(await completion).toEqual(expected)
   })
 })

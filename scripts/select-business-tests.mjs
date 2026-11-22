@@ -52,10 +52,8 @@ export function selectBusinessTests(paths, event = 'pull_request') {
     app: all.app.filter(group => full || businesses.has(group.business)),
   }
   const watcher = full || paths.includes('tests/runtime/development/nuxt-runtime-watch.http.app.test.ts')
-  const ttl = full || paths.some(path => /^(?:(?:layers\/sme-roster\/)?server\/api\/roster\/|tests\/roster\/official-evidence\/)/.test(path))
-  if (ttl) selected.app.push({ group: '深度测试 · 名录 · 快照真实过期', project: 'expiry' })
   if (watcher) selected.app.push({ group: '深度测试 · 运行环境 · 开发服务热更新', project: 'watcher' })
-  return { ...selected, full, upgrade, ttl, watcher, reasons,
+  return { ...selected, full, upgrade, watcher, reasons,
     skipped: [...all.native, ...all.app].filter(group => !selected[group.project].includes(group)).map(group => group.group) }
 }
 

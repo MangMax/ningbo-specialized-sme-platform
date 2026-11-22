@@ -1,10 +1,8 @@
-import { resetExportRows } from '../current-export/fixtures/reset-rows'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { CURRENT_RULE_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
-import { businessIdentity, expectedBusinessIdentity } from '../current-export/fixtures/specialized-export'
-import { reviewCurrentExportDecision, confirmCurrentExportExclusion } from '../fixtures/qualification-decisions'
+import { CURRENT_RULE_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification-model'
+import { businessIdentity } from '../current-export/fixtures/specialized-export'
+import { confirmCurrentExportExclusion } from '../fixtures/qualification-decisions'
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -14,13 +12,22 @@ import { newJobId } from '../../../layers/core/lib/job'
 import { createHash } from 'node:crypto'
 import { channel } from 'node:diagnostics_channel'
 import { get } from 'node:http'
-import { eq } from 'drizzle-orm'
+import pg from 'pg'
+import { sql } from 'drizzle-orm'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest'
-import { initializeDb, schema as s } from '../../../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { job as jobTable } from '../../../db/postgresql/job-tables'
+import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
+import { rosterLegacyMember } from '../../../db/postgresql/roster-selection-tables'
+import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'export-117-'))
-const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
+const exportDir = join(dir, 'exports')
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+let pool: pg.Pool
+let db: NodePgDatabase
 let servicePid: number
 let service: { baseUrl: string; stop: () => Promise<void>; diagnostics: () => unknown }
 const requestErrors = channel('undici:request:error')
@@ -58,45 +65,44 @@ async function workbook(key: string) {
   expect(download.headers.get('content-disposition')).toContain('.xlsx')
   const bytes = Buffer.from(await download.arrayBuffer()), wb = new ExcelJS.Workbook()
   await wb.xlsx.load(bytes as any)
+  expect(createHash('sha256').update(bytes).digest('hex')).toBe(job.result.artifact.sha256)
   return { wb, job, bytes }
 }
-function candidate(name: string, events: Array<{ eventType: 'award'|'review'|'nurture'|'maintain'; year: number|null; decidedYear?: number|null; reviewOutcome?: 'passed'|'failed'|null; batchSeq?: number|null }> = [{ eventType: 'award', year: new Date().getFullYear(), batchSeq: 1 }], titleCode = 'little_giant') {
-  const enterprise = db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: 'TEST-' + name, district: '鄞州区', city: '宁波市' }).returning().get()
-  db.insert(s.rosterLegacyMember).values({ enterpriseId: enterprise.id }).run()
-  const record = db.insert(s.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode, nameRaw: name }).returning().get()
-  for (const e of events) {
-    const event = db.insert(s.recordEvent).values({ recordId: record.id, ...e }).returning().get()
-    db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'jxj/announcement/synthetic.xlsx', attachment: '名单', listNo: enterprise.id }).run()
-  }
-  return { enterprise, record }
-}
-function seedLoadCandidates(count: number) {
-  const sqlite = db.$client
-  const insertEnterprise = sqlite.prepare(`insert into enterprise (name,name_norm,uscc_norm,district,city)
-    values (?,?,?,'鄞州区','宁波市')`)
-  const enroll = sqlite.prepare('insert into roster_legacy_member (enterprise_id) values (?)')
-  const insertRecord = sqlite.prepare(`insert into record (enterprise_id,title_code,source,name_raw)
-    values (?,'little_giant','jxj',?)`)
-  const insertAward = sqlite.prepare(`insert into record_event (record_id,event_type,year,batch_seq)
-    values (?,'award',?,1)`)
-  const insertEvidence = sqlite.prepare(`insert into record_evidence (record_event_id,source_file,attachment,list_no)
-    values (?,'jxj/announcement/synthetic.xlsx','名单',?)`)
-  const year = new Date().getFullYear()
-  db.transaction(() => {
-    for (let i = 0; i < count; i++) {
-      const name = `资源合成${i}`
-      const enterpriseId = insertEnterprise.run(name, name, 'TEST-' + name).lastInsertRowid
-      enroll.run(enterpriseId)
-      const recordId = insertRecord.run(enterpriseId, name).lastInsertRowid
-      const eventId = insertAward.run(recordId, year).lastInsertRowid
-      insertEvidence.run(eventId, enterpriseId)
+type Event = Pick<typeof recordEvent.$inferInsert, 'eventType' | 'year' | 'decidedYear' | 'reviewOutcome' | 'batchSeq'>
+function candidate(name: string, events: Event[] = [{ eventType: 'award', year: new Date().getFullYear(), batchSeq: 1 }]) {
+  return db.transaction(async tx => {
+    const [owner] = await tx.insert(enterprise).values({ name, nameNorm: name, usccNorm: 'TEST-' + name, district: '鄞州区', city: '宁波市' }).returning()
+    await tx.insert(rosterLegacyMember).values({ enterpriseId: owner!.id })
+    const [rosterRecord] = await tx.insert(record).values({ enterpriseId: owner!.id, source: 'jxj', titleCode: 'little_giant', nameRaw: name }).returning()
+    for (const input of events) {
+      const [event] = await tx.insert(recordEvent).values({ recordId: rosterRecord!.id, ...input }).returning()
+      await tx.insert(recordEvidence).values({ recordEventId: event!.id, sourceFile: 'jxj/announcement/synthetic.xlsx', attachment: '名单', listNo: owner!.id })
     }
+    return owner!
   })
+}
+async function seedLoadCandidates(count: number) {
+  await pool.query(`WITH names AS (
+    SELECT '资源合成' || n AS name FROM generate_series(0, $1::integer - 1) AS series(n)
+  ), owners AS (
+    INSERT INTO business.enterprise (name, name_norm, uscc_norm, district, city)
+    SELECT name, name, 'TEST-' || name, '鄞州区', '宁波市' FROM names RETURNING id, name
+  ), membership AS (
+    INSERT INTO business.roster_legacy_member (enterprise_id) SELECT id FROM owners
+  ), records AS (
+    INSERT INTO business.record (enterprise_id, title_code, source, name_raw)
+    SELECT id, 'little_giant', 'jxj', name FROM owners RETURNING id, enterprise_id
+  ), events AS (
+    INSERT INTO business.record_event (record_id, event_type, year, batch_seq)
+    SELECT id, 'award', $2, 1 FROM records RETURNING id, record_id
+  )
+  INSERT INTO business.record_evidence (record_event_id, source_file, attachment, list_no)
+  SELECT events.id, 'jxj/announcement/synthetic.xlsx', '名单', records.enterprise_id
+  FROM events JOIN records ON records.id = events.record_id`, [count, new Date().getFullYear()])
 }
 
 function warmRead(path: string) {
-  // Synchronous fixture writes can outlive the server's idle connection timeout.
-  // The warm-up opens a new connection before the timed fetch requests.
+  // Open a fresh connection before the timed requests.
   return new Promise<number | undefined>((resolve, reject) => {
     const request = get(url(path), { agent: false }, response => {
       response.once('error', reject)
@@ -107,16 +113,26 @@ function warmRead(path: string) {
   })
 }
 async function startService() {
-  await readDevelopmentDiscovery()
   const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
-  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir,'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, ...postgres!.env, NUXT_BUILD_DIR: join(dir,'build'), NUXT_DB_READONLY: '0', NUXT_ROSTER_EXPORT_DIR: exportDir, NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
   servicePid = child.pid!
   let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-12000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child), diagnostics: () => ({ pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode, output }) }
   try { await waitForHttp(url('/api/jobs/kinds'), { timeoutMs: 60000, child }) } catch (e) { await service.stop(); throw new Error(String(e) + output) }
 }
-beforeAll(startService, 90000)
-beforeEach(() => resetExportRows(db.$client))
+beforeAll(async () => {
+  await readDevelopmentDiscovery()
+  postgres = await postgresRuntimeFixture({ dir })
+  pool = new pg.Pool({ connectionString: postgres.url, options: '-c search_path=business,public' })
+  db = drizzle(pool)
+  await startService()
+}, 90_000)
+beforeEach(async () => {
+  expect((await pool.query("SELECT id FROM business.job WHERE kind = 'current-roster-export' AND state IN ('queued','running')")).rows).toEqual([])
+  await pool.query(`TRUNCATE business.job, business.enterprise, business.record, business.record_event,
+    business.record_evidence, business.roster_legacy_member, business.difference_reason,
+    business.enterprise_fact_revision, business.enterprise_fact_receipt, business.evidence_review_receipt_114 CASCADE`)
+})
 // Emit the assertion at failure time: a later workflow deadline may prevent
 // Vitest's end-of-run summary and JSON reporter from being written.
 afterEach(context => {
@@ -125,23 +141,26 @@ afterEach(context => {
     console.error('little-giant app state', service.diagnostics())
   }
 })
-afterAll(async () => { requestErrors.unsubscribe(logRequestError); if (service) await service.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => {
+  requestErrors.unsubscribe(logRequestError)
+  try { await service?.stop() }
+  finally {
+    try { await pool?.end() }
+    finally { postgres?.close(); rmSync(dir, { recursive: true, force: true }) }
+  }
+})
 it('HTTP提交到六表文件', async () => {
-  const { enterprise } = candidate('新认定')
+  await candidate('新认定')
   const { wb, job, bytes } = await workbook('fresh')
   expect(wb.worksheets.map(w => w.name)).toEqual(['有效企业','已到期','已注销（吊销）','已迁出','未认定','口径说明'])
-  expect(businessIdentity(rows(wb,'有效企业')[0]!)).toEqual(expectedBusinessIdentity(db,enterprise.id))
+  expect(businessIdentity(rows(wb,'有效企业')[0]!)).toEqual(['新认定', 'TEST-新认定'])
   expect(job.result.counts).toEqual({ eligible: 1, pending: 0, excluded: 0 })
   expect(job.result.artifact.size).toBe(bytes.length)
   expect(job.result.dataVersion).toMatch(/^sha256:/)
+  expect((await fetch(url(job.result.artifact.downloadUrl))).status).toBe(401)
 })
 function rows(wb: ExcelJS.Workbook, sheet: string) {
   return wb.getWorksheet(sheet)!.getRows(2, Math.max(0,wb.getWorksheet(sheet)!.rowCount-1))?.map(row => row.values as any[]) ?? []
-}
-function decision(enterpriseId: number, reasonCode: 'moved_out'|'moved_in'|'deregistered'|'renamed'|'pending_review'|'other', extra: Record<string,unknown> = {}) {
-  const decision = db.insert(s.differenceReason).values({enterpriseId,titleCode:'little_giant',direction:'extra_in_miit',status:'confirmed_reason',reasonCode,verificationStatus:'confirmed',lifecycleAction:'replace',basis:'人工确认合成主体事实',effectiveAt:'2025-01-01T00:00:00Z',recordedAt:new Date().toISOString(),...extra} as any).returning().get()
-  reviewCurrentExportDecision(db,decision)
-  return decision
 }
 function executorPid() {
   const line = execFileSync('ps',['-Ao','pid=,ppid=,args='],{encoding:'utf8'}).split('\n').find(line => Number(line.trim().split(/\s+/)[1]) === servicePid && line.includes('/current-export-worker.mjs'))
@@ -153,7 +172,7 @@ async function executor() {
   throw new Error('owned executor not found')
 }
 it('阻塞执行、背压、取消与失败', async () => {
-  seedLoadCandidates(3000)
+  await seedLoadCandidates(3000)
   const first = await json(await submit('blocked-running'))
   const pid = await executor(); process.kill(pid,'SIGSTOP')
   const queued: string[]=[]
@@ -175,20 +194,20 @@ it('阻塞执行、背压、取消与失败', async () => {
     expect((await fetch(url('/api/jobs/'+first.jobId),{method:'DELETE',headers})).status).toBe(202)
     const cancelledJob=await terminal(first.jobId)
     expect(cancelledJob.state).toBe('cancelled');expect(cancelledJob.result.ruleVersion).toBe(CURRENT_RULE_VERSION)
-    expect(existsSync(join(dbPath+'.exports',first.jobId+'.part'))).toBe(false)
+    expect(existsSync(join(exportDir,first.jobId+'.part'))).toBe(false)
     expect((await fetch(url('/api/job-artifacts/'+first.jobId),{headers})).status).toBe(404)
     const failed = await json(await submit('killed-executor'))
     process.kill(await executor(),'SIGKILL')
     const failure = await terminal(failed.jobId)
     expect(failure.state).toBe('failed'); expect(failure.error).toContain('中断');expect(failure.result.ruleVersion).toBe(CURRENT_RULE_VERSION)
-    expect(existsSync(join(dbPath+'.exports',failed.jobId+'.part'))).toBe(false)
+    expect(existsSync(join(exportDir,failed.jobId+'.part'))).toBe(false)
     expect((await fetch(url('/api/job-artifacts/'+failed.jobId),{headers})).status).toBe(404)
   } finally { try {process.kill(pid,'SIGCONT')} catch {} }
 },30000)
 it('万行快照与普通请求响应', async () => {
-  seedLoadCandidates(10000)
-  const last = candidate('快照末项')
-  const listPath='/api/roster/enterprises?pageSize=20', detailPath='/api/roster/enterprises/'+last.enterprise.id
+  await seedLoadCandidates(10000)
+  const last = await candidate('快照末项')
+  const listPath='/api/roster/enterprises?pageSize=20', detailPath='/api/roster/enterprises/'+last.id
   for(const path of [listPath,detailPath]) expect(await warmRead(path)).toBe(200)
   const start=performance.now(), accepted=await submit('large-snapshot'), submitMs=performance.now()-start
   expect(accepted.status).toBe(202);expect(submitMs).toBeLessThan(1000)
@@ -203,11 +222,13 @@ it('万行快照与普通请求响应', async () => {
   expect(active.state, 'snapshot must still be active before mutation: '+JSON.stringify(active)).toBe('running')
   expect(active.progress.done).toBeGreaterThanOrEqual(100)
   expect(active.progress.done).toBeLessThan(active.progress.total)
-  const changed=await fetch(url('/api/roster/decision-lifecycle/commands'),{method:'POST',headers,body:JSON.stringify({enterpriseId:last.enterprise.id,titleCode:'little_giant',direction:'extra_in_miit',action:'replace',expectedCurrentId:null,idempotencyKey:'snapshot-change',actor:{type:'agent',id:'test'},basis:'隔离SQLite当前事实更新',ruleVersion:'manual-v1',effectiveAt:'2026-01-01T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'moved_out',verificationStatus:'confirmed',measureCode:'mark_moved_out'}})})
+  const scope = { enterpriseId: last.id, titleCode: 'little_giant', direction: 'extra_in_miit' } as const
+  const context = { actor: { type: 'agent', id: 'test' }, basis: '隔离测试库当前事实更新', ruleVersion: 'manual-v1', effectiveAt: '2026-01-01T00:00:00Z' }
+  const decision = (command: object) => fetch(url('/api/roster/decision-lifecycle/commands'), { method: 'POST', headers, body: JSON.stringify({ ...scope, ...context, ...command }) })
+  const changed = await decision({ action: 'replace', expectedCurrentId: null, idempotencyKey: 'snapshot-change',
+    decision: { status: 'confirmed_reason', reasonCode: 'moved_out', verificationStatus: 'confirmed', measureCode: 'mark_moved_out' } })
   expect(changed.status).toBe(200)
-  const version=await changed.json()
-  reviewCurrentExportDecision(db,db.select().from(s.differenceReason).where(eq(s.differenceReason.id,version.versionId)).get()!)
-  await confirmCurrentExportExclusion(service.baseUrl,headers,last.enterprise.id,'snapshot-typed-exclusion')
+  await confirmCurrentExportExclusion(service.baseUrl,headers,last.id,'snapshot-typed-exclusion')
   const latencies:number[]=[]
   for(let i=0;i<4;i++) for(const path of [listPath,detailPath,'/api/files?limit=20']) {
     const t=performance.now(), response=await fetch(url(path));await response.arrayBuffer()
@@ -223,50 +244,59 @@ it('万行快照与普通请求响应', async () => {
   // The complete 10,000-row snapshot and responsiveness checks above are finished.
   // Remove only that stress fixture after its job is terminal; later cases and
   // the independent next execution still retain the changed subject and its facts.
-  db.transaction(() => {
-    db.$client.prepare("delete from record where enterprise_id in (select id from enterprise where name like '资源合成%')").run()
-    db.$client.prepare("delete from enterprise where name like '资源合成%'").run()
+  await db.transaction(async tx => {
+    await tx.execute(sql`DELETE FROM business.record_evidence WHERE record_event_id IN (
+      SELECT e.id FROM business.record_event e JOIN business.record r ON r.id = e.record_id
+      JOIN business.enterprise n ON n.id = r.enterprise_id WHERE n.name LIKE '资源合成%')`)
+    await tx.execute(sql`DELETE FROM business.record_event WHERE record_id IN (
+      SELECT r.id FROM business.record r JOIN business.enterprise n ON n.id = r.enterprise_id WHERE n.name LIKE '资源合成%')`)
+    await tx.execute(sql`DELETE FROM business.record WHERE enterprise_id IN (SELECT id FROM business.enterprise WHERE name LIKE '资源合成%')`)
+    await tx.execute(sql`DELETE FROM business.roster_legacy_member WHERE enterprise_id IN (SELECT id FROM business.enterprise WHERE name LIKE '资源合成%')`)
+    await tx.execute(sql`DELETE FROM business.enterprise WHERE name LIKE '资源合成%'`)
   })
   // A new execution observes the complete typed exclusion, without caching the earlier qualification.
   const next=await workbook('after-snapshot-change')
   expect(rows(next.wb,'已迁出').some(r=>r[2]==='快照末项')).toBe(true)
   expect(next.job.result.dataVersion).not.toBe(job.result.dataVersion)
 },60000)
-it('重启保留与中断清理', async () => {
+it('重启保留已完成文件并在下次导出清理中断产物', async () => {
   const finished=await workbook('persistent')
   await service.stop()
-  const otherDatabaseExport = join(dbPath + '.exports', newJobId() + '.xlsx')
-  writeFileSync(otherDatabaseExport, 'other database')
+  const unownedArtifact = join(exportDir, newJobId() + '.xlsx')
+  writeFileSync(unownedArtifact, 'other database')
   const interruptedId=newJobId()
-  db.insert(s.job).values({id:interruptedId,kind:'current-roster-export',params:{titleCode:'little_giant',clientRequestId:'interrupted'},state:'running',progress:{done:1,total:20}}).run()
-  writeFileSync(join(dbPath+'.exports',interruptedId+'.part'),'incomplete')
-  writeFileSync(join(dbPath+'.exports',interruptedId+'.xlsx'),'unpublished-orphan')
+  const interruptedAt = new Date().toISOString()
+  await db.insert(jobTable).values({ id: interruptedId, kind: 'current-roster-export',
+    params: JSON.stringify({ titleCode: 'little_giant', clientRequestId: 'interrupted' }),
+    state: 'running', progress: JSON.stringify({ done: 1, total: 20 }), createdAt: interruptedAt, startedAt: interruptedAt })
+  writeFileSync(join(exportDir,interruptedId+'.part'),'incomplete')
+  writeFileSync(join(exportDir,interruptedId+'.xlsx'),'unpublished-orphan')
   await startService()
   const interrupted=await json(await fetch(url('/api/jobs/'+interruptedId)))
   expect(interrupted.state).toBe('failed');expect(interrupted.error).toContain('重启')
-  for(let i=0;i<100 && (existsSync(join(dbPath+'.exports',interruptedId+'.part')) || existsSync(join(dbPath+'.exports',interruptedId+'.xlsx')));i++) await new Promise(r=>setTimeout(r,10))
-  expect(existsSync(join(dbPath+'.exports',interruptedId+'.part'))).toBe(false)
-  expect(existsSync(join(dbPath+'.exports',interruptedId+'.xlsx'))).toBe(false)
-  expect(readFileSync(otherDatabaseExport, 'utf8')).toBe('other database')
   expect((await fetch(url('/api/job-artifacts/'+interruptedId),{headers})).status).toBe(404)
+  await workbook('cleanup-after-restart')
+  expect(existsSync(join(exportDir,interruptedId+'.part'))).toBe(false)
+  expect(existsSync(join(exportDir,interruptedId+'.xlsx'))).toBe(false)
+  expect(readFileSync(unownedArtifact, 'utf8')).toBe('other database')
   const restored=await json(await fetch(url('/api/jobs/'+finished.job.id)))
   expect(restored.state).toBe('done');expect(restored.result.artifact.availability).toBe('available')
   const bytes=Buffer.from(await (await fetch(url(restored.result.artifact.downloadUrl),{headers})).arrayBuffer())
   expect(bytes.equals(finished.bytes)).toBe(true)
   expect((await json(await submit('persistent'))).jobId).toBe(finished.job.id)
 },90000)
-function businessDigest() {
-  const hash=createHash('sha256')
-  for(const table of ['enterprise','record','record_event','record_evidence','enterprise_alias','platform_collection','platform_business_observation','difference_reason','record_correspondence','enterprise_fact_revision']) for(const row of db.$client.prepare('select * from '+table+' order by id').iterate()) hash.update(JSON.stringify(row))
-  for (const { name } of db.$client.prepare("select name from sqlite_master where type='table' and name like 'platform_%' order by name").all() as Array<{ name: string }>) {
-    hash.update(name)
-    for (const row of db.$client.prepare(`select * from "${name}" order by rowid`).iterate()) hash.update(JSON.stringify(row))
+async function businessDigest() {
+  const hash = createHash('sha256')
+  const { rows: platform } = await pool.query<{ tablename: string }>("SELECT tablename FROM pg_tables WHERE schemaname = 'business' AND left(tablename, 9) = 'platform_' ORDER BY tablename")
+  const tables = ['enterprise', 'record', 'record_event', 'record_evidence', 'enterprise_alias', 'difference_reason',
+    'record_correspondence', 'enterprise_fact_revision', 'enterprise_fact_receipt', ...platform.map(row => row.tablename)]
+  for (const table of tables) {
+    const { rows } = await pool.query(`SELECT row_to_json(t)::text AS row FROM business.${pg.escapeIdentifier(table)} t ORDER BY row_to_json(t)::text COLLATE "C"`)
+    hash.update(JSON.stringify([table, rows]))
   }
-  for(const row of db.$client.prepare('select * from enterprise_fact_receipt order by idempotency_key').iterate()) hash.update(JSON.stringify(row))
   return hash.digest('hex')
 }
 it('空工作簿与下载取消', async () => {
-  db.delete(s.record).where(eq(s.record.titleCode,'innovative_sme')).run()
   const response=await fetch(url('/api/jobs'),{method:'POST',headers,body:JSON.stringify({kind:'current-roster-export',params:{titleCode:'innovative_sme',clientRequestId:'empty'}})})
   expect(response.status).toBe(202)
   const job=await terminal((await json(response)).jobId);expect(job.state).toBe('done')
@@ -281,12 +311,12 @@ it('空工作簿与下载取消', async () => {
 })
 it('未知周期、同年恢复与执行版本', async () => {
   const y=new Date().getFullYear()
-  candidate('未知复核周期',[{eventType:'award',year:y-1,batchSeq:1},{eventType:'review',year:null,decidedYear:y,reviewOutcome:'failed'}])
-  candidate('同年恢复顺序不明',[{eventType:'award',year:y-4,batchSeq:1},{eventType:'review',year:y-4,batchSeq:1,decidedYear:y,reviewOutcome:'failed'},{eventType:'award',year:y,batchSeq:2}])
-  const before=businessDigest()
+  await candidate('未知复核周期',[{eventType:'award',year:y-1,batchSeq:1},{eventType:'review',year:null,decidedYear:y,reviewOutcome:'failed'}])
+  await candidate('同年恢复顺序不明',[{eventType:'award',year:y-4,batchSeq:1},{eventType:'review',year:y-4,batchSeq:1,decidedYear:y,reviewOutcome:'failed'},{eventType:'award',year:y,batchSeq:2}])
+  const before=await businessDigest()
   const response=await submit('unknown-cycle'),id=(await json(response)).jobId
   let active:any
-  for(let i=0;i<500;i++) {active=await json(await fetch(url('/api/jobs/'+id)));if(active.state==='running' && active.progress.done>=100)break;await new Promise(r=>setTimeout(r,10))}
+  for(let i=0;i<500;i++) {active=await json(await fetch(url('/api/jobs/'+id)));if(active.result?.snapshotId===id || ['done','failed','cancelled'].includes(active.state))break;await new Promise(r=>setTimeout(r,10))}
   expect(active.result.ruleVersion).toBe(CURRENT_RULE_VERSION)
   expect(active.result.snapshotId).toBe(id)
   const job=await terminal(id);expect(job.state).toBe('done')
@@ -303,7 +333,7 @@ it('未知周期、同年恢复与执行版本', async () => {
     expect(String(row[7])).toContain('复核未通过')
     expect(String(row[12])).toContain('《synthetic.xlsx》，附件：名单')
   }
-  expect(businessDigest()).toBe(before)
+  expect(await businessDigest()).toBe(before)
   expect(job.result.snapshotId).toBe(id)
 },30000)
 it('OpenAPI任务与受控下载发现', async () => {
@@ -319,7 +349,7 @@ it('OpenAPI任务与受控下载发现', async () => {
 })
 it('产物存储错误不泄露路径', async () => {
   await workbook('storage-prior')
-  const root=dbPath+'.exports',backup=root+'.backup'
+  const root=exportDir,backup=root+'.backup'
   renameSync(root,backup);writeFileSync(root,'not-a-directory')
   let failed:any
   try {

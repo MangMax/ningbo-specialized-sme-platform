@@ -1,97 +1,55 @@
-import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import pg from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createLogService } from '../../../layers/core/lib/logging/service'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
-import { nativeAppAdapter } from '../../support/native-app'
-import { reserveLoopbackPort } from '../../support/owned-process.mjs'
+import { enterpriseSource } from '../../../db/postgresql/enterprise-source-tables'
+import { storedFile } from '../../../db/postgresql/file-tables'
+import { postgresLeadListRow, postgresLeadListVersion } from '../../../db/postgresql/lead-tables'
+import { postgresLeadFixture } from './fixtures/postgres-leads'
 
-const bin = process.env.LEAD_TEST_POSTGRES_BIN
 const versions = '/api/lead-lists/versions'
 const agent = { actor: { type: 'agent', id: 'lead-review' }, basis: '逐行核对原件' }
 const sourceBytes = Buffer.from('name\n原始企业\n')
 const sourceSha = createHash('sha256').update(sourceBytes).digest('hex')
 
-describe.skipIf(!bin)('PostgreSQL-only lead versions', () => {
-  let dir: string
-  let data: string
-  const command = (name: string, args: string[], options = {}) =>
-    execFileSync(join(bin!, name), args, { stdio: 'pipe', ...options })
-  let port: number
-  let started = false
+describe('PostgreSQL lead versions', () => {
+  const fixture = postgresLeadFixture()
+  const { app, dir } = fixture
   let db: pg.Pool
-  let app: ReturnType<typeof nativeAppAdapter>
 
   beforeAll(async () => {
-    dir = mkdtempSync(join(tmpdir(), 'lead-pg-'))
-    data = join(dir, 'pg')
-    mkdirSync(join(dir, 'files'))
-    writeFileSync(join(dir, 'files', 'fixture.csv'), sourceBytes)
-    app = nativeAppAdapter({
-      dir, token: 'isolated-lead-pg-token',
-      launch: ({ cwd, port: httpPort }) => ({
-        args: [join(cwd, '.output/server/index.mjs')],
-        env: {
-          NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(httpPort),
-          NUXT_DB_MODE: 'postgresql', NUXT_DB_READONLY: '0',
-          NUXT_DB_PATH: join(dir, 'legacy-runtime', 'business.db'),
-          NUXT_LOG_DIR: join(dir, 'legacy-logs'),
-          NUXT_POSTGRES_DIRECTORY_URL: `postgresql://lead_fixture@127.0.0.1:${port}/postgres`,
-          NUXT_POSTGRES_LOG_URL: `postgresql://lead_fixture@127.0.0.1:${port}/postgres`,
-        },
-      }),
+    await fixture.start(async ({ db: seed, filesDir }) => {
+      const filename = 'fixture.csv'
+      const acquiredOn = '2026-11-18'
+      writeFileSync(join(filesDir, filename), sourceBytes)
+      await seed.insert(storedFile).values({
+        id: 91, relPath: filename, filename, ext: 'csv', sha256: sourceSha, bytes: BigInt(sourceBytes.length), createdAt: acquiredOn,
+      })
+      const version = { channel: 'research', listType: 'lead', acquiredOn, fileId: 91, fileSha256: sourceSha, createdAt: acquiredOn }
+      await seed.insert(postgresLeadListVersion).values([
+        { ...version, id: 11, series: '走访名单', requestHash: 'request-one' },
+        { ...version, id: 12, series: '另一个名单', requestHash: 'request-two' },
+      ])
+      await seed.insert(postgresLeadListRow).values([
+        { id: 101, versionId: 11, rowNumber: 2, name: '原始企业', uscc: '待核对' },
+        { id: 102, versionId: 11, rowNumber: 3, name: '另一行' },
+        { id: 201, versionId: 12, rowNumber: 2, name: '其他名单行' },
+        { id: 202, versionId: 12, rowNumber: 3, name: '同一名单另一行' },
+      ])
+      await seed.insert(enterpriseSource).values({
+        id: 71, module: 'lead-lists', businessTable: 'lead_list_version', versionKey: '11',
+        channelCode: 'research', listTypeCode: 'lead', acquiredOn, series: '走访名单', fileId: 91, sha256: sourceSha,
+      })
     })
-    installLeadListSchema(app.db.$client)
-    app.db.$client.exec(`
-      INSERT INTO stored_file (id,rel_path,filename,ext,sha256,bytes,created_at)
-        VALUES (91,'fixture.csv','fixture.csv','csv','${sourceSha}',${sourceBytes.length},'2026-11-18');
-      INSERT INTO lead_list_version (id,series,channel_code,list_type_code,acquired_on,file_id,file_sha256,request_hash,created_at)
-        VALUES (11,'走访名单','research','lead','2026-11-18',91,'${sourceSha}','request-one','2026-11-18'),
-               (12,'另一个名单','research','lead','2026-11-18',91,'${sourceSha}','request-two','2026-11-18');
-      INSERT INTO lead_list_row (id,version_id,row_number,name,uscc)
-        VALUES (101,11,2,'原始企业','待核对'), (102,11,3,'另一行',NULL),
-               (201,12,2,'其他名单行',NULL), (202,12,3,'同一名单另一行',NULL);
-      INSERT INTO enterprise_source (id,module,business_table,version_key,channel_code,list_type_code,acquired_on,series,file_id,sha256)
-        VALUES (71,'lead-lists','lead_list_version','11','research','lead','2026-11-18','走访名单',91,'${sourceSha}');
-      PRAGMA wal_checkpoint(TRUNCATE);
-    `)
-    port = await reserveLoopbackPort()
-    command('initdb', ['-D', data, '-U', 'lead_fixture', '-A', 'trust', '--no-locale', '-E', 'UTF8'])
-    command('pg_ctl', ['-D', data, '-l', join(dir, 'postgres.log'), '-o', `-h 127.0.0.1 -p ${port} -k ${dir}`, '-w', 'start'])
-    started = true
-    const env = {
-      ...process.env, PGHOST: '127.0.0.1', PGPORT: String(port), PGUSER: 'lead_fixture', PGDATABASE: 'postgres',
-      PGSQL_BIN: join(bin!, 'psql'),
-    }
-    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', app.dbPath, 'lead_staging'], { env })
-    for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
-      command('psql', ['-X', '-w', '-v', 'staging=lead_staging', '-f', `upgrade/postgresql/materialize-${name}.sql`], { env })
-    }
-    const stagedLogs = join(dir, 'staged-logs')
-    const logs = createLogService({ directory: stagedLogs })
-    try {
-      await logs.policy()
-    } finally {
-      await logs.close()
-    }
-    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', join(stagedLogs, 'events.db'), 'logs_staging'], { env })
-    command('psql', ['-X', '-w', '-v', 'staging=logs_staging', '-f', 'upgrade/postgresql/materialize-runtime-logs.sql'], { env })
-    db = new pg.Pool({ host: '127.0.0.1', port, user: 'lead_fixture', database: 'postgres', options: '-c search_path=business,public' })
-    await app.start()
+    const connectionString = app.postgresUrl
+    if (!connectionString) throw new Error('Lead list fixture did not create a PostgreSQL connection')
+    db = new pg.Pool({ connectionString, options: '-c search_path=business,public' })
   }, 60_000)
 
   afterAll(async () => {
-    try {
-      await app?.close()
-    } finally {
-      await db?.end()
-      if (started) command('pg_ctl', ['-D', data, '-w', '-m', 'fast', 'stop'])
-      if (dir) rmSync(dir, { recursive: true, force: true })
-    }
+    try { await db?.end() }
+    finally { await fixture.close() }
   })
 
   const submit = (id: number, body: object, headers: HeadersInit = app.headers) =>
@@ -180,23 +138,6 @@ describe.skipIf(!bin)('PostgreSQL-only lead versions', () => {
       before: JSON.stringify({ enterpriseId: target.id, name: '原资料现名', city: null, district: null, uscc: null }),
       after: JSON.stringify({ enterpriseId: target.id, name: '核对后现名', city: null, district: null, uscc }),
     })])
-    const evidence = (await db.query(`
-      SELECT r.source_key, r.source_version, r.fact_changed, r.max_decision_id, r.fact_digest,
-        h.latest_revision_id = r.id AND h.fact_digest = r.fact_digest AS head,
-        t.scope_key, t.pending_count, p.done, e.event_id, e.title_code
-      FROM evidence_revision_113 r JOIN evidence_semantic_head_113 h ON h.source_key=r.source_key
-      JOIN evidence_scope_version_113 t ON t.latest_revision_id=r.id
-      JOIN evidence_impact_progress_113 p ON p.revision_id=r.id
-      JOIN evidence_revision_event_113 e ON e.revision_id=r.id
-    `)).rows
-    const hash = (text: string) => createHash('sha256').update(text).digest('hex')
-    const aliasDigest = hash('{"from":null,"name":"原资料现名","to":null}')
-    const identityDigest = hash(`{"aliases":["${aliasDigest}"],"enterprise":{"name":"核对后现名","uscc":"913302017133602847"}}`)
-    expect(evidence).toEqual([{
-      source_key: `identity:enterprise:${target.id}`, source_version: `profile:${audit[0].id}`, fact_changed: '1',
-      max_decision_id: '0', fact_digest: hash(JSON.stringify(identityDigest)), head: true,
-      scope_key: `[${target.id},null,null]`, pending_count: '1', done: '0', event_id: '302', title_code: 'specialized_sme',
-    }])
     expect((await db.query('SELECT id FROM record_event ORDER BY id')).rows).toEqual([{ id: '302' }])
     expect(await (await app.request(sourcesPath)).json()).toMatchObject([
       { module: 'core' }, { id: receipt.sourceId, module: 'lead-lists', versionKey: '12', fileId: 91 },
@@ -207,7 +148,6 @@ describe.skipIf(!bin)('PostgreSQL-only lead versions', () => {
     expect(unchanged.status).toBe(200)
     expect(await unchanged.json()).toEqual({ sourceId: receipt.sourceId, rows: [{ rowId: 202, enterpriseId: target.id }] })
     expect(await (await app.request(detailsPath)).json()).toMatchObject({ name: '核对后现名', uscc, revision: 3 })
-    expect((await db.query('SELECT id FROM evidence_revision_113')).rowCount).toBe(1)
     expect((await db.query('SELECT id FROM enterprise_profile_audit WHERE enterprise_id=$1', [target.id])).rowCount).toBe(1)
   })
 

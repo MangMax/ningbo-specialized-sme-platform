@@ -1,24 +1,19 @@
-import type { LogContext } from '../../../../core/lib/logging'
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { eq } from 'drizzle-orm'
 import { storedFile } from '../../../../../db/postgresql/file-tables'
 import { rosterFileClassification } from '../../../../../db/postgresql/roster-file-tables'
-import * as schema from '../../../../../db/schema'
 import {
   categoryStateOf,
   type FileKind,
   type FileSource,
 } from '../../../lib/stored-file'
-import { checkAdmission, getStoredFile, type StoredFileRow } from '../../../../core/server/utils/stored-files'
-import { fileRegistrationFacts, runFileRegistration, splitRegistrationPath, UploadRegistrationError, type RegistrationWriter } from '../../../../core/server/utils/file-store'
+import { fileRegistrationFacts, splitRegistrationPath, UploadRegistrationError } from '../../../../core/server/utils/file-store-contract'
+import type { RegistrationWriter } from '../../../../core/server/utils/file-store-contract'
 import {
   activePostgresPhysicalIntent, lockOrRegisterPostgresFile, postgresFileIdentity, readPostgresFile, type PostgresFileDb,
 } from '../../../../core/server/utils/file-store-postgres'
-import { createClassifiedFile } from '../../utils/roster-file-classification'
-import { recordLegacyFileMaintenanceWrite } from '../../../../core/server/utils/file-maintenance'
 import { recordLegacyPostgresFileMaintenanceWrite } from '../../../../core/server/utils/file-maintenance-postgres'
 import { landingSegments } from '../../../lib/sme-roster/file-landing'
-import { compareFileContentIdentity } from '../../../../core/server/utils/file-content-identity'
+import { compareFileContentIdentity } from '../../../../core/server/utils/file-identity'
 
 /**
  * 上传完成后的**登记**(票 10):把 tus 已经落位的文件写进 `stored_file`(票 09 的表)。
@@ -89,7 +84,7 @@ export function parseUploadDeclaration(body: unknown): UploadDeclaration {
  * 都不给分类时不硬填:写 `null` + `category_state='unset'`,交票 12 回写
  * (与 `layers/sme-roster/lib/stored-file.ts` 的 `categoryStateOf` 同一条规则 —— 公布文件没年份就是未定)。
  */
-function declaredClassification(input: UploadDeclaration) {
+export function declaredClassification(input: UploadDeclaration) {
   const segments = splitRegistrationPath(input.relPath)
   const filename = segments[segments.length - 1]!
   const actualDirs = segments.slice(0, -1)
@@ -144,44 +139,6 @@ function declaredClassification(input: UploadDeclaration) {
   return { source, kind, year, batch, categoryState } as const
 }
 
-function prepareRosterWriter(input: UploadDeclaration): RegistrationWriter {
-  const classification = declaredClassification(input)
-  return async (db, file) => {
-    const facts = await fileRegistrationFacts(file)
-    return db.transaction((tx) => {
-      const existing = tx
-        .select()
-        .from(schema.storedFile)
-        .where(eq(schema.storedFile.relPath, facts.relPath))
-        .get()
-
-      if (existing) {
-        const conflict = compareFileContentIdentity({ ...existing, fileId: existing.id }, facts)
-        if (conflict) {
-          throw new UploadRegistrationError('文件内容与登记身份不符,请恢复原文件或使用新路径登记', 409, conflict)
-        }
-        const before = getStoredFile(tx, existing.id)!
-        tx.update(schema.storedFile)
-          .set({ filename: facts.filename, ext: facts.ext, removedAt: null })
-          .where(eq(schema.storedFile.id, existing.id))
-          .run()
-        tx.update(schema.rosterFileClassification).set(classification)
-          .where(eq(schema.rosterFileClassification.fileId, existing.id)).run()
-        const row = getStoredFile(tx, existing.id)!
-        recordLegacyFileMaintenanceWrite(tx, before, row)
-        return { row, created: false }
-      }
-
-      const inserted = createClassifiedFile(tx, facts, classification)
-      return { row: getStoredFile(tx, inserted.id)!, created: true }
-    }, { behavior: 'immediate' })
-  }
-}
-
-export function prepareRosterRegistration(input: Record<string, unknown>): RegistrationWriter {
-  return prepareRosterWriter(parseUploadDeclaration(input))
-}
-
 export function preparePostgresRosterRegistration(input: Record<string, unknown>): RegistrationWriter<PostgresFileDb> {
   const { source, kind, year, batch, categoryState } = declaredClassification(parseUploadDeclaration(input))
   return async (db, file) => {
@@ -207,11 +164,4 @@ export function preparePostgresRosterRegistration(input: Record<string, unknown>
       return { row, created }
     })
   }
-}
-
-export function registerStoredFile(
-  db: BetterSQLite3Database<typeof schema>, filesRoot: string, input: UploadDeclaration,
-  context: LogContext = {},
-): Promise<{ row: StoredFileRow; created: boolean }> {
-  return runFileRegistration(db, filesRoot, input.relPath, () => prepareRosterWriter(input), checkAdmission, context)
 }

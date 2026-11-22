@@ -34,9 +34,6 @@
 
 固定基线 `c2e5dda4003df558968efef681a72e765f36c597`，#722 只读候选 `3d4ea502b4ff4ac0afd72ed8d866ff954b79e78e`，未合其代码。
 
-- [0048 archive 约束](../../db/migrations/0048_cute_madelyne_pryor.sql)：三 ref CHECK、seal-only UPDATE、跨 ref INSERT collision。
-- [0050 投影约束](../../db/migrations/0050_source_projection_observation.sql)：source_archive_id 与 canonical_archive_id 必须绑定其 sealed 原档。
-- [archive 服务](../../lib/platform/immutable-archive.ts)、[target 注册](../../lib/platform/target-schema.ts)、[phase guard](../../db/schema-phase.ts)、[离线 finalization](../../upgrade/finalize-observations.ts)。
-- [原 public oracle](../../server/utils/platform-business-record.ts)、[canonical serializer](../../lib/platform/observation-plan.ts)、[三来源写入之一](../../lib/platform/apply-target-writer.ts)、[command](../../lib/platform/collection-target-command.ts)、[历史转存](../../upgrade/observations.ts)。另两源按各自 parser 核对，不合并业务字段规则。
+上述 SQLite 迁移与核对器已退役。约束和实现样本可在固定基线的 `db/migrations/`、`lib/platform/` 和 `upgrade/` 中查阅。当前原文保留策略见 [PostgreSQL 数据精简](2026-11-20-postgresql-migration.md#已有-postgresql-库的数据精简)。
 
 仓外研究根为 `/Users/mang/.t3/acceptance/platform-complete-migration/w4b-replay/`。`INDEPENDENT-REVIEW.md` 的 F1/F2 FAIL 不变；`fingerprint-gap/NEXT-TICKET.md` 仅研究候选，本选择以实际 seal/phase/归档引用约束复核。原始反例与本轮只读范围记在 `fingerprint-contract/REPORT.md`。本轮 runtime、DB、tests、build、真实数据及修复后验证均 UNRUN。

@@ -1,13 +1,8 @@
-import { createReadTurns, runReadTurn } from '../../../../core/server/utils/read-turn'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
 import { TITLE_ORDER } from '#sme-roster/lib/labels'
 import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
-import { listDifferences, listPostgresDifferences } from '../../utils/mcp-roster'
-
-const differenceReads = createReadTurns((input: Parameters<typeof listDifferences>[1] & { [key: string]: string | number | undefined }) =>
-  listDifferences(useDb(), input))
+import { listPostgresDifferences } from '../../utils/mcp-roster-postgres'
 
 /**
  * `list_differences` —— 差异与解释（RL-11，契约 §9；读，不鉴权）。
@@ -52,18 +47,9 @@ export default defineMcpTool({
   handler: async (input, extra) => {
     // Project only SDK-validated primitive options, never the SDK request.
     const options = { title: input.title, direction: input.direction, status: input.status, page: input.page, pageSize: input.pageSize }
-    const native = usePostgresRosterDb()
-    if (native) {
-      extra?.signal.throwIfAborted()
-      const result = await listPostgresDifferences(native, options)
-      extra?.signal.throwIfAborted()
-      return result
-    }
-    useDb()
-    const result = await runReadTurn(differenceReads, options, extra?.signal)
-    // Propagate the SDK's own cancellation reason, never a domain 499/503 or
-    // an empty successful list for a cancelled call.
-    if (result === undefined) extra?.signal.throwIfAborted()
-    return result!
+    extra?.signal.throwIfAborted()
+    const result = await listPostgresDifferences(usePostgresRosterDb(), options)
+    extra?.signal.throwIfAborted()
+    return result
   },
 })

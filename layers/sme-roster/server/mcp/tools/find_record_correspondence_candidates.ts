@@ -1,6 +1,5 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
 import { dispatchRecordCorrespondenceMcp } from '../../utils/mcp-record-correspondence'
 
 const correspondenceRef = z.object({
@@ -22,7 +21,7 @@ export default defineMcpTool({
     total: z.number().int(), page: z.number().int(), pageSize: z.number().int(), coverage: z.array(z.record(z.string(), z.unknown())), exportBatches: z.array(z.record(z.string(), z.unknown())),
   },
   handler: async input => {
-    const result = await dispatchRecordCorrespondenceMcp('candidates', input, { get db() { return useDb() } })
+    const result = await dispatchRecordCorrespondenceMcp('candidates', input)
     if (result && typeof result === 'object' && 'isError' in result) return result
     return { structuredContent: result as Record<string, unknown>, content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
   },

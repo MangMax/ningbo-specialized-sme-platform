@@ -1,25 +1,22 @@
 import { bigint, text } from 'drizzle-orm/pg-core'
-import type { recordCorrespondence as sqliteCorrespondence, recordCorrespondenceAudit as sqliteCorrespondenceAudit } from '../schema'
 import { businessSchema } from './business-schema'
-
-type Correspondence = typeof sqliteCorrespondence.$inferSelect
-type CorrespondenceAudit = typeof sqliteCorrespondenceAudit.$inferSelect
 
 export const recordCorrespondence = businessSchema.table('record_correspondence', {
   id: bigint('id', { mode: 'number' }).primaryKey().generatedByDefaultAsIdentity(),
   edgeKey: text('edge_key').notNull(),
-  type: text('type').$type<Correspondence['type']>().notNull(),
+  type: text('type', { enum: ['event_process', 'event_recognized', 'later_process', 'event_export_context', 'process_export_context', 'recognized_export'] }).notNull(),
   role: text('role').notNull(),
   eventId: bigint('event_id', { mode: 'number' }),
   predecessorEventId: bigint('predecessor_event_id', { mode: 'number' }),
   observationId: bigint('observation_id', { mode: 'number' }),
+  platformEvidenceReboundRevision: bigint('platform_evidence_rebound_revision', { mode: 'number' }),
   exportRowId: bigint('export_row_id', { mode: 'number' }),
   enterpriseId: bigint('enterprise_id', { mode: 'number' }),
   titleCode: text('title_code').notNull(),
-  status: text('status').$type<Correspondence['status']>().notNull(),
+  status: text('status', { enum: ['candidate', 'confirmed', 'rejected', 'unlinked'] }).notNull(),
   revision: bigint('revision', { mode: 'number' }).notNull(),
   targetIdentity: text('target_identity').notNull(),
-  provenance: text('provenance').notNull(),
+  provenance: text('provenance'),
   sourceFingerprint: text('source_fingerprint').notNull(),
   ruleId: text('rule_id').notNull(),
   ruleVersion: text('rule_version').notNull(),
@@ -37,7 +34,7 @@ export const recordCorrespondenceAudit = businessSchema.table('record_correspond
   toStatus: text('to_status').notNull(),
   expectedRevision: bigint('expected_revision', { mode: 'number' }).notNull(),
   resultingRevision: bigint('resulting_revision', { mode: 'number' }).notNull(),
-  actorType: text('actor_type').$type<CorrespondenceAudit['actorType']>().notNull(),
+  actorType: text('actor_type', { enum: ['user', 'agent'] }).notNull(),
   actorId: text('actor_id').notNull(),
   basis: text('basis').notNull(),
   ruleId: text('rule_id').notNull(),
@@ -77,7 +74,6 @@ export const enterpriseFactRevision = businessSchema.table('enterprise_fact_revi
   basis: text('basis').notNull(),
   createdAt: text('created_at').notNull(),
 })
-
 
 
 export const enterpriseFactReceipt = businessSchema.table('enterprise_fact_receipt', {

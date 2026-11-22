@@ -1,14 +1,12 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { openFileStore } from '../../../../../server/mcp-file-store'
-import { listStoredFiles } from '../../utils/stored-files'
 import { listPostgresFiles, usePostgresFileDb } from '../../utils/file-store-postgres'
-import { serverFileCategories } from '../../../../../server/file-store'
+import { serverFileCategories } from '../../utils/file-category-runtime'
 
 /**
  * `list_files` —— 文件库列表(票 18,只读)。
  *
- * 与 `GET /api/files` **同一个查询层**(`listStoredFiles`):同一个筛选语义、同一个排序
+ * 与 `GET /api/files` **同一个查询层**:同一个筛选语义、同一个排序
  * (来源 → 公布年份倒序 → 公布批次倒序 → 文件名)、同一个「被记录引用数」。所以代理看到的
  * 就是 `/files` 页上那一份列表,不另立一套口径。
  *
@@ -21,7 +19,7 @@ export default defineMcpTool({
   description: [
     '列出文件库里的文件(元数据 + 处理状态 + 该文件含哪些段)。返回 displayName(用户可见名称)与 filename(磁盘文件名);relPath 是稳定的库内路径。',
     '筛选:来源 / 分类状态 / 解析状态 / 用户可见名称或磁盘文件名关键词;分页 page(从 1 起)、pageSize(默认 50,上限 200)。',
-    '**没有**类别(announcement / export)筛选 —— 查询层(`listStoredFiles`)没有这一维,`/api/files` 也没有;',
+    '类别(announcement / export)可从返回的 `kind` 查看；',
     '需要按类别收窄时,用 `source` 筛(经信局公布文件与工信部导出表的类别是固定的)或自己按 `kind` 过滤返回的 `rows`。',
     'registeredSummary={count,declarations}仅登记声明，按displaySequence升序；每个声明含declarationId/part/pageRanges。0声明count=0；parts保留兼容用途，不是登记摘要。读取不回填。',
     '`year` `batch` 是**公布**年份/批次(单值,目录给的);已登记的文件**内容**年份/批次看 `registeredSummary.declarations[].part`。',
@@ -50,9 +48,7 @@ export default defineMcpTool({
       pageSize: input.pageSize ?? 50,
     }
     const pg = usePostgresFileDb()
-    const { rows, total } = pg
-      ? await listPostgresFiles(pg, params, { categories: serverFileCategories })
-      : listStoredFiles((await openFileStore({ readOnly: true })).db, params)
+    const { rows, total } = await listPostgresFiles(pg, params, { categories: serverFileCategories })
     return {
       total,
       page: input.page ?? 1,

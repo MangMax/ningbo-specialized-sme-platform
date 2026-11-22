@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import { platformQueryInputSchema, platformQueryInputShape, platformQueryResultShape, recognizedConditionShape, validRecognizedConditionPairing, type PlatformLiveQueryResult } from './live-query'
 import type { RosterImportPlatformQuery } from '../roster-import-client'
-import { APPLY_GRID, BUSINESS_GRID, RECOGNIZED_GRID, parsePlatformPage, type PlatformRawRow, type PlatformRow } from './adapter'
+import { APPLY_GRID, BUSINESS_GRID, RECOGNIZED_GRID, parsePlatformPage, platformDataRowStringProjection, type PlatformRawRow, type PlatformRow } from './adapter'
 
 export const RDJB_TITLE_CODES: Record<string, string> = { '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' }
 export const TITLE_RDJB_CODES: Record<string, string> = Object.fromEntries(Object.entries(RDJB_TITLE_CODES).map(([rdjb, title]) => [title, rdjb]))
@@ -50,15 +50,6 @@ export function recognizedEvidenceError(value: unknown): string | null {
 }
 /** Validate the observed envelope, never reconstruct typed rows from its legacy projection. */
 export function platformEvidenceError(value: unknown): string | null {
-  return platformEvidenceEnvelopeError(value, false)
-}
-/** Separate legacy metadata lane. Never admitted as a new typed collection envelope. */
-export function legacyBusinessProvenanceError(value: unknown): string | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || (value as PlatformLiveQueryResult).source !== 'businessList'
-    || Object.hasOwn(value, 'rawData') || Object.hasOwn(value, 'dataRows')) return 'Legacy provenance requires businessList string rows without rawData/dataRows'
-  return platformEvidenceEnvelopeError(value, true)
-}
-function platformEvidenceEnvelopeError(value: unknown, legacySupplement: boolean): string | null {
   const parsed = resultSchema.safeParse(value)
   if (!parsed.success) return 'collectionEvidence requires the original query result, including times, conditions, pages, rows and unfinished positions'
   const r = parsed.data as PlatformLiveQueryResult
@@ -68,7 +59,7 @@ function platformEvidenceEnvelopeError(value: unknown, legacySupplement: boolean
   if (Object.hasOwn(original, 'dataRows')) {
     if (original.rawData) return 'Choose dataRows or rawData, never both'
     if (!original.dataRows || original.dataRows.length !== original.rows.length) return 'Typed business rows must cover every accepted row'
-    const projection = original.dataRows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value == null ? '' : typeof value === 'string' ? value : typeof value === 'object' ? JSON.stringify(value) : String(value)])))
+    const projection = original.dataRows.map(platformDataRowStringProjection)
     if (JSON.stringify(projection) !== JSON.stringify(original.rows)) return 'Typed business rows must match their string projection'
   }
   if (Object.hasOwn(original, 'rawData')) {
@@ -102,7 +93,7 @@ function platformEvidenceEnvelopeError(value: unknown, legacySupplement: boolean
   } else {
     // Historical process imports without collectionEvidence retain their old contract.
     // New envelopes must describe actual source-specific public query conditions.
-    if (!legacySupplement && !original.rawData && !original.dataRows) return 'Process collectionEvidence requires typed business dataRows or rawData version 1'
+    if (!original.rawData && !original.dataRows) return 'Process collectionEvidence requires typed business dataRows or rawData version 1'
     const rdjb = r.titleScope.rdjb.length === 1 ? r.titleScope.rdjb[0] : r.titleScope.rdjb.join(',') === '1,2,3' ? 'all' : undefined
     if (combination !== 'and' || !platformQueryInputSchema.safeParse({ source: r.source, ...conditions, ...(r.source === 'businessList' ? { rdjb } : {}), ...r.limits }).success
       || (r.source === 'queryList' ? r.titleScope.mode !== 'source_default' || r.titleScope.rdjb.length !== 0 : r.titleScope.mode !== 'selected')) return 'Invalid original process conditions or title scope'

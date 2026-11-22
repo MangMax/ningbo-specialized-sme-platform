@@ -1,15 +1,15 @@
 import { afterEach, expect, it } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { createLogService, type LogServiceOptions } from '../../../layers/core/lib/logging/service'
-const owned: { root: string; service: ReturnType<typeof createLogService> }[] = []
-function fixture(options: Omit<Partial<LogServiceOptions>, 'directory'> = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'logging-overload-180-'))
-  const service = createLogService({ directory: root, ...options })
-  owned.push({ root, service }); return service
+import { usePostgresLogCases } from '../fixtures/postgres-cases'
+import { createPostgresLogService } from '../../../layers/core/lib/logging/postgres-service'
+import type { LogServiceOptions } from '../../../layers/core/lib/logging/service'
+const openLogCase = usePostgresLogCases({ debug: true })
+const owned: { runtime: ReturnType<typeof openLogCase>; service: ReturnType<typeof createPostgresLogService> }[] = []
+function fixture(options: LogServiceOptions = {}) {
+  const runtime = openLogCase()
+  const service = createPostgresLogService({ postgresUrl: runtime.url, ...options })
+  owned.push({ runtime, service }); return service
 }
-afterEach(async () => { for (const f of owned.splice(0)) { await f.service.close(); rmSync(f.root, { recursive: true, force: true }) } })
+afterEach(async () => { for (const f of owned.splice(0)) { await f.service.close(); f.runtime.close() } })
 it('admits a task failure terminal when the bounded queue is full of debug query attempts', async () => {
   const service = fixture({ maxQueueEntries: 4 })
   for (let i = 0; i < 4; i++) expect(service.emit({ source: 'system', operation: 'db.query.select', outcome: 'started', level: 'debug', origin: { runtime: 'node', integration: 'drizzle', capture: 'hook' }, resourceId: i })).not.toBeNull()
@@ -163,7 +163,7 @@ it('drains a terminal queued behind a finishing flush before closing', async () 
   await service.close()
   await finishing
   expect(service.status()).toMatchObject({ accepted: 1, stored: 1, queuedEntries: 0, dropped: 0, writeUnknown: 0, drainFailures: 0, closed: true })
-  const reader = createLogService({ directory: owned[owned.length - 1]!.root })
+  const reader = createPostgresLogService({ postgresUrl: owned[owned.length - 1]!.runtime.url })
   try {
     expect((await reader.list({ taskId: 'shutdown-terminal' })).rows).toEqual([
       expect.objectContaining({ id, operation: 'export.current.workbook', outcome: 'success' }),

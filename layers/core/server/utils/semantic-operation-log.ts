@@ -39,8 +39,7 @@ function references(operation: string, body: Record<string, unknown>): LogContex
   if (operation === 'mcp.tool.patch_enterprise_profile' || operation === 'maintenance.enterprise_profile.patch') return { auditId: positiveId(body.auditId) }
   if (operation === 'mcp.tool.maintain_enterprise_alias' || operation === 'maintenance.alias.patch') return { resourceType: 'enterprise_alias', resourceId: positiveId(object(body.alias).id) }
   if (['mcp.tool.save_record_correspondences', 'mcp.tool.preflight_record_correspondences', 'maintenance.correspondence.commit', 'maintenance.correspondence.preflight',
-    'mcp.tool.commit_event_corrections', 'mcp.tool.preflight_event_corrections', 'maintenance.event.commit', 'maintenance.event.preflight',
-    'mcp.tool.commit_comparison_scope_proofs', 'mcp.tool.preflight_comparison_scope_proofs', 'maintenance.proof.commit', 'maintenance.proof.preflight'].includes(operation)) return { batchId: positiveId(body.batchId) }
+    'mcp.tool.commit_event_corrections', 'mcp.tool.preflight_event_corrections', 'maintenance.event.commit', 'maintenance.event.preflight'].includes(operation)) return { batchId: positiveId(body.batchId) }
   if (operation === 'mcp.tool.save_difference_decision' || operation === 'maintenance.decision.commands') return { resourceType: 'difference_decision_version', resourceId: positiveId(body.versionId) }
   return {}
 }

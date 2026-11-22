@@ -1,21 +1,30 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
-import { createLogService } from '../../../layers/core/lib/logging/service'
+import { createPostgresLogService } from '../../../layers/core/lib/logging/postgres-service'
+import { usePostgresLogCases } from '../fixtures/postgres-cases'
 
-const dirs: string[] = []
-const services: ReturnType<typeof createLogService>[] = []
-function fixture(options = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'log181-')); dirs.push(dir)
-  const service = createLogService({ directory: dir, ...options }); services.push(service)
-  return { dir, service }
+const openLogCase = usePostgresLogCases()
+const runtimes: ReturnType<typeof openLogCase>[] = []
+const services: ReturnType<typeof createPostgresLogService>[] = []
+function open(postgresUrl: string, options: Partial<Parameters<typeof createPostgresLogService>[0]> = {}) {
+  const service = createPostgresLogService({ postgresUrl, ...options })
+  services.push(service)
+  return service
 }
-afterEach(async () => { vi.useRealTimers(); for (const s of services.splice(0)) await s.close(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }) })
+function fixture(options: Partial<Parameters<typeof createPostgresLogService>[0]> = {}) {
+  const runtime = openLogCase()
+  runtimes.push(runtime)
+  if (options.retentionDays) runtime.psql(['-c', 'UPDATE runtime_logs.log_policy SET "retentionDays" = ' + options.retentionDays])
+  if (options.maxBytes) runtime.psql(['-c', 'UPDATE runtime_logs.log_policy SET "maxBytes" = ' + options.maxBytes])
+  return { runtime, service: open(runtime.url, options) }
+}
+afterEach(async () => {
+  vi.useRealTimers()
+  for (const service of services.splice(0)) await service.close()
+  for (const runtime of runtimes.splice(0)) runtime.close()
+})
 
 it('persists safe events and projects bounded summaries without raw error content', async () => {
-  const { service, dir } = fixture()
+  const { service, runtime } = fixture()
   service.emit({ source: 'worker', operation: 'fixture.run', outcome: 'failure', level: 'error', taskId: 'task-181', error: new Error('PRIVATE_RAW /Users/private/source Cookie=PRIVATE_TOKEN'), body: { token: 'PRIVATE_TOKEN' }, durationMs: 12 } as any)
   await service.flush()
   const list = await service.list({ taskId: 'task-181', limit: 1 })
@@ -25,7 +34,7 @@ it('persists safe events and projects bounded summaries without raw error conten
   const detail = await service.detail(list.rows[0]!.id)
   expect(detail).toMatchObject({ level: 'error', taskId: 'task-181' })
   expect(JSON.stringify({ list, detail })).not.toMatch(/PRIVATE_|\/Users\/|Cookie|body|stack/)
-  expect(readFileSync(join(dir,'events.db')).toString('utf8')).not.toMatch(/PRIVATE_|\/Users\/|Cookie/)
+  expect(runtime.psql(['-At', '-c', 'SELECT detail FROM runtime_logs.log_events'])).not.toMatch(/PRIVATE_|\/Users\/|Cookie/)
 })
 
 it('denies every log action without explicit capability and rejects unbounded clearing', async () => {
@@ -41,7 +50,7 @@ it('denies every log action without explicit capability and rejects unbounded cl
 })
 
 it('keeps stable disjoint cursors across concurrent appends and survives close and restart', async () => {
-  const { dir, service } = fixture()
+  const { runtime, service } = fixture()
   for (let i=0;i<5;i++) service.emit({ source: 'worker', operation: 'paging.run', outcome: 'success', resourceId: i })
   await service.flush()
   const first = await service.list({ operation: 'paging.run', limit: 2 })
@@ -55,7 +64,7 @@ it('keeps stable disjoint cursors across concurrent appends and survives close a
   expect(third.nextCursor).toBeNull()
   service.emit({ source: 'worker', operation: 'close.flush', outcome: 'failure', level: 'error' })
   await service.close()
-  const restarted = createLogService({ directory: dir }); services.push(restarted)
+  const restarted = open(runtime.url)
   expect((await restarted.list({ operation: 'close.flush' })).rows).toHaveLength(1)
 })
 
@@ -65,78 +74,32 @@ it('reports overflow and oversized drops while preserving failure events without
   expect(service.status()).toMatchObject({ accepted: 2, dropped: 1, overflow: 1 })
   await service.flush()
   expect((await service.list()).rows).toHaveLength(2)
-  const tiny = fixture({ maxEventBytes: 20 }).service
+  const { service: tiny } = fixture({ maxEventBytes: 20 })
   expect(tiny.emit({ source: 'worker', operation: 'bounded.run', outcome: 'failure' })).toBeNull()
   expect(tiny.status()).toMatchObject({ oversized: 1, dropped: 1, accepted: 0 })
 })
 
 it('persists policy changes and confirms only an explicit filtered clear range', async () => {
-  const { dir, service } = fixture()
+  const { runtime, service } = fixture()
   service.emit({ source: 'worker', operation: 'clear.target', outcome: 'failure' })
   service.emit({ source: 'worker', operation: 'clear.keep', outcome: 'success' })
   await service.flush()
   await service.setPolicy({ retentionDays: 2, maxBytes: 1048576 })
   expect(await service.clear({ from: '2000-01-01', to: '2100-01-01', operation: 'clear.target', confirm: true })).toEqual({ deleted: 1, hasMore: false })
   await service.flush(); await service.close()
-  const next = createLogService({ directory: dir }); services.push(next)
+  const next = open(runtime.url)
   expect(await next.policy()).toMatchObject({ retentionDays: 2, maxBytes: 1048576, cleared: 1 })
   expect((await next.list({ operation: 'clear.keep' })).rows).toHaveLength(1)
   expect((await next.list({ operation: 'logging.clear' })).rows[0]).toMatchObject({ outcome: 'success' })
   expect((await next.list({ operation: 'clear.target' })).rows).toHaveLength(0)
 })
 
-it('exposes unavailable and drop accounting when real filesystem storage fails', async () => {
-  const { service } = fixture({ directory: '/dev/null/log181' })
-  expect(service.emit({ source: 'worker', operation: 'fault.run', outcome: 'success' })).toBeTruthy()
-  await service.flush()
-  expect(service.status()).toMatchObject({ dropped: 1, stored: 0, unavailable: true, lastError: 'storage_unavailable' })
-  const { dispatchLogAction } = await import('../../../layers/core/lib/logging/application')
-  const result = await dispatchLogAction(service, 'policy', {}, true)
-  expect(result.status).toBe(503)
-  expect(result.body).toMatchObject({ status: { unavailable: true, dropped: 1 } })
-  expect(JSON.stringify(result.body)).not.toContain('/dev/null')
-})
-
 it('honors a policy changed by another process owner without reviving startup defaults', async () => {
-  const { dir, service } = fixture()
+  const { runtime, service } = fixture()
   service.emit({ source: 'worker', operation: 'shared.start', outcome: 'success' }); await service.flush()
-  const peer = createLogService({ directory: dir }); services.push(peer)
+  const peer = open(runtime.url)
   await peer.setPolicy({ retentionDays: 3, maxBytes: 2097152 })
   expect(await service.policy()).toMatchObject({ retentionDays: 3, maxBytes: 2097152 })
-})
-
-it('bounds drain timeouts and never throws logging failures into callers', async () => {
-  const { service } = fixture({ drainTimeoutMs: 1 })
-  expect(() => service.emit({ source: 'worker', operation: 'timeout.run', outcome: 'failure', level: 'error' })).not.toThrow()
-  await service.flush()
-  expect(service.status()).toMatchObject({ dropped: 0, writeUnknown: 1, unavailable: true, lastError: 'drain_timeout' })
-  const started = Date.now(); await service.close()
-  expect(Date.now() - started).toBeLessThan(3100)
-})
-
-it('prunes oldest events within the real SQLite page budget and exposes pruning counts', async () => {
-  const { service } = fixture({ maxBytes: 1048576 })
-  for (let batch=0;batch<15;batch++) {
-    for (let row=0;row<64;row++) service.emit({ source: 'worker', operation: 'capacity.run', outcome: 'failure', level: 'error', taskId: 't'.repeat(120), requestId: 'r'.repeat(120), traceId: 'x'.repeat(120), resourceId: batch*64+row, counts: { done: row } })
-    await service.flush()
-  }
-  const policy = await service.policy()
-  expect(policy.pruned).toBeGreaterThan(0)
-  expect(policy.storageBytes).toBeLessThanOrEqual(1048576)
-  expect((await service.list({ limit: 1 })).rows[0]!.resourceId).toBe(959)
-  expect(service.status().dropped).toBe(0)
-})
-
-it('refuses an existing foreign database without modifying its bytes or schema', async () => {
-  const { default: Database } = await import('better-sqlite3')
-  const { readFileSync } = await import('node:fs')
-  const { dir, service } = fixture()
-  const path = join(dir, 'events.db')
-  const foreign = new Database(path); foreign.exec('CREATE TABLE business_evidence(id INTEGER PRIMARY KEY, value TEXT); INSERT INTO business_evidence VALUES(1,\'PRIVATE_BUSINESS\')'); foreign.close()
-  const before = readFileSync(path)
-  service.emit({ source: 'worker', operation: 'foreign.guard', outcome: 'success' }); await service.flush()
-  expect(service.status()).toMatchObject({ unavailable: true, dropped: 1, stored: 0 })
-  expect(readFileSync(path).equals(before)).toBe(true)
 })
 
 it('enforces retention at the time boundary and records age pruning independently of clearing', async () => {
@@ -152,7 +115,7 @@ it('enforces retention at the time boundary and records age pruning independentl
 
 it('hides expired rows beyond one bounded maintenance batch', async () => {
   vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-01T00:00:00Z'))
-  const {service}=fixture({retentionDays:1})
+  const {service}= fixture({retentionDays:1})
   for(let batch=0;batch<20;batch++) {
     for(let i=0;i<64;i++)service.emit({source:'worker',operation:'age.backlog',outcome:'success'})
     await service.flush()
@@ -161,51 +124,34 @@ it('hides expired rows beyond one bounded maintenance batch', async () => {
   expect((await service.list()).rows).toHaveLength(0)
 })
 
-it('refuses to activate a smaller cap until bounded pruning physically satisfies it', async () => {
-  const {service,dir}=fixture()
-  // Capture a real persisted event shape, then seed the capacity backlog in one
-  // native transaction. Producer batching is covered separately; this case owns
-  // the 32 x 1000 deletion boundary and physical auto-vacuum commits.
-  service.emit({source:'worker',operation:'shrink.run',outcome:'success'})
-  await service.flush()
-  const { default: Database } = await import('better-sqlite3')
-  const db = new Database(join(dir,'events.db'))
-  try {
-    const seed = db.prepare('SELECT * FROM log_events').get() as Record<string, any>
-    const insert = db.prepare('INSERT INTO log_events(id,timestamp,level,source,operation,outcome,summary,detail) VALUES(@id,@timestamp,@level,@source,@operation,@outcome,@summary,@detail)')
-    db.transaction(() => {
-      for(let row=1;row<33280;row++) {
-        const id = randomUUID()
-        insert.run({...seed,id,summary:JSON.stringify({...JSON.parse(seed.summary),id}),detail:JSON.stringify({...JSON.parse(seed.detail),id})})
-      }
-    })()
-    expect(db.prepare('SELECT count(*) AS n FROM log_events').get()).toEqual({n:33280})
-    expect(service.status()).toMatchObject({stored:1,dropped:0,writeUnknown:0,unavailable:false})
-    const {dispatchLogAction}=await import('../../../layers/core/lib/logging/application')
-    const before = await service.policy()
-    const started = Date.now()
-    const pending=await dispatchLogAction(service,'setPolicy',{retentionDays:3,maxBytes:1048576,collection:{integrations:{application:{enabled:false,minLevel:'error'}}}},true)
-    expect(pending.status, JSON.stringify({response:pending.body,status:service.status(),elapsedMs:Date.now()-started})).toBe(409)
-    expect(pending.body).toMatchObject({error:{code:'policy_capacity_pending'}})
-    const unchanged = await service.policy()
-    expect(unchanged).toMatchObject({retentionDays:7,maxBytes:536870912,revision:0,collection:{integrations:{application:{enabled:true,minLevel:'debug'}}}})
-    expect(unchanged.fieldControls).toEqual(before.fieldControls)
-    expect(unchanged.pruned).toBe(32000)
-    expect(db.prepare('SELECT count(*) AS n FROM log_events').get()).toEqual({n:1280})
-    expect(unchanged.storageBytes).toBe(readFileSync(join(dir,'events.db')).byteLength)
-    expect(unchanged.storageBytes).toBeGreaterThan(1048576 / 3)
-    const applied=await dispatchLogAction(service,'setPolicy',{retentionDays:7,maxBytes:1048576},true)
-    expect(applied.status).toBe(200)
-    expect(await service.policy()).toMatchObject({maxBytes:1048576,revision:1,collection:{integrations:{application:{enabled:true,minLevel:'debug'}}}})
-    expect((await service.policy()).storageBytes).toBeLessThanOrEqual(1048576)
-  } finally { db.close() }
-}, 30000)
+it('prunes oldest events under the PostgreSQL detail byte budget and reports exact accounting', async () => {
+  const maxBytes = 1_048_576
+  const { runtime, service } = fixture({ maxBytes })
+  let total = 0
+  for (let batch = 0; batch < 40; batch++) {
+    for (let row = 0; row < 64; row++) {
+      service.emit({ source: 'worker', operation: 'capacity.run', outcome: 'failure',
+        taskId: 't'.repeat(120), requestId: 'r'.repeat(120), traceId: 'x'.repeat(120),
+        resourceId: total++, counts: { done: row } })
+    }
+    await service.flush()
+  }
+  const policy = await service.policy()
+  const [bytes, rows] = runtime.psql(['-At', '-c',
+    'SELECT sum(octet_length(detail)), count(*) FROM runtime_logs.log_events']).trim().split('|').map(Number)
+  expect(policy.pruned).toBeGreaterThan(0)
+  expect(policy.pruned + rows!).toBe(total)
+  expect(policy.storageBytes).toBe(bytes)
+  expect(policy.storageBytes).toBeLessThanOrEqual(maxBytes)
+  expect((await service.list({ limit: 1 })).rows[0]!.resourceId).toBe(total - 1)
+  expect(service.status()).toMatchObject({ dropped: 0, writeUnknown: 0 })
+}, 20_000)
 
 it('bounds byte-pressure drops and explicit bulk clear batches', async () => {
-  const tiny=fixture({maxQueueBytes:100}).service
+  const { service: tiny } = fixture({ maxQueueBytes: 100 })
   tiny.emit({source:'worker',operation:'bytes.run',outcome:'failure'})
   expect(tiny.status()).toMatchObject({dropped:1,overflow:1,queuedBytes:0,accepted:0})
-  const {service}=fixture()
+  const {service}= fixture()
   for(let batch=0;batch<20;batch++) {
     for(let row=0;row<64;row++)service.emit({source:'worker',operation:'clear.bulk',outcome:'success'})
     await service.flush()

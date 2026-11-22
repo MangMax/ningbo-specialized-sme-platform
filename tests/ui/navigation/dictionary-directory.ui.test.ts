@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
 import { expect, it } from 'vitest'
 import { createMemoryHistory, createRouter, RouterLink } from 'vue-router'

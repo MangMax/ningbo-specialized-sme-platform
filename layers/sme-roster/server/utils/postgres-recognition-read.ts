@@ -5,8 +5,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { TITLE_ORDER } from '../../lib/labels'
 import { isPageCapable } from '../../lib/roster/evidence-page'
 import { matchesRecognitionQuery } from '../../lib/roster/first-recognition'
-import { compareRecognitionCoordinates, summarizeRecognitionAwards } from '../../lib/roster/recognition-read'
-import { recognitionPageOf, type RosterRecognitionFilter, type RosterRecognitionRow, type RosterRecognitionsResult } from '../../lib/roster/recognitions'
+import { compareRecognitionCoordinates, summarizeRecognitionAwards, recognitionPageOf, type RosterRecognitionFilter, type RosterRecognitionRow, type RosterRecognitionsResult } from '../../lib/roster/recognition-projection'
 
 export function readPostgresRecognitions(db: NodePgDatabase, filter: RosterRecognitionFilter): Promise<RosterRecognitionsResult> {
   const { page, pageSize } = recognitionPageOf(filter)

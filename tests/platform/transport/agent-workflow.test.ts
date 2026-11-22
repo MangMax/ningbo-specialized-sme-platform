@@ -1,13 +1,17 @@
+import { closeApplicationLogging } from '../../../layers/core/lib/logging'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { initializeDb } from '../../../db/client'
-import { updateCredential } from '../../../layers/core/server/utils/credential-state'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { startPlatformBatchApi } from './fixtures/batch-api'
-import { whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
 const dir = mkdtempSync(join(tmpdir(), 'platform-agent-'))
-const db = initializeDb({ create: true,  dbPath: join(dir, 'agent.sqlite') })
+let db: ReturnType<typeof usePostgresDirectoryDb>
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 const nativeFetch = globalThis.fetch
 const scenarios = JSON.parse(readFileSync('.agents/skills/roster-ingestion-pipeline/examples/platform-scenarios.json', 'utf8'))
 const workflowUrl = new URL('../../../.agents/skills/roster-ingestion-pipeline/examples/investigate-platform.mjs', import.meta.url).href
@@ -16,9 +20,15 @@ let workflow: any
 let expired = true; let failedPage = true
 const platformRequests: { source: string; name: string; page: number }[] = []
 beforeAll(async () => {
-  vi.stubEnv('NUXT_DB_PATH', join(dir, 'agent.sqlite')); vi.stubEnv('MIIT_COOKIE', ''); vi.stubEnv('MIIT_COOKIE_FILE', '')
-  updateCredential('sme-roster.miitCookie', 'session=synthetic-agent-server-only', { db })
-  api = await startPlatformBatchApi({ db, apiToken: 'synthetic-agent-task-token', filesDir: dir })
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_POSTGRES_LOG_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  vi.stubEnv('MIIT_COOKIE', '')
+  vi.stubEnv('MIIT_COOKIE_FILE', '')
+  db = usePostgresDirectoryDb()
+  await updatePostgresCredentialState(db, { 'sme-roster.miitCookie': 'session=synthetic-agent-server-only' })
+  api = await startPlatformBatchApi({ apiToken: 'synthetic-agent-task-token', filesDir: dir })
   workflow = await import(workflowUrl)
   vi.stubGlobal('fetch', async (url: string, init: any) => {
     if (url.startsWith(api.baseUrl)) return nativeFetch(url, init)
@@ -33,10 +43,19 @@ beforeAll(async () => {
     const grid = source === 'queryList' ? 'applyGrid' : source === 'businessList' ? 'businessListGrid' : 'businessGrid'
     return new Response(JSON.stringify({ zrarData: { grid: { [grid]: { page, pageSize: 1, maxPage: total, maxCount: total, pageSet: [{ qymc: '合成企业', tyshxydm: '91330000TEST000001', relation: `${source}:${p.get('rdjb')}:${page}` }] } } } }))
   })
+}, 30_000)
+afterAll(async () => {
+  await api?.close()
+  await stopPostgresJobs()
+  await closeApplicationLogging()
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+  rmSync(dir, { recursive: true, force: true })
 })
-afterAll(async () => { await whenIdle(); await api?.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 it('reproducible agent workflow completes single batch expired second-page and multiple-relation scenarios using app routes only', async () => {
-  const options = { baseUrl: api.baseUrl, apiToken: 'synthetic-agent-task-token', maxPolls: 100, pollIntervalMs: 1 }
+  const options = { baseUrl: api.baseUrl, apiToken: 'synthetic-agent-task-token', maxPolls: 200, pollIntervalMs: 25 }
   const single = await workflow.querySingle({ ...options, query: scenarios.single })
   expect(single).toMatchObject({ status: 'success', completeness: 'complete', fetchedCount: 1 })
   const batch = await workflow.investigatePlatform({ ...options, queries: scenarios.batch })
@@ -57,5 +76,5 @@ it('reproducible agent workflow completes single batch expired second-page and m
   expect(api.paths.length).toBeGreaterThan(10)
   for (const path of api.paths) expect(path).toMatch(/^\/api\/platform\/(?:query|capabilities|batches(?:\/[0-9A-HJKMNP-TV-Z]{26}(?:\/retry|\/items\/[0-9A-HJKMNP-TV-Z]{26})?)?)$/)
   expect(JSON.stringify(recovered)).not.toContain('synthetic-agent-server-only')
-  expect(db.$client.prepare('SELECT count(*) AS n FROM enterprise').get()).toEqual({ n: 0 })
-})
+  expect(await db.select({ id: enterprise.id }).from(enterprise)).toEqual([])
+}, 20_000)

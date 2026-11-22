@@ -4,22 +4,31 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { spawn, type ChildProcess } from 'node:child_process'
-import Database from 'better-sqlite3'
-import { createLogService, validatePolicy, type LogService } from '../../../layers/core/lib/logging/service'
+import { usePostgresLogCases } from '../fixtures/postgres-cases'
+import { createPostgresLogService } from '../../../layers/core/lib/logging/postgres-service'
+import { validatePolicy, type LogService } from '../../../layers/core/lib/logging/service'
 import { LOG_DEFAULTS, LOG_LEVELS, LOG_SOURCES, LOG_SUPPORTED_INTEGRATIONS } from '../../../layers/core/lib/logging/contract'
 import { collectionAllows, defaultLogCollection } from '../../../layers/core/lib/logging/policy'
 import { safeLogEvent, projectEvlog } from '../../../layers/core/lib/logging/privacy'
 
 const dirs: string[] = [], services: LogService[] = [], children: ChildProcess[] = []
+const openLogCase = usePostgresLogCases()
+const runtimes: ReturnType<typeof openLogCase>[] = []
 const base = { retentionDays: 7, maxBytes: LOG_DEFAULTS.maxBytes }
-function fixture(directory = mkdtempSync(join(tmpdir(), 'dual-policy-'))) {
-  if (!dirs.includes(directory)) dirs.push(directory)
-  const service = createLogService({ directory, flushIntervalMs: 100 }); services.push(service)
-  return { service, directory }
+function open(postgresUrl: string) {
+  const service = createPostgresLogService({ postgresUrl, flushIntervalMs: 100 })
+  services.push(service)
+  return service
+}
+function fixture() {
+  const runtime = openLogCase()
+  runtimes.push(runtime)
+  return { service: open(runtime.url), runtime }
 }
 afterEach(async () => {
   for (const c of children.splice(0)) { c.kill('SIGKILL'); await new Promise<void>(r => c.exitCode !== null || c.signalCode !== null ? r() : c.once('exit', () => r())) }
   for (const s of services.splice(0)) await s.close()
+  for (const runtime of runtimes.splice(0)) runtime.close()
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
   vi.useRealTimers()
 })
@@ -46,7 +55,7 @@ it('rejects unknown top-level, unknown integration, prototype and incomplete rul
   expect(validatePolicy(payload)).toEqual(payload)
 })
 it('preserves legacy updates, old missing origins, history and restart rules', async () => {
-  const { service, directory } = fixture()
+  const { service, runtime } = fixture()
   const id = service.emit({source:'task',operation:'history.run',outcome:'success'})!
   await service.flush()
   expect((await service.detail(id))!.origin).toBeUndefined()
@@ -58,16 +67,16 @@ it('preserves legacy updates, old missing origins, history and restart rules', a
   expect((await service.policy()).revision).toBe(first.revision+1)
   expect(await service.detail(id)).toMatchObject({operation:'history.run'})
   await service.close()
-  const next = fixture(directory).service
+  const next = open(runtime.url)
   expect(await next.policy()).toMatchObject({retentionDays:3,collection:{sources:{task:{enabled:false,minLevel:'error'}}}})
-})
+}, 20_000)
 it('merges concurrent management writes and filters old queues and new batches separately from drops', async () => {
   // Keep the old event pending while both policy commits race. Early drain is
   // now intentionally faster than those RPCs; an already committed old event
   // would be valid history, rather than a stale-policy failure.
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setImmediate', 'clearImmediate'] })
-  const {service,directory} = fixture()
-  const peer = fixture(directory).service
+  const {service,runtime} = fixture()
+  const peer = open(runtime.url)
   await service.policy(); await peer.policy()
   peer.emit({source:'task',operation:'queue.old',outcome:'failure',level:'error'})
   await Promise.all([
@@ -83,7 +92,7 @@ it('merges concurrent management writes and filters old queues and new batches s
   peer.emit({source:'task',operation:'queue.reenabled',outcome:'success'})
   await peer.flush()
   expect((await service.list({source:'task'})).rows.map(r=>r.operation)).toEqual(['queue.reenabled'])
-})
+}, 20_000)
 it('projects origin by collector and discards arbitrary nested fields without inventing historical attribution', () => {
   expect(safeLogEvent({source:'file',operation:'file.register',outcome:'success'})).not.toHaveProperty('origin')
   expect(safeLogEvent({source:'client',operation:'fixture.run',outcome:'failure',origin:{runtime:'browser',integration:'vue',capture:'hook',execution:'page',message:'PRIVATE'} as any}).origin).toEqual({runtime:'browser',integration:'vue',capture:'hook',execution:'page'})
@@ -92,25 +101,27 @@ it('projects origin by collector and discards arbitrary nested fields without in
   expect(safeLogEvent({source:'system',operation:'fixture.run',outcome:'success',origin:{runtime:'node',integration:'unknown_library',capture:'hook'} as any})).not.toHaveProperty('origin')
 })
 
-async function childWriter(directory: string) {
+async function childWriter(directory: string, env: NodeJS.ProcessEnv) {
   const script = join(directory,'child.mjs')
   const jiti = createRequire(import.meta.resolve('nuxt/package.json')).resolve('jiti')
   writeFileSync(script, `
 import {createRequire} from 'node:module'
 const {createJiti}=createRequire(import.meta.url)(${JSON.stringify(jiti)})
 const logging=await createJiti(import.meta.url).import(${JSON.stringify(resolve('layers/core/lib/logging/index.ts'))})
+const options={source:'task',outcome:'failure',level:'error'}
 logging.initializeWorkerLogging()
 const service=logging.applicationLogs()
+const emit=operation=>logging.appLog({...options,operation})
 process.on('message',async m=>{
   try {
-    if(m.type==='emit') { logging.appLog({source:'task',operation:m.operation,outcome:'failure',level:'error'}); await service.flush() }
+    if(m.type==='emit') { emit(m.operation); await service.flush() }
     if(m.type==='close') await service.close()
     process.send({id:m.id,status:service.status()})
   } catch {process.send({id:m.id,error:true})}
 })
 process.send({ready:true})
 `)
-  const child = spawn(process.execPath,[script],{env:{...process.env,NUXT_LOG_DIR:directory},stdio:['ignore','pipe','pipe','ipc']})
+  const child = spawn(process.execPath,[script],{env:{...process.env,...env},stdio:['ignore','pipe','pipe','ipc']})
   children.push(child)
   let output = '', errors = ''
   child.stdout!.on('data',chunk=>{ output+=chunk.toString() })
@@ -126,10 +137,15 @@ process.send({ready:true})
     })
   }}
 }
-it('enforces disabled and reenabled rules in a real child sharing the directory, including stdout', async () => {
-  const {service,directory}=fixture()
+it('enforces shared PostgreSQL log policy in a separate worker, including stdout', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pg-policy-'))
+  dirs.push(directory)
+  const runtime = openLogCase()
+  runtimes.push(runtime)
+  const service = createPostgresLogService({ postgresUrl: runtime.url, flushIntervalMs: 100 })
+  services.push(service)
   await service.policy()
-  const child=await childWriter(directory)
+  const child = await childWriter(directory, runtime.env)
   await child.send('emit','child.before')
   await service.setPolicy({...base,collection:{sources:{task:{enabled:false,minLevel:'debug'}}}})
   const result=await child.send('emit','child.disabled')
@@ -144,38 +160,30 @@ it('enforces disabled and reenabled rules in a real child sharing the directory,
   expect(child.output()).not.toContain('child.disabled')
   expect((await service.list({source:'task'})).rows.map(r=>r.operation).sort()).toEqual(['child.after','child.before'])
   expect((await service.list({operation:'child.after'})).rows[0]!.origin).toEqual({runtime:'node',integration:'application',capture:'manual',execution:'worker'})
-})
-it('distinguishes unreadable policy failclosed from permitted stdout when event persistence fails', async () => {
-  const {service,directory}=fixture()
-  await service.policy()
-  const child=await childWriter(directory)
-  await child.send('emit','fault.warm')
-  const db=new Database(join(directory,'events.db'))
-  try {
-    db.exec("CREATE TRIGGER fail_events BEFORE INSERT ON log_events BEGIN SELECT RAISE(ABORT,'fixture'); END")
-    const failed=await child.send('emit','fault.persist')
-    expect(failed.status).toMatchObject({dropped:1,stored:1,filtered:0,unavailable:true})
-    db.exec('DROP TRIGGER fail_events')
-    db.exec("CREATE TRIGGER rollback_events BEFORE INSERT ON log_events BEGIN SELECT RAISE(ROLLBACK,'fixture'); END")
-    const rollback=await child.send('emit','fault.rollback')
-    expect(rollback.status).toMatchObject({dropped:2,stored:1,filtered:0,unavailable:true})
-    db.exec('DROP TRIGGER rollback_events')
-    db.exec('BEGIN EXCLUSIVE')
-    const unread=await child.send('emit','fault.policy')
-    expect(unread.status).toMatchObject({dropped:3,stored:1,filtered:0,unavailable:true})
-    db.exec('ROLLBACK')
-    await child.send('close')
-    await new Promise(r=>setTimeout(r,50))
-    expect(child.output()).toContain('fault.persist')
-    expect(child.output()).toContain('fault.rollback')
-    expect(child.output()).not.toContain('fault.policy')
-    expect((await service.list({operation:'fault.persist'})).rows).toEqual([])
-  } finally {if(db.inTransaction)db.exec('ROLLBACK');db.close()}
-})
+}, 20_000)
+it('distinguishes a rejected insert from unreadable policy without losing later permitted events', async () => {
+  const { service, runtime } = fixture()
+  runtime.psql(['-c', `ALTER TABLE runtime_logs.log_events ADD CHECK (operation <> 'rollback.fixture')`])
+  const failed = service.emit({ source: 'task', operation: 'rollback.fixture', outcome: 'failure' })!
+  await service.flush()
+  expect(await service.detail(failed)).toBeNull()
+  expect(service.status()).toMatchObject({ stored: 0, dropped: 1, writeUnknown: 0, unavailable: true })
 
+  runtime.psql(['-c', 'ALTER TABLE runtime_logs.log_collection RENAME TO offline_collection'])
+  const denied = service.emit({ source: 'task', operation: 'offline.fixture', outcome: 'failure' })!
+  await service.flush()
+  await expect(service.policy()).rejects.toMatchObject({ code: 'storage_unavailable' })
+  runtime.psql(['-c', 'ALTER TABLE runtime_logs.offline_collection RENAME TO log_collection'])
+  expect(await service.detail(denied)).toBeNull()
+
+  const next = service.emit({ source: 'task', operation: 'recovered.fixture', outcome: 'success' })!
+  await service.flush()
+  expect(await service.detail(next)).toMatchObject({ operation: 'recovered.fixture' })
+  expect(service.status()).toMatchObject({ stored: 1, dropped: 2, writeUnknown: 0, unavailable: false })
+}, 20_000)
 
 it('does not exempt policy and clear metadata from the application integration rule', async () => {
-  const {service}=fixture()
+  const {service}= fixture()
   await service.setPolicy({...base,collection:{integrations:{application:{enabled:false,minLevel:'debug'}}}})
   await service.clear({from:'2000-01-01',to:'2100-01-01',operation:'nothing.run',confirm:true})
   await service.flush()
@@ -185,22 +193,7 @@ it('does not exempt policy and clear metadata from the application integration r
   await service.setPolicy({...base,collection:{integrations:{application:{enabled:true,minLevel:'debug'}}}})
   await service.flush()
   expect((await service.list({operation:'logging.policy'})).rows).toHaveLength(1)
-})
-
-it('migrates an owned legacy store with default rules while preserving unmarked event rows', async () => {
-  const {service,directory}=fixture()
-  const id=service.emit({source:'file',operation:'file.register',outcome:'success'})!
-  await service.flush(); await service.close()
-  const legacy=new Database(join(directory,'events.db'))
-  legacy.exec('DROP TABLE log_collection'); legacy.close()
-  const next=fixture(directory).service
-  const policy=await next.policy()
-  expect(policy.revision).toBe(0)
-  expect(policy.collection).toEqual(defaultLogCollection())
-  expect(await next.detail(id)).toMatchObject({source:'file',operation:'file.register'})
-  expect(await next.detail(id)).not.toHaveProperty('origin')
-})
-
+}, 20_000)
 
 it('publishes the same closed keys and complete rules in REST OpenAPI metadata', async () => {
   let metadata:any

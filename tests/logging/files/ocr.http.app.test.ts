@@ -3,14 +3,15 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { initializeDb } from '../../../db/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { storedLogRows } from '../fixtures/runtime'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
 import { minimalPdf } from '../../support/minimal-pdf'
 import { startMiniOcrApi, type ModelApiFixture } from '../../files/ocr/fixtures/provider-api'
 
 const dir = mkdtempSync(join(tmpdir(), 'logging-186-'))
 const files = join(dir, 'files')
-const logDir = join(dir, 'logs')
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 const privateText = 'PRIVATE186_OCR_BODY'
 const privatePath = 'PRIVATE186_SOURCE.pdf'
 const fixture: ModelApiFixture = { pages: [privateText], failOnPage: { page: 2, message: 'PRIVATE186_PROVIDER_FAILURE' + 'x'.repeat(30_000) } }
@@ -61,12 +62,12 @@ async function register(pages = 3) {
   expect(response.status).toBe(201)
   return { id: response.body.id as number, relPath, requestId: response.requestId }
 }
-async function start(extra: Record<string, string> = {}) {
+async function start() {
   const port = await reserveLoopbackPort()
   origin = `http://127.0.0.1:${port}`
   child = spawn(process.execPath, ['.output/server/index.mjs'], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production', NUXT_BUILD_DIR: join(dir, 'nuxt'), NUXT_DB_PATH: join(dir, 'business.db'), NUXT_FILES_DIR: files, NUXT_LOG_DIR: logDir, NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_CURATED_PATH: join(dir, 'curated.json'), NUXT_RECONCILE_PATH: join(dir, 'reconcile.json'), NUXT_API_TOKEN: 'PRIVATE186_API_TOKEN', NUXT_MCP_TOKEN: 'PRIVATE186_MCP_TOKEN', NUXT_OCR_TOKEN: 'PRIVATE186_OCR_TOKEN', NUXT_OCR_BASE_URL: api.origin, NUXT_OCR_POLL_TIMEOUT_MS: '20', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: '', MIIT_COOKIE_FILE: '', PADDLEOCR_MCP_AISTUDIO_BASE_URL: '', NUXT_PLATFORM_COOKIE: '', ...extra },
+    env: { ...process.env, ...runtime.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production', NUXT_BUILD_DIR: join(dir, 'nuxt'), NUXT_DB_READONLY: '0', NUXT_FILES_DIR: files, NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_CURATED_PATH: join(dir, 'curated.json'), NUXT_RECONCILE_PATH: join(dir, 'reconcile.json'), NUXT_API_TOKEN: 'PRIVATE186_API_TOKEN', NUXT_MCP_TOKEN: 'PRIVATE186_MCP_TOKEN', NUXT_OCR_TOKEN: 'PRIVATE186_OCR_TOKEN', NUXT_OCR_BASE_URL: api.origin, NUXT_OCR_POLL_TIMEOUT_MS: '20', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: '', MIIT_COOKIE_FILE: '', PADDLEOCR_MCP_AISTUDIO_BASE_URL: '', NUXT_PLATFORM_COOKIE: '' },
   })
   child.stdout!.on('data', chunk => { output += chunk })
   child.stderr!.on('data', chunk => { output += chunk })
@@ -74,13 +75,14 @@ async function start(extra: Record<string, string> = {}) {
 }
 beforeAll(async () => {
   mkdirSync(files)
-  initializeDb({ dbPath: join(dir, 'business.db'), create: true }).$client.close()
+  runtime = await postgresRuntimeFixture({ dir })
   api = await startMiniOcrApi(fixture)
   await start()
 }, 240_000)
 afterAll(async () => {
-  await stopOwnedChild(child)
+  if (child) await stopOwnedChild(child)
   await api?.close()
+  runtime?.close()
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -122,9 +124,7 @@ it('actual Nuxt preserves full-PDF atomicity and recovers only the failed source
   for (const marker of ['PRIVATE186_', dir, api.origin]) expect(serialized).not.toContain(marker)
   for (const result of details) expect(Buffer.byteLength(JSON.stringify(result.body))).toBeLessThanOrEqual(8192)
   // The independent sink itself is checked, not just its public projection.
-  for (const name of readdirSync(logDir)) {
-    if (name.startsWith('events.db')) expect(readFileSync(join(logDir, name)).includes(Buffer.from('PRIVATE186_'))).toBe(false)
-  }
+  expect(storedLogRows(runtime)).not.toContain('PRIVATE186_')
   const semanticOutput = output.split('\n').filter(line => /"source":"(?:file|ocr)"/.test(line)).join('\n')
   expect(semanticOutput).not.toContain('PRIVATE186_')
 }, 120_000)
@@ -326,10 +326,8 @@ it('soft removal and verified restoration retain source bytes OCR pages and auth
 }, 120_000)
 
 it('unavailable independent log storage leaves registration OCR and receipt replay intact with safe fallback', async () => {
-  await stopOwnedChild(child)
-  const blocked = join(dir, 'blocked-log-directory')
-  writeFileSync(blocked, 'synthetic non-directory')
-  await start({ NUXT_LOG_DIR: blocked })
+  const blocked = 'blocked_log_policy'
+  runtime.psql(['-c', `ALTER TABLE runtime_logs.log_policy RENAME TO ${blocked}`])
   const file = await register(1)
   expect((await terminal(await job('render-pages', [file.relPath]))).state).toBe('done')
   expect((await terminal(await job('ocr', [file.relPath]))).state).toBe('done')
@@ -352,8 +350,8 @@ it('unavailable independent log storage leaves registration OCR and receipt repl
   expect(fault.body.status.dropped).toBeGreaterThan(0)
   expect(JSON.stringify(fault.body)).not.toContain(blocked)
   expect(output).toContain('"operation":"logging.drain"')
-  // Includes the real container/fallback stdout and stderr of BOTH processes.
+  // Includes the real container stdout and stderr while logging was unavailable.
   expect(output).not.toContain('PRIVATE186_')
   expect(output).not.toContain(files)
-  for (const name of readdirSync(logDir)) if (name.startsWith('events.db')) expect(readFileSync(join(logDir, name)).includes(Buffer.from('PRIVATE186_'))).toBe(false)
+  expect(storedLogRows(runtime)).not.toContain('PRIVATE186_')
 }, 120_000)

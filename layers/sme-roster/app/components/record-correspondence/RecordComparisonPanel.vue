@@ -7,7 +7,6 @@ import { useEvidencePreviewScrollRestore } from '#sme-roster/lib/roster/evidence
 import { humanRecordTime } from '#sme-roster/lib/roster/record-ledger'
 import { useRosterCorrespondenceReadback } from '#sme-roster/app/composables/useRosterCorrespondenceReadback'
 import RosterComparisonSourcePicker from './ComparisonSourcePicker.vue'
-import RosterComparisonProofPicker from './ComparisonProofPicker.vue'
 import RosterComparisonBusinessGroups from './ComparisonBusinessGroups.vue'
 import RosterComparisonEventRow from './ComparisonEventRow.vue'
 import RosterComparisonEvidence from './ComparisonEvidence.vue'
@@ -23,7 +22,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '#c
 const route = useRoute()
 const router = useRouter()
 const committed = ref<ComparisonRouteState>(comparisonRouteFromQuery(route.query))
-const copySelection = (value: ComparisonSelection): ComparisonSelection => ({ queryIds: [...value.queryIds], exportBatchIds: [...value.exportBatchIds], officialSourceDocumentIds: [...value.officialSourceDocumentIds], proofIds: [...value.proofIds] })
+const copySelection = (value: ComparisonSelection): ComparisonSelection => ({ queryIds: [...value.queryIds], exportBatchIds: [...value.exportBatchIds], officialSourceDocumentIds: [...value.officialSourceDocumentIds] })
 const selection = ref<ComparisonSelection>(copySelection(committed.value.selection))
 const asOfLocal = ref(localDateTimeForInstant(committed.value.asOf))
 const pickerValid = ref(true)
@@ -54,7 +53,7 @@ watch(() => route.query, (query) => {
 const submitted = computed(() => committed.value.selection.queryIds.length && committed.value.selection.officialSourceDocumentIds.length ? committed.value.selection : null)
 /**
  * 已有结果 / URL 里已有范围时，来源表单收成一行摘要；空状态仍展开完整选择。
- * 收起只改变可见高度，pickers、范围依据与时间选择器保持挂载，显式选择、
+ * 收起只改变可见高度，来源和时间选择器保持挂载，显式选择、
  * 目录 hydration、ready 回调与返回滚动都不会因为折叠而重建。
  */
 const sourcesExpanded = ref(selection.value.queryIds.length > 0 || selection.value.officialSourceDocumentIds.length > 0)
@@ -65,13 +64,13 @@ const asOfIso = computed(() => instantFromLocalDateTime(asOfLocal.value, committ
 const asOfValid = computed(() => pickerValid.value && (!asOfLocal.value || !!asOfIso.value))
 const canCompare = computed(() => selection.value.queryIds.length > 0 && selection.value.officialSourceDocumentIds.length > 0 && asOfValid.value)
 const missingSides = computed(() => [
-  ...(selection.value.officialSourceDocumentIds.length ? [] : ['正式文件']),
+  ...(selection.value.officialSourceDocumentIds.length ? [] : ['公布名单']),
   ...(selection.value.queryIds.length ? [] : ['平台查询']),
 ])
 const disabledReason = computed(() => missingSides.value.length
   ? `请选择${missingSides.value.join('和')}后开始对比。`
   : '')
-const sourceKey = (value: ComparisonSelection) => JSON.stringify([value.queryIds, value.exportBatchIds, value.officialSourceDocumentIds, value.proofIds])
+const sourceKey = (value: ComparisonSelection) => JSON.stringify([value.queryIds, value.exportBatchIds, value.officialSourceDocumentIds])
 const selectionChanged = computed(() => sourceKey(selection.value) !== sourceKey(committed.value.selection) || asOfIso.value !== committed.value.asOf)
 const displayedIsTarget = computed(() => !!displayed.value && !!displayedScope.value && comparisonRouteKey(displayedScope.value) === comparisonRouteKey(committed.value))
 const resultIsCurrent = computed(() => displayedIsTarget.value && !selectionChanged.value && !loading.value && !error.value)
@@ -81,7 +80,7 @@ const returnTo = computed(() => {
   if (!scope || !result) return '/comparison?mode=record'
   return `/comparison?${new URLSearchParams(comparisonRouteQuery({ ...scope, page: result.page, pageSize: result.pageSize }))}`
 })
-const scopeText = (scope: ComparisonRouteState) => `${scope.selection.officialSourceDocumentIds.length} 份正式文件 · ${scope.selection.queryIds.length} 次归档查询 · ${scope.selection.exportBatchIds.length} 个导出版本 · ${scope.selection.proofIds.length} 项范围依据 · ${scope.classification === 'all' ? '全部分类' : COMPARISON_CLASSES[scope.classification]} · 截止 ${scope.asOf ? humanRecordTime(scope.asOf) : '未设置'} · 第 ${scope.page} 页 · 每页 ${scope.pageSize} 条 · 平台业务第 ${scope.businessPage ?? 1} 页 · 每页 ${scope.businessPageSize ?? 25} 组`
+const scopeText = (scope: ComparisonRouteState) => `${scope.selection.officialSourceDocumentIds.length} 份公布名单 · ${scope.selection.queryIds.length} 次归档查询 · ${scope.selection.exportBatchIds.length} 个导出版本 · ${scope.classification === 'all' ? '全部分类' : COMPARISON_CLASSES[scope.classification]} · 截止 ${scope.asOf ? humanRecordTime(scope.asOf) : '未设置'} · 第 ${scope.page} 页 · 每页 ${scope.pageSize} 条 · 平台业务第 ${scope.businessPage ?? 1} 页 · 每页 ${scope.businessPageSize ?? 25} 组`
 const displayedScopeText = computed(() => displayedScope.value && displayed.value ? scopeText({ ...displayedScope.value, page: displayed.value.page, pageSize: displayed.value.pageSize }) : '')
 const loadedScope = computed(() => displayedScope.value && displayed.value ? { ...displayedScope.value, page: displayed.value.page, pageSize: displayed.value.pageSize } : null)
 const targetScopeText = computed(() => scopeText(committed.value))
@@ -96,9 +95,7 @@ const sourceReady = ref<Record<'official' | 'query', string | null>>({ official:
 function setSourceReady(slot: 'official' | 'query', key: string, ready: boolean) {
   sourceReady.value = { ...sourceReady.value, [slot]: ready ? key : null }
 }
-const proofReadyKey = ref<string | null>(null)
 const sourceLayoutKey = computed(() => JSON.stringify(selection.value))
-const proofLayoutKey = computed(() => JSON.stringify([selection.value, asOfIso.value]))
 const sourceReadyKey = computed(() => sourceReady.value.official === sourceLayoutKey.value && sourceReady.value.query === sourceLayoutKey.value ? sourceLayoutKey.value : null)
 const restoreScopeKey = comparisonRouteKey(committed.value)
 const panel = useTemplateRef<HTMLElement>('panel')
@@ -106,7 +103,7 @@ const resultsHeader = useTemplateRef<HTMLElement>('resultsHeader')
 let revealResults = false
 const restoreReady = computed(() => displayedIsTarget.value && !loading.value && !error.value
   && comparisonRouteKey(committed.value) === restoreScopeKey
-  && sourceReadyKey.value === sourceLayoutKey.value && proofReadyKey.value === proofLayoutKey.value)
+  && sourceReadyKey.value === sourceLayoutKey.value)
 useEvidencePreviewScrollRestore(restoreReady, (anchor) => {
   const event = [...(panel.value?.querySelectorAll<HTMLElement>('[data-event-id]') ?? [])].find(element => element.dataset.eventId === anchor.eventId)
   return event ? workspaceScrollTop() + event.getBoundingClientRect().top - anchor.viewportTop : undefined
@@ -180,7 +177,6 @@ async function navigate(next: ComparisonRouteState, replace = false) {
   }
 }
 function setSelection(value: ComparisonSelection) { selection.value = value }
-function setProofIds(value: number[]) { selection.value = { ...selection.value, proofIds: value } }
 /** 用户手动开合时恢复完整动画；`instant` 只属于「开始对比」的程序化收起。 */
 function setSourcesExpanded(open: boolean) {
   skipPanelTransition.value = false
@@ -304,9 +300,9 @@ const classificationEntries = computed(() => {
               按正式事件与平台原行做记录级对照；两侧来源只限定本次分析范围，不表示文件覆盖完整或两个版本相同。
             </p>
             <div class="flex min-w-0 flex-col gap-3">
-              <section class="flex min-w-0 flex-col gap-2" aria-label="左侧正式文件">
+              <section class="flex min-w-0 flex-col gap-2" aria-label="左侧公布名单">
                 <header class="flex flex-wrap items-baseline justify-between gap-2">
-                  <h3 class="text-sm font-medium">正式文件</h3>
+                  <h3 class="text-sm font-medium">公布名单</h3>
                   <span class="text-muted-foreground text-table tabular-nums">已选 {{ selection.officialSourceDocumentIds.length }} / {{ catalogTotals.official_document ?? '—' }}</span>
                 </header>
                 <RosterComparisonSourcePicker :kind="'official_document'" :selection="selection" @change="setSelection" @catalog="setCatalogTotal" @sources="rememberSources" @settled="(key, ready) => setSourceReady('official', key, ready)" />
@@ -320,14 +316,10 @@ const classificationEntries = computed(() => {
                 <RosterComparisonSourcePicker :kind="'query'" :selection="selection" @change="setSelection" @catalog="setCatalogTotal" @sources="rememberSources" @settled="(key, ready) => setSourceReady('query', key, ready)" />
               </section>
 
-              <!--
-                折叠时内容仍在 DOM 中（unmount-on-hide=false）：书签里的范围依据选择照常
-                初始化、校验并参与滚动恢复。
-              -->
               <DisclosurePanel compact keep-mounted padded content-class="pb-0" class="min-w-0 rounded-sm border">
                 <template #trigger>
                   <span class="shrink-0 whitespace-nowrap text-table font-medium">更多选项</span>
-                  <span class="text-muted-foreground min-w-0 text-xs font-normal">截止时点 · 范围依据 · 导出版本 · 分类筛选</span>
+                  <span class="text-muted-foreground min-w-0 text-xs font-normal">截止时点 · 导出版本 · 分类筛选</span>
                 </template>
                 <div class="flex min-w-0 flex-col gap-3 border-t p-3">
                   <div class="flex max-w-full flex-col gap-1">
@@ -335,7 +327,6 @@ const classificationEntries = computed(() => {
                     <DateTimePicker id="record-as-of" v-model="asOfLocal" @validity-change="pickerValid = $event" />
                     <p class="text-muted-foreground text-xs">只影响对比结果的历史范围；不选则按当前数据。</p>
                   </div>
-                  <RosterComparisonProofPicker :selection="selection" :as-of="asOfIso" @change="setProofIds" @settled="(key, ready) => { proofReadyKey = ready ? key : null }" />
                   <section class="flex min-w-0 flex-col gap-2 rounded-sm border p-3" aria-label="可选导出版本">
                     <header class="flex flex-wrap items-baseline justify-between gap-2">
                       <h3 class="text-sm font-medium">导出版本（可选）</h3>

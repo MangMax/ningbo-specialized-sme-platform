@@ -1,9 +1,8 @@
 import { savePostgresEnterpriseDetails } from '../../../../utils/enterprise-directory-postgres-write'
-import { useDb } from '@db'
 import { requireApiToken } from '../../../../utils/api-guard'
 import { sameOriginBrowserAccess } from '../../../../utils/browser-page-access'
 import { directoryInput, directoryResult, usePostgresDirectoryWriteDb, enterpriseId } from '../../../../utils/enterprise-directory-route'
-import { enterpriseDetailsSchema, saveEnterpriseDetails } from '../../../../utils/enterprise-kernel'
+import { enterpriseDetailsSchema } from '../../../../utils/enterprise-contract'
 
 defineRouteMeta({ openAPI: {
   tags: ['企业基础库'], summary: '更新企业区划、行业及地址',
@@ -26,6 +25,6 @@ export default defineEventHandler(async event => {
   const input = directoryInput(enterpriseDetailsSchema, await readBody(event))
   return directoryResult(() => {
     const db = usePostgresDirectoryWriteDb()
-    return db ? savePostgresEnterpriseDetails(db, id, input) : saveEnterpriseDetails(useDb(), id, input)
+    return savePostgresEnterpriseDetails(db, id, input)
   })
 })

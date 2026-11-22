@@ -1,64 +1,97 @@
-import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, afterEach, beforeEach, expect, it } from 'vitest'
-import { useDb } from '../../../db'
-import { credentialStatus, updateCredential } from '../../../layers/core/server/utils/credential-state'
-import { resolvePlatformCookie } from '../../../layers/sme-roster/server/utils/platform-credential'
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { postgresCredentialStorage, resolveRuntimeCredential, updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
 import { handleCredentialsRequest } from '../../../layers/core/server/utils/credentials-http'
-import { queryAllRdjb } from '../../../layers/sme-roster/lib/platform/client'
-import { EMPTY_APPLY_RESPONSE, platformFixture } from '../../platform/fixtures/source-replay'
+import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
+import { platformFixture } from '../../platform/fixtures/source-replay'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+
 const dir = mkdtempSync(join(tmpdir(), 'cookie-credentials-'))
-let db: ReturnType<typeof useDb>
-let sequence = 0
-beforeEach(() => { db = initializeDb({ create: true, dbPath: join(dir, `${sequence++}.sqlite`) }) })
-afterEach(() => db.$client.close())
-afterAll(() => rmSync(dir, { recursive: true, force: true }))
-const context = () => ({ db, env: {} })
-it('resolves database Cookie before environment, preserves controlled overrides and clears to fallback', () => {
-  const ctx = { ...context(), env: { MIIT_COOKIE: ' session=synthetic-env ' } }
-  expect(credentialStatus(ctx)['sme-roster.miitCookie']?.source).toBe('MIIT_COOKIE')
-  updateCredential('sme-roster.miitCookie', 'session=synthetic-saved', ctx)
-  expect(resolvePlatformCookie(undefined, { ...ctx })).toBe('session=synthetic-saved')
-  expect(resolvePlatformCookie('session=synthetic-override', ctx)).toBe('session=synthetic-override')
-  expect(resolvePlatformCookie(() => '', ctx)).toBe('')
-  expect(resolvePlatformCookie('', ctx)).toBe('')
-  expect(resolvePlatformCookie(' ', ctx)).toBe('')
-  updateCredential('sme-roster.miitCookie', null, ctx)
-  expect(resolvePlatformCookie(undefined, ctx)).toBe('session=synthetic-env')
-  ctx.env.MIIT_COOKIE = ''
-  expect(credentialStatus(ctx)['sme-roster.miitCookie']).toMatchObject({ configured: false, source: 'none' })
-})
-it('rejects invalid Cookie and mixed invalid requests without changing either saved credential', async () => {
-  const ctx = context()
-  updateCredential('sme-roster.miitCookie', 'session=synthetic-kept', ctx)
-  updateCredential('core.ocrToken', 'synthetic-ocr-kept', ctx)
-  for (const miitCookie of [' ', '\r\nsession=bad', null, 42, 'x'.repeat(65537)]) {
-    const response = await handleCredentialsRequest('state', { method: 'PATCH', headers: {}, body: { 'core.ocrToken': 'synthetic-not-written', 'sme-roster.miitCookie': miitCookie } }, ctx)
-    expect(response.status).toBe(400)
-    expect(resolvePlatformCookie(undefined, ctx)).toBe('session=synthetic-kept')
-    expect(credentialStatus(ctx)['core.ocrToken']?.masked).toBe('syn********ept')
+const key = 'sme-roster.miitCookie'
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
+beforeAll(async () => {
+  runtime = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', runtime.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+}, 20_000)
+beforeEach(() => runtime.psql(['-c', 'TRUNCATE business.service_credential']))
+afterAll(async () => {
+  try {
+    await closePostgresDirectoryDb()
+    runtime?.close()
+  } finally {
+    vi.unstubAllEnvs()
+    rmSync(dir, { recursive: true, force: true })
   }
 })
-it('sends database Cookie to a controlled HTTP service, fixes an in-flight operation and hot updates the next query', async () => {
-  const ctx = context()
-  updateCredential('sme-roster.miitCookie', 'session=synthetic-http-A', ctx)
-  let expected = 'session=synthetic-http-A'
-  const seen: boolean[] = []
+
+it('resolves saved Cookie before environment and clears to deployment fallback', async () => {
+  const ctx = { env: { MIIT_COOKIE: ' session=synthetic-env ' } }
+  const resolve = () => resolveRuntimeCredential(key, ctx)
+  const save = (value: string | null) => updatePostgresCredentialState(usePostgresDirectoryDb(), { [key]: value })
+  expect(await resolve()).toMatchObject({ source: 'MIIT_COOKIE', value: 'session=synthetic-env' })
+  await save('session=synthetic-saved')
+  expect(await resolve()).toMatchObject({ source: 'saved', value: 'session=synthetic-saved' })
+  await save(null)
+  expect(await resolve()).toMatchObject({ source: 'MIIT_COOKIE', value: 'session=synthetic-env' })
+  ctx.env.MIIT_COOKIE = ''
+  expect(await resolve()).toMatchObject({ source: 'none', value: '' })
+})
+
+it('rejects invalid Cookie and mixed invalid requests without changing either saved credential', async () => {
+  const ctx = { env: {} }
+  const storage = postgresCredentialStorage()
+  await storage.update({ [key]: 'session=synthetic-kept', 'core.ocrToken': 'synthetic-ocr-kept' })
+  for (const miitCookie of [' ', '\r\nsession=bad', null, 42, 'x'.repeat(65537)]) {
+    const response = await handleCredentialsRequest('state', {
+      method: 'PATCH', headers: {}, body: { 'core.ocrToken': 'synthetic-not-written', [key]: miitCookie },
+    }, ctx, storage)
+    expect(response.status).toBe(400)
+    expect((await resolveRuntimeCredential(key, ctx)).value).toBe('session=synthetic-kept')
+    expect((await resolveRuntimeCredential('core.ocrToken', ctx)).value).toBe('synthetic-ocr-kept')
+  }
+})
+
+it('keeps the database Cookie for every request in-flight and reads the update for the next live query', async () => {
+  const save = (value: string) => updatePostgresCredentialState(usePostgresDirectoryDb(), { [key]: value })
+  await save('session=synthetic-http-A')
+  const seen: (string | undefined)[] = []
+  const pending: Promise<unknown>[] = []
   const service = createServer((req, res) => {
-    seen.push(req.headers.cookie === expected)
-    updateCredential('sme-roster.miitCookie', 'session=synthetic-http-B', ctx)
-    res.end(req.url?.includes('businessList') ? platformFixture('business-list-rdjb1-empty.html') : EMPTY_APPLY_RESPONSE)
+    seen.push(req.headers.cookie)
+    const send = () => res.end(platformFixture('business-list-rdjb1-empty.html'))
+    if (seen.length === 1) {
+      pending.push(save('session=synthetic-http-B').then(send, () => {
+        res.statusCode = 500
+        res.end()
+      }))
+    } else send()
   })
   await new Promise<void>(r => service.listen(0, '127.0.0.1', r))
   try {
-    const query = () => queryAllRdjb({ uscc: '91330211255994457P', cookie: () => resolvePlatformCookie(undefined, ctx), baseUrl: `http://127.0.0.1:${(service.address() as AddressInfo).port}` })
-    expect((await query()).map(o => o.status)).toEqual(Array(4).fill('no_record'))
-    expected = 'session=synthetic-http-B'
-    expect((await query()).map(o => o.status)).toEqual(Array(4).fill('no_record'))
-    expect(seen).toEqual(Array(8).fill(true))
-  } finally { await new Promise<void>(r => service.close(() => r())) }
+    const query = (cookie?: string) => runPlatformLiveQuery({ source: 'businessList', uscc: '91330211255994457P', rdjb: 'all' }, {
+      credentials: { env: { MIIT_COOKIE: 'session=fallback' } },
+      cookie,
+      transport: { baseUrl: `http://127.0.0.1:${(service.address() as AddressInfo).port}` },
+    })
+    for (const cookie of [undefined, undefined, 'session=controlled']) {
+      expect(await query(cookie)).toMatchObject({ status: 'no_record', pages: [
+        { rdjb: '1', status: 'success' }, { rdjb: '2', status: 'success' }, { rdjb: '3', status: 'success' },
+      ] })
+    }
+    expect(await query('')).toMatchObject({ status: 'not_queried', error: { code: 'credential_unavailable' } })
+    expect(seen).toEqual([
+      ...Array(3).fill('session=synthetic-http-A'),
+      ...Array(3).fill('session=synthetic-http-B'),
+      ...Array(3).fill('session=controlled'),
+    ])
+  } finally {
+    await Promise.all(pending)
+    await new Promise<void>(r => service.close(() => r()))
+  }
 })

@@ -79,7 +79,7 @@ export interface DeclarationRecordRow {
   kind: 'record'
   record: { id: number; platformKey: string; interface: 'apply_list' }
   matchedVersion: DeclarationVersionFields
-  /** Number of content versions matching the current year/kind/status conditions. */
+  /** One for each returned current record. */
   matchedVersionCount: number
   /** All content versions for this business identity, including non-matching history. */
   versionCount: number
@@ -149,6 +149,7 @@ export interface DeclarationVersion extends DeclarationVersionFields {
 
 export interface DeclarationDetail {
   record: { id: number; platformKey: string; interface: 'apply_list'; identityRuleVersion: string; createdAt: string }
+  current: DeclarationVersionFields | null
   versions: DeclarationVersion[]
   observations: DeclarationObservation[]
   counts: {
@@ -159,5 +160,4 @@ export interface DeclarationDetail {
   }
 }
 
-export const DECLARATION_VERSION_LIMIT = 100
 export const DECLARATION_OBSERVATION_LIMIT = 200

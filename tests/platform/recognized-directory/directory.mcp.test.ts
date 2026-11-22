@@ -1,18 +1,17 @@
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { mkdtempSync,rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll,beforeAll,expect,it,vi } from 'vitest'
-import { schema } from '../../../db'
-import { initializeDb } from '../../../db/client'
-import { getTargetRecognizedRecord,listTargetRecognizedDirectory } from '../../../layers/sme-roster/server/utils/platform-recognized-target'
-import { submitNativePlatformQuery } from '../fixtures/native-query'
+import { enterprise as enterpriseTable } from '../../../db/postgresql/enterprise-tables'
+import { listPlatformArchive, readPlatformArchiveDetail } from '../../../layers/sme-roster/server/utils/platform-archive-read'
+import { seedPostgresPlatformQuery } from '../fixtures/postgres-query'
 
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 
 const dir = mkdtempSync(join(tmpdir(), 'recognized-directory-mcp-'))
-const dbPath = join(dir, 'recognized.sqlite')
-vi.stubEnv('NUXT_DB_PATH', dbPath)
-const db = initializeDb({ create: true, dbPath })
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let listTool: typeof import('../../../layers/sme-roster/server/mcp/tools/list_platform_recognized_directory').default
 let detailTool: typeof import('../../../layers/sme-roster/server/mcp/tools/get_platform_recognized_record').default
 let recordId = 0
@@ -20,10 +19,14 @@ let relationId = 0
 
 beforeAll(async () => {
   vi.stubGlobal('createError', (input: unknown) => Object.assign(new Error('fixture'), input))
-  const enterprise = db.insert(schema.enterprise).values({ name: 'MCP 目录企业', nameNorm: 'MCP 目录企业', usccNorm: '91330211DDDDDDDD4X' }).returning().get()
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  const db = usePostgresDirectoryDb()
+  const [enterprise] = await db.insert(enterpriseTable).values({ name: 'MCP 目录企业', nameNorm: 'MCP 目录企业', usccNorm: '91330211DDDDDDDD4X' }).returning()
+  if (!enterprise) throw new Error('Fixture enterprise was not created')
   const queriedAt = '2026-10-01T00:00:00Z'
   const raw = { id: 'DIR-MCP-READ', qymc: enterprise.name, tyshxydm: enterprise.usccNorm!, rdjb: '2', rddqrq: '2027-12-31', whpcyear: '2024', whpc: '2024-2', szq: '33020000', rdxx: '原认定说明', unknownSensitiveField: 'PRIVATE-MCP-MARKER' }
-  const written = submitNativePlatformQuery(db, {
+  const written = await seedPostgresPlatformQuery(db, {
     interface: 'recognized_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt, status: 'success',
     collectionEvidence: {
       source: 'queryBusList', status: 'success', effectiveConditions: { combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] },
@@ -38,9 +41,11 @@ beforeAll(async () => {
   relationId = written.relationIds[0]!
   listTool = (await import('../../../layers/sme-roster/server/mcp/tools/list_platform_recognized_directory')).default
   detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_recognized_record')).default
-})
-afterAll(() => {
-  vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true })
+}, 30_000)
+afterAll(async () => {
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.unstubAllGlobals(); vi.unstubAllEnvs(); rmSync(dir, { recursive: true, force: true })
 })
 
 it('exposes the same recognized directory contract over MCP as the shared domain service', async () => {
@@ -48,7 +53,7 @@ it('exposes the same recognized directory contract over MCP as the shared domain
   expect(detailTool.name).toBe('get_platform_recognized_record')
   const input = { view: 'records' as const, rdjb: '2' as const, rddqrq: '2027-12-31', whpcyear: 2024, whpc: '2024-2', szq: '33020000', page: 1, pageSize: 25 }
   const listed = await listTool.handler(input as never, {} as never) as { structuredContent: unknown; content: { text: string }[] }
-  const expected = listTargetRecognizedDirectory(input, db)
+  const expected = await listPlatformArchive('recognized-directory', input)
   expect(listed.structuredContent).toEqual(expected)
   expect(JSON.parse(listed.content[0]!.text)).toEqual(expected)
   expect(expected.rows[0]).toMatchObject({
@@ -58,12 +63,12 @@ it('exposes the same recognized directory contract over MCP as the shared domain
   })
 
   const detail = await detailTool.handler({ recordId }, {} as never) as { structuredContent: unknown; content: { text: string }[] }
-  const expectedDetail = getTargetRecognizedRecord(db, recordId)
+  const expectedDetail = await readPlatformArchiveDetail('recognized-directory', recordId)
   expect(detail.structuredContent).toEqual(expectedDetail)
   expect(JSON.parse(detail.content[0]!.text)).toEqual(expectedDetail)
   expect(expectedDetail.observations[0]).toMatchObject({ relationId, titleConflict: false })
   expect(JSON.stringify(expectedDetail)).not.toContain('unknownSensitiveField')
 
   const isolated = await listTool.handler({ view: 'isolated', pageSize: 25 } as never, {} as never) as { structuredContent: { rows: unknown[] } }
-  expect(isolated.structuredContent).toEqual(listTargetRecognizedDirectory({ view: 'isolated' }, db))
+  expect(isolated.structuredContent).toEqual(await listPlatformArchive('recognized-directory', { view: 'isolated' }))
 })

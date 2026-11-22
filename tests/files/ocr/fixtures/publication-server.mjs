@@ -29,34 +29,32 @@ if (process.env.ISSUE309_CACHE_GATE_HIT) {
     return value
   }
 }
-// Fault injector only: stop the owned process immediately AFTER a real SQLite
-// transaction commits the selected claim state, before its caller resumes. The
-// parent reads the committed row from another connection and SIGKILLs us. No
-// production hook or replacement claim algorithm is used by this observer.
 if (process.env.ISSUE309_STOP_CLAIM_SOURCE || process.env.ISSUE309_STOP_ORIGINAL_UNKNOWN) {
-  const Database = require('better-sqlite3')
-  const original = Database.prototype.transaction
+  const { Client } = require('pg')
+  const query = Client.prototype.query
+  const originalUnknown = Boolean(process.env.ISSUE309_STOP_ORIGINAL_UNKNOWN)
   let stopped = false
-  Database.prototype.transaction = function (fn) {
-    const native = original.call(this, fn)
-    const observe = () => {
-      if (stopped || this.inTransaction) return
-      const row = process.env.ISSUE309_STOP_ORIGINAL_UNKNOWN
-        ? this.prepare("select id, result from job where kind = 'ocr' and state = 'running' order by created_at desc limit 1").get()
-        : this.prepare('select id, result from job where id = ?').get(process.env.ISSUE309_STOP_CLAIM_SOURCE)
-      const result = JSON.parse(row?.result ?? '{}')
-      const committedState = process.env.ISSUE309_STOP_ORIGINAL_UNKNOWN ? 'original-unknown' : process.env.ISSUE309_STOP_CLAIM_STATE
-      const matched = process.env.ISSUE309_STOP_ORIGINAL_UNKNOWN
-        ? !result.publication?.recovery && result.publication?.files.some(file => Object.values(file.requests).some(request => request.state === 'unknown'))
-        : Object.values(result.ocrRecovery?.pages ?? {}).some(page => page.attempts.at(-1)?.state === committedState)
-      if (!matched) return
-      stopped = true
-      writeFileSync(process.env.ISSUE309_STOP_FILE, JSON.stringify({ pid: process.pid, taskId: row.id, committedState }))
-      process.kill(process.pid, 'SIGSTOP')
-    }
-    const wrapped = Object.fromEntries(['default', 'deferred', 'immediate', 'exclusive'].map(mode => [mode, (...args) => { const result = native[mode](...args); observe(); return result }]))
-    for (const f of Object.values(wrapped)) Object.defineProperties(f, Object.fromEntries([...Object.entries(wrapped), ['database', this]].map(([key, value]) => [key, { value }])))
-    return wrapped.default
+  Client.prototype.query = function (config, ...args) {
+    const result = query.call(this, config, ...args)
+    const statement = typeof config === 'string' ? config : config?.text
+    if (stopped || statement?.trim().toLowerCase() !== 'commit' || !result?.then) return result
+    return result.then(async committed => {
+      const rows = originalUnknown
+        ? await query.call(this, "select id, result from business.job where kind = 'ocr' and state = 'running' order by created_at desc limit 1")
+        : await query.call(this, 'select id, result from business.job where id = $1', [process.env.ISSUE309_STOP_CLAIM_SOURCE])
+      const row = rows.rows[0]
+      const receipt = JSON.parse(row?.result ?? '{}')
+      const committedState = originalUnknown ? 'original-unknown' : process.env.ISSUE309_STOP_CLAIM_STATE
+      const matched = originalUnknown
+        ? !receipt.publication?.recovery && receipt.publication?.files.some(file => Object.values(file.requests).some(request => request.state === 'unknown'))
+        : Object.values(receipt.ocrRecovery?.pages ?? {}).some(page => page.attempts.at(-1)?.state === committedState)
+      if (matched && !stopped) {
+        stopped = true
+        writeFileSync(process.env.ISSUE309_STOP_FILE, JSON.stringify({ pid: process.pid, taskId: row.id, committedState }))
+        process.kill(process.pid, 'SIGSTOP')
+      }
+      return committed
+    })
   }
 }
 const { initLogger } = require('evlog')
@@ -67,9 +65,12 @@ Object.assign(globalThis, h3, {
 })
 const jitiPath = createRequire(require.resolve('nuxt/package.json')).resolve('jiti')
 const { createJiti } = require(jitiPath)
-const load = createJiti(resolve(root, 'package.json'), { alias: { '@db/schema': resolve(root, 'db/schema.ts'), '@db': resolve(root, 'db/index.ts'), '~~': root, '#core': resolve(root, 'layers/core'), '#sme-roster': resolve(root, 'layers/sme-roster') } })
+const load = createJiti(resolve(root, 'package.json'), { alias: { '~~': root, '#core': resolve(root, 'layers/core'), '#sme-roster': resolve(root, 'layers/sme-roster') } })
 const { installApplicationServer } = await load.import(resolve(root, 'server/install-application.ts'))
 installApplicationServer()
+const { startPostgresJobs } = await load.import(resolve(root, 'layers/core/server/utils/postgres-jobs.ts'))
+const runner = startPostgresJobs(process.env.NUXT_FILES_DIR).runner
+await runner.wake()
 const router = h3.createRouter()
 for (const [method, path, file] of [
   ['post', '/api/jobs', 'jobs/index.post.ts'],
@@ -80,8 +81,7 @@ router.get('/health', h3.defineEventHandler(() => ({ isolated: true })))
 // Test-only observation of the actual runner finishing, including a still-live
 // original executor whose persisted row was marked failed by another process.
 router.get('/issue309/idle', h3.defineEventHandler(async () => {
-  const { whenIdle } = await load.import(resolve(root, 'layers/core/server/utils/job-runner.ts'))
-  await whenIdle()
+  await runner.wake()
   return { idle: true }
 }))
 const server = createServer(h3.toNodeListener(h3.createApp({ debug: false }).use(router)))

@@ -3,11 +3,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { serviceCredential } from '../../../../db/postgresql/credential-tables'
 import { usePostgresDirectoryDb } from '../../../../db/postgresql/client'
 import { registeredCredentials, type CredentialKey } from '../../../../lib/app-modules'
-import { credentialContext, credentialState, resolveCredential, resolveFromState, type CredentialContext } from './credential-state'
-
-export function selectedCredentialDb(ctx?: CredentialContext) {
-  return ctx?.db ? undefined : usePostgresDirectoryDb()
-}
+import { credentialContext, credentialState, resolveFromState, type CredentialStorage } from './credential-resolution'
 
 export async function readPostgresCredentialState(db: NodePgDatabase) {
   try {
@@ -35,10 +31,16 @@ export function updatePostgresCredentialState(db: NodePgDatabase, values: Partia
 }
 
 export async function resolveRuntimeCredential(key: CredentialKey, ctx = credentialContext()) {
-  const db = selectedCredentialDb(ctx)
-  return db ? resolvePostgresCredential(db, key, ctx) : resolveCredential(key, ctx)
+  return resolvePostgresCredential(usePostgresDirectoryDb(), key, ctx)
 }
 
 export async function resolvePostgresCredential(db: NodePgDatabase, key: CredentialKey, ctx = credentialContext()) {
   return resolveFromState(key, ctx, await readPostgresCredentialState(db))
+}
+
+export function postgresCredentialStorage(): CredentialStorage {
+  return {
+    read: () => readPostgresCredentialState(usePostgresDirectoryDb()),
+    update: values => updatePostgresCredentialState(usePostgresDirectoryDb(), values),
+  }
 }

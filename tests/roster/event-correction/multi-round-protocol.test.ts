@@ -1,21 +1,25 @@
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { createServer } from 'node:http'
+import { singlePostgresFixtureRow, useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
+import { failEventUpdate } from './fixtures/postgres'
+import { createServer, IncomingMessage, ServerResponse } from 'node:http'
+import { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
-import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
+import { createApp, createEvent, createRouter, defineEventHandler, toNodeListener } from 'h3'
 import { expect, it, vi } from 'vitest'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { McpToolCallbackResult } from '@nuxtjs/mcp-toolkit/server'
-import { schema, initializeDb } from '../../../db/client'
-import type { EventCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-event-correction'
-import { dispatchEventCorrectionMcp, isEventCorrectionMcpResult } from '../../../layers/sme-roster/server/utils/mcp-event-correction'
+import { enterprise as enterprises } from '../../../db/postgresql/enterprise-tables'
+import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
+import type { EventCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-event-correction-model'
+import { dispatchPostgresEventCorrectionMcp, isEventCorrectionMcpResult } from '../../../layers/sme-roster/server/utils/mcp-event-correction-runtime'
+
+const schema = { enterprise: enterprises, record, recordEvent, recordEvidence }
+const createDatabase = useIsolatedPostgresCases()
 
 // Replace only Nuxt registration discovery. Exported tool schemas/handlers,
-// MCP SDK HTTP transport, the domain command and SQLite are real.
+// MCP SDK HTTP transport, the domain command and PostgreSQL are real.
 // This harness does not boot or claim coverage of Nuxt's full MCP middleware.
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
 
@@ -98,20 +102,18 @@ it.each<{
 })
 
 async function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'issue304-correction-'))
-  const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
-  vi.stubEnv('NUXT_DB_PATH', dbPath)
+  const db = createDatabase()
   for (const key of ['MIIT_COOKIE', 'NUXT_OCR_TOKEN', 'PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN', 'NUXT_API_TOKEN', 'NUXT_MCP_TOKEN']) vi.stubEnv(key, '')
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'issue304-synthetic', mcpToken: 'issue304-synthetic' }))
-  const enterprise = db.insert(schema.enterprise).values({ name: '合成多轮复核企业', nameNorm: '合成多轮复核企业' }).returning().get()
-  const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
-  const seed = (decidedYear: number | null, fields: Partial<typeof schema.recordEvent.$inferInsert> = {}) => {
-    const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'review', year: 2018, decidedYear, batchSeq: 1, ...fields }).returning().get()
-    const evidence = db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic/issue304.pdf', attachment: '复核名单', page: 2, listNo: event.id }).returning().get()
+  const enterprise = singlePostgresFixtureRow(await db.insert(schema.enterprise).values({ name: '合成多轮复核企业', nameNorm: '合成多轮复核企业' }).returning())
+  const record = singlePostgresFixtureRow(await db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning())
+  const seed = async (decidedYear: number | null, fields: Partial<typeof schema.recordEvent.$inferInsert> = {}) => {
+    const event = singlePostgresFixtureRow(await db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'review', year: 2018, decidedYear, batchSeq: 1, ...fields }).returning())
+    const evidence = singlePostgresFixtureRow(await db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic/issue304.pdf', attachment: '复核名单', page: 2, listNo: event.id }).returning())
     return { event, evidence }
   }
-  const first = seed(2021), second = seed(2024)
+  const first = await seed(2021), second = await seed(2024)
   const request = (key: string, operations: EventCorrectionRequest['operations']): EventCorrectionRequest => ({
     idempotencyKey: `issue304-${key}`, sourceIdentity: 'synthetic:issue304', actor: { type: 'agent', id: 'issue304-test' }, basis: 'Synthetic verified announcement conclusions', operations,
   })
@@ -174,12 +176,9 @@ async function fixture() {
     expect(result.isError).not.toBe(true)
     return JSON.parse(result.content[0].text)
   }
-  return { db, dbPath, base, enterprise, record, seed, first, second, request, op, http, post, read, audit, rpc, call, close: async () => {
+  return { db, base, preflightTool: preflight, enterprise, record, seed, first, second, request, op, http, post, read, audit, rpc, call, close: async () => {
     await new Promise<void>(resolve => server.close(() => resolve()))
     await Promise.all(sessions.map(session => session.close()))
-    db.$client.close()
-    vi.unstubAllGlobals(); vi.unstubAllEnvs()
-    rmSync(dir, { recursive: true, force: true })
   } }
 }
 
@@ -238,7 +237,7 @@ it('corrects a review round through MCP HTTP and reads the same stable event evi
 it.each(['passed', 'failed'] as const)('rejects the same review matter with a %s outcome without partial writes', async outcome => {
   const f = await fixture()
   try {
-    f.db.$client.prepare('UPDATE record_event SET review_outcome = ? WHERE id = ?').run('passed', f.second.event.id)
+    await f.db.$client.query('UPDATE record_event SET review_outcome = $1 WHERE id = $2', ['passed', f.second.event.id])
     const before = await Promise.all([f.read(f.first.event.id), f.read(f.second.event.id)])
     const request = f.request(`same-matter-${outcome}`, [f.op(f.first.event.id, { decidedYear: 2024, reviewOutcome: outcome })])
     expect(await f.post('preflight', request)).toMatchObject({ status: 409, body: { error: { code: 'natural_key_conflict' } } })
@@ -273,7 +272,7 @@ it.each([
 ])('preserves conservative collision protection for $name', async ({ name, setup, patch }) => {
   const f = await fixture()
   try {
-    if (setup) f.db.$client.exec(setup)
+    if (setup) await f.db.$client.query(setup)
     const before = await Promise.all([f.read(f.first.event.id), f.read(f.second.event.id)])
     const request = f.request(name, [f.op(f.first.event.id, patch)])
     expect(await f.post('preflight', request)).toMatchObject({ status: 409, body: { error: { code: 'natural_key_conflict' } } })
@@ -291,11 +290,15 @@ it('rejects an invalid committed MCP receipt as an internal error without swallo
     const receipt = await f.call('commit_event_corrections', args)
     const before = await f.read(f.first.event.id), auditBefore = await f.audit(f.first.event.id)
     const stale = f.request('stale-before-result-guard', [f.op(f.first.event.id, { reviewOutcome: 'failed' })])
-    expect(() => dispatchEventCorrectionMcp('preflight', stale, { db: f.db, authorized: true })).toThrowError(expect.objectContaining({ code: 'stale_revision', statusCode: 409 }))
-    expect(() => dispatchEventCorrectionMcp('preflight', stale, { db: f.db })).toThrowError(expect.objectContaining({ code: 'unauthorized', statusCode: 401 }))
+    await expect(dispatchPostgresEventCorrectionMcp('preflight', stale)).rejects.toThrowError(expect.objectContaining({ code: 'stale_revision', statusCode: 409 }))
+    const incoming = new IncomingMessage(new Socket())
+    const event = createEvent(incoming, new ServerResponse(incoming))
+    expect(await (f.preflightTool.enabled as (request: typeof event) => boolean)(event)).toBe(false)
+    event.context.mcpAuth = { writeAuthorized: true }
+    expect(await (f.preflightTool.enabled as (request: typeof event) => boolean)(event)).toBe(true)
     // A malformed historical receipt is not a new business decision or a reason to rewrite it.
-    f.db.$client.prepare('UPDATE import_batch SET summary = NULL WHERE id = ?').run(receipt.batchId)
-    expect(() => dispatchEventCorrectionMcp('commit', args, { db: f.db, authorized: true })).toThrowError(expect.objectContaining({ code: 'internal_error', statusCode: 500, message: 'Invalid event correction MCP result' }))
+    await f.db.$client.query('UPDATE import_batch SET summary = NULL WHERE id = $1', [receipt.batchId])
+    await expect(dispatchPostgresEventCorrectionMcp('commit', args)).rejects.toThrowError(expect.objectContaining({ code: 'internal_error', statusCode: 500, message: 'Invalid event correction MCP result' }))
     const rejected = await f.rpc('commit_event_corrections', args)
     expect(rejected).toEqual({ isError: true, content: [{ type: 'text', text: 'Invalid event correction MCP result' }] })
     expect(await f.read(f.first.event.id)).toEqual(before)
@@ -378,12 +381,12 @@ it('preserves exact REST and MCP result bytes for preflight commit replay event 
 it('isolates corrections from matching review coordinates on another enterprise or title and preserves explicit unknowns', async () => {
   const f = await fixture()
   try {
-    const otherEnterprise = f.db.insert(schema.enterprise).values({ name: '合成对照企业', nameNorm: '合成对照企业' }).returning().get()
-    const records = [
-      f.db.insert(schema.record).values({ enterpriseId: otherEnterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get(),
-      f.db.insert(schema.record).values({ enterpriseId: f.enterprise.id, titleCode: 'innovative_sme', source: 'jxj' }).returning().get(),
-    ]
-    const controls = records.map(record => f.seed(2021, { recordId: record.id, reviewOutcome: 'failed' }))
+    const otherEnterprise = singlePostgresFixtureRow(await f.db.insert(schema.enterprise).values({ name: '合成对照企业', nameNorm: '合成对照企业' }).returning())
+    const records = (await Promise.all([
+      f.db.insert(schema.record).values({ enterpriseId: otherEnterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning(),
+      f.db.insert(schema.record).values({ enterpriseId: f.enterprise.id, titleCode: 'innovative_sme', source: 'jxj' }).returning(),
+    ])).map(singlePostgresFixtureRow)
+    const controls = await Promise.all(records.map(record => f.seed(2021, { recordId: record.id, reviewOutcome: 'failed' })))
     const before = await Promise.all(controls.map(source => f.read(source.event.id)))
     const request = f.request('scope-isolation', [f.op(f.first.event.id, { reviewOutcome: 'passed' })])
     const plan = await f.post('preflight', request)
@@ -405,9 +408,9 @@ it('rejects evidence and revision drift after multi-round preflight without chan
     const request = f.request('source-version-drift', [f.op(f.first.event.id, { reviewOutcome: 'passed' }), f.op(f.second.event.id, { reviewOutcome: 'passed' })])
     const plan = await f.post('preflight', request)
     expect(plan.status).toBe(200)
-    f.db.$client.prepare('UPDATE record_evidence SET page = 3 WHERE id = ?').run(f.first.evidence.id)
+    await f.db.$client.query('UPDATE record_evidence SET page = 3 WHERE id = $1', [f.first.evidence.id])
     expect(await f.post('commit', { request, planHash: plan.body.planHash })).toMatchObject({ status: 409, body: { error: { code: 'plan_mismatch' } } })
-    f.db.$client.prepare('UPDATE record_evidence SET page = 2 WHERE id = ?').run(f.first.evidence.id)
+    await f.db.$client.query('UPDATE record_evidence SET page = 2 WHERE id = $1', [f.first.evidence.id])
     const concurrent = f.request('new-revision', [f.op(f.first.event.id, { reviewOutcome: 'failed' })])
     const otherPlan = await f.post('preflight', concurrent)
     expect(otherPlan.status).toBe(200)
@@ -428,12 +431,12 @@ it('rolls back both review rounds audit revisions and receipt after a later SQL 
     const before = await Promise.all([f.read(f.first.event.id), f.read(f.second.event.id)])
     const plan = await f.post('preflight', request)
     expect(plan.status).toBe(200)
-    f.db.$client.exec(`CREATE TRIGGER issue304_fail_second BEFORE UPDATE ON record_event WHEN OLD.id = ${f.second.event.id} BEGIN SELECT RAISE(ABORT, 'issue304 synthetic failure'); END`)
+    const restore = await failEventUpdate(f.db, f.second.event.id)
     expect(await f.post('commit', { request, planHash: plan.body.planHash })).toMatchObject({ status: 500, body: { error: { code: 'transaction_failed' } } })
     expect(await Promise.all([f.read(f.first.event.id), f.read(f.second.event.id)])).toEqual(before)
     for (const id of [f.first.event.id, f.second.event.id]) expect((await f.audit(id)).body.total).toBe(0)
     expect((await f.post('preflight', request)).body.batchStatus).toBe('preflight')
-    f.db.$client.exec('DROP TRIGGER issue304_fail_second')
+    await restore()
     const receipt = await f.post('commit', { request, planHash: plan.body.planHash })
     expect(receipt).toMatchObject({ status: 200, body: { eventIds: [f.first.event.id, f.second.event.id] } })
     expect(await f.post('commit', { request, planHash: plan.body.planHash })).toEqual(receipt)
@@ -447,8 +450,8 @@ it('rolls back both review rounds audit revisions and receipt after a later SQL 
 it('preserves correspondence IDs while requiring revalidation and changing annual source generation after a review correction', async () => {
   const f = await fixture()
   try {
-    const native = submitNativePlatformQuery(f.db, { interface: 'business_list', queryKey: 'synthetic-issue304', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-25', status: 'success', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: f.enterprise.id, verificationStatus: 'confirmed', declareKind: 'review', year: 2021 }] })
-    const relation = { id: native.relationIds[0]! }
+    const { relationIds } = await seedPostgresPlatformQuery(f.db, { interface: 'business_list', queryKey: 'synthetic-issue304', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-25', status: 'success', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: f.enterprise.id, verificationStatus: 'confirmed', declareKind: 'review', year: 2021 }] })
+    const relation = { id: relationIds[0]! }
     const correspondence = { idempotencyKey: 'issue304-correspondence', sourceIdentity: 'synthetic:issue304', actor: { type: 'agent', id: 'issue304-test' }, basis: 'Explicit synthetic row context', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: f.first.event.id, relationId: relation.id, role: 'context_only' } }] }
     const confirmedPlan = await f.http('/api/roster/correspondences/preflight', correspondence)
     expect(confirmedPlan.status).toBe(200)

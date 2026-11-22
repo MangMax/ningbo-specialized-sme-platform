@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { importBatch, importReceipt } from '../../../../db/postgresql/import-tables'
 import { rosterAnnouncementIntake, rosterAnnouncementMember } from '../../../../db/postgresql/roster-selection-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
@@ -8,20 +8,20 @@ import type {
   SupplementAnnouncementPreflightResult, SupplementAnnouncementResponse,
 } from '../../lib/roster-import-client'
 import { readPostgresLegacyQualification } from '../../lib/roster/current-qualification-postgres'
-import { lockPostgresRosterImportBatch, lockPostgresRosterImportKey } from './roster-export-import-postgres'
-import { announcementIntakeDigest, type supplementSchema } from './announcement-intake'
+import { isPostgresImportWriteRejection, lockPostgresRosterImportBatch, lockPostgresRosterImportKey } from './roster-export-import-postgres'
+import { announcementIntakeDigest, type supplementSchema } from './announcement-intake-model'
 import { readPostgresIntakeRow } from './announcement-intake-postgres'
 import { reviewPostgresAnnouncementSubjects } from './announcement-subjects-postgres'
 import { planPostgresAnnouncement } from './announcement-plan-postgres'
 import { attachPostgresAnnouncementSources, writePostgresAnnouncement } from './announcement-write-postgres'
-import { ImportReceiptError } from './import-receipts'
+import { ImportReceiptError } from './import-receipt-model'
 import { applyPostgresOfficialImport, createPostgresOfficialImportState, finishPostgresOfficialImport } from './official-evidence-import-postgres'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
 import { runPostgresCorrespondenceTransaction } from './record-correspondence-write-postgres'
 import { importPostgresReceiptRedactor } from './import-receipt-redaction'
-import { publicRosterImportItems } from './roster-import'
+import { publicRosterImportItems } from './roster-import-model'
 import { createPostgresImportSteps, executePostgresImportSteps } from './roster-mixed-import-postgres'
-import { eventCorrectionCapture, eventCorrectionReadbackScope } from './roster-event-correction'
+import { eventCorrectionCapture, eventCorrectionReadbackScope } from './roster-event-correction-model'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Review = z.infer<typeof supplementSchema>
@@ -31,7 +31,7 @@ class Preview extends Error {
   constructor(readonly result: SupplementAnnouncementPreflightResult) { super('Announcement preview') }
 }
 class Conflicts extends Error {
-  constructor(readonly items: RosterImportItemResult[]) { super('Announcement conflicts') }
+  constructor(readonly items: RosterImportItemResult[], readonly rollbackMessage?: string) { super('Announcement conflicts') }
 }
 
 async function qualification(tx: Tx, owners: ReadonlyMap<number, number>): Promise<RosterImportAfterQualificationReadback> {
@@ -44,16 +44,12 @@ async function qualification(tx: Tx, owners: ReadonlyMap<number, number>): Promi
 }
 
 async function recordSupplementReceipt(tx: Tx, input: {
-  batchId: number; requestHash: string; requestBody: string; status: 'committed' | 'failed'
+  batchId: number; requestHash: string; status: 'committed' | 'failed'
   summary: RosterImportSummary; items: unknown; startedAt: string; completedAt: string
 }) {
-  const { batchId, requestHash, requestBody, status, summary, items, startedAt, completedAt } = input
-  const [owner] = await tx.select({ id: importReceipt.id }).from(importReceipt).where(and(
-    eq(importReceipt.batchId, batchId), eq(importReceipt.requestHash, requestHash),
-    isNull(importReceipt.bodyReceiptId), eq(importReceipt.requestBody, requestBody),
-  )).orderBy(importReceipt.id).limit(1)
+  const { batchId, requestHash, status, summary, items, startedAt, completedAt } = input
   await tx.insert(importReceipt).values({
-    bodyReceiptId: owner?.id ?? null, batchId, operation: 'commit', requestHash, requestBody: owner ? '' : requestBody,
+    batchId, operation: 'commit', requestHash,
     status, summary: JSON.stringify(summary), itemResults: JSON.stringify(items), createdAt: startedAt, completedAt,
   })
 }
@@ -66,7 +62,6 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
   const decision = announcementIntakeDigest(review)
   const redactor = await importPostgresReceiptRedactor(db)
   const requestHash = announcementIntakeDigest({ ...request, sourceSha256: request.sourceSha256 ?? null })
-  const requestBody = JSON.stringify(redactor({ ...request, sourceSha256: request.sourceSha256 ?? null }))
   return runPostgresCorrespondenceTransaction(db, async tx => {
     await lockPostgresRosterImportKey(tx, request.idempotencyKey)
     const row = await readPostgresIntakeRow(tx, id, true)
@@ -110,10 +105,20 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
         if (plan.errors.length) throw new Conflicts(plan.errors)
         const activeBatchId = batchId ?? previous?.id ?? await createBatch(nested)
         const evidence = createPostgresOfficialImportState()
-        const items = await writePostgresAnnouncement(nested, request, activeBatchId, plan, evidence)
-        if (plan.officialPlan) items.push(await applyPostgresOfficialImport(nested, plan.officialPlan, activeBatchId,
-          preflight ? plan.official! : officialEvidencePlanHash, evidence))
-        await finishPostgresOfficialImport(nested, evidence)
+        let items: RosterImportItemResult[]
+        try {
+          items = await writePostgresAnnouncement(nested, request, activeBatchId, plan, evidence)
+          if (plan.officialPlan) items.push(await applyPostgresOfficialImport(nested, plan.officialPlan, activeBatchId,
+            preflight ? plan.official! : officialEvidencePlanHash, evidence))
+          await finishPostgresOfficialImport(nested, evidence)
+        } catch (error) {
+          if (preflight || !isPostgresImportWriteRejection(error)) throw error
+          const message = '公布原行写入失败，已整批回滚，未写入任何数据'
+          throw new Conflicts(plan.rows.map(row => ({
+            ok: false, kind: 'record_event', ref: 'record:' + row.index,
+            error: { code: 'commit_rolled_back', message },
+          })), message)
+        }
         const sourceIds = await attachPostgresAnnouncementSources(nested, id, activeBatchId, request, owners, filesDir)
         const members = [...new Set(owners.values())].map(enterpriseId => ({ enterpriseId, intakeId: id }))
         for (let offset = 0; offset < members.length; offset += 30_000) {
@@ -143,7 +148,7 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
           summary: JSON.stringify({ ...summary, qualificationReadback: readback }), error: null, committedAt: completedAt,
         }).where(eq(importBatch.id, batchId!))
         const publicItems = publicRosterImportItems(items, batchId!)
-        await recordSupplementReceipt(nested, { batchId: batchId!, requestHash, requestBody, status: 'committed',
+        await recordSupplementReceipt(nested, { batchId: batchId!, requestHash, status: 'committed',
           summary, items: redactor(publicItems), startedAt, completedAt })
         const candidateTaskIds = extra?.summary ? extra.candidateTaskIds : undefined
         const receipt: SupplementAnnouncementResponse = { batchId: batchId!, status: 'supplemented', summary, items: publicItems, error: null,
@@ -158,13 +163,13 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
       if (error instanceof Preview) return error.result
       if (!(error instanceof Conflicts)) throw error
       const summary = { ...emptySummary, failed: error.items.length }
-      const message = '批次校验未通过：' + error.items.length + ' 项有误，未写入任何数据'
+      const message = error.rollbackMessage ?? ('批次校验未通过：' + error.items.length + ' 项有误，未写入任何数据')
       const items = publicRosterImportItems(error.items, batchId!)
       const completedAt = new Date().toISOString()
       await tx.update(importBatch).set({
         status: 'failed', itemResults: JSON.stringify(error.items), summary: JSON.stringify(summary), error: message,
       }).where(eq(importBatch.id, batchId!))
-      await recordSupplementReceipt(tx, { batchId: batchId!, requestHash, requestBody, status: 'failed',
+      await recordSupplementReceipt(tx, { batchId: batchId!, requestHash, status: 'failed',
         summary, items: redactor(items), startedAt, completedAt })
       return { batchId: batchId!, status: 'failed' as const, summary, items, error: message }
     }

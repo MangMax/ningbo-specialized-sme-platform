@@ -12,13 +12,13 @@ dist/
 .incoming/
 .runtime-logs/
 
-# data (local SQLite snapshots)
+# Local database snapshots
 data/
 *.db
 *.db-wal
 *.db-shm
 
-# 运行时业务数据：SQLite 快照、来源文件、上传件、页图与本地标注。
+# 运行时业务数据：数据库副本、来源文件、上传件、页图与本地标注。
 # 实际源文件只通过受控备份或应用上传交接。
 files/**
 

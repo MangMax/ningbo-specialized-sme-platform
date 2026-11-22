@@ -1,15 +1,11 @@
-import { eq } from 'drizzle-orm'
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
-import * as schema from '../../../../db/schema'
-import { getStoredFile, type StoredFileRow } from './stored-files'
+import { createError } from 'h3'
+import type { FileRow } from './file-store-contract'
 import { isPdfPath, normalizeDpi } from '../../lib/pdf-page'
-import { verifyFileRead, verifyRegisteredFileRead, verifyRenderedPageRead, type FileReadIdentity } from './file-read-identity'
+import { verifyRegisteredFileRead, verifyRenderedPageRead, type FileReadIdentity } from './file-read'
 import { listPdfPages, resolveWithinRoot, type PdfPagesState } from './pdf-pages'
-import { FileMaintenanceError } from './file-store'
+import { FileMaintenanceError } from './file-store-contract'
 import { postgresFileIdentity, readPostgresFile, type PostgresFileDb } from './file-store-postgres'
-
-type Db = BetterSQLite3Database<typeof schema>
 
 /**
  * 指向文件库某个文件的两种写法,**恰给其一**。
@@ -30,7 +26,7 @@ export interface FileRefInput {
 
 /** 解析结果:成功给整行(含引用数与段),失败给**给人看的中文原因**(tool 转成 MCP 错误)。 */
 export type FileRefResult =
-  | { ok: true; row: StoredFileRow }
+  | { ok: true; row: FileRow }
   | { ok: false; message: string }
 
 export interface FileRefOptions {
@@ -44,18 +40,7 @@ export interface FileRefOptions {
   allowRemoved?: boolean
 }
 
-/** 按相对路径找 id(`stored_file.rel_path` 上有 unique 索引)。 */
-export function findFileIdByRelPath(db: Db, relPath: string): number | null {
-  return (
-    db
-      .select({ id: schema.storedFile.id })
-      .from(schema.storedFile)
-      .where(eq(schema.storedFile.relPath, relPath))
-      .get()?.id ?? null
-  )
-}
-
-function fileLocator(ref: FileRefInput): { ok: true; locator: number | string } | { ok: false; message: string } {
+export function fileLocator(ref: FileRefInput): { ok: true; locator: number | string } | { ok: false; message: string } {
   const id = ref.fileId ?? null
   const relPath = typeof ref.relPath === 'string' ? ref.relPath.trim() : ''
 
@@ -72,11 +57,11 @@ function fileLocator(ref: FileRefInput): { ok: true; locator: number | string } 
   return { ok: true, locator: id ?? relPath }
 }
 
-function missingFileRef(locator: number | string) {
+export function missingFileRef(locator: number | string) {
   return `文件不存在:${typeof locator === 'number' ? 'id' : 'relPath'}=${locator}`
 }
 
-function visibleFileRef(row: StoredFileRow, options: FileRefOptions): FileRefResult {
+export function visibleFileRef<Row extends FileRow>(row: Row, options: FileRefOptions): { ok: true; row: Row } | { ok: false; message: string } {
   if (row.removedAt && !options.allowRemoved) {
     return {
       ok: false,
@@ -84,15 +69,6 @@ function visibleFileRef(row: StoredFileRow, options: FileRefOptions): FileRefRes
     }
   }
   return { ok: true, row }
-}
-
-export function resolveFileRef(db: Db, ref: FileRefInput, options: FileRefOptions = {}): FileRefResult {
-  const result = fileLocator(ref)
-  if (!result.ok) return result
-  const { locator } = result
-  const id = typeof locator === 'number' ? locator : findFileIdByRelPath(db, locator)
-  const row = id === null ? null : getStoredFile(db, id)
-  return row ? visibleFileRef(row, options) : { ok: false, message: missingFileRef(locator) }
 }
 
 export async function requirePostgresFileRef(db: PostgresFileDb, ref: FileRefInput, options: FileRefOptions = {}) {
@@ -122,35 +98,13 @@ export interface AgentFailure {
   message: string
 }
 
-/**
- * `list_page_images` 的取值逻辑(页图现状)。**不触发渲染** —— 渲染要写盘,
- * 而 MCP 侧刻意不给它开写入口(见 `server/mcp/tools/list_page_images.ts`)。
- *
- * 状态码的取值与 `GET /api/pdf-pages` **同一套**(415 非 PDF / 400 分辨率 / 403 路径越界),
- * 但**判定顺序不同**:那条路由先判扩展名再看别的(它拿到的就是路径,没有 id 可查);
- * 这里要先按 id/relPath 找到文件行才能知道它是什么,**所以「文件不存在」这条 404 排在最前**。
- * 于是「一个不存在的 `.xlsx` 路径」两边给的码不同(这里 404、那里 415)—— 都不是错的,
- * 只是「先答哪一个问题」不同。真要两边逐字一致,得让那条路由也先查一次 `stored_file`,
- * 那是它那张票(13)的事,不在本票改动范围。
- */
-export async function pageImagesForAgent(
-  db: Db,
-  root: string,
-  input: FileRefInput & { dpi?: number | null },
-  options: FileRefOptions = { allowRemoved: true },
-): Promise<{ ok: true; value: Omit<PdfPagesState, 'file'> & { file: FileRef } } | AgentFailure> {
-  const found = resolveFileRef(db, input, options)
-  if (!found.ok) return { ok: false, statusCode: 404, message: found.message }
-  return readPageImagesForAgent(found.row, root, input.dpi, () => verifyFileRead(db, root, found.row.relPath))
-}
-
 export async function postgresPageImagesForAgent(db: PostgresFileDb, root: string, input: FileRefInput & { dpi?: number | null }) {
   const file = await requirePostgresFileRef(db, input, { allowRemoved: true })
   return readPageImagesForAgent(file, root, input.dpi, () => verifyRegisteredFileRead(root, postgresFileIdentity(file)))
 }
 
-async function readPageImagesForAgent(
-  { id, relPath, filename }: Pick<StoredFileRow, 'id' | 'relPath' | 'filename'>,
+export async function readPageImagesForAgent(
+  { id, relPath, filename }: Pick<FileRow, 'id' | 'relPath' | 'filename'>,
   root: string,
   requestedDpi: number | null | undefined,
   verify: () => Promise<FileReadIdentity>,
@@ -184,20 +138,4 @@ export interface FileRef {
   relPath: string
   filename: string
   contentIdentity?: FileReadIdentity
-}
-
-/**
- * 同 `resolveFileRef`,但**失败即抛 H3 错误** —— 给「拿不到文件就没法继续」的 tool 用。
- *
- * 抛出的 `statusCode` 会由 `defineMcpTool` 留在 MCP 的 `isError` 文案里,所以 404
- * 是「文件不存在 / 已移出库」这一类原因的统一出口。
- */
-export function requireFileRef(
-  db: Db,
-  ref: FileRefInput,
-  options: FileRefOptions = {},
-): StoredFileRow {
-  const found = resolveFileRef(db, ref, options)
-  if (!found.ok) throw createError({ statusCode: 404, message: found.message })
-  return found.row
 }

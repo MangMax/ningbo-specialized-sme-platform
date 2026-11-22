@@ -1,10 +1,31 @@
+import { createHash } from 'node:crypto'
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { createError } from 'h3'
+import { z } from 'zod'
 import { postgresLeadListRow as leadRow, postgresLeadListVersion as leadVersion } from '../../../../db/postgresql/lead-tables'
-import { createPostgresReviewedEnterprise, lockPostgresReviewedEnterpriseBatch, registerPostgresEnterpriseSource } from '../../../core/server/public'
+import { createPostgresReviewedEnterprise, enterpriseFieldsSchema, EnterpriseKernelError, lockPostgresReviewedEnterpriseBatch, registerPostgresEnterpriseSource } from '../../../core/server/public'
 import { applyPostgresReviewedRosterIdentity } from '../../../sme-roster/public'
-import { leadReviewHash, leadSupplementError, type LeadSupplementInput } from './versions'
+import { leadListId } from '../../lib/contracts'
+
+const reviewer = z.strictObject({ type: z.enum(['user', 'agent']), id: z.string().trim().min(1).max(120) })
+const decision = z.discriminatedUnion('action', [
+  z.strictObject({ action: z.literal('create'), rowId: leadListId, fields: enterpriseFieldsSchema.required({ name: true }) }),
+  z.strictObject({ action: z.literal('attach'), rowId: leadListId, enterpriseId: leadListId, expectedRevision: leadListId, fields: enterpriseFieldsSchema.optional() }),
+])
+export const browserSupplementInput = z.strictObject({
+  decisions: z.array(decision).min(1).max(200).refine(items => new Set(items.map(item => item.rowId)).size === items.length),
+})
+export const supplementInput = browserSupplementInput.extend({
+  actor: reviewer,
+  basis: z.string().trim().min(1).max(500),
+})
+
+type LeadSupplementInput = z.infer<typeof supplementInput>
+
+function leadReviewHash(decision: LeadSupplementInput['decisions'][number], { actor, basis }: LeadSupplementInput) {
+  return createHash('sha256').update(JSON.stringify({ decision, actor, basis })).digest('hex')
+}
 
 export async function supplementPostgresLeadVersion(db: NodePgDatabase, id: number, input: LeadSupplementInput) {
   try {
@@ -56,6 +77,9 @@ export async function supplementPostgresLeadVersion(db: NodePgDatabase, id: numb
       return { sourceId, rows: resolved }
     }, { isolationLevel: 'read committed' })
   } catch (error) {
-    leadSupplementError(error)
+    if (error instanceof EnterpriseKernelError) {
+      throw createError({ statusCode: error.statusCode, message: error.message, data: { code: error.code } })
+    }
+    throw error
   }
 }

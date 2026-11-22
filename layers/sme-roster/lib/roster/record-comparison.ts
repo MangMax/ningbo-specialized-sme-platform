@@ -9,7 +9,6 @@ export const recordComparisonInput = z.object({
   queryIds: z.array(z.number().int().positive()).min(1).max(500),
   exportBatchIds: z.array(z.number().int().positive()).max(100),
   officialSourceDocumentIds: z.array(officialSourceRef).min(1).max(500),
-  proofIds: z.array(z.number().int().positive()).max(500).optional(),
   asOf: z.iso.datetime({ offset: true }).optional(),
   enterpriseId: z.number().int().positive().optional(),
   titleCode: z.enum(TITLE_ORDER as [string, ...string[]]).optional(),
@@ -42,7 +41,6 @@ export function parseRecordComparisonQuery(query: Record<string, unknown>): Reco
   return recordComparisonInput.parse({
     queryIds: ids(query.queryIds), exportBatchIds: ids(query.exportBatchIds),
     officialSourceDocumentIds: ids(query.officialSourceDocumentIds),
-    proofIds: ids(query.proofIds),
     asOf: query.asOf, enterpriseId: integer(query.enterpriseId), titleCode: query.titleCode,
     classification: query.classification, page: integer(query.page), pageSize: integer(query.pageSize),
     businessPage: integer(query.businessPage), businessPageSize: integer(query.businessPageSize),
@@ -61,7 +59,7 @@ interface GroupableComparisonObservation {
 }
 
 /** Comparison-only pure seam: consumes completed observation results, never decides
- * qualification, discovers sources, or copies a representative observation's proof.
+ * qualification, discovers sources, or copies another observation's result.
  * Canonical IDs are the sole identity keys. Unknown identities are isolated;
  * known records keep each unknown-content observation outside version nodes.
  */

@@ -1,10 +1,7 @@
-import { useDb } from '@db'
 import { requestLogContext } from '../../../core/lib/logging'
 import { taskCenterBrowserAccess } from '../../../core/server/utils/task-center-access'
-import {
-  handleCandidateJobRequest,
-  type CandidateJobAction,
-} from './candidate-job-api'
+import { handlePostgresCandidateJobRequest } from './candidate-job-runtime'
+import type { CandidateJobAction } from './candidate-job-api'
 export function candidateJobRoute(action: CandidateJobAction) {
   return defineEventHandler(async (event) => {
     setHeader(event, 'cache-control', 'no-store')
@@ -15,7 +12,7 @@ export function candidateJobRoute(action: CandidateJobAction) {
       throw createError({ statusCode: 400, message: '无效 JSON 请求' })
     }
     const config = useRuntimeConfig(event)
-    const result = await handleCandidateJobRequest(
+    const result = await handlePostgresCandidateJobRequest(
       action,
       {
         method: event.method,
@@ -28,7 +25,7 @@ export function candidateJobRoute(action: CandidateJobAction) {
         },
       },
       {
-        get db() { return useDb() },
+
         filesDir: config.filesDir,
         apiToken: config.apiToken,
         browserAuthorized: taskCenterBrowserAccess(event),

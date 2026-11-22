@@ -1,24 +1,25 @@
 
-import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
-import { initializeDb } from '../../../db/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { storedLogRows } from '../fixtures/runtime'
+import { businessDigest } from '../fixtures/business-state'
 import { APPLICATION_LOG_ROUTES } from '../../../lib/logging-route-templates'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
 /**
  * #180 actual built Nuxt seam: a fresh synthetic business DB and an independent
- * log directory. Only public HTTP is asserted; the parent service/fixture is
+ * PostgreSQL log schema. Only public HTTP is asserted; the parent service/fixture is
  * never touched.
  */
 const root = mkdtempSync(join(tmpdir(), 'log-usability-180-http-'))
-const dbPath = join(root, 'synthetic.db'), logDir = join(root, 'logs')
 const token = 'synthetic-log180-api', mcpToken = 'synthetic-log180-mcp'
 const PRIVATE = 'PRIVATE180_HTTP_NONCE'
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 let child: ReturnType<typeof spawn>, baseUrl = '', output = ''
 
 const apiHeaders = { authorization: `Bearer ${token}` }
@@ -58,36 +59,35 @@ async function mcp(method: string, params: unknown, tokenValue?: string) {
 }
 
 beforeAll(async () => {
-  const db = initializeDb({ create: true,  dbPath })
-  db.$client.close()
+  runtime = await postgresRuntimeFixture({ dir: root })
   const port = await reserveLoopbackPort()
   baseUrl = `http://127.0.0.1:${port}`
   child = spawn(process.execPath, ['.output/server/index.mjs'], {
     cwd: resolve(import.meta.dirname, '../../..'),
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
-      ...process.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production',
-      NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_LOG_DIR: logDir,
+      ...process.env, ...runtime.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production',
+      NUXT_DB_READONLY: '0',
       NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'),
       NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'),
     },
   })
   child.stdout!.on('data', chunk => { output += chunk.toString() })
   child.stderr!.on('data', chunk => { output += chunk.toString() })
-  mkdirSync(logDir, { recursive: true })
   mkdirSync(join(root, 'files'), { recursive: true })
   mkdirSync(join(root, 'incoming'), { recursive: true })
   await waitForHttp(url('/api/health'), { child, timeoutMs: 120_000 })
 }, 360_000)
 
 afterAll(async () => {
-  await stopOwnedChild(child)
+  if (child) await stopOwnedChild(child)
+  runtime?.close()
   writeFileSync(join(root, 'server.log'), output)
   rmSync(root, { recursive: true, force: true })
 })
 
 it('records a real matched HTTP template and method in the protected list and detail', async () => {
-  const health = await call(`/api/health?probe=${PRIVATE}`, { headers: { authorization: `Bearer ${PRIVATE}`, cookie: PRIVATE } })
+  const health = await call(`/api/file-library?probe=${PRIVATE}`, { headers: { authorization: `Bearer ${PRIVATE}`, cookie: PRIVATE } })
   expect(health.status).toBe(200)
   const rows = await waitLog(health.requestId)
   expect(rows).toHaveLength(1)
@@ -95,10 +95,10 @@ it('records a real matched HTTP template and method in the protected list and de
   expect(summary).toMatchObject({
     source: 'http', module: 'core', operation: 'http.request', outcome: 'success', statusCode: 200,
     origin: {runtime:'node',integration:'nuxt-nitro',capture:'framework',execution:'request'},
-    httpMethod: 'GET', httpRoute: '/api/health',
+    httpMethod: 'GET', httpRoute: '/api/file-library',
   })
   const event = await detail(summary.id)
-  expect(event).toMatchObject({ id: summary.id, module: 'core', httpMethod: 'GET', httpRoute: '/api/health', statusCode: 200 })
+  expect(event).toMatchObject({ id: summary.id, module: 'core', httpMethod: 'GET', httpRoute: '/api/file-library', statusCode: 200 })
   expect(await logs(`requestId=${health.requestId}&module=core&source=http&level=info&outcome=success`))
     .toMatchObject([{ id: summary.id, module: 'core' }])
   expect(await logs(`requestId=${health.requestId}&module=sme-roster`)).toEqual([])
@@ -122,8 +122,8 @@ it('uses a dynamic route template without persisting the concrete id or query va
   const serialized = JSON.stringify({ summary, detail: await detail(summary.id) })
   expect(serialized).not.toContain('987654321')
   expect(serialized).not.toContain(PRIVATE)
-  expect(readFileSync(join(logDir, 'events.db')).toString()).not.toContain('987654321')
-  expect(readFileSync(join(logDir, 'events.db')).toString()).not.toContain(PRIVATE)
+  expect(storedLogRows(runtime)).not.toContain('987654321')
+  expect(storedLogRows(runtime)).not.toContain(PRIVATE)
 })
 
 for (const action of ['commit', 'preflight'] as const) it(`retains the parse-result ${action} template on authenticated invalid-id POST without business writes`, async () => {
@@ -132,7 +132,7 @@ for (const action of ['commit', 'preflight'] as const) it(`retains the parse-res
   const path = `/api/files/${fileId}/parse-result/${action}`
   const requestURL = new URL(path, baseUrl).href
   const template = `/api/files/:id/parse-result/${action}`
-  const dbHash = () => createHash('sha256').update(readFileSync(dbPath)).digest('hex')
+  const dbHash = () => businessDigest(runtime)
   const before = dbHash()
   const response = await call(path, { method: 'POST', headers: { ...apiHeaders, 'content-type': 'application/json' }, body: '{}' })
   expect(response.status).toBe(400)
@@ -148,7 +148,7 @@ for (const action of ['commit', 'preflight'] as const) it(`retains the parse-res
   expect(stored).toEqual(event)
   expect(JSON.stringify({ rows, stored })).not.toContain(fileId)
   expect(output).not.toContain(fileId)
-  expect(readFileSync(join(logDir, 'events.db')).toString()).not.toContain(fileId)
+  expect(storedLogRows(runtime)).not.toContain(fileId)
   expect(dbHash()).toBe(before)
 })
 
@@ -249,13 +249,13 @@ it('records a real tus create and final PATCH with the server upload id and per-
   expect(JSON.stringify({ createdRows, finishedRows })).not.toContain('tus-log-180.txt')
 })
 
-it('keeps method but reports no template for an unmatched route', async () => {
-  // Unknown /api paths fall through to the SPA renderer (200), but no /api route template exists.
+it('logs the registered catch-all without exposing the unmatched request path', async () => {
   const response = await call(`/api/does-not-exist/${PRIVATE}`)
-  expect([200, 404]).toContain(response.status)
+  expect(response.status).toBe(404)
   const rows = await waitLog(response.requestId)
-  expect(rows[0]).toMatchObject({ source: 'http', module: null, httpMethod: 'GET', statusCode: response.status })
-  expect(rows[0]).not.toHaveProperty('httpRoute')
+  expect(rows[0]).toMatchObject({
+    source: 'http', module: null, httpMethod: 'GET', statusCode: 404, httpRoute: '/api/**:unmatched',
+  })
   expect(JSON.stringify(rows[0])).not.toContain(PRIVATE)
 })
 
@@ -355,7 +355,7 @@ it('saves dual collection rules through protected REST and MCP while disabled bu
   const disabled=await patch({...base,collection:{sources:{http:{enabled:false,minLevel:'debug'}}}})
   expect(disabled.status).toBe(200)
   expect(disabled.body.revision).toBe(initial.body.revision+1)
-  const health=await call('/api/health')
+  const health=await call('/api/file-library')
   expect(health.status).toBe(200)
   await new Promise(r=>setTimeout(r,250))
   expect(await logs('requestId='+health.requestId)).toEqual([])
@@ -376,7 +376,7 @@ it('saves dual collection rules through protected REST and MCP while disabled bu
   const read=await mcp('tools/call',{name:'get_runtime_log_policy',arguments:{}},mcpToken)
   const policy=read.body.result.structuredContent??JSON.parse(read.body.result.content[0].text)
   expect(policy.collection.sources.http).toEqual({enabled:true,minLevel:'debug'})
-  const after=await call('/api/health')
+  const after=await call('/api/file-library')
   expect(after.status).toBe(200)
   expect((await waitLog(after.requestId))[0]).toMatchObject({source:'http',outcome:'success'})
   expect((await call('/api/logs/policy',{headers:apiHeaders})).body.status.filtered).toBeGreaterThan(0)
@@ -477,14 +477,14 @@ it('persists the four real client integration mappings and applies their protect
     expect(restored.status).toBe(202)
     for (const [, , operation] of samples) expect(await waitOperation(restored.requestId, operation!)).toHaveLength(1)
     expect(output).not.toContain(PRIVATE)
-    expect(readFileSync(join(logDir, 'events.db')).toString()).not.toContain(PRIVATE)
+    expect(storedLogRows(runtime)).not.toContain(PRIVATE)
   } finally { await policyPatch(previous) }
 })
 
 it('keeps real worker queries successful while Drizzle and system rules independently suppress attempts', async () => {
   const previous = (await call('/api/logs/policy', { headers: apiHeaders })).body.collection
   const read = async () => {
-    const response = await call('/api/roster/enterprises?q=' + PRIVATE)
+    const response = await call('/api/roster/current-enterprises?titleCode=specialized_sme&q=' + PRIVATE)
     expect(response.status).toBe(200)
     // The terminal witness is emitted by the same child after its query hooks.
     const events = await waitOperation(response.requestId, 'enterprise_read.execute')

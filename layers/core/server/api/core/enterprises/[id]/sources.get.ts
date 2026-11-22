@@ -1,7 +1,5 @@
-import { useDb } from '@db'
 import { usePostgresDirectoryDb } from '../../../../../../../db/postgresql/client'
 import { listPostgresEnterpriseSources } from '../../../../utils/enterprise-directory-postgres'
-import { listEnterpriseSources } from '../../../../utils/enterprise-kernel'
 import { directoryInput, enterpriseId } from '../../../../utils/enterprise-directory-route'
 
 defineRouteMeta({ openAPI: {
@@ -10,5 +8,5 @@ defineRouteMeta({ openAPI: {
 export default defineEventHandler(event => {
   const id = directoryInput(enterpriseId, getRouterParam(event, 'id'))
   const postgres = usePostgresDirectoryDb()
-  return postgres ? listPostgresEnterpriseSources(postgres, id) : listEnterpriseSources(useDb(), id)
+  return listPostgresEnterpriseSources(postgres, id)
 })

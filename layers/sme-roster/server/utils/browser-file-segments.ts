@@ -1,10 +1,9 @@
 import { createError, getRouterParam, readBody, setHeader } from 'h3'
 import { z } from 'zod'
-import { useDb } from '@db'
 import { usePostgresFileDb } from '../../../core/server/utils/file-store-postgres'
 import { getPostgresParseState, preflightPostgresParse, savePostgresParse } from './parse-maintenance-postgres'
-import { checkBrowserReviewRequest } from './browser-review-102'
-import { getParse105, preflightRanges669, commitRanges669, parseFrozenCommit310, ParseMaintenanceError } from './parse-maintenance-105'
+import { checkBrowserReviewRequest } from './browser-review-access'
+import { parseFrozenCommit310, ParseMaintenanceError } from './parse-maintenance-contract'
 import { requestLogContext } from '../../../core/lib/logging'
 
 const preflight = z.strictObject({ expectedVersion: z.string().regex(/^[a-f0-9]{64}$/), verifyPhysicalPages: z.boolean().optional() })
@@ -25,8 +24,8 @@ export function browserFileSegmentsRoute(action: 'read' | 'preflight' | 'commit'
       if (!/^[1-9]\d*$/.test(rawId) || !Number.isSafeInteger(Number(rawId))) throw new ParseMaintenanceError(400, '文件 ID 非法')
       const id = Number(rawId)
       const pg = usePostgresFileDb()
-      const readState = () => pg ? getPostgresParseState(pg, id) : getParse105(useDb(), id)
-      const writeEnabled = pg ? process.env.NUXT_POSTGRES_DIRECTORY_WRITE === '1' : process.env.NUXT_DB_READONLY !== '1'
+      const readState = () => getPostgresParseState(pg, id)
+      const writeEnabled = process.env.NUXT_DB_READONLY !== '1'
       if (action === 'read') return { writeEnabled, state: await readState() }
       if (!writeEnabled) throw new ParseMaintenanceError(503, '文件库处于只读模式')
       const raw = await readBody(event)
@@ -36,9 +35,7 @@ export function browserFileSegmentsRoute(action: 'read' | 'preflight' | 'commit'
         const state = await readState()
         if (state.version !== input.data.expectedVersion) throw new ParseMaintenanceError(409, '解析版本冲突，请重新加载；草稿仍保留')
         const selection = { kind: 'file' as const, ...(input.data.verifyPhysicalPages ? { verifyPhysicalPages: true } : {}) }
-        const plan = pg
-          ? await preflightPostgresParse(pg, id, selection, config.filesDir)
-          : await preflightRanges669(useDb(), id, selection, config.filesDir)
+        const plan = await preflightPostgresParse(pg, id, selection, config.filesDir)
         if (plan.expectedVersion !== state.version) throw new ParseMaintenanceError(409, '解析版本冲突，请重新加载')
         return { ...plan, parseState: state.parseState }
       }
@@ -47,9 +44,7 @@ export function browserFileSegmentsRoute(action: 'read' | 'preflight' | 'commit'
       const state = await readState()
       if (state.version === input.data.expectedVersion && state.parseState !== input.data.parseState) throw new ParseMaintenanceError(400, '描述编辑必须保留解析状态')
       const command = { ...input.data, actor }
-      return pg
-        ? await savePostgresParse(pg, id, command, config.filesDir, 'commit', requestLogContext(event))
-        : await commitRanges669(useDb(), id, command, config.filesDir, requestLogContext(event))
+      return await savePostgresParse(pg, id, command, config.filesDir, 'commit', requestLogContext(event))
     } catch (error) {
       if (error instanceof ParseMaintenanceError) throw createError({ statusCode: error.statusCode, message: error.message })
       throw error

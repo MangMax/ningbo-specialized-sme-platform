@@ -1,20 +1,21 @@
 import { beforeAll, afterAll, expect, it } from 'vitest'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
+import pg from 'pg'
+import { qualificationExportFixture, businessTables } from '../current-export/fixtures/qualification-export'
 const f=qualificationExportFixture()
-let digest=''
+let digest: Awaited<ReturnType<typeof f.runtimeBusinessRows>>
 const priorNodeOptions=process.env.NODE_OPTIONS
 beforeAll(async()=>{
   const clock=join(f.dir,'clock.mjs')
   writeFileSync(clock,`const RealDate=Date; globalThis.Date=class extends RealDate {constructor(...args){super(...(args.length?args:['2026-06-01T00:00:00Z']))} static now(){return 1780272000000}}`)
   process.env.NODE_OPTIONS=`${process.env.NODE_OPTIONS ?? ''} --import=${clock}`
   for(const [name,titles] of [['none',[]],['specialized',['specialized_sme']],['innovative',['innovative_sme']],['both',['specialized_sme','innovative_sme']],['platform',['specialized_sme','innovative_sme']]] as const){
-    const c=f.candidate(name,[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
-    for(const title of titles) f.addRecord(c.enterprise.id,name,[{eventType:name==='platform'?'maintain':'award',year:2018,batchSeq:1}],title)
+    const c=await f.candidate(name,[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
+    for(const title of titles) await f.addRecord(c.enterprise.id,name,[{eventType:name==='platform'?'maintain':'award',year:2018,batchSeq:1}],title)
   }
-  digest=f.businessDigest()
   await f.start()
+  digest = await f.runtimeBusinessRows(businessTables)
 },90000)
 afterAll(async()=>{ if(priorNodeOptions == null) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS=priorNodeOptions; await f.close() })
 it.each([['specialized_sme','specialized-sme',['none','specialized','innovative','both','platform']],['innovative_sme','innovative-sme',['none','specialized','innovative','both','platform']]] as const)('public HTTP MCP and downloaded workbook agree for %s',async(title,slug,names)=>{
@@ -45,7 +46,7 @@ it.each([['specialized_sme','specialized-sme',['none','specialized','innovative'
  const sheet=wb.getWorksheet('有效企业')!
  expect(Array.from({length:sheet.rowCount-1},(_,i)=>sheet.getRow(i+2).getCell(2).value)).toEqual(names)
  for(let i=2;i<=sheet.rowCount;i++) expect(JSON.stringify(sheet.getRow(i).values)).toContain('按有效小巨人资格计入')
- expect(f.businessDigest()).toBe(digest)
+ expect(await f.runtimeBusinessRows(businessTables)).toEqual(digest)
 },90000)
 
 it('retains complete inherited evidence and versions across page sizes and later requests', async () => {
@@ -72,16 +73,35 @@ it('retains complete inherited evidence and versions across page sizes and later
     expect(lower.references).toEqual(expect.arrayContaining(giant.references.map((reference: string) => '小巨人依据：' + reference)))
   }
   expect(await query(200)).toEqual(large)
-  expect(f.businessDigest()).toBe(digest)
+  expect(await f.runtimeBusinessRows(businessTables)).toEqual(digest)
 }, 90000)
 
 it('specialized-only qualification enters innovative HTTP filters and XLSX with its actual period and no invented history', async () => {
- const c=f.candidate('specialized-only',[{eventType:'award',year:2025,batchSeq:1}],'specialized_sme')
- const before=f.businessDigest()
+ if (!f.postgresUrl) throw new Error('PostgreSQL fixture is not running')
+ const connection = new pg.Client({ connectionString: f.postgresUrl })
+ await connection.connect()
+ let enterpriseId: string
+ try {
+  const created = await connection.query<{ id: string }>(`
+    INSERT INTO business.enterprise (name,name_norm,uscc_norm,district,city)
+    VALUES ('specialized-only','specialized-only','SYNTHETIC-118-specialized-only','鄞州区','宁波市')
+    RETURNING id`)
+  enterpriseId = created.rows[0]!.id
+  const record = await connection.query<{ id: string }>(`
+    INSERT INTO business.record (enterprise_id,source,title_code,name_raw)
+    VALUES ($1,'jxj','specialized_sme','specialized-only') RETURNING id`, [enterpriseId])
+  const event = await connection.query<{ id: string }>(`
+    INSERT INTO business.record_event (record_id,event_type,year,batch_seq)
+    VALUES ($1,'award',2025,1) RETURNING id`, [record.rows[0]!.id])
+  await connection.query(`
+    INSERT INTO business.record_evidence (record_event_id,source_file,attachment,list_no)
+    VALUES ($1,'jxj/announcement/synthetic-118.xlsx','专精特新中小企业名单',$2)`, [event.rows[0]!.id, enterpriseId])
+ } finally { await connection.end() }
+ const before = await f.runtimeBusinessRows(businessTables)
  const list=await fetch(f.url('/api/roster/current-enterprises?titleCode=innovative_sme&q=specialized-only&district=鄞州区')).then(r=>r.json())
  expect(list.total).toBe(1)
  expect(list.rows.map((r:any)=>r.uscc)).toEqual(['SYNTHETIC-118-specialized-only'])
- const detail=await fetch(f.url(`/api/roster/enterprises/${c.enterprise.id}`)).then(r=>r.json())
+ const detail=await fetch(f.url(`/api/roster/enterprises/${enterpriseId}`)).then(r=>r.json())
  const lower=detail.qualificationAssessment.titles.find((t:any)=>t.titleCode==='innovative_sme')
  expect(lower.evidence).toEqual([]);expect(lower.cycles).toEqual([])
  expect(lower.effectiveQualification.localRuleBasis.join(' ')).toContain('实际支撑称号：专精特新中小企业')
@@ -93,5 +113,5 @@ it('specialized-only qualification enters innovative HTTP filters and XLSX with 
  expect(Array.from({length:sheet.rowCount-1},(_,i)=>sheet.getRow(i+2).getCell(3).value)).toEqual(['SYNTHETIC-118-none','SYNTHETIC-118-specialized','SYNTHETIC-118-innovative','SYNTHETIC-118-both','SYNTHETIC-118-platform','SYNTHETIC-118-specialized-only'])
  expect(JSON.stringify(sheet.getRow(7).values)).toContain('2028')
  expect(JSON.stringify(sheet.getRow(7).values)).toContain('专精特新中小企业')
- expect(f.businessDigest()).toBe(before)
+ expect(await f.runtimeBusinessRows(businessTables)).toEqual(before)
 },90000)

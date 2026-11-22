@@ -1,29 +1,26 @@
+import { prepareRuntimeLogs } from '../fixtures/runtime'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
+import pg from 'pg'
+import { drizzle } from 'drizzle-orm/node-postgres'
 import { sql } from 'drizzle-orm'
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
+import { applicationLogs } from '../../../layers/core/lib/logging'
 import { LOG_DEFAULTS, type LogPolicyPatch } from '../../../layers/core/lib/logging/contract'
 import { createDrizzleLogger } from '../../../layers/core/lib/logging/drizzle'
 
-describe('Drizzle real evlog and independent SQLite pipeline', () => {
-  let directory: string, previous: string | undefined, client: Database.Database
-  beforeEach(() => {
+describe('Drizzle real evlog and independent PostgreSQL pipeline', () => {
+  let directory: string, runtime: Awaited<ReturnType<typeof prepareRuntimeLogs>>, client: pg.Pool
+  beforeEach(async () => {
     directory = mkdtempSync(join(tmpdir(), 'drizzle-pipeline-'))
-    previous = process.env.NUXT_LOG_DIR
-    process.env.NUXT_LOG_DIR = directory
-    initializeWorkerLogging()
-    client = new Database(':memory:')
+    runtime = await prepareRuntimeLogs(directory)
+    client = new pg.Pool({ connectionString: runtime.url })
   })
   afterEach(async () => {
-    await closeApplicationLogging()
     vi.restoreAllMocks()
-    client.close()
-    if (previous === undefined) delete process.env.NUXT_LOG_DIR
-    else process.env.NUXT_LOG_DIR = previous
+    await client?.end()
+    await runtime?.close()
     rmSync(directory, { recursive: true, force: true })
   })
   const base = { retentionDays: 7, maxBytes: LOG_DEFAULTS.maxBytes }
@@ -38,14 +35,15 @@ describe('Drizzle real evlog and independent SQLite pipeline', () => {
   }
 
   it('persists and prints bounded native attempts without SQL params results or native errors', async () => {
+    await applicationLogs().setPolicy({ ...base, collection: { sources: { system: { enabled: true, minLevel: 'debug' } }, integrations: { drizzle: { enabled: true, minLevel: 'debug' } } } })
+    await settle(1)
+    const before = applicationLogs().status()
     const writes: string[] = []
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk: any, callback?: any) => { writes.push(String(chunk)); callback?.(); return true })
     const db = query()
-    expect(db.get(sql`SELECT ${'PRIVATE_PARAM_MARKER'} value /* PRIVATE_SQL_MARKER */`)).toEqual({ value: 'PRIVATE_PARAM_MARKER' })
-    const fault = new Error('PRIVATE_ERROR_MARKER')
-    client.function('fail_query', () => { throw fault })
-    expect(() => db.get(sql`SELECT fail_query()`)).toThrow(fault)
-    await settle(1)
+    expect((await db.execute(sql`SELECT ${'PRIVATE_PARAM_MARKER'}::text value /* PRIVATE_SQL_MARKER */`)).rows).toEqual([{ value: 'PRIVATE_PARAM_MARKER' }])
+    await expect(db.execute(sql`SELECT 1/0 /* PRIVATE_ERROR_MARKER */`)).rejects.toMatchObject({ cause: { code: '22012' } })
+    await settle(before.stored + before.filtered + 1)
     const listed = await rows()
     expect(listed).toHaveLength(1)
     for (const row of listed) expect(row).toMatchObject({
@@ -61,10 +59,11 @@ describe('Drizzle real evlog and independent SQLite pipeline', () => {
     }
     // The store also contains field-policy defaults with the legitimate
     // "durationMs" option. Its presence is not a leaked query duration.
-    const stored = new Database(join(directory, 'events.db'), { readonly: true })
-    try { expect((stored.prepare('SELECT collection FROM log_collection WHERE id=1').get() as { collection: string }).collection).toContain('"durationMs":true') } finally { stored.close() }
-    expect(readFileSync(join(directory, 'events.db')).toString()).not.toMatch(/PRIVATE_|fail_query|params|stack/)
-    expect(applicationLogs().status()).toMatchObject({ stored: 1, coalesced: 1, filtered: 0, dropped: 0, writeUnknown: 0 })
+    const stored = runtime.psql(['-At', '-c', 'SELECT collection FROM runtime_logs.log_collection WHERE id = 1'])
+    expect(stored).toMatch(/"durationMs"\s*:\s*true/)
+    const events = runtime.psql(['-At', '-c', 'SELECT row_to_json(event) FROM runtime_logs.log_events AS event'])
+    expect(events).not.toMatch(/PRIVATE_|fail_query|params|stack/)
+    expect(applicationLogs().status()).toMatchObject({ stored: before.stored + 1, coalesced: 1, filtered: before.filtered, dropped: 0, writeUnknown: 0 })
   })
 
   it.each([
@@ -81,7 +80,7 @@ describe('Drizzle real evlog and independent SQLite pipeline', () => {
     const writes: string[] = []
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk: any, callback?: any) => { writes.push(String(chunk)); callback?.(); return true })
     const db = query()
-    expect(db.get(sql`SELECT ${'PRIVATE_DISABLED_MARKER'} value`)).toEqual({ value: 'PRIVATE_DISABLED_MARKER' })
+    expect((await db.execute(sql`SELECT ${'PRIVATE_DISABLED_MARKER'}::text value`)).rows).toEqual([{ value: 'PRIVATE_DISABLED_MARKER' }])
     await settle(before.stored + before.filtered + 1)
     expect(await rows()).toEqual([])
     expect(writes.join('')).not.toContain('db.query')
@@ -89,7 +88,7 @@ describe('Drizzle real evlog and independent SQLite pipeline', () => {
     expect(service.status().dropped).toBe(0)
 
     await service.setPolicy({ ...base, collection: { sources: { system: { enabled: true, minLevel: 'debug' } }, integrations: { drizzle: { enabled: true, minLevel: 'debug' } } } } as LogPolicyPatch)
-    expect(db.get(sql`SELECT 7 value`)).toEqual({ value: 7 })
+    expect((await db.execute(sql`SELECT 7 value`)).rows).toEqual([{ value: 7 }])
     await vi.waitFor(async () => { await service.flush(); expect(await rows()).toHaveLength(1) })
     await vi.waitFor(() => expect(writes.join('')).toContain('db.query.select'))
     expect(writes.join('')).not.toContain('PRIVATE_')

@@ -1,12 +1,13 @@
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import * as schema from '../../../../db/schema'
-import { handleEvidenceCorrectionRequest, type EvidenceCorrectionAction } from './roster-evidence-correction-api'
-export async function dispatchEvidenceCorrectionMcp(action: EvidenceCorrectionAction, args: Record<string, unknown>, context: { db: BetterSQLite3Database<typeof schema>; filesDir?: string; authorized?: boolean }) {
-  const write = ['preflight', 'commit', 'batch'].includes(action)
-  const output = await handleEvidenceCorrectionRequest({ action, method: ['preflight', 'commit'].includes(action) ? 'POST' : 'GET', body: args, id: args.id, key: args.idempotencyKey, query: action==='get' ? Object.fromEntries(Object.entries(args).filter(([key,v])=>key!=='id' && v!==undefined)) : action === 'audit' ? Object.fromEntries(Object.entries({ page: args.page, pageSize: args.pageSize }).filter(([, v]) => v !== undefined)) : undefined, headers: (write || action==='get' && args.official!==undefined) && context.authorized ? { authorization: 'Bearer mcp-internal-authorized' } : undefined }, { get db() { return context.db }, filesDir: context.filesDir, apiToken: 'mcp-internal-authorized' })
+import { handlePostgresEvidenceCorrectionWrite } from './roster-evidence-correction-write-postgres'
+
+export async function dispatchEvidenceCorrectionMcp(action: 'preflight' | 'commit', args: Record<string, unknown>, context: { filesDir?: string; authorized?: boolean }) {
+  const apiToken = 'mcp-internal-authorized'
+  const output = await handlePostgresEvidenceCorrectionWrite({ action, method: 'POST', body: args,
+    headers: context.authorized ? { authorization: 'Bearer ' + apiToken } : undefined,
+  }, { filesDir: context.filesDir, apiToken })
   if (output.status !== 200) {
-    const error = (output.body as { error: { code: string; message: string } }).error
-    throw Object.assign(new Error(action==='get' && args.official!==undefined?JSON.stringify(output.body):error.message), { code: error.code, statusCode: output.status })
+    const { error } = output.body as { error: { code: string; message: string } }
+    throw Object.assign(new Error(error.message), { code: error.code, statusCode: output.status })
   }
   return output.body
 }

@@ -45,30 +45,28 @@ const declareKind = (value: string | null) => value ? RELATION_DECLARE_KINDS[val
   <Dialog :open="open" @update:open="emit('update:open', $event)">
     <DialogContent class="max-h-[85dvh] min-w-0 overflow-y-auto sm:max-w-3xl" data-testid="platform-declaration-detail">
       <DialogHeader>
-        <DialogTitle>申报记录 · 版本详情</DialogTitle>
-        <DialogDescription class="sr-only">查看历次申报的称号、日期和结果</DialogDescription>
+        <DialogTitle>申报记录 · 详情</DialogTitle>
+        <DialogDescription class="sr-only">查看当前申报的称号、日期和结果</DialogDescription>
       </DialogHeader>
       <div v-if="loading && !data" class="flex flex-col gap-2"><Skeleton class="h-24 w-full" /><Skeleton class="h-40 w-full" /></div>
       <TableFailureState v-else-if="error" title="申报记录加载失败" :description="error" :pending="loading" @retry="recordId != null && load(recordId)" />
       <div v-else-if="data" class="flex min-w-0 flex-col gap-5">
         <section class="min-w-0">
-          <h3 class="text-sm font-medium">内容版本 <span class="text-muted-foreground font-normal">{{ data.counts.versions }} 个<template v-if="data.counts.versionsTruncated">（仅显示前 {{ data.versions.length }} 个）</template></span></h3>
-          <div class="mt-2 flex flex-col gap-2">
-            <article v-for="version in data.versions" :key="version.versionId" class="rounded-sm border p-3" data-testid="platform-declaration-version">
-              <p v-if="version.ruleVersion == null" class="text-muted-foreground text-table">该版本暂无可核对的业务内容</p>
-              <template v-else>
-                <div class="flex flex-wrap items-baseline gap-2">
-                  <Badge variant="outline">{{ projectionDisplay(version, version.declareKind, declareKind) }}</Badge>
-                  <span class="text-muted-foreground text-xs">年度 {{ projectionDisplay(version, version.declarationYear) }} · 状态 {{ projectionDisplay(version, version.status) }}</span>
-                </div>
-                <dl class="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-table sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-                  <dt class="text-muted-foreground">称号</dt><dd>{{ projectionDisplay(version, version.titleRaw, projectionTitle) }}</dd>
-                  <dt class="text-muted-foreground">平台登记名称</dt><dd>{{ projectionDisplay(version, version.nameRaw) }} · {{ projectionDisplay(version, version.usccRaw) }}</dd>
-                  <dt class="text-muted-foreground">申报时间</dt><dd>{{ projectionDisplay(version, version.appliedAt, time) }}</dd>
-                </dl>
-              </template>
-            </article>
-          </div>
+          <article v-if="data.current" class="rounded-sm border p-3" data-testid="platform-declaration-current">
+            <p v-if="data.current.ruleVersion == null" class="text-muted-foreground text-table">暂无可核对的业务内容</p>
+            <template v-else>
+              <div class="flex flex-wrap items-baseline gap-2">
+                <Badge variant="outline">{{ projectionDisplay(data.current, data.current.declareKind, declareKind) }}</Badge>
+                <span class="text-muted-foreground text-xs">年度 {{ projectionDisplay(data.current, data.current.declarationYear) }} · 状态 {{ projectionDisplay(data.current, data.current.status) }}</span>
+              </div>
+              <dl class="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-table sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+                <dt class="text-muted-foreground">称号</dt><dd>{{ projectionDisplay(data.current, data.current.titleRaw, projectionTitle) }}</dd>
+                <dt class="text-muted-foreground">平台登记名称</dt><dd>{{ projectionDisplay(data.current, data.current.nameRaw) }} · {{ projectionDisplay(data.current, data.current.usccRaw) }}</dd>
+                <dt class="text-muted-foreground">申报时间</dt><dd>{{ projectionDisplay(data.current, data.current.appliedAt, time) }}</dd>
+              </dl>
+            </template>
+          </article>
+          <p v-else class="text-muted-foreground text-table">暂无可核对的业务内容</p>
         </section>
       </div>
     </DialogContent>

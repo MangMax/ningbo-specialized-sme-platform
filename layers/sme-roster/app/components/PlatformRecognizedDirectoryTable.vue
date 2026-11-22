@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { projectionDisplay } from '#sme-roster/lib/platform/projection-display'
 import { computed } from 'vue'
-import { ExternalLink, History } from '@lucide/vue'
+import { ExternalLink, FileText } from '@lucide/vue'
 import type { RecognizedDirectoryRow } from '#sme-roster/lib/platform/recognized-directory'
 import { RDJB_TITLE_CODES } from '#sme-roster/lib/platform/recognized-evidence'
 import { PLATFORM_RDJBS } from '#sme-roster/lib/labels'
@@ -48,7 +48,6 @@ const conflictLabel: Record<string, string> = {
               <TableHead class="w-[10%] whitespace-nowrap">维护批次</TableHead>
               <TableHead class="w-[11%] whitespace-nowrap">属地</TableHead>
               <TableHead class="w-[15%] whitespace-nowrap">称号</TableHead>
-              <TableHead class="w-[10%] whitespace-nowrap">版本</TableHead>
               <TableHead class="sticky right-0 z-20 w-[18%] border-l bg-muted">详情</TableHead>
             </TableRow>
           </TableHeader>
@@ -63,9 +62,8 @@ const conflictLabel: Record<string, string> = {
               <TableCell class="whitespace-normal break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.maintenanceBatch) }}</TableCell>
               <TableCell class="whitespace-normal break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.district) }}</TableCell>
               <TableCell class="whitespace-normal text-xs leading-5">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.titleRaw, projectionTitle) }}</TableCell>
-              <TableCell class="whitespace-nowrap tabular-nums">{{ row.versionCount }}<span v-if="row.matchedVersionCount > 1" class="text-muted-foreground block text-xs">匹配 {{ row.matchedVersionCount }} 个版本</span></TableCell>
               <TableCell class="sticky right-0 z-10 border-l bg-card">
-                <Button variant="ghost" size="sm" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />版本详情</Button>
+                <Button variant="ghost" size="sm" :disabled="loading" @click="emit('open-record', row.record.id)"><FileText data-icon="inline-start" />查看详情</Button>
                 <NuxtLink v-if="currentQuery(row).titleCode || currentQuery(row).q" :to="{ path: '/current-enterprises', query: { ...(currentQuery(row).titleCode ? { titleCode: currentQuery(row).titleCode } : {}), ...(currentQuery(row).q ? { q: currentQuery(row).q } : {}) } }" class="mt-1 block text-xs hover:underline" data-testid="platform-recognized-current-link">当前有效资格</NuxtLink>
                 <span v-for="conflict in row.conflicts.filter(value => value !== 'title_conflict')" :key="conflict" class="text-muted-foreground mt-1 block text-xs">{{ conflictLabel[conflict] ?? conflict }}</span>
               </TableCell>
@@ -81,12 +79,11 @@ const conflictLabel: Record<string, string> = {
               <p v-else class="font-medium break-words">{{ enterprise(row) }}</p>
               <p class="text-muted-foreground break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.usccRaw) }}</p>
             </div>
-            <Button variant="outline" size="sm" class="min-h-11 shrink-0" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />版本详情</Button>
+            <Button variant="outline" size="sm" class="min-h-11 shrink-0" :disabled="loading" @click="emit('open-record', row.record.id)"><FileText data-icon="inline-start" />查看详情</Button>
           </div>
           <p class="font-mono text-sm leading-5">有效期 {{ projectionDisplay(row.matchedVersion, row.matchedVersion.validityDateRaw) }}</p>
           <p class="text-sm leading-5">批次 {{ projectionDisplay(row.matchedVersion, row.matchedVersion.maintenanceBatch) }} · 属地 {{ projectionDisplay(row.matchedVersion, row.matchedVersion.district) }}</p>
           <p class="text-sm leading-5">称号 {{ projectionDisplay(row.matchedVersion, row.matchedVersion.titleRaw, projectionTitle) }}</p>
-          <p class="text-muted-foreground text-sm leading-5">版本 {{ row.versionCount }}</p>
           <NuxtLink v-if="currentQuery(row).titleCode || currentQuery(row).q" :to="{ path: '/current-enterprises', query: { ...(currentQuery(row).titleCode ? { titleCode: currentQuery(row).titleCode } : {}), ...(currentQuery(row).q ? { q: currentQuery(row).q } : {}) } }" class="text-xs hover:underline" data-testid="platform-recognized-current-link">当前有效资格（既有查询）</NuxtLink>
           <p v-for="conflict in row.conflicts.filter(value => value !== 'title_conflict')" :key="conflict" class="text-muted-foreground text-xs">{{ conflictLabel[conflict] ?? conflict }}</p>
         </li>

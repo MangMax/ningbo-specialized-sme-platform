@@ -5,11 +5,8 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { normalizeUscc } from '../../lib/domain'
 import type { RosterImportRequest, RosterImportEvent, RosterImportItemResult } from '../../lib/roster-import-client'
 import { announcementValues, readPostgresAnnouncementEvents, readPostgresAnnouncementEvidenceHashes } from './announcement-evidence-postgres'
-import {
-  ambiguousAnnouncementRepoints, announcementEvidenceCoordinate, eventCoordinates, groupNewAnnouncementEvidence, hasOfficialFactInput, indexedEvidenceHashes,
-  matchesEventCoordinates, projectAnnouncementRepoints, validateAnnouncementRecord,
-} from './roster-import'
-import { checkOfficialOuterDocument, officialPublishedRowSchema, officialFactFailure, officialPlanDigest, projectOfficialDeclaration, type OfficialClaimChange, type OfficialCoordinate } from './official-evidence-plan'
+import { ambiguousAnnouncementRepoints, announcementEvidenceCoordinate, eventCoordinates, groupNewAnnouncementEvidence, hasOfficialFactInput, indexedEvidenceHashes, matchesEventCoordinates, projectAnnouncementRepoints, validateAnnouncementRecord } from './roster-import-model'
+import { checkOfficialOuterDocument, officialPublishedRowSchema, officialFactFailure, officialPlanDigest, projectOfficialDeclaration, type OfficialClaimChange, type OfficialCoordinate } from './official-evidence-claim-model'
 import { lockPostgresOfficialImportTargets, planPostgresOfficialImport } from './official-evidence-import-postgres'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]

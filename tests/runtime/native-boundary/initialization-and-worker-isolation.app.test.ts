@@ -1,132 +1,95 @@
-import Database from 'better-sqlite3'
-import { once } from 'node:events'
-import { mkdtempSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { serialize } from 'node:v8'
-import { afterEach, expect, it, vi } from 'vitest'
-import { initializeDb, useApplicationDb } from '../../../db/client'
-import { RETIRED_PLATFORM_TABLES } from '../../../db/schema-phase'
-import * as s from '../../../db/schema'
-import { commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { expect, it, vi } from 'vitest'
+import pg from 'pg'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { runPostgresPlatformReconcile } from '../../../layers/sme-roster/server/utils/platform-reconcile-postgres'
+import { EMPTY_APPLY_RESPONSE, platformFixture, platformReplay } from '../../platform/fixtures/source-replay'
 import { createEnterpriseReadExecutor } from '../../../layers/sme-roster/server/utils/enterprise-read'
-import { createImportExecutionWorker } from '../../../layers/sme-roster/server/utils/import-execution-worker-location'
-import { listTargetBusinessProcesses } from '../../../layers/sme-roster/server/utils/platform-business-processes-target'
-import { runPlatformReconcile } from '../../../layers/sme-roster/server/utils/platform-reconcile'
-import { whenIdle } from '../../../layers/core/server/utils/job-runner'
-import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
-const cleanup:Array<()=>void|Promise<unknown>>=[]
-afterEach(async()=>{await whenIdle();for(const close of cleanup.splice(0).reverse())await close()})
-function fixture() {
-  const dir=mkdtempSync(join(tmpdir(),'final-native-')),path=join(dir,'native.sqlite')
-  cleanup.push(()=>rmSync(dir,{recursive:true,force:true}))
-  const db=initializeDb({dbPath:path,create:true})
-  cleanup.push(()=>{if(db.$client.open)db.$client.close()})
-  return {db,path}
-}
-function expectNative(db:Database.Database) {
-  expect(db.pragma('foreign_key_check')).toEqual([])
-  expect(db.pragma('user_version',{simple:true})).toBe(71614)
-  for(const name of RETIRED_PLATFORM_TABLES)expect(db.prepare('select name from sqlite_schema where type=? and name=?').get('table',name)).toBeUndefined()
-}
-function sourceRequest(key:string):RosterImportRequest {
-  return {idempotencyKey:key,sourceKind:'platform_archive',sourceIdentity:'native-runtime-source',payload:{platformQueries:[{interface:'business_list',queryKey:'name:Native',rdjb:'2',queriedAt:'2026-11-14T00:00:00Z',status:'success',rawResponse:'native original response',relations:[{sequenceNo:1,relationKey:'native-business',rawFields:{id:'native-business',rdjb:'2',qymc:'Native'}}]}]}}
-}
-
-it('initializes a native database imports replays and restarts without historical migrations',()=>{
-  const {db,path}=fixture()
-  expect(db.$client.prepare('select count(*) n from platform_migration_run').get()).toEqual({n:0})
-  const request=sourceRequest('native-first')
-  const first=commitRosterImport(db,request,[],{deferCandidateTasks:true})
-  expect(first.status,JSON.stringify(first)).toBe('committed')
-  const archives=db.$client.prepare('select * from platform_archive_value order by id').all()
-  expect(commitRosterImport(db,request,[],{deferCandidateTasks:true})).toEqual(first)
-  const replay=commitRosterImport(db,sourceRequest('native-source-replay'),[],{deferCandidateTasks:true})
-  expect(replay.status,JSON.stringify(replay)).toBe('committed')
-  expect(replay.summary.written).toBe(0)
-  expect(db.$client.prepare('select count(*) n from platform_collection').get()).toEqual({n:1})
-  expect(db.$client.prepare('select * from platform_archive_value order by id').all()).toEqual(archives)
-  expect(listTargetBusinessProcesses({},db).rows).toHaveLength(1)
-  expectNative(db.$client)
-  db.$client.close()
-  const restarted=initializeDb({dbPath:path})
-  cleanup.push(()=>{restarted.$client.close()})
-  expect(useApplicationDb({dbPath:path})).toBe(restarted)
-  expect(listTargetBusinessProcesses({},restarted).rows).toHaveLength(1)
-  expectNative(restarted.$client)
-  restarted.$client.exec('CREATE TABLE platform_query(id INTEGER PRIMARY KEY)')
-  // Offline schema mutation requires closing the admitted runtime connection.
-  restarted.$client.close()
-  expect(()=>useApplicationDb({dbPath:path})).toThrow('dependency remains')
-})
-
-it('refuses non-native databases at application and actual source worker entries',async()=>{
-  const dir=mkdtempSync(join(tmpdir(),'non-native-refusal-')),path=join(dir,'schema0.sqlite')
-  cleanup.push(()=>rmSync(dir,{recursive:true,force:true}))
-  const old=new Database(path)
-  cleanup.push(()=>{old.close()})
-  old.exec('CREATE TABLE __drizzle_migrations(id INTEGER PRIMARY KEY,hash TEXT,created_at INTEGER)')
-  expect(()=>useApplicationDb({dbPath:path})).toThrow('Unsupported final platform runtime schema')
-  const worker=createImportExecutionWorker();cleanup.push(()=>worker.terminate())
-  expect((await once(worker,'message'))[0]).toMatchObject({type:'ready'})
-  const stat=statSync(path),response=once(worker,'message')
-  worker.postMessage({id:1,dbPath:path,readonly:true,identity:{dev:stat.dev,ino:stat.ino,schemaVersion:old.pragma('schema_version',{simple:true}),migration:undefined},action:'preflight',payload:serialize(sourceRequest('refuse')),pageCountErrors:[]})
-  expect((await response)[0]).toMatchObject({type:'failure',error:{message:'Unsupported final platform runtime schema'}})
-},30000)
-
-it('serves native source read workers and commits an import through the actual source worker',async()=>{
-  const {db,path}=fixture()
-  db.insert(s.enterprise).values({name:'Native current',nameNorm:'Native current',usccNorm:'91330200712345678C'}).run()
-  const entity=db.select().from(s.enterprise).get()!
-  db.insert(s.rosterLegacyMember).values({enterpriseId:entity.id}).run()
-  const record=db.insert(s.record).values({enterpriseId:entity.id,titleCode:'little_giant',source:'jxj',nameRaw:entity.name}).returning().get()
-  db.insert(s.recordEvent).values({recordId:record.id,eventType:'award',year:2025,batchSeq:1}).run()
-  const reads=createEnterpriseReadExecutor();cleanup.push(()=>reads.close())
-  expect((await reads.list(path,{pageSize:5})).rows).toHaveLength(1)
-  const current=await reads.currentQualifiedJson(path,{titleCode:'little_giant',pageSize:5})
-  expect(current.found).toBe(true)
-  const currentBody=JSON.parse(current.body.toString())
-  expect(currentBody).toMatchObject({total:1,rows:[{enterpriseId:entity.id}]})
-  const currentTitle=currentBody.rows[0].qualificationAssessment.titles.find((title:{titleCode:string})=>title.titleCode==='little_giant')
-  expect(currentTitle).toMatchObject({titleCode:'little_giant',effectiveQualification:{status:'effective'},evidence:[{eventType:'award',year:2025,batchSeq:1}]})
-  expect(currentTitle.versions.facts).toMatch(/^[a-f0-9]{64}$/)
-  const stat=statSync(path),identity={dev:stat.dev,ino:stat.ino,schemaVersion:db.$client.pragma('schema_version',{simple:true}),migration:db.$client.prepare('SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get()}
-  const worker=createImportExecutionWorker();cleanup.push(()=>worker.terminate())
-  expect((await once(worker,'message'))[0]).toMatchObject({type:'ready'})
-  for(const [index,action] of ['preflight','commit'] .entries()){
-    const response=once(worker,'message')
-    worker.postMessage({id:index+1,dbPath:path,readonly:false,identity,action,payload:serialize(sourceRequest('native-worker')),pageCountErrors:[]})
-    expect((await response)[0]).toMatchObject({type:'result',id:index+1,result:{status:action==='preflight'?'preflight':'committed'}})
+it('reads changed facts from PostgreSQL through the qualification worker', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pg-native-worker-'))
+  let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+  let reads: ReturnType<typeof createEnterpriseReadExecutor> | undefined
+  try {
+    runtime = await postgresRuntimeFixture({ dir })
+    runtime.psql(['-c', `
+      INSERT INTO business.enterprise (id, name, name_norm) VALUES (1, 'Native current', 'Native current');
+      INSERT INTO business.roster_legacy_member (enterprise_id) VALUES (1);
+      INSERT INTO business.record (id, enterprise_id, title_code, source, name_raw)
+        VALUES (1, 1, 'little_giant', 'jxj', 'Native current');
+      INSERT INTO business.record_event (record_id, event_type, year, batch_seq) VALUES (1, 'award', 2025, 1);
+    `])
+    for (const [key, value] of Object.entries(runtime.env)) vi.stubEnv(key, value)
+    reads = createEnterpriseReadExecutor()
+    const filter = { titleCode: 'little_giant' as const, pageSize: 5 }
+    const read = async () => JSON.parse((await reads!.currentQualifiedJson(filter)).body.toString())
+    const current = await read()
+    expect(current).toMatchObject({ total: 1, rows: [{ enterpriseId: 1 }] })
+    const initial = current.rows[0].qualificationAssessment.titles.find((title: { titleCode: string }) => title.titleCode === 'little_giant')
+    expect(initial).toMatchObject({
+      effectiveQualification: { status: 'effective' }, evidence: [{ eventType: 'award', year: 2025, batchSeq: 1 }],
+    })
+    runtime.psql(['-c', 'UPDATE business.record_event SET year = 1999'])
+    const fresh = await read()
+    expect(fresh).toMatchObject({ total: 1, rows: [{ enterpriseId: 1 }] })
+    const updated = fresh.rows[0].qualificationAssessment.titles.find((title: { titleCode: string }) => title.titleCode === 'little_giant')
+    expect(updated).toMatchObject({
+      effectiveQualification: { status: 'effective' }, evidence: [{ eventType: 'award', year: 1999, batchSeq: 1 }],
+    })
+    expect(updated.versions.facts).toMatch(/^[a-f0-9]{64}$/)
+    expect(updated.versions.facts).not.toBe(initial.versions.facts)
+  } finally {
+    try { await reads?.close() } finally {
+      try { runtime?.close() } finally {
+        vi.unstubAllEnvs()
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
   }
-  expect(listTargetBusinessProcesses({},db).rows).toHaveLength(1)
-  db.$client.prepare('UPDATE record_event SET year=1999 WHERE record_id=?').run(record.id)
-  const fresh=await reads.currentQualifiedJson(path,{titleCode:'little_giant',pageSize:5})
-  expect(fresh.found).toBe(true)
-  const freshBody=JSON.parse(fresh.body.toString())
-  // Original little-giant awards do not expire by age; the worker must still
-  // reread the changed fact and expose a new content version, not a stale row.
-  expect(freshBody).toMatchObject({total:1})
-  expect(freshBody.rows.map((row:{enterpriseId:number})=>row.enterpriseId)).toEqual([entity.id])
-  const freshTitle=freshBody.rows[0].qualificationAssessment.titles.find((title:{titleCode:string})=>title.titleCode==='little_giant')
-  expect(freshTitle).toMatchObject({titleCode:'little_giant',effectiveQualification:{status:'effective'},evidence:[{eventType:'award',year:1999,batchSeq:1}]})
-  expect(freshTitle.versions.facts).toMatch(/^[a-f0-9]{64}$/)
-  expect(freshTitle.versions.facts).not.toBe(currentTitle.versions.facts)
-  expectNative(db.$client)
-},30000)
+}, 30_000)
 
-it('captures four native reconcile slots and reuses them without network or duplicate archives',async()=>{
-  const {db}=fixture(),uscc='91330200712345678C',time='2026-11-14T04:00:00Z'
-  const entity=db.insert(s.enterprise).values({name:'Native reconcile',nameNorm:'Native reconcile',usccNorm:uscc}).returning().get()
-  db.insert(s.record).values({enterpriseId:entity.id,titleCode:'specialized_sme',source:'jxj',nameRaw:entity.name,usccRaw:uscc}).run()
-  const fetchImpl=vi.fn(async()=>({ok:true,status:200,text:async()=>JSON.stringify({zrarData:{grid:{businessListGrid:{page:1,pageSize:50,maxCount:0,pageSet:[]},applyGrid:{page:1,pageSize:50,maxCount:0,pageSet:[]}}}})}))
-  const options={db,titles:['specialized_sme'],usccs:[uscc],now:()=>new Date(time),cookie:'synthetic-native=1',fetchImpl,retries:0}
-  const first=await runPlatformReconcile(options)
-  expect(first).toMatchObject({targetCount:1,queries:{network:4,reused:0},write:{status:'committed'}})
-  expect(db.$client.prepare('select count(*) n from platform_collection').get()).toEqual({n:4})
-  const originals=db.$client.prepare('select * from platform_archive_value order by id').all()
-  const second=await runPlatformReconcile({...options,fetchImpl:async()=>{throw new Error('Fresh native slots must not fetch')}})
-  expect(second).toMatchObject({targetCount:1,queries:{network:0,reused:4}})
-  expect(db.$client.prepare('select * from platform_archive_value order by id').all()).toEqual(originals)
-  expectNative(db.$client)
-},30000)
+it('captures four reconcile slots and commits their distinct PostgreSQL collections', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pg-native-reconcile-'))
+  let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+  let pool: pg.Pool | undefined
+  try {
+    runtime = await postgresRuntimeFixture({ dir })
+    const fixture = runtime
+    pool = new pg.Pool({ connectionString: fixture.url, options: '-c search_path=business,public' })
+    const db = drizzle(pool)
+    const uscc = '91330200712345678C'
+    await pool.query(`
+      INSERT INTO business.enterprise (id, name, name_norm, uscc_norm)
+        VALUES (1, 'Native reconcile', 'Native reconcile', '91330200712345678C');
+      INSERT INTO business.roster_legacy_member (enterprise_id) VALUES (1);
+      INSERT INTO business.record (enterprise_id, title_code, source, name_raw, uscc_raw)
+        VALUES (1, 'specialized_sme', 'jxj', 'Native reconcile', '91330200712345678C');
+    `)
+    const replay = platformReplay(({ interface: source }) => ({
+      text: source === 'apply_list' ? EMPTY_APPLY_RESPONSE : platformFixture('business-list-rdjb1-empty.html'),
+    }))
+    const options = {
+      titles: ['specialized_sme'], usccs: [uscc], now: () => new Date('2026-11-14T04:00:00Z'),
+      cookie: 'synthetic-native=1', fetchImpl: replay.fetchImpl, retries: 0,
+    }
+    expect(await runPostgresPlatformReconcile(db, options)).toMatchObject({
+      targetCount: 1, queries: { network: 4 },
+      collection: { complete: 4, partial: 0, failed: 0, unknown: 0 }, write: { status: 'committed' },
+    })
+    const calls = replay.calls.map(call => [call.interface, call.rdjb, call.uscc])
+    expect(calls).toHaveLength(4)
+    expect(calls).toEqual(expect.arrayContaining([
+      ['apply_list', '', uscc], ['business_list', '1', uscc], ['business_list', '2', uscc], ['business_list', '3', uscc],
+    ]))
+    const persisted = fixture.psql(['-At', '-c', `SELECT interface, rdjb FROM business.platform_collection
+      ORDER BY interface, rdjb`]).trim().split('\n')
+    expect(persisted).toEqual(['apply_list|', 'business_list|1', 'business_list|2', 'business_list|3'])
+  } finally {
+    try { await pool?.end() } finally {
+      try { runtime?.close() } finally { rmSync(dir, { recursive: true, force: true }) }
+    }
+  }
+}, 30_000)

@@ -1,15 +1,6 @@
 import { processFactsFromRow, type PlatformRelationRecord } from './identity'
-import type { BusinessStatusValue } from '../../../../db/business-status'
+import type { BusinessStatusValue } from '../../../../db/business-status-contract'
 import type { PlatformRow } from './types'
-
-/** Allowlist for readers that must avoid materializing unrelated archived payloads. */
-export const PLATFORM_PROCESS_RAW_KEYS = ['szsfmc', 'cszt', 'whpc', 'sblx', 'sqsj', 'personuuid', 'year', 'rdjb'] as const
-
-/** Decode SQLite's multi-path json_extract array, retaining JSON value types. */
-export function platformProcessRawFromJson(value: string): Record<string, unknown> {
-  const values: unknown[] = JSON.parse(value)
-  return Object.fromEntries(PLATFORM_PROCESS_RAW_KEYS.map((key, index) => [key, values[index]]))
-}
 
 const fields = ['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'] as const
 type Field = typeof fields[number]
@@ -18,7 +9,7 @@ type Facts = Omit<TextFacts, 'status'> & { status: BusinessStatusValue }
 export type PlatformNormalizationConflict =
   | { field: 'status'; storedValue: string | Buffer; rawValue: string }
   | { field: Exclude<Field, 'status'>; storedValue: string | number; rawValue: string | number }
-/** Correlated SQLite comparison tuples are checked before exposing the field union. */
+/** Check stored comparison values before exposing the field union. */
 export function platformNormalizationConflict(field: Field, storedValue: unknown, rawValue: unknown): PlatformNormalizationConflict {
   if (field === 'status') {
     if ((typeof storedValue === 'string' || Buffer.isBuffer(storedValue)) && typeof rawValue === 'string') return { field, storedValue, rawValue }

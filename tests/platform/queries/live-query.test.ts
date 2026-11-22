@@ -2,11 +2,19 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initializeDb } from '../../../db/client'
-import { updateCredential } from '../../../layers/core/server/utils/credential-state'
+import { execFileSync } from 'node:child_process'
+import { sql } from 'drizzle-orm'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'platform-live-'))
-const db = initializeDb({ create: true,  dbPath: join(dir, 'test.db') })
+let db: ReturnType<typeof usePostgresDirectoryDb>
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+const setCookie = (value: string | null) => updatePostgresCredentialState(db, { 'sme-roster.miitCookie': value })
+const dump = () => execFileSync(join(process.env.ROSTER_TEST_POSTGRES_BIN!, 'pg_dump'), [
+  '--data-only', '--schema=business', '--restrict-key=livequerysnapshot', postgres!.url,
+])
 const cookie = 'session=synthetic-query-secret'
 let body: unknown
 let rest: (event: any) => Promise<any>
@@ -21,7 +29,10 @@ function page(rows: Record<string, string>[], total = rows.length, number = 1, p
 const response = (text: string, status = 200) => ({ ok: status === 200, status, text: async () => text })
 async function query(input: unknown) { body = input; return rest({}) }
 beforeAll(async () => {
-  process.env.NUXT_DB_PATH = join(dir, 'test.db')
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  db = usePostgresDirectoryDb()
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
   vi.stubGlobal('readBody', async () => body)
   vi.stubGlobal('setHeader', vi.fn())
@@ -35,15 +46,21 @@ beforeAll(async () => {
     expect(JSON.parse(wire.content[0].text)).toEqual(wire.structuredContent)
     return wire.structuredContent
   } }
-})
-beforeEach(() => {
-  updateCredential('sme-roster.miitCookie', cookie, { db })
+}, 30_000)
+beforeEach(async () => {
+  await setCookie(cookie)
   fetcher.mockReset()
   vi.stubGlobal('fetch', fetcher)
 })
-afterAll(() => { vi.unstubAllGlobals(); delete process.env.NUXT_DB_PATH; rmSync(dir, { recursive: true, force: true }) })
-it('REST and MCP preserve every paginated relation for a name and code without writing SQLite', async () => {
-  const before = db.$client.serialize()
+afterAll(async () => {
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+  rmSync(dir, { recursive: true, force: true })
+})
+it('REST and MCP preserve every paginated relation for a name and code without writing business data', async () => {
+  const before = dump()
   const rows = [{ qymc: '合成新名称', tyshxydm: '91330211255994457P' }, { qymc: '合成曾用名', tyshxydm: '91330211255994457P' }]
   fetcher.mockImplementation(async (_: string, init: any) => {
     expect(init.headers.Cookie).toBe(cookie)
@@ -60,7 +77,7 @@ it('REST and MCP preserve every paginated relation for a name and code without w
   expect(a).toMatchObject({ source: 'queryList', status: 'success', rows, fetchedCount: 2, declaredTotal: 2, completeness: 'complete', unfinished: [], effectiveConditions: { name: '合成', uscc: '91330211255994457P', combination: 'and' } })
   expect(a.pages.map((p: any) => p.page)).toEqual([1, 2])
   expect({ ...a, queriedAt: null, completedAt: null }).toEqual({ ...b, queriedAt: null, completedAt: null })
-  expect(db.$client.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
+  expect(dump().equals(before), 'business data dump remains unchanged').toBe(true)
 })
 it.each([
   ['empty', () => response(page([], 0)), 'no_record', null],
@@ -118,7 +135,7 @@ it.each([
   expect(fetcher).not.toHaveBeenCalled()
 })
 it('missing credentials are not queried and do not fall back to a real environment', async () => {
-  updateCredential('sme-roster.miitCookie', null, { db })
+  await setCookie(null)
   const previous = process.env.MIIT_COOKIE
   process.env.MIIT_COOKIE = ''
   try {
@@ -172,7 +189,7 @@ it('keeps the server credential snapshot for all pages and excludes unrelated en
   let n = 0
   fetcher.mockImplementation(async (_url: string, init: any) => {
     expect(init.headers.Cookie).toBe(cookie)
-    updateCredential('sme-roster.miitCookie', 'session=synthetic-next-account', { db })
+    await setCookie('session=synthetic-next-account')
     const raw = JSON.parse(page([{ qymc: '合成' }], 2, ++n))
     raw.account = { token: 'private-envelope-token', username: 'private-account' }
     return response(JSON.stringify(raw))
@@ -226,13 +243,13 @@ it.each(['synthetic-query-secret', 'synthetic-query-%73ecret', 'session=syntheti
   expect(await query({ source: 'queryList', name: '合成' })).toMatchObject({ status: 'failed', error: { code: 'sensitive_response' }, rows: [] })
 })
 it('short credential components do not corrupt fixed public contract fields', async () => {
-  updateCredential('sme-roster.miitCookie', 'session=and', { db })
+  await setCookie('session=and')
   fetcher.mockResolvedValue(response(page([{ qymc: '合成' }])))
   expect(await query({ source: 'queryList', name: '合成' })).toMatchObject({ source: 'queryList', status: 'success', effectiveConditions: { combination: 'and' }, completeness: 'complete' })
 })
 
 it('returns a service error without querying upstream when credential storage is unavailable', async () => {
-  db.$client.exec('ALTER TABLE service_credential RENAME TO unavailable_credential')
+  await db.execute(sql`ALTER TABLE service_credential RENAME TO unavailable_credential`)
   try {
     expect(await query({ source: 'queryList', name: '合成' })).toEqual({
       error: { code: 'service_unavailable', message: '平台查询服务暂时不可用。' },
@@ -240,6 +257,6 @@ it('returns a service error without querying upstream when credential storage is
     expect(setResponseStatus).toHaveBeenCalledWith(expect.anything(), 503)
     expect(fetcher).not.toHaveBeenCalled()
   } finally {
-    db.$client.exec('ALTER TABLE unavailable_credential RENAME TO service_credential')
+    await db.execute(sql`ALTER TABLE unavailable_credential RENAME TO service_credential`)
   }
 })

@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { chooseCalendarPeriod } from '../../support/calendar-period'
 // Component/composable seam only: these are not actual Nuxt/browser evidence.
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
@@ -6,7 +6,7 @@ import { defineComponent, h, ref } from 'vue'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useLogRead } from '../../../layers/core/app/composables/useLogRead'
 import type { FieldCapturedLogEvent, LogSummary } from '../../../layers/core/lib/logging/contract'
-// Model reduced-motion preference in happy-dom; real browser checks retain the
+// Model reduced-motion preference in jsdom; real browser checks retain the
 // production transitions and exercise the actual Tabs/Sheet interaction.
 vi.mock('motion-v', async (original) => {
   const actual = await original<typeof import('motion-v')>()

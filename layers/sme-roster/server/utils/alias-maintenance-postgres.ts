@@ -1,3 +1,4 @@
+import { isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
 import { createHash } from 'node:crypto'
 import { and, count, desc, eq, ne, notExists } from 'drizzle-orm'
 import { alias as pgAlias } from 'drizzle-orm/pg-core'
@@ -6,14 +7,12 @@ import { enterprise as enterpriseTable, enterpriseAlias as aliases, enterpriseAl
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { sourceDocument } from '../../../../db/postgresql/official-evidence-tables'
 import { platformBusinessObservation as observation, platformCollection as collection,
-  platformLegacyRelationAlias as legacy, platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
+  platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { z } from 'zod'
 import { lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeUscc } from '../../lib/domain'
-import {
-  aliasDecisionSchema, aliasListInput, aliasPageInput, boundedAliasPage, decideEnterpriseAlias, failAlias, parseAliasInput, positiveAliasId,
-} from './alias-maintenance'
-import { capturePostgresIdentityChange, readPostgresIdentityMaterial } from './postgres-identity-evidence'
+import { failAlias, parse as parseAliasInput, positiveId as positiveAliasId } from './alias-maintenance-model'
+import { aliasDecisionSchema, aliasListInput, aliasPageInput, boundedAliasPage, decideEnterpriseAlias } from './alias-maintenance-model'
 
 type Db = NodePgDatabase
 type Alias = Parameters<typeof decideEnterpriseAlias>[0]
@@ -81,20 +80,19 @@ async function checkSource(db: Db, alias: Alias) {
       .innerJoin(sourceDocument, eq(sourceDocument.path, recordEvidence.sourceFile))
       .where(and(eq(sourceDocument.id, sourceRefId), eq(sourceDocument.source, 'jxj'), eq(record.enterpriseId, enterpriseId),
         eq(record.nameRaw, name))).limit(1)
-    if (!rows.length) failAlias(400, 'alias_source_evidence_mismatch', '公布文件ID必须由该企业同原名称的记录出处支持')
+    if (!rows.length) failAlias(400, 'alias_source_evidence_mismatch', '公布名单原件的 ID 必须由该企业同原名称的记录出处支持')
     return
   }
   const original = pgAlias(assignment, 'original')
   const latest = db.select({ enterpriseId: assignment.enterpriseId, observationId: assignment.observationId }).from(assignment)
     .where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('latest')
   const [source] = await db.select({ interface: collection.interface, enterpriseId: latest.enterpriseId,
-    uscc: enterpriseTable.usccNorm, originalUscc: original.usccRaw, originalName: original.nameRaw }).from(legacy)
-    .innerJoin(observation, eq(observation.id, legacy.observationId))
+    uscc: enterpriseTable.usccNorm, originalUscc: original.usccRaw, originalName: original.nameRaw }).from(observation)
     .innerJoin(collection, eq(collection.id, observation.collectionId))
     .innerJoin(enterpriseTable, eq(enterpriseTable.id, enterpriseId))
     .innerJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
     .innerJoinLateral(latest, eq(latest.observationId, observation.id))
-    .where(eq(legacy.oldId, sourceRefId))
+    .where(and(eq(observation.publicId, sourceRefId), isCurrentPlatformObservation(db)))
   if (!source) return failAlias(400, 'alias_source_evidence_required', '平台别名必须引用真实平台关系')
   const expectedInterface = sourceKind === 'platform_business' ? 'business_list' : 'apply_list'
   if (source.interface !== expectedInterface || !source.uscc || normalizeUscc(source.originalUscc) !== source.uscc || source.originalName !== name) {
@@ -125,7 +123,7 @@ async function checkConflict(db: Db, alias: Alias) {
 }
 
 export function maintainPostgresEnterpriseAlias(db: Db, enterpriseId: unknown, aliasId: unknown, input: unknown) {
-  if (process.env.NUXT_POSTGRES_DIRECTORY_WRITE !== '1') failAlias(503, 'write_unavailable', 'PostgreSQL 企业别名处于只读模式')
+  if (process.env.NUXT_DB_READONLY === '1') failAlias(503, 'write_unavailable', 'PostgreSQL 企业别名处于只读模式')
   const request = parseAliasInput(aliasDecisionSchema, input)
   const requestHash = createHash('sha256').update(JSON.stringify(request)).digest('hex')
   return db.transaction(async tx => {
@@ -145,7 +143,6 @@ export function maintainPostgresEnterpriseAlias(db: Db, enterpriseId: unknown, a
       await checkSource(tx, next)
       await checkConflict(tx, next)
     }
-    const identity = await readPostgresIdentityMaterial(tx, owner)
     const [updated] = await tx.update(aliases).set({
       name: next.name, nameNorm: next.nameNorm, sourceKind: next.sourceKind, sourceRefId: next.sourceRefId,
       validFrom: next.validFrom, validTo: next.validTo, note: next.note, verificationStatus: next.verificationStatus,
@@ -159,7 +156,6 @@ export function maintainPostgresEnterpriseAlias(db: Db, enterpriseId: unknown, a
       idempotencyKey: request.idempotencyKey, requestHash, before: JSON.stringify(before), after: JSON.stringify(alias),
       createdAt: new Date().toISOString(),
     })
-    await capturePostgresIdentityChange(tx, owner, `alias:${before.id}:${alias.version}`, identity)
     return { alias, replayed: false }
   })
 }

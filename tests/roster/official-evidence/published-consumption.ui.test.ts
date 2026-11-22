@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parse } from 'vue/compiler-sfc'
@@ -209,7 +209,7 @@ describe("formal source consumer boundaries", () => {
   const states = [true, false].flatMap(capability => (['confirmed', 'candidate'] as const).map(status => ({ capability, status })))
   it.each(states)("readonly event sources and current never mount decisions or request capability for $status capability=$capability", async ({ capability, status }) => {
     vi.stubGlobal('useState', () => ref(null))
-    const api = vi.fn(async (url: string) => url === '/api/roster/evidence-review/browser-context' ? { writeEnabled: capability } : r4Source(status))
+    const api = vi.fn(async (url: string) => url === '/api/roster/browser-context' ? { writeEnabled: capability } : r4Source(status))
     vi.stubGlobal('$fetch', api)
     const wrapper = mount(SourceReader, { props: { kind: 'event', id: 9, readOnly: true }, global: { stubs } }); mounted.push(wrapper)
     await flushPromises()
@@ -218,17 +218,17 @@ describe("formal source consumer boundaries", () => {
     expect(wrapper.get('[aria-label="当前导出快照"]').text()).toContain('非历史出处')
     expect(wrapper.findAllComponents(CorrespondenceItem).map(item => item.props('readOnly'))).toEqual([true, true])
     expect(wrapper.find('[data-testid="event-correspondence-decision"]').exists()).toBe(false)
-    expect(api.mock.calls.filter(([url]) => url === '/api/roster/evidence-review/browser-context')).toHaveLength(0)
+    expect(api.mock.calls.filter(([url]) => url === '/api/roster/browser-context')).toHaveLength(0)
   })
 
   it.each(states.flatMap(state => ['default', 'false'].map(mode => ({ ...state, mode }))))("writable $mode source preserves decision UI for $status capability=$capability", async ({ capability, status, mode }) => {
     vi.stubGlobal('useState', () => ref(null))
-    const api = vi.fn(async (url: string) => url === '/api/roster/evidence-review/browser-context' ? { writeEnabled: capability } : r4Source(status))
+    const api = vi.fn(async (url: string) => url === '/api/roster/browser-context' ? { writeEnabled: capability } : r4Source(status))
     vi.stubGlobal('$fetch', api)
     const wrapper = mount(SourceReader, { props: { kind: 'event', id: 9, ...(mode === 'false' ? { readOnly: false } : {}) }, global: { stubs } }); mounted.push(wrapper)
     await flushPromises()
     const decision = wrapper.get('[data-testid="event-correspondence-decision"]')
-    expect(api.mock.calls.filter(([url]) => url === '/api/roster/evidence-review/browser-context')).toHaveLength(1)
+    expect(api.mock.calls.filter(([url]) => url === '/api/roster/browser-context')).toHaveLength(1)
     if (capability) expect(decision.text()).toContain(status === 'confirmed' ? '取消对应' : '确认对应')
     else { expect(decision.text()).toContain('此页面当前只读'); expect(decision.find('button').exists()).toBe(false) }
     expect(api.mock.calls.every(call => call.length === 1)).toBe(true) // read-only API mocks; no decision submitted
@@ -261,7 +261,6 @@ describe("formal source consumer boundaries", () => {
       publishedPresentation: event.publishedPresentation }
     const api = vi.fn(async (url: string) => {
       if (url === '/api/roster/enterprises/42') return detail
-      if (url === '/api/roster/evidence-impacts') return { rows: [], nextCursor: null }
       if (url === '/api/roster/correspondences') return { rows: payload.correspondences.map(({ event, predecessorEvent, relation, exportRow, ...summary }) => summary), total: 2, page: 1, pageSize: 200 }
       if (url === '/api/roster/correspondences/329') return payload.correspondences[0]
       if (url === '/api/roster/correspondences/330') return payload.correspondences[1]

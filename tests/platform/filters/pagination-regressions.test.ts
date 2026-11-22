@@ -1,16 +1,26 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initializeDb } from '../../../db/client'
-import { updateCredential } from '../../../layers/core/server/utils/credential-state'
-import { whenIdle } from '../../../layers/core/server/utils/job-runner'
-import { handlePlatformBatchRequest } from '../../../layers/sme-roster/server/utils/platform-batch-http'
 
+import { handlePlatformBatchRequest } from '../../../layers/sme-roster/server/utils/platform-batch-http'
+import { runningPostgresJobRunner, stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
+
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 const dir = mkdtempSync(join(tmpdir(), 'pagination-regressions-'))
-const db = initializeDb({ create: true,  dbPath: join(dir, 'test.sqlite') })
 const cookie = 'session=synthetic-pagination-secret'
 const upstream = vi.fn()
+const whenIdle = () => runningPostgresJobRunner(usePostgresDirectoryDb())?.wake()
+
+beforeEach(async () => {
+  await updatePostgresCredentialState(usePostgresDirectoryDb(), { 'sme-roster.miitCookie': cookie })
+  upstream.mockReset()
+  vi.stubGlobal('fetch', upstream)
+})
+
 const uscc = '91330211255994457P'
 let body: unknown
 let rest: (event: any) => Promise<any>
@@ -23,9 +33,10 @@ function response(source: string, rows: Record<string, string>[], metadata: Reco
   // businessList's embedded JSON is a supported, independent response form.
   return { ok: true, status: 200, text: async () => source === 'businessList' ? `<script>(function(data){} )(${data});</script>` : data }
 }
-const batch = (action: 'submit' | 'status' | 'retry', value?: unknown, batchId?: string) => handlePlatformBatchRequest(action, { body: value, batchId, headers: { authorization: 'Bearer synthetic-task' } }, { db, apiToken: 'synthetic-task', filesDir: dir })
+const batch = (action: 'submit' | 'status' | 'retry', value?: unknown, batchId?: string) => handlePlatformBatchRequest(action, { body: value, batchId, headers: { authorization: 'Bearer synthetic-task' } }, { apiToken: 'synthetic-task', filesDir: dir })
 beforeAll(async () => {
-  vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
   vi.stubEnv('MIIT_COOKIE', '')
   vi.stubEnv('MIIT_COOKIE_FILE', '')
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
@@ -40,9 +51,16 @@ beforeAll(async () => {
     expect(JSON.parse(wire.content[0].text)).toEqual(wire.structuredContent)
     return wire.structuredContent
   }
+}, 60_000)
+
+afterAll(async () => {
+  await stopPostgresJobs()
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+  rmSync(dir, { recursive: true, force: true })
 })
-beforeEach(() => { updateCredential('sme-roster.miitCookie', cookie, { db }); upstream.mockReset(); vi.stubGlobal('fetch', upstream) })
-afterAll(async () => { await whenIdle(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 
 it.each([true, false, [], [1], ' ', {}, -1, 1.5, 'NaN', '9007199254740992'])('REST and MCP keep malformed totals unknown and traverse every relation (case %#)', async total => {
   for (const source of ['queryList', 'businessList']) {
@@ -270,9 +288,7 @@ it.each(['queryList', 'businessList'])('REST and MCP keep known %s totals as con
   }
 })
 
-it.each([
-  ['queryList', false], ['businessList', false], ['queryList', true], ['businessList', true],
-] as const)('batch %s preserves actual short-page consumption across retries with restart=%s', async (source, restart) => {
+it.each(['queryList', 'businessList'] as const)('batch %s preserves actual short-page consumption across retries', async source => {
   let mode = 'initial'
   let release!: () => void
   let entered!: () => void
@@ -287,27 +303,17 @@ it.each([
   })
   const receipt = (await batch('submit', { items: [{ query: { ...inputFor(source), pageSize: 50 } }] })).body as any
   await blocked
-  let restarted: typeof db | undefined
   let checkpoint: any
   try {
     checkpoint = (await batch('status', undefined, receipt.batchId)).body as any
     expect(checkpoint).toMatchObject({ state: 'running', completeness: 'partial' })
     expect(checkpoint.items[0]).toMatchObject({ unfinished: [{ page: 2 }], segments: [{ rows: [{ relation: '1' }], declaredTotal: 3 }] })
-    if (restart) {
-      const path = join(dir, `short-page-${source}.sqlite`)
-      writeFileSync(path, db.$client.serialize())
-      restarted = initializeDb({ create: true,  dbPath: path })
-    }
   } finally { release(); await whenIdle() }
-  const invoke = (action: 'status' | 'retry', value?: unknown) => handlePlatformBatchRequest(action, { batchId: receipt.batchId, body: value, headers: { authorization: 'Bearer synthetic-task' } }, { db: restarted ?? db, apiToken: 'synthetic-task', filesDir: dir })
+  const invoke = (action: 'status' | 'retry', value?: unknown) => handlePlatformBatchRequest(action, { batchId: receipt.batchId, body: value, headers: { authorization: 'Bearer synthetic-task' } }, { apiToken: 'synthetic-task', filesDir: dir })
   try {
     const first = (await invoke('status')).body as any
     expect(first).toMatchObject({ state: 'failed', completeness: 'partial' })
     expect(first.items[0].segments[0].rows).toEqual(checkpoint.items[0].segments[0].rows)
-    if (restart) {
-      expect(first.error).toContain('重启')
-      expect(first.items[0]).toEqual(checkpoint.items[0])
-    }
     mode = 'contradictory'; seen.length = 0
     expect((await invoke('retry', { itemIds: receipt.itemIds })).status).toBe(202); await whenIdle()
     const second = (await invoke('status')).body as any
@@ -330,7 +336,7 @@ it.each([
     expect(final.items[0].segments.flatMap((s: any) => s.rows).map((r: any) => r.relation)).toEqual(['1', '2', '3'])
     expect(final.items[0].segments.at(-1)).toMatchObject({ fullRange: false, fetchedCount: 1 })
     expect(seen).toEqual([3])
-  } finally { await whenIdle(); restarted?.$client.close() }
+  } finally { await whenIdle() }
 })
 
 it.each([

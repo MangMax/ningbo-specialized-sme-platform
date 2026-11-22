@@ -4,7 +4,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { storedFile } from '../../../../db/postgresql/file-tables'
 import { importBatch } from '../../../../db/postgresql/import-tables'
 import { recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
-import type { recordEvent as sqliteRecordEvent } from '../../../../db/schema'
+import type { OfficialEventRow } from './roster-event-version-model'
 import { isPageCapable } from '../../lib/roster/evidence-page'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -24,7 +24,7 @@ export function readPostgresAnnouncementEvidenceHashes(tx: Tx, paths: Iterable<s
     .where(announcementValues(storedFile.relPath, pathsToRead)))
 }
 
-export async function readPostgresAnnouncementEvents(tx: Tx, condition: SQL, lock = false): Promise<typeof sqliteRecordEvent.$inferSelect[]> {
+export async function readPostgresAnnouncementEvents(tx: Tx, condition: SQL, lock = false): Promise<OfficialEventRow[]> {
   const query = tx.select().from(recordEvent).where(condition).orderBy(recordEvent.id)
   return (await (lock ? query.for('update') : query)).map(({ formalValidity, ...event }) => ({
     ...event, formalValidity: formalValidity === null ? null : JSON.parse(formalValidity),

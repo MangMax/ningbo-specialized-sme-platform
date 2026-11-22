@@ -5,7 +5,7 @@
 import type { ComparisonDirection } from '../comparison'
 import type { PlatformInterface } from '../labels'
 import type { PlatformRelationRecord } from './identity'
-import type { BusinessStatusValue } from '../../../../db/business-status'
+import type { BusinessStatusValue } from '../../../../db/business-status-contract'
 import type { DifferenceMeasureCode, DifferenceReasonCode, DifferenceStatus } from './payload'
 
 export const DEFAULT_FRESHNESS_MS = 24 * 60 * 60 * 1000

@@ -1,3 +1,4 @@
+import { sql, type SQL } from 'drizzle-orm'
 import { bigint, text, uniqueIndex } from 'drizzle-orm/pg-core'
 import { businessSchema } from './business-schema'
 
@@ -27,7 +28,19 @@ export const officialEvidenceRowRevision = businessSchema.table('official_eviden
   importBatchId: bigint('import_batch_id', { mode: 'number' }),
   correctionBatchKey: text('correction_batch_key'),
   createdAt: text('created_at').notNull(),
+  nameRawJson: text('name_raw_json'),
+  usccRawJson: text('uscc_raw_json'),
+  districtRawJson: text('district_raw_json'),
 }, table => [uniqueIndex('official_evidence_row_revision_uq').on(table.evidenceId, table.revision)])
+
+// PostgreSQL text cannot store U+0000. The companion cell keeps the original
+// JSON string for affected values while ordinary captures use the original text column.
+export const officialRawFieldColumns = { nameRaw: 'name_raw', usccRaw: 'uscc_raw', districtRaw: 'district_raw' } as const
+export function postgresOfficialRawField(alias: string, field: keyof typeof officialRawFieldColumns): SQL {
+  const column = officialRawFieldColumns[field]
+  const table = sql.identifier(alias)
+  return sql`coalesce(${table}.${sql.identifier(column + '_json')}::json, to_json(${table}.${sql.identifier(column)}), 'null'::json)`
+}
 
 export const sourceDocument = businessSchema.table('source_document', {
   id: bigint('id', { mode: 'number' }).primaryKey().generatedByDefaultAsIdentity(),

@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import PlatformBusinessProcessTable from '../../../layers/sme-roster/app/components/PlatformBusinessProcessTable.vue'
@@ -31,6 +31,7 @@ const isolated: BusinessProcessRow = {
 }
 const detail = {
   record: { id: 7, platformKey: 'SQ-2023-1', interface: 'business_list' as const, identityRuleVersion: 'platform-observation-v1', createdAt: '2026-10-01T00:00:00Z' },
+  current: version,
   versions: [{ ...version, hashAlgorithm: 'platform-row-json-v1', contentHash: 'a'.repeat(64), createdAt: '2026-10-01T00:00:00Z', observationCount: 2, firstObservedAt: '2026-10-01T00:00:00Z', lastObservedAt: '2026-10-02T00:00:00Z', titleScopes: ['2'] }],
   observations: [{ relationId: 9, queryId: 4, queriedAt: '2026-10-01T00:00:00Z', queryKey: '91330211255994457P', queryStatus: 'success', sequenceNo: 1, enterpriseId: 11, enterpriseName: '甲办理企业', identityState: 'resolved' as const, contentState: 'verified' as const, keySource: 'both' as const, projectionRuleVersion: 'platform-observation-v1', versionId: 12, titleScopes: ['2'], correspondenceRefs: [{ id: 1, status: 'confirmed', revision: 2 }], version }],
   counts: { versions: 1, observations: 2, versionsTruncated: false, observationsTruncated: true },
@@ -47,7 +48,7 @@ describe('关联办理表格', () => {
       expect(view.text()).not.toContain('创新型中小企业、专精特新“小巨人”')
       expect(view.text()).toContain('终审通过')
       expect(view.text()).toContain('2023-2')
-      expect(view.text()).toContain('版本 1')
+      expect(view.text()).not.toContain('版本')
       expect(view.text()).not.toContain('1 / 2')
       await view.get('[data-testid="platform-business-process-row"] button').trigger('click')
       expect(view.emitted('open-record')?.[0]).toEqual([7])
@@ -78,7 +79,7 @@ describe('关联办理详情', () => {
       const dialog = new DOMWrapper(document.body).get('[data-testid="platform-business-process-detail"]')
       expect(dialog.text()).not.toContain('办理编号')
       expect(dialog.text()).not.toContain('SQ-2023-1')
-      expect(dialog.findAll('[data-testid="platform-business-process-version"]')).toHaveLength(1)
+      expect(dialog.findAll('[data-testid="platform-business-process-current"]')).toHaveLength(1)
       expect(dialog.text()).not.toContain('称号范围')
       expect(dialog.text()).not.toMatch(/版本 #|记录身份|规则版本|采集时间|内容哈希|platform-observation-v1|business_list/)
       expect(dialog.text()).not.toContain('实际观察')

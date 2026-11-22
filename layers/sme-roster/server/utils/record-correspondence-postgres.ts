@@ -4,20 +4,20 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { storedFile } from '../../../../db/postgresql/file-tables'
 import { record, recordEvidence, recordEvent } from '../../../../db/postgresql/ledger-tables'
-import { platformExportBatch, platformExportRow, platformLegacyRelationAlias } from '../../../../db/postgresql/platform-tables'
+import { platformExportBatch, platformExportRow, platformBusinessObservation } from '../../../../db/postgresql/platform-tables'
 import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { title } from '../../../../db/postgresql/title-table'
-import * as schema from '../../../../db/schema'
+import type { enterprise as EnterpriseTable } from '../../../../db/postgresql/enterprise-tables'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { readPostgresRelationDisplays } from '../../lib/platform/postgres-query-display'
 import { readPostgresPublishedNames } from '../../lib/roster/official-published-presentation-postgres'
-import { readPostgresCurrentProofCoverage } from './comparison-scope-proof-postgres'
 import { readPostgresCorrespondenceRefs } from './record-correspondence-postgres-refs'
-import { sanitizeRelationDisplays } from './platform-relation-evidence-display-target'
-import { correspondencePublishedScope, correspondenceSourceSelections, projectCorrespondenceSources, type SourceSelection } from './record-correspondence-read'
+import { sanitizeRelationDisplays } from './relation-evidence-projection'
+import { correspondencePublishedScope, correspondenceSourceSelections, projectCorrespondenceSources, type SourceSelection } from './record-correspondence-projection'
 import type { ReceiptRedactor } from './import-receipt-redaction'
 import { readPostgresCorrespondenceTargetSources } from './record-correspondence-target-postgres'
-import { projectObservedCorrespondence, type CorrespondenceFilter, type CorrespondencePaging, type CorrespondenceRead, type ReadSources, type SourceReference, type StoredCorrespondence } from './record-correspondence'
+import { type CorrespondenceFilter, type CorrespondencePaging, type CorrespondenceRead, type ReadSources, type SourceReference } from './record-correspondence'
+import { projectObservedCorrespondence } from './record-correspondence-model'
 
 type Db = Pick<NodePgDatabase, 'execute' | 'select'>
 type Evidence = ReadSources['evidence'] extends Map<number, (infer T)[]> ? T : never
@@ -29,13 +29,13 @@ async function readEventsAndEvidence(db: Db, eventIds: number[]) {
   const v = alias(recordEvidence, 'v'), f = storedFile
   type Event = ReadSources['events'] extends Map<number, infer V> ? V : never
   const events = await db.select({
-    event: sql<Event['event']>`${postgresRosterRow(schema.recordEvent, 'ev')}`,
-    record: sql<Event['record']>`${postgresRosterRow(schema.record, 'r')}`,
-    enterprise: sql<Event['enterprise']>`${postgresRosterRow(schema.enterprise, 'e')}`,
+    event: sql<Event['event']>`${postgresRosterRow(recordEvent, 'ev')}`,
+    record: sql<Event['record']>`${postgresRosterRow(record, 'r')}`,
+    enterprise: sql<Event['enterprise']>`${postgresRosterRow(enterprise, 'e')}`,
   }).from(ev).innerJoin(r, eq(r.id, ev.recordId)).innerJoin(e, eq(e.id, r.enterpriseId))
     .where(eq(ev.id, sql`ANY(${ids(eventIds)})`))
   const evidence = await db.select({
-    evidence: sql<Evidence['evidence']>`${postgresRosterRow(schema.recordEvidence, 'v')}`,
+    evidence: sql<Evidence['evidence']>`${postgresRosterRow(recordEvidence, 'v')}`,
     storedFile: sql<Evidence['storedFile']>`CASE WHEN ${f.id} IS NOT NULL THEN json_build_object(
       'id',${f.id},'relPath',${f.relPath},'bytes',${f.bytes},'sha256',${f.sha256},'removedAt',${f.removedAt}) END`,
   }).from(v).leftJoin(f, eq(f.relPath, v.sourceFile))
@@ -47,17 +47,13 @@ async function readExports(db: Db, rowIds: number[]) {
   const r = alias(platformExportRow, 'r'), b = alias(platformExportBatch, 'b')
   type Export = ReadSources['exports'] extends Map<number, infer V> ? V : never
   return db.select({
-    exportRow: sql<Export['exportRow']>`${postgresRosterRow(schema.platformExportRow, 'r')}`,
-    exportBatch: sql<Export['exportBatch']>`${postgresRosterRow(schema.platformExportBatch, 'b')}`,
+    exportRow: sql<Export['exportRow']>`${postgresRosterRow(platformExportRow, 'r')}`,
+    exportBatch: sql<Export['exportBatch']>`${postgresRosterRow(platformExportBatch, 'b')}`,
   }).from(r).innerJoin(b, eq(b.id, r.batchId)).where(eq(r.id, sql`ANY(${ids(rowIds)})`))
 
 }
 
-type ProofPair = { relationId: number; exportRowId: number; ids: number[] }
-
-export async function observePostgresCorrespondences(db: Db,
-  references: (SourceReference & Partial<Pick<StoredCorrespondence, 'type' | 'role' | 'provenance'>>)[], requestedProofs: ProofPair[] = [],
-) {
+export async function observePostgresCorrespondences(db: Db, references: SourceReference[], validityIds: number[]) {
   const scoped = references.filter(row => row.status === 'confirmed' || row.status === 'candidate')
   const { events, evidence } = await readEventsAndEvidence(db, present(scoped.flatMap(row => [row.eventId, row.predecessorEventId])))
   const relations = await readPostgresCorrespondenceTargetSources(db, present(scoped.map(row => row.relationId)))
@@ -65,23 +61,15 @@ export async function observePostgresCorrespondences(db: Db,
   const owner = alias(enterprise, 'p')
   const ownerIds = present([...scoped.map(row => row.enterpriseId), ...relations.map(row => row.relation.enterpriseId)])
   const enterprises = await db.select({
-    row: sql<typeof schema.enterprise.$inferSelect>`${postgresRosterRow(schema.enterprise, 'p')}`,
+    row: sql<typeof EnterpriseTable.$inferSelect>`${postgresRosterRow(enterprise, 'p')}`,
   }).from(owner).where(eq(owner.id, sql`ANY(${ids(ownerIds)})`))
   const titles = await db.select({ code: title.code }).from(title)
     .where(eq(title.code, sql`ANY(${sql.param([...new Set(scoped.map(row => row.titleCode))])}::text[])`))
   const exportMap = new Map(exports.map(row => [row.exportRow.id, row]))
   const relationMap = new Map(relations.map(row => [row.relation.id, row]))
-  const savedProofs = scoped.flatMap(ref => {
-    if (ref.type !== 'recognized_export' || ref.role !== 'same_current_row' || ref.status !== 'confirmed') return []
-    return [{ relationId: ref.relationId!, exportRowId: ref.exportRowId!, ids: ref.provenance?.comparisonProofIds as number[] ?? [] }]
-  })
-  const coverage = await readPostgresCurrentProofCoverage(db, [...savedProofs, ...requestedProofs].flatMap(ref => {
-    const queryId = relationMap.get(ref.relationId)?.query.id
-    const batchId = exportMap.get(ref.exportRowId)?.exportBatch.id
-    return queryId === undefined || batchId === undefined ? [] : [{ ids: ref.ids, queryId, batchId }]
-  }))
+  const validity = await readPostgresCorrespondenceRefs(db, { validityIds })
   const observed: ReadSources = {
-    coversCurrentProof: (ids, queryId, batchId) => coverage({ ids, queryId, batchId }),
+    sourceValidity: new Map(validity.map(ref => [ref.id, !ref.requiresRevalidation])),
     events: new Map(events.map(row => [row.event.id, row])),
     evidence: Map.groupBy(evidence, row => row.evidence.recordEventId),
     relations: relationMap, exports: exportMap, enterprises: new Map(enterprises.map(({ row }) => [row.id, row])),
@@ -91,9 +79,9 @@ export async function observePostgresCorrespondences(db: Db,
 }
 
 const edge = recordCorrespondence
-const relation = platformLegacyRelationAlias
+const relation = platformBusinessObservation
 const filters = {
-  id: edge.id, eventId: edge.eventId, relationId: relation.oldId, exportRowId: edge.exportRowId,
+  id: edge.id, eventId: edge.eventId, relationId: relation.publicId, exportRowId: edge.exportRowId,
   enterpriseId: edge.enterpriseId, titleCode: edge.titleCode, status: edge.status,
   type: edge.type, role: edge.role, ruleVersion: edge.ruleVersion,
 }
@@ -113,25 +101,22 @@ export async function listPostgresCorrespondences(db: Db, filter: Correspondence
 }
 
 export async function readPostgresCorrespondenceSelection(db: Db, where: SQL | undefined, paging?: CorrespondencePaging) {
-  const { observationId: _observationId, targetIdentity: _targetIdentity, provenance: _provenance, ...columns } = getTableColumns(edge)
+  const { observationId: _observationId, targetIdentity: _targetIdentity, provenance: _provenance, platformEvidenceReboundRevision: _rebound, ...columns } = getTableColumns(edge)
   const query = db.select({
     ...columns,
-    relationId: relation.oldId,
-    targetIdentity: sql<StoredCorrespondence['targetIdentity']>`'{}'::jsonb`,
-    provenance: sql<StoredCorrespondence['provenance']>`CASE WHEN ${edge.status}='confirmed'
-      THEN jsonb_build_object('comparisonProofIds',${edge.provenance}::json->'comparisonProofIds') ELSE '{}'::jsonb END`,
-  }).from(edge).leftJoin(relation, eq(relation.observationId, edge.observationId))
+    relationId: relation.publicId,
+  }).from(edge).leftJoin(relation, eq(relation.id, edge.observationId))
     .where(where).orderBy(edge.id)
   const page = await (paging
     ? query.limit(paging.pageSize).offset(Math.min(Number.MAX_SAFE_INTEGER, (paging.page - 1) * paging.pageSize))
     : query)
-  const observed = page.length ? await observePostgresCorrespondences(db, page) : undefined
-  return page.map(row => projectObservedCorrespondence(row, observed!))
+  const observed = page.length ? await observePostgresCorrespondences(db, page, page.filter(row => row.status === 'confirmed' || row.status === 'candidate').map(row => row.id)) : undefined
+  return page.map(row => projectObservedCorrespondence({ ...row, targetIdentity: {}, provenance: {} }, observed!))
 }
 
 export async function pagePostgresCorrespondences(db: Db, filter: CorrespondenceFilter, paging: CorrespondencePaging) {
   const [countRow] = await db.select({ total: count() }).from(edge)
-    .leftJoin(relation, eq(relation.observationId, edge.observationId)).where(relationScope(filter))
+    .leftJoin(relation, eq(relation.id, edge.observationId)).where(relationScope(filter))
   return { rows: await listPostgresCorrespondences(db, filter, paging), total: countRow!.total, ...paging }
 }
 

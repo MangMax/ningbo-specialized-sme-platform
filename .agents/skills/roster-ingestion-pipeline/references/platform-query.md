@@ -28,7 +28,7 @@
 
 批量：向 `POST /api/platform/batches` 提交 `{items:[{query:…},…],limits?:…}`，或用 MCP `submit_platform_batch`。提交/重试须有应用 API/MCP 任务令牌。保留回执 batchId、所有 itemId 和负责人。通过 `GET /api/platform/batches/{batchId}` / `get_platform_batch` 查进度，通过 `GET /api/platform/batches/{batchId}/items/{itemId}` / `get_platform_batch_item` 取单项结果。queued/running 表示未结束；`progress.done` 统计完整完成项，不是尝试项。最终 failed 仍可能包含成功项及分页检查点。
 
-每项含只追加的查询 `segments` 和当前 `unfinished`。保留全部分段、原始时间、成功页及其行；按成功页 fetchedCount 对应返回行区间，不按名称/代码压缩。重试后当前项可完整，同时仍保留先前失败页历史。
+每项含只追加的查询 `segments` 和当前 `unfinished`。离线保存全部分段、查询时间、成功页位置及其行；按成功页 fetchedCount 对应返回行区间，不按名称或代码压缩。重试后当前项可完整，同时仍保留先前失败页历史。
 
 ## 只重试缺口
 
@@ -44,7 +44,7 @@
 
 所有平台请求在同一应用进程共享最多并发2个，包括单查、旧入口和退避。工作代理不各建直连请求池；此内存限流器不提供多实例协调。
 
-存储支持 `business_list`、`apply_list` 和独立 `recognized_list`（仅 queryBusList）。用 `recognizedResultToImport` 将每个完整原结果/每个批量分段转换后，经统一预检/提交转存，保留原时间、条件、分页和原始行。元数据或结束证明不足继续待处理，不改标来源、不编完整性。通过 `GET /api/platform/queries` 或 `list_platform_queries` 读回历史，核对每个查询/行 ID。
+存储支持 `business_list`、`apply_list` 和独立 `recognized_list`（仅 queryBusList）。用 `recognizedResultToImport` 将每个完整原结果/每个批量分段转换后，经统一预检/提交转存，提交前离线保存原始响应和逐页材料。元数据或结束证明不足继续待处理。通过 `GET /api/platform/queries` 或 `list_platform_queries` 读回已提取的业务记录，核对查询 ID、记录 ID 和来源定位。精确原文或页面回放从离线档案查找。
 
 归档后另查本地业务状态，均不访问外部平台：
 
@@ -60,8 +60,8 @@
 
 三接口业务采集任务使用 `difference_snapshot`，先备份，再按原编号入库全部业务字段；无需保留请求或响应原文。可选 `enterpriseIds` 测试少量公布企业。
 
-下述 `rawDataVersion:1` 是其他调用方显式保留原文的兼容协议，不是新采集任务的存储要求。需要保留原 JSON 时，单查对象或批量 `items[].query` 显式加 `rawDataVersion:1`；先确认 capabilities v3 / tools/list 支持。原样保留 `rawData.version=1`、typed rows、实际接受页正文与页位置；旧 `rows` 只是字符串投影，缺少 rawData 的历史类型保持未知，不互相回退。原文敏感或超预算时，保留失败/unfinished 后补查，不裁剪正文。
+需要离线留存完整原页时，在单查对象中显式设置 `rawDataVersion:1`。将返回的 `rawData.rows`、已接受的 `rawData.pages` 原文和位置保存到业务档案。原文敏感或超预算的页会拒收，按 `unfinished` 查漏。批量结果保留结构化 `segments[].rows`、可用的 `dataRows` 与分页状态。批量行省略供应商返回的顶层空字符串与 null；保留 0、false、空白字符、嵌套业务值和全部行位置。批量查询参数中没有 `rawDataVersion`。
 
-封套归档可继续用 `recognizedResultToImport`。`collectionEvidence.rawData.version=1` 已显式选择 typed `rawData.rows` 作为 `relations[].rawFields` 与业务内容版本输入（#327）；封套版本、页/行、来源、解析、投影或关系冲突整批拒绝，不回退字符串行。无 rawData 的旧载荷仍按其原契约接受，历史类型未知，旧 ID/hash/raw/观察/决定不重算，不同接口业务身份独立。此接缝不代表 #298 或整条技能验收完成。原型同名键的现存 HTTP 拒绝边界及 MCP 读回能力见[归档接缝](../../../../layers/sme-roster/lib/platform/recognized-evidence.ts)。
+`recognizedResultToImport` 用原时间、页位置与提取的业务字段生成转存请求。单查带类型的行使用 `rawData.rows`，批量带类型的行使用 `dataRows`。核对输入类型、查询状态和来源事实，缺少结束证明的范围继续待处理。
 
-业务采集任务会复用同一查询范围内内容完全相同的最新完整结果，仅更新最近采集时间，不增加重复观察。任务仍实际请求供应商；失败和续页不按完整重复结果复用。三张业务表展示内容版本和采集时间，历史来源引用继续由原公开接口读取。
+业务采集任务会复用同一查询范围内内容完全相同的最新完整结果，仅更新最近采集时间，不增加重复观察。任务仍实际请求供应商；失败和续页不按完整重复结果复用。三张业务表展示内容版本和采集时间，历史来源引用继续通过平台查询历史读取。

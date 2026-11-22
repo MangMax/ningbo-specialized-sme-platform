@@ -97,7 +97,7 @@ export interface PlatformQueryOptions {
   sleep?: (ms: number) => Promise<void>
   /** 查询时点取值;默认当前时间。测试注入以固定 `queried_at`。 */
   now?: () => string
-  shouldCancel?: () => boolean
+  shouldCancel?: () => boolean | Promise<boolean>
   maxRequests?: number
   maxRows?: number
   maxDurationMs?: number
@@ -199,7 +199,7 @@ async function postWithoutBudget(
       if (source) appLog({ module: 'sme-roster', source: 'platform', operation: platformOperation(source, 'retry', body.rdjb ?? null), outcome: 'started', counts: { done: attempt },
         ...(Number.isSafeInteger(Number(body.pageNum)) && Number(body.pageNum) > 0 ? { page: Number(body.pageNum) } : {}) }, logContext)
     }
-    if (options.shouldCancel?.()) throw new Error('平台查询已取消。')
+    if (await options.shouldCancel?.()) throw new Error('平台查询已取消。')
     if (options.deadlineMs != null && Date.now() >= options.deadlineMs) throw new DOMException('平台查询超时。', 'TimeoutError')
     try {
       const response = await fetchImpl(new URL(path, base).toString(), {
@@ -263,7 +263,7 @@ export interface PlatformSlot {
   rdjb?: PlatformRdjb
 }
 
-/** Same page partition checks are used on admission and cache readback. */
+/** Validate the page partition before admitting a collected page. */
 function validateLegacyPage(parsed: ReturnType<typeof parsePlatformPage>, page: number, total: number | null): void {
   const declared = parsed.declaredTotal ?? total
   if (parsed.declaredTotal === null || parsed.responsePage !== page || parsed.responsePageSize !== 50 || parsed.rows.length > 50
@@ -272,32 +272,6 @@ function validateLegacyPage(parsed: ReturnType<typeof parsePlatformPage>, page: 
       || parsed.rows.length !== Math.min(50, Math.max(0, declared - (page - 1) * 50))))) {
     throw new PlatformResponseError('平台分页信息不一致或缺少页号/分页大小/声明总数。')
   }
-}
-
-/** Old success alone proves nothing. Revalidate the original per-page bytes and
- * exact ordered archived rows before reusing a newly collected complete slot. */
-export function readCompleteLegacySlot(raw: string | null, meta: { interface: PlatformInterface; rdjb: string; queryKey: string; queriedAt: string }, rows: PlatformRow[]): LegacySlotCollection | null {
-  try {
-    const value = JSON.parse(raw ?? '') as LegacySlotCollection
-    if (value.kind !== 'legacy-slot-pages/v1' || value.completeness !== 'complete' || value.unfinished.length || value.failureReason
-      || (['interface', 'rdjb', 'queryKey', 'queriedAt'] as const).some(key => value[key] !== meta[key])
-      || !value.pages.length || value.pages.length > 100 || !Number.isSafeInteger(value.requestCount)
-      || value.requestCount < value.pages.length || value.requestCount > 100
-      || !Number.isFinite(Date.parse(value.completedAt)) || Date.parse(value.completedAt) < Date.parse(meta.queriedAt)) return null
-    const collected: PlatformRow[] = []
-    let total: number | null = null
-    for (const [index, page] of value.pages.entries()) {
-      if (page.status !== 'success' || page.error !== null || page.page !== index + 1
-        || page.source !== (meta.interface === 'business_list' ? 'businessList' : 'queryList') || page.rdjb !== (meta.rdjb || null)
-        || !Number.isFinite(Date.parse(page.queriedAt)) || (total !== null && collected.length === total)) return null
-      const parsed = parsePlatformPage(page.raw, meta.interface === 'business_list' ? BUSINESS_GRID : APPLY_GRID)
-      validateLegacyPage(parsed, index + 1, total)
-      if (parsed.declaredTotal !== page.declaredTotal || page.fetchedCount !== parsed.rows.length) return null
-      total ??= parsed.declaredTotal
-      collected.push(...parsed.rows)
-    }
-    return total !== null && total === value.declaredTotal && total === collected.length && JSON.stringify(collected) === JSON.stringify(rows) ? value : null
-  } catch { return null }
 }
 
 /**
@@ -356,7 +330,7 @@ export async function queryPlatformSlots(
       const pageTime = options.now?.() ?? new Date().toISOString()
       try {
         if (credentialError) throw new Error('平台凭据不可用，请检查凭据来源。')
-        if (options.shouldCancel?.()) throw new Error('平台查询已取消。')
+        if (await options.shouldCancel?.()) throw new Error('平台查询已取消。')
         if (Date.now() >= deadlineMs) throw new DOMException('平台查询超时。', 'TimeoutError')
         if (collection.requestCount >= maxRequests || rows.length >= maxRows) throw new PlatformResponseError('平台查询达到安全上限，仍有未完成页。')
         const path = slot.interface === 'business_list' ? BUSINESS_LIST_PATH : APPLY_LIST_PATH

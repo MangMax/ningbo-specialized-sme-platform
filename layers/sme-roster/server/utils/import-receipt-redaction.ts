@@ -1,14 +1,10 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { readPostgresCredentialState } from '../../../core/server/utils/credential-state-postgres'
-import { resolveFromState } from '../../../core/server/utils/credential-state'
-import { validateReceiptRuntimeContext, type ReceiptRuntimeContext } from './receipt-runtime-context'
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import type * as schema from '../../../../db/schema'
+import { resolveFromState } from '../../../core/server/utils/credential-resolution'
 import { cookieRedactor } from '../../lib/platform/client'
-import { credentialContext, resolveCredential } from '../../../core/server/utils/credential-state'
-import { sanitizeEvidence } from './record-correspondence-read'
+import { sanitizeEvidence } from './evidence-redaction'
+import type { ReceiptRuntimeContext } from './receipt-runtime-context'
 
-type Db = BetterSQLite3Database<typeof schema>
 const sensitive = /cookie|password|passwd|token|secret|credential|authorization|authentication|api.?key|session/i
 /** Explicit trusted input for the internal name-only mode, never inferred from raw shape. */
 export type OfficialPublishedNameInput = Readonly<{
@@ -20,24 +16,17 @@ export type ReceiptRedactor = ((value: unknown, mode?: ReceiptRedactionMode) => 
   readonly knownRedactors: ReadonlyArray<(text: string) => string>
 }
 export type RedactionOptions = { additionalSecrets?: readonly (string | null | undefined)[] }
-export function importReceiptRedactor(db: Db, options: RedactionOptions = {}, receiptRuntime?: ReceiptRuntimeContext): ReceiptRedactor {
-  const runtime = receiptRuntime === undefined ? (typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : undefined) : validateReceiptRuntimeContext(receiptRuntime)
-  const context = receiptRuntime === undefined ? { ...credentialContext(), db } : { db, ocrToken: runtime?.ocrToken }
-  const secrets = [...(options.additionalSecrets ?? []), runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN, resolveCredential('sme-roster.miitCookie', context).value, resolveCredential('core.ocrToken', context).value]
-  return receiptRedactor(secrets)
-}
-
-export async function importPostgresReceiptRedactor(db: NodePgDatabase, options: RedactionOptions = {}) {
-  const runtime = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : undefined
+export async function importPostgresReceiptRedactor(db: NodePgDatabase, options: RedactionOptions = {}, receiptRuntime?: ReceiptRuntimeContext) {
+  const runtime = receiptRuntime ?? (typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : undefined)
   const saved = await readPostgresCredentialState(db)
-  const context = credentialContext()
+  const context = { ocrToken: runtime?.ocrToken }
   return receiptRedactor([
     ...(options.additionalSecrets ?? []), runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN,
     resolveFromState('sme-roster.miitCookie', context, saved).value, resolveFromState('core.ocrToken', context, saved).value,
   ])
 }
 
-function receiptRedactor(secrets: readonly (string | null | undefined)[]): ReceiptRedactor {
+export function receiptRedactor(secrets: readonly (string | null | undefined)[]): ReceiptRedactor {
   const redactors = Object.freeze([...new Set(secrets.filter((value): value is string => !!value))].map(cookieRedactor))
   function redact(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(redact)

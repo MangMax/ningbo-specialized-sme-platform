@@ -1,4 +1,4 @@
-import type { FileCategoryServer } from './file-store'
+import type { FileCategoryServer } from './file-store-contract'
 
 type Parameter = { name: string; in: string; schema: object; description?: string }
 type Content<Schema> = { content?: { 'application/json'?: { schema?: Schema } } }

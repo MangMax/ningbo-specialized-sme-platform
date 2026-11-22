@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Toaster, toast } from 'vue-sonner'

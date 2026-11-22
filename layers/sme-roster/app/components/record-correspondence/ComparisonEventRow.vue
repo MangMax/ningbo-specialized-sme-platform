@@ -54,8 +54,8 @@ const classificationVariant = computed(() => props.row.classification === 'histo
     </header>
 
     <div class="mt-3 grid min-w-0 gap-3 lg:grid-cols-2">
-      <section class="min-w-0" aria-label="正式文件">
-        <h4 class="text-muted-foreground mb-1.5 text-xs font-medium">正式文件</h4>
+      <section class="min-w-0" aria-label="公布名单">
+        <h4 class="text-muted-foreground mb-1.5 text-xs font-medium">公布名单</h4>
         <ul v-if="row.evidence.length" class="flex flex-col gap-1.5 text-table">
           <li v-for="evidence in row.evidence" :key="evidence.id" class="flex min-w-0 items-start gap-2">
             <RosterOfficialEvidence :evidence="evidence" :back="returnTo" @page-open="rememberReturn" />

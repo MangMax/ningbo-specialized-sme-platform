@@ -1,20 +1,28 @@
-import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { initializeDb, schema } from '../../../db/client'
+import { eq, sql } from 'drizzle-orm'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
+import pg from 'pg'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { storedFile } from '../../../db/postgresql/file-tables'
+import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
+import { rosterFileClassification, storedFilePart } from '../../../db/postgresql/roster-file-tables'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { minimalPdf } from '../../support/minimal-pdf'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'maintenance-derived-'))
-const filesDir = join(dir, 'files'), dbPath = join(dir, 'synthetic.db')
+const filesDir = join(dir, 'files')
 mkdirSync(filesDir)
-const db = initializeDb({ create: true,  dbPath })
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
+let pool: pg.Pool
+let db: NodePgDatabase
 const bytes = minimalPdf({ pages: 3 })
 const sha256 = createHash('sha256').update(bytes).digest('hex')
 let service: { baseUrl: string; stop: () => Promise<void> }
@@ -35,34 +43,72 @@ const evidencePath = (id: number) => '/api/roster/evidence/' + id
 const eventPath = (id: number) => '/api/roster/events/' + id
 const corrections = '/api/roster/evidence/corrections/'
 const eventCorrections = '/api/roster/events/corrections/'
-function fixture(name: string) {
+async function fixture(name: string) {
   const sourceFile = name + '.pdf'
   writeFileSync(join(filesDir, sourceFile), bytes)
-  const file = createClassifiedFile(db, { relPath: sourceFile, filename: sourceFile, ext: 'pdf', bytes: bytes.length, sha256 }, { source: 'jxj', kind: 'announcement' })
-  const enterprise = db.insert(schema.enterprise).values({ name, nameNorm: name }).returning().get()
-  const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
-  const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2021, decidedYear: 2021, batchSeq: 1, sortKey: 2021 }).returning().get()
-  const evidence = db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile, attachment: '附件1', listNo: 1, page: 1 }).returning().get()
-  // Existing persisted derived state, not an independent attachment declaration.
-  db.insert(schema.storedFilePart).values({ fileId: file.id, titleCode: 'specialized_sme', eventKind: 'award', year: 2021, batch: 1, attachment: '附件1', rowCount: 1, origin: 'derived' }).run()
-  return { file, enterprise, record, event, evidence }
+  const [file] = await db.insert(storedFile).values({
+    relPath: sourceFile, filename: sourceFile, ext: 'pdf', bytes: BigInt(bytes.length), sha256, createdAt: '2025-01-01T00:00:00Z',
+  }).returning()
+  await db.insert(rosterFileClassification).values({ fileId: file!.id, source: 'jxj', kind: 'announcement' })
+  const [owner] = await db.insert(enterprise).values({ name, nameNorm: name }).returning()
+  const [ledger] = await db.insert(record).values({ enterpriseId: owner!.id, titleCode: 'specialized_sme', source: 'jxj' }).returning()
+  const [event] = await db.insert(recordEvent).values({
+    recordId: ledger!.id, eventType: 'award', year: 2021, decidedYear: 2021, batchSeq: 1, sortKey: 2021,
+  }).returning()
+  const [evidence] = await db.insert(recordEvidence).values({
+    recordEventId: event!.id, sourceFile, attachment: '附件1', listNo: 1, page: 1,
+  }).returning()
+  // Existing persisted derived state, before any independent attachment declaration.
+  await db.insert(storedFilePart).values({
+    fileId: file!.id, titleCode: 'specialized_sme', eventKind: 'award', year: 2021, batch: 1,
+    attachment: '附件1', rowCount: 1, origin: 'derived',
+  })
+  return { file: file!, enterprise: owner!, record: ledger!, event: event!, evidence: evidence! }
+}
+async function rejectDerivedRefresh(fileId: number) {
+  await db.execute(sql`
+    CREATE FUNCTION business.reject_test_derived_refresh() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'synthetic projection failure'; END; $$;
+    CREATE TRIGGER reject_test_derived_refresh BEFORE DELETE ON business.stored_file_part
+    FOR EACH ROW WHEN (OLD.file_id = ${sql.raw(String(fileId))} AND OLD.origin = 'derived')
+    EXECUTE FUNCTION business.reject_test_derived_refresh();
+  `)
+}
+async function allowDerivedRefresh() {
+  await db.execute(sql`
+    DROP TRIGGER reject_test_derived_refresh ON business.stored_file_part;
+    DROP FUNCTION business.reject_test_derived_refresh();
+  `)
 }
 async function evidenceRequest(key: string, evidenceId: number, coordinate: Record<string, unknown>) {
   const row = await read(evidencePath(evidenceId))
   return { idempotencyKey: key, actor: { type: 'agent', id: 'integration-fixer' }, basis: '核对原公布文件的指定事件与名单坐标', operations: [{ evidenceId, eventId: row.eventId, recordId: row.recordId, enterpriseId: row.enterpriseId, expectedVersion: row.version, coordinate: { ...row.coordinate, ...coordinate } }] }
 }
 beforeAll(async () => {
+  runtime = await postgresRuntimeFixture({ dir })
+  pool = new pg.Pool({ connectionString: runtime.url, options: '-c search_path=business,public' })
+  db = drizzle<Record<string, never>>({ client: pool })
   const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
-  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: filesDir, NUXT_INCOMING_DIR: join(dir, 'incoming') } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), ...runtime.env, NUXT_DB_READONLY: '0', NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: filesDir, NUXT_INCOMING_DIR: join(dir, 'incoming') } })
   let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(service.baseUrl + '/api/health', { timeoutMs: 60000, child }) } catch (error) { await service.stop(); throw new Error(String(error) + output) }
 }, 90000)
-afterAll(async () => { if (service) await service.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => {
+  try {
+    if (service) await service.stop()
+  } finally {
+    try { await pool?.end() }
+    finally {
+      try { runtime?.close() }
+      finally { rmSync(dir, { recursive: true, force: true }) }
+    }
+  }
+})
 
 describe('cross-ticket event evidence and parse derived projections', () => {
   it('corrects a derived-only attachment through HTTP and MCP and preserves revision on replay and noop', async () => {
-    const f = fixture('derived-attachment')
+    const f = await fixture('derived-attachment')
     const before = await read(parsePath(f.file.id))
     const request = await evidenceRequest('derived-attachment', f.evidence.id, { attachment: '附件2' })
     const plan = await successfulPost(corrections + 'preflight', request)
@@ -85,7 +131,7 @@ describe('cross-ticket event evidence and parse derived projections', () => {
   })
 
   it('refreshes the parse projection after an event year correction then accepts an exact evidence list number correction', async () => {
-    const f = fixture('event-year-list-number')
+    const f = await fixture('event-year-list-number')
     const before = await read(parsePath(f.file.id))
     const request = { idempotencyKey: 'event-year-list-number', sourceIdentity: 'synthetic/notice', actor: { type: 'agent', id: 'integration-fixer' }, basis: '原公布名单年份为2022', operations: [{ eventId: f.event.id, recordId: f.record.id, enterpriseId: f.enterprise.id, expectedRevision: 1, patch: { year: 2022, decidedYear: 2022 } }] }
     const plan = await rpc('preflight_event_corrections', request)
@@ -103,8 +149,8 @@ describe('cross-ticket event evidence and parse derived projections', () => {
   })
 
   it.each(['agent', 'legacy'] as const)('keeps an explicit %s attachment declaration authoritative', async (origin) => {
-    const f = fixture('declared-' + origin)
-    db.$client.prepare('UPDATE stored_file_part SET origin=? WHERE file_id=?').run(origin, f.file.id)
+    const f = await fixture('declared-' + origin)
+    await db.update(storedFilePart).set({ origin }).where(eq(storedFilePart.fileId, f.file.id))
     const before = await read(parsePath(f.file.id))
     const request = await evidenceRequest('declared-conflict-' + origin, f.evidence.id, { attachment: '附件2' })
     const result = await post(corrections + 'preflight', request)
@@ -116,33 +162,48 @@ describe('cross-ticket event evidence and parse derived projections', () => {
   })
 
   it('refreshes both source files once per evidence batch and preserves agent and legacy row identities while recomputing conflicts', async () => {
-    const f = fixture('move-old'), destination = fixture('move-new')
-    const second = db.insert(schema.recordEvidence).values({ recordEventId: f.event.id, sourceFile: f.file.relPath, attachment: '附件1', listNo: 2, page: 1 }).returning().get()
-    const declared = db.insert(schema.storedFilePart).values({ fileId: destination.file.id, titleCode: 'specialized_sme', eventKind: 'award', year: 2021, batch: 1, attachment: '附件2', rowCount: 3, origin: 'agent' }).returning().get()
-    const legacy = db.insert(schema.storedFilePart).values({ fileId: f.file.id, titleCode: 'specialized_sme', eventKind: 'award', year: 2010, batch: 1, attachment: '附件9', rowCount: 1, origin: 'legacy', hasConflict: true }).returning().get()
+    const f = await fixture('move-old'), destination = await fixture('move-new')
+    const [second] = await db.insert(recordEvidence).values({ recordEventId: f.event.id, sourceFile: f.file.relPath, attachment: '附件1', listNo: 2, page: 1 }).returning()
+    const [declared] = await db.insert(storedFilePart).values({ fileId: destination.file.id, titleCode: 'specialized_sme', eventKind: 'award', year: 2021, batch: 1, attachment: '附件2', rowCount: 3, origin: 'agent' }).returning()
+    const [legacy] = await db.insert(storedFilePart).values({ fileId: f.file.id, titleCode: 'specialized_sme', eventKind: 'award', year: 2010, batch: 1, attachment: '附件9', rowCount: 1, origin: 'legacy', hasConflict: 1 }).returning()
     const firstRequest = await evidenceRequest('move-file-set', f.evidence.id, { sourceFile: destination.file.relPath, attachment: '附件2', listNo: 10 })
-    const secondRequest = await evidenceRequest('unused', second.id, { sourceFile: destination.file.relPath, attachment: '附件2', listNo: 11 })
+    const secondRequest = await evidenceRequest('unused', second!.id, { sourceFile: destination.file.relPath, attachment: '附件2', listNo: 11 })
     const request = { ...firstRequest, operations: [...firstRequest.operations, ...secondRequest.operations] }
     const plan = await successfulPost(corrections + 'preflight', request)
     // Each affected file is rebuilt once; duplicate per-evidence refreshes would fail this trigger.
-    db.$client.exec('CREATE TABLE refresh_seen(file_id INTEGER PRIMARY KEY); CREATE TRIGGER refresh_once BEFORE DELETE ON stored_file_part WHEN OLD.origin=\'derived\' BEGIN INSERT INTO refresh_seen VALUES(OLD.file_id); END')
-    try { await successfulPost(corrections + 'commit', { request, planHash: plan.planHash }) }
-    finally { db.$client.exec('DROP TRIGGER refresh_once; DROP TABLE refresh_seen') }
+    await db.execute(sql`
+      CREATE TABLE business.refresh_seen (file_id bigint PRIMARY KEY);
+      CREATE FUNCTION business.track_test_derived_refresh() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN INSERT INTO business.refresh_seen VALUES (OLD.file_id); RETURN OLD; END; $$;
+      CREATE TRIGGER track_test_derived_refresh BEFORE DELETE ON business.stored_file_part
+      FOR EACH ROW WHEN (OLD.origin = 'derived') EXECUTE FUNCTION business.track_test_derived_refresh();
+    `)
+    try {
+      await successfulPost(corrections + 'commit', { request, planHash: plan.planHash })
+      const seen = (await pool.query('SELECT file_id::float8 AS id FROM business.refresh_seen ORDER BY file_id')).rows
+      expect(seen).toEqual([{ id: f.file.id }, { id: destination.file.id }])
+    } finally {
+      await db.execute(sql`
+        DROP TRIGGER track_test_derived_refresh ON business.stored_file_part;
+        DROP FUNCTION business.track_test_derived_refresh();
+        DROP TABLE business.refresh_seen;
+      `)
+    }
     const oldParts = await read(parsePath(f.file.id)), newParts = await read(parsePath(destination.file.id))
     expect(oldParts.parts).toEqual([expect.objectContaining({ origin: 'legacy', year: 2010, attachment: '附件9', rowCount: 1, hasConflict: false })])
     expect(newParts.parts).toEqual([
       expect.objectContaining({ origin: 'derived', attachment: '附件1', rowCount: 1, hasConflict: false }),
       expect.objectContaining({ origin: 'agent', attachment: '附件2', rowCount: 3, hasConflict: true }),
     ])
-    expect(db.$client.prepare('SELECT id,origin,row_count FROM stored_file_part WHERE id=?').get(declared.id)).toEqual({ id: declared.id, origin: 'agent', row_count: 3 })
-    expect(db.$client.prepare('SELECT id,origin,row_count FROM stored_file_part WHERE id=?').get(legacy.id)).toEqual({ id: legacy.id, origin: 'legacy', row_count: 1 })
+    expect((await db.select({ id: storedFilePart.id, origin: storedFilePart.origin, rowCount: storedFilePart.rowCount }).from(storedFilePart).where(eq(storedFilePart.id, declared!.id)))[0]).toEqual({ id: declared!.id, origin: 'agent', rowCount: 3 })
+    expect((await db.select({ id: storedFilePart.id, origin: storedFilePart.origin, rowCount: storedFilePart.rowCount }).from(storedFilePart).where(eq(storedFilePart.id, legacy!.id)))[0]).toEqual({ id: legacy!.id, origin: 'legacy', rowCount: 1 })
     expect((await read(eventPath(f.event.id))).event.revision).toBe(2)
-    expect((await read(evidencePath(second.id))).coordinate).toMatchObject({ sourceFile: destination.file.relPath, listNo: 11 })
+    expect((await read(evidencePath(second!.id))).coordinate).toMatchObject({ sourceFile: destination.file.relPath, listNo: 11 })
   })
 
   it.each(['event', 'evidence', 'legacy'] as const)('rolls back %s changes audit receipt revision and projections when scoped refresh fails', async (entry) => {
-    const f = fixture('refresh-failure-' + entry)
-    const destination = entry === 'evidence' ? fixture('refresh-failure-destination') : null
+    const f = await fixture('refresh-failure-' + entry)
+    const destination = entry === 'evidence' ? await fixture('refresh-failure-destination') : null
     const destinationParts = destination ? await read(parsePath(destination.file.id)) : null
     const beforeEvidence = await read(evidencePath(f.evidence.id)), beforeEvent = await read(eventPath(f.event.id)), beforeParts = await read(parsePath(f.file.id))
     const key = 'refresh-failure-' + entry
@@ -151,7 +212,7 @@ describe('cross-ticket event evidence and parse derived projections', () => {
       : await evidenceRequest(key, f.evidence.id, destination ? { sourceFile: destination.file.relPath, attachment: '附件2', listNo: 7, page: 2 } : { page: 2 })
     const prefix = entry === 'event' ? eventCorrections : corrections
     const plan = entry === 'legacy' ? null : await successfulPost(prefix + 'preflight', request)
-    db.$client.exec('CREATE TRIGGER fail_derived_refresh BEFORE DELETE ON stored_file_part WHEN OLD.file_id=' + (destination?.file.id ?? f.file.id) + " AND OLD.origin='derived' BEGIN SELECT RAISE(ABORT,'synthetic projection failure'); END")
+    await rejectDerivedRefresh(destination?.file.id ?? f.file.id)
     try {
       const result = await post(entry === 'legacy' ? '/api/roster/evidence/pages' : prefix + 'commit', entry === 'legacy'
         ? { entries: [{ sourceFile: f.file.relPath, listNo: 1, enterpriseId: f.enterprise.id, page: 2 }] }
@@ -160,7 +221,7 @@ describe('cross-ticket event evidence and parse derived projections', () => {
         expect(result.status).toBe(200)
         expect(await result.json()).toMatchObject({ summary: { written: 0, pending: 1 } })
       } else expect(result.status).toBe(500)
-    } finally { db.$client.exec('DROP TRIGGER fail_derived_refresh') }
+    } finally { await allowDerivedRefresh() }
     expect(await read(evidencePath(f.evidence.id))).toEqual(beforeEvidence)
     expect(await read(eventPath(f.event.id))).toEqual(beforeEvent)
     expect(await read(parsePath(f.file.id))).toEqual(beforeParts)
@@ -175,7 +236,7 @@ describe('cross-ticket event evidence and parse derived projections', () => {
       expect(await successfulPost('/api/roster/evidence/pages', { ...body, dryRun: true })).toMatchObject({ status: 'dry_run', summary: { written: 0 } })
       expect(await read(evidencePath(f.evidence.id))).toEqual(beforeEvidence)
       // A stale cache is repaired by the legacy writer, without a library backfill.
-      db.$client.prepare('UPDATE stored_file_part SET row_count=0 WHERE file_id=?').run(f.file.id)
+      await db.update(storedFilePart).set({ rowCount: 0 }).where(eq(storedFilePart.fileId, f.file.id))
       expect(await successfulPost('/api/roster/evidence/pages', body)).toMatchObject({ summary: { written: 1 } })
       expect(await successfulPost('/api/roster/evidence/pages', body)).toMatchObject({ summary: { written: 0, unchanged: 1 } })
       expect((await read(parsePath(f.file.id))).parts).toEqual([expect.objectContaining({ rowCount: 1, origin: 'derived' })])
@@ -184,19 +245,31 @@ describe('cross-ticket event evidence and parse derived projections', () => {
   })
 
   it('uses indexed affected-file projections and leaves unrelated raw evidence and file caches untouched', async () => {
-    const f = fixture('scoped-refresh'), unrelated = fixture('unrelated-refresh')
-    submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: 'unrelated-refresh', rdjb: '2', queriedAt: '2026-10-19', status: 'success', rawResponse: 'UNRELATED_RAW'.repeat(100000) })
+    const f = await fixture('scoped-refresh'), unrelated = await fixture('unrelated-refresh')
+    await seedPostgresPlatformQuery(db, { interface: 'apply_list', queryKey: 'unrelated-refresh', rdjb: '2', queriedAt: '2026-10-19', status: 'success', rawResponse: 'UNRELATED_RAW'.repeat(100000) })
     const before = await read(parsePath(unrelated.file.id))
-    db.$client.exec('CREATE TRIGGER forbid_unrelated_refresh BEFORE DELETE ON stored_file_part WHEN OLD.file_id=' + unrelated.file.id + " BEGIN SELECT RAISE(ABORT,'unrelated cache touched'); END")
+    await rejectDerivedRefresh(unrelated.file.id)
     try {
       const request = await evidenceRequest('scoped-refresh', f.evidence.id, { attachment: '附件2' })
       const plan = await successfulPost(corrections + 'preflight', request)
       await successfulPost(corrections + 'commit', { request, planHash: plan.planHash })
-    } finally { db.$client.exec('DROP TRIGGER forbid_unrelated_refresh') }
+    } finally { await allowDerivedRefresh() }
     expect(await read(parsePath(unrelated.file.id))).toEqual(before)
-    const plan = db.$client.prepare('EXPLAIN QUERY PLAN SELECT e.source_file,r.title_code,v.event_type,v.year,v.batch_seq,e.attachment FROM record_evidence e JOIN record_event v ON v.id=e.record_event_id JOIN record r ON r.id=v.record_id WHERE e.source_file=?').all(f.file.relPath)
-    expect(JSON.stringify(plan)).toMatch(/SEARCH e USING INDEX record_evidence_(source_file_105|coordinate)_idx/)
-    expect(JSON.stringify(plan)).not.toContain('SCAN e')
+    await db.insert(recordEvidence).values(Array.from({ length: 5000 }, (_, index) => ({
+      recordEventId: unrelated.event.id, sourceFile: `unrelated-evidence-${index}.pdf`,
+    })))
+    await db.execute(sql`ANALYZE business.record_evidence`)
+    const plan = await pool.query(`
+      EXPLAIN (FORMAT JSON)
+      SELECT e.source_file, r.title_code, v.event_type, v.year, v.batch_seq, e.attachment
+      FROM business.record_evidence e
+      JOIN business.record_event v ON v.id = e.record_event_id
+      JOIN business.record r ON r.id = v.record_id
+      WHERE e.source_file COLLATE "C" = ANY($1::text[])
+    `, [[f.file.relPath]])
+    const serializedPlan = JSON.stringify(plan.rows)
+    expect(serializedPlan).toContain('"Index Name":"record_evidence_coordinate_idx"')
+    expect(serializedPlan).not.toMatch(/"Node Type":"Seq Scan"[^}]*"Relation Name":"record_evidence"/)
     const output = await rpc('get_file_parse_result', { fileId: f.file.id })
     expect(output.parts).toEqual([expect.objectContaining({ attachment: '附件2' })])
     expect(JSON.stringify(output)).not.toContain('UNRELATED_RAW')

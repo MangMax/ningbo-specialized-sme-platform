@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 // UI regressions for the task workbench (#116 / #120 / #121).
 //
 // The workbench uses same-origin browser requests: there is no admin key form,
@@ -241,7 +241,7 @@ const shownRect = [{ width: 10, height: 10, top: 0, left: 0, bottom: 10, right: 
 const hiddenRect = [] as unknown as DOMRectList
 
 /**
- * happy-dom lays nothing out, so `getClientRects()` is empty for every element and
+ * jsdom lays nothing out, so `getClientRects()` is empty for every element and
  * the page (rightly) treats them all as hidden. These stubs answer only the one
  * question the page asks — is this element on screen — never positions or sizes.
  *
@@ -270,7 +270,7 @@ function layout(mode: 'desktop' | 'mobile' | 'hidden') {
 /**
  * The scroll the page asked for.
  *
- * happy-dom has no layout, so "did the page move the reading position" is
+ * jsdom has no layout, so "did the page move the reading position" is
  * answered through the call itself: the page must not scroll a detail that is
  * merely being refreshed.
  */

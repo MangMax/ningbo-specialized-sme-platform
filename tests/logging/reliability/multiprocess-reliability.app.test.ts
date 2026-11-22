@@ -4,13 +4,15 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { type ChildProcess } from 'node:child_process'
-import { createLogService } from '../../../layers/core/lib/logging/service'
+import { createPostgresLogService } from '../../../layers/core/lib/logging/postgres-service'
+import { startDebugLogCollection } from '../fixtures/debug-collection'
 import { spawnOwnedChild as spawn, stopOwnedChild } from '../../support/owned-process.mjs'
 
-it('keeps all query attempt counts and terminals from four real processes sharing one SQLite store', async () => {
+it('keeps all query attempt counts and terminals from four real processes sharing one PostgreSQL store', async () => {
   const root = mkdtempSync(join(tmpdir(), 'logging-four-writers-180-'))
-  const directory = join(root, 'logs'), children: ChildProcess[] = []
-  const reader = createLogService({ directory })
+  const runtime = await startDebugLogCollection(root)
+  const children: ChildProcess[] = []
+  const reader = createPostgresLogService({ postgresUrl: runtime.url })
   const deadline = Date.now() + 10000
   async function bounded<T>(work: Promise<T>): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -24,8 +26,8 @@ it('keeps all query attempt counts and terminals from four real processes sharin
     writeFileSync(script, `
 import {createRequire} from 'node:module'
 const {createJiti}=createRequire(import.meta.url)(${JSON.stringify(jiti)})
-const {createLogService}=await createJiti(import.meta.url).import(${JSON.stringify(resolve('layers/core/lib/logging/service.ts'))})
-const service=createLogService({directory:${JSON.stringify(directory)},stdout:false})
+const {createPostgresLogService}=await createJiti(import.meta.url).import(${JSON.stringify(resolve('layers/core/lib/logging/postgres-service.ts'))})
+const service=createPostgresLogService({postgresUrl:${JSON.stringify(runtime.url)},stdout:false})
 const writer=process.argv[2]
 await service.policy()
 process.on('message',async message=>{
@@ -78,6 +80,6 @@ process.send({ready:true})
     }
   } finally {
     await Promise.all(children.map(child => stopOwnedChild(child)))
-    await reader.close(); rmSync(root, { recursive: true, force: true })
+    await reader.close(); runtime.close(); rmSync(root, { recursive: true, force: true })
   }
 }, 20000)

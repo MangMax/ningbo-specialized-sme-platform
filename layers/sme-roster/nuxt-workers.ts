@@ -7,7 +7,6 @@ export function installRosterWorkers(config: Parameters<NitroHooks['rollup:befor
   // from the launcher's final chunk, including in Nitro dev builds.
   for (const worker of [
     { location: './server/utils/enterprise-read-worker-location.ts', entry: './lib/roster/enterprise-read-worker.ts', fileName: 'enterprise-read-worker.mjs', factory: 'createEnterpriseWorker', chunk: 'enterprise-read-model' },
-    { location: './server/utils/import-execution-worker-location.ts', entry: './lib/roster/import-execution-worker.ts', fileName: 'import-execution-worker.mjs', factory: 'createImportExecutionWorker', chunk: 'import-execution-model' },
     { location: './server/utils/current-export-worker-location.ts', entry: './lib/roster/current-export-worker.ts', fileName: 'current-export-worker.mjs', factory: 'createCurrentExportWorker', chunk: 'current-export-model' },
   ]) {
     const location = fileURLToPath(new URL(worker.location, import.meta.url))

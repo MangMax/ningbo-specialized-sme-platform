@@ -1,18 +1,20 @@
-import { createRuntimeSchema } from '../../../db/create-runtime'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
-import * as schema from '../../../db/schema'
 import { afterEach, expect, it, vi } from 'vitest'
-const sqlite = new Database(':memory:')
-const db = drizzle(sqlite, { schema })
-sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
-vi.mock('@db', () => ({ useDb: () => db }))
 const root = mkdtempSync(join(tmpdir(), 'preview-text-47-'))
-afterEach(() => { vi.unstubAllGlobals(); sqlite.close(); rmSync(root, { recursive: true, force: true }) })
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
+afterEach(async () => {
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+  try { await closePostgresDirectoryDb(); runtime?.close() }
+  finally { rmSync(root, { recursive: true, force: true }) }
+})
 it('serves explicit text as inert text and rejects hidden sensitive files', async () => {
+  runtime = await postgresRuntimeFixture({ dir: root })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', runtime.url)
   writeFileSync(join(root, 'source.html'), '<script>alert(1)</script>')
   writeFileSync(join(root, '.secret.json'), '{"secret":true}')
   let path = 'source.html'
@@ -33,4 +35,4 @@ it('serves explicit text as inert text and rejects hidden sensitive files', asyn
   await new Promise<void>((resolve, reject) => { sent!.on('end', resolve).on('error', reject).resume() })
   path = '.secret.json'
   await expect(route({} as never)).rejects.toThrow(expect.objectContaining({ statusCode: 415 }))
-})
+}, 20_000)

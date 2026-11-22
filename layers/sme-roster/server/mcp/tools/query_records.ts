@@ -1,9 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
 import { EVENT_ORDER, SOURCE_ORDER, TITLE_ORDER } from '#sme-roster/lib/labels'
 import { FIRST_RECOGNITION_STATUS_VALUES } from '#sme-roster/lib/roster/first-recognition'
-import { listRecords } from '#sme-roster/lib/query'
 import { parseRecordQuery } from '../../utils/roster-read-query'
 import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 import { listPostgresLedgerRecords } from '../../../lib/query-postgres'
@@ -42,7 +40,6 @@ export default defineMcpTool({
   },
   handler: async (input) => {
     const filter = parseRecordQuery(input as Record<string, unknown>)
-    const pg = usePostgresRosterDb()
-    return pg ? listPostgresLedgerRecords(pg, filter) : listRecords(useDb(), filter)
+    return listPostgresLedgerRecords(usePostgresRosterDb(), filter)
   },
 })

@@ -1,19 +1,20 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { createLogService, type LogServiceOptions } from '../../../layers/core/lib/logging/service'
+import { usePostgresLogCases } from '../fixtures/postgres-cases'
+import { createPostgresLogService } from '../../../layers/core/lib/logging/postgres-service'
+import type { LogServiceOptions } from '../../../layers/core/lib/logging/service'
 import { LOG_DEFAULTS, type LogInput } from '../../../layers/core/lib/logging/contract'
 import { safeLogEvent } from '../../../layers/core/lib/logging/privacy'
 
-const owned: { root: string; service: ReturnType<typeof createLogService> }[] = []
-function fixture(options: Omit<Partial<LogServiceOptions>, 'directory'> = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'logging-reliability-180-'))
-  const service = createLogService({ directory: root, ...options })
-  owned.push({ root, service }); return service
+const openLogCase = usePostgresLogCases({ debug: true })
+const owned: { runtime: ReturnType<typeof openLogCase>; service: ReturnType<typeof createPostgresLogService> }[] = []
+function fixture(options: LogServiceOptions = {}, beforeOpen?: () => void) {
+  const runtime = openLogCase()
+  beforeOpen?.()
+  const service = createPostgresLogService({ postgresUrl: runtime.url, ...options })
+  owned.push({ runtime, service }); return service
 }
 const attempt = (extra: Partial<LogInput> = {}): LogInput => ({ source: 'system', operation: 'db.query.select', outcome: 'started', level: 'debug', origin: { runtime: 'node', integration: 'drizzle', capture: 'hook' }, resourceType: 'database_connection', resourceId: 'primary', ...extra })
-afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); for (const f of owned.splice(0)) { await f.service.close(); rmSync(f.root, { recursive: true, force: true }) } })
+afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); for (const f of owned.splice(0)) { await f.service.close(); f.runtime.close() } })
 
 it('coalesces ten thousand query attempts while preserving every task terminal without overflow', async () => {
   const service = fixture()
@@ -133,8 +134,7 @@ it('keeps source and integration policy authoritative for queued query summaries
 })
 
 it.each(['batch', 'warning'] as const)('schedules one early drain for %s without waiting for the periodic timer', async mode => {
-  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setImmediate', 'clearImmediate'] })
-  const service = fixture()
+  const service = fixture({}, () => vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setImmediate', 'clearImmediate'] }))
   const size = mode === 'batch' ? LOG_DEFAULTS.batchEntries : 1
   for (let i = 0; i < size; i++) service.emit({ source: 'task', operation: 'schedule.event', outcome: 'started', level: mode === 'batch' ? 'info' : 'warn', resourceId: i })
   expect(service.status()).toMatchObject({ queuedEntries: size, inFlightEntries: 0, pending: 0 })
@@ -146,8 +146,7 @@ it.each(['batch', 'warning'] as const)('schedules one early drain for %s without
 })
 
 it('drains an event arriving between an empty flush and its completion without waiting for a timer', async () => {
-  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setImmediate', 'clearImmediate'] })
-  const service = fixture()
+  const service = fixture({}, () => vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setImmediate', 'clearImmediate'] }))
   const empty = service.flush()
   service.emit({ source: 'task', operation: 'handoff.event', outcome: 'success' })
   await empty
@@ -158,12 +157,15 @@ it('drains an event arriving between an empty flush and its completion without w
 })
 
 it('schedules on the byte budget before the entry batch threshold and closes without a pending immediate', async () => {
-  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setImmediate', 'clearImmediate'] })
-  const scheduled = vi.spyOn(globalThis, 'setImmediate')
-  const cancelled = vi.spyOn(globalThis, 'clearImmediate')
+  let scheduled!: ReturnType<typeof vi.spyOn>
+  let cancelled!: ReturnType<typeof vi.spyOn>
   const input = { source: 'task', operation: 'bytes.schedule', outcome: 'success' } as const
   const bytes = Buffer.byteLength(JSON.stringify(safeLogEvent(input)))
-  const service = fixture({ maxQueueBytes: bytes * 2 })
+  const service = fixture({ maxQueueBytes: bytes * 2 }, () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setImmediate', 'clearImmediate'] })
+    scheduled = vi.spyOn(globalThis, 'setImmediate')
+    cancelled = vi.spyOn(globalThis, 'clearImmediate')
+  })
   service.emit(input); service.emit(input)
   expect(service.status()).toMatchObject({ queuedEntries: 2, queuedBytes: bytes * 2 })
   expect(vi.getTimerCount()).toBe(3)

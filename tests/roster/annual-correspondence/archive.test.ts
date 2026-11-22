@@ -1,32 +1,64 @@
-import { afterEach, expect, it } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { expect, it, vi } from 'vitest'
 import { nativeCorrespondenceFixture } from '../correspondence/fixtures/native-correspondence'
-import { readAnnualWriteScope } from '../../../layers/sme-roster/server/utils/annual-correspondence-read'
-import { stageAnnualCorrespondence, activateAnnualCorrespondence, retryAnnualCorrespondence } from '../../../layers/sme-roster/server/utils/jobs/annual-correspondence'
-import { getJob } from '../../../layers/core/server/utils/job-store'
-import { __resetJobRunner, clearJobSpecs, whenIdle, requestJobCancel } from '../../../layers/core/server/utils/job-runner'
-import { listRecordCorrespondences, getRecordCorrespondenceAudit } from '../../../layers/sme-roster/server/utils/record-correspondence'
-import { schema } from '../../../db/client'
-const fixtures: ReturnType<typeof nativeCorrespondenceFixture>[]=[]
-const fixture=()=>{__resetJobRunner();clearJobSpecs();const f=nativeCorrespondenceFixture();fixtures.push(f);return f}
-afterEach(async()=>{await whenIdle();__resetJobRunner();clearJobSpecs();for(const f of fixtures.splice(0))f.close()})
-it('stages native archive annual work atomically and runs the durable task once',async()=>{
- const f=fixture(),row=f.add(),receipt=stageAnnualCorrespondence(f.db,readAnnualWriteScope,{clientRequestId:'native-archive',eventIds:[f.event.id]})
- expect(getJob(f.db,receipt.jobId)?.state).toBe('queued');expect(listRecordCorrespondences(f.db)).toEqual([])
- activateAnnualCorrespondence(f.db,readAnnualWriteScope,[receipt.jobId],f.dir);await whenIdle()
- expect(getJob(f.db,receipt.jobId)).toMatchObject({state:'done',result:{events:[{status:'done',finalQualification:{status:'confirmed'}}]}})
- expect(listRecordCorrespondences(f.db)).toMatchObject([{relationId:row.id,status:'confirmed'}])
- const id=listRecordCorrespondences(f.db)[0]!.id,audit=getRecordCorrespondenceAudit(f.db,id)
- expect(stageAnnualCorrespondence(f.db,readAnnualWriteScope,{clientRequestId:'same-scope',eventIds:[f.event.id]}).jobId).toBe(receipt.jobId)
- expect(getRecordCorrespondenceAudit(f.db,id)).toEqual(audit)
+import { readFixtureAudit } from '../correspondence/fixtures/postgres-audit'
+import { useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
+import { listPostgresCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence-postgres'
+import { stagePostgresAnnualCorrespondence, retryPostgresAnnualCorrespondence } from '../../../layers/sme-roster/server/utils/jobs/annual-correspondence-postgres'
+import { postgresAnnualCorrespondenceSpec } from '../../../layers/sme-roster/server/utils/jobs/annual-correspondence-postgres-spec'
+import { cancelPostgresJob, getPostgresJob } from '../../../layers/core/server/utils/job-store-postgres'
+import { clearJobSpecs, registerJob } from '../../../layers/core/server/utils/job-spec-registry'
+import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { job } from '../../../db/postgresql/job-tables'
+import { runAnnualFixtureTask, stageAnnualFixtureTask } from './fixtures/native-annual'
+
+const createDb = useIsolatedPostgresCases()
+
+it('stages annual work atomically and runs the durable task once', async () => {
+  const f = await nativeCorrespondenceFixture(createDb())
+  const source = await f.add()
+  const receipt = await stageAnnualFixtureTask(f.db, f.event.id, 'archive')
+  expect((await getPostgresJob(f.db, receipt.jobId))?.row.state).toBe('queued')
+  expect(await listPostgresCorrespondences(f.db, {})).toEqual([])
+  expect(await runAnnualFixtureTask(f.db, receipt.jobId)).toMatchObject({
+    state: 'done', result: { events: [{ status: 'done', finalQualification: { status: 'confirmed' } }] },
+  })
+  const correspondences = await listPostgresCorrespondences(f.db, {})
+  expect(correspondences).toMatchObject([{ relationId: source.id, status: 'confirmed' }])
+  const id = correspondences[0]!.id
+  const audit = await readFixtureAudit(f.db, id)
+  expect((await stageAnnualFixtureTask(f.db, f.event.id, 'same-scope')).jobId).toBe(receipt.jobId)
+  expect(await readFixtureAudit(f.db, id)).toEqual(audit)
 })
-it('rolls native task admission back with its enclosing archive transaction',()=>{
- const f=fixture();f.add()
- expect(()=>f.db.transaction(()=>{stageAnnualCorrespondence(f.db,readAnnualWriteScope,{clientRequestId:'rollback',eventIds:[f.event.id]});throw new Error('rollback')})).toThrow('rollback')
- expect(f.db.select().from(schema.job).all()).toEqual([]);expect(listRecordCorrespondences(f.db)).toEqual([])
+
+it('rolls task admission back with its enclosing archive transaction', async () => {
+  const f = await nativeCorrespondenceFixture(createDb())
+  await f.add()
+  await expect(f.db.transaction(async tx => {
+    await stagePostgresAnnualCorrespondence(tx, { clientRequestId: 'rollback', eventIds: [f.event.id] })
+    throw new Error('rollback')
+  })).rejects.toThrow('rollback')
+  expect(await f.db.select().from(job)).toEqual([])
+  expect(await listPostgresCorrespondences(f.db, {})).toEqual([])
 })
-it('resumes cancelled native work on the same durable task',async()=>{
- const f=fixture();f.add();const receipt=stageAnnualCorrespondence(f.db,readAnnualWriteScope,{clientRequestId:'cancel',eventIds:[f.event.id]})
- expect(requestJobCancel(f.db,receipt.jobId)).toMatchObject({state:'cancelled'})
- retryAnnualCorrespondence(f.db,readAnnualWriteScope,receipt.jobId,f.dir);await whenIdle()
- expect(getJob(f.db,receipt.jobId)?.state).toBe('done');expect(listRecordCorrespondences(f.db)).toHaveLength(1)
+
+it('resumes cancelled work on the same durable task', async () => {
+  const f = await nativeCorrespondenceFixture(createDb())
+  await f.add()
+  const receipt = await stageAnnualFixtureTask(f.db, f.event.id, 'cancel')
+  expect(await cancelPostgresJob(f.db, receipt.jobId)).toMatchObject({ state: 'cancelled' })
+  const dir = mkdtempSync(join(tmpdir(), 'annual-retry-'))
+  clearJobSpecs()
+  registerJob(postgresAnnualCorrespondenceSpec)
+  try {
+    expect(await retryPostgresAnnualCorrespondence(f.db, receipt.jobId, dir)).toMatchObject({ jobId: receipt.jobId })
+    await vi.waitFor(async () => expect((await getPostgresJob(f.db, receipt.jobId))?.row.state).toBe('done'), { timeout: 5000 })
+    expect(await listPostgresCorrespondences(f.db, {})).toHaveLength(1)
+  } finally {
+    await stopPostgresJobs()
+    clearJobSpecs()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

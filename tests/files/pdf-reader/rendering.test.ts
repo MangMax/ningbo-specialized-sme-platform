@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { defineComponent, h, shallowRef } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
@@ -46,7 +46,6 @@ async function reader(onPositionChange?: (...args: any[]) => void) {
 }
 beforeEach(() => {
   control.documentState = shallowRef({ status: 'loaded', scale: 1, document: { pages: Array.from({ length: 12 }, () => ({ size: { width: 600, height: 1800 } })) } })
-  vi.spyOn(HTMLElement.prototype, 'animate').mockReturnValue({ cancel() {} } as Animation)
   control.pages = shallowRef([3, 4])
   control.metrics = null; control.smooth = false
   control.manualRaster = false

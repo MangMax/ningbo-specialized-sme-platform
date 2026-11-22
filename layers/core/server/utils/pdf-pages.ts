@@ -157,13 +157,7 @@ function pdfium(): Promise<PDFiumLibrary> {
 // 小工具
 // ---------------------------------------------------------------------------
 
-/**
- * 流式算 SHA-256,不把 10 MB 的 PDF 整个读进内存。
- *
- * 与 `layers/core/server/utils/stored-files.ts` 里的同名函数**逐行相同** —— 照抄而不是抽取,
- * 是因为抽取要改那份文件(票 09/17 的地盘,另有会话在动)。同仓已有先例:
- * `layers/sme-roster/lib/stored-file.ts` 也照抄了 pipeline 的 `parseBatch` 并注明来源。合流留给后续清理。
- */
+/** 流式计算 SHA-256，避免把整份 PDF 读入内存。 */
 function sha256Of(absPath: string): Promise<string> {
   return new Promise((resolveHash, reject) => {
     const hash = createHash('sha256')

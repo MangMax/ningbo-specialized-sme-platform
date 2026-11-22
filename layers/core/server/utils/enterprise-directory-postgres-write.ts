@@ -5,7 +5,7 @@ import { enterpriseSource, enterpriseSourceLink } from '../../../../db/postgresq
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { normalizeEnterpriseName } from '../../lib/enterprise-name'
 import { normalizeReviewedUscc } from '../../lib/enterprise-uscc'
-import { EnterpriseKernelError, enterpriseProfileVersion, type EnterpriseFields, type EnterpriseProfile, type EnterpriseSource, type ReviewedSubject, type enterpriseDetailsSchema } from './enterprise-kernel'
+import { EnterpriseKernelError, enterpriseProfileVersion, type EnterpriseFields, type EnterpriseProfile, type EnterpriseSource, type ReviewedSubject, type enterpriseDetailsSchema } from './enterprise-contract'
 import { readPostgresEnterpriseDetails } from './enterprise-directory-postgres'
 import type { z } from 'zod'
 

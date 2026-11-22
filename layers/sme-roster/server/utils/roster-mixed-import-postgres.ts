@@ -1,22 +1,24 @@
+import type { LogContext } from '../../../core/lib/logging'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { RosterImportItemResult, RosterImportPreflight, RosterImportRequest, RosterImportSummary } from '../../lib/roster-import-client'
 import { executePostgresAliasItems } from './alias-import-postgres'
 import { executePostgresUsccBackfillItems } from './uscc-backfill-postgres'
 import {
-  executePostgresExportItems, executePostgresRosterImport, lockPostgresRosterImportBatch, type NativeImportExecution,
+  executePostgresExportItems, executePostgresRosterImport, isPostgresImportWriteRejection, lockPostgresRosterImportBatch, type NativeImportExecution,
   type PostgresImportAction, type PostgresImportBatch,
 } from './roster-export-import-postgres'
 import { usePostgresRosterDb } from './postgres-roster-db'
 import { applyPostgresOfficialImport, planPostgresOfficialImport } from './official-evidence-import-postgres'
-import { OfficialFactError } from './official-evidence-plan'
+import { OfficialFactError } from './official-evidence-claim-model'
 import { OfficialEvidenceError } from './official-evidence'
-import { hasOfficialFactInput } from './roster-import'
+import { hasOfficialFactInput, retiredPlatformImportField } from './roster-import-model'
 import { hasAnnouncementRows } from '../../lib/roster-import-client'
 import { executePostgresPlatformItems } from './collection-import-postgres'
 import { stagePostgresAnnouncement } from './announcement-intake-postgres'
 import { planPostgresRawAnnouncementPreflight } from './announcement-preflight-postgres'
 import { planPostgresAnnouncementReplay, writePostgresAnnouncementReplay } from './announcement-replay-postgres'
 import { planPostgresImportDifference, writePostgresImportDifference } from './difference-import-postgres'
+import { ImportReceiptError } from './import-receipt-model'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
 import { applyPostgresRosterMerge, planPostgresRosterMerge } from './roster-merge-postgres'
 
@@ -38,14 +40,14 @@ export async function executePostgresImportSteps(
     evidenceRepoints: 0, conflicts: [], batchStatus: batch.status }
   const summary: RosterImportSummary = { ...emptySummary }
   const items: RosterImportItemResult[] = []
-  const candidateTaskIds: string[] = []
+  const candidateTaskIds: string[] = [], queuedCandidateTaskIds: string[] = []
   try {
     return await tx.transaction(async nested => {
       for (const step of steps) {
         const phase = await step.execute(nested, batch, action === 'preflight' && step.writeForPreflight ? 'commit' : action)
         const { preflight: preview } = phase
         for (const key of ['add', 'update', 'remove', 'review', 'evidenceRepoints'] as const) preflight[key] += preview[key]
-        for (const key of ['platformLegacyProvenanceSources','platformObservationSources','canonicalProjection','duplicateCandidates','qualificationDiagnostics'] as const) {
+        for (const key of ['canonicalProjection','duplicateCandidates','qualificationDiagnostics'] as const) {
           if (preview[key] !== undefined) Object.assign(preflight, { [key]: [...(preflight[key] ?? []), ...preview[key]] })
         }
         if (preview.qualificationReadback) preflight.qualificationReadback = preview.qualificationReadback
@@ -68,9 +70,10 @@ export async function executePostgresImportSteps(
         if (phase.summary.canonicalProjection) summary.canonicalProjection = phase.summary.canonicalProjection
         if (phase.summary.platformFields) summary.platformFields = phase.summary.platformFields
         candidateTaskIds.push(...phase.candidateTaskIds ?? [])
+        queuedCandidateTaskIds.push(...phase.queuedCandidateTaskIds ?? [])
       }
       if (action === 'preflight') throw new RollbackImport({ preflight })
-      return { preflight, items, summary, error: null, candidateTaskIds }
+      return { preflight, items, summary, error: null, candidateTaskIds, queuedCandidateTaskIds }
     })
   } catch (error) {
     if (error instanceof RollbackImport) return error.result
@@ -92,10 +95,13 @@ async function executePostgresOfficialItems(tx: Tx, batch: PostgresImportBatch, 
       return { preflight, items: [item], summary: { ...emptySummary, written: Number(item.detail?.rowsWritten ?? 0) }, error: null }
     })
   } catch (error) {
-    if (!(error instanceof OfficialFactError || error instanceof OfficialEvidenceError)) throw error
-    const item: RosterImportItemResult = { ok: false, kind: 'official_evidence', ref: 'payload', error: { code: error.code, message: error.message } }
-    preflight.conflicts.push(item)
-    return action === 'preflight' ? { preflight } : { preflight, items: [item], summary: { ...emptySummary, failed: 1 }, error: error.message }
+    const businessError = error instanceof OfficialFactError || error instanceof OfficialEvidenceError
+      ? { code: error.code, message: error.message } : null
+    if (!businessError && (action !== 'commit' || !isPostgresImportWriteRejection(error))) throw error
+    const rejection = businessError ?? { code: 'commit_rolled_back', message: '公布原行写入失败，已整批回滚，未写入任何数据' }
+    const item: RosterImportItemResult = { ok: false, kind: 'official_evidence', ref: 'payload', error: rejection }
+    if (businessError) preflight.conflicts.push(item)
+    return action === 'preflight' ? { preflight } : { preflight, items: [item], summary: { ...emptySummary, failed: 1 }, error: rejection.message }
   }
 }
 
@@ -149,10 +155,11 @@ async function executePostgresMergeItems(tx: Tx, action: PostgresImportAction,
     error: null }
 }
 
-export function runPostgresMixedImport(action: 'preflight' | 'commit' | 'replay', request: RosterImportRequest, filesDir?: string) {
+export function runPostgresMixedImport(action: 'preflight' | 'commit' | 'replay', request: RosterImportRequest, filesDir?: string, context?: LogContext) {
+  const retired = retiredPlatformImportField(request.payload)
+  if (retired) throw new ImportReceiptError(400, 'platform_archive_offline', retired + ' 已停用，历史平台原始资料请通过离线归档处理')
   const announcement = hasAnnouncementRows(request)
   const db = usePostgresRosterDb(true)
-  if (!db) return
   if (action === 'replay') return executePostgresRosterImport(db, action, request, async (tx,batch) => {
     const original = await lockPostgresRosterImportBatch(tx, request.idempotencyKey)
     const plan = await planPostgresAnnouncementReplay(tx, request, original)
@@ -161,18 +168,17 @@ export function runPostgresMixedImport(action: 'preflight' | 'commit' | 'replay'
     return { preflight: { ...plan.preflight, batchStatus: batch.status }, items,
       summary: { ...emptySummary, failed, evidenceRepointed }, replayUpdate: update,
       error: failed ? '收敛重放未执行：载荷有 '+failed+' 项不合法，未改动任何行' : null }
-  })
+  }, context)
   if (announcement && action === 'commit') {
     return validateRosterImportPageCounts(request, filesDir).then(errors=>stagePostgresAnnouncement(request,errors))
   }
   const steps = createPostgresImportSteps(action,request,filesDir)
-  return executePostgresRosterImport(db, action, request, (tx,batch) => executePostgresImportSteps(tx,batch,action,steps))
+  return executePostgresRosterImport(db, action, request, (tx,batch) => executePostgresImportSteps(tx,batch,action,steps), context)
 }
 
 export function createPostgresImportSteps(action: PostgresImportAction, request: RosterImportRequest,
   filesDir?: string, afterAnnouncement = false): ImportStep[] {
-  const { aliases, exportSnapshot, usccBackfills, platformQueries, platformLegacyProvenance,
-    platformRecordObservations, differences, merges } = request.payload
+  const { aliases, exportSnapshot, usccBackfills, platformQueries, differences, merges } = request.payload
   const announcement = hasAnnouncementRows(request)
   const steps: ImportStep[] = []
   if (announcement && !afterAnnouncement) steps.push({
@@ -181,7 +187,7 @@ export function createPostgresImportSteps(action: PostgresImportAction, request:
       return { preflight: await planPostgresRawAnnouncementPreflight(tx, request, { filesDir, pageCountErrors }) }
     },
   })
-  if (platformQueries?.length || platformLegacyProvenance?.length || platformRecordObservations?.length) steps.push({
+  if (platformQueries?.length) steps.push({
     writeForPreflight: Boolean(platformQueries?.length && (aliases?.length || differences?.length || merges?.length)),
     execute: (tx,batch,operation) => executePostgresPlatformItems(tx,batch,operation,request,undefined,action==='commit'),
   })

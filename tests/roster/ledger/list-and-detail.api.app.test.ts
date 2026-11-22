@@ -1,5 +1,5 @@
-import '../../support/compiled-enterprise-reader'
-import { initializeDb } from '../../../db/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { decodeJsonRead } from '../../support/json-read'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -10,7 +10,7 @@ import { Readable } from 'node:stream'
 import { createServer, type Server } from 'node:http'
 import { createApp, toNodeListener, getQuery as h3Query, setHeader as h3Header, createError as h3Error } from 'h3'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { schema, useDb } from '../../../db'
+import * as schema from '../fixtures/postgres-tables'
 
 /**
  * RL-04 的三个读接口(契约 §7.1 / §7.2 / §7.3)。
@@ -24,27 +24,24 @@ import { schema, useDb } from '../../../db'
  */
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-roster-api-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'api.db') })
+let db: ReturnType<typeof usePostgresDirectoryDb>
 
 const USCC = '91330211AAAAAAA001X'
 let enterpriseId = 0
 let emptyId = 0
 
-function seed(name: string, uscc: string | null, district: string | null, titleCode: string, source: 'jxj' | 'miit', eventType: 'award' | 'review' | 'maintain' | 'nurture') {
-  const id = db
+async function seed(name: string, uscc: string | null, district: string | null, titleCode: string, source: 'jxj' | 'miit', eventType: 'award' | 'review' | 'maintain' | 'nurture') {
+  const id = (await db
     .insert(schema.enterprise)
     .values({ name, nameNorm: name, usccNorm: uscc, district })
-    .returning({ id: schema.enterprise.id })
-    .get().id
-  db.insert(schema.rosterLegacyMember).values({ enterpriseId: id }).run()
-  const recordId = db
+    .returning({ id: schema.enterprise.id }))[0]!.id
+  await db.insert(schema.rosterLegacyMember).values({ enterpriseId: id })
+  const recordId = (await db
     .insert(schema.record)
     .values({ enterpriseId: id, titleCode, source })
-    .returning({ id: schema.record.id })
-    .get().id
-  db.insert(schema.recordEvent)
+    .returning({ id: schema.record.id }))[0]!.id
+  await db.insert(schema.recordEvent)
     .values({ recordId, eventType, year: 2021, decidedYear: 2021 })
-    .run()
   return id
 }
 
@@ -80,7 +77,12 @@ let handlerExport: (event: unknown) => Promise<Uint8Array | Readable>
 /** 只有工信部一侧的企业 ⇒ 专精特新上「平台有而公布无」。 */
 let sideOnlyId = 0
 
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 beforeAll(async () => {
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  db = usePostgresDirectoryDb()
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
   vi.stubGlobal('defineRouteMeta', () => undefined)
   vi.stubGlobal('getQuery', (event: Parameters<typeof h3Query>[0]) => event.node ? h3Query(event) : query)
@@ -90,26 +92,25 @@ beforeAll(async () => {
     if ((_event as Parameters<typeof h3Header>[0]).node) h3Header(_event as Parameters<typeof h3Header>[0], name, value)
   })
   vi.stubGlobal('createError', h3Error)
-  vi.doMock('@db', () => ({ useDb: () => db }))
 
-  enterpriseId = seed('宁波接口测试股份有限公司', USCC, '鄞州区', 'specialized_sme', 'jxj', 'award')
+
+  enterpriseId = await seed('宁波接口测试股份有限公司', USCC, '鄞州区', 'specialized_sme', 'jxj', 'award')
   // 两侧都有的记录 ⇒ 不是差异;用来验证筛选不会把非差异混进来。
-  const recordId = db
+  const recordId = (await db
     .insert(schema.record)
     .values({ enterpriseId, titleCode: 'specialized_sme', source: 'miit' })
-    .returning({ id: schema.record.id })
-    .get().id
-  db.insert(schema.recordEvent).values({ recordId, eventType: 'maintain', year: 2025 }).run()
-  db.insert(schema.enterpriseAlias)
+    .returning({ id: schema.record.id }))[0]!.id
+  await db.insert(schema.recordEvent).values({ recordId, eventType: 'maintain', year: 2025 })
+  await db.insert(schema.enterpriseAlias)
     .values({
       enterpriseId,
       name: '宁波接口测试厂',
       nameNorm: '宁波接口测试厂',
       sourceKind: 'manual',
+      createdAt: '2026-10-14T00:00:00Z',
       verificationStatus: 'confirmed',
     })
-    .run()
-  db.insert(schema.differenceReason)
+  await db.insert(schema.differenceReason)
     .values({
       enterpriseId,
       titleCode: 'specialized_sme',
@@ -119,13 +120,13 @@ beforeAll(async () => {
       measureCode: 'mark_moved_out',
       verificationStatus: 'confirmed',
       recordedAt: '2026-10-14T00:00:00.000Z',
+      createdAt: '2026-10-14T00:00:00.000Z',
     })
-    .run()
-  emptyId = seed('宁波无事件接口企业', '91330211AAAAAAA002X', null, 'innovative_sme', 'miit', 'award')
+  emptyId = await seed('宁波无事件接口企业', '91330211AAAAAAA002X', null, 'innovative_sme', 'miit', 'award')
 
   // 只有工信部一侧 ⇒ 专精特新上确实是一条差异;带一条**当前**解释。
-  sideOnlyId = seed('宁波仅平台接口企业', '91330211AAAAAAA003X', null, 'specialized_sme', 'miit', 'maintain')
-  db.insert(schema.differenceReason)
+  sideOnlyId = await seed('宁波仅平台接口企业', '91330211AAAAAAA003X', null, 'specialized_sme', 'miit', 'maintain')
+  await db.insert(schema.differenceReason)
     .values({
       enterpriseId: sideOnlyId,
       titleCode: 'specialized_sme',
@@ -135,8 +136,9 @@ beforeAll(async () => {
       measureCode: 'mark_moved_out',
       verificationStatus: 'confirmed',
       recordedAt: '2026-10-14T00:00:00.000Z',
+      createdAt: '2026-10-14T00:00:00.000Z',
     })
-    .run()
+
 
   handlerEnterprises = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default) as unknown as typeof handlerEnterprises
   handlerDetail = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default) as unknown as typeof handlerDetail
@@ -147,9 +149,9 @@ beforeAll(async () => {
   server = createServer(toNodeListener(app))
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`
-})
+}, 60_000)
 
-afterAll(async () => {
+afterAll(async () => { await closePostgresDirectoryDb(); postgres?.close(); vi.unstubAllEnvs();
   if (server) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
   vi.unstubAllGlobals()
   rmSync(dir, { recursive: true, force: true })
@@ -158,7 +160,7 @@ afterAll(async () => {
 describe('GET /api/roster/enterprises(契约 §7.1)', () => {
   it('不筛 = 全部;响应信封是 rows / counts / page / pageSize', async () => {
     query = {}
-    const out = (await handlerEnterprises({}))
+    const out = await handlerEnterprises({})
     expect(out.rows.length).toBe(3)
     expect(Object.keys(out).sort()).toEqual(['counts', 'page', 'pageSize', 'rows'])
     expect(out.page).toBe(1)
@@ -197,7 +199,7 @@ describe('GET /api/roster/enterprises(契约 §7.1)', () => {
     query = { pageSize: '1', page: '3' }
     expect((await handlerEnterprises({})).rows).toHaveLength(1)
     query = { pageSize: 'abc', page: '0' }
-    const fallback = (await handlerEnterprises({}))
+    const fallback = await handlerEnterprises({})
     expect(fallback.page).toBe(1)
     expect(fallback.pageSize).toBe(50)
     query = {}
@@ -251,7 +253,7 @@ describe('GET /api/roster/enterprises/:id(契约 §7.2)', () => {
     routerParam = '999999'
     await expect(handlerDetail({})).rejects.toThrowError(/not found/)
     routerParam = 'abc'
-    expect(() => handlerDetail({})).toThrowError(/invalid id/)
+    await expect(handlerDetail({})).rejects.toThrowError(/invalid id/)
     routerParam = undefined
   })
 })

@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { expect, it } from 'vitest'
 import SourceRowDetail from '../../../layers/sme-roster/app/components/record-correspondence/SourceRowDetail.vue'

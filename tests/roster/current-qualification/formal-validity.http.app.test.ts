@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { businessTables, qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
-import { schema } from '../../../db/client'
+import * as schema from '../fixtures/postgres-tables'
 
 // One owned Nuxt process and real read/export workers for the whole transport check.
 const f = qualificationExportFixture()
@@ -20,21 +22,21 @@ beforeAll(async () => {
     expect(spec.paths['/api/roster/exports/current/' + title].post).toBeDefined()
   }
   for (const sample of samples) {
-    const target = f.candidate(sample.name, [{ eventType: 'award', year: sample.year, batchSeq: sample.batch }], sample.title)
-    const award = f.db.select().from(schema.recordEvent).where(eq(schema.recordEvent.recordId,target.record.id)).get()!
-    const review = sample.name === 'owned_lanfan' ? null : f.db.insert(schema.recordEvent).values({ recordId: target.record.id, eventType: 'review', year: sample.year, batchSeq: sample.name === 'owned_yayan' ? 1 : null, decidedYear: year, reviewOutcome: 'passed' }).returning().get()
+    const target = await f.candidate(sample.name, [{ eventType: 'award', year: sample.year, batchSeq: sample.batch }], sample.title)
+    const award = (await f.db.select().from(schema.recordEvent).where(eq(schema.recordEvent.recordId,target.record.id)))[0]!
+    const review = sample.name === 'owned_lanfan' ? null : (await f.db.insert(schema.recordEvent).values({ recordId: target.record.id, eventType: 'review', year: sample.year, batchSeq: sample.name === 'owned_yayan' ? 1 : null, decidedYear: year, reviewOutcome: 'passed' }).returning())[0]!
     const path = sample.name + '.pdf', sha = 'a'.repeat(64)
-    f.db.insert(schema.storedFile).values({ relPath: path, filename: path, ext: 'pdf', bytes: 1, sha256: sha }).run()
+    await f.db.insert(schema.storedFile).values({createdAt:'2026-01-01T00:00:00Z', relPath: path, filename: path, ext: 'pdf', bytes: 1n, sha256: sha })
     const event = review ?? award
-    const evidence = f.db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: path, page: 2 }).returning().get()
+    const evidence = (await f.db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: path, page: 2 }).returning())[0]!
     const fact = { evidenceId: evidence.id, sourceSha256: sha, statementPages: [2], ...(review ? { originAwardEventId: award.id, publishedOn: today, continuation: sample.name === 'owned_yayan' ? 'until_next_review_results' : 'until_this_review_results' } : { interval: { validFrom: `${sample.year}-11-01`, validThrough: today } }) }
-    f.db.$client.prepare('UPDATE record_event SET formal_validity=? WHERE id=?').run(JSON.stringify(fact), event.id)
+    await f.db.update(schema.recordEvent).set({ formalValidity: JSON.stringify(fact) }).where(eq(schema.recordEvent.id, event.id))
   }
   await f.start()
 }, 120000)
 afterAll(() => f.close())
-it('real current-qualified HTTP and export artifacts agree for interval and both continuation scopes', async () => {
-  const before = f.businessDigest()
+it('real current-qualified HTTP, MCP and export artifacts agree for interval and both continuation scopes', async () => {
+  const before = await f.runtimeBusinessRows(businessTables)
   for (const sample of samples) {
     const response = await fetch(f.url(`/api/roster/current-enterprises?titleCode=${sample.title}&q=${sample.name}`))
     expect(response.status).toBe(200)
@@ -42,6 +44,19 @@ it('real current-qualified HTTP and export artifacts agree for interval and both
     expect(result.total).toBe(1)
     expect(result.rows[0].qualificationAssessment).toMatchObject({ ruleVersion: 'current-roster-116-v14', assessmentVersion: 'enterprise-qualification-807-v7' })
   }
+  const mcp = new Client({ name: 'formal-validity-runtime', version: '1' })
+  try {
+    await mcp.connect(new StreamableHTTPClientTransport(new URL(f.url('/mcp'))))
+    const result = await mcp.callTool({
+      name: 'list_current_qualified_enterprises', arguments: { titleCode: 'innovative_sme' },
+    })
+    expect(result.isError, JSON.stringify(result)).not.toBe(true)
+    const content = result.content as { type: string; text: string }[]
+    expect(content[0]?.type).toBe('text')
+    const response = JSON.parse(content[0]!.text)
+    expect(response.total).toBe(samples.length)
+    expect(response.rows.map((row: { name: string }) => row.name).sort()).toEqual(samples.map(sample => sample.name).sort())
+  } finally { await mcp.close() }
   for (const title of ['specialized-sme','innovative-sme']) {
     const response = await fetch(f.url('/api/roster/exports/current/' + title), { method: 'POST', headers: f.headers, body: JSON.stringify({ clientRequestId: 'formal-validity-' + title }) })
     expect(response.status).toBe(202)
@@ -63,53 +78,52 @@ it('real current-qualified HTTP and export artifacts agree for interval and both
     for (const row of sheet.getRows(2, expected.length)!) {
       const name = String(row.getCell(2).value)
       expect(String(row.getCell(14).value)).toContain(name === 'owned_lanfan'
-        ? `正式文件有效期：${year-3}-11-01 至 ${today}（含首尾）`
+        ? `公布名单所载有效期：${year-3}-11-01 至 ${today}（含首尾）`
         : `默认年度规则：最近一次认定或复核通过 ${year} 年 + 3 = ${year+3} 年；自 ${year+3} 年起到期（仅年份精度）`)
     }
   }
-  expect(f.businessDigest()).toBe(before)
+  expect(await f.runtimeBusinessRows(businessTables)).toEqual(before)
 }, 60000)
 
 // Expectations below are business literals, independent of production readers.
 // Y-3 expires in Y; Y-2 is still effective (it expired in neither Y-1 nor Y).
 it('annual expiry and title inheritance preserve literal HTTP and downloaded identity periods', async () => {
   await f.resetBusiness()
-  const continuation = (recordId: number, reviewYear: number | null, kind: 'until_next_review_results' | 'until_this_review_results') => {
-    const award = f.db.select().from(schema.recordEvent).where(eq(schema.recordEvent.recordId, recordId)).get()!
-    const event = reviewYear === null ? award : f.db.insert(schema.recordEvent).values({
+  const continuation = async (recordId: number, reviewYear: number | null, kind: 'until_next_review_results' | 'until_this_review_results') => {
+    const award = (await f.db.select().from(schema.recordEvent).where(eq(schema.recordEvent.recordId, recordId)))[0]!
+    const event = reviewYear === null ? award : (await f.db.insert(schema.recordEvent).values({
       recordId, eventType: 'review', year: year-6, batchSeq: 1,
       decidedYear: reviewYear === 0 ? null : reviewYear, reviewOutcome: 'passed',
-    }).returning().get()!
+    }).returning())[0]!
     const path = `annual-${event.id}.pdf`
     const sha = 'b'.repeat(64)
-    f.db.insert(schema.storedFile).values({ relPath: path, filename: path, ext: 'pdf', bytes: 7, sha256: sha }).run()
-    const evidence = f.db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: path, page: 3 }).returning().get()!
+    await f.db.insert(schema.storedFile).values({createdAt:'2026-01-01T00:00:00Z', relPath: path, filename: path, ext: 'pdf', bytes: 7n, sha256: sha })
+    const evidence = (await f.db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: path, page: 3 }).returning())[0]!
     // Publication is today even when the business year is missing or expired.
     const raw = JSON.stringify({ evidenceId: evidence.id, sourceSha256: sha, statementPages: [3],
       ...(event.id === award.id ? {} : { originAwardEventId: award.id }), publishedOn: today, continuation: kind })
-    f.db.$client.prepare('UPDATE record_event SET formal_validity=? WHERE id=?').run(raw, event.id)
+    await f.db.update(schema.recordEvent).set({ formalValidity: raw }).where(eq(schema.recordEvent.id, event.id))
   }
-  const expiredAward = f.candidate('annual_expired_upper', [{ eventType: 'award', year: year-3 }])
-  continuation(expiredAward.record.id, null, 'until_next_review_results')
-  const expiredReview = f.candidate('annual_expired_review', [{ eventType: 'award', year: year-6, batchSeq: 1 }], 'innovative_sme')
-  continuation(expiredReview.record.id, year-3, 'until_this_review_results')
-  const missing = f.candidate('annual_missing_business_year', [{ eventType: 'award', year: year-6, batchSeq: 1 }], 'innovative_sme')
-  continuation(missing.record.id, 0, 'until_next_review_results')
+  const expiredAward = await f.candidate('annual_expired_upper', [{ eventType: 'award', year: year-3 }])
+  await continuation(expiredAward.record.id, null, 'until_next_review_results')
+  const expiredReview = await f.candidate('annual_expired_review', [{ eventType: 'award', year: year-6, batchSeq: 1 }], 'innovative_sme')
+  await continuation(expiredReview.record.id, year-3, 'until_this_review_results')
+  const missing = await f.candidate('annual_missing_business_year', [{ eventType: 'award', year: year-6, batchSeq: 1 }], 'innovative_sme')
+  await continuation(missing.record.id, 0, 'until_next_review_results')
   // Y-3 was still valid last year, but is expired now: the two expired
   // fixtures above hit that exact first-expired-year boundary.
-  const valid = f.candidate('annual_valid_review', [{ eventType: 'award', year: year-6, batchSeq: 1 }], 'innovative_sme')
-  continuation(valid.record.id, year-2, 'until_next_review_results')
-  const inherited = f.candidate('annual_inherited_period', [{ eventType: 'award', year: year-1 }])
+  const valid = await f.candidate('annual_valid_review', [{ eventType: 'award', year: year-6, batchSeq: 1 }], 'innovative_sme')
+  await continuation(valid.record.id, year-2, 'until_next_review_results')
+  const inherited = await f.candidate('annual_inherited_period', [{ eventType: 'award', year: year-1 }])
   // Eight-year-old original recognition remains eligible without a passed review.
-  f.candidate('annual_inherited_giant', [{ eventType: 'award', year: year-8 }], 'little_giant')
-  const own = f.candidate('annual_own_period', [{ eventType: 'award', year: year-1 }])
-  f.addRecord(own.enterprise.id, own.enterprise.name, [{ eventType: 'award', year: year-2 }], 'innovative_sme')
+  await f.candidate('annual_inherited_giant', [{ eventType: 'award', year: year-8 }], 'little_giant')
+  const own = await f.candidate('annual_own_period', [{ eventType: 'award', year: year-1 }])
+  await f.addRecord(own.enterprise.id, own.enterprise.name, [{ eventType: 'award', year: year-2 }], 'innovative_sme')
   // Include source bytes/hash/page/origin/publication and all raw event columns,
   // not job tables that legitimately change during export.
-  const facts = () => ['record_event', 'record_evidence', 'stored_file'].map(table =>
-    f.db.$client.prepare(`SELECT * FROM ${table} ORDER BY id`).all())
-  const before = facts()
-  await f.start() // Discovery was inspected before any synthetic setup in beforeAll.
+  const facts = () => f.runtimeBusinessRows(['record_event', 'record_evidence', 'stored_file'])
+  await f.start()
+  const before = await facts()
   const annualReview = `默认年度规则：最近一次认定或复核通过 ${year-2} 年 + 3 = ${year+1} 年；自 ${year+1} 年起到期（仅年份精度）`
   const annualUpper = `默认年度规则：最近一次认定或复核通过 ${year-1} 年 + 3 = ${year+2} 年；自 ${year+2} 年起到期（仅年份精度）`
   const retainedGiant = '小巨人原认定或复核通过资格保留；不按认定年龄自动到期，适用正式期间、同周期失败及已确认处置另行裁定'
@@ -157,5 +171,5 @@ it('annual expiry and title inheritance preserve literal HTTP and downloaded ide
     const assessment = detail.qualificationAssessment.titles.find((t: any) => t.titleCode === 'innovative_sme')
     expect(assessment.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ eventType: 'review', year: year-6, decidedYear })]))
   }
-  expect(facts()).toEqual(before)
+  expect(await facts()).toEqual(before)
 }, 60000)

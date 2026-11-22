@@ -1,17 +1,3 @@
-import type { DecisionDb } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
-import { saveDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
-import { readEvidenceToken113 } from '../../../layers/sme-roster/server/utils/evidence-impact-113'
-import type { schema } from '../../../db/client'
-/** Synthetic subject facts must include #108 review, just like public writes.
- * Evidence-linked and legacy fixtures deliberately remain unreviewed unless the test reviews them.
- */
-export function reviewCurrentExportDecision(db: DecisionDb, decision: typeof schema.differenceReason.$inferSelect) {
-  if (decision.lifecycleAction !== 'replace' || !decision.basis || !decision.effectiveAt || decision.evidenceCollectionId || decision.evidenceObservationId) return
-  const scope={enterpriseId:decision.enterpriseId,titleCode:decision.titleCode as 'little_giant'|'specialized_sme'|'innovative_sme',direction:decision.direction as 'extra_in_miit'|'missing_in_miit'}
-  const token=readEvidenceToken113(db,scope)
-  saveDecision102(db,{...scope,action:'maintain',expectedCurrentId:decision.id,idempotencyKey:'fixture-reviewed-'+decision.id,actor:{type:'agent',id:'synthetic-export'},basis:decision.basis,ruleVersion:'synthetic-export',effectiveAt:decision.effectiveAt,reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:true}})
-}
-
 /** Complete typed exclusion fixture through the same preflight/commit contract as users. */
 export async function confirmCurrentExportExclusion(baseUrl: string, headers: Record<string,string>, enterpriseId: number, key: string, kind: 'moved_out'|'cancelled' = 'moved_out') {
   const root = `${baseUrl}/api/roster/enterprises/${enterpriseId}/facts`

@@ -4,7 +4,7 @@ import FileDisplayNameEditor from './FileDisplayNameEditor.vue'
 import { Alert, AlertDescription } from '#core/app/components/ui/alert'
 import { Button } from '#core/app/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '#core/app/components/ui/dialog'
-import type { FileRow } from '#core/server/utils/file-store'
+import type { FileRow } from '#core/server/utils/file-store-contract'
 import type { FileDetailDraft } from '#core/lib/core/file-categories'
 
 const open = defineModel<boolean>('open', { default: false })

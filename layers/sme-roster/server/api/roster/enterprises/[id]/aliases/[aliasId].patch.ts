@@ -1,8 +1,6 @@
 import { usePostgresDirectoryDb } from '../../../../../../../../db/postgresql/client'
 import { maintainPostgresEnterpriseAlias } from '../../../../../utils/alias-maintenance-postgres'
 import { semanticRouteHandler } from '../../../../../../../core/server/utils/core-route'
-import { useDb } from '@db'
-import { maintainEnterpriseAlias } from '../../../../../utils/alias-maintenance'
 import { requireApiToken } from '../../../../../../../core/server/utils/api-guard'
 
 defineRouteMeta({ openAPI: {
@@ -24,7 +22,7 @@ defineRouteMeta({ openAPI: {
       changes: { type: 'object', additionalProperties: false, description: '仅correct允许，必须实际改变字段。未提供保留；null仅清除validFrom/validTo/note。', properties: {
         name: { type: 'string', description: '去首尾空白后1–1000字符' },
         sourceKind: { type: 'string', enum: ['platform_business', 'platform_apply', 'announcement', 'manual'] },
-        sourceRefId: { type: 'integer', minimum: 0, description: '平台关系ID；announcement为由该企业同原名称的记录出处支持的经信局source_document ID；manual必须0，依据写basis。' },
+        sourceRefId: { type: 'integer', minimum: 0, description: '平台关系ID；announcement 为经信局公布名单原件的 source_document ID，须由该企业同原名称的记录出处支持；manual必须0，依据写basis。' },
         validFrom: { type: 'string', nullable: true, description: '非空时去首尾空白后1–100字符' },
         validTo: { type: 'string', nullable: true, description: '非空时去首尾空白后1–100字符' },
         note: { type: 'string', nullable: true, description: '最多4000字符' },
@@ -42,5 +40,5 @@ export default semanticRouteHandler('maintenance.alias.patch', async event => {
   setHeader(event, 'cache-control', 'no-store')
   requireApiToken(event)
   const pg = usePostgresDirectoryDb()
-  return pg ? maintainPostgresEnterpriseAlias(pg, getRouterParam(event, 'id'), getRouterParam(event, 'aliasId'), await readBody(event)) : maintainEnterpriseAlias(useDb(), getRouterParam(event, 'id'), getRouterParam(event, 'aliasId'), await readBody(event))
+  return maintainPostgresEnterpriseAlias(pg, getRouterParam(event, 'id'), getRouterParam(event, 'aliasId'), await readBody(event))
 })

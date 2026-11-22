@@ -1,12 +1,9 @@
 import { sendStream } from 'h3'
-import { useDb } from '@db'
 import { isJobId } from '../../../../core/lib/job'
 import { requireTaskCenterAccess } from '../../../../core/server/utils/task-center-access'
-import { resolveDbPath } from '../../../../../db/client'
 import { usePostgresJobsDb } from '../../../../core/server/utils/postgres-jobs'
 import { getPostgresJob } from '../../../../core/server/utils/job-store-postgres'
-import { getJob } from '../../../../core/server/utils/job-store'
-import { artifactStream, currentArtifact, EXPORT_MIME } from '../../utils/current-export-artifact'
+import { artifactStream, currentArtifact, EXPORT_MIME, postgresExportDirectory } from '../../utils/current-export-artifact'
 import { appLog, requestLogContext } from '../../../../core/lib/logging'
 defineRouteMeta({openAPI:{tags:['当前名录导出'],summary:'下载后台导出产物',security:[{bearerAuth:[]}],description:'与提交同一API token边界。只接受受控产物ULID；不接受文件路径。保留7天，过期410，缺失404，任务历史保留。同源页面请求通过浏览器标记、Fetch Metadata 及 Origin/Referer 校验后可直接操作，POST 还需 JSON；其他请求仍需 API token。此检查不识别用户。',parameters:[{in:'path',name:'id',required:true,schema:{type:'string'}}],responses:{200:{description:'Excel字节',content:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':{schema:{type:'string',format:'binary'}}}},401:{description:'需要token'},404:{description:'无可用产物'},410:{description:'已过期，请重新导出'}}}})
 export default defineEventHandler(async event => {
@@ -22,20 +19,19 @@ export default defineEventHandler(async event => {
   const id = getRouterParam(event,'id')
   if (!isJobId(id)) throw createError({statusCode:400,message:'产物ID非法'})
   const postgres = usePostgresJobsDb()
-  const sqlite = postgres ? undefined : useDb()
-  const job = postgres ? (await getPostgresJob(postgres, id))?.row : getJob(sqlite!, id)
-  const path = sqlite?.$client.name ?? resolveDbPath()
+  const job = (await getPostgresJob(postgres, id))?.row
+  const directory = postgresExportDirectory()
   // A syntactically valid URL parameter alone does not establish a known job.
   if (job?.kind === 'current-roster-export') taskId = job.id
-  const artifact = job ? await currentArtifact(job,path,logContext) : null
+  const artifact = job ? await currentArtifact(job,directory,logContext) : null
   if (artifact?.availability === 'expired') throw createError({statusCode:410,message:'产物已过期，请重新导出'})
-  if (!artifact || artifact.availability !== 'available') throw createError({statusCode:404,message:'产物不存在或尚未发布'})
+  if (!directory || artifact?.availability !== 'available') throw createError({statusCode:404,message:'产物不存在或尚未发布'})
   setHeader(event,'content-type',EXPORT_MIME)
   setHeader(event,'content-disposition',`attachment; filename="${artifact.filename}"`)
   setHeader(event,'content-length',artifact.size)
   setHeader(event,'etag',`"${artifact.sha256}"`)
   setHeader(event,'cache-control','private, no-store')
-  const stream = artifactStream(path,id)
+  const stream = artifactStream(directory,id)
   event.node.res.once('finish', () => record('success', 200))
   event.node.res.once('close', () => {
     if (event.node.res.writableFinished) return

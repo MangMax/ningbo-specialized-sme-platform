@@ -1,9 +1,6 @@
-import { evidenceRevisionEvent113, evidenceSemanticHead113 } from '../../../../db/postgresql/evidence-review-tables'
-import { record, recordEvent } from '../../../../db/postgresql/ledger-tables'
-import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
-import { platformBusinessObservation, platformCollection, platformLegacyQueryAlias, platformLegacyRelationAlias } from '../../../../db/postgresql/platform-tables'
-import { and, eq, exists, max, or, sql } from 'drizzle-orm'
+import { platformBusinessObservation, platformCollection } from '../../../../db/postgresql/platform-tables'
+import { and, DrizzleQueryError, eq, max, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { RELATION_DECLARE_KIND_ORDER } from '../../lib/labels'
 import { normalizeUscc } from '../../lib/domain'
@@ -11,43 +8,50 @@ import type { RosterImportItemResult, RosterImportPlatformQuery, RosterImportPre
 import { queryEvidenceError } from '../../lib/platform/query-evidence'
 import { platformQuerySourceConflict, stagedPlatformQuerySource, type PlatformQueryReplaySource } from '../../lib/platform/query-replay'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
-import { captureReconcileSlot } from '../../lib/platform/reconcile-slot-capture'
 import { writePostgresCollectionHeader } from '../../lib/platform/postgres-collection-write'
 import { writePostgresObservation } from '../../lib/platform/postgres-observation-write'
-import { readPostgresFingerprintQueries, readPostgresRelationFingerprints } from './postgres-platform-fingerprint'
 import { executePostgresRosterImport, type NativeImportExecution, type PostgresImportAction, type PostgresImportBatch } from './roster-export-import-postgres'
-import { projectQueryEvidenceRevisions, evidenceDigest113 } from './evidence-impact-113'
-import { appendPostgresEvidenceRevision } from './evidence-revision-postgres'
 import { stagePostgresJob } from '../../../core/server/utils/job-runner-postgres'
-import { EVENT_ARCHIVE_RULE_VERSION } from './event-archive-discovery'
-import { CANDIDATE_JOB_KIND, candidateJobParams } from './jobs/candidate-discovery'
+import { prunePostgresPlatformCaptures } from './platform-capture-retention-postgres'
+import { EVENT_ARCHIVE_RULE_VERSION } from './event-archive-discovery-model'
+import { CANDIDATE_JOB_KIND, candidateJobParams } from './jobs/candidate-discovery-contract'
 import type { PlatformProjectionResult } from '../../lib/platform/business-record'
 import { PlatformProjectionError } from '../../lib/platform/projection-error'
-import { ArchivedObservationWriteError, planPostgresHistoricalObservation, previewPostgresArchivedObservation, writePostgresArchivedObservation } from './platform-observation-import-postgres'
-import { LegacyProvenanceError } from '../../lib/platform/legacy-provenance-command'
-import { inspectPostgresLegacyProvenance, writePostgresLegacyProvenance } from './platform-legacy-provenance-postgres'
+import { applyProjectionPreview, businessProjectionPreview, planPlatformObservation, recognizedProjectionPreview } from './platform-business-record'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
-type Collection = Awaited<ReturnType<typeof writePostgresCollectionHeader>>
 type Observation = Awaited<ReturnType<typeof writePostgresObservation>>
 const emptySummary = { written: 0, skipped: 0, failed: 0, evidenceRepointed: 0 }
 const originalText = (value: unknown) => typeof value === 'string' ? value.trim() || null : null
 const itemError = (ref: string, code: string, message: string, field?: string): RosterImportItemResult =>
   ({ ok:false,kind:'platform_query',ref,error:{code,message,...(field ? {field} : {})} })
 
-async function archivedSource(tx: Tx, query: RosterImportPlatformQuery): Promise<{ id: number; source: PlatformQueryReplaySource } | null> {
-  const [entry] = await tx.select({ id: platformLegacyQueryAlias.oldId }).from(platformCollection)
-    .innerJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformCollection.id))
-    .where(and(eq(platformCollection.interface, query.interface), eq(platformCollection.queryKey, query.queryKey.trim()),
-      eq(platformCollection.rdjb, query.rdjb?.trim() ?? ''), eq(platformCollection.queriedAt, query.queriedAt.trim())))
+async function storedQuery(tx: Tx, query: RosterImportPlatformQuery) {
+  const c = platformCollection
+
+  const [entry] = await tx.select({
+    id: c.publicId, collectionId: c.id, titleCode: c.titleCode, status: c.status, failureReason: c.failureReason,
+  }).from(c)
+    .where(and(eq(c.interface, query.interface), eq(c.queryKey, query.queryKey.trim()),
+      eq(c.rdjb, originalText(query.rdjb) ?? ''), eq(c.queriedAt, query.queriedAt.trim())))
   if (!entry) return null
-  const { query: stored } = (await readPostgresFingerprintQueries(tx,[entry.id])).get(entry.id)!
-  const originals = await readPostgresRelationFingerprints(tx,{queryId:entry.id,archiveReplay:true})
   const ref = 'query:' + entry.id
-  const bySequence = new Map(originals.map(({ relation }) => [relation.sequenceNo,
-    { values:relation as unknown as NonNullable<RosterImportPlatformQuery['relations']>[number],ref:'relation:'+relation.id,id:relation.id }]))
-  return { id:entry.id,source:{ref,metadata:{titleCode:stored.titleCode,status:stored.status,failureReason:stored.failureReason,
-    rawResponse:stored.rawResponse,collectionEvidence:stored.collectionEvidence},relationCount:originals.length,relationAt:sequenceNo=>bySequence.get(sequenceNo)} }
+  return { ...entry, ref }
+}
+
+async function storedQueryReference(tx: Tx, entry: NonNullable<Awaited<ReturnType<typeof storedQuery>>>, query: RosterImportPlatformQuery) {
+  const o = platformBusinessObservation
+
+  const rows = query.relations?.length ? await tx.select({ sequenceNo: o.sequenceNo, relationKey: o.sourceRelationKey, relationId: o.publicId })
+    .from(o).where(eq(o.collectionId, entry.collectionId)) : []
+  const bySequence = new Map(rows.map(row => [row.sequenceNo, { values: row, ref: 'relation:' + row.relationId }]))
+  return platformQuerySourceConflict(query, {
+    ref: entry.ref,
+    metadata: { titleCode: entry.titleCode, status: entry.status as NonNullable<RosterImportPlatformQuery['status']>,
+      failureReason: entry.failureReason, rawResponse: null, collectionEvidence: null },
+    relationCount: rows.length,
+    relationAt: sequenceNo => bySequence.get(sequenceNo),
+  })
 }
 
 async function planQuery(tx: Tx, query: RosterImportPlatformQuery, index: number, pending?: PlatformQueryReplaySource) {
@@ -55,8 +59,21 @@ async function planQuery(tx: Tx, query: RosterImportPlatformQuery, index: number
   const invalid = (code: string, message: string, field?: string) => ({ error:itemError(ref,code,message,field) } as const)
   if (!originalText(query.queryKey)) return invalid('query_key_required','平台查询缺少 queryKey','queryKey')
   if (!originalText(query.queriedAt)) return invalid('queried_at_required','平台查询缺少 queriedAt（查询时点）','queriedAt')
-  const same = await archivedSource(tx,query)
   const relations = query.relations ?? []
+  if (!Array.isArray(relations) || relations.some(row => !row || typeof row !== 'object' || Array.isArray(row))) {
+    return invalid('collection_evidence_invalid', 'Relations must preserve the original source rows', 'relations')
+  }
+  const same = await storedQuery(tx, query)
+  if (same || query.reuseExisting === true) {
+    if (query.reuseExisting !== true || query.rawResponse != null || query.collectionEvidence != null ||
+      relations.some(row => Object.keys(row).some(key => key !== 'sequenceNo' && key !== 'relationKey'))) {
+      return invalid('query_replay_offline', 'Existing collections accept only a reference to the collection and its row coordinates', 'reuseExisting')
+    }
+    if (!same && !pending) return invalid('query_reuse_missing','No original collection exists at these coordinates','reuseExisting')
+    const conflict = same ? await storedQueryReference(tx, same, query) : platformQuerySourceConflict(query, pending!)
+    if (conflict) return { error: conflict } as const
+    return { kind: 'reference' as const, query, collection: same }
+  }
   const normalized = relations.map(row => normalizePlatformRelation(query.interface,row))
   const codes = [...new Set(normalized.map(row => normalizeUscc(row.usccRaw)).filter(Boolean))]
   const ids = [...new Set(normalized.flatMap(row => row.enterpriseId == null ? [] : [row.enterpriseId]))]
@@ -71,76 +88,38 @@ async function planQuery(tx: Tx, query: RosterImportPlatformQuery, index: number
     WHERE NOT cycle AND NOT EXISTS(SELECT 1 FROM enterprise_merge m WHERE m.from_enterprise_id=r.canonical) ORDER BY id`)
   const byId = new Map(owners.map(owner => [owner.id,owner]))
   const byCode = new Map(owners.filter(owner=>owner.usccNorm).map(owner=>[owner.usccNorm!,owner]))
-  const evidenceError = queryEvidenceError(query,same?.source ?? pending,{ byId:id=>byId.get(id),byUscc:code=>byCode.get(normalizeUscc(code)) })
+  const evidenceError = queryEvidenceError(query,pending,{ byId:id=>byId.get(id),byUscc:code=>byCode.get(normalizeUscc(code)) })
   if (evidenceError) return invalid('collection_evidence_invalid',evidenceError,'collectionEvidence')
   for (const [i,row] of normalized.entries()) {
-    if (!same && !pending && row.sequenceNo !== i+1) return invalid('sequence_no_invalid','新完整采集的 sequenceNo 必须按输入顺序从 1 连续编号','relations[].sequenceNo')
+    if (!pending && row.sequenceNo !== i+1) return invalid('sequence_no_invalid','新完整采集的 sequenceNo 必须按输入顺序从 1 连续编号','relations[].sequenceNo')
     if (row.normalizationConflicts.length) return invalid('platform_field_conflict','标准字段与原档冲突：'+row.normalizationConflicts.map(c=>c.field).join(', '),'relations')
   }
-  if (!same && !pending && query.reuseExisting) return invalid('query_reuse_missing','No original collection exists at these coordinates','reuseExisting')
-  if (!same && !pending && !query.collectionEvidence && query.rawResponse == null) return invalid('query_source_required','新采集必须提供原始 rawResponse 或 collectionEvidence','rawResponse')
-  const source = same?.source ?? pending ?? stagedPlatformQuerySource(query,ref)
+  if (!pending && !query.collectionEvidence && query.rawResponse == null) return invalid('query_source_required','新采集必须提供原始 rawResponse 或 collectionEvidence','rawResponse')
+  const source = pending ?? stagedPlatformQuerySource(query,ref)
   const conflict = platformQuerySourceConflict(query,source)
   if (conflict) return { error:conflict } as const
   const stored = { ...query, relations: query.relations?.map(row => row.enterpriseId == null ? row :
     { ...row,enterpriseId:byId.get(row.enterpriseId)?.canonical ?? row.enterpriseId }) }
-  return { query:stored,source,same,plannedReuse:pending !== undefined,normalized,byCode,byId } as const
+  if (pending) return { kind: 'reference' as const, query: stored, collection: null }
+  return { kind: 'new' as const, query: stored, source, normalized, byCode, byId }
 }
 
 type QueryPlan = Exclude<Awaited<ReturnType<typeof planQuery>>, {error: RosterImportItemResult}>
-async function recordQueryEvidence(tx: Tx, header: Collection, observations: Observation[]) {
-  const { query, columns } = header
-  const envelope = query.collectionEvidence
-  const ownsName = columns.queryKey.startsWith('name:')
-  const owners = await tx.select({ id: enterprise.id }).from(enterprise)
-    .where(ownsName ? eq(enterprise.nameNorm, columns.queryKey.slice(5)) : eq(enterprise.usccNorm, columns.queryKey))
-    .orderBy(enterprise.id).limit(2)
-  const revisions = projectQueryEvidenceRevisions({
-    ...columns,id:header.queryAlias,completeness:envelope?.completeness ?? null,conditions:JSON.stringify(envelope?.effectiveConditions ?? {}),
-    pages:JSON.stringify((envelope?.pages ?? []).map(p=>({rdjb:p.rdjb,page:p.page,status:p.status,fetchedCount:p.fetchedCount,
-      declaredTotal:p.declaredTotal,maxPage:p.maxPage ?? null }))),
-    unfinished:JSON.stringify((envelope?.unfinished ?? []).map(p=>({rdjb:p.rdjb,page:p.page}))),
-  },owners.length === 1 ? owners[0]!.id : null,observations.map(row=>row.evidence))
-  for (const revision of revisions) {
-    const previous = revision.preserveFacts
-      ? (await tx.select({ digest: evidenceSemanticHead113.factDigest }).from(evidenceSemanticHead113)
-          .where(eq(evidenceSemanticHead113.sourceKey, revision.sourceKind+':'+revision.sourceKey)))[0]?.digest
-      : undefined
-    const fact = revision.preserveFacts ? previous ?? evidenceDigest113([]) : revision.factDigest
-    const id = await appendPostgresEvidenceRevision(tx,{ ...revision,enterpriseId:revision.enterpriseId ?? undefined,
-      titleCode:revision.titleCode ?? undefined,direction:revision.direction ?? undefined,eventId:revision.eventId ?? undefined,factDigest:fact })
-    if (id === null || revision.enterpriseId == null) continue
-    await tx.insert(evidenceRevisionEvent113).select(tx.select({
-      revisionId: sql<number>`${id}::bigint`.as('revision_id'), eventId: recordEvent.id,
-      enterpriseId: record.enterpriseId, titleCode: record.titleCode,
-    }).from(record).innerJoin(recordEvent, eq(recordEvent.recordId, record.id))
-      .where(and(eq(record.enterpriseId, revision.enterpriseId),
-        revision.titleCode == null ? undefined : eq(record.titleCode, revision.titleCode),
-        exists(tx.select({ id: recordCorrespondence.id }).from(recordCorrespondence)
-          .where(and(eq(recordCorrespondence.status, 'confirmed'),
-            or(eq(recordCorrespondence.eventId, recordEvent.id), eq(recordCorrespondence.predecessorEventId, recordEvent.id))))),
-      ))).onConflictDoNothing()
-  }
-}
-
 async function writeQuery(tx: Tx, plan: QueryPlan, batchId: number): Promise<RosterImportItemResult> {
-  const { query,normalized,byId,byCode } = plan
-  const same = plan.same ?? (plan.plannedReuse ? await archivedSource(tx,query) : null)
-  if (same) {
-    const canonicalProjection: PlatformProjectionResult[] = []
-    for (const relation of query.relations ?? []) {
-      const relationId = same.source.relationAt(relation.sequenceNo)!.id!
-      const sync = query.reuseExisting !== true && relation.rawFields != null
-      const result = await writePostgresArchivedObservation(tx,relationId,{ kind:sync ? 'replay' : 'reference' })
-      if (result) canonicalProjection.push(result)
-    }
-    return { ok:true,kind:'platform_query',ref:'query:'+same.id,detail:{
-      relations:[],skipped:new Set((query.relations ?? []).map(row=>row.sequenceNo)).size,canonicalProjection,rowsWritten:0,reuseExisting:true,
+  const { query } = plan
+  if (plan.kind === 'reference') {
+    const source = plan.collection ?? await storedQuery(tx, query)
+    if (!source) throw new Error('Missing collection referenced in the same batch')
+    return { ok:true,kind:'platform_query',ref:source.ref,detail:{
+      relations:[],skipped:new Set((query.relations ?? []).map(row=>row.sequenceNo)).size,rowsWritten:0,reuseExisting:true,
     } }
   }
+  const { normalized, byId, byCode } = plan
   const assignments = normalized.map(row => {
-    const explicit = row.enterpriseId != null
-    const owner = explicit ? byId.get(row.enterpriseId!)?.canonical ?? row.enterpriseId! : byCode.get(normalizeUscc(row.usccRaw))?.canonical ?? null
+    const requestedOwner = row.enterpriseId
+    const explicit = requestedOwner != null
+    const owner = requestedOwner === undefined ? byCode.get(normalizeUscc(row.usccRaw))?.canonical ?? null
+      : requestedOwner === null ? null : byId.get(requestedOwner)?.canonical ?? requestedOwner
     const unknown = row.declareKind != null && !RELATION_DECLARE_KIND_ORDER.includes(row.declareKind)
     return { enterpriseId:owner,matchBasis:row.matchBasis ?? (explicit ? 'manual' : owner != null ? 'uscc' : 'none') as 'manual'|'uscc'|'none',
       verificationStatus:row.verificationStatus ?? (owner != null && !unknown ? 'confirmed' : 'pending') as 'confirmed'|'pending',
@@ -154,16 +133,7 @@ async function writeQuery(tx: Tx, plan: QueryPlan, batchId: number): Promise<Ros
   for (const [index,row] of (header.query.relations ?? []).entries()) {
     observations.push(await writePostgresObservation(tx,header,row,assignments[index]!,batchId))
   }
-  const raw = query.rawResponse ?? null
-  const slot = captureReconcileSlot({query:{id:header.queryAlias,...header.columns},
-    rawResponse:{storageClass:raw === null ? 'null' : 'text',byteLength:raw === null ? null : Buffer.byteLength(raw),sha256:header.rawArchive.sha256},
-    relations:observations.map(row=>row.slotInput)},header.rawArchive.id,raw,{rows:observations.map(row=>row.slot)})
-  await tx.update(platformCollection).set({
-    reconcileSlotState: slot.state, reconcileSlotRule: slot.rule, reconcileSlotRawArchiveId: slot.rawArchiveId,
-    reconcileSlotRowCount: slot.rowCount, reconcileSlotInputSha256: slot.inputSha256, reconcileSlotReason: slot.reason,
-  }).where(eq(platformCollection.id, header.collectionId))
-  await recordQueryEvidence(tx,header,observations)
-  return { ok:true,kind:'platform_query',ref:'query:'+header.queryAlias,detail:{ relations:observations.map(row=>row.projection.relationId),
+  return { ok:true,kind:'platform_query',ref:'query:'+header.queryId,detail:{ relations:observations.map(row=>row.projection.relationId),
     skipped:0,canonicalProjection:observations.map(row=>row.projection),rowsWritten:1+observations.length } }
 }
 
@@ -185,8 +155,7 @@ function archiveSummary(results: RosterImportItemResult[], reference: boolean, f
       rows.filter(row=>Reflect.get(row,key)===true).length]) : []
   }))
   return { ...emptySummary,written:results.reduce((count,item)=>count+Number(item.detail?.rowsWritten ?? 0),0),
-    skipped:results.reduce((count,item)=>count+Number(item.detail?.skipped ??
-      (item.kind==='platform_legacy_provenance' && item.detail?.rowsWritten===0)),0),
+    skipped:results.reduce((count,item)=>count+Number(item.detail?.skipped ?? 0),0),
     ...(rows.length ? {canonicalProjection:{...projection,...counts}} : {}),
     ...(fields ? {platformFields:{ status:quarantined || reference ? 'partial' as const : observations.size ? 'ready' as const : 'not_performed' as const,
       eligibleVersions:versions.size,projectionsCreated:created,projectionsReused:versions.size-created,
@@ -198,7 +167,7 @@ export async function planPostgresPlatformQueries(tx: Tx, queries: readonly Rost
   const conflicts: RosterImportItemResult[] = []
   const pending = new Map<string,PlatformQueryReplaySource>()
   for (const [index,query] of queries.entries()) {
-    const key = JSON.stringify([query.interface,query.queryKey.trim(),query.rdjb?.trim() ?? '',query.queriedAt.trim()])
+    const key = JSON.stringify([query.interface, originalText(query.queryKey), originalText(query.rdjb) ?? '', originalText(query.queriedAt)])
     if (query.interface === 'recognized_list' && pending.has(key)) {
       conflicts.push(itemError('query:'+index,'query_identity_duplicate','One original query identity may appear only once per batch','platformQueries'))
       continue
@@ -207,7 +176,7 @@ export async function planPostgresPlatformQueries(tx: Tx, queries: readonly Rost
     if ('error' in plan) conflicts.push(plan.error)
     else {
       plans.push(plan)
-      pending.set(key,plan.source)
+      if (plan.kind === 'new') pending.set(key,plan.source)
     }
   }
   return { plans, conflicts }
@@ -221,87 +190,57 @@ export function commitPostgresPlatformCollection(db: NodePgDatabase, request: Ro
 export async function executePostgresPlatformItems(tx: Tx,batch: PostgresImportBatch,action: PostgresImportAction,
   request: RosterImportRequest, checkpoint?: (tx: Tx)=>Promise<void>, stageCandidateJobs = true): Promise<NativeImportExecution> {
   const queries = Array.isArray(request.payload.platformQueries) ? request.payload.platformQueries : []
-  const requestedObservations = request.payload.platformRecordObservations ?? []
-  const provenance = request.payload.platformLegacyProvenance ?? []
   // Drizzle has no transaction-scoped PostgreSQL advisory lock API.
   if (action === 'commit') await tx.execute(sql`SELECT pg_advisory_xact_lock(21785,0)`)
   const { plans, conflicts } = await planPostgresPlatformQueries(tx,queries)
   const canonicalProjection: NonNullable<RosterImportPreflight['canonicalProjection']> = []
-  const addObservationError = (kind: 'platform_observation' | 'platform_relation', relationId: number, error: unknown) => {
-    if (!(error instanceof PlatformProjectionError)) throw error
-    conflicts.push({ ok:false,kind,ref:'relation:'+relationId,
-      error:{ code:error.code,message:error.message,...(kind==='platform_relation' ? {field:'relations'} : {}) } })
-  }
   for (const plan of plans) {
-    if (!plan.same) continue
+    if (plan.kind !== 'new') continue
     for (const relation of plan.query.relations ?? []) {
-      const relationId = plan.same.source.relationAt(relation.sequenceNo)!.id!
-      try { canonicalProjection.push(await previewPostgresArchivedObservation(tx,relationId)) }
-      catch (error) { addObservationError('platform_relation',relationId,error) }
+      const original = plan.source.relationAt(relation.sequenceNo)!
+      const projection = planPlatformObservation({
+        interface: plan.query.interface, relationKey: original.values.relationKey, rawFields: original.values.rawFields,
+      })
+      const apply = applyProjectionPreview(projection)
+      const business = businessProjectionPreview(projection)
+      const recognized = recognizedProjectionPreview(projection)
+      canonicalProjection.push({
+        relationId: null, identityState: projection.identityState, contentState: projection.contentState, keySource: projection.keySource,
+        ...(apply ? { applyProjection: apply } : {}),
+        ...(business ? { businessProjection: business } : {}),
+        ...(recognized ? { recognizedProjection: recognized } : {}),
+      })
     }
   }
-  const observationSources: NonNullable<RosterImportPreflight['platformObservationSources']> = []
-  let observationReview = 0
-  for (const { relationId } of requestedObservations) {
-    const expected = batch.preflight?.platformObservationSources?.find(row=>row.relationId===relationId)?.inputFingerprint
-    try {
-      const preview = await planPostgresHistoricalObservation(tx,relationId,expected)
-      observationSources.push({ relationId,inputFingerprint:preview.inputFingerprint })
-      canonicalProjection.push(preview)
-      observationReview += Number(preview.identityState!=='resolved' || preview.contentState!=='verified')
-    } catch (error) {
-      addObservationError('platform_observation',relationId,error)
-      if (expected) observationSources.push({ relationId,inputFingerprint:expected })
-    }
-  }
-  const legacy: Awaited<ReturnType<typeof inspectPostgresLegacyProvenance>>[] = []
-  const legacySources = []
-  for (const input of provenance) {
-    const expected = batch.preflight?.platformLegacyProvenanceSources?.find(row=>row.queryId===input.queryId)?.inputFingerprint
-    try {
-      const plan = await inspectPostgresLegacyProvenance(tx,input,expected)
-      legacy.push(plan)
-      legacySources.push({ queryId:input.queryId,inputFingerprint:plan.fingerprint })
-    } catch (error) {
-      if (!(error instanceof LegacyProvenanceError)) throw error
-      conflicts.push({ kind:'platform_legacy_provenance',ref:'query:'+input.queryId,ok:false,error:{code:error.code,message:error.message} })
-      if (expected) legacySources.push({ queryId:input.queryId,inputFingerprint:expected })
-    }
-  }
-  const preflight = { add:plans.filter(plan=>!plan.same && !plan.plannedReuse).length+legacy.filter(plan=>!plan.exists).length,
-    update:0,remove:0,review:plans.filter(plan=>plan.query.status==='failed').length+observationReview,conflicts,evidenceRepoints:0,batchStatus:batch.status,
-    ...(canonicalProjection.length ? {canonicalProjection} : {}),
-    ...(observationSources.length ? {platformObservationSources:observationSources} : {}),
-    ...(legacySources.length ? {platformLegacyProvenanceSources:legacySources} : {}) }
+  const preflight = { add:plans.filter(plan=>plan.kind==='new').length,
+    update:0,remove:0,review:plans.filter(plan=>plan.query.status==='failed').length,conflicts,evidenceRepoints:0,batchStatus:batch.status,
+    ...(canonicalProjection.length ? {canonicalProjection} : {}) }
   if (action === 'preflight') return {preflight}
   if (conflicts.length) return {preflight,items:conflicts,summary:{...emptySummary,failed:conflicts.length},
     error:'批次校验未通过：'+conflicts.length+' 项有误，未写入任何数据'}
-  const writes: { kind: string; ref: string; run(tx: Tx): Promise<RosterImportItemResult> }[] = [
-    ...plans.map((plan,index)=>({kind:'platform_query',ref:plan.same?.source.ref ?? 'query:'+index,
-      run:(nested: Tx)=>writeQuery(nested,plan,batch.id)})),
-    ...observationSources.map(({ relationId,inputFingerprint })=>{
-      const item = { kind:'platform_observation',ref:'relation:'+relationId }
-      return { ...item,async run(nested: Tx) {
-        const projection = await writePostgresArchivedObservation(nested,relationId,{ kind:'historical',batchId:batch.id,expected:inputFingerprint })
-        return { ...item,ok:true,detail:{ canonicalProjection:[projection!],rowsWritten:0 } }
-      } }
-    }),
-    ...legacy.map(plan=>{
-      const item = { kind:'platform_legacy_provenance',ref:'query:'+plan.input.queryId }
-      return { ...item,async run(nested: Tx) {
-        return { ...item,ok:true,detail:await writePostgresLegacyProvenance(nested,plan,batch.id) }
-      } }
-    }),
-  ]
+  const writes = plans.map((plan,index)=>({kind:'platform_query',
+    ref: (plan.kind === 'reference' ? plan.collection?.ref : null) ?? 'query:'+index,
+    run:(nested: Tx)=>writeQuery(nested,plan,batch.id)}))
   const items: RosterImportItemResult[] = []
   try {
     await tx.transaction(async nested=>{
       for (const write of writes) items.push(await write.run(nested))
+      const recordIds = new Set(items.flatMap(item => (item.detail?.canonicalProjection as PlatformProjectionResult[] | undefined) ?? [])
+        .flatMap(row => row.recordId === null ? [] : [row.recordId]))
+      await prunePostgresPlatformCaptures(nested, [...recordIds], true)
     })
   } catch (error) {
-    if (!(error instanceof ArchivedObservationWriteError)) throw error
-    const failed: RosterImportItemResult = { ok:false,kind:error.kind,ref:'relation:'+error.relationId,
-      error:{code:error.code,message:error.message,...(error.kind==='platform_relation' ? {field:'relations'} : {})} }
+    // Constraint and trigger rejections prove this write did not commit.
+    // Connection failures and retries must continue through the exception path.
+    const code = error instanceof DrizzleQueryError ? (error.cause as { code?: string } | undefined)?.code : undefined
+    const rejected = code?.startsWith('23') || code === 'P0001'
+    if ((!rejected && !(error instanceof PlatformProjectionError)) || !writes[items.length]) throw error
+    const { kind, ref } = writes[items.length]!
+    const details = error instanceof PlatformProjectionError
+      ? { code: error.code, message: error.message }
+      : { code: 'platform_write_failed', message: '平台证据写入失败，已整批回滚' }
+    const failed: RosterImportItemResult = { ok:false,kind,ref,
+      error:{ ...details, field:'relations' } }
     const rolledBack = items.map(item=>({ ...item,ok:false,error:{code:'commit_rolled_back',message:'整批回滚，本项未写入'} }))
     const notExecuted = writes.slice(items.length+1).map(({kind,ref})=>({
       kind,ref,ok:false,error:{code:'not_executed',message:'整批回滚，本项未执行'},
@@ -309,22 +248,20 @@ export async function executePostgresPlatformItems(tx: Tx,batch: PostgresImportB
     return {preflight,items:[...rolledBack,failed,...notExecuted],summary:{...emptySummary,failed:writes.length},
       error:'批次执行阶段有项失败（已整批回滚，未写入任何数据）'}
   }
-  const summary = archiveSummary(items,plans.some(plan=>(plan.same || plan.plannedReuse) &&
-    (plan.query.reuseExisting === true || (!plan.query.relations?.length && plan.source.relationCount > 0) ||
-      plan.query.relations?.some(row=>row.rawFields == null))),request.sourceKind==='platform_archive')
-  const candidateTaskIds = []
+  const summary = archiveSummary(items,plans.some(plan=>plan.kind==='reference'),request.sourceKind==='platform_archive')
+  const candidateTaskIds = [], queuedCandidateTaskIds = []
   if (checkpoint) await checkpoint(tx)
-  else if (stageCandidateJobs && process.env.NUXT_POSTGRES_JOBS === '1') {
-    for (const item of items.filter(item=>item.kind==='platform_query')) {
+  else if (stageCandidateJobs && process.env.NUXT_DB_READONLY !== '1') {
+    for (const item of items.filter(item=>item.kind==='platform_query' && item.detail?.reuseExisting !== true)) {
       const queryId = Number(item.ref.slice('query:'.length))
-      const [row] = await tx.select({ last: max(platformLegacyRelationAlias.oldId) }).from(platformLegacyQueryAlias)
-        .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.collectionId, platformLegacyQueryAlias.collectionId))
-        .innerJoin(platformLegacyRelationAlias, eq(platformLegacyRelationAlias.observationId, platformBusinessObservation.id))
-        .where(eq(platformLegacyQueryAlias.oldId, queryId))
+      const [row] = await tx.select({ last: max(platformBusinessObservation.publicId) }).from(platformCollection)
+        .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.collectionId, platformCollection.id))
+        .where(eq(platformCollection.publicId, queryId))
       const clientRequestId = 'archive:'+queryId+':'+(row?.last ?? 0)+':'+EVENT_ARCHIVE_RULE_VERSION
-      const { row: job } = await stagePostgresJob(tx,{kind:CANDIDATE_JOB_KIND,params:candidateJobParams.parse({queryId,clientRequestId})})
+      const { row: job, inserted } = await stagePostgresJob(tx,{kind:CANDIDATE_JOB_KIND,params:candidateJobParams.parse({queryId,clientRequestId})})
       candidateTaskIds.push(job.id)
+      if (inserted) queuedCandidateTaskIds.push(job.id)
     }
   }
-  return {preflight,items,summary,error:null,candidateTaskIds}
+  return {preflight,items,summary,error:null,candidateTaskIds,queuedCandidateTaskIds}
 }

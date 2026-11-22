@@ -10,10 +10,7 @@ import { differenceReason } from '../../../../db/postgresql/roster-selection-tab
 import { applyPostgresEnterpriseMerge, findPostgresEnterpriseMergeAliasConflict, lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import type { RosterImportItemResult, RosterImportMerge } from '../../lib/roster-import-client'
-import { evidenceDigest113 } from './evidence-impact-113'
-import { appendPostgresEvidenceRevision } from './evidence-revision-postgres'
-import { attachPostgresIdentityRevisionEvents, readPostgresIdentityMaterial } from './postgres-identity-evidence'
-import type { MergeLineage } from './roster-import'
+import type { MergeLineage } from './roster-import-model'
 import { findPostgresImportQuery, findPostgresImportRelation } from './roster-import-references-postgres'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -154,7 +151,7 @@ async function moveDifferences(tx: Tx, from: number, into: number) {
   const duplicates = tx.select({ id: targetDifference.id }).from(targetDifference)
     .where(and(eq(targetDifference.enterpriseId, into), differencePair))
   await tx.delete(differenceReason).where(and(eq(differenceReason.enterpriseId, from), exists(duplicates)))
-  const { rowCount } = await tx.update(differenceReason).set({ enterpriseId: into }).where(eq(differenceReason.enterpriseId, from))
+  const { rowCount } = await tx.update(differenceReason).set({ enterpriseId: into, retiredEvidenceValidity: null, retiredEvidenceReviewed: null }).where(eq(differenceReason.enterpriseId, from))
   return rowCount ?? 0
 }
 
@@ -214,16 +211,6 @@ async function moveRecords(tx: Tx, from: number, into: number) {
   return { recordsMoved, recordsFolded, eventsMoved, evidenceMoved }
 }
 
-async function captureMergeIdentity(tx: Tx, from: number, into: number, before: string) {
-  const after = await readPostgresIdentityMaterial(tx, into)
-  const revisionId = await appendPostgresEvidenceRevision(tx, {
-    sourceKind: 'identity', sourceKey: `merge:${from}:${into}`, sourceVersion: '1', enterpriseId: into,
-    beforeFactDigest: evidenceDigest113({ identity: before, from }),
-    factDigest: evidenceDigest113({ identity: after, merged: from }), metadata: { fromEnterpriseId: from },
-  })
-  if (revisionId !== null) await attachPostgresIdentityRevisionEvents(tx, revisionId, into)
-}
-
 export async function applyPostgresRosterMerge(tx: Tx, plan: PostgresRosterMergePlan): Promise<RosterImportItemResult> {
   const { merge, sourceEnterpriseId, intoEnterpriseId } = plan
   const ref = `merge:${sourceEnterpriseId}->${intoEnterpriseId}`
@@ -239,7 +226,6 @@ export async function applyPostgresRosterMerge(tx: Tx, plan: PostgresRosterMerge
   const conflict = await mergeConflict(tx, from.id, into.id, ref)
   if (conflict) return conflict
 
-  const identityBefore = await readPostgresIdentityMaterial(tx, into.id)
   const canonicalName = requestedName ?? into.name
   const sourceKind = merge.sourceKind ?? 'manual'
   const note = optionalText(merge.note)
@@ -264,7 +250,6 @@ export async function applyPostgresRosterMerge(tx: Tx, plan: PostgresRosterMerge
   const relations = await appendMergeAssignments(tx, from.id, into.id, basis, recordedAt)
   const records = await moveRecords(tx, from.id, into.id)
   await tx.update(recordCorrespondence).set({ enterpriseId: into.id }).where(eq(recordCorrespondence.enterpriseId, from.id))
-  await captureMergeIdentity(tx, from.id, into.id, identityBefore)
 
   const lineage: MergeLineage = {
     fromEnterpriseId: from.id, fromEnterpriseName: from.name, intoEnterpriseId: into.id, intoUscc: into.uscc ?? '',

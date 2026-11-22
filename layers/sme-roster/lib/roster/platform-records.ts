@@ -86,17 +86,6 @@ export function platformPresentationFields(raw: Record<string, unknown> | null |
   })
 }
 
-/** Bounded keys under investigation, never inferred personnel roles or cross-observation values. */
-export function platformRelatedRawFields(raw: Record<string, unknown> | null | undefined) {
-  return ['rdtime', 'rddqrq', 'sqsj', 'zsrxm', 'cz'].map(key => {
-    if (!raw || !Object.hasOwn(raw, key)) return { key, state: 'missing' as const, value: '' }
-    const value = raw[key]
-    if (value === null) return { key, state: 'null' as const, value: 'null' }
-    if (typeof value === 'string' && value.trim() === '') return { key, state: 'blank' as const, value: JSON.stringify(value) }
-    return { key, state: 'value' as const, value: typeof value === 'string' ? value : JSON.stringify(value) ?? String(value) }
-  })
-}
-
 export const PLATFORM_HISTORY_CONFLICTS: Record<string, string> = {
   identity_conflict: '企业身份冲突', title_conflict: '称号冲突',
   correspondence_decision_conflict: '对应决定冲突', platform_key_conflict: '平台编号冲突',

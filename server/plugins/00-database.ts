@@ -1,13 +1,10 @@
-import { useApplicationDb } from '../../db/client'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../db/postgresql/client'
 import { closeTaskCenterEvents, stopPostgresJobs } from '../../layers/core/server/public'
-import { postgresOnlyRuntime, validateRuntimeMode } from '../../db/runtime-mode'
-import { closePostgresReviewSnapshots } from '../../layers/sme-roster/server/utils/evidence-review-reads-postgres'
+import { validateRuntimeMode } from '../../db/runtime-mode'
 
 export default defineNitroPlugin(nitro => {
   validateRuntimeMode()
-  if (!postgresOnlyRuntime()) useApplicationDb()
-  if (!usePostgresDirectoryDb()) return
+  usePostgresDirectoryDb()
 
   // The Node preset waits for active HTTP responses before calling its close hook.
   // End SSE on the same signals so open streams don't hold up graceful shutdown.
@@ -20,7 +17,7 @@ export default defineNitroPlugin(nitro => {
   nitro.hooks.hook('close', async () => {
     for (const signal of signals) process.off(signal as NodeJS.Signals, closeStreams)
     try {
-      await Promise.all([closeTaskCenterEvents(), stopPostgresJobs(), closePostgresReviewSnapshots()])
+      await Promise.all([closeTaskCenterEvents(), stopPostgresJobs()])
     } finally {
       await closePostgresDirectoryDb()
     }

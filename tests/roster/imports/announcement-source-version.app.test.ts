@@ -4,27 +4,32 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, test } from 'vitest'
 import { nativeAppAdapter } from '../../support/native-app'
-import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { createRosterImportClient, type RosterImportRequest, type SupplementAnnouncementRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const dir = mkdtempSync(join(tmpdir(), 'announcement-source-version-'))
 const token = 'synthetic-version-test'
 const app = nativeAppAdapter({ dir, token })
-beforeAll(() => app.start())
+beforeAll(() => app.start(), 90_000)
 afterAll(async () => {
   await app.close()
   rmSync(dir, { recursive: true, force: true })
 })
 
-function storedVersion(filename: string, contents: string) {
-  const filesDir = join(dir, 'files')
-  mkdirSync(filesDir, { recursive: true })
-  writeFileSync(join(filesDir, filename), contents)
+async function storedVersion(filename: string, contents: string) {
+  const relativeDirectory = 'jxj/announcement/2025/1'
+  const directory = join(dir, 'files', relativeDirectory)
+  mkdirSync(directory, { recursive: true })
+  writeFileSync(join(directory, filename), contents)
+  const relPath = relativeDirectory + '/' + filename
   const sha256 = createHash('sha256').update(contents).digest('hex')
-  const file = createClassifiedFile(app.db, {
-    relPath: filename, filename, ext: 'xlsx', bytes: Buffer.byteLength(contents), sha256,
-  }, { kind: 'announcement', source: 'jxj' })
-  return { fileId: file.id, sha256 }
+  const response = await app.request('/api/files/register', {
+    method: 'POST',
+    body: JSON.stringify({ relPath, source: 'jxj', kind: 'announcement', year: 2025, batch: 1 }),
+  })
+  const file = await response.json()
+  expect(response.status, JSON.stringify(file)).toBe(201)
+  expect(file).toMatchObject({ relPath, sha256, source: 'jxj', kind: 'announcement' })
+  return { relPath, fileId: file.id as number, sha256 }
 }
 
 test('keeps both registered file versions when the declaration identity is reused', async () => {
@@ -50,18 +55,21 @@ test('keeps both registered file versions when the declaration identity is reuse
     return result
   }
 
-  const first = storedVersion('first.xlsx', 'First synthetic announcement')
-  const initial = await supplement('first.xlsx', first.sha256, {
+  const first = await storedVersion('first.xlsx', 'First synthetic announcement')
+  const initial = await supplement(first.relPath, first.sha256, {
     action: 'create', fields: { name: '来源版本测试企业' },
   })
   const enterpriseId = initial.owners[0]!
-  const second = storedVersion('second.xlsx', 'Second synthetic announcement')
-  const newer = await supplement('second.xlsx', second.sha256, {
+  const second = await storedVersion('second.xlsx', 'Second synthetic announcement')
+  const newer = await supplement(second.relPath, second.sha256, {
     action: 'attach', enterpriseId, expectedRevision: 1,
   })
   const response = await app.request('/api/core/enterprises/' + enterpriseId + '/sources')
   expect(response.status).toBe(200)
   const sources = await response.json()
-  expect(sources).toMatchObject([first, second])
+  expect(sources).toMatchObject([
+    { fileId: first.fileId, sha256: first.sha256 },
+    { fileId: second.fileId, sha256: second.sha256 },
+  ])
   expect(newer.sourceIds).toEqual([sources[1].id])
 })

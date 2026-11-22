@@ -1,13 +1,9 @@
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { usePostgresDirectoryDb } from '../../../../db/postgresql/client'
-import { postgresOnlyRuntime } from '../../../../db/runtime-mode'
 import { createPostgresJobRunner, type PostgresJobDb } from './job-runner-postgres'
 
 export function postgresJobsEnabled() {
-  return process.env.NUXT_POSTGRES_JOBS === '1'
-}
-
-export function postgresJobStorageEnabled() {
-  return postgresOnlyRuntime() || postgresJobsEnabled()
+  return process.env.NUXT_DB_READONLY !== '1'
 }
 
 export function requirePostgresJobsWritable() {
@@ -17,23 +13,30 @@ export function requirePostgresJobsWritable() {
 }
 
 export function usePostgresJobsDb() {
-  if (!postgresJobStorageEnabled()) return
-  const db = usePostgresDirectoryDb()
-  if (!db || (postgresJobsEnabled() && process.env.NUXT_POSTGRES_DIRECTORY_WRITE !== '1')) {
-    throw Object.assign(new Error('PostgreSQL 任务中心的业务连接不可用'), { statusCode: 503 })
-  }
-  return db
+  return usePostgresDirectoryDb()
 }
 
 let runtime: { db: PostgresJobDb; runner: ReturnType<typeof createPostgresJobRunner> } | undefined
 
+export function runningPostgresJobRunner(db: NodePgDatabase) {
+  return runtime && runtime.db === db ? runtime.runner : undefined
+}
+
 export function startPostgresJobs(filesDir: string) {
   if (!postgresJobsEnabled()) return
+  return startWritableJobRunner(filesDir)
+}
+
+function startWritableJobRunner(filesDir: string) {
   const db = usePostgresJobsDb()
-  if (!db) return
   if (runtime?.db !== db) runtime = { db, runner: createPostgresJobRunner(db, filesDir) }
   runtime.runner.start()
   return runtime
+}
+
+export function submitWritablePostgresJob(filesDir: string, input: Parameters<ReturnType<typeof createPostgresJobRunner>['submit']>[0]) {
+  requirePostgresJobsWritable()
+  return startWritableJobRunner(filesDir).runner.submit(input)
 }
 
 export async function stopPostgresJobs() {

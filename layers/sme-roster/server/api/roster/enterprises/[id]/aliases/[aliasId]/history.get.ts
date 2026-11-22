@@ -1,8 +1,6 @@
 import { usePostgresDirectoryDb } from '../../../../../../../../../db/postgresql/client'
 import { getPostgresEnterpriseAliasHistory } from '../../../../../../utils/alias-maintenance-postgres'
 import { semanticRouteHandler } from '../../../../../../../../core/server/utils/core-route'
-import { useDb } from '@db'
-import { getEnterpriseAliasHistory } from '../../../../../../utils/alias-maintenance'
 defineRouteMeta({ openAPI: {
   tags: ['企业别名维护'], summary: '按别名精确查询追加历史',
   description: '审计ID升序；包括action/actor/basis/idempotencyKey/requestHash/createdAt及before/after快照，不读取平台原文。归并折叠后用保留方企业和别名ID查询；快照保留原始IDs。',
@@ -17,5 +15,5 @@ defineRouteMeta({ openAPI: {
 export default semanticRouteHandler('maintenance.alias.history', event => {
   setHeader(event, 'cache-control', 'no-store')
   const pg = usePostgresDirectoryDb()
-  return pg ? getPostgresEnterpriseAliasHistory(pg, getRouterParam(event, 'id'), getRouterParam(event, 'aliasId'), getQuery(event)) : getEnterpriseAliasHistory(useDb(), getRouterParam(event, 'id'), getRouterParam(event, 'aliasId'), getQuery(event))
+  return getPostgresEnterpriseAliasHistory(pg, getRouterParam(event, 'id'), getRouterParam(event, 'aliasId'), getQuery(event))
 })

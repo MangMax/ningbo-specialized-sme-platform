@@ -1,11 +1,10 @@
-import { readAnnualWriteScope } from '../../utils/annual-correspondence-read'
-import { annualCorrespondenceSpec } from '../../utils/jobs/annual-correspondence'
 
 export { differenceSnapshotSpec } from '../../utils/difference-snapshot'
-export { batchSpec } from '../../utils/platform-batch-query'
+export { batchSpec } from '../../utils/platform-batch-query-postgres'
 export { reconcileSpec } from '../../utils/jobs/reconcile'
-export { candidateDiscoverySpec } from '../../utils/jobs/candidate-discovery'
+export { postgresCandidateDiscoverySpec as candidateDiscoverySpec } from '../../utils/jobs/candidate-discovery-postgres-spec'
 export { currentRosterExportSpec } from '../../utils/jobs/current-roster-export'
 export { rosterExportCleanupSpec } from '../../utils/jobs/roster-export-cleanup'
 
-export const annualSpec = annualCorrespondenceSpec(readAnnualWriteScope)
+export { postgresAnnualCorrespondenceSpec as annualSpec } from '../../utils/jobs/annual-correspondence-postgres-spec'
+export { rosterTaskHistoryCleanupSpec } from '../../utils/jobs/roster-task-history-cleanup'

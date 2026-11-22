@@ -9,11 +9,11 @@ import { postgresLeadListRow as leadRow, postgresLeadListVersion as leadVersion 
 import { registerPostgresEnterpriseSource, verifyRegisteredFileRead } from '../../../core/server/public'
 import type { LeadCatalog, LeadVersionDetail, LeadVersionSummary, VersionInput } from '../../lib/contracts'
 
-export function usePostgresLeadDb() {
-  if (process.env.NUXT_POSTGRES_LEAD_REGISTRATION !== '1') return
-  const db = usePostgresDirectoryDb()
-  if (!db) throw createError({ statusCode: 503, message: '线索名单 PostgreSQL 验收未配置' })
-  return db
+export function usePostgresLeadWriteDb() {
+  if (process.env.NUXT_DB_READONLY === '1') {
+    throw createError({ statusCode: 503, message: '线索名单处于只读验收模式。' })
+  }
+  return usePostgresDirectoryDb()
 }
 
 const fileColumns = {

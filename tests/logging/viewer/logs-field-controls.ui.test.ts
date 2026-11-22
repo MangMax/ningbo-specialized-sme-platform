@@ -1,6 +1,6 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 // Component seam only: proves the configuration UI's draft/PATCH contract in
-// happy-dom, not real browser behaviour. One case mounts the component with a
+// jsdom, not real browser behaviour. One case mounts the component with a
 // real service policy response so the rendered catalog cannot drift from the
 // backend shape without a failing test. Desktop and 390px operation stays a
 // separate manual acceptance lane.
@@ -11,7 +11,11 @@ import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { LogFieldControls, LogFieldControlsPatch } from '../../../layers/core/lib/logging/contract'
 import { LOG_FIELD_PROFILES } from '../../../layers/core/lib/logging/field-controls'
-import { createLogService } from '../../../layers/core/lib/logging/service'
+import { createPostgresLogService } from '../../../layers/core/lib/logging/postgres-service'
+import { createRequire } from 'node:module'
+
+const { postgresRuntimeFixture }: typeof import('../../support/postgres-fixture.mjs') =
+  createRequire(join(process.cwd(), 'package.json'))('./tests/support/postgres-fixture.mjs')
 
 vi.mock('motion-v', async (original) => {
   const actual = await original<typeof import('motion-v')>()
@@ -20,11 +24,13 @@ vi.mock('motion-v', async (original) => {
 })
 
 const wrappers: ReturnType<typeof mount>[] = []
-const services: ReturnType<typeof createLogService>[] = []
+const services: ReturnType<typeof createPostgresLogService>[] = []
 const directories: string[] = []
+const runtimes: Awaited<ReturnType<typeof postgresRuntimeFixture>>[] = []
 afterEach(async () => {
   wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
   for (const service of services.splice(0)) await service.close()
+  for (const runtime of runtimes.splice(0)) runtime.close()
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
   vi.unstubAllGlobals()
   document.body.innerHTML = ''
@@ -656,7 +662,9 @@ it('marks the real TUS profile as not collecting from file source and tus integr
 })
 
 it('renders and PATCHes the real service policy catalog without drifting from the backend shape', async () => {
-  const service = createLogService({ directory: ownedDirectory() })
+  const runtime = await postgresRuntimeFixture({ dir: ownedDirectory(), logsOnly: true })
+  runtimes.push(runtime)
+  const service = createPostgresLogService({ postgresUrl: runtime.url })
   services.push(service)
   const response = await service.policy()
   // The real response is the only thing driving the editor; the test itself
@@ -712,12 +720,12 @@ it('renders and PATCHes the real service policy catalog without drifting from th
     fieldControls: { http: { info: { httpRoute: false } } }
   })
   expect(saved.fieldControls.http.info).toMatchObject({ httpRoute: false, statusCode: true })
-  const reopened = createLogService({ directory: directories[0]! })
+  const reopened = createPostgresLogService({ postgresUrl: runtime.url })
   services.push(reopened)
   const persisted = await reopened.policy()
   expect(persisted.fieldControls).toEqual(saved.fieldControls)
   expect(persisted.catalog.profiles).toEqual(response.catalog.profiles)
-})
+}, 20_000)
 
 it('sends no fieldControls at all when the field draft is untouched', async () => {
   const { wrapper, calls } = await mountManagement(

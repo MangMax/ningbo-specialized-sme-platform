@@ -1,4 +1,4 @@
-import { submitNewFixtureAnnouncement } from '../../imports/fixtures/reviewed-announcement'
+import { submitNewFixtureAnnouncement } from './submit-announcement'
 import type { RosterImportRequest } from '../../../../layers/sme-roster/lib/roster-import-client'
 /** M2-specific public-write fixture, also used by the relocated built probe.
  * No database access: synthetic truth enters through the current HTTP API. */
@@ -24,9 +24,21 @@ export async function seedDifferenceReadFixture(base: string, token: string) {
     { enterprise: { name: 'M2R仅比较坐标' }, titleCode: 'innovative_sme', events: [{ eventType: 'nurture', year: 2021 }] },
   ] } })
   await commit({ differences: Array.from({ length: 8 }, (_, n) => (['missing_in_miit', 'extra_in_miit']).map(direction => ({ enterpriseName: m2Name(n), titleCode: 'specialized_sme', direction, status: 'needs_review', measureCode: 'manual_review', reasonNote: m2Note, recordedAt: '2026-10-18T00:00:00.000Z' }))).flat() })
+  const uscc = '91330211255994457P', statusTime = '2026-10-19T00:00:00.000Z'
   await commit({
-    platformQueries: [{ interface: 'business_list', queryKey: 'name:M2R合成00', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19T00:00:00.000Z', status: 'failed', rawResponse: 'SYNTHETIC_RAW_ONLY', failureReason: 'synthetic failure', relations: [{ sequenceNo: 1, nameRaw: 'M2R旧名称', usccRaw: '91330211255994457P', verificationStatus: 'confirmed' }, { sequenceNo: 2, nameRaw: 'unmatched synthetic' }] }, { interface:'business_list',queryKey:'91330211255994457P',rdjb:'2',titleCode:'specialized_sme',queriedAt:'2026-10-19T00:00:00.000Z',status:'failed',rawResponse:'SYNTHETIC_TIED',relations:[] }, { interface:'business_list',queryKey:'name:M2R合成01',rdjb:'2',titleCode:'specialized_sme',queriedAt:'2026-10-19T00:00:00.000Z',status:'partial',rawResponse:'SYNTHETIC_PARTIAL',relations:[] }],
-    aliases: [{ enterpriseName: m2Name(0), name: 'M2R旧名称', sourceKind: 'platform_business', verificationStatus: 'confirmed', sourceRelationRef: { interface: 'business_list', queryKey: 'name:M2R合成00', rdjb: '2', sequenceNo: 1 } }],
+    platformQueries: [
+      { interface: 'business_list', queryKey: uscc, rdjb: '2', titleCode: 'specialized_sme', queriedAt: statusTime,
+        status: 'partial', rawResponse: 'SYNTHETIC_RAW_ONLY', relations: [
+          { sequenceNo: 1, relationKey: 'M2R-current', nameRaw: 'M2R旧名称', usccRaw: uscc, verificationStatus: 'confirmed',
+            rawFields: { id: 'M2R-current', qymc: 'M2R旧名称', tyshxydm: uscc, rdjb: '2' } },
+          { sequenceNo: 2, nameRaw: 'unmatched synthetic' },
+        ] },
+      { interface: 'business_list', queryKey: 'name:M2R合成00', rdjb: '2', titleCode: 'specialized_sme', queriedAt: statusTime,
+        status: 'failed', failureReason: 'synthetic failure', rawResponse: 'SYNTHETIC_TIED', relations: [] },
+      { interface: 'business_list', queryKey: 'name:M2R合成01', rdjb: '2', titleCode: 'specialized_sme', queriedAt: statusTime,
+        status: 'partial', rawResponse: 'SYNTHETIC_PARTIAL', relations: [] },
+    ],
+    aliases: [{ enterpriseName: m2Name(0), name: 'M2R旧名称', sourceKind: 'platform_business', verificationStatus: 'confirmed', sourceRelationRef: { interface: 'business_list', queryKey: uscc, rdjb: '2', sequenceNo: 1 } }],
     differences: [
       { enterpriseName: m2Name(0), titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', reasonNote: m2Note, verificationStatus: 'confirmed', recordedAt: '2026-10-19T00:00:00.000Z', evidenceQueryRef: { interface: 'business_list', queryKey: 'name:M2R合成00', rdjb: '2' } },
       { enterpriseName: m2Name(1), titleCode: 'specialized_sme', direction: 'extra_in_miit', status: 'confirmed_no_diff', measureCode: 'none', reasonNote: m2Note, verificationStatus: 'confirmed', recordedAt: '2026-10-19T00:00:00.000Z' },
@@ -43,8 +55,8 @@ export function assertDifferenceReadState(rest: any, mcp?: any) {
   assert.equal(row.reasonNote, m2Note); assert.equal(row.status, 'confirmed_reason'); assert.equal(row.reasonCode, 'pending_review'); assert.equal(row.measureCode, 'follow_review')
   assert.equal(row.queryCoverage.status, 'failed'); assert.equal(row.queryCoverage.sources[0].outcome, 'unknown'); assert.equal(row.assessment, 'decided')
   assert.equal(row.currentDecision.versionId, row.explanationId); assert.equal(row.currentDecision.current.status, 'confirmed_reason')
-  assert.equal(row.explanationValidity.status, 'unknown'); assert.deepEqual(row.explanationValidity.evidenceQueryIds, [row.evidence.queryId])
-  assert.equal(row.evidence.failureReason, 'synthetic failure'); assert.equal(row.evidence.relationIds.length, 2); assert.equal(new Set(row.evidence.relationIds).size, 2)
+  assert.equal(row.explanationValidity.status, 'evidence_changed'); assert.deepEqual(row.explanationValidity.evidenceQueryIds, [row.evidence.queryId])
+  assert.equal(row.evidence.failureReason, 'synthetic failure'); assert.deepEqual(row.evidence.relationIds, [])
   assert.equal(rest.rows[1].status, 'confirmed_no_diff'); assert.equal(rest.rows[1].queryCoverage.status, 'partial'); assert.equal(rest.rows[2].queryCoverage.status, 'not_queried')
   assert.equal(absent.status, 'not_queried'); assert.equal(absent.explanationId, null); assert.equal(absent.evidence, null); assert.equal(absent.currentDecision.current, null); assert.equal(absent.assessment, 'not_queried')
   if (mcp) {

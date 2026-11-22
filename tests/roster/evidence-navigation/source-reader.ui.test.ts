@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -83,17 +83,17 @@ describe('record source reader public interaction', () => {
   })
 })
 
-it('only folds raw fields for the explicit compact reader and keeps them accessible through disclosure', async () => {
-  vi.stubGlobal('$fetch', vi.fn(async () => ({ source: { ...relation, rawFields: { retained: '完整原字段仍可查' } }, correspondences: [] })))
+it('shows extracted business fields and folds them in the compact reader', async () => {
+  vi.stubGlobal('$fetch', vi.fn(async () => ({ source: { ...relation, rawFields: { sshy: '设备制造' } }, correspondences: [] })))
   const wrapper = render('relation', 30)
   await flushPromises()
-  expect(wrapper.text()).toContain('完整原字段仍可查')
+  expect(wrapper.text()).toContain('设备制造')
   await wrapper.setProps({ compact: true }); await flushPromises()
   expect(wrapper.text()).toContain('合成企业')
   expect(wrapper.text()).toContain('退回')
-  expect(wrapper.text()).not.toContain('完整原字段仍可查')
-  await wrapper.findAll('button').find(b => b.text() === '完整原始字段与查询出处')!.trigger('click'); await flushPromises()
-  expect(wrapper.text()).toContain('完整原字段仍可查')
+  expect(wrapper.text()).not.toContain('设备制造')
+  await wrapper.findAll('button').find(b => b.text() === '补充业务字段')!.trigger('click'); await flushPromises()
+  expect(wrapper.text()).toContain('设备制造')
 })
 
 it('keeps related source links visible without nested decision controls in a read only decision reader', async () => {

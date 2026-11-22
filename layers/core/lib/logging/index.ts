@@ -1,25 +1,22 @@
 import { createLogger, initLogger } from 'evlog'
-import { resolve } from 'node:path'
 import { isMainThread } from 'node:worker_threads'
 import { randomUUID } from 'node:crypto'
-import { createLogService, type LogService } from './service'
+import type { LogService } from './service'
+import { createPostgresLogService } from './postgres-service'
 import { applicationLogRedaction, projectEvlog, safeLogEvent } from './privacy'
 import { LOG_DEFAULTS, type LogContext, type LogInput } from './contract'
+import { isSuccessfulProbe } from './http'
 import { httpLogModule, mcpLogModule } from './module'
-import { postgresOnlyRuntime } from '../../../../db/runtime-mode'
 export * from './contract'
-export { createLogService } from './service'
 let service: LogService | undefined
 let workerExecution = !isMainThread
 const numberEnv = (name: string, fallback: number) => {
   const value = Number(process.env[name]); return Number.isInteger(value) && value > 0 ? value : fallback
 }
 export function applicationLogs(): LogService {
-  const postgresUrl = process.env.NUXT_POSTGRES_LOG_URL
-    ?? (postgresOnlyRuntime() ? process.env.NUXT_POSTGRES_DIRECTORY_URL : undefined)
-  if (postgresOnlyRuntime() && !postgresUrl) throw new Error('PostgreSQL logging connection is required')
-  return service ??= createLogService({
-    directory: resolve(process.env.NUXT_LOG_DIR || './.runtime-logs'),
+  const postgresUrl = process.env.NUXT_POSTGRES_LOG_URL ?? process.env.NUXT_POSTGRES_DIRECTORY_URL
+  if (!postgresUrl) throw new Error('PostgreSQL logging connection is required')
+  return service ??= createPostgresLogService({
     postgresUrl,
     postgresSchema: process.env.NUXT_POSTGRES_LOG_SCHEMA || undefined,
     retentionDays: Math.min(365, numberEnv('NUXT_LOG_RETENTION_DAYS', LOG_DEFAULTS.retentionDays)),
@@ -29,7 +26,10 @@ export function applicationLogs(): LogService {
 }
 /** evlog custom drain. Never throws into the evlog/business pipeline. */
 export function drainApplicationEvent(event: Record<string, unknown>) {
-  try { applicationLogs().emit(projectEvlog(event)) } catch { /* Only fixed diagnostics, never original error. */ }
+  try {
+    const projected = projectEvlog(event)
+    if (!isSuccessfulProbe(projected)) applicationLogs().emit(projected)
+  } catch { /* Only fixed diagnostics, never original error. */ }
 }
 /** Worker entry points call once, before emitting. Nuxt is initialized by evlog/nuxt instead. */
 export function initializeWorkerLogging() {

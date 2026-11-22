@@ -28,7 +28,7 @@ const ruleCodes = new Map([...rules].map(([code, rule]) => [rule, code]))
 function area(path) {
   if (path.startsWith('tests/')) return '测试'
   if (path.startsWith('db/migrations/') || path === 'db/runtime-schema.generated.ts') return '迁移'
-  if (path.startsWith('upgrade/') || /^scripts\/(?:initialize-native-db|upgrade-)/.test(path)) return '离线'
+  if (path.startsWith('upgrade/') || path.startsWith('scripts/upgrade-')) return '离线'
   return '运行时'
 }
 
@@ -47,7 +47,7 @@ function runtimeEngine(path, source) {
 function accessPath(path, engine, row) {
   if (row.area === '测试') return '测试与夹具'
   if (row.area === '迁移') return '迁移与生成的建库 SQL'
-  if (row.area === '离线') return path.startsWith('upgrade/postgresql/') ? 'PG 离线迁移/恢复' : '离线工具与历史快照'
+  if (row.area === '离线') return path.startsWith('upgrade/pg/') ? 'PG 离线迁移/恢复' : '离线工具与历史快照'
   if (/\b(?:sqlite_schema|sqlite_master|pragma_(?:table|index)|pragma\b)|better-sqlite3|COLLATE\s+(?:BINARY|NOCASE)\b/i.test(row.snippet)) return 'SQLite 运行调用'
   if (/\b(?:pg_(?:(?:try_)?advisory_\w+|catalog|input_is_valid|get_serial_sequence))\b|::(?:jsonb|bytea)\b|COLLATE\s+"C"|WITH\s+ORDINALITY/i.test(row.snippet)) return 'PG 运行调用'
   return engine

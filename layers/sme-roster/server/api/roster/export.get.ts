@@ -1,7 +1,6 @@
 import { legacyExportSheet, writeLegacyXlsx } from '../../utils/legacy-export-xlsx'
-import { useDb } from '@db'
 import { FIRST_RECOGNITION_REASONS, TITLES } from '#sme-roster/lib/labels'
-import { allRosterEnterprises, type RosterEnterpriseRow } from '#sme-roster/lib/roster/enterprise-roster'
+import { type RosterEnterpriseRow } from '#sme-roster/lib/roster/enterprise-roster'
 import { evidencePointerText, firstRecognitionYearText } from '#sme-roster/lib/roster/first-recognition'
 import { parseRosterEnterpriseQuery } from '../../utils/roster-read-query'
 import { appLog, requestLogContext } from '../../../../core/lib/logging'
@@ -10,7 +9,7 @@ import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 
 /**
  * **企业总表导出**(RL-04)。与 `GET /api/roster/enterprises` **同一套筛选解析、
- * 同一段读模型**(`allRosterEnterprises`)—— 「筛选和导出同一口径」是结构上成立的,
+ * 同一段读模型**(`allPostgresRosterEnterprises`)—— 「筛选和导出同一口径」是结构上成立的,
  * 不是靠两处对齐。
  *
  * ── 单位(第一行就写清)──────────────────────────────────────────────────
@@ -119,8 +118,7 @@ export default defineEventHandler(async (event) => {
   appLog({ module: 'sme-roster', source: 'export', operation: 'export.legacy.enterprises.summary', outcome: 'started' }, logContext)
   try {
   const filter = parseRosterEnterpriseQuery(getQuery(event))
-  const pg = usePostgresRosterDb()
-  const { rows, counts } = pg ? await allPostgresRosterEnterprises(pg, filter) : allRosterEnterprises(useDb(), filter)
+  const { rows, counts } = await allPostgresRosterEnterprises(usePostgresRosterDb(), filter)
   summarized = true
   appLog({ module: 'sme-roster', source: 'export', operation: 'export.legacy.enterprises.summary', outcome: 'success', counts: { done: rows.length, total: rows.length } }, logContext)
 

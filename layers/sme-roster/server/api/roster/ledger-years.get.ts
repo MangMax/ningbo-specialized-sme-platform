@@ -1,5 +1,3 @@
-import { useDb } from '@db'
-import { readLedgerYears } from '#sme-roster/lib/roster/recognitions'
 import { readPostgresLedgerYears } from '../../utils/postgres-recognition-read'
 import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 
@@ -27,7 +25,4 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler(() => {
-  const pg = usePostgresRosterDb()
-  return pg ? readPostgresLedgerYears(pg) : readLedgerYears(useDb())
-})
+export default defineEventHandler(() => readPostgresLedgerYears(usePostgresRosterDb()))

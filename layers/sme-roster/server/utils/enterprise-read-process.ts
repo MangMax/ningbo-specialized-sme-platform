@@ -3,17 +3,24 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+
+export function createSourceEnterpriseReadProcess(entry: URL) {
+  const jitiPath = createRequire(import.meta.resolve('nuxt/package.json')).resolve('jiti')
+  const entryPath = JSON.stringify(fileURLToPath(entry))
+  return createEnterpriseReadProcess(entry, `
+    import { createRequire } from 'node:module';
+    const { createJiti } = createRequire(import.meta.url)(${JSON.stringify(jitiPath)});
+    await createJiti(${entryPath}).import(${entryPath});
+  `)
+}
 
 /** Worker-compatible lifecycle, with an OS process boundary for fatal V8 errors.
  * Explicit V8 flags override inherited NODE_OPTIONS, unlike Worker resourceLimits.
  * No application heap setting or timeout is changed. */
 export function createEnterpriseReadProcess(entry: URL, sourceLoader?: string) {
-  // Complete raw strings survive every IPC await in old/large-object space.
-  // Reserve room for the SQLite JSON text + parsed string (2x raw bytes),
-  // rather than giving most of the executor's allowance to short-lived tokens.
-  // Redistribute the existing budget: 256 + 3*16 = 304MiB effective V8 heap,
-  // below the former 128 + 3*64 = 320MiB. The app's heap is unchanged.
+  // Keep the worker heap bounded while holding query results and streaming JSON.
   const args = ['--max-old-space-size=256', '--max-semi-space-size=16']
   let bootstrapDir: string | undefined
   if (sourceLoader) {
@@ -47,7 +54,6 @@ export function createEnterpriseReadProcess(entry: URL, sourceLoader?: string) {
       child.ref()
       return new Promise(resolve => {
         child.once('exit', () => resolve())
-        // A blocking native SQLite call cannot process a cooperative stop message.
         child.kill('SIGKILL')
       })
     },

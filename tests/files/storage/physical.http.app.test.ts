@@ -1,16 +1,24 @@
+import { ok } from 'node:assert/strict'
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readlinkSync, lstatSync, renameSync, rmSync, existsSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { initializeDb, schema } from '../../../db/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import pg from 'pg'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
+import { eq } from 'drizzle-orm'
+import { storedFile } from '../../../db/postgresql/file-tables'
 import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'file-physical-312-'))
 const root = join(dir, 'files')
-const dbPath = join(dir, 'synthetic.db')
-const db = initializeDb({ create: true, dbPath })
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
+let pool: pg.Pool
+let db: ReturnType<typeof drizzle<Record<string, never>>>
 let service: { baseUrl: string; stop(): Promise<void>; crash(): Promise<void> }
 let serverOutput = ''
 let seq = 0
@@ -50,20 +58,44 @@ async function file() {
 async function startService() {
   const cwd = resolve(import.meta.dirname, '../../..')
   const port = await reserveLoopbackPort()
-  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt-build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: root, NUXT_INCOMING_DIR: join(dir, 'incoming') } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...runtime.env, NUXT_BUILD_DIR: join(dir, 'nuxt-build'), NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: root, NUXT_INCOMING_DIR: join(dir, 'incoming') } })
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { serverOutput = (serverOutput + data).slice(-12000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child), crash: async () => { const exited = new Promise<void>(resolveExit => child.once('exit', () => resolveExit())); process.kill(-child.pid!, 'SIGKILL'); await exited; await stopOwnedChild(child) } }
   try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) } catch (error) { await service.stop(); throw new Error(`${String(error)}\n${serverOutput}`) }
 }
 let discovery: any
-beforeAll(async () => { discovery = await readDevelopmentDiscovery(); await startService() }, 90000)
+beforeAll(async () => {
+  discovery = await readDevelopmentDiscovery()
+  runtime = await postgresRuntimeFixture({ dir })
+  pool = new pg.Pool({ connectionString: runtime.url, options: '-c search_path=business,public' })
+  db = drizzle<Record<string, never>>(pool)
+  await startService()
+}, 120_000)
 afterAll(async () => {
-  mkdirSync('/tmp/issue-312-stage', { recursive: true })
-  writeFileSync('/tmp/issue-312-stage/http-server.log', serverOutput)
   if (service) await service.stop()
-  db.$client.close()
+  await pool?.end()
+  runtime?.close()
   rmSync(dir, { recursive: true, force: true })
 })
+
+async function injectMaintenanceFailure(fileId: number) {
+  await pool.query(`
+    CREATE FUNCTION business.fail_file_maintenance() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RAISE EXCEPTION 'injected file maintenance audit failure';
+    END;
+    $$;
+    CREATE TRIGGER fail_file_maintenance BEFORE INSERT ON business.file_maintenance_audit
+      FOR EACH ROW WHEN (NEW.file_id = ${fileId})
+      EXECUTE FUNCTION business.fail_file_maintenance();
+  `)
+  return async () => {
+    await pool.query(`
+      DROP TRIGGER fail_file_maintenance ON business.file_maintenance_audit;
+      DROP FUNCTION business.fail_file_maintenance();
+    `)
+  }
+}
 
 describe("recoverable physical command", () => {
   it('quarantines original bytes and replays across transports then recovers the same identity', async () => {
@@ -89,7 +121,7 @@ describe("recoverable physical command", () => {
   it('retains original bytes after quarantine rename and DB failure and explicitly recovers pending intent', async () => {
     const f = await file(), controls = await modernControls(f.id)
     const before = (await rest(`${f.id}/maintenance`)).body
-    db.$client.exec(`CREATE TRIGGER fail312 BEFORE INSERT ON file_maintenance_audit WHEN NEW.file_id = ${f.id} BEGIN SELECT RAISE(ABORT, 'injected DB failure after rename'); END`)
+    const clearFailure = await injectMaintenanceFailure(f.id)
     try {
       expect((await rest(`${f.id}?deleteDisk=1`, 'DELETE', controls)).status).toBe(500)
       expect(existsSync(join(root, f.relPath))).toBe(false)
@@ -97,7 +129,7 @@ describe("recoverable physical command", () => {
       const pending = (await rest(`${f.id}/physical-recovery`)).body
       expect(pending.intent).toMatchObject({ state: 'pending', fileId: f.id })
       expect(readFileSync(join(root, '.physical-quarantine', pending.intent.id), 'utf8')).toBe('original synthetic file bytes')
-    } finally { db.$client.exec('DROP TRIGGER fail312') }
+    } finally { await clearFailure() }
     const pending = (await rest(`${f.id}/physical-recovery`)).body
     const recovered = await rest(`${f.id}/physical-recovery`, 'POST', { intentId: pending.intent.id, ...await modernControls(f.id) })
     expect(recovered.status).toBe(200)
@@ -107,9 +139,9 @@ describe("recoverable physical command", () => {
   })
   it('resumes the same delete key after rename failure and replays the durable receipt after process exit', async () => {
     const f = await file(), controls = await modernControls(f.id)
-    db.$client.exec(`CREATE TRIGGER fail312retry BEFORE INSERT ON file_maintenance_audit WHEN NEW.file_id = ${f.id} BEGIN SELECT RAISE(ABORT, 'injected rollback'); END`)
+    const clearFailure = await injectMaintenanceFailure(f.id)
     try { expect((await rest(`${f.id}?deleteDisk=1`, 'DELETE', controls)).status).toBe(500) }
-    finally { db.$client.exec('DROP TRIGGER fail312retry') }
+    finally { await clearFailure() }
     const completed = await rest(`${f.id}?deleteDisk=1`, 'DELETE', controls)
     expect(completed.status).toBe(200)
     await service.crash()
@@ -118,17 +150,18 @@ describe("recoverable physical command", () => {
     expect((await rest(`${f.id}/maintenance`)).body).toMatchObject({ revision: 1, total: 1 })
     expect((await rest(`${f.id}?deleteDisk=1`, 'DELETE', { ...controls, basis: 'different request' })).status).toBe(409)
     const recovery = { ...await modernControls(f.id), intentId: completed.body.intent.id }
-    db.$client.exec(`CREATE TRIGGER fail312restore BEFORE INSERT ON file_maintenance_audit WHEN NEW.file_id = ${f.id} BEGIN SELECT RAISE(ABORT, 'injected recovery rollback'); END`)
+    const clearRecoveryFailure = await injectMaintenanceFailure(f.id)
     try { expect((await rest(`${f.id}/physical-recovery`, 'POST', recovery)).status).toBe(500) }
-    finally { db.$client.exec('DROP TRIGGER fail312restore') }
+    finally { await clearRecoveryFailure() }
     expect(readFileSync(join(root, f.relPath), 'utf8')).toBe('original synthetic file bytes')
     expect((await rest(`${f.id}/physical-recovery`)).body.intent.state).toBe('recovering')
     expect((await rest(`${f.id}/maintenance`)).body.file.removedAt).not.toBeNull()
     expect((await rest(`${f.id}/physical-recovery`, 'POST', recovery)).status).toBe(200)
     expect((await rest(`${f.id}/maintenance`)).body).toMatchObject({ revision: 2, total: 2, file: { removedAt: null } })
   }, 90000)
-  it('rejects changed SHA same-size bytes, changed size and occupied original paths during explicit recovery', async () => {
-    for (const kind of ['same-size', 'size', 'occupied', 'dangling-symlink', 'missing'] as const) {
+  it.each(['same-size', 'size', 'occupied', 'dangling-symlink', 'missing'] as const)(
+    'rejects a %s obstruction during explicit recovery',
+    async kind => {
       const f = await file()
       const deleted = await rest(`${f.id}?deleteDisk=1`, 'DELETE', await modernControls(f.id))
       expect(deleted.status).toBe(200)
@@ -151,15 +184,15 @@ describe("recoverable physical command", () => {
       }
       if (kind === 'same-size' || kind === 'size' || kind === 'missing') writeFileSync(quarantined, 'original synthetic file bytes')
       expect((await rest(`${f.id}/physical-recovery`, 'POST', controls)).status).toBe(200)
-    }
-  })
+    },
+  )
   it('same-key quarantine retries preserve dangling destination and original entries without changing bytes or audit', async () => {
     for (const obstruction of ['quarantine', 'original'] as const) {
       const f = await file(), controls = await modernControls(f.id)
       const before = (await rest(`${f.id}/maintenance`)).body
-      db.$client.exec(`CREATE TRIGGER fail312entry BEFORE INSERT ON file_maintenance_audit WHEN NEW.file_id = ${f.id} BEGIN SELECT RAISE(ABORT, 'pending entry fixture'); END`)
+      const clearFailure = await injectMaintenanceFailure(f.id)
       try { expect((await rest(`${f.id}?deleteDisk=1`, 'DELETE', controls)).status).toBe(500) }
-      finally { db.$client.exec('DROP TRIGGER fail312entry') }
+      finally { await clearFailure() }
       const pending = (await rest(`${f.id}/physical-recovery`)).body
       const original = join(root, f.relPath), quarantine = join(root, '.physical-quarantine', pending.intent.id)
       const destination = obstruction === 'quarantine' ? quarantine : original
@@ -178,31 +211,37 @@ describe("recoverable physical command", () => {
       expect(readFileSync(quarantine, 'utf8')).toBe('original synthetic file bytes')
     }
   })
-  it('preserves default soft remove and official source pointers and rejects physical reference and root escapes', async () => {
+  it('soft removes and restores formally referenced files without changing evidence or bytes', async () => {
     const f = await file()
-    const enterprise = db.insert(schema.enterprise).values({ name: `引用企业${f.id}`, nameNorm: `引用企业${f.id}` }).returning().get()
-    const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
-    const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
-    db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: f.relPath, attachment: '附件1', listNo: 1, page: 1 }).run()
-    const sourceBefore = await (await fetch(`${service.baseUrl}/api/enterprises/${enterprise.id}`)).json()
+    const [enterpriseRow] = await db.insert(enterprise).values({ name: `引用企业${f.id}`, nameNorm: `引用企业${f.id}` }).returning()
+    ok(enterpriseRow, 'Enterprise fixture insert did not return a row')
+    const [recordRow] = await db.insert(record).values({ enterpriseId: enterpriseRow.id, titleCode: 'specialized_sme', source: 'jxj' }).returning()
+    ok(recordRow, 'Record fixture insert did not return a row')
+    const [eventRow] = await db.insert(recordEvent).values({ recordId: recordRow.id, eventType: 'award', year: 2024 }).returning()
+    ok(eventRow, 'Record event fixture insert did not return a row')
+    await db.insert(recordEvidence).values({ recordEventId: eventRow.id, sourceFile: f.relPath, attachment: '附件1', listNo: 1, page: 1 })
+    const sourceBefore = await (await fetch(`${service.baseUrl}/api/enterprises/${enterpriseRow.id}`)).json()
     expect((await rest(`${f.id}?deleteDisk=1`, 'DELETE', await modernControls(f.id))).status).toBe(409)
     expect((await rest(`${f.id}/physical-recovery`)).status).toBe(404)
     expect((await rest(`${f.id}`, 'DELETE')).body).toEqual({ removed: true, diskDeleted: false, referenceCount: 1 })
     expect((await modernRest(`${f.id}/restore`, 'POST')).status).toBe(200)
-    expect(await (await fetch(`${service.baseUrl}/api/enterprises/${enterprise.id}`)).json()).toEqual(sourceBefore)
+    expect(await (await fetch(`${service.baseUrl}/api/enterprises/${enterpriseRow.id}`)).json()).toEqual(sourceBefore)
     expect(await (await fetch(`${service.baseUrl}/api/files/${f.relPath}`)).text()).toBe('original synthetic file bytes')
-    const outside = join(dir, 'outside.txt')
-    writeFileSync(outside, 'outside untouched')
-    for (const kind of ['relpath', 'symlink', 'parent-symlink'] as const) {
+  })
+  it.each(['relpath', 'symlink', 'parent-symlink'] as const)(
+    'rejects physical quarantine when %s escapes the file root',
+    async kind => {
+      const outside = join(dir, 'outside.txt')
+      writeFileSync(outside, 'outside untouched')
       const target = await file()
-      if (kind === 'relpath') db.$client.prepare('UPDATE stored_file SET rel_path = ? WHERE id = ?').run('../outside.txt', target.id)
+      if (kind === 'relpath') await db.update(storedFile).set({ relPath: '../outside.txt' }).where(eq(storedFile.id, target.id))
       else if (kind === 'symlink') { rmSync(join(root, target.relPath)); symlinkSync(outside, join(root, target.relPath)) }
-      else { symlinkSync(dir, join(root, `escape-${target.id}`)); db.$client.prepare('UPDATE stored_file SET rel_path = ? WHERE id = ?').run(`escape-${target.id}/outside.txt`, target.id) }
+      else { symlinkSync(dir, join(root, `escape-${target.id}`)); await db.update(storedFile).set({ relPath: `escape-${target.id}/outside.txt` }).where(eq(storedFile.id, target.id)) }
       expect((await rest(`${target.id}?deleteDisk=1`, 'DELETE', await modernControls(target.id))).status).toBe(409)
       expect((await rest(`${target.id}/maintenance`)).body.total).toBe(0)
       expect(readFileSync(outside, 'utf8')).toBe('outside untouched')
-    }
-  })
+    },
+  )
   it('discovers guarded physical commands and requires independent transport tokens and complete controls', async () => {
     const f = await file()
     expect((await rest(`${f.id}?deleteDisk=1`, 'DELETE', await modernControls(f.id), false)).status).toBe(401)

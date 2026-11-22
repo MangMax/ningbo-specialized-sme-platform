@@ -1,17 +1,18 @@
+import { isCurrentPlatformObservation } from '../platform/current-observation-postgres'
 import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise, enterpriseAlias } from '../../../../db/postgresql/enterprise-tables'
 import { record } from '../../../../db/postgresql/ledger-tables'
-import { platformBusinessObservation, platformCollection, platformLegacyQueryAlias, platformLegacyRelationAlias } from '../../../../db/postgresql/platform-tables'
+import { platformBusinessObservation, platformCollection } from '../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
-import { getPostgresComparison } from '../comparison'
+import { getPostgresComparison } from '../comparison-heads-postgres'
 import { normalizeName } from '../domain'
-import { postgresDifferenceRow } from '../../server/utils/decision-lifecycle-102/postgres-reads'
+import { postgresDifferenceRow } from '../../server/utils/decision-lifecycle/postgres-reads'
 import { projectDifferences } from './current-difference'
 import { readPostgresDifferenceQualifications } from './current-qualification-postgres'
-import { projectRosterDifferenceList, selectRosterDifferencePage } from './difference-list'
-import type { RosterDifferenceFilter, RosterDifferencesResult } from './enterprise-roster'
+import { projectRosterDifferenceList, selectRosterDifferencePage } from './difference-list-projection'
+import type { RosterDifferenceFilter, RosterDifferencesResult } from './enterprise-roster-projection'
 import { readPostgresQueryAssessments } from './query-assessment-postgres'
 
 type Reader = Pick<NodePgDatabase, 'execute' | 'select' | 'selectDistinctOn' | '$with' | 'with'>
@@ -20,10 +21,10 @@ type Explanation = MapValue<Parameters<typeof projectRosterDifferenceList>[2]>
 type Query = MapValue<Parameters<typeof projectRosterDifferenceList>[4]>
 const reason = differenceReason
 const reasonProjection = alias(reason, 'p')
-const queryAlias = platformLegacyQueryAlias
+
 const collection = platformCollection
 const observation = platformBusinessObservation
-const relationAlias = platformLegacyRelationAlias
+
 
 async function selectPage(db: Reader, filter: RosterDifferenceFilter) {
   const heads = await db.selectDistinctOn([reason.enterpriseId, reason.titleCode, reason.direction], {
@@ -62,16 +63,18 @@ export async function listPostgresRosterDifferences(db: NodePgDatabase, filter: 
       .from(enterprise).where(inArray(enterprise.id, enterpriseIds))
     const queryIds = [...new Set(stored.flatMap(({ row }) => row.evidenceQueryId === null ? [] : [row.evidenceQueryId]))]
     const queries = queryIds.length ? await tx.select({
-      id: queryAlias.oldId, queriedAt: collection.queriedAt, interface: collection.interface,
+      id: collection.publicId, queriedAt: collection.queriedAt, interface: collection.interface,
       status: collection.status, failureReason: collection.failureReason,
-    }).from(queryAlias).innerJoin(collection, eq(collection.id, queryAlias.collectionId))
-      .where(inArray(queryAlias.oldId, queryIds)) as Query[] : []
-    const observations = queryIds.length ? await tx.select({ queryId: queryAlias.oldId, id: relationAlias.oldId })
-      .from(queryAlias).innerJoin(observation, eq(observation.collectionId, queryAlias.collectionId))
-      .innerJoin(relationAlias, eq(relationAlias.observationId, observation.id))
-      .where(inArray(queryAlias.oldId, queryIds)).orderBy(observation.id) : []
+    }).from(collection)
+      .where(inArray(collection.publicId, queryIds)) as Query[] : []
+    const observations = queryIds.length ? await tx.select({ queryId: collection.publicId, id: observation.publicId })
+      .from(collection).innerJoin(observation, eq(observation.collectionId, collection.id))
+      .where(and(inArray(collection.publicId, queryIds), isCurrentPlatformObservation(tx))).orderBy(observation.id) : []
     const relations = new Map([...Map.groupBy(observations, row => row.queryId)].map(([id, rows]) => [id, rows.map(row => row.id)]))
-    const assessments = await readPostgresQueryAssessments(tx, selected)
+    // Qualification follows enterprise merges. Stored difference coordinates
+    // may still refer to an original owner and need coverage for that owner.
+    const covered = selected.every(row => qualification.coverage.get(row.enterpriseId)?.has(row.titleCode))
+    const assessments = await readPostgresQueryAssessments(tx, selected, covered ? qualification.coverage : undefined)
     return projectRosterDifferenceList(page, selected, new Map(stored.map(({ row }) => [row.id,row])),
       new Map(districts.map(row => [row.id,row.district])), new Map(queries.map(row => [row.id,row])), relations, assessments)
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })

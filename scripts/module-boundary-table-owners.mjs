@@ -1,10 +1,10 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
 import ts from 'typescript'
 
 export function indexTableOwnership({ root, program, files, layerOf, layers, walk, report, violations }) {
   const checker = program.getTypeChecker()
-  const sharedSchema = resolve(root, 'db/schema.ts')
+  const schemaDirectory = resolve(root, 'db/postgresql')
   const ownershipPath = resolve(root, 'scripts/shared-schema-table-owners.json')
   const sharedOwners = new Map()
   const tableOwners = new Map()
@@ -32,10 +32,12 @@ export function indexTableOwnership({ root, program, files, layerOf, layers, wal
       const callee = ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node.expression
       const symbol = checker.getSymbolAtLocation(callee)
       const importName = symbol?.declarations?.find(ts.isImportSpecifier)
-      if ((importName?.propertyName ?? callee).getText(source) !== 'sqliteTable') return
+      const constructor = (importName?.propertyName ?? callee).getText(source)
+      const schema = ts.isPropertyAccessExpression(node.expression) && node.expression.expression.getText(source)
+      if (constructor !== 'pgTable' && !(constructor === 'table' && /^(?:businessSchema|logSchema|runtimeLogSchema)$/.test(schema || ''))) return
       const name = node.arguments[0]
       if (!name || !ts.isStringLiteralLike(name)) {
-        report(source, node, 'sqliteTable needs a static name for ownership checking')
+        report(source, node, 'PostgreSQL table declarations need a static name for ownership checking')
         return
       }
       const table = name.text.toLowerCase()
@@ -111,12 +113,24 @@ export function indexTableOwnership({ root, program, files, layerOf, layers, wal
     return tables
   }
 
-  const sharedSource = program.getSourceFile(sharedSchema)
-  if (sharedSource) indexTables(sharedSource)
-  for (const path of files) indexTables(program.getSourceFile(path))
+  for (const source of program.getSourceFiles()) {
+    if (source.fileName.startsWith(schemaDirectory + '/') || layerOf(source.fileName) && files.includes(source.fileName)) indexTables(source)
+  }
+  const schemaTables = new Set(
+    (existsSync(schemaDirectory) ? readdirSync(schemaDirectory) : []).filter(name => name.endsWith('.sql')).flatMap(name =>
+      [...readFileSync(resolve(schemaDirectory, name), 'utf8').matchAll(/^CREATE TABLE (?:IF NOT EXISTS )?(?:business\.)?(\w+)/gim)]
+        .map(match => match[1].toLowerCase())),
+  )
   for (const table of sharedOwners.keys()) {
-    if (!sharedDeclarations.has(table)) {
-      violations.push(`${relative(root, ownershipPath)}: table ${table} has no declaration in db/schema.ts`)
+    if (!schemaTables.has(table) && !sharedDeclarations.has(table)) {
+      violations.push(`${relative(root, ownershipPath)}: table ${table} has no PostgreSQL declaration`)
+    }
+  }
+  for (const table of schemaTables) {
+    if (!tableOwners.has(table)) {
+      const owner = sharedOwners.get(table)
+      if (owner) tableOwners.set(table, owner)
+      else violations.push(`${relative(root, ownershipPath)}: no owner declared for table ${table}`)
     }
   }
 

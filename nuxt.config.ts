@@ -174,20 +174,6 @@ export default defineNuxtConfig({
     hooks: {
       'rollup:before'(nitro, config) {
         installSessionOverlay(nitro, config, undefined, actualSessionEntryProfile(nitro))
-        const loggingLocation = fileURLToPath(new URL('./layers/core/lib/logging/sqlite-module-location.ts', import.meta.url))
-        config.plugins = [config.plugins, {
-          name: 'logging-native-module-location',
-          transform: { order: 'post' as const, handler(_code: string, id: string) {
-            if (id !== loggingLocation) return
-            // Dev chunks may live in an external buildDir without project dependencies.
-            // Production keeps chunk-relative lookup so the packaged output can move.
-            const code = nitro.options.dev
-              ? `export function resolveLoggingSqliteModule() { return ${JSON.stringify(createRequire(import.meta.url).resolve('better-sqlite3'))}; }`
-              : `import { createRequire } from 'node:module'; export function resolveLoggingSqliteModule() { return createRequire(_import_meta_url_).resolve('better-sqlite3'); }`
-            return { code, map: null }
-          } },
-        }]
-        // Nitro merges same-named hooks as config values. Compose both here.
         installRosterWorkers(config)
       },
     },
@@ -209,14 +195,10 @@ export default defineNuxtConfig({
   alias: {
     '#core': fileURLToPath(new URL('./layers/core', import.meta.url)),
     '#sme-roster': fileURLToPath(new URL('./layers/sme-roster', import.meta.url)),
-    '@db': fileURLToPath(new URL('./db', import.meta.url)),
   },
 
   // 忽略代理 worktree 与本地库目录:它们各自的 node_modules 若被 dev 文件监听扫进来
   // 会耗尽文件描述符(EMFILE: too many open files)。
-  // Runtime writes are not source changes. In particular Nuxt Icon's custom
-  // collection watcher reads builder:watch files as UTF-8, including SQLite
-  // files unless these directories are excluded from the builder watcher.
   ignore: ['**/.claude/**', ...runtimeDirectories.map(dir => `/${dir}/**`)],
 
   vite: {
@@ -228,5 +210,4 @@ export default defineNuxtConfig({
     },
   },
 
-  // DB 路径由 db/client.ts 解析(默认 <cwd>/data/roster.db,可用 NUXT_DB_PATH 覆盖)。
 })

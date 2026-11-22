@@ -1,30 +1,25 @@
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
-import '../../support/compiled-enterprise-reader'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { createServer } from 'node:http'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import * as h3 from 'h3'
 import ExcelJS from 'exceljs'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { initializeDb, schema as s } from '../../../db/client'
-import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
-import { readEvidenceToken113 } from '../../../layers/sme-roster/server/utils/evidence-impact-113'
-import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
-import { createCurrentCandidateReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
-import type { CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
-import type { CurrentQualifiedFilter } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
-import type { currentQualifiedFilterSchema } from '../../../layers/sme-roster/server/utils/current-qualified-filter'
+import { afterAll, beforeAll, expect, it } from 'vitest'
+import * as s from '../fixtures/postgres-tables'
+import { nativeAppAdapter } from '../../support/native-app'
+import pg from 'pg'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { seedRetiredEvidenceState } from '../fixtures/retired-evidence-state'
+import { writePostgresCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook-postgres'
+import type { DecisionCommand102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle/contract'
+import type { CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-page'
 
-const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
-vi.mock('@db', () => ({ useDb: () => active.db }))
-vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 const dir = mkdtempSync(join(tmpdir(), 'issue305-inbound-'))
-const db = initializeDb({ create: true,  dbPath: join(dir, 'issue305.sqlite') }); active.db = db
+const app = nativeAppAdapter({ dir, token: 'issue305-synthetic' })
+let db: typeof app.db
+let pool: pg.Pool
 const titles = ['little_giant', 'specialized_sme', 'innovative_sme'] as const
 const year = new Date().getFullYear(), reawardYear = year - 1
 type Review = { decidedYear: number | null; reviewOutcome: 'failed' | null }
@@ -44,76 +39,66 @@ const sourceCodes = ['91330211100000000P', '91330211100000010Q', '91330211100000
 const codes = new Map<string, string>()
 let identityIndex = 0
 const ids = new Map<string, number>()
-let server: ReturnType<typeof createServer>, base: string
-const sdk = new McpServer({ name: 'issue305-inbound-read', version: '1' })
+let base: string
 const client = new Client({ name: 'issue305-inbound-test', version: '1' })
-type CurrentTool = { inputSchema: typeof currentQualifiedFilterSchema.shape; handler(input: CurrentQualifiedFilter): Promise<string> }
 async function post(body: unknown): Promise<{ versionId: number }> {
   const response = await fetch(base + '/api/roster/decision-lifecycle/commands', { method: 'POST', headers, body: JSON.stringify(body) })
   expect(response.status, await response.clone().text()).toBe(200)
   return response.json()
 }
 beforeAll(async () => {
-  await enterpriseReads.start()
-  for (const [key, value] of Object.entries(h3)) vi.stubGlobal(key, value)
-  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'issue305-synthetic', filesDir: dir }))
-  const commands = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/commands.post')).default
-  const currentDecision = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/current.get')).default
-  const current = (await import('../../../layers/sme-roster/server/api/roster/current-enterprises.get')).default
-  const detail = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default
-  server = createServer(h3.toNodeListener(h3.createApp({ debug: false }).use(h3.createRouter()
-    .post('/api/roster/decision-lifecycle/commands', commands)
-    .get('/api/roster/decision-lifecycle/current', currentDecision)
-    .get('/api/roster/current-enterprises', current).get('/api/roster/enterprises/:id', detail))))
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
-  base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
-  const tool = (await import('../../../layers/sme-roster/server/mcp/tools/list_current_qualified_enterprises')).default as unknown as CurrentTool
-  sdk.registerTool('list_current_qualified_enterprises', { inputSchema: tool.inputSchema }, async input => ({ content: [{ type: 'text', text: await tool.handler(input) }] }))
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
-  await sdk.connect(serverTransport); await client.connect(clientTransport)
+  await app.prepare()
+  db = app.db
+  const decisions: { command: DecisionCommand102; qualification: object }[] = []
   for (const title of titles) for (const c of cases) {
     const name = `issue305-inbound-${title}-${c.id}`
-    // Only immutable synthetic source facts are set up in SQLite. Qualification
-    // and evidence review use the real public #102/#114 commands, as in PR138.
+    // Stage source facts once before exercising the reviewed qualification commands.
     const code = sourceCodes[identityIndex++]!
     codes.set(name, code)
-    const enterprise = db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: code, city: '宁波市' }).returning().get()
+    const enterprise = (await db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: code, city: '宁波市' }).returning())[0]!
     ids.set(name, enterprise.id)
-    const record = db.insert(s.record).values({ enterpriseId: enterprise.id, titleCode: title, source: 'jxj', nameRaw: name }).returning().get()
+    const record = (await db.insert(s.record).values({ enterpriseId: enterprise.id, titleCode: title, source: 'jxj', nameRaw: name }).returning())[0]!
     const events = [{ eventType: 'award' as const, year: 2020, decidedYear: 2020, batchSeq: 1 },
       ...(c.review ? [{ eventType: 'review' as const, year: 2020, batchSeq: 1, ...c.review }] : []),
       ...(c.formalAward ? [{ eventType: 'award' as const, year: reawardYear, decidedYear: reawardYear, batchSeq: 1 }] : [])]
     for (const input of events) {
-      const event = db.insert(s.recordEvent).values({ recordId: record.id, ...input }).returning().get()
-      db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'issue305/inbound-history.pdf', attachment: c.id, listNo: event.id, page: 1 }).run()
+      const event = (await db.insert(s.recordEvent).values({ recordId: record.id, ...input }).returning())[0]!
+      await db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'issue305/inbound-history.pdf', attachment: c.id, listNo: event.id, page: 1 })
     }
     const rdjb = { little_giant: '3', specialized_sme: '2', innovative_sme: '1' }[title]
-    const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: name, rdjb, titleCode: title, queriedAt: new Date().toISOString(), status: 'success', rawResponse: JSON.stringify({ synthetic: name }), relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: code, nameRaw: name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
+    const native = await seedPostgresPlatformQuery(db, { interface: 'business_list', queryKey: name, rdjb, titleCode: title, queriedAt: new Date().toISOString(), status: 'success', rawResponse: JSON.stringify({ synthetic: name }), relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: code, nameRaw: name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
     // A real, current interface period must not override applicable publication.
-    submitSyntheticRecognizedCollection(db, { rdjb, queriedAt: new Date().toISOString(), rows: [{ enterpriseId: null, raw: { id: name, qymc: name, tyshxydm: code, rdjb, rdtime: `${reawardYear}-01-01`, rddqrq: `${year+2}-12-31`, sfyx: '1', szsmc: '宁波市' } }] })
+    await submitSyntheticRecognizedCollection(db, { rdjb, queriedAt: new Date().toISOString(), rows: [{ enterpriseId: null, raw: { id: name, qymc: name, tyshxydm: code, rdjb, rdtime: `${reawardYear}-01-01`, rddqrq: `${year+2}-12-31`, sfyx: '1', szsmc: '宁波市' } }] })
     const query = { id: native.queryId }, relation = { id: native.relationIds[0]! }
     const scope = { enterpriseId: enterprise.id, titleCode: title, direction: 'extra_in_miit' as const }
     const qualification = { titleCode: title, validFrom: `${reawardYear}-01-01T00:00:00Z`, validUntil: `${year + 2}-01-01T00:00:00Z`,
       ...(c.explicitAward ? { awardYear: reawardYear } : {}), basis: 'Synthetic independently verified external qualification',
-      publicationCheck: { status: 'not_found', scope: 'New grant publications only; preserve older Ningbo history' } }
-    const accepted = await post({ ...scope, action: 'replace', expectedCurrentId: null, idempotencyKey: name + '-replace', actor,
+      publicationCheck: { status: 'not_found' as const, scope: 'New grant publications only; preserve older Ningbo history' } }
+    const command: DecisionCommand102 = { ...scope, action: 'replace', expectedCurrentId: null, idempotencyKey: name + '-replace', actor,
       basis: 'Synthetic reviewed inbound qualification with formal history', ruleVersion: 'issue305', effectiveAt: `${reawardYear}-01-01T00:00:00Z`,
-      decision: { status: 'confirmed_reason', reasonCode: 'moved_in', measureCode: 'record_moved_in', verificationStatus: 'confirmed', evidenceQueryId: query.id, evidenceRelationId: relation.id, currentQualification: qualification } })
-    const token = readEvidenceToken113(db, scope)
-    expect(token.projectionReady).toBe(true)
-    await post({ ...scope, action: 'maintain', expectedCurrentId: accepted.versionId, idempotencyKey: name + '-review', actor,
-      basis: 'Synthetic explicit evidence review', ruleVersion: 'issue305', effectiveAt: `${reawardYear}-01-01T00:00:00Z`,
-      reviewedEvidence: { latestRevisionId: token.latestRevisionId, projectionReady: token.projectionReady } })
-    const readback = await fetch(base + '/api/roster/decision-lifecycle/current?' + new URLSearchParams({ enterpriseId: String(enterprise.id), titleCode: title, direction: scope.direction }))
+      decision: { status: 'confirmed_reason', reasonCode: 'moved_in', measureCode: 'record_moved_in', verificationStatus: 'confirmed', evidenceQueryId: query.id, evidenceRelationId: relation.id, currentQualification: qualification } }
+    decisions.push({ command, qualification })
+  }
+  await app.start()
+  base = app.url('')
+  pool = new pg.Pool({ connectionString: app.postgresUrl, options: '-c search_path=business,public' })
+  await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp')))
+  for (const { command, qualification } of decisions) {
+    const { enterpriseId, titleCode, direction } = command
+    const accepted = await post(command)
+    await seedRetiredEvidenceState(drizzle(pool), accepted.versionId)
+    const readback = await fetch(base + '/api/roster/decision-lifecycle/current?' + new URLSearchParams({ enterpriseId: String(enterpriseId), titleCode, direction }))
     expect(readback.status).toBe(200)
     const body: { current: { currentQualification: unknown } } = await readback.json()
     expect(body.current.currentQualification).toEqual(qualification)
   }
-})
+}, 90000)
 afterAll(async () => {
-  await client.close(); await sdk.close()
-  if (server) await new Promise<void>(resolve => server.close(() => resolve()))
-  await enterpriseReads.close(); db.$client.close(); vi.unstubAllGlobals(); rmSync(dir, { recursive: true, force: true })
+  try { await client.close() } finally {
+    try { await pool?.end() } finally {
+      try { await app.close() } finally { rmSync(dir, { recursive: true, force: true }) }
+    }
+  }
 })
 // Current publication governs even expired/failed cycles. v1 remains explicit below.
 const retainedGiant = ['unknown-review-date', 'later-review-result-unknown']
@@ -142,17 +127,17 @@ it.each(titles)('uses publication over manual and interface periods with downwar
   const response = await fetch(base + '/api/roster/current-enterprises?' + new URLSearchParams({ titleCode: title, pageSize: '200' }))
   expect(response.status, await response.clone().text()).toBe(200)
   assertFormalQualification(await response.json(), title)
-})
+}, 30000)
 it.each(titles)('uses publication over manual and interface periods with downward inheritance over SDK MCP for %s', async title => {
   const response = await client.callTool({ name: 'list_current_qualified_enterprises', arguments: { titleCode: title, pageSize: 200 } })
   expect(response.isError).not.toBe(true)
   const content = response.content
   if (!Array.isArray(content) || content[0]?.type !== 'text') throw new Error('Expected MCP text result')
   assertFormalQualification(JSON.parse(content[0].text), title)
-})
+}, 30000)
 it.each(titles)('preserves literal five sheet identity partitions and local history in XLSX for %s', async title => {
   const file = join(dir, `issue305-inbound-${title}.xlsx`)
-  const result = await writeCurrentWorkbook(db.$client, title, file, () => {})
+  const result = await writePostgresCurrentWorkbook(drizzle(pool), title, file, () => {})
   const count = eligibleNames(title).length
   expect(result.counts).toEqual({ eligible: count, pending: 0, excluded: 7 * supportingTitles(title).length - count })
   const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(file)
@@ -200,27 +185,23 @@ it('keeps retained giant awards and failed publication independent of manual and
     }
   }
 })
-it('preserves reviewed inbound historical outcomes through the explicit v1 compatibility reader', () => {
-  const read = createCurrentCandidateReader(db.$client)
-  for (const title of titles) for (const c of cases) {
-    const id = ids.get(`issue305-inbound-${title}-${c.id}`)!
-    const row = read(id, title, year, Date.now(), undefined, false, true, { assessmentVersion: 'enterprise-qualification-407-v1' })
-    expect(row.group, `${title}/${c.id}`).toBe(c.eligible ? 'eligible' : 'pending')
-    expect(row.firstYear).toBe(2020)
-  }
-})
 it('incomplete typed fact and legacy termination cannot cancel a retained original giant award', async () => {
  const id = ids.values().next().value!
- const scope = {enterpriseId:id,titleCode:'little_giant',direction:'extra_in_miit'}
+ const scope = {enterpriseId:id,titleCode:'little_giant',direction:'extra_in_miit'} as const
  const cur = await (await fetch(base+'/api/roster/decision-lifecycle/current?'+new URLSearchParams({...scope,enterpriseId:String(id)}))).json()
  const r=await post({...scope,action:'replace',expectedCurrentId:cur.current.id,idempotencyKey:'probe-terminate',actor,basis:'Verified termination',ruleVersion:'probe',effectiveAt:'2024-01-01T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'deregistered',measureCode:'none',verificationStatus:'confirmed'}})
- const token=readEvidenceToken113(db,scope as any)
- await post({...scope,action:'maintain',expectedCurrentId:r.versionId,idempotencyKey:'probe-maintain',actor,basis:'Verified termination',ruleVersion:'probe',effectiveAt:'2024-01-01T00:00:00Z',reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:token.projectionReady}})
+ await seedRetiredEvidenceState(drizzle(pool), r.versionId)
  const read=async()=> (await (await fetch(base+`/api/roster/enterprises/${id}`)).json()).qualificationAssessment.titles.find((t:any)=>t.titleCode==='little_giant')
  expect(await read()).toMatchObject({group:'eligible',effectiveQualification:{status:'effective'}})
- const {getEnterpriseFacts,preflightEnterpriseFact,commitEnterpriseFact}=await import('../../../layers/sme-roster/server/utils/enterprise-facts')
- const request={action:'assert',expectedVersion:getEnterpriseFacts(db,id).version,idempotencyKey:'probe-pending',actor,basis:'Unknown registration observation',fact:{kind:'registration_status',source:{reference:'probe',statement:'Unknown'},observed:{precision:'year',value:'2024'},effective:{precision:'unknown',value:null},city:null}}
- const plan=preflightEnterpriseFact(db,id,request)
- commitEnterpriseFact(db,id,{request,planHash:plan.planHash})
+ const factsPath = '/api/roster/enterprises/' + id + '/facts'
+ const state = await (await fetch(base + factsPath)).json()
+ const request = {action:'assert',expectedVersion:state.version,idempotencyKey:'probe-pending',actor,basis:'Unknown registration observation',fact:{kind:'registration_status',source:{reference:'probe',statement:'Unknown'},observed:{precision:'year',value:'2024'},effective:{precision:'unknown',value:null},city:null}}
+ async function postFacts(action: string, body: object) {
+   const response = await fetch(base + factsPath + '/' + action, { method: 'POST', headers, body: JSON.stringify(body) })
+   expect(response.ok, await response.clone().text()).toBe(true)
+   return response.json()
+ }
+ const plan = await postFacts('preflight', request)
+ await postFacts('commit', { request, planHash: plan.planHash })
  expect(await read(), JSON.stringify(await read())).toMatchObject({group:'eligible',effectiveQualification:{status:'effective'}})
 })
