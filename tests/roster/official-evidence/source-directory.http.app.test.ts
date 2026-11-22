@@ -10,7 +10,7 @@ import pg from 'pg'
 import { enterprise as enterpriseTable } from '../../../db/postgresql/enterprise-tables'
 import { record as recordTable, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
 import { sourceDocument } from '../../../db/postgresql/official-evidence-tables'
-import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { postgresFixturePool, postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'official-source-directory-'))
@@ -18,7 +18,7 @@ mkdirSync(join(dir, 'files', 'nested'), { recursive: true })
 writeFileSync(join(dir, 'files', 'known.pdf'), '%PDF-1.4\n')
 writeFileSync(join(dir, 'files', 'nested', 'known.pdf'), '%PDF-1.4\n')
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
-let pool: pg.Pool
+let fixturePool: ReturnType<typeof postgresFixturePool> | undefined
 let db: NodePgDatabase
 let doc: typeof sourceDocument.$inferSelect
 let pdf: Awaited<ReturnType<typeof add>>
@@ -32,6 +32,7 @@ async function add(recordId: number, sourceFile: string, eventType: 'award' | 'r
   return { event: event!, evidence: evidence! }
 }
 async function snapshot() {
+  const pool = fixturePool!.pool
   const { rows } = await pool.query<{ tablename: string }>("select tablename from pg_tables where schemaname = 'business' order by tablename")
   return Promise.all(rows.map(async ({ tablename }) => {
     const table = pg.escapeIdentifier(tablename)
@@ -42,8 +43,8 @@ async function snapshot() {
 let service: { baseUrl: string; stop: () => Promise<void> }
 beforeAll(async () => {
   postgres = await postgresRuntimeFixture({ dir })
-  pool = new pg.Pool({ connectionString: postgres.url })
-  db = drizzle({ client: pool })
+  fixturePool = postgresFixturePool({ connectionString: postgres.url })
+  db = drizzle({ client: fixturePool.pool })
   const [enterprise] = await db.insert(enterpriseTable).values({ name: '目录合成企业', nameNorm: '目录合成企业' }).returning()
   const [record] = await db.insert(recordTable).values({ enterpriseId: enterprise!.id, source: 'jxj', titleCode: 'specialized_sme' }).returning()
   const documents = await db.insert(sourceDocument).values([
@@ -73,7 +74,7 @@ beforeAll(async () => {
 afterAll(async () => {
   try { await service?.stop() }
   finally {
-    try { await pool?.end() }
+    try { await fixturePool?.close() }
     finally { postgres?.close(); rmSync(dir, { recursive: true, force: true }) }
   }
 })

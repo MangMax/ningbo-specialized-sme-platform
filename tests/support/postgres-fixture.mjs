@@ -1,10 +1,31 @@
 import { execFileSync } from 'node:child_process'
+import { once } from 'node:events'
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import pg from 'pg'
 
 const root = fileURLToPath(new URL('../..', import.meta.url))
+
+/** @param {import('pg').PoolConfig} options */
+export function postgresFixturePool(options) {
+  const pool = new pg.Pool(options)
+  /** @type {Set<import('pg').PoolClient>} */
+  const connected = new Set()
+  pool.on('connect', client => connected.add(client))
+  pool.on('remove', client => connected.delete(client))
+  return {
+    pool,
+    async close() {
+      await pool.end()
+      // pg-pool can resolve end() before its idle clients finish disconnecting.
+      // Wait for their sockets before stopping the isolated PostgreSQL server.
+      while (connected.size) await once(pool, 'remove')
+    },
+  }
+}
+
 /**
  * Create an isolated PostgreSQL runtime.
  * @param {{ dir: string; bin?: string; logsOnly?: boolean }} options
