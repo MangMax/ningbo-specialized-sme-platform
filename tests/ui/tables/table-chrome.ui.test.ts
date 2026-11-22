@@ -128,7 +128,7 @@ describe('统一表格分页', () => {
 
 describe('统一表顶加载提示', () => {
   it('三页仅在加载中显示状态字及进度条，空闲不留占位内容', async () => {
-    for (const kind of ['ledger', 'files', 'comparison'] as const) {
+    for (const kind of ['ledger', 'files', 'platform-query'] as const) {
       const view = mount(TableLoadingStatus, { props: { kind, loading: false, label: '正在加载…' } })
       mounted.push(view)
       expect(view.attributes('data-testid')).toBe(`${kind}-loading-status`)

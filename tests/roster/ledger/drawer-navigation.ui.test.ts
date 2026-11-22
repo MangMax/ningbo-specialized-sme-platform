@@ -52,7 +52,6 @@ async function openLedger(path: string, beforeResult?: Promise<void>) {
       components: { PageHeader, TableFailureState, TableLoadingStatus, TablePagination },
       stubs: {
         RosterEnterpriseDrawer: { props: ['enterpriseId'], template: '<button v-if="enterpriseId" @click="$emit(\'close\')">关闭抽屉</button>' },
-        RosterEnterpriseDifferenceRefresh: true,
       },
     },
   })

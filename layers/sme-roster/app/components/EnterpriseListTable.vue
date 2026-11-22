@@ -1,10 +1,5 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import {
-  DIFFERENCE_REASONS,
-  DIFFERENCE_STATUSES,
-  DIFF_STATUS_NONE_LABEL,
-} from '#sme-roster/lib/labels'
 import { historicalAliasNamesForDisplay } from '#sme-roster/lib/roster/enterprise-name-display'
 import RosterEnterpriseTitleSummary from './EnterpriseTitleSummary.vue'
 import RosterEnterpriseAliasSummary from './EnterpriseAliasSummary.vue'
@@ -21,14 +16,7 @@ import {
 } from '#core/app/components/ui/table'
 import { LayoutList } from '@lucide/vue'
 
-/** 企业粒度表格：身份、认定摘要与原因；完整历史留在抽屉。 */
-
-export interface EnterpriseDifference {
-  count: number
-  status: string | null
-  reasonCode: string | null
-  anyCurrent: boolean
-}
+/** 企业粒度表格：身份和认定摘要；完整历史留在抽屉。 */
 
 export interface EnterpriseListRow {
   enterpriseId: number
@@ -40,7 +28,6 @@ export interface EnterpriseListRow {
   titles: string[]
   firstRecognition: { titleCode: string; year: number; needsReview: boolean }[]
   awards?: { titleCode: string; year: number | null; batchSeq: number | null }[]
-  difference: EnterpriseDifference
 }
 
 const props = defineProps<{
@@ -64,30 +51,13 @@ function selectRow(id: number, currentTarget: EventTarget | null) {
   emit('select', id, trigger)
 }
 
-const COLUMNS = 5
+const COLUMNS = 4
 const visibleAliasesByEnterpriseId = computed(() => new Map(
   props.rows.map((row) => [
     row.enterpriseId,
     historicalAliasNamesForDisplay(row.aliasNames, row.name),
   ]),
 ))
-
-/** 差异状态那一格的**文字**(状态 + 配对原因);一个差异记录都没有时是「无差异」。 */
-function differenceStatusText(row: EnterpriseListRow): string {
-  const d = row.difference
-  if (!d.count || d.status == null) return DIFF_STATUS_NONE_LABEL
-  const status = DIFFERENCE_STATUSES[d.status] ?? d.status
-  const reason = differenceReason(row)
-  if (!reason) return status
-  // “其他”单看没有信息；补回差异状态，避免整格只剩一个无法扫读的标签。
-  return d.reasonCode === 'other' ? `${status} · 其他原因` : reason
-}
-
-/** 差异原因的单独一段(好把它画成次要色,与设计稿一致)。 */
-function differenceReason(row: EnterpriseListRow): string {
-  const code = row.difference.reasonCode
-  return code ? (DIFFERENCE_REASONS[code] ?? code) : ''
-}
 
 </script>
 
@@ -116,9 +86,6 @@ function differenceReason(row: EnterpriseListRow): string {
           </TableHead>
           <TableHead class="bg-muted text-muted-foreground hidden h-9 w-[4.5rem] text-xs font-semibold tracking-wide lg:table-cell">
             属地
-          </TableHead>
-          <TableHead class="bg-muted text-muted-foreground h-9 w-[30%] text-xs font-semibold tracking-wide lg:w-[12rem]">
-            差异状态
           </TableHead>
         </TableRow>
       </TableHeader>
@@ -164,13 +131,6 @@ function differenceReason(row: EnterpriseListRow): string {
           </TableCell>
 
           <TableCell class="hidden text-table lg:table-cell">{{ row.district ?? '属地未知' }}</TableCell>
-
-          <TableCell class="text-table whitespace-normal break-words leading-4 [overflow-wrap:anywhere] sm:whitespace-nowrap" data-testid="enterprise-difference-cell">
-            <span :class="row.difference.count ? '' : 'text-muted-foreground'">
-              {{ differenceStatusText(row) }}
-            </span>
-
-          </TableCell>
         </TableRow>
 
         <!--
@@ -185,7 +145,6 @@ function differenceReason(row: EnterpriseListRow): string {
           </TableCell>
           <TableCell class="hidden lg:table-cell"><Skeleton class="h-3 w-32" /></TableCell>
           <TableCell class="hidden lg:table-cell"><Skeleton class="h-3 w-12" /></TableCell>
-          <TableCell><Skeleton class="h-3 w-full max-w-24" /></TableCell>
         </TableRow>
 
         <TableRow v-if="!loading && !hasError && !rows.length" class="hover:bg-transparent">

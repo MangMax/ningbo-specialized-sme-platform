@@ -5,12 +5,6 @@ import { useQuery } from '@pinia/colada'
 import { ExternalLink, Eye, FileText } from '@lucide/vue'
 import {
   ALIAS_SOURCE_KINDS,
-  comparisonDirectionNote,
-  DIFFERENCE_MEASURES,
-  DIFFERENCE_REASONS,
-  DIFFERENCE_STATUSES,
-  DIFFERENCE_STATUS_ORDER,
-  DIFFERENCE_STATUS_VARIANTS,
   FIRST_RECOGNITION_REASONS,
   FIRST_RECOGNITION_STATUSES,
   PLATFORM_INTERFACES,
@@ -20,7 +14,6 @@ import {
   RELATION_MATCH_BASES,
   REVIEW_OUTCOMES,
   SOURCE_ORDER,
-  TITLES,
   TITLE_ORDER,
   VERIFICATION_STATUSES,
 } from '#sme-roster/lib/labels'
@@ -32,7 +25,7 @@ import FilePreviewDialog from '#core/app/components/preview/FilePreviewDialog.vu
 import RosterEventChip from '#sme-roster/app/components/EventChip.vue'
 import RosterSourceChip from '#sme-roster/app/components/SourceChip.vue'
 import RosterTitleBadge from '#sme-roster/app/components/TitleBadge.vue'
-import { Badge, type BadgeVariants } from '#core/app/components/ui/badge'
+import { Badge } from '#core/app/components/ui/badge'
 import { Button } from '#core/app/components/ui/button'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
 import { Skeleton } from '#core/app/components/ui/skeleton'
@@ -82,27 +75,6 @@ interface RecordRow {
   district: string | null
   lifecycle: Lifecycle
 }
-interface MovedIn {
-  city: string | null
-  titleCode: string | null
-  year: number | null
-  batch: number | null
-  complete: boolean
-}
-interface Difference {
-  titleCode: string
-  direction: string
-  status: string
-  reasonCode: string | null
-  reasonNote: string | null
-  measureCode: string | null
-  measureNote: string | null
-  movedIn: MovedIn | null
-  verificationStatus: string
-  recordedAt: string | null
-  inCurrentDifference: boolean
-  evidence: { queryId: number; queriedAt: string; interface: string; status: string; relationIds: number[] } | null
-}
 interface QueryRow {
   id: number
   interface: string
@@ -147,7 +119,6 @@ interface Detail {
   events: EventRow[]
   evidence: Evidence[]
   recognitions: Recognition[]
-  differences: Difference[]
   platform: { queries: QueryRow[]; relations: Relation[] }
 }
 
@@ -224,13 +195,6 @@ function titleRank(code: string) {
   return i === -1 ? TITLE_ORDER.length : i
 }
 
-const statusOrder = (code: string) => {
-  const i = DIFFERENCE_STATUS_ORDER.indexOf(code)
-  return i === -1 ? DIFFERENCE_STATUS_ORDER.length : i
-}
-const differences = computed(() =>
-  [...(detail.value?.differences ?? [])].sort((a, b) => statusOrder(a.status) - statusOrder(b.status)),
-)
 const relationsByQuery = computed(() => {
   const map = new Map<number, Relation[]>()
   for (const relation of detail.value?.platform.relations ?? []) {
@@ -273,24 +237,6 @@ function recognitionEventTitle(recognition: Recognition): string {
   if (recognition.status === 'pending') return recognitionNote(recognition)
   return '该称号的首次认定就是这一条(最早的认定;复核通过或失败后再次获批都不会改变它)。'
 }
-
-/**
- * 差异状态徽章:六态颜色**只从 `DIFFERENCE_STATUS_VARIANTS` 取**(单一出处,与台账表同款)。
- * 这里不再写本地级联 —— 原来的那份把「未查询」与「无记录」画成同一枚 outline、
- * 把「待核实」与「查询失败」一律画红,恰好违反契约 §3.2 的「四态必须彼此可区分」。
- * 状态值本身只来自读模型的 `difference_reason.status`,不回推到别处。
- */
-const statusVariant = (code: string): BadgeVariants['variant'] =>
-  (DIFFERENCE_STATUS_VARIANTS[code] ?? 'outline') as BadgeVariants['variant']
-const movedInText = (movedIn: MovedIn) =>
-  [
-    movedIn.city,
-    movedIn.titleCode ? (TITLES[movedIn.titleCode] ?? movedIn.titleCode) : null,
-    movedIn.year == null ? null : String(movedIn.year),
-    movedIn.batch == null ? null : `第${movedIn.batch}批`,
-  ]
-    .filter(Boolean)
-    .join(' · ')
 
 // 出处预览(与台账的企业详情同一套)。
 const previewSrc = ref('')
@@ -492,58 +438,6 @@ const pageStateOf = (v: Evidence) => evidencePageState(v.sourceFile, v.page)
               </div>
             </div>
           </div>
-        </div>
-      </section>
-
-      <!-- 差异与解释:状态、原因、措施、迁入、证据 -->
-      <section v-if="differences.length" class="flex flex-col gap-1.5">
-        <h4 class="text-muted-foreground text-xs font-medium">差异与解释</h4>
-        <div
-          v-for="d in differences"
-          :key="`${d.titleCode}-${d.direction}`"
-          class="bg-card flex flex-col gap-1 rounded-sm border p-2.5"
-        >
-          <div class="flex flex-wrap items-center gap-2">
-            <RosterTitleBadge :code="d.titleCode" />
-            <Badge variant="quiet" class="font-normal">
-              {{ comparisonDirectionNote(d.direction) }}
-            </Badge>
-            <Badge :variant="statusVariant(d.status)">
-              {{ DIFFERENCE_STATUSES[d.status] ?? d.status }}
-            </Badge>
-            <Badge v-if="!d.inCurrentDifference" variant="outline" class="font-normal">
-              当前已不是差异(解释留档)
-            </Badge>
-            <span v-if="d.recordedAt" class="text-muted-foreground text-[11px] tabular-nums">
-              登记于 {{ d.recordedAt.slice(0, 10) }}
-            </span>
-          </div>
-          <p v-if="d.reasonCode || d.reasonNote" class="text-xs">
-            <span class="text-muted-foreground">原因</span>
-            {{ DIFFERENCE_REASONS[d.reasonCode ?? 'other'] ?? d.reasonCode }}
-            <span v-if="d.reasonNote" class="text-muted-foreground">— {{ d.reasonNote }}</span>
-          </p>
-          <p v-if="d.measureCode || d.measureNote" class="text-xs">
-            <span class="text-muted-foreground">后续措施</span>
-            {{ DIFFERENCE_MEASURES[d.measureCode ?? 'none'] ?? d.measureCode }}
-            <span v-if="d.measureNote" class="text-muted-foreground">— {{ d.measureNote }}</span>
-          </p>
-          <p v-if="d.movedIn" class="text-xs">
-            <span class="text-muted-foreground">迁入来源</span>
-            <template v-if="d.movedIn.complete">{{ movedInText(d.movedIn) }}</template>
-            <template v-else>
-              <span class="text-destructive">待补证</span>
-              <span class="text-muted-foreground">
-                (已知:{{ movedInText(d.movedIn) || '无' }};缺项不猜填)
-              </span>
-            </template>
-          </p>
-          <p v-if="d.evidence" class="text-muted-foreground text-[11px]">
-            接口证据:{{ PLATFORM_INTERFACES[d.evidence.interface] ?? d.evidence.interface }} ·
-            {{ PLATFORM_QUERY_STATUSES[d.evidence.status] ?? d.evidence.status }} ·
-            {{ d.evidence.queriedAt.slice(0, 19).replace('T', ' ') }} · 关系
-            {{ d.evidence.relationIds.length }} 条
-          </p>
         </div>
       </section>
 

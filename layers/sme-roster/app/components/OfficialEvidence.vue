@@ -2,14 +2,13 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { fileNameOf, fileUrl, isPreviewable } from '#core/lib/preview'
 import { evidencePageState, evidencePreviewHref } from '#sme-roster/lib/roster/evidence-page'
-import { publishedNameText, type OfficialPublishedFact } from '#sme-roster/lib/roster/correspondence-view'
+import { publishedNameText, type OfficialPublishedFact } from '#sme-roster/lib/roster/official-evidence-display'
 import { Button } from '#core/app/components/ui/button'
 import { FileText, ArrowUpRight, Download } from '@lucide/vue'
 
 const props = defineProps<{
-  evidence: { publishedName?: OfficialPublishedFact; sourceFile: string; attachment: string | null; listNo: number | null; page: number | null; inSelectedSource?: boolean }
+  evidence: { publishedName?: OfficialPublishedFact; sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }
   back: string
-  previewInPlace?: boolean
 }>()
 const emit = defineEmits<{ preview: []; 'page-open': [event: MouseEvent] }>()
 const checkAttempt = ref(0)
@@ -49,11 +48,9 @@ onMounted(() => watch([() => props.evidence.sourceFile, checkAttempt], async ([p
       <span v-else-if="pageState === 'assigned'">已记录第 {{ evidence.page }} 页</span>
       <span v-else-if="pageState === 'pending'">页码待核</span>
       <span v-else>这类文件没有可复核的页码</span>
-      <span v-if="evidence.inSelectedSource === false"> · 未选入本次范围</span>
       <div v-if="availability === 'available'" class="flex flex-wrap items-center gap-2">
         <template v-if="isPreviewable(evidence.sourceFile)">
-          <Button v-if="previewInPlace" variant="outline" size="sm" @click="emit('preview')">查看原文件<ArrowUpRight aria-hidden="true" /></Button>
-          <Button v-else as-child variant="outline" size="sm"><NuxtLink :to="previewHref" :data-evidence-return-focus="focusKey + 'file'" @click="emit('page-open', $event)">查看原文件<ArrowUpRight aria-hidden="true" /></NuxtLink></Button>
+          <Button variant="outline" size="sm" @click="emit('preview')">查看原文件<ArrowUpRight aria-hidden="true" /></Button>
         </template>
         <Button v-else as-child variant="outline" size="sm"><a :href="fileUrl(evidence.sourceFile)" target="_blank" rel="noopener">下载原文件<Download aria-hidden="true" /></a></Button>
       </div>

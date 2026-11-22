@@ -20,7 +20,6 @@ export default defineAppModule({
       paths: [
         ROSTER_LEDGER_PATH,
         ROSTER_FILES_PATH,
-        '/comparison',
         '/platform-business-processes',
         '/platform-declarations',
         '/platform-queries',

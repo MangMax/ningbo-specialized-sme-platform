@@ -83,7 +83,6 @@ const canCancel = computed(() => !!capabilities.value?.cancel && inFlight.value 
 const canRetry = computed(() => !!capabilities.value?.retry && !inFlight.value && current.value)
 const showActions = computed(() => canCancel.value || canRetry.value)
 const cancellationPendingLabel = computed(() => cancelRequested.value && inFlight.value)
-const reconcileCollection = computed(() => data.value?.kind === 'reconcile' ? data.value.reconcileCollection : undefined)
 const itemStatus: Record<string, string> = { success: '查询成功', no_record: '完整查询无记录', auth_failed: '授权失败', failed: '查询失败', partial: '部分', not_queried: '未查询', complete: '完整' }
 const current = computed(() => data.value?.id === props.id && sourceKey.value === key.value && !failed.value)
 const actionReason = computed(() => {
@@ -91,7 +90,7 @@ const actionReason = computed(() => {
   if (!current.value || (!showActions.value && state !== 'failed' && state !== 'cancelled')) return ''
   return capabilities.value?.reason ?? ''
 })
-const links = computed(() => (data.value?.links ?? []).filter(link => !data.value?.discovery || !link.to.startsWith('/enterprises/')))
+const links = computed(() => (data.value?.links ?? []).filter(link => router.resolve(link.to).matched.length))
 // The page renders export-specific content in the `content` slot; a payload
 // without `export` must simply show nothing there.
 const exportSummary = computed(() => data.value?.export ?? null)
@@ -101,15 +100,6 @@ function format(iso: string | null | undefined, empty: string) {
   return props.dated?.(iso) ?? iso
 }
 
-async function continueDiscovery() {
-  const scope=data.value?.discovery
-  if(!current.value||pending.value||!scope?.titleCode||!scope.nextAfterEventId)return
-  pending.value=true;notice.value=''
-  try {
-    const receipt=await $fetch<{jobId:string}>('/api/roster/correspondences/tasks',{method:'POST',headers,body:{titleCode:scope.titleCode,afterEventId:scope.nextAfterEventId,throughEventId:scope.throughEventId,clientRequestId:`continue:${props.id}:${scope.nextAfterEventId}`}})
-    await router.push({path:'/tasks',query:{tab:'sme-roster',group:'platform',job:receipt.jobId}});emit('changed')
-  }catch{notice.value='下一片未确认受理，请刷新后显式重试。'}finally{pending.value=false}
-}
 async function act(action: 'cancel' | 'retry') {
   if (!data.value || !capabilities.value || !current.value || pending.value || !capabilities.value[action]) return
   let relatedRequestId: string | undefined
@@ -185,52 +175,18 @@ async function act(action: 'cancel' | 'retry') {
             </ul>
             <p v-if="data.snapshot.truncated">仅展示前 20 个未完成位置，其余仍计入未完成范围。</p>
           </section>
-          <section v-if="data.discovery" aria-label="候选发现结果" class="flex min-w-0 flex-col gap-3 text-sm">
-            <p class="break-words">范围：{{ data.discovery.scope }}</p>
-            <p>成功 {{ data.discovery.counts.succeeded }} · 待核 {{ data.discovery.counts.needsReview }} · 失败 {{ data.discovery.counts.failed }}</p>
-            <p>新增候选 {{ data.discovery.counts.created }} · 保留已有对应 {{ data.discovery.counts.existing }}</p>
-            <p class="text-muted-foreground">候选尚需人工核对，任务不会自动确认。进入事件可查看公布出处和平台原行。</p>
-            <ul v-if="data.discovery.items.length" class="flex flex-col gap-2" aria-label="逐事件处理结果">
-              <li v-for="item in data.discovery.items" :key="item.eventId" class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <NuxtLink v-if="item.enterpriseId" :to="`/enterprises/${item.enterpriseId}?eventId=${item.eventId}`" class="text-primary underline">核对事件 #{{ item.eventId }} 与双方原行</NuxtLink>
-                <span v-else>事件 #{{ item.eventId }}</span>
-                <span>{{ item.status === 'running' && !inFlight ? '未完成' : ({pending:'未处理',running:'处理中',done:'已处理',failed:'失败'} as Record<string,string>)[item.status] ?? item.status }} · 新增 {{ item.created }} · 保留 {{ item.existing }}</span>
-                <span v-if="item.errorCode" class="text-destructive">{{ item.errorCode === 'source_materialization_limit' ? '原档超出单次读取上限，此原行未写入，已完成候选保留，请按原行核对' : item.errorCode === 'event_unavailable' ? '正式事件不可用' : '候选提交失败，可重试' }}</span>
-              </li>
-            </ul>
-            <Button v-if="data.state === 'done' && data.discovery.titleCode && data.discovery.nextAfterEventId" variant="outline" :disabled="!current || pending" @click="continueDiscovery">继续本称号下一片</Button>
-          </section>
           <Alert v-if="data.error" variant="destructive"><AlertTitle>任务错误</AlertTitle><AlertDescription>{{ data.error }}</AlertDescription></Alert>
 
-          <template v-if="data.reconcile">
-            <p class="text-sm" data-testid="task-outcome">报告目标 {{ data.reconcile.targets ?? '未知' }} · 待核实 {{ data.reconcile.needsReview ?? '未知' }} · 查询失败 {{ data.reconcile.queryFailed ?? '未知' }} · 未查询 {{ data.reconcile.notQueried ?? '未知' }}</p>
-            <p class="text-muted-foreground text-sm">查询完整性与核查结论分开核对；任务完成不代表所有差异已有业务结论。</p>
-          </template>
           <template v-if="data.outcome">
             <p class="text-sm" data-testid="task-outcome">
               完整 {{ data.outcome.complete }} · 部分 {{ data.outcome.partial }} ·
               查询失败 {{ data.outcome.failed }} · 未查询 {{ data.outcome.notQueried }}
-              <template v-if="data.kind !== 'reconcile'"> · 未完成范围 {{ data.outcome.unfinished }}</template>
+               · 未完成范围 {{ data.outcome.unfinished }}
             </p>
             <p v-if="data.kind === 'platform-query-batch'" class="text-muted-foreground text-sm">
               以上是平台取回的<b>完整性</b>（执行 {{ data.outcome.attempt }} / 10 次），不是业务判断结论；取回事实仅保存在任务结果中，不代表正式入库。
             </p>
-            <p v-else class="text-muted-foreground text-sm">查询完整性与核查结论分开核对；任务完成不代表所有差异已有业务结论。</p>
           </template>
-
-          <section v-if="data.kind === 'reconcile'" class="flex flex-col gap-2 text-sm" aria-label="平台采集完整性">
-            <template v-if="reconcileCollection && reconcileCollection.complete !== null">
-              <p>采集完整性：完整 {{ reconcileCollection.complete }} 槽位 · 部分 {{ reconcileCollection.partial }} 槽位 · 失败 {{ reconcileCollection.failed }} 槽位 · 未知 {{ reconcileCollection.unknown }} 槽位</p>
-              <p>未完成 {{ reconcileCollection.unfinished }} 范围</p>
-              <ul v-if="reconcileCollection.positions.length" class="flex flex-col gap-1" aria-label="未完成采集范围">
-                <li v-for="(position, index) in reconcileCollection.positions" :key="index">
-                  {{ position.source }} / {{ position.rdjb === null ? '不分认定级别' : `rdjb=${position.rdjb}` }} / 第 {{ position.page }} 页
-                </li>
-              </ul>
-              <p v-if="reconcileCollection.positionsTruncated" class="text-muted-foreground">仅展示前 {{ reconcileCollection.positions.length }} 个可定位范围；其余请查看原任务报告。</p>
-            </template>
-            <p v-else>采集完整性未知：本报告未记录采集完整性。未完成范围未知。</p>
-          </section>
 
           <ul v-if="data.items?.length" class="flex flex-col gap-3 text-sm" aria-label="平台逐项范围">
             <li v-for="item in data.items" :key="item.id" class="flex flex-col gap-1">
@@ -270,10 +226,6 @@ async function act(action: 'cancel' | 'retry') {
               <dt class="text-muted-foreground">创建</dt><dd><time :datetime="data.createdAt">{{ format(data.createdAt, '未记录') }}</time></dd>
               <dt class="text-muted-foreground">开始</dt><dd><time v-if="data.startedAt" :datetime="data.startedAt">{{ format(data.startedAt, '') }}</time><template v-else>尚未开始</template></dd>
               <dt class="text-muted-foreground">结束</dt><dd><time v-if="data.finishedAt" :datetime="data.finishedAt">{{ format(data.finishedAt, '') }}</time><template v-else>尚未结束</template></dd>
-              <template v-if="data.discovery">
-                <dt class="text-muted-foreground">规则版本</dt><dd class="break-all">{{ data.discovery.ruleVersion ?? '未记录' }}</dd>
-                <dt class="text-muted-foreground">执行次数</dt><dd>{{ data.discovery.attempt }} / 10</dd>
-              </template>
               <template v-if="data.export">
                 <dt class="text-muted-foreground">生成时间</dt><dd>{{ format(data.export.generatedAt, '尚未生成') }}</dd>
                 <dt class="text-muted-foreground">快照边界</dt><dd>{{ format(data.export.snapshotStartedAt, '尚未固定') }}</dd>

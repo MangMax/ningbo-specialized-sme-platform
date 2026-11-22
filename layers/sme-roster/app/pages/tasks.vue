@@ -2,7 +2,6 @@
 import { clientRequestReference } from '#core/lib/client-logging/request-reference'
 import { computed, ref, watch } from 'vue'
 import TaskListPanel from '#core/app/components/tasks/TaskListPanel.vue'
-import RosterCandidateTaskCreate from '#sme-roster/app/components/tasks/CandidateTaskCreate.vue'
 import { TASK_EXPORTS, taskArtifactExpiry, type TaskExportTitle } from '../../lib/sme-roster/task-exports'
 import { TASK_STATES } from '#core/lib/task-center'
 import type { TaskList, TaskSummary } from '../../lib/sme-roster/task-summary'
@@ -179,7 +178,6 @@ watch(job, (next, previous) => { if (previous && !next) closingRow.value = previ
     <!-- 任务列表：分类、筛选、列表与分页同属一个 h2 区块 -->
     <section aria-labelledby="task-list-heading" class="workspace-list workspace-list-body flex min-w-0 flex-col gap-4">
       <h2 id="task-list-heading" class="sr-only">任务列表</h2>
-      <RosterCandidateTaskCreate v-if="showsRosterTools && data?.authorized && !stale" @created="id => { void navigate({job:id,tab:'sme-roster',group:'platform',page:1}); void refresh() }" />
       <!-- 本次导出：跨分类常驻，只说“请求”状态，与服务端任务状态分开。
            这是一条常驻状态，不是错误：它用 role=region（不是 Alert 默认的
            role=alert），受理结果只由下面的 export-notice 播报一次。 -->

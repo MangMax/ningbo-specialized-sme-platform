@@ -46,7 +46,7 @@ describe.each([
     const view = mount(component as any, { global: { stubs: {
       TablePagination: pagination, TableFailureState: failure, TableLoadingStatus: true,
       PageHeader: { template: '<header><slot/><slot name="actions"/></header>' },
-      RosterEnterpriseDrawer: true, RosterEnterpriseDifferenceRefresh: true, MultiSelectFilter: true,
+      RosterEnterpriseDrawer: true, MultiSelectFilter: true,
       EditFileDialog: true, DeleteFileDialog: true, UploadDialog: true, PdfViewDialog: true, FilePreviewDialog: true,
       FileSegmentsEditor: true, NuxtLink: { template: '<a><slot/></a>' },
     } } })

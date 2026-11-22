@@ -33,8 +33,10 @@ afterEach(async () => {
 it.each([
   ['/', null, 'other'],
   ['/roster', 'sme-roster', 'other'],
+  ['/comparison', null, 'other'],
+  ['/tasks', 'core', 'tasks'],
+  ['/current-enterprises', 'sme-roster', 'roster'],
   ['/enterprises/1', 'sme-roster', 'roster'],
-  ['/comparison', 'sme-roster', 'other'],
   ['/platform-declarations', 'sme-roster', 'other'],
   ['/files', 'core', 'files'],
   ['/preview', 'core', 'other'],
