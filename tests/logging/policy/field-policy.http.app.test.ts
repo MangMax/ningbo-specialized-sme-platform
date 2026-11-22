@@ -62,7 +62,7 @@ beforeAll(async () => {
   beforeDbHash = businessDigest(runtime)
   for (const name of ['files', 'incoming']) mkdirSync(join(root, name))
   const port = await reserveLoopbackPort(); expect(port).not.toBe(50055); baseUrl = `http://127.0.0.1:${port}`
-  const child = spawn(process.execPath, ['.output/server/index.mjs'], { cwd: resolve('.'), stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...runtime.env, NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json') } }); children.push(child)
+  const child = spawn(process.execPath, ['.output/server/index.mjs'], { cwd: resolve('.'), stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...runtime.env, NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_RECONCILE_PATH: join(root, 'reconcile.json') } }); children.push(child)
   child.stdout!.on('data', c => { output += c }); child.stderr!.on('data', c => { output += c })
   await waitForHttp(baseUrl + '/api/health', { child })
   const boundaryChild = spawn(process.execPath, ['tests/logging/policy/fixtures/stream-boundary-server.mjs'], { cwd: resolve('.'), stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { ...process.env, ...boundaryRuntime.env } }); children.push(boundaryChild)

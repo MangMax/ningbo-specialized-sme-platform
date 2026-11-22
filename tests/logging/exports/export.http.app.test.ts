@@ -80,7 +80,7 @@ async function businessDigest() {
   try {
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
     const hash = createHash('sha256')
-    for (const table of ['enterprise', 'enterprise_alias', 'record', 'record_event', 'record_evidence', 'platform_collection', 'platform_business_observation', 'platform_observation_assignment', 'platform_business_record_version', 'difference_reason', 'record_correspondence']) {
+    for (const table of ['enterprise', 'enterprise_alias', 'record', 'record_event', 'record_evidence', 'platform_collection', 'platform_business_observation', 'platform_observation_assignment', 'platform_business_record_version', 'difference_reason']) {
       const result = await client.query<{ content: string }>(`SELECT to_jsonb(t)::text AS content FROM business.${table} t ORDER BY content`)
       for (const row of result.rows) hash.update(row.content)
     }
@@ -117,7 +117,6 @@ async function start() {
       NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: 'synthetic-mcp-188', NUXT_OCR_TOKEN: 'synthetic-ocr-188',
       NUXT_BROWSER_TASKS_ENABLED: 'false',
       NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'),
-      NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'),
       HOST: '127.0.0.1', PORT: String(port), NITRO_HOST: '127.0.0.1', NITRO_PORT: String(port),
     },
   })

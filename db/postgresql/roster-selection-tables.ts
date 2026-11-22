@@ -56,16 +56,3 @@ export const differenceReason = businessSchema.table('difference_reason', {
   retiredEvidenceValidity: text('retired_evidence_validity', { enum: ['valid', 'evidence_changed', 'premise_invalid'] }),
   retiredEvidenceReviewed: boolean('retired_evidence_reviewed'),
 })
-
-export const enterpriseDifferenceComparison = businessSchema.table('enterprise_difference_comparison', {
-  enterpriseId: bigint('enterprise_id', { mode: 'number' }).notNull(),
-  titleCode: text('title_code').notNull(),
-  comparisonState: text('comparison_state').notNull(),
-  reasons: text('reasons').notNull(),
-  comparisonError: text('comparison_error'),
-  businessFingerprint: text('business_fingerprint').notNull(),
-  stateFingerprint: text('state_fingerprint'),
-  changedAt: text('changed_at').notNull(),
-  refreshedAt: text('refreshed_at').notNull(),
-  decisionCutoffId: bigint('decision_cutoff_id', { mode: 'number' }).notNull(),
-})

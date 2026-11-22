@@ -2,7 +2,7 @@ import type { DifferenceQualification } from './current-difference'
 import { enterpriseBusinessTimeline } from './enterprise-business-timeline'
 import type { PlatformCollectionCoverage, PlatformStoredQuery } from '../platform/read'
 import type { PlatformStoredRelation } from '../platform/read'
-import type { PublishedPresentation } from './correspondence-view'
+import type { PublishedPresentation } from './published-presentation'
 import type { QueryAssessment } from './query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
 import { type PlatformNormalizationConflict } from '../platform/normalization'
@@ -35,7 +35,7 @@ import type { FormalValidity } from '../../../../db/record-event-formal-validity
 import type { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import type { platformExportBatch, platformExportRow } from '../../../../db/postgresql/platform-tables'
 import { normalizeName,normalizeUscc } from '../domain'
-import type { ComparisonDirection } from '../comparison-model'
+import type { ComparisonDirection } from '../difference-coordinate-model'
 import { DIFFERENCE_STATUS_ORDER,SOURCE_ORDER,TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query-limits'
 import type { RosterEnterpriseSort } from './ledger-contract'
@@ -729,7 +729,7 @@ export function differenceKey(enterpriseId: number, titleCode: string, direction
 }
 
 /**
- * 差异集合 = **比对口径**(`layers/sme-roster/lib/comparison.ts`,`§0` 的「唯一差异口径」)∪ **已有解释**。
+ * 差异集合由当前派生坐标和已有解释组成。
  *
  * 为什么要并上「已有解释」:时态化之后,一条解释可能对应一个**当前已不是差异**的坐标
  * (例如两侧后来对齐了)。`confirmed_no_diff` 这类状态必须看得见(否则按 `status` 筛

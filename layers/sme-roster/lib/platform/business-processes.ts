@@ -152,7 +152,6 @@ export interface BusinessProcessObservation {
   versionId: number | null
   /** Explicit query title scopes for this observation; query fact, not a row title. */
   titleScopes: string[]
-  /** Original correspondence decisions for this exact observation only; IDs/status, no content. */
   version: BusinessProcessVersionFields | null
 }
 

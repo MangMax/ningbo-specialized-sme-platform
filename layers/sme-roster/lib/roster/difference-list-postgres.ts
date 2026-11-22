@@ -6,7 +6,7 @@ import { enterprise, enterpriseAlias } from '../../../../db/postgresql/enterpris
 import { record } from '../../../../db/postgresql/ledger-tables'
 import { platformBusinessObservation, platformCollection } from '../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
-import { getPostgresComparison } from '../comparison-heads-postgres'
+import { readPostgresDifferenceCoordinates } from '../difference-coordinates-postgres'
 import { normalizeName } from '../domain'
 import { postgresDifferenceRow } from '../../server/utils/decision-lifecycle/postgres-reads'
 import { projectDifferences } from './current-difference'
@@ -31,7 +31,7 @@ async function selectPage(db: Reader, filter: RosterDifferenceFilter) {
     id: reason.id, enterpriseId: reason.enterpriseId, titleCode: reason.titleCode,
     direction: reason.direction, status: reason.status, reasonCode: reason.reasonCode,
   }).from(reason).orderBy(reason.enterpriseId, reason.titleCode, reason.direction, desc(reason.recordedAt), desc(reason.id))
-  const { rows: derived } = await getPostgresComparison(db)
+  const { rows: derived } = await readPostgresDifferenceCoordinates(db)
   const selectedOwners = [...new Set([...heads.map(row => row.enterpriseId), ...derived.map(row => row.enterpriseId)])]
   const ownerIds = sql`ANY(${sql.param(selectedOwners)}::bigint[])`
   const enterprises = await db.select({ id: enterprise.id, name: enterprise.name, uscc: enterprise.usccNorm })

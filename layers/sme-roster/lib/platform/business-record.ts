@@ -74,24 +74,6 @@ export interface PlatformBusinessMetadata {
   hashAlgorithm: string | null
   contentHash: string | null
 }
-export interface PlatformCorrespondenceRef {
-  id: number
-  relationId: number | null
-  exportRowId: number | null
-  eventId: number | null
-  predecessorEventId: number | null
-  enterpriseId: number | null
-  titleCode: string
-  type: string
-  role: string
-  status: 'candidate' | 'confirmed' | 'rejected' | 'unlinked'
-  revision: number
-  ruleId: string
-  ruleVersion: string
-  createdAt: string
-  decidedAt: string | null
-  endedAt: string | null
-}
 export interface PlatformBusinessTarget {
   eventId: number | null
   enterpriseId: number
@@ -123,14 +105,10 @@ export interface ScopedPlatformObservation {
 }
 export interface PlatformBusinessObservationRef extends ScopedPlatformObservation {
   businessRecord: PlatformBusinessMetadata
-  existingCorrespondenceIds: number[]
-  existingCorrespondences: PlatformCorrespondenceRef[]
 }
 export interface PlatformBusinessGroup {
   businessRecord: PlatformBusinessMetadata
   representativeRelationId: number
   observationRefs: PlatformBusinessObservationRef[]
-  existingCorrespondenceIds: number[]
-  existingCorrespondences: PlatformCorrespondenceRef[]
   conflicts: string[]
 }

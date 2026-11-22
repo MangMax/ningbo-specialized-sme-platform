@@ -1,10 +1,6 @@
-import { commitPostgresCorrespondences, preflightPostgresCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence-write-postgres'
-import { listPostgresCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence-postgres'
-import type { CorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-model'
 import { singlePostgresFixtureRow, useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
 import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { failEventUpdate } from './fixtures/postgres'
-import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
@@ -298,69 +294,6 @@ it('rolls back the first update, revisions, audit and receipt if a later update 
   } finally { await f.close() }
 })
 
-it('marks direct and predecessor confirmations stale after correction and after restoring original values until explicit reconfirmation', async () => {
-  const f = await fixture()
-  try {
-    const { relationIds } = await seedPostgresPlatformQuery(f.db, { interface: 'business_list', queryKey: 'synthetic', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'success', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: f.enterprise.id, verificationStatus: 'confirmed', declareKind: 'apply', appliedAt: '2026-01-01' }] })
-    const relation = { id: relationIds[0]! }
-    const eventEdge = { type: 'event_process', eventId: f.event.id, relationId: relation.id, role: 'context_only' } as const
-    const create: CorrespondenceRequest = { idempotencyKey: 'correspondence', sourceIdentity: 'synthetic:relation', actor: { type: 'agent', id: 'test' }, basis: 'Explicit row context', ruleId: 'manual', ruleVersion: '1', operations: [
-      { action: 'create', status: 'confirmed', edge: eventEdge },
-      { action: 'create', status: 'confirmed', edge: { type: 'later_process', enterpriseId: f.enterprise.id, titleCode: 'specialized_sme', predecessorEventId: f.event.id, relationId: relation.id, role: 'followup_apply' } },
-    ] }
-    const pre = await preflightPostgresCorrespondences(f.db, create)
-    const confirmed = await commitPostgresCorrespondences(f.db, create, pre.planHash)
-    const ids = confirmed.correspondenceIds
-    const readEdge = async (id: number) => (await listPostgresCorrespondences(f.db, { id }))[0]
-    const readAudit = async (id: number) => (await f.db.$client.query(
-      'SELECT to_status AS "toStatus", evidence::json FROM record_correspondence_audit WHERE correspondence_id = $1 ORDER BY id', [id],
-    )).rows
-    const originalAudit = await readAudit(ids[0]!)
-    expect(originalAudit).toMatchObject([
-      { toStatus: 'candidate', evidence: { event: { id: f.event.id, year: 2021 } } },
-      { toStatus: 'confirmed', evidence: { event: { id: f.event.id, year: 2021 } } },
-    ])
-    // Seed exactly the pre-0016 fingerprint format (no event revision) as historical data.
-    for (const id of ids) {
-      const snapshot = (await f.db.$client.query<{ evidence: string }>(
-        'SELECT evidence FROM record_correspondence_audit WHERE correspondence_id = $1 AND to_status = $2', [id, 'confirmed'],
-      )).rows[0]!
-      const provenance = JSON.parse(snapshot.evidence)
-      delete provenance.comparisonProofIds
-      const { rawResponseSha256, collectionEvidence, createdAt, ...query } = provenance.query
-      expect(rawResponseSha256).toBe(createHash('sha256').update('Explicit synthetic correspondence source').digest('hex'))
-      provenance.query = { ...query, rawResponse: 'Explicit synthetic correspondence source', collectionEvidence, createdAt }
-      if (provenance.event) delete provenance.event.revision
-      if (provenance.predecessor) delete provenance.predecessor.event.revision
-      const legacyHash = createHash('sha256').update(JSON.stringify(provenance)).digest('hex')
-      await f.db.$client.query('UPDATE record_correspondence SET source_fingerprint = $1 WHERE id = $2', [legacyHash, id])
-      expect(await readEdge(id)).toMatchObject({ requiresRevalidation: false })
-    }
-    const edit = f.request(), plan = await f.post('preflight', edit)
-    expect(plan.body.impact).toEqual({ corrected: 1 })
-    expect(plan.body.targets[0]).not.toHaveProperty('correspondences')
-    await f.db.$client.query('UPDATE record_correspondence SET revision = revision + 1 WHERE id = $1', [ids[1]])
-    expect((await f.post('commit', { request: edit, planHash: plan.body.planHash })).status).toBe(200)
-    for (const id of ids) expect(await readEdge(id)).toMatchObject({ status: 'confirmed', requiresRevalidation: true })
-    expect(await readAudit(ids[0]!)).toEqual(originalAudit)
-    expect(await commitPostgresCorrespondences(f.db, create, pre.planHash)).toEqual(confirmed)
-    const undo = f.request('restore-values', { year: 2021, decidedYear: 2021 }); undo.operations[0]!.expectedRevision = 2
-    const undoPlan = await f.post('preflight', undo)
-    expect((await f.post('commit', { request: undo, planHash: undoPlan.body.planHash })).status).toBe(200)
-    for (const id of ids) expect(await readEdge(id)).toMatchObject({ requiresRevalidation: true })
-    const reconfirm: CorrespondenceRequest = { ...create, idempotencyKey: 'reconfirm', operations: [{ action: 'correct', correspondenceId: ids[0]!, expectedRevision: 2, edge: eventEdge }] }
-    const re = await preflightPostgresCorrespondences(f.db, reconfirm)
-    await commitPostgresCorrespondences(f.db, reconfirm, re.planHash)
-    expect(await readEdge(ids[0]!)).toMatchObject({ requiresRevalidation: false, revision: 4 })
-    expect(await readEdge(ids[1]!)).toMatchObject({ requiresRevalidation: true })
-    const reconfirmed = await readAudit(ids[0]!)
-    expect(reconfirmed.slice(0, 2)).toEqual(originalAudit)
-    expect(reconfirmed.slice(2)).toMatchObject([
-      { toStatus: 'unlinked', evidence: { event: originalAudit[1].evidence.event } },
-      { toStatus: 'confirmed', evidence: { event: { revision: 3 } } },
-    ])
-  } finally { await f.close() }
-})
 
 it.each([
   { id: 'verified-batch', batchSeq: 1, initial: { state: 'active', needsReview: false, dueYear: 2027 }, failed: { state: 'terminated', needsReview: false, dueYear: null }, group: 'eligible', failedGroup: 'excluded' },

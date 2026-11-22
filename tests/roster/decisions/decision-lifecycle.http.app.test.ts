@@ -1,6 +1,6 @@
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -13,14 +13,13 @@ import { enterprise as enterpriseTable } from '../../../db/postgresql/enterprise
 import { record } from '../../../db/postgresql/ledger-tables'
 import { differenceReason } from '../../../db/postgresql/roster-selection-tables'
 import { importBatch } from '../../../db/postgresql/import-tables'
-import { evidenceReviewReceipt114 } from '../../../db/postgresql/evidence-review-tables'
+import { evidenceReviewReceipt114 } from '../official-evidence/fixtures/evidence-review-receipt-table'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 import historicalReceipts from '../../fixtures/decision-102-pre-browser-receipts.json'
 
 const dir = mkdtempSync(join(tmpdir(), 'decision-102-'))
-const curatedPath = join(dir, 'legacy.json')
 const enterprise = { id: 1, name: '合成决定企业', nameNorm: '合成决定企业', usccNorm: '91330211255994457P' }
 let query: { id: number }
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>
@@ -63,8 +62,6 @@ async function installImportRace(queryKey: string, enterpriseId: number) {
 async function removeImportRace() {
  await db.execute(sql`DROP TRIGGER fixture_import_race ON platform_collection; DROP FUNCTION fixture_import_race()`)
 }
-const legacyKey = JSON.stringify([enterprise.usccNorm, 'specialized_sme', 'missing_in_miit'])
-writeFileSync(curatedPath, JSON.stringify({ [legacyKey]: { note: '已看过/不算差异', at: '2026-10-18T00:00:00Z' } }))
 let service: { baseUrl: string; stop: () => Promise<void> }
 const coordinate = { enterpriseId: enterprise.id, titleCode: 'specialized_sme', direction: 'missing_in_miit' }
 const request = (key: string, expectedCurrentId: number | null = null) => ({ ...coordinate, action: 'replace', expectedCurrentId, idempotencyKey: key, actor: { type: 'agent', id: 'synthetic-reviewer' }, basis: '人工核对指定平台证据；不推断原因', ruleVersion: 'manual-1', effectiveAt: '2025-01-01T00:00:00Z', decision: { status: 'confirmed_reason', reasonCode: 'platform_stale', measureCode: 'mark_platform_snapshot', verificationStatus: 'confirmed', evidenceQueryId: query.id, reasonNote: '旧解释' } })
@@ -91,7 +88,7 @@ beforeAll(async () => {
   })
   query = { id: source.queryId }
   const cwd = resolve(import.meta.dirname, '../../..'); const port = await reserveLoopbackPort()
-  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), ...postgres.env, NUXT_DB_READONLY: '0', NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_CURATED_PATH: curatedPath, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), ...postgres.env, NUXT_DB_READONLY: '0', NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') } })
   let output = ''; for (const stream of [child.stdout,child.stderr]) stream.on('data', data => { output = (output + data).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(service.baseUrl + '/api/roster/differences', { timeoutMs: 60000, child }) } catch (e) { await service.stop(); throw new Error(String(e) + output) }
@@ -123,14 +120,14 @@ describe('ticket 102 public decision lifecycle', () => {
     const receipt = { versionId: row.id, currentId: command.action === 'withdraw' ? null : row.id, previousId: null, action: command.action, recordedAt: row.recordedAt,
       ...(review ? { reviewedRevisionId: 98765 } : {}) }
     if (review) {
+      postgres.psql(['-f', 'tests/roster/official-evidence/fixtures/retired-roster-tables.sql'])
       await db.insert(evidenceReviewReceipt114).values({
         idempotencyKey: command.idempotencyKey, requestHash: hash, kind: command.action,
         enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction,
         decisionId: row.id, reviewedRevisionId: 98765, actor: JSON.stringify(command.actor), basis: command.basis,
         ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, response: JSON.stringify(receipt), recordedAt: row.recordedAt,
       })
-      postgres.psql(['-f', 'upgrade/pg/2026-11-evidence-review-cutover/apply.sql'])
-      await db.delete(evidenceReviewReceipt114).where(eq(evidenceReviewReceipt114.idempotencyKey, command.idempotencyKey))
+      postgres.psql(['-f', 'upgrade/pg/2026-11-roster-cleanup/apply.sql'])
     }
     const persisted = async () => ({
       decisions: (await db.execute(sql`select * from difference_reason where enterprise_id=${command.enterpriseId}`)).rows,
@@ -349,7 +346,7 @@ describe('ticket 102 public decision lifecycle', () => {
     }
     expect(Object.keys(spec.paths).filter(path => /^\/api\/roster\/evidence-(impacts|review)(?:\/|$)/.test(path))).toEqual([])
     const cwd = resolve(import.meta.dirname, '../../..'); const port = await reserveLoopbackPort()
-    const child = spawnCompiledApp(port, { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir,'no-token-build'), ...postgres.env, NUXT_DB_READONLY: '0', NUXT_API_TOKEN: '', NUXT_MCP_TOKEN: '', NUXT_CURATED_PATH: curatedPath, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
+    const child = spawnCompiledApp(port, { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir,'no-token-build'), ...postgres.env, NUXT_DB_READONLY: '0', NUXT_API_TOKEN: '', NUXT_MCP_TOKEN: '', NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
     let output = ''; for (const stream of [child.stdout,child.stderr]) stream.on('data', data => { output = (output + data).slice(-4000) })
     const base = `http://127.0.0.1:${port}`
     try {

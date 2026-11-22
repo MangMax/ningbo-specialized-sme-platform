@@ -8,7 +8,7 @@ import { readPostgresLegacyQualification } from '../../../layers/sme-roster/lib/
 import { readPostgresQueryAssessments } from '../../../layers/sme-roster/lib/roster/query-assessment-postgres'
 import { decisionRequestHash102, type DecisionCommand102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle/contract'
 import { savePostgresDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle/postgres-writes'
-import { evidenceReviewReceipt114 } from '../../../db/postgresql/evidence-review-tables'
+import { evidenceReviewReceipt114 } from './fixtures/evidence-review-receipt-table'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 it('preserves decision validity and existing review receipts after retiring impact tracking', async () => {
@@ -18,6 +18,7 @@ it('preserves decision validity and existing review receipts after retiring impa
   try {
     runtime = await postgresRuntimeFixture({ dir })
     pool = new pg.Pool({ connectionString: runtime.url, options: '-c search_path=business,public' })
+    runtime.psql(['-f', 'tests/roster/official-evidence/fixtures/retired-roster-tables.sql'])
     const db = drizzle({ client: pool })
     await pool.query(`
       ALTER TABLE difference_reason DROP COLUMN retired_evidence_validity, DROP COLUMN retired_evidence_reviewed;
@@ -86,6 +87,11 @@ it('preserves decision validity and existing review receipts after retiring impa
     })
     const { rows } = await pool.query("SELECT to_regclass('explanation_impact_113') AS impact, to_regclass('evidence_scope_version_113') AS scope")
     expect(rows).toEqual([{ impact: null, scope: null }])
+    const retired = await pool.query(`SELECT to_regclass('record_correspondence') AS link,
+      to_regclass('record_correspondence_audit') AS audit,
+      to_regclass('enterprise_difference_comparison') AS comparison,
+      to_regclass('evidence_review_receipt_114') AS receipt`)
+    expect(retired.rows).toEqual([{ link: null, audit: null, comparison: null, receipt: null }])
   } finally {
     try { await pool?.end() }
     finally {

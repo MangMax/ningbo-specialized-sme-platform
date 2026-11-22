@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
-import { getPostgresComparison } from '../../../layers/sme-roster/lib/comparison'
+import { readPostgresDifferenceCoordinates } from '../../../layers/sme-roster/lib/difference-coordinates-postgres'
 import { CURRENT_TITLES } from '../../../layers/sme-roster/lib/roster/current-titles'
 import { readPostgresCurrentQualification, readPostgresDifferenceQualifications } from '../../../layers/sme-roster/lib/roster/current-qualification-postgres'
 import { listPostgresRosterDifferences } from '../../../layers/sme-roster/lib/roster/difference-list-postgres'
@@ -20,7 +20,7 @@ it('retains raw extras alongside effective inherited qualification and stored hi
  await f.db.insert(schema.rosterLegacyMember).values({enterpriseId:c.enterprise.id})
  await f.db.insert(schema.record).values({enterpriseId:c.enterprise.id,titleCode:'innovative_sme',source:'miit',nameRaw:'current-overlay'})
  const scope={title:['innovative_sme'],direction:['extra_in_miit'] as ['extra_in_miit']}
- expect((await getPostgresComparison(f.db)).rows).toContainEqual(expect.objectContaining({enterpriseId:c.enterprise.id,titleCode:'innovative_sme',direction:'extra_in_miit'}))
+ expect((await readPostgresDifferenceCoordinates(f.db)).rows).toContainEqual(expect.objectContaining({enterpriseId:c.enterprise.id,titleCode:'innovative_sme',direction:'extra_in_miit'}))
  expect(await listPostgresRosterDifferences(f.db,scope)).toMatchObject({total:1,rows:[{inCurrentDifference:true,qualification:{status:'effective'},suggestedAction:'none'}]})
  expect((await listPostgresRosterEnterprises(f.db,{page:1,pageSize:50})).rows.find(r=>r.enterpriseId===c.enterprise.id)!.difference.count).toBe(2)
  const head=singlePostgresFixtureRow(await f.db.insert(schema.differenceReason).values({enterpriseId:c.enterprise.id,titleCode:'innovative_sme',direction:'extra_in_miit',status:'needs_review',createdAt:'2026-01-01',recordedAt:'2026-01-01'}).returning())

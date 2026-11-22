@@ -38,7 +38,6 @@ export const SOURCES = enumSet(record.source.enumValues)
 /** 平台接口取值集 = `layers/sme-roster/lib/labels.ts` 的唯一出处（契约 §2.4）。 */
 export const PLATFORM_INTERFACE_SET = new Set<string>(PLATFORM_INTERFACE_VALUES)
 
-// Correspondence decisions share the batch ledger, but are never a roster-import payload.
 const IMPORT_SOURCE_KINDS = new Set<string>(['announcement', 'platform_export', 'platform_archive', 'alias_evidence'])
 
 export function isObject(value: unknown): value is Record<string, unknown> {

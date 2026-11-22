@@ -31,7 +31,6 @@ function snapshot(id: number, pending: boolean, selectedTitle: CurrentTitle = 'i
       subject: { status: 'not_established', message: '未见主体终止事实', decisionIds: [] },
       region: { status: 'not_established', message: '沿用正式公布地域范围', decisionIds: [] },
       platform: { status: 'not_queried', comparison: 'not_established', message: '未查询不否定正式资格', truncated: false, observations: [] },
-      correspondence: { status: 'unmatched', message: '对应不等于资格', refs: [] },
       completeness: { status: pending && selected ? 'incomplete' : 'recorded', message: pending && selected ? '复核结论与结论年待补' : '合成资料已记录', gaps: pending && selected ? ['missing_cycle_semantics'] : [], eventIds: pending && selected ? [eventId] : [],
         fieldGaps: pending && selected ? [
           { eventId, field: 'decidedYear', valueState: 'unknown', inputState: 'null' },

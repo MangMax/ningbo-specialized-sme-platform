@@ -2,7 +2,7 @@ import { isManagedDifference } from './decision-lifecycle/reviewed-decisions'
 import { and, eq, gte, notExists, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { differenceMeasures, differenceReasons, differenceStatuses } from '../../../../db/difference-codes'
-import { COMPARISON_DIRECTIONS } from '../../lib/comparison-model'
+import { COMPARISON_DIRECTIONS } from '../../lib/difference-coordinate-model'
 import { enterprise, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
 import { differenceReason as d } from '../../../../db/postgresql/roster-selection-tables'
 import { platformBusinessObservation as observation, platformCollection, platformCollectionPage as page,

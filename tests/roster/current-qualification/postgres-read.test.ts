@@ -4,14 +4,13 @@ import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
 import { readPostgresEffectiveQualifications, readPostgresCurrentDetailBatch } from '../../../layers/sme-roster/lib/roster/current-qualification-postgres'
 import { listPostgresCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query-postgres'
-import { commitPostgresCorrespondences, preflightPostgresCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence-write-postgres'
 import { singlePostgresFixtureRow as single, useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
 
 const createDb = useIsolatedPostgresCases()
 const asOf = Date.parse('2026-06-01T00:00:00.000Z')
 
-it('keeps current qualification and filters independent of legacy correspondence revisions', async () => {
+it('keeps the formal award and its filter options independent of a platform row', async () => {
   const db = createDb()
   const titleCode = 'innovative_sme' as const
   const name = '合成认定见证企业'
@@ -20,16 +19,10 @@ it('keeps current qualification and filters independent of legacy correspondence
   const ledger = single(await db.insert(record).values({ enterpriseId: owner.id, titleCode, source: 'jxj', nameRaw: name }).returning())
   const award = single(await db.insert(recordEvent).values({ recordId: ledger.id, eventType: 'award', year: 2025, batchSeq: 1 }).returning())
   await db.insert(recordEvidence).values({ recordEventId: award.id, sourceFile: 'synthetic/award.pdf', page: 1 })
-  const { relationIds } = await submitSyntheticRecognizedCollection(db, {
+  await submitSyntheticRecognizedCollection(db, {
     rdjb: '1', queriedAt: '2026-05-01T00:00:00Z',
     rows: [{ enterpriseId: owner.id, raw: { id: 'recognized-witness', qymc: name, tyshxydm: uscc, rdjb: '1', rddqrq: '2028-11-20', whpc: '2023-2' } }],
   })
-  const edge = { type: 'event_recognized' as const, eventId: award.id, relationId: relationIds[0]! }
-  const request = {
-    idempotencyKey: 'confirm-recognized-witness', sourceIdentity: 'synthetic/recognized-witness',
-    actor: { type: 'agent' as const, id: 'test' }, basis: 'Synthetic corroboration', ruleId: 'manual', ruleVersion: '1',
-    operations: [{ action: 'create' as const, status: 'confirmed' as const, edge: { ...edge, role: 'recognized_corrob' as const } }],
-  }
   const filter = { titleCode, validYear: 2028, maintenanceYear: 2023 }
   const before = await listPostgresCurrentQualified(db, { titleCode }, asOf)
   expect(before).toMatchObject({
@@ -37,21 +30,6 @@ it('keeps current qualification and filters independent of legacy correspondence
       awardEventId: award.id, matchedValidYear: null, matchedMaintenance: null,
     }] }],
   })
-  const plan = await preflightPostgresCorrespondences(db, request)
-  const receipt = await commitPostgresCorrespondences(db, request, plan.planHash)
-  expect(await listPostgresCurrentQualified(db, { titleCode }, asOf)).toEqual(before)
-  expect(await listPostgresCurrentQualified(db, filter, asOf)).toMatchObject({ total: 0, rows: [] })
-
-  const correction = {
-    ...request, idempotencyKey: 'correct-recognized-witness-to-context',
-    operations: [{
-      action: 'correct' as const, correspondenceId: receipt.correspondenceIds[0]!, expectedRevision: 2,
-      edge: { ...edge, role: 'current_context' as const },
-    }],
-  }
-  const revised = await preflightPostgresCorrespondences(db, correction)
-  await commitPostgresCorrespondences(db, correction, revised.planHash)
-  expect(await listPostgresCurrentQualified(db, { titleCode }, asOf)).toEqual(before)
   expect(await listPostgresCurrentQualified(db, filter, asOf)).toMatchObject({ total: 0, rows: [] })
 })
 

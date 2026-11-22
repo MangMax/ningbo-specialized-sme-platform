@@ -140,7 +140,7 @@ function completeSnapshot(value: unknown, enterpriseId: number): boolean {
       if (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) return false
     }
     if (typeof title.group !== 'string' || !['eligible', 'pending', 'excluded'].includes(title.group)
-      || !['officialQualification', 'subject', 'region', 'platform', 'correspondence', 'completeness', 'shadow'].every(key => isObject(title[key]))
+      || !['officialQualification', 'subject', 'region', 'platform', 'completeness', 'shadow'].every(key => isObject(title[key]))
       || !['cycles', 'evidence', 'sourceVersions', 'references', 'notes'].every(key => Array.isArray(title[key]))) return false
   }
   const scope = { enterpriseId: value.enterpriseId, asOf: value.asOf, ruleVersion: value.ruleVersion, assessmentVersion: value.assessmentVersion }

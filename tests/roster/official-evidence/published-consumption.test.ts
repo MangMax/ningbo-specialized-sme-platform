@@ -18,7 +18,6 @@ import { readPostgresRosterEnterpriseDetail } from '../../../layers/sme-roster/l
 import { listPostgresCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query-postgres'
 import type { CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-page'
 import { usePostgresRosterDb } from '../../../layers/sme-roster/server/utils/postgres-roster-db'
-import { receiptRedactor } from '../../../layers/sme-roster/server/utils/import-receipt-redaction'
 import { startHttpFixture } from '../../support/http'
 import { minimalPdf } from '../../support/minimal-pdf'
 import * as official from '../../../layers/sme-roster/server/utils/official-evidence-postgres'
@@ -183,21 +182,6 @@ it("separates unavailable safe errors from unknown legacy while preserving origi
   expect(query.rows[0].publishedPresentation).toEqual({availability:'unavailable',error:'read_failed',facts:[]})
 })
 
-it("reuses one selected event Map across source detail and repeated references with no per-evidence latest", async () => {
-  const f = await paired()
-  const { readPostgresCorrespondenceSources } = await import('../../../layers/sme-roster/server/utils/record-correspondence-postgres')
-  // Caller-selected reference inputs to the pure reader, not forged persisted decisions.
-  const row = { id: 17, type:'later_process',role:'followup_apply',status:'candidate',eventId:1,predecessorEventId:2,relationId:null,exportRowId:null } as any
-  const read = vi.spyOn(official,'readPostgresOfficialEvidencePages'), latest = vi.spyOn(official,'readPostgresPublicOfficialEvidence')
-  const reader = await readPostgresCorrespondenceSources(f.db,[row,{...row,id:18}],receiptRedactor([]),{kind:'event',id:1})
-  const direct = reader.read('event',1) as any, first = reader.detail(row), second = reader.detail({...row,id:18})
-  expect(read).toHaveBeenCalledTimes(1)
-  expect(read.mock.calls.map(call => call[1])).toEqual([[{eventId:1},{eventId:2}]])
-  expect(first.event).toBe(direct); expect(second.event).toBe(direct)
-  expect((first.event as any).evidence[0].publishedName).toBe((second.event as any).evidence[0].publishedName)
-  expect((first.predecessorEvent as any).publishedPresentation.facts).toEqual([minimal(2,2,'2024新名')])
-  expect(latest).not.toHaveBeenCalled()
-})
 
 it("preserves published names and locators within the detail response budget", async () => {
   const f = await fixture(), name = 'x'.repeat(600)

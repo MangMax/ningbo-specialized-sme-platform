@@ -19,7 +19,6 @@ export interface ComparisonRow {
   district: string | null
   titleCode: TitleCode
   direction: ComparisonDirection
-  curated: boolean
   evidence: {
     matchedBy: 'uscc'
     otherSideUscc: null
@@ -66,7 +65,6 @@ function projectComparison(records: ComparisonInputRow[], opts: ComparisonQuery)
       district: r.district,
       titleCode: r.titleCode,
       direction: r.direction,
-      curated: false,
       evidence: {
         matchedBy: 'uscc',
         otherSideUscc: null,

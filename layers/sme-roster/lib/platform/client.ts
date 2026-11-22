@@ -378,7 +378,7 @@ export async function queryPlatformSlots(
  *
  * 为什么必须三个全查:实测 `91330211255994457P` 的 `rdjb=1` 与 `rdjb=2` 各 0 行、
  * `rdjb=3` 有 6 行 —— 曾用名证据就在那 6 行里。只查本地称号映射出的那一个 `rdjb`
- * (旧 `pipeline/scripts/reconcile.ts:262` 的做法)会**整条漏掉证据**。
+ * 按写入目标过滤会整条漏掉证据。
  */
 export async function queryAllRdjb(options: PlatformQueryOptions): Promise<PlatformQueryOutcome[]> {
   return queryPlatformSlots(options, [

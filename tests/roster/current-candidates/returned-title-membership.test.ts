@@ -27,14 +27,13 @@ it.each(['queryBusList', 'businessList', 'queryList'] as const)('uses actual ret
   expect(await candidates('specialized_sme')).toEqual([owners[1]!, owners[2]!].map(e => e.id))
   expect(await candidates('innovative_sme')).toEqual(owners.slice(0,3).map(e => e.id))
 })
-it('keeps local records correspondence and differences with only higher-to-lower candidate inheritance', async () => {
+it('keeps local records and explanations with only higher-to-lower candidate inheritance', async () => {
   const { db, enterprise, candidates } = fixture()
   const giants = []
-  for (const name of ['巨人记录', '巨人对应', '巨人原因']) giants.push(await enterprise(name))
+  for (const name of ['巨人记录', '巨人原因']) giants.push(await enterprise(name))
   const specialized = await enterprise('仅省专'), innovative = await enterprise('仅创新')
   for (const [e, title] of [[giants[0]!, 'little_giant'], [specialized, 'specialized_sme'], [innovative, 'innovative_sme']] as const) await db.insert(schema.record).values({ enterpriseId: e.id, titleCode: title, source: 'jxj' })
-  await db.insert(schema.recordCorrespondence).values({ enterpriseId: giants[1]!.id, titleCode: 'little_giant', edgeKey: 'local', type: 'event_process', role: 'candidate', status: 'rejected', revision: 1, targetIdentity: '{}', provenance: '{}', sourceFingerprint: 'f', ruleId: 'r', ruleVersion: 'v', createdAt: 'c' })
-  await db.insert(schema.differenceReason).values({ enterpriseId: giants[2]!.id, titleCode: 'little_giant', direction: 'missing_in_miit', status: 'needs_review', recordedAt: '2026-01-01', createdAt: '2026-01-01' })
+  await db.insert(schema.differenceReason).values({ enterpriseId: giants[1]!.id, titleCode: 'little_giant', direction: 'missing_in_miit', status: 'needs_review', recordedAt: '2026-01-01', createdAt: '2026-01-01' })
   expect(await candidates('little_giant')).toEqual(giants.map(e => e.id))
   expect(await candidates('specialized_sme')).toEqual([...giants, specialized].map(e => e.id))
   expect(await candidates('innovative_sme')).toEqual([...giants, specialized, innovative].map(e => e.id))

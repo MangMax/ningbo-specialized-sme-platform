@@ -65,7 +65,7 @@ beforeAll(async () => {
   db = usePostgresDirectoryDb()
   installApplicationServer()
   for (const key of ['setHeader', 'defineEventHandler', 'getQuery', 'getRouterParam', 'getHeader', 'getRequestURL', 'readBody', 'setResponseStatus', 'createError'] as const) vi.stubGlobal(key, h3[key])
-  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: token, filesDir: dir, curatedPath: join(dir, 'absent-curated.json') }))
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: token, filesDir: dir }))
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
   const routes = h3.createRouter()
     .post('/api/roster/import/preflight', createRosterImportHandler('preflight'))

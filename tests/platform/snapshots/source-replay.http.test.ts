@@ -123,8 +123,6 @@ const replayTables = [
   'platform_business_observation',
   'platform_export_batch',
   'platform_export_row',
-  'record_correspondence',
-  'record_correspondence_audit',
 ]
 
 async function state() {

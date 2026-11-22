@@ -29,7 +29,7 @@ import { projectEffectiveQualifications, type EffectiveQualification } from './e
 import { readPostgresQueryCoverage } from './query-coverage-postgres'
 import { createPostgresPublishedPresentationReader } from './official-published-presentation-postgres'
 import { officialPublishedError, projectOfficialPublishedNames, type OfficialPublishedScope, type OfficialPublishedFact } from './official-published-presentation'
-import type { PublishedPresentation } from './correspondence-view'
+import type { PublishedPresentation } from './published-presentation'
 import { importPostgresReceiptRedactor } from '../../server/utils/import-receipt-redaction'
 import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
 import { platformObservationSourceValue, platformObservationVersionDefaults } from '../platform/postgres-observation-facts'

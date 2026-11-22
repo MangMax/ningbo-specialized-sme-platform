@@ -2,7 +2,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { ReceiptRedactor } from '../../server/utils/import-receipt-redaction'
 import { readPostgresOfficialEvidencePages } from '../../server/utils/official-evidence-postgres'
 import type { OfficialEvidencePageResult } from '../../server/utils/official-evidence'
-import type { PublishedPresentation } from './correspondence-view'
+import type { PublishedPresentation } from './published-presentation'
 import {
   officialPublishedError, officialPublishedPresentationSteps, projectOfficialPublishedNames,
   type OfficialPublishedScope,

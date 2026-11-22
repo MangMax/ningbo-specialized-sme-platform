@@ -402,8 +402,6 @@ export const IMPORT_SOURCE_KINDS: Record<string, string> = {
   announcement: '公布名单',
   platform_export: '平台导出',
   alias_evidence: '别名证据',
-  correspondence_decision: '记录对应确认',
-  comparison_scope_proof: '对比范围依据',
   event_correction: '正式事件更正',
   platform_archive: '平台采集归档',
 }
@@ -413,8 +411,6 @@ export const IMPORT_SOURCE_KIND_ORDER: string[] = [
   'announcement',
   'platform_export',
   'alias_evidence',
-  'correspondence_decision',
-  'comparison_scope_proof',
   'event_correction',
   'platform_archive',
 ]
@@ -424,19 +420,6 @@ export const COMPARISON_LABELS = {
   missing_in_miit: '应纳未纳',
   extra_in_miit: '应出未出',
 } as const
-
-/** 旧 JSON 解释缓存的原因词表；保留历史读取与 pipeline 兼容。 */
-export const RECONCILE_LABELS = {
-  deregistered: '已注销',
-  moved_out: '已外迁',
-  non_local: '外地注册',
-  withdrawn: '已撤回',
-  on_platform: '平台有记录',
-  no_platform_record: '平台亦无记录',
-  unknown: '未查询',
-} as const
-
-export type ReconcileReason = keyof typeof RECONCILE_LABELS
 
 /**
  * 差异方向 → 一句话说明,用在需要写全的地方(徽章、展开面板、下拉选项)。

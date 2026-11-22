@@ -1,7 +1,3 @@
-import { readPostgresQualifiedAnnualProcess } from '../../../layers/sme-roster/server/utils/event-annual-process-postgres'
-import { commitPostgresCorrespondences, preflightPostgresCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence-write-postgres'
-import { listPostgresCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence-postgres'
-import type { CorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-model'
 import { singlePostgresFixtureRow, useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
 import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { failEventUpdate } from './fixtures/postgres'
@@ -445,30 +441,6 @@ it('rolls back both review rounds audit revisions and receipt after a later SQL 
   } finally { await f.close() }
 })
 
-it('preserves correspondence IDs while requiring revalidation and changing annual source generation after a review correction', async () => {
-  const f = await fixture()
-  try {
-    const { relationIds } = await seedPostgresPlatformQuery(f.db, { interface: 'business_list', queryKey: 'synthetic-issue304', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-25', status: 'success', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: f.enterprise.id, verificationStatus: 'confirmed', declareKind: 'review', year: 2021 }] })
-    const relation = { id: relationIds[0]! }
-    const correspondence: CorrespondenceRequest = { idempotencyKey: 'issue304-correspondence', sourceIdentity: 'synthetic:issue304', actor: { type: 'agent', id: 'issue304-test' }, basis: 'Explicit synthetic row context', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: f.first.event.id, relationId: relation.id, role: 'context_only' } }] }
-    const confirmedPlan = await preflightPostgresCorrespondences(f.db, correspondence)
-    const confirmed = await commitPostgresCorrespondences(f.db, correspondence, confirmedPlan.planHash)
-    const correspondenceId = confirmed.correspondenceIds[0]!
-    const readEdge = async () => (await listPostgresCorrespondences(f.db, { id: correspondenceId }))[0]
-    expect(await readEdge()).toMatchObject({ id: correspondenceId, requiresRevalidation: false, status: 'confirmed' })
-    const annualBefore = await readPostgresQualifiedAnnualProcess(f.db, f.first.event.id)
-    const request = f.request('correspondence-source-change', [f.op(f.first.event.id, { reviewOutcome: 'passed' })])
-    const plan = await f.post('preflight', request)
-    expect(plan.status).toBe(200)
-    expect(plan.body.impact).toEqual({ corrected: 1 })
-    expect((await f.post('commit', { request, planHash: plan.body.planHash })).status).toBe(200)
-    expect(await readEdge()).toMatchObject({ id: correspondenceId, eventId: f.first.event.id, relationId: relation.id, status: 'confirmed', requiresRevalidation: true })
-    const annualAfter = await readPostgresQualifiedAnnualProcess(f.db, f.first.event.id)
-    expect(annualAfter?.sourceGeneration).not.toBe(annualBefore?.sourceGeneration)
-    expect(annualAfter?.sourceRefs.event).toMatchObject({ id: f.first.event.id, revision: 2, year: 2018, decidedYear: 2021 })
-    expect((await f.read(f.first.event.id)).body.evidence).toEqual([f.first.evidence])
-  } finally { await f.close() }
-})
 
 it('rechecks sibling occupancy at commit and leaves the other correction and receipt uncommitted', async () => {
   const f = await fixture()

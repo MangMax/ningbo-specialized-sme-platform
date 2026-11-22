@@ -61,7 +61,6 @@ async function start(env: Record<string, string>): Promise<Server> {
       NUXT_BUILD_DIR: join(dir, 'build-' + port),
       ...postgres!.env,
       NUXT_DB_READONLY: '0',
-      NUXT_CURATED_PATH: join(dir, 'curated.json'),
       NUXT_FILES_DIR: join(dir, 'files'),
       NUXT_INCOMING_DIR: join(dir, 'incoming'),
       NUXT_MCP_TOKEN: 'synthetic-browser-108-mcp',

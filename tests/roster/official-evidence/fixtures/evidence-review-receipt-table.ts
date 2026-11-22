@@ -1,5 +1,5 @@
 import { bigint, text } from 'drizzle-orm/pg-core'
-import { businessSchema } from './business-schema'
+import { businessSchema } from '../../../../db/postgresql/business-schema'
 
 export const evidenceReviewReceipt114 = businessSchema.table('evidence_review_receipt_114', {
   id: bigint('id', { mode: 'number' }).generatedByDefaultAsIdentity().primaryKey(),

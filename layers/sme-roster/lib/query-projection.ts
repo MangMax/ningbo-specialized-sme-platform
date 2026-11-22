@@ -1,5 +1,5 @@
 import type { OfficialPublishedFact, OfficialPublishedScope } from './roster/official-published-presentation'
-import { publishedNameText, type PublishedPresentation } from './roster/correspondence-view'
+import { publishedNameText, type PublishedPresentation } from './roster/published-presentation'
 import { compact, groupBy, minBy, orderBy } from 'es-toolkit'
 import { EVENTS, LIFECYCLE_FLAGS, LIFECYCLE_FLAG_ORDER, SOURCE_ORDER, TITLE_ORDER } from './labels'
 import { isPageCapable } from './roster/evidence-page'

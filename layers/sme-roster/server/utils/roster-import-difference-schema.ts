@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { differenceMeasures, differenceReasons, differenceStatuses } from '../../../../db/difference-codes'
-import { COMPARISON_DIRECTIONS } from '../../lib/comparison-model'
+import { COMPARISON_DIRECTIONS } from '../../lib/difference-coordinate-model'
 import { TITLE_ORDER } from '../../lib/labels'
 import type { RosterImportDifference } from '../../lib/roster-import-client'
 import { platformRefDiscoverySchema, relationRefDiscoverySchema } from './roster-import-alias-schema'

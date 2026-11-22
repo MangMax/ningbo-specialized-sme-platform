@@ -106,7 +106,7 @@ beforeAll(async () => {
   vi.stubEnv('NUXT_POSTGRES_LOG_URL', postgres.url)
   vi.stubEnv('NUXT_DB_READONLY', '0')
   for (const [key, value] of Object.entries({ defineEventHandler, getQuery, createError, getHeader, readBody, setHeader, setResponseStatus })) vi.stubGlobal(key, value)
-  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: TOKEN, filesDir: dir, curatedPath: join(dir, 'no-curation.json') }))
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: TOKEN, filesDir: dir }))
   db = usePostgresDirectoryDb()
 
   const owners = await db.insert(enterprise).values([

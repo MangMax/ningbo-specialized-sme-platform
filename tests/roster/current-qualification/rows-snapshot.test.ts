@@ -18,7 +18,6 @@ function crossRequestLiteralRows(asOf: string): CurrentQualifiedRow[] {
       subject: { status: 'not_established', message: '未见主体终止事实', decisionIds: [] },
       region: { status: 'ningbo', message: '合成宁波正式范围', decisionIds: [enterpriseId * 10 + 401] },
       platform: { status: 'not_queried', comparison: 'not_established', message: '未查询不否定正式资格', truncated: false, observations: [] },
-      correspondence: { status: 'unmatched', message: '对应不代替资格', refs: [] },
       completeness: { status: 'recorded', message: '合成字段已记录', gaps: [], eventIds: [], fieldGaps: [], publishedNames: [{ evidenceId: eventId + 100, availability: 'captured', nameKnown: true }] },
       evidence: [{ eventId, revision: 1, eventType: 'award', year: 2025, batchSeq: 1, decidedYear: 2025, reviewOutcome: null, evidenceIds: [eventId + 100] }],
       sourceVersions: [{ evidenceId: eventId + 100, eventId, sourceFile: 'synthetic/408/adapter-literal.pdf', storedFileId: null, sha256: null, bytes: null, removedAt: null, capturedRevision: 1, capturedSha256: '5'.repeat(64) }],

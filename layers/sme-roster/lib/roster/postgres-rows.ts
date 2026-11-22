@@ -43,7 +43,6 @@ const jsonFields: Readonly<Record<string, readonly string[]>> = {
   platform_export_row: ['rawFields'],
   platform_observation_assignment: ['actor'],
   record: ['qualityFlags'],
-  record_correspondence: ['targetIdentity', 'provenance'],
   record_event: ['formalValidity'],
 }
 

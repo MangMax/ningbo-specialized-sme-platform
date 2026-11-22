@@ -323,7 +323,7 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
       MIIT_COOKIE: 'sid=synthetic-snapshot-cookie', NUXT_POSTGRES_BIN: pgBin,
       NUXT_DB_READONLY: '0', NUXT_POSTGRES_DIRECTORY_URL: url,
       NUXT_FILES_DIR: filesDir,
-      NUXT_CURATED_PATH: join(pgDir, 'curated.json'), NUXT_RECONCILE_PATH: join(pgDir, 'reconcile.json') },
+      NUXT_RECONCILE_PATH: join(pgDir, 'reconcile.json') },
   }) })
   const env = {
     PATH: process.env.PATH, LANG: 'C', PGHOST: pgDir, PGPORT: '5432', PGDATABASE: 'postgres',

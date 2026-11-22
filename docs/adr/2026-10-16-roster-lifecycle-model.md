@@ -248,8 +248,6 @@ erDiagram
    复合唯一索引 SQL 会被逗号切坏(实测)。若父代理不接受 sentinel `0`,需要手改迁移 SQL。
 4. **`rosterState` / `removed_platform_only` 定为派生、不落列** —— RL-07 若要物化这个状态,
    需要再补一列;本契约选择派生以免多一份要对账的状态。
-5. **读接口路径前缀**(`/api/roster/*`、`/api/platform/*`)尚未与既有 `/api/comparison`、
-   `/api/records` 的路由风格统一评审 —— 若父代理有既定命名,按既定改。
 6. **归并是否保留被并企业行?** 契约 §5.2 选择「迁走子行后**删除**被并 `enterprise` 行」,
    归并轨迹只留在 `import_batch.item_results` 与 `enterprise_alias`(旧名)里。
    若父代理要求可回溯「哪一行并进了哪一行」,需在 `enterprise` 上加一列(如

@@ -14,8 +14,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { eq, sql } from 'drizzle-orm'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
-import { platformBusinessObservation } from '../../../db/postgresql/platform-tables'
-import { recordCorrespondence, recordCorrespondenceAudit } from '../../../db/postgresql/qualification-tables'
 import { runPostgresMixedImport } from '../../../layers/sme-roster/server/utils/roster-mixed-import-postgres'
 import { updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
 import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
@@ -146,7 +144,7 @@ async function businessState() {
   return usePostgresDirectoryDb().transaction(async tx => {
     const tables = await tx.execute<{ name: string }>(sql`
       SELECT tablename AS name FROM pg_tables WHERE schemaname = 'business' AND (
-        tablename LIKE 'platform_%' OR tablename IN ('record_correspondence', 'record_correspondence_audit', 'difference_reason')
+        tablename LIKE 'platform_%' OR tablename = 'difference_reason'
       ) ORDER BY tablename
     `)
     const snapshot: Record<string, Record<string, unknown>[]> = {}
@@ -422,16 +420,12 @@ it.each([
   expect(row.relations[0]).toMatchObject({ relationKey: businessRow.id, sourcePage: 1, sourceRdjb })
 })
 
-it('changed typed content detaches superseded evidence and preserves its original audit', async () => {
+it('keeps previous typed content available after a newer capture', async () => {
   const e = await collect({ id: 'historical-decision', qymc: '合成', n: 1 })
   const old = structuredClone(e); delete old.rawData
   const saved = await submit('REST', 'commit', request([recognizedResultToImport(old)]))
   expect(saved.status).toBe('committed')
   const { projection } = await readSaved(saved)
-  const db = usePostgresDirectoryDb()
-  const [observation] = await db.select().from(platformBusinessObservation).where(eq(platformBusinessObservation.publicId, projection.relationId))
-  const [edge] = await db.insert(recordCorrespondence).values({ edgeKey: 'issue327-old-edge', type: 'event_recognized', role: 'context_only', observationId: observation!.id, titleCode: 'specialized_sme', status: 'confirmed', revision: 1, targetIdentity: JSON.stringify({ synthetic: true }), provenance: JSON.stringify({ originalRelation: projection.relationId }), sourceFingerprint: 'synthetic-old-fingerprint', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-01-01' }).returning()
-  await db.insert(recordCorrespondenceAudit).values({ correspondenceId: edge!.id, batchId: saved.batchId, idempotencyKey: 'issue327-old-audit', toStatus: 'confirmed', expectedRevision: 0, resultingRevision: 1, actorType: 'agent', actorId: 'issue327', basis: 'synthetic prior decision', ruleId: 'manual', ruleVersion: '1', evidence: JSON.stringify({ originalRelation: projection.relationId }), decidedAt: '2026-01-01' })
   const before = await businessState()
   const fresh = await collect(e.rawData!.rows[0]!)
   const added = await submit('REST', 'commit', request([recognizedResultToImport(fresh)]))
@@ -440,11 +434,8 @@ it('changed typed content detaches superseded evidence and preserves its origina
   expect(newer.projection.recordId).toBe(projection.recordId)
   expect(newer.projection.versionId).not.toBe(projection.versionId)
   const after = await businessState()
-  for (const table of Object.keys(before).filter(name => name !== 'record_correspondence')) {
+  for (const table of Object.keys(before)) {
     expect(after[table]).toEqual(expect.arrayContaining(before[table] as unknown[]))
   }
   expect(newer.projection.relationId).toBeGreaterThan(projection.relationId)
-  expect(after.record_correspondence).toEqual(before.record_correspondence!.map(row => row.id === edge!.id
-    ? { ...row, observation_id: null } : row))
-  expect(after.record_correspondence_audit).toEqual(before.record_correspondence_audit)
 })

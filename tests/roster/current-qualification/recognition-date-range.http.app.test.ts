@@ -12,7 +12,6 @@ import { nativeAppAdapter } from '../../support/native-app'
 import { syntheticRecognizedQuery } from '../fixtures/recognized-source'
 import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
-import { commitPostgresCorrespondences, preflightPostgresCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence-write-postgres'
 import { fresh, year, type Event } from '../current-export/fixtures/specialized-export'
 
 const dir = mkdtempSync(join(tmpdir(), 'recognition-date-range-'))
@@ -28,7 +27,7 @@ beforeEach(async () => {
   await db.execute(sql`
     TRUNCATE enterprise, record_event, record_evidence, platform_collection,
       platform_business_record, import_batch,
-      record_correspondence, record_correspondence_audit, difference_reason RESTART IDENTITY CASCADE
+      difference_reason RESTART IDENTITY CASCADE
   `)
 })
 afterAll(async () => {
@@ -79,21 +78,12 @@ async function mcp(args: Record<string, unknown>) {
   return JSON.parse(payload.result.content[0].text)
 }
 
-async function linkRecognized(subject: { id: number; name: string; usccNorm: string | null }, eventId: number, raw: Record<string, unknown>) {
-  const native = await seedPostgresPlatformQuery(db, syntheticRecognizedQuery({
+async function seedRecognized(subject: { id: number; name: string; usccNorm: string | null }, raw: Record<string, unknown>) {
+  await seedPostgresPlatformQuery(db, syntheticRecognizedQuery({
     rdjb: '1', queriedAt: new Date().toISOString(),
     rows: [{ raw: { id: 'synthetic-retired-filter', qymc: subject.name, tyshxydm: subject.usccNorm, rdjb: '1', ...raw }, enterpriseId: subject.id }],
   }))
-  const request = {
-    idempotencyKey: 'synthetic-retired-filter', sourceIdentity: 'synthetic/retired-filter',
-    actor: { type: 'agent' as const, id: 'test' }, basis: 'synthetic confirmed event and recognized row',
-    ruleId: 'manual', ruleVersion: '1', operations: [{
-      action: 'create' as const, status: 'confirmed' as const,
-      edge: { type: 'event_recognized' as const, eventId, relationId: native.relationIds[0]!, role: 'recognized_corrob' as const },
-    }],
-  }
-  const plan = await preflightPostgresCorrespondences(db, request)
-  await commitPostgresCorrespondences(db, request, plan.planHash)
+
 }
 
 it('filters a formal current award by full-year contained recognition range and reports partial overlap separately', async () => {
@@ -107,10 +97,10 @@ it('filters a formal current award by full-year contained recognition range and 
   expect((await mcp({ recognitionFrom: `${year - 2}-02-01`, recognitionTo: `${year - 2}-12-31` })).uncertainTotal).toBe(1)
 })
 
-it('retires manual platform corroboration while preserving a formal recognition filter', async () => {
-  const a = await candidate('正式认定与旧平台绑定', [{ eventType: 'award', year: year - 1, batchSeq: 2 }])
+it('preserves the formal recognition filter with a platform row', async () => {
+  const a = await candidate('正式认定与平台数据', [{ eventType: 'award', year: year - 1, batchSeq: 2 }])
   const eventId = await eventForRecord(a.record.id)
-  await linkRecognized(a.enterprise, eventId, {
+  await seedRecognized(a.enterprise, {
     rddqrq: `${year + 2}-11-20`, whpc: `${year - 1}-2`,
   })
   const recognition = { recognitionFrom: `${year - 1}-01-01`, recognitionTo: `${year - 1}-12-31` }

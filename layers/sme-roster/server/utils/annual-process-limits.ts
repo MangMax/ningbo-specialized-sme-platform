@@ -1,1 +1,0 @@
-export const ANNUAL_COMPARISON_RAW_LIMIT = 4096

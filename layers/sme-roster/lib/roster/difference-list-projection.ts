@@ -2,7 +2,7 @@ import type { differenceReason } from '../../../../db/postgresql/roster-selectio
 import type { platformCollection } from '../../../../db/postgresql/platform-tables'
 import type { publicVersion102 } from '../../server/utils/decision-lifecycle/contract'
 import type { DifferenceQualification } from './current-difference'
-import type { ComparisonRow } from '../comparison-model'
+import type { ComparisonRow } from '../difference-coordinate-model'
 import { normalizeName } from '../domain'
 import { TITLE_ORDER } from '../labels'
 import { MAX_PAGE_SIZE } from '../query-limits'

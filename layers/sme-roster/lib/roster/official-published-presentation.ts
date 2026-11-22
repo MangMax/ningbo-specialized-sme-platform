@@ -1,4 +1,4 @@
-import type { PublishedPresentation } from './correspondence-view'
+import type { PublishedPresentation } from './published-presentation'
 import { publishedNameText, type OfficialPublishedFact } from './official-evidence-display'
 export type { OfficialPublishedFact } from './official-evidence-display'
 import { OfficialEvidenceError, type OfficialEvidencePageRequest, type OfficialEvidencePageResult } from '../../server/utils/official-evidence'

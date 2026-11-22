@@ -11,7 +11,7 @@ const postgresGroup = {
 }
 export const postgresTestFiles = [
   'tests/files/segments/postgres-source-boundaries.http.test.ts',
-  'tests/roster/comparison/export.test.ts',
+  'tests/roster/legacy-export/xlsx.test.ts',
   'tests/roster/enterprise-read/research-postgres.http.test.ts',
 ]
 const owners = {
@@ -80,7 +80,6 @@ const owners = {
     "platform/queries",
     "platform/transport",
     "platform/retained-query",
-    "platform/comparison"
   ],
   "平台 · 归档与引用迁移": [
     "platform/evidence",
@@ -110,7 +109,6 @@ const owners = {
   ],
   "名录 · 导出任务执行": ["roster/export-execution"],
   "名录 · 企业台账与年度流程": [
-    "roster/annual-process",
     "roster/aliases",
     "roster/enterprise-detail",
     "roster/enterprise-facts",
@@ -123,7 +121,6 @@ const owners = {
   ],
   "名录 · 对应与差异决定": [
     "roster/comparison",
-    "roster/correspondence",
     "roster/event-correspondence",
     "roster/decisions"
   ],

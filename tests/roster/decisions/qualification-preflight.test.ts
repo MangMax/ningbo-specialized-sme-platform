@@ -5,7 +5,7 @@ import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/po
 import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { enterpriseFactRevision } from '../../../db/postgresql/qualification-tables'
 import { differenceReason } from '../../../db/postgresql/roster-selection-tables'
-import { evidenceReviewReceipt114 } from '../../../db/postgresql/evidence-review-tables'
+import { evidenceReviewReceipt114 } from '../official-evidence/fixtures/evidence-review-receipt-table'
 import { platformObservationAssignment } from '../../../db/postgresql/platform-tables'
 import { eq, sql } from 'drizzle-orm'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
@@ -213,14 +213,14 @@ it.each(historicalReceipts.fixtures)('preserves frozen legacy hash and original 
     const receipt = { versionId: row.id, currentId: command.action === 'withdraw' ? null : row.id, previousId: null, action: command.action, recordedAt: row.recordedAt,
       ...(review ? { reviewedRevisionId: 98765 } : {}) }
     if (review) {
+      postgres!.psql(['-f', 'tests/roster/official-evidence/fixtures/retired-roster-tables.sql'])
       await db.insert(evidenceReviewReceipt114).values({
         idempotencyKey: command.idempotencyKey, requestHash: hash, kind: command.action,
         enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction,
         decisionId: row.id, reviewedRevisionId: 98765, actor: JSON.stringify(command.actor), basis: command.basis,
         ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, response: JSON.stringify(receipt), recordedAt: row.recordedAt,
       })
-      postgres!.psql(['-f', 'upgrade/pg/2026-11-evidence-review-cutover/apply.sql'])
-      await db.delete(evidenceReviewReceipt114).where(eq(evidenceReviewReceipt114.idempotencyKey, command.idempotencyKey))
+      postgres!.psql(['-f', 'upgrade/pg/2026-11-roster-cleanup/apply.sql'])
     }
  const before = (await decisions())
  const replay = await post('commands', command)

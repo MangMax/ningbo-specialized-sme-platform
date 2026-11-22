@@ -155,7 +155,6 @@ export interface RecognizedDirectoryObservation {
   titleScopes: string[]
   /** True only when a known row-level rdjb contradicts the explicit query scope. */
   titleConflict: boolean
-  /** Original correspondence decisions for this exact observation only; IDs/status, no content. */
   version: RecognizedDirectoryVersionFields | null
 }
 

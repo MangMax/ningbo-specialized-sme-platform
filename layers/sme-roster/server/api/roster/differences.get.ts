@@ -1,4 +1,4 @@
-import { COMPARISON_DIRECTIONS } from '#sme-roster/lib/comparison-model'
+import { COMPARISON_DIRECTIONS } from '#sme-roster/lib/difference-coordinate-model'
 import { DIFFERENCE_REASONS, DIFFERENCE_STATUSES } from '#sme-roster/lib/labels'
 import { listPostgresRosterDifferences } from '#sme-roster/lib/roster/difference-list-postgres'
 import { usePostgresRosterDb } from '../../utils/postgres-roster-db'

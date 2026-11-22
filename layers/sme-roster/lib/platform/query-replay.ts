@@ -10,7 +10,7 @@ const optionalInt = (value: unknown) => typeof value === 'number' && Number.isFi
 function failure(kind: string, ref: string, code: string, message: string, field?: string): RosterImportItemResult {
   return { ok: false, kind, ref, error: { code, ...(field ? { field } : {}), message } }
 }
-/** Legacy reconcile used null as an omitted-response sentinel, never as a clear command. */
+
 export function queryUsesReference(query: RosterImportPlatformQuery): boolean {
   return query.reuseExisting === true || (query.interface !== 'recognized_list' && query.collectionEvidence == null && query.rawResponse == null)
 }

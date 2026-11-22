@@ -19,7 +19,7 @@ beforeAll(async () => {
   vi.stubGlobal('setHeader', setHeader)
   vi.stubGlobal('createError', createError)
   vi.stubGlobal('readBody', readBody)
-  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-fairness', filesDir: dir, curatedPath: join(dir, 'curated.json'), reconcilePath: join(dir, 'reconcile.json') }))
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-fairness', filesDir: dir }))
   const handler = (await import('../../../layers/sme-roster/server/api/roster/differences.get')).default
   const recognitions = (await import('../../../layers/sme-roster/server/api/roster/recognitions.get')).default
   const usccGet = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.get')).default

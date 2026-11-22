@@ -20,8 +20,6 @@ CREATE TRIGGER evidence_correction_append_only BEFORE UPDATE OR DELETE ON eviden
   FOR EACH ROW EXECUTE FUNCTION reject_roster_history_mutation();
 CREATE TRIGGER roster_file_parse_append_only BEFORE UPDATE OR DELETE ON file_parse_audit_105
   FOR EACH ROW EXECUTE FUNCTION reject_roster_history_mutation();
-CREATE TRIGGER correspondence_audit_append_only BEFORE UPDATE OR DELETE ON record_correspondence_audit
-  FOR EACH ROW EXECUTE FUNCTION reject_roster_history_mutation();
 
 \ir platform-projection-owner.sql
 

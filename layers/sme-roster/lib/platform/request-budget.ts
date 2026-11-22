@@ -1,4 +1,4 @@
-/** Process-wide platform budget shared by every consumer, including legacy reconcile.
+/** Process-wide platform budget shared by all platform requests.
  * A slot covers the whole request (body read and retry backoff included).
  */
 let active = 0

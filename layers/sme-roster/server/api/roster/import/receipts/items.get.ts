@@ -164,11 +164,11 @@ defineRouteMeta({
                                 "enterpriseId": {"type": "integer", "minimum": 1}, "asOf": {"type": "string", "format": "date-time"},
                                 "ruleVersion": {"type": "string", "description": "Non-empty original rule version; minimum length 1."}, "assessmentVersion": {"type": "string", "description": "Non-empty original assessment version; minimum length 1."}, "snapshotId": {"type": "string", "description": "Exactly 64 lowercase hexadecimal characters; pattern ^[a-f0-9]{64}$."},
                                 "titles": {"type": "array", "minItems": 3, "maxItems": 3, "description": "innovative_sme/specialized_sme/little_giant各一份完整称号assessment，不裁切维度。", "items": {
-                                  "type": "object", "required": ["titleCode", "group", "cycles", "versions", "officialQualification", "subject", "region", "platform", "correspondence", "completeness", "evidence", "sourceVersions", "references", "notes", "shadow"],
+                                  "type": "object", "required": ["titleCode", "group", "cycles", "versions", "officialQualification", "subject", "region", "platform", "completeness", "evidence", "sourceVersions", "references", "notes", "shadow"],
                                   "properties": {
                                     "titleCode": {"type": "string", "enum": ["innovative_sme", "specialized_sme", "little_giant"]}, "group": {"type": "string", "enum": ["eligible", "pending", "excluded"]},
                                     "cycles": {"type": "array", "items": {"type": "object"}}, "versions": {"type": "object", "required": ["facts", "sources", "decisions", "observations"], "additionalProperties": {"type": "string", "description": "Exactly 64 lowercase hexadecimal characters; pattern ^[a-f0-9]{64}$."}},
-                                    "officialQualification": {"type": "object"}, "subject": {"type": "object"}, "region": {"type": "object"}, "platform": {"type": "object"}, "correspondence": {"type": "object"}, "completeness": {"type": "object"}, "shadow": {"type": "object"},
+                                    "officialQualification": {"type": "object"}, "subject": {"type": "object"}, "region": {"type": "object"}, "platform": {"type": "object"}, "completeness": {"type": "object"}, "shadow": {"type": "object"},
                                     "evidence": {"type": "array", "items": {"type": "object"}}, "sourceVersions": {"type": "array", "items": {"type": "object"}}, "references": {"type": "array", "items": {"type": "string"}}, "notes": {"type": "array", "items": {"type": "string"}}
                                   }
                                 }}

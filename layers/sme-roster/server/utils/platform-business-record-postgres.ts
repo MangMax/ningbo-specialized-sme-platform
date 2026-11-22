@@ -2,9 +2,8 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { eq,sql } from 'drizzle-orm'
 import { platformBusinessObservation as observation, platformBusinessRecord as businessRecord,
   platformBusinessRecordVersion as version } from '../../../../db/postgresql/platform-tables'
-import { recordCorrespondence as correspondence } from '../../../../db/postgresql/qualification-tables'
 import { normalizeUscc } from '../../lib/domain'
-import type { PlatformBusinessGroup,PlatformBusinessMetadata,PlatformBusinessObservationRef,PlatformCorrespondenceRef,ScopedPlatformObservation } from '../../lib/platform/business-record'
+import type { PlatformBusinessGroup,PlatformBusinessMetadata,PlatformBusinessObservationRef,ScopedPlatformObservation } from '../../lib/platform/business-record'
 
 export type BusinessMetadataRow =
   Pick<typeof observation.$inferSelect, 'projectionRuleVersion' | 'recordId' | 'versionId'>
@@ -27,39 +26,14 @@ export async function readPostgresPlatformBusinessMetadata(db: Pick<NodePgDataba
   return new Map<number, BusinessMetadataRow>(rows.map(row => [row.relationId, row as BusinessMetadataRow]))
 }
 
-function decisionConflicts(priors: PlatformCorrespondenceRef[]) {
-  // Different endpoint types/roles may legitimately coexist. Compare decisions
-  // within a type/role, retaining all other references without rewriting them.
-  for (const sameRole of Map.groupBy(priors, p => JSON.stringify([p.type, p.role])).values()) {
-    const decisions = sameRole.filter(p => p.status !== 'candidate')
-    if (new Set(decisions.map(p => p.status)).size > 1) return true
-    if (new Set(decisions.map(p => JSON.stringify([p.eventId, p.predecessorEventId, p.exportRowId, p.enterpriseId, p.titleCode]))).size > 1) return true
-  }
-  return false
-}
-
 export async function readPostgresPlatformBusinessGroups(db: Pick<NodePgDatabase, 'select'>, observations: ScopedPlatformObservation[], metadata?: Map<number, BusinessMetadataRow>) {
   if (!observations.length) return []
   const relationIds = observations.map(row => row.relationId)
   metadata ??= await readPostgresPlatformBusinessMetadata(db, relationIds)
-  return projectPlatformBusinessGroups(observations, metadata, await readPostgresPlatformBusinessCorrespondences(db, relationIds))
+  return projectPlatformBusinessGroups(observations, metadata)
 }
 
-export async function readPostgresPlatformBusinessCorrespondences(
-  db: Pick<NodePgDatabase, 'select'>, relationIds: readonly number[],
-): Promise<PlatformCorrespondenceRef[]> {
-  if (!relationIds.length) return []
-  return db.select({ id: correspondence.id, relationId: observation.publicId, exportRowId: correspondence.exportRowId,
-    eventId: correspondence.eventId, predecessorEventId: correspondence.predecessorEventId, enterpriseId: correspondence.enterpriseId,
-    titleCode: correspondence.titleCode, type: correspondence.type, role: correspondence.role, status: correspondence.status,
-    revision: correspondence.revision, ruleId: correspondence.ruleId, ruleVersion: correspondence.ruleVersion,
-    createdAt: correspondence.createdAt, decidedAt: correspondence.decidedAt, endedAt: correspondence.endedAt,
-  }).from(correspondence).innerJoin(observation, eq(observation.id, correspondence.observationId))
-    .where(postgresRelationScope(relationIds)).orderBy(correspondence.id)
-}
-
-export function projectPlatformBusinessGroups(observations: ScopedPlatformObservation[], metadata: Map<number, BusinessMetadataRow>, priors: PlatformCorrespondenceRef[]): PlatformBusinessGroup[] {
-  const byRelation = Map.groupBy(priors, p => p.relationId)
+export function projectPlatformBusinessGroups(observations: ScopedPlatformObservation[], metadata: Map<number, BusinessMetadataRow>): PlatformBusinessGroup[] {
   const groups = new Map<string, PlatformBusinessObservationRef[]>()
   for (const observation of observations) {
     const row = metadata.get(observation.relationId)
@@ -69,8 +43,8 @@ export function projectPlatformBusinessGroups(observations: ScopedPlatformObserv
       platformKey: row?.platformKey ?? null, groupState, identityState: row?.identityState ?? 'not_indexed', contentState: row?.contentState ?? 'not_indexed',
       keySource: row?.keySource ?? null, projectionRuleVersion: row?.projectionRuleVersion ?? null, hashAlgorithm: row?.hashAlgorithm ?? null, contentHash: row?.contentHash ?? null,
     }
-    const existingCorrespondences = byRelation.get(observation.relationId) ?? []
-    const ref: PlatformBusinessObservationRef = { ...observation, businessRecord, existingCorrespondences, existingCorrespondenceIds: existingCorrespondences.map(p => p.id) }
+
+    const ref: PlatformBusinessObservationRef = { ...observation, businessRecord }
     // Never group null/missing/unverified identities, nor distinct target roles.
     const key = JSON.stringify([observation.target.eventId, observation.target.enterpriseId, observation.target.titleCode, observation.target.type, observation.target.role, observation.interface,
       groupState === 'verified' ? [businessRecord.recordId, businessRecord.versionId] : ['relation', observation.relationId]])
@@ -80,13 +54,12 @@ export function projectPlatformBusinessGroups(observations: ScopedPlatformObserv
   }
   return [...groups.values()].map(observationRefs => {
     const sorted = [...observationRefs].sort((a, b) => a.relationId - b.relationId)
-    const representative = sorted.find(o => o.existingCorrespondenceIds.length) ?? sorted[0]!
-    const existingCorrespondences = [...new Map(observationRefs.flatMap(o => o.existingCorrespondences).map(p => [p.id, p])).values()].sort((a, b) => a.id - b.id)
+    const representative = sorted[0]!
+
     const conflicts = new Set(observationRefs.flatMap(o => o.conflicts))
     if (observationRefs.some(o => o.businessRecord.identityState === 'conflict')) conflicts.add('platform_key_conflict')
     if (new Set(observationRefs.map(o => normalizeUscc(o.usccRaw)).filter(Boolean)).size > 1 || new Set(observationRefs.map(o => o.enterpriseId).filter(id => id != null)).size > 1) conflicts.add('identity_conflict')
     if (new Set(observationRefs.map(o => o.titleCode).filter(Boolean)).size > 1) conflicts.add('title_conflict')
-    if (decisionConflicts(existingCorrespondences)) conflicts.add('correspondence_decision_conflict')
-    return { businessRecord: representative.businessRecord, representativeRelationId: representative.relationId, observationRefs, existingCorrespondences, existingCorrespondenceIds: existingCorrespondences.map(p => p.id), conflicts: [...conflicts] }
+    return { businessRecord: representative.businessRecord, representativeRelationId: representative.relationId, observationRefs, conflicts: [...conflicts] }
   })
 }

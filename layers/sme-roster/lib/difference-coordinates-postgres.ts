@@ -4,9 +4,9 @@ import { alias } from 'drizzle-orm/pg-core'
 import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { record } from '../../../db/postgresql/ledger-tables'
 import { TITLE_ORDER } from './labels'
-import { projectComparisonSources, type ComparisonQuery } from './comparison-model'
+import { projectComparisonSources, type ComparisonQuery } from './difference-coordinate-model'
 
-export async function getPostgresComparison(db: Pick<NodePgDatabase, 'select' | '$with' | 'with'>, opts: ComparisonQuery = {}) {
+export async function readPostgresDifferenceCoordinates(db: Pick<NodePgDatabase, 'select' | '$with' | 'with'>, opts: ComparisonQuery = {}) {
   const opposite = alias(record, 'opposite')
   const other = alias(enterprise, 'other')
   const localSide = eq(record.source, 'jxj')
