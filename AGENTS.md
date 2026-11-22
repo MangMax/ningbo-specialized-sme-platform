@@ -8,6 +8,8 @@
 - Keep architectural decisions in `docs/adr/` and agent instructions in `AGENTS.md`, `docs/agents/`, or `.agents/`. Track specifications, plans, progress, reviews and follow-up work in GitHub Issues; keep generated reports, screenshots and logs outside Git.
 - For new background jobs or job notifications, follow [the job integration contract](docs/agents/background-jobs.md).
 - For test changes, follow [test ownership and execution conventions](docs/agents/testing.md).
+- For schema changes, new tables, migration cleanup, or persistent logs/jobs, read [storage and schema restraint rules](docs/agents/storage-restraint.md) first and get user approval before adding tables or >5 columns.
+- Prefer deleting obsolete paths over wrapping them; never keep one-off migration fallbacks, legacy cell snapshots, or parallel projections in runtime schema or code.
 
 ## Agent skills
 
