@@ -49,7 +49,7 @@ db/postgresql/job-integrity.sql	FnrxDae3sNmfpid4GWL4T3iKXby5VHYj5N19ajXyc6iw	Ins
 db/postgresql/job-schema.sql	FapCqZLJ6cRBJDhLb3IgFfbJk2J1BH1qKVtpkZyd1_SM	Define the shared job table before assigning its runtime claim default.
 db/postgresql/official-evidence-tables.ts	TALU0iapPUQJjT1BnN4eZdOPgPJWm_w-6JRSZl1WWOWY	Return the exact PostgreSQL JSON scalar without decoding U+0000 into text.
 db/postgresql/platform-batch-segments.sql	FdsAnK_90YSFhqE48uo-PmaFYCoDqa3rQzzXlsDNSGNQ	Define the PostgreSQL segment table and its composite key, foreign key and check constraint. Drizzle query builders do not install DDL.
-db/postgresql/platform-capture-retention.sql	FToO18FD92gkyueBYzBXaxN8oxCmYXftwE0We_WGaaIM	PostgreSQL 事务内核对同内容的证据出处、重绑业务引用并删除超期业务事实。
+db/postgresql/platform-capture-retention.sql	FVM_SUk2UAi2E_QU-EaJnBX1bvz-wllnTIZ61dDbqw40	Drizzle 无 PL/pgSQL 函数及触发器 DDL 构造器。保留函数在同一事务内处理差异依据及采集保留。
 db/postgresql/platform-collection-scope-integrity.sql	FXgq0NIoH-m-MlPny3z3X9B72zgEMyr2n2lTEiRyxzT0	Shared bootstrap DDL for PostgreSQL constraints, typed projections and trigger functions.
 db/postgresql/platform-legacy-coverage.sql	FG3gqJhdxdtL2cT4v65wDguk8XNuniudtDzCiV4CFE_g	Extract typed collection scope from binary historical envelopes during offline migration. Drizzle does not express byte offsets or temporary PL/pgSQL programs.
 db/postgresql/platform-observation-source.sql	Fsts4gx-17W43wBTbf-TXZCefCuJHvhINYBzyjGg7AQQ	Shared bootstrap DDL for PostgreSQL constraints, typed projections and trigger functions.
@@ -497,8 +497,8 @@ layers/sme-roster/server/utils/platform-batch-results-postgres.ts	To0nVuZbwUojqe
 layers/sme-roster/server/utils/platform-business-detail-postgres.ts	TdDoSO93j3_LPxjST-QzFAEAHkdskyXGTGJJYLRLWMvM	Bind selected business-detail IDs in a single bigint array, which Drizzle 0.45 cannot express as ANY.
 layers/sme-roster/server/utils/platform-business-record-postgres.ts	TRlqV4us0D7uRVP_ZauIdqNhqqeN4GbAnfpryO3QvmTY	Bind variable-sized record IDs as one bigint array, which Drizzle 0.45 cannot express as ANY.
 layers/sme-roster/server/utils/platform-capture-retention-postgres.ts	T0MvPpVHRzZCeKC6aM5aAn7iuSZZFNm45_b19QtP6XoE	Drizzle 无事务级 advisory lock 构造器。
-layers/sme-roster/server/utils/platform-capture-retention-postgres.ts	TA0OM6rP-9Off3mSNP-S_3CVXw6b3y0pxgagZ57pwHQ0	调用 PostgreSQL 采集清理函数，传入带类型的业务记录数组。
 layers/sme-roster/server/utils/platform-capture-retention-postgres.ts	TluCj3pbUveO73zHiWcRMgcLDV5CWQC0v_Uil0rAlzx8	Drizzle 无事务级 advisory lock 构造器。
+layers/sme-roster/server/utils/platform-capture-retention-postgres.ts	TuzzjOHYs0EZqReCPaopjnRRvnCV9piFzILFr5TfvYes	调用 PostgreSQL 采集清理函数，传入带类型的业务记录数组。
 layers/sme-roster/server/utils/postgres-platform-fingerprint.ts	T8b6ocPSs04ROmezPdC5BkG4GXhASTHstnPq4uMEtgGI	Use bound bigint arrays for selected query and relation IDs without expanding parameters. Drizzle 0.45 has no ANY array helper.
 layers/sme-roster/server/utils/postgres-platform-fingerprint.ts	TvrxQUjmp3uDRRweYgLdvmLCf_iqnZ1kTom9nnv1uUQY	Use bound bigint arrays for selected query and relation IDs without expanding parameters. Drizzle 0.45 has no ANY array helper.
 layers/sme-roster/server/utils/record-comparison-catalog-postgres.ts	TjMeW6JOPZoIhP6XPliSfjrBqUVMtTQE_z1otYW5BmTY	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。

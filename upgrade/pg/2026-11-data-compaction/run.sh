@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Historical chain: run from 59ae7ff4 with steps 18 and 19 from the same checkout.
+# Step 18 installs the three-argument retention SQL. Step 19 imports the matching
+# application helper and prunes while the record_correspondence references still exist.
+
 : "${PGDATABASE:?set the database to compact}"
 cd "$(dirname "$0")"
 client=${PGSQL_BIN:-psql}
