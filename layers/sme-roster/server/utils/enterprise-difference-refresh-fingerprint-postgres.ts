@@ -1,3 +1,4 @@
+import { isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
 import { and, desc, eq, getTableColumns, gt, inArray, isNotNull, notExists, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise, enterpriseAlias } from '../../../../db/postgresql/enterprise-tables'
@@ -38,7 +39,7 @@ async function readNativePlatformRefreshFacts(tx: Tx, selected: ReturnType<typeo
     .leftJoin(platformBusinessProjection, eq(platformBusinessProjection.versionId, observation.versionId))
     .leftJoin(platformRecognizedProjection, eq(platformRecognizedProjection.versionId, observation.versionId))
     .innerJoinLateral(current, sql`true`)
-    .where(and(sql`${observation.collectionId} = any(${selected})`, isNotNull(observation.sourceValues)))
+    .where(and(sql`${observation.collectionId} = any(${selected})`, isNotNull(observation.sourceValues), isCurrentPlatformObservation(tx)))
   const relations = Map.groupBy(sources.map(row => {
     const source = row.source as PlatformFactInterface
     const typed = source === 'apply_list' ? row.apply : source === 'business_list' ? row.business : row.recognized
@@ -109,7 +110,7 @@ async function readPlatformMaterials(tx: Tx, enterpriseIds: readonly number[], r
     const columns = Object.values(getTableColumns(table))
     const material = Object.fromEntries(names.map(name => [name, columns.find(column => column.name === name)!]))
     const rows = await tx.select({ collectionId: observation.collectionId, material }).from(observation)
-      .innerJoin(table, eq(table.versionId, observation.versionId)).where(sql`${observation.collectionId} = any(${selected})`)
+      .innerJoin(table, eq(table.versionId, observation.versionId)).where(and(sql`${observation.collectionId} = any(${selected})`, isCurrentPlatformObservation(tx)))
     typed.push(Map.groupBy(rows, row => row.collectionId))
   }
   const projections = new Map<number, Material>()

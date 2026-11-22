@@ -1,8 +1,9 @@
-import { and, desc, eq, sql, type SQLWrapper } from 'drizzle-orm'
+import { eq, sql, type SQLWrapper } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { platformApplyProjection as apply, platformBusinessObservation as observation, platformBusinessProjection as business,
-  platformCollection as collection, platformRecognizedProjection as recognized } from '../../../../db/postgresql/platform-tables'
+import { platformApplyProjection as apply, platformBusinessProjection as business,
+  platformRecognizedProjection as recognized } from '../../../../db/postgresql/platform-tables'
 import { platformSourceCellValue, type PlatformSourceCell } from '../../../../db/postgresql/platform-source-values'
+import { currentPlatformObservation } from '../platform/current-observation-postgres'
 import { normalizeUscc } from '../domain'
 import { isValidUscc } from './uscc-research'
 import { projectPlatformQualificationFact, type PlatformQualificationInputRow, type PlatformQualificationFact } from './platform-qualification'
@@ -45,14 +46,9 @@ async function readFacts(db: Reader, byUscc: Map<string, { id: number; uscc_norm
   // Array ANY binds one parameter for an entire batch. Drizzle only offers parameter-per-value inArray.
   const scope = (column: SQLWrapper) => sql`${column} = ANY(${sql.param(raw)}::text[])`
   const latest = (recordId: typeof recognized.recordId | typeof business.recordId | typeof apply.recordId) =>
-    db.select({ recordId: observation.recordId, versionId: observation.versionId,
-      observationId: observation.id, collectedAt: collection.queriedAt })
-      .from(observation).innerJoin(collection, eq(collection.id, observation.collectionId))
-      .where(and(eq(observation.recordId, recordId), eq(observation.contentState, 'verified')))
-      // Drizzle has no COLLATE builder. The stored text order is bytewise.
-      .orderBy(desc(sql`${collection.queriedAt} COLLATE "C"`), desc(observation.id)).limit(1).as('latest')
+    currentPlatformObservation(db, recordId).as('latest')
   const coordinates = (row: ReturnType<typeof latest>) => ({
-    recordId: row.recordId, versionId: row.versionId, observationId: row.observationId, collectedAt: row.collectedAt,
+    recordId: row.recordId, versionId: row.versionId, observationId: row.id, collectedAt: row.collectedAt,
   })
   const recognizedLatest = latest(recognized.recordId)
   const recognizedRows = await db.select({ ...coordinates(recognizedLatest),

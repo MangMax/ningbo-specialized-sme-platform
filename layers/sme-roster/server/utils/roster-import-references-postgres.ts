@@ -5,6 +5,7 @@ import {
   platformCollection as collection,
   platformObservationAssignment as assignment,
 } from '../../../../db/postgresql/platform-tables'
+import { isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
 import { describeRef, normalizeRef, type NormalizedRef } from './roster-import-model'
 
 type Reader = Pick<NodePgDatabase, 'select'>
@@ -40,7 +41,7 @@ async function relations(db: Reader, condition: SQL | undefined): Promise<Postgr
     queryId: collection.publicId, key: observation.sourceRelationKey,
   }).from(collection)
     .innerJoin(observation, eq(observation.collectionId, collection.id))
-    .innerJoinLateral(owner, eq(owner.observationId, observation.id)).where(condition)
+    .innerJoinLateral(owner, eq(owner.observationId, observation.id)).where(and(condition, isCurrentPlatformObservation(db)))
 }
 
 export async function findPostgresImportRelationById(db: Reader, id: number) {

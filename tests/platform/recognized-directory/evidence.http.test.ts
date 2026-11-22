@@ -5,7 +5,7 @@ import { and, eq, isNull, sql } from 'drizzle-orm'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { enterprise, enterpriseDirectory, enterpriseMerge } from '../../../db/postgresql/enterprise-tables'
 import { sourceDocument } from '../../../db/postgresql/official-evidence-tables'
-import { platformExportBatch } from '../../../db/postgresql/platform-tables'
+import { platformBusinessObservation, platformBusinessRecord, platformBusinessRecordVersion, platformCollection, platformExportBatch } from '../../../db/postgresql/platform-tables'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { installApplicationServer } from '../../../server/install-application'
 import { createRosterImportHandler } from '../../../layers/sme-roster/server/utils/roster-import-route'
@@ -70,6 +70,7 @@ beforeAll(async () => {
     .post('/api/roster/import/commit', createRosterImportHandler('commit'))
     .post('/api/roster/import/intake/:id/supplement', (await import('../../../layers/sme-roster/server/api/roster/import/intake/[id]/supplement.post')).default)
     .get('/api/roster/enterprises/:id', (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default)
+    .delete('/api/platform/records/:id/previous', (await import('../../../layers/sme-roster/server/api/platform/records/[id]/previous.delete')).default)
     .get('/api/platform/queries', (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default)
     .get('/api/comparison', (await import('../../../layers/sme-roster/server/api/comparison.get')).default)
     .get('/api/roster/record-comparison', (await import('../../../layers/sme-roster/server/api/roster/record-comparison.get')).default)
@@ -247,7 +248,7 @@ it('same natural identity replays idempotently, conflicting archive cannot mutat
   expect(after).toEqual(before)
 })
 
-it('MCP history and enterprise detail match REST, preserve cross-source identical IDs, and evidence never changes enterprise records or decisions implicitly', async () => {
+it('keeps capture history separate from current enterprise evidence across REST and MCP', async () => {
   const { recognizedResultToImport } = await import('../../../layers/sme-roster/lib/platform/recognized-evidence')
   const seed = await client.commit({ idempotencyKey: 'seed-enterprise', sourceKind: 'announcement', sourceIdentity: 'synthetic-seed', payload: { announcement: {
     sourceDocument: { source: 'jxj', title: '合成种子' }, records: [{ enterprise: { name: '合成主档', uscc: USCC }, titleCode: 'innovative_sme', events: [{ eventType: 'award', year: 2023 }] }],
@@ -272,7 +273,13 @@ it('MCP history and enterprise detail match REST, preserve cross-source identica
   const after = JSON.parse(await detailTool.handler({ enterpriseId }))
   expect(after.platform.queries.find((q: any) => q.queriedAt === evidence.queriedAt).collectionEvidence).toEqual(coverage(evidence))
   const allHistory = await (await fetch(`${baseUrl}/api/platform/queries?queryKey=${USCC}&pageSize=100`)).json()
-  expect(after.platform.relations.map((r: any) => r.id).sort((a: number, b: number) => a-b)).toEqual(allHistory.rows.flatMap((q: any) => q.relations.map((r: any) => r.id)).sort((a: number, b: number) => a-b))
+  const archivedIds = allHistory.rows.flatMap((q: any) => q.relations.map((r: any) => r.id))
+  const currentIds = after.platform.relations.map((r: any) => r.id)
+  expect(currentIds.sort((a: number, b: number) => a - b)).toEqual(archivedIds.sort((a: number, b: number) => a - b))
+  const stored = await db.select({ id: platformBusinessObservation.publicId }).from(platformBusinessObservation)
+    .innerJoin(platformCollection, eq(platformCollection.id, platformBusinessObservation.collectionId))
+    .where(and(eq(platformCollection.queryKey, USCC), eq(platformCollection.interface, 'recognized_list')))
+  expect(stored.some(row => !currentIds.includes(row.id))).toBe(true)
   expect(after.platform.relations[0]).toMatchObject({ sourceRdjb: '1', sourcePage: 1, relationKey: evidence.rows[0]!.id })
   for (const key of ['enterprise', 'aliases', 'records', 'events', 'evidence'] as const) expect(after[key]).toEqual(before[key])
   // Coverage is additive read state; archival evidence must not change business decisions.
@@ -288,7 +295,7 @@ it('MCP history and enterprise detail match REST, preserve cross-source identica
   const comparisonQuery = comparison.rows.find((r: any) => r.enterpriseId === enterpriseId).platform.queries.find((q: any) => q.queriedAt === evidence.queriedAt)
   expect(comparisonQuery.collectionEvidence).toEqual(coverage(evidence))
   expect(comparisonQuery.relations[0]).toMatchObject({ relationKey: evidence.rows[0]!.id, sourceRdjb: '1', sourcePage: 1 })
-  const legacy = { ...request(evidence, 'legacy-same-id'), payload: { platformQueries: [{ interface: 'business_list' as const, queryKey: USCC, rdjb: '1', queriedAt: evidence.queriedAt, status: 'success' as const, rawResponse: JSON.stringify(evidence.rows), relations: [{ sequenceNo: 1, relationKey: evidence.rows[0]!.id, usccRaw: USCC, nameRaw: '合成企业' }] }] } }
+  const legacy = { ...request(evidence, 'legacy-same-id'), payload: { platformQueries: [{ interface: 'business_list' as const, queryKey: USCC, rdjb: '1', queriedAt: evidence.queriedAt, status: 'success' as const, rawResponse: JSON.stringify(evidence.rows), relations: [{ sequenceNo: 1, relationKey: evidence.rows[0]!.id, usccRaw: USCC, nameRaw: '合成企业', rawFields: evidence.rows[0]! }] }] } }
   const legacySaved = await client.commit(legacy)
   expect(legacySaved.status, JSON.stringify(legacySaved)).toBe('committed')
   const read = await (await fetch(`${baseUrl}/api/platform/queries?enterpriseId=${enterpriseId}`)).json()
@@ -406,7 +413,7 @@ it.each(['uscc', 'name'] as const)('archive-before-master %s query preserves eve
   const queryKey = subject === 'uscc' ? code : `name:${name}`
   const evidence = archive()
   evidence.effectiveConditions = subject === 'uscc' ? {uscc: code, combination: 'and'} : {name, combination: 'and'}
-  evidence.rows = evidence.rows.map(row => ({ ...row, tyshxydm: subject === 'uscc' ? code : '', qymc: name }))
+  evidence.rows = evidence.rows.map(row => ({ ...row, id: subject + '-' + row.id, tyshxydm: subject === 'uscc' ? code : '', qymc: name }))
   const imported = await client.commit({ ...request(evidence, `before-master-archive-${subject}`), payload: { platformQueries: [recognizedResultToImport(evidence)] } })
   expect(imported.status).toBe('committed')
   const readHistory = async () => (await (await fetch(`${baseUrl}/api/platform/queries?interface=recognized_list&queryKey=${encodeURIComponent(queryKey)}`)).json()).rows[0]
@@ -526,4 +533,35 @@ it('a publicly saved title-wide archive retains exact comparison rows as observa
     recognizedObservations: [{ recognized: { queryId, usccRaw: USCC }, exportRows: [{ batchId: exportBatchId, sourceRowNo: 3, usccRaw: USCC }], observation: 'same_uscc_title_observed', qualification: 'not_comparable' }],
     exportObservations: [{ exportRow: { batchId: exportBatchId, sourceRowNo: 3 }, qualification: 'not_comparable' }],
   })
+})
+
+it('keeps one rollback capture and lets an authorized caller remove it without changing current data', async () => {
+  const key = 'retention-current-and-previous'
+  const query = (day: number, status: string) => ({
+    interface: 'apply_list' as const, queryKey: key, queriedAt: `2026-11-${String(day).padStart(2, '0')}T00:00:00Z`, status: 'success' as const, rawResponse: '{}',
+    relations: [{ sequenceNo: 1, relationKey: key, rawFields: { id: key, qymc: '采集保留测试', cszt: status } }],
+  })
+  for (const [day, status] of [[10, 'old'], [11, 'previous'], [12, 'current'], [9, 'backdated']] as const) {
+    const result = await client.commit({ idempotencyKey: key + day, sourceKind: 'platform_archive', sourceIdentity: key,
+      payload: { platformQueries: [query(day, status)] } })
+    expect(result.status, JSON.stringify(result)).toBe('committed')
+  }
+  const [record] = await db.select({ id: platformBusinessRecord.id }).from(platformBusinessRecord)
+    .where(eq(platformBusinessRecord.platformKey, key))
+  const recordId = record!.id
+  const readCaptures = () => db.select({ time: platformCollection.queriedAt, id: platformBusinessObservation.publicId })
+    .from(platformBusinessObservation).innerJoin(platformCollection, eq(platformCollection.id, platformBusinessObservation.collectionId))
+    .where(eq(platformBusinessObservation.recordId, recordId)).orderBy(platformCollection.queriedAt)
+  const before = await readCaptures()
+  expect(before.map(row => row.time)).toEqual(['2026-11-11T00:00:00Z', '2026-11-12T00:00:00Z'])
+  const endpoint = baseUrl + '/api/platform/records/' + recordId + '/previous'
+  expect((await fetch(endpoint, { method: 'DELETE' })).status).toBe(401)
+  expect(await readCaptures()).toEqual(before)
+  const remove = () => fetch(endpoint, { method: 'DELETE', headers: { authorization: 'Bearer ' + token } })
+  const response = await remove()
+  expect(response.status).toBe(200)
+  expect(await response.json()).toEqual({ removed: 1 })
+  expect(await readCaptures()).toEqual(before.slice(1))
+  expect(await (await remove()).json()).toEqual({ removed: 0 })
+  expect(await db.select().from(platformBusinessRecordVersion).where(eq(platformBusinessRecordVersion.recordId, recordId))).toHaveLength(1)
 })

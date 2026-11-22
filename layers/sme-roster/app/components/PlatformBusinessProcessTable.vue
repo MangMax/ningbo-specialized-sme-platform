@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { projectionDisplay } from '#sme-roster/lib/platform/projection-display'
 import { computed } from 'vue'
-import { ExternalLink, History } from '@lucide/vue'
+import { ExternalLink, FileText } from '@lucide/vue'
 import type { BusinessProcessRow } from '#sme-roster/lib/platform/business-processes'
 import { formatFetchTime } from '#sme-roster/lib/reconcile-time'
 import { PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '#sme-roster/lib/labels'
@@ -44,7 +44,6 @@ const conflictLabel: Record<string, string> = {
               <TableHead class="w-[8%] whitespace-nowrap">状态</TableHead>
               <TableHead class="w-[8%] whitespace-nowrap">批次</TableHead>
               <TableHead class="w-[13%] whitespace-nowrap">办理时间</TableHead>
-              <TableHead class="w-[9%] whitespace-nowrap">版本</TableHead>
               <TableHead class="sticky right-0 z-20 w-[13%] border-l bg-muted">详情</TableHead>
             </TableRow>
           </TableHeader>
@@ -61,9 +60,8 @@ const conflictLabel: Record<string, string> = {
               <TableCell class="whitespace-normal break-words">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.status) }}</TableCell>
               <TableCell class="whitespace-normal break-words">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.batch) }}</TableCell>
               <TableCell class="whitespace-normal break-words tabular-nums">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.appliedAt, date) }}</TableCell>
-              <TableCell class="tabular-nums">{{ row.versionCount }}<span v-if="row.matchedVersionCount > 1" class="text-muted-foreground block text-xs">匹配 {{ row.matchedVersionCount }} 个版本</span></TableCell>
               <TableCell class="sticky right-0 z-10 border-l bg-card">
-                <Button variant="ghost" size="sm" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />版本详情</Button>
+                <Button variant="ghost" size="sm" :disabled="loading" @click="emit('open-record', row.record.id)"><FileText data-icon="inline-start" />查看详情</Button>
                 <span v-for="conflict in row.conflicts" :key="conflict" class="text-muted-foreground mt-1 block text-xs">{{ conflictLabel[conflict] ?? conflict }}</span>
               </TableCell>
             </TableRow>
@@ -78,12 +76,11 @@ const conflictLabel: Record<string, string> = {
               <p v-else class="font-medium break-words">{{ enterprise(row) }}</p>
               <p class="text-muted-foreground break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.usccRaw) }}</p>
             </div>
-            <Button variant="outline" size="sm" class="min-h-11 shrink-0" :disabled="loading" @click="emit('open-record', row.record.id)"><History data-icon="inline-start" />版本详情</Button>
+            <Button variant="outline" size="sm" class="min-h-11 shrink-0" :disabled="loading" @click="emit('open-record', row.record.id)"><FileText data-icon="inline-start" />查看详情</Button>
           </div>
           <p class="text-sm font-medium leading-5">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.titleRaw, titleLabel) }}</p>
           <p class="text-sm leading-5">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.declareKind, declareKind) }} · 业务年 {{ projectionDisplay(row.matchedVersion, row.matchedVersion.businessYear) }} · {{ projectionDisplay(row.matchedVersion, row.matchedVersion.status) }}</p>
           <p class="text-muted-foreground text-sm leading-5">批次 {{ projectionDisplay(row.matchedVersion, row.matchedVersion.batch) }} · 办理时间 {{ projectionDisplay(row.matchedVersion, row.matchedVersion.appliedAt, time) }}</p>
-          <p class="text-muted-foreground text-sm leading-5">版本 {{ row.versionCount }}</p>
           <p v-for="conflict in row.conflicts" :key="conflict" class="text-muted-foreground text-xs">{{ conflictLabel[conflict] ?? conflict }}</p>
         </li>
       </ul>
@@ -98,7 +95,7 @@ const conflictLabel: Record<string, string> = {
               <TableHead class="w-[18%]">企业原值</TableHead>
               <TableHead class="w-[14%] whitespace-nowrap">称号</TableHead>
               <TableHead class="w-[7%] whitespace-nowrap">事项</TableHead>
-              <TableHead class="w-[6%] whitespace-nowrap">业务年</TableHead>
+              <TableHead class="w-[10%] whitespace-nowrap">业务年</TableHead>
               <TableHead class="w-[8%] whitespace-nowrap">状态</TableHead>
               <TableHead class="w-[7%] whitespace-nowrap">批次</TableHead>
               <TableHead class="w-[9%] whitespace-nowrap">办理时间</TableHead>

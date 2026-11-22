@@ -6,6 +6,7 @@ import {
   platformCollection, platformCollectionPage, platformRecognizedProjection,
   platformObservationAssignment,
 } from '../../../../db/postgresql/platform-tables'
+import { isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
 import { platformObservationSourceValue, platformObservationVersionDefaults } from '../../lib/platform/postgres-observation-facts'
 import { platformSourceFields } from '../../../../db/postgresql/platform-source-values'
 import type { PlatformStoredQuery, PlatformStoredRelation } from '../../lib/platform/read'
@@ -105,7 +106,7 @@ export async function readPostgresRelationFingerprints(db: Db, scope: { queryId:
     .leftJoin(platformApplyProjection, eq(platformApplyProjection.versionId, observation.versionId))
     .leftJoin(platformBusinessProjection, eq(platformBusinessProjection.versionId, observation.versionId))
     .leftJoin(platformRecognizedProjection, eq(platformRecognizedProjection.versionId, observation.versionId))
-    .where(where).orderBy(observation.publicId)
+    .where(and(where, isCurrentPlatformObservation(db, observation))).orderBy(observation.publicId)
   return rows.map(row => {
     const { id, enterpriseId, matchBasis, verificationStatus, queryId, observationId, sourceRdjb, originalUscc, originalName } = row
     const source = row.source as PlatformStoredQuery['interface']

@@ -23,6 +23,7 @@ import { readPostgresComparisonIdentities } from './record-comparison-catalog-po
 import { readPostgresObservationComparisonFacts } from './record-correspondence-target-postgres'
 import { readPostgresCorrespondenceSelection } from './record-correspondence-postgres'
 import { compareRecordInputs, comparisonBefore, validatedComparisonInput, type ComparisonRead, type FormalEvent, type SelectedRecordComparison } from './record-comparison-model'
+import { isCurrentPlatformCollection } from '../../lib/platform/current-observation-postgres'
 import { postgresCollectionConditionValues, projectPostgresComparisonConditions, projectPostgresUnfinishedPositions } from '../../lib/platform/postgres-collection-scope'
 import { readPostgresPlatformBusinessMetadata } from './platform-business-record-postgres'
 
@@ -56,7 +57,7 @@ async function readQueryFacts(db: Reader, ids: number[]): Promise<QueryFacts[]> 
   const rows = await db.select({
     id: c.publicId, collection: sql<QueryFacts['collection']>`${postgresRosterRow(platformCollection,'c')}`,
     conditions: postgresCollectionConditionValues(c.conditionFacts), unfinished: c.unfinishedPositions,
-  }).from(c).where(eq(c.publicId, sql`ANY(${numbers(ids)})`)).orderBy(c.publicId)
+  }).from(c).where(and(eq(c.publicId, sql`ANY(${numbers(ids)})`), isCurrentPlatformCollection(db, c))).orderBy(c.publicId)
   const coordinates = numbers(rows.map(row => row.collection.id))
   const page = alias(platformCollectionPage, 'p')
   const pages = Map.groupBy((await db.select({
@@ -106,7 +107,7 @@ async function selectComparison(db: Reader, input: RecordComparisonInput): Promi
     .map(({ row }) => ({ row: { ...row, rawFields: null }, batch: batchById.get(row.batchId)! }))
   const edge = recordCorrespondence
   const edgeScope = and(
-    or(isNull(edge.observationId), eq(edge.observationId, sql`ANY(${numbers(observationIds.map(row => row.observationId))})`)),
+    or(eq(edge.type, 'event_export_context'), eq(edge.observationId, sql`ANY(${numbers(observationIds.map(row => row.observationId))})`)),
     or(isNull(edge.exportRowId), eq(edge.exportRowId, sql`ANY(${numbers(exports.map(row => row.row.id))})`)),
   )
   const allEdges = (await readPostgresCorrespondenceSelection(db, edgeScope)).filter(edge => comparisonBefore(edge.createdAt, input.asOf))

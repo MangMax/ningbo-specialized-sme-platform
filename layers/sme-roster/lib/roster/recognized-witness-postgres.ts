@@ -4,6 +4,7 @@ import {
   platformBusinessObservation as observation, platformBusinessRecord as record, platformCollection as collection,
   platformObservationAssignment as assignment, platformRecognizedProjection as projection,
 } from '../../../../db/postgresql/platform-tables'
+import { isCurrentPlatformObservation } from '../platform/current-observation-postgres'
 import { projectRecognizedWitness } from './recognized-witness-projection'
 import type { RecognizedWitnessReader } from './recognized-witness-reader'
 
@@ -27,7 +28,7 @@ function readWitnessRows(db: Reader, ids: readonly number[]) {
     .leftJoin(record, eq(record.id, observation.recordId))
     .leftJoin(projection, and(eq(projection.versionId, observation.versionId), eq(projection.recordId, observation.recordId)))
     // Drizzle inArray binds one parameter per witness. Keep one bound array.
-    .where(sql`${observation.publicId} = ANY(${sql.param(ids)}::bigint[])`)
+    .where(and(sql`${observation.publicId} = ANY(${sql.param(ids)}::bigint[])`, isCurrentPlatformObservation(db)))
 }
 
 export type RecognizedWitnessRow = Awaited<ReturnType<typeof readWitnessRows>>[number]

@@ -12,6 +12,7 @@ import { writePostgresCollectionHeader } from '../../lib/platform/postgres-colle
 import { writePostgresObservation } from '../../lib/platform/postgres-observation-write'
 import { executePostgresRosterImport, type NativeImportExecution, type PostgresImportAction, type PostgresImportBatch } from './roster-export-import-postgres'
 import { stagePostgresJob } from '../../../core/server/utils/job-runner-postgres'
+import { prunePostgresPlatformCaptures } from './platform-capture-retention-postgres'
 import { EVENT_ARCHIVE_RULE_VERSION } from './event-archive-discovery-model'
 import { CANDIDATE_JOB_KIND, candidateJobParams } from './jobs/candidate-discovery-contract'
 import type { PlatformProjectionResult } from '../../lib/platform/business-record'
@@ -224,6 +225,9 @@ export async function executePostgresPlatformItems(tx: Tx,batch: PostgresImportB
   try {
     await tx.transaction(async nested=>{
       for (const write of writes) items.push(await write.run(nested))
+      const recordIds = new Set(items.flatMap(item => (item.detail?.canonicalProjection as PlatformProjectionResult[] | undefined) ?? [])
+        .flatMap(row => row.recordId === null ? [] : [row.recordId]))
+      await prunePostgresPlatformCaptures(nested, [...recordIds], true)
     })
   } catch (error) {
     // Constraint and trigger rejections prove this write did not commit.

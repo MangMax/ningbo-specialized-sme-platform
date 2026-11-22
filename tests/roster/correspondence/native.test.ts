@@ -54,7 +54,7 @@ it('stores native observation keys while returning public aliases and replaying 
   expect(await readFixtureAudit(f.db, id)).toEqual(audit)
 })
 
-it.each(['apply_list', 'business_list'] as const)('keeps %s native detail content versions and typed source fields for repeated and changed observations', async sourceKind => {
+it.each(['apply_list', 'business_list'] as const)('shows only the current %s observation and its typed fields in enterprise detail', async sourceKind => {
   const f = await fixture()
   const query = (time: string, status?: string) => ({ ...f.query(time, status), interface: sourceKind, rdjb: sourceKind === 'apply_list' ? '' : '2', titleCode: sourceKind === 'apply_list' ? null : 'specialized_sme' })
   const first = await seedPostgresPlatformQuery(f.db, query('2026-10-01T00:00:00Z'))
@@ -62,14 +62,12 @@ it.each(['apply_list', 'business_list'] as const)('keeps %s native detail conten
   const changed = await seedPostgresPlatformQuery(f.db, query('2026-10-03T00:00:00Z', '已退回'))
   const detail = (await readPostgresRosterEnterpriseDetail(f.db, f.enterprise.id))!
   const observations = detail.platform.businessRecords.flatMap(record => record.observationRefs)
-  expect(observations.map(row => row.relationId).sort((a, b) => a - b)).toEqual([201, 202, 203])
+  expect(observations.map(row => row.relationId).sort((a, b) => a - b)).toEqual([203])
   expect(first.observations[0]!.versionId).toBe(repeated.observations[0]!.versionId)
   expect(changed.observations[0]!.versionId).not.toBe(first.observations[0]!.versionId)
   const byId = new Map(observations.map(row => [row.relationId, row]))
-  expect(byId.get(201)?.typedFields).toMatchObject({ declareKind: 'apply', year: 2024, appliedAt: '2024-01-02', status: '终审通过', nameRaw: '原生合同企业' })
-  expect(byId.get(202)?.typedFields).toMatchObject({ status: '终审通过' })
-  expect(byId.get(203)?.typedFields).toMatchObject({ status: '已退回' })
-  expect(detail.platform.businessRecords[0]).toMatchObject({ versionCount: 2, observationCount: 3 })
+  expect(byId.get(203)?.typedFields).toMatchObject({ declareKind: 'apply', year: 2024, appliedAt: '2024-01-02', status: '已退回', nameRaw: '原生合同企业' })
+  expect(detail.platform.businessRecords[0]).toMatchObject({ versionCount: 1, observationCount: 1 })
   expect(JSON.stringify(detail.platform.businessRecords)).not.toContain('NATIVE-PRIVATE-SOURCE')
 })
 

@@ -25,7 +25,7 @@ it('keeps a new native content version independent of the old confirmed decision
  const changed=await f.add({status:'终审不通过'})
  expect(changed.id).not.toBe(old.id)
  expect(await listPostgresCorrespondences(f.db,{relationId:changed.id})).toEqual([])
- expect((await readPostgresCorrespondenceRefs(f.db,[before!.id]))[0]).toEqual(before)
+ expect((await readPostgresCorrespondenceRefs(f.db,[before!.id]))[0]).toEqual({ ...before, requiresRevalidation: true })
  await f.save(f.request('changed',[{action:'create',status:'rejected',edge:f.edge(changed.id)}]))
  expect((await listPostgresCorrespondences(f.db,{})).map(r=>[r.relationId,r.status])).toEqual([[old.id,'confirmed'],[changed.id,'rejected']])
  expect(await readFixtureAudit(f.db,before!.id)).toEqual(audit)

@@ -78,29 +78,31 @@ it('writes native-title business endpoints using annual year lineage and retains
   expect(await source()).toEqual(sourceBefore)
 })
 
-it.each(['rejected', 'unlinked'] as const)('protects same-event manual %s on a verified version outside the current annual scope', async status => {
+it.each(['rejected', 'unlinked'] as const)('does not use a manual %s decision tied to a superseded capture', async status => {
   const f = await fixture()
-  const old = await f.add({ year: 2023, kind: 'review' }), current = await f.add()
+  const old = await f.add({ year: 2023, kind: 'review' })
   const { correspondenceIds: [id] } = await f.save(f.request('historical', [{
     action: 'create', status: status === 'rejected' ? 'rejected' : 'confirmed', edge: f.edge(old),
   }]))
   if (status === 'unlinked') await f.save(f.request('cancel', [{ action: 'decide', correspondenceId: id!, expectedRevision: 2, status: 'unlinked' }]))
+  const current = await f.add()
   const before = await f.read(), scope = await f.scope()
   expect(before.sourceRefs.observations.map(ref => ref.relationId)).not.toContain(old)
   expect(scope.generation).toBe(before.sourceGeneration)
   expect(scope.steps[0]!.currentRelationIds).toEqual([current])
-  expect(scope.steps[0]!.protectionRelationIds).toContain(old)
+  expect(scope.steps[0]!.protectionRelationIds).not.toContain(old)
   const audits = await f.audit()
-  expect((await f.reconcile()).outcomes).toMatchObject([{ status: 'protected', decisionRefs: [{ id, relationId: old, status }] }])
-  expect((await f.read()).process.finalQualification).toMatchObject({ stepId: null, status: 'blocked', reasons: ['protected_decision'] })
-  expect(await f.audit()).toEqual(audits)
+  expect((await f.reconcile()).outcomes).toMatchObject([{ status: 'created', relationId: current }])
+  expect((await f.read()).process.finalQualification).toMatchObject({ status: 'confirmed', decisionRefs: [{ relationId: current }] })
+  expect((await f.audit()).slice(0, audits.length)).toEqual(audits)
 })
 
 it('does not let a different event historical rejection block current-year confirmation', async () => {
   const f = await fixture()
-  const old = await f.add({ year: 2023, kind: 'review' }), current = await f.add()
+  const old = await f.add({ year: 2023, kind: 'review' })
   const other = singlePostgresFixtureRow(await f.db.insert(recordEvent).values({ recordId: f.record.id, eventType: 'award', year: 2023 }).returning())
   await f.save(f.request('other-event-history', [{ action: 'create', status: 'rejected', edge: { ...f.edge(old), eventId: other.id } }]))
+  const current = await f.add()
   expect((await f.reconcile()).outcomes).toMatchObject([{ status: 'created', relationId: current }])
   expect((await f.read()).process.finalQualification?.status).toBe('confirmed')
 })
@@ -130,14 +132,15 @@ it('never falls back to an older confirmed pass after a later application fails'
   expect((await f.read()).process.finalQualification).toMatchObject({ stepId: null, status: 'none' })
 })
 
-it('preserves a historical business-year contradiction as no final', async () => {
+it('uses the corrected current business year instead of superseded source values', async () => {
   const f = await fixture()
-  await f.add({ year: 2023 })
-  await f.add({ year: 2024 })
-  expect((await f.scope()).finalCandidateStepId).toBeNull()
-  expect((await f.reconcile()).outcomes).toMatchObject([{ status: 'needs_review' }])
-  expect((await f.read()).process.finalQualification).toMatchObject({ stepId: null, status: 'none' })
-  expect(await f.db.select().from(recordCorrespondence)).toEqual([])
+  const old = await f.add({ year: 2023 })
+  const current = await f.add({ year: 2024 })
+  expect((await f.scope()).steps.flatMap(step => step.currentRelationIds)).toEqual([current])
+  await expect(f.save(f.request('superseded', [{ action: 'create', status: 'confirmed', edge: f.edge(old) }])))
+    .rejects.toThrow('Persisted positive interface row not found')
+  expect((await f.reconcile()).outcomes).toMatchObject([{ status: 'created', relationId: current }])
+  expect((await f.read()).process.finalQualification).toMatchObject({ status: 'confirmed', decisionRefs: [{ relationId: current }] })
 })
 
 it('runs registered MCP handlers with independent credentials and the actual annual read and queue', async () => {

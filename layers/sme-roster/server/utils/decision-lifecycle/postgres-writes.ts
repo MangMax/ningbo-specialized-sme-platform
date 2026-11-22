@@ -10,6 +10,7 @@ import {
 } from '../../../../../db/postgresql/platform-tables'
 import type { platformObservationAssignment as PlatformObservationAssignmentTable } from '../../../../../db/postgresql/platform-tables'
 import type { EnterpriseFactRevision } from '../enterprise-fact-model'
+import { currentPlatformObservation, isCurrentPlatformCollection } from '../../../lib/platform/current-observation-postgres'
 import { readPostgresDifferenceObservations } from '../../../lib/platform/difference-sources-postgres'
 import { readPostgresCollectionScopes } from '../../../lib/roster/query-coverage-postgres'
 import { postgresRosterRow } from '../../../lib/roster/postgres-rows'
@@ -66,7 +67,7 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins:
       errorCode: c.errorCode, errorMessage: c.errorMessage, maxRequests: c.maxRequests, maxRows: c.maxRows,
       maxDurationMs: c.maxDurationMs, pageSize: c.pageSize,
     },
-  }).from(c).where(eq(c.publicId, queryId)))[0] : null
+  }).from(c).where(and(eq(c.publicId, queryId), relation ? undefined : isCurrentPlatformCollection(tx))))[0] : null
   const collection = targetQuery?.collection
   const needsPages = relation && collection?.rdjb.includes(',')
   const sourceScope = collection && (capturePins || needsPages) ? (await readPostgresCollectionScopes(tx, [collection])).get(collection.id)! : null
@@ -81,8 +82,9 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins:
   const assignment = observation ? (await tx.select({
     row: sql<typeof PlatformObservationAssignmentTable.$inferSelect>`${postgresRosterRow(platformObservationAssignment, 'p')}`,
   }).from(assignmentTable).where(eq(assignmentTable.observationId, observation.id)).orderBy(desc(assignmentTable.revision)).limit(1))[0]?.row : null
-  const sourceVersions = observation?.recordId ? await tx.select({ id: v.id, contentHash: v.contentHash })
-    .from(v).where(eq(v.recordId, observation.recordId)).orderBy(desc(v.id)).limit(1) : []
+  const latest = observation?.recordId == null ? null : currentPlatformObservation(tx, sql`${observation.recordId}`).as('decision_current_source')
+  const sourceVersions = latest ? await tx.select({ id: v.id, contentHash: v.contentHash })
+    .from(latest).innerJoin(v, eq(v.id, latest.versionId)) : []
   const pins = { sourceVersions, enterprise, previous: previous ?? null, relation, observation, version, assignment, sourceScope, facts }
   return { previous, d, targetQuery, relation, pins }
 }

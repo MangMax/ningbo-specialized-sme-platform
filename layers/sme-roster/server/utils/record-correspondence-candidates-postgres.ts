@@ -1,3 +1,4 @@
+import { isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
 import { and, between, desc, eq, exists, inArray, isNotNull, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
@@ -144,7 +145,7 @@ export async function generatePostgresCandidates(db: Reader, input: CandidateInp
     observationId: o.id, interface: c.interface, sourceRdjb: coverage.rdjb, sourcePage: coverage.pageNo,
   }).from(c).innerJoin(o, eq(o.collectionId, c.id)).innerJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1)))
     .innerJoinLateral(assignment, sql`true`).leftJoin(v, eq(v.id, o.versionId))
-    .leftJoinLateral(coverage, sql`true`).where(and(eq(o.publicId, sql`ANY(${ids(selection?.relationIds ?? targetPage!.ids)})`),
+    .leftJoinLateral(coverage, sql`true`).where(and(isCurrentPlatformObservation(db, o), eq(o.publicId, sql`ANY(${ids(selection?.relationIds ?? targetPage!.ids)})`),
       inArray(c.status, ['success', 'partial']))).orderBy(c.publicId, o.sequenceNo, o.publicId) as Relevant[]
   const relevantRelations = relations.filter(r => (!r.enterpriseId || r.enterpriseId === enterpriseId) &&
     ((identity && normalizeUscc(r.usccRaw) === identity) || (selection && !normalizeUscc(r.usccRaw) && r.enterpriseId === enterpriseId && r.verificationStatus === 'confirmed')))

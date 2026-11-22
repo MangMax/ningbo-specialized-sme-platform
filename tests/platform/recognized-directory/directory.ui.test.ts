@@ -44,6 +44,7 @@ const isolated: RecognizedDirectoryRow = {
 }
 const detail: RecognizedDirectoryDetail = {
   record: { id: 7, platformKey: 'DIR-2024-1', interface: 'recognized_list', identityRuleVersion: 'platform-observation-v1', createdAt: '2026-10-01T00:00:00Z' },
+  current: version,
   versions: [{ ...version, hashAlgorithm: 'platform-row-json-v1', contentHash: 'a'.repeat(64), createdAt: '2026-10-01T00:00:00Z', observationCount: 2, firstObservedAt: '2026-10-01T00:00:00Z', lastObservedAt: '2026-10-02T00:00:00Z', titleScopes: ['2'] }],
   observations: [{
     relationId: 9, queryId: 4, queriedAt: '2026-10-01T00:00:00Z', queryKey: '91330211AAAAAAAA1X', queryStatus: 'success',
@@ -66,7 +67,7 @@ describe('平台认定目录表格', () => {
       expect(row.text()).toContain('33020000')
       expect(row.text()).toContain('专精特新中小企业')
       expect(row.text()).not.toContain('1 / 2')
-      expect(row.text()).toContain('版本详情')
+      expect(row.text()).toContain('查看详情')
       expect(view.text()).not.toContain('行称号与查询范围不一致')
       await row.get('button').trigger('click')
       expect(view.emitted('open-record')?.[0]).toEqual([7])
@@ -126,8 +127,8 @@ describe('平台认定目录详情', () => {
       await flushPromises()
       expect(fetch).toHaveBeenCalledWith('/api/platform/recognized-directory/7', { retry: 0 })
       const dialog = new DOMWrapper(document.body).get('[data-testid="platform-recognized-directory-detail"]')
-      expect(dialog.text()).toContain('平台认定目录 · 版本详情')
-      expect(dialog.findAll('[data-testid="platform-recognized-directory-version"]')).toHaveLength(1)
+      expect(dialog.text()).toContain('平台认定目录 · 详情')
+      expect(dialog.findAll('[data-testid="platform-recognized-directory-current"]')).toHaveLength(1)
       expect(dialog.text()).toContain('有效期')
       expect(dialog.text()).toContain('2027-12-31')
       expect(dialog.text()).toContain('称号')
@@ -142,10 +143,10 @@ describe('平台认定目录详情', () => {
     } finally { view.unmount(); vi.unstubAllGlobals() }
   })
 
-  it('shows missing projection for the exact historical version', async () => {
+  it('shows missing current projection without displaying historical content', async () => {
     const legacy = {
       ...detail,
-      versions: [{ ...detail.versions[0]!, versionId: 3, ruleVersion: null, validityDateRaw: null, maintenanceYear: null, maintenanceBatch: null, district: null, awardNote: null, titleRaw: null }],
+      current: { ...detail.versions[0]!, versionId: 3, ruleVersion: null, validityDateRaw: null, maintenanceYear: null, maintenanceBatch: null, district: null, awardNote: null, titleRaw: null },
       observations: [{ ...detail.observations[0]!, versionId: null, version: null, titleConflict: false }],
     }
     vi.stubGlobal('$fetch', vi.fn(async () => legacy))
@@ -154,7 +155,7 @@ describe('平台认定目录详情', () => {
       await flushPromises()
       const dialog = new DOMWrapper(document.body).get('[data-testid="platform-recognized-directory-detail"]')
       expect(dialog.text()).not.toContain('typed')
-      expect(dialog.get('[data-testid="platform-recognized-directory-version"]').text()).toBe('该版本暂无可核对的业务内容')
+      expect(dialog.get('[data-testid="platform-recognized-directory-current"]').text()).toBe('暂无可核对的业务内容')
     } finally { view.unmount(); vi.unstubAllGlobals() }
   })
 })

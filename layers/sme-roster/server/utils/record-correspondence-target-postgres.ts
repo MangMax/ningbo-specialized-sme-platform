@@ -1,7 +1,8 @@
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { platformApplyProjection, platformBusinessObservation, platformBusinessProjection,
   platformBusinessRecordVersion, platformRecognizedProjection } from '../../../../db/postgresql/platform-tables'
+import { isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
 import { platformObservationComparison, platformObservationVersionDefaults } from '../../lib/platform/postgres-observation-facts'
 import type { CorrespondenceRelationSource } from './record-correspondence-model'
 import { readPostgresFingerprintQueries, readPostgresRelationFingerprints } from './postgres-platform-fingerprint'
@@ -28,7 +29,7 @@ export async function readPostgresObservationComparisonFacts(db: Db, owners: Pro
       id: o.id, sourceValues: o.sourceValues, versionId: o.versionId,
       observationFields: o.businessFields, versionFields: v.businessFields, projection: p,
     }).from(o).leftJoin(v, eq(v.id, o.versionId)).leftJoin(p, eq(p.versionId, o.versionId))
-      .where(eq(o.id, sql`ANY(${sql.param(matching.map(row => row.observationId))}::bigint[])`))
+      .where(and(eq(o.id, sql`ANY(${sql.param(matching.map(row => row.observationId))}::bigint[])`), isCurrentPlatformObservation(db)))
     for (const row of rows) {
       const defaults = platformObservationVersionDefaults(source, row.projection)
       const comparison = platformObservationComparison(source, row.sourceValues, defaults,

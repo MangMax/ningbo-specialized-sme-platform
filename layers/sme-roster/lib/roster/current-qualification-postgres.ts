@@ -18,6 +18,7 @@ import {
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
 import { evaluateEnterpriseFactEffects, type EnterpriseFactEffectRow } from './enterprise-fact-effects'
 import { qualificationUsccCandidate, createPostgresPlatformQualificationReader, type PostgresPlatformQualificationReader } from './platform-qualification-postgres'
+import { isCurrentPlatformObservation } from '../platform/current-observation-postgres'
 import { platformEffectsForTitle } from './difference-platform-scope'
 import { currentCandidateIdBlocks } from './current-candidate-reader'
 import type { PlatformInterface } from '../labels'
@@ -141,8 +142,8 @@ async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], 
     .innerJoin(collection, eq(collection.id, observation.collectionId))
     .innerJoin(first, and(eq(first.observationId, observation.id), eq(first.revision, 1)))
     .innerJoin(assignment, and(eq(assignment.observationId, observation.id), eq(assignment.revision, latestRevision)))
-    .where(or(inArray(assignment.enterpriseId, ids), codes.length
-      ? and(isNull(assignment.enterpriseId), qualificationUsccCandidate(sql`${uscc}`, codes)) : undefined))
+    .where(and(isCurrentPlatformObservation(db), or(inArray(assignment.enterpriseId, ids), codes.length
+      ? and(isNull(assignment.enterpriseId), qualificationUsccCandidate(sql`${uscc}`, codes)) : undefined)))
     .orderBy(observation.publicId)
   const rows = await (readFacts ? query
     .leftJoin(business, eq(business.versionId, observation.versionId))

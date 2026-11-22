@@ -7,6 +7,7 @@ import { platformBusinessObservation as observation, platformCollection as colle
 import { normalizeUscc } from '../domain'
 import { projectDifferenceCollectionScope, type DifferenceCollectionScopeRows } from '../platform/difference-collection-scope'
 import { postgresCollectionConditionValues, projectPostgresConditionRows, projectPostgresUnfinishedPositions } from '../platform/postgres-collection-scope'
+import { isCurrentPlatformCollection, isCurrentPlatformObservation } from '../platform/current-observation-postgres'
 import { TITLE_RDJB_CODES } from '../platform/recognized-evidence'
 import { qualificationUsccCandidate } from './platform-qualification-postgres'
 import { projectQueryCoverage } from './query-assessment-projection'
@@ -62,7 +63,7 @@ export async function readPostgresQueryCoverageInputs(db: Reader, subjects: read
   const owners = db.$with('owners').as(db.selectDistinct({
     enterpriseId: assignment.enterpriseId, collectionId: observation.collectionId,
   }).from(assignment).innerJoin(observation, eq(observation.id, assignment.observationId))
-    .where(and(matchesIds(assignment.enterpriseId, subjects.map(subject => subject.id)),
+    .where(and(isCurrentPlatformObservation(db), matchesIds(assignment.enterpriseId, subjects.map(subject => subject.id)),
       notExists(db.select({ revision: newer.revision }).from(newer)
         .where(and(eq(newer.observationId, assignment.observationId), gt(newer.revision, assignment.revision)))))))
   // Drizzle cannot express column = ANY(array) or split the stored title list.
@@ -80,9 +81,9 @@ export async function readPostgresQueryCoverageInputs(db: Reader, subjects: read
   }).from(candidates).innerJoin(wanted, eq(wanted.slot, candidates.slot))
     .innerJoin(collection, eq(collection.id, candidates.collectionId))
     .leftJoin(owners, and(eq(owners.enterpriseId, wanted.enterpriseId), eq(owners.collectionId, collection.id)))
-    .where(or(eq(collection.interface, 'apply_list'), eq(collection.titleCode, wanted.titleCode),
+    .where(and(isCurrentPlatformCollection(db), or(eq(collection.interface, 'apply_list'), eq(collection.titleCode, wanted.titleCode),
       sql`${wanted.rdjb} = ANY(string_to_array(${collection.rdjb}, ','))`,
-      and(eq(collection.rdjb, ''), isNull(collection.titleCode)))))
+      and(eq(collection.rdjb, ''), isNull(collection.titleCode))))))
   const rows = await db.with(wanted, owners, candidates, ranked).select({
     slot: ranked.slot, id: ranked.id, matched: ranked.matched,
     collection: {

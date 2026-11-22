@@ -30,6 +30,7 @@ SET LOCAL search_path TO business, pg_catalog;
 \ir roster-review-schema.sql
 \ir roster-constraints.sql
 \ir roster-triggers.sql
+\ir platform-capture-retention.sql
 
 INSERT INTO enterprise_kernel_completion (id, version) VALUES (1, 1);
 INSERT INTO enterprise_source_channel (code, name) VALUES

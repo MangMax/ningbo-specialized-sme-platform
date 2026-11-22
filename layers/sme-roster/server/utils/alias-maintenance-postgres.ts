@@ -1,3 +1,4 @@
+import { isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
 import { createHash } from 'node:crypto'
 import { and, count, desc, eq, ne, notExists } from 'drizzle-orm'
 import { alias as pgAlias } from 'drizzle-orm/pg-core'
@@ -91,7 +92,7 @@ async function checkSource(db: Db, alias: Alias) {
     .innerJoin(enterpriseTable, eq(enterpriseTable.id, enterpriseId))
     .innerJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
     .innerJoinLateral(latest, eq(latest.observationId, observation.id))
-    .where(eq(observation.publicId, sourceRefId))
+    .where(and(eq(observation.publicId, sourceRefId), isCurrentPlatformObservation(db)))
   if (!source) return failAlias(400, 'alias_source_evidence_required', '平台别名必须引用真实平台关系')
   const expectedInterface = sourceKind === 'platform_business' ? 'business_list' : 'apply_list'
   if (source.interface !== expectedInterface || !source.uscc || normalizeUscc(source.originalUscc) !== source.uscc || source.originalName !== name) {

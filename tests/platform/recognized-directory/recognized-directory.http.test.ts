@@ -119,14 +119,14 @@ afterAll(async () => {
 it('serves recognized records and isolated filters through HTTP and MCP', async () => {
   const cases = [
     [{ view: 'isolated', titleRaw: '3' }, 1],
-    [{ titleRaw: '2' }, 207],
+    [{ titleRaw: '2' }, 206],
     [{ titleRaw: '1', whpcyear: 2026 }, 0],
-    [{ rddqrq: '2028' }, 1],
-    [{ whpcyear: 2026 }, 2],
-    [{ whpc: '2026-2' }, 1],
-    [{ szq: 'D' }, 1],
+    [{ rddqrq: '2028' }, 0],
+    [{ whpcyear: 2026 }, 1],
+    [{ whpc: '2026-2' }, 0],
+    [{ szq: 'D' }, 0],
     [{ rdjb: '2', platformKey: 'A' }, 1],
-    [{ rdjb: '3', platformKey: 'A' }, 1],
+    [{ rdjb: '3', platformKey: 'A' }, 0],
     [{ platformKey: 'A' }, 1],
     [{ enterpriseId: 1 }, 1],
     [{ q: 'Alpha' }, 1],
@@ -142,13 +142,13 @@ it('serves recognized records and isolated filters through HTTP and MCP', async 
   }
   expect(listTool.name).toBe('list_platform_recognized_directory')
   expect(detailTool.name).toBe('get_platform_recognized_record')
-  const literal = await mcp({ titleRaw: '2', platformKey: 'A' })
-  expect(literal.rows[0]).toMatchObject({ record: { platformKey: 'A' }, matchedVersionCount: 1, versionCount: 2, observationCount: 3, enterpriseIds: [1, 2], conflicts: ['title_conflict', 'enterprise_assignment_conflict'] })
+  const literal = await mcp({ titleRaw: '1', platformKey: 'A' })
+  expect(literal.rows[0]).toMatchObject({ record: { platformKey: 'A' }, matchedVersionCount: 1, versionCount: 2, observationCount: 2, enterpriseIds: [1], conflicts: [] })
   const recordId = literal.rows[0].record.id
   const { response, body } = await get(`recognized-directory/${recordId}`)
   expect(response.status).toBe(200)
   expect(response.headers.get('cache-control')).toBe('no-store')
-  expect(body).toMatchObject({ record: { id: recordId, platformKey: 'A' }, counts: { versions: 2, observations: 3 } })
+  expect(body).toMatchObject({ record: { id: recordId, platformKey: 'A' }, current: { titleRaw: '1', validityDateRaw: '2029' }, counts: { versions: 1, observations: 1 } })
   expect(await mcp({ recordId }, true)).toEqual(body)
   expect(JSON.stringify(body)).not.toMatch(/canonicalRawJson|rawFields|rawResponse/)
 })
@@ -206,7 +206,7 @@ it('HTTP and MCP preserve migrated NULL false blank whitespace and BLOB title se
   expect(raw.structuredContent.rows.find((r: { relationId: number }) => r.relationId === 11).titleRaw).toEqual(Buffer.from('3200ff', 'hex'))
   expect((await get('filter-options?source=recognized-directory&view=isolated')).body.titles).toEqual(['0', '3', { type: 'Buffer', data: [50, 0, 255] }])
 })
-it('public pagination counts and global options survive detail truncation and stable ties', async () => {
+it('paginates current recognized records and excludes superseded captures from details', async () => {
   const first = (await get('recognized-directory?whpcyear=2090&pageSize=200')).body
   expect(first.total).toBe(205); expect(first.rows).toHaveLength(200)
   const second = (await get('recognized-directory?whpcyear=2090&pageSize=200&page=2')).body
@@ -215,14 +215,16 @@ it('public pagination counts and global options survive detail truncation and st
   expect(await mcp({ whpcyear: 2090, pageSize: 200, page: 2 })).toEqual(second)
   const many = (await get('recognized-directory?platformKey=Limit')).body.rows[0]
   const detail = (await get(`recognized-directory/${many.record.id}`)).body
-  expect(detail.counts).toEqual({ versions: 101, observations: 201, versionsTruncated: true, observationsTruncated: true })
-  expect(detail.versions).toHaveLength(100); expect(detail.observations).toHaveLength(200)
+  expect(detail.counts).toEqual({ versions: 1, observations: 200, versionsTruncated: false, observationsTruncated: true })
+  expect(detail.versions).toHaveLength(1); expect(detail.observations).toHaveLength(200)
   expect(await mcp({ recordId: many.record.id }, true)).toEqual(detail)
   expect((await get('filter-options?source=recognized-directory')).body.batches).toContain('outside-page')
 })
 it('public requests see current assignment corrections while preserving original isolated names', async () => {
+  expect((await get('recognized-directory?enterpriseId=2')).body.total).toBe(0)
+  postgres!.psql(['-c', "INSERT INTO business.platform_observation_assignment(observation_id,revision,enterprise_id,match_basis,verification_status,origin) VALUES(3,2,2,'manual','pending','command')"])
   expect((await get('recognized-directory?enterpriseId=2')).body.total).toBe(1)
-  postgres!.psql(['-c', "INSERT INTO business.platform_observation_assignment(observation_id,revision,enterprise_id,match_basis,verification_status,origin) VALUES(2,2,1,'manual','pending','command'),(5,2,2,'manual','pending','command')"])
+  postgres!.psql(['-c', "INSERT INTO business.platform_observation_assignment(observation_id,revision,enterprise_id,match_basis,verification_status,origin) VALUES(3,3,1,'manual','pending','command'),(5,2,2,'manual','pending','command')"])
   expect((await get('recognized-directory?enterpriseId=2')).body.total).toBe(0)
   const body = (await get('recognized-directory?view=isolated&enterpriseId=2')).body
   expect(body).toMatchObject({ total: 1, rows: [{ relationId: 5, enterpriseId: 2, enterpriseName: 'Beta', nameRaw: ' Original ', usccRaw: ' U ' }] })

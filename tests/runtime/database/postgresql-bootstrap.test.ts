@@ -91,7 +91,7 @@ it.skipIf(!bin)('keeps historical public IDs and allocates fresh IDs above both 
       DROP TRIGGER platform_collection_public_id_fixed ON platform_collection;
       DROP TRIGGER platform_collection_public_id_retained ON platform_collection;
       DROP TRIGGER platform_observation_public_id_fixed ON platform_business_observation;
-      DROP TRIGGER platform_observation_public_id_retained ON platform_business_observation;
+      DROP TRIGGER IF EXISTS platform_observation_public_id_retained ON platform_business_observation;
       ALTER TABLE platform_collection DROP COLUMN public_id;
       ALTER TABLE platform_business_observation DROP COLUMN public_id;
       CREATE TABLE platform_legacy_query_alias (

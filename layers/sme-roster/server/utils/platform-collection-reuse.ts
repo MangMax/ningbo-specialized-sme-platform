@@ -1,10 +1,11 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { and, desc, eq, isNotNull, isNull, ne, or } from 'drizzle-orm'
+import { and, desc, eq, count, isNotNull, isNull, ne, not, or } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import {
   platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformCollection,
   platformObservationAssignment, platformRecognizedProjection,
 } from '../../../../db/postgresql/platform-tables'
+import { isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
 import type { DifferenceCollectionScopeRows } from '../../lib/platform/difference-collection-scope'
 import type { PlatformLiveQueryResult } from '../../lib/platform/live-query'
 import { platformResultToImport } from '../../lib/platform/recognized-evidence'
@@ -41,8 +42,10 @@ export async function reusePostgresCollectedPlatformResult(db: Pick<NodePgDataba
   const incomplete = await db.select({ id: o.id }).from(o)
     .leftJoinLateral(latest, isNotNull(latest.observationId)).leftJoin(p, eq(p.versionId, o.versionId))
     .where(and(eq(o.collectionId, collection.id), or(isNull(latest.enterpriseId), ne(latest.enterpriseId, enterpriseId),
-      isNull(o.recordId), isNull(o.versionId), isNull(p.versionId)))).limit(1)
+      isNull(o.recordId), isNull(o.versionId), isNull(p.versionId), not(isCurrentPlatformObservation(db)!)))).limit(1)
   if (incomplete.length) return false
+  const [stored] = await db.select({ rows: count() }).from(o).where(eq(o.collectionId, collection.id))
+  if (stored!.rows !== (query.relations?.length ?? 0)) return false
   if (Date.parse(result.queriedAt)>Date.parse(collection.lastCollectedAt ?? collection.queriedAt)) {
     await db.update(platformCollection).set({ lastCollectedAt: result.queriedAt }).where(eq(platformCollection.id, collection.id))
   }

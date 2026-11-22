@@ -9,6 +9,7 @@ import {
 import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import { normalizeUscc } from '../domain'
+import { isCurrentPlatformObservation } from '../platform/current-observation-postgres'
 import { TITLE_RDJB_CODES } from '../platform/recognized-evidence'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
 import { qualificationUsccCandidate } from './platform-qualification-postgres'
@@ -29,9 +30,9 @@ export async function readPostgresCurrentCandidateIds(db: Reader, title: Current
   // Drizzle has no JSON key extraction. Comparing JSON strings excludes numeric titles.
   const observedTitle = sql<string>`${observation.sourceValues} -> 'titleRaw'`
   const observations = db.$with('observations').as(db.select({ id: observation.id }).from(typedReturn)
-    .innerJoin(observation, eq(observation.versionId, typedReturn.versionId))
+    .innerJoin(observation, eq(observation.versionId, typedReturn.versionId)).where(isCurrentPlatformObservation(db))
     .union(db.select({ id: observation.id }).from(observation)
-      .where(and(isNull(observation.versionId), inArray(observedTitle, returnedTitles.map(code => JSON.stringify(code)))))))
+      .where(and(isNull(observation.versionId), isCurrentPlatformObservation(db), inArray(observedTitle, returnedTitles.map(code => JSON.stringify(code)))))))
   const assignment = db.select({ enterpriseId: platformObservationAssignment.enterpriseId, uscc: platformObservationAssignment.usccRaw })
     .from(platformObservationAssignment).where(eq(platformObservationAssignment.observationId, observations.id))
     .orderBy(desc(platformObservationAssignment.revision)).limit(1).as('assignment')

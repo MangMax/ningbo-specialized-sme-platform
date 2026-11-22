@@ -1,3 +1,4 @@
+import { isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
 import { and, count, desc, eq, gt, lte, ne, notExists, or, sql, type SQLWrapper } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
@@ -84,7 +85,7 @@ async function readTargets(db: NodePgDatabase, owners: Owner[], aliases: Alias[]
     reasonCode: differenceReason.reasonCode, reasonNote: differenceReason.reasonNote,
   }).from(differenceReason).where(containsIds(differenceReason.enterpriseId, [...selectedIds])).orderBy(differenceReason.id)
   const relationCount = db.select({ count: count() }).from(platformBusinessObservation)
-    .innerJoin(platformObservationAssignment, initialAssignment).where(eq(platformBusinessObservation.collectionId, platformCollection.id))
+    .innerJoin(platformObservationAssignment, initialAssignment).where(and(eq(platformBusinessObservation.collectionId, platformCollection.id), isCurrentPlatformObservation(db)))
   const traces = await db.select({
     ...queryFields, status: sql<UsccTargetSnapshot['queries'][number]['status']>`${platformCollection.status}`,
     count: sql<number>`${relationCount}`.mapWith(Number),
@@ -118,7 +119,7 @@ async function readEvidence(db: Reader, requested: string[]) {
     }).from(platformCollection)
       .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.collectionId, platformCollection.id))
       .innerJoin(platformObservationAssignment, initialAssignment)
-      .where(containsIds(platformCollection.publicId, queryIds))
+      .where(and(containsIds(platformCollection.publicId, queryIds), isCurrentPlatformObservation(db)))
       .orderBy(platformCollection.publicId, platformBusinessObservation.sequenceNo, platformBusinessObservation.publicId)
     for (const relation of relations) {
       const bucket = index.relationsByQuery.get(relation.queryId) ?? []

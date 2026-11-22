@@ -6,6 +6,7 @@ import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/l
 import { platformBusinessObservation as observation, platformCollection as collection, platformCollectionPage as page,
   platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
 import { projectAnnualFinalQualification, validAnnualDecisionQuery, type AnnualWriteScope, type AnnualWriteStep } from './annual-correspondence-contract'
 import { ANNUAL_COMPARISON_RAW_LIMIT } from './annual-process-limits'
 import { annualScopeRecordIds, projectAnnualWriteScope } from './annual-correspondence-projection'
@@ -63,7 +64,7 @@ async function readAnnualSources(db: Reader, scope: AnnualEventScope, comparison
     .innerJoin(observation, eq(observation.collectionId, collection.id))
     .innerJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
     .crossJoinLateral(latest).leftJoinLateral(sourcePage, sql`true`)
-    .where(and(sql`${collection.publicId} = any(${sql.param(collections.map(row => row.queryId))}::bigint[])`, or(isNull(latest.enterpriseId), eq(latest.enterpriseId, owner)),
+    .where(and(isCurrentPlatformObservation(db), sql`${collection.publicId} = any(${sql.param(collections.map(row => row.queryId))}::bigint[])`, or(isNull(latest.enterpriseId), eq(latest.enterpriseId, owner)),
       or(identity ? eq(uscc, identity) : and(eq(latest.enterpriseId, owner), eq(latest.verificationStatus, 'confirmed')),
         and(eq(uscc, ''), or(eq(latest.enterpriseId, owner), named)))))
     .orderBy(collection.publicId, observation.sequenceNo, observation.publicId) as Observation[]
@@ -118,7 +119,7 @@ async function projectPostgresAnnualScope(db: Reader, read: NonNullable<Awaited<
   const recordIds = annualScopeRecordIds(read)
   const history = recordIds.length ? await db.select({ recordId: observation.recordId, relationId: observation.publicId })
     .from(observation)
-    .where(sql`${observation.recordId} = any(${sql.param(recordIds)}::bigint[])`).orderBy(observation.publicId) : []
+    .where(and(sql`${observation.recordId} = any(${sql.param(recordIds)}::bigint[])`, isCurrentPlatformObservation(db))).orderBy(observation.publicId) : []
   const byRecord = Map.groupBy(history, row => row.recordId)
   return projectAnnualWriteScope(read, matching => matching.flatMap(id => (byRecord.get(id) ?? []).map(row => row.relationId)))
 }

@@ -6,6 +6,7 @@ import {
   platformCollection as collection,
   platformObservationAssignment as assignment,
 } from '../../../../db/postgresql/platform-tables'
+import { isCurrentPlatformObservation } from './current-observation-postgres'
 import type { DifferenceObservation } from './difference-sources'
 
 export async function readPostgresDifferenceObservations(db: Pick<NodePgDatabase, 'select'>, relationIds: readonly number[]) {
@@ -24,6 +25,6 @@ export async function readPostgresDifferenceObservations(db: Pick<NodePgDatabase
     .innerJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
     .crossJoinLateral(current)
     // Drizzle has no scalar = ANY(array) builder. One array keeps legacy batches below the bind limit.
-    .where(sql`${observation.publicId} = any(${sql.param(relationIds)}::bigint[])`) as DifferenceObservation[]
+    .where(and(sql`${observation.publicId} = any(${sql.param(relationIds)}::bigint[])`, isCurrentPlatformObservation(db))) as DifferenceObservation[]
   return new Map(rows.map(row => [row.id, row]))
 }

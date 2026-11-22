@@ -1,4 +1,5 @@
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
+import { isCurrentPlatformCollection, isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
 import { postgresCollectionConditionValues, projectPostgresComparisonConditions } from '../../lib/platform/postgres-collection-scope'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
@@ -31,7 +32,7 @@ export async function readPostgresComparisonIdentities(db: Reader, queryIds: rea
   }).from(q).innerJoin(o, eq(o.collectionId, q.id))
     .innerJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1)))
     .innerJoinLateral(latest, sql`true`).leftJoin(enterprise, eq(enterprise.id, latest.enterpriseId))
-    .where(eq(q.publicId, sql`ANY(${ids(queryIds)})`)).orderBy(o.publicId)
+    .where(and(eq(q.publicId, sql`ANY(${ids(queryIds)})`), isCurrentPlatformObservation(db))).orderBy(o.publicId)
   return rows as Link[]
 }
 
@@ -59,7 +60,7 @@ export function readPostgresRecordComparisonSources(db: NodePgDatabase, input: C
     // also has an id. Keep this reference qualified when joining file identity.
     const documentId = sql`${sql.identifier('official_directory')}.${sql.identifier('id')}`.mapWith(Number)
     const docFilter = filter.ids === undefined ? undefined : inArray(documentId, filter.ids)
-    const queryFilter = byId(c.publicId), batchFilter = byId(b.id)
+    const queryFilter = and(byId(c.publicId), isCurrentPlatformCollection(tx, c)), batchFilter = byId(b.id)
     const [documentCount] = await tx.select({ n: count() }).from(d).where(docFilter)
     const [queryCount] = await tx.select({ n: count() }).from(c).where(queryFilter)
     const [batchCount] = await tx.select({ n: count() }).from(b).where(batchFilter)

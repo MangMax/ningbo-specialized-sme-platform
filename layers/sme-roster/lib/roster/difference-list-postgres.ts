@@ -1,3 +1,4 @@
+import { isCurrentPlatformObservation } from '../platform/current-observation-postgres'
 import { and, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
@@ -68,7 +69,7 @@ export async function listPostgresRosterDifferences(db: NodePgDatabase, filter: 
       .where(inArray(collection.publicId, queryIds)) as Query[] : []
     const observations = queryIds.length ? await tx.select({ queryId: collection.publicId, id: observation.publicId })
       .from(collection).innerJoin(observation, eq(observation.collectionId, collection.id))
-      .where(inArray(collection.publicId, queryIds)).orderBy(observation.id) : []
+      .where(and(inArray(collection.publicId, queryIds), isCurrentPlatformObservation(tx))).orderBy(observation.id) : []
     const relations = new Map([...Map.groupBy(observations, row => row.queryId)].map(([id, rows]) => [id, rows.map(row => row.id)]))
     // Qualification follows enterprise merges. Stored difference coordinates
     // may still refer to an original owner and need coverage for that owner.

@@ -121,16 +121,17 @@ it('serves declaration records and isolated filters through HTTP and MCP', async
     expect(body.total, query.toString()).toBe(total)
     expect(await mcp(input)).toEqual(body)
   }
-  const literal = await mcp({ status: 'pending', platformKey: 'A' })
-  expect(literal.rows[0]).toMatchObject({ record: { platformKey: 'A' }, matchedVersionCount: 1, versionCount: 2, observationCount: 3, enterpriseIds: [1, 2], conflicts: ['enterprise_assignment_conflict'] })
+  expect((await mcp({ status: 'pending', platformKey: 'A' })).rows).toEqual([])
+  const literal = await mcp({ status: 'passed', platformKey: 'A' })
+  expect(literal.rows[0]).toMatchObject({ record: { platformKey: 'A' }, matchedVersionCount: 1, versionCount: 1, observationCount: 2, enterpriseIds: [1], conflicts: [] })
   const recordId = literal.rows[0].record.id
   const { response, body } = await get(`declarations/${recordId}`)
   expect(response.status).toBe(200)
-  expect(body).toMatchObject({ record: { id: recordId, platformKey: 'A' }, counts: { versions: 2, observations: 3 } })
+  expect(body).toMatchObject({ record: { id: recordId, platformKey: 'A' }, current: { status: 'passed' }, counts: { versions: 1, observations: 1 } })
   expect(await mcp({ recordId }, true)).toEqual(body)
   expect(JSON.stringify(body)).not.toMatch(/canonicalRawJson|rawFields|rawResponse/)
 })
-it('public pagination caps at 200 and detail reports 101 versions 201 observations without silent truncation', async () => {
+it('paginates current declarations and returns only the latest capture in details', async () => {
   const page = await get('declarations?year=2090&pageSize=200')
   expect(page.body.total).toBe(205); expect(page.body.rows).toHaveLength(200)
   const second = await get('declarations?year=2090&pageSize=200&page=2')
@@ -139,8 +140,8 @@ it('public pagination caps at 200 and detail reports 101 versions 201 observatio
   expect(await mcp({ year: 2090, pageSize: 200, page: 2 })).toEqual(second.body)
   const many = (await get('declarations?platformKey=MANY')).body.rows[0]
   const detail = (await get(`declarations/${many.record.id}`)).body
-  expect(detail.counts).toEqual({ versions: 101, observations: 201, versionsTruncated: true, observationsTruncated: true })
-  expect(detail.versions).toHaveLength(100); expect(detail.observations).toHaveLength(200)
+  expect(detail.counts).toEqual({ versions: 1, observations: 200, versionsTruncated: false, observationsTruncated: true })
+  expect(detail.versions).toHaveLength(1); expect(detail.observations).toHaveLength(200)
   expect(await mcp({ recordId: many.record.id }, true)).toEqual(detail)
   expect((await get('filter-options?source=declarations')).body.statuses).toContain('outside-page')
 })
@@ -222,7 +223,7 @@ it('declaration readiness, count and page use one snapshot during a concurrent c
     }).toBe(1)
     await client.query(`
       UPDATE business.platform_collection SET last_collected_at = '2026-12-01'
-      WHERE query_key = 'q0'
+      WHERE query_key = 'q2'
     `)
     await client.query('COMMIT')
     expect((await inFlight).body).toEqual(before.body)

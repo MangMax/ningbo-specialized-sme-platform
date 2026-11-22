@@ -6,7 +6,7 @@ import { readPostgresCurrentDetailBatch } from '../../../layers/sme-roster/lib/r
 const f = specializedExportFixture()
 afterAll(() => f.close())
 
-it.each([50, 51, 52])('preserves native observation ordering and the public 50-attempt boundary for %i collections', async count => {
+it.each([50, 51, 52])('retains only the latest same-scope attempt in qualification after %i collections', async count => {
   await f.resetBusiness()
   const c = await f.candidate('Native coverage ' + count)
   const ids = []
@@ -14,8 +14,8 @@ it.each([50, 51, 52])('preserves native observation ordering and the public 50-a
   const actual = (await listPostgresCurrentQualified(f.db, { titleCode: 'specialized_sme' })).rows[0]!.qualificationAssessment
   expect(actual).toEqual(await f.db.transaction(async tx => (await readPostgresCurrentDetailBatch(tx, [c.enterprise.id], 'specialized_sme', Date.parse(actual.asOf))).get(c.enterprise.id)?.snapshot, { isolationLevel: 'repeatable read' }))
   const platform = actual.titles.find(t => t.titleCode === 'specialized_sme')!.platform
-  expect(platform.observations.map(q => q.queryId)).toEqual(ids.reverse().slice(0, 50))
-  expect(platform.truncated).toBe(count > 50)
+  expect(platform.observations.map(q => q.queryId)).toEqual([ids.at(-1)])
+  expect(platform.truncated).toBe(false)
 })
 
 it('retains name and explicitly assigned native observations when credit code is absent', async () => {
@@ -28,7 +28,7 @@ it('retains name and explicitly assigned native observations when credit code is
   expect(actual.titles.map(title => title.platform.observations.map(q => q.queryId))).toEqual([[linked.queryId, named.queryId], [linked.queryId, named.queryId], [linked.queryId, named.queryId]])
 })
 
-it('shows each observation’s stored facts when two queries return the same process version', async () => {
+it('uses only current stored facts when two queries share the same process content', async () => {
   await f.resetBusiness()
   const { enterprise } = await f.candidate('Repeated process version')
   const query = {
@@ -40,7 +40,7 @@ it('shows each observation’s stored facts when two queries return the same pro
     usccRaw: enterprise.usccNorm!, nameRaw: enterprise.name, matchBasis: 'uscc', verificationStatus: 'confirmed',
     rawFields: { id: 'same-process', rdjb: '2', qymc: enterprise.name, tyshxydm: enterprise.usccNorm!, year: 2024 },
   } as const
-  const first = await seedPostgresPlatformQuery(f.db, {
+  await seedPostgresPlatformQuery(f.db, {
     ...query, queriedAt: `${year}-01-01T00:00:00Z`, relations: [relation],
   })
   const second = await seedPostgresPlatformQuery(f.db, {
@@ -53,6 +53,5 @@ it('shows each observation’s stored facts when two queries return the same pro
     .find(title => title.titleCode === 'specialized_sme')!.platform.observations
   expect(observations.map(({ queryId, rows }) => ({ queryId, rows }))).toEqual([
     { queryId: second.queryId, rows: [{ relationId: second.relationIds[0], status: '终审未通过', year: 2024, batch: '2023-3' }] },
-    { queryId: first.queryId, rows: [{ relationId: first.relationIds[0], status: null, year: 2024, batch: null }] },
   ])
 })

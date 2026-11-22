@@ -5,6 +5,7 @@ import { recordCorrespondence as correspondence } from '../../../../db/postgresq
 import { platformQueryTitleScope as titleScope } from '../../../../db/postgresql/platform-query-scope-tables'
 import { platformBusinessObservation as observation, platformCollection as collection, platformCollectionPage as page,
   platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
+import { isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
 import { projectLegacyComparisonCycles } from '../../lib/roster/current-qualification-model'
 import { readPostgresLegacyQualification, type PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
 import { COMPARISON_VERSION, comparePlatformComparison, type CandidateComparisonInput } from '../../lib/roster/platform-comparison'
@@ -33,7 +34,7 @@ async function hasUnboundProcessCollection(tx: Tx, enterpriseId: number) {
   const assignments = tx.select({ id: observation.id }).from(observation)
     .innerJoin(assignment, eq(assignment.observationId, observation.id))
     .innerJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
-    .where(and(eq(observation.collectionId, collection.id), or(
+    .where(and(isCurrentPlatformObservation(tx), eq(observation.collectionId, collection.id), or(
       eq(assignment.enterpriseId, enterprise.id),
       and(ne(enterprise.usccNorm, ''), eq(normalizedUscc(original.usccRaw), enterprise.usccNorm)),
     )))
@@ -79,7 +80,7 @@ async function readAnnualComparisonProcesses(tx: Tx, request: AnnualComparisonRe
   const historicalQueries = await tx.select({ recordId: observation.recordId, relationId: observation.publicId, queryId: collection.publicId })
     .from(observation)
     .innerJoin(collection, eq(collection.id, observation.collectionId))
-    .where(or(matchesIds(observation.recordId, recordIds), matchesIds(observation.publicId, refs.map(row => row.relationId))))
+    .where(and(isCurrentPlatformObservation(tx), or(matchesIds(observation.recordId, recordIds), matchesIds(observation.publicId, refs.map(row => row.relationId)))))
     .orderBy(observation.publicId)
   const history = new Map([...Map.groupBy(historicalQueries, row => row.recordId)].flatMap(([id, rows]) =>
     id === null ? [] : [[id, rows.map(row => row.relationId)] as const]))

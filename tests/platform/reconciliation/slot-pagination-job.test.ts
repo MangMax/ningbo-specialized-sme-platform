@@ -200,7 +200,7 @@ postgresTest('public job retains both sources’ unique row 51 and page position
   expect(second.result.queries).toMatchObject({ network: 4, reused: 0 })
   const recollected = await queries()
   expect(recollected).toHaveLength(8)
-  for (const original of stored) expect(recollected.find(entry => entry.query.id === original.query.id)).toEqual(original)
+  for (const original of stored) expect(recollected.find(entry => entry.query.id === original.query.id)).toEqual({ query: { ...original.query, relationCount: 0 }, relations: [] })
   expect(calls).toHaveLength(12)
   const summary = await api(`/api/jobs/${job.jobId}?view=summary`)
   expect(summary).toMatchObject({ kind: 'reconcile', state: 'done' })
@@ -327,7 +327,7 @@ postgresTest('network retry and subsequent pages keep the submission credential 
   expect(backoffs).toEqual([1000])
 }, 65_000)
 
-postgresTest('fresh recollection leaves earlier complete and failed slots independently addressable', async () => {
+postgresTest('fresh recollection keeps slot receipts and hides superseded source rows', async () => {
   await upstream()
   await finish((await submit()).jobId)
   const before = await queries()
@@ -339,7 +339,7 @@ postgresTest('fresh recollection leaves earlier complete and failed slots indepe
   const retried = await finish((await submit()).jobId)
   expect(retried.result.queries).toMatchObject({ network: 4, reused: 0 })
   const after = await queries()
-  expect(after.find(e => e.query.id === old.query.id)).toEqual(old)
+  expect(after.find(e => e.query.id === old.query.id)).toEqual({ query: { ...old.query, relationCount: 0 }, relations: [] })
   expect(after.find(e => e.query.id === failureId).query.failureReason).toBe('newer synthetic failure')
   expect(after.filter(e => e.query.interface === 'business_list' && e.query.rdjb === '3')).toHaveLength(3)
 }, 65_000)
@@ -370,7 +370,7 @@ postgresTest('missing later-page total cannot inherit earlier metadata and masqu
   })]))
 }, 65_000)
 
-postgresTest('a changed later page becomes a new observation without replacing the original rows', async () => {
+postgresTest('a changed later page is returned as current instead of the superseded capture', async () => {
   await upstream()
   await finish((await submit()).jobId)
   const original = (await queries()).find(e => e.query.rdjb === '3')
@@ -379,7 +379,7 @@ postgresTest('a changed later page becomes a new observation without replacing t
     : normalReply(s, r, n)
   const retry = await finish((await submit()).jobId)
   expect(retry.result.queries).toMatchObject({ network: 4, reused: 0 })
-  expect((await queries()).find(e => e.query.id === original.query.id)).toEqual(original)
+  expect((await queries()).find(e => e.query.id === original.query.id)).toEqual({ query: { ...original.query, relationCount: 1 }, relations: [original.relations[50]] })
   const latest = (await queries()).find(e => e.query.rdjb === '3' && e.query.id !== original.query.id)
   expect(latest.relations[50]).toMatchObject({ sequenceNo: 51, relationKey: 'DIFFERENT', nameRaw: '不同记录' })
 }, 65_000)
