@@ -141,10 +141,21 @@ BEGIN
     WHERE effective_title IS NOT NULL
     GROUP BY record_id, recency, effective_title
     HAVING count(DISTINCT version_id) = 1 AND count(evidence) = count(*) AND count(DISTINCT evidence) = 1
-  ), resolved_round_rows AS (
+  ), round_timeline AS (
     SELECT r.*, observed.evidence, observed.ownership_strength,
-      lag(observed.ownership_strength) OVER (PARTITION BY r.record_id, r.effective_title ORDER BY r.recency) AS newer_strength
+      lag(r.recency) OVER title_rounds AS newer_recency,
+      lag(r.version_id) OVER title_rounds AS newer_version_id,
+      lag(observed.evidence) OVER title_rounds AS newer_evidence,
+      lag(observed.ownership_strength) OVER title_rounds AS newer_strength
     FROM equivalent_round_rows r JOIN evidence_rows observed ON observed.id = r.observation_id
+    WINDOW title_rounds AS (PARTITION BY r.record_id, r.effective_title ORDER BY r.recency)
+  ), uninterrupted_rounds AS (
+    -- An intervening change or missing title severs the approval chain.
+    SELECT *, bool_and(recency = 1 OR coalesce(
+      newer_recency = recency - 1 AND newer_version_id = version_id
+        AND newer_evidence = evidence AND ownership_strength <= newer_strength, false
+    )) OVER (PARTITION BY record_id, effective_title ORDER BY recency ROWS UNBOUNDED PRECEDING) AS uninterrupted
+    FROM round_timeline
   ), replacements AS MATERIALIZED (
     SELECT old.id AS old_id, old.recency, old.collection_id AS old_collection_id,
       old.public_id AS old_public_id, old.collection_public_id AS old_collection_public_id,
@@ -153,19 +164,12 @@ BEGIN
       live.enterprise_id, live.verification_status, live.assignment_revision
     FROM referenced_observations refs
     JOIN evidence_rows old ON old.id = refs.id
+    JOIN uninterrupted_rounds source ON source.record_id = old.record_id AND source.recency = old.recency
+      AND source.effective_title = old.effective_title AND source.ownership_strength = old.ownership_strength
+      AND source.uninterrupted
     JOIN equivalent_round_rows target ON target.record_id = old.record_id AND target.version_id = old.version_id
       AND target.effective_title = old.effective_title AND target.recency = 1
     JOIN evidence_rows live ON live.id = target.observation_id AND live.evidence = old.evidence
-    WHERE (
-      -- An intervening changed or ambiguous capture severs the approval chain.
-      SELECT count(*)
-      FROM resolved_round_rows prior
-      WHERE prior.record_id = old.record_id AND prior.version_id = old.version_id
-        AND prior.effective_title = old.effective_title AND prior.recency <= old.recency
-        AND prior.evidence = old.evidence
-        AND (prior.recency = 1 OR prior.ownership_strength <= prior.newer_strength)
-        AND (prior.recency < old.recency OR prior.ownership_strength = old.ownership_strength)
-    ) = old.recency
   ), edge_destinations AS (
     SELECT e.id AS edge_id, e.status, r.*,
       -- These compact JSON arrays match the JavaScript correspondenceEdgeKey input.
