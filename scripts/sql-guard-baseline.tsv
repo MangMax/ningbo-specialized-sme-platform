@@ -245,18 +245,14 @@ layers/sme-roster/server/utils/event-annual-process-postgres.ts	TVNcknDTZ0zMXOFc
 layers/sme-roster/server/utils/export-snapshot-import-postgres.ts	TOPLEdPecykxXOmjR0Vzwxh1CwjHW55hL5La0bJIo0iA	Drizzle 0.45.4 无 PG 大小写/修剪、CAST 和聚合 FILTER 构造器；原值与快照判重仍在事务内解析。
 layers/sme-roster/server/utils/export-snapshot-import-postgres.ts	Twv6axibQCzD0bLMf1EvMP_9dcpsj1GopvR36zBqGg30	Drizzle 0.45.4 无 PG 大小写/修剪、CAST 和聚合 FILTER 构造器；原值与快照判重仍在事务内解析。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	T1_P3vHacd33_uM-Ac04HzvUDKRT0Xavg1GCLz4kAXEE	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
-layers/sme-roster/server/utils/file-event-sync-postgres.ts	T62mCKRBFzulFg2oOX1MQIwWf87yHmS8-KaMezbJvJL0	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	T8zGKefkbdq6JJQeB8atFdQ9vXZmmGeIvvPMzVkK-7iE	Drizzle 0.45.4 无动态表达式 CAST；历史业务 API 要求原有数值与 JSON 形状。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	TCutrj33ixOiB9pdmk145qux2TiiOF9Ov1DU1pvNsR6s	Drizzle 0.45.4 无动态表达式 CAST；历史业务 API 要求原有数值与 JSON 形状。
-layers/sme-roster/server/utils/file-event-sync-postgres.ts	TFgGBprTT2yvSAM32ZjKy4y_kMtcKXNfgHMuSYpliJxk	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	TgYJfyHP3WsE1fVjND1nMImDeVqtQ2ZZN9VNE3LcnGkk	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	TlOaqjwnFp6g4a7TkbvWTBK_n1paaToYna98A0pdKDYI	Drizzle 0.45.4 无表达式 COLLATE 构造器，保留 C 字节序，匹配原查询排序或索引。
-layers/sme-roster/server/utils/file-event-sync-postgres.ts	TOkr1zl2Js7icmfd6y8kaseAUdEY78Awwsj6w4T23L2g:3	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
+layers/sme-roster/server/utils/file-event-sync-postgres.ts	TOkr1zl2Js7icmfd6y8kaseAUdEY78Awwsj6w4T23L2g:2	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	TpfpIVUGVYPEWvSvZAACCOw8i-oLpi2BJ15NBt_EFrkA	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	TQ1ynnAOOjVRgp6OWP2rmFLhUtr2lo9GIxOXK02RN_iU	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/file-event-sync-postgres.ts	TQtxxCY8Qh2VyU7Rc-DVadwJO3kWkdRgdSCK7DHzI1rk:2	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
-layers/sme-roster/server/utils/file-event-sync-postgres.ts	Tqzu6lXlluX8YHEqZG0rbHN5q2TGHxLBQiqw3Ii4nCrU	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
-layers/sme-roster/server/utils/file-event-sync-postgres.ts	Ts1dMSLYJYqCjHVx2f8R_G3pbELiJUYcumaM7aLa-CqM	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
+layers/sme-roster/server/utils/file-event-sync-postgres.ts	TQtxxCY8Qh2VyU7Rc-DVadwJO3kWkdRgdSCK7DHzI1rk	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	TxCJ8-oC872pqWuRWTGTatxe72aqWY7AZHZg5B4JhQVc	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
 layers/sme-roster/server/utils/file-parts-postgres.ts	TQlYHY7FKqKGuPmWWLhvXI9okHsXehjuShn4k2HF_Ico	Match the PostgreSQL coordinate index collation. Drizzle has no COLLATE operator.
 layers/sme-roster/server/utils/file-parts-postgres.ts	TZKmx7vfoETjIR7mgpUfR7Eo721KjlHRSZoGmXhNPFxA:2	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。

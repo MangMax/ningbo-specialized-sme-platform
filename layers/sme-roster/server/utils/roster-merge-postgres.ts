@@ -5,7 +5,6 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { platformObservationAssignment } from '../../../../db/postgresql/platform-tables'
-import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import { applyPostgresEnterpriseMerge, findPostgresEnterpriseMergeAliasConflict, lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
@@ -245,7 +244,6 @@ export async function applyPostgresRosterMerge(tx: Tx, plan: PostgresRosterMerge
   const differences = await moveDifferences(tx, from.id, into.id)
   const relations = await appendMergeAssignments(tx, from.id, into.id, basis, recordedAt)
   const records = await moveRecords(tx, from.id, into.id)
-  await tx.update(recordCorrespondence).set({ enterpriseId: into.id }).where(eq(recordCorrespondence.enterpriseId, from.id))
 
   const lineage: MergeLineage = {
     fromEnterpriseId: from.id, fromEnterpriseName: from.name, intoEnterpriseId: into.id, intoUscc: into.uscc ?? '',

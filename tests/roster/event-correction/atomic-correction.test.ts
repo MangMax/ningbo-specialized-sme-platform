@@ -68,6 +68,16 @@ it('corrects the exact official event in place and replays the receipt with pres
     expect(receipt.status).toBe(200)
     expect(receipt.body).toMatchObject({ eventIds: [f.event.id] })
     expect((await f.post('commit', { request, planHash: plan.body.planHash })).body).toEqual(receipt.body)
+    const { rows: [stored] } = await f.db.$client.query<{ summary: string }>(
+      'SELECT summary FROM import_batch WHERE id = $1', [receipt.body.batchId],
+    )
+    const legacyReceipt = JSON.parse(stored!.summary)
+    legacyReceipt.impact.requiresRevalidation = 2
+    await f.db.$client.query('UPDATE import_batch SET summary = $1 WHERE id = $2',
+      [JSON.stringify(legacyReceipt), receipt.body.batchId])
+    expect((await f.post('commit', { request, planHash: plan.body.planHash })).body).toEqual({
+      ...receipt.body, impact: { corrected: 1, requiresRevalidation: 2 },
+    })
     expect((await f.read()).body).toMatchObject({ event: { id: f.event.id, recordId: f.record.id, revision: 2, year: 2022, decidedYear: 2022, sortKey: 2022 }, record: { id: f.record.id, enterpriseId: f.enterprise.id }, evidence: [f.evidence], lifecycle: { firstRecognitionYear: 2022, dueYear: 2025 } })
     expect((await f.read(`/api/roster/events/${f.event.id}/audit?pageSize=1`)).body).toMatchObject({ total: 1, rows: [{ before: { year: 2021 }, after: { year: 2022 }, actorId: 'test', basis: request.basis, sourceIdentity: request.sourceIdentity, evidence: [f.evidence] }] })
   } finally { await f.close() }
@@ -327,7 +337,9 @@ it('marks direct and predecessor confirmations stale after correction and after 
       expect((await f.read(`/api/roster/correspondences/${id}`)).body.requiresRevalidation).toBe(false)
     }
     const edit = f.request(), plan = await f.post('preflight', edit)
-    expect(plan.body.impact.requiresRevalidation).toBe(2)
+    expect(plan.body.impact).toEqual({ corrected: 1 })
+    expect(plan.body.targets[0]).not.toHaveProperty('correspondences')
+    await f.db.$client.query('UPDATE record_correspondence SET revision = revision + 1 WHERE id = $1', [ids[1]])
     expect((await f.post('commit', { request: edit, planHash: plan.body.planHash })).status).toBe(200)
     for (const id of ids) expect((await f.read(`/api/roster/correspondences/${id}`)).body).toMatchObject({ status: 'confirmed', requiresRevalidation: true })
     expect((await readAudit(ids[0]!)).body).toEqual(originalAudit)

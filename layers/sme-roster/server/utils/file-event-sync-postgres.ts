@@ -1,4 +1,4 @@
-import { eq, getTableName, or, sql, type Table } from 'drizzle-orm'
+import { eq, getTableName, sql, type Table } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { recordEvidence as RecordEvidenceTable } from '../../../../db/postgresql/ledger-tables'
 import type { RegisteredDeclaration } from './registered-declaration-summary'
@@ -8,14 +8,13 @@ import { storedFile } from '../../../../db/postgresql/file-tables'
 import { importBatch } from '../../../../db/postgresql/import-tables'
 import { record, recordEvidence, recordEvent } from '../../../../db/postgresql/ledger-tables'
 import { officialEvidenceRowRevision as officialRevision } from '../../../../db/postgresql/official-evidence-tables'
-import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { fileDeclaration669, rosterFileClassification } from '../../../../db/postgresql/roster-file-tables'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { preflightPostgresParse } from './parse-maintenance-postgres'
 import { loadPostgresEventCorrectionInputs, preflightPostgresEventCorrections, commitPostgresEventCorrections } from './roster-event-correction-postgres'
 import { projectEventCorrectionPlan, validateEventCorrectionTargets } from './roster-event-correction-model'
 import { lockPostgresRosterImportKey } from './roster-export-import-postgres'
-import { runPostgresCorrespondenceTransaction } from './record-correspondence-write-postgres'
+import { runPostgresSerializableTransaction } from './postgres-serializable-transaction'
 import { failFileEventSync as fail, FILE_EVENT_SYNC_CHUNK as chunkSize, FILE_EVENT_SYNC_LIMIT as limit, fileEventSyncHash as hash, fileEventSyncPhysical, fileEventSyncResult as result, proposeFileEventSync, withoutFileSyncCollisions, type FileEventSyncPlan, type FileSyncEventSources, type SyncRequest } from './file-event-sync-model'
 
 type Db = NodePgDatabase
@@ -69,28 +68,17 @@ async function snapshot(db: Db, id: number, dir: string, request: SyncRequest) {
   const official = (await db.select({ row: fingerprintRow<Omit<FileSyncEventSources['official'][number], 'sourceBindingKnown'> & { sourceBindingKnown: number }>(officialRevision, officialRevision) })
     .from(officialRevision).where(sql`${officialRevision.evidenceId} = ANY(${numberIds(evidence.map(row => row.id))})`)
     .orderBy(officialRevision.evidenceId, officialRevision.revision)).map(({ row }) => row)
-  const byCorrespondence = db.select({
-    id: recordCorrespondence.id, row: fingerprintRow<FileSyncEventSources['correspondences'][number]>(recordCorrespondence, recordCorrespondence).as('row'),
-  }).from(recordCorrespondence).where(or(
-    sql`${recordCorrespondence.eventId} = ids.id`, sql`${recordCorrespondence.predecessorEventId} = ids.id`,
-  )).orderBy(recordCorrespondence.id).limit(301).as('correspondence_by_event')
-  const correspondences = await db.select({ eventId: sql<number>`ids.id::float8`, row: byCorrespondence.row })
-    .from(sql`unnest(${numberIds(eventIds)}) ids(id)`).innerJoinLateral(byCorrespondence, sql`TRUE`)
-    .orderBy(sql`ids.id`, byCorrespondence.id)
   const evidenceByEvent = Map.groupBy(evidence,row=>row.recordEventId)
   const siblingsByRecord = Map.groupBy(siblings,row=>row.recordId)
   const officialByEvidence = Map.groupBy(official,row=>row.evidenceId)
-  const correspondenceByEvent = Map.groupBy(correspondences,row=>row.eventId)
   const sources = owners.map(({event,record}):FileSyncEventSources=>{
     const references = evidenceByEvent.get(event.id) ?? []
     const history = references.flatMap(row=>officialByEvidence.get(row.id) ?? [])
       .map(row=>({ ...row,sourceBindingKnown:Boolean(row.sourceBindingKnown) }))
     const peerEvents = siblingsByRecord.get(record.id) ?? []
-    const relations = (correspondenceByEvent.get(event.id) ?? []).map(row=>row.row)
     if (references.length>300) fail('capacity','单事件出处超过300',413)
     if (history.length>limit || peerEvents.length>limit) fail('capacity','事件历史或同记录事件超过3000；须先缩小维护范围',413)
-    if (relations.length>300) fail('capacity','事件对应影响超过300',413)
-    return { event,record,evidence:references,siblings:peerEvents,official:history,correspondences:relations }
+    return { event,record,evidence:references,siblings:peerEvents,official:history }
   })
   const rows:FileEventSyncPlan['rows'] = []
   const operations:Operation[] = []
@@ -133,7 +121,7 @@ export async function preflightPostgresFileEventSync(db: Db, id: number, request
   const old = await bound(db,id,request)
   if (old.plan) return result(old.plan)
   await preflightPostgresParse(db,id,{kind:'file',verifyPhysicalPages:true},dir)
-  return runPostgresCorrespondenceTransaction(db,async tx=>{
+  return runPostgresSerializableTransaction(db,async tx=>{
     await lockPostgresRosterImportKey(tx,old.key)
     const replay = await bound(tx,id,request,true)
     if (replay.plan) return result(replay.plan)
@@ -160,7 +148,7 @@ export async function commitPostgresFileEventSync(db: Db,id: number,request: Syn
     throw error
   }
   try {
-    return await runPostgresCorrespondenceTransaction(db,async tx=>{
+    return await runPostgresSerializableTransaction(db,async tx=>{
       await lockPostgresRosterImportKey(tx,old.key)
       const { batch,plan } = await bound(tx,id,request,true)
       if (!batch || !plan || plan.planHash!==planHash) fail('plan_mismatch','预检计划不存在')
@@ -168,7 +156,7 @@ export async function commitPostgresFileEventSync(db: Db,id: number,request: Syn
       if (chunk!==plan.completed.length || chunk>=plan.chunks) fail('chunk_order','必须顺序执行未完成块')
       await tx.select({ id: storedFile.id }).from(storedFile).where(eq(storedFile.id, id)).for('update')
       if ((await snapshot(tx,id,dir,request)).fingerprint!==(plan.expectedFingerprint ?? plan.fingerprint)) {
-        fail('stale_membership','完整候选成员、事件或出处已变化；请重新预检')
+        fail('stale_membership','完整候选成员、事件或出处已变化；请使用新的幂等键重新预检')
       }
       const correction = { ...request,idempotencyKey:`file-event-sync-chunk:${id}:${request.idempotencyKey}:${chunk}`,
         sourceIdentity:`file-event-sync:${id}:${planHash}`,operations:plan.operations.slice(chunk*chunkSize,(chunk+1)*chunkSize) }

@@ -4,7 +4,6 @@ import { storedFile } from '../../../../db/postgresql/file-tables'
 import { importBatch } from '../../../../db/postgresql/import-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { eventCorrectionAudit } from '../../../../db/postgresql/official-evidence-tables'
-import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { readPostgresLegacyQualification, type PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
 import { assertEventCorrectionBatch, eventCorrectionCapture, eventCorrectionCommitBatch, eventCorrectionCommitReplay, eventCorrectionFailure, eventCorrectionPreflightReplay, eventCorrectionPreflightResult, eventCorrectionReadbackScope, eventCorrectionResult, projectEventCorrectionPlan, validateEventCorrectionTargets, type EventCorrectionInputs, type EventCorrectionRequest, type CorrectionQualificationSafety } from './roster-event-correction-model'
@@ -40,15 +39,6 @@ export async function loadPostgresEventCorrectionInputs(tx: Reader, eventIds: nu
     id: storedFile.id, relPath: storedFile.relPath, sha256: storedFile.sha256, bytes: storedFile.bytes, removedAt: storedFile.removedAt,
   }).from(storedFile).where(inArray(storedFile.relPath, [...new Set(evidence.map(row => row.sourceFile))]))
     .orderBy(asc(storedFile.id)) : []
-  const correspondenceFor = (eventColumn: typeof recordCorrespondence.eventId | typeof recordCorrespondence.predecessorEventId) => tx.select({
-    id: recordCorrespondence.id, revision: recordCorrespondence.revision, status: recordCorrespondence.status,
-  }).from(recordCorrespondence).where(eq(eventColumn, recordEvent.id)).orderBy(asc(recordCorrespondence.id)).limit(301)
-  const eventCorrespondence = correspondenceFor(recordCorrespondence.eventId)
-    .unionAll(correspondenceFor(recordCorrespondence.predecessorEventId)).as('event_correspondence')
-  const correspondence = await tx.select({
-    eventId: recordEvent.id,
-    relation: { id: eventCorrespondence.id, revision: eventCorrespondence.revision, status: eventCorrespondence.status },
-  }).from(recordEvent).crossJoinLateral(eventCorrespondence).where(eventFilter).orderBy(asc(eventCorrespondence.id))
   const targetEvent = alias(recordEvent, 'target_event')
   const targetRecord = alias(record, 'target_record')
   const targetScope = tx.select({ id: targetEvent.id }).from(targetEvent)
@@ -60,7 +50,6 @@ export async function loadPostgresEventCorrectionInputs(tx: Reader, eventIds: nu
     .where(and(eq(record.source, 'jxj'), exists(targetScope))).orderBy(asc(recordEvent.id))
   const related = relatedRows.map(row => ({ event: parseEvent(row.event), key: row.enterpriseId + ':' + row.titleCode }))
   const evidenceByEvent = Map.groupBy(evidence, row => row.recordEventId)
-  const correspondenceByEvent = Map.groupBy(correspondence, row => row.eventId)
   const titles = Map.groupBy(related, row => row.key)
   const events = related.map(row => row.event)
   const siblings = Map.groupBy(events, row => row.recordId)
@@ -74,7 +63,6 @@ export async function loadPostgresEventCorrectionInputs(tx: Reader, eventIds: nu
       const paths = new Set(rows.map(row => row.sourceFile))
       return { ...target, evidence: rows, files: files.flatMap(file => paths.has(file.relPath) ? [{ ...file, bytes: Number(file.bytes) }] : []) }
     },
-    correspondence: id => correspondenceByEvent.get(id)?.map(row => row.relation) ?? [],
     titleEvents: record => titles.get(record.enterpriseId + ':' + record.titleCode)?.map(row => row.event) ?? [],
     siblings: id => siblings.get(id) ?? [],
     origin: id => origins.get(id) ?? null,
@@ -137,7 +125,7 @@ export async function commitPostgresEventCorrections(tx: Tx, request: EventCorre
   await tx.select({ id: recordEvent.id }).from(recordEvent).where(inArray(recordEvent.id, eventIds))
     .orderBy(asc(recordEvent.id)).for('update')
   const plan = await buildPostgresEventPlan(tx, request)
-  if (plan.planHash !== planHash) return eventCorrectionFailure(409, 'plan_mismatch', 'Event/source/impact changed after preflight')
+  if (plan.planHash !== planHash) return eventCorrectionFailure(409, 'plan_mismatch', 'Event or source changed after preflight; preflight again with a new idempotency key')
   const correctedAt = new Date().toISOString()
   for (const target of plan.targets) {
     const { after, before, evidence, enterpriseId } = target

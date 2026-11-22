@@ -6,7 +6,6 @@ import { z } from 'zod'
 import type { enterprise as EnterpriseTable } from '../../../../db/postgresql/enterprise-tables'
 import type { recordEvidence as RecordEvidenceTable } from '../../../../db/postgresql/ledger-tables'
 import type { officialEvidenceRowRevision as OfficialEvidenceRowRevisionTable } from '../../../../db/postgresql/official-evidence-tables'
-import type { recordCorrespondence as RecordCorrespondenceTable } from '../../../../db/postgresql/qualification-tables'
 import type { RegisteredDeclaration } from './registered-declaration-summary'
 import { normalizeAttachment } from '../../lib/attachment'
 import type { InputRef310 } from './parse-maintenance-contract'
@@ -60,7 +59,6 @@ export type FileSyncEventSources = {
   evidence:(typeof RecordEvidenceTable.$inferSelect)[]
   siblings:(OfficialEventRow)[]
   official:(Omit<typeof OfficialEvidenceRowRevisionTable.$inferSelect, 'sourceBindingKnown'> & { sourceBindingKnown: boolean })[]
-  correspondences:(typeof RecordCorrespondenceTable.$inferSelect)[]
 }
 
 export function proposeFileEventSync(input: FileSyncEventSources,

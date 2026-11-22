@@ -13,9 +13,13 @@ import { importPostgresReceiptRedactor } from './import-receipt-redaction'
 import { ImportReceiptError } from './import-receipt-model'
 import { planPostgresExportSnapshot, writePostgresExportSnapshot } from './export-snapshot-import-postgres'
 import { publicRosterImportItems, readSummaryOf, replayBatchKey } from './roster-import-model'
-import { runPostgresCorrespondenceTransaction } from './record-correspondence-write-postgres'
+import { runPostgresSerializableTransaction } from './postgres-serializable-transaction'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
+
+export function runPostgresImportTransaction<T>(db: NodePgDatabase, run: (tx: Tx) => Promise<T>) {
+  return runPostgresSerializableTransaction(db, run, { retryForeignKey: 'difference_reason_evidence_relation_id_fkey' })
+}
 export type PostgresImportAction = 'preflight' | 'commit'
 export type PostgresImportBatch = {
   id: number; status: NonNullable<RosterImportPreflight['batchStatus']>; kind: string; identity: string; sha256: string | null
@@ -143,7 +147,7 @@ export async function executePostgresRosterImport(db: NodePgDatabase, action: Po
     logReplay(attempt.originalReceiptId)
     return committedPostgresImportResult(attempt.batch, action === 'preflight' ? 'preflight' : 'commit')
   }
-  const run = (remember: (jobs: readonly { id: string; kind: string }[]) => void) => runPostgresCorrespondenceTransaction(db, async tx => {
+  const run = (remember: (jobs: readonly { id: string; kind: string }[]) => void) => runPostgresImportTransaction(db, async tx => {
     remember([])
     const batch = (await lockPostgresRosterImportBatch(tx, key))!
     if (batch.status === 'committed' && action !== 'replay') {

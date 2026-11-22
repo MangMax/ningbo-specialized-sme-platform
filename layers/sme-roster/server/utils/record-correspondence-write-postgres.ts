@@ -1,4 +1,3 @@
-import { setTimeout as delay } from 'node:timers/promises'
 import { and, eq, getTableColumns, inArray, or, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
@@ -9,6 +8,7 @@ import { buildRecordCorrespondencePlan, correspondenceEdgeKey, correspondenceHas
 import { observePostgresCorrespondences } from './record-correspondence-postgres'
 import { lockPostgresCurrentCapture } from './platform-capture-retention-postgres'
 import { postgresCorrespondenceProvenance } from './record-correspondence-postgres-refs'
+import { postgresErrorDetails, PostgresSourceConflict, runPostgresSerializableTransaction } from './postgres-serializable-transaction'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Batch = {
@@ -20,19 +20,16 @@ const fail = (code: CorrespondenceError['code'], message: string): never => { th
 export async function runPostgresCorrespondenceTransaction<T>(
   db: NodePgDatabase, run: (tx: Tx) => Promise<T>, retryDelays: readonly number[] = [0, 0],
 ) {
-  for (let attempt = 0; ; attempt++) {
-    try { return await db.transaction(run, { isolationLevel: 'serializable' }) }
-    catch (error) {
-      const cause = error as { code?: string; constraint?: string; cause?: { code?: string; constraint?: string } }
-      const code = cause.code ?? cause.cause?.code
-      const constraint = cause.constraint ?? cause.cause?.constraint
-      if (code === '23505' && constraint === 'record_correspondence_edge_uq') fail('plan_mismatch', 'Another request committed this edge; preflight again')
-      if (code === '23503' && constraint === 'record_correspondence_observation_id_fkey') fail('plan_mismatch', 'Platform evidence changed; preflight again')
-      if (code !== '40001' && !(code === '23503' && constraint === 'difference_reason_evidence_relation_id_fkey')) throw error
-      const wait = retryDelays[attempt]
-      if (wait === undefined) fail('plan_mismatch', 'Concurrent source change; preflight again')
-      if (wait) await delay(wait)
-    }
+  try {
+    return await runPostgresSerializableTransaction(db, run, {
+      retryDelays, retryForeignKey: 'difference_reason_evidence_relation_id_fkey',
+    })
+  } catch (error) {
+    const { code, constraint } = postgresErrorDetails(error)
+    if (code === '23505' && constraint === 'record_correspondence_edge_uq') fail('plan_mismatch', 'Another request committed this edge; preflight again')
+    if (code === '23503' && constraint === 'record_correspondence_observation_id_fkey') fail('plan_mismatch', 'Platform evidence changed; preflight again')
+    if (error instanceof PostgresSourceConflict) fail('plan_mismatch', error.message)
+    throw error
   }
 }
 

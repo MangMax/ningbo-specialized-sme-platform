@@ -466,7 +466,7 @@ it('preserves correspondence IDs while requiring revalidation and changing annua
     const request = f.request('correspondence-source-change', [f.op(f.first.event.id, { reviewOutcome: 'passed' })])
     const plan = await f.post('preflight', request)
     expect(plan.status).toBe(200)
-    expect(plan.body.impact.requiresRevalidation).toBe(1)
+    expect(plan.body.impact).toEqual({ corrected: 1 })
     expect((await f.post('commit', { request, planHash: plan.body.planHash })).status).toBe(200)
     expect((await f.http(path)).body).toMatchObject({ id: correspondenceId, eventId: f.first.event.id, relationId: relation.id, status: 'confirmed', requiresRevalidation: true })
     const annualAfter = await f.http(`/api/roster/events/${f.first.event.id}/annual-process`)

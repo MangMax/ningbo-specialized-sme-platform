@@ -118,6 +118,10 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
     expect(createHash('sha256').update(readFileSync(join(filesDir, 'notice.pdf'))).digest('hex')).toBe(sha256)
     const recovered = await fetch(api('evidence/corrections/batches/commit-audit'), { headers: { authorization: 'Bearer synthetic-api-token' } })
     expect(await json(recovered)).toEqual(receipt)
+    const legacyReceipt = { ...receipt, impact: { ...receipt.impact, correspondencePolicy: 'dynamic_source_fingerprint_revalidation' } }
+    await pool.query('UPDATE evidence_correction_batch SET receipt = $1 WHERE idempotency_key = $2',
+      [JSON.stringify(legacyReceipt), req.idempotencyKey])
+    expect(await json(await post('evidence/corrections/commit', { request: req, planHash: plan.planHash }))).toEqual(legacyReceipt)
   })
 
   it('exposes equivalent authenticated correction tools and bounded audit over real MCP', async () => {
@@ -263,7 +267,8 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
     expect(await edgeRead()).toMatchObject({ status: 'confirmed', requiresRevalidation: false })
     const req = request('edge-invalidating-correction', await read(target.id), 2)
     const plan = await json(await post('evidence/corrections/preflight', req))
-    expect(plan.targets[0].relatedCorrespondences).toBe(1)
+    expect(plan.targets[0]).not.toHaveProperty('relatedCorrespondences')
+    expect(plan.impact).toEqual({ updated: 1, audit: 1 })
     expect((await post('evidence/corrections/commit', { request: req, planHash: plan.planHash })).status).toBe(200)
     const stale = await edgeRead()
     expect(stale).toMatchObject({ status: 'confirmed', requiresRevalidation: true })
