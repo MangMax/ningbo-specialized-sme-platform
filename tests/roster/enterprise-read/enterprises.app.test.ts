@@ -752,7 +752,7 @@ describe('§7.3 差异与解释', () => {
     expect(failed.map((r) => r.enterpriseId)).toEqual([ids.stateFailed!])
   })
 
-  it('已确认原因带证据与配对措施;查询失败带接口证据', async () => {
+  it('已确认原因带证据与配对措施，查询失败只带查询证据', async () => {
     const rows = (await listRosterDifferences(db, { pageSize: 500 })).rows
     const a = rows.find((r) => r.enterpriseId === ids.a && r.titleCode === 'little_giant')!
     expect(a).toMatchObject({
@@ -769,7 +769,7 @@ describe('§7.3 差异与解释', () => {
       interface: 'business_list',
       status: 'failed',
       queriedAt: '2026-10-15T01:00:00.000Z',
-      relationIds: [expect.any(Number)],
+      relationIds: [],
     })
   })
 
