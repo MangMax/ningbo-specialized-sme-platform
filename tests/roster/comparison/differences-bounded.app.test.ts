@@ -106,9 +106,16 @@ it('bounds assessment work for REST and MCP pages while keeping the current expl
 
 it('preserves REST filters counts deep pages evidence and the intentionally narrower MCP projection', async () => {
   const f = await fixture(), api = await publicReads()
-  await f.write({ platformQueries: [{ interface: 'business_list', queryKey: 'name:合成差异00', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19T00:00:00.000Z', status: 'failed', rawResponse: 'SYNTHETIC_RAW', failureReason: 'synthetic failure', relations: [{ sequenceNo: 1, nameRaw: '合成旧名称', usccRaw: '91330211255994457P', verificationStatus: 'confirmed' }, { sequenceNo: 2, nameRaw: 'unmatched synthetic' }] }],
-    aliases: [{ enterpriseName: '合成差异00', name: '合成旧名称', sourceKind: 'platform_business', verificationStatus: 'confirmed', sourceRelationRef: { interface: 'business_list', queryKey: 'name:合成差异00', rdjb: '2', sequenceNo: 1 } }, { enterpriseName: '合成差异01', name: '合成旧名称', sourceKind: 'platform_apply', verificationStatus: 'pending' }],
-    differences: [{ enterpriseName: '合成差异00', titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', verificationStatus: 'confirmed', recordedAt: '2026-10-19T00:00:00.000Z', evidenceQueryRef: { interface: 'business_list', queryKey: 'name:合成差异00', rdjb: '2' } }, { enterpriseName: '合成差异01', titleCode: 'specialized_sme', direction: 'extra_in_miit', status: 'confirmed_no_diff', measureCode: 'none', verificationStatus: 'confirmed', recordedAt: '2026-10-19T00:00:00.000Z' }, { enterpriseName: '合成差异02', titleCode: 'little_giant', direction: 'missing_in_miit', status: 'needs_review', reasonCode: 'moved_in', measureCode: 'record_moved_in', movedIn: { city: '合成城市' }, recordedAt: '2026-10-19T00:00:00.000Z' }] })
+  const successfulAt = '2026-10-18T00:00:00.000Z', failedAt = '2026-10-19T00:00:00.000Z'
+  const scope = { interface: 'business_list' as const, queryKey: 'name:合成差异00', rdjb: '2' }
+  await f.write({ platformQueries: [
+    { ...scope, titleCode: 'specialized_sme', queriedAt: successfulAt, status: 'partial', rawResponse: 'SYNTHETIC_RAW',
+      relations: [{ sequenceNo: 1, relationKey: 'm2-current', nameRaw: '合成旧名称', usccRaw: '91330211255994457P', verificationStatus: 'confirmed',
+        rawFields: { id: 'm2-current', qymc: '合成旧名称', tyshxydm: '91330211255994457P', rdjb: '2' } }] },
+    { ...scope, titleCode: 'specialized_sme', queriedAt: failedAt, status: 'failed', rawResponse: 'SYNTHETIC_FAILURE', failureReason: 'synthetic failure', relations: [] },
+  ],
+    aliases: [{ enterpriseName: '合成差异00', name: '合成旧名称', sourceKind: 'platform_business', verificationStatus: 'confirmed', sourceRelationRef: { ...scope, queriedAt: successfulAt, sequenceNo: 1 } }, { enterpriseName: '合成差异01', name: '合成旧名称', sourceKind: 'platform_apply', verificationStatus: 'pending' }],
+    differences: [{ enterpriseName: '合成差异00', titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', verificationStatus: 'confirmed', recordedAt: failedAt, evidenceQueryRef: { ...scope, queriedAt: failedAt } }, { enterpriseName: '合成差异01', titleCode: 'specialized_sme', direction: 'extra_in_miit', status: 'confirmed_no_diff', measureCode: 'none', verificationStatus: 'confirmed', recordedAt: '2026-10-19T00:00:00.000Z' }, { enterpriseName: '合成差异02', titleCode: 'little_giant', direction: 'missing_in_miit', status: 'needs_review', reasonCode: 'moved_in', measureCode: 'record_moved_in', movedIn: { city: '合成城市' }, recordedAt: '2026-10-19T00:00:00.000Z' }] })
   for (const [query, total, rows] of [
     ['', 41, 41], ['page=3&pageSize=7', 41, 7], ['page=200&pageSize=5', 41, 0],
     ['q=合成（旧）名称&title=specialized_sme,little_giant', 2, 2],
@@ -123,7 +130,8 @@ it('preserves REST filters counts deep pages evidence and the intentionally narr
   expect(aliasRows).toMatchObject({ total: 2, rows: [{ name: '合成差异00' }, { name: '合成差异00' }] })
   const pending = await api.rest('?reason=pending_review')
   expect(pending).toMatchObject({ total: 1, rows: [{ status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', queryCoverage: { status: 'failed' }, currentDecision: { current: { reasonCode: 'pending_review' } } }] })
-  expect(pending.rows[0].evidence.relationIds).toHaveLength(2)
+  expect(pending.rows[0].evidence).toMatchObject({ status: 'failed', relationIds: [] })
+  expect(pending.rows[0].explanationValidity.status).toBe('evidence_changed')
   expect((await api.rest('?reason=moved_in')).rows[0].movedIn).toEqual({ city: '合成城市', titleCode: null, year: null, batch: null, complete: false })
   expect((await api.mcp({ status: 'confirmed_no_diff' })).rows).toMatchObject([{ name: '合成差异01', status: 'confirmed_no_diff', reasonCode: null, measureCode: 'none' }])
   await f.write({ announcement: { sourceDocument: { source: 'jxj', title: 'Synthetic derived only' }, records: [{ enterprise: { name: '仅有正式记录' }, titleCode: 'innovative_sme', events: [{ eventType: 'nurture', year: 2021 }] }] } })

@@ -153,7 +153,7 @@ async function planDifference(tx: Tx, difference: RosterImportDifference, index:
     relation = await findPostgresImportRelationById(tx, relationId)
   }
   if (relationId !== null && !relation) return reject('evidence_subject_mismatch', 'Relation evidence not found', 'evidenceRelationRef')
-  const queryMode = relation ? undefined : platformDecisionQueryMode(difference.status ?? 'not_queried')
+  const queryMode = relation ? undefined : platformDecisionQueryMode(difference.status ?? 'not_queried', reasonCode)
   const query = queryId === null ? null : (await findCollection(tx, queryId, queryMode) ?? null)
   if (queryId !== null && !query) return reject('evidence_subject_mismatch', 'Current query evidence not found', 'evidenceQueryRef')
   if (query && relation && query.nativeId !== relation.collectionId) {
