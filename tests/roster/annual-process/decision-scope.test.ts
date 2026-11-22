@@ -1,14 +1,15 @@
+import assert from 'node:assert/strict'
+import { commitPostgresPlatformCollection } from '../../../layers/sme-roster/server/utils/collection-import-postgres'
 import { expect, it } from 'vitest'
 import { nativeCorrespondenceFixture } from '../correspondence/fixtures/native-correspondence'
 import { readFixtureAudit } from '../correspondence/fixtures/postgres-audit'
 import { listPostgresCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence-postgres'
 import { readPostgresAnnualWriteScope, readPostgresQualifiedAnnualProcess } from '../../../layers/sme-roster/server/utils/event-annual-process-postgres'
 import { useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
-import { annualFixtureEvent, collectAnnualFixtureObservation, runAnnualFixtureTask, stageAnnualFixtureTask } from '../annual-correspondence/fixtures/native-annual'
 
 const createDb = useIsolatedPostgresCases()
 
-it('annual reconciliation keeps a same-content confirmation on the current capture', async () => {
+it('annual qualification reads a same-content confirmation on the current capture', async () => {
   const f = await nativeCorrespondenceFixture(createDb())
   const old = await collectAnnualFixtureObservation(f, 1)
   const { correspondenceIds: [id] } = await f.save(f.request('confirmation', [{ action: 'create', status: 'confirmed', edge: f.edge(old) }]))
@@ -20,15 +21,11 @@ it('annual reconciliation keeps a same-content confirmation on the current captu
   expect((await readPostgresQualifiedAnnualProcess(f.db, f.event.id))?.process.finalQualification).toMatchObject({
     status: 'confirmed', decisionRefs: [{ id, relationId: current, requiresRevalidation: false }],
   })
-  const task = await stageAnnualFixtureTask(f.db, f.event.id, 'same-version')
-  expect(annualFixtureEvent(await runAnnualFixtureTask(f.db, task.jobId)).outcomes).toMatchObject([
-    { status: 'existing', relationId: current },
-  ])
   expect(await listPostgresCorrespondences(f.db, {})).toMatchObject([{ id, relationId: current, status: 'confirmed' }])
   expect((await readFixtureAudit(f.db, id!)).slice(0, audit.length)).toEqual(audit)
 })
 
-it.each(['rejected', 'unlinked'] as const)('annual reconciliation keeps a same-content manual %s decision on the current capture', async status => {
+it.each(['rejected', 'unlinked'] as const)('annual qualification reads a same-content manual %s decision on the current capture', async status => {
   const f = await nativeCorrespondenceFixture(createDb())
   const old = await collectAnnualFixtureObservation(f, 1)
   const { correspondenceIds: [id] } = await f.save(f.request('initial', [
@@ -44,38 +41,48 @@ it.each(['rejected', 'unlinked'] as const)('annual reconciliation keeps a same-c
   expect((await readPostgresQualifiedAnnualProcess(f.db, f.event.id))?.process.finalQualification).toMatchObject({
     status: 'blocked', decisionRefs: [{ id, relationId: current, status }], reasons: ['protected_decision'],
   })
-  const task = await stageAnnualFixtureTask(f.db, f.event.id, 'same-version')
-  expect(annualFixtureEvent(await runAnnualFixtureTask(f.db, task.jobId)).outcomes).toMatchObject([
-    { status: 'protected', relationId: current, decisionRefs: [{ id, relationId: current, status }] },
-  ])
   expect(await listPostgresCorrespondences(f.db, {})).toMatchObject([{ id, relationId: current, status }])
   expect((await readFixtureAudit(f.db, id!)).slice(0, audit.length)).toEqual(audit)
 })
 
-it('annual reconciliation protects a rejected current capture and makes a separate decision for changed content', async () => {
+it('annual qualification keeps the old rejection scoped to its original content', async () => {
   const f = await nativeCorrespondenceFixture(createDb())
   const old = await collectAnnualFixtureObservation(f, 1, '终审不通过')
   const { correspondenceIds: [id] } = await f.save(f.request('reject', [{ action: 'create', status: 'rejected', edge: f.edge(old) }]))
   const audit = await readFixtureAudit(f.db, id!)
-  const originalTask = await stageAnnualFixtureTask(f.db, f.event.id, 'original')
-  expect(annualFixtureEvent(await runAnnualFixtureTask(f.db, originalTask.jobId)).outcomes).toMatchObject([
-    { status: 'protected', relationId: old, decisionRefs: [{ id, relationId: old, status: 'rejected' }] },
-  ])
+  expect((await readPostgresQualifiedAnnualProcess(f.db, f.event.id))?.process.finalQualification).toMatchObject({
+    status: 'none', decisionRefs: [],
+  })
 
   const current = await collectAnnualFixtureObservation(f, 2)
   expect((await readPostgresQualifiedAnnualProcess(f.db, f.event.id))?.process.finalQualification).toMatchObject({
     status: 'eligible', decisionRefs: [], reasons: ['decision_required'],
   })
-  const task = await stageAnnualFixtureTask(f.db, f.event.id, 'changed-content')
-  const reconciled = annualFixtureEvent(await runAnnualFixtureTask(f.db, task.jobId))
-  expect(reconciled.outcomes).toMatchObject([{ status: 'created', relationId: current }])
-  expect(reconciled.finalQualification).toMatchObject({
-    status: 'confirmed', decisionRefs: [{ relationId: current, status: 'confirmed', requiresRevalidation: false }],
-  })
-  const [historical, confirmed] = await listPostgresCorrespondences(f.db, {})
-  expect(historical).toMatchObject({ id, status: 'rejected' })
+  expect(await listPostgresCorrespondences(f.db, {})).toMatchObject([{ id, status: 'rejected' }])
   expect(JSON.parse(audit.at(-1)!.evidence)).toMatchObject({ relation: { id: old } })
-  expect(confirmed).toMatchObject({ relationId: current, status: 'confirmed' })
-  expect(confirmed?.id).not.toBe(id)
   expect(await readFixtureAudit(f.db, id!)).toEqual(audit)
 })
+async function collectAnnualFixtureObservation(
+  { db, enterprise }: Awaited<ReturnType<typeof nativeCorrespondenceFixture>>,
+  sequence: number,
+  status = '终审通过',
+) {
+  const key = 'BUSINESS-1'
+  const receipt = await commitPostgresPlatformCollection(db, {
+    idempotencyKey: `annual/capture/${sequence}`, sourceKind: 'platform_archive', sourceIdentity: 'annual-fixture',
+    payload: { platformQueries: [{
+      interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme',
+      queriedAt: `2026-10-20T00:0${sequence}:00Z`, status: 'success', rawResponse: 'Synthetic original response',
+      relations: [{ sequenceNo: 1, relationKey: key, enterpriseId: enterprise.id, nameRaw: enterprise.name,
+        usccRaw: enterprise.usccNorm, verificationStatus: 'confirmed', matchBasis: 'uscc',
+        rawFields: { id: key, year: 2024, sblx: '申请', sqsj: '2024-06-01', cszt: status } }],
+    }] },
+  }, async () => {})
+  assert(receipt.status === 'committed', JSON.stringify(receipt))
+  const item = receipt.items[0]
+  const relations = item?.detail?.relations
+  assert(item?.ok && Array.isArray(relations) && relations.length === 1, JSON.stringify(item))
+  const [relationId] = relations
+  assert(typeof relationId === 'number', JSON.stringify(item))
+  return relationId
+}
