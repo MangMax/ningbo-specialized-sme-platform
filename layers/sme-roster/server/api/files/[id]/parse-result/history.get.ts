@@ -1,4 +1,4 @@
-import { parseRoute105 } from '../../../../utils/parse-maintenance-105-route'
+import { parseRoute105 } from '../../../../utils/parse-maintenance-route'
 defineRouteMeta({ openAPI: {
   tags: ['Files'], summary: '#105 有界解析维护审计及回执点读',
   description: '默认20最多50条,按receiptId升序,afterId游标。列表不含before/after快照;receiptId显式点读完整回执(不得混分页)。保留全部历史,不含OCR/名录原文。',

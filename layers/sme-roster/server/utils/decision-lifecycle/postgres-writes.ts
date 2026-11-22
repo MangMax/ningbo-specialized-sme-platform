@@ -14,7 +14,7 @@ import { decodePostgresExactCell } from '../../../../../db/postgresql/exact-cell
 import { readPostgresDifferenceObservations } from '../../../lib/platform/difference-sources-postgres'
 import { readPostgresCollectionScopes } from '../../../lib/roster/query-coverage-postgres'
 import { postgresRosterRow } from '../../../lib/roster/postgres-rows'
-import { checkDecisionFact102, checkDecisionHead102, checkDecisionPriorTime102, checkDecisionQuery102, checkDecisionRelation102, decisionContent102, DecisionError102, decisionReceipt102, decisionRequestHash102, decisionValues102, internalDecisionCommand102, parse102, qualificationCommit102, qualificationPlanHash, qualificationPlanRule, qualificationPreflight102, type DecisionCommand102 } from '../decision-lifecycle-102/contract'
+import { checkDecisionFact102, checkDecisionHead102, checkDecisionPriorTime102, checkDecisionQuery102, checkDecisionRelation102, decisionContent102, DecisionError102, decisionReceipt102, decisionRequestHash102, decisionValues102, internalDecisionCommand102, parse102, qualificationCommit102, qualificationPlanHash, qualificationPlanRule, qualificationPreflight102, type DecisionCommand102 } from '../decision-lifecycle/contract'
 import { readPostgresDecisionHead102, requirePostgresDecisionEnterprise } from './postgres-reads'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]

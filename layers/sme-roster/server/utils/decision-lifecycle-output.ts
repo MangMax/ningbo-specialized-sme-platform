@@ -3,7 +3,7 @@ import { importPostgresReceiptRedactor } from './import-receipt-redaction'
 import { usePostgresRosterDb } from './postgres-roster-db'
 import { sanitizeEvidence } from './evidence-redaction'
 import { z } from 'zod'
-import { DecisionError102, decisionScope102 } from './decision-lifecycle-102/contract'
+import { DecisionError102, decisionScope102 } from './decision-lifecycle/contract'
 export async function postgresDecisionOutput102(db: NodePgDatabase) {
   const { knownRedactors } = await importPostgresReceiptRedactor(db)
   return projectDecisionOutput(knownRedactors)

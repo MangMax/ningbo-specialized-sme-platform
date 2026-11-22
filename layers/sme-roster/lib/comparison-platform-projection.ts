@@ -2,7 +2,7 @@ import type { PlatformCollectionCoverage, PlatformStoredQuery, PlatformStoredRel
 import type { PlatformObservationFact } from './platform/observation-facts'
 import { sourcePositionForSequence } from './platform/recognized-evidence'
 import type { PlatformNormalizationConflict } from './platform/normalization'
-import type { publicVersion102 } from '../server/utils/decision-lifecycle-102/contract'
+import type { publicVersion102 } from '../server/utils/decision-lifecycle/contract'
 import type { ComparisonDirection } from './comparison-model'
 import { normalizeUscc } from './domain'
 

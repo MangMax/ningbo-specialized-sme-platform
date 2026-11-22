@@ -7,7 +7,7 @@ import { platformBusinessObservation, platformCollection } from '../../../../db/
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import { getPostgresComparison } from '../comparison-heads-postgres'
 import { normalizeName } from '../domain'
-import { postgresDifferenceRow } from '../../server/utils/decision-lifecycle-102/postgres-reads'
+import { postgresDifferenceRow } from '../../server/utils/decision-lifecycle/postgres-reads'
 import { projectDifferences } from './current-difference'
 import { readPostgresDifferenceQualifications } from './current-qualification-postgres'
 import { projectRosterDifferenceList, selectRosterDifferencePage } from './difference-list-projection'

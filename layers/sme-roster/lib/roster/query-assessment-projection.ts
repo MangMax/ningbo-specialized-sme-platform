@@ -2,8 +2,8 @@ import { z } from 'zod'
 import { normalizeUscc } from '../domain'
 import { platformQueryResultShape, type PlatformQueryPage } from '../platform/live-query'
 
-import type { DecisionScope102 } from '../../server/utils/decision-lifecycle-102/contract'
-import type { currentPostgresDecisions102 } from '../../server/utils/decision-lifecycle-102/postgres-reads'
+import type { DecisionScope102 } from '../../server/utils/decision-lifecycle/contract'
+import type { currentPostgresDecisions102 } from '../../server/utils/decision-lifecycle/postgres-reads'
 
 export type AssessmentScope = DecisionScope102
 type DecisionState = Awaited<ReturnType<typeof currentPostgresDecisions102>>[number]

@@ -35,7 +35,7 @@ import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-c
 import { CANDIDATE_SCOPE_RULE } from '../platform/candidate-scope-capture'
 import { readPostgresCorrespondenceRefs } from '../../server/utils/record-correspondence-postgres-refs'
 
-import { readPostgresQualificationDecisionHeads } from '../../server/utils/decision-lifecycle-102/postgres-reads'
+import { readPostgresQualificationDecisionHeads } from '../../server/utils/decision-lifecycle/postgres-reads'
 import { readPostgresDifferenceObservations } from '../platform/difference-sources-postgres'
 import { readPostgresQueryAssessments } from './query-assessment-postgres'
 

@@ -1,10 +1,10 @@
 import { expect, it } from 'vitest'
-import { decisionHistory102, internalDecisionCommand102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102/contract'
+import { decisionHistory102, internalDecisionCommand102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle/contract'
 import {
   currentPostgresDecisions102, historyPostgresDecision102, readPostgresDecision102,
   readPostgresQualificationDecisionHeads,
-} from '../../../layers/sme-roster/server/utils/decision-lifecycle-102/postgres-reads'
-import { savePostgresDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102/postgres-writes'
+} from '../../../layers/sme-roster/server/utils/decision-lifecycle/postgres-reads'
+import { savePostgresDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle/postgres-writes'
 
 import { enterprise } from '../fixtures/postgres-tables'
 import { useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'

@@ -13,7 +13,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { seedRetiredEvidenceState } from '../fixtures/retired-evidence-state'
 import { writePostgresCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook-postgres'
-import type { DecisionCommand102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102/contract'
+import type { DecisionCommand102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle/contract'
 import type { CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-page'
 
 const dir = mkdtempSync(join(tmpdir(), 'issue305-inbound-'))

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { decisionCommand102, decisionHistory102, decisionScope102 } from './decision-lifecycle-102/contract'
+import { decisionCommand102, decisionHistory102, decisionScope102 } from './decision-lifecycle/contract'
 const contracts = {
   save_difference_decision: decisionCommand102,
   get_difference_decision: z.strictObject({ id: z.number().int().positive() }),

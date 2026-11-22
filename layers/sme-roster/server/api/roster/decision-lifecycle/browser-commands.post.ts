@@ -1,10 +1,10 @@
 import { readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
-import { checkBrowserReviewRequest } from '../../../utils/browser-review-102'
-import { browserDecisionCommand102, DecisionError102, parse102, type DecisionCommand102 } from '../../../utils/decision-lifecycle-102/contract'
-import { decisionFailure102, postgresDecisionOutput102 } from '../../../utils/decision-lifecycle-102-output'
+import { checkBrowserReviewRequest } from '../../../utils/browser-review-access'
+import { browserDecisionCommand102, DecisionError102, parse102, type DecisionCommand102 } from '../../../utils/decision-lifecycle/contract'
+import { decisionFailure102, postgresDecisionOutput102 } from '../../../utils/decision-lifecycle-output'
 
 import { usePostgresRosterDb } from '../../../utils/postgres-roster-db'
-import { savePostgresDecision102 } from '../../../utils/decision-lifecycle-102/postgres-writes'
+import { savePostgresDecision102 } from '../../../utils/decision-lifecycle/postgres-writes'
 
 defineRouteMeta({
   openAPI: {

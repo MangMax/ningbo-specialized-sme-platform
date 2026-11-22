@@ -7,7 +7,7 @@ import type { QueryAssessment } from './query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
 import { type PlatformNormalizationConflict } from '../platform/normalization'
 import type { readPostgresPlatformDetailFacts } from '../../server/utils/platform-business-detail-postgres'
-import type { publicVersion102 } from '../../server/utils/decision-lifecycle-102/contract'
+import type { publicVersion102 } from '../../server/utils/decision-lifecycle/contract'
 import type { CurrentQualificationSnapshot } from './current-qualification-model'
 import type { PlatformBusinessDetail } from './platform-business-detail'
 /**

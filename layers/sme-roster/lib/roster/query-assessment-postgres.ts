@@ -1,7 +1,7 @@
 import { eq, inArray, sql } from 'drizzle-orm'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
-import { currentPostgresDecisions102 } from '../../server/utils/decision-lifecycle-102/postgres-reads'
+import { currentPostgresDecisions102 } from '../../server/utils/decision-lifecycle/postgres-reads'
 import { projectRetiredEvidenceAssessment, type AssessmentScope } from './query-assessment-projection'
 import { readPostgresQueryCoverage } from './query-coverage-postgres'
 

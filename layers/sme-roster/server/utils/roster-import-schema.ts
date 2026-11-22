@@ -31,8 +31,3 @@ export const rosterImportMcpPayloadSchema = z.object({
   officialEvidenceCorrections: importCorrectionSchema.meta(importCorrectionDiscovery).describe('复用精确更正DTO；导入采用外层幂等键，每项明确publishedRow和expectedRowRevision，与追加/capture共用最终计划'),
   officialEvidencePlanHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).catchall(z.unknown()).describe('统一写入载荷。新采集提交平台来源字段，已存采集通过 reuseExisting:true 引用采集坐标和行号。见名录契约 §8.3')
-
-const { announcement, officialEvidenceAppends, officialEvidenceCorrections, officialEvidencePlanHash } = z.toJSONSchema(rosterImportMcpPayloadSchema, { io: 'input' }).properties!
-export const rosterImportOfficialDiscovery = { announcement, officialEvidenceAppends, officialEvidenceCorrections, officialEvidencePlanHash }
-const legacyDiscovery = z.toJSONSchema(rosterImportMcpPayloadSchema, { io: 'input' }).properties!
-export const rosterImportLegacyDiscovery = { aliases: legacyDiscovery.aliases, exportSnapshot: legacyDiscovery.exportSnapshot, platformQueries: legacyDiscovery.platformQueries, differences: legacyDiscovery.differences, usccBackfills: legacyDiscovery.usccBackfills, merges: legacyDiscovery.merges }

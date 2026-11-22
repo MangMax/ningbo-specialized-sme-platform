@@ -17,8 +17,8 @@ layers/sme-roster/server/api/roster/title-cycle-dispositions/commit.post.ts	LEOa
 layers/sme-roster/server/mcp/tools/commit_enterprise_fact.ts	Lqz8aOtiodhSXj0B2whIb6FixtlNrDNd6eQn2sgPoAr8
 layers/sme-roster/server/mcp/tools/commit_title_cycle_disposition.ts	LwTph3u68swuG_6iN_TqNaqRCh9GSIn8cVc-ylyMyAXk
 layers/sme-roster/server/utils/collection-import-postgres.ts	TluCj3pbUveO73zHiWcRMgcLDV5CWQC0v_Uil0rAlzx8,Tsk2zFcsonahae3rGPVny33vyt3MxP0fUsXq_GK_GICA
-layers/sme-roster/server/utils/decision-lifecycle-102/postgres-reads.ts	TdZdg_DCSPvpayxMR3vRuAJgRM2aToyO2CGKVmGmcb4s,Te7zPHZjzGlfJUapZ7AVTxW34sVJe8Hba1nCII1mCVXk,TfxJBZ5PW32woJ1X5XX4vhTFNYsnGn5HIf6tfxnkhzuc,TxXo1f1xjW6XBtnIqWjA5Bal3lYIaATZLNtPUUm3CB3c
-layers/sme-roster/server/utils/decision-lifecycle-102/postgres-writes.ts	TjzhfK0DJYmoyVgVBM47LDfhYzo31ilvZBK3rPLDcKr0
+layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	TdZdg_DCSPvpayxMR3vRuAJgRM2aToyO2CGKVmGmcb4s,Te7zPHZjzGlfJUapZ7AVTxW34sVJe8Hba1nCII1mCVXk,TfxJBZ5PW32woJ1X5XX4vhTFNYsnGn5HIf6tfxnkhzuc,TxXo1f1xjW6XBtnIqWjA5Bal3lYIaATZLNtPUUm3CB3c
+layers/sme-roster/server/utils/decision-lifecycle/postgres-writes.ts	TjzhfK0DJYmoyVgVBM47LDfhYzo31ilvZBK3rPLDcKr0
 layers/sme-roster/server/utils/difference-snapshot.ts	TluCj3pbUveO73zHiWcRMgcLDV5CWQC0v_Uil0rAlzx8
 layers/sme-roster/server/utils/enterprise-facts-postgres.ts	TPnAR9n1Z9rfc2xTxEfqCR9cpimr8bb4X4K1Eys24L1c
 layers/sme-roster/server/utils/enterprise-profile-postgres.ts	T-IAQTD5hH3dWxjYD4w7sgjxiJDQpbE6EBzkYqsx4-bg
@@ -201,19 +201,19 @@ layers/sme-roster/server/modules/sme-roster/files.ts	Tk7APnncTb5yvyBGetgApZ6ENzm
 layers/sme-roster/server/utils/announcement-evidence-postgres.ts	Tg99io4zncrZyUuGYbhQeNpLOxa8Y44wiGSur4M5sM8Y	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
 layers/sme-roster/server/utils/announcement-evidence-postgres.ts	TYuDxaGUjxQ53RL4JzG0_9O5arbXyPk9gKmCLNeyKrPc	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
 layers/sme-roster/server/utils/announcement-replay-postgres.ts	TZQT7lB5xy_gZRko9wTOS3WkSd3A2ld9UYc1vEX6CaPE	Drizzle 0.45.4 无递归 CTE/CYCLE 构造器；公告主体闭包须以原请求绑定 JSON 验证歧义与循环。
-layers/sme-roster/server/utils/decision-lifecycle-102/postgres-reads.ts	T-Zs5QBO-clE_lJEETjbJsWTZUnHkqPbFcdq4U6bmeEw:2	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
-layers/sme-roster/server/utils/decision-lifecycle-102/postgres-reads.ts	Tb1K1_ReFfrhZuKr69YAC6CaSImLiNO6M4cBeRTyswdM	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
-layers/sme-roster/server/utils/decision-lifecycle-102/postgres-reads.ts	TB1U47nIG6H42QhvpffuIv8g8QiboatOuR_Q57YzgArA	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
-layers/sme-roster/server/utils/decision-lifecycle-102/postgres-reads.ts	Te0RYhtFntXlQArVOZ8kCJaFPzRJ78hK6iV98mYKJM84	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
-layers/sme-roster/server/utils/decision-lifecycle-102/postgres-reads.ts	TFiKQIdWiE6FGiVxnTg9jgSnHkmoamBojInIJKLAOB10	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
-layers/sme-roster/server/utils/decision-lifecycle-102/postgres-reads.ts	TjvF-Xlm01NOrrUHiQtHV6JbMn7nOMubtg4Cf3y5Ut2E	Drizzle 0.45.4 无 CASE 与 IS DISTINCT FROM 构造器；撤回过滤保持缺省 NULL 语义。
-layers/sme-roster/server/utils/decision-lifecycle-102/postgres-reads.ts	TNfuFU7ipUZwi0D6o9CQBxUx1vis2rhXgINvQpHYo-0s:2	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
-layers/sme-roster/server/utils/decision-lifecycle-102/postgres-reads.ts	TqBTIWaSmKc5pPQ-RRn6vu1ssMSxWSZB3wYTnaI4senw	Embed the correlated public-ID select as a scalar expression in the frozen JSON row projection.
-layers/sme-roster/server/utils/decision-lifecycle-102/postgres-reads.ts	TqPNBi_l6r0MVsfW-FKUh2l9a9ObACNsNaKH0ZOIEHHw	Drizzle 0.45.4 无 FROM VALUES 构造器；两条固定方向及顺序由 SQL 内生。
-layers/sme-roster/server/utils/decision-lifecycle-102/postgres-reads.ts	Ts3CyKt0Dy0ejL_-mBqMtPVCb68HnW-dFrEkwg0lfvK8:2	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
-layers/sme-roster/server/utils/decision-lifecycle-102/postgres-reads.ts	TSwWFlzwF0E5_N-Tt974RtStnK4rxNWPzb1MqHLbbqpo:2	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
-layers/sme-roster/server/utils/decision-lifecycle-102/postgres-reads.ts	TthAM6Pn36K2rUixRcAY82AfEFB68Lu4pfOvk3QPQvx0	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
-layers/sme-roster/server/utils/decision-lifecycle-102/postgres-writes.ts	T4RQsa3Z-1KMpRlq8yU-FIX66oWr4gnHL5mjT-PncR0I	Drizzle 0.45.4 没有通用 CAST 表达式，恢复历史保存的 PostgreSQL JSON 值。
+layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	T-Zs5QBO-clE_lJEETjbJsWTZUnHkqPbFcdq4U6bmeEw:2	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
+layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	Tb1K1_ReFfrhZuKr69YAC6CaSImLiNO6M4cBeRTyswdM	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
+layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	TB1U47nIG6H42QhvpffuIv8g8QiboatOuR_Q57YzgArA	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
+layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	Te0RYhtFntXlQArVOZ8kCJaFPzRJ78hK6iV98mYKJM84	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
+layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	TFiKQIdWiE6FGiVxnTg9jgSnHkmoamBojInIJKLAOB10	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
+layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	TjvF-Xlm01NOrrUHiQtHV6JbMn7nOMubtg4Cf3y5Ut2E	Drizzle 0.45.4 无 CASE 与 IS DISTINCT FROM 构造器；撤回过滤保持缺省 NULL 语义。
+layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	TNfuFU7ipUZwi0D6o9CQBxUx1vis2rhXgINvQpHYo-0s:2	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
+layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	TqBTIWaSmKc5pPQ-RRn6vu1ssMSxWSZB3wYTnaI4senw	Embed the correlated public-ID select as a scalar expression in the frozen JSON row projection.
+layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	TqPNBi_l6r0MVsfW-FKUh2l9a9ObACNsNaKH0ZOIEHHw	Drizzle 0.45.4 无 FROM VALUES 构造器；两条固定方向及顺序由 SQL 内生。
+layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	Ts3CyKt0Dy0ejL_-mBqMtPVCb68HnW-dFrEkwg0lfvK8:2	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
+layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	TSwWFlzwF0E5_N-Tt974RtStnK4rxNWPzb1MqHLbbqpo:2	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
+layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	TthAM6Pn36K2rUixRcAY82AfEFB68Lu4pfOvk3QPQvx0	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
+layers/sme-roster/server/utils/decision-lifecycle/postgres-writes.ts	T4RQsa3Z-1KMpRlq8yU-FIX66oWr4gnHL5mjT-PncR0I	Drizzle 0.45.4 没有通用 CAST 表达式，恢复历史保存的 PostgreSQL JSON 值。
 layers/sme-roster/server/utils/difference-import-postgres.ts	TXlRXjB-gEdv5uCfLkBU-YhVxWP9fF8iWMGcXbo4yC7o	Drizzle 0.45.4 无窗口函数构造器；按历史稳定顺序计算累计行数或来源排名。
 layers/sme-roster/server/utils/difference-snapshot.ts	T9KLmuuv0rS3Ado2bcHFFbU7IuFB1XsO-jmNfksPIY5o	Drizzle 0.45.4 无 PostgreSQL 快照导出构造器；这一条独立函数调用使应用查询和 pg_dump 共用同一事务快照。
 layers/sme-roster/server/utils/difference-snapshot.ts	TX_pLVjWsOMoWaVMvl6sKFVkdvQKsZ9g1mlr0CozI2GQ	Drizzle 0.45.4 无聚合内部 ORDER BY，备份范围保留冻结记录 ID 次序。

@@ -6,7 +6,7 @@ import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-job
 import { useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
 import { completeInProcessPostgresIntake } from '../imports/fixtures/in-process-intake-postgres'
 import { runPostgresMixedImport } from '../../../layers/sme-roster/server/utils/roster-mixed-import-postgres'
-import { savePostgresDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102/postgres-writes'
+import { savePostgresDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle/postgres-writes'
 import type { RosterImportCommitResponse, RosterImportPayload, RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 

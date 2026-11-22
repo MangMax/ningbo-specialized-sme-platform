@@ -2,7 +2,7 @@ import { createError, getRouterParam, readBody, setHeader } from 'h3'
 import { z } from 'zod'
 import { usePostgresFileDb } from '../../../core/server/utils/file-store-postgres'
 import { getPostgresParseState, preflightPostgresParse, savePostgresParse } from './parse-maintenance-postgres'
-import { checkBrowserReviewRequest } from './browser-review-102'
+import { checkBrowserReviewRequest } from './browser-review-access'
 import { parseFrozenCommit310, ParseMaintenanceError } from './parse-maintenance-contract'
 import { requestLogContext } from '../../../core/lib/logging'
 

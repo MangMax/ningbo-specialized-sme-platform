@@ -1,6 +1,6 @@
 import { parseCurationPatch } from '#sme-roster/lib/curation-model'
-import { DecisionError102 } from '../../utils/decision-lifecycle-102/contract'
-import { patchPostgresLegacyCuration102 } from '../../utils/legacy-curation-102'
+import { DecisionError102 } from '../../utils/decision-lifecycle/contract'
+import { patchPostgresLegacyCuration102 } from '../../utils/legacy-curation'
 import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 
 /** Legacy annotations remain separate from formal difference decisions. */

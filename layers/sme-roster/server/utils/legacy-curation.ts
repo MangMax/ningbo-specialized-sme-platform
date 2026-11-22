@@ -5,8 +5,8 @@ import { differenceReason } from '../../../../db/postgresql/roster-selection-tab
 import { evidenceReviewReceipt114 as receipt } from '../../../../db/postgresql/evidence-review-tables'
 import { normalizeUscc } from '../../lib/domain'
 import { patchCuration, type CurationPatch } from '../../lib/curation-model'
-import { DecisionError102 } from './decision-lifecycle-102/contract'
-import { lockPostgresDecisionOwnership102 } from './decision-lifecycle-102/postgres-writes'
+import { DecisionError102 } from './decision-lifecycle/contract'
+import { lockPostgresDecisionOwnership102 } from './decision-lifecycle/postgres-writes'
 
 function exactLegacyEnterpriseId(candidates: { id: number }[]) {
   if (candidates.length > 1) {

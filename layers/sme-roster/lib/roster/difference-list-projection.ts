@@ -1,6 +1,6 @@
 import type { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import type { platformCollection } from '../../../../db/postgresql/platform-tables'
-import type { publicVersion102 } from '../../server/utils/decision-lifecycle-102/contract'
+import type { publicVersion102 } from '../../server/utils/decision-lifecycle/contract'
 import type { DifferenceQualification } from './current-difference'
 import type { ComparisonRow } from '../comparison-model'
 import { normalizeName } from '../domain'

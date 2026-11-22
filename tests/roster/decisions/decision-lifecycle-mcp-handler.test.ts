@@ -6,7 +6,7 @@ import { sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
-import { decisionCommand102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102/contract'
+import { decisionCommand102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle/contract'
 
 // Only the framework registration shell is replaced; the exported tool handler,
 // parser, error mapping, output redaction and PostgreSQL remain real.
