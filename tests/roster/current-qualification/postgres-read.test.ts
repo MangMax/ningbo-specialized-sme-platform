@@ -11,7 +11,7 @@ import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-sour
 const createDb = useIsolatedPostgresCases()
 const asOf = Date.parse('2026-06-01T00:00:00.000Z')
 
-it('changes combined filter membership when the same recognized row becomes context only', async () => {
+it('keeps current qualification and filters independent of legacy correspondence revisions', async () => {
   const db = createDb()
   const titleCode = 'innovative_sme' as const
   const name = '合成认定见证企业'
@@ -20,7 +20,7 @@ it('changes combined filter membership when the same recognized row becomes cont
   const ledger = single(await db.insert(record).values({ enterpriseId: owner.id, titleCode, source: 'jxj', nameRaw: name }).returning())
   const award = single(await db.insert(recordEvent).values({ recordId: ledger.id, eventType: 'award', year: 2025, batchSeq: 1 }).returning())
   await db.insert(recordEvidence).values({ recordEventId: award.id, sourceFile: 'synthetic/award.pdf', page: 1 })
-  const { relationIds, queryId } = await submitSyntheticRecognizedCollection(db, {
+  const { relationIds } = await submitSyntheticRecognizedCollection(db, {
     rdjb: '1', queriedAt: '2026-05-01T00:00:00Z',
     rows: [{ enterpriseId: owner.id, raw: { id: 'recognized-witness', qymc: name, tyshxydm: uscc, rdjb: '1', rddqrq: '2028-11-20', whpc: '2023-2' } }],
   })
@@ -30,14 +30,17 @@ it('changes combined filter membership when the same recognized row becomes cont
     actor: { type: 'agent' as const, id: 'test' }, basis: 'Synthetic corroboration', ruleId: 'manual', ruleVersion: '1',
     operations: [{ action: 'create' as const, status: 'confirmed' as const, edge: { ...edge, role: 'recognized_corrob' as const } }],
   }
-  const plan = await preflightPostgresCorrespondences(db, request)
-  const receipt = await commitPostgresCorrespondences(db, request, plan.planHash)
   const filter = { titleCode, validYear: 2028, maintenanceYear: 2023 }
-  expect(await listPostgresCurrentQualified(db, filter, asOf)).toMatchObject({
+  const before = await listPostgresCurrentQualified(db, { titleCode }, asOf)
+  expect(before).toMatchObject({
     total: 1, rows: [{ enterpriseId: owner.id, qualificationWitnesses: [{
-      awardEventId: award.id, conditionQueryId: queryId, matchedValidYear: 2028, matchedMaintenance: { year: 2023, batch: null },
+      awardEventId: award.id, matchedValidYear: null, matchedMaintenance: null,
     }] }],
   })
+  const plan = await preflightPostgresCorrespondences(db, request)
+  const receipt = await commitPostgresCorrespondences(db, request, plan.planHash)
+  expect(await listPostgresCurrentQualified(db, { titleCode }, asOf)).toEqual(before)
+  expect(await listPostgresCurrentQualified(db, filter, asOf)).toMatchObject({ total: 0, rows: [] })
 
   const correction = {
     ...request, idempotencyKey: 'correct-recognized-witness-to-context',
@@ -48,7 +51,7 @@ it('changes combined filter membership when the same recognized row becomes cont
   }
   const revised = await preflightPostgresCorrespondences(db, correction)
   await commitPostgresCorrespondences(db, correction, revised.planHash)
-  expect(await listPostgresCurrentQualified(db, { titleCode }, asOf)).toMatchObject({ total: 1, rows: [{ enterpriseId: owner.id }] })
+  expect(await listPostgresCurrentQualified(db, { titleCode }, asOf)).toEqual(before)
   expect(await listPostgresCurrentQualified(db, filter, asOf)).toMatchObject({ total: 0, rows: [] })
 })
 

@@ -14,7 +14,7 @@ import {
 import { enterpriseFactRevision, titleCycleDispositionRevision } from '../../../../db/postgresql/qualification-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import {
-  assessCurrentQualificationInputs, assessLegacyQualificationInputs, currentQualificationSnapshot, evaluateLoadedCurrentQualification, formatQualificationCorrespondence,
+  assessCurrentQualificationInputs, assessLegacyQualificationInputs, currentQualificationSnapshot, evaluateLoadedCurrentQualification,
   type CandidateEvent, type CandidateFile, type CurrentQualificationInput, type LoadedCurrentQualificationInput, type LegacyQualificationInput, type QualificationDisposition,
 } from './current-qualification-model'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
@@ -26,7 +26,6 @@ import { currentCandidateIdBlocks } from './current-candidate-reader'
 import type { PlatformInterface } from '../labels'
 import { normalizeUscc } from '../domain'
 import { projectEffectiveQualifications, type EffectiveQualification } from './effective-qualifications'
-import { readPostgresRecognizedWitnesses } from './recognized-witness-postgres'
 import { readPostgresQueryCoverage } from './query-coverage-postgres'
 import { createPostgresPublishedPresentationReader } from './official-published-presentation-postgres'
 import { officialPublishedError, projectOfficialPublishedNames, type OfficialPublishedScope, type OfficialPublishedFact } from './official-published-presentation'
@@ -34,7 +33,6 @@ import type { PublishedPresentation } from './correspondence-view'
 import { importPostgresReceiptRedactor } from '../../server/utils/import-receipt-redaction'
 import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
 import { platformObservationSourceValue, platformObservationVersionDefaults } from '../platform/postgres-observation-facts'
-import { readPostgresCorrespondenceRefs } from '../../server/utils/record-correspondence-postgres-refs'
 
 import { readPostgresQualificationDecisionHeads } from '../../server/utils/decision-lifecycle/postgres-reads'
 import { readPostgresDifferenceObservations } from '../platform/difference-sources-postgres'
@@ -184,7 +182,7 @@ async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], 
 }
 
 async function readQualificationInputs(tx: PostgresQualificationTransaction, enterpriseIds: readonly number[], asOf: number,
-  selectionScope?: { mode: 'scan' | 'detail' | 'roster-detail' | 'workbook' | 'classify'; title: CurrentTitle }, readPlatform = createPostgresPlatformQualificationReader(tx)) {
+  mode?: 'scan' | 'detail' | 'roster-detail' | 'workbook', readPlatform = createPostgresPlatformQualificationReader(tx)) {
   if (!enterpriseIds.length) return []
   const selection = await readEnterprises(tx, enterpriseIds)
   if (!selection.length) return []
@@ -240,24 +238,16 @@ async function readQualificationInputs(tx: PostgresQualificationTransaction, ent
   }).from(fact).innerJoin(members, eq(fact.enterpriseId, sql`members.id`)).orderBy(fact.id)
   const dispositions = await readDispositions(tx, ids)
   const platformFacts = await readPlatform(subjects)
-  const scanning = selectionScope?.mode === 'scan'
-  const classifying = selectionScope?.mode === 'classify'
-  const effectScope = selectionScope?.mode === 'detail' || selectionScope?.mode === 'workbook' ? 'hydration'
-    : selectionScope?.mode === 'roster-detail' ? 'roster-detail' : 'references'
-  const platformEffects = scanning || classifying ? undefined : await readPlatformEffects(tx, subjects, effectScope)
-  const correspondence = classifying ? [] : await readPostgresCorrespondenceRefs(tx, ids, scanning ? selectionScope.title : undefined)
-  const witnesses = selectionScope?.mode === 'detail' || scanning ? await readPostgresRecognizedWitnesses(tx, [...new Set(correspondence.flatMap(ref =>
-    ref.type === 'event_recognized' && ref.role === 'recognized_corrob' && ref.status === 'confirmed' && !ref.requiresRevalidation
-      && ref.relationId !== null ? [ref.relationId] : []))]) : undefined
+  const effectScope = mode === 'detail' || mode === 'workbook' ? 'hydration'
+    : mode === 'roster-detail' ? 'roster-detail' : 'references'
+  const platformEffects = mode === 'scan' ? undefined : await readPlatformEffects(tx, subjects, effectScope)
   const eventsByOwner = Map.groupBy(events, row => row.owner)
   const evidenceByOwner = Map.groupBy(evidence, row => row.owner)
-  const referencesByOwner = Map.groupBy(correspondence, row => row.enterpriseId)
   const aliasesByOwner = Map.groupBy(aliases, row => row.owner)
   const factsByOwner = Map.groupBy(facts, row => row.owner)
   const byCanonical = new Map(subjects.map(enterprise => {
     const { id } = enterprise
     const ownerEvidence = evidenceByOwner.get(id) ?? []
-    const refsByTitle = Map.groupBy(referencesByOwner.get(id) ?? [], row => row.titleCode)
     const rowsByTitle = Map.groupBy(eventsByOwner.get(id) ?? [], row => row.title)
     const evidenceByTitle = Map.groupBy(ownerEvidence, row => row.title)
     const files = new Map<string, CandidateFile>(ownerEvidence.flatMap(row => row.file
@@ -270,7 +260,6 @@ async function readQualificationInputs(tx: PostgresQualificationTransaction, ent
     const inputs = new Map(CURRENT_TITLES.map(title => {
       const titleEvents = rowsByTitle.get(title) ?? []
       const effects = platformEffects?.(id, title) ?? []
-      const refs = refsByTitle.get(title) ?? []
       const input: LoadedCurrentQualificationInput = {
         enterprise,
         events: titleEvents.map(row => row.event as CandidateEvent),
@@ -280,8 +269,6 @@ async function readQualificationInputs(tx: PostgresQualificationTransaction, ent
         readAliases: () => aliasRows,
         readDispositions: () => dispositions.get(id)?.map(row => row.input) ?? [],
         platformReferences: effects.map(({ id, queryId, interface: kind, queriedAt }) => ({ id, queryId, interface: kind, queriedAt })),
-        ...(selectionScope ? { readWitnesses: witnesses, readCorrespondences: () => refs }
-          : { correspondenceReferences: () => refs.map(formatQualificationCorrespondence) }),
         ...(effectScope !== 'references' ? { readPlatformEffects: () => effects } : {}),
         readFactEffects: effectiveOnly => evaluateEnterpriseFactEffects(factRows, asOf, effectiveOnly),
         readPlatformFacts: () => platformFacts.get(id) ?? [],
@@ -300,12 +287,12 @@ async function readQualificationCandidates(tx: PostgresQualificationTransaction,
 }
 
 export async function readPostgresCurrentFilterBatch(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, readPlatform?: PostgresPlatformQualificationReader) {
-  const loaded = await readQualificationInputs(tx, ids, asOf, { mode: 'scan', title }, readPlatform)
+  const loaded = await readQualificationInputs(tx, ids, asOf, 'scan', readPlatform)
   return new Map(loaded.map(([id, inputs]) => [id, evaluateLoadedCurrentQualification(asOf, inputs, title, 'scan').get(title)!]))
 }
 
 export async function readPostgresCurrentStatusBatch(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, readPlatform?: PostgresPlatformQualificationReader) {
-  const loaded = await readQualificationInputs(tx, ids, asOf, { mode: 'classify', title }, readPlatform)
+  const loaded = await readQualificationInputs(tx, ids, asOf, 'scan', readPlatform)
   return new Map(loaded.map(([id, inputs]) => [id, evaluateLoadedCurrentQualification(asOf, inputs, undefined, 'scan').get(title)!.effectiveStatus]))
 }
 
@@ -340,7 +327,7 @@ async function readPostgresDetailedAssessments(tx: PostgresQualificationTransact
     snapshot: ReturnType<typeof currentQualificationSnapshot>; publishedPresentation?: PublishedPresentation;
     workbookPublished: Map<number, OfficialPublishedFact> }][] = []
   if (!ids.length) return new Map(hydrated)
-  const loaded = await readQualificationInputs(tx, ids, asOf, { mode, title }, readPlatform)
+  const loaded = await readQualificationInputs(tx, ids, asOf, mode, readPlatform)
   const titles = mode === 'workbook' ? CURRENT_TITLES.slice(0, CURRENT_TITLES.indexOf(title) + 1) : CURRENT_TITLES
   const { readPublished } = await prepareDetailedQualificationSources(tx, loaded, titles, receiptRuntime)
   for (const [id, inputs] of loaded) {
@@ -406,7 +393,7 @@ export async function readPostgresEffectiveQualifications(tx: PostgresQualificat
 }
 
 export async function readPostgresDifferenceQualifications(tx: PostgresQualificationTransaction, ids: readonly number[], asOf: number) {
-  const loaded = await readQualificationInputs(tx, ids, asOf, { mode: 'detail', title: 'specialized_sme' })
+  const loaded = await readQualificationInputs(tx, ids, asOf, 'detail')
   const { coverage } = await prepareDetailedQualificationSources(tx, loaded, CURRENT_TITLES)
   return {
     coverage,
@@ -418,7 +405,7 @@ export async function readPostgresDifferenceQualifications(tx: PostgresQualifica
 
 export async function readPostgresRosterDetailQualification(tx: PostgresQualificationTransaction,
   requestedId: number, asOf: number, copies: (enterpriseId:number)=>Promise<OfficialPublishedScope[]>) {
-  const loaded = await readQualificationInputs(tx, [requestedId], asOf, { mode: 'roster-detail', title: 'specialized_sme' })
+  const loaded = await readQualificationInputs(tx, [requestedId], asOf, 'roster-detail')
   const inputs = loaded[0]?.[1]
   if (!inputs) return null
   const input = inputs.get('specialized_sme')!
@@ -450,7 +437,7 @@ export async function readPostgresRosterDetailQualification(tx: PostgresQualific
 }
 
 export async function readPostgresLegacyQualification(tx: PostgresQualificationTransaction, enterpriseId: number, asOf: number) {
-  const loaded = await readQualificationInputs(tx, [enterpriseId], asOf, { mode: 'detail', title: 'specialized_sme' })
+  const loaded = await readQualificationInputs(tx, [enterpriseId], asOf, 'detail')
   const inputs = loaded[0]?.[1]
   if (!inputs) throw new Error('Qualification enterprise not found')
   const owner = inputs.get('specialized_sme')!.enterprise.id

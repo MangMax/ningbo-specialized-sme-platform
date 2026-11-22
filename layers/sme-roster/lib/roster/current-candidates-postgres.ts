@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { record } from '../../../../db/postgresql/ledger-tables'
@@ -6,7 +6,6 @@ import {
   platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformObservationAssignment,
   platformRecognizedProjection,
 } from '../../../../db/postgresql/platform-tables'
-import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import { normalizeUscc } from '../domain'
 import { isCurrentPlatformObservation } from '../platform/current-observation-postgres'
@@ -47,8 +46,6 @@ export async function readPostgresCurrentCandidateIds(db: Reader, title: Current
   })
     .from(record).where(inArray(record.titleCode, titles))
     .union(db.select({ id: differenceReason.enterpriseId, uscc: noUscc }).from(differenceReason).where(inArray(differenceReason.titleCode, titles)))
-    .union(db.select({ id: recordCorrespondence.enterpriseId, uscc: noUscc }).from(recordCorrespondence)
-      .where(and(inArray(recordCorrespondence.titleCode, titles), isNotNull(recordCorrespondence.enterpriseId))))
     .union(db.select({
       id: assignment.enterpriseId,
       uscc: sql<string | null>`CASE WHEN ${assignment.enterpriseId} IS NULL THEN ${assignment.uscc} END`,

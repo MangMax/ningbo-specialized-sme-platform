@@ -46,7 +46,7 @@ function snapshot(id: number, pending: boolean, selectedTitle: CurrentTitle = 'i
 function row(id: number, name: string, pending: boolean, selectedTitle: CurrentTitle = 'innovative_sme'): CurrentQualifiedRow {
   return { enterpriseId: id, name, uscc: null, district: '鄞州区', publishedNames: [name], aliases: [], firstYear: pending ? 2022 : 2025,
     basis: 'synthetic formal basis', reviews: pending ? '复核结论未知' : '', publication: '已见本称号宁波公布记录', notes: [], references: [], group: pending ? 'excluded' : 'eligible',
-    recognition: pending ? null : { precision: 'year', year: 2025 }, qualificationWitnesses: pending ? [] : [{ cycle: { originYear: 2025, batchSeq: 1 }, awardEventId: id + 1000, recognition: { precision: 'year', year: 2025 }, matchedValidYear: null, matchedMaintenance: null, correspondenceId: null, conditionQueryId: null }], matchedValidYears: [], matchedMaintenance: [],
+    recognition: pending ? null : { precision: 'year', year: 2025 }, qualificationWitnesses: pending ? [] : [{ cycle: { originYear: 2025, batchSeq: 1 }, awardEventId: id + 1000, recognition: { precision: 'year', year: 2025 }, matchedValidYear: null, matchedMaintenance: null }], matchedValidYears: [], matchedMaintenance: [],
     publishedPresentation: { availability: 'available', error: null, facts: [{ evidenceId: id + 2000, eventId: id + 1000, revision: 1, availability: 'captured', nameRaw: name, sourceBindingKnown: true }] }, qualificationAssessment: snapshot(id, pending, selectedTitle) }
 }
 // Five-state responses have one rowset. Each fixture is literal wire data;

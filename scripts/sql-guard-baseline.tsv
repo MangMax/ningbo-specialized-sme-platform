@@ -185,7 +185,6 @@ layers/sme-roster/lib/roster/query-coverage-postgres.ts	TI58rY_z2f9VrwtXjZyqs0MP
 layers/sme-roster/lib/roster/query-coverage-postgres.ts	TmP5WZGLeq8U2yMkSaGYYAUkVwLzRl4g1hBb0mTlt9Ng	Drizzle 0.45.4 无 JSON 表值函数、WITH ORDINALITY、JSON 访问运算符和数组构造器，保留重复目标及请求顺序。
 layers/sme-roster/lib/roster/query-coverage-postgres.ts	TOmaB-9sDQ6uxzA7fJcvkDSlSU_VSMTFp1FBXHhYgBGE	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
 layers/sme-roster/lib/roster/query-coverage-postgres.ts	TVJ_r6GTqg-6k8A0AxywOEiNtA0qSeB8oohCtzj7KwI4	Drizzle 0.45.4 无 JSON 表值函数、WITH ORDINALITY、JSON 访问运算符和数组构造器，保留重复目标及请求顺序。
-layers/sme-roster/lib/roster/recognized-witness-postgres.ts	TRlqV4us0D7uRVP_ZauIdqNhqqeN4GbAnfpryO3QvmTY	Bind an entire observation ID list as one PostgreSQL array parameter.
 layers/sme-roster/server/modules/sme-roster/files.ts	Th-FQU1jlZU-DQaW_uBwr-syF7EIcQ7PIiI3DRgnboXw	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
 layers/sme-roster/server/modules/sme-roster/files.ts	Tk7APnncTb5yvyBGetgApZ6ENzmFYRdpyE1Jl3BNJY7g	Drizzle 0.45.4 无表达式 COLLATE 构造器，保留 C 字节序，匹配原查询排序或索引。
 layers/sme-roster/server/utils/announcement-evidence-postgres.ts	Tg99io4zncrZyUuGYbhQeNpLOxa8Y44wiGSur4M5sM8Y	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
