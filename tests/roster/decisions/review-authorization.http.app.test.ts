@@ -5,7 +5,8 @@ import {qualificationExportFixture} from '../current-export/fixtures/qualificati
 const f=qualificationExportFixture()
 beforeAll(()=>{ vi.stubEnv('NUXT_MCP_TOKEN', f.token); return f.start() },60000)
 afterAll(async()=>{ try { await f.close() } finally { vi.unstubAllEnvs() } })
-it.each(['difference_snapshot','refresh_enterprise_differences'])('protects %s at HTTP and SDK boundaries',async name=>{
+it('protects difference_snapshot at HTTP and SDK boundaries',async ()=>{
+  const name = 'difference_snapshot'
  for(const auth of [undefined,'Bearer incorrect']){
   const response=await fetch(f.url('/mcp'),{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream',...(auth?{authorization:auth}:{})},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:{}}})})
   expect(response.status).toBe(401)
@@ -18,7 +19,7 @@ it.each(['difference_snapshot','refresh_enterprise_differences'])('protects %s a
    else {
     expect((await client.listTools()).tools.map(t=>t.name)).toContain(name)
     // Invalid input reaches validation, but must not execute a write.
-    const result=await client.callTool({name,arguments:name==='refresh_enterprise_differences'?{enterpriseIds:[]}: {}}).catch(error=>error)
+    const result=await client.callTool({name,arguments:{}}).catch(error=>error)
     expect(result).toMatchObject({isError:true})
    }
   }finally{await client.close()}

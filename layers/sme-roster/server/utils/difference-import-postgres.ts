@@ -1,10 +1,10 @@
-import { and, eq, exists, gte, isNotNull, notExists, or, sql } from 'drizzle-orm'
+import { isManagedDifference } from './decision-lifecycle/reviewed-decisions'
+import { and, eq, gte, notExists, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { differenceMeasures, differenceReasons, differenceStatuses } from '../../../../db/difference-codes'
-import { COMPARISON_DIRECTIONS } from '../../lib/comparison-model'
+import { COMPARISON_DIRECTIONS } from '../../lib/difference-coordinate-model'
 import { enterprise, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
 import { differenceReason as d } from '../../../../db/postgresql/roster-selection-tables'
-import { evidenceReviewReceipt114 as receipt } from '../../../../db/postgresql/evidence-review-tables'
 import { platformBusinessObservation as observation, platformCollection, platformCollectionPage as page,
   platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { postgresCanonicalEnterpriseId } from '../../../core/server/public'
@@ -163,11 +163,7 @@ async function planDifference(tx: Tx, difference: RosterImportDifference, index:
   if (mismatch) return reject('evidence_subject_mismatch', mismatch, 'evidenceRelationRef')
 
   const scope = and(eq(d.enterpriseId, enterprise.id), eq(d.titleCode, difference.titleCode), eq(d.direction, difference.direction))
-  const adopted = exists(tx.select({ id: receipt.id }).from(receipt).where(and(
-    or(eq(receipt.decisionId, d.id), eq(receipt.sourceDecisionId, d.id)),
-    isNotNull(receipt.reviewedRevisionId),
-  )))
-  const [managed] = await tx.select({ id: d.id }).from(d).where(and(scope, or(isNotNull(d.lifecycleAction), adopted))).limit(1)
+  const [managed] = await tx.select({ id: d.id }).from(d).where(and(scope, isManagedDifference())).limit(1)
   if (managed) return reject('decision_lifecycle_required', '该企业称号方向已采用差异决定生命周期；请用 /api/roster/decision-lifecycle/commands 或 save_difference_decision', 'differences')
   const [existing] = await tx.select({ id: d.id }).from(d).where(and(scope, eq(d.recordedAt, recordedAt)))
   const existingId = existing?.id ?? null

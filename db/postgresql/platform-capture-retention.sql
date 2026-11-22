@@ -12,15 +12,15 @@ CREATE OR REPLACE TRIGGER platform_apply_projection_append_only
 
 DROP TRIGGER IF EXISTS platform_observation_public_id_retained ON platform_business_observation;
 
-ALTER TABLE record_correspondence ADD COLUMN IF NOT EXISTS platform_evidence_rebound_revision bigint;
 ALTER TABLE difference_reason
   ADD COLUMN IF NOT EXISTS original_evidence_relation_public_id bigint,
   ADD COLUMN IF NOT EXISTS original_evidence_query_public_id bigint;
 
-DROP FUNCTION IF EXISTS prune_platform_captures(bigint[], boolean);
-
+-- The one-time retirement upgrade installs this function and drops the legacy
+-- overload business.prune_platform_captures(bigint[], boolean, bigint[])
+-- in the same transaction that removes the retired tables and their foreign keys.
 CREATE OR REPLACE FUNCTION prune_platform_captures(
-  selected_records bigint[], keep_previous boolean, valid_source_edges bigint[]
+  selected_records bigint[], keep_previous boolean
 ) RETURNS integer LANGUAGE plpgsql SET search_path = business, pg_catalog AS $$
 DECLARE
   superseded bigint[];
@@ -60,18 +60,15 @@ BEGIN
     LEFT JOIN kept k USING (record_id, collection_id)
     WHERE r.recency > 1
   ), referenced_observations AS (
-    SELECT o.id, o.record_id
-    FROM old_captures o JOIN record_correspondence e ON e.observation_id = o.id
-    UNION
-    SELECT o.id, o.record_id
+    SELECT DISTINCT o.id, o.record_id
     FROM old_captures o JOIN difference_reason d ON d.evidence_relation_id = o.id
   ), referenced_records AS (
     SELECT DISTINCT record_id FROM referenced_observations
   ), title_codes(rdjb, code) AS (
     VALUES ('1', 'innovative_sme'), ('2', 'specialized_sme'), ('3', 'little_giant')
   ), evidence_rows AS MATERIALIZED (
-    SELECT o.id, o.public_id, o.sequence_no, r.record_id, o.version_id, r.recency, c.id AS collection_id,
-      c.public_id AS collection_public_id, c.interface, c.query_key, c.rdjb, c.queried_at,
+    SELECT o.id, o.public_id, r.record_id, o.version_id, r.recency, c.id AS collection_id,
+      c.public_id AS collection_public_id,
       owner.enterprise_id, owner.verification_status, owner.revision AS assignment_revision,
       CASE WHEN owner.verification_status = 'confirmed' THEN 2 ELSE 0 END
         + CASE WHEN owner.match_basis <> 'none' THEN 1 ELSE 0 END AS ownership_strength,
@@ -161,11 +158,9 @@ BEGIN
     )) OVER (PARTITION BY record_id, effective_title ORDER BY recency ROWS UNBOUNDED PRECEDING) AS uninterrupted
     FROM round_timeline
   ), replacements AS MATERIALIZED (
-    SELECT old.id AS old_id, old.recency, old.collection_id AS old_collection_id,
+    SELECT old.id AS old_id, old.collection_id AS old_collection_id,
       old.public_id AS old_public_id, old.collection_public_id AS old_collection_public_id,
-      live.id, live.public_id, live.sequence_no, live.collection_id,
-      live.collection_public_id, live.interface, live.query_key, live.rdjb, live.queried_at, live.effective_title,
-      live.enterprise_id, live.verification_status, live.assignment_revision
+      live.id, live.collection_id, live.effective_title, live.enterprise_id, live.verification_status
     FROM referenced_observations refs
     JOIN evidence_rows old ON old.id = refs.id
     JOIN uninterrupted_rounds source ON source.record_id = old.record_id AND source.recency = old.recency
@@ -174,40 +169,6 @@ BEGIN
     JOIN equivalent_round_rows target ON target.record_id = old.record_id AND target.version_id = old.version_id
       AND target.effective_title = old.effective_title AND target.recency = 1
     JOIN evidence_rows live ON live.id = target.observation_id AND live.evidence = old.evidence
-  ), edge_destinations AS (
-    SELECT e.id AS edge_id, e.status, r.*,
-      -- These compact JSON arrays match the JavaScript correspondenceEdgeKey input.
-      encode(sha256(convert_to(CASE e.type
-        WHEN 'later_process' THEN format('[%s,%s,%s,%s,%s,%s]',
-          to_json(e.type), e.enterprise_id, to_json(e.title_code), coalesce(e.predecessor_event_id::text, 'null'),
-          r.public_id, to_json(e.role))
-        WHEN 'event_process' THEN format('[%s,%s,%s,%s]', to_json(e.type), e.event_id, r.public_id, to_json(e.role))
-        WHEN 'event_recognized' THEN format('[%s,%s,%s,%s]', to_json(e.type), e.event_id, r.public_id, to_json(e.role))
-        WHEN 'process_export_context' THEN format('[%s,%s,%s,%s]', to_json(e.type), r.public_id, e.export_row_id, to_json(e.role))
-        WHEN 'recognized_export' THEN format('[%s,%s,%s,%s]', to_json(e.type), r.public_id, e.export_row_id, to_json(e.role))
-      END, 'UTF8')), 'hex') AS destination_key
-    FROM record_correspondence e
-    JOIN replacements r ON e.observation_id = r.old_id AND e.title_code = r.effective_title
-    WHERE (e.enterprise_id IS NULL OR r.enterprise_id IS NULL OR e.enterprise_id = r.enterprise_id)
-      AND ((e.type = 'later_process' AND e.enterprise_id IS NOT NULL)
-        OR (e.type IN ('event_process', 'event_recognized') AND e.event_id IS NOT NULL)
-        OR (e.type IN ('process_export_context', 'recognized_export') AND e.export_row_id IS NOT NULL))
-  ), uncontested_edges AS (
-    SELECT destination_key, (array_agg(edge_id ORDER BY recency, edge_id DESC))[1] AS edge_id
-    FROM edge_destinations
-    GROUP BY destination_key
-    HAVING count(DISTINCT status) = 1 AND min(status) IN ('candidate', 'confirmed', 'rejected', 'unlinked')
-  ), rebound_edges AS (
-    UPDATE record_correspondence e
-    SET observation_id = dest.id, edge_key = dest.destination_key, platform_evidence_rebound_revision = CASE WHEN e.id = ANY(valid_source_edges) THEN dest.assignment_revision END,
-      target_identity = (e.target_identity::jsonb || jsonb_build_object(
-        'relationId', dest.public_id, 'queryId', dest.collection_public_id,
-        'queryNaturalKey', jsonb_build_array(dest.interface, dest.query_key, dest.rdjb, dest.queried_at, dest.sequence_no)
-      ))::text
-    FROM edge_destinations dest JOIN uncontested_edges winner
-      ON winner.destination_key = dest.destination_key AND winner.edge_id = dest.edge_id
-    WHERE e.id = dest.edge_id
-      AND NOT EXISTS (SELECT 1 FROM record_correspondence another WHERE another.edge_key = dest.destination_key)
   ), rebound_decisions AS (
     UPDATE difference_reason d
     SET evidence_relation_id = r.id, evidence_query_id = CASE WHEN d.evidence_query_id IS NOT NULL THEN r.collection_id END,
@@ -235,9 +196,6 @@ BEGIN
            THEN 'premise_invalid' ELSE 'evidence_changed' END
     FROM platform_business_observation o
    WHERE d.evidence_relation_id = o.id AND o.id = ANY(superseded);
-
-  UPDATE record_correspondence SET observation_id = NULL, platform_evidence_rebound_revision = NULL
-  WHERE observation_id = ANY(superseded);
 
   IF expired IS NULL THEN
     RETURN 0;

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { TitleCode } from '../../../db/titles'
-import { getPostgresComparison, type ComparisonDirection } from '../../../layers/sme-roster/lib/comparison'
+import { readPostgresDifferenceCoordinates } from '../../../layers/sme-roster/lib/difference-coordinates-postgres'
+import type { ComparisonDirection } from '../../../layers/sme-roster/lib/difference-coordinate-model'
 import type { EventType } from '../../../layers/sme-roster/lib/query-projection'
 import * as schema from '../fixtures/postgres-tables'
 import { useIsolatedPostgresCases, singlePostgresFixtureRow } from '../../support/isolated-postgres-cases'
@@ -55,9 +56,9 @@ beforeEach(async () => {
 
 
 const members = async (direction: ComparisonDirection, title = 'specialized_sme') =>
-  (await getPostgresComparison(db, { title: [title], direction })).rows.map((r) => r.enterpriseId).sort((a, b) => a - b)
+  (await readPostgresDifferenceCoordinates(db, { title: [title], direction })).rows.map((r) => r.enterpriseId).sort((a, b) => a - b)
 
-describe('getPostgresComparison 统代差集(企业 × 称号)', () => {
+describe('PostgreSQL 统代差集(企业 × 称号)', () => {
   it('returns exact member sets for both directions without name fallback', async () => {
     expect(await members('missing_in_miit')).toEqual(
       ['jxj', 'nurture', 'conflictJ', 'noUscc', 'nullJ'].map((key) => ids[key]!).sort((a, b) => a - b),
@@ -68,17 +69,17 @@ describe('getPostgresComparison 统代差集(企业 × 称号)', () => {
   })
 
   it('excludes a matching USCC from both directions', async () => {
-    expect((await getPostgresComparison(db)).rows.filter((r) => r.enterpriseId === ids.both)).toEqual([])
+    expect((await readPostgresDifferenceCoordinates(db)).rows.filter((r) => r.enterpriseId === ids.both)).toEqual([])
   })
 
   it('includes nurture-only records in J(T), with and without a matching MIIT record', async () => {
     expect(await members('missing_in_miit')).toContain(ids.nurture)
     expect(await members('extra_in_miit')).not.toContain(ids.nurture)
-    expect((await getPostgresComparison(db)).rows.filter((r) => r.enterpriseId === ids.nurtureMatched)).toEqual([])
+    expect((await readPostgresDifferenceCoordinates(db)).rows.filter((r) => r.enterpriseId === ids.nurtureMatched)).toEqual([])
   })
 
   it('exposes the same legal person with different source USCCs in both directions', async () => {
-    const rows = (await getPostgresComparison(db)).rows.filter((r) => r.name === '宁波市鄞州区规划设计院')
+    const rows = (await readPostgresDifferenceCoordinates(db)).rows.filter((r) => r.name === '宁波市鄞州区规划设计院')
     expect(rows.map((r) => [r.uscc, r.direction]).sort()).toEqual([
       ['12330227732092318Q', 'missing_in_miit'],
       ['9133021257053651XQ', 'extra_in_miit'],
@@ -91,7 +92,7 @@ describe('getPostgresComparison 统代差集(企业 × 称号)', () => {
   })
 
   it('counts each enterprise × title once, regardless of event count or year', async () => {
-    expect((await getPostgresComparison(db)).rows.filter((r) => r.enterpriseId === ids.jxj)
+    expect((await readPostgresDifferenceCoordinates(db)).rows.filter((r) => r.enterpriseId === ids.jxj)
       .map((r) => [r.titleCode, r.direction])).toEqual([
       ['specialized_sme', 'missing_in_miit'],
       ['innovative_sme', 'extra_in_miit'],
@@ -100,10 +101,10 @@ describe('getPostgresComparison 统代差集(企业 × 称号)', () => {
   })
 
   it('keeps migrated and deregistered enterprises and exposes evidence', async () => {
-    expect((await getPostgresComparison(db)).rows.find((r) => r.enterpriseId === ids.offCity)).toEqual({
+    expect((await readPostgresDifferenceCoordinates(db)).rows.find((r) => r.enterpriseId === ids.offCity)).toEqual({
       enterpriseId: ids.offCity,
       name: '迁出注销企业', uscc: 'OFF-CITY', district: '鄞州区',
-      titleCode: 'specialized_sme', direction: 'extra_in_miit', curated: false,
+      titleCode: 'specialized_sme', direction: 'extra_in_miit',
       evidence: { matchedBy: 'uscc', otherSideUscc: null, currentCity: '嘉兴市', regStatus: '注销' },
     })
   })
@@ -120,15 +121,15 @@ describe('getPostgresComparison 统代差集(企业 × 称号)', () => {
     expect(await members('missing_in_miit', 'little_giant')).toEqual([ids.giantJ])
     expect(await members('extra_in_miit', 'little_giant')).toEqual([ids.giantM])
     // 两侧统代一致的那家**两个方向都不出现**(与其它称号同一判据)。
-    expect((await getPostgresComparison(db)).rows.filter((r) => r.enterpriseId === ids.giantBoth)).toEqual([])
+    expect((await readPostgresDifferenceCoordinates(db)).rows.filter((r) => r.enterpriseId === ids.giantBoth)).toEqual([])
     // 筛选小巨人时只看得到小巨人,不会串到别的称号。
     expect(
-      (await getPostgresComparison(db, { title: ['little_giant'] })).rows.map((r) => r.titleCode),
+      (await readPostgresDifferenceCoordinates(db, { title: ['little_giant'] })).rows.map((r) => r.titleCode),
     ).toEqual(['little_giant', 'little_giant'])
   })
 
   it('returns global counts consistent with complete rows and independent of filters', async () => {
-    const all = await getPostgresComparison(db)
+    const all = await readPostgresDifferenceCoordinates(db)
     expect(all.counts).toEqual({
       little_giant: { missing_in_miit: 1, extra_in_miit: 1 },
       specialized_sme: { missing_in_miit: 5, extra_in_miit: 5 },
@@ -139,10 +140,9 @@ describe('getPostgresComparison 统代差集(企业 × 称号)', () => {
         expect(all.rows.filter((r) => r.titleCode === title && r.direction === direction)).toHaveLength(n)
       }
     }
-    const filtered = await getPostgresComparison(db, { title: ['specialized_sme'], direction: 'missing_in_miit' })
+    const filtered = await readPostgresDifferenceCoordinates(db, { title: ['specialized_sme'], direction: 'missing_in_miit' })
     expect(filtered.rows).toHaveLength(5)
     expect(filtered.rows.every((r) => r.direction === 'missing_in_miit' && r.titleCode === 'specialized_sme')).toBe(true)
     expect(filtered.counts).toEqual(all.counts)
-    expect(all.rows.every((r) => r.curated === false)).toBe(true)
   })
 })

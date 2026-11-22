@@ -97,7 +97,7 @@ it('preserves validation errors without leaving staged files even when the disk 
   state.fail = true
   const response = await fetch(`${baseUrl}/api/export?mode=comparison`)
   expect(response.status).toBe(400)
-  expect((await response.json()).statusMessage).toBe('Comparison export requires a valid title and direction')
+  expect((await response.json()).statusMessage).toBe('Unsupported export mode')
   expect(state.directories.every((folder) => !existsSync(folder))).toBe(true)
 })
 

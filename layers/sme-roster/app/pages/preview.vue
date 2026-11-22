@@ -13,9 +13,13 @@ import { Button } from '#core/app/components/ui/button'
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '#core/app/components/ui/breadcrumb'
 
 const route = useRoute()
+const router = useRouter()
 const { parsed, sourcePage, target, invalid, visible, changeView } = useSourcePdfRoute()
 const file = computed(() => parsed.value.file)
-const backTo = computed(() => parsed.value.back || ROSTER_LEDGER_PATH)
+const backTo = computed(() => {
+  const back = parsed.value.back
+  return back && router.resolve(back).matched.length ? back : ROSTER_LEDGER_PATH
+})
 const backLabel = computed(() => {
   const path = new URL(backTo.value, 'http://app.invalid').pathname
   if (/^\/enterprises\/\d+\/?$/.test(path)) return '企业详情'
@@ -24,7 +28,6 @@ const backLabel = computed(() => {
     '/files': '文件管理',
     [ROSTER_FILES_PATH]: '名单文件',
     [ROSTER_LEDGER_PATH]: ENTERPRISE_LIST_TITLE,
-    '/comparison': ENTERPRISE_LIST_TITLE,
     '/ocr': '识别校对',
     '/platform-queries': '平台查询历史',
   }

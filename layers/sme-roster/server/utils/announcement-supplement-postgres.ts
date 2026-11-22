@@ -8,7 +8,7 @@ import type {
   SupplementAnnouncementPreflightResult, SupplementAnnouncementResponse,
 } from '../../lib/roster-import-client'
 import { readPostgresLegacyQualification } from '../../lib/roster/current-qualification-postgres'
-import { isPostgresImportWriteRejection, lockPostgresRosterImportBatch, lockPostgresRosterImportKey } from './roster-export-import-postgres'
+import { isPostgresImportWriteRejection, lockPostgresRosterImportBatch, lockPostgresRosterImportKey, runPostgresImportTransaction } from './roster-export-import-postgres'
 import { announcementIntakeDigest, type supplementSchema } from './announcement-intake-model'
 import { readPostgresIntakeRow } from './announcement-intake-postgres'
 import { reviewPostgresAnnouncementSubjects } from './announcement-subjects-postgres'
@@ -17,7 +17,6 @@ import { attachPostgresAnnouncementSources, writePostgresAnnouncement } from './
 import { ImportReceiptError } from './import-receipt-model'
 import { applyPostgresOfficialImport, createPostgresOfficialImportState, finishPostgresOfficialImport } from './official-evidence-import-postgres'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
-import { runPostgresCorrespondenceTransaction } from './record-correspondence-write-postgres'
 import { importPostgresReceiptRedactor } from './import-receipt-redaction'
 import { publicRosterImportItems } from './roster-import-model'
 import { createPostgresImportSteps, executePostgresImportSteps } from './roster-mixed-import-postgres'
@@ -62,7 +61,7 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
   const decision = announcementIntakeDigest(review)
   const redactor = await importPostgresReceiptRedactor(db)
   const requestHash = announcementIntakeDigest({ ...request, sourceSha256: request.sourceSha256 ?? null })
-  return runPostgresCorrespondenceTransaction(db, async tx => {
+  return runPostgresImportTransaction(db, async tx => {
     await lockPostgresRosterImportKey(tx, request.idempotencyKey)
     const row = await readPostgresIntakeRow(tx, id, true)
     if (row.digest !== input.sourceDigest) throw new ImportReceiptError(409, 'source_changed', 'Announcement version changed')
@@ -150,10 +149,8 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
         const publicItems = publicRosterImportItems(items, batchId!)
         await recordSupplementReceipt(nested, { batchId: batchId!, requestHash, status: 'committed',
           summary, items: redactor(publicItems), startedAt, completedAt })
-        const candidateTaskIds = extra?.summary ? extra.candidateTaskIds : undefined
         const receipt: SupplementAnnouncementResponse = { batchId: batchId!, status: 'supplemented', summary, items: publicItems, error: null,
-          qualificationReadback: readback, intakeId: id, sourceIds, owners: [...owners.values()],
-          ...(candidateTaskIds?.length ? { candidateTaskIds } : {}) }
+          qualificationReadback: readback, intakeId: id, sourceIds, owners: [...owners.values()] }
         await nested.update(rosterAnnouncementIntake).set({
           supplementDigest: decision, reviewedRequest: JSON.stringify(input), receipt: JSON.stringify(receipt),
         }).where(eq(rosterAnnouncementIntake.id, id))

@@ -18,7 +18,6 @@ function crossRequestLiteralRows(asOf: string): CurrentQualifiedRow[] {
       subject: { status: 'not_established', message: '未见主体终止事实', decisionIds: [] },
       region: { status: 'ningbo', message: '合成宁波正式范围', decisionIds: [enterpriseId * 10 + 401] },
       platform: { status: 'not_queried', comparison: 'not_established', message: '未查询不否定正式资格', truncated: false, observations: [] },
-      correspondence: { status: 'unmatched', message: '对应不代替资格', refs: [] },
       completeness: { status: 'recorded', message: '合成字段已记录', gaps: [], eventIds: [], fieldGaps: [], publishedNames: [{ evidenceId: eventId + 100, availability: 'captured', nameKnown: true }] },
       evidence: [{ eventId, revision: 1, eventType: 'award', year: 2025, batchSeq: 1, decidedYear: 2025, reviewOutcome: null, evidenceIds: [eventId + 100] }],
       sourceVersions: [{ evidenceId: eventId + 100, eventId, sourceFile: 'synthetic/408/adapter-literal.pdf', storedFileId: null, sha256: null, bytes: null, removedAt: null, capturedRevision: 1, capturedSha256: '5'.repeat(64) }],
@@ -29,8 +28,8 @@ function crossRequestLiteralRows(asOf: string): CurrentQualifiedRow[] {
       enterpriseId, name: `synthetic_408_adapter_${enterpriseId}`, uscc: null, district: '鄞州区', publishedNames: [`synthetic_408_published_${enterpriseId}`], aliases: ['synthetic_408_confirmed_alias'], firstYear: 2025,
       basis: 'synthetic_408_basis', reviews: '', publication: '已见本称号宁波公布记录', notes: [], references: [`evidence:${enterpriseId * 10 + 103}`], group: 'eligible',
       recognition: { precision: 'year', year: 2025 }, matchedValidYears: [2028], matchedMaintenance: [{ year: 2024, batch: null }],
-      qualificationWitnesses: [{ cycle: { originYear: 2025, batchSeq: 1 }, awardEventId: enterpriseId * 10 + 3, recognition: { precision: 'year', year: 2025 }, matchedValidYear: 2028, matchedMaintenance: { year: 2024, batch: null }, correspondenceId: enterpriseId * 10 + 201, conditionQueryId: enterpriseId * 10 + 301 }],
-      workbookFacts: { events: [], evidence: [], migration: [{ basis: 'synthetic_408_validity', awardYear: 2025, validFrom: '2025-01-01', validUntil: '2028-12-31', publicationScope: '宁波市' }], platform: [], assessments: [], correspondenceNeedsRevalidation: false },
+      qualificationWitnesses: [{ cycle: { originYear: 2025, batchSeq: 1 }, awardEventId: enterpriseId * 10 + 3, recognition: { precision: 'year', year: 2025 }, matchedValidYear: 2028, matchedMaintenance: { year: 2024, batch: null } }],
+      workbookFacts: { events: [], evidence: [], migration: [{ basis: 'synthetic_408_validity', awardYear: 2025, validFrom: '2025-01-01', validUntil: '2028-12-31', publicationScope: '宁波市' }], platform: [], assessments: [] },
       publishedPresentation: { availability: 'available', error: null, facts: [{ evidenceId: enterpriseId * 10 + 103, eventId: enterpriseId * 10 + 3, revision: 1, availability: 'captured', nameRaw: `synthetic_408_published_${enterpriseId}`, sourceBindingKnown: true }] },
       qualificationAssessment: { ...scope, titles, snapshotId: createHash('sha256').update(JSON.stringify([scope, titles])).digest('hex') },
     }

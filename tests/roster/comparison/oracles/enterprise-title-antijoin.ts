@@ -1,5 +1,5 @@
 import { orderBy } from 'es-toolkit'
-import type { ComparisonRow, ComparisonCounts, ComparisonQuery } from '../../../../layers/sme-roster/lib/comparison-model'
+import type { ComparisonRow, ComparisonCounts, ComparisonQuery } from '../../../../layers/sme-roster/lib/difference-coordinate-model'
 import type { TitleCode } from '../../../../db/titles'
 import { TITLE_ORDER } from '../../../../layers/sme-roster/lib/labels'
 
@@ -30,7 +30,7 @@ export function readBaselineComparison(sources: readonly Source[], opts: Compari
     if (differences.has(key)) continue
     counts[titleCode][direction]++
     differences.set(key, {
-      enterpriseId: row.enterpriseId, name: row.name, uscc: row.uscc, district: row.district, titleCode, direction, curated: false,
+      enterpriseId: row.enterpriseId, name: row.name, uscc: row.uscc, district: row.district, titleCode, direction,
       evidence: { matchedBy: 'uscc', otherSideUscc: null, currentCity: row.currentCity, regStatus: row.regStatus },
     })
   }

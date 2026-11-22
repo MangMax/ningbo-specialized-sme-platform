@@ -137,13 +137,6 @@ export interface RecognizedDirectoryListResult {
   pageSize: number
 }
 
-/** Observation-scoped decision reference. Never copies a decision to other observations. */
-export interface RecognizedDirectoryCorrespondenceRef {
-  id: number
-  status: string
-  revision: number
-}
-
 export interface RecognizedDirectoryObservation {
   relationId: number
   queryId: number
@@ -162,8 +155,6 @@ export interface RecognizedDirectoryObservation {
   titleScopes: string[]
   /** True only when a known row-level rdjb contradicts the explicit query scope. */
   titleConflict: boolean
-  /** Original correspondence decisions for this exact observation only; IDs/status, no content. */
-  correspondenceRefs: RecognizedDirectoryCorrespondenceRef[]
   version: RecognizedDirectoryVersionFields | null
 }
 

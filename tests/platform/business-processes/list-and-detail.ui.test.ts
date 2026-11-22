@@ -33,7 +33,7 @@ const detail = {
   record: { id: 7, platformKey: 'SQ-2023-1', interface: 'business_list' as const, identityRuleVersion: 'platform-observation-v1', createdAt: '2026-10-01T00:00:00Z' },
   current: version,
   versions: [{ ...version, hashAlgorithm: 'platform-row-json-v1', contentHash: 'a'.repeat(64), createdAt: '2026-10-01T00:00:00Z', observationCount: 2, firstObservedAt: '2026-10-01T00:00:00Z', lastObservedAt: '2026-10-02T00:00:00Z', titleScopes: ['2'] }],
-  observations: [{ relationId: 9, queryId: 4, queriedAt: '2026-10-01T00:00:00Z', queryKey: '91330211255994457P', queryStatus: 'success', sequenceNo: 1, enterpriseId: 11, enterpriseName: '甲办理企业', identityState: 'resolved' as const, contentState: 'verified' as const, keySource: 'both' as const, projectionRuleVersion: 'platform-observation-v1', versionId: 12, titleScopes: ['2'], correspondenceRefs: [{ id: 1, status: 'confirmed', revision: 2 }], version }],
+  observations: [{ relationId: 9, queryId: 4, queriedAt: '2026-10-01T00:00:00Z', queryKey: '91330211255994457P', queryStatus: 'success', sequenceNo: 1, enterpriseId: 11, enterpriseName: '甲办理企业', identityState: 'resolved' as const, contentState: 'verified' as const, keySource: 'both' as const, projectionRuleVersion: 'platform-observation-v1', versionId: 12, titleScopes: ['2'], version }],
   counts: { versions: 1, observations: 2, versionsTruncated: false, observationsTruncated: true },
 }
 

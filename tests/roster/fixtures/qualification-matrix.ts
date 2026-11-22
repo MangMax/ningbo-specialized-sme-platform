@@ -4,7 +4,6 @@ import * as schema from './postgres-tables'
 import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import type { CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-titles'
 import type { PlatformRow } from '../../../layers/sme-roster/lib/platform/types'
-import { preflightPostgresCorrespondences, commitPostgresCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence-write-postgres'
 
 type QualificationEvent = { eventType: 'award' | 'review'; year: number | null; batchSeq?: number | null; decidedYear?: number | null; reviewOutcome?: 'passed' | 'failed' | null }
 
@@ -36,7 +35,6 @@ export function qualificationMatrix(db: NodePgDatabase) {
     const record = (await db.select().from(schema.record).where(eq(schema.record.id, event.recordId)))[0]!
     const titleCode = record.titleCode as CurrentTitle
     const rdjb = { innovative_sme: '1', specialized_sme: '2', little_giant: '3' }[titleCode]
-    // Different observations retain independent rows and event bindings.
     const ordinal = sourceSequence++
     const stamp = `2026-05-01T00:00:${String(ordinal).padStart(2, '0')}Z`
     rawFields = { id: `synthetic408-recognized-${ordinal}`, qymc:enterprise.name,tyshxydm:enterprise.usccNorm!,rdjb,...rawFields }
@@ -46,9 +44,6 @@ export function qualificationMatrix(db: NodePgDatabase) {
     const row = {sequenceNo:1,relationKey:rawFields.id,nameRaw:enterprise.name,usccRaw:enterprise.usccNorm,rawFields,enterpriseId,verificationStatus:'confirmed' as const,matchBasis:'uscc' as const}
     const result = await seedPostgresPlatformQuery(db,{interface:'recognized_list',queryKey:enterprise.usccNorm!,titleCode,rdjb,queriedAt:stamp,status:'success',collectionEvidence:evidence,relations:[row]})
     const relation = {...row,id:result.relationIds[0]!,queryId:result.queryId}
-    const request = { idempotencyKey: `synthetic408-${relation.id}`, sourceIdentity: `synthetic/408/${relation.id}`, actor: { type: 'agent' as const, id: 'synthetic408' }, basis: 'synthetic_408_confirmed_row', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create' as const, status: 'confirmed' as const, edge: { type: 'event_recognized' as const, eventId, relationId: relation.id, role: 'recognized_corrob' as const } }] }
-    const plan = await preflightPostgresCorrespondences(db, request)
-    await commitPostgresCorrespondences(db, request, plan.planHash)
     return relation
   }
   return { formal, platform, recognized }

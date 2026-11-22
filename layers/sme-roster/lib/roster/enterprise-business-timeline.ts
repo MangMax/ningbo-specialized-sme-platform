@@ -10,7 +10,7 @@ type BusinessEvent = Pick<PlatformQualificationFact, 'platformName' | 'title' | 
 }
 
 /** Detail-only presentation: source facts remain owned by the qualification reader.
- * No observation/version or correspondence is a business event. */
+ * Platform captures are source metadata. */
 export function enterpriseBusinessTimeline(
   enterpriseId: number,
   records: readonly { id: number; titleCode: string }[],

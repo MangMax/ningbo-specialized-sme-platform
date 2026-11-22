@@ -1,5 +1,4 @@
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
-import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
 import { createHash } from 'node:crypto'
@@ -118,6 +117,10 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
     expect(createHash('sha256').update(readFileSync(join(filesDir, 'notice.pdf'))).digest('hex')).toBe(sha256)
     const recovered = await fetch(api('evidence/corrections/batches/commit-audit'), { headers: { authorization: 'Bearer synthetic-api-token' } })
     expect(await json(recovered)).toEqual(receipt)
+    const legacyReceipt = { ...receipt, impact: { ...receipt.impact, correspondencePolicy: 'dynamic_source_fingerprint_revalidation' } }
+    await pool.query('UPDATE evidence_correction_batch SET receipt = $1 WHERE idempotency_key = $2',
+      [JSON.stringify(legacyReceipt), req.idempotencyKey])
+    expect(await json(await post('evidence/corrections/commit', { request: req, planHash: plan.planHash }))).toEqual(legacyReceipt)
   })
 
   it('exposes equivalent authenticated correction tools and bounded audit over real MCP', async () => {
@@ -251,29 +254,6 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
     expect((await post('evidence/corrections/commit', { request: req, planHash: plan.planHash })).status).toBe(200)
   })
 
-  it('marks confirmed related correspondences stale and permits explicit revalidation', async () => {
-    const target = await seedEvidence(17)
-    const { relationIds } = await seedPostgresPlatformQuery(db, { interface: 'business_list', queryKey: 'synthetic-101', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'partial', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, nameRaw: enterprise.name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
-    const relation = { id: relationIds[0]! }
-    const decision = { idempotencyKey: 'edge-before-101', sourceIdentity: 'synthetic/manual-101', actor: { type: 'agent', id: 'test' }, basis: '明确核对公开来源', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: event.id, relationId: relation.id, role: 'context_only' } }] }
-    const edgePlan = await json(await post('correspondences/preflight', decision))
-    const edgeReceipt = await json(await post('correspondences/commit', { request: decision, planHash: edgePlan.planHash }))
-    const edgeId = edgeReceipt.correspondenceIds[0]
-    const edgeRead = () => fetch(api('correspondences/' + edgeId)).then(json)
-    expect(await edgeRead()).toMatchObject({ status: 'confirmed', requiresRevalidation: false })
-    const req = request('edge-invalidating-correction', await read(target.id), 2)
-    const plan = await json(await post('evidence/corrections/preflight', req))
-    expect(plan.targets[0].relatedCorrespondences).toBe(1)
-    expect((await post('evidence/corrections/commit', { request: req, planHash: plan.planHash })).status).toBe(200)
-    const stale = await edgeRead()
-    expect(stale).toMatchObject({ status: 'confirmed', requiresRevalidation: true })
-    const reconfirm = { ...decision, idempotencyKey: 'edge-after-101', operations: [{ action: 'correct', correspondenceId: edgeId, expectedRevision: stale.revision, edge: decision.operations[0]!.edge }] }
-    const replan = await json(await post('correspondences/preflight', reconfirm))
-    expect((await post('correspondences/commit', { request: reconfirm, planHash: replan.planHash })).status).toBe(200)
-    expect(await edgeRead()).toMatchObject({ status: 'confirmed', requiresRevalidation: false })
-    expect((await post('evidence/pages', { entries: [{ sourceFile: 'notice.pdf', listNo: 17, page: 3, enterpriseId: enterprise.id, basis: '人工重核页图' }] })).status).toBe(200)
-    expect(await edgeRead()).toMatchObject({ status: 'confirmed', requiresRevalidation: true })
-  })
   it('publishes actionable OpenAPI coordinates and rejects unauthenticated or malformed requests', async () => {
     const spec = discovery
     const operation = spec.paths['/api/roster/evidence/corrections/preflight'].post.requestBody.content['application/json'].schema.properties.operations.items
@@ -303,38 +283,6 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
     } finally { await pool.query('UPDATE stored_file SET sha256 = $1 WHERE id = $2', [sha256, file.id]) }
   })
 
-  it.each(['atomic', 'legacy'])('keeps direct and predecessor confirmations stale after %s coordinate ABA', async mode => {
-    const target = await seedEvidence(mode === 'atomic' ? 30 : 31)
-    const { relationIds } = await seedPostgresPlatformQuery(db, { interface: 'business_list', queryKey: 'aba-' + mode, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'success', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, verificationStatus: 'confirmed', declareKind: 'apply', appliedAt: '2026-01-01' }] })
-    const relation = { id: relationIds[0]! }
-    const edges = [
-      { type: 'event_process', eventId: event.id, relationId: relation.id, role: 'context_only' },
-      { type: 'later_process', enterpriseId: enterprise.id, titleCode: 'specialized_sme', predecessorEventId: event.id, relationId: relation.id, role: 'followup_apply' },
-    ]
-    const decision = { idempotencyKey: 'aba-edges-' + mode, sourceIdentity: 'synthetic-aba-' + mode, actor: { type: 'agent', id: 'test' }, basis: 'explicit source and predecessor context review', ruleId: 'manual', ruleVersion: '1', operations: edges.map(edge => ({ action: 'create', status: 'confirmed', edge })) }
-    const edgePlan = await json(await post('correspondences/preflight', decision))
-    const edgeReceipt = await json(await post('correspondences/commit', { request: decision, planHash: edgePlan.planHash }))
-    const ids: number[] = edgeReceipt.correspondenceIds
-    const edgeRead = (id: number) => fetch(api('correspondences/' + id)).then(json)
-    for (const id of ids) expect((await edgeRead(id)).requiresRevalidation).toBe(false)
-    for (const page of [2, 1]) {
-      const row = await read(target.id)
-      if (mode === 'atomic') {
-        const req = request('aba-' + mode + '-' + page, row, page)
-        const plan = await json(await post('evidence/corrections/preflight', req))
-        expect((await post('evidence/corrections/commit', { request: req, planHash: plan.planHash })).status).toBe(200)
-      } else {
-        const response = await post('evidence/pages', { entries: [{ sourceFile: 'notice.pdf', listNo: row.coordinate.listNo, page, enterpriseId: enterprise.id, basis: 'explicit original page review' }] })
-        expect(await json(response)).toMatchObject({ summary: { written: 1 } })
-      }
-      for (const id of ids) expect((await edgeRead(id)).requiresRevalidation).toBe(true)
-    }
-    expect((await read(target.id)).coordinate.page).toBe(1)
-    const reconfirm = { ...decision, idempotencyKey: 'aba-reconfirm-' + mode, operations: await Promise.all(ids.map(async (id, index) => ({ action: 'correct', correspondenceId: id, expectedRevision: (await edgeRead(id)).revision, edge: edges[index] }))) }
-    const replan = await json(await post('correspondences/preflight', reconfirm))
-    expect((await post('correspondences/commit', { request: reconfirm, planHash: replan.planHash })).status).toBe(200)
-    for (const id of ids) expect((await edgeRead(id)).requiresRevalidation).toBe(false)
-  }, 15_000)
   it('advances one event revision per changed atomic batch and never for noops replay or dry runs', async () => {
     const a = await seedEvidence(32), b = await seedEvidence(33)
     const ar = await read(a.id), br = await read(b.id), revision = ar.event.revision

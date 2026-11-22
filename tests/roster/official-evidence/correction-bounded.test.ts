@@ -8,7 +8,6 @@ import { record as recordTable, recordEvent, recordEvidence } from '../../../db/
 import { storedFile } from '../../../db/postgresql/file-tables'
 import { rosterFileClassification } from '../../../db/postgresql/roster-file-tables'
 import { evidenceCorrectionAudit } from '../../../db/postgresql/official-evidence-tables'
-import { recordCorrespondence } from '../../../db/postgresql/qualification-tables'
 import pg from 'pg'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -40,12 +39,9 @@ it('bounds fixed evidence preflight and history materialization across unrelated
     actor: JSON.stringify({ type: 'legacy', id: 'synthetic-fixture' }), basis: 'synthetic historical fixture',
     before, after: before, createdAt: '2026-10-19',
   })))
-  const archive = await seedPostgresPlatformQuery(db, { interface: 'business_list', queryKey: 'unrelated-source', rdjb: '2',
+  await seedPostgresPlatformQuery(db, { interface: 'business_list', queryKey: 'unrelated-source', rdjb: '2',
     queriedAt: '2026-10-19', status: 'success', rawResponse: 'raw-sentinel'.repeat(1024),
     relations: [{ sequenceNo: 1, rawFields: { rawSentinel: 'raw-sentinel'.repeat(1024) } }] })
-  const archiveObservation = await db.$client.query<{ observation_id: number }>(
-    'SELECT id::integer AS observation_id FROM platform_business_observation WHERE public_id=$1', [archive.relationIds[0]])
-  const { observation_id: observationId } = singlePostgresFixtureRow(archiveObservation.rows)
   const reader = usePostgresDirectoryDb()
   // Use the driver result to measure actual rows returned, across all connections.
   let calls = 0, rows = 0, materializedBytes = 0, rawReads = 0
@@ -100,12 +96,6 @@ it('bounds fixed evidence preflight and history materialization across unrelated
         }))).returning({ id: recordEvent.id })
         await tx.insert(recordEvidence).values(otherEvents.map((row, i) => ({
           recordEventId: row.id, sourceFile: 'unrelated/' + (existing + i) + '.pdf', listNo: 1, page: 1,
-        })))
-        await tx.insert(recordCorrespondence).values(otherEvents.map((row, i) => ({
-          edgeKey: 'unrelated-' + (existing + i), type: 'event_process' as const, role: 'context_only',
-          eventId: row.id, predecessorEventId: row.id, observationId, titleCode: 'specialized_sme',
-          status: 'candidate' as const, revision: 1, targetIdentity: '{}', provenance: JSON.stringify({ rawSentinel: 'raw-sentinel'.repeat(1024) }),
-          sourceFingerprint: 'synthetic', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-10-19',
         })))
       })
       const point = await measure('/point', unrelated)

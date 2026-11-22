@@ -154,13 +154,10 @@ it("real_transports_distinguish_unrequested_pending_and_requested_empty", async 
 })
 
 it.each([
+  { id: 'retired_manual_corroboration', args: { validYear: 2028, maintenanceYear: 2024 } },
   { id: 'different_valid_year', args: { validYear: 2027 } },
   { id: 'unknown_batch', args: { maintenanceYear: 2024, maintenanceBatch: 2 } },
 ])("real_expired_identity_is_not_a_definite_filter_hit_$id", async ({ args }) => {
-  const known = await http({ q: 'synthetic_408_public_pending', status: 'expired', validYear: '2028', maintenanceYear: '2024' })
-  expect(known.rows.map(row => row.enterpriseId)).toEqual([pendingId])
-  expect(known.rows[0]).toMatchObject({ matchedValidYears: [2028], matchedMaintenance: [{ year: 2024, batch: null }] })
-  sameCurrentFacts(known, await sdk({ q: 'synthetic_408_public_pending', status: 'expired', validYear: 2028, maintenanceYear: 2024 }))
   const query = Object.fromEntries(Object.entries(args).map(([key, value]) => [key, String(value)]))
   const a = await http({ q: 'synthetic_408_public_pending', ...query })
   expect(a).toMatchObject({ rows: [], total: 0, uncertainTotal: 0, publishedPending: { rows: [], total: 0 } })

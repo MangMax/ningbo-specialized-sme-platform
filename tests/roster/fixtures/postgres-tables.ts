@@ -3,7 +3,6 @@ export { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledg
 export { enterpriseFactRevision } from '../../../db/postgresql/qualification-tables'
 export { differenceReason, rosterLegacyMember, rosterAnnouncementMember } from '../../../db/postgresql/roster-selection-tables'
 export { storedFile } from '../../../db/postgresql/file-tables'
-export { recordCorrespondence, recordCorrespondenceAudit } from '../../../db/postgresql/qualification-tables'
 export { importBatch } from '../../../db/postgresql/import-tables'
 export { platformExportBatch, platformExportRow } from '../../../db/postgresql/platform-tables'
 export { serviceCredential } from '../../../db/postgresql/credential-tables'

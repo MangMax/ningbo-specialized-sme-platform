@@ -31,11 +31,9 @@ import {
   ledgerYearOptions,
   type LedgerState,
 } from '#sme-roster/lib/roster/ledger-view'
-import { ROSTER_DIFFERENCE_FILTER_OPTIONS, rosterDifferenceFilterLabel } from '#sme-roster/lib/roster/ledger-contract'
 import { captureQueryRequest, useRetainedQuerySnapshot } from '#core/app/composables/useRetainedQuerySnapshot'
 import type { QueryRequestSnapshot } from '#core/app/composables/useRetainedQuerySnapshot'
 import RosterEnterpriseDrawer from '#sme-roster/app/components/EnterpriseDrawer.vue'
-import RosterEnterpriseDifferenceRefresh from '#sme-roster/app/components/EnterpriseDifferenceRefresh.vue'
 import RosterEnterpriseListTable, {
   type EnterpriseListRow,
 } from '#sme-roster/app/components/EnterpriseListTable.vue'
@@ -54,7 +52,6 @@ interface Counts {
   titlePairs: number
   titles: Record<string, number>
   recognitionPairs: number
-  differences: number
 }
 
 const apiGet = $fetch as unknown as <T>(
@@ -84,7 +81,10 @@ const positiveInt = (v: unknown): number | null => {
 const clampSize = (n: number) => Math.min(200, Math.max(1, n))
 
 // —— 页面状态:唯一写入方是下面的 watcher,唯一读取方是模板与取数 ——
-const state = ref<LedgerState>(ledgerStateFromQuery(route.query))
+function readLedgerState(query: Parameters<typeof ledgerStateFromQuery>[0]): LedgerState {
+  return ledgerStateFromQuery({ ...query, diffStatus: undefined })
+}
+const state = ref<LedgerState>(readLedgerState(route.query))
 const page = ref(positiveInt(route.query.page) ?? 1)
 const pageSize = ref(clampSize(positiveInt(route.query.pageSize) ?? 25))
 /** 抽屉里那家;**`null` = 抽屉关着**。地址栏参数沿用旧的 `expand`(同一件事的旧写法)。 */
@@ -147,7 +147,7 @@ watch(
       return
     }
     if (serialized === normalize(toRouteQuery())) return
-    state.value = ledgerStateFromQuery(q)
+    state.value = readLedgerState(q)
     search.value = state.value.q
     page.value = positiveInt(q.page) ?? 1
     pageSize.value = clampSize(positiveInt(q.pageSize) ?? 25)
@@ -209,7 +209,6 @@ const {
   failureDescription,
 } = useRetainedQuerySnapshot<LedgerListQueryParams, LedgerListQueryResult>(data, isLoading, error, activeRequest)
 const rows = computed<EnterpriseListRow[]>(() => displayedResult.value?.rows ?? [])
-const displayedEnterpriseIds = computed(() => rows.value.map(row => row.enterpriseId))
 const returnRowsReady = computed(() => !isLoading.value && (displayedResult.value?.request.key === activeRequestKey.value || error.value != null))
 useEvidencePreviewScrollRestore(returnRowsReady)
 const total = computed(() => displayedResult.value?.counts.total ?? 0)
@@ -273,7 +272,6 @@ const firstStatusOptions = computed(() =>
     label: FIRST_RECOGNITION_STATUSES[code] ?? code,
   })),
 )
-const statusOptions = ROSTER_DIFFERENCE_FILTER_OPTIONS
 const districtOptions = [...NINGBO_DISTRICTS, ...NINGBO_INDEPENDENT_ZONES]
 
 /**
@@ -311,7 +309,7 @@ const activeFilters = computed<ActiveFilter[]>(() => {
     state.value = { ...state.value, [key]: value }
   }
   const without = (
-    key: 'title' | 'source' | 'eventType' | 'year' | 'firstYear' | 'firstStatus' | 'diffStatus',
+    key: 'title' | 'source' | 'eventType' | 'year' | 'firstYear' | 'firstStatus',
     drop: string,
   ) =>
     patch(
@@ -328,11 +326,6 @@ const activeFilters = computed<ActiveFilter[]>(() => {
     ...(s.district
       ? [{ key: 'district', label: `属地 · ${s.district}`, clear: () => patch('district', '') }]
       : []),
-    ...s.diffStatus.map((v) => ({
-      key: `diffStatus:${v}`,
-      label: `差异状态 · ${rosterDifferenceFilterLabel(v)}`,
-      clear: () => without('diffStatus', v),
-    })),
     ...s.source.map((v) => ({
       key: `source:${v}`,
       label: `来源 · ${SOURCES[v] ?? v}`,
@@ -406,13 +399,6 @@ useHead({ title: ENTERPRISE_LIST_TITLE })
 <template>
   <div class="workspace-list ledger-page flex min-w-0 flex-col gap-2 sm:gap-3">
     <DefineAdvancedFilters>
-      <MultiSelectFilter
-        v-model="state.diffStatus"
-        :options="statusOptions"
-        placeholder="全部差异状态"
-        summary-prefix="差异"
-        class="w-32 shadow-none"
-      />
       <MultiSelectFilter
         v-model="state.year"
         :options="yearOptions"
@@ -492,7 +478,6 @@ useHead({ title: ENTERPRISE_LIST_TITLE })
             <ReuseAdvancedFilters v-if="!isNarrow" />
           </div>
           <div class="ml-auto flex flex-wrap items-center justify-end gap-2" role="group" aria-label="企业列表操作">
-            <RosterEnterpriseDifferenceRefresh :enterprise-ids="displayedEnterpriseIds" :disabled="isLoading || !!error" @refreshed="refetch()" />
             <Button as-child variant="outline" size="sm">
               <a :href="exportUrl"><ExternalLink class="size-3.5" aria-hidden="true" />{{ LEDGER_EXPORT_LABEL }}</a>
             </Button>

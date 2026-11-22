@@ -91,7 +91,7 @@ type ExactEvidence = ReturnType<typeof projectExactEvidence>
 type DestinationPart = Pick<typeof StoredFilePartTable.$inferSelect, 'titleCode' | 'eventKind' | 'year' | 'batch' | 'attachment' | 'hasConflict'>
 
 export type EvidencePlanInput = { type: 'evidence'; id: number } | { type: 'enterprise'; id: number } | { type: 'file'; sourceFile: string }
-  | { type: 'parts'; fileId: number } | { type: 'collisions'; coordinate: EvidenceCoordinate; id: number } | { type: 'correspondences'; eventId: number }
+  | { type: 'parts'; fileId: number } | { type: 'collisions'; coordinate: EvidenceCoordinate; id: number }
 
 type EvidencePlanValues = {
   evidence: ExactEvidence
@@ -99,7 +99,6 @@ type EvidencePlanValues = {
   file: EvidenceFile | null
   parts: DestinationPart[]
   collisions: { id: number; attachment: string | null; event: OfficialEventRow }[]
-  correspondences: number
 }
 
 function* evidenceInput<T extends EvidencePlanInput['type']>(input: Extract<EvidencePlanInput, { type: T }>): Generator<EvidencePlanInput, EvidencePlanValues[T], unknown> {
@@ -145,10 +144,9 @@ export function* projectEvidenceCorrectionTargets(request: EvidenceCorrectionReq
         if (normalizeAttachment(collision.attachment) === after.attachment && collision.event.eventType === row.event.eventType && collision.event.year === row.event.year && collision.event.batchSeq === row.event.batchSeq) fail('coordinate_conflict', 'Destination conflicts with another evidence in the same event segment')
       }
     }
-    const correspondenceCount = yield* evidenceInput<'correspondences'>({ type: 'correspondences', eventId: row.eventId })
     const rowChange: OfficialClaimChange | undefined = op.publishedRow ? { ref: `correction:${op.evidenceId}`, evidenceId: op.evidenceId, eventId: op.eventId, owner: `enterprise:${op.enterpriseId}`, titleCode: row.titleCode, coordinate: after, publishedRow: op.publishedRow, expectedRowRevision: op.expectedRowRevision! } : undefined
     if (typed && !rowChange) fail('ambiguity', 'A mixed typed correction batch requires explicit publishedRow for every target')
-    targets.push({ evidenceId: row.evidenceId, eventId: row.eventId, recordId: row.recordId, enterpriseId: row.enterpriseId, expectedVersion: row.version, before: row.coordinate, beforeFile: row.file, event: row.event, after, file, relatedCorrespondences: correspondenceCount, rowChange })
+    targets.push({ evidenceId: row.evidenceId, eventId: row.eventId, recordId: row.recordId, enterpriseId: row.enterpriseId, expectedVersion: row.version, before: row.coordinate, beforeFile: row.file, event: row.event, after, file, rowChange })
   }
   for (let i = 0; i < targets.length; i++) for (let j = i + 1; j < targets.length; j++) {
     const a = targets[i]!, b = targets[j]!
@@ -159,7 +157,7 @@ export function* projectEvidenceCorrectionTargets(request: EvidenceCorrectionReq
 }
 
 export function projectEvidenceCorrectionPlan(request: EvidenceCorrectionRequest, targets: ReturnType<typeof projectEvidenceCorrectionTargets> extends Generator<unknown, infer Result> ? Result : never, factsHash?: string) {
-  const impact = { updated: targets.filter(t => evidenceCorrectionDigest(t.before) !== evidenceCorrectionDigest(t.after) || t.rowChange?.changed).length, audit: targets.filter(t => evidenceCorrectionDigest(t.before) !== evidenceCorrectionDigest(t.after) || t.rowChange?.changed).length, correspondencePolicy: 'dynamic_source_fingerprint_revalidation' }
+  const impact = { updated: targets.filter(t => evidenceCorrectionDigest(t.before) !== evidenceCorrectionDigest(t.after) || t.rowChange?.changed).length, audit: targets.filter(t => evidenceCorrectionDigest(t.before) !== evidenceCorrectionDigest(t.after) || t.rowChange?.changed).length }
   return { status: 'preflight', targets, impact, planHash: evidenceCorrectionDigest({ request, targets, impact, facts: factsHash }) }
 }
 

@@ -24,7 +24,7 @@ export type Event = { eventType: 'award'|'review'|'nurture'|'maintain'; year: nu
 export const fresh: Event[] = [{ eventType: 'award', year, batchSeq: 1 }]
 export const businessTables = [
   'enterprise', 'enterprise_alias', 'enterprise_fact_revision', 'record', 'record_event', 'record_evidence',
-  'record_correspondence', 'difference_reason', 'platform_collection', 'platform_collection_page',
+  'difference_reason', 'platform_collection', 'platform_collection_page',
   'platform_query_title_scope', 'platform_business_record', 'platform_business_record_version',
   'platform_business_observation', 'platform_observation_assignment', 'platform_apply_projection',
   'platform_business_projection', 'platform_recognized_projection', 'platform_export_batch', 'platform_export_row',

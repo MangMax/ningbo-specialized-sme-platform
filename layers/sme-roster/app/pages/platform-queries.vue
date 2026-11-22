@@ -94,7 +94,7 @@ const identity = (row: PlatformQueriesResult['rows'][number]) => JSON.stringify(
       </template>
     </PageHeader>
     <div class="relative" :class="{ 'min-h-6': isLoading }">
-      <TableLoadingStatus kind="comparison" :loading="isLoading" label="正在加载平台查询历史…" />
+      <TableLoadingStatus kind="platform-query" :loading="isLoading" label="正在加载平台查询历史…" />
       <p v-if="data || queryKey || enterpriseId || queryId" class="text-muted-foreground wrap-anywhere text-xs" aria-live="polite">
         <template v-if="queryId">原查询 #{{ queryId }}</template>
         <template v-else-if="data">共 {{ data.total.toLocaleString('zh-CN') }} 次查询 · 第 {{ sourcePage }} 页</template>

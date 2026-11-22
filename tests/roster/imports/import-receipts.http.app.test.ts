@@ -34,7 +34,7 @@ async function seedReceiptFixture() {
   const [legacyRow, processingRow, foreignRow, longRow] = await db.insert(importBatch).values([
     { idempotencyKey: 'legacy/key?精确=1', sourceKind: 'announcement', sourceIdentity: 'synthetic/legacy', createdAt },
     { idempotencyKey: 'interrupted-worker', sourceKind: 'announcement', sourceIdentity: 'synthetic/processing', createdAt },
-    { idempotencyKey: 'correspondence-only', sourceKind: 'correspondence_decision', sourceIdentity: 'synthetic/correspondence', createdAt },
+    { idempotencyKey: 'metrics-only', sourceKind: 'test_unrelated_operation', sourceIdentity: 'synthetic/operation', createdAt },
     { idempotencyKey: 'K'.repeat(4100), sourceKind: 'announcement', sourceIdentity: 'S'.repeat(4100), createdAt,
       status: 'committed', summary: JSON.stringify({ written: 1, skipped: 0, failed: 0 }),
       itemResults: JSON.stringify([{ ok: true, kind: 'record', ref: 'record:991', detail: { raw: 'LEGACY_RAW_ONLY'.repeat(8192) } }]) },

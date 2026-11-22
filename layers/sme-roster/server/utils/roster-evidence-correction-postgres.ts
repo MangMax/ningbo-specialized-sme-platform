@@ -1,9 +1,8 @@
-import { and, asc, eq, inArray, ne, or } from 'drizzle-orm'
+import { and, asc, eq, inArray, ne } from 'drizzle-orm'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { storedFile } from '../../../../db/postgresql/file-tables'
 import { recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { evidenceCorrectionAudit, evidenceCorrectionBatch } from '../../../../db/postgresql/official-evidence-tables'
-import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { rosterFileClassification, storedFilePart } from '../../../../db/postgresql/roster-file-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { EvidencePageCandidate } from '../../lib/roster/evidence-page'
@@ -14,9 +13,9 @@ import { planPostgresOfficialEvidenceChanges } from './official-evidence-plan-po
 import { writePostgresOfficialPublishedRow } from './official-evidence-write-postgres'
 import { advancePostgresOfficialEventRevision } from './evidence-revision-postgres'
 import { lockPostgresFilePaths, refreshPostgresDerivedFileParts } from './file-parts-postgres'
-import { runPostgresCorrespondenceTransaction } from './record-correspondence-write-postgres'
+import { runPostgresSerializableTransaction } from './postgres-serializable-transaction'
 
-type Reader = Pick<NodePgDatabase, 'execute' | 'select' | '$count'>
+type Reader = Pick<NodePgDatabase, 'execute' | 'select'>
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Query = Exclude<ReturnType<ReturnType<typeof projectEvidenceCorrectionTargets>['next']>, {done: true}>['value']
 const snapshot = { isolationLevel: 'repeatable read', accessMode: 'read only' } as const
@@ -47,7 +46,7 @@ export function createPostgresLegacyEvidencePageAdapter(db: NodePgDatabase, file
       await db.transaction(verify, snapshot)
       return false
     }
-    return runPostgresCorrespondenceTransaction(db, async tx => {
+    return runPostgresSerializableTransaction(db, async tx => {
       await lockPostgresFilePaths(tx, [coordinate.sourceFile])
       await tx.select({ id: recordEvent.id }).from(recordEvent).where(eq(recordEvent.id, row.eventId)).for('update')
       const file = await verify(tx)
@@ -77,20 +76,15 @@ async function readTargetInput(tx: Reader, input: Query) {
       eq(storedFilePart.fileId, input.fileId), inArray(storedFilePart.origin, ['agent', 'legacy']),
     )).orderBy(asc(storedFilePart.id)).limit(1001)
   }
-  if (input.type === 'collisions') {
-    const listNo = input.coordinate.listNo
-    if (listNo === null) return []
-    const rows = await tx.select({ id: recordEvidence.id, attachment: recordEvidence.attachment, event: recordEvent })
-      .from(recordEvidence).innerJoin(recordEvent, eq(recordEvent.id, recordEvidence.recordEventId)).where(and(
-        eq(recordEvidence.sourceFile, input.coordinate.sourceFile), eq(recordEvidence.listNo, listNo), ne(recordEvidence.id, input.id),
-      )).limit(101)
-    return rows.map(row => ({ ...row,
-      event: { ...row.event, formalValidity: row.event.formalValidity === null ? null : JSON.parse(row.event.formalValidity) },
-    }))
-  }
-  return tx.$count(recordCorrespondence, or(
-    eq(recordCorrespondence.eventId, input.eventId), eq(recordCorrespondence.predecessorEventId, input.eventId),
-  ))
+  const listNo = input.coordinate.listNo
+  if (listNo === null) return []
+  const rows = await tx.select({ id: recordEvidence.id, attachment: recordEvidence.attachment, event: recordEvent })
+    .from(recordEvidence).innerJoin(recordEvent, eq(recordEvent.id, recordEvidence.recordEventId)).where(and(
+      eq(recordEvidence.sourceFile, input.coordinate.sourceFile), eq(recordEvidence.listNo, listNo), ne(recordEvidence.id, input.id),
+    )).limit(101)
+  return rows.map(row => ({ ...row,
+    event: { ...row.event, formalValidity: row.event.formalValidity === null ? null : JSON.parse(row.event.formalValidity) },
+  }))
 }
 
 export async function planPostgresEvidenceCorrectionTargets(tx: Reader, request: EvidenceCorrectionRequest,
@@ -134,7 +128,7 @@ export async function commitPostgresEvidenceCorrection(db: NodePgDatabase, reque
   if (previous) return previous
   const inspected = await inspectEvidenceCorrectionRequest(request, filesDir)
   try {
-    return await runPostgresCorrespondenceTransaction(db, async tx => {
+    return await runPostgresSerializableTransaction(db, async tx => {
       const replay = await savedReceipt(tx, request, planHash)
       if (replay) return replay
       const priorFiles = await tx.select({ path: recordEvidence.sourceFile }).from(recordEvidence)
@@ -143,7 +137,7 @@ export async function commitPostgresEvidenceCorrection(db: NodePgDatabase, reque
       await tx.select({ id: recordEvent.id }).from(recordEvent)
         .where(inArray(recordEvent.id, request.operations.map(op => op.eventId))).orderBy(asc(recordEvent.id)).for('update')
       const plan = await buildPostgresEvidencePlan(tx, request, inspected, filesDir)
-      if (plan.planHash !== planHash) return fail('plan_mismatch', 'Preflight impact or source changed; preflight again', 409)
+      if (plan.planHash !== planHash) return fail('plan_mismatch', 'Preflight plan or source changed; preflight again', 409)
       const receipt: CorrectionReceipt = { status: 'committed', idempotencyKey: request.idempotencyKey, planHash, impact: plan.impact,
         evidenceIds: plan.targets.map(t => t.evidenceId), committedAt: new Date().toISOString() }
       const created = await tx.insert(evidenceCorrectionBatch).values({

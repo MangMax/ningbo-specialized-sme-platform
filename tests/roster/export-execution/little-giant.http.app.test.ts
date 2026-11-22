@@ -131,7 +131,7 @@ beforeEach(async () => {
   expect((await pool.query("SELECT id FROM business.job WHERE kind = 'current-roster-export' AND state IN ('queued','running')")).rows).toEqual([])
   await pool.query(`TRUNCATE business.job, business.enterprise, business.record, business.record_event,
     business.record_evidence, business.roster_legacy_member, business.difference_reason,
-    business.enterprise_fact_revision, business.enterprise_fact_receipt, business.evidence_review_receipt_114 CASCADE`)
+    business.enterprise_fact_revision, business.enterprise_fact_receipt CASCADE`)
 })
 // Emit the assertion at failure time: a later workflow deadline may prevent
 // Vitest's end-of-run summary and JSON reporter from being written.
@@ -289,7 +289,7 @@ async function businessDigest() {
   const hash = createHash('sha256')
   const { rows: platform } = await pool.query<{ tablename: string }>("SELECT tablename FROM pg_tables WHERE schemaname = 'business' AND left(tablename, 9) = 'platform_' ORDER BY tablename")
   const tables = ['enterprise', 'record', 'record_event', 'record_evidence', 'enterprise_alias', 'difference_reason',
-    'record_correspondence', 'enterprise_fact_revision', 'enterprise_fact_receipt', ...platform.map(row => row.tablename)]
+    'enterprise_fact_revision', 'enterprise_fact_receipt', ...platform.map(row => row.tablename)]
   for (const table of tables) {
     const { rows } = await pool.query(`SELECT row_to_json(t)::text AS row FROM business.${pg.escapeIdentifier(table)} t ORDER BY row_to_json(t)::text COLLATE "C"`)
     hash.update(JSON.stringify([table, rows]))

@@ -1,13 +1,14 @@
 
 import { nativeWorkbookFixture } from './fixtures/native-workbook'
 import { afterAll, beforeEach, expect, it } from 'vitest'
-import { year as y } from './fixtures/specialized-export'
+import { rows, year as y } from './fixtures/specialized-export'
 import { qualificationCycleCases } from "../current-qualification/fixtures/cycle-cases"
 import { currentQualificationWorkbookAssertions, type EffectiveQualificationCase } from './assertions/qualification'
 
 const f = nativeWorkbookFixture()
 beforeEach(async () => { await f.resetBusiness() }, 90000)
 afterAll(f.close)
+
 // Literal #475/#478 native workbook rowsets; the shared fixtures retain historical reader oracles.
 const expectedRows = {
 '有效企业': ['A-batches-passed', 'A-batches-fresh', 'A-batches-no-review', 'A-batches-unknown', 'A-batches-undated', 'B-later-reaward-resolves-tie', 'B-only-same-year-reaward', 'B-later-passed-does-not-resolve-tie', 'C-unknown-before-award', 'C-unknown-and-failed-before-award', 'C-batch-gap-before-award', 'C-unknown-before-only-passed', 'C-unknown-same-year-award', 'C-unknown-after-award', 'C-undated-unknown-with-award', 'C-old-pass-gap-before-current-pass', 'C-failed-batch-gap-before-only-passed', 'D-old-unproven-award-before-renewal', 'D-old-proven-award-before-renewal', 'D-old-unproven-award-same-year-renewal', 'D-old-proven-award-same-year-renewal', 'D-old-unproven-award-after-renewal', 'D-old-proven-award-after-renewal', 'D-independent-renewal-only', 'D-unproven-current-award', 'D-unproven-current-review', 'D-unproven-unknown-origin-award', 'A-batches-mixed', 'D-old-unproven-review-after-renewal', 'R3-cross-cycle-same-conclusion', 'R3-independent-failure-then-passed'],

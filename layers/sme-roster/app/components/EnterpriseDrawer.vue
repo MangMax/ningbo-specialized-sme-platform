@@ -8,11 +8,6 @@ import { useQuery } from '@pinia/colada'
 import { DialogClose, DialogContent, DialogRoot, DialogTitle } from 'reka-ui'
 import { ExternalLink, X } from '@lucide/vue'
 import {
-  comparisonDirectionNote,
-  DIFFERENCE_MEASURES,
-  DIFFERENCE_REASONS,
-  DIFFERENCE_STATUSES,
-  DIFFERENCE_STATUS_RAILS,
   EVENT_ORDER,
   EVENTS,
   TITLE_ORDER,
@@ -49,18 +44,6 @@ interface EventRow {
   decidedYear: number | null
   reviewOutcome: string | null
 }
-interface Difference {
-  explanationId: number | null
-  titleCode: string
-  direction: string
-  status: string
-  reasonCode: string | null
-  reasonNote: string | null
-  measureCode: string | null
-  measureNote: string | null
-  verificationStatus: string
-  inCurrentDifference: boolean
-}
 interface Detail {
   businessTimeline: RosterEnterpriseDetail['businessTimeline']
   qualificationAssessment: RosterEnterpriseDetail['qualificationAssessment']
@@ -78,7 +61,6 @@ interface Detail {
   records: RecordRow[]
   events: EventRow[]
   evidence: { eventId: number; sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }[]
-  differences: Difference[]
   titleAssessments?: (ReviewAssessment & ReviewScope)[]
 }
 
@@ -266,9 +248,6 @@ const timeline = computed<TimelineItem[]>(() => {
   return items
 })
 
-/** 差异块:状态机顺序已经在读模型里排过(`§7.2` 的排序),这里原样用。 */
-const differences = computed(() => detail.value?.differences ?? [])
-
 const fullPageTo = computed(() => {
   const q = props.backQuery ? `?back=${encodeURIComponent(props.backQuery)}` : ''
   return `/enterprises/${props.enterpriseId}${q}`
@@ -279,25 +258,7 @@ function rememberLedger(event: MouseEvent) {
   rememberEvidencePreviewReturn(props.backQuery ? `${ROSTER_LEDGER_PATH}?${props.backQuery}` : ROSTER_LEDGER_PATH, document.querySelector('[data-testid="enterprise-table-scroll"]') ?? document.querySelector('[data-evidence-return-scroll-container]'))
 }
 
-const statusTextClass = (code: string) => {
-  switch (DIFFERENCE_STATUS_RAILS[code]) {
-    case 'confirmed': return 'text-primary'
-    case 'failed': return 'text-destructive'
-    default: return 'text-muted-foreground'
-  }
-}
 const eventLabel = (type: string) => EVENTS[type] ?? type
-
-function directionLabel(direction: string) {
-  if (direction === 'missing_in_miit') return '应纳未纳'
-  if (direction === 'extra_in_miit') return '平台多出'
-  return comparisonDirectionNote(direction)
-}
-
-function measureLabel(code: string) {
-  if (code === 'mark_platform_snapshot') return '标记平台快照'
-  return DIFFERENCE_MEASURES[code] ?? code
-}
 
 /**
  * 「认定 / 复核 / 维护」这一档上要跟的那半句。
@@ -413,33 +374,6 @@ function eventSuffix(item: TimelineItem): string {
               </li>
             </ul>
           </DisclosurePanel>
-
-          <!-- 差异块:方向 · 原因 → 措施 的可视化链 + 依据原文 -->
-          <template v-if="differences.length">
-            <h3 class="text-muted-foreground mt-5 border-t pt-4 text-xs font-medium">差异</h3>
-            <div v-for="d in differences" :key="`${d.titleCode}-${d.direction}`" class="mt-3">
-              <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-table leading-5">
-                <span class="font-medium">{{ TITLES[d.titleCode] ?? d.titleCode }}</span>
-                <span data-testid="enterprise-difference-status" :class="statusTextClass(d.status)">{{ DIFFERENCE_STATUSES[d.status] ?? d.status }}</span>
-                <span v-if="!d.inCurrentDifference" class="text-muted-foreground">历史差异</span>
-              </div>
-              <dl class="mt-2 grid grid-cols-[3.5rem_minmax(0,1fr)] gap-x-3 gap-y-1 border-t pt-2 text-table leading-5" data-testid="difference-reason-chain">
-                <dt class="text-muted-foreground">方向</dt>
-                <dd>{{ directionLabel(d.direction) }}</dd>
-                <dt class="text-muted-foreground">原因</dt>
-                <dd>
-                  {{ d.reasonCode
-                    ? (DIFFERENCE_REASONS[d.reasonCode] ?? d.reasonCode)
-                    : d.status === 'confirmed_no_diff'
-                      ? '无需原因'
-                      : '待核实' }}
-                </dd>
-                <dt class="text-muted-foreground">措施</dt>
-                <dd>{{ d.measureCode ? measureLabel(d.measureCode) : '—' }}</dd>
-              </dl>
-
-            </div>
-          </template>
         </div>
 
         <footer class="border-t px-5 py-3">

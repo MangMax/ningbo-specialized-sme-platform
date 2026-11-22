@@ -136,13 +136,6 @@ export interface BusinessProcessListResult {
   pageSize: number
 }
 
-/** Observation-scoped decision reference. Never copies a decision to other observations. */
-export interface BusinessProcessCorrespondenceRef {
-  id: number
-  status: string
-  revision: number
-}
-
 export interface BusinessProcessObservation {
   relationId: number
   queryId: number
@@ -159,8 +152,6 @@ export interface BusinessProcessObservation {
   versionId: number | null
   /** Explicit query title scopes for this observation; query fact, not a row title. */
   titleScopes: string[]
-  /** Original correspondence decisions for this exact observation only; IDs/status, no content. */
-  correspondenceRefs: BusinessProcessCorrespondenceRef[]
   version: BusinessProcessVersionFields | null
 }
 

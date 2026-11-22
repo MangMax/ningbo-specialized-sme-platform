@@ -13,17 +13,11 @@ const row: EnterpriseListRow = {
     { titleCode: 'specialized_sme', year: 2020, batchSeq: 2 },
     { titleCode: 'innovative_sme', year: 2019, batchSeq: 1 },
   ],
-  difference: { count: 1, status: 'confirmed_reason', reasonCode: 'platform_stale', anyCurrent: true },
 }
 const render = (patch: Partial<EnterpriseListRow> = {}) => mount(EnterpriseListTable, {
   props: { rows: [{ ...row, ...patch }], loading: false, hasError: false, selectedId: null, filtered: false },
 })
 describe('企业列表紧凑信息展示', () => {
-  it('移除行前状态块并直接显示已知原因', () => {
-    const view = render()
-    expect(view.get('[data-testid="enterprise-difference-cell"]').text()).toBe('平台未更新')
-    view.unmount()
-  })
   it('年份未知时仍保留已知批次', () => {
     const view = render({titles: ['little_giant'], firstRecognition: [], awards: [{titleCode: 'little_giant',year: null,batchSeq: 3}]})
     expect(view.get('[data-testid="title-recognition-list"]').text()).toContain('年待核-3')

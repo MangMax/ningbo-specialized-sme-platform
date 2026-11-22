@@ -30,7 +30,7 @@ describe('企业列表的曾用名', () => {
           aliasNames: [name],
           titles: [],
           firstRecognition: [],
-          difference: { count: 0, status: null, reasonCode: null, anyCurrent: false },
+
         }],
         loading: false,
         hasError: false,
@@ -56,7 +56,7 @@ describe('企业列表的曾用名', () => {
           aliasNames: ['宁波上航测绘股份有限公司', '宁波上航测绘有限公司'],
           titles: [],
           firstRecognition: [],
-          difference: { count: 0, status: null, reasonCode: null, anyCurrent: false },
+
         }],
         loading: false,
         hasError: false,
@@ -84,7 +84,7 @@ describe('企业列表的曾用名', () => {
           aliasNames: [alias],
           titles: [],
           firstRecognition: [],
-          difference: { count: 0, status: null, reasonCode: null, anyCurrent: false },
+
         }],
         loading: false,
         hasError: false,
@@ -112,7 +112,7 @@ describe('企业列表的抽屉触发器', () => {
           aliasNames: [],
           titles: [],
           firstRecognition: [],
-          difference: { count: 0, status: null, reasonCode: null, anyCurrent: false },
+
         }],
         loading: false,
         hasError: false,
@@ -140,7 +140,7 @@ it('keeps the title foreground token when sizing the award badge', () => {
         aliasNames: [],
         titles: ['little_giant'],
         firstRecognition: [{ titleCode: 'little_giant', year: 2025, needsReview: false }],
-        difference: { count: 0, status: null, reasonCode: null, anyCurrent: false },
+
       }],
       loading: false,
       hasError: false,

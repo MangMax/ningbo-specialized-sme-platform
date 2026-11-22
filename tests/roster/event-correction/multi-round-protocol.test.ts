@@ -119,17 +119,11 @@ async function fixture() {
   })
   const op = (id: number, patch: EventCorrectionRequest['operations'][number]['patch'], expectedRevision = 1) => ({ eventId: id, recordId: record.id, enterpriseId: enterprise.id, expectedRevision, patch })
   const { eventCorrectionRoute } = await import('../../../layers/sme-roster/server/utils/roster-event-correction-route')
-  const { correspondenceRoute } = await import('../../../layers/sme-roster/server/utils/record-correspondence-route')
-  const { default: annualRoute } = await import('../../../layers/sme-roster/server/api/roster/events/[id]/annual-process.get')
   const router = createRouter(), app = createApp()
   router.use('/api/roster/events/corrections/preflight', eventCorrectionRoute('preflight'))
   router.use('/api/roster/events/corrections/commit', eventCorrectionRoute('commit'))
   router.use('/api/roster/events/:id/audit', eventCorrectionRoute('audit'))
-  router.use('/api/roster/events/:id/annual-process', annualRoute)
   router.use('/api/roster/events/:id', eventCorrectionRoute('get'))
-  router.use('/api/roster/correspondences/preflight', correspondenceRoute('preflight'))
-  router.use('/api/roster/correspondences/commit', correspondenceRoute('commit'))
-  router.use('/api/roster/correspondences/:id', correspondenceRoute('get', { id: true }))
   app.use(router)
   const [{ default: preflight }, { default: commit }, { default: get }, { default: auditTool }] = await Promise.all([
     import('../../../layers/sme-roster/server/mcp/tools/preflight_event_corrections'),
@@ -447,35 +441,6 @@ it('rolls back both review rounds audit revisions and receipt after a later SQL 
   } finally { await f.close() }
 })
 
-it('preserves correspondence IDs while requiring revalidation and changing annual source generation after a review correction', async () => {
-  const f = await fixture()
-  try {
-    const { relationIds } = await seedPostgresPlatformQuery(f.db, { interface: 'business_list', queryKey: 'synthetic-issue304', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-25', status: 'success', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: f.enterprise.id, verificationStatus: 'confirmed', declareKind: 'review', year: 2021 }] })
-    const relation = { id: relationIds[0]! }
-    const correspondence = { idempotencyKey: 'issue304-correspondence', sourceIdentity: 'synthetic:issue304', actor: { type: 'agent', id: 'issue304-test' }, basis: 'Explicit synthetic row context', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: f.first.event.id, relationId: relation.id, role: 'context_only' } }] }
-    const confirmedPlan = await f.http('/api/roster/correspondences/preflight', correspondence)
-    expect(confirmedPlan.status).toBe(200)
-    const confirmed = await f.http('/api/roster/correspondences/commit', { request: correspondence, planHash: confirmedPlan.body.planHash })
-    expect(confirmed.status).toBe(200)
-    const correspondenceId = confirmed.body.correspondenceIds[0]
-    const path = `/api/roster/correspondences/${correspondenceId}`
-    const before = (await f.http(path)).body
-    expect(before).toMatchObject({ id: correspondenceId, requiresRevalidation: false, status: 'confirmed' })
-    const annualBefore = await f.http(`/api/roster/events/${f.first.event.id}/annual-process`)
-    expect(annualBefore.status).toBe(200)
-    const request = f.request('correspondence-source-change', [f.op(f.first.event.id, { reviewOutcome: 'passed' })])
-    const plan = await f.post('preflight', request)
-    expect(plan.status).toBe(200)
-    expect(plan.body.impact.requiresRevalidation).toBe(1)
-    expect((await f.post('commit', { request, planHash: plan.body.planHash })).status).toBe(200)
-    expect((await f.http(path)).body).toMatchObject({ id: correspondenceId, eventId: f.first.event.id, relationId: relation.id, status: 'confirmed', requiresRevalidation: true })
-    const annualAfter = await f.http(`/api/roster/events/${f.first.event.id}/annual-process`)
-    expect(annualAfter.status).toBe(200)
-    expect(annualAfter.body.sourceGeneration).not.toBe(annualBefore.body.sourceGeneration)
-    expect(annualAfter.body.sourceRefs.event).toMatchObject({ id: f.first.event.id, revision: 2, year: 2018, decidedYear: 2021 })
-    expect((await f.read(f.first.event.id)).body.evidence).toEqual([f.first.evidence])
-  } finally { await f.close() }
-})
 
 it('rechecks sibling occupancy at commit and leaves the other correction and receipt uncommitted', async () => {
   const f = await fixture()

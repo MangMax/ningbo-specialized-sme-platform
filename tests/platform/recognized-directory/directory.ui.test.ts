@@ -50,7 +50,7 @@ const detail: RecognizedDirectoryDetail = {
     relationId: 9, queryId: 4, queriedAt: '2026-10-01T00:00:00Z', queryKey: '91330211AAAAAAAA1X', queryStatus: 'success',
     sequenceNo: 1, enterpriseId: 11, enterpriseName: '甲目录企业', identityState: 'resolved', contentState: 'verified',
     keySource: 'both', projectionRuleVersion: 'platform-observation-v1', versionId: 12, titleScopes: ['2'],
-    titleConflict: false, correspondenceRefs: [{ id: 1, status: 'confirmed', revision: 2 }], version,
+    titleConflict: false, version,
   }],
   counts: { versions: 1, observations: 2, versionsTruncated: false, observationsTruncated: true },
   conflicts: ['title_conflict'],

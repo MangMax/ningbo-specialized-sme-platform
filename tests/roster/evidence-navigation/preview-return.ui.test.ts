@@ -159,8 +159,6 @@ const globalStubs = {
       '<header><h1>{{ title }}</h1><slot name="breadcrumb"/><slot name="description"/><slot name="actions"/></header>',
   },
   FilePreviewDialog: true,
-  RecordSourceReader: true,
-  RosterEnterpriseLaterProcesses: true,
   RosterEventChip: true,
   RosterSourceChip: true,
   RosterTitleBadge: true,
@@ -755,14 +753,13 @@ describe('出处预览返回滚动恢复', () => {
     { label: '桌面详情页', width: 1440, height: 900, windowTop: 90 },
     { label: '390×844 窄屏详情页', width: 390, height: 844, windowTop: 42 },
   ])('$label 从出处预览返回时在详情数据渲染后恢复页面位置', async ({ width, height, windowTop }) => {
-    const nestedReturnTo = '/comparison?mode=record&queryIds=20&page=2&q=A%3FB&returnTo=%2Fcurrent-enterprises%3Fpage%3D4'
-    const detailPath = '/enterprises/91?back=view%3Denterprise%26q%3D%E5%BC%80%E8%AF%9A%26page%3D2%26expand%3D91&returnTo=%2Fcomparison%3Fmode%3Drecord%26queryIds%3D20%26page%3D2%26q%3DA%253FB%26returnTo%3D%252Fcurrent-enterprises%253Fpage%253D4'
+    const detailPath = '/enterprises/91?back=view%3Denterprise%26q%3D%E5%BC%80%E8%AF%9A%26page%3D2%26expand%3D91'
     const returnPath = detailPath + '&tab=records&eventId=10'
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: height })
     Object.defineProperty(window, 'scrollY', { configurable: true, value: windowTop })
     history.replaceState(null, '', detailPath)
-    currentRoute = { path: '/enterprises/91', params: { id: '91' }, query: { back: 'view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91', returnTo: nestedReturnTo }, fullPath: detailPath }
+    currentRoute = { path: '/enterprises/91', params: { id: '91' }, query: { back: 'view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91' }, fullPath: detailPath }
     mocks.detail = fullDetail
     mocks.loading = false
 
@@ -775,14 +772,13 @@ describe('出处预览返回滚动恢复', () => {
     const previewUrl = new URL(sourceLink!.attributes('href')!, window.location.origin)
     expect(previewUrl.pathname).toBe('/preview')
     expect(previewUrl.searchParams.get('back')).toBe(returnPath)
-    expect(new URL(previewUrl.searchParams.get('back')!, window.location.origin).searchParams.get('returnTo')).toBe(nestedReturnTo)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain(`"back":"${returnPath}"`)
     expect(sessionStorage.getItem('roster:evidence-preview-return')).toContain(`"scrollY":${windowTop}`)
     source.unmount()
 
     history.pushState(null, '', returnPath)
     Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 })
-    currentRoute = { path: '/enterprises/91', params: { id: '91' }, query: { tab: 'records', eventId: '10', back: 'view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91', returnTo: nestedReturnTo }, fullPath: returnPath }
+    currentRoute = { path: '/enterprises/91', params: { id: '91' }, query: { tab: 'records', eventId: '10', back: 'view=enterprise&q=%E5%BC%80%E8%AF%9A&page=2&expand=91' }, fullPath: returnPath }
     mocks.detail = null
     mocks.loading = true
     const frames: FrameRequestCallback[] = []

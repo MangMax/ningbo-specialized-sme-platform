@@ -69,7 +69,7 @@
 
 ## 4. 决定、proof与旧引用不变量
 
-- `queryId/relationId/sequenceNo`、业务ID/versionId、exportBatchId/exportRowId、eventId/evidenceId、correspondenceId、proofId、批次/回执/审计ID、文件ID和深链继续可定位。别名来源、差异evidence引用与任务分段也保留，不按裸业务编号改指/删观察。
+- `queryId/relationId/sequenceNo`、业务ID/versionId、exportBatchId/exportRowId、eventId/evidenceId、批次/回执/审计ID、文件ID和深链继续可定位。别名来源、差异evidence引用与任务分段也保留，不按裸业务编号改指/删观察。
 - 原raw、正文、canonical内容、旧hash算法/值、sourceFingerprint、revision、plan/request绑定和审计保留；只追加明确版本的投影。旧类型不反推，不重算指纹使旧决定重新有效。
 - 先按原规则限定企业/称号/角色/年度/时间/来源，再按业务身份组织观察。同版本或hash不把某观察的确认、驳回、解除、归属或proof传播到其他观察；当前投影不替换历史来源。
 - 年度保留全部过程与唯一final的既有最新有效业务及明确结果规则。来源代次变更经113登记、114明确复核；proof范围/等价资格与确认/撤销审计不削弱，不从旧候选偷换授权。
@@ -105,10 +105,6 @@
 | `enterprise_alias` | 来源独立别名断言，确认/时间未知保留 |
 | `enterprise_profile_audit` | 资料更正历史保留 |
 | `difference_reason` | 差异决定版本，引用独立主体事实，不独占迁移 |
-| `record_correspondence` | 精确行/类型/角色/决定生命周期保留 |
-| `record_correspondence_audit` | 对应决定追加历史保留 |
-| `comparison_scope_proof` | 原范围/等价声明和资格保留 |
-| `comparison_scope_proof_audit` | 确认/撤销历史保留 |
 | `event_correction_audit` | 正式事件更正历史保留 |
 | `enterprise_alias_audit` | 别名确认/更正/撤回历史保留 |
 | `evidence_correction_batch` | 精确出处更正幂等计划/结果保留 |
@@ -180,9 +176,8 @@
 | [原文件进仓库](2026-10-13-source-files-in-repo.md) | 撤销随源码版本控制，保留配置文件库根/相对出处路径 |
 | [record最小粒度](2026-10-13-record-as-grain.md) | record仍兼容容器，不包办业务身份/事件身份/原值；不做企业宽表仍成立 |
 | [生命周期三线分离](2026-10-16-roster-lifecycle-model.md) | 平台不只取证，迁移不只寄head，旧锚点不代完整周期；保留正式历史/平台陈述/决定分离及未知不猜 |
-| [记录对应提案](2026-10-18-record-level-correspondence.md) | 未实现只属当时提案；已有对应/审计/年度能力，原文不是完整实现回执；观察级决定保留 |
 | [正文共享](2026-10-24-platform-archive-body-sharing.md) | 停止继续实施，六附表冻结、inline不切换；物理共享不改业务/观察/证明身份仍成立 |
 
-[身份/版本/观察ADR](2026-10-23-platform-business-record-identity.md)继续有效，本票不另造通用版本引擎。[有界对应快照提案](2026-10-23-bounded-correspondence-snapshot.md)已有替代注记，本票不恢复其停止方向。
+[身份/版本/观察ADR](2026-10-23-platform-business-record-identity.md)继续有效。
 
 不选：万能可空业务表、按URL机械划聚合、统一状态/年份字典、raw唯一业务、同hash传播决定、任意表字段CRUD、通用事件总线/规则引擎、新compiler/GC。PostgreSQL与性能另经来源查询稳定后的实测决定，不和领域迁移捆绑；未证访问风险不写成生产泄露/事故。

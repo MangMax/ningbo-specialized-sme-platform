@@ -8,6 +8,7 @@ import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../db/postgr
 import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
 import { differenceReason, rosterLegacyMember } from '../../../db/postgresql/roster-selection-tables'
 import { importBatch } from '../../../db/postgresql/import-tables'
+import { job } from '../../../db/postgresql/job-tables'
 import { platformCollection } from '../../../db/postgresql/platform-tables'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { readPostgresFingerprintQueries, readPostgresFingerprintRelations } from '../../../layers/sme-roster/server/utils/postgres-platform-fingerprint'
@@ -16,7 +17,7 @@ import { createRosterImportHandler } from '../../../layers/sme-roster/server/uti
  * RL-03 的**真实端到端**(写入 → 读回):
  *
  *   裁剪的真实平台响应(夹具)→ §8.3 载荷 → **真实 HTTP** preflight + commit
- *   → 落库断言 → 再用**只读接口**(`/api/platform/queries`、`/api/comparison`)读回来。
+ *   → 落库断言 → 再用**只读接口**(`/api/platform/queries`)读回来。
  *
  * 为什么要分两批(而不是一个 payload 一把梭):`enterprise_alias.source_ref_id` 与
  * `difference_reason.evidence_query_id` / `evidence_relation_id` 是**整数行 id**,而
@@ -105,7 +106,7 @@ beforeAll(async () => {
   vi.stubEnv('NUXT_POSTGRES_LOG_URL', postgres.url)
   vi.stubEnv('NUXT_DB_READONLY', '0')
   for (const [key, value] of Object.entries({ defineEventHandler, getQuery, createError, getHeader, readBody, setHeader, setResponseStatus })) vi.stubGlobal(key, value)
-  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: TOKEN, filesDir: dir, curatedPath: join(dir, 'no-curation.json') }))
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: TOKEN, filesDir: dir }))
   db = usePostgresDirectoryDb()
 
   const owners = await db.insert(enterprise).values([
@@ -133,11 +134,9 @@ beforeAll(async () => {
   ]
 
   const queriesRoute = (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default
-  const comparisonRoute = (await import('../../../layers/sme-roster/server/api/comparison.get')).default
   const enterprisesRoute = (await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default
   const router = createRouter()
     .get('/api/platform/queries', queriesRoute)
-    .get('/api/comparison', comparisonRoute)
     .get('/api/roster/enterprises', enterprisesRoute)
     .post('/api/roster/import/preflight', createRosterImportHandler('preflight'))
     .post('/api/roster/import/commit', createRosterImportHandler('commit'))
@@ -178,6 +177,8 @@ describe('第一批 · 平台查询与关系经统一 API 落库', () => {
     commitResult = (await client().commitCommand(request)) as unknown as typeof commitResult
     expect(commitResult.status).toBe('committed')
     expect(commitResult.summary.written).toBeGreaterThan(0)
+    expect(commitResult).not.toHaveProperty('candidateTaskIds')
+    expect(await db.$count(job)).toBe(0)
   })
 
   it('platform_query:五次查询各自成行,四态按实际(含 rdjb=1/2 的 no_record 与一次 failed)', async () => {
@@ -426,18 +427,6 @@ describe('第二批 · 曾用名、已核验处置与归并', () => {
     const text = batch!.items!
     expect(text).toContain(`merge:${duplicate}->${canonical}`)
     expect(text).toContain('"eventsMoved"')
-  })
-
-  it('读回:GET /api/comparison 带出曾用名与已核验处置(§7.6 / 交付物 3)', async () => {
-    const result = (await json('/api/comparison?title=innovative_sme&direction=extra_in_miit&pageSize=50')) as unknown as {
-      rows: { enterpriseId: number; platform: { aliases: { name: string; verificationStatus: string }[]; disposition: { reasonCode: string; measureCode: string } | null; relationCount: number } | null }[]
-      platform: { withEvidence: number }
-    }
-    const row = result.rows.find((r) => r.enterpriseId === canonical)!
-    expect(row).toBeTruthy()
-    expect(row.platform!.aliases.map((a) => `${a.name}:${a.verificationStatus}`)).toContain(`${OLD_NAME}:confirmed`)
-    expect(row.platform!.disposition).toMatchObject({ reasonCode: 'platform_stale', measureCode: 'mark_platform_snapshot' })
-    expect(row.platform!.relationCount).toBe(8)
   })
 
   it('读回:GET /api/platform/queries?enterpriseId= 能列出该企业的全部关系', async () => {

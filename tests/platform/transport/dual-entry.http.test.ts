@@ -66,7 +66,7 @@ it('structured readback and reference reuse preserve all three sources across re
     expect(response.status).toBe(expectedStatus)
     const result = await response.json(); receipts.push(result); return result
   }
-  const invariantTables = ['platform_apply_projection', 'platform_business_projection', 'platform_recognized_projection', 'platform_collection', 'platform_observation_assignment', 'platform_business_record', 'platform_business_record_version', 'platform_business_observation', 'enterprise', 'record', 'record_event', 'enterprise_alias', 'record_correspondence', 'record_correspondence_audit', 'difference_reason']
+  const invariantTables = ['platform_apply_projection', 'platform_business_projection', 'platform_recognized_projection', 'platform_collection', 'platform_observation_assignment', 'platform_business_record', 'platform_business_record_version', 'platform_business_observation', 'enterprise', 'record', 'record_event', 'enterprise_alias', 'difference_reason']
   const snapshot = async () => Object.fromEntries(await Promise.all(invariantTables.map(async table => {
     const result = await db.execute<{ content: string }>(sql`SELECT row_to_json(item)::text AS content
       FROM business.${sql.identifier(table)} AS item ORDER BY (row_to_json(item)::text) COLLATE "C"`)
@@ -100,15 +100,9 @@ it('structured readback and reference reuse preserve all three sources across re
       INSERT INTO enterprise(id,name,name_norm) VALUES(598,'受控人工决定企业','受控人工决定企业');
       INSERT INTO difference_reason(enterprise_id,title_code,direction,status,reason_note,recorded_at,created_at)
         VALUES(598,'specialized_sme','missing_in_miit','needs_review','598 independent controlled decision','2026-11-01','2026-11-01');
-      INSERT INTO record_correspondence(id,edge_key,type,role,enterprise_id,title_code,status,revision,target_identity,provenance,source_fingerprint,rule_id,rule_version,created_at)
-        VALUES(598,'598-controlled','event_process','controlled',598,'specialized_sme','confirmed',1,'{}','{}','598-independent','controlled','1','2026-11-01');
-      INSERT INTO record_correspondence_audit(batch_id,correspondence_id,idempotency_key,to_status,expected_revision,resulting_revision,actor_type,actor_id,basis,rule_id,rule_version,evidence,decided_at)
-        VALUES((SELECT id FROM import_batch LIMIT 1),598,'598-controlled-decision','confirmed',0,1,'agent','598-controlled','independent fixture','controlled','1','{}','2026-11-01');
     `)
     const before = await snapshot()
     expect(before.difference_reason).toHaveLength(1)
-    expect(before.record_correspondence).toHaveLength(1)
-    expect(before.record_correspondence_audit).toHaveLength(1)
     execFileSync(join(process.env.ROSTER_TEST_POSTGRES_BIN!, 'pg_dump'), ['--format=custom', '--schema=business', '--file=' + checkpoint, postgres.url])
     const replay = await post('commit', request('598-offline-replay', { platformQueries: queries }))
     expect(replay).toMatchObject({ status: 'failed', items: expect.arrayContaining([
@@ -157,7 +151,7 @@ it('structured readback and reference reuse preserve all three sources across re
     expect((await post('commit', failedRequest)).status).toBe('committed')
     await check()
     const recovered = await snapshot()
-    for (const table of ['difference_reason', 'record_correspondence', 'record_correspondence_audit'])
+    for (const table of ['difference_reason'])
       expect(recovered[table]).toEqual(before[table])
     expect(readFileSync(originalFile, 'utf8')).toBe(originalBytes)
     expect(JSON.parse(readFileSync(join(dir, 'failed-receipt.json'), 'utf8'))).toEqual(failed)

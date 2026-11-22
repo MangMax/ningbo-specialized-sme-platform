@@ -6,9 +6,6 @@ CREATE UNIQUE INDEX difference_reason_version_uq ON difference_reason (enterpris
 CREATE UNIQUE INDEX enterprise_fact_revision_key ON enterprise_fact_revision(enterprise_id,fact_id,revision);
 CREATE INDEX event_correction_audit_event_idx ON event_correction_audit (event_id, id);
 CREATE INDEX evidence_correction_audit_evidence_idx ON evidence_correction_audit (evidence_id, id);
-CREATE INDEX evidence_review_decision_114_idx ON evidence_review_receipt_114(decision_id,id);
-CREATE INDEX evidence_review_scope_114_idx ON evidence_review_receipt_114(enterprise_id,title_code,direction,decision_id,id);
-CREATE INDEX evidence_review_source_decision_114_idx ON evidence_review_receipt_114(source_decision_id,id);
 CREATE INDEX file_declaration_681_order_idx ON file_declaration_669(file_id, display_sequence);
 CREATE INDEX file_parse_105_history_idx ON file_parse_audit_105 (file_id,id);
 CREATE UNIQUE INDEX file_parse_105_key_uq ON file_parse_audit_105 (file_id,idempotency_key);
@@ -62,13 +59,6 @@ CREATE INDEX platform_recognized_projection_uscc_idx ON platform_recognized_proj
 CREATE INDEX platform_recognized_projection_validity_idx ON platform_recognized_projection (validity_date_raw);
 CREATE UNIQUE INDEX platform_recognized_projection_version_uq ON platform_recognized_projection (version_id);
 CREATE INDEX platform_recognized_projection_year_idx ON platform_recognized_projection (maintenance_year);
-CREATE INDEX record_correspondence_audit_edge_idx ON record_correspondence_audit (correspondence_id,id);
-CREATE UNIQUE INDEX record_correspondence_edge_uq ON record_correspondence (edge_key);
-CREATE INDEX record_correspondence_enterprise_idx ON record_correspondence (enterprise_id,title_code);
-CREATE INDEX record_correspondence_event_idx ON record_correspondence (event_id);
-CREATE INDEX record_correspondence_export_idx ON record_correspondence (export_row_id);
-CREATE INDEX record_correspondence_observation_idx ON record_correspondence (observation_id);
-CREATE INDEX record_correspondence_predecessor_idx ON record_correspondence (predecessor_event_id);
 CREATE INDEX record_district_idx ON record (district);
 CREATE INDEX record_event_record_idx ON record_event (record_id,sort_key,id);
 CREATE INDEX record_evidence_coordinate_idx ON record_evidence (source_file COLLATE "C", list_no, attachment);
@@ -100,10 +90,6 @@ ALTER TABLE difference_reason
   ADD FOREIGN KEY (evidence_relation_id) REFERENCES platform_business_observation(id);
 ALTER TABLE difference_reason
   ADD FOREIGN KEY (moved_in_title_code) REFERENCES title(code);
-ALTER TABLE enterprise_difference_comparison
-  ADD FOREIGN KEY (enterprise_id) REFERENCES enterprise(id) ON DELETE CASCADE;
-ALTER TABLE enterprise_difference_comparison
-  ADD FOREIGN KEY (title_code) REFERENCES title(code);
 ALTER TABLE enterprise_fact_revision
   ADD FOREIGN KEY (enterprise_id) REFERENCES enterprise(id);
 ALTER TABLE event_correction_audit
@@ -191,22 +177,6 @@ ALTER TABLE record
   ADD FOREIGN KEY (enterprise_id) REFERENCES enterprise(id);
 ALTER TABLE record
   ADD FOREIGN KEY (title_code) REFERENCES title(code);
-ALTER TABLE record_correspondence
-  ADD FOREIGN KEY (event_id) REFERENCES record_event(id);
-ALTER TABLE record_correspondence
-  ADD FOREIGN KEY (predecessor_event_id) REFERENCES record_event(id);
-ALTER TABLE record_correspondence
-  ADD FOREIGN KEY (observation_id) REFERENCES platform_business_observation(id);
-ALTER TABLE record_correspondence
-  ADD FOREIGN KEY (export_row_id) REFERENCES platform_export_row(id);
-ALTER TABLE record_correspondence
-  ADD FOREIGN KEY (enterprise_id) REFERENCES enterprise(id);
-ALTER TABLE record_correspondence
-  ADD FOREIGN KEY (title_code) REFERENCES title(code);
-ALTER TABLE record_correspondence_audit
-  ADD FOREIGN KEY (correspondence_id) REFERENCES record_correspondence(id);
-ALTER TABLE record_correspondence_audit
-  ADD FOREIGN KEY (batch_id) REFERENCES import_batch(id);
 ALTER TABLE record_event
   ADD FOREIGN KEY (record_id) REFERENCES record(id) ON DELETE CASCADE;
 ALTER TABLE record_evidence

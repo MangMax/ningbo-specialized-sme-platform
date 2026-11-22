@@ -69,7 +69,7 @@ beforeAll(async () => {
       ...process.env, ...runtime.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production',
       NUXT_DB_READONLY: '0',
       NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'),
-      NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'),
+      NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken,
     },
   })
   child.stdout!.on('data', chunk => { output += chunk.toString() })
@@ -311,19 +311,6 @@ it('accepts exactly the built application route templates and no other spelling'
   expect([...APPLICATION_LOG_ROUTES].sort()).toEqual(actual)
   expect(actual).toContain('/api/platform/declarations')
   expect(actual).toContain('/api/platform/declarations/:recordId')
-})
-
-it('records new annual and candidate HTTP templates without concrete event or task identities', async () => {
-  for (const [path, template] of [
-    ['/api/roster/events/987654321/annual-process', '/api/roster/events/:id/annual-process'],
-    ['/api/roster/annual-correspondence-tasks/not-a-job', '/api/roster/annual-correspondence-tasks/:id'],
-  ]) {
-    const response = await call(path!)
-    expect([400, 404]).toContain(response.status)
-    const rows = await waitLog(response.requestId)
-    expect(rows.find(row => row.source === 'http')).toMatchObject({ httpMethod: 'GET', httpRoute: template, statusCode: response.status })
-    expect(JSON.stringify(rows)).not.toMatch(/987654321|not-a-job/)
-  }
 })
 
 it('records the requested file id on a real delete failure', async () => {

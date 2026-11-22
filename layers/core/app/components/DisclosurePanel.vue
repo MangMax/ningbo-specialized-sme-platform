@@ -16,7 +16,7 @@ import {
  *
  * - `keepMounted`：关闭后保留子树（隐藏为 `until-found`，不占位、不可聚焦），
  *   供需要保持表单实例/初始化回调的折叠使用。
- * - `instant`：仅供程序化收起（如点「开始对比」）跳过动画；手动开合仍有完整动画。
+ * - `instant`：仅供程序化收起跳过动画；手动开合仍有完整动画。
  * - `compact`：唯一的紧凑层级；两档之外不再有页面级折叠样式。
  * - `#chevron`：可选的自定义展开图标槽。传了就完全替换默认 chevron（不附加旋转）；
  *   日志配置页用它固定朝右的 `lucide:chevron-right`。不传时保持全站默认行为。
@@ -121,7 +121,7 @@ function onUpdate(value: string | string[] | undefined) {
 </template>
 
 <style scoped>
-/* 程序化收起（开始对比）直接用最终高度定位，不播放高度动画。 */
+/* 程序化收起直接用最终高度定位，不播放高度动画。 */
 .disclosure-instant :deep([data-slot='accordion-content']) {
   animation: none !important;
 }

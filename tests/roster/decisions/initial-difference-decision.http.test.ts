@@ -59,5 +59,4 @@ it('first browser registration roundtrips null metadata and history while stale 
     SELECT raw_response_sha256 AS digest FROM platform_collection WHERE id = 1
   `)
   expect(rows).toEqual([{ digest: createHash('sha256').update('{"synthetic":"unaltered"}').digest('hex') }])
-  expect((await db.execute(sql`SELECT * FROM evidence_review_receipt_114`)).rows).toHaveLength(0)
 })

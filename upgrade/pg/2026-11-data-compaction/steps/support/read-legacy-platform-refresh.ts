@@ -2,7 +2,7 @@ import { and, desc, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { platformBusinessObservation as observation, platformCollection as collection,
   platformObservationAssignment as assignment } from '../../../../../db/postgresql/platform-tables'
-import { refreshRelationFields } from '../../../../../layers/sme-roster/lib/platform/difference-hash-keys'
+import { refreshRelationFields } from './platform-refresh-hash-keys'
 import type { PostgresQualificationTransaction as Tx } from '../../../../../layers/sme-roster/lib/roster/current-qualification-postgres'
 
 const cellSchema = z.object({name:z.string(),storageClass:z.enum(['null','text','blob','integer','real']),hex:z.string().regex(/^(?:[a-fA-F0-9]{2})*$/),real64be:z.string().regex(/^[a-fA-F0-9]{16}$/).optional()})

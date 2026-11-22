@@ -371,7 +371,7 @@ html.theme-transition::view-transition-new(root) {
   }
 }
 
-/* Enterprise list, files and comparison share table typography and spacing. */
+/* Workspace tables share typography and spacing. */
 .data-table {
   font-size: var(--text-table);
   line-height: var(--text-table--line-height);

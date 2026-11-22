@@ -1,4 +1,4 @@
-import type { PublishedPresentation } from './correspondence-view'
+import type { PublishedPresentation } from './published-presentation'
 import { normalizeName, normalizeUscc } from '../domain'
 import { CURRENT_RULE_VERSION, type CurrentQualificationSnapshot, type CurrentQualificationWitness, type CurrentRow, type CurrentTitle } from './current-qualification-model'
 

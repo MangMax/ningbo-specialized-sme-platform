@@ -1,0 +1,84 @@
+\set ON_ERROR_STOP on
+BEGIN;
+SET LOCAL search_path TO business, pg_catalog;
+SELECT pg_advisory_xact_lock(21785,0);
+SELECT pg_advisory_xact_lock(42458,114);
+
+-- Check that every receipt can be projected without changing a decision or
+-- replacing its stored metadata. Refuse unexpected receipt shapes atomically.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM evidence_review_receipt_114 r
+    LEFT JOIN difference_reason target ON target.id = r.decision_id
+    LEFT JOIN difference_reason source ON source.id = r.source_decision_id
+    WHERE r.kind <> 'process' AND NOT CASE
+      WHEN r.kind = 'maintain' THEN
+        target.id IS NOT NULL AND (r.source_decision_id IS NULL OR r.source_decision_id = target.id)
+        AND r.reviewed_revision_id IS NOT NULL AND jsonb_typeof(r.response::jsonb) = 'object'
+      WHEN r.kind = 'replace' THEN
+        target.id IS NOT NULL AND (r.source_decision_id IS NULL OR source.id IS NOT NULL)
+        AND r.reviewed_revision_id BETWEEN 0 AND 9007199254740991
+        AND target.lifecycle_action = 'replace' AND target.previous_id IS NOT DISTINCT FROM source.id
+        AND target.idempotency_key = r.idempotency_key AND target.request_hash = r.request_hash
+        AND target.basis = r.basis AND target.effective_at IS NOT DISTINCT FROM r.effective_at
+        AND r.response::jsonb = jsonb_build_object(
+          'versionId', target.id, 'currentId', target.id, 'previousId', target.previous_id,
+          'action', target.lifecycle_action, 'recordedAt', target.recorded_at,
+          'reviewedRevisionId', r.reviewed_revision_id
+        )
+      ELSE false
+    END IS TRUE
+  ) THEN
+    RAISE EXCEPTION 'Evidence review receipt cannot be projected without changing decision semantics';
+  END IF;
+END
+$$;
+
+INSERT INTO import_batch
+  (idempotency_key, source_kind, source_identity, source_sha256, status, summary, created_at, committed_at)
+SELECT
+  'evidence-review:' || r.idempotency_key,
+  CASE r.kind WHEN 'maintain' THEN 'maintained_difference'
+              ELSE 'reviewed_difference_replacement' END,
+  r.decision_id::text,
+  CASE WHEN r.kind <> 'replace' THEN r.request_hash END,
+  'committed',
+  CASE r.kind WHEN 'maintain' THEN json_build_object(
+                'response', r.response::json,
+                'qualification', json_build_object('basis', r.basis, 'effectiveAt', r.effective_at)
+              )::text
+              ELSE json_build_object('reviewedRevisionId', r.reviewed_revision_id)::text END,
+  r.recorded_at, r.recorded_at
+FROM evidence_review_receipt_114 r
+WHERE r.kind <> 'process'
+ORDER BY r.id;
+\ir ../../../db/postgresql/platform-capture-retention.sql
+DROP FUNCTION IF EXISTS prune_platform_captures(bigint[], boolean, bigint[]);
+
+LOCK TABLE job IN SHARE ROW EXCLUSIVE MODE;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM job j
+    WHERE j.kind IN ('reconcile', 'event-archive-candidates', 'event-annual-correspondence', 'roster_task_history_cleanup')
+      AND (j.state IN ('queued', 'running') OR j.claim_token IS NOT NULL
+        OR EXISTS (SELECT 1 FROM lead_list_export WHERE job_id = j.id)
+        OR EXISTS (SELECT 1 FROM platform_batch_segment WHERE job_id = j.id))
+  ) THEN
+    RAISE EXCEPTION 'A task scheduled for removal is active or owns a retained result';
+  END IF;
+END
+$$;
+
+DELETE FROM job
+WHERE kind IN ('reconcile', 'event-archive-candidates', 'event-annual-correspondence', 'roster_task_history_cleanup');
+
+DROP TABLE record_correspondence_audit, record_correspondence, evidence_review_receipt_114, enterprise_difference_comparison;
+
+DELETE FROM import_receipt r USING import_batch b
+WHERE r.batch_id = b.id AND b.source_kind = 'correspondence_decision';
+DELETE FROM import_batch WHERE source_kind = 'correspondence_decision';
+
+COMMIT;

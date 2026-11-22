@@ -24,7 +24,7 @@ beforeEach(() => {
   vi.stubGlobal('$fetch', vi.fn())
 })
 async function open(query: Record<string, string> = { file, page: '3', back }) {
-  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/preview', component: { template: '<div/>' } }] })
+  const router = createRouter({ history: createMemoryHistory(), routes: ['/preview', '/enterprises/:id', '/roster', '/files'].map(path => ({ path, component: { template: '<div/>' } })) })
   await router.push({ path: '/preview', query })
   const wrapper = mount(PreviewPage, { global: { plugins: [router], stubs: {
     PdfEngine: Engine, PageImageGallery: Gallery,

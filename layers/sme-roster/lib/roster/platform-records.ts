@@ -88,7 +88,7 @@ export function platformPresentationFields(raw: Record<string, unknown> | null |
 
 export const PLATFORM_HISTORY_CONFLICTS: Record<string, string> = {
   identity_conflict: '企业身份冲突', title_conflict: '称号冲突',
-  correspondence_decision_conflict: '对应决定冲突', platform_key_conflict: '平台编号冲突',
+  platform_key_conflict: '平台编号冲突',
   platform_field_conflict: '原字段冲突',
 }
 export const PLATFORM_HISTORY_STATES: Record<string, string> = {

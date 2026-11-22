@@ -6,9 +6,8 @@ import { computed, nextTick, ref, watch } from 'vue'
 import RosterEventChip from '#sme-roster/app/components/EventChip.vue'
 import type { RosterEnterpriseDetail } from '#sme-roster/lib/roster/enterprise-roster'
 import { titleLabel } from '#sme-roster/lib/roster/review-display'
-import { sourceReturnTarget, type OfficialPublishedFact } from '#sme-roster/lib/roster/correspondence-view'
-import OfficialEvidenceView from '#sme-roster/app/components/record-correspondence/OfficialEvidence.vue'
-import { eventDecisionText } from '#sme-roster/lib/roster/correspondence-view'
+import OfficialEvidenceView from '#sme-roster/app/components/OfficialEvidence.vue'
+import { eventDecisionText, type OfficialPublishedFact } from '#sme-roster/lib/roster/official-evidence-display'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import RosterPlatformRecords from '#sme-roster/app/components/PlatformRecords.vue'
 import RosterTitleBadge from '#sme-roster/app/components/TitleBadge.vue'
@@ -73,8 +72,7 @@ interface LedgerEvent extends DetailEvent {
 
 const route = useRoute()
 const id = computed(() => String(route.params.id ?? ''))
-const comparisonReturn = computed(() => sourceReturnTarget(route.query.returnTo))
-const backLabel = computed(() => typeof route.query.currentBack === 'string' ? CURRENT_ENTERPRISES_TITLE : comparisonReturn.value ? '记录级对比' : ENTERPRISE_LIST_TITLE)
+const backLabel = computed(() => typeof route.query.currentBack === 'string' ? CURRENT_ENTERPRISES_TITLE : ENTERPRISE_LIST_TITLE)
 
 /**
  * 返回名录台账。
@@ -92,7 +90,6 @@ const backTo = computed(() => {
     for (const [key, value] of new URLSearchParams(route.query.currentBack)) query[key] = value
     return { path: '/current-enterprises', query }
   }
-  if (comparisonReturn.value) return comparisonReturn.value
   const raw = typeof route.query.back === 'string' ? route.query.back : ''
   if (!raw) return ROSTER_LEDGER_PATH
   const query: Record<string, string> = {}
@@ -402,7 +399,7 @@ function openPreview(e: Evidence) {
                         <p v-if="!event.evidence.length" class="text-muted-foreground text-sm">此事件未记录公布名单出处。</p>
                         <ul v-else class="grid min-w-0 gap-3 xl:grid-cols-2">
                           <li v-for="(item, index) in event.evidence" :key="item.id ?? index" class="min-w-0">
-                            <OfficialEvidenceView :evidence="item" :back="previewReturnPath(event.id)" preview-in-place @preview="openPreview(item)" @page-open="rememberPagePreviewReturn(event.id, $event)" />
+                            <OfficialEvidenceView :evidence="item" :back="previewReturnPath(event.id)" @preview="openPreview(item)" @page-open="rememberPagePreviewReturn(event.id, $event)" />
                           </li>
                         </ul>
                       </section>

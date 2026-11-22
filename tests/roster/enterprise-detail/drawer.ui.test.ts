@@ -19,11 +19,11 @@ let queryData: ReturnType<typeof ref>
 let queryLoading: ReturnType<typeof ref>
 let queryError: ReturnType<typeof ref>
 
-function detailWithDifference(patch: Record<string, unknown> = {}) {
+function enterpriseDetail() {
   return {
     enterprise: {
       enterpriseId: 1,
-      name: '宁波已确认无差异企业',
+      name: '宁波测试企业',
       uscc: '91330211000000012X',
       district: '鄞州区',
       aliasNames: [],
@@ -36,19 +36,6 @@ function detailWithDifference(patch: Record<string, unknown> = {}) {
     records: [],
     events: [],
     evidence: [],
-    differences: [{
-      explanationId: 1,
-      titleCode: 'specialized_sme',
-      direction: 'extra_in_miit',
-      status: 'confirmed_no_diff',
-      reasonCode: null,
-      reasonNote: null,
-      measureCode: 'none',
-      measureNote: null,
-      verificationStatus: 'confirmed',
-      inCurrentDifference: false,
-      ...patch,
-    }],
   }
 }
 
@@ -191,47 +178,12 @@ describe('企业详情抽屉的焦点返回', () => {
   })
 })
 
-describe('企业详情抽屉的差异原因', () => {
-  it.each([
-    ['not_queried', '未查询'],
-    ['query_failed', '查询失败'],
-    ['no_record', '无记录'],
-    ['confirmed_no_diff', '已确认无差异'],
-    ['confirmed_reason', '已确认原因'],
-    ['needs_review', '待核实'],
-  ])('%s 状态在抽屉里显示中文状态', (status, label) => {
-    queryData.value = detailWithDifference({ status })
-    queryLoading.value = false
-    const wrapper = mountDrawer()
-    const statusLabel = wrapper.get('[data-testid="enterprise-difference-status"]')
-
-    expect(statusLabel.text()).toBe(label)
-  })
-
-  it('confirmed_no_diff 没有 reason_code 时显示「无需原因」', () => {
-    queryData.value = detailWithDifference()
-    queryLoading.value = false
-    const wrapper = mountDrawer()
-
-    expect(wrapper.get('[data-testid="difference-reason-chain"]').text()).toContain('无需原因')
-    expect(wrapper.get('[data-testid="difference-reason-chain"]').text()).not.toContain('待核实')
-  })
-
-  it('其他无已知原因的差异仍显示「待核实」', () => {
-    queryData.value = detailWithDifference({ status: 'needs_review', measureCode: null })
-    queryLoading.value = false
-    const wrapper = mountDrawer()
-
-    expect(wrapper.get('[data-testid="difference-reason-chain"]').text()).toContain('待核实')
-  })
-})
-
-describe('企业详情抽屉的复核年份', () => {
+describe('企业详情抽屉的复核安排', () => {
   it('只有下次复核年份对应的称号锚点待核时才标记该年份', () => {
     queryData.value = {
-      ...detailWithDifference(),
+      ...enterpriseDetail(),
       enterprise: {
-        ...detailWithDifference().enterprise,
+        ...enterpriseDetail().enterprise,
         nextReviewYear: 2023,
         anchorNeedsReview: true,
       },
@@ -249,9 +201,9 @@ describe('企业详情抽屉的复核年份', () => {
 
   it('下次复核年份本身的锚点待核时显示待核标记', () => {
     queryData.value = {
-      ...detailWithDifference(),
+      ...enterpriseDetail(),
       enterprise: {
-        ...detailWithDifference().enterprise,
+        ...enterpriseDetail().enterprise,
         nextReviewYear: 2023,
         anchorNeedsReview: false,
       },
@@ -278,7 +230,7 @@ describe('企业详情抽屉的曾用名', () => {
       name: '宁波九纵智能科技有限公司',
     },
   ])('不把企业 $enterpriseId 的现名显示成曾用名', ({ name }) => {
-    const detail = detailWithDifference()
+    const detail = enterpriseDetail()
     queryData.value = {
       ...detail,
       enterprise: { ...detail.enterprise, name, aliasNames: [name] },
@@ -292,7 +244,7 @@ describe('企业详情抽屉的曾用名', () => {
   })
 
   it('真实历史曾用名仍会显示', () => {
-    const detail = detailWithDifference()
+    const detail = enterpriseDetail()
     queryData.value = {
       ...detail,
       enterprise: {
@@ -313,7 +265,7 @@ describe('企业详情抽屉的曾用名', () => {
 describe('企业详情抽屉的称号时间线', () => {
   function timelineDetail(types: string[]) {
     return {
-      ...detailWithDifference(),
+      ...enterpriseDetail(),
       records: [{id:1,titleCode:'little_giant',source:'jxj',district:null,lifecycle:{firstRecognitionYear:2020,dueYear:null,needsReview:false,state:'active'}}],
       events: types.map((eventType,index)=>({id:index+1,recordId:1,eventType,year:2020+index,decidedYear:null,batchSeq:1,reviewOutcome:null})),
     }
@@ -346,7 +298,7 @@ describe('企业详情抽屉的称号时间线', () => {
   })
 
   it('抽屉展示四个业务来源并卸载核对入口', () => {
-    queryData.value = detailWithDifference()
+    queryData.value = enterpriseDetail()
     queryLoading.value = false
     const wrapper = mountDrawer()
     expect(wrapper.findAll('[role="tab"]').map(tab => tab.text())).toEqual(['公布资料', '认定目录', '关联办理', '申报记录'])
@@ -362,11 +314,11 @@ describe('企业详情抽屉的复核称号与认定批次',()=>{
   const award: RosterEventRow={id:1,recordId:1,eventType:'award',year:2021,decidedYear:2021,batchSeq:3,reviewOutcome:null}
   const review: RosterEventRow={id:2,recordId:1,eventType:'review',year:2021,decidedYear:2024,batchSeq:1,reviewOutcome:'passed'}
   function reviewDetail(events: RosterEventRow[]=[award,review]) {
-    return {...detailWithDifference(),records:[{id:1,titleCode:'specialized_sme',source:'jxj',district:null,lifecycle}],events}
+    return {...enterpriseDetail(),records:[{id:1,titleCode:'specialized_sme',source:'jxj',district:null,lifecycle}],events}
   }
 
   it('逐称号展示复核年与原认定年批次，同称号跨来源只显示一次',()=>{
-    queryData.value={...detailWithDifference(),records:[
+    queryData.value={...enterpriseDetail(),records:[
       {id:2,titleCode:'little_giant',source:'miit',district:null,lifecycle:{...lifecycle,anchorEventId:10,firstRecognitionYear:2024}},
       {id:1,titleCode:'little_giant',source:'jxj',district:null,lifecycle:{...lifecycle,anchorEventId:10,firstRecognitionYear:2024}},
       {id:3,titleCode:'specialized_sme',source:'jxj',district:null,lifecycle:{...lifecycle,anchorEventId:20,dueYear:2024,needsReview:true}},
@@ -422,7 +374,7 @@ describe('企业详情抽屉的复核称号与认定批次',()=>{
 })
 
 it('saves the filtered expanded ledger and both scroll layers when opening the complete enterprise page', async () => {
-  queryData.value = detailWithDifference()
+  queryData.value = enterpriseDetail()
   queryLoading.value = false
   const table = mount(EnterpriseListTable, { attachTo: document.body, props: { rows: [], loading: false, hasError: false, selectedId: 1, filtered: true } })
   const scroller = table.get('[data-testid="enterprise-table-scroll"]').element

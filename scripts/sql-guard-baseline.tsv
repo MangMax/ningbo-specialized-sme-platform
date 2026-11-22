@@ -21,22 +21,18 @@ layers/sme-roster/server/utils/decision-lifecycle/postgres-writes.ts	TjzhfK0DJYm
 layers/sme-roster/server/utils/difference-snapshot.ts	TluCj3pbUveO73zHiWcRMgcLDV5CWQC0v_Uil0rAlzx8
 layers/sme-roster/server/utils/enterprise-facts-postgres.ts	TPnAR9n1Z9rfc2xTxEfqCR9cpimr8bb4X4K1Eys24L1c
 layers/sme-roster/server/utils/enterprise-profile-postgres.ts	T-IAQTD5hH3dWxjYD4w7sgjxiJDQpbE6EBzkYqsx4-bg
-layers/sme-roster/server/utils/event-archive-discovery-model.ts	T8ZS4cWQP3nH7vvqEoGP2EnMt4gid9NoEKHNmGefbDbY,Tk77Ua0zYWgj1Kenqb1eqahedmqGcA-9nYPe3qQowKL4
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	TD4_EWZxJW82LomqiCCmXbfAID__3x2wtaC9vFLOWPko
 layers/sme-roster/server/utils/file-parts-postgres.ts	TCRRAn9Zj19ZgOI1OdKP1YNCymZrE5Uz6fJtcagtzBM4
 layers/sme-roster/server/utils/import-receipts-postgres.ts	TXGv2f5F2CPtVBbgQO-ar4sAHJmJ5ffvHzDbnotH7vHw
+layers/sme-roster/server/utils/normalized-uscc-postgres.ts	T8ZS4cWQP3nH7vvqEoGP2EnMt4gid9NoEKHNmGefbDbY,Tk77Ua0zYWgj1Kenqb1eqahedmqGcA-9nYPe3qQowKL4
 layers/sme-roster/server/utils/official-evidence-postgres.ts	T9ZFLcJ0RhpZ2M36V0kurQBNYw-pkEG1MJNfWffYCkQw,Ta_8gclnyCYpva2F2D7pIQ2ORRmHECEVN67nCdR1dG8s,TbjKCWkWX3nssp4nHnHcRWt1ltt5mjb7R2wGe7uFwiJE,TdNtzsmNNJmCtHDx4pwpWSz07HltVQEYcrqEz5NGcJC4,TGTBuyCa0F-VkHhcPVZZrkzbXqZUYsDpYVm0Y1KY7xDc,TH90Xd_cs4raTPsTVLgsWuZ5trA8A4p8QhMcWsEp3QjM,TjI5Ea-EuM_icQRcxkwI3l1Az6mpLYVLseCRpNdqt8NM,TOfjr-nynUvqqt1scre-Mtf7Jrh5-JgTZ-gjGJjDOCt4,TVUy6v931lWfKWWcQAkCsvsW26xTBrKSZkQygJgQb-pI
 layers/sme-roster/server/utils/parse-maintenance-postgres.ts	TRbmLMLDST2L3Oi6NKHnD6SdwzGh95cSRAi9McXMhWBI
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TaUTFvnZ4CzF8QefBoyayVOoSqE9ypaBWaCniwfWCQbs,TIHpqAoSs-a3l0oWW4-LCqBXOwNpBeT6OCpnDXgNyiYk,TsQTxzwF25F0AGIKUKXnxJeee-H-01F1Fo7M-PHhiw0k,TzWUnzzHfsaNHOSFj1QU-rr98Zr1GNDDYv3jE-Kwg9YI
-layers/sme-roster/server/utils/record-comparison-catalog-postgres.ts	T-Zs5QBO-clE_lJEETjbJsWTZUnHkqPbFcdq4U6bmeEw,TY_7frR6qnmCHLUF60NW0Y7adHz1GEZUiugfxGd9OiUY
-layers/sme-roster/server/utils/record-comparison-postgres.ts	TY_7frR6qnmCHLUF60NW0Y7adHz1GEZUiugfxGd9OiUY
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	T26UfjVgIGm9wJYuSKPJPuZEpMpFGnsO27iFgP6EK2nI,T3s6muTndHQUbr9D9pYsMFcK6N8CRh-yjp3CkR--lNec,T7RkO0-Jw1CxtjjgDTHJIAHvLTy6ocyYKcVNg-3CEPDE,TH5SBvGSvdtA7-p59OzisM4QZ1f3aGJlOSpWWk_ii2hE,TJmeUl-RlycOAfjorLeGPwX0hZhQj3TJZeIYoXjxoel4,TkStQ_tXa6zPnA8pEjh0jm4GPCLHak-7n6Y8xhFB_vmg:2,TraryXLilMORBm4uWOmUpQSbgoc_M4oCFARD-xwhcI-s,TXg0FF8RhzEj0S_pg6h3mlNnZUUpM6d9HunqnA7Wn_l8,TY_7frR6qnmCHLUF60NW0Y7adHz1GEZUiugfxGd9OiUY,TZ7g8JWTaE745Xpi6U-K1osCkHKEZFdTaG2il2YdRZzs
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	T4ROUxvTwZrcmsQ7uEUju63ojSRyi5SMZSvvo8Bm6E4g,T7NrHxDWa-f7jWcJzlm1XoM2c12s2tHJKSc80qC5pB14,TABFoexeLFqHlaPMREiDkBgtXaAasYNorr4-e2sM9QeE,TaPz0QmFlTZQ33G81-LywUmc3J_2NDssavCGPzOkEhWo,Tea22hGhawpanGkXNykBbc6nIsgL06KQ1-J_o5wecBe8,THyubArkU5a_dYyrUz-uXkLV_pQisKA90Oy6XAkNL_XM,TJ7oTuRw74bupH9FHXi0Vp_75aGzUox3-w-dzvnu7pIE,TjMVm1rdHmgaididr32MfUa5sCLEPBo_ok12dNhHyZcM,TPDqNUS9lL4vyUbjpEhY3Bal14GYzspqx8FlnH-WKit4,TV3EQ56OD7U-3WGpJ09DWHz1F3HRHiIq7M45TiDBurK4,TyPnEWPslh0DDYNYPWIxl3v8Ny61fO9ZIMzR9usjqMOY,TZoDObuIk7xIQRlzAlsHx17RCpw0YKl8zDwaOKl3teyQ
-layers/sme-roster/server/utils/record-correspondence-postgres.ts	TY_7frR6qnmCHLUF60NW0Y7adHz1GEZUiugfxGd9OiUY
 layers/sme-roster/server/utils/task-center-route.ts	T_SE9ykJYL-Uo1edm9UbBDVe0mXi58Jktfkz9dbo0BUA
 layers/sme-roster/server/utils/title-cycle-disposition-postgres.ts	TO6xZrN6KhNwpjxMxcc5m7CETyiGh8c8_SgPNy5Sg6Iw
 # Justified exceptions: the optional third column records the reviewed reason.
-db/postgresql/bootstrap.sql	FD_hsDQRO3PlwxB0pTqnVLQcGYJxRzaaqTH-Wopzw_0I	安装 PostgreSQL 结构和采集保留过程。
+db/postgresql/bootstrap.sql	Fya1HBcTkcBWpiO3FfCAILXh0J4dTKp26LIiandgDvnA	Install the PostgreSQL schema and shared catalog comments.
+db/postgresql/business-catalog-comments.sql	FAwoVekr4SaAVXlt2ncTb1-Ez7LEpfR5N2fEOmR7wFUQ	PostgreSQL COMMENT ON DDL for business schema documentation.
 db/postgresql/client.ts	IKqS8xL0RaLGLCweUQRC4BLJWsYeyEX7AUgHQNS5nJTs	Drizzle accepts the existing pg pool; the driver configures session options, connection timeouts and startup version validation.
 db/postgresql/client.ts	DGedDIzHc8JvwFZd_UfhQVKAe1couSlutIEfW3sPx6cI	Drizzle node-postgres 适配器接收受管 pg.Pool，连接参数和连接初始化检查在适配器边界配置。
 db/postgresql/enterprise-directory-indexes.sql	F0IBxoSr7tKcmEldw_rbJpySPz2wya6W-MPdPFGVVkZw	Install the shared enterprise search extension and directory indexes.
@@ -49,18 +45,19 @@ db/postgresql/job-integrity.sql	FnrxDae3sNmfpid4GWL4T3iKXby5VHYj5N19ajXyc6iw	Ins
 db/postgresql/job-schema.sql	FapCqZLJ6cRBJDhLb3IgFfbJk2J1BH1qKVtpkZyd1_SM	Define the shared job table before assigning its runtime claim default.
 db/postgresql/official-evidence-tables.ts	TALU0iapPUQJjT1BnN4eZdOPgPJWm_w-6JRSZl1WWOWY	Return the exact PostgreSQL JSON scalar without decoding U+0000 into text.
 db/postgresql/platform-batch-segments.sql	FdsAnK_90YSFhqE48uo-PmaFYCoDqa3rQzzXlsDNSGNQ	Define the PostgreSQL segment table and its composite key, foreign key and check constraint. Drizzle query builders do not install DDL.
-db/postgresql/platform-capture-retention.sql	FToO18FD92gkyueBYzBXaxN8oxCmYXftwE0We_WGaaIM	PostgreSQL 事务内核对同内容的证据出处、重绑业务引用并删除超期业务事实。
+db/postgresql/platform-capture-retention.sql	FVM_SUk2UAi2E_QU-EaJnBX1bvz-wllnTIZ61dDbqw40	Drizzle 无 PL/pgSQL 函数及触发器 DDL 构造器。保留函数在同一事务内处理差异依据及采集保留。
 db/postgresql/platform-collection-scope-integrity.sql	FXgq0NIoH-m-MlPny3z3X9B72zgEMyr2n2lTEiRyxzT0	Shared bootstrap DDL for PostgreSQL constraints, typed projections and trigger functions.
 db/postgresql/platform-legacy-coverage.sql	FG3gqJhdxdtL2cT4v65wDguk8XNuniudtDzCiV4CFE_g	Extract typed collection scope from binary historical envelopes during offline migration. Drizzle does not express byte offsets or temporary PL/pgSQL programs.
 db/postgresql/platform-observation-source.sql	Fsts4gx-17W43wBTbf-TXZCefCuJHvhINYBzyjGg7AQQ	Shared bootstrap DDL for PostgreSQL constraints, typed projections and trigger functions.
 db/postgresql/platform-projection-owner.sql	FMRJgnW3uhYQz_2A6tIIPV0EB6yR4LlQELtTjiD0BO8E	Shared bootstrap DDL for PostgreSQL constraints, typed projections and trigger functions.
 db/postgresql/platform-public-id-triggers.sql	FvudH63PHJYPVegGIIWBzB9sQkKi7RK8i1Q_-BsUou84	Protect migrated public identifiers and owner keys through native triggers. Drizzle cannot install trigger functions.
 db/postgresql/platform-version-business-fields-projection.sql	FAziGGZRgZ2M0smERUxQy02QWM8fLSEKSyOAzQ_vHYmM	Prove identical historical fields for each stored version before clearing redundant observation copies.
-db/postgresql/roster-constraints.sql	FNgbaqMSvBa0Tz3rfXf-LQ_449AOAIUd4HfcNvsE5GdU	Shared bootstrap DDL for PostgreSQL constraints, typed projections and trigger functions.
+db/postgresql/roster-constraints.sql	FAfQOJAxsuUMpP7WVUEuNdTOU_ikGEGWRZjQI4qA5aNw	Shared PostgreSQL bootstrap DDL.
 db/postgresql/roster-platform-schema.sql	FrefjLr2kN4ZrbcQxoppFjE_hfxXOzo2SF9Pn1anEBaY	Shared bootstrap DDL for PostgreSQL constraints, typed projections and trigger functions.
-db/postgresql/roster-review-schema.sql	FL8h_wwxC8VUqgXE5jDmkRJdLwGEs0buVzjcA2oUzuCk	Define the private native state digest separately from the existing public comparison digest.
+db/postgresql/roster-review-schema.sql	FLDHeus5SD5T2BsNvFkDk3-DlMprUKvzpWQCcQwKyYyw	Shared PostgreSQL bootstrap DDL.
 db/postgresql/roster-schema.sql	FuzPhs1OZo9V3eQ8l4xs9jHErrlX_za5rQG7ij_fAjx4	Define the native PostgreSQL roster schema and typed import receipt metadata.
-db/postgresql/roster-triggers.sql	Fbsm9vhxleshtg4cjHTdGsL_seu3q4r-UK0R6hL5ueUw	Shared bootstrap DDL for PostgreSQL constraints, typed projections and trigger functions.
+db/postgresql/roster-triggers.sql	Fc-XDV2w8qthKVsiLhGX7JkMY0iB7IrT5KL22Y-fsu54	Shared PostgreSQL bootstrap DDL.
+db/postgresql/runtime-log-catalog-comments.sql	FWQkC00OAMnyW99w-ffmeYNXih6nJbFNQQvHKU_JSNsc	仅 COMMENT ON 运行日志表与字段的中文说明，Drizzle 无目录注释 DDL
 db/postgresql/runtime-log-indexes.sql	FswA5ZQ3EtzwSG4PnCc8VwJzbRlZmWxV92C7iv94ivTg	Install the shared retained PostgreSQL runtime log indexes.
 db/postgresql/runtime-log-schema.sql	FjdE7pPImb87xO394HTaUkOPwo89SslvgjX8z_-asWko	Define the shared PostgreSQL runtime log policy and detail-only event storage.
 layers/core/lib/logging/postgres-storage.ts	TCtPLa5C_1qSlre2hRG1Fls3Hj-VYQ4ACrk17-6vLSj0	Drizzle 0.45.4 无列算术表达式构造器，在数据库仍持有行锁时执行原子的增减。
@@ -120,8 +117,7 @@ layers/lead-lists/server/utils/postgres-versions.ts	TALXICfUkk7TM_9D_S_IAYC74pHm
 layers/lead-lists/server/utils/postgres-versions.ts	TcY-9LkSmGJlX3doJI-Uar9iGrxg5YWgYi8Yd8jTLhiQ	Drizzle 0.45.4 无表达式 COLLATE 构造器，保留 C 字节序，匹配原查询排序或索引。
 layers/lead-lists/server/utils/postgres-versions.ts	TVzaldY8sRwYN1_ibUPNVVdDOz5F_lbki8rjOTN2tRDs	Drizzle 0.45.4 无表达式 COLLATE 构造器，保留 C 字节序，匹配原查询排序或索引。
 layers/lead-lists/server/utils/postgres-versions.ts	TXe4KZekuncdYLWdxbqkOKtXW03VC28oIEXqI9bIeUOk	Drizzle 0.45.4 无表达式 COLLATE 构造器，此处保留字节序比较。
-layers/sme-roster/lib/comparison-heads-postgres.ts	Tmb9PnvVR6NlNhebTEEkeOEpuX6qPJty50HeFdn-2eeM	Drizzle 0.45.4 无表达式 COLLATE 构造器，此处保留字节序比较。
-layers/sme-roster/lib/comparison-postgres.ts	TTSq-nFCm_Y7ySZbgz4qsMKfYY5WM41A3qny-dnKgZWE	Drizzle 0.45.4 无表达式 COLLATE 构造器，保留 C 字节序，匹配原查询排序或索引。
+layers/sme-roster/lib/difference-coordinates-postgres.ts	Tmb9PnvVR6NlNhebTEEkeOEpuX6qPJty50HeFdn-2eeM	Drizzle 0.45.4 无表达式 COLLATE 构造器，此处保留字节序比较。
 layers/sme-roster/lib/platform-snapshots-postgres.ts	TmmTz62TgUfK-Ay2wxjYkM72VPw0Jzo27CAE_tBONuu8	Drizzle 0.45.4 无表达式 COLLATE 构造器，保留 C 字节序，匹配原查询排序或索引。
 layers/sme-roster/lib/platform/current-observation-postgres.ts	T3mmqjE1Kuqej278hbB4uf6swEIvTyOJadAYvxwxKNWI	Drizzle 无 IS NOT DISTINCT FROM 构造器；空条件只匹配同口径采集。
 layers/sme-roster/lib/platform/current-observation-postgres.ts	Tf_DJH135fNYibvtjCBzJpy8yWfsn21JQBbrleeEu9oQ	Drizzle 无 COALESCE 和 COLLATE 表达式构造器；共享接口采集时间排序。
@@ -154,7 +150,7 @@ layers/sme-roster/lib/roster/difference-list-postgres.ts	TSTDI2URinnJiiW4F9figVT
 layers/sme-roster/lib/roster/enterprise-detail-postgres.ts	TGCoM8XkMRGogEFy8g2wwZApzyTB37po4T4Gojlaodfw	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	T1AT8_PvokLaphb_JM7sInl6bFLCjK5_ME3XgZ0YFcWU	Drizzle 0.45.4 无表达式 COLLATE 构造器，保留 C 字节序，匹配原查询排序或索引。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	T4hy7I-oVWWxkEuwEOrHXsFuCE4ECiZDVuKkTisvDFAA	Drizzle 0.45.4 没有布尔/数组聚合与聚合 FILTER 构造器，保持同一业务快照的分组粒度和成员条件。
-layers/sme-roster/lib/roster/enterprise-list-postgres.ts	T5oQ2XIbogSPU5AzO3QndxF3lpnbE1QiQsW1Vh61vWII:2	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
+layers/sme-roster/lib/roster/enterprise-list-postgres.ts	T5oQ2XIbogSPU5AzO3QndxF3lpnbE1QiQsW1Vh61vWII	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	T8QVPg5RChNzudZpl8RN5fJnpleKIinig4K5_QoWT9aw	Drizzle 0.45.4 没有布尔/数组聚合与聚合 FILTER 构造器，保持同一业务快照的分组粒度和成员条件。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	T9EGNLS0DP3OrWLD12AEwlf4MLPxwDztnds1IeIlPARI	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	Tdj1uq06DHFpbVQoLPb3RHYd-88zbiuVxVF7Nn3rsENw	Drizzle 0.45.4 没有布尔/数组聚合与聚合 FILTER 构造器，保持同一业务快照的分组粒度和成员条件。
@@ -170,7 +166,7 @@ layers/sme-roster/lib/roster/enterprise-list-postgres.ts	TtUBwspAK4vrVMxJ6aRxsHy
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	Tu4PAutQdTtPMrFeA7e4oy3GGFcpvSwq9z-N11CHXnPc	Drizzle 0.45.4 没有布尔/数组聚合与聚合 FILTER 构造器，保持同一业务快照的分组粒度和成员条件。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	TvSAVM0L0ws3UzJTExRXzSTbZ3lITiw7rGzPttFclnjs	Drizzle 0.45.4 没有 NULLIF/COALESCE 表达式构造器，保留缺省值与空值语义。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	TwLPJKUncETYoV7Lkl22VFY7yVKqDHYSxYRq8YVVvkj8	Drizzle 0.45.4 没有 NULLIF/COALESCE 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/lib/roster/enterprise-list-postgres.ts	TyL8AOy7KTP7Wg2r4bFrl7S1he1Xsu1gFXrd0LT_jyww:2	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
+layers/sme-roster/lib/roster/enterprise-list-postgres.ts	TyL8AOy7KTP7Wg2r4bFrl7S1he1Xsu1gFXrd0LT_jyww	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	TyZ8xqm_sRN2hj4ZJjmZLtdZUkJMtpm-_cn3RQifoyc4	Drizzle 0.45.4 没有布尔/数组聚合与聚合 FILTER 构造器，保持同一业务快照的分组粒度和成员条件。
 layers/sme-roster/lib/roster/platform-qualification-postgres.ts	Tf0yIDl2F2N9zIPnCz5C4KcGxk90gI82d0PjW3VKPNkM	Drizzle 0.45.4 无正则运算符和表达式 COLLATE 构造器，识别不满足旧信用代码格式的记录。
 layers/sme-roster/lib/roster/platform-qualification-postgres.ts	ToB5rdMQHoI2HXnBvvzRGZ6Li_fIRAuxQr4PPUCZgJ28	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
@@ -189,7 +185,6 @@ layers/sme-roster/lib/roster/query-coverage-postgres.ts	TI58rY_z2f9VrwtXjZyqs0MP
 layers/sme-roster/lib/roster/query-coverage-postgres.ts	TmP5WZGLeq8U2yMkSaGYYAUkVwLzRl4g1hBb0mTlt9Ng	Drizzle 0.45.4 无 JSON 表值函数、WITH ORDINALITY、JSON 访问运算符和数组构造器，保留重复目标及请求顺序。
 layers/sme-roster/lib/roster/query-coverage-postgres.ts	TOmaB-9sDQ6uxzA7fJcvkDSlSU_VSMTFp1FBXHhYgBGE	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
 layers/sme-roster/lib/roster/query-coverage-postgres.ts	TVJ_r6GTqg-6k8A0AxywOEiNtA0qSeB8oohCtzj7KwI4	Drizzle 0.45.4 无 JSON 表值函数、WITH ORDINALITY、JSON 访问运算符和数组构造器，保留重复目标及请求顺序。
-layers/sme-roster/lib/roster/recognized-witness-postgres.ts	TRlqV4us0D7uRVP_ZauIdqNhqqeN4GbAnfpryO3QvmTY	Bind an entire observation ID list as one PostgreSQL array parameter.
 layers/sme-roster/server/modules/sme-roster/files.ts	Th-FQU1jlZU-DQaW_uBwr-syF7EIcQ7PIiI3DRgnboXw	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
 layers/sme-roster/server/modules/sme-roster/files.ts	Tk7APnncTb5yvyBGetgApZ6ENzmFYRdpyE1Jl3BNJY7g	Drizzle 0.45.4 无表达式 COLLATE 构造器，保留 C 字节序，匹配原查询排序或索引。
 layers/sme-roster/server/utils/announcement-evidence-postgres.ts	Tg99io4zncrZyUuGYbhQeNpLOxa8Y44wiGSur4M5sM8Y	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
@@ -208,55 +203,21 @@ layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	TqPNBi_l6r0M
 layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	Ts3CyKt0Dy0ejL_-mBqMtPVCb68HnW-dFrEkwg0lfvK8:2	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
 layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	TSwWFlzwF0E5_N-Tt974RtStnK4rxNWPzb1MqHLbbqpo:2	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
 layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	TthAM6Pn36K2rUixRcAY82AfEFB68Lu4pfOvk3QPQvx0	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
-layers/sme-roster/server/utils/decision-lifecycle/postgres-writes.ts	T4RQsa3Z-1KMpRlq8yU-FIX66oWr4gnHL5mjT-PncR0I	Drizzle 0.45.4 没有通用 CAST 表达式，恢复历史保存的 PostgreSQL JSON 值。
+layers/sme-roster/server/utils/decision-lifecycle/reviewed-decisions.ts	THKdo6q9_DvccSUBvFB5xJg8oEi6ZDP4TBlrBI4ZSc7I	Drizzle lacks a typed PostgreSQL cast for comparing bigint decision IDs against the text batch source identity.
 layers/sme-roster/server/utils/difference-import-postgres.ts	TXlRXjB-gEdv5uCfLkBU-YhVxWP9fF8iWMGcXbo4yC7o	Drizzle 0.45.4 无窗口函数构造器；按历史稳定顺序计算累计行数或来源排名。
 layers/sme-roster/server/utils/difference-snapshot.ts	T9KLmuuv0rS3Ado2bcHFFbU7IuFB1XsO-jmNfksPIY5o	Drizzle 0.45.4 无 PostgreSQL 快照导出构造器；这一条独立函数调用使应用查询和 pg_dump 共用同一事务快照。
 layers/sme-roster/server/utils/difference-snapshot.ts	TX_pLVjWsOMoWaVMvl6sKFVkdvQKsZ9g1mlr0CozI2GQ	Drizzle 0.45.4 无聚合内部 ORDER BY，备份范围保留冻结记录 ID 次序。
-layers/sme-roster/server/utils/enterprise-difference-refresh-comparison-postgres.ts	TcALPP8tvufa3bkHqMtyGBaafwOdUXCR5XCvc9cyCxsw	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/server/utils/enterprise-difference-refresh-comparison-postgres.ts	Tq1xVKEZbyz3KKLvJogsT45D06xiK-z7ssJHNsMtQcxY	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/server/utils/enterprise-difference-refresh-comparison-postgres.ts	Tvy01DOM7nSyFcEhL0Sq2fs6SSkJN_o64hOzvLS0Zh-s	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/server/utils/enterprise-difference-refresh-comparison-postgres.ts	TWp9D8QK4smy_hoXtrfuGX2MevRkHf3joBD2bzDJVfpE	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	T-Zs5QBO-clE_lJEETjbJsWTZUnHkqPbFcdq4U6bmeEw	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	TkJSOyJhFTC-MdK80T4_IABjzlfZZEIoNKTxBxrmoBEo	Drizzle 0.45.4 没有 PostgreSQL 文本 JSON 检查、提取、类型转换或聚合构造器，保留旧文本语义与数据库侧有界投影。
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	Tq1xVKEZbyz3KKLvJogsT45D06xiK-z7ssJHNsMtQcxY	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	TttJT4odvzw2DmBjSDtCKtV45p29eEwI82g10jAJNlQk:2	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	TwWygnA1hsn4gcOOf5WuiqzCK_PfP9HuzUHP0Uh4kzH8	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	TxScACji0gQ1HCRdxLbHF_gHvSMNe739-LcxbNe8bAuo	Drizzle lacks ANY with a single bound array. Keep refresh metadata reads scoped to the selected collections.
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	Tzg7Wxhwqh9o1MKLKtPkgP00jd7Qp5zGGScVS6ZGW850	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	TzyWuURXO4pLDRXEpJdnaNGXMEHsyEDMdewtRQ_VCccA	Drizzle 0.45.4 无窗口函数构造器；按历史稳定顺序计算累计行数或来源排名。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	T-Zs5QBO-clE_lJEETjbJsWTZUnHkqPbFcdq4U6bmeEw	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TCFYPi8pXDKV0enTFVyCD6fNhFc6RdiyWN8tsJpvRwfM	Drizzle 0.45.4 无表达式 COLLATE 构造器，保留 C 字节序，匹配原查询排序或索引。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TGF3h62RGnWRu8nQLODVjilxzLdXjoUIR65HkFGKwWiI	Drizzle lacks a typed excluded reference for the native state digest in the atomic comparison upsert.
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TLhS8u_Phn8K70V-eBqqRVg1O5z1cb07ffIPaVAVMyF4	Drizzle 0.45.4 无 EXCLUDED 表引用构造器；证据刷新 upsert 使用待插入值。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TOoSflwPTuJXmhOuaRmSctDWaiwmkVBcZ-6BG2TquNdI	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TpEcX-S7KoR26bRBYjwgVU5ijkiDSwu6ndEXbmxqmNqs	Drizzle 0.45.4 无表达式 COLLATE 构造器，保留 C 字节序，匹配原查询排序或索引。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TT65VVWZdYsTLJnAIvgnqlfwi_KSApoBObE0RnmLZdgE	Drizzle 0.45.4 无 EXCLUDED 表引用构造器；证据刷新 upsert 使用待插入值。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TugBNo4OW_X2HMDxfvc_KP5TZYub2OuMhJizgHqstpfE	Drizzle 0.45.4 无 EXCLUDED 表引用构造器；证据刷新 upsert 使用待插入值。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TvwzNazOwcN5MAJ_xfX_Iw8TjCYG1FYAAet1U4UFOGe4	Drizzle 0.45.4 无 EXCLUDED 表引用构造器；证据刷新 upsert 使用待插入值。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	Ty1w1JDzrWNDTfr3yhavhnm6gm9PnFFhaGvrHIyi_FV8	Drizzle 0.45.4 无 EXCLUDED 表引用构造器；证据刷新 upsert 使用待插入值。
-layers/sme-roster/server/utils/event-annual-process-postgres.ts	T-Zs5QBO-clE_lJEETjbJsWTZUnHkqPbFcdq4U6bmeEw	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
-layers/sme-roster/server/utils/event-annual-process-postgres.ts	T6MssWY79nfNV4CMAFOULv2576Xq8eEhnppjGU-T1wrc	Drizzle lacks SQL type casts. Keep the original numeric identity-only flag consumed by the annual comparison projection.
-layers/sme-roster/server/utils/event-annual-process-postgres.ts	T7hIOhGCkql96IrBnF5zAHVaCieJi90FkxWBVz0qBfTM	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/event-annual-process-postgres.ts	TCovIOZ5N4L9BS473xjqY1GMp9JOA4Sc5YtUuHMDRD-M	Use one bound bigint array for exact annual process source IDs. Drizzle 0.45 has no PostgreSQL ANY array builder.
-layers/sme-roster/server/utils/event-annual-process-postgres.ts	Tjez6IH6Ch_kA4V_Ykwt1YHN-YJ-OuhjUpN1ga2l60zg	Drizzle 0.45.4 无 CASE、COALESCE、NULLIF 或拼接构造器；保留年度业务来源和自然键规范。
-layers/sme-roster/server/utils/event-annual-process-postgres.ts	Tkl4wz3e2KV_LOUdWWHWwg8k5aksCKYiZhkwvw6RNN4k	Use one bound bigint array for exact annual process source IDs. Drizzle 0.45 has no PostgreSQL ANY array builder.
-layers/sme-roster/server/utils/event-annual-process-postgres.ts	Tq1xVKEZbyz3KKLvJogsT45D06xiK-z7ssJHNsMtQcxY	Drizzle 0.45.4 无 CASE、COALESCE、NULLIF 或拼接构造器；保留年度业务来源和自然键规范。
-layers/sme-roster/server/utils/event-annual-process-postgres.ts	TVNcknDTZ0zMXOFcAFgoWA5-NXO9LLhMhRDt0lVufS6o	Drizzle 0.45.4 无 CASE、COALESCE、NULLIF 或拼接构造器；保留年度业务来源和自然键规范。
 layers/sme-roster/server/utils/export-snapshot-import-postgres.ts	TOPLEdPecykxXOmjR0Vzwxh1CwjHW55hL5La0bJIo0iA	Drizzle 0.45.4 无 PG 大小写/修剪、CAST 和聚合 FILTER 构造器；原值与快照判重仍在事务内解析。
 layers/sme-roster/server/utils/export-snapshot-import-postgres.ts	Twv6axibQCzD0bLMf1EvMP_9dcpsj1GopvR36zBqGg30	Drizzle 0.45.4 无 PG 大小写/修剪、CAST 和聚合 FILTER 构造器；原值与快照判重仍在事务内解析。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	T1_P3vHacd33_uM-Ac04HzvUDKRT0Xavg1GCLz4kAXEE	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
-layers/sme-roster/server/utils/file-event-sync-postgres.ts	T62mCKRBFzulFg2oOX1MQIwWf87yHmS8-KaMezbJvJL0	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	T8zGKefkbdq6JJQeB8atFdQ9vXZmmGeIvvPMzVkK-7iE	Drizzle 0.45.4 无动态表达式 CAST；历史业务 API 要求原有数值与 JSON 形状。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	TCutrj33ixOiB9pdmk145qux2TiiOF9Ov1DU1pvNsR6s	Drizzle 0.45.4 无动态表达式 CAST；历史业务 API 要求原有数值与 JSON 形状。
-layers/sme-roster/server/utils/file-event-sync-postgres.ts	TFgGBprTT2yvSAM32ZjKy4y_kMtcKXNfgHMuSYpliJxk	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	TgYJfyHP3WsE1fVjND1nMImDeVqtQ2ZZN9VNE3LcnGkk	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	TlOaqjwnFp6g4a7TkbvWTBK_n1paaToYna98A0pdKDYI	Drizzle 0.45.4 无表达式 COLLATE 构造器，保留 C 字节序，匹配原查询排序或索引。
-layers/sme-roster/server/utils/file-event-sync-postgres.ts	TOkr1zl2Js7icmfd6y8kaseAUdEY78Awwsj6w4T23L2g:3	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
+layers/sme-roster/server/utils/file-event-sync-postgres.ts	TOkr1zl2Js7icmfd6y8kaseAUdEY78Awwsj6w4T23L2g:2	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	TpfpIVUGVYPEWvSvZAACCOw8i-oLpi2BJ15NBt_EFrkA	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	TQ1ynnAOOjVRgp6OWP2rmFLhUtr2lo9GIxOXK02RN_iU	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/file-event-sync-postgres.ts	TQtxxCY8Qh2VyU7Rc-DVadwJO3kWkdRgdSCK7DHzI1rk:2	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
-layers/sme-roster/server/utils/file-event-sync-postgres.ts	Tqzu6lXlluX8YHEqZG0rbHN5q2TGHxLBQiqw3Ii4nCrU	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
-layers/sme-roster/server/utils/file-event-sync-postgres.ts	Ts1dMSLYJYqCjHVx2f8R_G3pbELiJUYcumaM7aLa-CqM	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
+layers/sme-roster/server/utils/file-event-sync-postgres.ts	TQtxxCY8Qh2VyU7Rc-DVadwJO3kWkdRgdSCK7DHzI1rk	Drizzle 0.45.4 无 UNNEST 表输出列构造器；单数组参数与命名输出关联保留原始批量访问边界。
 layers/sme-roster/server/utils/file-event-sync-postgres.ts	TxCJ8-oC872pqWuRWTGTatxe72aqWY7AZHZg5B4JhQVc	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
 layers/sme-roster/server/utils/file-parts-postgres.ts	TQlYHY7FKqKGuPmWWLhvXI9okHsXehjuShn4k2HF_Ico	Match the PostgreSQL coordinate index collation. Drizzle has no COLLATE operator.
 layers/sme-roster/server/utils/file-parts-postgres.ts	TZKmx7vfoETjIR7mgpUfR7Eo721KjlHRSZoGmXhNPFxA:2	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
@@ -368,14 +329,6 @@ layers/sme-roster/server/utils/import-receipts-postgres.ts	TydWH-VcAoBz1O_EKLDVk
 layers/sme-roster/server/utils/import-receipts-postgres.ts	TYXCSiqG0mkH5pQlJ1i_mVm8PARTjy_t0ffentE7EXUU	Drizzle 0.45.4 无 PostgreSQL JSON、字节操作、CAST 或 CASE 构造器；这些回执表达式保留原始值、类型和单读快照内的字段/字节封顶。
 layers/sme-roster/server/utils/import-receipts-postgres.ts	TYYECb8KCgxQdx3xbvy4tCeiJPZ1vXP9rBQKqn0bQxk0	Drizzle 0.45.4 无 JSON_TYPEOF 表达式构造器，区分历史回执的 SQL NULL 与 JSON null。
 layers/sme-roster/server/utils/import-receipts-postgres.ts	TZjnRRWjcHH_brFzwnH1f74MWXHICBZugrFhO4xHl_rA	Drizzle 0.45.4 无 PostgreSQL JSON、字节操作、CAST 或 CASE 构造器；这些回执表达式保留原始值、类型和单读快照内的字段/字节封顶。
-layers/sme-roster/server/utils/jobs/annual-correspondence-postgres.ts	T59MhK7scZQTFrmYE0cR1gim-qY9UceSS7x6QIeEPs8Y	Drizzle 0.45.4 无 PostgreSQL JSON 运算/聚合、文字位置、表函数别名或显式转换构造器；读取受限任务摘要并保留旧格式。
-layers/sme-roster/server/utils/jobs/annual-correspondence-postgres.ts	TX-m60jBi6xMLfeDe75BtyUBMNg5G4IWMGCgH17CHkpU	Drizzle 0.45.4 无 PostgreSQL JSON 运算/聚合、文字位置、表函数别名或显式转换构造器；读取受限任务摘要并保留旧格式。
-layers/sme-roster/server/utils/jobs/annual-summary-postgres.ts	T5o_M0x-YyTvSptlKhL7CNHqZxvXSllCzd3K60sPS138	Drizzle 0.45.4 没有 PostgreSQL 文本 JSON 检查、提取、类型转换或聚合构造器，保留旧文本语义与数据库侧有界投影。
-layers/sme-roster/server/utils/jobs/annual-summary-postgres.ts	TC6nUadM8ZLxMOpDSXWdwIG5asQRxWBJYBP68vYYt4w0	Drizzle 0.45.4 无 PostgreSQL JSON 运算/聚合、文字位置、表函数别名或显式转换构造器；读取受限任务摘要并保留旧格式。
-layers/sme-roster/server/utils/jobs/annual-summary-postgres.ts	TCYb9p5cvx2mmrzfNJbxeE_IzWcnd1SvcbQbCztlQiuA	Drizzle 0.45.4 无 PostgreSQL JSON 运算/聚合、文字位置、表函数别名或显式转换构造器；读取受限任务摘要并保留旧格式。
-layers/sme-roster/server/utils/jobs/annual-summary-postgres.ts	THdh7nzUZ1uMBQ_aMStZUJlYDNv2cMVoQq_TLu3_ZUXI	Drizzle 0.45.4 无 PostgreSQL JSON 运算/聚合、文字位置、表函数别名或显式转换构造器；读取受限任务摘要并保留旧格式。
-layers/sme-roster/server/utils/jobs/annual-summary-postgres.ts	TjEY2F-_5vu94mjQN-86oFwBBIiMRga0qyuEu8emgY-8	Drizzle 0.45.4 无 PostgreSQL JSON 运算/聚合、文字位置、表函数别名或显式转换构造器；读取受限任务摘要并保留旧格式。
-layers/sme-roster/server/utils/jobs/annual-summary-postgres.ts	Ty-eyKCNwmblm3rBgyR7QiBufz6xQau5EZN9BAYsiBQs	Drizzle 0.45.4 无 PostgreSQL JSON 运算/聚合、文字位置、表函数别名或显式转换构造器；读取受限任务摘要并保留旧格式。
 layers/sme-roster/server/utils/jobs/batch-summary-postgres.ts	T0w-eWC2yBfA_lo0IWxM020m8e2f3u6mIWLScP1gDaso	Drizzle 0.45.4 缺少该 SQL 标量函数表达式的构造器，原值与比较语义须保持。
 layers/sme-roster/server/utils/jobs/batch-summary-postgres.ts	TeyJ6DSUd_ufw_sq_KmmE3JObLeZLM6uEOAerghCpEhg:2	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
 layers/sme-roster/server/utils/jobs/batch-summary-postgres.ts	TIL3h5JZTrmJiOZgNcZukrr-XB2XiWgrun8jSLeO4pT4	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
@@ -386,43 +339,11 @@ layers/sme-roster/server/utils/jobs/batch-summary-postgres.ts	TQ1-Jzf3crt87HDmza
 layers/sme-roster/server/utils/jobs/batch-summary-postgres.ts	TUKVO43HcNsRUIonhhT-P1QoG91fdTMInlyzFOpE6Lg4	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
 layers/sme-roster/server/utils/jobs/batch-summary-postgres.ts	TwSFus-1701BaIIHE3s6avy9Mn8FRH9XJzkVnI1Ikpvc	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
 layers/sme-roster/server/utils/jobs/batch-summary-postgres.ts	TY6k4gd9pfbF_H94alSGsowruqBuyuGhvf6DbEfzdj5c	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/jobs/candidate-discovery-postgres.ts	TbaOzpPo6huG-OZFYZ3UMjL_dpFGWORDIClQyDIUsgbU	Drizzle 0.45.4 无 CASE、COALESCE、NULLIF 或拼接构造器；保留年度业务来源和自然键规范。
-layers/sme-roster/server/utils/jobs/candidate-discovery-postgres.ts	Tdhzhz4uHEBcNLu9UuzFboaBamK_sqPNzPOtnvq8bOdQ	Drizzle 0.45.4 无 CASE、COALESCE、NULLIF 或拼接构造器；保留年度业务来源和自然键规范。
-layers/sme-roster/server/utils/jobs/candidate-discovery-postgres.ts	TIjwb34kVVslYZ09xXhD2ZE-Ac5OCO0c7EM__PeWONH4	Drizzle 0.45.4 无 CASE、COALESCE、NULLIF 或拼接构造器；保留年度业务来源和自然键规范。
-layers/sme-roster/server/utils/jobs/candidate-discovery-postgres.ts	TjRlkM9BLwqOyVMjMBjCVpHA0-eoOt7asYDi0r2pG5w8	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/jobs/candidate-discovery-postgres.ts	Tvy01DOM7nSyFcEhL0Sq2fs6SSkJN_o64hOzvLS0Zh-s	Drizzle 0.45.4 无 CASE、COALESCE、NULLIF 或拼接构造器；保留年度业务来源和自然键规范。
-layers/sme-roster/server/utils/jobs/candidate-discovery-postgres.ts	TZw_XBIP7SU1GpRHNCdMdLUugh2GAEFeMVd3FtP7-HLE	Drizzle 0.45.4 无 CASE、COALESCE、NULLIF 或拼接构造器；保留年度业务来源和自然键规范。
-layers/sme-roster/server/utils/jobs/candidate-summary-postgres.ts	T0da4Q9PhmemGPV1q-CVURbKzGIxa53owIjauwDEAS10	Drizzle 0.45.4 无 PostgreSQL JSON 运算/聚合、文字位置、表函数别名或显式转换构造器；读取受限任务摘要并保留旧格式。
-layers/sme-roster/server/utils/jobs/candidate-summary-postgres.ts	T0MXX8GSZTEFKxMSlwtkktOJQ-yJZg_ER9tTVr4JZGe4	Drizzle 0.45.4 没有 PostgreSQL 文本 JSON 检查、提取、类型转换或聚合构造器，保留旧文本语义与数据库侧有界投影。
-layers/sme-roster/server/utils/jobs/candidate-summary-postgres.ts	T0w-eWC2yBfA_lo0IWxM020m8e2f3u6mIWLScP1gDaso	Drizzle 0.45.4 无 PostgreSQL JSON 运算/聚合、文字位置、表函数别名或显式转换构造器；读取受限任务摘要并保留旧格式。
-layers/sme-roster/server/utils/jobs/candidate-summary-postgres.ts	TeyJ6DSUd_ufw_sq_KmmE3JObLeZLM6uEOAerghCpEhg	Drizzle 0.45.4 没有 PostgreSQL 文本 JSON 检查、提取、类型转换或聚合构造器，保留旧文本语义与数据库侧有界投影。
-layers/sme-roster/server/utils/jobs/candidate-summary-postgres.ts	TgnCy2m2jTVVS2O_6iPSsNmtZ9rZcEBkjzvXOL9ZSkAQ	Drizzle 0.45.4 没有 PostgreSQL 文本 JSON 检查、提取、类型转换或聚合构造器，保留旧文本语义与数据库侧有界投影。
-layers/sme-roster/server/utils/jobs/candidate-summary-postgres.ts	Tlt3mPVwj4uZbqsbpKae-6JMDNbk30hrE6VXH9-SZlnQ	Drizzle 0.45.4 无 PostgreSQL JSON 运算/聚合、文字位置、表函数别名或显式转换构造器；读取受限任务摘要并保留旧格式。
-layers/sme-roster/server/utils/jobs/candidate-summary-postgres.ts	TOiQTD4AgDx6_FmVT19aKG0yVHoZFwJCIc2RdKwsUPbA	Drizzle 0.45.4 无 PostgreSQL JSON 运算/聚合、文字位置、表函数别名或显式转换构造器；读取受限任务摘要并保留旧格式。
-layers/sme-roster/server/utils/jobs/candidate-summary-postgres.ts	TRrgNHUyTOKbDobbd-erICfD3t6hoyW8N_4-9igWQKcs	Drizzle 0.45.4 无 PostgreSQL JSON 运算/聚合、文字位置、表函数别名或显式转换构造器；读取受限任务摘要并保留旧格式。
-layers/sme-roster/server/utils/jobs/candidate-summary-postgres.ts	TxDXZDPy1ADca6rmSmxa600qX2TQXvCYSH-hXHn83mGs	Drizzle 0.45.4 无 PostgreSQL JSON 运算/聚合、文字位置、表函数别名或显式转换构造器；读取受限任务摘要并保留旧格式。
 layers/sme-roster/server/utils/jobs/export-summary-postgres.ts	T0w-eWC2yBfA_lo0IWxM020m8e2f3u6mIWLScP1gDaso	Drizzle 0.45.4 缺少该 SQL 标量函数表达式的构造器，原值与比较语义须保持。
 layers/sme-roster/server/utils/jobs/export-summary-postgres.ts	TazibtkBqBiKHFfyc7N9YXd6ZmQFKT9-wmWJvthoaMJs	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
 layers/sme-roster/server/utils/jobs/export-summary-postgres.ts	TgnCy2m2jTVVS2O_6iPSsNmtZ9rZcEBkjzvXOL9ZSkAQ	Drizzle 0.45.4 没有应用 PostgreSQL 函数调用的专用构造器；保留旧任务 JSON 清理。
 layers/sme-roster/server/utils/jobs/export-summary-postgres.ts	TjEY2F-_5vu94mjQN-86oFwBBIiMRga0qyuEu8emgY-8	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
 layers/sme-roster/server/utils/jobs/export-summary-postgres.ts	TRTRMrYYzXnsvZT1SYwcGVpXJV16OVxjpjXHx4PwRx-M	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	T0MXX8GSZTEFKxMSlwtkktOJQ-yJZg_ER9tTVr4JZGe4	Drizzle 0.45.4 无自定义 PostgreSQL 函数调用构造器，沿用旧任务 JSON 清理。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	T1NkLpizNfH1IA6_0T3t_qRCR91J9gNKim4jlcOwXYyU	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	T2q-Z13IaZlVv2DgaO0MDDdYACoWODdwV0UfeupwCUq8	Drizzle 0.45.4 无 UNNEST 命名表值构造器；数组为固定内部状态键。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	T3Z_8bJPmVybo5kQ0jQGR5mR47L0nbXmICxfgi03FDLc	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	T5eF3QTeLoKWXxR-8xS90iog_B5LcOlrumk_RmBssAxk	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	T7Jl23X7GN-l6nJLio4kAT26FUWTfMMEP8pel5UJAA2o	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	TadIQqmfgdz4bedcjcL9WQmE52P2dnFeJrBAPAoRRo6Q	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	TauJClDgKRB54IpaHcn7Uusqto8adGa9jF6Q9yR1YGR4	Drizzle 0.45.4 无 COALESCE 表达式构造器，空聚合回退为零。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	Tb85cpCT6nvh2lw59zA5Qi0aOjTL8k4jiOMrTCDT_20M	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	TGjahaH6N8yVugljppYXkjzMjQd4oZrej_elE9UeXe3g	Drizzle 0.45.4 无表值函数输出列构造器；选取 JSON 数组展开后的命名字段。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	ThSi6b4ebW068iICgwpzke-OwXaIikkTavNgbznAD5mA	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	TnCdyNbf1klIp9Fq8PbrKe0eLgcmlPpU68_oJocptDpg	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	TphAWdRYKyPUudD-bw85i5gXQ4WeTv-QX55KtLLaOUA0	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	TTKHJddDAT_1Wa7aXRP63MFITLrpo0spiaojt-pgKMB8	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	Ttw4sEXQz-ORs1Mgw8BNuHKXC4jI5qBJoPlqz5oYOwPk	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	Tv4ZhSop46oLF1a248cX-BOfoU7oBThboIyLwuxCxg0g	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/jobs/reconcile-summary-postgres.ts	TxJtMJuM2BR1GyV2-MJ6zreHHa1uVhiQy4H_a4Z7Zc8U	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
 layers/sme-roster/server/utils/jobs/snapshot-summary.ts	T1ENgicicf5hVXNYV6wSiG2FjFZkYISFeat3DoO0DWJs	Drizzle 0.45.4 不提供 PostgreSQL JSON 字段提取构造器；公开摘要只读取预定计数。
 layers/sme-roster/server/utils/jobs/snapshot-summary.ts	T3PHDdIjaoQo3VUNcIHMD5iAACRJ_H1jm7ZdDeKdte_k	Drizzle 0.45.4 无 PostgreSQL JSON 表值输出位置构造器，保持源快照顺序。
 layers/sme-roster/server/utils/jobs/snapshot-summary.ts	T6ICzGU-t09nTVRBwKaV5FBH0Mu2sr9GYa68nvZyaI4k	Drizzle 0.45.4 没有通用 CAST 表达式，恢复历史保存的 PostgreSQL JSON 值。
@@ -474,13 +395,12 @@ layers/sme-roster/server/utils/parse-maintenance-postgres.ts	TyNNzrhIKpspQHR-sqE
 layers/sme-roster/server/utils/parse-maintenance-postgres.ts	Tzt0YJeMYYX2watuF7JUX1ncAGJetQKligR4RBebOPAs	Drizzle 的冲突更新 set 接受 SQL 但无 EXCLUDED 引用构造器，引用数据库收到的批量行。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	T-evjXwZsa0WriB-7GfasvpFRgRqENgZpTaRQoLkmFik	Archive option filtering uses byte-level ASCII-space detection including byte-backed strings.
 layers/sme-roster/server/utils/platform-archive-postgres.ts	T9-rNjRW0i1itPI6FA-qEXgsTiuxNHUXnAYH7nwbchAI:2	Drizzle 0.45.4 无窗口函数、表达式 COLLATE、排序 NULLS LAST、字节编码/正则或标量投影包装构造器；这一边界保持历史目录粒度与排序。
-layers/sme-roster/server/utils/platform-archive-postgres.ts	T91fCLSGvNWR9G2wozDAJcnAXSawMZ-lNdLeGL-4hUR0	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TBshJHRwX-86i9nAYnvNKNWATGx-rbdQHR6_hU1Yh3O0	Drizzle 0.45.4 的类型化投影或 JOIN 条件没有该固定 SQL 常量的专用构造器。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TcjYalb8VW9bdzzXFSUfnHispfgoOOlP-oXvH73xbMOo	Drizzle 0.45.4 无 ARRAY(subquery)，只包住按企业 ID 排序的类型化归属 ID 查询。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TevkoLTQC7gCXMnceTQMllIMYTkVyLurrXsuVbrdwEP8	Drizzle lacks JSONB key lookup with a bound dynamic key.
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TG05ofz6D72k-3vJPezgNDXD2pR9V1h_doAyqwHNGjb4	Drizzle has no PostgreSQL JSONB to UTF-8/base64 byte conversion builder.
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TLSnCrtqthzfqliV7l1-VIR_cyDya4f5JTqRw1JjiFJI	Drizzle 0.45.4 无窗口函数、表达式 COLLATE、排序 NULLS LAST、字节编码/正则或标量投影包装构造器；这一边界保持历史目录粒度与排序。
-layers/sme-roster/server/utils/platform-archive-postgres.ts	TnTyJMYlCnV8crYLKGYPCvOZrKWgRI1J6QOXfQbcm_yg:5	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
+layers/sme-roster/server/utils/platform-archive-postgres.ts	TnTyJMYlCnV8crYLKGYPCvOZrKWgRI1J6QOXfQbcm_yg:4	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TRVym1mqkRVT9ljkkYAzU6LpNo-6_zGdiABp936tp3lU	Drizzle 0.45.4 无 STRPOS 和 SQL 拼接表达式构造器；保留字面称号匹配边界。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TsNEFRjfIHoviu_WLtBIZf7UI3pClw5qFQqkZtCzppRE	Drizzle 0.45.4 无 REPLACE 构造器；沿用含分隔符标题的空值判断。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TTLtjmvnVNvARqKs46T6AsrsVuUUMq8S-MMLE-gba9k4	Drizzle 0.45.4 缺少该 SQL 标量函数表达式的构造器，原值与比较语义须保持。
@@ -488,7 +408,6 @@ layers/sme-roster/server/utils/platform-archive-postgres.ts	TTSatRXCNHrCu7ThFWL3
 layers/sme-roster/server/utils/platform-archive-postgres.ts	Tuqs7F3tng1AkDTr_-jWJaCYYCSSBVF8RBYTTeKfIQJ4	Archive sorting uses PostgreSQL JSONB type ordering and byte-backed text discrimination.
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TV4DPgcs9jjvwDXs4PeXqcOffO7-ZYOGFhPIiZNt3K7g	Drizzle 0.45.4 无窗口函数、表达式 COLLATE、排序 NULLS LAST、字节编码/正则或标量投影包装构造器；这一边界保持历史目录粒度与排序。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TvdHlrdPpqtO1v8mDvzdtaNfb5pm5dSxRwWLh-025o24	Drizzle 0.45.4 无 ARRAY(subquery)，只包住按原企业 ID 排序的非空归属名称查询。
-layers/sme-roster/server/utils/platform-archive-postgres.ts	TW1MvaO5ClImYCBhugaS2M6QQDvSQapHwVt2HdXEsQVo	Drizzle 0.45.4 无 COALESCE 或 SELECT 标量包装，空关联集继续返回 JSON 数组。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	Tw90BlzRkBakEOFbMN4i8YvEUlWQM7X2UbobUPIAQKFo	Drizzle has no SQL-to-JSONB scalar conversion builder.
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TwNlPuzoU6Itknl1RHIprplSEDe45iAC-PqjbUIAKgOI	Numeric distinct options use typed PostgreSQL JSONB extraction.
 layers/sme-roster/server/utils/platform-archive-postgres.ts	Tyq-OTtbqKoKTy9nC6sXkXXOtxxRfl6KMEMEllUPaifg	Drizzle 0.45.4 无 STRPOS 和 SQL 拼接表达式构造器；按字面界定认定标题冲突。
@@ -497,79 +416,10 @@ layers/sme-roster/server/utils/platform-batch-results-postgres.ts	To0nVuZbwUojqe
 layers/sme-roster/server/utils/platform-business-detail-postgres.ts	TdDoSO93j3_LPxjST-QzFAEAHkdskyXGTGJJYLRLWMvM	Bind selected business-detail IDs in a single bigint array, which Drizzle 0.45 cannot express as ANY.
 layers/sme-roster/server/utils/platform-business-record-postgres.ts	TRlqV4us0D7uRVP_ZauIdqNhqqeN4GbAnfpryO3QvmTY	Bind variable-sized record IDs as one bigint array, which Drizzle 0.45 cannot express as ANY.
 layers/sme-roster/server/utils/platform-capture-retention-postgres.ts	T0MvPpVHRzZCeKC6aM5aAn7iuSZZFNm45_b19QtP6XoE	Drizzle 无事务级 advisory lock 构造器。
-layers/sme-roster/server/utils/platform-capture-retention-postgres.ts	TA0OM6rP-9Off3mSNP-S_3CVXw6b3y0pxgagZ57pwHQ0	调用 PostgreSQL 采集清理函数，传入带类型的业务记录数组。
 layers/sme-roster/server/utils/platform-capture-retention-postgres.ts	TluCj3pbUveO73zHiWcRMgcLDV5CWQC0v_Uil0rAlzx8	Drizzle 无事务级 advisory lock 构造器。
+layers/sme-roster/server/utils/platform-capture-retention-postgres.ts	TuzzjOHYs0EZqReCPaopjnRRvnCV9piFzILFr5TfvYes	调用 PostgreSQL 采集清理函数，传入带类型的业务记录数组。
 layers/sme-roster/server/utils/postgres-platform-fingerprint.ts	T8b6ocPSs04ROmezPdC5BkG4GXhASTHstnPq4uMEtgGI	Use bound bigint arrays for selected query and relation IDs without expanding parameters. Drizzle 0.45 has no ANY array helper.
 layers/sme-roster/server/utils/postgres-platform-fingerprint.ts	TvrxQUjmp3uDRRweYgLdvmLCf_iqnZ1kTom9nnv1uUQY	Use bound bigint arrays for selected query and relation IDs without expanding parameters. Drizzle 0.45 has no ANY array helper.
-layers/sme-roster/server/utils/record-comparison-catalog-postgres.ts	TjMeW6JOPZoIhP6XPliSfjrBqUVMtTQE_z1otYW5BmTY	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-comparison-catalog-postgres.ts	TNJooM0m7KguQit23AGOkiYfWGjYr3mskkLoxxMTX9gk	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-comparison-catalog-postgres.ts	TpxxjvnvDggQvFZr78VkllaUqYXRb6tMIoyN1UVxmC8g	Drizzle 0.45.4 的派生 SQL.Aliased 列渲染不带所属关系，加入另一个有 id 的关系时须限定引号标识符。
-layers/sme-roster/server/utils/record-comparison-catalog-postgres.ts	Tqlpyrs0HlAbKm1Ere24Dr7xqdsALMzYzQ_jM1VTzLzk	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-comparison-postgres.ts	T-8VLi6fQJOVLgjUm-9fRG_4Um8npvF-_kiLeibRJlRs:2	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-comparison-postgres.ts	T17bVdWsGJXulmih5E8UVA5oImgAd8BMOKiErEbkkXjU	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-comparison-postgres.ts	T3RfDPa4oSWYNmT5N3uQ0QErriMIjfAHrg60Is-l9sr4	Drizzle 0.45.4 没有 PostgreSQL 文本 JSON 检查、提取、类型转换或聚合构造器，保留旧文本语义与数据库侧有界投影。
-layers/sme-roster/server/utils/record-comparison-postgres.ts	T4OUy4cxKEOkBQQZsfuASU3ghP09IY_iq0LY9oXxrBjs	Qualify the aliased PostgreSQL CTE field because Drizzle otherwise emits its unqualified column alias.
-layers/sme-roster/server/utils/record-comparison-postgres.ts	T5VjzS7XSeOwV8zIBEa18_Z5NiIq1CW9PO7oAxJvul6c	Drizzle 0.45.4 没有 PostgreSQL 文本 JSON 检查、提取、类型转换或聚合构造器，保留旧文本语义与数据库侧有界投影。
-layers/sme-roster/server/utils/record-comparison-postgres.ts	T9dB1BnS4mCN9_Ika45OCq0g8JzX8J8QtcNYB1i3Hq0E	Drizzle 0.45.4 没有 PostgreSQL 文本 JSON 检查、提取、类型转换或聚合构造器，保留旧文本语义与数据库侧有界投影。
-layers/sme-roster/server/utils/record-comparison-postgres.ts	TaB4GYmNl7dn9noPvG9AiXjGOB_ztEFTAwIcOqe6uDRE:2	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-comparison-postgres.ts	TDReLwbkNZ1jrxI-0InEF8LdMw6CpVzMWytH82xSJH_E:2	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-comparison-postgres.ts	TE-q3rP6o6qHId-uenKcbm-oST2y4h_V9E4wZjx6Cqkc	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-comparison-postgres.ts	TeGcHMkWEEfFP6-EagNZCK6LZmKYXjjnfmZ7VLbQ4QrY	Drizzle 0.45.4 无源投影需用的 JSON、聚合 FILTER、FROM VALUES 或 CAST 构造器。外层查询仍由构造器组合。
-layers/sme-roster/server/utils/record-comparison-postgres.ts	TewupXEkA5bXPy-m6A2iGB44_gyOCsMRkN4SlUNuZXnA	Drizzle 0.45.4 无源投影需用的 JSON、聚合 FILTER、FROM VALUES 或 CAST 构造器。外层查询仍由构造器组合。
-layers/sme-roster/server/utils/record-comparison-postgres.ts	TI_4w7Q4j97WzN4metpRhukWivz7C_7TgHYVzFZKzAmw	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-comparison-postgres.ts	TMf5r7n8J8FbNuWPrWVK8b3UZyuPCa0wKgQUh3XZpsIY	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-comparison-postgres.ts	TUWrk4YCvY35g7Ai_BFKPU2CzT9tMKMLQxoCqyV_VxF4	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	T-Zs5QBO-clE_lJEETjbJsWTZUnHkqPbFcdq4U6bmeEw:2	Drizzle 0.45.4 的类型化投影或 JOIN 条件没有该固定 SQL 常量的专用构造器。
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	T2OMh85PY7O3HIVOwjFtuj2aRLfjParr8ANpFAfi-GQw	Drizzle 0.45.4 的 inArray 为数组每项绑定一个参数。这里绑定一个定型数组，保留一次查询或同一事务中的不设上限范围。
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	T4g0RSYfhMQvvDqriMe8bd4RufeLsCRZbX2ERQKkWBfQ	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	T8SpLwXh3_L1jdHAqlpEUBZYKlOoYirLE3YJv6PZ6884	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	TB1jK_lMUGaYScxplZQyWnHalLCNgFJA-nnJ7yQYESQI	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	TfdzQ0Dq1AgJM3MKvlWw_lUDrvRa_jJFyk8tEoFvDUkc	Existing candidate materialization and window ranking now read PostgreSQL business-field JSONB and first/current assignment.
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	TIv_eQT5hPMO9pEqn-6XPiCJQVUmctfMS0NqpvSEV7x0	Drizzle 0.45.4 的 inArray 为数组每项绑定一个参数。这里绑定一个定型数组，保留一次查询或同一事务中的不设上限范围。
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	TjkEJKdHfVKekvFJQtoWUZEleQnIhVYoG1pl4XANiJrY	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	TKDhRM5XJJw-glBpn7kP6EfcLPyfPxtYQhgAQCmNaYzA	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	TPFG386xtexm1qs32yGdo29V_tn3Gd1KFEz_xokZvU1I	Existing candidate materialization and window ranking now read PostgreSQL business-field JSONB and first/current assignment.
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	Tqlpyrs0HlAbKm1Ere24Dr7xqdsALMzYzQ_jM1VTzLzk	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	Tw9Er4pyGhPKiymqPuL_24Ujp3dX3aL55X7HyDsN-KP4	Retain the PostgreSQL source candidate scope, tagged witness fields and locking semantics while reading inline public IDs. Drizzle 0.45 lacks the required PostgreSQL JSON and row expressions.
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	TYqWtHfztLJXN9ylFSQhny6Z9Le3x5Q5jP6vcTIpk6DQ	Existing candidate materialization and window ranking now read PostgreSQL business-field JSONB and first/current assignment.
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	TZn6GutBIpx8fHeI9kHaoFKmW_fp-8jSU1S3AzbI5vQg	Existing candidate materialization and window ranking now read PostgreSQL business-field JSONB and first/current assignment.
-layers/sme-roster/server/utils/record-correspondence-candidates-postgres.ts	TZoUHttyjQQLFYwzpAFH25dplM5lmtHEBD5VMSWBjAMo	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	T_KhAcnkGYBiz5mHJLHa-UbvUS-W3zgSA1aBRwOmdX1w	Drizzle does not combine a scalar subquery with COALESCE and a JSON cast. The audit selection itself uses the query builder.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	T-Zs5QBO-clE_lJEETjbJsWTZUnHkqPbFcdq4U6bmeEw:3	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	T5S4_gsOEfL5cDXtMeDTZM3E80XMZeD3GoqPZF9Mksmg	PostgreSQL JSONB evidence comparison and NULL-safe scalar resolution require uncovered operators and a correlated existence expression.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	T7_1cFmuT6UX6tROgss2Te7awUWQsam5FZxLuTY-MIN0	PostgreSQL JSONB evidence comparison and NULL-safe scalar resolution require uncovered operators and a correlated existence expression.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	TDDLGhsxWQekvlAqaTq4wB3vmfwV1CQ4XEYMF5UcNPX0	PostgreSQL JSONB evidence comparison and NULL-safe scalar resolution require uncovered operators and a correlated existence expression.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	TefI1WzAcxLtGYrpyOrURPyNZyiB6HrPbilqzLyYFDQc	PostgreSQL JSONB evidence comparison and NULL-safe scalar resolution require uncovered operators and a correlated existence expression.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	TeoAy0u7NEunW0DoR_Gw_inaSn8L3uiPxrUBPe-7idv8	PostgreSQL JSONB evidence comparison and NULL-safe scalar resolution require uncovered operators and a correlated existence expression.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	TFRNoAIyWxnHakSnIMxnjMlhyTlKTO0B_xVjLHGJFpQQ	Drizzle lacks PostgreSQL JSON path comparisons within a CASE and correlated source replay predicate. This existing predicate preserves exact evidence matching.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	Tg3LQcAhhHnm6jlu-18BXV8eadRi4D9AhEumrtmmmxiM	PostgreSQL JSONB evidence comparison and NULL-safe scalar resolution require uncovered operators and a correlated existence expression.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	TIKzLrgbqud6yMErbz63oEErhhaeA6qmvHjiLHfb3wKU	Drizzle does not construct SQL CASE or casts. Only selected correspondence revisions require source validity checks.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	TkdO4azhRKN0eE8JQBmSEapW5hGhGsI-F2hPtgB1Jlz8	Drizzle 0.45.4 无 CTE MATERIALIZED 构造器；只保留强制物化的外层前置语句，两个查询由构造器生成。
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	TL_JiBwJN50nhdjfJyIecLdkPFGjh22sK77WAW1zZiWQ	Compare deferred historic or typed source provenance in PostgreSQL using JSONB paths, source digests and null-safe equality. Drizzle 0.45 cannot express these operators.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	TlUHlJ8rntIkWxgUu403zcpc3nXfhE958qQmNKLwKihs	Drizzle 无 CASE 构造器；清理后的旧平台关联不能当作无需关联的导出证据。
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	Tp5VPw18wcz_New8g4QHTYJ2MHPG-SIO3w8Pt7R8dRPg	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	Tplvv6ViL_gYpklAPedbr4sCZFXN_6p8_4xKRBdDvFAE	Compare deferred historic or typed source provenance in PostgreSQL using JSONB paths, source digests and null-safe equality. Drizzle 0.45 cannot express these operators.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	Tqv1sK9M-hk78Spxev40KdOmL2E3wIwa-D8STvkDcDp8	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	TrWUXhslgF7JCCuguw_LBngTUixl709eDhQtdAN52gTM	Compare deferred historic or typed source provenance in PostgreSQL using JSONB paths, source digests and null-safe equality. Drizzle 0.45 cannot express these operators.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	Tse8m8m2Jjeiwr-8Ot0NLyibv2d9dbRxnrz-f3IlchN0	PostgreSQL JSONB evidence comparison and NULL-safe scalar resolution require uncovered operators and a correlated existence expression.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	TslPZuBsFnr96499Zeegto_7hdnr1_FpG6Qrd655vYa8	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	Tve26t4UzrP1ELea_jqLiHhqvwlAYPA2OXSS1IXWq8Zc	Compare deferred historic or typed source provenance in PostgreSQL using JSONB paths, source digests and null-safe equality. Drizzle 0.45 cannot express these operators.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	TW2nyYYzQ0hQfGtYEY4qWY-3aade6zCC8y4a4rIhU5zY	PostgreSQL JSONB evidence comparison and NULL-safe scalar resolution require uncovered operators and a correlated existence expression.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	TWD_mhUwaHCpA_I6FDUeKpj89ro1LqWC3j1DcAC0P3uw	Compare deferred historic or typed source provenance in PostgreSQL using JSONB paths, source digests and null-safe equality. Drizzle 0.45 cannot express these operators.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	TxCyVkHh5nJkwVD9RAFGuD0v-HnoJP8o1Sm-99rMaJz8	Compare deferred historic or typed source provenance in PostgreSQL using JSONB paths, source digests and null-safe equality. Drizzle 0.45 cannot express these operators.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	TyK2G1ia-nb8oaNF1mrY8YnwzaID96OG4wQrxrWfvOc4	Drizzle lacks PostgreSQL JSON path comparisons within a CASE and correlated source replay predicate. This existing predicate preserves exact evidence matching.
-layers/sme-roster/server/utils/record-correspondence-postgres-refs.ts	Tyxcx0_YTj0m_TX_nmp4Owopv1A1mtFUcwD01FB5H57k	PostgreSQL JSONB evidence comparison and NULL-safe scalar resolution require uncovered operators and a correlated existence expression.
-layers/sme-roster/server/utils/record-correspondence-postgres.ts	T800C3uLy0m2Nue6gIqolH8BKt5GAY1AMb6kTGO0PnIY	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-correspondence-postgres.ts	Tc4n1vuleInMf47Qlsr26AYHQllCABQNc5z0U2CpTBIo	Drizzle 0.45.4 无源投影需用的 JSON、聚合 FILTER、FROM VALUES 或 CAST 构造器。外层查询仍由构造器组合。
-layers/sme-roster/server/utils/record-correspondence-postgres.ts	TjJ-H5Q5PUDGby02t3W1b9gAO_5xU0FFbVOtOWYEXdC8	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-correspondence-postgres.ts	TnKMz9CBDQR2A1xckDpA20OtJYhCpCNQ-ORZvRizo6Pw:2	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-correspondence-postgres.ts	TYHUGy9u4V9dxhmcgOpzb1uuaU_E5-2xrcnth9bCQnz8	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-correspondence-runtime.ts	TqvUVzOUXo7GmcKJfOQOK6unX9s8LNSHx4CzlCxFqxNQ	Drizzle 0.45.4 没有通用 CAST 表达式，恢复历史保存的 PostgreSQL JSON 值。
-layers/sme-roster/server/utils/record-correspondence-target-postgres.ts	THXFeusb-Fp5yipyYA-nfe0wDYz5ODPdjnC64gOqnAQU	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/record-correspondence-write-postgres.ts	T67nfQV1ANltezk7Uy0V4AqB7Ewszgxkb6HNR2zAqYx0	Drizzle 0.45.4 无通用 CAST 构造器；历史对应收据的 JSON 文本恢复原公开结构。
-layers/sme-roster/server/utils/record-correspondence-write-postgres.ts	TqXjb3-_hlEjqQPrR87RfsHd1sDMHze_fEsjF0P5sR1Y	Drizzle 0.45.4 无通用 CAST 构造器；历史对应收据的 JSON 文本恢复原公开结构。
-layers/sme-roster/server/utils/record-correspondence-write-postgres.ts	TtgASPaCzhavO5TzpakY3QY_K-A9xzL1BE4tIZcdC0Kw	Drizzle 0.45.4 无通用 CAST 构造器；历史对应收据的 JSON 文本恢复原公开结构。
-layers/sme-roster/server/utils/record-correspondence-write-postgres.ts	TTP6GbgRL_7GLICdSVeydLNgQq-yKCTyoErKvnhzZtkg	Drizzle 的冲突更新 set 接受 SQL 但无 EXCLUDED 引用构造器，引用数据库收到的批量行。
 layers/sme-roster/server/utils/roster-evidence-pages-postgres.ts	T9vJLMXJRoNi1OBjevhdbkjzKK5ZqONOeXqAHDmdRVPE	Drizzle 0.45.4 的 inArray 为数组每项绑定一个参数。这里绑定一个定型数组，保留一次查询或同一事务中的不设上限范围。
 layers/sme-roster/server/utils/roster-export-import-postgres.ts	T7Km3LyLAVbpSM8jE8ywxU5RnzjhxJA4_3TFCZuMXhnk	Drizzle 0.45.4 的锁接口仅覆盖行锁，PostgreSQL advisory 锁用绑定参数保持现有事务或会话串行边界。
 layers/sme-roster/server/utils/roster-export-import-postgres.ts	TQqocrupun4yiJMGVSRiTS8-urB3--3h0vpcjJk9qpyE	Drizzle 0.45.4 的锁接口仅覆盖行锁，PostgreSQL advisory 锁用绑定参数保持现有事务或会话串行边界。
@@ -590,31 +440,22 @@ layers/sme-roster/server/utils/roster-file-postgres.ts	TsLFucpCV1s_qYe1dTpramUq1
 layers/sme-roster/server/utils/roster-file-postgres.ts	TUTQF7wZabYrgOhEBS6Qd8-MOktNrdw2aAb0IOeWhXxc	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
 layers/sme-roster/server/utils/roster-file-postgres.ts	Tx6-4QZ4berL0P76Eb1jQqWjyat7SLO44KFtry61Xc1o	Drizzle 0.45.4 没有 PostgreSQL 文本 JSON 检查、提取、类型转换或聚合构造器，保留旧文本语义与数据库侧有界投影。
 layers/sme-roster/server/utils/roster-merge-postgres.ts	Tl3K811zTm7VvSIgu0GZnQfi9wqwpff0xgyyCrKEk9sU	Drizzle 0.45.4 无列算术表达式构造器，在数据库仍持有行锁时执行原子的增减。
-upgrade/pg/2026-11-data-compaction/apply.sql	FGweXQmwonR3DqehGFh1lC-towU3Fbxu2s9PVVrrwzUs	Offline PostgreSQL compaction DDL and audited one-time source materialization.
+upgrade/pg/2026-11-catalog-comments/apply.sql	F5gOh7KkaEvtWtgwbefSpRIGM4XEQOKdsRLiy7m2djLQ	已有库升级入口，仅按顺序引用建库共用的注释 SQL
 upgrade/pg/2026-11-data-compaction/steps/01-install-runtime-log-compaction.sql	FTnxq55vhUUhElUz3jYZ8HmIDypolkYhzGcdZTgsfUxc	原地重整历史事件与容量计数并删除重复列及索引。Drizzle 查询构造器不支持在同一事务执行 ALTER TABLE DROP COLUMN 与 DROP INDEX。
 upgrade/pg/2026-11-data-compaction/steps/02-remove-offline-platform-tables.sql	FjHF9OAXaE7YICwMRK_xZLsO2cOH9vS1mGghfPJX-NNk	Install or migrate the native PostgreSQL schema, constraints and sequences. Drizzle query builders cannot express this psql DDL.
 upgrade/pg/2026-11-data-compaction/steps/03-install-platform-public-ids.sql	FRwhox8QdNZBDIzJHwps_rKQRCtUNkJIbveMkaCyRM_0	Install or migrate the native PostgreSQL schema, constraints and sequences. Drizzle query builders cannot express this psql DDL.
-upgrade/pg/2026-11-data-compaction/steps/04-remove-automatic-correspondence-candidates.sql	FUXEBmFMgspZNGexxZdzFdH3XKP880J-aWr_QD7kKwW0	Install or migrate the native PostgreSQL schema, constraints and sequences. Drizzle query builders cannot express this psql DDL.
 upgrade/pg/2026-11-data-compaction/steps/05-install-platform-version-business-fields.sql	Fs1AgakEq2-V-TqVkeh6QRTylK-yfD2doEDqQUlS6QIw	Migrate already captured PostgreSQL display fields into final single-owner storage.
 upgrade/pg/2026-11-data-compaction/steps/06-install-platform-business-facts.sql	F9aLRRJxfjh76pAayINobWEfSYBlIwFVfJCaOKh7SlkI	Offline PostgreSQL compaction DDL and audited one-time source materialization.
 upgrade/pg/2026-11-data-compaction/steps/07-install-platform-offline-read-facts.sql	F1HCWlfqmACLzU5kQxQDvHwaMHKnUOs9-vawvbXaObDs	Offline PostgreSQL compaction DDL and audited one-time source materialization.
 upgrade/pg/2026-11-data-compaction/steps/08-retire-platform-online-archives.sql	F7GEJT4aZLhvVbhdQ-EUFrB2asse3kyBXhLtTCSovH-s	Offline PostgreSQL compaction DDL and audited one-time source materialization.
 upgrade/pg/2026-11-data-compaction/steps/09-install-platform-collection-scope.sql	FNRI33KghcOzGRbDSHEgr7-lOJj9qaXgj_7jvp34JBiw	Install or migrate the native PostgreSQL schema, constraints and sequences. Drizzle query builders cannot express this psql DDL.
 upgrade/pg/2026-11-data-compaction/steps/10-install-platform-projection-compaction.sql	F5F5GKiLPyitTcrfisvmMpG9OGzNzMUQiHXBpXt7IIv8	Offline PostgreSQL compaction DDL and audited one-time source materialization.
-upgrade/pg/2026-11-data-compaction/steps/11-install-correspondence-query-evidence-compaction.sql	FfAa-RrNZhyfd26oWWPvjULw5-tcoDYDGThvYxaoPlQ0	Lock correspondence and audit tables and suspend the append-only trigger for an offline transactional compaction. Drizzle query builders do not install or alter triggers.
 upgrade/pg/2026-11-data-compaction/steps/12-compact-import-receipts.sql	F2uqrHj3cNeO0CuZahq5Gi-4YDQTC4zVzXeT_DIoEsB8	Project historical receipt classification and remove obsolete request storage in one offline transaction.
 upgrade/pg/2026-11-data-compaction/steps/13-compact-platform-batch-results.sql	FasR3zE1DBGDZeNmWtbGN7QixWi01nksSnklLfpza8TA	Install or migrate the native PostgreSQL schema, constraints and sequences. Drizzle query builders cannot express this psql DDL.
 upgrade/pg/2026-11-data-compaction/steps/14-retire-evidence-impact-tracker.sql	F5tLBbu1X3nh8Q9jsoRVBPTSVY5NvYwMzSRfqNm9hCVk	Retire the legacy impact tracker in the same transaction as freezing the decision evidence status. Drizzle query builders do not install DDL or psql includes.
-upgrade/pg/2026-11-data-compaction/steps/15-retire-comparison-scope-proof.sql	FWhnKUU0K6qrLfRchXGyP1CggH-0oDn2vvBhh2o9Qe2A	Check locked proof tables and historical correspondence confirmations before retiring the tables. Drizzle query builders do not issue PostgreSQL DDL or explicit table locks.
 upgrade/pg/2026-11-data-compaction/steps/16-compact-platform-observations.sql	FsEQy5KBMA5UcjDt2kjM2xQ9eZqUrl4pIR2sbNiesPbM	Offline PostgreSQL compaction DDL and audited one-time source materialization.
-upgrade/pg/2026-11-data-compaction/steps/17-refresh-platform-digests.mjs	IVqPdRkoTWS-tK7Z_vIj6H9vpwPG9nfVHYFmjTjcu7ec	Offline upgrade runner uses the supplied PostgreSQL environment to bind a Drizzle transaction.
-upgrade/pg/2026-11-data-compaction/steps/17-refresh-platform-digests.mjs	DGedDIzHc8JvwFZd_UfhQVKAe1couSlutIEfW3sPx6cI	Offline upgrade runner uses the supplied PostgreSQL environment to bind a Drizzle transaction.
-upgrade/pg/2026-11-data-compaction/steps/18-install-platform-capture-retention.sql	F1oe9EiSDEv_gBVRj4KkfwoKOCm_udWZdY0L6DljOHaw	安装保留策略并在迁移事务内清理超出保留范围的采集。
-upgrade/pg/2026-11-data-compaction/steps/19-prune-platform-captures.mjs	If6MoLqGmqtis0zsgQWf4bnL9tpDUWMPrz1qhbfyUxFQ	Offline upgrade runner uses the business search path for the shared provenance validator.
-upgrade/pg/2026-11-data-compaction/steps/19-prune-platform-captures.mjs	DGedDIzHc8JvwFZd_UfhQVKAe1couSlutIEfW3sPx6cI	Offline upgrade runner binds Drizzle to the selected PostgreSQL database.
 upgrade/pg/2026-11-data-compaction/steps/support/backfill-platform-collection-scope.sql	FtXK82a-ZCTilKEq4cPs488vfjr1fc3hYkF6-PPJek0M	Move typed conditions, exact selected witnesses and ordered unfinished positions from legacy relations into JSONB. Drizzle cannot express the psql schema parameters and DDL migration.
 upgrade/pg/2026-11-data-compaction/steps/support/classify-import-receipt.sql	FIkpxldGV7Acc3VSHGeNKpiTUbWF4kdOnEG5Z8QMLHkI	Preserve JavaScript JSON property presence when projecting a historical request before offline body removal.
-upgrade/pg/2026-11-data-compaction/steps/support/compact-correspondence-query-evidence.sql	FBrux_40L3S7OUomgrSZeVTHay_XaB2xHjxqPdXQJUMc	Remove historic transport payloads and reuse equivalent immutable audit revisions with a transactional PostgreSQL JSONB migration.
 upgrade/pg/2026-11-data-compaction/steps/support/compact-platform-source-values.sql	FpwhGOkmYq4R1H3qs8Two4uPqpaaSvnpCv5-wFIU-z74	Offline PostgreSQL compaction DDL and audited one-time source materialization.
 upgrade/pg/2026-11-data-compaction/steps/support/compact-recognized-source-scope.sql	FzDA7A8cSYIETJvuLZ4q_Yeodaxacw6Tk3ITpy1jaONg	Offline PostgreSQL compaction DDL and audited one-time source materialization.
 upgrade/pg/2026-11-data-compaction/steps/support/freeze-decision-evidence.sql	FjycL6m82Ws0hFmD5IQH_zlIjCuQ7nkZvYnU-UNqS4y4	Project legacy evidence tracker outcomes onto the original decision rows before retirement. Drizzle query builders do not express the PostgreSQL psql schema identifier and JSON projection.
@@ -625,12 +466,6 @@ upgrade/pg/2026-11-data-compaction/steps/support/platform-observation-snapshot.s
 upgrade/pg/2026-11-data-compaction/steps/support/platform-offline-read-facts.sql	FrUKIfd8BSZtUMUk-YA0ClzB-Rb22KoJNQ9i07tgWMHg	Offline PostgreSQL compaction DDL and audited one-time source materialization.
 upgrade/pg/2026-11-data-compaction/steps/support/platform-projection-comparison-constraints.sql	FC8-JJ8GOxgcuWkV2RMLCJBJRJZU4zGtiB_5TLm0D0vM	Offline PostgreSQL compaction DDL and audited one-time source materialization.
 upgrade/pg/2026-11-data-compaction/steps/support/platform-recognized-title-trigger.sql	FJd9rvves8ifgmUzQPc7iRCdhrvOZeA01s0m2imLpvKs	Offline PostgreSQL compaction DDL and audited one-time source materialization.
-upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-v2-migration.ts	T61OlMRtKgobs62lacL2rC6jkPgsPCX3uFjkKwPh3sso	Install the private native comparison digest column.
-upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-v2-migration.ts	TAC6_eVzwRvsqbbjum8v3elRsr3hhGrtfnAZwPKgOhbM	Detect the old schema and reject a partial prior cutover.
-upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-v2-migration.ts	TdT86bxc7G4VSDVgACX4rRIGTTQGRgt_HHHzEOv-y8BM	Bind checked comparison coordinates as one recordset without updating their public digest or audit.
-upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-v2-migration.ts	ToWvezRJCTudfT3j35tybo0L-_8ajLlnLILpI8VOKB8U	Remove historical refresh metadata after verification in the same transaction.
-upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-v2-migration.ts	TUoadL1Aa00vL0inrGQmfsrVgVEPp5AfOID2Awn-Xc3I	Remove historical byte cells after verification in the same transaction.
-upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-v2-migration.ts	Tw7N34tv81SOwvrxNjHH5BAUxyKf9-PZgBTT0Ey1v3BY	Lock the involved cache and source tables before the offline digest transition.
 upgrade/pg/2026-11-data-compaction/steps/support/project-platform-batch-business-rows.sql	FkLdzajwjgqlITQZpwCMmMDjiKeHO3AZrA1XhnI156QI	Normalize historical platform result cells to sparse typed or string rows and preserve continuation metadata transactionally.
 upgrade/pg/2026-11-data-compaction/steps/support/read-legacy-platform-refresh.ts	T-Zs5QBO-clE_lJEETjbJsWTZUnHkqPbFcdq4U6bmeEw	Read the retired inputs only during the independent V1 digest verification.
 upgrade/pg/2026-11-data-compaction/steps/support/read-legacy-platform-refresh.ts	TbH7fgtXApM_kkJrVT96CsawLmp2dE82FL30zi04qoEw	Read the retired inputs only during the independent V1 digest verification.
@@ -640,3 +475,4 @@ upgrade/pg/2026-11-data-compaction/steps/support/read-legacy-platform-refresh.ts
 upgrade/pg/2026-11-data-compaction/steps/support/read-legacy-platform-refresh.ts	TxScACji0gQ1HCRdxLbHF_gHvSMNe739-LcxbNe8bAuo	Read the retired inputs only during the independent V1 digest verification.
 upgrade/pg/2026-11-data-compaction/steps/support/split-platform-batch-results.sql	FQm-tlE_GCWEsp8P0eJM6rZrs0bAtHbbRbK_0d3zWURM	Backfill ordered platform batch segment rows without losing original JSON escape sequences. Drizzle query builders do not express the PL/pgSQL loop and lateral JSON ordinality.
 upgrade/pg/2026-11-data-compaction/steps/support/verify-platform-source-comparison.sql	Fwo6iTer8lZ4L310l-Z0GiJi_nxZIxzwXTKRgkBKlhT0	Offline PostgreSQL compaction DDL and audited one-time source materialization.
+upgrade/pg/2026-11-roster-cleanup/apply.sql	FkuZYX8p6W8Qu8anZXhdQfbRuIXFNICBck5zkYBbXV7c	Offline transactional cutover uses a PostgreSQL advisory lock and PL/pgSQL assertions to abort on lossy projections.

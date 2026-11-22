@@ -65,7 +65,7 @@ beforeAll(async () => {
   db = usePostgresDirectoryDb()
   installApplicationServer()
   for (const key of ['setHeader', 'defineEventHandler', 'getQuery', 'getRouterParam', 'getHeader', 'getRequestURL', 'readBody', 'setResponseStatus', 'createError'] as const) vi.stubGlobal(key, h3[key])
-  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: token, filesDir: dir, curatedPath: join(dir, 'absent-curated.json') }))
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: token, filesDir: dir }))
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
   const routes = h3.createRouter()
     .post('/api/roster/import/preflight', createRosterImportHandler('preflight'))
@@ -74,8 +74,6 @@ beforeAll(async () => {
     .get('/api/roster/enterprises/:id', (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default)
     .delete('/api/platform/records/:id/previous', (await import('../../../layers/sme-roster/server/api/platform/records/[id]/previous.delete')).default)
     .get('/api/platform/queries', (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default)
-    .get('/api/comparison', (await import('../../../layers/sme-roster/server/api/comparison.get')).default)
-    .get('/api/roster/record-comparison', (await import('../../../layers/sme-roster/server/api/roster/record-comparison.get')).default)
     .post('/api/platform/query', h3.defineEventHandler(async event => runPlatformLiveQuery(await h3.readBody(event), {
       cookie: 'session=synthetic-recognized-session', transport: { fetchImpl: async (_url, init) => {
         const form = new URLSearchParams(init.body)
@@ -293,10 +291,6 @@ it('keeps capture history separate from current enterprise evidence across REST 
   expect(changed.assessment).toBe('unknown')
   expect(changed.explanationValidity).toEqual({ status: 'not_applicable', reasons: [], explanationId: null, evidenceQueryIds: [] })
   expect(before.differences.find((d: any) => d.titleCode === 'innovative_sme')!.queryCoverage.sources.some((s: any) => s.queriedAt === evidence.queriedAt)).toBe(false)
-  const comparison = await (await fetch(`${baseUrl}/api/comparison?title=innovative_sme&direction=missing_in_miit`)).json()
-  const comparisonQuery = comparison.rows.find((r: any) => r.enterpriseId === enterpriseId).platform.queries.find((q: any) => q.queriedAt === evidence.queriedAt)
-  expect(comparisonQuery.collectionEvidence).toEqual(coverage(evidence))
-  expect(comparisonQuery.relations[0]).toMatchObject({ relationKey: evidence.rows[0]!.id, sourceRdjb: '1', sourcePage: 1 })
   const legacy = { ...request(evidence, 'legacy-same-id'), payload: { platformQueries: [{ interface: 'business_list' as const, queryKey: USCC, rdjb: '1', queriedAt: evidence.queriedAt, status: 'success' as const, rawResponse: JSON.stringify(evidence.rows), relations: [{ sequenceNo: 1, relationKey: evidence.rows[0]!.id, usccRaw: USCC, nameRaw: '合成企业', rawFields: evidence.rows[0]! }] }] } }
   const legacySaved = await client.commit(legacy)
   expect(legacySaved.status, JSON.stringify(legacySaved)).toBe('committed')
@@ -435,13 +429,6 @@ it.each(['uscc', 'name'] as const)('archive-before-master %s query preserves eve
   expect(detail.platform.relations.map((r: any) => r.id)).toEqual(archived.relations.map((r: any) => r.id))
   for (const row of detail.platform.relations) expect(row).toMatchObject({ enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending' })
   expect(detail.platform.relations.map((r: any) => [r.rawFields, r.sourceRdjb, r.sourcePage])).toEqual(archived.relations.map((r: any) => [r.rawFields, r.sourceRdjb, r.sourcePage]))
-  const comparison = await (await fetch(`${baseUrl}/api/comparison?title=innovative_sme&direction=missing_in_miit`)).json()
-  const platform = comparison.rows.find((r: any) => r.enterpriseId === enterpriseId).platform
-  expect(platform.relationCount).toBe(4)
-  expect(platform.queries.map((q: any) => q.id)).toEqual([archived.query.id])
-  expect(platform.queries[0].relationCount).toBe(4)
-  expect(platform.queries[0].relations.map((r: any) => r.id)).toEqual(archived.relations.map((r: any) => r.id))
-  for (const row of platform.queries[0].relations) expect(row).toMatchObject({ enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending' })
   expect(await readHistory()).toEqual(archived)
   expect(detail.differences).toEqual([expect.objectContaining({ explanationId: null, status: 'not_queried', reasonCode: null })])
 })
@@ -503,40 +490,6 @@ it('rejects malformed title-wide conditions, title scope and page proof through 
     expect((await client.commit(req as never)).status, `case ${index}`).toBe('failed')
   }
 })
-it('a publicly saved title-wide archive retains exact comparison rows as observations', async () => {
-  const evidence = titleWideArchive()
-  evidence.queriedAt = '2026-10-18T05:00:00.000Z'; evidence.completedAt = '2026-10-18T05:01:00.000Z'
-  const item = (await import('../../../layers/sme-roster/lib/platform/recognized-evidence')).recognizedResultToImport(evidence)
-  expect((await client.commit({ idempotencyKey: 'comparison-title-wide-query', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/comparison/query', payload: { platformQueries: [item] } })).status).toBe('committed')
-  const queryRead = await (await fetch(`${baseUrl}/api/platform/queries?interface=recognized_list&queryKey=${encodeURIComponent(item.queryKey)}`)).json()
-  const queryId = queryRead.rows.find((row: any) => row.query.queriedAt === evidence.queriedAt).query.id as number
-
-  const official = await client.commit({ idempotencyKey: 'comparison-title-wide-official', sourceKind: 'announcement', sourceIdentity: 'synthetic/comparison/official', payload: { announcement: {
-    sourceDocument: { source: 'jxj', title: '合成公布文件' }, records: [{ enterprise: { name: '合成企业', uscc: USCC }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2024 }] }],
-  } } })
-  expect(official.status).toBe('committed')
-  const [document] = await db.select({ id: sourceDocument.id }).from(sourceDocument).where(eq(sourceDocument.path, 'synthetic/comparison/official'))
-  const documentId = document!.id
-  const exported = await client.commit({ idempotencyKey: 'comparison-title-wide-export', sourceKind: 'platform_export', sourceIdentity: 'synthetic/comparison/export', payload: { exportSnapshot: {
-    titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'synthetic-comparison-export.xlsx', sha256: 'b'.repeat(64),
-    rows: [{ sourceRowNo: 3, usccRaw: USCC, nameRaw: '合成企业' }],
-  } } })
-  expect(exported.status).toBe('committed')
-  const [exportBatch] = await db.select({ id: platformExportBatch.id }).from(platformExportBatch).where(eq(platformExportBatch.originalFilename, 'synthetic-comparison-export.xlsx'))
-  const exportBatchId = exportBatch!.id
-
-  const sources = `queryIds=${queryId}&exportBatchIds=${exportBatchId}&officialSourceDocumentIds=${documentId}`
-  const response = await fetch(`${baseUrl}/api/roster/record-comparison?${sources}`)
-  expect(response.status).toBe(200)
-  const comparison = await response.json()
-  expect(comparison.officialCoverage).toMatchObject({ qualification: 'unknown', selectedDocumentIds: [documentId] })
-  expect(comparison.currentSourceConsistency).toMatchObject({
-    qualification: 'not_comparable',
-    recognizedObservations: [{ recognized: { queryId, usccRaw: USCC }, exportRows: [{ batchId: exportBatchId, sourceRowNo: 3, usccRaw: USCC }], observation: 'same_uscc_title_observed', qualification: 'not_comparable' }],
-    exportObservations: [{ exportRow: { batchId: exportBatchId, sourceRowNo: 3 }, qualification: 'not_comparable' }],
-  })
-})
-
 it('keeps one distinct rollback capture and protects manual deletion with API and read-only checks', async () => {
   const key = 'retention-current-and-previous'
   const query = (day: number, status: string) => ({

@@ -122,8 +122,8 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
       expect((await fetch(healthUrl)).status).toBe(200)
       const { kinds } = await (await fetch(`${base}/api/jobs/kinds`)).json()
       expect(kinds).toEqual(expect.arrayContaining([
-        'render-pages', 'ocr', 'difference-snapshot', 'platform-query-batch', 'reconcile',
-        'event-archive-candidates', 'event-annual-correspondence', 'current-roster-export', 'lead-lists-version-export',
+        'render-pages', 'ocr', 'difference-snapshot', 'platform-query-batch',
+        'current-roster-export', 'lead-lists-version-export',
       ].map(kind => expect.objectContaining({ kind, status: 'ready' }))))
       const credentials = await fetch(`${base}/api/settings/credentials`, {
         method: 'PATCH',

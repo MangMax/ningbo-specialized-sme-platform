@@ -4,7 +4,6 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type { importBatch as ImportBatchTable } from '../../../../db/postgresql/import-tables'
 import type { recordEvidence as RecordEvidenceTable } from '../../../../db/postgresql/ledger-tables'
-import type { recordCorrespondence as RecordCorrespondenceTable } from '../../../../db/postgresql/qualification-tables'
 import { computeTitleLifecycle } from '../../lib/roster/lifecycle'
 import { CURRENT_TITLES, diagnoseOfficialEventFields } from '../../lib/roster/current-qualification-model'
 import type { readPostgresLegacyQualification } from '../../lib/roster/current-qualification-postgres'
@@ -40,11 +39,8 @@ type CorrectionSnapshot = {
   files: (Pick<typeof storedFile.$inferSelect, 'id' | 'relPath' | 'sha256' | 'removedAt'> & { bytes: number })[]
 }
 
-type CorrectionRelation = Pick<typeof RecordCorrespondenceTable.$inferSelect, 'id' | 'revision' | 'status'>
-
 export type EventCorrectionInputs = {
   snapshot(id: number): CorrectionSnapshot
-  correspondence(id: number): CorrectionRelation[]
   titleEvents(record: StoredRecord): StoredEvent[]
   siblings(recordId: number): StoredEvent[]
   origin(id: number): StoredEvent | null
@@ -74,11 +70,9 @@ export function projectEventCorrectionPlan(request: EventCorrectionRequest, inpu
       if (after.eventType !== 'award' && after.eventType !== 'review') eventCorrectionFailure(422, 'invalid_event_combination', 'Formal validity requires award or review')
     }
     if (Object.entries(op.patch).every(([key, value]) => isDeepStrictEqual(before[key as keyof typeof before], value))) eventCorrectionFailure(422, 'no_change', 'Correction must change an event field')
-    const correspondences = inputs.correspondence(op.eventId)
-    if (correspondences.length > 300) eventCorrectionFailure(413, 'source_limit', 'Event correspondence impact exceeds 300 rows')
     const titleKey = `${source.record.enterpriseId}:${source.record.titleCode}`
     if (!titleEvents.has(titleKey)) titleEvents.set(titleKey, inputs.titleEvents(source.record))
-    return { titleCode: source.record.titleCode, eventId: op.eventId, recordId: op.recordId, enterpriseId: op.enterpriseId, before, after, evidence: source.evidence, files: source.files, correspondences: correspondences.sort((a, b) => a.id - b.id), lifecycleBefore: computeTitleLifecycle(titleEvents.get(titleKey)!) }
+    return { titleCode: source.record.titleCode, eventId: op.eventId, recordId: op.recordId, enterpriseId: op.enterpriseId, before, after, evidence: source.evidence, files: source.files, lifecycleBefore: computeTitleLifecycle(titleEvents.get(titleKey)!) }
   })
   const finalEvents = new Map(targets.map(target => [target.eventId, target.after]))
   const validityOrigins: Array<{ eventId: number; origin: StoredEvent | null }> = []
@@ -109,7 +103,7 @@ export function projectEventCorrectionPlan(request: EventCorrectionRequest, inpu
   }
   const projected = targets.map(target => ({ ...target, lifecycleAfter: computeTitleLifecycle(titleEvents.get(`${target.enterpriseId}:${target.titleCode}`)!.map(event => finalEvents.get(event.id) ?? event)) }))
   const requestHash = eventCorrectionHash(request)
-  return { requestHash, planHash: eventCorrectionHash({ requestHash, targets: projected, ...(validityOrigins.length ? { validityOrigins } : {}) }), targets: projected, impact: { corrected: targets.length, requiresRevalidation: targets.reduce((n, t) => n + t.correspondences.filter(c => c.status === 'confirmed').length, 0) } }
+  return { requestHash, planHash: eventCorrectionHash({ requestHash, targets: projected, ...(validityOrigins.length ? { validityOrigins } : {}) }), targets: projected, impact: { corrected: targets.length } }
 }
 
 export type QualificationReadback = RosterImportBeforeQualificationReadback | RosterImportAfterQualificationReadback
@@ -146,7 +140,7 @@ function completeSnapshot(value: unknown, enterpriseId: number): boolean {
       if (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)) return false
     }
     if (typeof title.group !== 'string' || !['eligible', 'pending', 'excluded'].includes(title.group)
-      || !['officialQualification', 'subject', 'region', 'platform', 'correspondence', 'completeness', 'shadow'].every(key => isObject(title[key]))
+      || !['officialQualification', 'subject', 'region', 'platform', 'completeness', 'shadow'].every(key => isObject(title[key]))
       || !['cycles', 'evidence', 'sourceVersions', 'references', 'notes'].every(key => Array.isArray(title[key]))) return false
   }
   const scope = { enterpriseId: value.enterpriseId, asOf: value.asOf, ruleVersion: value.ruleVersion, assessmentVersion: value.assessmentVersion }

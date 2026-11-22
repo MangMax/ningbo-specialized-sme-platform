@@ -19,7 +19,7 @@ it('keeps platform qualification facts in the existing qualification business gr
 
 it.each([
   'tests/files/segments/postgres-source-boundaries.http.test.ts',
-  'tests/roster/comparison/export.test.ts',
+  'tests/roster/comparison/enterprise-title-antijoin.test.ts',
   'tests/roster/enterprise-read/research-postgres.http.test.ts',
   'layers/sme-roster/server/api/files/[id]/segments.get.ts',
   'layers/sme-roster/server/api/export.get.ts',

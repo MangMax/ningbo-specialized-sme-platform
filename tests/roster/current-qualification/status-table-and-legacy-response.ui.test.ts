@@ -31,7 +31,6 @@ function snapshot(id: number, pending: boolean, selectedTitle: CurrentTitle = 'i
       subject: { status: 'not_established', message: '未见主体终止事实', decisionIds: [] },
       region: { status: 'not_established', message: '沿用正式公布地域范围', decisionIds: [] },
       platform: { status: 'not_queried', comparison: 'not_established', message: '未查询不否定正式资格', truncated: false, observations: [] },
-      correspondence: { status: 'unmatched', message: '对应不等于资格', refs: [] },
       completeness: { status: pending && selected ? 'incomplete' : 'recorded', message: pending && selected ? '复核结论与结论年待补' : '合成资料已记录', gaps: pending && selected ? ['missing_cycle_semantics'] : [], eventIds: pending && selected ? [eventId] : [],
         fieldGaps: pending && selected ? [
           { eventId, field: 'decidedYear', valueState: 'unknown', inputState: 'null' },
@@ -46,7 +45,7 @@ function snapshot(id: number, pending: boolean, selectedTitle: CurrentTitle = 'i
 function row(id: number, name: string, pending: boolean, selectedTitle: CurrentTitle = 'innovative_sme'): CurrentQualifiedRow {
   return { enterpriseId: id, name, uscc: null, district: '鄞州区', publishedNames: [name], aliases: [], firstYear: pending ? 2022 : 2025,
     basis: 'synthetic formal basis', reviews: pending ? '复核结论未知' : '', publication: '已见本称号宁波公布记录', notes: [], references: [], group: pending ? 'excluded' : 'eligible',
-    recognition: pending ? null : { precision: 'year', year: 2025 }, qualificationWitnesses: pending ? [] : [{ cycle: { originYear: 2025, batchSeq: 1 }, awardEventId: id + 1000, recognition: { precision: 'year', year: 2025 }, matchedValidYear: null, matchedMaintenance: null, correspondenceId: null, conditionQueryId: null }], matchedValidYears: [], matchedMaintenance: [],
+    recognition: pending ? null : { precision: 'year', year: 2025 }, qualificationWitnesses: pending ? [] : [{ cycle: { originYear: 2025, batchSeq: 1 }, awardEventId: id + 1000, recognition: { precision: 'year', year: 2025 }, matchedValidYear: null, matchedMaintenance: null }], matchedValidYears: [], matchedMaintenance: [],
     publishedPresentation: { availability: 'available', error: null, facts: [{ evidenceId: id + 2000, eventId: id + 1000, revision: 1, availability: 'captured', nameRaw: name, sourceBindingKnown: true }] }, qualificationAssessment: snapshot(id, pending, selectedTitle) }
 }
 // Five-state responses have one rowset. Each fixture is literal wire data;

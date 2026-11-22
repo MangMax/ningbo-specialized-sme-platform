@@ -77,7 +77,7 @@ describe('维护状态的中文标签与展示顺序', () => {
     expect(IMPORT_SOURCE_KINDS.platform_archive).toBe('平台采集归档')
     expect(IMPORT_SOURCE_KIND_ORDER).toEqual([
       'announcement', 'platform_export', 'alias_evidence',
-      'correspondence_decision', 'comparison_scope_proof', 'event_correction',
+      'event_correction',
       'platform_archive',
     ])
   })

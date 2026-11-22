@@ -67,7 +67,7 @@ async function start() {
   origin = `http://127.0.0.1:${port}`
   child = spawn(process.execPath, ['.output/server/index.mjs'], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, ...runtime.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production', NUXT_BUILD_DIR: join(dir, 'nuxt'), NUXT_DB_READONLY: '0', NUXT_FILES_DIR: files, NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_CURATED_PATH: join(dir, 'curated.json'), NUXT_RECONCILE_PATH: join(dir, 'reconcile.json'), NUXT_API_TOKEN: 'PRIVATE186_API_TOKEN', NUXT_MCP_TOKEN: 'PRIVATE186_MCP_TOKEN', NUXT_OCR_TOKEN: 'PRIVATE186_OCR_TOKEN', NUXT_OCR_BASE_URL: api.origin, NUXT_OCR_POLL_TIMEOUT_MS: '20', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: '', MIIT_COOKIE_FILE: '', PADDLEOCR_MCP_AISTUDIO_BASE_URL: '', NUXT_PLATFORM_COOKIE: '' },
+    env: { ...process.env, ...runtime.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production', NUXT_BUILD_DIR: join(dir, 'nuxt'), NUXT_DB_READONLY: '0', NUXT_FILES_DIR: files, NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_API_TOKEN: 'PRIVATE186_API_TOKEN', NUXT_MCP_TOKEN: 'PRIVATE186_MCP_TOKEN', NUXT_OCR_TOKEN: 'PRIVATE186_OCR_TOKEN', NUXT_OCR_BASE_URL: api.origin, NUXT_OCR_POLL_TIMEOUT_MS: '20', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: '', MIIT_COOKIE_FILE: '', PADDLEOCR_MCP_AISTUDIO_BASE_URL: '', NUXT_PLATFORM_COOKIE: '' },
   })
   child.stdout!.on('data', chunk => { output += chunk })
   child.stderr!.on('data', chunk => { output += chunk })

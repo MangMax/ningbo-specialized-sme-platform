@@ -11,7 +11,7 @@ const postgresGroup = {
 }
 export const postgresTestFiles = [
   'tests/files/segments/postgres-source-boundaries.http.test.ts',
-  'tests/roster/comparison/export.test.ts',
+  'tests/roster/comparison/enterprise-title-antijoin.test.ts',
   'tests/roster/enterprise-read/research-postgres.http.test.ts',
 ]
 const owners = {
@@ -20,11 +20,9 @@ const owners = {
     "roster/imports",
     "roster/official-evidence",
     "roster/event-correction",
-    "roster/source-completeness",
-    "roster/curation"
+    "roster/source-completeness"
   ],
   "任务 · 后台任务": [
-    "tasks/candidates",
     "tasks/center",
     "tasks/context",
     "tasks/details",
@@ -82,7 +80,6 @@ const owners = {
     "platform/queries",
     "platform/transport",
     "platform/retained-query",
-    "platform/comparison"
   ],
   "平台 · 归档与引用迁移": [
     "platform/evidence",
@@ -95,8 +92,7 @@ const owners = {
   ],
   "平台 · 观察、指纹与补录": [
     "platform/fingerprints",
-    "platform/observations",
-    "platform/reconciliation"
+    "platform/observations"
   ],
   "名录 · 资格与认定读取": [
     "roster/current-qualification",
@@ -113,7 +109,6 @@ const owners = {
   ],
   "名录 · 导出任务执行": ["roster/export-execution"],
   "名录 · 企业台账与年度流程": [
-    "roster/annual-process",
     "roster/aliases",
     "roster/enterprise-detail",
     "roster/enterprise-facts",
@@ -126,11 +121,8 @@ const owners = {
   ],
   "名录 · 对应与差异决定": [
     "roster/comparison",
-    "roster/correspondence",
     "roster/event-correspondence",
-    "roster/annual-correspondence",
-    "roster/decisions",
-    "roster/enterprise-differences"
+    "roster/decisions"
   ],
   "文件 · 存储、OCR识别、解析与预览": [
     "files/ocr",

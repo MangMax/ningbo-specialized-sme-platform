@@ -14,7 +14,6 @@ import {
 import { platformSourceCellValue, type PlatformSourceCell, type PlatformSourceValues } from '../../../../db/postgresql/platform-source-values'
 import { platformQueryTitleScope as titleScope } from '../../../../db/postgresql/platform-query-scope-tables'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
-import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { alias } from 'drizzle-orm/pg-core'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { BUSINESS_PROCESS_OBSERVATION_LIMIT, type BusinessProcessFilter } from '../../lib/platform/business-processes'
@@ -518,12 +517,6 @@ export function readPostgresPlatformArchiveDetail(db: NodePgDatabase, source: So
     const col = archivedCollection
     const current = tx.select({ enterpriseId: assignment.enterpriseId }).from(assignment)
       .where(eq(assignment.observationId, obs.id)).orderBy(desc(assignment.revision)).limit(1).as('owner')
-    // Drizzle 0.45 has no ordered JSON aggregation.
-    const links = tx.select({
-      refs: sql`json_agg(json_build_object('id', ${recordCorrespondence.id}, 'status', ${recordCorrespondence.status},
-        'revision', ${recordCorrespondence.revision}) ORDER BY ${recordCorrespondence.id})`,
-    }).from(recordCorrespondence).where(eq(recordCorrespondence.observationId, obs.id))
-    const correspondenceRefs = scoped ? sql`coalesce((${links}), '[]'::json)` : sql<null>`NULL`
     const observations = await tx.select({
       relationId: obs.publicId, queryId: col.publicId, queriedAt: col.queriedAt,
       queryKey: col.queryKey, queryStatus: col.status, sequenceNo: obs.sequenceNo,
@@ -532,7 +525,6 @@ export function readPostgresPlatformArchiveDetail(db: NodePgDatabase, source: So
       projectionRuleVersion: obs.projectionRuleVersion, versionId: obs.versionId,
       projection: { projectionId: table.id, ...projectionFields },
       titleScopes: scoped ? collectionScopes as SQL<string[]> : sql<null>`NULL`,
-      correspondenceRefs,
     }).from(obs).innerJoin(col, eq(col.id, obs.collectionId))
       .leftJoinLateral(current, eq(obs.id, obs.id)).leftJoin(enterprise, eq(enterprise.id, current.enterpriseId))
       .leftJoin(table, and(eq(table.versionId, obs.versionId), eq(table.recordId, obs.recordId)))
@@ -540,9 +532,9 @@ export function readPostgresPlatformArchiveDetail(db: NodePgDatabase, source: So
       .orderBy(desc(sql`${col.queriedAt} COLLATE "C"`), desc(obs.publicId)).limit(catalog.limits.observations + 1)
 
     const observationsTruncated = observations.length > catalog.limits.observations
-    const detailObservations = observations.slice(0, catalog.limits.observations).map(({ projection, titleScopes, correspondenceRefs, ...fields }) => {
+    const detailObservations = observations.slice(0, catalog.limits.observations).map(({ projection, titleScopes, ...fields }) => {
       const version = fields.versionId === null ? null : versionData(catalog, fields.versionId, projection)
-      const row = { ...fields, version, ...(titleScopes === null ? {} : { titleScopes: orderedScopes(titleScopes), correspondenceRefs }) }
+      const row = { ...fields, version, ...(titleScopes === null ? {} : { titleScopes: orderedScopes(titleScopes) }) }
       if (row.identityState === 'not_indexed' || row.contentState === 'not_indexed'
         || row.keySource === null || row.projectionRuleVersion === null) {
         failPlatformBusinessRequest(409, catalog.notIndexedCode, catalog.notIndexedMessage)

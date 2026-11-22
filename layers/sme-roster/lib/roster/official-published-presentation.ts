@@ -1,14 +1,9 @@
-import { publishedNameText, type PublishedPresentation } from './correspondence-view'
+import type { PublishedPresentation } from './published-presentation'
+import { publishedNameText, type OfficialPublishedFact } from './official-evidence-display'
+export type { OfficialPublishedFact } from './official-evidence-display'
 import { OfficialEvidenceError, type OfficialEvidencePageRequest, type OfficialEvidencePageResult } from '../../server/utils/official-evidence'
 import { type OfficialPublishedNameInput, type ReceiptRedactor } from '../../server/utils/import-receipt-redaction'
 
-/** Minimal display facts only. Locators stay on the caller's existing evidence. */
-export type OfficialPublishedFact = {
-  evidenceId: number; eventId: number
-} & (
-  | { availability: 'captured'; revision: number; nameRaw: string | null; sourceBindingKnown: boolean }
-  | { availability: 'unknown_legacy' | 'unavailable'; revision: null; nameRaw: null; sourceBindingKnown: null }
-)
 export type OfficialPublishedScope = { evidenceId: number; eventId: number }
 type DisplayErrorCode = 'invalid_scope' | 'source_limit' | 'field_limit' | 'response_limit' | 'read_failed'
 export class OfficialPublishedPresentationError extends Error {

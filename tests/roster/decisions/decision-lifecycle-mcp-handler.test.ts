@@ -46,5 +46,5 @@ it.each([
   expect(JSON.parse(result.content[0]!.text)).toEqual({ error: { code: 'invalid_request', message: 'Invalid decision request; see decision-lifecycle contract' } })
   const db = usePostgresDirectoryDb()
   expect((await db.execute(sql`select count(*)::int as n from difference_reason`)).rows).toEqual([{ n: 0 }])
-  expect((await db.execute(sql`select count(*)::int as n from evidence_review_receipt_114`)).rows).toEqual([{ n: 0 }])
+  expect((await db.execute(sql`select count(*)::int as n from import_batch`)).rows).toEqual([{ n: 0 }])
 })
