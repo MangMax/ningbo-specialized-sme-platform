@@ -404,13 +404,12 @@ layers/sme-roster/server/utils/parse-maintenance-postgres.ts	TyNNzrhIKpspQHR-sqE
 layers/sme-roster/server/utils/parse-maintenance-postgres.ts	Tzt0YJeMYYX2watuF7JUX1ncAGJetQKligR4RBebOPAs	Drizzle 的冲突更新 set 接受 SQL 但无 EXCLUDED 引用构造器，引用数据库收到的批量行。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	T-evjXwZsa0WriB-7GfasvpFRgRqENgZpTaRQoLkmFik	Archive option filtering uses byte-level ASCII-space detection including byte-backed strings.
 layers/sme-roster/server/utils/platform-archive-postgres.ts	T9-rNjRW0i1itPI6FA-qEXgsTiuxNHUXnAYH7nwbchAI:2	Drizzle 0.45.4 无窗口函数、表达式 COLLATE、排序 NULLS LAST、字节编码/正则或标量投影包装构造器；这一边界保持历史目录粒度与排序。
-layers/sme-roster/server/utils/platform-archive-postgres.ts	T91fCLSGvNWR9G2wozDAJcnAXSawMZ-lNdLeGL-4hUR0	Drizzle 0.45.4 缺少 PostgreSQL JSON 运算符、CAST 和聚合内部排序构造器，保留有界任务投影与旧数据行为。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TBshJHRwX-86i9nAYnvNKNWATGx-rbdQHR6_hU1Yh3O0	Drizzle 0.45.4 的类型化投影或 JOIN 条件没有该固定 SQL 常量的专用构造器。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TcjYalb8VW9bdzzXFSUfnHispfgoOOlP-oXvH73xbMOo	Drizzle 0.45.4 无 ARRAY(subquery)，只包住按企业 ID 排序的类型化归属 ID 查询。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TevkoLTQC7gCXMnceTQMllIMYTkVyLurrXsuVbrdwEP8	Drizzle lacks JSONB key lookup with a bound dynamic key.
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TG05ofz6D72k-3vJPezgNDXD2pR9V1h_doAyqwHNGjb4	Drizzle has no PostgreSQL JSONB to UTF-8/base64 byte conversion builder.
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TLSnCrtqthzfqliV7l1-VIR_cyDya4f5JTqRw1JjiFJI	Drizzle 0.45.4 无窗口函数、表达式 COLLATE、排序 NULLS LAST、字节编码/正则或标量投影包装构造器；这一边界保持历史目录粒度与排序。
-layers/sme-roster/server/utils/platform-archive-postgres.ts	TnTyJMYlCnV8crYLKGYPCvOZrKWgRI1J6QOXfQbcm_yg:5	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
+layers/sme-roster/server/utils/platform-archive-postgres.ts	TnTyJMYlCnV8crYLKGYPCvOZrKWgRI1J6QOXfQbcm_yg:4	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TRVym1mqkRVT9ljkkYAzU6LpNo-6_zGdiABp936tp3lU	Drizzle 0.45.4 无 STRPOS 和 SQL 拼接表达式构造器；保留字面称号匹配边界。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TsNEFRjfIHoviu_WLtBIZf7UI3pClw5qFQqkZtCzppRE	Drizzle 0.45.4 无 REPLACE 构造器；沿用含分隔符标题的空值判断。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TTLtjmvnVNvARqKs46T6AsrsVuUUMq8S-MMLE-gba9k4	Drizzle 0.45.4 缺少该 SQL 标量函数表达式的构造器，原值与比较语义须保持。
@@ -418,7 +417,6 @@ layers/sme-roster/server/utils/platform-archive-postgres.ts	TTSatRXCNHrCu7ThFWL3
 layers/sme-roster/server/utils/platform-archive-postgres.ts	Tuqs7F3tng1AkDTr_-jWJaCYYCSSBVF8RBYTTeKfIQJ4	Archive sorting uses PostgreSQL JSONB type ordering and byte-backed text discrimination.
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TV4DPgcs9jjvwDXs4PeXqcOffO7-ZYOGFhPIiZNt3K7g	Drizzle 0.45.4 无窗口函数、表达式 COLLATE、排序 NULLS LAST、字节编码/正则或标量投影包装构造器；这一边界保持历史目录粒度与排序。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TvdHlrdPpqtO1v8mDvzdtaNfb5pm5dSxRwWLh-025o24	Drizzle 0.45.4 无 ARRAY(subquery)，只包住按原企业 ID 排序的非空归属名称查询。
-layers/sme-roster/server/utils/platform-archive-postgres.ts	TW1MvaO5ClImYCBhugaS2M6QQDvSQapHwVt2HdXEsQVo	Drizzle 0.45.4 无 COALESCE 或 SELECT 标量包装，空关联集继续返回 JSON 数组。
 layers/sme-roster/server/utils/platform-archive-postgres.ts	Tw90BlzRkBakEOFbMN4i8YvEUlWQM7X2UbobUPIAQKFo	Drizzle has no SQL-to-JSONB scalar conversion builder.
 layers/sme-roster/server/utils/platform-archive-postgres.ts	TwNlPuzoU6Itknl1RHIprplSEDe45iAC-PqjbUIAKgOI	Numeric distinct options use typed PostgreSQL JSONB extraction.
 layers/sme-roster/server/utils/platform-archive-postgres.ts	Tyq-OTtbqKoKTy9nC6sXkXXOtxxRfl6KMEMEllUPaifg	Drizzle 0.45.4 无 STRPOS 和 SQL 拼接表达式构造器；按字面界定认定标题冲突。
