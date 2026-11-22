@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { mount, flushPromises } from '@vue/test-utils'
 import { expect, it } from 'vitest'
 import Provenance from '../../../layers/sme-roster/app/components/PlatformQueryProvenance.vue'

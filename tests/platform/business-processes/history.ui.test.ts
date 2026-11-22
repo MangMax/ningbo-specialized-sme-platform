@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import PlatformRecords from '../../../layers/sme-roster/app/components/PlatformRecords.vue'

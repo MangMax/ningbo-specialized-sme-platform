@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h, onMounted, ref } from 'vue'
 import { afterEach, expect, it } from 'vitest'

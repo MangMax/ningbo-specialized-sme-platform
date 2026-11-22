@@ -2,10 +2,10 @@ import { z } from 'zod'
 import { normalizeUscc } from '../domain'
 import { platformQueryResultShape, type PlatformQueryPage } from '../platform/live-query'
 
-import type { Scope } from '../../server/utils/decision-lifecycle-102/contract'
+import type { DecisionScope102 } from '../../server/utils/decision-lifecycle-102/contract'
 import type { currentPostgresDecisions102 } from '../../server/utils/decision-lifecycle-102/postgres-reads'
 
-export type AssessmentScope = Scope
+export type AssessmentScope = DecisionScope102
 type DecisionState = Awaited<ReturnType<typeof currentPostgresDecisions102>>[number]
 type CoverageStatus = 'not_queried' | 'complete' | 'partial' | 'failed' | 'unknown'
 const metadataSchema = z.object({

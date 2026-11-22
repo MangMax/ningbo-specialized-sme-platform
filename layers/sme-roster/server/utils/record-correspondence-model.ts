@@ -59,11 +59,9 @@ export class CorrespondenceError extends Error {
   get status() { return ['stale_revision', 'plan_mismatch', 'idempotency_conflict'].includes(this.code) ? 409 : 422 }
 }
 
-export function fail(code: CorrespondenceError['code'], message: string): never { throw new CorrespondenceError(code, message) }
+function fail(code: CorrespondenceError['code'], message: string): never { throw new CorrespondenceError(code, message) }
 
 export function correspondenceHash(value: unknown) { return createHash('sha256').update(JSON.stringify(value)).digest('hex') }
-
-export const hash = correspondenceHash
 
 function positive(id: number | null | undefined) { return typeof id === 'number' && Number.isSafeInteger(id) && id > 0 }
 
@@ -72,11 +70,11 @@ function filled(s: unknown) { return typeof s === 'string' && s.trim().length > 
 export function correspondenceEdgeKey(edge: CorrespondenceEdge) {
   switch (edge.type) {
     case 'event_process':
-    case 'event_recognized': return hash([edge.type, edge.eventId, edge.relationId, edge.role])
-    case 'later_process': return hash([edge.type, edge.enterpriseId, edge.titleCode, edge.predecessorEventId ?? null, edge.relationId, edge.role])
-    case 'event_export_context': return hash([edge.type, edge.eventId, edge.exportRowId, edge.role])
+    case 'event_recognized': return correspondenceHash([edge.type, edge.eventId, edge.relationId, edge.role])
+    case 'later_process': return correspondenceHash([edge.type, edge.enterpriseId, edge.titleCode, edge.predecessorEventId ?? null, edge.relationId, edge.role])
+    case 'event_export_context': return correspondenceHash([edge.type, edge.eventId, edge.exportRowId, edge.role])
     case 'process_export_context':
-    case 'recognized_export': return hash([edge.type, edge.relationId, edge.exportRowId, edge.role])
+    case 'recognized_export': return correspondenceHash([edge.type, edge.relationId, edge.exportRowId, edge.role])
   }
 }
 
@@ -229,7 +227,7 @@ function sourceForEdge(observed: ReadSources, edge: CorrespondenceEdge, confirme
     predecessorEventId: edge.type === 'later_process' ? edge.predecessorEventId ?? null : null,
     predecessorEvidence: provenance.predecessor?.officialEvidence.map(({ evidence, storedFile }) => ({ evidenceId: evidence.id, sourceFile: evidence.sourceFile, attachment: evidence.attachment, listNo: evidence.listNo, page: evidence.page, storedFileId: storedFile?.id ?? null, storedFileSha256: storedFile?.sha256 ?? null })) ?? [],
     relationId: relation?.relation.id ?? null, queryId: relation?.query.id ?? null, queryNaturalKey: relation ? [relation.query.interface, relation.query.queryKey, relation.query.rdjb, relation.query.queriedAt, relation.relation.sequenceNo] : null, exportRowId: exported?.exportRow.id ?? null, exportNaturalKey: exported ? [exported.exportBatch.titleCode, exported.exportBatch.year, exported.exportBatch.sha256, exported.exportRow.sourceRowNo] : null }
-  return { enterpriseId, titleCode, provenance, targetIdentity, sourceFingerprint: hash(provenance) }
+  return { enterpriseId, titleCode, provenance, targetIdentity, sourceFingerprint: correspondenceHash(provenance) }
 }
 
 function storedEdge(row: StoredCorrespondence): CorrespondenceEdge {
@@ -255,7 +253,7 @@ export type DecisionLookup = { byId: (id: number) => StoredCorrespondence | unde
 
 export function buildRecordCorrespondencePlan(lookup: DecisionLookup, request: CorrespondenceRequest, observed: ReadSources) {
   validatedRequest(request)
-  const requestHash = hash(request)
+  const requestHash = correspondenceHash(request)
   const targets: Record<string, unknown>[] = []
   const impact: CorrespondenceImpact = { created: 0, unlinked: 0, audit: 0 }
   const touched = new Set<number>()
@@ -314,7 +312,7 @@ export function buildRecordCorrespondencePlan(lookup: DecisionLookup, request: C
       const next = op.action === 'correct' ? 'unlinked' : op.status
       if (!(row.status === 'candidate' && ['confirmed', 'rejected'].includes(next)) && !(row.status === 'confirmed' && next === 'unlinked')) fail('invalid_endpoint_type', 'Invalid decision transition')
       const observedSourceFingerprint = next === 'unlinked'
-        ? hash(sourceProvenance(observed, storedEdge(row)))
+        ? correspondenceHash(sourceProvenance(observed, storedEdge(row)))
         : sourceForEdge(observed, storedEdge(row), next === 'confirmed').sourceFingerprint
       if (next !== 'unlinked' && !recordedSourceMatches(observed, row, observedSourceFingerprint)) fail('plan_mismatch', 'Source row changed since correspondence decision')
       targets.push({ correspondenceId: row.id, revision: row.revision, status: row.status, sourceFingerprint: row.sourceFingerprint, observedSourceFingerprint })
@@ -322,7 +320,7 @@ export function buildRecordCorrespondencePlan(lookup: DecisionLookup, request: C
       if (next === 'unlinked') impact.unlinked++
     }
   }
-  return { requestHash, targets, impact, planHash: hash({ requestHash, targets, impact }) }
+  return { requestHash, targets, impact, planHash: correspondenceHash({ requestHash, targets, impact }) }
 }
 
 type DecisionState = Omit<typeof RecordCorrespondenceTable.$inferInsert, 'targetIdentity' | 'provenance'> & Pick<StoredCorrespondence, 'targetIdentity' | 'provenance'>

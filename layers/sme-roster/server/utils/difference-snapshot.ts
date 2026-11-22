@@ -30,11 +30,11 @@ export const snapshotInput = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('create'), clientRequestId: z.string().trim().min(1).max(120), enterpriseIds: z.array(z.number().int().positive().max(Number.MAX_SAFE_INTEGER)).min(1).max(200).transform(ids => [...new Set(ids)].sort((a,b)=>a-b)).optional() }),
   z.strictObject({ action: z.enum(['read', 'retry']), jobId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/) }),
 ])
-export type Scope = { enterpriseId: number; name: string; uscc: string | null; recordIds: number[] }
+type Scope = { enterpriseId: number; name: string; uscc: string | null; recordIds: number[] }
 type CoverageSegment = Omit<PlatformLiveQueryResult, 'rows' | 'rawData' | 'dataRows'>
 type Item = { itemId: string; batchId: string; enterpriseId: number; source: string; rdjb: string | null; complete: boolean; rows: number | null; segments: CoverageSegment[]; reason: string | null }
 export type Receipt = { scope: Scope[]; items: Item[]; attempt: number; completeness: string; counts: { enterprises: number; requests: number; rows: number; unfinished: number; bySource?: Record<string, { requests: number; rows: number; failed: number; unfinished: number }> }; collectionPolicy: string }
-export const fail = (statusCode: number, message: string): never => { throw Object.assign(new Error(message), { statusCode }) }
+const fail = (statusCode: number, message: string): never => { throw Object.assign(new Error(message), { statusCode }) }
 function provenPages(pages: PlatformLiveQueryResult['pages'], size: number) {
   const sorted = [...pages].sort((a,b)=>a.page-b.page)
   const last = sorted.at(-1)

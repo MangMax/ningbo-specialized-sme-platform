@@ -4,7 +4,7 @@ import { declarationFilterSchema } from '../../lib/platform/declarations'
 import type { PlatformFilterOptionsQuery } from '../../lib/platform/filter-options'
 import { recognizedDirectoryFilterSchema } from '../../lib/platform/recognized-directory'
 import { listPostgresPlatformArchive, readPostgresPlatformArchiveDetail, readPostgresPlatformArchiveOptions } from './platform-archive-postgres'
-import { fail } from './platform-business-projection'
+import { failPlatformBusinessRequest } from './platform-business-projection'
 
 type Source = PlatformFilterOptionsQuery['source']
 
@@ -30,7 +30,7 @@ export async function listPlatformArchive(source: Source, input: unknown) {
   const reader = readers[source]
   const postgres = usePostgresDirectoryDb()
   const filter = reader.parse.safeParse(input)
-  if (!filter.success) fail(400, reader.invalidCode, reader.invalidMessage)
+  if (!filter.success) failPlatformBusinessRequest(400, reader.invalidCode, reader.invalidMessage)
   return listPostgresPlatformArchive(postgres, source, filter.data)
 }
 

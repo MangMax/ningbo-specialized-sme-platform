@@ -40,7 +40,7 @@ export class EvidenceCorrectionError extends Error {
   constructor(readonly code: string, message: string, readonly status = 422) { super(message) }
 }
 
-export function fail(code: string, message: string, status = 422): never { throw new EvidenceCorrectionError(code, message, status) }
+function fail(code: string, message: string, status = 422): never { throw new EvidenceCorrectionError(code, message, status) }
 
 export const evidenceCorrectionDigest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 

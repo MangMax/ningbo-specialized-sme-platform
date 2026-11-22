@@ -6,7 +6,7 @@ import type { PlatformComparison } from '../../lib/roster/platform-comparison'
 
 export const enterpriseDifferenceRefreshInput = z.strictObject({ enterpriseIds: z.array(z.number().int().positive().max(Number.MAX_SAFE_INTEGER)).min(1).max(10000).refine(ids => new Set(ids).size === ids.length, 'Duplicate enterprise IDs').optional() })
 
-export const fail = (message: string): never => { throw createError({statusCode:400,message}) }
+const fail = (message: string): never => { throw createError({statusCode:400,message}) }
 
 export function parseEnterpriseDifferenceRefreshQuery(raw: Record<string, unknown>) {
   if (Object.keys(raw).some(key => key !== 'enterpriseIds')) return fail('Unknown refresh query parameter')

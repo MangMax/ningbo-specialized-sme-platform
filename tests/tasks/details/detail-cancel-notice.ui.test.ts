@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 // A cancel request is only a request.
 //
 // The detail card used to report the *moment* the request was accepted

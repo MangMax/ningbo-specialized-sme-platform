@@ -51,9 +51,9 @@ export const discovery = z.strictObject({ eventId: positive, page: positive.defa
 
 export const sourceKinds = ['event', 'relation', 'export_row'] as const
 
-export function fail(status: number, code: string, message: string): CorrespondenceApiOutput { return { status, headers, body: { error: { code, message } } } }
+function fail(status: number, code: string, message: string): CorrespondenceApiOutput { return { status, headers, body: { error: { code, message } } } }
 
-export function success(body: object): CorrespondenceApiOutput { return { status: 200, headers, body: { ...body } } }
+function success(body: object): CorrespondenceApiOutput { return { status: 200, headers, body: { ...body } } }
 
 export function ok(body: object, redactors: ReadonlyArray<(text: string) => string>): CorrespondenceApiOutput { return success(sanitizeEvidence({ ...body }, redactors)) }
 

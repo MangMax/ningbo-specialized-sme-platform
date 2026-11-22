@@ -89,7 +89,7 @@ export const internalDecisionCommand102 = decisionScope102.extend({
   ...decisionCommandFields(),
 }).superRefine(refineDecisionCommand)
 
-export type Scope = Omit<z.infer<typeof decisionScope102>, 'titleCode'> & { titleCode: string }
+export type DecisionScope102 = Omit<z.infer<typeof decisionScope102>, 'titleCode'> & { titleCode: string }
 
 export type DecisionCommand102 = z.infer<typeof internalDecisionCommand102>
 

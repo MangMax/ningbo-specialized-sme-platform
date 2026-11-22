@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
 import { PiniaColada } from '@pinia/colada'
 import { createPinia } from 'pinia'

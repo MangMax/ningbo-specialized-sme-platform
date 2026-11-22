@@ -40,7 +40,7 @@ export const enterpriseFactCommitSchema = z.strictObject({ request: enterpriseFa
 
 export const enterpriseFactHash = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex')
 
-export function fail(code: string, message: string): never { throw new EnterpriseProfileError(409, code, message) }
+function fail(code: string, message: string): never { throw new EnterpriseProfileError(409, code, message) }
 
 export function parseEnterpriseFactInput<T>(schema: z.ZodType<T>, body: unknown): T {
   const result = schema.safeParse(body)

@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, afterEach, describe, it, expect, vi, type Mock } from 'vitest'
 import Business from '../../../layers/sme-roster/app/pages/platform-business-processes.vue'

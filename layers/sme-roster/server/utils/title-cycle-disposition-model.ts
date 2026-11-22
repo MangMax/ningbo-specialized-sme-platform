@@ -44,11 +44,9 @@ export class DispositionError extends Error {
     constructor(readonly code: string) { super(code); }
 }
 
-export const fail = (code: string): never => { throw new DispositionError(code); };
+const fail = (code: string): never => { throw new DispositionError(code); };
 
 export type DispositionRow = Omit<typeof titleCycleDispositionRevision.$inferSelect, 'fact' | 'audit'> & { fact: Fact; audit: unknown };
-
-export type Row = DispositionRow;
 
 export type DispositionRequest = z.infer<typeof dispositionRequestSchema>;
 
@@ -78,7 +76,7 @@ export function dispositionDependencies(source: DispositionSources, enterpriseId
     return { enterprise, file, cycle, formal }
 }
 
-export function projectCurrentDispositions(version: string, rows: Row[], resolve: (id: number, fact: Fact) => unknown) {
+export function projectCurrentDispositions(version: string, rows: DispositionRow[], resolve: (id: number, fact: Fact) => unknown) {
     return {
         version, rows: rows.map(row => {
             let sourceCurrent = true
@@ -93,11 +91,11 @@ export function projectCurrentDispositions(version: string, rows: Row[], resolve
     }
 }
 
-export function simulateDispositions(existing: Row[], request: DispositionRequest,
+export function simulateDispositions(existing: DispositionRow[], request: DispositionRequest,
     resolve: (id: number, fact: Fact) => unknown, committedAt: string) {
     const current = new Map(existing.map(r => [r.id, r]))
-    const appended: Omit<Row, 'revisionId'>[] = [], ids: string[] = [], deps: unknown[] = [];
-    const append = (r: Omit<Row, 'revisionId'>) => {
+    const appended: Omit<DispositionRow, 'revisionId'>[] = [], ids: string[] = [], deps: unknown[] = [];
+    const append = (r: Omit<DispositionRow, 'revisionId'>) => {
         const { revisionId: _revisionId, ...value } = { ...r, revisionId: 0 };
         appended.push(value);
         current.set(r.id, { ...r, revisionId: 0 });

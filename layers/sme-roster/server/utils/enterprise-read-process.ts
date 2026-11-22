@@ -3,7 +3,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+
+export function createSourceEnterpriseReadProcess(entry: URL) {
+  const jitiPath = createRequire(import.meta.resolve('nuxt/package.json')).resolve('jiti')
+  const entryPath = JSON.stringify(fileURLToPath(entry))
+  return createEnterpriseReadProcess(entry, `
+    import { createRequire } from 'node:module';
+    const { createJiti } = createRequire(import.meta.url)(${JSON.stringify(jitiPath)});
+    await createJiti(${entryPath}).import(${entryPath});
+  `)
+}
 
 /** Worker-compatible lifecycle, with an OS process boundary for fatal V8 errors.
  * Explicit V8 flags override inherited NODE_OPTIONS, unlike Worker resourceLimits.

@@ -7,11 +7,11 @@ export type EnterpriseAliasView = Omit<typeof enterpriseAlias.$inferSelect, 'upd
 
 export const positiveId = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 
-export function fail(statusCode: number, code: string, message: string): never { throw createError({ statusCode, message, data: { code } }) }
+export function failAlias(statusCode: number, code: string, message: string): never { throw createError({ statusCode, message, data: { code } }) }
 
 export function parse<T>(shape: z.ZodType<T>, value: unknown): T {
   const result = shape.safeParse(value)
-  if (!result.success) fail(400, 'alias_input_invalid', result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; '))
+  if (!result.success) failAlias(400, 'alias_input_invalid', result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; '))
   return result.data
 }
 
@@ -42,19 +42,19 @@ export const aliasDecisionSchema = z.strictObject(aliasDecisionInput)
 
 /** A page never silently truncates persisted notes or history snapshots. */
 export function boundedAliasPage<T>(result: T): T {
-  if (Buffer.byteLength(JSON.stringify(result), 'utf8') > 256 * 1024) fail(413, 'alias_page_response_too_large', '别名页面超过256KiB，请减小pageSize后完整分页读取')
+  if (Buffer.byteLength(JSON.stringify(result), 'utf8') > 256 * 1024) failAlias(413, 'alias_page_response_too_large', '别名页面超过256KiB，请减小pageSize后完整分页读取')
   return result
 }
 
 export function decideEnterpriseAlias(before: EnterpriseAliasView, request: z.infer<typeof aliasDecisionSchema>) {
-  if (before.version !== request.expectedVersion) fail(409, 'alias_version_conflict', '别名版本已改变，请重新读取')
-  if (request.action !== 'correct' && request.changes != null) fail(400, 'alias_input_invalid', '仅更正操作接收changes')
-  if (request.action === 'confirm' && before.verificationStatus === 'confirmed') fail(409, 'alias_transition_invalid', '该别名已经确认')
-  if (request.action === 'withdraw' && before.verificationStatus === 'withdrawn') fail(409, 'alias_transition_invalid', '该别名已经撤回')
+  if (before.version !== request.expectedVersion) failAlias(409, 'alias_version_conflict', '别名版本已改变，请重新读取')
+  if (request.action !== 'correct' && request.changes != null) failAlias(400, 'alias_input_invalid', '仅更正操作接收changes')
+  if (request.action === 'confirm' && before.verificationStatus === 'confirmed') failAlias(409, 'alias_transition_invalid', '该别名已经确认')
+  if (request.action === 'withdraw' && before.verificationStatus === 'withdrawn') failAlias(409, 'alias_transition_invalid', '该别名已经撤回')
   const changes = request.changes ?? {}
-  if (request.action === 'correct' && !Object.entries(changes).some(([key, value]) => before[key as keyof typeof before] !== value)) fail(400, 'alias_correction_empty', '更正必须明确改变字段')
+  if (request.action === 'correct' && !Object.entries(changes).some(([key, value]) => before[key as keyof typeof before] !== value)) failAlias(400, 'alias_correction_empty', '更正必须明确改变字段')
   const next = { ...before, ...changes, nameNorm: changes.name == null ? before.nameNorm : normalizeName(changes.name),
     verificationStatus: request.action === 'confirm' ? 'confirmed' as const : request.action === 'withdraw' ? 'withdrawn' as const : before.verificationStatus }
-  if (!next.nameNorm) fail(400, 'alias_input_invalid', '归一化名称不能为空')
+  if (!next.nameNorm) failAlias(400, 'alias_input_invalid', '归一化名称不能为空')
   return next
 }

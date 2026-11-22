@@ -5,7 +5,7 @@ import { alias, QueryBuilder } from 'drizzle-orm/pg-core'
 import { enterprise } from '../../../../../db/postgresql/enterprise-tables'
 import { platformCollection, platformBusinessObservation } from '../../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../../db/postgresql/roster-selection-tables'
-import { DecisionError102, publicVersion102, type decisionHistory102, type Scope } from '../decision-lifecycle-102/contract'
+import { DecisionError102, publicVersion102, type decisionHistory102, type DecisionScope102 } from '../decision-lifecycle-102/contract'
 
 type Reader = Pick<NodePgDatabase,'select'>
 type PublicRow = Parameters<typeof publicVersion102>[0]
@@ -39,10 +39,10 @@ export function postgresDifferenceRow(keys = differencePublicFieldOrder) {
   return sql`json_build_object(${sql.join(fields, sql`,`)})`
 }
 
-const inScope = (scope: Scope) => and(eq(p.enterpriseId, scope.enterpriseId), eq(p.titleCode, scope.titleCode), eq(p.direction, scope.direction))
+const inScope = (scope: DecisionScope102) => and(eq(p.enterpriseId, scope.enterpriseId), eq(p.titleCode, scope.titleCode), eq(p.direction, scope.direction))
 const newestFirst = [desc(p.recordedAt), desc(p.id)] as const
 
-export async function readPostgresDecisionHead102(db: Reader, scope: Scope) {
+export async function readPostgresDecisionHead102(db: Reader, scope: DecisionScope102) {
   const [row] = await db.select({ id: p.id, recordedAt: p.recordedAt, lifecycleAction: p.lifecycleAction, status: p.status })
     .from(p).where(inScope(scope)).orderBy(...newestFirst).limit(1)
   return row
@@ -55,7 +55,7 @@ export async function requirePostgresDecisionEnterprise(db: Reader, id: number) 
   return owner
 }
 
-export async function currentPostgresDecisions102(db: Reader, scopes: readonly Scope[]) {
+export async function currentPostgresDecisions102(db: Reader, scopes: readonly DecisionScope102[]) {
   if (!scopes.length) return []
   // WITH ORDINALITY preserves duplicate scopes and their original positions.
   const wanted = sql`unnest(${sql.param(scopes.map(scope => scope.enterpriseId))}::bigint[],

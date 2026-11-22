@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import PlatformBusinessProcessTable from '../../../layers/sme-roster/app/components/PlatformBusinessProcessTable.vue'

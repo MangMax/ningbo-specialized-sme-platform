@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import PlatformRecognizedDirectoryTable from '../../../layers/sme-roster/app/components/PlatformRecognizedDirectoryTable.vue'

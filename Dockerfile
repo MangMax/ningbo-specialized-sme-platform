@@ -7,13 +7,13 @@ FROM ${NODE_IMAGE} AS build
 
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install --global --no-audit --no-fund "$(node -p "require('./package.json').packageManager")"
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN npm install --global --no-audit --no-fund "$(node -p "require('./package.json').packageManager")" \
+  && pnpm install --frozen-lockfile --ignore-scripts --store-dir /tmp/pnpm-store \
+  && rm -rf /tmp/pnpm-store
 
 COPY . .
-RUN pnpm install --frozen-lockfile --store-dir /tmp/pnpm-store \
-  && pnpm build \
-  && rm -rf /tmp/pnpm-store
+RUN pnpm build
 
 FROM ${NODE_IMAGE} AS runtime-tools
 

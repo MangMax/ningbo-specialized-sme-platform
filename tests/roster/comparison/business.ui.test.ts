@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { mount, flushPromises } from '@vue/test-utils'
 import { afterEach, expect, it } from 'vitest'
 import ComparisonBusinessGroups from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonBusinessGroups.vue'

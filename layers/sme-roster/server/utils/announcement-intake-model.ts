@@ -7,7 +7,7 @@ import { hasOfficialFactInput, validateAnnouncementIdentityAndEvidence } from '.
 import { ImportReceiptError } from './import-receipt-model'
 import { canonicalImportJson } from './import-request-canonical'
 
-export const hash = z.string().regex(/^[0-9a-f]{64}$/)
+const hash = z.string().regex(/^[0-9a-f]{64}$/)
 
 const id = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 

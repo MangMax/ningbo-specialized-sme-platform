@@ -1,10 +1,10 @@
 
 
-export function fail(statusCode: number, code: string, message: string): never {
+export function failPlatformBusinessRequest(statusCode: number, code: string, message: string): never {
   throw Object.assign(new Error(message), { statusCode, code })
 }
 
-export function pageOf(filter: { page: number; pageSize: number }) {
+export function platformBusinessPage(filter: { page: number; pageSize: number }) {
   return { page: filter.page, pageSize: filter.pageSize, offset: (filter.page - 1) * filter.pageSize }
 }
 

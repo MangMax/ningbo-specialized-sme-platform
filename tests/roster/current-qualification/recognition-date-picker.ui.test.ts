@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it } from 'vitest'
 import { calendarPeriodValue, chooseCalendarPeriod, openCalendarPeriod } from '../../support/calendar-period'

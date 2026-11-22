@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick } from 'vue'
@@ -49,6 +49,11 @@ describe('sidebar menu tooltip keyboard behavior', () => {
   })
 
   it('shows help for a focused collapsed desktop menu and removes it when expanded', async () => {
+    // The real tooltip observes its size. jsdom does not perform layout.
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect() {}
+    })
     const view = mountSidebar(false, false)
     const menu = view.get<HTMLButtonElement>('#menu').element
     menu.focus()

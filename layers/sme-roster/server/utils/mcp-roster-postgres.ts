@@ -30,7 +30,7 @@ export type ListEnterprisesResult = RosterEnterprisesResult
 
 const PAGE_SIZE_MAX = 200
 
-export function pageOf(input: { page?: number; pageSize?: number }): { page: number; pageSize: number } {
+function pageOf(input: { page?: number; pageSize?: number }): { page: number; pageSize: number } {
   const page = Number.isInteger(input.page) && (input.page as number) > 0 ? (input.page as number) : 1
   const rawSize = Number.isInteger(input.pageSize) && (input.pageSize as number) > 0 ? (input.pageSize as number) : 50
   return { page, pageSize: Math.min(rawSize, PAGE_SIZE_MAX) }

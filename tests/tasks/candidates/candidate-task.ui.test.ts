@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import CandidateTaskCreate from '../../../layers/sme-roster/app/components/tasks/CandidateTaskCreate.vue'

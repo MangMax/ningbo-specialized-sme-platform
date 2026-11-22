@@ -10,7 +10,7 @@ import { platformBusinessObservation as observation, platformCollection as colle
 import { z } from 'zod'
 import { lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeUscc } from '../../lib/domain'
-import { fail as failAlias, parse as parseAliasInput, positiveId as positiveAliasId } from './alias-maintenance-model'
+import { failAlias, parse as parseAliasInput, positiveId as positiveAliasId } from './alias-maintenance-model'
 import { aliasDecisionSchema, aliasListInput, aliasPageInput, boundedAliasPage, decideEnterpriseAlias } from './alias-maintenance-model'
 
 type Db = NodePgDatabase

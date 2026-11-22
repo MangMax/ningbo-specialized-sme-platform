@@ -21,7 +21,7 @@ import { DECLARATION_OBSERVATION_LIMIT, DECLARATION_VERSION_LIMIT, type Declarat
 import type { PlatformFilterOptionsQuery } from '../../lib/platform/filter-options'
 import { normalizeDeclareKind } from '../../lib/platform/identity'
 import { RECOGNIZED_DIRECTORY_OBSERVATION_LIMIT, RECOGNIZED_DIRECTORY_VERSION_LIMIT, type RecognizedDirectoryFilter } from '../../lib/platform/recognized-directory'
-import { fail, orderedScopes, pageOf } from './platform-business-projection'
+import { failPlatformBusinessRequest, orderedScopes, platformBusinessPage } from './platform-business-projection'
 
 type Reader = Pick<NodePgDatabase, 'select' | 'selectDistinct' | '$with' | 'with' | '$count'>
 type Source = PlatformFilterOptionsQuery['source']
@@ -158,7 +158,7 @@ async function captureGate(tx: Reader, catalog: Catalog, recordId?: number) {
         recordId === undefined ? undefined : eq(observation.recordId, recordId),
         or(isNull(applyProjection.id), notCaptured(applyProjection.exactStoredState), notCaptured(applyProjection.sqlFactTitleState)),
       )).limit(1)
-    if (missing) fail(409, 'apply_stored_uncaptured', 'Declaration observation has uncaptured stored facts')
+    if (missing) failPlatformBusinessRequest(409, 'apply_stored_uncaptured', 'Declaration observation has uncaptured stored facts')
     return
   }
 
@@ -176,8 +176,8 @@ async function captureGate(tx: Reader, catalog: Catalog, recordId?: number) {
       or(isNull(projection.id), capture, isNull(original.observationId))))
     .limit(1)
   if (missing) {
-    if (process) fail(409, 'process_target_uncaptured', 'Process observation has uncaptured original facts or assignment')
-    fail(409, 'recognized_target_uncaptured', 'Recognized observation has uncaptured original facts or assignment')
+    if (process) failPlatformBusinessRequest(409, 'process_target_uncaptured', 'Process observation has uncaptured original facts or assignment')
+    failPlatformBusinessRequest(409, 'recognized_target_uncaptured', 'Recognized observation has uncaptured original facts or assignment')
   }
 }
 
@@ -315,7 +315,7 @@ function recordFilter(tx: Reader, catalog: Catalog, filter: ArchiveFilter, proje
 }
 
 async function listRecords(tx: Reader, catalog: Catalog, filter: ArchiveFilter) {
-  const { page, pageSize, offset } = pageOf(filter)
+  const { page, pageSize, offset } = platformBusinessPage(filter)
   const projection = alias(catalog.table, 'p')
   const where = recordFilter(tx, catalog, filter, projection)
   const matching = <T extends PgSelect>(query: T) => query.innerJoin(record, eq(record.id, version.recordId))
@@ -372,7 +372,7 @@ async function listRecords(tx: Reader, catalog: Catalog, filter: ArchiveFilter) 
 }
 
 async function listIsolated(tx: Reader, catalog: Catalog, filter: ArchiveFilter) {
-  const { page, pageSize, offset } = pageOf(filter)
+  const { page, pageSize, offset } = platformBusinessPage(filter)
   const base = { view: 'isolated' as const, page, pageSize }
   const recognized = catalog.interface === 'recognized_list'
   if (recognized && [filter.rddqrq, filter.whpcyear, filter.whpc, filter.szq].some(value => value !== undefined)) {
@@ -492,7 +492,7 @@ export function readPostgresPlatformArchiveOptions(db: NodePgDatabase, { source,
 export function readPostgresPlatformArchiveDetail(db: NodePgDatabase, source: Source, recordId: number) {
   const catalog = catalogs[source]
   if (!Number.isSafeInteger(recordId) || recordId < 1) {
-    fail(400, catalog.idCode, 'recordId must be a positive safe integer')
+    failPlatformBusinessRequest(400, catalog.idCode, 'recordId must be a positive safe integer')
   }
   const scoped = catalog.interface !== 'apply_list'
   const recognized = catalog.interface === 'recognized_list'
@@ -503,7 +503,7 @@ export function readPostgresPlatformArchiveDetail(db: NodePgDatabase, source: So
       id: businessRecord.id, platformKey: businessRecord.platformKey,
       identityRuleVersion: businessRecord.identityRuleVersion, createdAt: businessRecord.createdAt,
     }).from(businessRecord).where(and(eq(businessRecord.id, recordId), eq(businessRecord.interface, catalog.interface)))
-    if (!recordInfo) fail(404, catalog.notFoundCode, catalog.notFoundMessage)
+    if (!recordInfo) failPlatformBusinessRequest(404, catalog.notFoundCode, catalog.notFoundMessage)
     if (!scoped) await captureGate(tx, catalog, recordId)
 
     const totals = {
@@ -564,7 +564,7 @@ export function readPostgresPlatformArchiveDetail(db: NodePgDatabase, source: So
       const row = { ...fields, version, ...(titleScopes === null ? {} : { titleScopes: orderedScopes(titleScopes), correspondenceRefs }) }
       if (row.identityState === 'not_indexed' || row.contentState === 'not_indexed'
         || row.keySource === null || row.projectionRuleVersion === null) {
-        fail(409, catalog.notIndexedCode, catalog.notIndexedMessage)
+        failPlatformBusinessRequest(409, catalog.notIndexedCode, catalog.notIndexedMessage)
       }
       if (!recognized) return row
       const title = row.version?.titleRaw as string | null | undefined

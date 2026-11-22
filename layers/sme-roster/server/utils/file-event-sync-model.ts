@@ -44,7 +44,7 @@ export function fileEventSyncPhysical(ref: InputRef310, dir:string) {
   }
 }
 
-export type Row = {
+type Row = {
   eventId: number
   enterpriseId: number
   enterpriseName: string

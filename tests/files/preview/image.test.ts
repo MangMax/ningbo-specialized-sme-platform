@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import ImagePreview from '../../../layers/core/app/components/preview/ImagePreview.vue'
@@ -20,7 +20,7 @@ import { fitZoom, nextZoom, retrySrc, ZOOM_ABS_MAX } from '../../../layers/core/
  * 重试后 `<img>` 换成了新节点、地址也换了一个 —— 那才是浏览器会重新请求的证据。
  * 覆盖:重试后加载成功、重试后再次失败(还能再重试)。
  *
- * 环境是 `happy-dom`(不真的取图),所以加载结果由用例**手工派发** `load` / `error`
+ * 环境是 `jsdom`(不真的取图),所以加载结果由用例**手工派发** `load` / `error`
  * —— 与浏览器里那两个事件是同一对入口,组件无法分辨。
  */
 

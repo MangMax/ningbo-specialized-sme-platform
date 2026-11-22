@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import { it, expect, vi } from 'vitest'
 import Declaration from '../../../layers/sme-roster/app/components/PlatformDeclarationDetailDialog.vue'

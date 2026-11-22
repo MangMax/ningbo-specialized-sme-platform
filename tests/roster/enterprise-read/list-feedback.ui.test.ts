@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import EnterpriseListTable, { type EnterpriseListRow } from '../../../layers/sme-roster/app/components/EnterpriseListTable.vue'

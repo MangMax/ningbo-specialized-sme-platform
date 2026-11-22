@@ -1,6 +1,6 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 // Component seam only: proves the configuration UI's draft/PATCH contract in
-// happy-dom, not real browser behaviour. One case mounts the component with a
+// jsdom, not real browser behaviour. One case mounts the component with a
 // real service policy response so the rendered catalog cannot drift from the
 // backend shape without a failing test. Desktop and 390px operation stays a
 // separate manual acceptance lane.
