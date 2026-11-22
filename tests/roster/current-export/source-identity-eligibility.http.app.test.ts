@@ -1,3 +1,4 @@
+import { seedRetiredEvidenceState } from '../fixtures/retired-evidence-state'
 import { syntheticRecognizedQuery } from '../fixtures/recognized-source'
 import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
@@ -18,11 +19,6 @@ async function api(path: string, body: unknown) {
   return { status:response.status, body:await response.json() }
 }
 const scope = (id:number, titleCode = 'specialized_sme' as const) => ({ enterpriseId:id, titleCode, direction:'extra_in_miit' as const })
-async function maintain(id:number, version:number) {
-  const token = await f.reviewToken(scope(id),version)
-  const r = await api('/api/roster/decision-lifecycle/commands',{...scope(id),action:'maintain',expectedCurrentId:version,idempotencyKey:'pr126-maintain-'+(++serial),actor,basis:'Explicitly reviewed all committed evidence',ruleVersion:'synthetic-pr126',effectiveAt:'2025-01-01T00:00:00Z',reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:true}})
-  expect(r.status,JSON.stringify(r.body)).toBe(200)
-}
 async function relation(id:number, rdjb='2', assigned=true) {
   const e=f.identity(id)
   const native=await seedPostgresPlatformQuery(f.db,syntheticRecognizedQuery({rdjb,queriedAt:new Date(Date.now()+(++serial)).toISOString(),rows:[{enterpriseId:assigned?id:null,raw:{id:`PR126-${serial}`,qymc:e.name,tyshxydm:e.usccNorm,rdjb:'2'}}]}))
@@ -49,13 +45,9 @@ async function currentIdentity(id: number, status: 'effective'|'unrecognized') {
 }
 it('keeps explanation validity readable while legacy subject decisions do not alter formal eligibility', async () => {
   const c=await f.candidate('Changed departure evidence'), legacy=await f.candidate('Maintained legacy termination')
-  const d=await f.decision(c.enterprise.id,'moved_out')
-  await maintain(c.enterprise.id,d.id)
-  const l=await f.decision(legacy.enterprise.id,'deregistered',{lifecycleAction:null,basis:null,effectiveAt:null})
-  await maintain(legacy.enterprise.id,l.id)
-  const release=await api('/api/roster/evidence-impacts/commands',{action:'release_rule',idempotencyKey:'pr126-rule-'+(++serial),actor,basis:'Synthetic rule change',ruleId:'synthetic-pr126',version:String(serial),scopes:[{...scope(c.enterprise.id),previousEvaluationDigest:'0'.repeat(64),evaluationDigest:'1'.repeat(64)}]})
-  expect(release.status).toBe(200)
-  for(let i=0;i<20;i++){const r=await api('/api/roster/evidence-impacts/commands',{action:'process',limit:100,idempotencyKey:'pr126-process-'+(++serial),actor,basis:'Process synthetic impacts'});expect(r.status).toBe(200);if(!r.body.unfinished)break}
+  await f.decision(c.enterprise.id, 'moved_out', { retiredEvidenceValidity: 'evidence_changed', retiredEvidenceReviewed: true })
+  await f.decision(legacy.enterprise.id, 'deregistered', { lifecycleAction: null, basis: null, effectiveAt: null,
+    retiredEvidenceValidity: 'valid', retiredEvidenceReviewed: true })
   expect((await readPostgresQueryAssessments(f.db,[scope(c.enterprise.id)]))[0]!.explanationValidity.status).toBe('evidence_changed')
   expect((await readPostgresQueryAssessments(f.db,[scope(legacy.enterprise.id)]))[0]!.explanationValidity.status).toBe('valid')
   const {wb}=await f.workbook('pr126-validity')
@@ -79,7 +71,7 @@ it('retains historical inbound receipts while only a same-code source period gra
   await f.query('insert into business.enterprise_alias(enterprise_id,name,name_norm,verification_status,source_kind,created_at) values ($1,$2,$2,$3,$4,$5)',[c.enterprise.id,'Confirmed old inbound name','confirmed','manual',new Date().toISOString()])
   const result=await api('/api/roster/decision-lifecycle/commands',{...scope(c.enterprise.id),action:'replace',expectedCurrentId:null,idempotencyKey:'pr126-qualified-inbound',actor,basis:'Synthetic independent qualification and publication search verification',ruleVersion:'synthetic-pr126',effectiveAt:'2025-01-01T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'moved_in',measureCode:'record_moved_in',verificationStatus:'confirmed',evidenceQueryId:q.id,evidenceRelationId:r.id,movedIn:{titleCode:'specialized_sme'},currentQualification:{titleCode:'specialized_sme',validFrom:`${year-1}-01-01T00:00:00Z`,validUntil:`${year+1}-01-01T00:00:00Z`,basis:'Verified external award document and current qualification',publicationCheck:{status:'not_found',scope:'All ingested Ningbo specialized announcements through 2026-10-20; current and confirmed former names'}}}})
   expect(result.status,JSON.stringify(result.body)).toBe(200)
-  await maintain(c.enterprise.id,result.body.versionId)
+  await seedRetiredEvidenceState(f.db, result.body.versionId)
   // This old relation has neither a recognition start nor a usable current period.
   const manual=await f.workbook('pr126-manual-inbound-is-not-current-grant')
   expect(occurrences(manual.wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['未认定'])
@@ -117,7 +109,7 @@ it('preserves historical qualification command validation without granting curre
     const result=await api('/api/roster/decision-lifecycle/commands',{...scope(c.enterprise.id),action:'replace',expectedCurrentId:null,idempotencyKey:'pr126-boundary-'+label,actor,basis:'Synthetic explicit verification',ruleVersion:'synthetic-pr126',effectiveAt:'2025-01-01T00:00:00Z',decision:{...decision(q.id,r.id,{...base,...patch}),...(label==='unconfirmed'?{verificationStatus:'pending'}:{})}})
     if(label==='unconfirmed') { expect(result.status).toBe(400); pending.push(c.enterprise.id); continue }
     expect(result.status,JSON.stringify(result.body)).toBe(200)
-    if(review)await maintain(c.enterprise.id,result.body.versionId)
+    if(review)await seedRetiredEvidenceState(f.db, result.body.versionId)
     pending.push(c.enterprise.id)
   }
   const c=await f.candidate('Invalid qualification scope',[]),{q,r}=await relation(c.enterprise.id)
@@ -140,7 +132,7 @@ it('preserves historical source ownership commands and explicit prior-version in
   expect(result.status,JSON.stringify(result.body)).toBe(200)
   const replay=await api('/api/roster/decision-lifecycle/commands',{...command,idempotencyKey:'pr126-exact-interval'})
   expect(replay.body).toEqual(result.body)
-  await maintain(c.enterprise.id,result.body.versionId)
+  await seedRetiredEvidenceState(f.db, result.body.versionId)
   const at = async (instant: string) => {
     const snapshot = await f.db.transaction(tx => readPostgresLegacyQualification(tx,c.enterprise.id,Date.parse(instant)),
       { isolationLevel: 'repeatable read', accessMode: 'read only' })

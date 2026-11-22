@@ -6,7 +6,7 @@ defineRouteMeta({
       "导入回执"
     ],
     "summary": "精确读取导入批次回执（只读）",
-    "description": "batchId、idempotencyKey 或历史 receiptId 三选一。只读、不提交、不消费 key；不返回请求原文或全部逐项结果。preflight=仅预检；processing=提交尚无终态（不推断成功）；failed=失败；committed=已提交。旧批次 originalRequest=not_retained。需独立 API token。",
+    "description": "batchId、idempotencyKey 或历史 receiptId 三选一。只读、不提交、不消费 key；不返回请求原文或全部逐项结果。preflight=仅预检；processing=提交尚无终态（不推断成功）；failed=失败；committed=已提交。需独立 API token。",
     "security": [
       {
         "bearerAuth": []
@@ -118,13 +118,6 @@ defineRouteMeta({
                       "type": "integer"
                     }
                   }
-                },
-                "originalRequest": {
-                  "type": "string",
-                  "enum": [
-                    "not_retained",
-                    "redacted"
-                  ]
                 }
               }
             }
@@ -132,7 +125,7 @@ defineRouteMeta({
         }
       },
       "400": {
-        "description": "invalid_query：选择器、分页或字节偏移不合法"
+        "description": "invalid_query：选择器不合法"
       },
       "401": {
         "description": "unauthorized：API token 缺失、不匹配或未配置"

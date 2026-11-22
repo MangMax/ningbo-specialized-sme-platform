@@ -7,7 +7,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import { nativeAppAdapter } from '../../support/native-app'
 import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
-import { readPostgresEvidenceImpacts113 } from '../../../layers/sme-roster/lib/roster/query-assessment-postgres'
+import { seedRetiredEvidenceState } from '../fixtures/retired-evidence-state'
 
 const dir = mkdtempSync(join(tmpdir(), 'main-a9bc-qualification-'))
 const app = nativeAppAdapter({ dir, token: 'synthetic-a9bc' })
@@ -34,7 +34,7 @@ beforeAll(async () => {
   expect(preflight.status).toBe(200)
   const committed = await submitNewFixtureAnnouncement(base, headers.authorization.slice('Bearer '.length), body as RosterImportRequest)
   expect(committed).toMatchObject({ status: 'supplemented', summary: { failed: 0 } })
-  // Read IDs from this owned synthetic DB; no SQL writes or copied fixtures.
+  // Read IDs from this owned synthetic DB; the historical validity fixture is staged after the decision is created.
   enterpriseId = Number((await pool.query('SELECT id FROM business.enterprise')).rows[0]!.id)
   relationId = Number((await pool.query('SELECT old_id FROM business.platform_legacy_relation_alias')).rows[0]!.old_id)
 }, 90000)
@@ -93,16 +93,7 @@ it('preserves main qualification and evidence validity across single REST and pa
   expect((await post(replacement, false)).status).toBe(401)
   const accepted = await post(replacement); expect(accepted.status, JSON.stringify(accepted.body)).toBe(200)
   await assertAssessments(qualification, 'unknown', accepted.body.versionId)
-  const processed = await fetch(base + '/api/roster/evidence-impacts/commands', { method: 'POST', headers, body: JSON.stringify({
-    action: 'process', limit: 100, idempotencyKey: 'synthetic-a9bc-process', actor: { type: 'agent', id: 'synthetic-a9bc' }, basis: 'Process synthetic imported evidence before explicit review',
-  }) })
-  expect(processed.status).toBe(200)
-  const [impact] = await readPostgresEvidenceImpacts113(drizzle(pool), [{ scope: scope(), decisionId: accepted.body.versionId, latestDecisionId: accepted.body.versionId }])
-  if (!impact) throw new Error('Missing evidence review state')
-  const { token } = impact
-  expect(token.projectionReady).toBe(true)
-  const reviewed = await post({ ...command('maintain', accepted.body.versionId), reviewedEvidence: { latestRevisionId: token.latestRevisionId, projectionReady: true } })
-  expect(reviewed.status).toBe(200)
+  await seedRetiredEvidenceState(drizzle(pool), accepted.body.versionId)
   await assertAssessments(qualification, 'valid', accepted.body.versionId)
   const current = await (await fetch(base + '/api/roster/decision-lifecycle/current?' + new URLSearchParams({ enterpriseId: String(enterpriseId), titleCode: 'specialized_sme', direction: 'extra_in_miit' as const }))).json()
   expect(current.current.currentQualification).toEqual(qualification)

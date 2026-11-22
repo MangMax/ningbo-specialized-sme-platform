@@ -128,8 +128,6 @@ const replayTables = [
   'platform_export_row',
   'record_correspondence',
   'record_correspondence_audit',
-  'evidence_revision_113',
-  'evidence_semantic_head_113',
 ]
 
 async function state() {

@@ -5,8 +5,9 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../../../../db/schema'
 import { importReceiptRedactor } from './import-receipt-redaction-sqlite'
 type Db = BetterSQLite3Database<typeof schema>
+type SqliteReceiptAction = ImportReceiptAction | 'request'
 /** Exact SQL projections: neither default reads nor pagination load whole raw blobs into JS. */
-export function readImportReceipt(db: Db, action: ImportReceiptAction, args: Record<string, unknown>) {
+export function readImportReceipt(db: Db, action: SqliteReceiptAction, args: Record<string, unknown>) {
   if(action==='items' && args.projection!==undefined) {
     const parsed=importItemsReadSchema.safeParse(officialReadQuery(args))
     if(!parsed.success) return invalidImportReceiptQuery('Invalid exact merge snapshot selector')
@@ -65,8 +66,11 @@ function readQualificationProjection(db: Db, args: ImportItemsRead) {
       CASE WHEN json_type(diagnostic_entry,'$.diagnostics')='object' AND length(CAST(json_extract(diagnostic_entry,'$.diagnostics') AS BLOB))<=65536 THEN json_extract(diagnostic_entry,'$.diagnostics') ELSE NULL END AS diagnosticsPayload FROM selected`)
   return projectQualificationReceipt(row, args, importReceiptRedactor(db))
 }
-function readImportReceiptSnapshot(db: Db, action: ImportReceiptAction, args: Record<string, unknown>) {
-  const { receiptId, batchId, key } = parseImportReceiptSelector(action, args)
+function readImportReceiptSnapshot(db: Db, action: SqliteReceiptAction, args: Record<string, unknown>) {
+  const { offset: requestOffset, maxBytes: requestBytes, ...selectors } = args
+  const { receiptId, batchId, key } = action === 'request'
+    ? parseImportReceiptSelector('get', selectors)
+    : parseImportReceiptSelector(action, args)
   const condition = batchId !== undefined ? sql`b.id = ${batchId}` : receiptId !== undefined
     ? sql`b.id = (SELECT batch_id FROM import_receipt WHERE id = ${receiptId})` : sql`b.idempotency_key = ${key}`
   const row = db.get<ReceiptRow>(sql`
@@ -86,8 +90,8 @@ function readImportReceiptSnapshot(db: Db, action: ImportReceiptAction, args: Re
   if (!row) throw new ImportReceiptError(404, 'not_found', 'Import batch or receipt not found')
   if (action === 'get') return projectImportReceiptMetadata(row)
   if (action === 'request') {
-    const offset = importReceiptInteger(args.offset, 'offset', 0, Number.MAX_SAFE_INTEGER - 1, 0)
-    const maxBytes = importReceiptInteger(args.maxBytes, 'maxBytes', 16384, 65536)
+    const offset = importReceiptInteger(requestOffset, 'offset', 0, Number.MAX_SAFE_INTEGER - 1, 0)
+    const maxBytes = importReceiptInteger(requestBytes, 'maxBytes', 16384, 65536)
     if (row.receiptId === null) throw new ImportReceiptError(404, 'not_retained', 'Original request was not retained')
     const body = db.get<{ totalBytes: number; chunk: Buffer }>(sql`SELECT length(CAST(COALESCE((SELECT owner.request_body FROM import_receipt owner WHERE owner.id=import_receipt.body_receipt_id), request_body) AS BLOB)) AS totalBytes, substr(CAST(COALESCE((SELECT owner.request_body FROM import_receipt owner WHERE owner.id=import_receipt.body_receipt_id), request_body) AS BLOB), ${offset + 1}, ${maxBytes}) AS chunk FROM import_receipt WHERE id = ${row.receiptId}`)!
     if (offset > body.totalBytes) invalidImportReceiptQuery('offset exceeds request bytes')

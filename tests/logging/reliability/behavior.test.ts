@@ -2,13 +2,16 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { seedDebugLogCollection } from '../fixtures/debug-collection'
 import { createLogService, type LogServiceOptions } from '../../../layers/core/lib/logging/sqlite-service'
 import { LOG_DEFAULTS, type LogInput } from '../../../layers/core/lib/logging/contract'
 import { safeLogEvent } from '../../../layers/core/lib/logging/privacy'
 
 const owned: { root: string; service: ReturnType<typeof createLogService> }[] = []
-function fixture(options: Omit<Partial<LogServiceOptions>, 'directory'> = {}) {
+async function fixture(options: Omit<Partial<LogServiceOptions>, 'directory'> = {}, beforeOpen?: () => void) {
   const root = mkdtempSync(join(tmpdir(), 'logging-reliability-180-'))
+  await seedDebugLogCollection(root)
+  beforeOpen?.()
   const service = createLogService({ directory: root, ...options })
   owned.push({ root, service }); return service
 }
@@ -16,7 +19,7 @@ const attempt = (extra: Partial<LogInput> = {}): LogInput => ({ source: 'system'
 afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); for (const f of owned.splice(0)) { await f.service.close(); rmSync(f.root, { recursive: true, force: true }) } })
 
 it('coalesces ten thousand query attempts while preserving every task terminal without overflow', async () => {
-  const service = fixture()
+  const service = await fixture()
   for (let task = 0; task < 100; task++) {
     for (let query = 0; query < 100; query++) expect(service.emit(attempt({ taskId: 'task-' + task }))).not.toBeNull()
     service.emit({ source: 'task', operation: 'task.finished', outcome: 'success', taskId: 'task-' + task })
@@ -44,7 +47,7 @@ it.each([
   { name: 'verb', extra: { operation: 'db.query.update' } },
   { name: 'execution', extra: { origin: { runtime: 'node', integration: 'drizzle', capture: 'hook', execution: 'worker' } } },
 ] satisfies { name: string; extra: Partial<LogInput> }[])('keeps different $name facts in separate query summaries', async ({ extra }) => {
-  const service = fixture()
+  const service = await fixture()
   const first = service.emit(attempt()), second = service.emit(attempt(extra))
   expect(first).not.toBe(second)
   expect(service.emit(attempt())).toBe(first)
@@ -54,7 +57,7 @@ it.each([
 })
 
 it('ends a query summary segment at a business event and keeps the first identity and timestamp', async () => {
-  const service = fixture()
+  const service = await fixture()
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-24T09:00:00Z'))
   const first = service.emit(attempt())
   vi.setSystemTime(new Date('2026-10-24T09:00:01Z'))
@@ -75,7 +78,7 @@ it.each([
   { name: 'unknown-connection', extra: { resourceId: 'not-a-purpose' } },
   { name: 'existing-counts', extra: { counts: { total: 9 } } },
 ] satisfies { name: string; extra: Partial<LogInput> }[])('never coalesces $name records', async ({ extra }) => {
-  const service = fixture()
+  const service = await fixture()
   const first = service.emit(attempt(extra)), second = service.emit(attempt(extra))
   expect(first).not.toBe(second)
   await service.flush()
@@ -84,7 +87,7 @@ it.each([
 })
 
 it('does not mutate an in flight summary and removes drained and evicted index entries', async () => {
-  const service = fixture({ maxQueueEntries: 2 })
+  const service = await fixture({ maxQueueEntries: 2 })
   const first = service.emit(attempt())
   service.emit(attempt())
   const draining = service.flush()
@@ -106,7 +109,7 @@ it('does not mutate an in flight summary and removes drained and evicted index e
 
 it('accounts for count growth and splits a summary at the exact single event byte limit', async () => {
   const bytes = Buffer.byteLength(JSON.stringify({ ...safeLogEvent(attempt()), counts: { total: 9 } }))
-  const service = fixture({ maxEventBytes: bytes, maxQueueBytes: bytes * 2 })
+  const service = await fixture({ maxEventBytes: bytes, maxQueueBytes: bytes * 2 })
   const first = service.emit(attempt())
   for (let n = 2; n <= 9; n++) expect(service.emit(attempt())).toBe(first)
   const next = service.emit(attempt())
@@ -119,7 +122,7 @@ it('accounts for count growth and splits a summary at the exact single event byt
 })
 
 it('keeps source and integration policy authoritative for queued query summaries', async () => {
-  const service = fixture()
+  const service = await fixture()
   const first = service.emit(attempt()); service.emit(attempt())
   await service.setPolicy({ retentionDays: 7, maxBytes: LOG_DEFAULTS.maxBytes, collection: { integrations: { drizzle: { enabled: false, minLevel: 'debug' } } } })
   await service.flush()
@@ -133,8 +136,7 @@ it('keeps source and integration policy authoritative for queued query summaries
 })
 
 it.each(['batch', 'warning'] as const)('schedules one early drain for %s without waiting for the periodic timer', async mode => {
-  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setImmediate', 'clearImmediate'] })
-  const service = fixture()
+  const service = await fixture({}, () => vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setImmediate', 'clearImmediate'] }))
   const size = mode === 'batch' ? LOG_DEFAULTS.batchEntries : 1
   for (let i = 0; i < size; i++) service.emit({ source: 'task', operation: 'schedule.event', outcome: 'started', level: mode === 'batch' ? 'info' : 'warn', resourceId: i })
   expect(service.status()).toMatchObject({ queuedEntries: size, inFlightEntries: 0, pending: 0 })
@@ -146,8 +148,7 @@ it.each(['batch', 'warning'] as const)('schedules one early drain for %s without
 })
 
 it('drains an event arriving between an empty flush and its completion without waiting for a timer', async () => {
-  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setImmediate', 'clearImmediate'] })
-  const service = fixture()
+  const service = await fixture({}, () => vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setImmediate', 'clearImmediate'] }))
   const empty = service.flush()
   service.emit({ source: 'task', operation: 'handoff.event', outcome: 'success' })
   await empty
@@ -158,12 +159,15 @@ it('drains an event arriving between an empty flush and its completion without w
 })
 
 it('schedules on the byte budget before the entry batch threshold and closes without a pending immediate', async () => {
-  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setImmediate', 'clearImmediate'] })
-  const scheduled = vi.spyOn(globalThis, 'setImmediate')
-  const cancelled = vi.spyOn(globalThis, 'clearImmediate')
+  let scheduled!: ReturnType<typeof vi.spyOn>
+  let cancelled!: ReturnType<typeof vi.spyOn>
   const input = { source: 'task', operation: 'bytes.schedule', outcome: 'success' } as const
   const bytes = Buffer.byteLength(JSON.stringify(safeLogEvent(input)))
-  const service = fixture({ maxQueueBytes: bytes * 2 })
+  const service = await fixture({ maxQueueBytes: bytes * 2 }, () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setImmediate', 'clearImmediate'] })
+    scheduled = vi.spyOn(globalThis, 'setImmediate')
+    cancelled = vi.spyOn(globalThis, 'clearImmediate')
+  })
   service.emit(input); service.emit(input)
   expect(service.status()).toMatchObject({ queuedEntries: 2, queuedBytes: bytes * 2 })
   expect(vi.getTimerCount()).toBe(3)
@@ -175,7 +179,7 @@ it('schedules on the byte budget before the entry batch threshold and closes wit
 
 it('does not exceed the queue byte budget when a count gains a digit and no split fits', async () => {
   const bytes = Buffer.byteLength(JSON.stringify({ ...safeLogEvent(attempt()), counts: { total: 9 } }))
-  const service = fixture({ maxQueueBytes: bytes })
+  const service = await fixture({ maxQueueBytes: bytes })
   const first = service.emit(attempt())
   for (let i = 2; i <= 9; i++) expect(service.emit(attempt())).toBe(first)
   expect(service.emit(attempt())).toBeNull()
@@ -188,7 +192,7 @@ it('keeps exact UTF8 byte accounting across interleaved summary digit boundaries
   const a = attempt({ requestId: 'request-a' }), b = attempt({ requestId: 'request-b' })
   const size = (input: LogInput, total: number) => Buffer.byteLength(JSON.stringify({ ...safeLogEvent(input), counts: { total } }), 'utf8')
   const expected = size(a, 10) + size(b, 100)
-  const service = fixture({ maxQueueBytes: expected })
+  const service = await fixture({ maxQueueBytes: expected })
   const first = service.emit(a), second = service.emit(b)
   for (let n = 2; n <= 100; n++) {
     if (n <= 10) expect(service.emit(a)).toBe(first)

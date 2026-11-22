@@ -28,7 +28,7 @@ const ruleCodes = new Map([...rules].map(([code, rule]) => [rule, code]))
 function area(path) {
   if (path.startsWith('tests/')) return '测试'
   if (path.startsWith('db/migrations/') || path === 'db/runtime-schema.generated.ts') return '迁移'
-  if (path.startsWith('upgrade/') || /^scripts\/(?:initialize-native-db|upgrade-)/.test(path)) return '离线'
+  if (path.startsWith('upgrade/') || path.startsWith('scripts/upgrade-')) return '离线'
   return '运行时'
 }
 

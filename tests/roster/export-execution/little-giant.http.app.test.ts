@@ -2,7 +2,6 @@ import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { CURRENT_RULE_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { businessIdentity } from '../current-export/fixtures/specialized-export'
-import { readPostgresEvidenceImpacts113 } from '../../../layers/sme-roster/lib/roster/query-assessment-postgres'
 import { confirmCurrentExportExclusion } from '../fixtures/qualification-decisions'
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -132,8 +131,7 @@ beforeEach(async () => {
   expect((await pool.query("SELECT id FROM business.job WHERE kind = 'current-roster-export' AND state IN ('queued','running')")).rows).toEqual([])
   await pool.query(`TRUNCATE business.job, business.enterprise, business.record, business.record_event,
     business.record_evidence, business.roster_legacy_member, business.difference_reason,
-    business.enterprise_fact_revision, business.enterprise_fact_receipt, business.evidence_review_receipt_114,
-    business.evidence_revision_113, business.evidence_semantic_head_113, business.evidence_scope_version_113 CASCADE`)
+    business.enterprise_fact_revision, business.enterprise_fact_receipt, business.evidence_review_receipt_114 CASCADE`)
 })
 // Emit the assertion at failure time: a later workflow deadline may prevent
 // Vitest's end-of-run summary and JSON reporter from being written.
@@ -230,14 +228,6 @@ it('万行快照与普通请求响应', async () => {
   const changed = await decision({ action: 'replace', expectedCurrentId: null, idempotencyKey: 'snapshot-change',
     decision: { status: 'confirmed_reason', reasonCode: 'moved_out', verificationStatus: 'confirmed', measureCode: 'mark_moved_out' } })
   expect(changed.status).toBe(200)
-  const { versionId } = await changed.json()
-  const [impact] = await readPostgresEvidenceImpacts113(db, [{ scope, decisionId: versionId, latestDecisionId: versionId }])
-  expect(impact).toBeDefined()
-  const evidenceToken = impact!.token
-  expect(evidenceToken.projectionReady).toBe(true)
-  const reviewed = await decision({ action: 'maintain', expectedCurrentId: versionId, idempotencyKey: 'snapshot-review',
-    reviewedEvidence: { latestRevisionId: evidenceToken.latestRevisionId, projectionReady: true } })
-  expect(reviewed.status, await reviewed.text()).toBe(200)
   await confirmCurrentExportExclusion(service.baseUrl,headers,last.id,'snapshot-typed-exclusion')
   const latencies:number[]=[]
   for(let i=0;i<4;i++) for(const path of [listPath,detailPath,'/api/files?limit=20']) {

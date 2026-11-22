@@ -8,10 +8,23 @@ import { fileURLToPath } from 'node:url'
 const root = fileURLToPath(new URL('../..', import.meta.url))
 const materializers = ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']
 
-async function createEmptyLogSource(directory) {
+function sqliteFixtureImporter() {
   const require = createRequire(import.meta.url)
   const { createJiti } = createRequire(require.resolve('nuxt/package.json'))('jiti')
-  const jiti = createJiti(import.meta.url, { fsCache: false })
+  return createJiti(import.meta.url, { fsCache: false })
+}
+
+async function createEmptyBusinessSource(sourcePath) {
+  const jiti = sqliteFixtureImporter()
+  const { initializeDb } = await jiti.import(join(root, 'db/client.ts'))
+  const { installLeadListSchema } = await jiti.import(join(root, 'layers/lead-lists/install-schema.ts'))
+  const db = initializeDb({ create: true, dbPath: sourcePath, readOnly: false })
+  try { db.$client.transaction(() => installLeadListSchema(db.$client)).immediate() }
+  finally { db.$client.close() }
+}
+
+async function createEmptyLogSource(directory) {
+  const jiti = sqliteFixtureImporter()
   const { createLogService } = await jiti.import(join(root, 'layers/core/lib/logging/sqlite-service.ts'))
   const logs = createLogService({ directory })
   try { await logs.policy() }
@@ -20,11 +33,12 @@ async function createEmptyLogSource(directory) {
 }
 
 /**
- * Materialize the runtime from a disposable SQLite source using the real offline
- * conversion. The running application only sees the isolated PostgreSQL schemas.
- * @param {{ dir: string; sourcePath?: string; bin?: string; logsOnly?: boolean }} options
+ * Create an isolated PostgreSQL runtime. Historical tests can materialize their
+ * SQLite source, and tests starting from empty runtime state can use native DDL.
+ * @param {{ dir: string; sourcePath?: string; bin?: string; logsOnly?: boolean; native?: boolean }} options
  */
-export async function postgresRuntimeFixture({ dir, sourcePath, bin = process.env.ROSTER_TEST_POSTGRES_BIN, logsOnly = false }) {
+export async function postgresRuntimeFixture({ dir, sourcePath, bin = process.env.ROSTER_TEST_POSTGRES_BIN, logsOnly = false, native = !sourcePath }) {
+  if (native && sourcePath) throw new Error('A native PostgreSQL fixture cannot load a SQLite source')
   if (!bin) throw new Error('Set ROSTER_TEST_POSTGRES_BIN to the PostgreSQL 19 bin directory')
   const binDir = resolve(bin)
   const version = execFileSync(join(binDir, 'postgres'), ['--version'], { encoding: 'utf8' }).trim()
@@ -58,17 +72,21 @@ export async function postgresRuntimeFixture({ dir, sourcePath, bin = process.en
     const socketSetting = socket.replaceAll('\\', '\\\\').replaceAll("'", "''")
     appendFileSync(join(data, 'postgresql.conf'), "\nlisten_addresses = ''\nport = 5432\nunix_socket_directories = '" + socketSetting + "'\n")
     run('pg_ctl', ['-D', data, '-l', log, '-w', 'start'])
-    if (!logsOnly) {
-      if (!sourcePath) {
-        sourcePath = join(fixture, 'source.db')
-        node(['scripts/initialize-native-db.mjs', sourcePath])
+    if (native) {
+      node(['scripts/initialize-postgresql.mjs', ...(logsOnly ? ['--logs-only'] : [])])
+    } else {
+      if (!logsOnly) {
+        if (!sourcePath) {
+          sourcePath = join(fixture, 'source.db')
+          await createEmptyBusinessSource(sourcePath)
+        }
+        node(['upgrade/postgresql/stage-sqlite.mjs', resolve(sourcePath), 'fixture_business'])
+        for (const name of materializers) materialize(name, 'fixture_business')
       }
-      node(['upgrade/postgresql/stage-sqlite.mjs', resolve(sourcePath), 'fixture_business'])
-      for (const name of materializers) materialize(name, 'fixture_business')
+      const logSource = await createEmptyLogSource(join(fixture, 'source-logs'))
+      node(['upgrade/postgresql/stage-sqlite.mjs', logSource, 'fixture_logs'])
+      materialize('runtime-logs', 'fixture_logs')
     }
-    const logSource = await createEmptyLogSource(join(fixture, 'source-logs'))
-    node(['upgrade/postgresql/stage-sqlite.mjs', logSource, 'fixture_logs'])
-    materialize('runtime-logs', 'fixture_logs')
     return {
       url: url.href, psql, close,
       env: {

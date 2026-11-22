@@ -1,4 +1,4 @@
-import { validatedComparisonInput, comparisonBefore, type Query, type Relation, type VerifiedComparisonEvidence, type SelectedRecordComparison, compareRecordInputs, type ComparisonRead, type ReadResult, projectLegacyComparisonImpact, type SourceEnterpriseLink, unique, projectSourceEnterpriseLinks, comparisonCatalogWindows, projectCatalogDocument, projectCatalogExport, projectCatalogQuery } from './record-comparison-model'
+import { validatedComparisonInput, comparisonBefore, type Query, type Relation, type SelectedRecordComparison, compareRecordInputs, type ComparisonRead, type ReadResult, projectLegacyComparisonImpact, type SourceEnterpriseLink, unique, projectSourceEnterpriseLinks, comparisonCatalogWindows, projectCatalogDocument, projectCatalogExport, projectCatalogQuery } from './record-comparison-model'
 import { and, eq, getTableColumns, inArray, isNull, or, sql } from 'drizzle-orm'
 import type { useApplicationDb } from '../../../../db/client'
 import * as schema from '../../../../db/schema'
@@ -13,13 +13,12 @@ import { comparisonFormalCounts, iterateComparisonFormalEvents } from './record-
 import { readComparisonTargetIdentities, readComparisonTargetQueryFacts, readComparisonTargetRelations } from './record-comparison-target-sources'
 import { readScopedRecordCorrespondences } from './record-correspondence'
 import { correspondenceColumns, correspondenceTable } from './record-correspondence-store'
-import { readCorrespondenceTargetQueries } from './record-correspondence-target-sources'
 type Db = ReturnType<typeof useApplicationDb>
 export function selected(db: Db, input: RecordComparisonInput) {
   const parsed = validatedComparisonInput(input)
   const targetFacts = readComparisonTargetQueryFacts(db, parsed.queryIds)
   if ((targetFacts.length !== parsed.queryIds.length || targetFacts.some(row => !comparisonBefore(row.collection.queriedAt, parsed.asOf)))) throw new Error('source_set_missing_or_out_of_scope')
-  const queries: Query[] = targetFacts.map(facts => ({ ...facts.collection, id: facts.id, collectionEvidence: null, rawResponse: null, comparisonFacts: facts, proofSource: () => readCorrespondenceTargetQueries(db, [facts.id], { rawResponse: false }).get(facts.id)!.query })).filter(row => comparisonBefore(row.queriedAt, parsed.asOf))
+  const queries: Query[] = targetFacts.map(facts => ({ ...facts.collection, id: facts.id, collectionEvidence: null, rawResponse: null, comparisonFacts: facts })).filter(row => comparisonBefore(row.queriedAt, parsed.asOf))
   const batches = db.select().from(schema.platformExportBatch).where(inArray(schema.platformExportBatch.id, parsed.exportBatchIds)).orderBy(schema.platformExportBatch.id).all().filter(row => row.importStatus === 'imported' && comparisonBefore(row.collectedOn, parsed.asOf))
   const documents = readOfficialSourceDocuments(db, parsed.officialSourceDocumentIds).filter(row => row.source === 'jxj' && (!parsed.asOf || comparisonBefore(row.issueDate, parsed.asOf)))
   if (queries.length !== parsed.queryIds.length || batches.length !== parsed.exportBatchIds.length || documents.length !== parsed.officialSourceDocumentIds.length) throw new Error('source_set_missing_or_out_of_scope')
@@ -40,18 +39,18 @@ export function selected(db: Db, input: RecordComparisonInput) {
   const businessMetadata = readPlatformBusinessMetadata(db, relations.map(item => item.relation.id))
   return { input: parsed, queries, batches, documents, relations, exports, edges, unavailableEdges, businessMetadata }
 }
-export function getRecordComparison(db: Db, input: RecordComparisonInput, verifiedEvidence?: VerifiedComparisonEvidence) {
-  return consumeComparison(iterateRecordComparison(db, input, verifiedEvidence))
+export function getRecordComparison(db: Db, input: RecordComparisonInput) {
+  return consumeComparison(iterateRecordComparison(db, input))
 }
 /** Same comparison computation, with cooperative boundaries for HTTP/MCP reads. */
-export function* iterateRecordComparison(db: Db, input: RecordComparisonInput, verifiedEvidence?: VerifiedComparisonEvidence) {
-  return yield* compareRecords(db, selected(db, input), verifiedEvidence)
+export function* iterateRecordComparison(db: Db, input: RecordComparisonInput) {
+  return yield* compareRecords(db, selected(db, input))
 }
 function consumeComparison<T>(steps: Generator<void, T>) {
   while (true) { const step = steps.next(); if (step.done) return step.value }
 }
-function* compareRecords(db: Db, source: SelectedRecordComparison, verifiedEvidence?: VerifiedComparisonEvidence, paginate = true) {
-  const steps = compareRecordInputs(source, verifiedEvidence, paginate)
+function* compareRecords(db: Db, source: SelectedRecordComparison, paginate = true) {
+  const steps = compareRecordInputs(source, paginate)
   let step = steps.next()
   try {
     while (!step.done) {
@@ -78,7 +77,7 @@ function registerLegacyCutoff(db: Db) {
 }
 export function previewRecordCorrespondenceImpact(db: Db, input: RecordComparisonInput) {
   const source = selected(db, input)
-  const comparison = consumeComparison(compareRecords(db, source, undefined, false))
+  const comparison = consumeComparison(compareRecords(db, source, false))
   const reason = schema.differenceReason
   if (input.asOf) registerLegacyCutoff(db)
   const cutoff = input.asOf ? sql`record_comparison_before(${reason.recordedAt}, ${input.asOf}) = 1` : undefined
@@ -157,4 +156,4 @@ export function* iterateRecordComparisonSources(db: Db, input: ComparisonSourceC
   const queries = targetPage.map(row => projectCatalogQuery(row, enterpriseLinks))
   return { rows: [...documents, ...queries, ...batches], total: filter.kind ? counts[filter.kind] : counts.official_document + counts.query + counts.export_batch, page: filter.page, pageSize: filter.pageSize, counts, selection: 'explicit', completeness: 'not_implied_by_catalog' }
 }
-export { type VerifiedComparisonEvidence, queryProofFingerprint, comparisonBefore, validatedComparisonInput, type SelectedRecordComparison, type ComparisonRead, compareRecordInputs, projectLegacyComparisonImpact, projectSourceEnterpriseLinks, comparisonCatalogWindows, projectCatalogDocument, projectCatalogQuery, projectCatalogExport } from './record-comparison-model'
+export { comparisonBefore, validatedComparisonInput, type SelectedRecordComparison, type ComparisonRead, compareRecordInputs, projectLegacyComparisonImpact, projectSourceEnterpriseLinks, comparisonCatalogWindows, projectCatalogDocument, projectCatalogQuery, projectCatalogExport } from './record-comparison-model'

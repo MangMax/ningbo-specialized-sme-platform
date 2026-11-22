@@ -6,7 +6,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { CURRENT_TITLES } from '../../lib/roster/current-titles'
 import type { RosterImportHistoricalQualificationDiagnostics } from '../../lib/roster-import-client'
 
-export type ImportReceiptAction = 'get' | 'items' | 'history' | 'request'
+export type ImportReceiptAction = 'get' | 'items' | 'history'
 
 export class ImportReceiptError extends Error {
   constructor(readonly statusCode: number, readonly code: string, message: string, readonly requiredBytes?: number) { super(message) }
@@ -162,7 +162,7 @@ export function projectQualificationReceipt(row: QualificationReceiptRow | undef
 }
 
 export function parseImportReceiptSelector(action: ImportReceiptAction, args: Record<string, unknown>) {
-  const allowed = new Set(['batchId', 'idempotencyKey', ...(action === 'history' ? [] : ['receiptId']), ...(action === 'history' || action === 'items' ? ['page', 'pageSize'] : []), ...(action === 'request' ? ['offset', 'maxBytes'] : [])])
+  const allowed = new Set(['batchId', 'idempotencyKey', ...(action === 'history' ? [] : ['receiptId']), ...(action === 'history' || action === 'items' ? ['page', 'pageSize'] : [])])
   for (const key of Object.keys(args)) if (!allowed.has(key)) invalidImportReceiptQuery('Unsupported query field')
   if (['batchId', 'idempotencyKey', 'receiptId'].filter(key => args[key] !== undefined).length !== 1) invalidImportReceiptQuery('Supply exactly one batchId, idempotencyKey or receiptId')
   if (args.idempotencyKey !== undefined && (typeof args.idempotencyKey !== 'string' || !args.idempotencyKey.trim() || args.idempotencyKey.length > 4096)) invalidImportReceiptQuery('Invalid idempotencyKey')
@@ -176,7 +176,7 @@ export function parseImportReceiptSelector(action: ImportReceiptAction, args: Re
 
 export function projectImportReceiptMetadata(row: ReceiptRow) {
     const { written, skipped, failed, evidenceRepointed, canonicalProjection, ...metadata } = row
-    return { ...metadata, idempotencyKeyTruncated: !!row.idempotencyKeyTruncated, sourceIdentityTruncated: !!row.sourceIdentityTruncated, summary: written === null ? null : { written, skipped: skipped ?? 0, failed: failed ?? 0, evidenceRepointed: evidenceRepointed ?? 0, ...(canonicalProjection ? { canonicalProjection: JSON.parse(canonicalProjection) } : {}) }, originalRequest: row.receiptId === null ? 'not_retained' : 'redacted' }
+    return { ...metadata, idempotencyKeyTruncated: !!row.idempotencyKeyTruncated, sourceIdentityTruncated: !!row.sourceIdentityTruncated, summary: written === null ? null : { written, skipped: skipped ?? 0, failed: failed ?? 0, evidenceRepointed: evidenceRepointed ?? 0, ...(canonicalProjection ? { canonicalProjection: JSON.parse(canonicalProjection) } : {}) } }
 }
 
 const cursorSchema=z.strictObject({source:z.enum(['private_batch','redacted_receipt']),sourceId:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),itemIndex:z.number().int().min(0).max(Number.MAX_SAFE_INTEGER-1),oldRecordId:z.number().int().positive().max(Number.MAX_SAFE_INTEGER),afterIndex:z.number().int().min(0).max(Number.MAX_SAFE_INTEGER-1)})

@@ -11,6 +11,7 @@ import type { PlatformStoredQuery, PlatformStoredRelation } from '../../lib/plat
 import { legacyFingerprintRaw } from '../../lib/platform/legacy-fingerprint-raw'
 import { sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
 import { snapshotSchema } from '../../lib/platform/evidence-snapshot-model'
+import { postgresObservationSnapshot } from '../../lib/platform/postgres-observation-snapshot'
 type Db = Pick<NodePgDatabase, 'select'>
 type Cell = ReturnType<typeof snapshotSchema.parse>['fields'][number]
 type Collection = typeof LegacyCollection.$inferSelect
@@ -137,7 +138,8 @@ export async function readPostgresRelationFingerprints(db: Db, scope: { queryId:
   const rows = await db.select({
     id: relation.oldId, queryId: query.oldId, observationId: observation.id,
     enterpriseId: latest.enterpriseId, matchBasis: latest.matchBasis, verificationStatus: latest.verificationStatus,
-    originalUscc: original.usccRaw, originalName: original.nameRaw, sourceRdjb: sourcePage.rdjb, snapshot: platformArchiveValue.bytes,
+    originalUscc: original.usccRaw, originalName: original.nameRaw, sourceRdjb: sourcePage.rdjb,
+    snapshot: postgresObservationSnapshot(observation.id, platformArchiveValue.bytes),
   }).from(query)
     .innerJoin(observation, eq(observation.collectionId, query.collectionId))
     .innerJoin(relation, eq(relation.observationId, observation.id))

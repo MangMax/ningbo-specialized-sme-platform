@@ -6,7 +6,6 @@ import * as s from '../../../../db/schema'
 import { storedProcessProjection } from '../../lib/platform/process-stored-schema'
 import { sourceQueryFields, sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
 import { targetSchema } from '../../lib/platform/target-schema'
-import { listRecordCorrespondencesForIds } from './record-correspondence'
 import { correspondenceTable } from './record-correspondence-store'
 type Db = BetterSQLite3Database<typeof s>
 const t = s.recordCorrespondence
@@ -79,14 +78,11 @@ function targetSourceMatches(observationId: SQL): SQL {
       and ${and(...queryFields)})`
 }
 const owner = alias(s.enterprise,'ref_owner')
-/** Narrow reverse-link validity, with the same immutable source/change boundary.
- * Proof revalidation retains its existing service behind a 64KiB read budget;
- * a larger proof is explicitly unknown/requiresRevalidation, never assumed valid.
- */
+/** Narrow reverse-link validity, with the same immutable source/change boundary. */
 export function correspondenceRefValidity(db: Db, ids: number[]): Map<number, boolean> {
   return createCorrespondenceRefValidityReader(db)(ids)
 }
-/** Reuse compilation only. Each invocation revalidates live source rows and proofs;
+/** Reuse compilation only. Each invocation revalidates live source rows;
  * no validity result, archive or source fingerprint survives the call. */
 export function createCorrespondenceRefValidityReader(db: Db) {
 
@@ -101,7 +97,7 @@ export function createCorrespondenceRefValidityReader(db: Db) {
       sql`case when ${target.exportRowId} is null then ${value('$.exportRow')} is null and ${value('$.exportBatch')} is null else ${rowMatches(s.platformExportRow,'$.exportRow',sql`${target.exportRowId}`)} and ${rowMatches(s.platformExportBatch,'$.exportBatch',sql`(select ${s.platformExportRow.batchId} from ${s.platformExportRow} where ${s.platformExportRow.id}=${target.exportRowId})`)} end`,
     )!
     const assignment=targetSchema.platformObservationAssignment
-    const prepared=db.select({id:target.id,type:target.type,role:target.role,enterpriseId:target.enterpriseId,titleCode:target.titleCode,
+    const prepared=db.select({id:target.id,type:target.type,enterpriseId:target.enterpriseId,titleCode:target.titleCode,
       matches:sql<number>`${sourceMatches}`,relationEnterpriseId:assignment.enterpriseId,relationStatus:assignment.verificationStatus,
       relationUscc:sql<string|null>`${value('$.relation.usccRaw')}`,ownerId:owner.id,ownerUscc:owner.usccNorm,targetId:s.enterprise.id,targetUscc:s.enterprise.usccNorm,targetTitle:s.title.code,
     }).from(target).leftJoin(assignment,and(eq(assignment.observationId,target.observationId),eq(assignment.revision,sql`(select max(revision) from platform_observation_assignment where observation_id=${target.observationId})`)))
@@ -110,11 +106,9 @@ export function createCorrespondenceRefValidityReader(db: Db) {
     return (ids: number[]) => {
       if (!ids.length) return new Map<number, boolean>()
       const rows=prepared.all({ids:JSON.stringify(ids)})
-      const proofs=rows.filter(row=>row.type==='recognized_export'&&row.role==='same_current_row').map(row=>row.id)
-      const proofValidity=new Map(proofs.length?listRecordCorrespondencesForIds(db,proofs).map(row=>[row.id,row.requiresRevalidation]):[])
       const validity = new Map(rows.map(row => {
         const invalid = !row.matches || correspondenceAttributionChanged(row)
-        return [row.id,invalid||(proofValidity.get(row.id)??false)] as const
+        return [row.id, invalid] as const
       }))
       // The old reverse-link SQL compares saved JSON with the native status cell.
       // A saved Buffer object never IS a SQLite BLOB, unlike the full fingerprint.

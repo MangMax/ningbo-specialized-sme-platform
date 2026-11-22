@@ -26,7 +26,7 @@ beforeAll(async () => {
   vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-only', }))
-  const command = (await import('../../../layers/sme-roster/server/api/roster/evidence-review/browser-commands.post')).default
+  const command = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/browser-commands.post')).default
   const current = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/current.get')).default
   const history = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/history.get')).default
   const app = createApp().use('/command', command).use('/current', current).use('/history', history)

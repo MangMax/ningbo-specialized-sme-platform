@@ -281,11 +281,10 @@ CREATE TABLE import_receipt (
   batch_id bigint NOT NULL,
   operation text NOT NULL,
   request_hash text NOT NULL,
-  request_body text NOT NULL,
+  historical_projection boolean NOT NULL DEFAULT false,
   status text NOT NULL,
   summary text,
   item_results text,
   created_at text NOT NULL,
-  completed_at text,
-  body_receipt_id bigint
+  completed_at text
 );

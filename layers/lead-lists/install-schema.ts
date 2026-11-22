@@ -40,7 +40,3 @@ export function installLeadListSchema(db: Database.Database) {
     );
   `)
 }
-
-export function leadListSchemaPresent(db: Database.Database) {
-  return Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='lead_list_row'").get())
-}

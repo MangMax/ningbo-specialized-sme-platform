@@ -61,7 +61,7 @@ export const EVENT_ORDER: string[] = ['award', 'review', 'maintain', 'nurture']
 
 /** 类别代号 → 中文名。与 SOURCES 同源同风格。 */
 export const KINDS: Record<string, string> = {
-  announcement: '公布文件',
+  announcement: '公布名单',
   export: '导出表',
 }
 
@@ -111,7 +111,7 @@ export const REVIEW_OUTCOME_ORDER: string[] = ['passed', 'failed']
 export const ALIAS_SOURCE_KINDS: Record<string, string> = {
   platform_business: '平台业务接口',
   platform_apply: '平台申报接口',
-  announcement: '公布文件',
+  announcement: '公布名单',
   manual: '人工登记',
 }
 
@@ -402,7 +402,7 @@ export const IMPORT_BATCH_STATUS_ORDER: string[] = ['preflight', 'committed', 'f
 
 /** 导入来源类别(`import_batch.source_kind`)→ 中文名。 */
 export const IMPORT_SOURCE_KINDS: Record<string, string> = {
-  announcement: '公布文件',
+  announcement: '公布名单',
   platform_export: '平台导出',
   alias_evidence: '别名证据',
   correspondence_decision: '记录对应确认',

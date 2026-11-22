@@ -2,37 +2,15 @@
 BEGIN;
 SET LOCAL search_path TO business, public;
 
-CREATE TABLE business.job (
-  id text COLLATE "C" PRIMARY KEY,
-  kind text NOT NULL,
-  params text NOT NULL,
-  state text NOT NULL DEFAULT 'queued' CHECK (state IN ('queued', 'running', 'done', 'failed', 'cancelled')),
-  progress text NOT NULL DEFAULT '{"done":0,"total":1}',
-  result text,
-  error text,
-  created_at text COLLATE "C" NOT NULL,
-  started_at text,
-  finished_at text,
-  claim_token uuid,
-  cancel_requested boolean NOT NULL DEFAULT false,
-  request_key text COLLATE "C",
-  input_snapshot text
-);
+\ir ../../db/postgresql/job-schema.sql
 
 INSERT INTO business.job (id, kind, params, state, progress, result, error, created_at, started_at, finished_at)
 SELECT id, kind, params, state, progress, result, error, created_at, started_at, finished_at
 FROM :"staging".job;
 
-ALTER TABLE business.job ALTER COLUMN claim_token SET DEFAULT gen_random_uuid();
-
-CREATE INDEX job_kind_idx ON business.job (kind);
-CREATE INDEX job_state_idx ON business.job (state);
-CREATE INDEX job_created_at_idx ON business.job (created_at DESC, id DESC);
-\ir job-request-index.sql
-
-CREATE UNIQUE INDEX job_request_key_uq ON business.job (kind, request_key) WHERE request_key IS NOT NULL;
+\ir ../../db/postgresql/job-integrity.sql
+\ir ../../db/postgresql/platform-batch-segments.sql
+\ir split-platform-batch-results.sql
 
 ANALYZE business.job;
-\ir job-notifications.sql
-
 COMMIT;

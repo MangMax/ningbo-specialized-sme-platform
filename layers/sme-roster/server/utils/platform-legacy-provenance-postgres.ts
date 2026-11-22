@@ -10,6 +10,7 @@ import { rejectLegacyProvenance as reject } from '../../lib/platform/legacy-prov
 import type { originalLegacyProvenanceInput } from '../../lib/platform/legacy-provenance-command'
 import type { LegacyPlatformProvenanceInput } from '../../lib/platform/legacy-provenance'
 import { snapshotSchema } from '../../lib/platform/evidence-snapshot-model'
+import { postgresObservationSnapshot } from '../../lib/platform/postgres-observation-snapshot'
 import { legacyProvenanceFingerprint } from './platform-legacy-provenance-fingerprint'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -49,7 +50,7 @@ async function readOriginal(tx: Tx, queryId: number): Promise<Original> {
   const snapshot = alias(platformArchiveValue, 'snapshot_value')
   const observed = await tx.select({
     id: a.oldId, sequenceNo: o.sequenceNo, key: o.sourceRelationKey, raw: rawValue.bytes,
-    storage: rawValue.storageClass, snapshot: snapshot.bytes,
+    storage: rawValue.storageClass, snapshot: postgresObservationSnapshot(o.id, snapshot.bytes),
   }).from(o).leftJoin(a, eq(a.observationId, o.id))
     .leftJoin(rawRowRef, and(eq(rawRowRef.ownerId, o.id), eq(rawRowRef.field, 'rawFields'), eq(rawRowRef.sealed, 1)))
     .leftJoin(rawValue, eq(rawValue.id, rawRowRef.archiveId))

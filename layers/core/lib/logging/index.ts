@@ -5,6 +5,7 @@ import type { LogService } from './service'
 import { createPostgresLogService } from './postgres-service'
 import { applicationLogRedaction, projectEvlog, safeLogEvent } from './privacy'
 import { LOG_DEFAULTS, type LogContext, type LogInput } from './contract'
+import { isSuccessfulProbe } from './http'
 import { httpLogModule, mcpLogModule } from './module'
 export * from './contract'
 let service: LogService | undefined
@@ -25,7 +26,10 @@ export function applicationLogs(): LogService {
 }
 /** evlog custom drain. Never throws into the evlog/business pipeline. */
 export function drainApplicationEvent(event: Record<string, unknown>) {
-  try { applicationLogs().emit(projectEvlog(event)) } catch { /* Only fixed diagnostics, never original error. */ }
+  try {
+    const projected = projectEvlog(event)
+    if (!isSuccessfulProbe(projected)) applicationLogs().emit(projected)
+  } catch { /* Only fixed diagnostics, never original error. */ }
 }
 /** Worker entry points call once, before emitting. Nuxt is initialized by evlog/nuxt instead. */
 export function initializeWorkerLogging() {

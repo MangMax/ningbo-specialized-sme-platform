@@ -1,7 +1,6 @@
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../db/postgresql/client'
 import { closeTaskCenterEvents, stopPostgresJobs } from '../../layers/core/server/public'
 import { validateRuntimeMode } from '../../db/runtime-mode'
-import { closePostgresReviewSnapshots } from '../../layers/sme-roster/server/utils/evidence-review-reads-postgres'
 
 export default defineNitroPlugin(nitro => {
   validateRuntimeMode()
@@ -18,7 +17,7 @@ export default defineNitroPlugin(nitro => {
   nitro.hooks.hook('close', async () => {
     for (const signal of signals) process.off(signal as NodeJS.Signals, closeStreams)
     try {
-      await Promise.all([closeTaskCenterEvents(), stopPostgresJobs(), closePostgresReviewSnapshots()])
+      await Promise.all([closeTaskCenterEvents(), stopPostgresJobs()])
     } finally {
       await closePostgresDirectoryDb()
     }

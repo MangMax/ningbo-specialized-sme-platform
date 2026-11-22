@@ -3,10 +3,9 @@ import { and, desc, eq, exists, gt, inArray, isNull, lte, max, ne, or, sql } fro
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise, enterpriseAlias } from '../../../../../db/postgresql/enterprise-tables'
 import { record, recordEvent } from '../../../../../db/postgresql/ledger-tables'
-import { recordCorrespondence } from '../../../../../db/postgresql/qualification-tables'
 import {
   platformBusinessObservation as observation, platformCollection as collection, platformLegacyQueryAlias as queryAlias,
-  platformLegacyRelationAlias as relationAlias, platformObservationAssignment as assignment,
+  platformObservationAssignment as assignment,
 } from '../../../../../db/postgresql/platform-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { LogContext } from '../../../../core/lib/logging'
@@ -14,14 +13,13 @@ import { ANNUAL_CORRESPONDENCE_KIND } from '../../../lib/roster/annual-correspon
 import { type PostgresJobContext, stagePostgresJob } from '../../../../core/server/utils/job-runner-postgres'
 import { getPostgresJob, reopenPostgresJob } from '../../../../core/server/utils/job-store-postgres'
 import { startPostgresJobs } from '../../../../core/server/utils/postgres-jobs'
-import { readPostgresCandidateSourceBytes } from '../candidate-source-bytes-postgres'
 import { EVENT_ARCHIVE_RULE_VERSION, normalizedUscc } from '../event-archive-discovery-model'
 import { importPostgresReceiptRedactor } from '../import-receipt-redaction'
 import { discoverPostgresEventArchives } from '../record-correspondence-candidates-postgres'
-import { commitPostgresCorrespondenceDecision, runPostgresCorrespondenceTransaction } from '../record-correspondence-write-postgres'
+import { runPostgresCorrespondenceTransaction } from '../record-correspondence-write-postgres'
 import { stagePostgresAnnualCorrespondence } from './annual-correspondence-postgres'
 import { postgresCandidateDiscoverySpec } from './candidate-discovery-postgres-spec'
-import { CANDIDATE_JOB_KIND, candidateJobParams, candidateResult, candidateRequest, candidateSourceLimitError, candidateCompletion, updateCounts, type CandidateJobResult, type CandidateJobParams } from './candidate-discovery-contract'
+import { CANDIDATE_JOB_KIND, candidateJobParams, candidateResult, candidateCompletion, updateCounts, type CandidateJobResult, type CandidateJobParams } from './candidate-discovery-contract'
 
 const readOnly = { isolationLevel: 'repeatable read', accessMode: 'read only' } as const
 const fail = (message: string, statusCode = 400): never => { throw Object.assign(new Error(message), { statusCode }) }
@@ -81,7 +79,7 @@ export async function runPostgresCandidateDiscovery(ctx: PostgresJobContext, raw
     await ctx.progress(result.counts.succeeded + result.counts.failed, result.items.length)
   }
   await persist()
-  for (const [position, item] of result.items.entries()) {
+  for (const item of result.items) {
     if (item.status === 'done') continue
     item.status = 'running'
     delete item.errorCode
@@ -98,29 +96,9 @@ export async function runPostgresCandidateDiscovery(ctx: PostgresJobContext, raw
         while (item.rowIndex < page.rows.length) {
           if (await ctx.cancelled()) return { result, cancelled: true }
           const candidate = page.rows[item.rowIndex]!
-          const request = candidateRequest(ctx.jobId, item.eventId, candidate)
-          const edge = request.operations[0].edge
-          const committed = await runPostgresCorrespondenceTransaction(ctx.db, async tx => {
-            const [prior] = await tx.select({ status: recordCorrespondence.status }).from(recordCorrespondence)
-              .innerJoin(relationAlias, eq(relationAlias.observationId, recordCorrespondence.observationId))
-              .where(and(eq(recordCorrespondence.eventId, item.eventId), eq(relationAlias.oldId, edge.relationId),
-                eq(recordCorrespondence.type, edge.type))).orderBy(recordCorrespondence.id).limit(1)
-            const next = { ...item, rowIndex: item.rowIndex + 1 }
-            if (prior || candidate.recommendation === 'existing_decision') {
-              next.existing++
-              if (prior?.status === 'candidate') next.needsReview = true
-            } else {
-              await checkPostgresCandidateSourceBudget(tx, edge.relationId)
-              await commitPostgresCorrespondenceDecision(tx, request)
-              next.created++
-              next.needsReview = true
-            }
-            const checkpoint = { ...result, items: result.items.map((row, index) => index === position ? next : row) }
-            updateCounts(checkpoint)
-            await ctx.checkpoint(checkpoint, tx)
-            return next
-          })
-          Object.assign(item, committed)
+          if (candidate.recommendation === 'existing_decision') item.existing++
+          if (candidate.recommendation !== 'existing_decision' || candidate.existingStatus === 'candidate') item.needsReview = true
+          item.rowIndex++
         }
         if (item.page * 25 >= page.total) item.status = 'done'
         else {
@@ -165,11 +143,6 @@ export async function runPostgresCandidateDiscovery(ctx: PostgresJobContext, raw
     if (continuation) result.continuationJobId = continuation
   }
   return candidateCompletion(result, await ctx.cancelled())
-}
-
-async function checkPostgresCandidateSourceBudget(db: NodePgDatabase, relationId: number) {
-  const bytes = await readPostgresCandidateSourceBytes(db, relationId)
-  if (bytes === undefined || bytes > 4 * 1024 * 1024) throw candidateSourceLimitError()
 }
 
 export async function submitPostgresCandidateDiscovery(input: unknown, filesDir: string, logContext?: LogContext) {

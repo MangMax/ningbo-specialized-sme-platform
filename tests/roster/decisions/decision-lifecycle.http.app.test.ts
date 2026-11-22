@@ -428,13 +428,11 @@ describe('ticket 102 public decision lifecycle', () => {
     const names = list.result.tools.map((t: any) => t.name)
     expect(names).toEqual(expect.arrayContaining(['get_difference_decision','get_current_difference_decision','list_difference_decision_history','preview_legacy_difference_decisions']))
     expect(names).not.toContain('save_difference_decision')
-    expect(names).toEqual(expect.arrayContaining(['list_evidence_impacts','get_evidence_impact','preview_evidence_impacts','list_evidence_impact_sources','list_evidence_revision_events']))
-    expect(names).not.toContain('process_evidence_impacts')
-    expect(names).not.toContain('release_evidence_rule')
-    const review = spec.paths['/api/roster/evidence-impacts/commands'].post.requestBody.content['application/json'].schema
-    expect(review.oneOf[0].properties.limit).toMatchObject({ minimum: 1, maximum: 100 })
-    expect(review.oneOf[1].properties.scopes).toMatchObject({ minItems: 1, maxItems: 50 })
-    expect(spec.paths['/api/roster/evidence-impacts'].get.parameters).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'cursor' }),expect.objectContaining({ name: 'eventId' }),expect.objectContaining({ name: 'decisionId' })]))
+    for (const retired of ['list_evidence_impacts', 'get_evidence_impact', 'preview_evidence_impacts',
+      'list_evidence_impact_sources', 'list_evidence_revision_events', 'process_evidence_impacts', 'release_evidence_rule']) {
+      expect(names).not.toContain(retired)
+    }
+    expect(Object.keys(spec.paths).filter(path => /^\/api\/roster\/evidence-(impacts|review)(?:\/|$)/.test(path))).toEqual([])
     const cwd = resolve(import.meta.dirname, '../../..'); const port = await reserveLoopbackPort()
     const child = spawnCompiledApp(port, { cwd, stdio: ['ignore','pipe','pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir,'no-token-build'), ...postgres.env, NUXT_DB_READONLY: '0', NUXT_API_TOKEN: '', NUXT_MCP_TOKEN: '', NUXT_CURATED_PATH: curatedPath, NUXT_FILES_DIR: join(dir,'files'), NUXT_INCOMING_DIR: join(dir,'incoming') } })
     let output = ''; for (const stream of [child.stdout,child.stderr]) stream.on('data', data => { output = (output + data).slice(-4000) })

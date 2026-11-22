@@ -14,7 +14,7 @@ import { normalizeName, normalizeUscc } from '../../../layers/sme-roster/lib/dom
 import { closeApplicationLogging } from '../../../layers/core/lib/logging'
 import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import { assertEnterpriseDetailSnapshotEqual } from '../../roster/assertions/enterprise-detail-snapshot'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
@@ -72,9 +72,6 @@ beforeAll(async () => {
     .get('/api/platform/queries', (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default)
     .get('/api/comparison', (await import('../../../layers/sme-roster/server/api/comparison.get')).default)
     .get('/api/roster/record-comparison', (await import('../../../layers/sme-roster/server/api/roster/record-comparison.get')).default)
-    .post('/api/roster/comparison-scope-proofs/preflight', (await import('../../../layers/sme-roster/server/api/roster/comparison-scope-proofs/preflight.post')).default)
-    .post('/api/roster/comparison-scope-proofs/commit', (await import('../../../layers/sme-roster/server/api/roster/comparison-scope-proofs/commit.post')).default)
-    .post('/api/files/register', (await import('../../../layers/core/server/api/files/register.post')).default)
     .post('/api/platform/query', h3.defineEventHandler(async event => runPlatformLiveQuery(await h3.readBody(event), {
       cookie: 'session=synthetic-recognized-session', transport: { fetchImpl: async (_url, init) => {
         const form = new URLSearchParams(init.body)
@@ -483,48 +480,36 @@ it('rejects malformed title-wide conditions, title scope and page proof through 
     expect((await client.commit(req as never)).status, `case ${index}`).toBe('failed')
   }
 })
-it('a publicly saved title-wide archive can register current equivalence and qualify public comparison', async () => {
+it('a publicly saved title-wide archive retains exact comparison rows as observations', async () => {
   const evidence = titleWideArchive()
   evidence.queriedAt = '2026-10-18T05:00:00.000Z'; evidence.completedAt = '2026-10-18T05:01:00.000Z'
   const item = (await import('../../../layers/sme-roster/lib/platform/recognized-evidence')).recognizedResultToImport(evidence)
-  expect((await client.commit({ idempotencyKey: 'proof-title-wide-query', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/proof/query', payload: { platformQueries: [item] } })).status).toBe('committed')
+  expect((await client.commit({ idempotencyKey: 'comparison-title-wide-query', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/comparison/query', payload: { platformQueries: [item] } })).status).toBe('committed')
   const queryRead = await (await fetch(`${baseUrl}/api/platform/queries?interface=recognized_list&queryKey=${encodeURIComponent(item.queryKey)}`)).json()
   const queryId = queryRead.rows.find((row: any) => row.query.queriedAt === evidence.queriedAt).query.id as number
 
-  const official = await client.commit({ idempotencyKey: 'proof-title-wide-official', sourceKind: 'announcement', sourceIdentity: 'synthetic/proof/official', payload: { announcement: {
+  const official = await client.commit({ idempotencyKey: 'comparison-title-wide-official', sourceKind: 'announcement', sourceIdentity: 'synthetic/comparison/official', payload: { announcement: {
     sourceDocument: { source: 'jxj', title: '合成公布文件' }, records: [{ enterprise: { name: '合成企业', uscc: USCC }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2024 }] }],
   } } })
   expect(official.status).toBe('committed')
-  const [document] = await db.select({ id: sourceDocument.id }).from(sourceDocument).where(eq(sourceDocument.path, 'synthetic/proof/official'))
+  const [document] = await db.select({ id: sourceDocument.id }).from(sourceDocument).where(eq(sourceDocument.path, 'synthetic/comparison/official'))
   const documentId = document!.id
-  const exported = await client.commit({ idempotencyKey: 'proof-title-wide-export', sourceKind: 'platform_export', sourceIdentity: 'synthetic/proof/export', payload: { exportSnapshot: {
-    titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'synthetic-proof-export.xlsx', sha256: 'b'.repeat(64),
+  const exported = await client.commit({ idempotencyKey: 'comparison-title-wide-export', sourceKind: 'platform_export', sourceIdentity: 'synthetic/comparison/export', payload: { exportSnapshot: {
+    titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'synthetic-comparison-export.xlsx', sha256: 'b'.repeat(64),
     rows: [{ sourceRowNo: 3, usccRaw: USCC, nameRaw: '合成企业' }],
   } } })
   expect(exported.status).toBe('committed')
-  const [exportBatch] = await db.select({ id: platformExportBatch.id }).from(platformExportBatch).where(eq(platformExportBatch.originalFilename, 'synthetic-proof-export.xlsx'))
+  const [exportBatch] = await db.select({ id: platformExportBatch.id }).from(platformExportBatch).where(eq(platformExportBatch.originalFilename, 'synthetic-comparison-export.xlsx'))
   const exportBatchId = exportBatch!.id
 
-  mkdirSync(join(dir, 'miit', 'export'), { recursive: true })
-  writeFileSync(join(dir, 'miit', 'export', 'synthetic-proof-freeze.txt'), 'synthetic archived freeze')
-  const registered = await fetch(`${baseUrl}/api/files/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ relPath: 'miit/export/synthetic-proof-freeze.txt', source: 'miit', kind: 'export' }) })
-  expect(registered.status).toBe(201)
-  const freeze = await registered.json()
-  const proofRequest = { idempotencyKey: 'proof-title-wide-equivalence', sourceIdentity: 'synthetic/proof/equivalence', actor: { type: 'agent', id: 'synthetic-agent' }, basis: 'Synthetic archived query and export share an attested account, region and collection window', ruleId: 'manual-review', ruleVersion: '1', operations: [{ action: 'create', kind: 'current_source_equivalence', status: 'confirmed', evidence: {
-    queryId, exportBatchId, titleCode: 'specialized_sme', queryReference: 'platform_query.collectionEvidence', exportReference: 'platform_export_batch.sha256',
-    scope: { queryAccount: 'synthetic-account', exportAccount: 'synthetic-account', queryRegion: 'synthetic-region', exportRegion: 'synthetic-region', queryFilters: { combination: 'and' }, exportFilters: { combination: 'and' }, windowStart: '2026-10-18T00:00:00.000Z', windowEnd: '2026-10-18T23:59:59.000Z', platformVersion: 'synthetic-v1', freezeReference: freeze.relPath, freezeFileId: freeze.id, freezeSha256: freeze.sha256 },
-  } }] }
-  const proofPost = (action: string, body: unknown) => fetch(`${baseUrl}/api/roster/comparison-scope-proofs/${action}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body) })
-  const preflight = await proofPost('preflight', proofRequest)
-  expect(preflight.status).toBe(200)
-  const plan = await preflight.json()
-  expect(plan.planHash).toMatch(/^[a-f0-9]{64}$/)
-  const committed = await proofPost('commit', { request: proofRequest, planHash: plan.planHash })
-  expect(committed.status).toBe(200)
-  const proofId = (await committed.json()).proofIds[0] as number
   const sources = `queryIds=${queryId}&exportBatchIds=${exportBatchId}&officialSourceDocumentIds=${documentId}`
-  const before = await (await fetch(`${baseUrl}/api/roster/record-comparison?${sources}`)).json()
-  expect(before.currentSourceConsistency.recognizedObservations[0].qualification).toBe('not_comparable')
-  const qualified = await (await fetch(`${baseUrl}/api/roster/record-comparison?${sources}&proofIds=${proofId}`)).json()
-  expect(qualified.currentSourceConsistency.recognizedObservations[0].qualification).toBe('matched')
+  const response = await fetch(`${baseUrl}/api/roster/record-comparison?${sources}`)
+  expect(response.status).toBe(200)
+  const comparison = await response.json()
+  expect(comparison.officialCoverage).toMatchObject({ qualification: 'unknown', selectedDocumentIds: [documentId] })
+  expect(comparison.currentSourceConsistency).toMatchObject({
+    qualification: 'not_comparable',
+    recognizedObservations: [{ recognized: { queryId, usccRaw: USCC }, exportRows: [{ batchId: exportBatchId, sourceRowNo: 3, usccRaw: USCC }], observation: 'same_uscc_title_observed', qualification: 'not_comparable' }],
+    exportObservations: [{ exportRow: { batchId: exportBatchId, sourceRowNo: 3 }, qualification: 'not_comparable' }],
+  })
 })

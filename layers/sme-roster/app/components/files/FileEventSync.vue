@@ -53,7 +53,7 @@ watch(open, async (value) => {
   failure.value = ''
   try {
     enabled.value = (
-      await $fetch<{ writeEnabled: boolean }>('/api/roster/evidence-review/browser-context')
+      await $fetch<{ writeEnabled: boolean }>('/api/roster/browser-context')
     ).writeEnabled
   } catch {
     enabled.value = false

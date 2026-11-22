@@ -101,10 +101,11 @@ function adjudicateCycle(events: QualificationEvent[], originYear: number, batch
     const dueYear = anchor ? factTime(anchor)! + 3 : null
     const fact = day ? anchor?.formalValidity : undefined
     const futureReviewGrace = !annualPeriod && day && anchor && events.some(e => e.eventType === 'review' && e.formalValidity?.continuation === 'until_this_review_results' && e.formalValidity.publishedOn && day < e.formalValidity.publishedOn && facts.awards.some(a => a.id === e.formalValidity!.originAwardEventId))
+    const publication = annualPeriod || retainAward ? '公布名单所载' : '正式文件'
     result.periodBasis = fact?.interval
-      ? `正式文件有效期：${fact.interval.validFrom} 至 ${fact.interval.validThrough}（含首尾）`
+      ? `${publication}有效期：${fact.interval.validFrom} 至 ${fact.interval.validThrough}（含首尾）`
       : futureReviewGrace || !annualPeriod && fact?.continuation === 'until_next_review_results'
-        ? '正式文件延续规则：至下次复核结果公布前有效'
+        ? `${publication}延续规则：至下次复核结果公布前有效`
         : retainAward && anchor ? '小巨人原认定或复核通过资格保留；不按认定年龄自动到期，适用正式期间、同周期失败及已确认处置另行裁定'
         : dueYear != null ? `默认年度规则：最近一次认定或复核通过 ${factTime(anchor!)} 年 + 3 = ${dueYear} 年；自 ${dueYear} 年起到期（仅年份精度）` : '正式资格期间未记录'
     if (futureReviewGrace && !fact?.interval) result.group='eligible'
@@ -237,7 +238,7 @@ export function adjudicateQualificationCycles(formal: QualificationEvent[], year
       const undatedPeriods = unknown.filter(e => !disposedAwards.has(e.id) && (e.eventType === 'award' || e.reviewOutcome === 'passed') && e.formalValidity?.interval)
       const intervalEligible = undatedPeriods.some(e => e.formalValidity!.interval!.validFrom <= day! && day! <= e.formalValidity!.interval!.validThrough)
       group = intervalEligible || current.some(c => c.group === 'eligible') ? 'eligible' : 'excluded'
-      for (const e of undatedPeriods) notes.push(`event:${e.id} 认定年份缺失，仅备注；正式文件有效期：${e.formalValidity!.interval!.validFrom} 至 ${e.formalValidity!.interval!.validThrough}（含首尾）`)
+      for (const e of undatedPeriods) notes.push(`event:${e.id} 认定年份缺失，仅备注；${annualPeriod || retainAward ? '公布名单所载' : '正式文件'}有效期：${e.formalValidity!.interval!.validFrom} 至 ${e.formalValidity!.interval!.validThrough}（含首尾）`)
     }
   }
   return { group, notes, originYear, cycles: current }

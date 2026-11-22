@@ -23,12 +23,8 @@ import { postgresOfficialSourceDirectory } from './official-source-directory-pos
 import { readPostgresComparisonIdentities } from './record-comparison-catalog-postgres'
 import { readPostgresObservationComparisonFacts } from './record-correspondence-target-postgres'
 import { readPostgresCorrespondenceSelection } from './record-correspondence-postgres'
-import { readPostgresFingerprintQueries } from './postgres-platform-fingerprint'
-import { compareRecordInputs, comparisonBefore, projectLegacyComparisonImpact, validatedComparisonInput, type ComparisonRead, type SelectedRecordComparison, type VerifiedComparisonEvidence } from './record-comparison-model'
-import { readPostgresComparisonProofHead, readPostgresCurrentProofSource, readPostgresOfficialProofSource } from './comparison-scope-proof-postgres'
+import { compareRecordInputs, comparisonBefore, projectLegacyComparisonImpact, validatedComparisonInput, type ComparisonRead, type SelectedRecordComparison } from './record-comparison-model'
 import { readPostgresPlatformBusinessMetadata } from './platform-business-record-postgres'
-import { type CurrentEvidence, type OfficialEvidence } from './comparison-scope-proof-source-projection'
-import { ProofSourceError } from './comparison-scope-proof-source-model'
 
 type Reader = Pick<NodePgDatabase, 'execute' | 'select' | 'selectDistinct' | '$with' | 'with'>
 type QueryFacts = SelectedRecordComparison['queries'][number]['comparisonFacts']
@@ -90,37 +86,7 @@ async function readQueryFacts(db: Reader, ids: number[]): Promise<QueryFacts[]> 
   })
 }
 
-async function verifiedProofs(db: Reader, input: RecordComparisonInput, signal?: AbortSignal): Promise<VerifiedComparisonEvidence> {
-  const evidence: VerifiedComparisonEvidence = { officialScopes: [], currentScopes: [] }
-  for (const id of new Set(input.proofIds ?? [])) {
-    signal?.throwIfAborted()
-    const head = await readPostgresComparisonProofHead(db, id)
-    if (!head || head.state?.status !== 'confirmed' || !comparisonBefore(head.state.decidedAt, input.asOf)) continue
-    const { proof, state } = head
-    try {
-      if (proof.kind === 'official_coverage') {
-        const value = proof.evidence as OfficialEvidence
-        const sourceDocumentIds = value.sourceDocuments.map(ref => ref.id)
-        if (!sourceDocumentIds.every(ref => input.officialSourceDocumentIds.includes(ref))) continue
-        const observed = await readPostgresOfficialProofSource(db, value)
-        if (observed.sourceFingerprint !== proof.sourceFingerprint) continue
-        evidence.officialScopes.push({ proofId: String(id), sourceDocumentIds, titleCode: value.titleCode, fromYear: value.fromYear,
-          throughYear: value.throughYear, enterpriseIds: value.enterpriseIds, verifiedAt: state.decidedAt })
-      } else {
-        const value = proof.evidence as CurrentEvidence
-        if (!input.queryIds.includes(value.queryId) || !input.exportBatchIds.includes(value.exportBatchId)) continue
-        const observed = await readPostgresCurrentProofSource(db, value)
-        if (observed.sourceFingerprint !== proof.sourceFingerprint) continue
-        evidence.currentScopes.push({ proofId: String(id), queryId: value.queryId, exportBatchId: value.exportBatchId, titleCode: value.titleCode,
-          querySourceFingerprint: observed.querySourceFingerprint, exportSha256: observed.exportSha256, scopeEquivalent: true,
-          versionEquivalent: true, verifiedAt: state.decidedAt })
-      }
-    } catch (error) { if (!(error instanceof ProofSourceError)) throw error }
-  }
-  return evidence
-}
-
-async function selectComparison(db: Reader, input: RecordComparisonInput, verified: VerifiedComparisonEvidence): Promise<SelectedRecordComparison> {
+async function selectComparison(db: Reader, input: RecordComparisonInput): Promise<SelectedRecordComparison> {
   const facts = await readQueryFacts(db, input.queryIds)
   const batch = alias(platformExportBatch, 'p')
   const batches = (await db.select({
@@ -130,9 +96,7 @@ async function selectComparison(db: Reader, input: RecordComparisonInput, verifi
   const documents = (await readDocuments(db, input.officialSourceDocumentIds)).filter(row => comparisonBefore(row.issueDate, input.asOf))
   if (facts.length !== input.queryIds.length || facts.some(row => !comparisonBefore(row.collection.queriedAt, input.asOf)) ||
       batches.length !== input.exportBatchIds.length || documents.length !== input.officialSourceDocumentIds.length) throw new Error('source_set_missing_or_out_of_scope')
-  const originals = await readPostgresFingerprintQueries(db, [...new Set(verified.currentScopes.map(proof => proof.queryId))])
-  const queries = facts.map(item => ({ ...item.collection, id: item.id, comparisonFacts: item, collectionEvidence: null, rawResponse: null,
-    proofSource: () => originals.get(item.id)!.query }))
+  const queries = facts.map(item => ({ ...item.collection, id: item.id, comparisonFacts: item, collectionEvidence: null, rawResponse: null }))
   const byQuery = new Map(queries.map(query => [query.id, query]))
   const observationIds = await readPostgresComparisonIdentities(db, input.queryIds)
   const normalized = await readPostgresObservationComparisonFacts(db, observationIds.map(row => ({ observationId: row.observationId,
@@ -191,8 +155,8 @@ async function readFormalEvents(db: Reader, input: RecordComparisonInput, reques
       eq(r.source, 'jxj'), inArray(e.eventType, ['award', 'review']))).orderBy(e.id) satisfies PromiseLike<FormalEvent[]>
 }
 
-async function runComparison(tx: Reader, source: SelectedRecordComparison, verified: VerifiedComparisonEvidence, signal?: AbortSignal, paginate = true) {
-  const steps = compareRecordInputs(source, verified, paginate)
+async function runComparison(tx: Reader, source: SelectedRecordComparison, signal?: AbortSignal, paginate = true) {
+  const steps = compareRecordInputs(source, paginate)
   let step = steps.next()
   try {
     while (!step.done) {
@@ -225,18 +189,16 @@ export function readPostgresRecordComparison(db: NodePgDatabase, raw: RecordComp
   signal?.throwIfAborted()
   const input = validatedComparisonInput(raw)
   return db.transaction(async tx => {
-    const verified = await verifiedProofs(tx, input, signal)
-    const source = await selectComparison(tx, input, verified)
-    return runComparison(tx, source, verified, signal)
+    const source = await selectComparison(tx, input)
+    return runComparison(tx, source, signal)
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }
 
 export function previewPostgresRecordCorrespondenceImpact(db: NodePgDatabase, raw: RecordComparisonInput, signal?: AbortSignal) {
   const input = validatedComparisonInput(raw)
   return db.transaction(async tx => {
-    const evidence: VerifiedComparisonEvidence = { officialScopes: [], currentScopes: [] }
-    const source = await selectComparison(tx, input, evidence)
-    const comparison = await runComparison(tx, source, evidence, signal, false)
+    const source = await selectComparison(tx, input)
+    const comparison = await runComparison(tx, source, signal, false)
     const d = differenceReason, q = platformLegacyQueryAlias, a = platformLegacyRelationAlias
     const reasonIds = input.asOf ? (await tx.select({ id: d.id, recordedAt: d.recordedAt }).from(d))
       .filter(row => comparisonBefore(row.recordedAt, input.asOf)).map(row => row.id) : null

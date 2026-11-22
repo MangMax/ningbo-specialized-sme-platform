@@ -31,8 +31,6 @@ CREATE TRIGGER roster_file_parse_append_only BEFORE UPDATE OR DELETE ON file_par
   FOR EACH ROW EXECUTE FUNCTION reject_roster_history_mutation();
 CREATE TRIGGER correspondence_audit_append_only BEFORE UPDATE OR DELETE ON record_correspondence_audit
   FOR EACH ROW EXECUTE FUNCTION reject_roster_history_mutation();
-CREATE TRIGGER comparison_scope_proof_audit_append_only BEFORE UPDATE OR DELETE ON comparison_scope_proof_audit
-  FOR EACH ROW EXECUTE FUNCTION reject_roster_history_mutation();
 
 CREATE FUNCTION guard_platform_archive_binding() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
@@ -68,30 +66,8 @@ CREATE TRIGGER platform_version_archive_binding
   BEFORE INSERT OR UPDATE OR DELETE ON platform_version_archive_ref
   FOR EACH ROW EXECUTE FUNCTION guard_platform_archive_binding('platform_business_record_version');
 
-CREATE FUNCTION guard_platform_canonical_archive() RETURNS trigger
-LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
-BEGIN
-  IF TG_OP = 'UPDATE' AND (
-    (OLD.record_id, OLD.hash_algorithm, OLD.content_hash, OLD.canonical_raw_json)
-      IS DISTINCT FROM (NEW.record_id, NEW.hash_algorithm, NEW.content_hash, NEW.canonical_raw_json)
-    OR (OLD.canonical_archive_id IS NOT NULL AND NEW.canonical_archive_id IS DISTINCT FROM OLD.canonical_archive_id)
-  ) THEN
-    RAISE EXCEPTION 'Canonical version evidence is immutable' USING ERRCODE = 'integrity_constraint_violation';
-  END IF;
-  IF NEW.canonical_archive_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM platform_version_archive_ref r JOIN platform_archive_value a ON a.id = r.archive_id
-    WHERE r.owner_id = NEW.id AND r.archive_id = NEW.canonical_archive_id AND r.sealed = 1
-      AND a.storage_class = 'text' AND a.bytes = convert_to(NEW.canonical_raw_json, 'UTF8')
-  ) THEN
-    RAISE EXCEPTION 'Canonical archive owner or bytes disagree' USING ERRCODE = 'integrity_constraint_violation';
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER platform_version_canonical_archive
-  BEFORE INSERT OR UPDATE ON platform_business_record_version
-  FOR EACH ROW EXECUTE FUNCTION guard_platform_canonical_archive();
+\ir platform-canonical-archive-triggers.sql
+\ir platform-observation-snapshot.sql
 
 CREATE FUNCTION guard_platform_projection_owner() RETURNS trigger
 LANGUAGE plpgsql SET search_path FROM CURRENT AS $$

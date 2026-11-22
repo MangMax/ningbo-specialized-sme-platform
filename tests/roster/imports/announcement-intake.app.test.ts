@@ -119,8 +119,6 @@ test('audits reviewed name and USCC changes and keeps the prior name tied to the
   const owner = await submit(core, { name })
   const path = `/api/roster/enterprises/${owner.id}`
   const before = await get(path + '/profile')
-  const revisionRows = async () => (await database!.query(`SELECT source_version AS "sourceVersion", fact_changed::int AS "factChanged"
-    FROM business.evidence_revision_113 WHERE enterprise_id=$1 AND source_kind='identity' ORDER BY id`, [owner.id])).rows
   const formerNames = async () => (await database!.query(`SELECT a.name, f.uscc, f.renamed_year AS "renamedYear"
     FROM business.enterprise_alias a JOIN business.enterprise_former_name f ON f.alias_id=a.id WHERE a.enterprise_id=$1`, [owner.id])).rows
 
@@ -143,7 +141,6 @@ test('audits reviewed name and USCC changes and keeps the prior name tied to the
   expect(firstAudit).toMatchObject({ total: 1, rows: [{ before: { name, uscc: null }, after: { name: newName, uscc },
     basis, retainedAliasId: alias.id, aliasCreated: true, beforeVersion: before.version, afterVersion: renamed.version }] })
   expect(await formerNames()).toEqual([{ name, uscc, renamedYear: null }])
-  expect(await revisionRows()).toEqual([{ sourceVersion: `profile:${firstAudit.rows[0].id}`, factChanged: 1 }])
 
   const clearCode = await stageSubject(name, 12)
   await submit(clearCode.supplement, { sourceDigest: clearCode.sourceDigest, basis: '复核确认应暂留空统代', rows: [
@@ -154,10 +151,6 @@ test('audits reviewed name and USCC changes and keeps the prior name tied to the
   expect(cleared).toMatchObject({ total: 2, rows: [{ before: { name: newName, uscc }, after: { name: newName, uscc: null },
     retainedAliasId: null, aliasCreated: false }, firstAudit.rows[0]] })
   expect(await formerNames()).toEqual([{ name, uscc: null, renamedYear: null }])
-  expect(await revisionRows()).toEqual([
-    { sourceVersion: `profile:${firstAudit.rows[0].id}`, factChanged: 1 },
-    { sourceVersion: `profile:${cleared.rows[0].id}`, factChanged: 1 },
-  ])
 }, 15_000)
 
 test('rejects reviewed identity collisions with a current name, confirmed former name or USCC', async () => {

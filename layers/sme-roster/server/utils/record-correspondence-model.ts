@@ -4,7 +4,6 @@ import { normalizeUscc } from '../../lib/domain'
 import type { PlatformStoredQuery, PlatformStoredRelation } from '../../lib/platform/read'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import { platformRowTitle } from '../../lib/platform/row-title'
-import type { createCurrentProofCoverageReader } from './comparison-scope-proof'
 import { correspondenceIdentityProblem } from './record-correspondence-identity'
 import type { readCorrespondenceTargetSources } from './record-correspondence-target-sources'
 import { versionedOfficialEvent } from './roster-event-version-model'
@@ -30,7 +29,6 @@ export interface CorrespondenceRequest {
   basis: string
   ruleId: string
   ruleVersion: string
-  proofIds?: number[]
   operations: CorrespondenceOperation[]
 }
 
@@ -132,7 +130,7 @@ function sameTitle(a: string | null, b: string | null, confirmed: boolean) {
   if (confirmed && (!a || !b)) fail('incomplete_coverage', 'Row title is not explicit')
 }
 
-function sourceForEdge(observed: ReadSources, edge: CorrespondenceEdge, confirmed: boolean, proofIds: number[] = []) {
+function sourceForEdge(observed: ReadSources, edge: CorrespondenceEdge, confirmed: boolean) {
   if (!edge || typeof edge !== 'object') fail('invalid_endpoint_type', 'Typed edge required')
   const shapes: Record<CorrespondenceEdge['type'], readonly string[]> = {
     event_process: ['type', 'eventId', 'relationId', 'role'],
@@ -212,19 +210,16 @@ function sourceForEdge(observed: ReadSources, edge: CorrespondenceEdge, confirme
   if (relation) sameTitle(titleCode, relationTitle(relation), confirmed)
   if (exported) sameTitle(titleCode, exported.exportBatch.titleCode, confirmed)
   if (edge.type === 'later_process' && confirmed && relation?.relation.declareKind && relation.relation.declareKind !== edge.role.replace('followup_', '')) fail('invalid_endpoint_type', 'Follow-up role conflicts with original process type')
-  if (edge.type === 'recognized_export' && confirmed && edge.role === 'same_current_row') {
-    const covered = relation && exported && observed.coversCurrentProof(proofIds, relation.query.id, exported.exportRow.batchId)
-    if (!covered) fail('incomplete_coverage', 'Confirmed current-source equivalence proof required')
+  if (edge.type === 'recognized_export' && confirmed) {
+    fail('incomplete_coverage', 'Recognized interface and export rows can only be recorded as candidates')
   }
-  if (edge.type === 'recognized_export' && confirmed && edge.role === 'candidate_same_current_row') fail('incomplete_coverage', 'Candidate role cannot be confirmed as current equivalence')
-  const originalSource = sourceProvenance(observed, edge)
-  const provenance = { ...originalSource, comparisonProofIds: edge.type === 'recognized_export' ? proofIds : [] }
+  const provenance = sourceProvenance(observed, edge)
   const targetIdentity = { eventId: event?.event.id ?? null, recordId: event?.record.id ?? null,
     officialEvidence: provenance.officialEvidence.map(({ evidence, storedFile }) => ({ evidenceId: evidence.id, sourceFile: evidence.sourceFile, attachment: evidence.attachment, listNo: evidence.listNo, page: evidence.page, storedFileId: storedFile?.id ?? null, storedFileSha256: storedFile?.sha256 ?? null })),
     predecessorEventId: edge.type === 'later_process' ? edge.predecessorEventId ?? null : null,
     predecessorEvidence: provenance.predecessor?.officialEvidence.map(({ evidence, storedFile }) => ({ evidenceId: evidence.id, sourceFile: evidence.sourceFile, attachment: evidence.attachment, listNo: evidence.listNo, page: evidence.page, storedFileId: storedFile?.id ?? null, storedFileSha256: storedFile?.sha256 ?? null })) ?? [],
     relationId: relation?.relation.id ?? null, queryId: relation?.query.id ?? null, queryNaturalKey: relation ? [relation.query.interface, relation.query.queryKey, relation.query.rdjb, relation.query.queriedAt, relation.relation.sequenceNo] : null, exportRowId: exported?.exportRow.id ?? null, exportNaturalKey: exported ? [exported.exportBatch.titleCode, exported.exportBatch.year, exported.exportBatch.sha256, exported.exportRow.sourceRowNo] : null }
-  return { enterpriseId, titleCode, provenance, targetIdentity, sourceFingerprint: hash(originalSource) }
+  return { enterpriseId, titleCode, provenance, targetIdentity, sourceFingerprint: hash(provenance) }
 }
 
 function storedEdge(row: StoredCorrespondence): CorrespondenceEdge {
@@ -246,10 +241,6 @@ export function validatedRequest(request: CorrespondenceRequest) {
   }
 }
 
-function effectiveProofIds(request: CorrespondenceRequest, row: StoredCorrespondence): number[] {
-  return request.proofIds ?? (row.provenance.comparisonProofIds as number[] | undefined) ?? []
-}
-
 export type DecisionLookup = { byId: (id: number) => StoredCorrespondence | undefined; byEdge: (key: string) => StoredCorrespondence | undefined }
 
 export function buildRecordCorrespondencePlan(lookup: DecisionLookup, request: CorrespondenceRequest, observed: ReadSources) {
@@ -267,13 +258,13 @@ export function buildRecordCorrespondencePlan(lookup: DecisionLookup, request: C
       const row = lookup.byId(op.correspondenceId)
       if (!row || row.status !== 'candidate') fail('invalid_endpoint_type', 'Only a candidate can rebind source evidence')
       if (row.revision !== op.expectedRevision) fail('stale_revision', 'Correspondence revision changed')
-      const source = sourceForEdge(observed, storedEdge(row), false, effectiveProofIds(request, row))
+      const source = sourceForEdge(observed, storedEdge(row), false)
       if (source.sourceFingerprint === row.sourceFingerprint) fail('ambiguous_candidate', 'Same edge has no changed source evidence to revalidate')
       targets.push({ correspondenceId: row.id, revision: row.revision, status: row.status, sourceFingerprint: row.sourceFingerprint, observedSourceFingerprint: source.sourceFingerprint, targetIdentity: source.targetIdentity })
       impact.audit++
     }
     if (op.action === 'create' || op.action === 'correct') {
-      const source = sourceForEdge(observed, op.edge, op.action === 'correct' || op.status === 'confirmed', request.proofIds)
+      const source = sourceForEdge(observed, op.edge, op.action === 'correct' || op.status === 'confirmed')
       const key = edgeKey(op.edge)
       if (created.has(key)) fail('ambiguous_candidate', 'Duplicate edge in one plan')
       created.add(key)
@@ -312,13 +303,11 @@ export function buildRecordCorrespondencePlan(lookup: DecisionLookup, request: C
       if (row.revision !== op.expectedRevision) fail('stale_revision', 'Correspondence revision changed')
       const next = op.action === 'correct' ? 'unlinked' : op.status
       if (!(row.status === 'candidate' && ['confirmed', 'rejected'].includes(next)) && !(row.status === 'confirmed' && next === 'unlinked')) fail('invalid_endpoint_type', 'Invalid decision transition')
-      const proofIds = effectiveProofIds(request, row)
       const observedSourceFingerprint = next === 'unlinked'
         ? hash(sourceProvenance(observed, storedEdge(row)))
-        : sourceForEdge(observed, storedEdge(row), next === 'confirmed', proofIds).sourceFingerprint
+        : sourceForEdge(observed, storedEdge(row), next === 'confirmed').sourceFingerprint
       if (next !== 'unlinked' && observedSourceFingerprint !== row.sourceFingerprint) fail('plan_mismatch', 'Source row changed since correspondence decision')
-      targets.push({ correspondenceId: row.id, revision: row.revision, status: row.status, sourceFingerprint: row.sourceFingerprint, observedSourceFingerprint,
-        ...(next === 'confirmed' && row.type === 'recognized_export' ? { comparisonProofIds: proofIds } : {}) })
+      targets.push({ correspondenceId: row.id, revision: row.revision, status: row.status, sourceFingerprint: row.sourceFingerprint, observedSourceFingerprint })
       impact.audit++
       if (next === 'unlinked') impact.unlinked++
     }
@@ -343,7 +332,7 @@ export function* recordCorrespondenceMutations(
     actorType: request.actor.type, actorId: request.actor.id, basis: request.basis, ...rule, evidence, decidedAt: at,
   })
   const insert = (edge: CorrespondenceEdge, status: 'candidate' | 'confirmed' | 'rejected'): DecisionMutation => {
-    const source = sourceForEdge(observed, edge, status === 'confirmed', request.proofIds)
+    const source = sourceForEdge(observed, edge, status === 'confirmed')
     const audits = [audit(null, 'candidate', 0, source.provenance)]
     if (status !== 'candidate') audits.push(audit('candidate', status, 1, source.provenance))
     return { type: 'insert', audits, changes: {
@@ -360,7 +349,7 @@ export function* recordCorrespondenceMutations(
     if (op.action === 'create') {
       const row = lookup.byEdge(edgeKey(op.edge))
       if (row) {
-        const { enterpriseId: _enterprise, titleCode: _title, ...source } = sourceForEdge(observed, op.edge, false, request.proofIds)
+        const { enterpriseId: _enterprise, titleCode: _title, ...source } = sourceForEdge(observed, op.edge, false)
         yield { type: 'update', row, changes: { ...source, ...rule, status: 'candidate', revision: row.revision + 1, decidedAt: null, endedAt: null },
           audits: [audit('rejected', 'candidate', row.revision, source.provenance)] }
       } else yield insert(op.edge, op.status)
@@ -368,26 +357,25 @@ export function* recordCorrespondenceMutations(
     }
     const row = lookup.byId(op.correspondenceId)!
     if (op.action === 'revalidate') {
-      const source = sourceForEdge(observed, storedEdge(row), false, effectiveProofIds(request, row))
+      const source = sourceForEdge(observed, storedEdge(row), false)
       yield { type: 'update', row, candidateOnly: true, changes: { ...source, ...rule, revision: row.revision + 1 },
         audits: [audit('candidate', 'candidate', row.revision, source.provenance)] }
       continue
     }
     if (op.action === 'correct' && row.edgeKey === edgeKey(op.edge)) {
-      const source = sourceForEdge(observed, op.edge, true, request.proofIds)
+      const source = sourceForEdge(observed, op.edge, true)
       yield { type: 'update', row, changes: { ...source, ...rule, status: 'confirmed', revision: row.revision + 2, decidedAt: at, endedAt: null },
         audits: [audit('confirmed', 'unlinked', row.revision, row.provenance), audit('unlinked', 'confirmed', row.revision + 1, source.provenance)] }
       continue
     }
     const next = op.action === 'correct' ? 'unlinked' : op.status
-    const provenance = next === 'confirmed' && row.type === 'recognized_export'
-      ? { ...row.provenance, comparisonProofIds: effectiveProofIds(request, row) } : row.provenance
+    const provenance = row.provenance
     yield { type: 'update', row, changes: { ...rule, status: next, revision: row.revision + 1, decidedAt: at, endedAt: next === 'unlinked' ? at : null, provenance },
       audits: [audit(row.status, next, row.revision, provenance)] }
     if (op.action === 'correct') {
       const replacement = lookup.byEdge(edgeKey(op.edge))
       if (replacement) {
-        const { provenance } = sourceForEdge(observed, op.edge, true, request.proofIds)
+        const { provenance } = sourceForEdge(observed, op.edge, true)
         yield { type: 'update', row: replacement, candidateOnly: true,
           changes: { ...rule, status: 'confirmed', revision: replacement.revision + 1, decidedAt: at, provenance },
           audits: [audit('candidate', 'confirmed', replacement.revision, provenance)] }
@@ -403,7 +391,6 @@ type RelationRows = { relation: PlatformStoredRelation; query: PlatformStoredQue
 type ExportRows = { exportRow: typeof schema.platformExportRow.$inferSelect; exportBatch: typeof schema.platformExportBatch.$inferSelect }
 
 export interface ReadSources {
-  coversCurrentProof: ReturnType<typeof createCurrentProofCoverageReader>
   events: Map<number, EventRows>
   relations: Map<number, RelationRows>
   exports: Map<number, ExportRows>
@@ -426,7 +413,7 @@ export function requestedCorrespondenceSources(request: CorrespondenceRequest, s
 export function projectObservedCorrespondence(row: StoredCorrespondence, observed: ReadSources): CorrespondenceRead {
   let requiresRevalidation = false
   if (row.status === 'confirmed' || row.status === 'candidate') {
-    try { requiresRevalidation = sourceForEdge(observed, storedEdge(row), row.status === 'confirmed', (row.provenance.comparisonProofIds as number[] | undefined) ?? []).sourceFingerprint !== row.sourceFingerprint }
+    try { requiresRevalidation = sourceForEdge(observed, storedEdge(row), row.status === 'confirmed').sourceFingerprint !== row.sourceFingerprint }
     catch { requiresRevalidation = true }
   }
   return { ...row, requiresRevalidation }

@@ -3,7 +3,6 @@ import { chooseCalendarPeriod } from '../../support/calendar-period'
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, reactive } from 'vue'
 import ComparisonSourcePicker from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonSourcePicker.vue'
-import ComparisonProofPicker from '../../../layers/sme-roster/app/components/record-correspondence/ComparisonProofPicker.vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import RecordComparisonPanel from '../../../layers/sme-roster/app/components/record-correspondence/RecordComparisonPanel.vue'
 import ComparisonDateTimePicker from '../../../layers/core/app/components/DateTimePicker.vue'
@@ -16,8 +15,7 @@ const stubs = {
   // These tests own request/readiness/return scheduling. Accordion uses its own RAF
   // to measure height; exercise that real component separately in disclosure/workflow tests.
   DisclosurePanel: { template: '<section><slot name="header" /><slot name="trigger" /><slot name="title" /><slot /></section>' },
-  RosterComparisonSourcePicker: defineComponent({ props: ['selection'], emits: ['change', 'settled'], watch: { selection: { immediate: true, deep: true, handler(value: unknown) { this.$emit('settled', JSON.stringify(value), true) } } }, template: '<button data-testid="select-sources" @click="$emit(\'change\', { queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [3], proofIds: [] })">选定来源</button>' }),
-  RosterComparisonProofPicker: defineComponent({ props: ['selection', 'asOf'], emits: ['change', 'settled'], watch: { selection: { immediate: true, deep: true, handler() { this.$emit('settled', JSON.stringify([this.selection, this.asOf]), true) } }, asOf() { this.$emit('settled', JSON.stringify([this.selection, this.asOf]), true) } }, template: '<div data-testid="proof-cutoff">{{ asOf }}<button data-testid="select-proof" @click="$emit(\'change\', [12])">选定依据</button></div>' }),
+  RosterComparisonSourcePicker: defineComponent({ props: ['selection'], emits: ['change', 'settled'], watch: { selection: { immediate: true, deep: true, handler(value: unknown) { this.$emit('settled', JSON.stringify(value), true) } } }, template: '<button data-testid="select-sources" @click="$emit(\'change\', { queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [3] })">选定来源</button>' }),
   RosterComparisonEvidence: { template: '<div data-testid="shown-result">已读取结果</div>' },
   RosterComparisonEventRow: true,
   TableLoadingStatus: true,
@@ -80,17 +78,7 @@ describe('record comparison public interaction', () => {
     expect(fetch).toHaveBeenLastCalledWith('/api/roster/record-comparison', expect.objectContaining({ query: expect.objectContaining({ page: 2 }) }))
   })
 
-  it('passes only explicitly selected proof IDs alongside the source set', async () => {
-    vi.stubGlobal('$fetch', vi.fn(async (_url: string, options: { query: Record<string, unknown> }) => { calls.query.push(options.query); return result() }))
-    wrapper = mount(RecordComparisonPanel, { global: { stubs } })
-    await wrapper.get('[data-testid="select-sources"]').trigger('click')
-    await wrapper.get('[data-testid="select-proof"]').trigger('click')
-    await wrapper.findAll('button').find(button => button.text() === '开始对比')!.trigger('click')
-    await flushPromises()
-    expect(calls.query[0]).toMatchObject({ queryIds: '7', officialSourceDocumentIds: '3', proofIds: '12' })
-  })
-
-  it('roundtrips the cutoff instant in Shanghai without hiding a proof or shifting a no-edit compare', async () => {
+  it('roundtrips the cutoff instant in Shanghai without shifting a no-edit compare', async () => {
     vi.stubEnv('TZ', 'Asia/Shanghai')
     startWith({ queryIds: '7', exportBatchIds: '', officialSourceDocumentIds: '3', asOf: '2026-10-18T10:00:00.000Z', page: '1', pageSize: '25' })
     vi.stubGlobal('$fetch', vi.fn(async (_url: string, options: { query: Record<string, unknown> }) => { calls.query.push(options.query); return result() }))
@@ -98,7 +86,6 @@ describe('record comparison public interaction', () => {
     await flushPromises()
     expect(wrapper.findComponent(ComparisonDateTimePicker).props('modelValue')).toBe('2026-10-18T18:00:00.000')
     expect(wrapper.get('#record-as-of').text()).toContain('18:00:00')
-    expect(wrapper.get('[data-testid="proof-cutoff"]').text()).toContain('2026-10-18T10:00:00.000Z')
     await wrapper.findAll('button').find(button => button.text() === '开始对比')!.trigger('click')
     await flushPromises()
     expect(calls.query.at(-1)).toMatchObject({ asOf: '2026-10-18T10:00:00.000Z' })
@@ -193,8 +180,8 @@ describe('record comparison public interaction', () => {
 })
 
 
-it.each(['result-first', 'pickers-first'])('waits for catalog, selected labels, selected proof and audit layout before return restore: %s', async (order) => {
-  startWith({ queryIds: '7', officialSourceDocumentIds: '3', proofIds: '12' })
+it.each(['result-first', 'pickers-first'])('waits for source catalogs and selected labels before return restore: %s', async (order) => {
+  startWith({ queryIds: '7', officialSourceDocumentIds: '3' })
   Object.defineProperty(window, 'scrollY', { configurable: true, value: 1400 })
   rememberEvidencePreviewReturn(route.fullPath)
   const pending = new Map<string, (value: unknown) => void>()
@@ -206,31 +193,19 @@ it.each(['result-first', 'pickers-first'])('waits for catalog, selected labels, 
   const scrollTo = vi.fn()
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.push(callback); return frames.length })
   vi.stubGlobal('scrollTo', scrollTo)
-  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, RosterComparisonSourcePicker: false, RosterComparisonProofPicker: false } } })
+  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, RosterComparisonSourcePicker: false } } })
   await flushPromises()
   const finishResult = async () => { pending.get('/api/roster/record-comparison')!(result()); await flushPromises() }
   if (order === 'result-first') await finishResult()
   expect(frames).toHaveLength(0)
   pending.get('official_document:25')!({ rows: Array.from({ length: 25 }, (_, index) => ({ kind: 'official_document', id: index + 1, label: `公布名单 ${index + 1}`, selectable: true })), total: 25, page: 1, pageSize: 25 })
-  pending.get('/api/roster/comparison-scope-proofs')!({ rows: [{ id: 11, kind: 'official_coverage', status: 'confirmed', valid: true, evidence: { titleCode: 'specialized_sme', sourceDocuments: [{ id: 3 }] } }], total: 1, page: 1, pageSize: 25 })
   await flushPromises()
   expect(wrapper.findComponent(ComparisonSourcePicker).findAll('li')).toHaveLength(25)
   expect(frames).toHaveLength(0)
   pending.get('official_document:200')!({ rows: [{ kind: 'official_document', id: 3, label: '正式文件名称', selectable: true }], total: 1, page: 1, pageSize: 200 })
   await flushPromises()
   pending.get('query:200')!({ rows: [{ kind: 'query', id: 7, label: '归档查询名称', selectable: true }], total: 1, page: 1, pageSize: 200 })
-  pending.get('/api/roster/comparison-scope-proofs/12')!({ id: 12, kind: 'official_coverage', status: 'confirmed', valid: true, evidence: { titleCode: 'specialized_sme', sourceDocuments: [{ id: 3 }] } })
   await flushPromises()
-  expect(frames).toHaveLength(0)
-  pending.get('/api/roster/comparison-scope-proofs/12/audit')!({ rows: [{ basis: '延迟的多行登记依据' }], total: 1, page: 1, pageSize: 200 })
-  await flushPromises()
-  expect(frames).toHaveLength(0)
-  pending.get('/api/roster/comparison-scope-proofs/11/audit')!({ rows: [{ basis: '尚未完整的登记历史' }], total: 201, page: 1, pageSize: 200 })
-  await flushPromises()
-  expect(frames).toHaveLength(0)
-  pending.get('/api/roster/comparison-scope-proofs/11/audit')!({ rows: [{ basis: '最终登记依据会在目录中换行' }], total: 201, page: 2, pageSize: 200 })
-  await flushPromises()
-  expect(wrapper.findComponent(ComparisonProofPicker).text()).toContain('最终登记依据会在目录中换行')
   expect(frames).toHaveLength(0)
   pending.get('query:25')!({ rows: [{ kind: 'query', id: 7, label: '归档查询名称', selectable: true }], total: 1, page: 1, pageSize: 25 })
   await flushPromises()
@@ -276,12 +251,12 @@ it.each(['unmount', 'route-change', 'picker-pending'])('does not let a queued re
   expect(frames).toHaveLength(1)
   if (change === 'unmount') { wrapper.unmount(); wrapper = null }
   else if (change === 'route-change') startWith({ queryIds: '7', officialSourceDocumentIds: '3', page: '2' })
-  else wrapper.findComponent(ComparisonSourcePicker).vm.$emit('settled', JSON.stringify({ queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [3], proofIds: [] }), false)
+  else wrapper.findComponent(ComparisonSourcePicker).vm.$emit('settled', JSON.stringify({ queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [3] }), false)
   await flushPromises()
   frames[0]!(0)
   expect(scrollTo).not.toHaveBeenCalled()
   if (change === 'picker-pending') {
-    wrapper!.findComponent(ComparisonSourcePicker).vm.$emit('settled', JSON.stringify({ queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [3], proofIds: [] }), true)
+    wrapper!.findComponent(ComparisonSourcePicker).vm.$emit('settled', JSON.stringify({ queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [3] }), true)
     await flushPromises()
     expect(frames).toHaveLength(2)
     frames[1]!(0)
@@ -290,7 +265,7 @@ it.each(['unmount', 'route-change', 'picker-pending'])('does not let a queued re
 })
 
 it('settles failed picker reads with their visible fallback layout before numeric return restoration', async () => {
-  startWith({ queryIds: '7', officialSourceDocumentIds: '3', proofIds: '12' })
+  startWith({ queryIds: '7', officialSourceDocumentIds: '3' })
   Object.defineProperty(window, 'scrollY', { configurable: true, value: 730 })
   rememberEvidencePreviewReturn(route.fullPath)
   const frames: FrameRequestCallback[] = []
@@ -301,11 +276,9 @@ it('settles failed picker reads with their visible fallback layout before numeri
     if (url === '/api/roster/record-comparison') return result()
     throw new Error('offline')
   }))
-  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, RosterComparisonSourcePicker: false, RosterComparisonProofPicker: false } } })
+  wrapper = mount(RecordComparisonPanel, { global: { stubs: { ...stubs, RosterComparisonSourcePicker: false } } })
   await flushPromises()
   expect(wrapper.text()).toContain('来源目录读取失败')
-  expect(wrapper.text()).toContain('范围依据目录读取失败')
-  expect(wrapper.text()).toContain('部分已选依据暂不可读')
   expect(frames).toHaveLength(1)
   frames[0]!(0)
   expect(scrollTo).toHaveBeenCalledExactlyOnceWith({ top: 730, behavior: 'instant' })

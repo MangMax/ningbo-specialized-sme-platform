@@ -55,7 +55,7 @@ it('upgrades a saved six-integration policy without resetting choices history or
   expect(policy.revision).toBe(before.revision)
   expect(policy.collection.sources.client).toEqual({ enabled: false, minLevel: 'warn' })
   expect(policy.collection.integrations.application).toEqual({ enabled: false, minLevel: 'error' })
-  for (const key of added) expect((policy.collection.integrations as Record<string, unknown>)[key]).toEqual({ enabled: true, minLevel: 'debug' })
+  for (const key of added) expect((policy.collection.integrations as Record<string, unknown>)[key]).toEqual({ enabled: true, minLevel: 'info' })
   expect(await next.detail(oldId)).toMatchObject({ operation: 'history.native' })
   await next.setPolicy({ ...base, retentionDays: 6 })
   const updated = await next.policy()

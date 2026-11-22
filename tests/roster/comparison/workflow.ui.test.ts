@@ -12,7 +12,6 @@ const sources = {
 const counts = { distinctEvents: 0, distinctPlatformRows: 0, distinctEnterpriseTitles: 0, laterProcessRows: 0, historical_aligned: 0, historical_conflict: 0, official_without_correspondence: 0, unresolved: 0, platformWithoutOfficialRows: 0, unresolvedPlatformRows: 0, recognizedRows: 0, exportRows: 0, observedRecognizedExportPairs: 0 }
 const result = { rows: [], total: 0, page: 1, pageSize: 25, counts, coverage: [], officialCoverage: { qualification: 'unknown', reasons: [] }, currentSourceConsistency: { qualification: 'not_comparable', reasons: [], recognizedObservations: [], exportObservations: [] }, platformWithoutOfficial: { rows: [], total: 0 }, historicalDecisionUnavailable: [], laterProcessPlatformRows: [] }
 const stubs = {
-  RosterComparisonProofPicker: defineComponent({ props: ['selection', 'asOf'], emits: ['settled'], watch: { selection: { immediate: true, deep: true, handler() { this.$emit('settled', JSON.stringify([this.selection, this.asOf]), true) } } }, template: '<div />' }),
   RosterComparisonEvidence: { template: '<div data-testid="compared-result">对比结果</div>' },
   RosterComparisonEventRow: true,
   TableLoadingStatus: true,

@@ -1,4 +1,5 @@
 import { createServer } from 'node:http'
+import { createHash } from 'node:crypto'
 
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -13,6 +14,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { eq, sql } from 'drizzle-orm'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { platformArchiveValue } from '../../../db/postgresql/platform-archive-tables'
 import { platformBusinessRecordVersion, platformLegacyRelationAlias } from '../../../db/postgresql/platform-tables'
 import { recordCorrespondence, recordCorrespondenceAudit } from '../../../db/postgresql/qualification-tables'
 import { runPostgresMixedImport } from '../../../layers/sme-roster/server/utils/roster-mixed-import-postgres'
@@ -290,10 +292,13 @@ for (const transport of ['REST', 'MCP'] as const) {
     const { projection } = await readSaved(first)
     // Seed a deliberately inconsistent archive in this disposable fixture. The online guard remains installed.
     await usePostgresDirectoryDb().transaction(async tx => {
-      await tx.execute(sql`ALTER TABLE business.platform_business_record_version DISABLE TRIGGER platform_version_canonical_archive`)
-      await tx.update(platformBusinessRecordVersion).set({ canonicalRawJson: '{"syntheticCollision":true}' })
-        .where(eq(platformBusinessRecordVersion.id, projection.versionId))
-      await tx.execute(sql`ALTER TABLE business.platform_business_record_version ENABLE TRIGGER platform_version_canonical_archive`)
+      const [version] = await tx.select({ archiveId: platformBusinessRecordVersion.canonicalArchiveId })
+        .from(platformBusinessRecordVersion).where(eq(platformBusinessRecordVersion.id, projection.versionId))
+      const bytes = Buffer.from('{"syntheticCollision":true}')
+      await tx.execute(sql`ALTER TABLE business.platform_archive_value DISABLE TRIGGER platform_archive_append_only`)
+      await tx.update(platformArchiveValue).set({ bytes, byteLength: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') })
+        .where(eq(platformArchiveValue.id, BigInt(version!.archiveId)))
+      await tx.execute(sql`ALTER TABLE business.platform_archive_value ENABLE TRIGGER platform_archive_append_only`)
     })
     const sibling = archive(await collect({ id: `${transport}-collision-sibling`, n: 2 }, transport))
     const again = archive(await collect(e.rawData!.rows[0]!, transport))
@@ -376,8 +381,10 @@ it('MCP typed prototype keys are retained in relation and version while strict R
   const stored = await readSaved(saved)
   expect(stored.row.relations[0].rawFields).toEqual(typed)
   expect(Object.hasOwn(stored.row.relations[0].rawFields, '__proto__')).toBe(true)
-  const [version] = await usePostgresDirectoryDb().select().from(platformBusinessRecordVersion).where(eq(platformBusinessRecordVersion.id, stored.projection.versionId))
-  expect(JSON.parse(version!.canonicalRawJson)).toEqual(typed)
+  const [version] = await usePostgresDirectoryDb().select({ bytes: platformArchiveValue.bytes }).from(platformBusinessRecordVersion)
+    .innerJoin(platformArchiveValue, eq(platformArchiveValue.id, platformBusinessRecordVersion.canonicalArchiveId))
+    .where(eq(platformBusinessRecordVersion.id, stored.projection.versionId))
+  expect(JSON.parse(version!.bytes!.toString('utf8'))).toEqual(typed)
 })
 
 it('MCP batch partial and resumed segments archive with exact original page positions and reusable typed versions', async () => {

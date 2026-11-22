@@ -10,6 +10,7 @@ import { platformApplyProjection, platformBusinessProjection, platformRecognized
 import { recordCorrespondence as correspondence } from '../../../../db/postgresql/qualification-tables'
 import { refreshMetadataKeys, refreshRelationFields, refreshSourceKeys } from '../../lib/platform/difference-hash-keys'
 import { snapshotSchema } from '../../lib/platform/evidence-snapshot-model'
+import { postgresObservationSnapshot } from '../../lib/platform/postgres-observation-snapshot'
 import { CURRENT_TITLES } from '../../lib/roster/current-titles'
 import type { PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
 import { hashRefreshInputs, projectRefreshObservation, refreshProjectionColumns } from './enterprise-difference-refresh-contract'
@@ -111,7 +112,7 @@ async function readPlatformMaterials(tx: Tx, enterpriseIds: readonly number[]) {
   // These lateral SQL projections retain JSON token order and first duplicate keys.
   // Drizzle 0.45.4 has no builders for JSON set-returning functions with ordinality,
   // bytea decoding or JSON token validation. Only selected fields leave PostgreSQL.
-  const snapshot = sql`convert_from(${archive.bytes}, 'UTF8')::json`
+  const snapshot = sql`convert_from(${postgresObservationSnapshot(observation.id, archive.bytes)}, 'UTF8')::json`
   const current = tx.select({ matchBasis: assignment.matchBasis, verificationStatus: assignment.verificationStatus })
     .from(assignment).where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('current_assignment')
   const cells = tx.select({

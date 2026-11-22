@@ -35,6 +35,9 @@ describe('Drizzle real evlog and independent PostgreSQL pipeline', () => {
   }
 
   it('persists and prints bounded native attempts without SQL params results or native errors', async () => {
+    await applicationLogs().setPolicy({ ...base, collection: { sources: { system: { enabled: true, minLevel: 'debug' } }, integrations: { drizzle: { enabled: true, minLevel: 'debug' } } } })
+    await settle(1)
+    const before = applicationLogs().status()
     const writes: string[] = []
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk: any, callback?: any) => { writes.push(String(chunk)); callback?.(); return true })
     const db = query()
@@ -62,7 +65,7 @@ describe('Drizzle real evlog and independent PostgreSQL pipeline', () => {
     expect(stored).toMatch(/"durationMs"\s*:\s*true/)
     const events = runtime.psql(['-At', '-c', 'SELECT row_to_json(event) FROM runtime_logs.log_events AS event'])
     expect(events).not.toMatch(/PRIVATE_|fail_query|params|stack/)
-    expect(applicationLogs().status()).toMatchObject({ stored: 1, coalesced: 1, filtered: 0, dropped: 0, writeUnknown: 0 })
+    expect(applicationLogs().status()).toMatchObject({ stored: before.stored + 1, coalesced: 1, filtered: before.filtered, dropped: 0, writeUnknown: 0 })
   })
 
   it.each([

@@ -627,7 +627,7 @@ it('raw auth precedes legacy strict malformed and batch dispatch', async () => {
 })
 it('raw other tools retain their original dispatch and strict opt-in', async () => {
   const { officialEvidenceRpcError } = await import('../../../layers/sme-roster/server/utils/official-evidence-read')
-  for (const [name, args] of [['get_roster_evidence', { id: 1, legacyIgnored: 1 }], ['get_official_event', { eventId: 1 }], ['list_roster_import_receipts', { batchId: 1, pageSize: 51 }], ['get_roster_import_request', { batchId: 1, maxBytes: 65537 }]] as const) {
+  for (const [name, args] of [['get_roster_evidence', { id: 1, legacyIgnored: 1 }], ['get_official_event', { eventId: 1 }], ['list_roster_import_receipts', { batchId: 1, pageSize: 51 }]] as const) {
     expect(officialEvidenceRpcError({ ...rpc399(args), params: { name, arguments: args } }, false)).toBeNull()
   }
   for (const [name, args] of [['get_roster_evidence', { id: 1, official: 'latest', extra: 1 }], ['get_official_event', { eventId: 1, official: 'latest', pageSize: 51 }]] as const) {

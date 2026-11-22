@@ -63,3 +63,26 @@ it('projects implicit request events before evlog output while retaining safe pr
   expect(events[0]!.applicationLog).toMatchObject({ source: 'http', operation: 'http.request', statusCode: 400, requestId: '12345678-1234-4123-8123-123456789012', traceId: '87654321-4321-4321-8321-210987654321' })
   expect(JSON.stringify(events)).not.toMatch(/PRIVATE_UUID180|headers|authorization|body|message|auditId|receiptId|path/)
 })
+
+live('keeps failed probes and business events while dropping successful polling and default SQL debug logs', async () => {
+  await useRuntimeLogs()
+  const { drainApplicationEvent } = await import('../../../layers/core/lib/logging')
+  const request = (httpRoute: string, status: number) => {
+    drainApplicationEvent({ path: httpRoute, httpRoute, method: 'GET', status })
+  }
+  request('/api/health', 200)
+  request('/api/health', 503)
+  request('/api/task-center', 200)
+  request('/api/task-center', 401)
+  request('/api/roster/enterprises', 200)
+  appLog({ source: 'system', operation: 'db.query.select', outcome: 'started', level: 'debug',
+    origin: { runtime: 'node', integration: 'drizzle', capture: 'framework' } })
+  await applicationLogs().flush()
+  const { rows } = await applicationLogs().list({})
+  expect(rows.map(row => [row.httpRoute, row.statusCode])).toEqual([
+    ['/api/roster/enterprises', 200], ['/api/task-center', 401], ['/api/health', 503],
+  ])
+  expect(await applicationLogs().detail(rows[0]!.id)).toMatchObject({
+    httpRoute: '/api/roster/enterprises', statusCode: 200,
+  })
+})

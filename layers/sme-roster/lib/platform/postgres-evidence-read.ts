@@ -18,6 +18,7 @@ import { MAX_EVIDENCE_CHUNK_BYTES, PROVENANCE_CELL_NAMES, type PlatformEvidenceI
 import { platformEvidenceInputSchema } from './evidence-input'
 import { relationEvidenceColumns } from './relation-evidence-fields'
 import { snapshotSchema } from './evidence-snapshot-model'
+import { postgresObservationSnapshot } from './postgres-observation-snapshot'
 
 type Reader = Pick<NodePgDatabase, 'select'>
 export type PostgresPlatformArchive = { id: string; byteLength: string | null; storageClass: string; sealed: boolean }
@@ -130,7 +131,7 @@ async function readRelation(db: Reader, collectionId: number, input: PlatformEvi
     verificationStatus: assignment.verificationStatus,
   }).from(assignment).where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('owner')
   const [row] = await db.select({
-    bytes: valueArchive.bytes,
+    bytes: postgresObservationSnapshot(observation.id, valueArchive.bytes),
     sealed: observationRef.sealed,
     enterpriseId: owner.enterpriseId,
     matchBasis: owner.matchBasis,

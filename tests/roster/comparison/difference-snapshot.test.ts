@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setImmediate } from 'node:timers/promises'
 import Database from 'better-sqlite3'
-import { count } from 'drizzle-orm'
+import { count, eq } from 'drizzle-orm'
 import { createApp, createRouter, defineEventHandler, getRouterParam, readBody, setResponseStatus, toNodeListener } from 'h3'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { initializeDb } from '../../../db/client'
@@ -15,6 +15,7 @@ import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/po
 import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { job } from '../../../db/postgresql/job-tables'
 import { record } from '../../../db/postgresql/ledger-tables'
+import { platformArchiveValue } from '../../../db/postgresql/platform-archive-tables'
 import { platformBusinessObservation, platformBusinessRecordVersion } from '../../../db/postgresql/platform-tables'
 import { newJobId } from '../../../layers/core/lib/job'
 import { clearJobSpecs, registerJob } from '../../../layers/core/server/utils/job-spec-registry'
@@ -324,9 +325,10 @@ describe('PostgreSQL snapshot public handlers', () => {
     expect(done.result).toMatchObject({counts:{enterprises:1,unfinished:0,rows:51,requests:8}})
     const result=done.result as {items:{segments:PlatformLiveQueryResult[]}[]}
     expect(result.items.every(i=>i.segments.every(segment=>!Object.hasOwn(segment,'rows')&&!Object.hasOwn(segment,'rawData')&&!Object.hasOwn(segment,'dataRows')))).toBe(true)
-    const versions=await db.select({ raw: platformBusinessRecordVersion.canonicalRawJson }).from(platformBusinessRecordVersion)
+    const versions = await db.select({ bytes: platformArchiveValue.bytes }).from(platformBusinessRecordVersion)
+      .innerJoin(platformArchiveValue, eq(platformArchiveValue.id, platformBusinessRecordVersion.canonicalArchiveId))
     expect(versions.length).toBe(51)
-    expect(versions.every(v=>{const row=JSON.parse(v.raw);return row.qymc==='fixture provider'&&row.blank===null&&JSON.stringify(row.unknown)==='{"nested":[null,false,17]}'})).toBe(true)
+    expect(versions.every(v=>{const row=JSON.parse(v.bytes!.toString('utf8'));return row.qymc==='fixture provider'&&row.blank===null&&JSON.stringify(row.unknown)==='{"nested":[null,false,17]}'})).toBe(true)
   }, 30_000)
 
   it.each(['short-tail','retained-total'] as const)('real provider public snapshot handles %s across retry without erasing attempts', async mode => {

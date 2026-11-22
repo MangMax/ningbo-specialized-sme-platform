@@ -2,7 +2,6 @@ import { type CorrespondenceRead, type DecisionLookup, type CorrespondenceReques
 import { and, asc, count, eq, inArray, or, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
-import { createCurrentProofCoverageReader } from './comparison-scope-proof'
 import { correspondenceRefValidity, createCorrespondenceRefValidityReader } from './record-correspondence-ref-validity'
 import { correspondenceColumns, correspondenceTable, externalRelationColumn } from './record-correspondence-store'
 import { readCorrespondenceTargetSources } from './record-correspondence-target-sources'
@@ -109,7 +108,7 @@ function observeReadSources(db: Db, rows: SourceReference[]): ReadSources {
   const paths = [...new Set(evidence.map(r => r.sourceFile))]
   const files = Array.from({ length: Math.ceil(paths.length / 400) }, (_, i) => paths.slice(i * 400, (i + 1) * 400)).flatMap(paths => db.select({ id: schema.storedFile.id, relPath: schema.storedFile.relPath, bytes: schema.storedFile.bytes, sha256: schema.storedFile.sha256, removedAt: schema.storedFile.removedAt }).from(schema.storedFile).where(inArray(schema.storedFile.relPath, paths)).all())
   const filesByPath = new Map(files.map(r => [r.relPath, r]))
-  return { coversCurrentProof: createCurrentProofCoverageReader(db), events: new Map(events.map(r => [r.event.id, r])), relations: new Map(targetRelations.map(r => [r.relation.id, r])), exports: new Map(exports.map(r => [r.exportRow.id, r])), enterprises: new Map(enterprises.map(r => [r.id, r])), titles: new Set(storedTitles.map(r => r.code)), evidence: Map.groupBy(evidence.map(evidence => ({ evidence, storedFile: filesByPath.get(evidence.sourceFile) ?? null })), r => r.evidence.recordEventId) }
+  return { events: new Map(events.map(r => [r.event.id, r])), relations: new Map(targetRelations.map(r => [r.relation.id, r])), exports: new Map(exports.map(r => [r.exportRow.id, r])), enterprises: new Map(enterprises.map(r => [r.id, r])), titles: new Set(storedTitles.map(r => r.code)), evidence: Map.groupBy(evidence.map(evidence => ({ evidence, storedFile: filesByPath.get(evidence.sourceFile) ?? null })), r => r.evidence.recordEventId) }
 }
 function readCorrespondences(db: Db, rows: StoredCorrespondence[]) {
   const observed = observeReadSources(db, rows)

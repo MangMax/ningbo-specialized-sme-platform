@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import pg from 'pg'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { readPostgresPlatformEvidence } from '../../../layers/sme-roster/lib/platform/postgres-evidence-read'
 import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { readRuntimeImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipts-runtime'
 import { handlePostgresRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
@@ -20,6 +21,7 @@ const queriedAt = '2026-11-11T00:00:00Z'
 const queryKey = 'name:孤立历史'
 const originalRaw = '{ "rdjb": "2", "id": "history-A", "year": 2024, "sblx": "申请", "cszt": "通过" }'
 const originalSource = '历史原文\r\n🧾'
+const legacyInputA = Buffer.from('{"interface":"apply_list","invalidRaw":null,"queriedAt":"2026-11-11T00:00:00Z","queryId":91,"queryKey":"name:孤立历史","rawFields":{"cszt":"通过","id":"history-A","rdjb":"2","sblx":"申请","year":2024},"rdjb":"2","relationKey":"history-A","sequenceNo":1}')
 const historical = [
   { interface: 'apply_list', queryId: 91, relationId: 101, key: 'history-A', raw: originalRaw, result: 'apply' },
   { interface: 'business_list', queryId: 92, relationId: 102, key: 'history-B', raw: '{ "id": "history-B", "year": 2024 }', result: 'business' },
@@ -183,7 +185,7 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
   it('freezes original aliases through HTTP and indexes only version projections through MCP', async () => {
     const ids = historical.map(row => ({ relationId: row.relationId }))
     const reference = request('unindexed-reference', { platformQueries: [{
-      interface: 'apply_list', queryKey, rdjb: '2', queriedAt, reuseExisting: true, relations: [{ sequenceNo: 1 }],
+      interface: 'apply_list', queryKey, rdjb: '2', queriedAt, reuseExisting: true as const, relations: [{ sequenceNo: 1 }],
     }] })
     expect(await http('commit', reference)).toMatchObject({ status: 200, body: { status: 'committed', items: [{
       ref: 'query:91', detail: { rowsWritten: 0, canonicalProjection: [] },
@@ -215,8 +217,7 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
     }
 
     const body = request('original-observation', { platformRecordObservations: ids })
-    const expectedBytes = Buffer.from('{"interface":"apply_list","invalidRaw":null,"queriedAt":"2026-11-11T00:00:00Z","queryId":91,"queryKey":"name:孤立历史","rawFields":{"cszt":"通过","id":"history-A","rdjb":"2","sblx":"申请","year":2024},"rdjb":"2","relationKey":"history-A","sequenceNo":1}')
-    const fingerprint = createHash('sha256').update(expectedBytes).digest('hex')
+    const fingerprint = createHash('sha256').update(legacyInputA).digest('hex')
     const preflight = await http('preflight', body)
     expect(preflight).toMatchObject({ status: 200, body: { status: 'preflight', preflight: {
       add: 0, update: 0, review: 0, conflicts: [],
@@ -240,13 +241,13 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
     } })
     expect(await http('commit', body)).toMatchObject({ status: 200, body: committed })
     const ledger = await client.query(`
-      SELECT a.old_id AS relation_id,o.batch_id,o.indexed_at,o.input_fingerprint,b.scheme,v.bytes
+      SELECT a.old_id AS relation_id,o.batch_id,o.indexed_at,o.input_fingerprint,b.scheme,b.input_archive_id
       FROM platform_business_observation o JOIN platform_legacy_relation_alias a ON a.observation_id=o.id
-      JOIN platform_observation_fingerprint_basis b ON b.observation_id=o.id JOIN platform_archive_value v ON v.id=b.input_archive_id
+      JOIN platform_observation_fingerprint_basis b ON b.observation_id=o.id
       ORDER BY a.old_id
     `)
     expect(ledger.rows[0]).toMatchObject({ relation_id: '101', batch_id: expect.any(String), scheme: 'legacy-bootstrap-v1',
-      indexed_at: expect.any(String), input_fingerprint: fingerprint, bytes: expectedBytes })
+      indexed_at: expect.any(String), input_fingerprint: fingerprint, input_archive_id: null })
     expect(await readOriginals()).toEqual(originals)
 
     for (const original of historical) {
@@ -273,7 +274,7 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
 
   it('returns only requested archived query projections and keeps reference-only imports read-only', async () => {
     const body = request('query-reference', { platformQueries: [{
-      interface: 'apply_list', queryKey, rdjb: '2', queriedAt, reuseExisting: true, relations: [{ sequenceNo: 1 }],
+      interface: 'apply_list', queryKey, rdjb: '2', queriedAt, reuseExisting: true as const, relations: [{ sequenceNo: 1 }],
     }] })
     expect(await mcp('preflight', body)).toMatchObject({ status: 'preflight', preflight: {
       add: 0, conflicts: [], canonicalProjection: [{ relationId: 101, applyProjection: { declarationYear: 2024 } }],
@@ -305,6 +306,22 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
       FROM platform_business_observation o JOIN platform_legacy_relation_alias a ON a.observation_id=o.id WHERE a.old_id=8001
     `)
     expect(owner.physical).not.toBe(8001)
+    expect((await client.query(`
+      SELECT c.name,c.value_kind,c.witness_kind
+      FROM platform_collection_condition c
+      JOIN platform_legacy_query_alias q ON q.collection_id=c.collection_id WHERE q.old_id=8001
+    `)).rows).toEqual([{ name: 'name', value_kind: 'absent', witness_kind: null }])
+    const canonicalText = '{"id":"new-key","year":2025}'
+    expect((await client.query(`
+      SELECT v.content_hash, a.bytes, a.storage_class, r.sealed
+      FROM platform_business_observation o JOIN platform_business_record_version v ON v.id=o.version_id
+      JOIN platform_version_archive_ref r ON r.owner_id=v.id AND r.archive_id=v.canonical_archive_id
+      JOIN platform_archive_value a ON a.id=r.archive_id
+      WHERE o.id=$1 AND r.field='canonicalRawJson'
+    `, [owner.physical])).rows).toEqual([{
+      content_hash: createHash('sha256').update('platform-row-json-v1\n' + canonicalText).digest('hex'),
+      bytes: Buffer.from(canonicalText), storage_class: 'text', sealed: '1',
+    }])
     expect(await mcp('preflight', request('physical-id', { platformRecordObservations: [{ relationId: owner.physical }] })))
       .toMatchObject({ status: 'preflight', preflight: { conflicts: [{ error: { code: 'projection_source_missing' } }] } })
     expect(await http('commit', request('native-source-reference', { platformQueries: [{
@@ -326,13 +343,19 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
     const changed = request(body.idempotencyKey, { platformRecordObservations: [{ relationId: 101 }] })
     expect(await http('commit', changed)).toMatchObject({ status: 409, body: { error: { code: 'idempotency_conflict' } } })
     expect(await http('commit', body)).toMatchObject({ status: 200, body: { status: 'failed', summary: { written: 0, failed: 1 } } })
+    const noHistoricalProjection = { ...body, payload: { platformQueries: [{
+      interface: 'apply_list' as const, queryKey, rdjb: '2', queriedAt, reuseExisting: true as const, relations: [{ sequenceNo: 1 }],
+    }] } }
+    expect(await http('commit', noHistoricalProjection)).toMatchObject({
+      status: 409, body: { error: { code: 'idempotency_conflict', message: 'Historical projection key belongs to a different request' } },
+    })
     expect(await http('replay', body)).toMatchObject({ status: 400 })
     expect(await readOriginals()).toEqual(originals)
   })
 
-  it('replays a committed import and reads bounded receipt pages and request bytes', async () => {
+  it('replays a committed import and reads bounded receipt pages without request bodies', async () => {
     const body = { ...request('bounded-receipt', { platformQueries: [{
-      interface: 'apply_list', queryKey, rdjb: '2', queriedAt, reuseExisting: true, relations: [{ sequenceNo: 1 }],
+      interface: 'apply_list', queryKey, rdjb: '2', queriedAt, reuseExisting: true as const, relations: [{ sequenceNo: 1 }],
     }] }), sourceIdentity: '隔离历史🧾' }
     expect(await http('preflight', body)).toMatchObject({ status: 200, body: { status: 'preflight' } })
     const committed = await http('commit', body)
@@ -351,19 +374,10 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
     expect(await readRuntimeImportReceipt('items', { receiptId: receipt.receiptId, page: 2, pageSize: 1 }))
       .toMatchObject({ page: 2, pageSize: 1, total: 1, rows: [] })
 
-    const { rows: [stored] } = await client.query(`
-      SELECT original.request_body FROM import_receipt current
-      JOIN import_receipt original ON original.id=current.body_receipt_id WHERE current.id=$1
-    `, [receipt.receiptId])
-    expect(JSON.parse(stored.request_body)).toMatchObject({ idempotencyKey: body.idempotencyKey, sourceIdentity: body.sourceIdentity })
-    const expectedBody = Buffer.from(stored.request_body)
-    const offset = expectedBody.indexOf(Buffer.from('🧾')) + 1
-    expect(offset).toBeGreaterThan(0)
-    expect(await readRuntimeImportReceipt('request', { receiptId: receipt.receiptId, maxBytes: 17, offset }))
-      .toMatchObject({ totalBytes: expectedBody.length,
-        data: expectedBody.subarray(offset, offset + 17).toString('base64'), nextOffset: offset + 17 })
-    expect(await readRuntimeImportReceipt('request', { receiptId: receipt.receiptId, offset: expectedBody.length }))
-      .toMatchObject({ data: '', nextOffset: null })
+    const { rows } = await client.query('SELECT request_hash, historical_projection FROM import_receipt WHERE batch_id=$1 ORDER BY id', [receipt.batchId])
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toEqual({ request_hash: expect.stringMatching(/^[a-f0-9]{64}$/), historical_projection: false })
+    expect(rows[1]).toEqual(rows[0])
   })
 
   it('projects only the selected retained import item and enforces snapshot byte limits', async () => {
@@ -547,5 +561,111 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
     `)).rows).toEqual([{ identity_state: 'not_indexed', content_state: 'not_indexed', record_id: null, version_id: null,
       input_fingerprint: null, batch_id: null, scheme: null, exact_status: status, exact_status_sqlite_storage: 'blob' }])
     expect((await client.query("SELECT id FROM platform_business_record WHERE platform_key='blob-status'")).rows).toEqual([])
+  })
+
+  it('compacts a byte-exact historical raw cell while preserving evidence ranges and archive identity', async () => {
+    const evidence = (offset?: number, length?: number) => readPostgresPlatformEvidence(usePostgresDirectoryDb(), {
+      queryId: 91, relationId: 101, field: 'relation', offset, length,
+    })
+    const snapshot = async (relationId: number) => (await client.query(`
+      SELECT s.archive_id,a.bytes,platform_observation_snapshot(s.owner_id,a.bytes) AS original,a.sha256
+      FROM platform_legacy_relation_alias l
+      JOIN platform_observation_archive_ref s ON s.owner_id=l.observation_id AND s.field='legacyRowSnapshot'
+      JOIN platform_archive_value a ON a.id=s.archive_id WHERE l.old_id=$1
+    `, [relationId])).rows[0]!
+    await client.query(`
+      BEGIN;
+      ALTER TABLE platform_recognized_projection DISABLE TRIGGER platform_recognized_exact_title_fixed;
+      UPDATE platform_recognized_projection p SET exact_title_archive_id=s.archive_id, exact_title_sha256=a.sha256
+      FROM platform_legacy_relation_alias l
+      JOIN platform_observation_archive_ref s ON s.owner_id=l.observation_id AND s.field='legacyRowSnapshot'
+      JOIN platform_archive_value a ON a.id=s.archive_id
+      WHERE l.old_id=103 AND p.observation_id=l.observation_id;
+      ALTER TABLE platform_recognized_projection ENABLE TRIGGER platform_recognized_exact_title_fixed;
+      COMMIT;
+    `)
+    const before = await evidence()
+    if (!('data' in before)) throw new Error('Expected evidence bytes')
+    const offset = Buffer.from(before.data, 'base64').indexOf('"rawFields":')
+    expect(offset).toBeGreaterThan(0)
+    const beforeRawRange = await evidence(offset, Buffer.byteLength(originalRaw) + 12)
+    const old = await snapshot(101)
+    const pinned = await snapshot(103)
+    expect(old.bytes).toEqual(old.original)
+
+    const compact = () => command('psql', ['-X', '-w', '-d', process.env.NUXT_POSTGRES_DIRECTORY_URL!,
+      '-f', 'upgrade/postgresql/install-platform-observation-snapshot-compaction.sql'])
+    compact()
+    const updated = await snapshot(101)
+    expect(updated.archive_id).toBe(old.archive_id)
+    expect(updated.original).toEqual(old.bytes)
+    expect(updated.bytes.length).toBeLessThan(old.bytes.length)
+    expect(updated.sha256).toBe(createHash('sha256').update(updated.bytes).digest('hex'))
+    expect(await evidence()).toEqual(before)
+    expect(await evidence(offset, Buffer.byteLength(originalRaw) + 12)).toEqual(beforeRawRange)
+    expect(await snapshot(103)).toEqual(pinned)
+    compact()
+    expect(await snapshot(101)).toEqual(updated)
+  })
+
+  it('retires verified legacy fingerprint bodies, preserves pins and still rejects source drift', async () => {
+    const legacyInputB = Buffer.from('{"interface":"business_list","invalidRaw":null,"queriedAt":"2026-11-11T00:00:00Z","queryId":92,"queryKey":"name:孤立历史","rawFields":{"id":"history-B","year":2024},"rdjb":"2","relationKey":"history-B","sequenceNo":1}')
+    const seedArchive = async (relationId: number, bytes: Buffer) => (await client.query(`
+      WITH stored AS (
+        INSERT INTO platform_archive_value(storage_class,bytes,byte_length,sha256)
+        VALUES('blob',$2,length($2::bytea),encode(sha256($2::bytea),'hex')) RETURNING id
+      )
+      UPDATE platform_observation_fingerprint_basis b
+      SET scheme='legacy-indexed-v1',input_archive_id=stored.id
+      FROM platform_legacy_relation_alias l,stored WHERE l.old_id=$1 AND b.observation_id=l.observation_id
+      RETURNING stored.id
+    `, [relationId, bytes])).rows[0]!.id as string
+    await client.query(`
+      BEGIN;
+      ALTER TABLE platform_observation_fingerprint_basis DROP CONSTRAINT platform_fingerprint_basis_input;
+      ALTER TABLE platform_observation_fingerprint_basis DISABLE TRIGGER platform_fingerprint_append_only;
+      ALTER TABLE platform_recognized_projection DISABLE TRIGGER platform_recognized_exact_title_fixed;
+    `)
+    const wrong = await seedArchive(101, Buffer.from('wrong fingerprint input'))
+    const pinned = await seedArchive(102, legacyInputB)
+    await client.query(`
+      UPDATE platform_recognized_projection p SET exact_title_archive_id=a.id,exact_title_sha256=a.sha256
+      FROM platform_archive_value a,platform_legacy_relation_alias l
+      WHERE a.id=$1 AND l.old_id=103 AND p.observation_id=l.observation_id
+    `, [pinned])
+    await client.query(`
+      ALTER TABLE platform_recognized_projection ENABLE TRIGGER platform_recognized_exact_title_fixed;
+      ALTER TABLE platform_observation_fingerprint_basis ENABLE TRIGGER platform_fingerprint_append_only;
+      ALTER TABLE platform_observation_fingerprint_basis ADD CONSTRAINT platform_fingerprint_basis_input
+        CHECK ((scheme='uncaptured') = (input_archive_id IS NULL)) NOT VALID;
+      COMMIT;
+    `)
+    const prune = () => command('psql', ['-X', '-w', '-d', process.env.NUXT_POSTGRES_DIRECTORY_URL!,
+      '-f', 'upgrade/postgresql/install-platform-legacy-fingerprint-pruning.sql'])
+    expect(prune).toThrow('has no verified fingerprint archive')
+    expect((await client.query('SELECT input_archive_id FROM platform_observation_fingerprint_basis WHERE input_archive_id=$1', [wrong])).rowCount).toBe(1)
+
+    await client.query('ALTER TABLE platform_archive_value DISABLE TRIGGER platform_archive_append_only')
+    await client.query(`
+      UPDATE platform_archive_value SET bytes=$2,byte_length=length($2::bytea),sha256=encode(sha256($2::bytea),'hex') WHERE id=$1
+    `, [wrong, legacyInputA])
+    await client.query('ALTER TABLE platform_archive_value ENABLE TRIGGER platform_archive_append_only')
+    prune()
+    prune()
+    expect((await client.query('SELECT id,bytes FROM platform_archive_value WHERE id IN ($1,$2)', [wrong, pinned])).rows)
+      .toEqual([{ id: pinned, bytes: legacyInputB }])
+    expect((await client.query(`SELECT count(*)::int AS n FROM platform_observation_fingerprint_basis
+      WHERE scheme='target-command-v1' AND input_archive_id IS NOT NULL`)).rows[0]!.n).toBeGreaterThan(0)
+    const legacyReference = { platformRecordObservations: [{ relationId: 101 }] }
+    expect(await http('preflight', request('pruned-legacy-fingerprint', legacyReference))).toMatchObject({
+      status: 200, body: { preflight: { conflicts: [] } },
+    })
+    await client.query(`
+      UPDATE platform_business_observation o SET input_fingerprint=repeat('0',64)
+      FROM platform_legacy_relation_alias l WHERE l.old_id=101 AND o.id=l.observation_id
+    `)
+    expect(await http('preflight', request('pruned-legacy-stale', legacyReference))).toMatchObject({
+      status: 200, body: { preflight: { conflicts: [{ error: { code: 'projection_source_drift' } }] } },
+    })
   })
 })

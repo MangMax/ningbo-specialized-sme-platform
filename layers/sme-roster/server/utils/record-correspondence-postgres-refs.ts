@@ -4,18 +4,17 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { title } from '../../../../db/postgresql/title-table'
 import {
-  platformBusinessObservation, platformBusinessProjection, platformExportBatch, platformExportRow,
-  platformLegacyQueryAlias, platformLegacyRelationAlias, platformObservationAssignment,
+  platformBusinessProjection, platformExportBatch, platformExportRow,
+  platformLegacyRelationAlias, platformObservationAssignment,
 } from '../../../../db/postgresql/platform-tables'
 import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { sourceQueryFields, sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
-import { readPostgresCurrentProofCoverage } from './comparison-scope-proof-postgres'
+import { postgresObservationSnapshot } from '../../lib/platform/postgres-observation-snapshot'
 import { correspondenceAttributionChanged, type CorrespondenceAttribution } from './record-correspondence-attribution'
 import type { CorrespondenceRefRow } from './record-correspondence'
 
 type Db = Pick<NodePgDatabase, 'execute' | 'select'>
-type ProofReference = Parameters<typeof readPostgresCurrentProofCoverage>[1][number]
 const NULL_JSON = sql`'null'::jsonb`
 const refValue = (...segments: string[]) => sql`p.provenance_json #> ${sql.param(segments)}::text[]`
 const jsonEqual = (saved: SQL, actual: SQL) => sql`coalesce((${saved})::jsonb,${NULL_JSON}) = coalesce((${actual})::jsonb,${NULL_JSON})`
@@ -56,7 +55,7 @@ function eventMatches(id: SQL, predecessor = false) {
 }
 
 function relationMatches(assignment: { enterpriseId: SQL; matchBasis: SQL; verificationStatus: SQL }) {
-  const cells = sql`json_array_elements(convert_from(snapshot.bytes,'UTF8')::json->'fields')`
+  const cells = sql`json_array_elements(convert_from(${postgresObservationSnapshot(sql`o.id`, sql`snapshot.bytes`)},'UTF8')::json->'fields')`
   const text = sql`convert_from(decode(cell->>'hex','hex'),'UTF8')`
   const decoded = sql`CASE cell->>'storageClass'
     WHEN 'text' THEN to_json(${text})
@@ -74,8 +73,14 @@ function relationMatches(assignment: { enterpriseId: SQL; matchBasis: SQL; verif
     return sql`WHEN ${column.name} THEN cell->>'storageClass' <> 'blob' AND ${jsonEqual(saved, actual)}`
   })
   const query = Object.entries(sourceQueryFields).map(([key, column]) => {
-    const archiveField = key === 'rawResponse' || key === 'collectionEvidence'
-    const value = archiveField ? sql`(
+    if (key === 'rawResponse') {
+      const digest = sql`(
+        SELECT encode(sha256(v.bytes),'hex')
+        FROM platform_collection_archive_ref r JOIN platform_archive_value v ON v.id=r.archive_id
+        WHERE r.owner_id=c.id AND r.field=${key})`
+      return jsonEqual(refValue('query', 'rawResponseSha256'), textJson(digest))
+    }
+    const value = key === 'collectionEvidence' ? sql`(
       SELECT convert_from(v.bytes,'UTF8') FROM platform_collection_archive_ref r JOIN platform_archive_value v ON v.id=r.archive_id
       WHERE r.owner_id=c.id AND r.field=${key})` : key === 'id' ? sql`qa.old_id` : tableColumn('c', column.name)
     return jsonEqual(refValue('query', key), column.dataType === 'json' ? sql`(${value})::json` : textJson(value))
@@ -131,12 +136,10 @@ export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly numbe
       eq(edge.status, 'confirmed'), eq(edge.type, 'event_recognized'), eq(edge.role, 'recognized_corrob'),
       isNotNull(edge.eventId), isNotNull(relation.oldId))))
   const p = new QueryBuilder().$with('p').as(selected)
-  const observation = platformBusinessObservation
-  const a = platformObservationAssignment, query = platformLegacyQueryAlias
-  const exportRow = platformExportRow, target = alias(enterprise, 'target'), business = platformBusinessProjection
+  const a = platformObservationAssignment
+  const target = alias(enterprise, 'target'), business = platformBusinessProjection
   const assignment = db.select({ enterpriseId: a.enterpriseId, matchBasis: a.matchBasis, verificationStatus: a.verificationStatus })
     .from(a).where(eq(a.observationId, p.observationId)).orderBy(desc(a.revision)).limit(1).as('assignment')
-  const collection = db.select({ id: observation.collectionId }).from(observation).where(eq(observation.id, p.observationId))
   const noOpaqueStatus = notExists(db.select({ id: business.id }).from(business)
     .where(and(eq(business.observationId, p.observationId), eq(business.storedStatusSqliteStorage, 'blob'))))
   const validate = annual ? sql`true` : eq(p.status, 'confirmed')
@@ -157,24 +160,16 @@ export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly numbe
       'relationEnterpriseId',${assignment.enterpriseId},'relationStatus',${assignment.verificationStatus},'relationUscc',${refValue('relation', 'usccRaw')},
       'ownerId',${enterprise.id},'ownerUscc',${enterprise.usccNorm},'targetId',${target.id},'targetUscc',${target.usccNorm},'targetTitle',${title.code})
     END`.as('attribution'),
-    proof: sql`CASE WHEN ${and(eq(p.status, 'confirmed'), eq(p.type, 'recognized_export'), eq(p.role, 'same_current_row'))} THEN json_build_object(
-      'ids',coalesce(p.provenance_json->'comparisonProofIds','[]'::jsonb),
-      'queryId',${query.oldId},'batchId',${exportRow.batchId})
-    END`.as('proof'),
   }).from(p).leftJoinLateral(assignment, sql`true`)
-    .leftJoin(query, eq(query.collectionId, sql`(${collection})`))
-    .leftJoin(exportRow, eq(exportRow.id, p.exportRowId))
     .leftJoin(enterprise, eq(enterprise.id, assignment.enterpriseId))
     .leftJoin(target, eq(target.id, p.enterpriseId)).leftJoin(title, eq(title.code, p.titleCode))
     .orderBy(p.id)
   // Drizzle cannot mark a CTE MATERIALIZED. Retain the planner boundary before
   // checking archived byte fields and saved JSON provenance.
   const { rows } = await db.execute<{
-    ref: CorrespondenceRefRow; matches: boolean; attribution: CorrespondenceAttribution | null; proof: ProofReference | null
+    ref: CorrespondenceRefRow; matches: boolean; attribution: CorrespondenceAttribution | null
   }>(sql`WITH p AS MATERIALIZED (${selected}) ${projected}`)
-  const covers = await readPostgresCurrentProofCoverage(db, rows.flatMap(row => row.proof ? [row.proof] : []))
-  return rows.map(({ ref, matches, attribution, proof }) => ({
-    ...ref, requiresRevalidation: !matches || attribution !== null && correspondenceAttributionChanged(attribution)
-      || proof !== null && !covers(proof),
+  return rows.map(({ ref, matches, attribution }) => ({
+    ...ref, requiresRevalidation: !matches || attribution !== null && correspondenceAttributionChanged(attribution),
   }))
 }

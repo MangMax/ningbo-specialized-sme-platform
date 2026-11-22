@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { importBatch, importReceipt } from '../../../../db/postgresql/import-tables'
 import { rosterAnnouncementIntake, rosterAnnouncementMember } from '../../../../db/postgresql/roster-selection-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
@@ -44,16 +44,12 @@ async function qualification(tx: Tx, owners: ReadonlyMap<number, number>): Promi
 }
 
 async function recordSupplementReceipt(tx: Tx, input: {
-  batchId: number; requestHash: string; requestBody: string; status: 'committed' | 'failed'
+  batchId: number; requestHash: string; status: 'committed' | 'failed'
   summary: RosterImportSummary; items: unknown; startedAt: string; completedAt: string
 }) {
-  const { batchId, requestHash, requestBody, status, summary, items, startedAt, completedAt } = input
-  const [owner] = await tx.select({ id: importReceipt.id }).from(importReceipt).where(and(
-    eq(importReceipt.batchId, batchId), eq(importReceipt.requestHash, requestHash),
-    isNull(importReceipt.bodyReceiptId), eq(importReceipt.requestBody, requestBody),
-  )).orderBy(importReceipt.id).limit(1)
+  const { batchId, requestHash, status, summary, items, startedAt, completedAt } = input
   await tx.insert(importReceipt).values({
-    bodyReceiptId: owner?.id ?? null, batchId, operation: 'commit', requestHash, requestBody: owner ? '' : requestBody,
+    batchId, operation: 'commit', requestHash,
     status, summary: JSON.stringify(summary), itemResults: JSON.stringify(items), createdAt: startedAt, completedAt,
   })
 }
@@ -66,7 +62,6 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
   const decision = announcementIntakeDigest(review)
   const redactor = await importPostgresReceiptRedactor(db)
   const requestHash = announcementIntakeDigest({ ...request, sourceSha256: request.sourceSha256 ?? null })
-  const requestBody = JSON.stringify(redactor({ ...request, sourceSha256: request.sourceSha256 ?? null }))
   return runPostgresCorrespondenceTransaction(db, async tx => {
     await lockPostgresRosterImportKey(tx, request.idempotencyKey)
     const row = await readPostgresIntakeRow(tx, id, true)
@@ -153,7 +148,7 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
           summary: JSON.stringify({ ...summary, qualificationReadback: readback }), error: null, committedAt: completedAt,
         }).where(eq(importBatch.id, batchId!))
         const publicItems = publicRosterImportItems(items, batchId!)
-        await recordSupplementReceipt(nested, { batchId: batchId!, requestHash, requestBody, status: 'committed',
+        await recordSupplementReceipt(nested, { batchId: batchId!, requestHash, status: 'committed',
           summary, items: redactor(publicItems), startedAt, completedAt })
         const candidateTaskIds = extra?.summary ? extra.candidateTaskIds : undefined
         const receipt: SupplementAnnouncementResponse = { batchId: batchId!, status: 'supplemented', summary, items: publicItems, error: null,
@@ -174,7 +169,7 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
       await tx.update(importBatch).set({
         status: 'failed', itemResults: JSON.stringify(error.items), summary: JSON.stringify(summary), error: message,
       }).where(eq(importBatch.id, batchId!))
-      await recordSupplementReceipt(tx, { batchId: batchId!, requestHash, requestBody, status: 'failed',
+      await recordSupplementReceipt(tx, { batchId: batchId!, requestHash, status: 'failed',
         summary, items: redactor(items), startedAt, completedAt })
       return { batchId: batchId!, status: 'failed' as const, summary, items, error: message }
     }

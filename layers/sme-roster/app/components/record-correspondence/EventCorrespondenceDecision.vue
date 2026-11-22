@@ -23,7 +23,7 @@ const emit = defineEmits<{ protected: [value: boolean] }>()
 const enabled = useState<boolean | null>('correspondence-browser-capability', () => null)
 onMounted(async () => {
   if (enabled.value !== null) return
-  try { enabled.value = (await $fetch<{ writeEnabled: boolean }>('/api/roster/evidence-review/browser-context')).writeEnabled === true }
+  try { enabled.value = (await $fetch<{ writeEnabled: boolean }>('/api/roster/browser-context')).writeEnabled === true }
   catch { enabled.value = false }
 })
 type Action = 'confirm' | 'reject' | 'unlink' | 'correct' | 'revalidate'
@@ -299,7 +299,7 @@ async function refreshConflict() {
             <p>{{ TITLES[official.record.titleCode] ?? official.record.titleCode }} · {{ eventDecisionText(official) }} · 第 {{ official.batchSeq ?? '未记录' }} 批</p>
             <p class="break-words [overflow-wrap:anywhere]">公布信用代码：{{ official.record.usccRaw ?? '未提供' }}</p>
             <RosterOfficialEvidence v-for="(item, index) in official.evidence" :key="index" :evidence="item" :back="back ?? ''" />
-            <p v-if="!official.evidence.length" class="text-muted-foreground">未记录正式文件出处。</p>
+            <p v-if="!official.evidence.length" class="text-muted-foreground">未记录公布名单出处。</p>
           </section>
           <section class="min-w-0" aria-label="待核平台原行">
             <h3 class="mb-2 text-base font-medium">待核平台原行</h3>

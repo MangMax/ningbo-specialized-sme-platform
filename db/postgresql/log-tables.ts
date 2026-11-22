@@ -33,7 +33,6 @@ export function postgresLogTables(schemaName = 'runtime_logs') {
       fileId: int64('fileId'),
       batchId: text('batchId'),
       resourceId: text('resourceId'),
-      summary: text('summary').notNull(),
       detail: text('detail').notNull(),
     }),
   }

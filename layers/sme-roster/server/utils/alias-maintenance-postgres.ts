@@ -12,7 +12,6 @@ import { lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } fr
 import { normalizeUscc } from '../../lib/domain'
 import { fail as failAlias, parse as parseAliasInput, positiveId as positiveAliasId } from './alias-maintenance-model'
 import { aliasDecisionSchema, aliasListInput, aliasPageInput, boundedAliasPage, decideEnterpriseAlias } from './alias-maintenance-model'
-import { capturePostgresIdentityChange, readPostgresIdentityMaterial } from './postgres-identity-evidence'
 
 type Db = NodePgDatabase
 type Alias = Parameters<typeof decideEnterpriseAlias>[0]
@@ -80,7 +79,7 @@ async function checkSource(db: Db, alias: Alias) {
       .innerJoin(sourceDocument, eq(sourceDocument.path, recordEvidence.sourceFile))
       .where(and(eq(sourceDocument.id, sourceRefId), eq(sourceDocument.source, 'jxj'), eq(record.enterpriseId, enterpriseId),
         eq(record.nameRaw, name))).limit(1)
-    if (!rows.length) failAlias(400, 'alias_source_evidence_mismatch', '公布文件ID必须由该企业同原名称的记录出处支持')
+    if (!rows.length) failAlias(400, 'alias_source_evidence_mismatch', '公布名单原件的 ID 必须由该企业同原名称的记录出处支持')
     return
   }
   const original = pgAlias(assignment, 'original')
@@ -144,7 +143,6 @@ export function maintainPostgresEnterpriseAlias(db: Db, enterpriseId: unknown, a
       await checkSource(tx, next)
       await checkConflict(tx, next)
     }
-    const identity = await readPostgresIdentityMaterial(tx, owner)
     const [updated] = await tx.update(aliases).set({
       name: next.name, nameNorm: next.nameNorm, sourceKind: next.sourceKind, sourceRefId: next.sourceRefId,
       validFrom: next.validFrom, validTo: next.validTo, note: next.note, verificationStatus: next.verificationStatus,
@@ -158,7 +156,6 @@ export function maintainPostgresEnterpriseAlias(db: Db, enterpriseId: unknown, a
       idempotencyKey: request.idempotencyKey, requestHash, before: JSON.stringify(before), after: JSON.stringify(alias),
       createdAt: new Date().toISOString(),
     })
-    await capturePostgresIdentityChange(tx, owner, `alias:${before.id}:${alias.version}`, identity)
     return { alias, replayed: false }
   })
 }

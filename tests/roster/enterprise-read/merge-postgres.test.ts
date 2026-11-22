@@ -172,8 +172,6 @@ it.skipIf(!url)('deduplicates equal aliases and differences while retaining orig
     expect((await tx.execute(sql`SELECT enterprise_id,event_id,revision,target_identity,provenance,source_fingerprint
       FROM record_correspondence WHERE id=7901`)).rows).toEqual([{ enterprise_id: '7002', event_id: '7201', revision: '2',
       target_identity: ' original identity ', provenance: ' original provenance ', source_fingerprint: ' source fingerprint ' }])
-    expect((await tx.execute(sql`SELECT enterprise_id,metadata FROM evidence_revision_113 WHERE source_key='identity:merge:7001:7002'`)).rows)
-      .toEqual([{ enterprise_id: '7002', metadata: JSON.stringify({ fromEnterpriseId: 7001 }) }])
   })
 })
 
@@ -236,8 +234,6 @@ it.skipIf(!url)('rolls back merge lineage, membership and ownership with the cal
       throw laterItemFailure
     })).rejects.toBe(laterItemFailure)
     expect(await postgresCanonicalEnterpriseId(tx, 7001)).toBe(7001)
-    expect((await tx.execute(sql`SELECT enterprise_id,source_key FROM evidence_revision_113 WHERE source_key='identity:merge:7001:7002'`)).rows)
-      .toEqual([])
     expect((await tx.execute(sql`SELECT enterprise_id FROM roster_legacy_member WHERE enterprise_id IN (7001,7002)`)).rows)
       .toEqual([{ enterprise_id: '7001' }])
     expect((await tx.execute(sql`SELECT record_id FROM record_event WHERE id=7201`)).rows).toEqual([{ record_id: '7101' }])

@@ -202,7 +202,7 @@ describe('任务种类注册表', () => {
   it('启动登记完整任务目录，可重复调用且保留已登记的 spec', () => {
     registerJobSpecs()
     const kinds = jobSpecs()
-    expect(kinds.map((s) => s.kind)).toEqual(['current-roster-export', 'difference-snapshot', 'event-annual-correspondence', 'event-archive-candidates', 'lead-lists-version-export', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages', 'roster_export_cleanup'])
+    expect(kinds.map((s) => s.kind)).toEqual(['current-roster-export', 'difference-snapshot', 'event-annual-correspondence', 'event-archive-candidates', 'lead-lists-version-export', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages', 'roster_export_cleanup', 'roster_task_history_cleanup'])
     for (const k of ['render-pages', 'ocr', 'reconcile']) {
       expect(getJobSpec(k)!.status).toBe('ready')
       expect(getJobSpec(k)!.postgres?.run).toBeTypeOf('function')

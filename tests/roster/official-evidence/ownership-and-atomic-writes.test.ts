@@ -374,7 +374,7 @@ it('preserves old observation raw hash proof decisions and audit while changing 
   const relationId = native.relationIds[0]!
   f.db.insert(schema.recordCorrespondence).values({ edgeKey: 'synthetic-old-edge', type: 'event_process', role: 'context_only', eventId: 1, observationId: native.observations[0]!.observationId, enterpriseId: 1, titleCode: 'specialized_sme', status: 'confirmed', revision: 7, targetIdentity: { old: true }, provenance: { relationId, observation: 'original' }, sourceFingerprint: 'original-hash-not-recomputed', ruleId: 'manual', ruleVersion: 'old', createdAt: '2021-01-01' }).run()
   f.db.insert(schema.comparisonScopeProof).values({ kind: 'official_coverage', evidence: { eventIds: [1], original: true }, sourceFingerprint: 'original-proof-hash', createdAt: '2021-01-01' }).run()
-  const tables = ['platform_collection', 'platform_business_observation', 'platform_observation_assignment', 'platform_archive_value', 'platform_collection_archive_ref', 'platform_observation_archive_ref', 'record_correspondence', 'record_correspondence_audit', 'comparison_scope_proof', 'comparison_scope_proof_audit']
+  const tables = ['platform_collection', 'platform_business_observation', 'platform_observation_assignment', 'platform_archive_value', 'platform_collection_archive_ref', 'platform_observation_archive_ref', 'record_correspondence', 'record_correspondence_audit']
   const snapshot = () => Object.fromEntries(tables.map(table => [table, f.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]))
   const before = snapshot()
   await f.commit(f.request({ officialEvidenceCorrections: { actor: { type: 'agent', id: 'synthetic' }, basis: 'Verified original', operations: [f.correction(1, f.row({ nameRaw: 'Explicit corrected original' }))] } }))

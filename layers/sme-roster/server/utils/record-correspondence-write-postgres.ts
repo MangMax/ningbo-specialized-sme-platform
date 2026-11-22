@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { and, eq, getTableColumns, inArray, or, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
@@ -14,6 +15,15 @@ type Batch = {
   plan: (CorrespondencePlan & { requestHash: string }) | null; receipt: CorrespondenceReceipt | null
 }
 const fail = (code: CorrespondenceError['code'], message: string): never => { throw new CorrespondenceError(code, message) }
+
+function storedProvenance(provenance: Record<string, unknown>, audit = false) {
+  const query = provenance.query
+  if (!query || typeof query !== 'object') return provenance
+  const { rawResponse, rawResponseSha256, ...source } = query as Record<string, unknown>
+  if (audit) return { ...provenance, query: source }
+  const hash = typeof rawResponse === 'string' ? createHash('sha256').update(rawResponse).digest('hex') : rawResponseSha256
+  return { ...provenance, query: { ...source, ...(hash === undefined ? {} : { rawResponseSha256: hash }) } }
+}
 
 export async function runPostgresCorrespondenceTransaction<T>(
   db: NodePgDatabase, run: (tx: Tx) => Promise<T>, retryDelays: readonly number[] = [0, 0],
@@ -62,17 +72,7 @@ async function loadPlan(tx: Tx, request: CorrespondenceRequest, lock: boolean) {
   const stored = await (lock ? query.for('update', { of: edge }) : query)
   const byId = new Map(stored.map(row => [row.id, row]))
   const byEdge = new Map(stored.map(row => [row.edgeKey, row]))
-  const proofs = request.operations.flatMap(op => {
-    if ('edge' in op && op.edge.type === 'recognized_export') return [{
-      relationId: op.edge.relationId, exportRowId: op.edge.exportRowId, ids: request.proofIds ?? [],
-    }]
-    if (op.action !== 'decide' || op.status !== 'confirmed') return []
-    const row = byId.get(op.correspondenceId)
-    return row?.type === 'recognized_export' && row.relationId !== null && row.exportRowId !== null
-      ? [{ relationId: row.relationId, exportRowId: row.exportRowId, ids: request.proofIds ?? row.provenance.comparisonProofIds as number[] ?? [] }]
-      : []
-  })
-  const observed = await observePostgresCorrespondences(tx, requestedCorrespondenceSources(request, stored), proofs)
+  const observed = await observePostgresCorrespondences(tx, requestedCorrespondenceSources(request, stored))
   const lookup = { byId: (id: number) => byId.get(id), byEdge: (key: string) => byEdge.get(key) }
   return { lookup, observed, plan: buildRecordCorrespondencePlan(lookup, request, observed) }
 }
@@ -123,7 +123,7 @@ async function commitInTransaction(tx: Tx, request: CorrespondenceRequest, planH
     if (mutation.type === 'insert') {
       const { targetIdentity, provenance, ...changes } = mutation.changes
       const [created] = await tx.insert(edge).values({
-        ...changes, targetIdentity: JSON.stringify(targetIdentity), provenance: JSON.stringify(provenance),
+        ...changes, targetIdentity: JSON.stringify(targetIdentity), provenance: JSON.stringify(storedProvenance(provenance)),
       }).returning({ id: edge.id })
       id = created!.id
     } else {
@@ -132,7 +132,7 @@ async function commitInTransaction(tx: Tx, request: CorrespondenceRequest, planH
       const result = await tx.update(edge).set({
         ...changes,
         targetIdentity: targetIdentity === undefined ? undefined : JSON.stringify(targetIdentity),
-        provenance: provenance === undefined ? undefined : JSON.stringify(provenance),
+        provenance: provenance === undefined ? undefined : JSON.stringify(storedProvenance(provenance)),
       }).where(and(
         eq(edge.id, id), eq(edge.revision, mutation.row.revision),
         mutation.candidateOnly ? eq(edge.status, 'candidate') : undefined,
@@ -140,7 +140,7 @@ async function commitInTransaction(tx: Tx, request: CorrespondenceRequest, planH
       if (result.rowCount !== 1) return fail('stale_revision', 'Correspondence revision changed')
     }
     for (const { evidence, ...audit } of mutation.audits) {
-      await tx.insert(recordCorrespondenceAudit).values({ ...audit, evidence: JSON.stringify(evidence), correspondenceId: id })
+      await tx.insert(recordCorrespondenceAudit).values({ ...audit, evidence: JSON.stringify(storedProvenance(evidence, true)), correspondenceId: id })
     }
     correspondenceIds.push(id)
   }

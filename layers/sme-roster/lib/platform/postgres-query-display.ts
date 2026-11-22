@@ -23,6 +23,7 @@ import { BUSINESS_STATUS_V1, BUSINESS_STATUS_V2 } from '../../../../db/business-
 import { MAX_FULL_QUERY_BYTES, assertPlatformFullReadBudget } from './evidence-contract'
 import { legacySourcePositionForSequence, type LegacyProvenanceDisplay } from './legacy-provenance'
 import { legacyEnvelopeCollection, readPlatformArchiveBytes } from './postgres-evidence-read'
+import { postgresObservationSnapshot } from './postgres-observation-snapshot'
 import type { PlatformQueryRow } from './read'
 import { sourcePositionForSequence } from './recognized-evidence'
 import { snapshotSchema } from './evidence-snapshot-model'
@@ -115,7 +116,7 @@ export async function readPostgresDisplayRows<T extends DisplayQuery>(db: Reader
     owner: observation.collectionId,
     bytes: sql<number>`sum(1024 + coalesce(octet_length(${enterprise.name}),0) + coalesce(
       (SELECT sum(length(cell.value->>'hex')/2)
-       FROM json_array_elements(convert_from(${archiveValue.bytes},'UTF8')::json->'fields') AS cell(value)
+       FROM json_array_elements(convert_from(${postgresObservationSnapshot(observation.id, archiveValue.bytes)},'UTF8')::json->'fields') AS cell(value)
        WHERE cell.value->>'name' = ANY(${sql.param(byteBudgetCells)}::text[])),0))`.mapWith(Number),
   }).from(observation)
     .innerJoin(observationRef, and(eq(observationRef.ownerId, observation.id), eq(observationRef.field, 'legacyRowSnapshot')))
@@ -174,8 +175,9 @@ export async function readPostgresDisplayRows<T extends DisplayQuery>(db: Reader
   const relationArchives = await db.select({
     owner: observationRef.ownerId, field: observationRef.field, sealed: observationRef.sealed,
     // Drizzle 0.45 has no CASE expression. Transfer bytes only for the two fields consumed here.
-    bytes: sql<Buffer | null>`CASE WHEN ${inArray(observationRef.field, ['rawFields', 'legacyRowSnapshot'])}
-      THEN ${archiveValue.bytes} END`,
+    bytes: sql<Buffer | null>`CASE ${observationRef.field}
+      WHEN 'rawFields' THEN ${archiveValue.bytes}
+      WHEN 'legacyRowSnapshot' THEN ${postgresObservationSnapshot(observationRef.ownerId, archiveValue.bytes)} END`,
   }).from(observationRef).innerJoin(archiveValue, eq(archiveValue.id, observationRef.archiveId))
     .where(inArray(observationRef.ownerId, observationRows.map(row => row.observationId)))
   const byObservation = Map.groupBy(relationArchives, ref => String(ref.owner))

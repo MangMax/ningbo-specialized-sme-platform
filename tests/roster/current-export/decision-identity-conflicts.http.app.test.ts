@@ -1,3 +1,4 @@
+import { seedRetiredEvidenceState } from '../fixtures/retired-evidence-state'
 import { syntheticRecognizedQuery } from '../fixtures/recognized-source'
 import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
@@ -18,11 +19,6 @@ let serial=0
 const actor={type:'agent',id:'synthetic-pr138-review'}
 const scope=(id:number,direction: 'extra_in_miit'|'missing_in_miit' = 'extra_in_miit', titleCode: CurrentTitle = 'specialized_sme')=>({enterpriseId:id,titleCode,direction})
 async function api(body:unknown){const r=await fetch(f.url('/api/roster/decision-lifecycle/commands'),{method:'POST',headers:f.headers,body:JSON.stringify(body)});return {status:r.status,body:await r.json()}}
-async function review(id:number,version:number,direction: 'extra_in_miit'|'missing_in_miit' = 'extra_in_miit'){
-  const token=await f.reviewToken(scope(id,direction),version)
-  const r=await api({...scope(id,direction),action:'maintain',expectedCurrentId:version,idempotencyKey:'pr138-review-'+(++serial),actor,basis:'Synthetic explicit review',ruleVersion:'synthetic-pr138',effectiveAt:`${year-1}-01-01T00:00:00Z`,reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:true}})
-  expect(r.status,JSON.stringify(r.body)).toBe(200)
-}
 async function source(id:number,raw?:string,assigned=true){
   const e=f.identity(id)
   const native=await seedPostgresPlatformQuery(f.db,{interface:'business_list',queryKey:e.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:new Date(Date.now()+(++serial)).toISOString(),status:'success',rawResponse:'Synthetic process source',relations:[{enterpriseId:assigned?id:null,sequenceNo:1,usccRaw:raw?.trim()??e.usccNorm,nameRaw:e.name,rawFields:{id:'PR138-'+serial,qymc:e.name,tyshxydm:raw??e.usccNorm},verificationStatus:assigned?'confirmed':'pending',matchBasis:'uscc'}]})
@@ -44,7 +40,7 @@ it('rejects bound source identity conflicts without creating decision history',a
 })
 it('keeps later conflicting observations separate from retained decision audit',async()=>{
   const c=await candidate('Historical source conflict',[]),{result,r}=await inbound(c.enterprise.id)
-  expect(result.status).toBe(200);await review(c.enterprise.id,result.body.versionId)
+  expect(result.status).toBe(200);await seedRetiredEvidenceState(f.db, result.body.versionId)
   // Append the new source observation; the original binding remains immutable.
   const correction=await source(c.enterprise.id,'91330110MA2GMDFH58',false)
   expect(correction.r.id).not.toBe(r.id)
@@ -60,10 +56,10 @@ it('admits independently confirmed inbound qualification despite unrelated diagn
   for(const kind of ['other','unknown','identity','subject'] as const){
     const c=await candidate('Sticky inbound blocker '+kind,kind==='identity'?[{eventType:'award',year:year-6,batchSeq:1}]:[])
     if(kind==='identity')await f.query('update business.record set uscc_raw=$1 where id=$2',['91330110MA2GMDFH58',c.record.id])
-    const {result}=await inbound(c.enterprise.id);expect(result.status).toBe(200);await review(c.enterprise.id,result.body.versionId)
+    const {result}=await inbound(c.enterprise.id);expect(result.status).toBe(200);await seedRetiredEvidenceState(f.db, result.body.versionId)
     if(kind==='other'||kind==='unknown'){
       const d=await f.decision(c.enterprise.id,'other',{direction:'missing_in_miit',...(kind==='unknown'?{lifecycleAction:null}:{}),reasonNote:'Unresolved qualification evidence; no automatic text interpretation'})
-      if(kind==='other')await review(c.enterprise.id,d.id,'missing_in_miit')
+      if(kind==='other')await seedRetiredEvidenceState(f.db, d.id)
     }
     if(kind==='subject')await f.decision(c.enterprise.id,'moved_out',{titleCode:'little_giant',verificationStatus:'pending'})
     ids.push(c.enterprise.id)
@@ -73,7 +69,7 @@ it('admits independently confirmed inbound qualification despite unrelated diagn
 },60000)
 it('preserves expired formal grant despite a later platform period',async()=>{
   const c=await candidate('Historical local returning enterprise',[{eventType:'award',year:year-6,batchSeq:1}])
-  const {result}=await inbound(c.enterprise.id);expect(result.status).toBe(200);await review(c.enterprise.id,result.body.versionId)
+  const {result}=await inbound(c.enterprise.id);expect(result.status).toBe(200);await seedRetiredEvidenceState(f.db, result.body.versionId)
   const {wb}=await f.workbook('pr138-returning-history'),actual=occurrences(wb,c.enterprise.id)
   expect(actual.map(x=>x.sheet)).toEqual(['已到期'])
   expect(actual[0]!.row[7]).toContain('年第1批认定')
@@ -92,7 +88,7 @@ it('keeps formal failures and undated grants in the expired sheet despite inboun
     {id:'unknown review cycle',events:[{eventType:'award',year:year-6,batchSeq:1},{eventType:'review',year:null,decidedYear:year,reviewOutcome:'failed',batchSeq:null}]},
   ] as const
   const ids:number[]=[]
-  for(const cse of cases){const c=await candidate('Inbound formal boundary '+cse.id,[...cse.events] as any);const {result}=await inbound(c.enterprise.id);expect(result.status).toBe(200);await review(c.enterprise.id,result.body.versionId);ids.push(c.enterprise.id)}
+  for(const cse of cases){const c=await candidate('Inbound formal boundary '+cse.id,[...cse.events] as any);const {result}=await inbound(c.enterprise.id);expect(result.status).toBe(200);await seedRetiredEvidenceState(f.db, result.body.versionId);ids.push(c.enterprise.id)}
   const {wb}=await f.workbook('pr138-formal-boundaries')
   for(const id of ids)expect.soft(occurrences(wb,id).map(x=>x.sheet)).toEqual(['已到期'])
 },60000)
@@ -100,7 +96,7 @@ it('separates earlier failures from same year and later formal failure conflicts
   const expected:Array<[number,string]>=[]
   for(const [label,failureYear,awardYear] of [['later',year-2,year-1],['unknown-origin-later',year-2,year-1],['same-year',year-1,year-1],['later-failure',year,year-1]] as const){
     const c=await candidate('Explicit external recovery '+label,[{eventType:'award',year:year-6,batchSeq:1},{eventType:'review',year:label==='unknown-origin-later'?null:year-6,decidedYear:failureYear,reviewOutcome:'failed',batchSeq:null}])
-    const {result}=await inbound(c.enterprise.id,{awardYear});expect(result.status,JSON.stringify(result.body)).toBe(200);await review(c.enterprise.id,result.body.versionId);expected.push([c.enterprise.id,'已到期'])
+    const {result}=await inbound(c.enterprise.id,{awardYear});expect(result.status,JSON.stringify(result.body)).toBe(200);await seedRetiredEvidenceState(f.db, result.body.versionId);expected.push([c.enterprise.id,'已到期'])
   }
   const {wb}=await f.workbook('pr138-explicit-reaward')
   for(const [id,group] of expected)expect(occurrences(wb,id).map(x=>x.sheet)).toEqual([group])
@@ -126,7 +122,7 @@ it('rejects future reaward assertions and keeps unrelated title qualification ga
   const rejected=await inbound(c.enterprise.id,{awardYear:year+1})
   expect(rejected.result.status).toBe(400)
   const {result}=await inbound(c.enterprise.id)
-  expect(result.status).toBe(200);await review(c.enterprise.id,result.body.versionId)
+  expect(result.status).toBe(200);await seedRetiredEvidenceState(f.db, result.body.versionId)
   await f.decision(c.enterprise.id,'other',{titleCode:'little_giant',direction:'missing_in_miit'})
   const {wb}=await f.workbook('pr138-title-gap-scope')
   expect(occurrences(wb,c.enterprise.id).map(x=>x.sheet)).toEqual(['有效企业'])
@@ -134,7 +130,7 @@ it('rejects future reaward assertions and keeps unrelated title qualification ga
 
 it('keeps later pending observations separate from reviewed inbound history',async()=>{
   const c=await candidate('Unconfirmed historical source',[]),{result,r}=await inbound(c.enterprise.id)
-  expect(result.status).toBe(200);await review(c.enterprise.id,result.body.versionId)
+  expect(result.status).toBe(200);await seedRetiredEvidenceState(f.db, result.body.versionId)
   const next=await source(c.enterprise.id,undefined,false)
   expect(next.r.id).not.toBe(r.id)
   const {wb}=await f.workbook('pr138-source-confirmation-defense')
@@ -143,7 +139,7 @@ it('keeps later pending observations separate from reviewed inbound history',asy
 it('preserves a later definite formal qualification when the inbound interval belongs to older history',async()=>{
   const c=await candidate('Later definite local award',[{eventType:'award',year,batchSeq:1}])
   const {result}=await inbound(c.enterprise.id)
-  expect(result.status).toBe(200);await review(c.enterprise.id,result.body.versionId)
+  expect(result.status).toBe(200);await seedRetiredEvidenceState(f.db, result.body.versionId)
   const {wb}=await f.workbook('pr138-later-definite-local-control'),actual=occurrences(wb,c.enterprise.id)
   expect(actual.map(x=>x.sheet)).toEqual(['有效企业'])
   expect(actual[0]!.row[7]).toContain('年第1批认定')
@@ -162,9 +158,7 @@ it.each(CURRENT_TITLES)('keeps a later formal failure excluded after an expired 
   const sc=scope(c.enterprise.id,'extra_in_miit',titleCode)
   const result=await api({...sc,action:'replace',expectedCurrentId:null,idempotencyKey:'pr138-expired-'+(++serial),actor,basis:'Synthetic verified historical migration and expired grant',ruleVersion:'synthetic-pr138',effectiveAt:`${year-1}-01-01T00:00:00Z`,decision:{status:'confirmed_reason',reasonCode:'moved_in',measureCode:'record_moved_in',verificationStatus:'confirmed',evidenceQueryId:q.id,evidenceRelationId:r.id,currentQualification:{titleCode,awardYear:year-6,validFrom:`${year-6}-01-01T00:00:00Z`,validUntil:`${year-3}-01-01T00:00:00Z`,basis:'Synthetic expired external grant retained for audit',publicationCheck:{status:'not_found',scope:'Historical grant scope only'}}}})
   expect(result.status,JSON.stringify(result.body)).toBe(200)
-  const token=await f.reviewToken(sc,result.body.versionId)
-  const maintained=await api({...sc,action:'maintain',expectedCurrentId:result.body.versionId,idempotencyKey:'pr138-expired-review-'+(++serial),actor,basis:'Synthetic explicit review of historical evidence',ruleVersion:'synthetic-pr138',effectiveAt:`${year-1}-01-01T00:00:00Z`,reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:true}})
-  expect(maintained.status,JSON.stringify(maintained.body)).toBe(200)
+  await seedRetiredEvidenceState(f.db, result.body.versionId)
   const auditBefore=(await f.query('select * from business.difference_reason where enterprise_id=$1 order by id',[c.enterprise.id])).rows
   const eventsBefore=(await f.query('select * from business.record_event where record_id=$1 order by id',[c.record.id])).rows
   const {wb}=await f.workbook('pr138-expired-export-'+titleCode,titleCode),actual=occurrences(wb,c.enterprise.id)
@@ -187,7 +181,7 @@ it.each(['not_found','not_checked'] as const)('keeps a formal failure excluded d
   ])
   const {result}=await inbound(c.enterprise.id,{publicationCheck:{status,scope:'Synthetic current assertion; publication scope recorded explicitly'}})
   expect(result.status,JSON.stringify(result.body)).toBe(200)
-  await review(c.enterprise.id,result.body.versionId)
+  await seedRetiredEvidenceState(f.db, result.body.versionId)
   const {wb}=await f.workbook('pr138-current-unresolved-'+status),actual=occurrences(wb,c.enterprise.id)
   expect(actual.map(x=>x.sheet)).toEqual(['已到期'])
   expect(actual[0]!.row[11]??'').not.toContain('日期顺序尚未消解')

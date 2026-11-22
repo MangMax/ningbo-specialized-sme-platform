@@ -30,7 +30,14 @@ node upgrade/postgresql/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA 
 
 ## 初始化 PostgreSQL 结构
 
-重建数据库时，先生成业务与日志的已对账暂存 schema，再按以下顺序在隔离数据库运行。第一条命令创建 `business` schema，存在同名 schema 时中止。
+新建开发或测试库时，先用 PostgreSQL 19 创建 UTF-8 数据库。下面的命令用当前连接角色在同一事务中创建 `business`、`runtime_logs` 与运行所需的字典和日志策略。该角色需要创建 schema 和安装 `pg_trgm` 的权限。已有同名运行 schema 时整笔事务回滚。
+
+```sh
+PGHOST=/path/to/isolated/socket PGDATABASE=roster PGUSER=fixture \
+  PGSQL_BIN=/path/to/postgresql19/bin pnpm db:init
+```
+
+从 SQLite 历史快照恢复数据时，先生成业务与日志的已对账暂存 schema，再按以下顺序在隔离数据库运行。第一条命令创建 `business` schema，存在同名 schema 时中止。
 
 ```sh
 psql -X -w -v staging=staged_business -f upgrade/postgresql/materialize-enterprise-directory.sql
@@ -43,11 +50,27 @@ psql -X -w -v staging=staged_logs -f upgrade/postgresql/materialize-runtime-logs
 
 早期隔离副本若已物化 `business.job` 但缺少任务运行字段，可单独执行 [install-job-runtime.sql](../../upgrade/postgresql/install-job-runtime.sql)。
 
-升级已有 PostgreSQL 库时，先在目标库执行 [install-official-evidence-raw-text.sql](../../upgrade/postgresql/install-official-evidence-raw-text.sql)，再启动新版服务。脚本可重跑，保留已有出处原值。新版服务用三个可空 JSON 字符串列保存含 U+0000 的公布名称、信用代码和属地原值，普通数据沿用原有列。用早期转换脚本建立的 SQLite 暂存 schema 需要从同一源快照重新生成，以包含这三个原值的可逆表示。
+升级早期 PostgreSQL 物化库时，用 [install-official-evidence-raw-text.sql](../../upgrade/postgresql/install-official-evidence-raw-text.sql) 保留含 U+0000 的公布名称、信用代码和属地原值。
+
+## 已有 PostgreSQL 库的数据精简
+
+停止应用及后台任务并完成完整备份后，先在恢复的隔离副本执行同一顺序的迁移。
+
+```sh
+psql -X -w -f upgrade/postgresql/apply-data-compaction.sql
+```
+
+- 成功的健康探针和任务轮询不进入日志，失败仍保留。日志每条仅保存一份事件，列表从同一事件投影。
+- 平台归档保留来源 ID、字节证据和资格指纹。删去重复版本原文，并精简空查询条件与可从封存原档逐字节还原的快照字段。
+- 候选按需生成。迁移仅清除从未人工裁决的自动候选及专属回执。对应关系保留来源摘要、校验值及人工审计。导入回执保留请求哈希和执行结果。公布名单收件保留来源载荷。
+- 平台批量查询的任务记录只保存执行摘要。逐项结果的分页、历史失败及原始记录保存在平台模块，读取和续跑使用同一检查点。候选发现和年度核对的终态任务每天清理超过七天的记录。
+- 差异决定保留历史证据有效性。旧复核回执用于重放、归并及历史资格读取。退役范围证明前确认不存在证明、证明审计或接口与导出对应的确认历史。
+
+迁移成功后通过备份恢复或表重写回收空间。使用同一副本比较资格、导出以及文件原件，保留迁移前备份供恢复演练。
 
 恢复演练比较 `business` 与 `runtime_logs` 的主键顺序二进制内容及序列高水位。恢复目标需预装 `pg_trgm`。
 
-运行日志可在隔离应用设置 `NUXT_POSTGRES_LOG_URL`，连接同一数据库内的 `runtime_logs`，使用独立连接池。容量以已存摘要与详情 JSON 的 UTF-8 字节数计，排除索引、副本筛选列、数据库物理开销和 stdout。写入、保留清理与策略修改通过固定策略行协调，事务内同时维护容量计数；旧日志的原始 JSON 与模块空值保留。
+运行日志可在隔离应用设置 `NUXT_POSTGRES_LOG_URL`，连接同一数据库内的 `runtime_logs`，使用独立连接池。容量以每条已存事件 JSON 的 UTF-8 字节数计，排除索引、副本筛选列、数据库物理开销和 stdout。写入、保留清理与策略修改通过固定策略行协调，事务内同时维护容量计数；旧日志的原始 JSON 与模块空值保留。
 
 ## PostgreSQL 单库启动与恢复演练
 

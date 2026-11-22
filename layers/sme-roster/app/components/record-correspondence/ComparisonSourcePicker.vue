@@ -62,7 +62,7 @@ const layoutReady = computed(() => !loading.value && hydratedKey.value === selec
 watch([selectionKey, layoutReady], ([key, ready]) => emit('settled', key, ready), { immediate: true, flush: 'post' })
 const keyOf = (source: Pick<ComparisonSource, 'kind' | 'id'>) => `${source.kind}:${source.id}`
 const groups: { kind: ComparisonSourceKind; label: string; shortLabel: string }[] = [
-  { kind: 'official_document', label: '正式公布文件', shortLabel: '正式文件' },
+  { kind: 'official_document', label: '公布名单', shortLabel: '公布名单' },
   { kind: 'query', label: '平台查询', shortLabel: '平台查询' },
   { kind: 'export_batch', label: '平台导出版本', shortLabel: '导出版本' },
 ]
@@ -70,7 +70,7 @@ const selectedItems = computed(() => visibleGroups.value.flatMap(group => props.
 const sourceStatus = (source: ComparisonSource) => source.kind === 'query'
   ? PLATFORM_QUERY_STATUSES[source.status] ?? '状态待核'
   : source.kind === 'export_batch' ? source.status === 'imported' ? '已导入' : '未完成导入'
-  : '正式文件'
+  : '公布名单'
 const sourceNote = (source: ComparisonSource) => source.kind === 'query'
   ? `${source.completeness === 'complete' ? '完整采集' : source.completeness === 'partial' ? '部分采集' : '完整性未知'} · ${source.fullRange ? '从首页查询' : '范围未证实'}${source.conditions?.combination === 'and' ? ' · 条件按且关系' : ''}`
   : source.kind === 'export_batch' ? `原行 ${source.rowCount} 条${source.replacedBatchId ? ' · 替换既有批次' : ''}`
@@ -158,7 +158,7 @@ watch(selectionKey, () => { void hydrateSelectedLabels() }, { immediate: true, f
 
 <template>
   <section class="flex min-w-0 flex-col gap-2" data-testid="record-comparison-source-picker" :aria-label="fixedKind ? `选择${groups.find(group => group.kind === activeKind)?.label ?? '来源'}` : '选择记录级对比来源'">
-    <p v-if="!fixedKind" class="text-muted-foreground text-table">逐项选择正式文件、平台查询和导出版本。选择只限定本次分析范围，不表示文件覆盖完整或两个来源版本相同。</p>
+    <p v-if="!fixedKind" class="text-muted-foreground text-table">逐项选择公布名单、平台查询和导出版本。选择只限定本次分析范围，不表示名单覆盖完整或两个来源版本相同。</p>
     <Tabs v-if="!fixedKind" :model-value="activeKind" @update:model-value="activeKind = $event as ComparisonSourceKind">
       <TabsList class="h-auto w-full flex-wrap justify-start gap-1" aria-label="来源类别"><TabsTrigger v-for="group in groups" :key="group.kind" :value="group.kind">{{ group.label }} · {{ selection[sourceSelectionKey(group.kind)].length }}</TabsTrigger></TabsList>
     </Tabs>

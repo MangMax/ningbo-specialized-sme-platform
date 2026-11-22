@@ -188,7 +188,7 @@ it('refuses to activate a smaller cap until bounded pruning physically satisfies
     expect(pending.status, JSON.stringify({response:pending.body,status:service.status(),elapsedMs:Date.now()-started})).toBe(409)
     expect(pending.body).toMatchObject({error:{code:'policy_capacity_pending'}})
     const unchanged = await service.policy()
-    expect(unchanged).toMatchObject({retentionDays:7,maxBytes:536870912,revision:0,collection:{integrations:{application:{enabled:true,minLevel:'debug'}}}})
+    expect(unchanged).toMatchObject({retentionDays:7,maxBytes:536870912,revision:0,collection:{integrations:{application:{enabled:true,minLevel:'info'}}}})
     expect(unchanged.fieldControls).toEqual(before.fieldControls)
     expect(unchanged.pruned).toBe(32000)
     expect(db.prepare('SELECT count(*) AS n FROM log_events').get()).toEqual({n:1280})
@@ -196,7 +196,7 @@ it('refuses to activate a smaller cap until bounded pruning physically satisfies
     expect(unchanged.storageBytes).toBeGreaterThan(1048576 / 3)
     const applied=await dispatchLogAction(service,'setPolicy',{retentionDays:7,maxBytes:1048576},true)
     expect(applied.status).toBe(200)
-    expect(await service.policy()).toMatchObject({maxBytes:1048576,revision:1,collection:{integrations:{application:{enabled:true,minLevel:'debug'}}}})
+    expect(await service.policy()).toMatchObject({maxBytes:1048576,revision:1,collection:{integrations:{application:{enabled:true,minLevel:'info'}}}})
     expect((await service.policy()).storageBytes).toBeLessThanOrEqual(1048576)
   } finally { db.close() }
 }, 30000)

@@ -2,8 +2,9 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise as enterpriseTable } from '../../../../../db/postgresql/enterprise-tables'
-import { evidenceReviewReceipt114, evidenceScopeVersion113, explanationImpact113 } from '../../../../../db/postgresql/evidence-review-tables'
+import { evidenceReviewReceipt114 } from '../../../../../db/postgresql/evidence-review-tables'
 import { enterpriseFactRevision } from '../../../../../db/postgresql/qualification-tables'
+import { platformArchiveValue, platformVersionArchiveRef } from '../../../../../db/postgresql/platform-archive-tables'
 import { differenceReason } from '../../../../../db/postgresql/roster-selection-tables'
 import {
   platformBusinessObservation, platformBusinessRecordVersion, platformCollection, platformLegacyQueryAlias, platformObservationAssignment,
@@ -11,11 +12,9 @@ import {
 import type * as schema from '../../../../../db/schema'
 import { decodePostgresExactCell } from '../../../../../db/postgresql/exact-cell'
 import { readPostgresDifferenceObservations } from '../../../lib/platform/difference-sources-postgres'
-import { readPostgresEvidenceImpacts113 } from '../../../lib/roster/query-assessment-postgres'
 import { readPostgresCollectionScopes } from '../../../lib/roster/query-coverage-postgres'
 import { postgresRosterRow } from '../../../lib/roster/postgres-rows'
 import { checkDecisionFact102, checkDecisionHead102, checkDecisionPriorTime102, checkDecisionQuery102, checkDecisionRelation102, decisionContent102, DecisionError102, decisionReceipt102, decisionRequestHash102, decisionValues102, internalDecisionCommand102, parse102, qualificationCommit102, qualificationPlanHash, qualificationPlanRule, qualificationPreflight102, type DecisionCommand102 } from '../decision-lifecycle-102/contract'
-import { evidenceKeys113 } from '../evidence-impact-model'
 import { readPostgresDecisionHead102, requirePostgresDecisionEnterprise } from './postgres-reads'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -43,10 +42,7 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins:
   const owner = await requirePostgresDecisionEnterprise(tx, command.enterpriseId)
   const enterprise = { id: owner.id, usccNorm: owner.usccNorm, nameNorm: owner.nameNorm }
   const previous = await readPostgresDecisionHead102(tx, command)
-  const token = command.reviewedEvidence ? (await readPostgresEvidenceImpacts113(tx, [{
-    scope: command, decisionId: null, latestDecisionId: previous?.id ?? null,
-  }]))[0]!.token : undefined
-  checkDecisionHead102(command, previous, token)
+  checkDecisionHead102(command, previous)
   const d = decisionContent102(command)
   const refs = d.factReferences ?? []
   const fact = alias(enterpriseFactRevision, 'p')
@@ -74,9 +70,16 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins:
   if (!capturePins) return { previous, d, targetQuery, relation, pins: null }
   const observation = relation ? await readObservationPin(tx, relation.observationId) : null
   const v = alias(platformBusinessRecordVersion, 'p'), assignmentTable = alias(platformObservationAssignment, 'p')
+  const archiveRef = platformVersionArchiveRef, archive = platformArchiveValue
+  // The original text and field order are part of existing qualification plan hashes.
   const version = observation?.versionId ? (await tx.select({
-    row: sql<typeof schema.platformBusinessRecordVersion.$inferSelect>`${postgresRosterRow(platformBusinessRecordVersion, 'p')}`,
-  }).from(v).where(eq(v.id, observation.versionId)))[0]?.row : null
+    row: sql<typeof schema.platformBusinessRecordVersion.$inferSelect>`${postgresRosterRow(platformBusinessRecordVersion, 'p', {
+      canonicalRawJson: sql`convert_from(${archive.bytes}, 'UTF8')`,
+    })}`,
+  }).from(v).innerJoin(archiveRef, and(eq(archiveRef.ownerId, v.id), eq(archiveRef.archiveId, v.canonicalArchiveId),
+    eq(archiveRef.field, 'canonicalRawJson'), eq(archiveRef.sealed, 1)))
+    .innerJoin(archive, and(eq(archive.id, archiveRef.archiveId), eq(archive.storageClass, 'text')))
+    .where(eq(v.id, observation.versionId)))[0]?.row : null
   const assignment = observation ? (await tx.select({
     row: sql<typeof schema.platformObservationAssignment.$inferSelect>`${postgresRosterRow(platformObservationAssignment, 'p')}`,
   }).from(assignmentTable).where(eq(assignmentTable.observationId, observation.id)).orderBy(desc(assignmentTable.revision)).limit(1))[0]?.row : null
@@ -94,35 +97,6 @@ export async function preflightPostgresQualification102(db: NodePgDatabase, inpu
       qualification: command.decision!.currentQualification!, movedIn: command.decision!.movedIn ?? null,
       facts: pins!.facts, source: pins!.relation, latestKnownSourceVersion: pins!.sourceVersions[0] ?? null }
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
-}
-
-async function finishReview(tx: Tx, command: DecisionCommand102, hash: string, result: ReturnType<typeof decisionReceipt102>, previousId: number | null) {
-  if (!command.reviewedEvidence) return result
-  const revisionId = command.reviewedEvidence.latestRevisionId
-  const decisionId = result.versionId
-  const impact = explanationImpact113
-  await tx.insert(impact).values({
-    enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction,
-    decisionId, latestRevisionId: revisionId, pendingSinceRevisionId: revisionId,
-    reviewedRevisionId: revisionId, classification: 'evidence_changed',
-  }).onConflictDoUpdate({
-    target: [impact.enterpriseId, impact.titleCode, impact.direction, impact.decisionId],
-    set: { reviewedRevisionId: revisionId },
-  })
-  if (previousId !== null && previousId !== decisionId) {
-    await tx.update(impact).set({ reviewedRevisionId: revisionId }).where(and(
-      eq(impact.decisionId, previousId), eq(impact.enterpriseId, command.enterpriseId),
-      eq(impact.titleCode, command.titleCode), eq(impact.direction, command.direction),
-    ))
-  }
-  const response = { ...result, reviewedRevisionId: revisionId }
-  await tx.insert(evidenceReviewReceipt114).values({
-    idempotencyKey: command.idempotencyKey, requestHash: hash, kind: command.action,
-    enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction, decisionId,
-    sourceDecisionId: previousId, reviewedRevisionId: revisionId, actor: JSON.stringify(command.actor), basis: command.basis,
-    ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, response: JSON.stringify(response), recordedAt: new Date().toISOString(),
-  })
-  return response
 }
 
 export function savePostgresDecision102(db: NodePgDatabase, input: DecisionCommand102, planHash?: string) {
@@ -146,17 +120,9 @@ export function savePostgresDecision102(db: NodePgDatabase, input: DecisionComma
       return decisionReceipt102(prior)
     }
     await tx.select({ id: enterpriseTable.id }).from(enterpriseTable).where(eq(enterpriseTable.id, command.enterpriseId)).for('update')
-    if (command.reviewedEvidence) {
-      const scope = evidenceScopeVersion113
-      await tx.select({ key: scope.scopeKey }).from(scope)
-        .where(inArray(scope.scopeKey, evidenceKeys113(command))).orderBy(scope.scopeKey).for('update')
-    }
+    if (command.reviewedEvidence || command.action === 'maintain') throw new DecisionError102(422, 'invalid_request', 'Automatic evidence review has been retired')
     const { previous, d, targetQuery, relation, pins } = await prepareDecision(tx, command, !!planHash)
     if (planHash && qualificationPlanHash(command, pins) !== planHash) throw new DecisionError102(409, 'stale_plan', 'Qualification plan changed; preflight again')
-    if (command.action === 'maintain') {
-      const [row] = await tx.select(columns).from(reason).where(eq(reason.id, previous!.id))
-      return finishReview(tx, command, hash, { ...decisionReceipt102(row!), action: 'maintain', recordedAt: new Date().toISOString() }, previous!.id)
-    }
     const value = decisionValues102(command, previous, d, hash)
     const [row] = await tx.insert(reason).values({
       ...value,
@@ -166,7 +132,7 @@ export function savePostgresDecision102(db: NodePgDatabase, input: DecisionComma
       evidenceQueryId: d.evidenceQueryId ? targetQuery!.collection.id : null,
       evidenceRelationId: relation?.observationId ?? null,
     }).returning(columns)
-    return finishReview(tx, command, hash, decisionReceipt102(row!), previous?.id ?? null)
+    return decisionReceipt102(row!)
   })
 }
 

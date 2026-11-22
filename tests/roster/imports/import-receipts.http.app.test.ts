@@ -9,11 +9,12 @@ import { join, resolve } from 'node:path'
 
 import { request as httpRequest } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { desc, eq, sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
 import { importBatch, importReceipt } from '../../../db/postgresql/import-tables'
 import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { rosterAnnouncementIntake } from '../../../db/postgresql/roster-selection-tables'
 import { sourceDocument } from '../../../db/postgresql/official-evidence-tables'
 
 const dir = mkdtempSync(join(tmpdir(), 'spec98-import-receipts-'))
@@ -40,7 +41,7 @@ async function seedReceiptFixture() {
   foreignBatch = foreignRow!
   longLegacy = longRow!
   await db.insert(importReceipt).values({
-    batchId: processing.id, operation: 'commit', requestHash: 'synthetic-hash', requestBody: '{}', status: 'processing', createdAt,
+    batchId: processing.id, operation: 'commit', requestHash: 'synthetic-hash', status: 'processing', createdAt,
   })
   await db.execute(sql`
     CREATE FUNCTION business.synthetic_receipt_rollback() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -97,7 +98,7 @@ async function startService(configured = true) {
   catch (error) { await service.stop(); throw new Error(`${String(error)}\n${output.slice(-8000)}`) }
 }
 beforeAll(async () => {
-  postgres = await postgresRuntimeFixture({ dir })
+  postgres = await postgresRuntimeFixture({ dir, native: true })
   pool = new pg.Pool({ connectionString: postgres.url })
   db = drizzle({ client: pool })
   await seedReceiptFixture()
@@ -118,7 +119,7 @@ describe('import receipts through real HTTP and MCP on isolated PostgreSQL', () 
     expect(response.status).toBe(200)
     expect(response.headers.get('cache-control')).toBe('no-store')
     const body = await response.json()
-    expect(body).toMatchObject({ batchId: legacy.id, idempotencyKey: legacy.idempotencyKey, status: 'preflight', receiptId: null, originalRequest: 'not_retained', itemCount: 0 })
+    expect(body).toMatchObject({ batchId: legacy.id, idempotencyKey: legacy.idempotencyKey, status: 'preflight', receiptId: null, itemCount: 0 })
     expect(body).not.toHaveProperty('items')
     expect(body).not.toHaveProperty('request')
     expect(await (await get(`?idempotencyKey=${encodeURIComponent(legacy.idempotencyKey)}`)).json()).toEqual(body)
@@ -128,7 +129,7 @@ describe('import receipts through real HTTP and MCP on isolated PostgreSQL', () 
   it('bounds legacy metadata and item projections without loading raw result details', async () => {
     const summary = await (await get(`?batchId=${longLegacy.id}`)).json()
     expect(summary.idempotencyKey).toHaveLength(4096)
-    expect(summary).toMatchObject({ sourceIdentityTruncated: true, idempotencyKeyTruncated: true, summary: { written: 1, evidenceRepointed: 0 }, itemCount: 1, originalRequest: 'not_retained' })
+    expect(summary).toMatchObject({ sourceIdentityTruncated: true, idempotencyKeyTruncated: true, summary: { written: 1, evidenceRepointed: 0 }, itemCount: 1 })
     expect(summary.sourceIdentity).toHaveLength(4096)
     const items = await get(`/items?batchId=${longLegacy.id}&pageSize=1`)
     const text = await items.text()
@@ -147,7 +148,7 @@ describe('import receipts through real HTTP and MCP on isolated PostgreSQL', () 
     })
     const selector = `?idempotencyKey=${encodeURIComponent(submitted.idempotencyKey)}`
     const receipt = await (await get(selector)).json()
-    expect(receipt).toMatchObject({ status: 'committed', originalRequest: 'redacted', itemCount: 1, summary: { written: 4, failed: 0 } })
+    expect(receipt).toMatchObject({ status: 'committed', itemCount: 1, summary: { written: 4, failed: 0 } })
     expect(receipt.receiptId).toBeGreaterThan(0)
     expect(value(await rpc('get_roster_import_receipt', { idempotencyKey: submitted.idempotencyKey }))).toEqual(receipt)
     const retry = await post('commit', submitted)
@@ -197,39 +198,22 @@ describe('import receipts through real HTTP and MCP on isolated PostgreSQL', () 
     expect(await (await get(`/items?batchId=${committed.batchId}&page=3&pageSize=2`)).json()).toMatchObject({ total: 3, rows: [] })
     expect(await (await get(`/items?batchId=${legacy.id}`)).json()).toMatchObject({ total: 0, rows: [] })
   })
-  it('reads only explicitly requested redacted UTF8 byte chunks and never defaults to the full request', async () => {
-    const submitted = { ...request('raw-chunks'), payload: { ...request('raw-chunks').payload, externalRaw: { marker: 'RAW_ONLY_103_中文'.repeat(6000), Authorization: 'Bearer FAKE_AUTH_103', cookie: 'FAKE_COOKIE_103', api_key: 'FAKE_KEY_103', echo: apiToken, encoded: encodeURIComponent('{"session":"FAKE_SESSION_103"}'), nested: [{ password: 'FAKE_PASS_103', value: '{"access_token":"FAKE_JSON_TOKEN_103","name":"保留原事实"}' }] } } }
-    expect((await post('preflight', submitted)).status).toBe(200)
+  it('keeps source intake evidence and omits request bodies from receipt readback', async () => {
+    const submitted = request('intake-source-evidence')
+    submitted.payload.announcement.sourceDocument.title = '合成留存来源公告'
+    submitted.payload.announcement.records[0]!.enterprise.name = '合成留存来源企业'
+    const staged = await (await post('commit', submitted)).json()
+    expect(staged).toMatchObject({ status: 'staged' })
     const committed = await supplement(submitted)
     expect(committed.status).toBe('supplemented')
-    const [shared] = await db.select({ body: importReceipt.requestBody, owner: importReceipt.bodyReceiptId })
-      .from(importReceipt).where(eq(importReceipt.batchId, committed.batchId)).orderBy(desc(importReceipt.id)).limit(1)
-    expect(shared!.body).toBe('')
-    expect(shared!.owner).toBeGreaterThan(0)
+    const [intake] = await db.select({ request: rosterAnnouncementIntake.request })
+      .from(rosterAnnouncementIntake).where(eq(rosterAnnouncementIntake.idempotencyKey, submitted.idempotencyKey))
+    expect(JSON.parse(intake!.request)).toMatchObject(submitted)
     const summary = await (await get(`?batchId=${committed.batchId}`)).json()
-    expect(JSON.stringify(summary)).not.toContain('RAW_ONLY_103')
-    expect(summary.originalRequest).toBe('redacted')
-    const firstResponse = await get(`/request?receiptId=${summary.receiptId}&maxBytes=17`)
-    expect(firstResponse.status).toBe(200)
-    const first = await firstResponse.json()
-    expect(first).toMatchObject({ redacted: true, encoding: 'base64', offset: 0, nextOffset: 17 })
-    expect(Buffer.from(first.data, 'base64')).toHaveLength(17)
-    const chunks: Buffer[] = []
-    let offset: number | null = 0
-    while (offset !== null) {
-      const chunk: any = await (await get(`/request?receiptId=${summary.receiptId}&offset=${offset}&maxBytes=65536`)).json()
-      chunks.push(Buffer.from(chunk.data, 'base64'))
-      expect(Buffer.from(chunk.data, 'base64').length).toBeLessThanOrEqual(65536)
-      offset = chunk.nextOffset
-    }
-    const text = Buffer.concat(chunks).toString('utf8')
-    expect(/FAKE_(AUTH|COOKIE|KEY|PASS|JSON_TOKEN|SESSION)_103/.test(text)).toBe(false)
-    expect(text.includes(apiToken)).toBe(false)
-    expect(JSON.parse(text).payload.externalRaw).toMatchObject({ marker: submitted.payload.externalRaw.marker, Authorization: '[REDACTED]', cookie: '[REDACTED]', api_key: '[REDACTED]', nested: [{ password: '[REDACTED]', value: '{"access_token":"[REDACTED]","name":"保留原事实"}' }] })
-    expect(value(await rpc('get_roster_import_request', { receiptId: summary.receiptId, offset: 0, maxBytes: 17 }))).toEqual(first)
-    expect(await (await get(`/request?receiptId=${summary.receiptId}&offset=${first.totalBytes}`)).json()).toMatchObject({ data: '', nextOffset: null })
-    expect((await get(`/request?receiptId=${summary.receiptId}&offset=${first.totalBytes + 1}`)).status).toBe(400)
-    expect((await get(`/request?batchId=${legacy.id}`)).status).toBe(404)
+    expect(summary).toMatchObject({ status: 'committed', summary: committed.summary })
+    expect(summary).not.toHaveProperty('originalRequest')
+    const retiredRoute = await get(`/request?receiptId=${summary.receiptId}`)
+    expect(retiredRoute.headers.get('content-type')).toMatch(/^text\/html\b/)
   })
   it('distinguishes processing, preflight, failure and not found without consuming missing keys', async () => {
     expect(await (await get(`?batchId=${processing.id}`)).json()).toMatchObject({ status: 'processing', committedAt: null, completedAt: null })
@@ -269,14 +253,14 @@ describe('import receipts through real HTTP and MCP on isolated PostgreSQL', () 
     expect(await (await get(`?receiptId=${receipt.receiptId}`)).json()).toEqual(receipt)
   })
   it('enforces independent credentials and advertises read-only receipt tools only to authorized callers', async () => {
-    for (const path of ['', '/items', '/history', '/request']) {
+    for (const path of ['', '/items', '/history']) {
       for (const token of [null, 'wrong', mcpToken]) {
         const denied = await get(`${path}?batchId=${legacy.id}`, token)
         expect(denied.status).toBe(401)
         expect(denied.headers.get('cache-control')).toBe('no-store')
       }
     }
-    const names = ['get_roster_import_receipt', 'list_roster_import_items', 'list_roster_import_receipts', 'get_roster_import_request']
+    const names = ['get_roster_import_receipt', 'list_roster_import_items', 'list_roster_import_receipts']
     const hidden = (await rpc('', {}, null, 'tools/list')).body.result.tools.map((tool: any) => tool.name)
     for (const name of names) {
       expect(hidden).not.toContain(name)
@@ -284,25 +268,25 @@ describe('import receipts through real HTTP and MCP on isolated PostgreSQL', () 
       expect((await rpc(name, { batchId: legacy.id }, apiToken)).status).toBe(401)
     }
     const tools = (await rpc('', {}, mcpToken, 'tools/list')).body.result.tools
+    expect(tools.map((tool: {name: string}) => tool.name)).not.toContain('get_roster_import_request')
     for (const name of names) expect(tools.find((tool: any) => tool.name === name)).toMatchObject({ annotations: { readOnlyHint: true, destructiveHint: false } })
     expect((await fetch(api(`?batchId=${legacy.id}`), { headers: { 'x-api-token': apiToken } })).status).toBe(200)
   })
   it('rejects invalid selectors and unbounded pagination on both public transports', async () => {
     for (const query of ['', '?batchId=0', '?batchId=1.5', '?batchId=1e2', '?batchId=1&batchId=2', '?idempotencyKey=', `?batchId=${legacy.id}&idempotencyKey=x`, `?batchId=${legacy.id}&includeRaw=true`]) expect((await get(query)).status).toBe(400)
     for (const path of ['/items', '/history']) for (const query of ['page=0', 'page=1000001', 'pageSize=0', 'pageSize=51', 'pageSize=2.5']) expect((await get(`${path}?batchId=${legacy.id}&${query}`)).status).toBe(400)
-    for (const query of ['offset=-1', 'maxBytes=0', 'maxBytes=65537']) expect((await get(`/request?batchId=${legacy.id}&${query}`)).status).toBe(400)
     for (const args of [{}, { batchId: 0 }, { batchId: legacy.id, idempotencyKey: 'x' }]) expect((await rpc('get_roster_import_receipt', args)).body.result.isError).toBe(true)
     for (const name of ['list_roster_import_items', 'list_roster_import_receipts']) expect((await rpc(name, { batchId: legacy.id, pageSize: 51 })).body.result.isError).toBe(true)
-    expect((await rpc('get_roster_import_request', { batchId: legacy.id, maxBytes: 65537 })).body.result.isError).toBe(true)
   })
   it('exposes all receipt reads in OpenAPI without replacing the original-body commit schema', async () => {
     const spec = await (await Promise.resolve(new Response(JSON.stringify(await readDevelopmentDiscovery())))).json()
-    for (const suffix of ['', '/items', '/history', '/request']) expect(spec.paths[`/api/roster/import/receipts${suffix}`].get.security).toEqual([{ bearerAuth: [] }])
+    for (const suffix of ['', '/items', '/history']) expect(spec.paths[`/api/roster/import/receipts${suffix}`].get.security).toEqual([{ bearerAuth: [] }])
+    expect(spec.paths['/api/roster/import/receipts/request']).toBeUndefined()
     const required = spec.paths['/api/roster/import/commit'].post.requestBody.content['application/json'].schema.required
     expect(required).toEqual(['idempotencyKey', 'sourceKind', 'sourceIdentity', 'payload'])
     expect(spec.paths['/api/roster/import/receipts'].get.responses['200'].content['application/json'].schema.properties.status.enum).toEqual(['preflight', 'processing', 'failed', 'committed'])
   })
-  it('keeps fixed-page responses bounded when unrelated retained request bytes grow', async () => {
+  it('keeps fixed-page responses bounded when unrelated retained item bytes grow', async () => {
     const submitted = request('bounded-target')
     submitted.payload.announcement.sourceDocument.title = '合成有界分页公告'
     submitted.payload.announcement.records = Array.from({ length: 120 }, (_, i) => ({ enterprise: { name: `合成有界企业${i}` }, titleCode: 'specialized_sme', events: [{ eventType: 'award' as const, year: 2026 }] }))
@@ -321,7 +305,7 @@ describe('import receipts through real HTTP and MCP on isolated PostgreSQL', () 
         status: 'committed', itemResults, createdAt,
       }))).returning({ id: importBatch.id })
       await tx.insert(importReceipt).values(batches.map(batch => ({
-        batchId: batch.id, operation: 'commit', requestHash: 'synthetic', requestBody: JSON.stringify({ padding }),
+        batchId: batch.id, operation: 'commit', requestHash: 'synthetic',
         status: 'committed', createdAt, completedAt: '2026-10-19T00:01:00Z', itemResults,
       })))
     })
@@ -332,8 +316,6 @@ describe('import receipts through real HTTP and MCP on isolated PostgreSQL', () 
     expect(Buffer.byteLength(after)).toBeLessThan(2048)
     expect(Buffer.byteLength(itemAfter)).toBeLessThan(16384)
     expect(value(await rpc('list_roster_import_items', { batchId: committed.batchId, page: 3, pageSize: 50 }))).toEqual(JSON.parse(itemAfter))
-    const raw = await (await get(`/request${path}&maxBytes=4096`)).json()
-    expect(Buffer.from(raw.data, 'base64')).toHaveLength(4096)
   }, 30_000)
   it('disables protected reads when credentials are unconfigured', async () => {
     await service.stop()

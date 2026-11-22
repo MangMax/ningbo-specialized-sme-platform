@@ -307,6 +307,9 @@ it('marks direct and predecessor confirmations stale after correction and after 
       const stored = (await f.db.$client.query<{ provenance: string }>('SELECT provenance FROM record_correspondence WHERE id = $1', [id])).rows[0]!
       const provenance = JSON.parse(stored.provenance)
       delete provenance.comparisonProofIds
+      const { rawResponseSha256, collectionEvidence, createdAt, ...query } = provenance.query
+      expect(rawResponseSha256).toBe(createHash('sha256').update('Explicit synthetic correspondence source').digest('hex'))
+      provenance.query = { ...query, rawResponse: 'Explicit synthetic correspondence source', collectionEvidence, createdAt }
       if (provenance.event) delete provenance.event.revision
       if (provenance.predecessor) delete provenance.predecessor.event.revision
       const legacyHash = createHash('sha256').update(JSON.stringify(provenance)).digest('hex')

@@ -1882,7 +1882,7 @@ defineRouteMeta({
         "records"
       ],
       "additionalProperties": {},
-      "description": "公布文件历史命令；未知附加字段保留，遗漏/null/归一化及逐项错误由现有领域校验处理；publishedRow 使用正式事实严格 DTO，原行留存后须对已核企业身份和事实调用补充预检，并在补充请求带回 officialEvidencePlanHash"
+      "description": "公布名单历史命令；未知附加字段保留，遗漏/null/归一化及逐项错误由现有领域校验处理；publishedRow 使用正式事实严格 DTO，原行留存后须对已核企业身份和事实调用补充预检，并在补充请求带回 officialEvidencePlanHash"
     },
     "officialEvidenceAppends": {
       "description": "精确正式佐证追加；expectedVersion=当前event.revision，显式声明与publishedRow；无公布原行时先调用导入预检并在payload带回officialEvidencePlanHash；含公布原行时使用补充预检",

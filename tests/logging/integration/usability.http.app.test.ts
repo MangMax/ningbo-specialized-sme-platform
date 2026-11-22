@@ -87,7 +87,7 @@ afterAll(async () => {
 })
 
 it('records a real matched HTTP template and method in the protected list and detail', async () => {
-  const health = await call(`/api/health?probe=${PRIVATE}`, { headers: { authorization: `Bearer ${PRIVATE}`, cookie: PRIVATE } })
+  const health = await call(`/api/file-library?probe=${PRIVATE}`, { headers: { authorization: `Bearer ${PRIVATE}`, cookie: PRIVATE } })
   expect(health.status).toBe(200)
   const rows = await waitLog(health.requestId)
   expect(rows).toHaveLength(1)
@@ -95,10 +95,10 @@ it('records a real matched HTTP template and method in the protected list and de
   expect(summary).toMatchObject({
     source: 'http', module: 'core', operation: 'http.request', outcome: 'success', statusCode: 200,
     origin: {runtime:'node',integration:'nuxt-nitro',capture:'framework',execution:'request'},
-    httpMethod: 'GET', httpRoute: '/api/health',
+    httpMethod: 'GET', httpRoute: '/api/file-library',
   })
   const event = await detail(summary.id)
-  expect(event).toMatchObject({ id: summary.id, module: 'core', httpMethod: 'GET', httpRoute: '/api/health', statusCode: 200 })
+  expect(event).toMatchObject({ id: summary.id, module: 'core', httpMethod: 'GET', httpRoute: '/api/file-library', statusCode: 200 })
   expect(await logs(`requestId=${health.requestId}&module=core&source=http&level=info&outcome=success`))
     .toMatchObject([{ id: summary.id, module: 'core' }])
   expect(await logs(`requestId=${health.requestId}&module=sme-roster`)).toEqual([])
@@ -355,7 +355,7 @@ it('saves dual collection rules through protected REST and MCP while disabled bu
   const disabled=await patch({...base,collection:{sources:{http:{enabled:false,minLevel:'debug'}}}})
   expect(disabled.status).toBe(200)
   expect(disabled.body.revision).toBe(initial.body.revision+1)
-  const health=await call('/api/health')
+  const health=await call('/api/file-library')
   expect(health.status).toBe(200)
   await new Promise(r=>setTimeout(r,250))
   expect(await logs('requestId='+health.requestId)).toEqual([])
@@ -376,7 +376,7 @@ it('saves dual collection rules through protected REST and MCP while disabled bu
   const read=await mcp('tools/call',{name:'get_runtime_log_policy',arguments:{}},mcpToken)
   const policy=read.body.result.structuredContent??JSON.parse(read.body.result.content[0].text)
   expect(policy.collection.sources.http).toEqual({enabled:true,minLevel:'debug'})
-  const after=await call('/api/health')
+  const after=await call('/api/file-library')
   expect(after.status).toBe(200)
   expect((await waitLog(after.requestId))[0]).toMatchObject({source:'http',outcome:'success'})
   expect((await call('/api/logs/policy',{headers:apiHeaders})).body.status.filtered).toBeGreaterThan(0)

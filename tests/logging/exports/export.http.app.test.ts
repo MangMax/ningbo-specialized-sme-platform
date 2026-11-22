@@ -170,7 +170,7 @@ it('exports an original XLSX with correlated summary workbook publish and downlo
   expect(serialized).not.toContain(token)
   expect(serialized).not.toContain(root)
   const { rows: leaked } = await postgres.query(
-    'SELECT id FROM runtime_logs.log_events WHERE position($1 in summary) > 0 OR position($1 in detail) > 0', [privateText])
+    'SELECT id FROM runtime_logs.log_events WHERE position($1 in detail) > 0', [privateText])
   expect(leaked).toEqual([])
   expect(await businessDigest()).toBe(digest)
 }, 45000)

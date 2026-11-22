@@ -59,7 +59,7 @@ test.runIf(Boolean(pg19Bin))('repoints only existing equal-content evidence and 
     })).rejects.toThrow('receipt failed')
     expect((await pool.query('SELECT source_file,page FROM record_evidence')).rows)
       .toEqual([{ source_file: 'outside.pdf', page: '9' }])
-    expect((await pool.query('SELECT id FROM evidence_revision_113')).rows).toEqual([])
+    expect((await pool.query('SELECT revision FROM record_event WHERE id=29')).rows).toEqual([{ revision: '1' }])
 
     const originalBatch = {
       status: 'committed', kind: 'announcement', identity: 'library.xlsx', sha256: hash,

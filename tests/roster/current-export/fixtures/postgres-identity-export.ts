@@ -12,14 +12,9 @@ import { differenceReason } from '../../../../db/postgresql/roster-selection-tab
 import { normalizeUscc } from '../../../../layers/sme-roster/lib/domain'
 import { TASK_EXPORTS } from '../../../../layers/sme-roster/lib/sme-roster/task-exports'
 import type { CurrentTitle } from '../../../../layers/sme-roster/lib/roster/current-titles'
-import { readPostgresEvidenceImpacts113 } from '../../../../layers/sme-roster/lib/roster/query-assessment-postgres'
 import { readPostgresCurrentQualification } from '../../../../layers/sme-roster/lib/roster/current-qualification-postgres'
 import { nativeAppAdapter } from '../../../support/native-app'
 import { rows, type Event, fresh, titleCode } from './specialized-export'
-
-type DecisionScope = { enterpriseId: number; titleCode: CurrentTitle; direction: typeof differenceReason.$inferInsert.direction }
-const decisionPath = '/api/roster/decision-lifecycle/commands'
-const exportFixtureActor = { type: 'agent', id: 'synthetic-export' }
 
 export function postgresIdentityExportFixture() {
   const dir = mkdtempSync(join(tmpdir(), 'roster-identity-export-'))
@@ -37,9 +32,7 @@ export function postgresIdentityExportFixture() {
   async function resetBusiness() {
     await pool!.query(`truncate business.enterprise, business.record, business.record_event, business.record_evidence,
       business.platform_collection, business.platform_archive_value, business.platform_business_record,
-      business.import_batch, business.difference_reason, business.evidence_review_receipt_114,
-      business.evidence_revision_113, business.evidence_semantic_head_113, business.evidence_scope_version_113,
-      business.evidence_rule_release_114, business.explanation_impact_113 restart identity cascade`)
+      business.import_batch, business.difference_reason, business.evidence_review_receipt_114 restart identity cascade`)
     identities.clear()
   }
 
@@ -57,24 +50,18 @@ export function postgresIdentityExportFixture() {
     return result
   }
 
-  async function reviewToken(scope: DecisionScope, decisionId: number) {
-    const { token } = (await readPostgresEvidenceImpacts113(database, [{ scope, decisionId, latestDecisionId: decisionId }]))[0]!
-    expect(token.projectionReady).toBe(true)
-    return { latestRevisionId: token.latestRevisionId, projectionReady: true }
-  }
-
   async function decision(enterpriseId: number, reasonCode: NonNullable<typeof differenceReason.$inferInsert.reasonCode>, extra: Partial<typeof differenceReason.$inferInsert> = {}) {
     const now = new Date().toISOString()
-    const [row] = await database.insert(differenceReason).values({ enterpriseId, titleCode, direction: 'extra_in_miit', status: 'confirmed_reason', reasonCode,
-      verificationStatus: 'confirmed', lifecycleAction: 'replace', basis: '人工确认合成主体事实', effectiveAt: '2025-01-01T00:00:00Z', recordedAt: now, createdAt: now, ...extra }).returning()
-    if (row!.lifecycleAction === 'replace' && row!.basis && row!.effectiveAt) {
-      const scope = { enterpriseId, titleCode: row!.titleCode as CurrentTitle, direction: row!.direction }
-      const response = await app.request(decisionPath, { method: 'POST', body: JSON.stringify({ ...scope,
-        action: 'maintain', expectedCurrentId: row!.id, idempotencyKey: 'fixture-reviewed-' + row!.id, actor: exportFixtureActor, basis: row!.basis,
-        ruleVersion: 'synthetic-export', effectiveAt: row!.effectiveAt, reviewedEvidence: await reviewToken(scope, row!.id),
-      }) })
-      expect(response.status, await response.text()).toBe(200)
+    const input: typeof differenceReason.$inferInsert = {
+      enterpriseId, titleCode, direction: 'extra_in_miit', status: 'confirmed_reason', reasonCode,
+      verificationStatus: 'confirmed', lifecycleAction: 'replace', basis: '人工确认合成主体事实',
+      effectiveAt: '2025-01-01T00:00:00Z', recordedAt: now, createdAt: now, ...extra,
     }
+    if (input.lifecycleAction === 'replace' && input.basis && input.effectiveAt) {
+      input.retiredEvidenceValidity ??= 'valid'
+      input.retiredEvidenceReviewed ??= true
+    }
+    const [row] = await database.insert(differenceReason).values(input).returning()
     return row!
   }
 
@@ -111,7 +98,7 @@ export function postgresIdentityExportFixture() {
     return assessment?.titles.find(row => row.titleCode === title)?.group
   }
 
-  return { get db() { return database }, headers: app.headers, url: app.url, candidate, decision, identity, occurrences, reviewToken, start, resetBusiness, workbook,
+  return { get db() { return database }, headers: app.headers, url: app.url, candidate, decision, identity, occurrences, start, resetBusiness, workbook,
     currentGroup,
     query: (statement: string, values: unknown[] = []) => pool!.query(statement, values),
     async close() {

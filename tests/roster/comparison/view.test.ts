@@ -5,16 +5,16 @@ afterEach(() => vi.unstubAllEnvs())
 
 describe('record comparison client request', () => {
   it('requires the explicit source set and retains independent source kinds', () => {
-    const selected = comparisonSelectionFromQuery({ queryIds: '3,4', exportBatchIds: '8', officialSourceDocumentIds: '2', proofIds: '9' })
-    expect(selected).toEqual({ queryIds: [3, 4], exportBatchIds: [8], officialSourceDocumentIds: [2], proofIds: [9] })
-    expect(comparisonSelectionQuery(selected)).toEqual({ queryIds: '3,4', exportBatchIds: '8', officialSourceDocumentIds: '2', proofIds: '9' })
+    const selected = comparisonSelectionFromQuery({ queryIds: '3,4', exportBatchIds: '8', officialSourceDocumentIds: '2' })
+    expect(selected).toEqual({ queryIds: [3, 4], exportBatchIds: [8], officialSourceDocumentIds: [2] })
+    expect(comparisonSelectionQuery(selected)).toEqual({ queryIds: '3,4', exportBatchIds: '8', officialSourceDocumentIds: '2' })
     expect(comparisonRequest(selected, 2, 25, 'unresolved')).toMatchObject({ queryIds: [3, 4], exportBatchIds: [8], officialSourceDocumentIds: [2], classification: 'unresolved', page: 2 })
     expect(sourceSelectionKey('query')).toBe('queryIds')
     expect(sourceSelectionKey('official_document')).toBe('officialSourceDocumentIds')
   })
 
   it('rejects malformed URL identities rather than forwarding guesses', () => {
-    expect(comparisonSelectionFromQuery({ queryIds: '3,not-an-id', exportBatchIds: '0', officialSourceDocumentIds: '2,2', proofIds: '9,bad' })).toEqual({ queryIds: [], exportBatchIds: [], officialSourceDocumentIds: [2], proofIds: [] })
+    expect(comparisonSelectionFromQuery({ queryIds: '3,not-an-id', exportBatchIds: '0', officialSourceDocumentIds: '2,2' })).toEqual({ queryIds: [], exportBatchIds: [], officialSourceDocumentIds: [2] })
   })
 
   it('roundtrips a URL instant through a Shanghai datetime-local input without changing its instant', () => {
@@ -27,16 +27,16 @@ describe('record comparison client request', () => {
   })
 
   it('keeps source set, proof, classification, page and page size in a canonical return URL', () => {
-    const state = comparisonRouteFromQuery({ queryIds: '7', exportBatchIds: '8', officialSourceDocumentIds: '3', proofIds: '12', classification: 'unresolved', asOf: '2026-10-18T18:00:00+08:00', page: '2', pageSize: '50' })
-    expect(state).toMatchObject({ selection: { queryIds: [7], exportBatchIds: [8], officialSourceDocumentIds: [3], proofIds: [12] }, classification: 'unresolved', asOf: '2026-10-18T10:00:00.000Z', page: 2, pageSize: 50 })
-    expect(comparisonRouteQuery(state)).toMatchObject({ mode: 'record', queryIds: '7', exportBatchIds: '8', officialSourceDocumentIds: '3', proofIds: '12', classification: 'unresolved', asOf: '2026-10-18T10:00:00.000Z', page: '2', pageSize: '50' })
+    const state = comparisonRouteFromQuery({ queryIds: '7', exportBatchIds: '8', officialSourceDocumentIds: '3', classification: 'unresolved', asOf: '2026-10-18T18:00:00+08:00', page: '2', pageSize: '50' })
+    expect(state).toMatchObject({ selection: { queryIds: [7], exportBatchIds: [8], officialSourceDocumentIds: [3] }, classification: 'unresolved', asOf: '2026-10-18T10:00:00.000Z', page: 2, pageSize: 50 })
+    expect(comparisonRouteQuery(state)).toMatchObject({ mode: 'record', queryIds: '7', exportBatchIds: '8', officialSourceDocumentIds: '3', classification: 'unresolved', asOf: '2026-10-18T10:00:00.000Z', page: '2', pageSize: '50' })
     expect(comparisonRouteKey(comparisonRouteFromQuery(comparisonRouteQuery(state)))).toBe(comparisonRouteKey(state))
   })
 })
 
 it('restores read-only official evidence references without accepting negative query or proof IDs', () => {
-  const selection = comparisonSelectionFromQuery({ queryIds: '7', exportBatchIds: '', officialSourceDocumentIds: '-9,3', proofIds: '-2' })
-  expect(selection).toEqual({ queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [-9, 3], proofIds: [] })
+  const selection = comparisonSelectionFromQuery({ queryIds: '7', exportBatchIds: '', officialSourceDocumentIds: '-9,3' })
+  expect(selection).toEqual({ queryIds: [7], exportBatchIds: [], officialSourceDocumentIds: [-9, 3] })
   expect(comparisonSelectionFromQuery(comparisonSelectionQuery(selection))).toEqual(selection)
   expect(comparisonSelectionFromQuery({ queryIds: '-7', officialSourceDocumentIds: '0' })).toMatchObject({ queryIds: [], officialSourceDocumentIds: [] })
 })

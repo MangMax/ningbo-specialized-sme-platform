@@ -49,7 +49,7 @@ export default defineMcpTool({
     kind: z
       .enum(['announcement', 'export'])
       .nullish()
-      .describe('类别;announcement 公布文件 / export 导出表;null 清空'),
+      .describe('类别：announcement 公布名单 / export 导出表，null 清空'),
     year: z
       .number()
       .int()

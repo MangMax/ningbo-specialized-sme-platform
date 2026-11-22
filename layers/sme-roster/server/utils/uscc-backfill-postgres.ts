@@ -5,7 +5,6 @@ import { backfillPostgresEnterpriseUscc, lockPostgresReviewedEnterpriseBatch, po
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { missingUsccSourceFields, usccFormatVerdict } from '../../lib/roster/uscc-research'
 import type { RosterImportItemResult, RosterImportUsccBackfill } from '../../lib/roster-import-client'
-import { capturePostgresIdentityChange, readPostgresIdentityMaterial } from './postgres-identity-evidence'
 import type { NativeImportExecution, PostgresImportAction, PostgresImportBatch } from './roster-export-import-postgres'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -84,9 +83,7 @@ export async function executePostgresUsccBackfillItems(tx: Tx,batch:PostgresImpo
         if (plan.target.id!==original.target.id) throw new BackfillConflict([...results,
           failure(plan.ref,'enterprise_selector_conflict','补录归属企业已变更，请重新核对','enterpriseId')])
         const { target,uscc,backfill } = plan
-        const before = await readPostgresIdentityMaterial(nested,target.id)
         await backfillPostgresEnterpriseUscc(nested,target.id,uscc,JSON.parse(target.flags ?? 'null') ?? [])
-        await capturePostgresIdentityChange(nested,target.id,'uscc:'+uscc,before)
         results.push({ ok:true,kind:'uscc_backfill',ref:item(plan).ref,detail:{ enterpriseId:target.id,uscc,rowsWritten:1,
           lineage:{ enterpriseId:target.id,enterpriseName:target.name,uscc,previousUscc:null,source:backfill.source,note:optionalText(backfill.note) } } })
       }

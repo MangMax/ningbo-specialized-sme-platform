@@ -46,8 +46,8 @@ const eventSections = computed(() => {
     <template v-if="current || displayed">
       <template v-if="event">
         <p class="text-sm font-medium">{{ TITLES[event.record.titleCode] ?? event.record.titleCode }} · {{ eventDecisionText(event) }}</p>
-        <p v-if="!event.evidence.length" class="text-muted-foreground text-table">本记录未记录正式文件出处。</p>
-        <ul v-if="event.evidence.length" class="flex min-w-0 flex-col gap-3" aria-label="本记录的正式文件出处">
+        <p v-if="!event.evidence.length" class="text-muted-foreground text-table">本记录未记录公布名单出处。</p>
+        <ul v-if="event.evidence.length" class="flex min-w-0 flex-col gap-3" aria-label="本记录的公布名单出处">
           <li v-for="(item, index) in event.evidence" :key="index" class="min-w-0">
             <RosterOfficialEvidence :evidence="item" :back="returnTo ?? ''" />
           </li>

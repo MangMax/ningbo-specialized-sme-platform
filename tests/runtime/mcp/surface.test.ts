@@ -43,8 +43,6 @@ describe('mcp-auth 鉴权判据', () => {
       'commit_qualification_decision',
       'difference_snapshot',
       'refresh_enterprise_differences',
-      'process_evidence_impacts',
-      'release_evidence_rule',
       'maintain_enterprise_alias',
       'save_ocr_result',
       'delete_ocr_result',
@@ -71,13 +69,9 @@ describe('mcp-auth 鉴权判据', () => {
       'preflight_event_corrections',
       'commit_event_corrections',
       'get_record_correspondence_batch',
-      'preflight_comparison_scope_proofs',
-      'commit_comparison_scope_proofs',
-      'get_comparison_scope_proof_batch',
       'get_roster_import_receipt',
       'list_roster_import_receipts',
       'list_roster_import_items',
-      'get_roster_import_request',
       'patch_enterprise_profile',
       'preflight_title_cycle_disposition',
       'commit_title_cycle_disposition',
@@ -105,9 +99,6 @@ describe('mcp-auth 鉴权判据', () => {
       params: { name, arguments: {} },
     })
     expect(writeToolCallIn(call('save_roster_batch'))).toBe('save_roster_batch')
-    expect(writeToolCallIn(call('preflight_comparison_scope_proofs'))).toBe('preflight_comparison_scope_proofs')
-    expect(writeToolCallIn(call('commit_comparison_scope_proofs'))).toBe('commit_comparison_scope_proofs')
-    expect(writeToolCallIn(call('get_comparison_scope_proof_batch'))).toBe('get_comparison_scope_proof_batch')
     // 只读预检按契约 §9 归为读 tool —— 不在此列(但仍不改业务数据)。
     expect(writeToolCallIn(call('preflight_roster_batch'))).toBeNull()
     expect(writeToolCallIn(call('list_enterprises'))).toBeNull()

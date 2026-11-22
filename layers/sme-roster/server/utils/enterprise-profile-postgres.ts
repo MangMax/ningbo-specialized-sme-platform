@@ -9,7 +9,6 @@ import {
 } from '../../../core/server/public'
 import { EnterpriseProfileError } from './enterprise-profile-model'
 import { boundedEnterpriseProfileHistory, enterpriseProfilePatchSchema, parseEnterpriseProfileHistoryQuery } from './enterprise-profile-model'
-import { capturePostgresIdentityChange, readPostgresIdentityMaterial } from './postgres-identity-evidence'
 
 export function getPostgresEnterpriseProfile(db: NodePgDatabase, enterpriseId: number) {
   return db.transaction(async tx => {
@@ -53,12 +52,9 @@ export function patchPostgresEnterpriseProfile(db: NodePgDatabase, enterpriseId:
     for (const [key, value] of Object.entries(input.expectedValues ?? {})) {
       if (current.profile[key as keyof EnterpriseProfile] !== value) throw new EnterpriseProfileError(409, 'old_value_conflict', `Unexpected old ${key}`)
     }
-    const renamed = input.changes.name !== undefined && input.changes.name !== current.profile.name
-    const before = renamed ? await readPostgresIdentityMaterial(tx, owner) : null
     const result = await applyPostgresEnterpriseProfileChange(tx, current, input.changes, {
       idempotencyKey: input.idempotencyKey, requestHash, actor: input.actor, basis: input.basis, previousName: input.previousName?.name,
     })
-    if (before !== null) await capturePostgresIdentityChange(tx, owner, `profile:${result.auditId}`, before)
     return result
   })
 }

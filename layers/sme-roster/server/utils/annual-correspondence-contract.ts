@@ -89,8 +89,6 @@ export function planAnnualStep(scope: AnnualWriteScope, step: AnnualWriteStep, r
     actor: { type: 'agent', id: 'annual-correspondence-worker' },
     basis: JSON.stringify({ ...identity, sourceRefs: scope.sourceRefs, selectedRelationId: relationId, reason: 'complete_explicit_annual_process' }),
     ruleId: ANNUAL_CORRESPONDENCE_RULE, ruleVersion: ANNUAL_CORRESPONDENCE_VERSION,
-    // No comparison proof is borrowed from a different observation/version.
-    proofIds: [],
     operations: candidate ? [{ action: 'decide', correspondenceId: candidate.id, expectedRevision: candidate.revision, status: 'confirmed' }] : [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: scope.eventId, relationId, role: 'context_only' } }],
   }
   return { relationId, request, created: refs => outcome('created', refs, []) }

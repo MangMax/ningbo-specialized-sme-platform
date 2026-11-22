@@ -45,8 +45,8 @@ it('HTTP selects all five statuses and defaults to effective without turning not
   expect(assessment.effectiveQualification.status).toBe(state)
   expect(assessment.effectiveQualification.notes).toContain('来源文件版本不可用')
   expect(assessment.effectiveQualification.basis).toContain('event:')
-  if(state==='expired' && title==='little_giant') expect(assessment.effectiveQualification.presentationBasis).toEqual(['正式文件有效期：2021-01-01 至 2023-12-31（含首尾）；正式来源：jxj/announcement/synthetic-118.xlsx；第 1 页'])
-  if(state==='effective' && title==='little_giant') expect(assessment.effectiveQualification.presentationBasis).toEqual(['正式文件有效期：2026-01-01 至 2028-12-31（含首尾）；正式来源：jxj/announcement/synthetic-118.xlsx；第 1 页'])
+  if(state==='expired' && title==='little_giant') expect(assessment.effectiveQualification.presentationBasis).toEqual(['公布名单所载有效期：2021-01-01 至 2023-12-31（含首尾）；正式来源：jxj/announcement/synthetic-118.xlsx；第 1 页'])
+  if(state==='effective' && title==='little_giant') expect(assessment.effectiveQualification.presentationBasis).toEqual(['公布名单所载有效期：2026-01-01 至 2028-12-31（含首尾）；正式来源：jxj/announcement/synthetic-118.xlsx；第 1 页'])
  }
  const b=await fetch(f.url('/api/roster/current-enterprises?titleCode=specialized_sme')).then(r=>r.json())
  expect(b.rows.map((r:any)=>r.name)).toEqual(expectedNames.specialized_sme!.effective)

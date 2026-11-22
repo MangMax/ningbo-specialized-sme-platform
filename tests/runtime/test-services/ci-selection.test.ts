@@ -33,7 +33,6 @@ it('keeps shared qualification consumers and unknown or deleted paths in full co
     const result = selectBusinessTests([path])
     expect(result.full, path).toBe(true)
     expect(result.native).toEqual(matrices(true).native)
-    expect(result.ttl).toBe(true)
     expect(result.watcher).toBe(true)
   }
 })
@@ -42,7 +41,7 @@ it('keeps full coverage on main, nightly and manual runs even with no changed pa
   for (const event of ['push', 'schedule', 'workflow_dispatch']) {
     const result = selectBusinessTests([], event)
     expect(result.native).toEqual(matrices(true).native)
-    expect(result.app.length).toBe(matrices(true).app.length + 2)
+    expect(result.app.length).toBe(matrices(true).app.length + 1)
     expect(result.skipped).toEqual([])
   }
 })

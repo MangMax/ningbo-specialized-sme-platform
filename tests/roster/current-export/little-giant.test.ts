@@ -79,7 +79,7 @@ it('对应周期、复核年份与同年冲突', async () => {
   expect(names('有效企业')).toEqual(['新认定','复核延续','失败恢复','旧周期晚失败','已到复核年','复核结论缺年'])
   expect(names('未认定')).toEqual(['培育非资格'])
   expect(names('已到期')).toEqual(['本周期失败','同年冲突','正式期间已到期'])
-  expect(rows(wb,'已到期').find(r => r[2] === '正式期间已到期')![14]).toBe(`正式文件有效期：${y-3}-01-01 至 ${y-1}-12-31（含首尾）；正式来源：jxj/announcement/synthetic.xlsx；第 1 页`)
+  expect(rows(wb,'已到期').find(r => r[2] === '正式期间已到期')![14]).toBe(`公布名单所载有效期：${y-3}-01-01 至 ${y-1}-12-31（含首尾）；正式来源：jxj/announcement/synthetic.xlsx；第 1 页`)
   expect(rows(wb,'有效企业').find(r => r[2] === '失败恢复')![6]).toBe(String(y-5))
   expect(rows(wb,'已到期').find(r => r[2] === '同年冲突')![15]).toContain('本称号原认定周期已有生效的已确认处置；复核通过不构成新认定')
 })

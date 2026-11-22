@@ -11,14 +11,13 @@ import type * as schema from '../../../../db/schema'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { readPostgresRelationDisplays } from '../../lib/platform/postgres-query-display'
 import { readPostgresPublishedNames } from '../../lib/roster/official-published-presentation-postgres'
-import { readPostgresCurrentProofCoverage } from './comparison-scope-proof-postgres'
 import { readPostgresCorrespondenceRefs } from './record-correspondence-postgres-refs'
 import { sanitizeRelationDisplays } from './relation-evidence-projection'
 import { correspondencePublishedScope, correspondenceSourceSelections, projectCorrespondenceSources, type SourceSelection } from './record-correspondence-projection'
 import type { ReceiptRedactor } from './import-receipt-redaction'
 import { readPostgresCorrespondenceTargetSources } from './record-correspondence-target-postgres'
 import { type CorrespondenceFilter, type CorrespondencePaging, type CorrespondenceRead, type ReadSources, type SourceReference } from './record-correspondence'
-import { projectObservedCorrespondence, type StoredCorrespondence } from './record-correspondence-model'
+import { projectObservedCorrespondence } from './record-correspondence-model'
 
 type Db = Pick<NodePgDatabase, 'execute' | 'select'>
 type Evidence = ReadSources['evidence'] extends Map<number, (infer T)[]> ? T : never
@@ -54,11 +53,7 @@ async function readExports(db: Db, rowIds: number[]) {
 
 }
 
-type ProofPair = { relationId: number; exportRowId: number; ids: number[] }
-
-export async function observePostgresCorrespondences(db: Db,
-  references: (SourceReference & Partial<Pick<StoredCorrespondence, 'type' | 'role' | 'provenance'>>)[], requestedProofs: ProofPair[] = [],
-) {
+export async function observePostgresCorrespondences(db: Db, references: SourceReference[]) {
   const scoped = references.filter(row => row.status === 'confirmed' || row.status === 'candidate')
   const { events, evidence } = await readEventsAndEvidence(db, present(scoped.flatMap(row => [row.eventId, row.predecessorEventId])))
   const relations = await readPostgresCorrespondenceTargetSources(db, present(scoped.map(row => row.relationId)))
@@ -72,17 +67,7 @@ export async function observePostgresCorrespondences(db: Db,
     .where(eq(title.code, sql`ANY(${sql.param([...new Set(scoped.map(row => row.titleCode))])}::text[])`))
   const exportMap = new Map(exports.map(row => [row.exportRow.id, row]))
   const relationMap = new Map(relations.map(row => [row.relation.id, row]))
-  const savedProofs = scoped.flatMap(ref => {
-    if (ref.type !== 'recognized_export' || ref.role !== 'same_current_row' || ref.status !== 'confirmed') return []
-    return [{ relationId: ref.relationId!, exportRowId: ref.exportRowId!, ids: ref.provenance?.comparisonProofIds as number[] ?? [] }]
-  })
-  const coverage = await readPostgresCurrentProofCoverage(db, [...savedProofs, ...requestedProofs].flatMap(ref => {
-    const queryId = relationMap.get(ref.relationId)?.query.id
-    const batchId = exportMap.get(ref.exportRowId)?.exportBatch.id
-    return queryId === undefined || batchId === undefined ? [] : [{ ids: ref.ids, queryId, batchId }]
-  }))
   const observed: ReadSources = {
-    coversCurrentProof: (ids, queryId, batchId) => coverage({ ids, queryId, batchId }),
     events: new Map(events.map(row => [row.event.id, row])),
     evidence: Map.groupBy(evidence, row => row.evidence.recordEventId),
     relations: relationMap, exports: exportMap, enterprises: new Map(enterprises.map(({ row }) => [row.id, row])),
@@ -118,16 +103,13 @@ export async function readPostgresCorrespondenceSelection(db: Db, where: SQL | u
   const query = db.select({
     ...columns,
     relationId: relation.oldId,
-    targetIdentity: sql<StoredCorrespondence['targetIdentity']>`'{}'::jsonb`,
-    provenance: sql<StoredCorrespondence['provenance']>`CASE WHEN ${edge.status}='confirmed'
-      THEN jsonb_build_object('comparisonProofIds',${edge.provenance}::json->'comparisonProofIds') ELSE '{}'::jsonb END`,
   }).from(edge).leftJoin(relation, eq(relation.observationId, edge.observationId))
     .where(where).orderBy(edge.id)
   const page = await (paging
     ? query.limit(paging.pageSize).offset(Math.min(Number.MAX_SAFE_INTEGER, (paging.page - 1) * paging.pageSize))
     : query)
   const observed = page.length ? await observePostgresCorrespondences(db, page) : undefined
-  return page.map(row => projectObservedCorrespondence(row, observed!))
+  return page.map(row => projectObservedCorrespondence({ ...row, targetIdentity: {}, provenance: {} }, observed!))
 }
 
 export async function pagePostgresCorrespondences(db: Db, filter: CorrespondenceFilter, paging: CorrespondencePaging) {

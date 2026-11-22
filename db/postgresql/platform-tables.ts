@@ -465,9 +465,8 @@ export const platformBusinessRecordVersion = businessSchema.table('platform_busi
   recordId: bigint('record_id', { mode: 'number' }).notNull(),
   hashAlgorithm: text('hash_algorithm').notNull(),
   contentHash: text('content_hash').notNull(),
-  canonicalRawJson: text('canonical_raw_json').notNull(),
   createdAt: text('created_at').notNull(),
-  canonicalArchiveId: bigint('canonical_archive_id', { mode: 'number' }),
+  canonicalArchiveId: bigint('canonical_archive_id', { mode: 'number' }).notNull(),
 })
 
 export const platformObservationFingerprintBasis = businessSchema.table('platform_observation_fingerprint_basis', {

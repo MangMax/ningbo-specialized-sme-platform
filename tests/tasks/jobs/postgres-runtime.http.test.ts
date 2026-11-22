@@ -391,6 +391,7 @@ it.runIf(!!bin)('retries only an unfinished platform page in PostgreSQL and pres
   const networkFetch = globalThis.fetch
   const pages: number[] = []
   let rejectPageTwo = true
+  let rowName = '合成企业'
   vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
     if (url.startsWith(base)) return networkFetch(url, init)
     expect(url).toMatch(/^https:\/\/zjtx\.miit\.gov\.cn\/zxqy\//)
@@ -398,7 +399,7 @@ it.runIf(!!bin)('retries only an unfinished platform page in PostgreSQL and pres
     const page = Number(new URLSearchParams(init?.body as string).get('pageNum'))
     pages.push(page)
     if (page === 2 && rejectPageTwo) return new Response('', { status: 503 })
-    return Response.json({ zrarData: { grid: { applyGrid: { pageSet: [{ qymc: '合成企业', relation: String(page) }], page, maxCount: 2 } } } })
+    return Response.json({ zrarData: { grid: { applyGrid: { pageSet: [{ qymc: rowName, relation: String(page) }], page, maxCount: 2 } } } })
   })
   const post = (path: string, body: unknown) => request(path, { method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify(body) })
@@ -412,6 +413,18 @@ it.runIf(!!bin)('retries only an unfinished platform page in PostgreSQL and pres
     const prior = await status()
     expect(prior).toMatchObject({ attempt: 1, items: [{ itemId: itemIds[0], unfinished: [{ page: 2 }] }] })
     expect(prior.items[0].segments[0].rows).toEqual([{ qymc: '合成企业', relation: '1' }])
+    expect(prior.items[0].segments[0].pages.map((page: { status: string }) => page.status)).toEqual(['success', 'failed'])
+    const generic = await (await request('/api/jobs/' + batchId)).json()
+    expect(generic).toMatchObject({
+      state: 'failed', progress: { done: 0, total: 1 },
+      result: { attempt: 1, usage: { requests: 2, rows: 1 }, items: [{
+        itemId: itemIds[0], status: 'partial', completeness: 'partial',
+        unfinished: [{ source: 'queryList', rdjb: null, page: 2 }],
+        error: { code: 'upstream_failed' },
+      }] },
+    })
+    expect(generic.result.items[0]).not.toHaveProperty('segments')
+    expect(JSON.stringify(generic.result)).not.toContain('合成企业')
     expect(pages).toEqual([1, 2])
     const taskPath = '/api/task-center/' + batchId
     const task = await (await request(taskPath)).json()
@@ -433,9 +446,31 @@ it.runIf(!!bin)('retries only an unfinished platform page in PostgreSQL and pres
     expect(item.segments[0]).toEqual(prior.items[0].segments[0])
     expect(item.segments[1].rows).toEqual([{ qymc: '合成企业', relation: '2' }])
     expect(item.unfinished).toEqual([])
+    expect((await status()).items).toEqual([item])
     const persisted = await pool.query('SELECT params,result,input_snapshot FROM business.job WHERE id=$1', [batchId])
     expect(JSON.stringify(persisted.rows[0])).not.toContain(credential)
+    expect(JSON.parse(persisted.rows[0].result)).toMatchObject({
+      attempt: 2, items: [{ itemId: itemIds[0], status: 'success', error: null, unfinished: [] }],
+    })
+    expect(JSON.parse(persisted.rows[0].result).items[0]).not.toHaveProperty('segments')
     expect((await post(path + '/retry', { itemIds })).status).toBe(409)
+
+    // Force the segment write to fail after the new job checkpoint has been proposed.
+    rowName = '合成失败写入'
+    await pool.query("ALTER TABLE business.platform_batch_segment ADD CONSTRAINT reject_test_segment CHECK (position('合成失败写入' in payload) = 0)")
+    try {
+      const receipt = await (await post('/api/platform/batches', {
+        items: [{ query: { source: 'queryList', name: '合成', pageSize: 1 } }],
+      })).json()
+      const rejectedStatus = async () => (await request('/api/platform/batches/' + receipt.batchId)).json()
+      await expect.poll(async () => (await rejectedStatus()).state).toBe('failed')
+      expect(await rejectedStatus()).toMatchObject({
+        attempt: 1, usage: { requests: 0, rows: 0 },
+        items: [{ itemId: receipt.itemIds[0], status: 'not_queried', segments: [], unfinished: [{ page: 1 }] }],
+      })
+    } finally {
+      await pool.query('ALTER TABLE business.platform_batch_segment DROP CONSTRAINT reject_test_segment')
+    }
   } finally {
     vi.stubGlobal('fetch', networkFetch)
     await pool.query("DELETE FROM business.service_credential WHERE key='sme-roster.miitCookie'")

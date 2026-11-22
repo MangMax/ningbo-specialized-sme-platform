@@ -35,7 +35,7 @@ defineRouteMeta({
         name: 'direction',
         in: 'query',
         schema: { type: 'string', enum: ['missing_in_miit', 'extra_in_miit'] },
-        description: '比对方向:公布文件有而平台导出无 / 反方向。',
+        description: '比对方向:公布名单有而平台导出无 / 反方向。',
       },
       {
         name: 'showCurated',

@@ -1,9 +1,6 @@
-import { evidenceRevisionEvent113, evidenceSemanticHead113 } from '../../../../db/postgresql/evidence-review-tables'
-import { record, recordEvent } from '../../../../db/postgresql/ledger-tables'
-import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { platformBusinessObservation, platformCollection, platformLegacyQueryAlias, platformLegacyRelationAlias } from '../../../../db/postgresql/platform-tables'
-import { and, DrizzleQueryError, eq, exists, max, or, sql } from 'drizzle-orm'
+import { and, DrizzleQueryError, eq, max, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { RELATION_DECLARE_KIND_ORDER } from '../../lib/labels'
 import { normalizeUscc } from '../../lib/domain'
@@ -16,9 +13,6 @@ import { writePostgresCollectionHeader } from '../../lib/platform/postgres-colle
 import { writePostgresObservation } from '../../lib/platform/postgres-observation-write'
 import { readPostgresFingerprintQueries, readPostgresRelationFingerprints } from './postgres-platform-fingerprint'
 import { executePostgresRosterImport, type NativeImportExecution, type PostgresImportAction, type PostgresImportBatch } from './roster-export-import-postgres'
-import { projectQueryEvidenceRevisions } from './evidence-impact-model'
-import { evidenceDigest113 } from './evidence-digest'
-import { appendPostgresEvidenceRevision } from './evidence-revision-postgres'
 import { stagePostgresJob } from '../../../core/server/utils/job-runner-postgres'
 import { EVENT_ARCHIVE_RULE_VERSION } from './event-archive-discovery-model'
 import { CANDIDATE_JOB_KIND, candidateJobParams } from './jobs/candidate-discovery-contract'
@@ -30,7 +24,6 @@ import { LegacyProvenanceError } from '../../lib/platform/legacy-provenance-erro
 import { inspectPostgresLegacyProvenance, writePostgresLegacyProvenance } from './platform-legacy-provenance-postgres'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
-type Collection = Awaited<ReturnType<typeof writePostgresCollectionHeader>>
 type Observation = Awaited<ReturnType<typeof writePostgresObservation>>
 const emptySummary = { written: 0, skipped: 0, failed: 0, evidenceRepointed: 0 }
 const originalText = (value: unknown) => typeof value === 'string' ? value.trim() || null : null
@@ -93,41 +86,6 @@ async function planQuery(tx: Tx, query: RosterImportPlatformQuery, index: number
 }
 
 type QueryPlan = Exclude<Awaited<ReturnType<typeof planQuery>>, {error: RosterImportItemResult}>
-async function recordQueryEvidence(tx: Tx, header: Collection, observations: Observation[]) {
-  const { query, columns } = header
-  const envelope = query.collectionEvidence
-  const ownsName = columns.queryKey.startsWith('name:')
-  const owners = await tx.select({ id: enterprise.id }).from(enterprise)
-    .where(ownsName ? eq(enterprise.nameNorm, columns.queryKey.slice(5)) : eq(enterprise.usccNorm, columns.queryKey))
-    .orderBy(enterprise.id).limit(2)
-  const revisions = projectQueryEvidenceRevisions({
-    ...columns,id:header.queryAlias,completeness:envelope?.completeness ?? null,conditions:JSON.stringify(envelope?.effectiveConditions ?? {}),
-    pages:JSON.stringify((envelope?.pages ?? []).map(p=>({rdjb:p.rdjb,page:p.page,status:p.status,fetchedCount:p.fetchedCount,
-      declaredTotal:p.declaredTotal,maxPage:p.maxPage ?? null }))),
-    unfinished:JSON.stringify((envelope?.unfinished ?? []).map(p=>({rdjb:p.rdjb,page:p.page}))),
-  },owners.length === 1 ? owners[0]!.id : null,observations.map(row=>row.evidence))
-  for (const revision of revisions) {
-    const previous = revision.preserveFacts
-      ? (await tx.select({ digest: evidenceSemanticHead113.factDigest }).from(evidenceSemanticHead113)
-          .where(eq(evidenceSemanticHead113.sourceKey, revision.sourceKind+':'+revision.sourceKey)))[0]?.digest
-      : undefined
-    const fact = revision.preserveFacts ? previous ?? evidenceDigest113([]) : revision.factDigest
-    const id = await appendPostgresEvidenceRevision(tx,{ ...revision,enterpriseId:revision.enterpriseId ?? undefined,
-      titleCode:revision.titleCode ?? undefined,direction:revision.direction ?? undefined,eventId:revision.eventId ?? undefined,factDigest:fact })
-    if (id === null || revision.enterpriseId == null) continue
-    await tx.insert(evidenceRevisionEvent113).select(tx.select({
-      revisionId: sql<number>`${id}::bigint`.as('revision_id'), eventId: recordEvent.id,
-      enterpriseId: record.enterpriseId, titleCode: record.titleCode,
-    }).from(record).innerJoin(recordEvent, eq(recordEvent.recordId, record.id))
-      .where(and(eq(record.enterpriseId, revision.enterpriseId),
-        revision.titleCode == null ? undefined : eq(record.titleCode, revision.titleCode),
-        exists(tx.select({ id: recordCorrespondence.id }).from(recordCorrespondence)
-          .where(and(eq(recordCorrespondence.status, 'confirmed'),
-            or(eq(recordCorrespondence.eventId, recordEvent.id), eq(recordCorrespondence.predecessorEventId, recordEvent.id))))),
-      ))).onConflictDoNothing()
-  }
-}
-
 async function writeQuery(tx: Tx, plan: QueryPlan, batchId: number): Promise<RosterImportItemResult> {
   const { query,normalized,byId,byCode } = plan
   const same = plan.same ?? (plan.plannedReuse ? await archivedSource(tx,query) : null)
@@ -169,7 +127,6 @@ async function writeQuery(tx: Tx, plan: QueryPlan, batchId: number): Promise<Ros
     reconcileSlotState: slot.state, reconcileSlotRule: slot.rule, reconcileSlotRawArchiveId: slot.rawArchiveId,
     reconcileSlotRowCount: slot.rowCount, reconcileSlotInputSha256: slot.inputSha256, reconcileSlotReason: slot.reason,
   }).where(eq(platformCollection.id, header.collectionId))
-  await recordQueryEvidence(tx,header,observations)
   return { ok:true,kind:'platform_query',ref:'query:'+header.queryAlias,detail:{ relations:observations.map(row=>row.projection.relationId),
     skipped:0,canonicalProjection:observations.map(row=>row.projection),rowsWritten:1+observations.length } }
 }

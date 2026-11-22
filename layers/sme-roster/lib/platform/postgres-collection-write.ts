@@ -46,14 +46,19 @@ export async function writePostgresCollectionHeader(tx: Tx, command: NewCollecti
       witnessSha256: evidenceArchive.sha256, witnessGate: witness.gate,
     }).where(eq(schema.platformCollection.id, collectionId))
   }
-  for (const name of conditionNames) {
+  const conditions = conditionNames.flatMap(name => {
     const value = evidence?.effectiveConditions[name]
     const w = witness?.conditions[name as typeof witnessConditionNames[number]]
-    await tx.insert(schema.platformCollectionCondition).values({
+    if (value === undefined && !w) return []
+    return [{
       collectionId, name, valueKind: value === undefined ? 'absent' : 'text', textValue: value ?? null,
       ...(w ? { witnessKind: w.kind, ...encodePlatformExactCell('witnessValue', w.value) } : {}),
-    })
-  }
+    }]
+  })
+  // A captured but empty condition set is distinct from one with no stored rows.
+  await tx.insert(schema.platformCollectionCondition).values(conditions.length ? conditions : [
+    { collectionId, name: 'name', valueKind: 'absent' },
+  ])
   const positions = new Map<number, Position>()
   const pageTitles = new Map<number, string | null>()
   let offset = 0

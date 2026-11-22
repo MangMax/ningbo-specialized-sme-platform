@@ -196,9 +196,8 @@ CREATE TABLE platform_business_record_version (
   record_id bigint NOT NULL,
   hash_algorithm text NOT NULL,
   content_hash text NOT NULL,
-  canonical_raw_json text NOT NULL,
   created_at text NOT NULL,
-  canonical_archive_id bigint
+  canonical_archive_id bigint NOT NULL
 );
 
 CREATE TABLE platform_version_archive_ref (
@@ -342,8 +341,7 @@ CREATE TABLE platform_observation_fingerprint_basis (
   observation_id bigint PRIMARY KEY NOT NULL CONSTRAINT platform_fingerprint_basis_safe_id CHECK(observation_id IS NOT NULL AND observation_id BETWEEN 1 AND 9007199254740991),
   scheme text NOT NULL CONSTRAINT platform_fingerprint_basis_scheme CHECK(scheme IN ('legacy-indexed-v1','legacy-bootstrap-v1','target-command-v1','uncaptured')),
   input_archive_id bigint UNIQUE,
-  CONSTRAINT platform_fingerprint_basis_input CHECK ((scheme='uncaptured' AND input_archive_id IS NULL) OR
-    (scheme<>'uncaptured' AND input_archive_id IS NOT NULL))
+  CONSTRAINT platform_fingerprint_basis_input CHECK ((scheme = 'target-command-v1') = (input_archive_id IS NOT NULL))
 );
 
 CREATE TABLE platform_legacy_alias_sequence (
@@ -1143,29 +1141,4 @@ CREATE TABLE platform_export_row (
   reg_status text,
   raw_fields text,
   created_at text NOT NULL
-);
-
-CREATE TABLE platform_migration_run (
-  run_id text PRIMARY KEY NOT NULL,
-  source_snapshot_sha256 text NOT NULL,
-  source_schema_hash text NOT NULL,
-  source_manifest_sha256 text NOT NULL,
-  target_schema_version text NOT NULL,
-  transform_version text NOT NULL,
-  state text NOT NULL,
-  CONSTRAINT platform_migration_run_state_ck CHECK (state IN ('running','complete'))
-);
-
-CREATE TABLE platform_migration_checkpoint (
-  run_id text NOT NULL,
-  phase text NOT NULL,
-  source_table text NOT NULL,
-  last_old_id bigint NOT NULL,
-  copied_count bigint NOT NULL,
-  batch_digest text NOT NULL,
-  PRIMARY KEY(run_id, phase, source_table),
-  CONSTRAINT platform_migration_checkpoint_last_old_id_ck CHECK (last_old_id IS NOT NULL AND last_old_id BETWEEN
-    0 AND 9007199254740991),
-  CONSTRAINT platform_migration_checkpoint_copied_count_ck CHECK (copied_count IS NOT NULL AND copied_count
-    BETWEEN 0 AND 9007199254740991)
 );

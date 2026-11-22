@@ -72,7 +72,7 @@ it('yields to concurrent work while keeping counts and rows in one readonly SQLi
     let settled = false
     void reading.then(() => { settled = true })
     // Run the writer after source reads but before the native formal cursor opens.
-    // A cursor alone cannot protect the earlier source/proof statements.
+    // A cursor alone cannot protect the earlier source statements.
     await Promise.resolve()
     expect(settled).toBe(false)
     db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2026 }).run()

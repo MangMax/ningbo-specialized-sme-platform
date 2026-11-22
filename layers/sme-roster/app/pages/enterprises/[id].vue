@@ -329,7 +329,7 @@ function openPreview(e: Evidence) {
 
       <Alert v-if="!detail.uscc" variant="destructive">
         <AlertTitle>缺少统一社会信用代码</AlertTitle>
-        <AlertDescription>记录按企业名称归并。同名企业需查阅公布文件核对。</AlertDescription>
+        <AlertDescription>记录按企业名称归并。同名企业需查阅公布名单原件核对。</AlertDescription>
       </Alert>
 
       <div class="flex min-w-0 flex-col gap-5">
@@ -397,9 +397,9 @@ function openPreview(e: Evidence) {
                       <p v-if="event.type === 'review'" class="mt-2">{{ eventDecisionText({ eventType: event.type, year: event.year, decidedYear: event.decidedYear, reviewOutcome: event.reviewOutcome }) }}</p>
                       <p v-if="event.seq != null" class="text-muted-foreground mt-1 text-sm">{{ event.type === 'review' ? '原认定批次' : '批次' }}：第 {{ event.seq }} 批</p>
                       <p v-if="event.type === 'nurture'" class="text-muted-foreground mt-1 text-sm">入库培育不表示已持有称号。</p>
-                      <section aria-label="正式公布文件" class="mt-3 flex min-w-0 flex-col gap-3">
+                      <section aria-label="公布名单" class="mt-3 flex min-w-0 flex-col gap-3">
                         <h4 class="text-sm font-medium">正式出处</h4>
-                        <p v-if="!event.evidence.length" class="text-muted-foreground text-sm">此事件未记录公布文件出处。</p>
+                        <p v-if="!event.evidence.length" class="text-muted-foreground text-sm">此事件未记录公布名单出处。</p>
                         <ul v-else class="grid min-w-0 gap-3 xl:grid-cols-2">
                           <li v-for="(item, index) in event.evidence" :key="item.id ?? index" class="min-w-0">
                             <OfficialEvidenceView :evidence="item" :back="previewReturnPath(event.id)" preview-in-place @preview="openPreview(item)" @page-open="rememberPagePreviewReturn(event.id, $event)" />

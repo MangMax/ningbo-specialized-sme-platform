@@ -13,9 +13,9 @@ import type { PlatformProjectionResult } from '../../lib/platform/business-recor
 import { legacyFingerprintRaw } from '../../lib/platform/legacy-fingerprint-raw'
 import { materializedText } from '../../lib/platform/apply-materialization'
 import { canonicalPlatformJson, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE, planPlatformObservation } from '../../lib/platform/observation-plan'
-import { writePostgresArchiveValue } from '../../lib/platform/postgres-archive-write'
 import { ensurePostgresObservationContent } from '../../lib/platform/postgres-observation-write'
 import { snapshotSchema } from '../../lib/platform/evidence-snapshot-model'
+import { postgresObservationSnapshot } from '../../lib/platform/postgres-observation-snapshot'
 import type { RosterImportPlatformQuery, RosterImportRelation } from '../../lib/roster-import-client'
 import { applyProjectionPreview, businessProjectionPreview, PlatformProjectionError, recognizedProjectionPreview } from './platform-business-record'
 
@@ -30,6 +30,7 @@ type ArchivedObservation = Pick<PlatformProjectionResult, 'recordId' | 'versionI
   projectionRuleVersion: string | null; inputFingerprint: string | null; scheme: string | null; basisId: number | null; pageValid: boolean
 }
 type Archive = { id: number; storageClass: 'null' | 'blob' | 'text'; bytes: Buffer | null; byteLength: number | null; sha256: string | null }
+type ObservationArchive = Archive & { snapshotBytes: Buffer | null }
 const projectionTables = {
   apply_list: platformApplyProjection, business_list: platformBusinessProjection, recognized_list: platformRecognizedProjection,
 } as const
@@ -98,19 +99,22 @@ async function inspectObservation(tx: Tx, relationId: number, options: { expecte
   const refs = platformObservationArchiveRef
   const unreferenced = [platformCollectionArchiveRef, platformObservationArchiveRef, platformVersionArchiveRef]
     .map(ref => notExists(tx.select({ id: ref.archiveId }).from(ref).where(eq(ref.archiveId, value.id))))
-  const ownerArchives = tx.select({ field: refs.field, ...archived }).from(refs)
+  const ownerArchives = tx.select({ field: refs.field, ...archived,
+    snapshotBytes: sql<Buffer | null>`CASE WHEN ${refs.field} = 'legacyRowSnapshot'
+      THEN ${postgresObservationSnapshot(refs.ownerId, value.bytes)} END`,
+  }).from(refs)
     .innerJoin(value, eq(value.id, refs.archiveId)).where(and(eq(refs.ownerId, row.id), eq(refs.sealed, 1)))
-  const archives = await (row.basisId === null ? ownerArchives : ownerArchives.unionAll(
-    tx.select({ field: sql<string>`'basis'::text`.as('field'), ...archived }).from(value)
+  const archives = await (row.scheme !== 'target-command-v1' || row.basisId === null ? ownerArchives : ownerArchives.unionAll(
+    tx.select({ field: sql<string>`'basis'::text`.as('field'), ...archived, snapshotBytes: sql<null>`NULL::bytea` }).from(value)
       .where(and(eq(value.id, BigInt(row.basisId)), ...unreferenced)),
   ))
-  const originals = new Map(archives.map(archive => [archive.field, { ...archive, id: Number(archive.id) } as Archive]))
+  const originals = new Map(archives.map(archive => [archive.field, { ...archive, id: Number(archive.id) } as ObservationArchive]))
   const raw = checkedArchive(originals.get('rawFields'))
   const sourceText = checkedArchive(originals.get('sourceText'))
-  const snapshot = checkedArchive(originals.get('legacyRowSnapshot'), 'blob')
+  checkedArchive(originals.get('legacyRowSnapshot'), 'blob')
   const { rawFields, bytes, legacyStatusBlob } = (() => {
     try {
-      const cells = snapshotSchema.parse(JSON.parse(decode(snapshot.bytes!))).fields
+      const cells = snapshotSchema.parse(JSON.parse(decode(originals.get('legacyRowSnapshot')!.snapshotBytes!))).fields
       const byName = new Map(cells.map(cell => [cell.name, cell]))
       if (byName.size !== cells.length) return drift('Duplicate original relation cell')
       const cell = (name: string) => byName.get(name) ?? drift('Missing original relation cell ' + name)
@@ -143,7 +147,6 @@ async function inspectObservation(tx: Tx, relationId: number, options: { expecte
           interface: row.source, relationKey: originalKey, queryId: row.queryId, sequenceNo: row.sequenceNo,
           queryKey: row.queryKey, rdjb: row.rdjb, queriedAt: row.queriedAt, ...legacy,
         }))
-        if (indexed && !checkedArchive(originals.get('basis'), 'blob').bytes!.equals(bytes)) return drift('Original legacy fingerprint input differs')
         return { rawFields: legacy.rawFields, bytes,
           legacyStatusBlob: !indexed && row.source === 'business_list' && cell('status').storageClass === 'blob' }
       }
@@ -201,7 +204,7 @@ async function inspectObservation(tx: Tx, relationId: number, options: { expecte
           .innerJoin(value, eq(value.id, r.archiveId))
           .leftJoin(table, and(eq(table.versionId, v.id), eq(table.recordId, v.recordId)))
           .where(and(eq(v.id, row.versionId), eq(v.recordId, row.recordId), eq(v.hashAlgorithm, PLATFORM_RAW_HASH_RULE),
-            eq(v.contentHash, plan.contentHash), eq(v.canonicalRawJson, plan.canonicalRawJson)))
+            eq(v.contentHash, plan.contentHash)))
       if (!version || !checkedArchive({ ...version, id: Number(version.id) } as Archive, 'text').bytes!.equals(Buffer.from(plan.canonicalRawJson))) {
         mapping('Original version owner or archive differs')
       }
@@ -219,7 +222,7 @@ async function inspectObservation(tx: Tx, relationId: number, options: { expecte
   const historicalPreview = { ...fingerprint, ...fields }
   const observationPreview = { relationId, identityState: plan.identityState, contentState: plan.contentState, keySource: plan.keySource,
     [projectionNames[row.source]]: Object.fromEntries(previewKeys[row.source].map(key => [key, Reflect.get(observed, key)])) }
-  return { row, indexed, plan, fingerprint, bytes, historicalPreview, observationPreview, versionProjectionMissing, legacyStatusBlob }
+  return { row, indexed, plan, fingerprint, historicalPreview, observationPreview, versionProjectionMissing, legacyStatusBlob }
 }
 
 export async function planPostgresHistoricalObservation(tx: Tx, relationId: number, expected?: string) {
@@ -241,7 +244,7 @@ export class ArchivedObservationWriteError extends PlatformProjectionError {
 export async function writePostgresArchivedObservation(tx: Tx, relationId: number, mode: ImportMode): Promise<PlatformProjectionResult | null> {
   const sync = mode.kind !== 'reference'
   try {
-    const { row, indexed, plan, fingerprint, bytes, versionProjectionMissing, legacyStatusBlob } = await inspectObservation(tx, relationId,
+    const { row, indexed, plan, fingerprint, versionProjectionMissing, legacyStatusBlob } = await inspectObservation(tx, relationId,
       mode.kind === 'historical' ? { expected: mode.expected } : { allowMissingVersionProjection: true })
     if (!indexed && !sync) return null
     if (legacyStatusBlob) throw new PlatformProjectionError('projection_source_drift', 'Legacy text class conflict')
@@ -251,10 +254,9 @@ export async function writePostgresArchivedObservation(tx: Tx, relationId: numbe
       ? await ensurePostgresObservationContent(tx, row.source, plan, now)
       : { recordId: row.recordId, versionId: row.versionId, recordCreated: false, versionCreated: false, projectionCreated: false }
     if (!indexed) {
-      const archive = await writePostgresArchiveValue(tx, bytes, null)
       const batchId = mode.kind === 'historical' ? mode.batchId : null
       await tx.insert(platformObservationFingerprintBasis).values({
-        observationId: row.id, scheme: 'legacy-bootstrap-v1', inputArchiveId: archive.id,
+        observationId: row.id, scheme: 'legacy-bootstrap-v1',
       })
       await tx.update(platformBusinessObservation).set({
         recordId: content.recordId, versionId: content.versionId, identityState: plan.identityState,

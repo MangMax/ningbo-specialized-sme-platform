@@ -121,23 +121,6 @@ describe('PostgreSQL lead versions', () => {
       before: JSON.stringify({ enterpriseId: target.id, name: '原资料现名', city: null, district: null, uscc: null }),
       after: JSON.stringify({ enterpriseId: target.id, name: '核对后现名', city: null, district: null, uscc }),
     })])
-    const evidence = (await db.query(`
-      SELECT r.source_key, r.source_version, r.fact_changed, r.max_decision_id, r.fact_digest,
-        h.latest_revision_id = r.id AND h.fact_digest = r.fact_digest AS head,
-        t.scope_key, t.pending_count, p.done, e.event_id, e.title_code
-      FROM evidence_revision_113 r JOIN evidence_semantic_head_113 h ON h.source_key=r.source_key
-      JOIN evidence_scope_version_113 t ON t.latest_revision_id=r.id
-      JOIN evidence_impact_progress_113 p ON p.revision_id=r.id
-      JOIN evidence_revision_event_113 e ON e.revision_id=r.id
-    `)).rows
-    const hash = (text: string) => createHash('sha256').update(text).digest('hex')
-    const aliasDigest = hash('{"from":null,"name":"原资料现名","to":null}')
-    const identityDigest = hash(`{"aliases":["${aliasDigest}"],"enterprise":{"name":"核对后现名","uscc":"913302017133602847"}}`)
-    expect(evidence).toEqual([{
-      source_key: `identity:enterprise:${target.id}`, source_version: `profile:${audit[0].id}`, fact_changed: '1',
-      max_decision_id: '0', fact_digest: hash(JSON.stringify(identityDigest)), head: true,
-      scope_key: `[${target.id},null,null]`, pending_count: '1', done: '0', event_id: '302', title_code: 'specialized_sme',
-    }])
     expect((await db.query('SELECT id FROM record_event ORDER BY id')).rows).toEqual([{ id: '302' }])
     expect(await (await app.request(sourcesPath)).json()).toMatchObject([
       { module: 'core' }, { id: receipt.sourceId, module: 'lead-lists', versionKey: '12', fileId: 91 },
@@ -148,7 +131,6 @@ describe('PostgreSQL lead versions', () => {
     expect(unchanged.status).toBe(200)
     expect(await unchanged.json()).toEqual({ sourceId: receipt.sourceId, rows: [{ rowId: 202, enterpriseId: target.id }] })
     expect(await (await app.request(detailsPath)).json()).toMatchObject({ name: '核对后现名', uscc, revision: 3 })
-    expect((await db.query('SELECT id FROM evidence_revision_113')).rowCount).toBe(1)
     expect((await db.query('SELECT id FROM enterprise_profile_audit WHERE enterprise_id=$1', [target.id])).rowCount).toBe(1)
   })
 

@@ -71,7 +71,6 @@ async function fixture() {
   const order = {
     enterprise: 'id', record: 'id', record_event: 'id', record_evidence: 'id', source_document: 'id',
     official_evidence_row_revision: 'evidence_id, revision', evidence_correction_audit: 'id',
-    evidence_revision_113: 'id', evidence_revision_event_113: 'revision_id, event_id',
   }
   const snapshot = async () => Object.fromEntries(await Promise.all(Object.entries(order).map(async ([table, columns]) =>
     [table, await readRows(`SELECT * FROM ${table} ORDER BY ${columns}`)] as const)))
@@ -120,9 +119,9 @@ for (const entry of ['import', 'standalone'] as const) for (const sameEvent of [
 })
 
 const auditValue = z.object({ coordinate: z.object({ sourceFile: z.string(), listNo: z.number() }), row: z.null().optional(), rowRevision: z.number().optional(), publishedRow: z.object({ nameRaw: z.string(), usccRaw: z.string(), districtRaw: z.string() }).optional(), importBatchId: z.number().optional() })
-for (const entry of ['import', 'standalone'] as const) for (const sameEvent of [true, false]) it(`R3 S1 ${entry} ${sameEvent ? 'same-event' : 'cross-event'} compatible correction keeps named ID raw audit CAS113 and receipt`, async () => {
+for (const entry of ['import', 'standalone'] as const) for (const sameEvent of [true, false]) it(`R3 S1 ${entry} ${sameEvent ? 'same-event' : 'cross-event'} compatible correction keeps named ID raw audit and receipt`, async () => {
   const f = await fixture(), state = await f.setup(sameEvent, false), correction = await state.correction('compatible'), prior = await f.exact(state.targetId)
-  const revisions = await f.readRows('SELECT * FROM evidence_revision_113 ORDER BY id'), records = await f.readRows('SELECT * FROM record ORDER BY id')
+  const records = await f.readRows('SELECT * FROM record ORDER BY id')
   if (entry === 'import') {
     const { idempotencyKey: key, ...command } = correction
     const { result } = await f.commit(f.request({ officialEvidenceCorrections: command }, key))
@@ -145,7 +144,6 @@ for (const entry of ['import', 'standalone'] as const) for (const sameEvent of [
   expect(audit).toMatchObject({ evidence_id: state.targetId, event_id: prior.eventId, batch_key: entry === 'import' ? null : 'compatible' })
   expect(auditValue.parse(JSON.parse(audit.before))).toMatchObject({ coordinate: { sourceFile: 'other.txt', listNo: 20 }, row: null })
   expect(auditValue.parse(JSON.parse(audit.after))).toMatchObject({ coordinate: { sourceFile: 'notice.txt', listNo: 10 }, rowRevision: 1, publishedRow: { nameRaw: 'Alpha original', usccRaw: 'printed code', districtRaw: 'printed district' } })
-  expect(await f.readRows('SELECT * FROM evidence_revision_113 ORDER BY id')).toHaveLength(revisions.length + 1)
 })
 
 it("S1 genuine append no-op reuses known association without propagating historical locator or unknown state", async () => {
@@ -156,7 +154,7 @@ it("S1 genuine append no-op reuses known association without propagating histori
   expect(await f.exact(state.knownId)).toEqual(known)
 })
 
-for (const entry of ['import', 'standalone'] as const) it(`R3 S1 ${entry} genuine unchanged correction creates no row revision audit or CAS113`, async () => {
+for (const entry of ['import', 'standalone'] as const) it(`R3 S1 ${entry} genuine unchanged correction creates no row revision or audit`, async () => {
   const f = await fixture(), state = await f.setup(true, false)
   const apply = async (correction: EvidenceCorrectionRequest) => {
     if (entry === 'import') { const { idempotencyKey: key, ...command } = correction; return f.commit(f.request({ officialEvidenceCorrections: command }, key)) }
@@ -225,7 +223,6 @@ for (const entry of ['import', 'standalone'] as const) for (const secondKnown of
   const exactBefore = await Promise.all(ids.map(id => f.exact(id)))
   if (secondKnown) for (const t of exactBefore) expect(t.coordinate).toEqual({ sourceFile: 'notice.txt', attachment: null, listNo: 10, page: null })
   const auditsBefore = z.object({ n: z.number() }).parse(await f.readFirst('SELECT count(*) n FROM evidence_correction_audit')).n
-  const revisionsBefore = z.object({ n: z.number() }).parse(await f.readFirst('SELECT count(*) n FROM evidence_revision_113')).n
   const history = await Promise.all(ids.map(id => f.readRows('SELECT * FROM official_evidence_row_revision WHERE evidence_id=$1 ORDER BY revision', [id])))
   const operations = await Promise.all(ids.map(id => finalOperation(f, id, next)))
   await submitFinalCorrections(f, entry, reverse ? operations.reverse() : operations, 'joint-final')
@@ -246,7 +243,6 @@ for (const entry of ['import', 'standalone'] as const) for (const secondKnown of
     expect(a.batch_key).toBe(entry === 'import' ? null : 'joint-final')
     if (entry === 'import') { expect(after.importBatchId).toBeTypeOf('number'); expect(after.importBatchId).toBe(prior.importBatchId) }
   }
-  expect(await f.readFirst('SELECT count(*) n FROM evidence_revision_113')).toEqual({ n: revisionsBefore + 1 })
   const after = await f.snapshot(); expect(after.record).toEqual(before.record); expect(after.enterprise).toEqual(before.enterprise)
 })
 
@@ -342,10 +338,9 @@ async function compatibleStoredConsumer(kind: typeof publicKinds[number], revers
     expect(await f.readRows('SELECT * FROM official_evidence_row_revision WHERE evidence_id IN ($1,$2) ORDER BY evidence_id,revision', [knownId, targetId])).toEqual(oldFacts)
   } else {
     const target = (await f.rows()).find(r => r.list_no === 30); if (!target) throw new Error('Expected public legacy target')
-    const exact = await f.exact(target.id), revisions = z.object({ n: z.number() }).parse(await f.readFirst('SELECT count(*) n FROM evidence_revision_113')).n
+    const exact = await f.exact(target.id)
     await submitFinalCorrections(f, kind === 'import-correction' ? 'import' : 'standalone', [await finalOperation(f, target.id, row)], 'pair-cross-correction')
     expect(await f.exact(target.id)).toMatchObject({ evidenceId: target.id, coordinate: { sourceFile: 'notice.txt', listNo: 10 }, event: { revision: exact.event.revision + 1 } })
-    expect(await f.readFirst('SELECT count(*) n FROM evidence_revision_113')).toEqual({ n: revisions + 1 })
     expect(await f.readRows('SELECT * FROM official_evidence_row_revision WHERE evidence_id IN ($1,$2) ORDER BY evidence_id,revision', [knownId, targetId])).toEqual(oldFacts)
   }
 }

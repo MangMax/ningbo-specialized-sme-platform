@@ -22,19 +22,23 @@ DO $$ BEGIN RAISE EXCEPTION 'Roster materialization requires a distinct native t
 \ir ../../db/postgresql/roster-platform-schema.sql
 \ir ../../db/postgresql/roster-review-schema.sql
 
-INSERT INTO comparison_scope_proof (
-  id, kind, evidence, source_fingerprint, created_at
-)
-SELECT id, kind, evidence, source_fingerprint, created_at
-FROM :"staging".comparison_scope_proof;
-
-INSERT INTO comparison_scope_proof_audit (
-  id, proof_id, batch_id, idempotency_key, from_status, to_status, expected_revision, resulting_revision,
-  actor_type, actor_id, basis, rule_id, rule_version, decided_at
-)
-SELECT id, proof_id, batch_id, idempotency_key, from_status, to_status, expected_revision, resulting_revision,
-  actor_type, actor_id, basis, rule_id, rule_version, decided_at
-FROM :"staging".comparison_scope_proof_audit;
+-- The source staging schema remains an exact copy. Retiring the native proof
+-- tables must not discard a populated historical source or a past confirmation.
+SELECT NOT (
+  EXISTS (SELECT FROM :"staging".comparison_scope_proof)
+  OR EXISTS (SELECT FROM :"staging".comparison_scope_proof_audit)
+  OR EXISTS (SELECT FROM :"staging".record_correspondence WHERE type = 'recognized_export' AND status = 'confirmed')
+  OR EXISTS (
+    SELECT FROM :"staging".record_correspondence_audit audit
+    JOIN :"staging".record_correspondence edge ON edge.id = audit.correspondence_id
+    WHERE edge.type = 'recognized_export' AND audit.to_status = 'confirmed'
+  )
+) AS without_retired_comparison_evidence
+\gset
+\if :without_retired_comparison_evidence
+\else
+DO $$ BEGIN RAISE EXCEPTION 'Source retains comparison scope proof or confirmed interface-export correspondence'; END $$;
+\endif
 
 INSERT INTO difference_reason (
   id, enterprise_id, title_code, direction, status, reason_code, reason_note, measure_code, measure_note,
@@ -47,6 +51,9 @@ SELECT id, enterprise_id, title_code, direction, status, reason_code, reason_not
   moved_in_batch, verification_status, recorded_at, created_at, lifecycle_action, previous_id, actor, basis,
   rule_version, effective_at, idempotency_key, request_hash, current_qualification, fact_references
 FROM :"staging".difference_reason;
+
+\set evidence_source :staging
+\ir freeze-decision-evidence.sql
 
 INSERT INTO enterprise_difference_comparison (
   enterprise_id, title_code, comparison_state, reasons, comparison_error, decision_cutoff_id,
@@ -88,18 +95,6 @@ INSERT INTO evidence_correction_batch (
 SELECT idempotency_key, request_hash, plan_hash, receipt, created_at
 FROM :"staging".evidence_correction_batch;
 
-INSERT INTO evidence_impact_link_113 (
-  revision_id, impact_id, classification
-)
-SELECT revision_id, impact_id, classification
-FROM :"staging".evidence_impact_link_113;
-
-INSERT INTO evidence_impact_progress_113 (
-  revision_id, cursor, done
-)
-SELECT revision_id, cursor, done
-FROM :"staging".evidence_impact_progress_113;
-
 INSERT INTO evidence_review_receipt_114 (
   id, idempotency_key, request_hash, kind, enterprise_id, title_code, direction, decision_id,
   source_decision_id, reviewed_revision_id, actor, basis, rule_version, effective_at, response, recorded_at
@@ -107,50 +102,6 @@ INSERT INTO evidence_review_receipt_114 (
 SELECT id, idempotency_key, request_hash, kind, enterprise_id, title_code, direction, decision_id,
   source_decision_id, reviewed_revision_id, actor, basis, rule_version, effective_at, response, recorded_at
 FROM :"staging".evidence_review_receipt_114;
-
-INSERT INTO evidence_revision_113 (
-  id, source_kind, source_key, source_version, enterprise_id, title_code, direction, event_id,
-  coverage_digest, fact_digest, coverage_changed, fact_changed, query_executed, metadata, max_decision_id,
-  created_at
-)
-SELECT id, source_kind, source_key, source_version, enterprise_id, title_code, direction, event_id,
-  coverage_digest, fact_digest, coverage_changed, fact_changed, query_executed, metadata, max_decision_id,
-  created_at
-FROM :"staging".evidence_revision_113;
-
-INSERT INTO evidence_revision_event_113 (
-  revision_id, event_id, enterprise_id, title_code
-)
-SELECT revision_id, event_id, enterprise_id, title_code
-FROM :"staging".evidence_revision_event_113;
-
-INSERT INTO evidence_rule_release_114 (
-  id, rule_id, version, enterprise_id, title_code, direction, previous_digest, evaluation_digest,
-  revision_id, receipt_key
-)
-SELECT id, rule_id, version, enterprise_id, title_code, direction, previous_digest, evaluation_digest,
-  revision_id, receipt_key
-FROM :"staging".evidence_rule_release_114;
-
-INSERT INTO evidence_scope_version_113 (
-  scope_key, latest_revision_id, pending_count
-)
-SELECT scope_key, latest_revision_id, pending_count
-FROM :"staging".evidence_scope_version_113;
-
-INSERT INTO evidence_semantic_head_113 (
-  source_key, coverage_digest, fact_digest, latest_revision_id
-)
-SELECT source_key, coverage_digest, fact_digest, latest_revision_id
-FROM :"staging".evidence_semantic_head_113;
-
-INSERT INTO explanation_impact_113 (
-  id, enterprise_id, title_code, direction, decision_id, latest_revision_id, pending_since_revision_id,
-  reviewed_revision_id, classification
-)
-SELECT id, enterprise_id, title_code, direction, decision_id, latest_revision_id, pending_since_revision_id,
-  reviewed_revision_id, classification
-FROM :"staging".explanation_impact_113;
 
 INSERT INTO file_declaration_669 (
   declaration_id, file_id, revision, active, sha256, content_version, part, page_ranges, display_sequence
@@ -172,13 +123,17 @@ SELECT id, idempotency_key, source_kind, source_identity, source_sha256, status,
   summary, error, created_at, committed_at
 FROM :"staging".import_batch;
 
+\ir classify-import-receipt.sql
 INSERT INTO import_receipt (
-  id, batch_id, operation, request_hash, request_body, status, summary, item_results, created_at,
-  completed_at, body_receipt_id
+  id, batch_id, operation, request_hash, historical_projection, status, summary, item_results, created_at, completed_at
 )
-SELECT id, batch_id, operation, request_hash, request_body, status, summary, item_results, created_at,
-  completed_at, body_receipt_id
-FROM :"staging".import_receipt;
+SELECT receipt.id, receipt.batch_id, receipt.operation, receipt.request_hash,
+  CASE WHEN batch.source_kind = 'platform_archive'
+    THEN pg_temp.import_historical_projection(coalesce(owner.request_body, receipt.request_body)) ELSE false END,
+  receipt.status, receipt.summary, receipt.item_results, receipt.created_at, receipt.completed_at
+FROM :"staging".import_receipt receipt
+LEFT JOIN :"staging".import_batch batch ON batch.id = receipt.batch_id
+LEFT JOIN :"staging".import_receipt owner ON owner.id = receipt.body_receipt_id;
 
 INSERT INTO official_evidence_row_revision (
   evidence_id, revision, format_version, event_id, captured_record_id, captured_enterprise_id, name_raw,
@@ -315,9 +270,9 @@ SELECT id, interface, platform_key, identity_rule_version, created_at
 FROM :"staging".platform_business_record;
 
 INSERT INTO platform_business_record_version (
-  id, record_id, hash_algorithm, content_hash, canonical_raw_json, created_at, canonical_archive_id
+  id, record_id, hash_algorithm, content_hash, created_at, canonical_archive_id
 )
-SELECT id, record_id, hash_algorithm, content_hash, canonical_raw_json, created_at, canonical_archive_id
+SELECT id, record_id, hash_algorithm, content_hash, created_at, canonical_archive_id
 FROM :"staging".platform_business_record_version;
 
 INSERT INTO platform_collection (
@@ -351,6 +306,8 @@ INSERT INTO platform_collection_condition (
 SELECT collection_id, name, value_kind, text_value, integer_value, witness_kind, witness_value,
   witness_value_sqlite_storage
 FROM :"staging".platform_collection_condition;
+
+\ir compact-platform-collection-conditions.sql
 
 INSERT INTO platform_collection_legacy_provenance (
   collection_id, origin, source_identity, source_sha256, segment_index, input_fingerprint, import_batch_id,
@@ -408,20 +365,6 @@ INSERT INTO platform_legacy_relation_alias (
 SELECT old_id, observation_id
 FROM :"staging".platform_legacy_relation_alias;
 
-INSERT INTO platform_migration_checkpoint (
-  run_id, phase, source_table, last_old_id, copied_count, batch_digest
-)
-SELECT run_id, phase, source_table, last_old_id, copied_count, batch_digest
-FROM :"staging".platform_migration_checkpoint;
-
-INSERT INTO platform_migration_run (
-  run_id, source_snapshot_sha256, source_schema_hash, source_manifest_sha256, target_schema_version,
-  transform_version, state
-)
-SELECT run_id, source_snapshot_sha256, source_schema_hash, source_manifest_sha256, target_schema_version,
-  transform_version, state
-FROM :"staging".platform_migration_run;
-
 INSERT INTO platform_observation_archive_ref (
   owner_id, field, archive_id, sealed
 )
@@ -436,10 +379,15 @@ SELECT observation_id, revision, enterprise_id, match_basis, verification_status
   alias_name_raw, actor, basis, command_receipt_id, recorded_at, origin
 FROM :"staging".platform_observation_assignment;
 
+CREATE TEMP TABLE legacy_platform_fingerprint_release ON COMMIT DROP AS
+SELECT observation_id, input_archive_id AS archive_id
+FROM :"staging".platform_observation_fingerprint_basis
+WHERE scheme IN ('legacy-indexed-v1', 'legacy-bootstrap-v1') AND input_archive_id IS NOT NULL;
+
 INSERT INTO platform_observation_fingerprint_basis (
   observation_id, scheme, input_archive_id
 )
-SELECT observation_id, scheme, input_archive_id
+SELECT observation_id, scheme, CASE WHEN scheme = 'target-command-v1' THEN input_archive_id END
 FROM :"staging".platform_observation_fingerprint_basis;
 
 INSERT INTO platform_query_title_scope (
@@ -500,11 +448,19 @@ INSERT INTO platform_version_archive_ref (
 SELECT owner_id, field, archive_id, sealed
 FROM :"staging".platform_version_archive_ref;
 
-INSERT INTO reconciliation_result (
-  id, title_code, enterprise_id, direction, curated, evidence
-)
-SELECT id, title_code, enterprise_id, direction, curated, evidence
-FROM :"staging".reconciliation_result;
+-- Source staging retains the duplicate text so the first materialization can prove byte equality.
+SELECT EXISTS (
+  SELECT 1
+  FROM :"staging".platform_business_record_version v
+  LEFT JOIN platform_version_archive_ref r
+    ON r.owner_id = v.id AND r.archive_id = v.canonical_archive_id AND r.field = 'canonicalRawJson' AND r.sealed = 1
+  LEFT JOIN platform_archive_value a ON a.id = r.archive_id AND a.storage_class = 'text'
+  WHERE a.id IS NULL OR a.bytes IS DISTINCT FROM convert_to(v.canonical_raw_json, 'UTF8')
+) AS invalid_canonical_archive
+\gset
+\if :invalid_canonical_archive
+DO $$ BEGIN RAISE EXCEPTION 'Staged canonical platform version has no matching sealed text archive'; END $$;
+\endif
 
 INSERT INTO record (
   id, enterprise_id, title_code, source, district, uscc_raw, name_raw, quality_flags
@@ -529,6 +485,7 @@ INSERT INTO record_correspondence_audit (
 SELECT id, correspondence_id, batch_id, idempotency_key, from_status, to_status, expected_revision,
   resulting_revision, actor_type, actor_id, basis, rule_id, rule_version, evidence, decided_at
 FROM :"staging".record_correspondence_audit;
+\ir compact-correspondence-query-evidence.sql
 
 INSERT INTO record_event (
   id, record_id, event_type, year, batch_seq, sort_key, review_outcome, decided_year, revision,
@@ -636,16 +593,11 @@ $$;
 CREATE TEMP TABLE roster_sequence_restart (table_name text, column_name text, next_id bigint) ON COMMIT DROP;
 WITH owned_sequences(table_name, column_name) AS (
   VALUES
-    ('comparison_scope_proof', 'id'),
-    ('comparison_scope_proof_audit', 'id'),
     ('difference_reason', 'id'),
     ('enterprise_fact_revision', 'id'),
     ('event_correction_audit', 'id'),
     ('evidence_correction_audit', 'id'),
     ('evidence_review_receipt_114', 'id'),
-    ('evidence_revision_113', 'id'),
-    ('evidence_rule_release_114', 'id'),
-    ('explanation_impact_113', 'id'),
     ('file_parse_audit_105', 'id'),
     ('import_batch', 'id'),
     ('import_receipt', 'id'),
@@ -660,7 +612,6 @@ WITH owned_sequences(table_name, column_name) AS (
     ('platform_export_batch', 'id'),
     ('platform_export_row', 'id'),
     ('platform_recognized_projection', 'id'),
-    ('reconciliation_result', 'id'),
     ('record', 'id'),
     ('record_correspondence', 'id'),
     ('record_correspondence_audit', 'id'),
@@ -688,16 +639,17 @@ DROP FUNCTION pg_temp.roster_sequence_high_water(text, text);
 
 \ir ../../db/postgresql/roster-constraints.sql
 \ir ../../db/postgresql/roster-triggers.sql
+\ir ../../db/postgresql/platform-fingerprint-legacy-verify.sql
+\ir ../../db/postgresql/platform-fingerprint-legacy-prune.sql
+\ir ../../db/postgresql/platform-observation-snapshot-compaction.sql
 
 SELECT format('ANALYZE %I.%I', :'target', tablename)
 FROM pg_tables
 WHERE schemaname = :'target' AND tablename IN (
-  'comparison_scope_proof', 'comparison_scope_proof_audit', 'difference_reason',
+  'difference_reason',
   'enterprise_difference_comparison', 'enterprise_fact_receipt', 'enterprise_fact_revision',
   'event_correction_audit', 'evidence_correction_audit', 'evidence_correction_batch',
-  'evidence_impact_link_113', 'evidence_impact_progress_113', 'evidence_review_receipt_114',
-  'evidence_revision_113', 'evidence_revision_event_113', 'evidence_rule_release_114',
-  'evidence_scope_version_113', 'evidence_semantic_head_113', 'explanation_impact_113',
+  'evidence_review_receipt_114',
   'file_declaration_669', 'file_parse_audit_105', 'import_batch', 'import_receipt',
   'official_evidence_row_revision', 'platform_apply_projection', 'platform_archive_value',
   'platform_business_observation', 'platform_business_projection', 'platform_business_record',
@@ -705,10 +657,10 @@ WHERE schemaname = :'target' AND tablename IN (
   'platform_collection_condition', 'platform_collection_legacy_provenance', 'platform_collection_page',
   'platform_collection_unfinished', 'platform_export_batch', 'platform_export_row',
   'platform_legacy_alias_sequence', 'platform_legacy_query_alias', 'platform_legacy_relation_alias',
-  'platform_migration_checkpoint', 'platform_migration_run', 'platform_observation_archive_ref',
+  'platform_observation_archive_ref',
   'platform_observation_assignment', 'platform_observation_fingerprint_basis', 'platform_query_title_scope',
   'platform_query_title_scope_error', 'platform_recognized_projection', 'platform_version_archive_ref',
-  'reconciliation_result', 'record', 'record_correspondence', 'record_correspondence_audit', 'record_event',
+  'record', 'record_correspondence', 'record_correspondence_audit', 'record_event',
   'record_evidence', 'roster_file_classification', 'source_document', 'stored_file_part', 'title',
   'title_cycle_disposition_receipt', 'title_cycle_disposition_revision', 'roster_announcement_intake',
   'roster_legacy_member', 'roster_announcement_member'

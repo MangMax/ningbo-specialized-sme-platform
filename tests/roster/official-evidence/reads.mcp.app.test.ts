@@ -290,8 +290,6 @@ it('transport other legacy receipt tools retain SDK field errors', async () => {
     const result = await rpc('list_roster_import_receipts', args)
     expect(result.status).toBe(200); expect(result.body).not.toHaveProperty('error'); expect(rpcResult.parse(result.body).result.isError).toBe(true)
   }
-  const result = await rpc('get_roster_import_request', { batchId: 1, maxBytes: 65537 })
-  expect(result.status).toBe(200); expect(result.body).not.toHaveProperty('error'); expect(rpcResult.parse(result.body).result.isError).toBe(true)
 })
 
 const pgBin = process.env.TEST_IMPORT_RECEIPTS_PG_BIN
@@ -373,14 +371,10 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
     expect(withdrawal.status, JSON.stringify(withdrawal.body)).toBe(200)
 
     const activeScope = { ...scope, direction: 'extra_in_miit' }
-    const active = await http('/api/roster/decision-lifecycle/commands', { ...legacyDecision, ...activeScope, idempotencyKey: 'native-impact-decision' })
+    const active = await http('/api/roster/decision-lifecycle/commands', { ...legacyDecision, ...activeScope, idempotencyKey: 'native-active-decision' })
     expect(active.status, JSON.stringify(active.body)).toBe(200)
     const activeDecisionId = z.object({ versionId: z.number() }).parse(active.body).versionId
 
-    const secondScope = { ...activeScope, titleCode: 'little_giant' }
-    const second = await http('/api/roster/decision-lifecycle/commands', { ...legacyDecision, ...secondScope, idempotencyKey: 'native-second-impact' })
-    expect(second.status, JSON.stringify(second.body)).toBe(200)
-    const secondDecisionId = z.object({ versionId: z.number() }).parse(second.body).versionId
     const archivedAt = '2026-10-09T01:08:28Z'
     const archived = await http('/api/roster/import/commit', {
       idempotencyKey: 'native-qualification-source', sourceKind: 'alias_evidence', sourceIdentity: '合成工信部来源',
@@ -516,7 +510,6 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
     const calls = [
       ['', 'get_roster_import_receipt', { receiptId }],
       ['/history', 'list_roster_import_receipts', { batchId: batch.id, pageSize: 1 }],
-      ['/request', 'get_roster_import_request', { receiptId, offset: 3, maxBytes: 17 }],
       ['/items', 'list_roster_import_items', { batchId: batch.id, pageSize: 1 }],
       ['/items', 'list_roster_import_items', { ...selector, projection: 'snapshot' }],
       ['/items', 'list_roster_import_items', { ...selector, projection: 'eventIds', pageSize: 1 }],
@@ -727,8 +720,7 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
     expect(attempts.map(response => response.status), JSON.stringify(committed)).toEqual([200, 200])
     expect(committed[0]).toEqual(committed[1])
     expect(committed[0]).toMatchObject({ status: 'committed', summary: { written: 2, skipped: 0, failed: 0 }, items: [{ detail: { rows: [expect.any(Number)] } }] })
-    expect(JSON.parse(run('psql', ['-X', '-w', '-Atc', `SELECT json_build_object('count',(SELECT count(*) FROM business.platform_export_batch WHERE year=2027),
-      'revision',(SELECT count(*) FROM business.evidence_revision_113 WHERE source_kind='selected_snapshot' AND metadata::json#>>'{after,year}'='2027'))`]).toString())).toEqual({ count: 1, revision: 1 })
+    expect(run('psql', ['-X', '-w', '-Atc', 'SELECT count(*) FROM business.platform_export_batch WHERE year=2027']).toString().trim()).toBe('1')
     const receipt = await app.request(`/api/roster/import/receipts/history?batchId=${committed[0].batchId}`)
     expect(receipt.status).toBe(200)
     expect(await receipt.json()).toMatchObject({ rows: expect.arrayContaining([expect.objectContaining({ status: 'committed' })]) })
@@ -782,78 +774,8 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
     const eventAudit = await (await app.request(eventPath + '/audit')).json()
     expect(eventAudit.rows).toEqual([expect.objectContaining({ eventId: event.id, before: priorNative.event, after: corrected.event })])
 
-
-    const workPath = '/api/roster/evidence-impacts/commands'
-    const evidenceWork = (body: unknown) => app.request(workPath, { method: 'POST', body: JSON.stringify(body) })
-    const rule = { action: 'release_rule', idempotencyKey: 'native-impact-release', actor, basis, ruleId: 'fixture-source-rule', version: '2',
-      scopes: [activeScope, secondScope].map(target => ({ ...target, previousEvaluationDigest: 'a'.repeat(64), evaluationDigest: 'b'.repeat(64) })) }
-    const releaseResponses = await Promise.all([evidenceWork(rule), evidenceWork(rule)])
-    const releases = await Promise.all(releaseResponses.map(response => response.json()))
-    expect(releaseResponses.map(response => response.status), JSON.stringify(releases)).toEqual([200, 200])
-    expect(releases[0]).toEqual(releases[1])
-    expect(releases[0]).toMatchObject({ unchanged: 0, revisionIds: [expect.any(Number), expect.any(Number)] })
-    expect(await nativeTool('release_evidence_rule', rule)).toEqual({ body: releases[0], isError: false })
-    expect((await evidenceWork({ ...rule, idempotencyKey: 'different-rule-request', scopes: [{ ...rule.scopes[0], evaluationDigest: 'c'.repeat(64) }] })).status).toBe(409)
-    const processCommand = { action: 'process', idempotencyKey: 'native-impact-process', limit: 100, actor, basis }
-    const applied = await evidenceWork(processCommand)
-    const workReceipt = await applied.json()
-    expect(applied.status, JSON.stringify(workReceipt)).toBe(200)
-    expect(workReceipt).toMatchObject({ processed: expect.any(Number), unfinished: false })
-    expect(workReceipt.processed).toBeGreaterThan(0)
-    expect(workReceipt.watermark).toBeGreaterThanOrEqual(releases[0].revisionIds[0])
-    expect(await nativeTool('process_evidence_impacts', processCommand)).toEqual({ body: workReceipt, isError: false })
-    const link = run('psql', ['-X', '-w', '-Atc', `SELECT l.classification,i.decision_id FROM business.evidence_impact_link_113 l
-      JOIN business.explanation_impact_113 i ON i.id=l.impact_id WHERE l.revision_id=${releases[0].revisionIds[0]}`]).toString().trim()
-    expect(link).toEqual('evidence_changed|' + activeDecisionId)
-    const pending = run('psql', ['-X', '-w', '-Atc', 'SELECT sum(pending_count) FROM business.evidence_scope_version_113']).toString().trim()
-    expect(pending).toBe('0')
-
-
-    const impactsPath = '/api/roster/evidence-impacts'
-    const impacted = await app.request(impactsPath + '?limit=1&enterpriseId=' + firstOwner.id)
-    const firstImpact = await impacted.json()
-    expect(impacted.status, JSON.stringify(firstImpact)).toBe(200)
-    expect(firstImpact).toMatchObject({ rows: [expect.objectContaining({ decisionId: activeDecisionId, pending: true })],
-      nextCursor: expect.any(String), projectionReady: true })
-    const impactId = firstImpact.rows[0].id
-    const impactRead = await app.request(impactsPath + '/' + impactId)
-    const impactDetail = await impactRead.json()
-    expect(impactRead.status, JSON.stringify(impactDetail)).toBe(200)
-    expect(impactDetail).toMatchObject({ decisionId: activeDecisionId, oldDecision: { id: activeDecisionId },
-      evidenceToken: { latestRevisionId: releases[0].revisionIds[0], projectionReady: true } })
-    expect(await nativeTool('get_evidence_impact', { id: impactId })).toEqual({ body: impactDetail, isError: false })
-    const sources = await app.request(impactsPath + '/' + impactId + '/sources')
-    expect(sources.status).toBe(200)
-    expect(await sources.json()).toMatchObject({ rows: expect.arrayContaining([expect.objectContaining({
-      revisionId: releases[0].revisionIds[0], sourceKind: 'rule_release', classification: 'evidence_changed',
-    })]) })
-    const impactPreview = await nativeTool('preview_evidence_impacts', { revisionId: releases[0].revisionIds[1] })
-    expect(impactPreview).toMatchObject({ isError: false, body: { rows: [expect.objectContaining({ id: secondDecisionId, classification: 'evidence_changed' })] } })
-    const eventRevision = Number(run('psql', ['-X', '-w', '-Atc',
-      'SELECT max(id) FROM business.evidence_revision_113 WHERE event_id=' + event.id]).toString().trim())
-    expect(await nativeTool('list_evidence_revision_events', { revisionId: eventRevision })).toMatchObject({
-      isError: false, body: { rows: [expect.objectContaining({ eventId: event.id, enterpriseId: firstOwner.id })] },
-    })
-
     const decisionRoot = '/api/roster/decision-lifecycle/'
     const decide = (action: string, body: unknown) => app.request(decisionRoot + action, { method: 'POST', body: JSON.stringify(body) })
-    const maintain = { ...activeScope, action: 'maintain', expectedCurrentId: activeDecisionId,
-      idempotencyKey: 'native-scope-review', basis, effectiveAt: '2026-10-18T00:00:00Z',
-      reviewedEvidence: { latestRevisionId: releases[0].revisionIds[0], projectionReady: true } }
-    const reviewPath = '/api/roster/evidence-review/browser-commands'
-    const reviewResponse = await app.request(reviewPath, {
-      method: 'POST', headers: { origin: new URL(app.url(reviewPath)).origin, 'sec-fetch-site': 'same-origin', 'content-type': 'application/json' },
-      body: JSON.stringify(maintain),
-    })
-    const reviewed = await reviewResponse.json()
-    expect(reviewResponse.status, JSON.stringify(reviewed)).toBe(200)
-    expect(reviewed).toMatchObject({ action: 'maintain', versionId: activeDecisionId, reviewedRevisionId: releases[0].revisionIds[0] })
-    const secondPage = await app.request(impactsPath + '?limit=1&enterpriseId=' + firstOwner.id + '&cursor=' + encodeURIComponent(firstImpact.nextCursor))
-    expect(secondPage.status).toBe(200)
-    expect(await secondPage.json()).toMatchObject({ asOf: firstImpact.asOf,
-      rows: [expect.objectContaining({ decisionId: secondDecisionId, pending: true })] })
-    const nowReviewed = await app.request(impactsPath + '/' + impactId)
-    expect(await nowReviewed.json()).toMatchObject({ pending: false, reviewedBaseline: { actor: null, ruleVersion: null } })
     const migration = { ...legacyDecision, ...activeScope, expectedCurrentId: activeDecisionId, idempotencyKey: 'native-qualification-decision',
       decision: { status: 'confirmed_reason', reasonCode: 'moved_in', measureCode: 'record_moved_in', verificationStatus: 'confirmed',
         evidenceQueryId: archiveCoordinates.queryId, evidenceRelationId: archiveCoordinates.relationId, movedIn: { city: '南通' },

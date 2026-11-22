@@ -38,7 +38,7 @@ export default defineMcpTool({
     idempotencyKey: z.string().min(1).describe('幂等键；同一来源重复调用必须给同一个值（库层面唯一）'),
     sourceKind: z
       .enum(['announcement', 'platform_export', 'platform_archive', 'alias_evidence'])
-      .describe('来源类别：公布文件 / 平台导出 / 别名证据'),
+      .describe('来源类别：公布名单 / 平台导出 / 别名证据'),
     sourceIdentity: z.string().min(1).describe('来源身份：文件相对路径或逻辑标识（不含凭证）'),
     sourceSha256: z.string().optional().describe('源文件内容 SHA-256；给不出留空'),
     payload: rosterImportMcpPayloadSchema,

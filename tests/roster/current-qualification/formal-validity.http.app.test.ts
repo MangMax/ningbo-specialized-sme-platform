@@ -78,7 +78,7 @@ it('real current-qualified HTTP, MCP and export artifacts agree for interval and
     for (const row of sheet.getRows(2, expected.length)!) {
       const name = String(row.getCell(2).value)
       expect(String(row.getCell(14).value)).toContain(name === 'owned_lanfan'
-        ? `正式文件有效期：${year-3}-11-01 至 ${today}（含首尾）`
+        ? `公布名单所载有效期：${year-3}-11-01 至 ${today}（含首尾）`
         : `默认年度规则：最近一次认定或复核通过 ${year} 年 + 3 = ${year+3} 年；自 ${year+3} 年起到期（仅年份精度）`)
     }
   }

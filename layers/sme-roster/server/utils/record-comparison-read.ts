@@ -6,15 +6,11 @@ import type { useApplicationDb } from '../../../../db/client'
 import * as schema from '../../../../db/schema'
 import type { ComparisonSourceCatalogInput, RecordComparisonInput } from '../../lib/roster/record-comparison'
 import { iterateRecordComparison, iterateRecordComparisonSources } from './record-comparison'
-import { resolveVerifiedComparisonEvidence } from './comparison-scope-proof'
 
 /** An independent readonly connection keeps a single SQLite snapshot across yields.
  * It never shares an async transaction with the app's cached writer connection. */
 export async function readRecordComparison(owner: ReturnType<typeof useApplicationDb>, input: RecordComparisonInput, signal?: AbortSignal) {
-  return readComparisonSnapshot(owner, db => {
-    const evidence = resolveVerifiedComparisonEvidence(db, input.proofIds ?? [], input)
-    return iterateRecordComparison(db, input, evidence)
-  }, signal)
+  return readComparisonSnapshot(owner, db => iterateRecordComparison(db, input), signal)
 }
 export async function readRecordComparisonSources(owner: ReturnType<typeof useApplicationDb>, input: ComparisonSourceCatalogInput, signal?: AbortSignal) {
   return readComparisonSnapshot(owner, db => iterateRecordComparisonSources(db, input), signal)

@@ -4,7 +4,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { readPostgresEvidenceImpacts113 } from '../../../layers/sme-roster/lib/roster/query-assessment-postgres'
+import { seedRetiredEvidenceState } from '../fixtures/retired-evidence-state'
 import { normalizeUscc } from '../../../layers/sme-roster/lib/domain'
 import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
@@ -31,7 +31,7 @@ beforeEach(async () => {
     TRUNCATE enterprise, record_event, record_evidence, platform_collection, platform_archive_value,
       platform_business_record, import_batch,
       record_correspondence, record_correspondence_audit, difference_reason,
-      evidence_review_receipt_114, evidence_scope_version_113, explanation_impact_113 RESTART IDENTITY CASCADE
+      evidence_review_receipt_114 RESTART IDENTITY CASCADE
   `)
 })
 afterAll(async () => {
@@ -262,10 +262,7 @@ it('uses a source period without manual admission or fabricated publication reco
   }
   const command=await api({...scope,action:'replace',expectedCurrentId:null,idempotencyKey:'filter155-migrant',actor:{type:'agent',id:'synthetic-155'},basis:'Synthetic independent external qualification and publication check',ruleVersion:'synthetic-155',effectiveAt:`${year-1}-01-01T00:00:00Z`,decision:{status:'confirmed_reason',reasonCode:'moved_in',measureCode:'record_moved_in',verificationStatus:'confirmed',evidenceQueryId:source.id,evidenceRelationId:relation.id,currentQualification:{titleCode:'innovative_sme',validFrom:`${year-1}-01-01T00:00:00Z`,validUntil:`${year+2}-01-01T00:00:00Z`,basis:'Synthetic confirmed external qualification',publicationCheck:{status:'not_found',scope:'All ingested Ningbo innovative announcements'}}}})
   expect(command.status,JSON.stringify(command.body)).toBe(200)
-  const [impact] = await readPostgresEvidenceImpacts113(db, [{ scope, decisionId: command.body.versionId, latestDecisionId: command.body.versionId }])
-  const token = impact!.token
-  const review=await api({...scope,action:'maintain',expectedCurrentId:command.body.versionId,idempotencyKey:'filter155-migrant-review',actor:{type:'agent',id:'synthetic-155'},basis:'Synthetic explicit review',ruleVersion:'synthetic-155',effectiveAt:`${year-1}-01-01T00:00:00Z`,reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:true}})
-  expect(review.status,JSON.stringify(review.body)).toBe(200)
+  await seedRetiredEvidenceState(db, command.body.versionId)
   const unfiltered=await query({})
   expect(unfiltered.body).toMatchObject({total:1,rows:[{enterpriseId:migrant.enterprise.id,firstYear:null,recognition:{precision:'year',year:year-1},matchedValidYears:[year+1],qualificationWitnesses:[{cycle:{originYear:year-1,batchSeq:null},awardEventId:null,recognition:{precision:'year',year:year-1},matchedValidYear:year+1,matchedMaintenance:null,correspondenceId:null,conditionQueryId:null}]}],publishedPending:{rows:[],total:0}})
   const unrecognized=await query({status:'unrecognized'})

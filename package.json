@@ -22,7 +22,7 @@
     "verify:native-platform-boundary": "node scripts/verify-native-platform-boundary.mjs",
     "verify:module-boundaries": "node scripts/verify-module-boundaries.mjs",
     "verify:sql": "node scripts/sql-guard.mjs",
-    "db:init": "node --env-file-if-exists=.env scripts/initialize-native-db.mjs",
+    "db:init": "node --env-file-if-exists=.env scripts/initialize-postgresql.mjs",
     "test:runtime": "vitest run --project runtime",
     "test:upgrade": "vitest run --project upgrade",
     "test:app": "vitest run --project app",

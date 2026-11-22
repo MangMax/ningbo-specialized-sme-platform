@@ -7,7 +7,6 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { registerPostgresEnterpriseSource } from '../../../core/server/public'
 import type { RosterImportRequest, RosterImportItemResult } from '../../lib/roster-import-client'
 import { readPostgresAnnouncementEvents, repointPostgresAnnouncementEvidence } from './announcement-evidence-postgres'
-import { capturePostgresOfficialEventRevision } from './evidence-revision-postgres'
 import { announcementEvidenceCoordinate, evidenceRepointPlanFingerprint, eventCoordinates, matchesEventCoordinates } from './roster-import-model'
 import { officialFactFailure, readOfficialFile } from './official-evidence-claim-model'
 import { resolvePostgresOfficialDeclaration, writePostgresOfficialPublishedRow } from './official-evidence-write-postgres'
@@ -101,7 +100,6 @@ export async function writePostgresAnnouncement(tx: Tx, request: RosterImportReq
           await writePostgresOfficialPublishedRow(tx, entry.publishedRow, evidenceId, 0, { kind: 'import', batchId }, declarations)
         }
       }
-      if (row.source === 'jxj') await capturePostgresOfficialEventRevision(tx, eventId, 0, 1)
     }
     const rowsWritten = Number(source.created) + declarations.size - beforeDeclarations + Number(row.created) + Number(recordCreated) + events.length + evidenceIds.length
     items.push({ ok: true, kind: 'record_event', ref: 'record:' + recordId, detail: {

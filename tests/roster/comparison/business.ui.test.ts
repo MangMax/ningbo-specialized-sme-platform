@@ -10,7 +10,7 @@ const observations = [1076, 3161].map((id, index) => ({
   linkState: index ? 'unlinked' : 'linked',
   correspondences: index ? [] : [{ id: 329, eventId: 3, status: 'confirmed', requiresRevalidation: true }],
   historicalDecisionUnavailable: [], currentSource: null,
-  withoutOfficial: index ? { qualification: 'unresolved', proofId: null, reasons: ['official_source_completeness_not_persisted'] } : null,
+  withoutOfficial: index ? { qualification: 'unresolved', reasons: ['official_source_completeness_not_persisted'] } : null,
 }))
 const groups = {
   rows: [{ key: 'canonical:1', firstRelationId: 1076, unknownObservations: [], recordId: 1, interface: 'business_list', platformKey: 'SQ1', groupState: 'resolved', observationCount: 2, linkState: 'mixed', resultState: 'mixed', versions: [{ versionId: 1, observationCount: 2, linkState: 'mixed', resultState: 'mixed', observations }] }],

@@ -51,8 +51,6 @@ describe('record comparison HTTP adapters on isolated PostgreSQL', () => {
     expect(body.rows).toMatchObject([{ id: reason.id, disposition: 'legacy_pending_review', possibleEventIds: [event.id] }])
     const invalid = await fetch(`${app.url('')}/api/roster/record-comparison?exportBatchIds=&officialSourceDocumentIds=${doc.id}`)
     expect(invalid.status).toBe(400)
-    const unsupported = await fetch(`${app.url('')}/api/roster/record-comparison/legacy-impact?${sourceQuery}&proofIds=1`)
-    expect(unsupported.status).toBe(400)
   })
   it('discovers both read-only MCP tools and returns the same comparison data through MCP', async () => {
     const rpc = async (method: string, params?: Record<string, unknown>) => {
@@ -66,6 +64,8 @@ describe('record comparison HTTP adapters on isolated PostgreSQL', () => {
     const tools = listed.result.tools as Array<{ name: string; annotations?: { readOnlyHint?: boolean }; inputSchema: { properties: Record<string, unknown> } }>
     expect(tools.find(tool => tool.name === 'list_record_comparison')).toMatchObject({ annotations: { readOnlyHint: true } })
     expect(tools.find(tool => tool.name === 'preview_record_correspondence_impact')).toMatchObject({ annotations: { readOnlyHint: true } })
+    expect(tools.map(tool => tool.name).filter(name => name.includes('comparison_scope_proof'))).toEqual([])
+    expect(tools.find(tool => tool.name === 'list_record_comparison')?.inputSchema.properties).not.toHaveProperty('proofIds')
     expect(tools.find(tool => tool.name === 'list_record_comparison')?.inputSchema.properties).toMatchObject({ businessPage: { type: 'integer' }, businessPageSize: { type: 'integer', maximum: 200 } })
     const called = await rpc('tools/call', { name: 'list_record_comparison', arguments: { queryIds: [query.id], exportBatchIds: [], officialSourceDocumentIds: [doc.id] } })
     const value = JSON.parse(called.result.content[0].text)
@@ -121,6 +121,10 @@ describe('record comparison HTTP adapters on isolated PostgreSQL', () => {
     expect((await fetch(`${url}&businessPage=0`)).status).toBe(400)
     expect((await fetch(`${url}&businessPageSize=201`)).status).toBe(400)
     const openapi = developmentSpec
+    expect(Object.keys(openapi.paths).filter(path => path.startsWith('/api/roster/comparison-scope-proofs'))).toEqual([])
+    expect(openapi.paths['/api/roster/record-comparison'].get.parameters).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'proofIds' })]))
+    const retired = await fetch(`${app.url('')}/api/roster/comparison-scope-proofs`)
+    expect(retired.headers.get('content-type')).toContain('text/html')
     expect(openapi.paths['/api/roster/record-comparison'].get.parameters).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'businessPage' }), expect.objectContaining({ name: 'businessPageSize' })]))
   })
 

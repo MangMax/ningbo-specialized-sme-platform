@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import type pg from 'pg'
+import { readFileSync } from 'node:fs'
 
 const tables = {
   enterprise: 'id:i name name_norm uscc_norm',
@@ -51,4 +52,6 @@ export async function installArchiveFixture(pg: pg.Client, sqlite: Database.Data
       await pg.query(`INSERT INTO business.${table} VALUES (${values.map((_, i) => '$' + (i + 1)).join(', ')})`, values)
     }
   }
+  await pg.query(`SET search_path TO business, pg_catalog;
+    ${readFileSync(new URL('../../../db/postgresql/platform-observation-snapshot.sql', import.meta.url), 'utf8')}`)
 }

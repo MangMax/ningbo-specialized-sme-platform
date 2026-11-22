@@ -77,9 +77,9 @@ export const decisionCommand102 = decisionScope102.extend({
 }).superRefine(refineDecisionCommand)
 
 export const browserDecisionCommand102 = decisionScope102.extend({
-  action: z.enum(['replace', 'maintain']),
+  action: z.literal('replace'),
   ...decisionCommandFields(),
-}).superRefine(refineDecisionCommand)
+}).omit({ reviewedEvidence: true }).superRefine(refineDecisionCommand)
 
 export const internalDecisionCommand102 = decisionScope102.extend({
   action: z.enum(['replace', 'withdraw', 'maintain']),

@@ -210,6 +210,9 @@ async function copyQualificationsFixture(client: pg.Client, sqlite: ReturnType<t
     fields.push(...mixedColumns.map(name => 'typeof(' + name + ')'))
     const targetFields = columns.map(({ name, type }) => `"${name}" ${/int/i.test(type) ? 'bigint' : /blob/i.test(type) ? 'bytea' : 'text'}`)
     targetFields.push(...mixedColumns.map(name => name + '_sqlite_storage text'))
+    if (table === 'official_evidence_row_revision') {
+      targetFields.push('name_raw_json text', 'uscc_raw_json text', 'district_raw_json text')
+    }
     await client.query(`create table "${table}" (${targetFields.join(', ')})`)
     for (const raw of sqlite.prepare(`select ${fields.join(', ')} from "${table}"`).raw().all()) {
       const row = raw as unknown[]

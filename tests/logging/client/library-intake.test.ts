@@ -48,6 +48,14 @@ const expected = [
 ] as const
 
 it('persists every fixed server mapping and discards adversarial library claims through evlog and restart', async () => {
+  await applicationLogs().setPolicy({ retentionDays: 7, maxBytes: LOG_DEFAULTS.maxBytes, collection: {
+    sources: { client: { enabled: true, minLevel: 'debug' } },
+    integrations: {
+      'tus-client': { enabled: true, minLevel: 'debug' },
+      embedpdf: { enabled: true, minLevel: 'debug' },
+      'vue-router': { enabled: true, minLevel: 'debug' },
+    },
+  } })
   const intake = createClientLogIntake()
   const malicious = { level: 'fatal', source: 'worker', operation: 'forged', outcome: 'success',
     origin: { runtime: 'node', integration: 'drizzle', capture: 'framework', execution: 'worker', extra: 'PRIVATE180' },

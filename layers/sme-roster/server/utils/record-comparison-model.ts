@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import type * as schema from '../../../../db/schema'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { TITLES } from '../../lib/labels'
@@ -15,24 +14,13 @@ import type { readComparisonTargetIdentities, readComparisonTargetRelations, Com
 import type { listRecordCorrespondences } from './record-correspondence'
 import type { selected, getRecordComparison } from './record-comparison'
 
-export type Query = PlatformStoredQuery & { comparisonFacts: ComparisonTargetQueryFacts; proofSource: () => PlatformStoredQuery }
+export type Query = PlatformStoredQuery & { comparisonFacts: ComparisonTargetQueryFacts }
 
 export type Relation = ReturnType<typeof readComparisonTargetRelations>[number]
 
 type Event = Omit<typeof schema.recordEvent.$inferSelect, 'formalValidity'>
 
 type Edge = ReturnType<typeof listRecordCorrespondences>[number]
-
-/** Only the persisted proof owner supplies verified attestations; client assertions are not accepted. */
-export interface VerifiedComparisonEvidence {
-  officialScopes: Array<{ proofId: string; sourceDocumentIds: number[]; titleCode: string; fromYear: number; throughYear: number; enterpriseIds: number[] | null; verifiedAt: string }>
-  currentScopes: Array<{ proofId: string; queryId: number; exportBatchId: number; titleCode: string; querySourceFingerprint: string; exportSha256: string; scopeEquivalent: true; versionEquivalent: true; verifiedAt: string }>
-}
-
-export function queryProofFingerprint(input: PlatformStoredQuery & { proofSource?: () => PlatformStoredQuery }) {
-  const query = input.proofSource?.() ?? input
-  return createHash('sha256').update(JSON.stringify({ id: query.id, interface: query.interface, queryKey: query.queryKey, rdjb: query.rdjb, titleCode: query.titleCode, queriedAt: query.queriedAt, status: query.status, collectionEvidence: query.collectionEvidence })).digest('hex')
-}
 
 export const unique = <T>(rows: T[]) => [...new Set(rows)]
 
@@ -107,14 +95,6 @@ function exactQueryCoverage(query: Query, title: string, uscc: string | null) {
     !conditions.name && !conditions.sqsj && !conditions.rddqrq && !conditions.whpcyear && !conditions.whpc && !conditions.szq)
 }
 
-function officialProof(evidence: VerifiedComparisonEvidence | undefined, documents: Array<typeof schema.sourceDocument.$inferSelect>, enterpriseId: number, titleCode: string, year: number | null) {
-  if (!year) return null
-  const selected = new Set(documents.map(document => document.id))
-  return evidence?.officialScopes.find(proof => proof.titleCode === titleCode && proof.fromYear <= year && year <= proof.throughYear &&
-    proof.sourceDocumentIds.length > 0 && proof.sourceDocumentIds.every(id => selected.has(id)) &&
-    (proof.enterpriseIds === null || proof.enterpriseIds.includes(enterpriseId))) ?? null
-}
-
 function conclusion(event: Event, edges: Edge[], relations: Map<number, { relation: Relation; query: Query }>): { classification: HistoricalClassification; reasons: string[] } {
   // Keep legacy field conflicts visible even when the edge needs revalidation,
   // without hiding a contradiction proved by another valid same-event edge.
@@ -178,11 +158,7 @@ export type ComparisonRead =
 
 export type ReadResult = FormalCount | Iterable<FormalEvent> | PageEvidence[] | undefined
 
-export function* compareRecordInputs(source: SelectedRecordComparison, verifiedEvidence?: VerifiedComparisonEvidence, paginate = true) {
-  if (source.input.asOf && verifiedEvidence) verifiedEvidence = {
-    officialScopes: verifiedEvidence.officialScopes.filter(proof => comparisonBefore(proof.verifiedAt, source.input.asOf)),
-    currentScopes: verifiedEvidence.currentScopes.filter(proof => comparisonBefore(proof.verifiedAt, source.input.asOf)),
-  }
+export function* compareRecordInputs(source: SelectedRecordComparison, paginate = true) {
   const { queries, batches, documents, relations, exports, edges } = source
   const relationMap = new Map(relations.map(item => [item.relation.id, item]))
   const exportMap = new Map(exports.map(item => [item.row.id, item]))
@@ -197,7 +173,6 @@ export function* compareRecordInputs(source: SelectedRecordComparison, verifiedE
   const laterByOwner = groupBy(later, edge => `${edge.enterpriseId}:${edge.titleCode}`)
   const laterByRelation = groupBy(later, edge => edge.relationId)
   const linkedRelationIds = new Set(selectedEdges.filter(edge => edge.eventId != null && edge.status === 'confirmed' && historicalEdge(edge)).map(edge => edge.relationId))
-  const candidateRelationIds = new Set(selectedEdges.filter(edge => edge.status === 'candidate' && edge.eventId != null).map(edge => edge.relationId))
   const coverageCache = new Map<string, boolean>()
   const covers = (title: string, uscc: string | null) => {
     const key = JSON.stringify([title, uscc])
@@ -256,45 +231,66 @@ export function* compareRecordInputs(source: SelectedRecordComparison, verifiedE
   }
   const recognized = relations.filter(item => item.query.interface === 'recognized_list')
   const exportsByIdentity = groupBy(exports, item => JSON.stringify([item.batch.titleCode, normalizeUscc(item.row.usccRaw)]))
-  const queryFingerprints = new Map<number, string>()
-  const proofFingerprint = (query: Query) => {
-    if (!queryFingerprints.has(query.id)) queryFingerprints.set(query.id, queryProofFingerprint(query))
-    return queryFingerprints.get(query.id)!
-  }
-  const observations = recognized.flatMap(({ relation, query }) => {
+  const equivalenceUnknown = ['version_equivalence_unknown', 'export_scope_equivalence_unknown']
+  const officialCoverageUnknown = 'official_source_completeness_not_persisted'
+  const observations = recognized.map(({ relation, query }) => {
     const title = relationTitle(relation, query)
     const uscc = normalizeUscc(relation.usccRaw)
     const matches = uscc && title ? (exportsByIdentity.get(JSON.stringify([title, uscc])) ?? []) : []
-    const proof = verifiedEvidence?.currentScopes.find(item => item.queryId === query.id && item.titleCode === title && batches.some(batch => batch.id === item.exportBatchId && batch.sha256 === item.exportSha256) && item.querySourceFingerprint === proofFingerprint(query) && queryCoverage(query).titleCoverage.some(unit => unit.titleCode === title && unit.complete))
-    const provenMatches = proof ? matches.filter(item => item.batch.id === proof.exportBatchId) : []
-    const fieldConflict = provenMatches.some(item => Boolean(relation.nameRaw && item.row.nameRaw && relation.nameRaw !== item.row.nameRaw))
-    const reasons = proof ? [] : ['version_equivalence_unknown', 'export_scope_equivalence_unknown']
+    const reasons = [...equivalenceUnknown]
     if (!consistentScope(query, title ?? '')) reasons.push('query_conditions_or_completeness_not_comparable')
     if (!uscc || !title) reasons.push('row_identity_or_title_unknown')
-    return [{ recognized: publicRelation(relation, query), exportRows: matches.map(item => publicExport(item.row, item.batch)), observation: matches.length ? 'same_uscc_title_observed' : 'no_matching_selected_export_observed', qualification: proof && uscc && title ? (fieldConflict ? 'field_conflict' as const : provenMatches.length ? 'matched' as const : 'interface_only' as const) : 'not_comparable' as const, proofId: proof?.proofId ?? null, reasons }]
+    return {
+      recognized: publicRelation(relation, query), exportRows: matches.map(item => publicExport(item.row, item.batch)),
+      observation: matches.length ? 'same_uscc_title_observed' : 'no_matching_selected_export_observed',
+      qualification: 'not_comparable' as const, reasons,
+    }
   })
-  const matchedExportIds = new Set(observations.flatMap(item => item.exportRows.map(row => row.id)))
-  const observationsByExport = new Map<number, typeof observations>()
+  const recognizedIdsByExport = new Map<number, number[]>()
   for (const observation of observations) for (const row of observation.exportRows) {
-    const bucket = observationsByExport.get(row.id)
-    if (bucket) bucket.push(observation); else observationsByExport.set(row.id, [observation])
+    const bucket = recognizedIdsByExport.get(row.id)
+    if (bucket) bucket.push(observation.recognized.id)
+    else recognizedIdsByExport.set(row.id, [observation.recognized.id])
   }
-  const exportObservations = exports.map(({ row, batch }) => {
-    const paired = (observationsByExport.get(row.id) ?? [])
-    const recognizedRelationIds = paired.map(item => item.recognized.id)
-    const proof = verifiedEvidence?.currentScopes.find(item => item.exportBatchId === batch.id && item.titleCode === batch.titleCode && item.exportSha256 === batch.sha256 && queries.some(query => query.id === item.queryId && item.querySourceFingerprint === proofFingerprint(query) && consistentScope(query, batch.titleCode)))
-    const pairedProof = paired.find(item => item.proofId)
-    const effectiveProofId = pairedProof?.proofId ?? proof?.proofId ?? null
-    return { exportRow: publicExport(row, batch), recognizedRelationIds, qualification: paired.some(item => item.qualification === 'field_conflict') ? 'field_conflict' as const : paired.some(item => item.qualification === 'matched') ? 'matched' as const : proof && !recognizedRelationIds.length ? 'export_only' as const : 'not_comparable' as const, proofId: effectiveProofId, reasons: effectiveProofId ? [] : ['version_equivalence_unknown', 'export_scope_equivalence_unknown'] }
-  })
+  const exportObservations = exports.map(({ row, batch }) => ({
+    exportRow: publicExport(row, batch), recognizedRelationIds: recognizedIdsByExport.get(row.id) ?? [],
+    qualification: 'not_comparable' as const, reasons: equivalenceUnknown,
+  }))
   const laterRelationIds = new Set(later.map(edge => edge.relationId))
   const laterProcessPlatformRows = relations.filter(item => laterRelationIds.has(item.relation.id))
   const unlinkedPlatformRows = relations.filter(item => !linkedRelationIds.has(item.relation.id) && !laterRelationIds.has(item.relation.id))
-  const withoutOfficial = unlinkedPlatformRows.filter(item => item.relation.enterpriseId != null && item.relation.verificationStatus === 'confirmed' && item.relation.year != null && !unavailableRelations.has(item.relation.id) && !candidateRelationIds.has(item.relation.id) && (item.query.interface === 'recognized_list' || /通过|获批|认定/.test(String(item.relation.status ?? ''))) &&
-    officialProof(verifiedEvidence, documents, item.relation.enterpriseId!, relationTitle(item.relation, item.query) ?? '', item.relation.year))
-  const withoutOfficialIds = new Set(withoutOfficial.map(item => item.relation.id))
-  const counts = { officialEventRows, distinctEvents: officialEventRows, distinctPlatformRows: unique(relations.map(item => item.relation.id)).length, distinctEnterpriseTitles: formalCounts.enterpriseTitles, historical_aligned: classificationCounts.historical_aligned, historical_conflict: classificationCounts.historical_conflict, official_without_correspondence: classificationCounts.official_without_correspondence, unresolved: classificationCounts.unresolved, laterProcessRows: unique(later.map(edge => edge.relationId)).length, laterProcessAffectedEvents, platformWithoutOfficialRows: withoutOfficial.length, unresolvedPlatformRows: unlinkedPlatformRows.length - withoutOfficial.length, recognizedRows: recognized.length, exportRows: exports.length, observedRecognizedExportPairs: observations.reduce((n, item) => n + item.exportRows.length, 0), observedExportRows: matchedExportIds.size }
-  const comparison = { rows, total, page: source.input.page, pageSize: source.input.pageSize, grain: { rows: 'official_event_id', platform: 'relation_id', export: 'batch_id_source_row_no', later: 'enterprise_id_title_code_relation_id' }, counts, sourceSet: { queryIds: source.input.queryIds, exportBatchIds: source.input.exportBatchIds, officialSourceDocumentIds: source.input.officialSourceDocumentIds, asOf: source.input.asOf ?? null }, coverage: queries.map(queryCoverage), officialCoverage: { qualification: verifiedEvidence?.officialScopes.length ? 'verified' as const : 'unknown' as const, reasons: verifiedEvidence?.officialScopes.length ? [] : ['official_source_completeness_not_persisted'], selectedDocumentIds: documents.map(row => row.id), proofIds: verifiedEvidence?.officialScopes.map(item => item.proofId) ?? [] }, currentSourceConsistency: { qualification: observations.length && observations.every(item => item.qualification !== 'not_comparable') && exportObservations.every(item => item.qualification !== 'not_comparable') ? 'comparable' as const : 'not_comparable' as const, reasons: observations.some(item => item.qualification === 'not_comparable') || exportObservations.some(item => item.qualification === 'not_comparable') ? ['version_equivalence_unknown', 'export_scope_equivalence_unknown'] : [], recognizedObservations: observations, exportObservations }, historicalDecisionUnavailable: unavailableEdges.map(edge => ({ id: edge.id, type: edge.type, eventId: edge.eventId, relationId: edge.relationId, reason: 'post_cutoff_decision_state_unavailable' as const })), platformWithoutOfficial: { rows: unlinkedPlatformRows.map(item => { const proof = withoutOfficialIds.has(item.relation.id) ? officialProof(verifiedEvidence, documents, item.relation.enterpriseId!, relationTitle(item.relation, item.query) ?? '', item.relation.year) : null; return { relation: publicRelation(item.relation, item.query), qualification: proof ? 'platform_without_official' as const : 'unresolved' as const, proofId: proof?.proofId ?? null, reasons: proof ? [] : [item.relation.enterpriseId == null || item.relation.verificationStatus !== 'confirmed' ? 'row_identity_unverified' : unavailableRelations.has(item.relation.id) ? 'post_cutoff_decision_state_unavailable' : 'official_source_completeness_not_persisted'] } }), total: unlinkedPlatformRows.length }, laterProcessPlatformRows: laterProcessPlatformRows.map(item => ({ relation: publicRelation(item.relation, item.query), correspondences: (laterByRelation.get(item.relation.id) ?? []).map(publicEdge) })), exportBatches: batches.map(batch => ({ id: batch.id, titleCode: batch.titleCode, year: batch.year, collectedOn: batch.collectedOn, sha256: batch.sha256, rowCount: batch.rowCount, replacedBatchId: batch.replacedBatchId })) }
+  const counts = {
+    officialEventRows, distinctEvents: officialEventRows, distinctPlatformRows: unique(relations.map(item => item.relation.id)).length,
+    distinctEnterpriseTitles: formalCounts.enterpriseTitles, ...classificationCounts,
+    laterProcessRows: unique(later.map(edge => edge.relationId)).length, laterProcessAffectedEvents,
+    platformWithoutOfficialRows: 0, unresolvedPlatformRows: unlinkedPlatformRows.length,
+    recognizedRows: recognized.length, exportRows: exports.length,
+    observedRecognizedExportPairs: observations.reduce((n, item) => n + item.exportRows.length, 0), observedExportRows: recognizedIdsByExport.size,
+  }
+  const comparison = {
+    rows, total, page: source.input.page, pageSize: source.input.pageSize,
+    grain: { rows: 'official_event_id', platform: 'relation_id', export: 'batch_id_source_row_no', later: 'enterprise_id_title_code_relation_id' },
+    counts,
+    sourceSet: { queryIds: source.input.queryIds, exportBatchIds: source.input.exportBatchIds, officialSourceDocumentIds: source.input.officialSourceDocumentIds, asOf: source.input.asOf ?? null },
+    coverage: queries.map(queryCoverage),
+    officialCoverage: { qualification: 'unknown' as const, reasons: [officialCoverageUnknown], selectedDocumentIds: documents.map(row => row.id) },
+    currentSourceConsistency: {
+      qualification: 'not_comparable' as const,
+      reasons: observations.length || exportObservations.length ? equivalenceUnknown : [],
+      recognizedObservations: observations, exportObservations,
+    },
+    historicalDecisionUnavailable: unavailableEdges.map(edge => ({ id: edge.id, type: edge.type, eventId: edge.eventId, relationId: edge.relationId, reason: 'post_cutoff_decision_state_unavailable' as const })),
+    platformWithoutOfficial: {
+      rows: unlinkedPlatformRows.map(({ relation, query }) => ({
+        relation: publicRelation(relation, query), qualification: 'unresolved' as const,
+        reasons: [relation.enterpriseId == null || relation.verificationStatus !== 'confirmed' ? 'row_identity_unverified'
+          : unavailableRelations.has(relation.id) ? 'post_cutoff_decision_state_unavailable' : officialCoverageUnknown],
+      })),
+      total: unlinkedPlatformRows.length,
+    },
+    laterProcessPlatformRows: laterProcessPlatformRows.map(item => ({ relation: publicRelation(item.relation, item.query), correspondences: (laterByRelation.get(item.relation.id) ?? []).map(publicEdge) })),
+    exportBatches: batches.map(batch => ({ id: batch.id, titleCode: batch.titleCode, year: batch.year, collectedOn: batch.collectedOn, sha256: batch.sha256, rowCount: batch.rowCount, replacedBatchId: batch.replacedBatchId })),
+  }
   // Add grouping only after the original observation-level comparison is complete.
   const byUnlinked = new Map(comparison.platformWithoutOfficial.rows.map(row => [row.relation.id, row]))
   const byCurrent = new Map(observations.map(row => [row.recognized.id, row]))

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { and, eq, isNotNull, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/postgresql/platform-tables'
 import { platformArchiveValue, platformVersionArchiveRef } from '../../../../db/postgresql/platform-archive-tables'
@@ -69,38 +69,37 @@ export async function ensurePostgresObservationContent(tx: Tx, source: Source, p
   Object.assign(result,{recordId,recordCreated:!!fresh})
   if (!plan.canonicalRawJson || !plan.contentHash) return result
   const versionTable = schema.platformBusinessRecordVersion
+  const expectedBytes = Buffer.from(plan.canonicalRawJson, 'utf8')
   const [version] = await tx.select({
-    id: versionTable.id, text: versionTable.canonicalRawJson, valid: isNotNull(platformArchiveValue.id),
+    id: versionTable.id, bytes: platformArchiveValue.bytes,
   })
     .from(versionTable)
     .leftJoin(platformVersionArchiveRef, and(
       eq(platformVersionArchiveRef.ownerId, versionTable.id),
       eq(platformVersionArchiveRef.field, 'canonicalRawJson'),
       eq(platformVersionArchiveRef.sealed, 1),
+      eq(platformVersionArchiveRef.archiveId, versionTable.canonicalArchiveId),
     ))
     .leftJoin(platformArchiveValue, and(
       eq(platformArchiveValue.id, platformVersionArchiveRef.archiveId),
-      eq(platformArchiveValue.id, versionTable.canonicalArchiveId),
-      // Drizzle does not expose PostgreSQL's encoding conversion.
-      eq(platformArchiveValue.bytes, sql`convert_to(${versionTable.canonicalRawJson}, 'UTF8')`),
+      eq(platformArchiveValue.storageClass, 'text'),
     ))
     .where(and(eq(versionTable.recordId, recordId), eq(versionTable.hashAlgorithm, PLATFORM_RAW_HASH_RULE),
       eq(versionTable.contentHash, plan.contentHash)))
-  if (version && (version.text !== plan.canonicalRawJson || !version.valid)) {
+  if (version && !version.bytes?.equals(expectedBytes)) {
     throw new PlatformProjectionError('platform_content_hash_conflict', 'Stored canonical platform evidence disagrees with its content hash')
   }
   let versionId: number
   if (version) {
     versionId = version.id
   } else {
+    const archive = await writePostgresArchiveValue(tx, plan.canonicalRawJson, now)
     const [inserted] = await tx.insert(versionTable).values({
-      recordId, hashAlgorithm: PLATFORM_RAW_HASH_RULE, contentHash: plan.contentHash, canonicalRawJson: plan.canonicalRawJson, createdAt: now,
+      recordId, hashAlgorithm: PLATFORM_RAW_HASH_RULE, contentHash: plan.contentHash, canonicalArchiveId: archive.id, createdAt: now,
     }).returning({ id: versionTable.id })
     versionId = inserted!.id
-    const archive = await writePostgresArchiveValue(tx,plan.canonicalRawJson,now)
     await bindPostgresArchive(tx,{ kind:'version',ownerId:versionId,field:'canonicalRawJson' },archive.id)
     await sealPostgresArchive(tx,{ kind:'version',ownerId:versionId })
-    await tx.update(versionTable).set({ canonicalArchiveId: archive.id }).where(eq(versionTable.id, versionId))
   }
   const projectionCreated = await completeVersionProjection(tx,source,plan,recordId,versionId,now)
   return { ...result,versionId,versionCreated:!version,projectionCreated }
@@ -200,7 +199,9 @@ export async function writePostgresObservation(tx: Tx, collection: Collection, r
     return { name,storageClass:value == null ? 'null' : typeof value === 'number' ? 'integer' : 'text',
       hex:value == null ? '' : Buffer.from(String(value)).toString('hex').toUpperCase() }
   })
-  const snapshot = Buffer.from(JSON.stringify({ encoding:'t05a-sqlite-cells-v1',fields:cells }))
+  const snapshotCells = cells.map(cell => cell.name === 'raw_fields' && cell.hex.length > '@raw-upper'.length
+    ? { ...cell, hex: '@raw-upper' } : cell)
+  const snapshot = Buffer.from(JSON.stringify({ encoding:'t05a-sqlite-cells-v1',fields:snapshotCells }))
   const rawArchive = await writePostgresArchiveValue(tx,rawText,now)
   for (const [field,value] of [['sourceText',row.sourceText ?? null],['legacyRowSnapshot',snapshot]] as const) {
     const archived = await writePostgresArchiveValue(tx,value,now)

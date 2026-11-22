@@ -42,7 +42,7 @@ const operation = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('correct'), correspondenceId: positive, expectedRevision: positive, edge }),
 ])
 
-export const decision = z.strictObject({ idempotencyKey: z.string().trim().min(1), sourceIdentity: z.string().trim().min(1), actor: z.strictObject({ type: z.enum(['user', 'agent']), id: z.string().trim().min(1) }), basis: z.string().trim().min(1), ruleId: z.string().trim().min(1), ruleVersion: z.string().trim().min(1), proofIds: z.array(positive).max(100).optional(), operations: z.array(operation).min(1) })
+export const decision = z.strictObject({ idempotencyKey: z.string().trim().min(1), sourceIdentity: z.string().trim().min(1), actor: z.strictObject({ type: z.enum(['user', 'agent']), id: z.string().trim().min(1) }), basis: z.string().trim().min(1), ruleId: z.string().trim().min(1), ruleVersion: z.string().trim().min(1), operations: z.array(operation).min(1) })
 
 export const commitDecision = z.strictObject({ request: decision, planHash: z.string().regex(/^[0-9a-f]{64}$/) })
 

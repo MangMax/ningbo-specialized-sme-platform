@@ -99,7 +99,7 @@
 - 超时、会话过期、HTTP 200 登录页、分页不全属于失败/部分证据，不是零记录。保留准确查询及分页边界。
 - 统一导入整批全成或全败。平台、别名和其他独立命令失败后，保留原有证据，修复报错项并按命令契约同键重试。公布原行在 `staged` 后固定。同一来源版本的身份核对可在失败后修正并重新补充，原行有更正时使用新版本和新幂等键。
 - 公布留存响应丢失时，用完全相同的载荷和幂等键重取 `intakeId` 和 `sourceDigest`。补充响应丢失时，先读取 `GET /api/roster/import/intake/{id}` 的状态和回执。已补充版本保存原核对决定和回执，重试使用相同决定。
-- 提交响应丢失时，先用 `GET /api/roster/import/receipts` / `get_roster_import_receipt` 按原 `idempotencyKey` 或已知 `batchId` 查询；精确历史回执用 `receiptId`，三者只选一个。读取需独立 API/MCP token，不重新提交。区分 preflight、processing、failed、committed；HTTP 成功不等于业务提交成功，processing 保留未完成。按需用 `/receipts/history` / `list_roster_import_receipts` 查历史、`/receipts/items` / `list_roster_import_items` 分页查逐项结果、`/receipts/request` / `get_roster_import_request` 读脱敏原文块。旧原文 `not_retained` 保持未知；receiptId 与私有 batchId 不互换。检查已知回执后才决定是否明确同键重试，不自动重提或换新键。
+- 提交响应丢失时，先用 `GET /api/roster/import/receipts` / `get_roster_import_receipt` 按原 `idempotencyKey` 或已知 `batchId` 查询；精确历史回执用 `receiptId`，三者只选一个。读取需独立 API/MCP token，不重新提交。区分 preflight、processing、failed、committed；HTTP 成功不等于业务提交成功，processing 保留未完成。按需用 `/receipts/history` / `list_roster_import_receipts` 查历史、`/receipts/items` / `list_roster_import_items` 分页查逐项结果。receiptId 与私有 batchId 不互换。检查已知回执后才决定是否明确同键重试，不自动重提或换新键。
 - 必需身份/来源字段无法由当前契约支持时保留待处理并开边界明确的票，不绕过校验、不编造计数、不接受真实业务错误。
 - 单一验收维度失败不放弃整轮；保留成功结果，只重试/修复失败单元，再核验受影响维度。非阻塞缺口单列；未解决业务错误仍阻止验收完成。
 

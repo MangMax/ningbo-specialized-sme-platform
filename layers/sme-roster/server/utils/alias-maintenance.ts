@@ -68,7 +68,7 @@ export function maintainEnterpriseAlias(db: Db, enterpriseId: unknown, aliasId: 
           .innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId))
           .innerJoin(schema.sourceDocument, eq(schema.sourceDocument.path, schema.recordEvidence.sourceFile))
           .where(and(eq(schema.sourceDocument.id, next.sourceRefId), eq(schema.sourceDocument.source, 'jxj'), eq(schema.record.enterpriseId, target.id), eq(schema.record.nameRaw, next.name))).limit(1).get()
-        if (!evidence) fail(400, 'alias_source_evidence_mismatch', '公布文件ID必须由该企业同原名称的记录出处支持')
+        if (!evidence) fail(400, 'alias_source_evidence_mismatch', '公布名单原件的 ID 必须由该企业同原名称的记录出处支持')
       }
       if (next.verificationStatus === 'confirmed') {
         const other = tx.select({ id: schema.enterprise.id }).from(schema.enterprise).where(and(currentEnterpriseIdentity(tx), ne(schema.enterprise.id, target.id), eq(schema.enterprise.nameNorm, next.nameNorm))).limit(1).get()

@@ -196,7 +196,6 @@ jobs:
       - name: Run tests within the workflow time budget
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_REAL_TTL_DEEP: ${{ matrix.project == 'expiry' && '1' || '0' }}
           TEST_DISCOVERY_ARTIFACT: ${{ github.workspace }}/development-discovery.json
           APP_SHARD: ${{ matrix.project }}
           BUSINESS_GROUP: ${{ matrix.group }}
@@ -211,19 +210,10 @@ jobs:
             exit 1
           fi
           result=0
-          project=app
           if [ "$APP_SHARD" = watcher ]; then
-            project=deep
-            args=()
-          elif [ "$APP_SHARD" = expiry ]; then
-            args=(tests/roster/official-evidence/review.http.app.test.ts -t 'expires 120-second readonly snapshots')
+            command=(pnpm test --project=deep --maxWorkers=1 --no-file-parallelism)
           else
-            args=()
-          fi
-          if [ "$APP_SHARD" = app ]; then
             command=(node scripts/business-test-groups.mjs run "$BUSINESS_GROUP")
-          else
-            command=(pnpm test --project="$project" "${args[@]}" --maxWorkers=1 --no-file-parallelism)
           fi
           timeout --signal=TERM --kill-after=5s "${remaining}s" "${command[@]}" --reporter=default --reporter=json --outputFile=test-results.json || result=$?
           elapsed=$(( $(date +%s) - started ))

@@ -13,6 +13,11 @@ import { resolvePostgresCredential } from '../../../core/server/utils/credential
 import { getPostgresJob, reopenPostgresJob } from '../../../core/server/public'
 import type { JobRow } from '../../../core/server/utils/job-store'
 import { summarizePostgresBatches } from './jobs/batch-summary-postgres'
+import {
+  platformBatchCheckpoint, readPostgresPlatformBatchResult, readPostgresPlatformBatchSegments,
+  restorePlatformBatchCheckpointItem, savePostgresPlatformBatchSegment,
+  type PlatformBatchCheckpoint, type PlatformBatchSegmentUpdate,
+} from './platform-batch-results-postgres'
 
 export const platformBatchFailure = (statusCode: number, message: string): never => { throw Object.assign(new Error(message), { statusCode }) }
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf8')
@@ -24,7 +29,7 @@ function initialItem(entry: PlatformBatchParams['items'][number]): PlatformBatch
 type BatchContext = Pick<JobContext, 'jobId' | 'logContext'> & {
   cancelled(): boolean | Promise<boolean>
   progress(done: number, total: number): void | Promise<void>
-  checkpoint(result: PlatformBatchResult): void | Promise<void>
+  checkpoint(result: PlatformBatchResult, update?: PlatformBatchSegmentUpdate): void | Promise<void>
 }
 
 export async function runPlatformBatch(ctx: BatchContext, raw: Record<string, unknown>, cookie: string, prior: PlatformBatchResult | null) {
@@ -34,9 +39,9 @@ export async function runPlatformBatch(ctx: BatchContext, raw: Record<string, un
   result.usage.requests = 0
   const start = Date.now()
   const logContext = { ...(ctx.logContext ?? newLogContext()), taskId: ctx.jobId, batchId: ctx.jobId }
-  const persist = async () => {
+  const persist = async (update?: PlatformBatchSegmentUpdate) => {
     result.completeness = result.items.every(item => item.completeness === 'complete') ? 'complete' : 'partial'
-    await ctx.checkpoint(result)
+    await ctx.checkpoint(result, update)
     await ctx.progress(result.items.filter(item => item.completeness === 'complete').length, result.items.length)
   }
   await persist()
@@ -69,7 +74,7 @@ export async function runPlatformBatch(ctx: BatchContext, raw: Record<string, un
         item.unfinished = position ? baseUnfinished.flatMap(p => p.source === position.source && p.rdjb === position.rdjb && p.page === position.page ? segment.unfinished : [p]) : segment.unfinished
         item.completeness = item.unfinished.length ? 'partial' : 'complete'
         item.status = item.completeness === 'complete' ? item.segments.some(s => s.rows.length) ? 'success' : 'no_record' : item.segments.some(s => s.pages.some(p => p.status === 'success')) ? 'partial' : segment.status
-        return persist()
+        return persist({ itemId: item.itemId, segmentIndex, segment })
       }
       const declaredTotals = new Map<string | null, number>()
       const acceptedPages = new Map<string | null, Map<number, number>>()
@@ -130,7 +135,7 @@ async function preparePostgresBatch(db: NodePgDatabase, params: Record<string, u
 export const batchSpec: JobSpec = {
   openAPIParams: {
     order: 20,
-    description: 'platform-query-batch 使用 /api/platform/batches 的 items/limits，推荐专用接口（支持稳定 itemId 和局部重试）。',
+    description: 'platform-query-batch 使用 /api/platform/batches 的 items/limits，支持稳定 itemId 和局部重试。通用任务只返回检查点摘要，逐页数据通过专用接口读取。',
   },
   kind: PLATFORM_BATCH_KIND, status: 'ready', summary: '只读平台批量查询（仅保存任务结果）',
   paramsHint: 'Use POST /api/platform/batches; items[{query}], limits; no credentials.',
@@ -151,20 +156,39 @@ export const batchSpec: JobSpec = {
       const cookie = (await resolvePostgresCredential(ctx.db, 'sme-roster.miitCookie')).value
       validatePlatformBatchConditions(params, cookie)
       const row = (await getPostgresJob(ctx.db, ctx.jobId))!.row
-      return runPlatformBatch(ctx, params, inputSnapshot === fingerprint(cookie) ? cookie : '', row.result as PlatformBatchResult | null)
+      const prior = await readPostgresPlatformBatchResult(ctx.db, row.id, row.result as PlatformBatchCheckpoint | null)
+      const completion = await runPlatformBatch({
+        ...ctx,
+        checkpoint: (result, update) => ctx.db.transaction(async tx => {
+          await ctx.checkpoint(platformBatchCheckpoint(result), tx)
+          if (update) await savePostgresPlatformBatchSegment(tx, ctx.jobId, update)
+        }),
+      }, params, inputSnapshot === fingerprint(cookie) ? cookie : '', prior)
+      return { ...completion, result: platformBatchCheckpoint(completion.result) }
     },
   },
 }
 export function registerPlatformBatchJob() { if (!getJobSpec(PLATFORM_BATCH_KIND)) registerJob(batchSpec) }
 
-export function projectPlatformBatch(row: JobRow | null | undefined) {
+function requirePlatformBatchJob(row: JobRow | null | undefined) {
   if (!row || row.kind !== PLATFORM_BATCH_KIND) return platformBatchFailure(404, 'Platform batch not found')
+  return row
+}
+
+function projectBatchState<Item extends Pick<PlatformBatchItem, 'itemId' | 'completeness'>>(
+  row: JobRow,
+  result: (Omit<PlatformBatchResult, 'items'> & { items: Item[] }) | null,
+) {
   const params = row.params as unknown as PlatformBatchParams
-  const result = row.result as PlatformBatchResult | null
   const items = result?.items ?? params.items.map(initialItem)
   return { batchId: row.id, itemIds: items.map(item => item.itemId), state: row.state, progress: { done: items.filter(i => i.completeness === 'complete').length, total: items.length }, completeness: result?.completeness ?? 'partial', attempt: result?.attempt ?? 0, items, usage: result?.usage ?? { requests: 0, rows: 0 }, limits: params.limits, createdAt: row.createdAt, startedAt: row.startedAt, finishedAt: row.finishedAt, error: row.error }
 }
-export function validatePlatformBatchRetry(batch: ReturnType<typeof projectPlatformBatch>, itemIds: string[]) {
+export function projectPlatformBatch(row: JobRow | null | undefined) {
+  const job = requirePlatformBatchJob(row)
+  return projectBatchState(job, job.result as PlatformBatchResult | null)
+}
+
+export function validatePlatformBatchRetry(batch: Pick<ReturnType<typeof projectBatchState>, 'state' | 'attempt' | 'items'>, itemIds: string[]) {
   if (batch.state === 'queued' || batch.state === 'running') return platformBatchFailure(409, 'Platform batch is still active')
   if (batch.attempt >= MAX_BATCH_ATTEMPTS) return platformBatchFailure(409, 'Platform batch retry limit reached')
   if (itemIds.some(id => !batch.items.some(item => item.itemId === id && item.completeness !== 'complete'))) return platformBatchFailure(409, 'Retry requires existing unfinished items')
@@ -173,14 +197,24 @@ export function validatePlatformBatchRetry(batch: ReturnType<typeof projectPlatf
 export async function getPostgresPlatformBatch(db: NodePgDatabase, input: unknown) {
   const parsed = platformBatchStatusSchema.safeParse(input)
   if (!parsed.success) return platformBatchFailure(400, 'Invalid batch ID')
-  return projectPlatformBatch((await getPostgresJob(db, parsed.data.batchId))?.row)
+  return db.transaction(async tx => {
+    const row = requirePlatformBatchJob((await getPostgresJob(tx, parsed.data.batchId))?.row)
+    const result = await readPostgresPlatformBatchResult(tx, row.id, row.result as PlatformBatchCheckpoint | null)
+    return projectBatchState(row, result)
+  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }
 
 export async function getPostgresPlatformBatchItem(db: NodePgDatabase, input: unknown) {
   const parsed = platformBatchItemSchema.safeParse(input)
   if (!parsed.success) return platformBatchFailure(400, 'Invalid batch or item ID')
-  const batch = await getPostgresPlatformBatch(db, { batchId: parsed.data.batchId })
-  return batch.items.find(item => item.itemId === parsed.data.itemId) ?? platformBatchFailure(404, 'Platform batch item not found')
+  return db.transaction(async tx => {
+    const row = requirePlatformBatchJob((await getPostgresJob(tx, parsed.data.batchId))?.row)
+    const checkpoint = row.result as PlatformBatchCheckpoint | null
+    const item = projectBatchState(row, checkpoint).items.find(item => item.itemId === parsed.data.itemId)
+    if (!item) return platformBatchFailure(404, 'Platform batch item not found')
+    if ('segments' in item) return item
+    return restorePlatformBatchCheckpointItem(item, await readPostgresPlatformBatchSegments(tx, row.id, item.itemId))
+  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }
 
 export async function retryPostgresPlatformBatch(db: NodePgDatabase, input: unknown, logContext?: LogContext) {
@@ -189,9 +223,10 @@ export async function retryPostgresPlatformBatch(db: NodePgDatabase, input: unkn
   const retry = parsed.data
   const receipt = await db.transaction(async tx => {
     const previous = await getPostgresJob(tx, retry.batchId)
-    const batch = projectPlatformBatch(previous?.row)
+    const row = requirePlatformBatchJob(previous?.row)
+    const batch = projectBatchState(row, row.result as PlatformBatchCheckpoint | null)
     validatePlatformBatchRetry(batch, retry.itemIds)
-    const { row, claimToken } = previous!
+    const { claimToken } = previous!
     if (row.state === 'queued' || row.state === 'running') return platformBatchFailure(409, 'Platform batch is still active')
     const params = { ...row.params, retryItemIds: retry.itemIds }
     const snapshot = await preparePostgresBatch(tx, params)

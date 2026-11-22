@@ -11,7 +11,7 @@ import { nativeAppAdapter } from '../../support/native-app'
 import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { readPostgresEvidenceImpacts113 } from '../../../layers/sme-roster/lib/roster/query-assessment-postgres'
+import { seedRetiredEvidenceState } from '../fixtures/retired-evidence-state'
 import { writePostgresCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook-postgres'
 import { saveDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
 import type { DecisionCommand102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102/contract'
@@ -48,9 +48,6 @@ async function post(body: unknown): Promise<{ versionId: number }> {
   const response = await fetch(base + '/api/roster/decision-lifecycle/commands', { method: 'POST', headers, body: JSON.stringify(body) })
   expect(response.status, await response.clone().text()).toBe(200)
   return response.json()
-}
-async function evidenceToken(scope: Pick<DecisionCommand102, 'enterpriseId' | 'titleCode' | 'direction'>, id: number) {
-  return (await readPostgresEvidenceImpacts113(drizzle(pool), [{ scope, decisionId: id, latestDecisionId: id }]))[0]!.token
 }
 beforeAll(async () => {
   const decisions: { command: DecisionCommand102; qualification: object }[] = []
@@ -90,17 +87,13 @@ beforeAll(async () => {
   for (const { command, qualification } of decisions) {
     const { enterpriseId, titleCode, direction } = command
     const accepted = await post(command)
-    const token = await evidenceToken(command, accepted.versionId)
-    expect(token.projectionReady).toBe(true)
-    const review: DecisionCommand102 = { enterpriseId, titleCode, direction, action: 'maintain', expectedCurrentId: accepted.versionId, idempotencyKey: command.idempotencyKey + '-review', actor,
-      basis: 'Synthetic explicit evidence review', ruleVersion: 'issue305', effectiveAt: `${reawardYear}-01-01T00:00:00Z`,
-      reviewedEvidence: { latestRevisionId: token.latestRevisionId, projectionReady: true } }
-    await post(review)
+    await seedRetiredEvidenceState(drizzle(pool), accepted.versionId)
     const archived = saveDecision102(db, command)
     if (typeof archived.versionId !== 'number') throw new Error('Archived decision did not return a version ID')
     const archiveToken = readEvidenceToken113(db, command)
     expect(archiveToken.projectionReady).toBe(true)
-    saveDecision102(db, { ...review, expectedCurrentId: archived.versionId, reviewedEvidence: { latestRevisionId: archiveToken.latestRevisionId, projectionReady: true } })
+    saveDecision102(db, { ...command, action: 'maintain', expectedCurrentId: archived.versionId, idempotencyKey: command.idempotencyKey + '-review', decision: undefined,
+      basis: 'Synthetic historical evidence review', reviewedEvidence: { latestRevisionId: archiveToken.latestRevisionId, projectionReady: true } })
     const readback = await fetch(base + '/api/roster/decision-lifecycle/current?' + new URLSearchParams({ enterpriseId: String(enterpriseId), titleCode, direction }))
     expect(readback.status).toBe(200)
     const body: { current: { currentQualification: unknown } } = await readback.json()
@@ -213,8 +206,7 @@ it('incomplete typed fact and legacy termination cannot cancel a retained origin
  const scope = {enterpriseId:id,titleCode:'little_giant',direction:'extra_in_miit'} as const
  const cur = await (await fetch(base+'/api/roster/decision-lifecycle/current?'+new URLSearchParams({...scope,enterpriseId:String(id)}))).json()
  const r=await post({...scope,action:'replace',expectedCurrentId:cur.current.id,idempotencyKey:'probe-terminate',actor,basis:'Verified termination',ruleVersion:'probe',effectiveAt:'2024-01-01T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'deregistered',measureCode:'none',verificationStatus:'confirmed'}})
- const token=await evidenceToken(scope,r.versionId)
- await post({...scope,action:'maintain',expectedCurrentId:r.versionId,idempotencyKey:'probe-maintain',actor,basis:'Verified termination',ruleVersion:'probe',effectiveAt:'2024-01-01T00:00:00Z',reviewedEvidence:{latestRevisionId:token.latestRevisionId,projectionReady:token.projectionReady}})
+ await seedRetiredEvidenceState(drizzle(pool), r.versionId)
  const read=async()=> (await (await fetch(base+`/api/roster/enterprises/${id}`)).json()).qualificationAssessment.titles.find((t:any)=>t.titleCode==='little_giant')
  expect(await read()).toMatchObject({group:'eligible',effectiveQualification:{status:'effective'}})
  const factsPath = '/api/roster/enterprises/' + id + '/facts'

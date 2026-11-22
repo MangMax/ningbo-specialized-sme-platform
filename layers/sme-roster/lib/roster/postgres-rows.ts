@@ -46,7 +46,6 @@ const orderedKeys: Readonly<Record<string, readonly string[]>> = {
   ],
 }
 const jsonFields: Readonly<Record<string, readonly string[]>> = {
-  comparison_scope_proof: ['evidence'],
   enterprise: ['qualityFlags'],
   enterprise_fact_revision: ['fact', 'actor'],
   file_declaration_669: ['part', 'pageRanges'],
@@ -58,13 +57,15 @@ const jsonFields: Readonly<Record<string, readonly string[]>> = {
   record_event: ['formalValidity'],
 }
 
-export function postgresRosterRow(table: Table, alias: string) {
+export function postgresRosterRow(table: Table, alias: string, derivedFields: Readonly<Record<string, ReturnType<typeof sql>>> = {}) {
   const name = getTableName(table)
   const columns = getTableColumns(table)
   const officialEvidence = name === 'official_evidence_row_revision'
   const keys = orderedKeys[name] ?? Object.keys(columns).filter(key => !officialEvidence || !['nameRawJson', 'usccRawJson', 'districtRawJson'].includes(key))
   const casts = jsonFields[name] ?? []
   const fields = keys.map(key => {
+    const derived = derivedFields[key]
+    if (derived) return sql`${derived} AS ${sql.identifier(key)}`
     if (officialEvidence && Object.hasOwn(officialRawFieldColumns, key)) {
       return sql`${postgresOfficialRawField(alias, key as keyof typeof officialRawFieldColumns)} AS ${sql.identifier(key)}`
     }

@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { getRecordComparison, previewRecordCorrespondenceImpact, queryProofFingerprint } from '../../../layers/sme-roster/server/utils/record-comparison'
+import { getRecordComparison, previewRecordCorrespondenceImpact } from '../../../layers/sme-roster/server/utils/record-comparison'
 import { commitRecordCorrespondences, preflightRecordCorrespondences, type CorrespondenceOperation } from '../../../layers/sme-roster/server/utils/record-correspondence'
 
 const dirs: string[] = []
@@ -78,43 +78,6 @@ describe('record comparison public read service', () => {
     const row = getRecordComparison(f.db, f.input([q.id], [batch.id])).rows[0]!
     expect(row.classification).toBe('official_without_correspondence')
     expect(row.correspondences).toMatchObject([{ type: 'event_export_context', exportRowId: exportRow.id }])
-  })
-  it('trusted source-bound scope proof reaches platform_without_official and same-version field conflict', () => {
-    const f = fixture(), e = f.makeEnterprise('Old name', '91330211255994472Z')
-    const evidence = { source: 'queryBusList', status: 'success', effectiveConditions: { combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: '2026-10-18T00:00:00Z', completedAt: '2026-10-18T00:00:01Z', rows: [{ tyshxydm: e.usccNorm!, qymc: 'Old name', whpcyear: '2024' }], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, maxPage: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, error: null }], fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 } } as RosterImportPlatformQuery['collectionEvidence']
-    const query = f.makeQuery('recognized_list', e.usccNorm!, 'specialized_sme', 'success', evidence, [{ sequenceNo: 1, enterpriseId: e.id, usccRaw: e.usccNorm, status: '在册', declareKind: null, year: 2024, rawFields: undefined, matchBasis: e.id ? 'uscc' : 'none', verificationStatus: e.id ? 'confirmed' : 'pending' }])
-    const recognized = query.relations[0]!
-    const batch = f.db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'synthetic.xlsx', sha256: 'c'.repeat(64), importStatus: 'imported' }).returning().get()
-    const exported = f.db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo: 1, usccRaw: e.usccNorm, nameRaw: 'New name' }).returning().get()
-    const positiveProcess = f.makeQuery('business_list', e.usccNorm!, 'specialized_sme', 'success', undefined, [{ sequenceNo: 1, enterpriseId: e.id, usccRaw: e.usccNorm, status: '认定通过', declareKind: 'apply', year: 2024, matchBasis: 'uscc', verificationStatus: 'confirmed' }])
-    const positive = positiveProcess.relations[0]!
-    const input = f.input([query.id, positiveProcess.id], [batch.id])
-    const unproved = getRecordComparison(f.db, input)
-    expect(unproved.counts.platformWithoutOfficialRows).toBe(0)
-    expect(unproved.currentSourceConsistency.recognizedObservations[0]?.qualification).toBe('not_comparable')
-    const proof = { officialScopes: [{ proofId: 'official-scope-1', sourceDocumentIds: [f.doc.id], titleCode: 'specialized_sme', fromYear: 2020, throughYear: 2026, enterpriseIds: [e.id], verifiedAt: '2026-10-18T01:00:00Z' }], currentScopes: [{ proofId: 'same-version-1', queryId: query.id, exportBatchId: batch.id, titleCode: 'specialized_sme', querySourceFingerprint: queryProofFingerprint({...query,lastCollectedAt:null}), exportSha256: batch.sha256, scopeEquivalent: true as const, versionEquivalent: true as const, verifiedAt: '2026-10-18T01:00:00Z' }] }
-    const out = getRecordComparison(f.db, input, proof)
-    expect(out.counts.platformWithoutOfficialRows, JSON.stringify(out.platformWithoutOfficial)).toBe(1)
-    expect(out.platformWithoutOfficial.rows.find(row => row.relation.id === positive.id)).toMatchObject({ relation: { id: positive.id }, qualification: 'platform_without_official', proofId: 'official-scope-1' })
-    expect(out.platformWithoutOfficial.rows.find(row => row.relation.id === recognized.id)?.qualification).toBe('unresolved')
-    expect(out.currentSourceConsistency.recognizedObservations).toMatchObject([{ recognized: { id: recognized.id }, exportRows: [{ id: exported.id }], qualification: 'field_conflict', proofId: 'same-version-1' }])
-    expect(out.currentSourceConsistency.exportObservations[0]?.qualification).toBe('field_conflict')
-    const stale = getRecordComparison(f.db, input, { ...proof, currentScopes: [{ ...proof.currentScopes[0]!, querySourceFingerprint: 'stale' }] })
-    expect(stale.currentSourceConsistency.recognizedObservations[0]?.qualification).toBe('not_comparable')
-  })
-  it('trusted equal-version proof distinguishes matched and export-only original rows', () => {
-    const f = fixture(), e = f.makeEnterprise('Paired', '91330211255994473A')
-    const evidence = { source: 'queryBusList', status: 'success', effectiveConditions: { combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: '2026-10-18T00:00:00Z', completedAt: '2026-10-18T00:00:01Z', rows: [{ tyshxydm: e.usccNorm!, qymc: 'Paired' }], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, maxPage: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, error: null }], fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 1, maxRows: 50, maxDurationMs: 1000, pageSize: 50 } } as RosterImportPlatformQuery['collectionEvidence']
-    const q = f.makeQuery('recognized_list', e.usccNorm!, 'specialized_sme', 'success', evidence, [{ sequenceNo: 1, enterpriseId: e.id, usccRaw: e.usccNorm, status: '在册', declareKind: null, year: 2024, rawFields: undefined, matchBasis: e.id ? 'uscc' : 'none', verificationStatus: e.id ? 'confirmed' : 'pending' }])
-    const recognized = q.relations[0]!
-    const batch = f.db.insert(schema.platformExportBatch).values({ titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-18', originalFilename: 'same-version.xlsx', sha256: 'd'.repeat(64), importStatus: 'imported' }).returning().get()
-    const matching = f.db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo: 1, usccRaw: e.usccNorm, nameRaw: 'Paired' }).returning().get()
-    const extra = f.db.insert(schema.platformExportRow).values({ batchId: batch.id, sourceRowNo: 2, usccRaw: '91330211255994474B', nameRaw: 'Only export' }).returning().get()
-    const proof = { officialScopes: [], currentScopes: [{ proofId: 'same-version-2', queryId: q.id, exportBatchId: batch.id, titleCode: 'specialized_sme', querySourceFingerprint: queryProofFingerprint({...q,lastCollectedAt:null}), exportSha256: batch.sha256, scopeEquivalent: true as const, versionEquivalent: true as const, verifiedAt: '2026-10-18T01:00:00Z' }] }
-    const out = getRecordComparison(f.db, f.input([q.id], [batch.id]), proof)
-    expect(out.currentSourceConsistency.recognizedObservations).toMatchObject([{ recognized: { id: recognized.id }, exportRows: [{ id: matching.id }], qualification: 'matched' }])
-    expect(out.currentSourceConsistency.exportObservations).toMatchObject([{ exportRow: { id: matching.id }, qualification: 'matched' }, { exportRow: { id: extra.id }, qualification: 'export_only' }])
-    expect(out.currentSourceConsistency.qualification).toBe('comparable')
   })
   it('case 1 preserves aligned 2021 award and independent rejected 2025 update with current export scope unknown', () => {
     const f = fixture(), enterprise = f.makeEnterprise('A', '91330211255994457P')
@@ -264,15 +227,14 @@ describe('record comparison public read service', () => {
     const confirmed = f.save('asof-confirmed', [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: event.id, relationId: another.id, role: 'supports_award' } }])
     const confirmedId = confirmed.correspondenceIds[0]!
     f.db.update(schema.recordCorrespondence).set({ createdAt: '2026-10-18T00:30:00Z', status: 'unlinked', revision: 3, decidedAt: '2026-10-18T02:00:00Z', endedAt: '2026-10-18T02:00:00Z' }).where(eq(schema.recordCorrespondence.id, confirmedId)).run()
-    const asOf = getRecordComparison(f.db, { ...f.input([q.id]), asOf: '2026-10-18T09:00:00+08:00' }, { officialScopes: [{ proofId: 'future-proof', sourceDocumentIds: [f.doc.id], titleCode: 'specialized_sme', fromYear: 2020, throughYear: 2026, enterpriseIds: [e.id], verifiedAt: '2026-10-18T02:00:00Z' }], currentScopes: [] })
+    const asOf = getRecordComparison(f.db, { ...f.input([q.id]), asOf: '2026-10-18T09:00:00+08:00' })
     expect(asOf.rows[0]).toMatchObject({ classification: 'unresolved', correspondences: [] })
     expect(asOf.historicalDecisionUnavailable).toMatchObject([{ id: edgeId, eventId: event.id, relationId: relation.id, reason: 'post_cutoff_decision_state_unavailable' }, { id: confirmedId, eventId: event.id, relationId: another.id, reason: 'post_cutoff_decision_state_unavailable' }])
     expect(asOf.platformWithoutOfficial.rows).toMatchObject([{ relation: { id: relation.id }, qualification: 'unresolved' }, { relation: { id: another.id }, qualification: 'unresolved' }])
-    expect(asOf.officialCoverage.proofIds).toEqual([])
+    expect(asOf.officialCoverage).toMatchObject({ qualification: 'unknown' })
     expect(JSON.stringify(asOf)).not.toContain('2026-10-18T02:00:00Z')
     expect(JSON.stringify(asOf)).not.toContain('"status":"rejected"')
     expect(JSON.stringify(asOf)).not.toContain('"status":"unlinked"')
-    expect(JSON.stringify(asOf)).not.toContain('future-proof')
     expect(previewRecordCorrespondenceImpact(f.db, { ...f.input([q.id]), asOf: '2026-10-18T09:00:00+08:00' }).proposedCandidates).toEqual([])
   })
   it('equivalent asOf instants both reject a next-UTC-day export source', () => {

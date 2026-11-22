@@ -1,4 +1,4 @@
-import { bigint, text } from 'drizzle-orm/pg-core'
+import { bigint, boolean, text } from 'drizzle-orm/pg-core'
 import type { differenceReason as sqliteDifferenceReason } from '../schema'
 import { businessSchema } from './business-schema'
 
@@ -53,6 +53,8 @@ export const differenceReason = businessSchema.table('difference_reason', {
   requestHash: text('request_hash'),
   currentQualification: text('current_qualification'),
   factReferences: text('fact_references'),
+  retiredEvidenceValidity: text('retired_evidence_validity', { enum: ['valid', 'evidence_changed', 'premise_invalid'] }),
+  retiredEvidenceReviewed: boolean('retired_evidence_reviewed'),
 })
 
 export const enterpriseDifferenceComparison = businessSchema.table('enterprise_difference_comparison', {

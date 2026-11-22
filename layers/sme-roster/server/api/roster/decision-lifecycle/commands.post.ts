@@ -4,7 +4,7 @@ defineRouteMeta({
   openAPI: {
     tags: ['差异决定'],
     summary: '追加替代或撤回差异决定',
-    description: '需要 API token；每次操作追加版本，保留旧原因。expectedCurrentId 是当前版本（包括撤回标记）的 ID，首次为 null。replace 必须给完整 decision；withdraw/maintain 必须省略 decision。maintain 必须给 reviewedEvidence；replace 可带已审证据，withdraw 禁止带。复核检查最新证据和投影就绪。effectiveAt 是显式业务时点。',
+    description: '需要 API token；每次操作追加版本，保留旧原因。expectedCurrentId 是当前版本（包括撤回标记）的 ID，首次为 null。replace 必须给完整 decision；withdraw 必须省略 decision。历史复核请求仅支持匹配既有回执的重放。effectiveAt 是显式业务时点。',
     requestBody: {
       required: true,
       content: {

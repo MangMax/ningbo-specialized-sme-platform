@@ -86,26 +86,6 @@ async function readStandardReceipt(db: Reader, action: ImportReceiptAction, args
     .where(and(match, inArray(importBatch.sourceKind, kinds)))
   if (!row) throw new ImportReceiptError(404, 'not_found', 'Import batch or receipt not found')
   if (action === 'get') return projectImportReceiptMetadata(row)
-  if (action === 'request') {
-    const offset = importReceiptInteger(args.offset, 'offset', 0, Number.MAX_SAFE_INTEGER - 1, 0)
-    const maxBytes = importReceiptInteger(args.maxBytes, 'maxBytes', 16384, 65536)
-    if (row.receiptId === null) throw new ImportReceiptError(404, 'not_retained', 'Original request was not retained')
-    const owner = alias(importReceipt, 'owner')
-    const source = db.select({
-      bytes: sql<Buffer>`convert_to(coalesce(${owner.requestBody},${importReceipt.requestBody}),'UTF8')`.as('bytes'),
-    }).from(importReceipt).leftJoin(owner, eq(owner.id, importReceipt.bodyReceiptId))
-      .where(eq(importReceipt.id, row.receiptId)).as('source')
-    const [stored] = await db.select({
-      totalBytes: sql<number>`octet_length(${source.bytes})`,
-      chunk: sql<Buffer | null>`CASE WHEN ${offset}::bigint <= octet_length(${source.bytes})
-        THEN substring(${source.bytes} FROM (${offset}::integer+1) FOR ${maxBytes}) END`,
-    }).from(source)
-    if (!stored?.chunk) return invalidImportReceiptQuery('offset exceeds request bytes')
-    const { totalBytes, chunk } = stored
-    return { batchId: row.batchId, receiptId: row.receiptId, redacted: true, encoding: 'base64',
-      contentType: 'application/json; charset=utf-8', offset, totalBytes, data: chunk.toString('base64'),
-      nextOffset: offset + chunk.length < totalBytes ? offset + chunk.length : null }
-  }
   const page = importReceiptInteger(args.page, 'page', 1, 1_000_000)
   const pageSize = importReceiptInteger(args.pageSize, 'pageSize', 20, 50)
   const offset = (page - 1) * pageSize

@@ -9,7 +9,6 @@ defineRouteMeta({ openAPI: { tags: ['名录'], summary: '旧结论只读影响�
 ], responses: { 200: { description: '按 difference_reason ID 的旧结论只读候选与影响。' }, 400: { description: '无效来源或参数。' } } } })
 export default defineEventHandler(async event => {
   setHeader(event, 'cache-control', 'no-store')
-  if (getQuery(event).proofIds !== undefined) throw createError({ statusCode: 400, statusMessage: 'proofIds are supported only by record-comparison' })
   try {
     const input = parseRecordComparisonQuery(getQuery(event)), pg = usePostgresRosterDb()
     return await previewPostgresRecordCorrespondenceImpact(pg, input)

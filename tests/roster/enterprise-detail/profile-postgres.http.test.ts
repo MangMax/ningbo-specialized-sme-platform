@@ -72,11 +72,9 @@ it.skipIf(!url)('serializes version checks and preserves profile receipts and co
     before: before.value.profile, after: renamed.value.profile, actor: input.actor, aliasCreated: true,
   }] } })
   expect(history.value.rows[0]).not.toHaveProperty('requestHash')
-  const evidence = await client.query('SELECT source_kind,source_version FROM business.evidence_revision_113 WHERE enterprise_id=$1', [id])
-  expect(evidence.rows).toEqual([{ source_kind: 'identity', source_version: 'profile:' + renamed.value.auditId }])
 })
 
-it.skipIf(!url)('reads and revises a stable alias with replayable history and identity evidence in PostgreSQL', async () => {
+it.skipIf(!url)('reads and revises a stable alias with replayable history in PostgreSQL', async () => {
   const original = '验收录入的别名'
   const { rows } = await client.query(`
     INSERT INTO business.enterprise_alias (enterprise_id,name,name_norm,source_kind,created_at)
@@ -98,6 +96,4 @@ it.skipIf(!url)('reads and revises a stable alias with replayable history and id
   expect(await call(path + '/history?page=2&pageSize=1')).toMatchObject({ status: 200, value: { total: 2, rows: [{
     before: { verificationStatus: 'confirmed', version: 2 }, after: { verificationStatus: 'withdrawn', version: 3 },
   }] } })
-  const revisions = await client.query("SELECT source_version FROM business.evidence_revision_113 WHERE enterprise_id=$1 AND source_version LIKE 'alias:%' ORDER BY id", [id])
-  expect(revisions.rows).toEqual([{ source_version: `alias:${aliasId}:2` }, { source_version: `alias:${aliasId}:3` }])
 })

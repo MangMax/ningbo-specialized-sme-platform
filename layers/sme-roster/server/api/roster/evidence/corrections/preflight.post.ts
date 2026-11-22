@@ -101,7 +101,7 @@ defineRouteMeta({
                       "properties": {
                         "sourceFile": {
                           "type": "string",
-                          "description": "文件库相对路径；注册的在用jxj announcement文件"
+                          "description": "文件库相对路径；已登记且在用的经信局公布名单原件（jxj / announcement）"
                         },
                         "attachment": {
                           "type": "string",
