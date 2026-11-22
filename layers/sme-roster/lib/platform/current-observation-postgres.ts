@@ -1,4 +1,4 @@
-import { and, desc, eq, exists, inArray, isNotNull, isNull, or, sql, type SQLWrapper } from 'drizzle-orm'
+import { and, desc, eq, exists, inArray, isNotNull, isNull, or, sql, type SQL, type SQLWrapper } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import {
@@ -54,7 +54,7 @@ export function platformDecisionQueryMode(status: string, reasonCode?: string | 
   return status === 'query_failed' || status === 'needs_review' || awaitingReview ? 'attempt' : 'evidence'
 }
 
-export function isCurrentPlatformCollection(db: Reader, row: ScopeCoordinate = collection, eligibility?: 'rows' | 'evidence' | 'attempt') {
+export function isCurrentPlatformCollection(db: Reader, row: ScopeCoordinate = collection, eligibility?: 'rows' | 'evidence' | 'attempt'): SQL {
   const source = alias(collection, 'scoped_collection')
   const evidenceRow = alias(observation, 'scoped_evidence')
   const positivePartial = eligibility === 'evidence' ? exists(db.select({ id: evidenceRow.id }).from(evidenceRow)
