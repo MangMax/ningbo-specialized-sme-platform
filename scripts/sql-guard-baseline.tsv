@@ -49,7 +49,7 @@ db/postgresql/job-integrity.sql	FnrxDae3sNmfpid4GWL4T3iKXby5VHYj5N19ajXyc6iw	Ins
 db/postgresql/job-schema.sql	FapCqZLJ6cRBJDhLb3IgFfbJk2J1BH1qKVtpkZyd1_SM	Define the shared job table before assigning its runtime claim default.
 db/postgresql/official-evidence-tables.ts	TALU0iapPUQJjT1BnN4eZdOPgPJWm_w-6JRSZl1WWOWY	Return the exact PostgreSQL JSON scalar without decoding U+0000 into text.
 db/postgresql/platform-batch-segments.sql	FdsAnK_90YSFhqE48uo-PmaFYCoDqa3rQzzXlsDNSGNQ	Define the PostgreSQL segment table and its composite key, foreign key and check constraint. Drizzle query builders do not install DDL.
-db/postgresql/platform-capture-retention.sql	F1d18I-6qS1FdhNziueA_QzBWFd4LgYZFUsTNnekciSU	PostgreSQL 事务内核对同内容的证据出处、重绑业务引用并删除超期业务事实。
+db/postgresql/platform-capture-retention.sql	FoAG5iiNg5PxXAt6-m_F8quz13hg9JbhlbId9ZRrHbeg	PostgreSQL 事务内核对同内容的证据出处、重绑业务引用并删除超期业务事实。
 db/postgresql/platform-collection-scope-integrity.sql	FXgq0NIoH-m-MlPny3z3X9B72zgEMyr2n2lTEiRyxzT0	Shared bootstrap DDL for PostgreSQL constraints, typed projections and trigger functions.
 db/postgresql/platform-legacy-coverage.sql	FG3gqJhdxdtL2cT4v65wDguk8XNuniudtDzCiV4CFE_g	Extract typed collection scope from binary historical envelopes during offline migration. Drizzle does not express byte offsets or temporary PL/pgSQL programs.
 db/postgresql/platform-observation-source.sql	Fsts4gx-17W43wBTbf-TXZCefCuJHvhINYBzyjGg7AQQ	Shared bootstrap DDL for PostgreSQL constraints, typed projections and trigger functions.

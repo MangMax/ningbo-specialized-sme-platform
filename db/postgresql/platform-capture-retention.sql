@@ -143,6 +143,7 @@ BEGIN
     HAVING count(DISTINCT version_id) = 1 AND count(evidence) = count(*) AND count(DISTINCT evidence) = 1
   ), round_timeline AS (
     SELECT r.*, observed.evidence, observed.ownership_strength,
+      lag(observed.assignment_revision) OVER title_rounds AS newer_assignment_revision,
       lag(r.recency) OVER title_rounds AS newer_recency,
       lag(r.version_id) OVER title_rounds AS newer_version_id,
       lag(observed.evidence) OVER title_rounds AS newer_evidence,
@@ -153,7 +154,8 @@ BEGIN
     -- An intervening change or missing title severs the approval chain.
     SELECT *, bool_and(recency = 1 OR coalesce(
       newer_recency = recency - 1 AND newer_version_id = version_id
-        AND newer_evidence = evidence AND ownership_strength <= newer_strength, false
+        AND newer_evidence = evidence
+        AND (ownership_strength <= newer_strength OR (newer_recency > 1 AND newer_assignment_revision = 1)), false
     )) OVER (PARTITION BY record_id, effective_title ORDER BY recency ROWS UNBOUNDED PRECEDING) AS uninterrupted
     FROM round_timeline
   ), replacements AS MATERIALIZED (

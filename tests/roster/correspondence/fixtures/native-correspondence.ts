@@ -11,13 +11,13 @@ export async function nativeCorrespondenceFixture(db: PostgresJobDb) {
   const record = singlePostgresFixtureRow(await db.insert(ledger.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: enterprise.usccNorm }).returning())
   const event = singlePostgresFixtureRow(await db.insert(ledger.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning())
   let sequence = 0
-  const add = async (options: { key?: string; status?: string; year?: number; titleCode?: string; rdjb?: string; enterpriseId?: number; rawPadding?: string; queryRaw?: string } = {}) => {
+  const add = async (options: { key?: string; status?: string; year?: number; titleCode?: string; rdjb?: string; enterpriseId?: number; verificationStatus?: 'pending' | 'confirmed'; matchBasis?: 'none' | 'uscc'; rawPadding?: string; queryRaw?: string } = {}) => {
     const n = ++sequence, key = options.key ?? 'BUSINESS-1'
     const seeded = await seedPostgresPlatformQuery(db, {
       interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: options.rdjb ?? '2', titleCode: options.titleCode ?? 'specialized_sme',
       queriedAt: `2026-10-20T00:${String(n).padStart(2, '0')}:00Z`, status: 'success', rawResponse: options.queryRaw ?? 'Synthetic original response',
       relations: [{ sequenceNo: 1, relationKey: key, enterpriseId: options.enterpriseId ?? enterprise.id, nameRaw: enterprise.name, usccRaw: enterprise.usccNorm,
-        verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { id: key, year: options.year ?? 2024, sblx: '申请', sqsj: '2024-06-01', cszt: options.status ?? '终审通过', cookie: 'PRIVATE-COOKIE', ...(options.rawPadding ? { padding: options.rawPadding } : {}) } }],
+        verificationStatus: options.verificationStatus ?? 'confirmed', matchBasis: options.matchBasis ?? 'uscc', rawFields: { id: key, year: options.year ?? 2024, sblx: '申请', sqsj: '2024-06-01', cszt: options.status ?? '终审通过', cookie: 'PRIVATE-COOKIE', ...(options.rawPadding ? { padding: options.rawPadding } : {}) } }],
     })
     return { id: seeded.relationIds[0]!, queryId: seeded.queryId }
   }

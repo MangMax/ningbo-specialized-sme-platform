@@ -54,8 +54,9 @@ it('rebinds human evidence to an identical current capture and invalidates it wh
   retiredEvidenceValidity: 'valid', retiredEvidenceReviewed: true,
  }).returning({ id: differenceReason.id })
 
+ await f.add({ verificationStatus: 'pending', matchBasis: 'none' })
  const repeat = await f.add({ queryRaw: 'New transmission of identical business content' })
- expect(await prunePostgresPlatformCaptures(f.db, [original!.recordId!], true)).toBe(1)
+ expect(await prunePostgresPlatformCaptures(f.db, [original!.recordId!], true)).toBe(2)
  expect(await readPostgresCorrespondenceRefs(f.db, { validityIds: [id] })).toMatchObject([
   { id, relationId: repeat.id, status: 'confirmed', requiresRevalidation: false },
  ])
