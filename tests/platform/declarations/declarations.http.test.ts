@@ -123,7 +123,7 @@ it('serves declaration records and isolated filters through HTTP and MCP', async
   }
   expect((await mcp({ status: 'pending', platformKey: 'A' })).rows).toEqual([])
   const literal = await mcp({ status: 'passed', platformKey: 'A' })
-  expect(literal.rows[0]).toMatchObject({ record: { platformKey: 'A' }, matchedVersionCount: 1, versionCount: 1, observationCount: 2, enterpriseIds: [1], conflicts: [] })
+  expect(literal.rows[0]).toMatchObject({ record: { platformKey: 'A' }, matchedVersionCount: 1, versionCount: 2, observationCount: 2, enterpriseIds: [1], conflicts: [] })
   const recordId = literal.rows[0].record.id
   const { response, body } = await get(`declarations/${recordId}`)
   expect(response.status).toBe(200)
@@ -140,8 +140,8 @@ it('paginates current declarations and returns only the latest capture in detail
   expect(await mcp({ year: 2090, pageSize: 200, page: 2 })).toEqual(second.body)
   const many = (await get('declarations?platformKey=MANY')).body.rows[0]
   const detail = (await get(`declarations/${many.record.id}`)).body
-  expect(detail.counts).toEqual({ versions: 1, observations: 200, versionsTruncated: false, observationsTruncated: true })
-  expect(detail.versions).toHaveLength(1); expect(detail.observations).toHaveLength(200)
+  expect(detail.counts).toEqual({ versions: 1, observations: 1, versionsTruncated: false, observationsTruncated: false })
+  expect(detail.versions).toHaveLength(1); expect(detail.observations).toHaveLength(1)
   expect(await mcp({ recordId: many.record.id }, true)).toEqual(detail)
   expect((await get('filter-options?source=declarations')).body.statuses).toContain('outside-page')
 })

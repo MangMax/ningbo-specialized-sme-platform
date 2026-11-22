@@ -1,4 +1,4 @@
-import { and, desc, eq, exists, isNotNull, sql, type SQLWrapper } from 'drizzle-orm'
+import { and, desc, eq, exists, isNotNull, isNull, or, sql, type SQLWrapper } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import {
@@ -24,13 +24,27 @@ export function currentPlatformObservation(db: Reader, recordId: SQLWrapper) {
     .orderBy(desc(platformCaptureTime(source)), desc(source.publicId), desc(candidate.publicId)).limit(1)
 }
 
-export function isCurrentPlatformObservation(db: Reader, row: { collectionId: SQLWrapper; recordId: SQLWrapper } = observation) {
-  const current = currentPlatformObservation(db, row.recordId).as('current_platform_row')
-  const active = db.select({ collectionId: current.collectionId }).from(current)
+type ObservationCoordinate = {
+  id: SQLWrapper; collectionId: SQLWrapper; recordId: SQLWrapper; versionId: SQLWrapper; contentState: SQLWrapper
+}
+
+function isCurrentUnkeyedObservation(db: Reader, row: ObservationCoordinate) {
   const source = alias(collection, 'unkeyed_collection')
-  const currentUnkeyed = db.select({ id: source.id }).from(source)
-    .where(and(eq(source.id, row.collectionId), isCurrentPlatformCollection(db, source, true)))
-  return eq(row.collectionId, sql`coalesce((${active}), (${currentUnkeyed}))`)
+  return exists(db.select({ id: source.id }).from(source)
+    .where(and(eq(source.id, row.collectionId), isCurrentPlatformCollection(db, source, true))))
+}
+
+export function isCurrentPlatformObservation(db: Reader, row: ObservationCoordinate = observation) {
+  const current = currentPlatformObservation(db, row.recordId).as('current_platform_row')
+  const active = db.select({ id: current.id }).from(current)
+  return or(eq(row.id, active), and(isNull(row.recordId), isCurrentUnkeyedObservation(db, row)))!
+}
+
+// Current query pages can contain several distinct title observations for one business identity.
+export function isCurrentPlatformCaptureRow(db: Reader, row: ObservationCoordinate = observation) {
+  const current = currentPlatformObservation(db, row.recordId).as('current_platform_capture')
+  const active = db.select({ id: current.collectionId }).from(current)
+  return or(and(eq(row.collectionId, active), eq(row.contentState, 'verified'), isNotNull(row.versionId)), and(isNull(row.recordId), isCurrentUnkeyedObservation(db, row)))!
 }
 
 type ScopeCoordinate = CaptureTime & Record<'id' | 'interface' | 'queryKey' | 'rdjb' | 'conditionFacts' | 'fullRange', SQLWrapper>

@@ -2,6 +2,7 @@ import { and, count, desc, eq, getTableColumns, gt, inArray, notExists, or, sql 
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
 import { chunk } from 'es-toolkit'
+import { isCurrentPlatformCollection, isCurrentPlatformCaptureRow } from './platform/current-observation-postgres'
 import { normalizeUscc } from './domain'
 import { readCuration, projectCuratedComparison } from './curation-model'
 import { getPostgresComparison } from './comparison-heads-postgres'
@@ -51,7 +52,7 @@ async function readMemberships(db: Pick<NodePgDatabase, 'select' | 'selectDistin
     }).from(platformObservationAssignment)
       .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.id, platformObservationAssignment.observationId))
       .innerJoin(platformCollection, eq(platformCollection.id, platformBusinessObservation.collectionId))
-      .where(and(inArray(platformObservationAssignment.enterpriseId, subjectIds), notExists(
+      .where(and(inArray(platformObservationAssignment.enterpriseId, subjectIds), isCurrentPlatformCaptureRow(db), notExists(
         db.select({ revision: latest.revision }).from(latest).where(and(
           eq(latest.observationId, platformObservationAssignment.observationId),
           gt(latest.revision, platformObservationAssignment.revision),
@@ -69,7 +70,7 @@ async function readMemberships(db: Pick<NodePgDatabase, 'select' | 'selectDistin
     const queried = await db.select({
       key: platformCollection.queryKey, collectionId: platformCollection.id, queryId: platformCollection.publicId,
     }).from(platformCollection)
-      .where(inArray(platformCollection.queryKey, keys))
+      .where(and(inArray(platformCollection.queryKey, keys), isCurrentPlatformCollection(db)))
     for (const row of queried) {
       for (const enterpriseId of queriedOwners.get(row.key) ?? []) {
         const member = { enterpriseId, collectionId: row.collectionId, queryId: row.queryId, owned: false }
@@ -155,7 +156,7 @@ export function readPostgresWholeComparison(db: NodePgDatabase, input: Compariso
       const batch = await tx.select({ queryId: platformCollection.publicId, count: count() })
         .from(platformCollection)
         .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.collectionId, platformCollection.id))
-        .where(inArray(platformCollection.publicId, queryIds)).groupBy(platformCollection.publicId)
+        .where(and(inArray(platformCollection.publicId, queryIds), isCurrentPlatformCaptureRow(tx))).groupBy(platformCollection.publicId)
       for (const row of batch) counts.set(row.queryId, row.count)
     }
     const assessment = await readPostgresQueryAssessments(tx, selected)
@@ -214,10 +215,10 @@ async function readPostgresComparisonEvidence<T extends Parameters<typeof projec
   for (let index = 0; index < Math.max(collectionBatches.length, recognizedBatches.length); index++) {
     const batch = await tx.select({ id: platformBusinessObservation.publicId }).from(platformBusinessObservation)
       .innerJoin(platformCollection, eq(platformCollection.id, platformBusinessObservation.collectionId))
-      .where(or(
+      .where(and(isCurrentPlatformCaptureRow(tx), or(
         inArray(platformBusinessObservation.collectionId, collectionBatches[index] ?? []),
         inArray(platformCollection.publicId, recognizedBatches[index] ?? []),
-      ))
+      )))
     for (const row of batch) relationIds.add(row.id)
   }
   const originals = await readPostgresRelationFingerprints(tx, { relationIds: [...relationIds] })

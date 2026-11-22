@@ -103,6 +103,7 @@ export function savePostgresDecision102(db: NodePgDatabase, input: DecisionComma
   const command = parse102(internalDecisionCommand102, input)
   const hash = decisionRequestHash102(command, planHash)
   return db.transaction(async tx => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock_shared(21785,0)`)
     await lockPostgresDecisionOwnership102(tx)
     const receipt = evidenceReviewReceipt114
     const [review] = await tx.select({ hash: receipt.requestHash, response: sql<Record<string, unknown>>`${receipt.response}::json` })

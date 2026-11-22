@@ -26,7 +26,8 @@ export async function runPostgresCorrespondenceTransaction<T>(
       const code = cause.code ?? cause.cause?.code
       const constraint = cause.constraint ?? cause.cause?.constraint
       if (code === '23505' && constraint === 'record_correspondence_edge_uq') fail('plan_mismatch', 'Another request committed this edge; preflight again')
-      if (code !== '40001') throw error
+      if (code === '23503' && constraint === 'record_correspondence_observation_id_fkey') fail('plan_mismatch', 'Platform evidence changed; preflight again')
+      if (code !== '40001' && !(code === '23503' && constraint === 'difference_reason_evidence_relation_id_fkey')) throw error
       const wait = retryDelays[attempt]
       if (wait === undefined) fail('plan_mismatch', 'Concurrent source change; preflight again')
       if (wait) await delay(wait)

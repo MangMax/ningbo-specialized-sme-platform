@@ -106,7 +106,7 @@ function decisionCoverage(scope: AssessmentScope, queryCoverage: ReturnType<type
 }
 export function projectRetiredEvidenceAssessment(scope: AssessmentScope, queryCoverage: ReturnType<typeof projectQueryCoverage>, currentDecision: DecisionState, historicalValidity: 'valid' | 'evidence_changed' | 'premise_invalid' | null, historicalReviewed: boolean) {
   const { invalid, executed, assessment } = decisionCoverage(scope, queryCoverage, currentDecision, historicalReviewed)
-  const validity = !currentDecision.current ? 'not_applicable' : historicalValidity ?? (invalid ? 'premise_invalid' : 'unknown')
+  const validity = !currentDecision.current ? 'not_applicable' : invalid ? 'premise_invalid' : historicalValidity ?? 'unknown'
   return assessmentResult(queryCoverage, currentDecision, validity, invalid, executed, assessment)
 }
 

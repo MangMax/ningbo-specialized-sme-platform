@@ -25,10 +25,11 @@ const differencePublicFieldOrder = [
   'id', 'enterpriseId', 'titleCode', 'direction', 'status', 'reasonCode', 'reasonNote', 'measureCode', 'measureNote', 'evidenceQueryId', 'evidenceRelationId', 'movedInCity', 'movedInTitleCode', 'movedInYear', 'movedInBatch', 'factReferences', 'currentQualification', 'verificationStatus', 'recordedAt', 'lifecycleAction', 'previousId', 'actor', 'basis', 'ruleVersion', 'effectiveAt', 'idempotencyKey', 'requestHash', 'createdAt'
 ]
 
-export function postgresDifferenceRow(keys = differencePublicFieldOrder) {
+export function postgresDifferenceRow(keys = differencePublicFieldOrder, historical = false) {
   const fields = keys.map(key => {
     let value: SQL
-    if (key === 'evidenceQueryId' || key === 'evidenceRelationId') value = sql`(${publicIdOf[key]})`
+    if (historical && key === 'evidenceRelationId') value = sql`coalesce((${publicIdOf.evidenceRelationId}), ${p.retiredEvidenceRelationPublicId})`
+    else if (key === 'evidenceQueryId' || key === 'evidenceRelationId') value = sql`(${publicIdOf[key]})`
     else {
       const field = key as keyof typeof decisionColumns
       value = sql`${decisionColumns[field]}`
@@ -93,7 +94,7 @@ export async function readPostgresQualificationDecisionHeads(db: Reader, enterpr
 }
 
 export async function readPostgresDecision102(db: Reader, id: number) {
-  const [stored] = await db.select({ row: sql<PublicRow>`${postgresDifferenceRow()}` }).from(p).where(eq(p.id, id))
+  const [stored] = await db.select({ row: sql<PublicRow>`${postgresDifferenceRow(undefined, true)}` }).from(p).where(eq(p.id, id))
   if (!stored) throw new DecisionError102(404, 'not_found', 'Decision version not found')
   return publicVersion102(stored.row, (await readPostgresDecisionHead102(db, stored.row))?.id ?? null)
 }
@@ -108,7 +109,7 @@ export async function historyPostgresDecision102(db: Reader, input: z.infer<type
   await requirePostgresDecisionEnterprise(db, scope.enterpriseId)
   const head = await readPostgresDecisionHead102(db, scope)
   const [totals] = await db.select({ total: count() }).from(p).where(inScope(scope))
-  const rows = await db.select({ row: sql<Pick<PublicRow, typeof historyFields[number]>>`${postgresDifferenceRow([...historyFields])}` })
+  const rows = await db.select({ row: sql<Pick<PublicRow, typeof historyFields[number]>>`${postgresDifferenceRow([...historyFields], true)}` })
     .from(p).where(inScope(scope)).orderBy(...newestFirst).limit(input.pageSize).offset((input.page - 1) * input.pageSize)
   return { total: totals!.total, page: input.page, pageSize: input.pageSize, rows: rows.map(({ row }) => ({
     ...row, origin: row.lifecycleAction ? 'lifecycle' : 'legacy_import', isCurrent: row.id === head?.id, detailsAvailable: true,

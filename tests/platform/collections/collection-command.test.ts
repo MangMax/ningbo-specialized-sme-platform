@@ -78,7 +78,7 @@ it.each(['queryList', 'businessList', 'queryBusList'] as const)('writes complete
   expect(scopes).toEqual(source === 'queryList' ? [] : [{ rdjb: '2' }])
 })
 
-it('retains distinct collections and observations while sharing one content version', async () => {
+it('retains collection receipts and one current observation for the same content', async () => {
   const original = evidence('queryBusList')
   const next = { ...original, queriedAt: '2026-11-11T00:00:30Z' }
   const firstQuery = platformResultToImport(original)
@@ -95,7 +95,6 @@ it('retains distinct collections and observations while sharing one content vers
     SELECT c.public_id::int AS query_id, o.public_id::int AS relation_id, c.queried_at, o.version_id::int
     FROM platform_collection c JOIN platform_business_observation o ON o.collection_id=c.id ORDER BY query_id
   `)).rows).toEqual([
-    { query_id: 1, relation_id: 1, queried_at: '2026-11-11T00:00:00Z', version_id: 1 },
     { query_id: 2, relation_id: 2, queried_at: '2026-11-11T00:00:30Z', version_id: 1 },
   ])
 })

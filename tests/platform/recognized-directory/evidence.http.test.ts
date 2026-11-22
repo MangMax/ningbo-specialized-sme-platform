@@ -4,6 +4,8 @@ import * as h3 from 'h3'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { enterprise, enterpriseDirectory, enterpriseMerge } from '../../../db/postgresql/enterprise-tables'
+import { differenceReason } from '../../../db/postgresql/roster-selection-tables'
+import { historyPostgresDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle/postgres-reads'
 import { sourceDocument } from '../../../db/postgresql/official-evidence-tables'
 import { platformBusinessObservation, platformBusinessRecord, platformBusinessRecordVersion, platformCollection, platformExportBatch } from '../../../db/postgresql/platform-tables'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
@@ -279,7 +281,7 @@ it('keeps capture history separate from current enterprise evidence across REST 
   const stored = await db.select({ id: platformBusinessObservation.publicId }).from(platformBusinessObservation)
     .innerJoin(platformCollection, eq(platformCollection.id, platformBusinessObservation.collectionId))
     .where(and(eq(platformCollection.queryKey, USCC), eq(platformCollection.interface, 'recognized_list')))
-  expect(stored.some(row => !currentIds.includes(row.id))).toBe(true)
+  expect(stored.map(row => row.id).sort((a, b) => a - b)).toEqual(currentIds)
   expect(after.platform.relations[0]).toMatchObject({ sourceRdjb: '1', sourcePage: 1, relationKey: evidence.rows[0]!.id })
   for (const key of ['enterprise', 'aliases', 'records', 'events', 'evidence'] as const) expect(after[key]).toEqual(before[key])
   // Coverage is additive read state; archival evidence must not change business decisions.
@@ -535,13 +537,13 @@ it('a publicly saved title-wide archive retains exact comparison rows as observa
   })
 })
 
-it('keeps one rollback capture and lets an authorized caller remove it without changing current data', async () => {
+it('keeps one distinct rollback capture and protects manual deletion with API and read-only checks', async () => {
   const key = 'retention-current-and-previous'
   const query = (day: number, status: string) => ({
     interface: 'apply_list' as const, queryKey: key, queriedAt: `2026-11-${String(day).padStart(2, '0')}T00:00:00Z`, status: 'success' as const, rawResponse: '{}',
     relations: [{ sequenceNo: 1, relationKey: key, rawFields: { id: key, qymc: '采集保留测试', cszt: status } }],
   })
-  for (const [day, status] of [[10, 'old'], [11, 'previous'], [12, 'current'], [9, 'backdated']] as const) {
+  for (const [day, status] of [[10, 'old'], [11, 'previous'], [12, 'current'], [13, 'current'], [9, 'backdated']] as const) {
     const result = await client.commit({ idempotencyKey: key + day, sourceKind: 'platform_archive', sourceIdentity: key,
       payload: { platformQueries: [query(day, status)] } })
     expect(result.status, JSON.stringify(result)).toBe('committed')
@@ -553,15 +555,33 @@ it('keeps one rollback capture and lets an authorized caller remove it without c
     .from(platformBusinessObservation).innerJoin(platformCollection, eq(platformCollection.id, platformBusinessObservation.collectionId))
     .where(eq(platformBusinessObservation.recordId, recordId)).orderBy(platformCollection.queriedAt)
   const before = await readCaptures()
-  expect(before.map(row => row.time)).toEqual(['2026-11-11T00:00:00Z', '2026-11-12T00:00:00Z'])
+  expect(before.map(row => row.time)).toEqual(['2026-11-11T00:00:00Z', '2026-11-13T00:00:00Z'])
+  const [previous] = await db.select({ id: platformBusinessObservation.id, collectionId: platformBusinessObservation.collectionId }).from(platformBusinessObservation)
+    .where(eq(platformBusinessObservation.publicId, before[0]!.id))
+  const [owner] = await db.select({ id: enterprise.id }).from(enterprise).where(eq(enterprise.usccNorm, USCC))
+  const [decision] = await db.insert(differenceReason).values({
+    enterpriseId: owner!.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review',
+    recordedAt: time, createdAt: time, evidenceQueryId: previous!.collectionId, evidenceRelationId: previous!.id,
+    retiredEvidenceValidity: 'premise_invalid', retiredEvidenceReviewed: true,
+  }).returning({ id: differenceReason.id })
   const endpoint = baseUrl + '/api/platform/records/' + recordId + '/previous'
   expect((await fetch(endpoint, { method: 'DELETE' })).status).toBe(401)
   expect(await readCaptures()).toEqual(before)
   const remove = () => fetch(endpoint, { method: 'DELETE', headers: { authorization: 'Bearer ' + token } })
+  vi.stubEnv('NUXT_DB_READONLY', '1')
+  try { expect((await remove()).status).toBe(403) } finally { vi.stubEnv('NUXT_DB_READONLY', '0') }
+  expect(await readCaptures()).toEqual(before)
   const response = await remove()
   expect(response.status).toBe(200)
   expect(await response.json()).toEqual({ removed: 1 })
   expect(await readCaptures()).toEqual(before.slice(1))
+  const [storedDecision] = await db.select().from(differenceReason).where(eq(differenceReason.id, decision!.id))
+  expect(storedDecision).toMatchObject({
+    evidenceRelationId: null, retiredEvidenceRelationPublicId: before[0]!.id, evidenceQueryId: previous!.collectionId,
+    retiredEvidenceValidity: 'premise_invalid', retiredEvidenceReviewed: false,
+  })
+  const history = await historyPostgresDecision102(db, { id: decision!.id, page: 1, pageSize: 20 })
+  expect(history.rows).toEqual(expect.arrayContaining([expect.objectContaining({ id: decision!.id, evidenceRelationId: before[0]!.id })]))
   expect(await (await remove()).json()).toEqual({ removed: 0 })
   expect(await db.select().from(platformBusinessRecordVersion).where(eq(platformBusinessRecordVersion.recordId, recordId))).toHaveLength(1)
 })

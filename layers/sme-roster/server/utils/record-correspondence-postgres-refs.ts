@@ -10,7 +10,7 @@ import {
 import { platformSourceFields } from '../../../../db/postgresql/platform-source-values'
 import { recordCorrespondence, recordCorrespondenceAudit } from '../../../../db/postgresql/qualification-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
-import { isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
+import { isCurrentPlatformCaptureRow } from '../../lib/platform/current-observation-postgres'
 import { sourceQueryFields } from '../../lib/platform/source-snapshot-fields'
 import { correspondenceAttributionChanged, type CorrespondenceAttribution } from './record-correspondence-attribution'
 import type { CorrespondenceRefRow } from './record-correspondence'
@@ -115,7 +115,7 @@ function relationMatches(db: Db, assignment: { enterpriseId: SQL; matchBasis: SQ
     .leftJoin(a, eq(a.versionId, o.versionId))
     .leftJoin(b, eq(b.versionId, o.versionId))
     .leftJoin(r, eq(r.versionId, o.versionId))
-    .where(and(eq(o.id, sql`p.observation_id`), isCurrentPlatformObservation(db, o), isNotNull(o.sourceValues), ...fields, ...query,
+    .where(and(eq(o.id, sql`p.observation_id`), isCurrentPlatformCaptureRow(db, o), isNotNull(o.sourceValues), ...fields, ...query,
       sql`(${comparisonStatus} ? 'base64' AND NOT (${comparisonStatus} ? 'storage')) IS NOT TRUE`))
   return sql`CASE WHEN p.observation_id IS NULL THEN p.type = 'event_export_context' AND
     ${jsonEqual(refValue('relation'), NULL_JSON)} AND ${jsonEqual(refValue('query'), NULL_JSON)}

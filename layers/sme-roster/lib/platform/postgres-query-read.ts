@@ -12,7 +12,7 @@ import {
 import { MAX_PAGE_SIZE } from '../query-limits'
 import type { PlatformQueriesResult, PlatformQueryFilter } from './read'
 import { RDJB_TITLE_CODES } from './recognized-evidence'
-import { isCurrentPlatformObservation } from './current-observation-postgres'
+import { isCurrentPlatformCaptureRow } from './current-observation-postgres'
 import { readPostgresQueryDisplays } from './postgres-query-display'
 
 function conditionsOf(db: NodePgDatabase, filter: PlatformQueryFilter) {
@@ -24,7 +24,7 @@ function conditionsOf(db: NodePgDatabase, filter: PlatformQueryFilter) {
   if (filter.uscc) {
     const rawAssignment = db.select({ id: observation.id }).from(observation)
       .innerJoin(assignment, and(eq(assignment.observationId, observation.id), eq(assignment.revision, 1)))
-      .where(and(eq(observation.collectionId, collection.id), isCurrentPlatformObservation(db), eq(assignment.usccRaw, filter.uscc)))
+      .where(and(eq(observation.collectionId, collection.id), isCurrentPlatformCaptureRow(db), eq(assignment.usccRaw, filter.uscc)))
     conditions.push(filter.uscc.includes('\0') ? ne(collection.id, collection.id)
       : or(eq(collection.queryKey, filter.uscc), exists(rawAssignment))!)
   }
@@ -34,7 +34,7 @@ function conditionsOf(db: NodePgDatabase, filter: PlatformQueryFilter) {
       .where(and(eq(later.observationId, assignment.observationId), gt(later.revision, assignment.revision)))
     const currentOwner = db.select({ id: observation.id }).from(assignment)
       .innerJoin(observation, eq(observation.id, assignment.observationId))
-      .where(and(eq(observation.collectionId, collection.id), isCurrentPlatformObservation(db), eq(assignment.enterpriseId, filter.enterpriseId), notExists(laterAssignment)))
+      .where(and(eq(observation.collectionId, collection.id), isCurrentPlatformCaptureRow(db), eq(assignment.enterpriseId, filter.enterpriseId), notExists(laterAssignment)))
     conditions.push(Number.isSafeInteger(filter.enterpriseId) ? exists(currentOwner) : ne(collection.id, collection.id))
   }
   return conditions
@@ -71,7 +71,7 @@ export function readPostgresPlatformQueries(db: NodePgDatabase, filter: Platform
       failureReason: collection.failureReason,
       createdAt: collection.createdAt,
       lastCollectedAt: collection.lastCollectedAt,
-      relationCount: tx.$count(observation, and(eq(observation.collectionId, collection.id), isCurrentPlatformObservation(tx))),
+      relationCount: tx.$count(observation, and(eq(observation.collectionId, collection.id), isCurrentPlatformCaptureRow(tx))),
     }).from(collection).where(predicate)
       // Drizzle 0.45 has no collation operator. Preserve bytewise chronological ordering.
       .orderBy(desc(sql`${collection.queriedAt} COLLATE "C"`), desc(collection.publicId))

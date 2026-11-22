@@ -17,7 +17,7 @@ import { projectDifferences } from './current-difference'
 import { readPostgresRosterDetailQualification } from './current-qualification-postgres'
 import { isPageCapable } from './evidence-page'
 import { qualificationUsccCandidate } from './platform-qualification-postgres'
-import { isCurrentPlatformObservation } from '../platform/current-observation-postgres'
+import { isCurrentPlatformCaptureRow } from '../platform/current-observation-postgres'
 import { readPostgresQueryAssessments } from './query-assessment-postgres'
 import { projectEnterpriseDifferenceUniverse, projectRosterDetailHistory, projectRosterDetailRelations,
   projectRosterDetailTimeline, selectRosterDetailArchive, type RosterDetailArchive, type RosterEnterpriseDetail } from './enterprise-roster-projection'
@@ -36,7 +36,7 @@ async function readSources(db: Reader, enterprise: Enterprise, evidenceIds: numb
   const newer = alias(assignment, 'newer')
   const owned = db.selectDistinct({ collectionId: observation.collectionId }).from(assignment)
     .innerJoin(observation, eq(observation.id, assignment.observationId))
-    .where(and(isCurrentPlatformObservation(db), eq(assignment.enterpriseId, id), notExists(db.select({ revision: newer.revision }).from(newer)
+    .where(and(isCurrentPlatformCaptureRow(db), eq(assignment.enterpriseId, id), notExists(db.select({ revision: newer.revision }).from(newer)
       .where(and(eq(newer.observationId, assignment.observationId), gt(newer.revision, assignment.revision)))))).as('owned')
   const sourceRows = await db.select({ collectionId: collection.id, provenanceState: collection.provenanceState,
     lastCollectedAt: collection.lastCollectedAt, ownedCollectionId: owned.collectionId,
@@ -63,7 +63,7 @@ async function readSources(db: Reader, enterprise: Enterprise, evidenceIds: numb
   }).from(observation)
     .innerJoin(collection, eq(collection.id, observation.collectionId))
     .leftJoinLateral(owner, eq(owner.observationId, observation.id))
-    .where(and(isCurrentPlatformObservation(db), or(and(inIds(observation.collectionId, selected.map(row => row.collectionId)),
+    .where(and(isCurrentPlatformCaptureRow(db), or(and(inIds(observation.collectionId, selected.map(row => row.collectionId)),
       or(recognizedScope, eq(owner.enterpriseId, id))), inIds(collection.publicId, evidenceIds))))
     .orderBy(observation.id)
   const recognizedCollections = new Set(recognized)

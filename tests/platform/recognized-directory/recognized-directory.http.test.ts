@@ -215,8 +215,8 @@ it('paginates current recognized records and excludes superseded captures from d
   expect(await mcp({ whpcyear: 2090, pageSize: 200, page: 2 })).toEqual(second)
   const many = (await get('recognized-directory?platformKey=Limit')).body.rows[0]
   const detail = (await get(`recognized-directory/${many.record.id}`)).body
-  expect(detail.counts).toEqual({ versions: 1, observations: 200, versionsTruncated: false, observationsTruncated: true })
-  expect(detail.versions).toHaveLength(1); expect(detail.observations).toHaveLength(200)
+  expect(detail.counts).toEqual({ versions: 1, observations: 1, versionsTruncated: false, observationsTruncated: false })
+  expect(detail.versions).toHaveLength(1); expect(detail.observations).toHaveLength(1)
   expect(await mcp({ recordId: many.record.id }, true)).toEqual(detail)
   expect((await get('filter-options?source=recognized-directory')).body.batches).toContain('outside-page')
 })

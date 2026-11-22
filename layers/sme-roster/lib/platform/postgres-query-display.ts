@@ -11,7 +11,7 @@ import {
   platformCollection as collection,
   platformObservationAssignment as assignment,
 } from '../../../../db/postgresql/platform-tables'
-import { isCurrentPlatformObservation } from './current-observation-postgres'
+import { isCurrentPlatformCaptureRow } from './current-observation-postgres'
 import { assertPlatformFullReadBudget } from './evidence-contract'
 import type { PlatformQueryRow } from './read'
 import { sourcePositionForSequence } from './recognized-evidence'
@@ -62,7 +62,7 @@ export async function readPostgresDisplayRows<T extends DisplayQuery>(db: Reader
     .leftJoin(recognizedProjection, eq(recognizedProjection.versionId, observation.versionId))
     .leftJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
     .leftJoinLateral(current, eq(observation.id, observation.id)).leftJoin(enterprise, eq(enterprise.id, current.enterpriseId))
-    .where(and(inArray(observation.collectionId, collectionIds), isCurrentPlatformObservation(db), selection === undefined ? undefined : inArray(observation.publicId, selection)))
+    .where(and(inArray(observation.collectionId, collectionIds), isCurrentPlatformCaptureRow(db), selection === undefined ? undefined : inArray(observation.publicId, selection)))
     .orderBy(asc(observation.collectionId), asc(observation.sequenceNo))
   const observations = observationRows.map(row => ({
     ...row, collectionId: String(row.collectionId),

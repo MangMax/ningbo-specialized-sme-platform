@@ -36,6 +36,8 @@ export async function readPostgresQueryAssessments(db: Parameters<typeof readPos
     const relationId = decision.current?.evidenceRelationId
     const queryId = decision.current?.evidenceQueryId
     const outdated = relationId != null ? !currentEvidence.has(relationId) : queryId != null && !currentQueries.has(queryId)
-    return projectRetiredEvidenceAssessment(scope, item, decision, outdated ? 'evidence_changed' : baseline?.validity ?? null, baseline?.reviewed === true)
+    const savedValidity = baseline?.validity ?? null
+    const validity = outdated && savedValidity !== 'premise_invalid' ? 'evidence_changed' : savedValidity
+    return projectRetiredEvidenceAssessment(scope, item, decision, validity, !outdated && baseline?.reviewed === true)
   })
 }

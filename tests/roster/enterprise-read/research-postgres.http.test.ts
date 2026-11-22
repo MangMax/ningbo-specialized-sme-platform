@@ -34,19 +34,19 @@ describe('PostgreSQL roster identity discovery over HTTP', () => {
       interface: 'business_list', queryKey: '\u200b' + code.toLowerCase() + '\u3000', rdjb: '3',
       queriedAt: '2024-01-01', status: 'success', rawResponse: 'synthetic stored platform evidence',
       relations: [
-        { sequenceNo: 1, relationKey: 'wrong-code', nameRaw: oldName, usccRaw: '91330110MA2GMDFH58' },
-        { sequenceNo: 2, relationKey: 'original-authority', nameRaw: oldName, usccRaw: code },
+        { sequenceNo: 1, relationKey: 'wrong-code', nameRaw: oldName, usccRaw: '91330110MA2GMDFH58', rawFields: { id: 'wrong-code', qymc: oldName, tyshxydm: '91330110MA2GMDFH58' } },
+        { sequenceNo: 2, relationKey: 'original-authority', nameRaw: oldName, usccRaw: code, rawFields: { id: 'original-authority', qymc: oldName, tyshxydm: code } },
       ],
     })
     await seedPostgresPlatformQuery(db, {
       interface: 'apply_list', queryKey: code, queriedAt: '2025-01-01', status: 'success',
       rawResponse: 'synthetic later evidence',
-      relations: [{ sequenceNo: 1, relationKey: 'later-query', nameRaw: oldName, usccRaw: code }],
+      relations: [{ sequenceNo: 1, relationKey: 'later-query', nameRaw: oldName, usccRaw: code, rawFields: { id: 'later-query', qymc: oldName, tyshxydm: code } }],
     })
     await seedPostgresPlatformQuery(db, {
       interface: 'apply_list', queryKey: 'name:' + oldName, queriedAt: '2025-02-01', status: 'partial',
       rawResponse: 'synthetic partial name query',
-      relations: [{ sequenceNo: 1, relationKey: 'name-trace', nameRaw: oldName }],
+      relations: [{ sequenceNo: 1, relationKey: 'name-trace', nameRaw: oldName, rawFields: { id: 'name-trace', qymc: oldName } }],
     })
     psql(`
       SET search_path TO business, public;
