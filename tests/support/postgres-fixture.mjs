@@ -60,7 +60,7 @@ export async function postgresRuntimeFixture({ dir, sourcePath, bin = process.en
   /** @param {string[]} args */
   const psql = (args) => run('psql', ['-X', '-w', '-v', 'ON_ERROR_STOP=1', ...args])
   const node = (args) => execFileSync(process.execPath, args, { cwd: root, env: pgEnv, encoding: 'utf8', stdio: 'pipe' })
-  const materialize = (name, staging) => psql(['-v', 'staging=' + staging, '-f', 'upgrade/postgresql/materialize-' + name + '.sql'])
+  const materialize = (name, staging) => psql(['-v', 'staging=' + staging, '-f', 'upgrade/pg/sqlite-import/materialize-' + name + '.sql'])
   const close = () => {
     if (existsSync(join(data, 'postmaster.pid'))) run('pg_ctl', ['-D', data, '-w', '-m', 'fast', 'stop'])
     rmSync(socket, { recursive: true, force: true })
@@ -80,12 +80,12 @@ export async function postgresRuntimeFixture({ dir, sourcePath, bin = process.en
           sourcePath = join(fixture, 'source.db')
           await createEmptyBusinessSource(sourcePath)
         }
-        node(['upgrade/postgresql/stage-sqlite.mjs', resolve(sourcePath), 'fixture_business'])
+        node(['upgrade/pg/sqlite-import/stage-sqlite.mjs', resolve(sourcePath), 'fixture_business'])
         for (const name of materializers) materialize(name, 'fixture_business')
-        node(['upgrade/postgresql/install-platform-refresh-v2.mjs'])
+        node(['upgrade/pg/2026-11-data-compaction/steps/16-refresh-platform-digests.mjs'])
       }
       const logSource = await createEmptyLogSource(join(fixture, 'source-logs'))
-      node(['upgrade/postgresql/stage-sqlite.mjs', logSource, 'fixture_logs'])
+      node(['upgrade/pg/sqlite-import/stage-sqlite.mjs', logSource, 'fixture_logs'])
       materialize('runtime-logs', 'fixture_logs')
     }
     return {

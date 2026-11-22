@@ -18,12 +18,12 @@
 
 ## 离线数据工具
 
-[stage-sqlite.mjs](../../upgrade/postgresql/stage-sqlite.mjs) 通过开发依赖 better-sqlite3 从只读事务读取源快照。用环境变量 `PGHOST`、`PGDATABASE` 和所需连接选项指定隔离目标，`PGSQL_BIN` 可指定 PostgreSQL 19 的客户端目录或 psql 可执行文件路径。
+[stage-sqlite.mjs](../../upgrade/pg/sqlite-import/stage-sqlite.mjs) 通过开发依赖 better-sqlite3 从只读事务读取源快照。用环境变量 `PGHOST`、`PGDATABASE` 和所需连接选项指定隔离目标，`PGSQL_BIN` 可指定 PostgreSQL 19 的客户端目录或 psql 可执行文件路径。
 
 ```sh
-node upgrade/postgresql/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA
-node upgrade/postgresql/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA --verify-only
-node upgrade/postgresql/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA --resume
+node upgrade/pg/sqlite-import/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA
+node upgrade/pg/sqlite-import/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA --verify-only
+node upgrade/pg/sqlite-import/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA --resume
 ```
 
 首次运行创建新 schema。状态、SQLite 序列高水位、文本、NULL 和二进制证据随表导入；SQLite 的优化器统计由 PostgreSQL 重新生成。验收以完整的逐表哈希清单为准。`--resume` 会先核验已存在的表，再补导尚未出现的表。工具生成的是对账数据结构，生产运行结构按第二阶段交付。
@@ -37,28 +37,28 @@ PGHOST=/path/to/isolated/socket PGDATABASE=roster PGUSER=fixture \
   PGSQL_BIN=/path/to/postgresql19/bin pnpm db:init
 ```
 
-从 SQLite 历史快照恢复数据时，先生成业务与日志的已对账暂存 schema，再按以下顺序在隔离数据库运行。第一条命令创建 `business` schema，存在同名 schema 时中止。
+旧 SQLite 库内升级链已退役。离线导入使用最终 SQLite 快照。从该快照恢复数据时，先生成业务与日志的已对账暂存 schema，再按以下顺序在隔离数据库运行。第一条命令创建 `business` schema，存在同名 schema 时中止。
 
 ```sh
-psql -X -w -v staging=staged_business -f upgrade/postgresql/materialize-enterprise-directory.sql
-psql -X -w -v staging=staged_business -f upgrade/postgresql/materialize-enterprise-identity.sql
-psql -X -w -v staging=staged_business -f upgrade/postgresql/materialize-jobs.sql
-psql -X -w -v staging=staged_business -f upgrade/postgresql/materialize-file-and-lead-lists.sql
-psql -X -w -v staging=staged_business -f upgrade/postgresql/materialize-roster.sql
-psql -X -w -v staging=staged_logs -f upgrade/postgresql/materialize-runtime-logs.sql
-node upgrade/postgresql/install-platform-refresh-v2.mjs
+psql -X -w -v staging=staged_business -f upgrade/pg/sqlite-import/materialize-enterprise-directory.sql
+psql -X -w -v staging=staged_business -f upgrade/pg/sqlite-import/materialize-enterprise-identity.sql
+psql -X -w -v staging=staged_business -f upgrade/pg/sqlite-import/materialize-jobs.sql
+psql -X -w -v staging=staged_business -f upgrade/pg/sqlite-import/materialize-file-and-lead-lists.sql
+psql -X -w -v staging=staged_business -f upgrade/pg/sqlite-import/materialize-roster.sql
+psql -X -w -v staging=staged_logs -f upgrade/pg/sqlite-import/materialize-runtime-logs.sql
+node upgrade/pg/2026-11-data-compaction/steps/16-refresh-platform-digests.mjs
 ```
 
-早期隔离副本若已物化 `business.job` 但缺少任务运行字段，可单独执行 [install-job-runtime.sql](../../upgrade/postgresql/install-job-runtime.sql)。
+早期隔离副本若已物化 `business.job` 但缺少任务运行字段，可单独执行 [install-job-runtime.sql](../../upgrade/pg/legacy/install-job-runtime.sql)。
 
-升级早期 PostgreSQL 物化库时，用 [install-official-evidence-raw-text.sql](../../upgrade/postgresql/install-official-evidence-raw-text.sql) 保留含 U+0000 的公布名称、信用代码和属地原值。
+原生建库和离线物化均保留含 U+0000 的公布名称、信用代码和属地原值。此前用于早期物化库的独立补丁已退役。
 
 ## 已有 PostgreSQL 库的数据精简
 
-停止应用及后台任务，在精简前用 `pg_dump -Fc` 保留完整原库并记录 SHA-256。将备份恢复到隔离库，用 [平台归档清单](../../upgrade/postgresql/platform-archive-manifest.sh) 逐表核对采集字节和来源坐标。原库备份作为历史原文的离线归档。验证后先在隔离副本执行精简。使用同一组 PostgreSQL 客户端连接环境变量，并显式设置 `PGDATABASE`。
+停止应用及后台任务，在精简前用 `pg_dump -Fc` 保留完整原库并记录 SHA-256。将备份恢复到隔离库，用 [平台归档清单](../../upgrade/pg/2026-11-data-compaction/export-archive-manifest.sh) 逐表核对采集字节和来源坐标。原库备份作为历史原文的离线归档。验证后先在隔离副本执行精简。使用同一组 PostgreSQL 客户端连接环境变量，并显式设置 `PGDATABASE`。
 
 ```sh
-bash upgrade/postgresql/compact-database.sh
+bash upgrade/pg/2026-11-data-compaction/run.sh
 ```
 
 - 成功的健康探针和任务轮询不进入日志，失败仍保留。日志每条仅保存一份事件，列表从同一事件投影。
@@ -85,5 +85,5 @@ Compose 从 `ROSTER_ENV_FILE` 读取连接配置。隔离环境可用 `postgres-
 
 ```sh
 PGHOST=/path/to/isolated/socket PGDATABASE=roster PGUSER=fixture \
-  PGSQL_BIN=/path/to/postgresql19/bin bash upgrade/postgresql/rehearse-restore.sh
+  PGSQL_BIN=/path/to/postgresql19/bin bash upgrade/pg/2026-11-data-compaction/verify-restore.sh
 ```

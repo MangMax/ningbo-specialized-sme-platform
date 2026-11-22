@@ -370,7 +370,7 @@ describe('PostgreSQL snapshot public handlers', () => {
     const conflicted = sql(`UPDATE business.platform_business_observation SET business_fields=NULL
       WHERE id=(SELECT min(id) FROM business.platform_business_observation WHERE version_id IS NOT NULL) RETURNING id`)
       .split('\n')[0]!
-    const migrate = () => fixture.psql([target, '-f', 'upgrade/postgresql/install-platform-version-business-fields.sql'])
+    const migrate = () => fixture.psql([target, '-f', 'upgrade/pg/2026-11-data-compaction/steps/05-install-platform-version-business-fields.sql'])
     expect(migrate).toThrow('conflicting observation business fields')
     expect(sql("SELECT count(*) FROM information_schema.columns WHERE table_schema='business' AND table_name='platform_business_record_version' AND column_name='business_fields'")).toBe('0')
     sql(`UPDATE business.platform_business_observation SET business_fields='{"id":"shared-version","qymc":"共享版本合成企业","accepted":true}'::jsonb WHERE id=${Number(conflicted)}`)

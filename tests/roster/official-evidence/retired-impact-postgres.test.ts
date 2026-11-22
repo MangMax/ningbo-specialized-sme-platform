@@ -56,7 +56,7 @@ it('preserves decision validity and existing review receipts after retiring impa
       actor: JSON.stringify(request.actor), basis: request.basis, ruleVersion: request.ruleVersion,
       effectiveAt: request.effectiveAt, response: JSON.stringify(response), recordedAt: request.effectiveAt,
     })
-    for (let run = 0; run < 2; run++) runtime.psql(['-f', 'upgrade/postgresql/retire-evidence-impact-tracker.sql'])
+    for (let run = 0; run < 2; run++) runtime.psql(['-f', 'upgrade/pg/2026-11-data-compaction/steps/14-retire-evidence-impact-tracker.sql'])
     const assessments = await readPostgresQueryAssessments(db, [11, 12, 13, 14, 15].map(scope))
     expect(assessments.map(item => [item.currentDecision.versionId, item.explanationValidity.status])).toEqual([
       [11, 'valid'], [12, 'evidence_changed'], [13, 'premise_invalid'], [14, 'evidence_changed'], [15, 'unknown'],

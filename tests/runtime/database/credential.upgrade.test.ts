@@ -3,12 +3,10 @@ import { initializeDb } from '../../../db/client'
 import { spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
+import { join } from 'node:path'
+import type Database from 'better-sqlite3'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { schema } from '../../../db'
 import { allRecords } from '../../../layers/sme-roster/lib/query'
@@ -92,26 +90,6 @@ it('rolls back the entire credential migration if an existing destination key co
   expect(result.stderr).toContain('SQLITE_CONSTRAINT_PRIMARYKEY')
   expect(result.stdout + result.stderr).not.toContain('synthetic-')
   expect(rows.all()).toEqual(before)
-})
-it('upgrades an existing database without changing business rows', () => {
-  const previous = join(dir, 'previous-migrations')
-  mkdirSync(join(previous, 'meta'), { recursive: true })
-  const migrations = resolve('db/migrations')
-  const journal = JSON.parse(readFileSync(join(migrations, 'meta/_journal.json'), 'utf8'))
-  journal.entries = journal.entries.filter((entry: { idx: number }) => entry.idx < 9)
-  writeFileSync(join(previous, 'meta/_journal.json'), JSON.stringify(journal))
-  for (const entry of journal.entries) copyFileSync(join(migrations, entry.tag + '.sql'), join(previous, entry.tag + '.sql'))
-  const sqlite = new Database(join(dir, 'upgrade.sqlite')); connections.push(sqlite)
-  const db = drizzle(sqlite, { schema })
-  migrate(db, { migrationsFolder: previous })
-  db.insert(schema.enterprise).values({ name: 'Synthetic kept enterprise', nameNorm: 'synthetic kept enterprise' }).run()
-  const before = db.select().from(schema.enterprise).all()
-  migrate(db, { migrationsFolder: migrations })
-  expect(db.select().from(schema.enterprise).all()).toEqual(before)
-  expect(db.select().from(schema.serviceCredential).all()).toEqual([])
-  updateCredentials({ 'core.ocrToken': 'synthetic-upgraded' }, { db, env: {} })
-  expect(db.select().from(schema.serviceCredential).get()?.value).toBe('synthetic-upgraded')
-  expect(sqlite.pragma('integrity_check', { simple: true })).toBe('ok')
 })
 it('keeps credential values out of ordinary roster export rows', () => {
   const db = initializeDb({ create: true, dbPath: join(dir, 'export.sqlite') }); connections.push(db.$client)

@@ -101,14 +101,14 @@ it.skipIf(!bin).each(['PostgreSQL', 'already separated PostgreSQL', 'SQLite'] as
         if (source === 'PostgreSQL') await client.query('DROP TABLE business.platform_batch_segment')
         await client.query('INSERT INTO business.job (id, kind, params, state, result, created_at) VALUES ($1,$2,$3,$4,$5,$6)', records)
         if (source === 'already separated PostgreSQL') {
-          runtime.psql(['-f', 'upgrade/postgresql/split-platform-batch-results.sql'])
+          runtime.psql(['-f', 'upgrade/pg/2026-11-data-compaction/steps/support/split-platform-batch-results.sql'])
           expect((await client.query('SELECT payload FROM business.platform_batch_segment WHERE segment_index = 0')).rows)
             .toEqual([{ payload: firstSegment }])
           await client.query('UPDATE business.platform_batch_segment SET payload = $1 WHERE segment_index = 0', [firstAlreadySeparated])
         }
-        runtime.psql(['-f', 'upgrade/postgresql/compact-platform-batch-results.sql'])
+        runtime.psql(['-f', 'upgrade/pg/2026-11-data-compaction/steps/13-compact-platform-batch-results.sql'])
         await assertCompactBatch(client)
-        runtime.psql(['-f', 'upgrade/postgresql/compact-platform-batch-results.sql'])
+        runtime.psql(['-f', 'upgrade/pg/2026-11-data-compaction/steps/13-compact-platform-batch-results.sql'])
       }
 
       await assertCompactBatch(client)

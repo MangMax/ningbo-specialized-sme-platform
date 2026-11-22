@@ -51,7 +51,7 @@ describe.skipIf(!bin)('native PostgreSQL platform collection references and impo
     command('psql', ['-X', '-w', '-d', url, '-v', 'ON_ERROR_STOP=1', '-c', 'SET search_path TO business,pg_catalog',
       ...['roster-schema', 'roster-platform-schema', 'roster-review-schema', 'roster-constraints', 'roster-triggers']
         .flatMap(file => ['-f', 'db/postgresql/' + file + '.sql'])])
-    command('psql', ['-X', '-w', '-d', url, '-v', 'ON_ERROR_STOP=1', '-v', 'staging=fixture', '-f', 'upgrade/postgresql/materialize-jobs.sql'])
+    command('psql', ['-X', '-w', '-d', url, '-v', 'ON_ERROR_STOP=1', '-v', 'staging=fixture', '-f', 'upgrade/pg/sqlite-import/materialize-jobs.sql'])
     await client.query(`
       INSERT INTO platform_collection(id,public_id,interface,query_key,rdjb,queried_at,created_at,status,completeness,provenance_state,parse_state,rule_version)
       VALUES (1,91,'recognized_list',$1,'2',$2,$2,'success','unknown','unknown','absent','fixture');

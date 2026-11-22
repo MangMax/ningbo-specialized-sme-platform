@@ -89,7 +89,7 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
       INSERT INTO staged.sqlite_sequence VALUES ('log_events', 101);
     `)
     for (const file of ['materialize-jobs.sql', 'materialize-runtime-logs.sql']) {
-      command('psql', ['-X', '-w', '-v', 'ON_ERROR_STOP=1', '-v', 'staging=staged', '-f', join('upgrade/postgresql', file)])
+      command('psql', ['-X', '-w', '-v', 'ON_ERROR_STOP=1', '-v', 'staging=staged', '-f', join('upgrade/pg/sqlite-import', file)])
     }
     query(`
       CREATE ROLE fixture_logs LOGIN;
@@ -295,7 +295,7 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
       }
 
       for (let run = 0; run < 2; run++) {
-        command('psql', ['-Xqw', '-f', 'upgrade/postgresql/install-job-runtime.sql'])
+        command('psql', ['-Xqw', '-f', 'upgrade/pg/legacy/install-job-runtime.sql'])
       }
       query(`UPDATE business.job SET progress = '{"done":5,"total":8}' WHERE id = '${id}'`)
       const reconnected = await openTaskEvents(base)
@@ -315,10 +315,10 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
     expect(existsSync(logsPath)).toBe(false)
 
     for (let run = 0; run < 2; run++) {
-      const report = execFileSync('bash', ['upgrade/postgresql/rehearse-restore.sh'], {
+      const report = execFileSync('bash', ['upgrade/pg/2026-11-data-compaction/verify-restore.sh'], {
         env: { ...pgEnv, TMPDIR: dir }, encoding: 'utf8',
       })
-      expect(report).toContain('Matched table hashes and sequence states for 10 relations')
+      expect(report).toContain('Matched table hashes and sequence states for 11 relations')
       expect(query("SELECT count(*) FROM pg_database WHERE datname LIKE 'restore_%'")).toBe('0')
       expect(query('SELECT last_value FROM business.record_id_seq')).toBe('33')
     }

@@ -48,7 +48,7 @@ describe.skipIf(!bin)('PostgreSQL current qualification worker logging', () => {
         "requestId" text, "traceId" text, "taskId" text, "fileId" bigint, "batchId" text, "resourceId" text, summary text, detail text);
       CREATE TABLE staged.sqlite_sequence (name text, seq bigint);
     `)
-    command('psql', ['-X', '-w', '-v', 'staging=staged', url, '-f', 'upgrade/postgresql/materialize-runtime-logs.sql'])
+    command('psql', ['-X', '-w', '-v', 'staging=staged', url, '-f', 'upgrade/pg/sqlite-import/materialize-runtime-logs.sql'])
     vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
     vi.stubEnv('NUXT_POSTGRES_LOG_URL', url)
     vi.stubEnv('NUXT_DB_READONLY', '1')

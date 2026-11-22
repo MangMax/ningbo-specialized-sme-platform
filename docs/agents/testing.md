@@ -18,7 +18,7 @@
 - Ordinary documentation selects no business groups; ADRs select full coverage. Rename detection is disabled for scope calculation so both old and new paths are checked. Main pushes, nightly and manual dispatch always select full coverage. Build, typecheck, static checks and development discovery remain mandatory. The CI summary lists selected and unselected groups and selection reasons; unselected means not run, never passed. Empty native/app matrices skip their jobs, and the final gate accepts a skipped job only when its successful scope output explicitly selected zero groups. Any selected job failure, cancellation or unexpected skip fails the gate.
 - `scripts/select-upgrade-tests.mjs` controls historical inclusion within selected business groups. Production server/lib/db source, ADRs and unclassified paths conservatively include history. Existing ordinary runtime/app tests can skip history. Deployment acceptance requires a full successful run for the exact candidate; retain offline entry points until their supported recovery path is explicitly retired.
 
-- Disposable fixtures use the runner’s ordinary temporary filesystem. Existing full historical upgrade tools enforce an 8 GiB free-space floor; a small tmpfs cannot host those checks. Incremental recognized-qualification field capture reuses the existing working copy and does not inherit that fixed floor; assess its actual write space before running it on a real copy.
+- Disposable fixtures use the runner’s ordinary temporary filesystem. Size production-copy rehearsals from the source, the restored database, and temporary rewrite space.
 - The final `check` requires coverage selection, every selected business group, build and typecheck to pass. No known failure is allow-listed. Preserve per-business JSON reports; use job logs if timeout prevents JSON. Each test lane retains the five-minute workflow budget measured from run-attempt start including setup and queue time; only the remaining time is available to tests. Timeout fails, never semantic success. More runners improve scheduling headroom but do not establish the 2–5 minute goal without measured CI evidence.
 
 ## Test surface
@@ -38,6 +38,6 @@ support and workflow changes, and always on main/nightly/manual runs. The app
 matrix requires the selected watcher result. A PR without that selection has no
 fresh development watcher evidence. Deployment acceptance requires the full run.
 
-## Retired historical stage acceptance
+## Upgrade coverage
 
-The frozen recognized writer and business-process shadow comparison no longer have standalone acceptance suites. The recognized-directory shadow suite remains because it also exercises a current business predicate. Current collection writes belong to `platform/collections/collection-command.test.ts`; historical replay belongs to `platform/collections/collection-target-replay.upgrade.test.ts` (historical input) and native business owners. Historical schema expansion, source bytes/IDs/ownership, full migration, rollback/resume, independent CLI and migration-open boundaries remain supported and tested.
+The upgrade project covers PostgreSQL compaction, offline import of final SQLite snapshots and standalone data transformations with retained owners. Current collection commands, declarations and recognized-directory reads belong to their runtime suites.

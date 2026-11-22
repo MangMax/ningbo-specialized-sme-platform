@@ -1,11 +1,9 @@
-import { upgradeEnterpriseKernel } from '../../../upgrade/enterprise-kernel'
-import { syntheticEnterpriseDictionaries } from '../../support/pre-enterprise-kernel'
+import { createRuntimeSchema } from '../../../db/create-runtime'
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { expect, it } from 'vitest';
 import * as s from '../../../db/schema';
 import { getEnterpriseProfile } from '../../../layers/sme-roster/server/utils/enterprise-profile'
-import { runtimeSchemaStatements } from '../../../db/runtime-schema.generated';
 import { upgradeTitleCycleDisposition } from '../../../db/title-cycle-disposition';
 import { currentDispositions, historyDispositions } from '../../../layers/sme-roster/server/utils/title-cycle-disposition';
 it('adds disposition storage twice without changing retained enterprise data', () => {
@@ -13,8 +11,8 @@ it('adds disposition storage twice without changing retained enterprise data', (
     try {
         sqlite.pragma('foreign_keys=ON');
         // Pre-disposition native schema: additive upgrade must create the missing tables.
-        for (const statement of runtimeSchemaStatements)
-            if (!statement.includes('title_cycle_disposition_')) sqlite.exec(statement);
+        createRuntimeSchema(sqlite);
+        sqlite.exec('DROP TABLE title_cycle_disposition_revision; DROP TABLE title_cycle_disposition_receipt');
         const db = drizzle(sqlite, { schema: s });
         const enterprise = db.insert(s.enterprise).values({ name: '保留企业', nameNorm: '保留企业' }).returning().get();
         const before=getEnterpriseProfile(db,enterprise.id);
@@ -39,15 +37,8 @@ it('opens an existing pre-disposition native database without installing tables'
     let runtime: ReturnType<typeof useRuntimeDb> | undefined;
     const sqlite = new Database(path);
     try {
-        for (const statement of runtimeSchemaStatements)
-            if (!statement.includes('title_cycle_disposition_')) sqlite.exec(statement);
-        sqlite.pragma('user_version=71613');
-        sqlite.prepare('INSERT INTO platform_runtime_completion VALUES(1,?,?,?)').run('platform-mixed-model-retirement-v1', 71613, '2026-01-01');
-        const predecessor = sqlite.prepare('SELECT type,name,sql FROM sqlite_schema ORDER BY name').all();
-        expect(() => useRuntimeDb({ dbPath: path })).toThrow('Enterprise kernel missing');
-        expect(sqlite.prepare('SELECT type,name,sql FROM sqlite_schema ORDER BY name').all()).toEqual(predecessor);
-        sqlite.pragma('foreign_keys=ON');
-        upgradeEnterpriseKernel(sqlite, syntheticEnterpriseDictionaries);
+        createRuntimeSchema(sqlite);
+        sqlite.exec('DROP TABLE title_cycle_disposition_revision; DROP TABLE title_cycle_disposition_receipt');
         const before = sqlite.prepare('SELECT type,name,sql FROM sqlite_schema ORDER BY name').all();
         runtime = useRuntimeDb({ dbPath: path });
         expect(sqlite.prepare('SELECT type,name,sql FROM sqlite_schema ORDER BY name').all()).toEqual(before);

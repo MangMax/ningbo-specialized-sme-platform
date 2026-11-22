@@ -16,7 +16,7 @@ import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledg
 import { readPostgresCurrentQualification } from '../../../layers/sme-roster/lib/roster/current-qualification-postgres'
 import { refreshEnterpriseDifferences } from '../../../layers/sme-roster/server/utils/enterprise-difference-refresh'
 import { readPostgresRefreshFingerprints } from '../../../layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres'
-import { installPlatformRefreshV2 } from '../../../upgrade/postgresql/platform-refresh-v2-migration'
+import { installPlatformRefreshV2 } from '../../../upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-v2-migration'
 import { readPostgresCandidateSourceBytes } from '../../../layers/sme-roster/server/utils/candidate-source-bytes-postgres'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 vi.mock('@nuxtjs/mcp-toolkit/server',()=>({defineMcpTool:(value:unknown)=>value}))

@@ -57,9 +57,9 @@ describe.runIf(Boolean(bin))('PostgreSQL browser file segments', () => {
     run('initdb', ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', env.PGUSER, '-D', join(dir, 'pg')], env)
     run('pg_ctl', ['-w', '-D', join(dir, 'pg'), '-l', join(dir, 'pg.log'), '-o', "-c listen_addresses='' -k " + dir, 'start'], env)
     started = true
-    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', snapshot, 'staged'], { env, stdio: 'pipe' })
+    execFileSync(process.execPath, ['upgrade/pg/sqlite-import/stage-sqlite.mjs', snapshot, 'staged'], { env, stdio: 'pipe' })
     for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
-      run('psql', ['-Xwq', '-v', 'staging=staged', '-f', 'upgrade/postgresql/materialize-' + name + '.sql'], env)
+      run('psql', ['-Xwq', '-v', 'staging=staged', '-f', 'upgrade/pg/sqlite-import/materialize-' + name + '.sql'], env)
     }
     rmSync(snapshot)
     vi.stubEnv('NUXT_DB_PATH', join(dir, 'must-not-open.sqlite'))

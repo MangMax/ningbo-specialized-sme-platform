@@ -261,7 +261,7 @@ async function copyQualificationsFixture(client: pg.Client, sqlite: ReturnType<t
       .replace('\\ir platform-version-business-fields-projection.sql',
       () => sqlFixture('platform-version-business-fields-projection.sql')))
   }
-  const scopeBackfill = readFileSync(new URL('../../../upgrade/postgresql/backfill-platform-collection-scope.sql', import.meta.url), 'utf8')
+  const scopeBackfill = readFileSync(new URL('../../../upgrade/pg/2026-11-data-compaction/steps/support/backfill-platform-collection-scope.sql', import.meta.url), 'utf8')
   await client.query(scopeBackfill.split('\\gexec')[1]!.replaceAll(':"scope_source"', 'business').replaceAll(':"target"', 'business'))
   await client.query('DROP TABLE platform_collection_condition, platform_collection_unfinished')
   await client.query('DROP FUNCTION platform_observation_snapshot(bigint, bytea); DROP TABLE platform_collection_legacy_provenance, platform_collection_archive_ref, platform_observation_archive_ref, platform_archive_value')

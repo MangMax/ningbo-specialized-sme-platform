@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
+import { createRuntimeSchema } from '../../../db/create-runtime'
+import { assertApplicationSchema } from '../../../db/schema-phase'
 import { useRuntimeDb as runtimeDb } from '../../../db/client'
 import { validateRuntimeMode } from '../../../db/runtime-mode'
 
@@ -120,4 +122,17 @@ it('allows distinct PostgreSQL roles on the same endpoint and rejects another da
     vi.stubEnv('NUXT_POSTGRES_LOG_URL', 'postgres://log@db/roster?host=%2Ftmp')
     expect(() => validateRuntimeMode()).toThrow(/same PostgreSQL database/)
   } finally { vi.unstubAllEnvs() }
+})
+
+it('a native database is admitted with the enterprise kernel installed', () => {
+  const db = new Database(':memory:')
+  try {
+    db.pragma('foreign_keys = ON')
+    createRuntimeSchema(db)
+    expect(() => assertApplicationSchema(db)).not.toThrow()
+    expect(db.prepare('SELECT name FROM enterprise_source_channel WHERE code = ?').get('direct'))
+      .toEqual({ name: '直接添加' })
+  } finally {
+    db.close()
+  }
 })

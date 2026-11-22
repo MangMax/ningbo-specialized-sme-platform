@@ -66,9 +66,9 @@ it.runIf(Boolean(pgBin))('preserves archived title scope, original identity and 
     runPg('initdb', ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', env.PGUSER, '-D', pgData])
     runPg('pg_ctl', ['-w', '-D', pgData, '-l', join(dir, 'pg.log'), '-o', `-h '' -k ${dir}`, 'start'])
     started = true
-    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', source, 'staged'], { env, stdio: 'pipe' })
+    execFileSync(process.execPath, ['upgrade/pg/sqlite-import/stage-sqlite.mjs', source, 'staged'], { env, stdio: 'pipe' })
     for (const layer of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
-      runPg('psql', ['-Xqw', '-v', 'staging=staged', '-f', `upgrade/postgresql/materialize-${layer}.sql`])
+      runPg('psql', ['-Xqw', '-v', 'staging=staged', '-f', `upgrade/pg/sqlite-import/materialize-${layer}.sql`])
     }
     client = new pg.Client({ host: dir, port: 5432, database: env.PGDATABASE, user: env.PGUSER, options: '-c search_path=business,public' })
     await client.connect()

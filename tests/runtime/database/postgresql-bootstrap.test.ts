@@ -132,7 +132,7 @@ it.skipIf(!bin)('keeps historical public IDs and allocates fresh IDs above both 
       INSERT INTO platform_legacy_relation_alias VALUES (700,1);
       INSERT INTO platform_observation_assignment (observation_id,revision,match_basis,verification_status,origin)
         VALUES (1,1,'none','pending','migrated_current');`)
-    const installer = 'upgrade/postgresql/install-platform-public-ids.sql'
+    const installer = 'upgrade/pg/2026-11-data-compaction/steps/03-install-platform-public-ids.sql'
     runtime.psql(['-f', installer])
     runtime.psql(['-f', installer])
 

@@ -33,9 +33,9 @@ export async function withHistoricalImportDatabase(seed: string, run: (pool: pg.
       throw new Error(readFileSync(join(dir, 'pg.log'), 'utf8'), { cause: error })
     }
     started = true
-    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', sqlitePath, 'staged'], { env, stdio: 'pipe' })
+    execFileSync(process.execPath, ['upgrade/pg/sqlite-import/stage-sqlite.mjs', sqlitePath, 'staged'], { env, stdio: 'pipe' })
     for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
-      command('psql', '-X', '-w', '-q', '-v', 'staging=staged', '-f', 'upgrade/postgresql/materialize-' + name + '.sql')
+      command('psql', '-X', '-w', '-q', '-v', 'staging=staged', '-f', 'upgrade/pg/sqlite-import/materialize-' + name + '.sql')
     }
     await run(pool, drizzle(pool))
   } finally {

@@ -90,9 +90,9 @@ it.skipIf(!bin)('compacts legacy receipt bodies and resolves historical body own
   try {
     runtime = await postgresRuntimeFixture({ dir, native: true })
     await seedLegacyPostgreSQL(runtime)
-    runtime.psql(['-f', 'upgrade/postgresql/compact-import-receipts.sql'])
+    runtime.psql(['-f', 'upgrade/pg/2026-11-data-compaction/steps/12-compact-import-receipts.sql'])
     assertCompactReceipts(runtime)
-    runtime.psql(['-f', 'upgrade/postgresql/compact-import-receipts.sql'])
+    runtime.psql(['-f', 'upgrade/pg/2026-11-data-compaction/steps/12-compact-import-receipts.sql'])
     assertCompactReceipts(runtime)
   } finally {
     runtime?.close()

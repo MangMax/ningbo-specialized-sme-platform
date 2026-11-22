@@ -72,7 +72,7 @@ it('removes only untouched worker suggestions and rediscovers them without stori
     const readHistory = () => db.select().from(recordCorrespondenceAudit).orderBy(recordCorrespondenceAudit.id)
     const histories = await readHistory()
     const removed = previous.get('untouched')!
-    const migration = 'upgrade/postgresql/remove-automatic-correspondence-candidates.sql'
+    const migration = 'upgrade/pg/2026-11-data-compaction/steps/04-remove-automatic-correspondence-candidates.sql'
     runtime.psql(['-f', migration])
     runtime.psql(['-f', migration])
     const remaining = [...previous.values()].filter(row => row.edgeId !== removed.edgeId)

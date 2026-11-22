@@ -210,3 +210,49 @@ it('preserves projection mapping conflict code field and original relation alias
   try{writeCollectionTarget(db,input);expect.fail('accepted mapping drift')}catch(error){expect(error).toMatchObject({result:{ref:`relation:${first.observations[0]!.relationAlias}`,error:{code:'projection_mapping_conflict',field:'relations'}}})}
   expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
 })
+
+it('retains insertion defaults for whitespace metadata and rdjb before replay lookup',()=>{
+  const {sqlite,db}=fixture()
+  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:'apply_list',queryKey:'key',rdjb:' 2 ',queriedAt:'time',failureReason:'  ',rawResponse:'raw',relations:[]}),evidenceText:null,createdAt:'c',assignments:[]}
+  writeCollectionTarget(db,input)
+  expect(sqlite.prepare('select rdjb,failure_reason from platform_collection').get()).toEqual({rdjb:'2',failure_reason:null})
+  const before=bytes(sqlite);writeCollectionTarget(db,input);expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
+})
+
+it.each([null,'',' ',' A '] as const)('replays new target key %s using insertion semantics while retaining its original archived key and materialized typed key',key=>{
+  const {sqlite,db}=fixture()
+  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:'apply_list',queryKey:'legacy',queriedAt:'time',status:'success',rawResponse:'raw',relations:[{sequenceNo:1,relationKey:key,rawFields:{id:'A'}}]}),evidenceText:null,createdAt:'c',assignments:command(evidence('queryList')).assignments.map(a=>({...a,nameRaw:null}))}
+  writeCollectionTarget(db,input);const before=bytes(sqlite);writeCollectionTarget(db,input)
+  expect(sqlite.prepare('select source_relation_key from platform_business_observation').get()).toEqual({source_relation_key:key?.trim() || null})
+  const requestArchive=sqlite.prepare("SELECT a.bytes,a.sha256 FROM platform_collection_archive_ref r JOIN platform_archive_value a ON a.id=r.archive_id WHERE r.field='request'").get() as {bytes:Buffer;sha256:string}
+  expect(requestArchive.bytes).toEqual(Buffer.from(input.queryText))
+  expect(requestArchive.sha256).toBe(createHash('sha256').update(input.queryText).digest('hex'))
+  expect(JSON.parse(requestArchive.bytes.toString()).relations[0].relationKey).toBe(key)
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
+})
+it.each([{label:'queryKey',queryKey:' legacy ',queriedAt:'time'},{label:'queriedAt',queryKey:'legacy',queriedAt:' time '}])('retains transaction recheck for original whitespace $label without rewriting coordinates',({queryKey,queriedAt})=>{
+  const {sqlite,db}=fixture()
+  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:'apply_list',queryKey,queriedAt,status:'success',rawResponse:'raw',relations:[{sequenceNo:1,relationKey:'A',rawFields:{id:'A'}}]}),evidenceText:null,createdAt:'c',assignments:command(evidence('queryList')).assignments.map(a=>({...a,nameRaw:null}))}
+  const first=writeCollectionTarget(db,input),before=bytes(sqlite),second=writeCollectionTarget(db,input)
+  expect(second.queryAlias).toBe(first.queryAlias);expect(second.reused).toBe(true)
+  const explicit=replay(input,q=>{q.reuseExisting=true})
+  expect(()=>writeCollectionTarget(db,explicit)).toThrow('query_reuse_missing')
+  expect(sqlite.prepare('select query_key,queried_at from platform_collection').get()).toEqual({query_key:queryKey,queried_at:queriedAt})
+  expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true);sqlite.close()
+})
+it('retains own proto keys, typed arrays, and original raw bytes when a new row is referenced', () => {
+  const rawText='{"id":"A","__proto__":{"polluted":true},"array":[null,false," ",2]}'
+  const input:NewCollectionTargetCommand={queryText:JSON.stringify({interface:'apply_list',queryKey:'legacy',queriedAt:'time',status:'success',rawResponse:'raw',relations:[{sequenceNo:1,relationKey:'A',nameRaw:'Example',rawFields:JSON.parse(rawText)}]}),evidenceText:null,createdAt:'c',assignments:[]}
+  const {sqlite,db}=fixture()
+  writeCollectionTarget(db,{...input,assignments:command(evidence('queryList')).assignments})
+  const reference=replay(input,q=>{q.reuseExisting=true;q.relations=[{sequenceNo:1}]})
+  const before=bytes(sqlite);writeCollectionTarget(db,reference);expect(bytes(sqlite).equals(before), 'database bytes remain unchanged').toBe(true)
+  const archived = sqlite.prepare("select a.bytes,a.sha256 from platform_archive_value a join platform_observation_archive_ref r on r.archive_id=a.id where r.owner_id=? and r.field='rawFields'").get(1) as {bytes:Buffer;sha256:string}
+  expect(archived.bytes).toEqual(Buffer.from(rawText))
+  expect(archived.sha256).toBe(createHash('sha256').update(rawText).digest('hex'))
+  const raw = JSON.parse(archived.bytes.toString())
+  expect(Object.hasOwn(raw, '__proto__')).toBe(true)
+  expect(raw.__proto__).toEqual({polluted:true})
+  expect(raw.array).toEqual([null,false,' ',2])
+  sqlite.close()
+})

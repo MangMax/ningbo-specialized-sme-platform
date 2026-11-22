@@ -86,9 +86,9 @@ it.skipIf(!pgBin)('materializes query history as structured facts and leaves ori
     execFileSync(join(pgBin!, 'initdb'), ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', 'history_fixture', '-D', join(dir, 'pg')], { env: pgEnv })
     ctl('-l', join(dir, 'pg.log'), '-o', `-h '' -k ${dir}`, 'start')
     started = true
-    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', source, 'staged'], { env: pgEnv })
+    execFileSync(process.execPath, ['upgrade/pg/sqlite-import/stage-sqlite.mjs', source, 'staged'], { env: pgEnv })
     for (const layer of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
-      execFileSync(pgEnv.PGSQL_BIN, ['-Xqw', '-v', 'staging=staged', '-f', `upgrade/postgresql/materialize-${layer}.sql`], { env: pgEnv })
+      execFileSync(pgEnv.PGSQL_BIN, ['-Xqw', '-v', 'staging=staged', '-f', `upgrade/pg/sqlite-import/materialize-${layer}.sql`], { env: pgEnv })
     }
     pool = new pg.Pool({ user: pgEnv.PGUSER, database: pgEnv.PGDATABASE, host: dir, port: 5432, options: '-c search_path=business,public' })
     const db = drizzle({ client: pool })

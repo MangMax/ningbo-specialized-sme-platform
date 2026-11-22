@@ -22,7 +22,7 @@ test.runIf(Boolean(connection))('loads linked roster facts, keeps platform bytes
   const command = ['-X', '-w', '-Atq', '-v', 'ON_ERROR_STOP=1']
   const query = (sql: string) => execFileSync(psql, [...command, '-c', sql], { env, encoding: 'utf8' }).trim()
   const materialize = (schema = target) => spawnSync(psql, [...command, '-v', `staging=${staging}`, '-v', `target=${schema}`,
-    '-f', 'upgrade/postgresql/materialize-roster.sql'], { env, encoding: 'utf8' })
+    '-f', 'upgrade/pg/sqlite-import/materialize-roster.sql'], { env, encoding: 'utf8' })
 
   try {
     const sqlite = new Database(snapshot)
@@ -70,7 +70,7 @@ test.runIf(Boolean(connection))('loads linked roster facts, keeps platform bytes
     } finally {
       sqlite.close()
     }
-    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', snapshot, staging], { env, stdio: ['ignore', 'pipe', 'pipe'] })
+    execFileSync(process.execPath, ['upgrade/pg/sqlite-import/stage-sqlite.mjs', snapshot, staging], { env, stdio: ['ignore', 'pipe', 'pipe'] })
     const createCore = (schema: string) => query(`CREATE SCHEMA ${schema};
       CREATE TABLE ${schema}.enterprise(id bigint PRIMARY KEY);
       CREATE TABLE ${schema}.enterprise_merge(from_enterprise_id bigint, into_enterprise_id bigint);
@@ -166,14 +166,14 @@ test.runIf(Boolean(connection))('retains the SQLite type and bytes of declaratio
       SET exact_title_raw = ' 2 ', exact_year = 2024, exact_batch = ?, exact_province = NULL
       WHERE observation_id = ?`).run(Buffer.from([255, 0]), business)
     await sqlite.backup(snapshot)
-    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', snapshot, staging], { env })
+    execFileSync(process.execPath, ['upgrade/pg/sqlite-import/stage-sqlite.mjs', snapshot, staging], { env })
     query(`CREATE SCHEMA ${target};
       CREATE TABLE ${target}.enterprise(id bigint PRIMARY KEY);
       CREATE TABLE ${target}.enterprise_merge(from_enterprise_id bigint, into_enterprise_id bigint);
       CREATE TABLE ${target}.stored_file(id bigint PRIMARY KEY);
       INSERT INTO ${target}.enterprise VALUES (${fixture.enterprise.id});`)
     execFileSync(psql, [...args, '-v', `staging=${staging}`, '-v', `target=${target}`,
-      '-f', 'upgrade/postgresql/materialize-roster.sql'], { env })
+      '-f', 'upgrade/pg/sqlite-import/materialize-roster.sql'], { env })
 
     expect(query(`SELECT exact_title_raw_sqlite_storage,encode(exact_title_raw,'hex'),
       exact_year_sqlite_storage,encode(exact_year,'hex'),exact_status_sqlite_storage,convert_from(exact_status,'UTF8'),
