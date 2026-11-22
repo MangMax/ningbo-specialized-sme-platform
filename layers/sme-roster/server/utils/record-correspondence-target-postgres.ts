@@ -4,11 +4,10 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformRecognizedProjection } from '../../../../db/postgresql/platform-tables'
 import { decodePostgresExactCell } from '../../../../db/postgresql/exact-cell'
 import { platformNormalizationConflict } from '../../lib/platform/normalization'
-import type { readCorrespondenceTargetSources } from './record-correspondence-target-sources'
+import type { CorrespondenceRelationSource } from './record-correspondence-model'
 import { readPostgresFingerprintQueries, readPostgresRelationFingerprints } from './postgres-platform-fingerprint'
 
 type Db = Pick<NodePgDatabase, 'execute' | 'select'>
-type RelationSource = ReturnType<typeof readCorrespondenceTargetSources>[number]
 type ProjectionOwner = { observationId: number; interface: keyof typeof projections }
 const fields = [
   ['province', 'province'], ['status', 'status'], ['batch', 'batch'], ['declareKind', 'declare_kind'],
@@ -56,7 +55,7 @@ export async function readPostgresObservationComparisonFacts(db: Db, owners: Pro
         .leftJoin(v, and(eq(v.versionId, o.versionId), eq(v.recordId, o.recordId))).where(where)
     for (const row of rows) facts.set(Number(row.observation_id), row)
   }
-  const result = new Map<number, Omit<RelationSource['facts'], 'id' | 'queryId' | 'sequenceNo' | 'enterpriseId' | 'usccRaw' | 'verificationStatus' | 'sourceRdjb'>>()
+  const result = new Map<number, Omit<CorrespondenceRelationSource['facts'], 'id' | 'queryId' | 'sequenceNo' | 'enterpriseId' | 'usccRaw' | 'verificationStatus' | 'sourceRdjb'>>()
   for (const [id, p] of facts) {
     const conflicts = fields.flatMap(([field, key]) => {
       const stored = fieldValue(p, field, 'stored_' + key), parsed = fieldValue(p, field, 'parsed_' + key)
@@ -83,7 +82,7 @@ export async function readPostgresObservationComparisonFacts(db: Db, owners: Pro
   return result
 }
 
-export async function readPostgresCorrespondenceTargetSources(db: Db, ids: readonly number[]): Promise<RelationSource[]> {
+export async function readPostgresCorrespondenceTargetSources(db: Db, ids: readonly number[]): Promise<CorrespondenceRelationSource[]> {
   if (!ids.length) return []
   const owners = await readPostgresRelationFingerprints(db, { relationIds: ids })
   const queries = await readPostgresFingerprintQueries(db, [...new Set(owners.map(owner => owner.relation.queryId))])
@@ -92,10 +91,13 @@ export async function readPostgresCorrespondenceTargetSources(db: Db, ids: reado
   return owners.map(({ relation, observationId, sourceRdjb, originalUscc }) => {
     const projection = facts.get(observationId)
     if (!projection) throw new Error('Missing correspondence source projection')
-    const observed: RelationSource['facts'] = { ...projection,
+    const observed: CorrespondenceRelationSource['facts'] = { ...projection,
       id: relation.id, queryId: relation.queryId, sequenceNo: relation.sequenceNo, enterpriseId: relation.enterpriseId,
       usccRaw: originalUscc, verificationStatus: relation.verificationStatus, sourceRdjb,
     }
-    return { relation, query: queries.get(relation.queryId)!.query, facts: observed, observationId }
+    const query = queries.get(relation.queryId)!.query
+    const { rawResponse: _rawResponse, ...queryFacts } = query
+    const { rawFields: _rawFields, sourceText: _sourceText, ...relationFacts } = relation
+    return { relation, query, facts: observed, observationId, provenance: { relation: relationFacts, query: queryFacts } }
   })
 }

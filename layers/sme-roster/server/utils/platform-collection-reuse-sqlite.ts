@@ -8,7 +8,7 @@ import { sqliteConnection } from '../../lib/platform/target-connection'
 import { currentDifferenceAssignment, readDifferenceCollectionScope } from '../../lib/platform/difference-sources'
 import { targetReplaySource } from '../../lib/platform/collection-target-replay'
 import { canonicalPlatformJson } from './platform-business-record'
-import { reusableCollectionContent as contents, collectionEvidenceShape as evidenceShape } from './platform-collection-reuse'
+import { reusableCollectionContent as contents, collectionEvidenceShape as evidenceShape } from '../../lib/platform/collection-reuse-digest'
 
 type Db = BetterSQLite3Database<typeof schema>
 

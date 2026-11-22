@@ -25,6 +25,8 @@ it('removes only untouched worker suggestions and rediscovers them without stori
   let runner: ReturnType<typeof createPostgresJobRunner> | undefined
   try {
     runtime = await postgresRuntimeFixture({ dir })
+    runtime.psql(['-c', `ALTER TABLE business.platform_collection ALTER COLUMN public_id RESTART WITH 301;
+      ALTER TABLE business.platform_business_observation ALTER COLUMN public_id RESTART WITH 701`])
     pool = new pg.Pool({ connectionString: runtime.url, options: '-c search_path=business,public' })
     const db = drizzle({ client: pool })
     const uscc = '91330211255994457P'
@@ -45,6 +47,8 @@ it('removes only untouched worker suggestions and rediscovers them without stori
           year: 2022, batch: '2022-1', declareKind: 'apply', verificationStatus: 'confirmed', rawFields: { original: index } }],
       })
       const relationId = query.relationIds[0]!
+      expect(query.queryId).toBe(301 + index)
+      expect(relationId).toBe(701 + index)
       const operations = [{ action: 'create', status: 'candidate', edge: {
         type: 'event_process', eventId: event!.id, relationId, role: 'supports_award',
       } }] satisfies CorrespondenceRequest['operations']

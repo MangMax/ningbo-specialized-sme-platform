@@ -12,7 +12,6 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { readPostgresPlatformQueries } from '../../../layers/sme-roster/lib/platform/postgres-query-read'
 import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { insertTargetLegacyProvenance } from '../../../layers/sme-roster/lib/platform/legacy-provenance-command'
-import { readPostgresPlatformEvidence } from '../../../layers/sme-roster/lib/platform/postgres-evidence-read'
 import { importBatch } from '../../../db/schema'
 const handles:ReturnType<typeof nativeImportDb>[]=[]
 afterEach(()=>{for(const db of handles.splice(0))db.$client.close()})
@@ -47,7 +46,7 @@ it('enforces full-read budgets while keeping summary and bounded bytes available
 })
 
 const pgBin = process.env.TEST_PLATFORM_HISTORY_PG_BIN
-it.skipIf(!pgBin)('materializes native history with complete relations, original text and full-read limits', async () => {
+it.skipIf(!pgBin)('materializes query history as structured facts and leaves original bytes in the offline source', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'pg-history-'))
   const sqlite = fixture()
   sqlite.$client.transaction(() => installLeadListSchema(sqlite.$client))()
@@ -93,16 +92,17 @@ it.skipIf(!pgBin)('materializes native history with complete relations, original
     }
     pool = new pg.Pool({ user: pgEnv.PGUSER, database: pgEnv.PGDATABASE, host: dir, port: 5432, options: '-c search_path=business,public' })
     const db = drizzle({ client: pool })
-    for (const query of [
-      { queryId: observed.queryId }, { includeRawResponse: true, queryId: observed.queryId },
-      { queryId: observed.queryId, view: 'summary' as const }, { queryId: large.queryId },
-    ]) expect(await readPostgresPlatformQueries(db, query)).toEqual(listPlatformQueries(sqlite, query))
+    const summary = { queryId: observed.queryId, view: 'summary' as const }
+    expect(await readPostgresPlatformQueries(db, summary)).toEqual(listPlatformQueries(sqlite, summary))
     const saved = (await readPostgresPlatformQueries(db, { queryId: observed.queryId })).rows[0]!
-    expect(saved.query.legacyProvenance?.collection).not.toHaveProperty('rows')
+    expect(saved.query.collectionEvidence).toMatchObject({ fetchedCount: 2, pages: [{ page: 1 }, { page: 2 }] })
     expect(saved.relations.map(row => [row.sourceRdjb, row.sourcePage])).toEqual([['2', 1], ['2', 2]])
-    expect(await readPostgresPlatformEvidence(db, { queryId: observed.queryId, field: 'rawResponse' }))
-      .toMatchObject({ totalBytes: Buffer.byteLength(rawResponse), data: Buffer.from(rawResponse).toString('base64') })
-    await expect(readPostgresPlatformQueries(db, { queryId: large.queryId, includeRawResponse: true })).rejects.toMatchObject({ statusCode: 413 })
+    expect(saved.relations[0]).toMatchObject({ id: observed.relationIds[0], nameRaw: '合成🙂企业', status: '终审通过', aliasNameRaw: '原名' })
+    expect(JSON.stringify(saved)).not.toContain('页面一原文')
+    expect(JSON.stringify(saved)).not.toContain(rawResponse)
+    expect((await readPostgresPlatformQueries(db, { queryId: large.queryId })).total).toBe(1)
+    expect((await pool.query("SELECT to_regclass('business.platform_archive_value') IS NULL AS absent")).rows).toEqual([{ absent: true }])
+    expect(bytes(sqlite, observed.queryId, 'rawResponse')).toEqual(Buffer.from(rawResponse))
   } finally {
     await pool?.end()
     if (started) ctl('-m', 'fast', 'stop')

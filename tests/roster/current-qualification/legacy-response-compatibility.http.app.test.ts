@@ -36,7 +36,7 @@ beforeAll(async () => {
   expect(committed).toMatchObject({ status: 'supplemented', summary: { failed: 0 } })
   // Read IDs from this owned synthetic DB; the historical validity fixture is staged after the decision is created.
   enterpriseId = Number((await pool.query('SELECT id FROM business.enterprise')).rows[0]!.id)
-  relationId = Number((await pool.query('SELECT old_id FROM business.platform_legacy_relation_alias')).rows[0]!.old_id)
+  relationId = Number((await pool.query('SELECT public_id FROM business.platform_business_observation')).rows[0]!.public_id)
 }, 90000)
 afterAll(async () => {
   try { await pool?.end() } finally {

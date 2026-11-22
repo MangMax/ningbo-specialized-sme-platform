@@ -1,7 +1,9 @@
 import type * as s from '../../../../db/schema'
 
 export type DifferenceCollectionScopeRows = {
-  collection: typeof s.platformCollection.$inferSelect
+  collection: Pick<typeof s.platformCollection.$inferSelect, 'id' | 'interface' | 'status' | 'parseState' | 'source' |
+    'evidenceStatus' | 'scopeMode' | 'completeness' | 'fullRange' | 'errorCode' | 'errorMessage' | 'maxRequests' |
+    'maxRows' | 'maxDurationMs' | 'pageSize' | 'fetchedCount' | 'declaredTotal' | 'rdjb' | 'queriedAt' | 'titleCode'>
   conditions: Pick<typeof s.platformCollectionCondition.$inferSelect, 'name' | 'valueKind' | 'textValue' | 'integerValue'>[]
   pages: (typeof s.platformCollectionPage.$inferSelect)[]
   unfinished: (typeof s.platformCollectionUnfinished.$inferSelect)[]

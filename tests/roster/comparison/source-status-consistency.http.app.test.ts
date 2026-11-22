@@ -26,7 +26,7 @@ let base = external ?? ''
 let stop: (() => Promise<void>) | undefined
 let full: Awaited<ReturnType<typeof rest>>
 let detail: Awaited<ReturnType<typeof rest>>
-const businessTables = ['platform_collection', 'platform_business_observation', 'platform_archive_value', 'platform_observation_assignment', 'difference_reason', 'record_correspondence', 'record_correspondence_audit']
+const businessTables = ['platform_collection', 'platform_business_observation', 'platform_business_record_version', 'platform_observation_assignment', 'difference_reason', 'record_correspondence', 'record_correspondence_audit']
 async function persisted() {
   const connectionString = postgres?.url ?? process.env.NUXT_POSTGRES_DIRECTORY_URL
   if (!connectionString) throw new Error('An external comparison fixture requires its PostgreSQL URL')
@@ -91,29 +91,9 @@ it.each(fixture.cases)('native full matches enterprise and HTTP/MCP archive fact
   expect(remoteArchive).toEqual(archive)
   const conflicts = label === 'status-conflict' ? [{ field: 'status', storedValue: '已退回', rawValue: '终审通过' }] : []
   const facts = { status: expected, normalizationConflicts: conflicts, declareKind: query.interface === 'recognized_list' ? null : 'apply', appliedAt: query.interface === 'recognized_list' ? null : '2025-01-02', year: query.interface === 'recognized_list' ? null : 2025 }
-  for (const row of [actual, detail.platform.relations.find((r: { id: number }) => r.id === relation.id), archive.rows[0].relations[0]]) expect(row).toMatchObject({ id: relation.id, queryId: query.id, rawFields: relation.rawFields, ...facts })
+  for (const row of [actual, detail.platform.relations.find((r: { id: number }) => r.id === relation.id), archive.rows[0].relations[0]]) expect(row).toMatchObject({ id: relation.id, queryId: query.id, ...facts })
   expect(full.rows[0].platform.disposition).toMatchObject({ explanationId: fixture.decision.id, status: fixture.decision.status, evidenceRelationId: fixture.decision.evidenceRelationId })
 })
-
-it('exact HTTP/MCP chunks preserve response bytes and stored relation values after derived reads', async () => {
-  for (const { query, relation } of fixture.cases) {
-    for (const field of ['rawResponse', 'relation'] as const) {
-      const chunks: Buffer[] = []
-      let offset = 0
-      for (;;) {
-        const input = { queryId: query.id, field, ...(field === 'relation' ? { relationId: relation.id } : {}), offset, length: 97 }
-        const part = await rest(`/api/platform/queries/${query.id}/evidence?${new URLSearchParams(Object.entries(input).filter(([key]) => key !== 'queryId').map(([k, v]) => [k, String(v)]))}`)
-        expect(await mcp('get_platform_query_evidence', input)).toEqual(part)
-        const bytes = Buffer.from(part.data, 'base64'); chunks.push(bytes); offset += bytes.length
-        if (!part.hasMore) { expect(offset).toBe(part.totalBytes); break }
-      }
-      const bytes = Buffer.concat(chunks)
-      if (field === 'rawResponse') expect(bytes).toEqual(Buffer.from(fixture.rawResponse))
-      else expect(JSON.parse(bytes.toString('utf8'))).toMatchObject({ id: relation.id, queryId: query.id, sequenceNo: relation.sequenceNo, rawFields: relation.rawFields, sourceText: relation.sourceText })
-    }
-  }
-  expect(await persisted()).toEqual(before)
-}, 30_000)
 
 it('rejects a conflicting stored and original process status before publishing any native collection', async () => {
   const client = createRosterImportClient({ baseUrl: base, token: 'issue301-synthetic' })

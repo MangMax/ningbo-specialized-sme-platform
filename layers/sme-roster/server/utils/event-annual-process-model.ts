@@ -203,7 +203,8 @@ export function admitAnnualComparison({ request, entries, history, decisions, hi
   request: AnnualComparisonRequest; entries: ComparisonEntry[]; history: Map<number, number[]>
   decisions: (Omit<ClosureDecision, 'relationId'> & { relationId: number | null })[]
   historicalQueries: (Omit<ClosureHistory, 'recordId'> & { recordId: number | null })[]
-  queryRows: { id: number; collection: typeof schema.platformCollection.$inferSelect }[]
+  queryRows: { id: number; collection: Pick<typeof schema.platformCollection.$inferSelect,
+    'id' | 'rdjb' | 'titleCode' | 'interface' | 'parseState' | 'scopeMode'> }[]
   pages: Pick<typeof schema.platformCollectionPage.$inferSelect, 'collectionId' | 'rdjb'>[]
   titleScopes: Pick<typeof schema.platformQueryTitleScope.$inferSelect, 'collectionId' | 'rdjb'>[]
   metadata: Map<number, ClosureMetadata>; hasUnboundProcessCollection: () => boolean

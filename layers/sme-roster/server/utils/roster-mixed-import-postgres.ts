@@ -11,13 +11,14 @@ import { usePostgresRosterDb } from './postgres-roster-db'
 import { applyPostgresOfficialImport, planPostgresOfficialImport } from './official-evidence-import-postgres'
 import { OfficialFactError } from './official-evidence-claim-model'
 import { OfficialEvidenceError } from './official-evidence'
-import { hasOfficialFactInput } from './roster-import-model'
+import { hasOfficialFactInput, retiredPlatformImportField } from './roster-import-model'
 import { hasAnnouncementRows } from '../../lib/roster-import-client'
 import { executePostgresPlatformItems } from './collection-import-postgres'
 import { stagePostgresAnnouncement } from './announcement-intake-postgres'
 import { planPostgresRawAnnouncementPreflight } from './announcement-preflight-postgres'
 import { planPostgresAnnouncementReplay, writePostgresAnnouncementReplay } from './announcement-replay-postgres'
 import { planPostgresImportDifference, writePostgresImportDifference } from './difference-import-postgres'
+import { ImportReceiptError } from './import-receipt-model'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
 import { applyPostgresRosterMerge, planPostgresRosterMerge } from './roster-merge-postgres'
 
@@ -46,7 +47,7 @@ export async function executePostgresImportSteps(
         const phase = await step.execute(nested, batch, action === 'preflight' && step.writeForPreflight ? 'commit' : action)
         const { preflight: preview } = phase
         for (const key of ['add', 'update', 'remove', 'review', 'evidenceRepoints'] as const) preflight[key] += preview[key]
-        for (const key of ['platformLegacyProvenanceSources','platformObservationSources','canonicalProjection','duplicateCandidates','qualificationDiagnostics'] as const) {
+        for (const key of ['canonicalProjection','duplicateCandidates','qualificationDiagnostics'] as const) {
           if (preview[key] !== undefined) Object.assign(preflight, { [key]: [...(preflight[key] ?? []), ...preview[key]] })
         }
         if (preview.qualificationReadback) preflight.qualificationReadback = preview.qualificationReadback
@@ -155,6 +156,8 @@ async function executePostgresMergeItems(tx: Tx, action: PostgresImportAction,
 }
 
 export function runPostgresMixedImport(action: 'preflight' | 'commit' | 'replay', request: RosterImportRequest, filesDir?: string, context?: LogContext) {
+  const retired = retiredPlatformImportField(request.payload)
+  if (retired) throw new ImportReceiptError(400, 'platform_archive_offline', retired + ' 已停用，历史平台原始资料请通过离线归档处理')
   const announcement = hasAnnouncementRows(request)
   const db = usePostgresRosterDb(true)
   if (action === 'replay') return executePostgresRosterImport(db, action, request, async (tx,batch) => {
@@ -175,8 +178,7 @@ export function runPostgresMixedImport(action: 'preflight' | 'commit' | 'replay'
 
 export function createPostgresImportSteps(action: PostgresImportAction, request: RosterImportRequest,
   filesDir?: string, afterAnnouncement = false): ImportStep[] {
-  const { aliases, exportSnapshot, usccBackfills, platformQueries, platformLegacyProvenance,
-    platformRecordObservations, differences, merges } = request.payload
+  const { aliases, exportSnapshot, usccBackfills, platformQueries, differences, merges } = request.payload
   const announcement = hasAnnouncementRows(request)
   const steps: ImportStep[] = []
   if (announcement && !afterAnnouncement) steps.push({
@@ -185,7 +187,7 @@ export function createPostgresImportSteps(action: PostgresImportAction, request:
       return { preflight: await planPostgresRawAnnouncementPreflight(tx, request, { filesDir, pageCountErrors }) }
     },
   })
-  if (platformQueries?.length || platformLegacyProvenance?.length || platformRecordObservations?.length) steps.push({
+  if (platformQueries?.length) steps.push({
     writeForPreflight: Boolean(platformQueries?.length && (aliases?.length || differences?.length || merges?.length)),
     execute: (tx,batch,operation) => executePostgresPlatformItems(tx,batch,operation,request,undefined,action==='commit'),
   })

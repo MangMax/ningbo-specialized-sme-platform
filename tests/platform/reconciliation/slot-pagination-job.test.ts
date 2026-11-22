@@ -63,7 +63,7 @@ async function finish(id: string) {
   await expect.poll(async () => (await read()).state, { timeout: 30_000 }).toMatch(/^(done|failed|cancelled)$/)
   return read()
 }
-async function archives() { return (await api(`/api/platform/queries?queryKey=${USCC}&includeRawResponse=true&pageSize=100`)).rows as any[] }
+async function queries() { return (await api(`/api/platform/queries?queryKey=${USCC}&pageSize=100`)).rows as any[] }
 
 beforeAll(async () => {
   if (!bin) return
@@ -180,28 +180,33 @@ async function upstream() {
   })
 }
 
-// Archives both 51-row sources then replays a public job to verify cache identity.
-postgresTest('public job retains both sources’ unique row 51 and exact page evidence; complete cache reuses original IDs', async () => {
+postgresTest('public job retains both sources’ unique row 51 and page positions, then recollects all four slots', async () => {
   await upstream()
   reply=(s,r,n)=>page(s,n,s==='queryList'||r==='3'?51:0)
   const job = await submit(), done = await finish(job.jobId)
   expect(done.state).toBe('done')
   expect(done.result.relations).toBe(102)
   expect(calls.filter(c => c.page === 2).map(c => c.source)).toEqual(['businessList', 'queryList'])
-  const stored = await archives()
-  for (const entry of stored.filter(e => e.relations.length)) {
+  const stored = await queries()
+  const populated = stored.filter(entry => entry.relations.length)
+  expect(populated).toHaveLength(2)
+  for (const entry of populated) {
     expect(entry.relations).toHaveLength(51)
     expect(entry.relations[50]).toMatchObject({ sequenceNo: 51, relationKey: 'SQ51', nameRaw: '后页独有企业' })
-    const raw = JSON.parse(entry.query.rawResponse)
-    expect(raw).toMatchObject({ completeness: 'complete', declaredTotal: 51, unfinished: [] })
-    expect(raw.pages.map((p: any) => p.page)).toEqual([1, 2])
-    expect(raw.pages[1].raw).toBe(page(entry.query.interface === 'business_list' ? 'businessList' : 'queryList', 2))
-    expect(entry.query.collectionEvidence).toBeNull()
+    expect(entry.query).not.toHaveProperty('rawResponse')
+    const position = done.result.collection.positions.find((slot: { interface: string; rdjb: string }) =>
+      slot.interface === entry.query.interface && slot.rdjb === entry.query.rdjb)
+    expect(position).toMatchObject({ completeness: 'complete', declaredTotal: 51, unfinished: [], pages: [
+      { page: 1, status: 'success', fetchedCount: 50 }, { page: 2, status: 'success', fetchedCount: 1 },
+    ] })
+    for (const acceptedPage of position.pages) expect(acceptedPage).not.toHaveProperty('raw')
   }
   const second = await finish((await submit()).jobId)
-  expect(second.result.queries).toMatchObject({ network: 0, reused: 4 })
-  expect((await archives()).map(e => e.query.id)).toEqual(stored.map(e => e.query.id))
-  expect(calls).toHaveLength(6)
+  expect(second.result.queries).toMatchObject({ network: 4, reused: 0 })
+  const recollected = await queries()
+  expect(recollected).toHaveLength(8)
+  for (const original of stored) expect(recollected.find(entry => entry.query.id === original.query.id)).toEqual(original)
+  expect(calls).toHaveLength(12)
   const summary = await api(`/api/jobs/${job.jobId}?view=summary`)
   expect(summary).toMatchObject({ kind: 'reconcile', state: 'done' })
   const task = await api(`/api/task-center/${job.jobId}`)
@@ -211,24 +216,25 @@ postgresTest('public job retains both sources’ unique row 51 and exact page ev
   expect((await api(`/api/task-center/${second.id}`)).reconcileCollection).toEqual(task.reconcileCollection)
 }, 65_000)
 
-// These multi-page/replay integration cases include native archive verification.
-// The case budget allows two bounded job waits across submission and replay.
-postgresTest('later-page inconsistency keeps first-page rows, original total, unfinished page and retries only incomplete slots', async () => {
+// The case budget allows two bounded job waits across submission and recollection.
+postgresTest('later-page inconsistency keeps first-page rows and the original total and locates the unfinished page before recollection', async () => {
   await upstream()
   reply = (s, r, n) => s === 'businessList' && r === '3' && n === 2 ? page(s, n, 52) : normalReply(s, r, n)
   const job = await submit(), done = await finish(job.jobId)
-  const partial = (await archives()).find(e => e.query.interface === 'business_list' && e.query.rdjb === '3')
+  const partial = (await queries()).find(e => e.query.interface === 'business_list' && e.query.rdjb === '3')
   expect(partial.query.status).toBe('partial')
   expect(partial.relations).toHaveLength(50)
-  expect(JSON.parse(partial.query.rawResponse)).toMatchObject({ completeness: 'partial', declaredTotal: 51, unfinished: [{ page: 2 }] })
+  expect(done.result.collection.positions).toEqual(expect.arrayContaining([expect.objectContaining({
+    interface: 'business_list', rdjb: '3', completeness: 'partial', declaredTotal: 51, unfinished: [{ source: 'businessList', rdjb: '3', page: 2 }],
+  })]))
   expect(done.result.collection).toMatchObject({ complete: 3, partial: 1, failed: 0, unknown: 0 })
   expect(await api(`/api/task-center/${job.jobId}`)).toMatchObject({ outcome: null, reconcile: { needsReview: 1 }, capabilities: { retry: false } })
   expect(await api(`/api/task-center/${job.jobId}`)).toMatchObject({ outcome: null, reconcile: { targets: 1, needsReview: 1 }, reconcileCollection: { complete: 3, partial: 1, failed: 0, unknown: 0, unfinished: 1, positions: [{ source: 'businessList', rdjb: '3', page: 2 }] } })
   const oldId = partial.query.id
   reply = normalReply
   const retry = await finish((await submit()).jobId)
-  expect(retry.result.queries).toMatchObject({ network: 1, reused: 3 })
-  const after = await archives()
+  expect(retry.result.queries).toMatchObject({ network: 4, reused: 0 })
+  const after = await queries()
   expect(after.find(e => e.query.id === oldId).query.status).toBe('partial')
   expect(after.filter(e => e.query.interface === 'business_list' && e.query.rdjb === '3')).toHaveLength(2)
 }, 65_000)
@@ -254,34 +260,37 @@ postgresTest('cancel between pages stops requests, returns unfinished position a
   ])
   expect(await api(`/api/task-center/${job.jobId}`)).toMatchObject({ outcome: null, reconcile: { targets: 1 }, reconcileCollection: { complete: 2, partial: 1, failed: 0, unknown: 1, unfinished: 2, positions: [{ source: 'businessList', rdjb: '3', page: 2 }, { source: 'queryList', rdjb: null, page: 1 }] } })
   expect(cancelled.result.collection.positions).toEqual(expect.arrayContaining([expect.objectContaining({ interface: 'business_list', rdjb: '3', unfinished: [{ source: 'businessList', rdjb: '3', page: 2 }] })]))
-  expect(await archives()).toHaveLength(0)
+  expect(await queries()).toHaveLength(0)
   expect(await tableCount('import_batch')).toBe(0)
   reply = normalReply
   expect((await finish((await submit()).jobId)).result.relations).toBe(51)
 }, 65_000)
 
-postgresTest('historical success without page proof is preserved but never reused as complete', async () => {
+postgresTest('historical success without page proof remains visible when all slots are recollected', async () => {
   await upstream()
   const rawResponse = page('businessList', 1)
-  const old = { id: await seedQuery({
-    queriedAt: new Date().toISOString(), status: 'success', rawResponse,
+  const oldId = await seedQuery({
+    queriedAt: '2026-11-01T00:00:00.000Z', status: 'success', rawResponse,
     relations: [{ sequenceNo: 1, relationKey: 'old', rawFields: { id: 'old' } }],
-  }), rawResponse }
+  })
   const done = await finish((await submit()).jobId)
   expect(done.result.queries).toMatchObject({ network: 4, reused: 0 })
-  expect((await archives()).find(e => e.query.id === old.id)).toMatchObject({ query: { status: 'success', rawResponse: old.rawResponse }, relations: [{ id: expect.any(Number), relationKey: 'old' }] })
+  const old = (await queries()).find(e => e.query.id === oldId)
+  expect(old).toMatchObject({ query: { status: 'success' }, relations: [{ id: expect.any(Number), relationKey: 'old' }] })
+  expect(old.query).not.toHaveProperty('rawResponse')
 }, 65_000)
 
-postgresTest.each(['maxCount', 'page', 'pageSize'])('missing %s stays incomplete and preserves original raw instead of inventing coverage', async field => {
+postgresTest.each(['maxCount', 'page', 'pageSize'])('missing %s stays incomplete and reports an unfinished page', async field => {
   await upstream()
   reply = (s, r, n) => s === 'queryList' ? page(s, n, 0, { [field]: undefined }) : normalReply(s, r, n)
   const done = await finish((await submit()).jobId)
-  const entry = (await archives()).find(e => e.query.interface === 'apply_list')
+  const entry = (await queries()).find(e => e.query.interface === 'apply_list')
   expect(['success', 'no_record']).not.toContain(entry.query.status)
-  const evidence = JSON.parse(entry.query.rawResponse)
+  const evidence = done.result.collection.positions.find((slot: { interface: string }) => slot.interface === 'apply_list')
   expect(evidence.completeness).not.toBe('complete')
-  expect(evidence.pages[0].raw).toBe(page('queryList', 1, 0, { [field]: undefined }))
-  expect(evidence.unfinished).toHaveLength(1)
+  expect(evidence.pages[0]).toMatchObject({ page: 1, status: 'failed' })
+  expect(evidence.pages[0]).not.toHaveProperty('raw')
+  expect(evidence.unfinished).toEqual([{ source: 'queryList', rdjb: null, page: 1 }])
   expect(evidence.failureReason).toBeTruthy()
   expect(done.result.counts.noRecord).toBe(0)
   expect(done.result.collection.complete).toBe(3)
@@ -294,10 +303,10 @@ postgresTest('later-page timeout exhausts bounded retries, retains 50 rows and t
     return normalReply(s, r, n)
   }
   const done = await finish((await submit()).jobId)
-  const entry = (await archives()).find(e => e.query.interface === 'business_list' && e.query.rdjb === '3')
+  const entry = (await queries()).find(e => e.query.interface === 'business_list' && e.query.rdjb === '3')
   expect(entry.query.status).toBe('partial')
   expect(entry.relations).toHaveLength(50)
-  const evidence = JSON.parse(entry.query.rawResponse)
+  const evidence = done.result.collection.positions.find((slot: { rdjb: string }) => slot.rdjb === '3')
   expect(evidence).toMatchObject({ declaredTotal: 51, requestCount: 4, unfinished: [{ page: 2 }], failureReason: 'issue299 upstream timeout' })
   expect(evidence.pages[1].error.code).toBe('timeout')
   expect(done.result.collection.partial).toBe(1)
@@ -316,36 +325,37 @@ postgresTest('network retry and subsequent pages keep the submission credential 
   expect(done.result.relations).toBe(51)
   expect(calls).toHaveLength(6)
   expect(calls.every(c => c.cookie === 'session=issue299-original')).toBe(true)
-  const stored = await archives()
+  const stored = await queries()
   expect(JSON.stringify({ done, stored })).not.toMatch(/issue299-original|issue299-replacement/)
-  const evidence = JSON.parse(stored.find(e => e.query.rdjb === '3').query.rawResponse)
+  const evidence = done.result.collection.positions.find((slot: { rdjb: string }) => slot.rdjb === '3')
   expect(evidence.requestCount).toBe(3)
   expect(backoffs).toEqual([1000])
 }, 65_000)
 
-postgresTest('newer failed slot invalidates older complete cache without changing either historical query', async () => {
+postgresTest('fresh recollection leaves earlier complete and failed slots independently addressable', async () => {
   await upstream()
   await finish((await submit()).jobId)
-  const before = await archives()
+  const before = await queries()
   const old = before.find(e => e.query.rdjb === '3')
   const failureId = await seedQuery({
     queriedAt: new Date(Date.now() + 1000).toISOString(), status: 'failed',
     failureReason: 'newer synthetic failure', rawResponse: 'Explicit failed response',
   })
   const retried = await finish((await submit()).jobId)
-  expect(retried.result.queries).toMatchObject({ network: 1, reused: 3 })
-  const after = await archives()
+  expect(retried.result.queries).toMatchObject({ network: 4, reused: 0 })
+  const after = await queries()
   expect(after.find(e => e.query.id === old.query.id)).toEqual(old)
   expect(after.find(e => e.query.id === failureId).query.failureReason).toBe('newer synthetic failure')
+  expect(after.filter(e => e.query.interface === 'business_list' && e.query.rdjb === '3')).toHaveLength(3)
 }, 65_000)
 
-postgresTest('archive failure on row 51 rolls back the whole query/relation/decision batch, then retry commits', async () => {
+postgresTest('storage failure on row 51 rolls back the whole query/relation/decision batch, then retry commits', async () => {
   await upstream()
   await db.query('ALTER TABLE business.platform_business_observation ADD CONSTRAINT fixture_reject_row_51 CHECK (sequence_no <> 51)')
   try {
     const failed = await finish((await submit()).jobId)
     expect(failed.state).toBe('failed')
-    expect(await archives()).toHaveLength(0)
+    expect(await queries()).toHaveLength(0)
     expect(await tableCount('platform_business_observation')).toBe(0)
     expect(await tableCount('difference_reason')).toBe(0)
     expect(await tableCount('import_receipt')).toBeGreaterThan(0)
@@ -356,33 +366,27 @@ postgresTest('archive failure on row 51 rolls back the whole query/relation/deci
 postgresTest('missing later-page total cannot inherit earlier metadata and masquerade as complete', async () => {
   await upstream()
   reply = (s, r, n) => s === 'businessList' && r === '3' && n === 2 ? page(s, n, 51, { maxCount: undefined }) : normalReply(s, r, n)
-  await finish((await submit()).jobId)
-  const entry = (await archives()).find(e => e.query.rdjb === '3')
+  const done = await finish((await submit()).jobId)
+  const entry = (await queries()).find(e => e.query.rdjb === '3')
   expect(entry.query.status).toBe('partial')
   expect(entry.relations).toHaveLength(50)
-  expect(JSON.parse(entry.query.rawResponse)).toMatchObject({ completeness: 'partial', declaredTotal: 51, unfinished: [{ page: 2 }] })
+  expect(done.result.collection.positions).toEqual(expect.arrayContaining([expect.objectContaining({
+    interface: 'business_list', rdjb: '3', completeness: 'partial', declaredTotal: 51, unfinished: [{ source: 'businessList', rdjb: '3', page: 2 }],
+  })]))
 }, 65_000)
 
-postgresTest('immutable native archives reject a forged complete marker before cache replay', async () => {
+postgresTest('a changed later page becomes a new observation without replacing the original rows', async () => {
   await upstream()
   await finish((await submit()).jobId)
-  const original = (await archives()).find(e => e.query.rdjb === '3')
-  const corrupted = JSON.parse(original.query.rawResponse)
-  corrupted.pages[1].raw = page('businessList', 2, 51, { pageSet: [{ id: 'DIFFERENT', qymc: '不同记录', tyshxydm: USCC }] })
-  // Synthetic corruption stays in this isolated database only.
-  await expect(db.query(`
-    UPDATE business.platform_archive_value SET bytes = $1
-    WHERE id = (
-      SELECT r.archive_id FROM business.platform_collection_archive_ref r
-      JOIN business.platform_legacy_query_alias a ON a.collection_id = r.owner_id
-      WHERE a.old_id = $2 AND r.field = 'rawResponse'
-    )
-  `, [Buffer.from(JSON.stringify(corrupted)), original.query.id])).rejects.toThrow('platform_archive_value is append-only')
+  const original = (await queries()).find(e => e.query.rdjb === '3')
+  reply = (s, r, n) => s === 'businessList' && r === '3' && n === 2
+    ? page(s, n, 51, { pageSet: [{ id: 'DIFFERENT', qymc: '不同记录', tyshxydm: USCC }] })
+    : normalReply(s, r, n)
   const retry = await finish((await submit()).jobId)
-  expect(retry.result.queries).toMatchObject({ network: 0, reused: 4 })
-  const after = await archives()
-  expect(after.find(e => e.query.id === original.query.id).query.rawResponse).toBe(original.query.rawResponse)
-  expect(after.filter(e => e.query.rdjb === '3')).toHaveLength(1)
+  expect(retry.result.queries).toMatchObject({ network: 4, reused: 0 })
+  expect((await queries()).find(e => e.query.id === original.query.id)).toEqual(original)
+  const latest = (await queries()).find(e => e.query.rdjb === '3' && e.query.id !== original.query.id)
+  expect(latest.relations[50]).toMatchObject({ sequenceNo: 51, relationKey: 'DIFFERENT', nameRaw: '不同记录' })
 }, 65_000)
 
 postgresTest('four failed slots remain four failed collection slots through public task list and detail, while report targets stay one', async () => {

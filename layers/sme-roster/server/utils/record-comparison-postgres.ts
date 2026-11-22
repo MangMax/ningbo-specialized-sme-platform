@@ -7,11 +7,10 @@ import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { storedFile } from '../../../../db/postgresql/file-tables'
 import { record, recordEvidence, recordEvent } from '../../../../db/postgresql/ledger-tables'
 import {
-  platformCollection, platformCollectionCondition, platformCollectionPage, platformCollectionUnfinished,
-  platformLegacyQueryAlias, platformLegacyRelationAlias,
+  platformBusinessObservation, platformCollection, platformCollectionPage,
   platformExportBatch, platformExportRow,
 } from '../../../../db/postgresql/platform-tables'
-import { platformQueryTitleScope } from '../../../../db/postgresql/platform-archive-tables'
+import { platformQueryTitleScope } from '../../../../db/postgresql/platform-query-scope-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import { sourceDocument } from '../../../../db/postgresql/official-evidence-tables'
 import type * as schema from '../../../../db/schema'
@@ -24,6 +23,7 @@ import { readPostgresComparisonIdentities } from './record-comparison-catalog-po
 import { readPostgresObservationComparisonFacts } from './record-correspondence-target-postgres'
 import { readPostgresCorrespondenceSelection } from './record-correspondence-postgres'
 import { compareRecordInputs, comparisonBefore, projectLegacyComparisonImpact, validatedComparisonInput, type ComparisonRead, type SelectedRecordComparison } from './record-comparison-model'
+import { postgresCollectionConditionValues, projectPostgresComparisonConditions, projectPostgresUnfinishedPositions } from '../../lib/platform/postgres-collection-scope'
 import { readPostgresPlatformBusinessMetadata } from './platform-business-record-postgres'
 
 type Reader = Pick<NodePgDatabase, 'execute' | 'select' | 'selectDistinct' | '$with' | 'with'>
@@ -52,36 +52,27 @@ async function readDocuments(db: Reader, ids: number[]): Promise<SelectedRecordC
 }
 
 async function readQueryFacts(db: Reader, ids: number[]): Promise<QueryFacts[]> {
-  const q = platformLegacyQueryAlias, c = alias(platformCollection, 'c')
+  const c = alias(platformCollection, 'c')
   const rows = await db.select({
-    id: q.oldId, collection: sql<QueryFacts['collection']>`${postgresRosterRow(platformCollection,'c')}`,
-  }).from(q).innerJoin(c, eq(c.id, q.collectionId)).where(eq(q.oldId, sql`ANY(${numbers(ids)})`)).orderBy(q.oldId)
+    id: c.publicId, collection: sql<QueryFacts['collection']>`${postgresRosterRow(platformCollection,'c')}`,
+    conditions: postgresCollectionConditionValues(c.conditionFacts), unfinished: c.unfinishedPositions,
+  }).from(c).where(eq(c.publicId, sql`ANY(${numbers(ids)})`)).orderBy(c.publicId)
   const coordinates = numbers(rows.map(row => row.collection.id))
-  const page = alias(platformCollectionPage, 'p'), remaining = alias(platformCollectionUnfinished, 'p')
+  const page = alias(platformCollectionPage, 'p')
   const pages = Map.groupBy((await db.select({
     row: sql<typeof schema.platformCollectionPage.$inferSelect>`${postgresRosterRow(platformCollectionPage, 'p')}`,
   }).from(page).where(eq(page.collectionId, sql`ANY(${coordinates})`))
     .orderBy(page.collectionId, page.ordinal)).map(({ row }) => row), row => row.collectionId)
-  const unfinished = Map.groupBy((await db.select({
-    row: sql<typeof schema.platformCollectionUnfinished.$inferSelect>`${postgresRosterRow(platformCollectionUnfinished, 'p')}`,
-  }).from(remaining).where(eq(remaining.collectionId, sql`ANY(${coordinates})`))
-    .orderBy(remaining.collectionId, remaining.ordinal)).map(({ row }) => row), row => row.collectionId)
-  const condition = platformCollectionCondition
-  const conditions = await db.select({
-    collectionId: condition.collectionId, name: condition.name, valueKind: condition.valueKind,
-    textValue: condition.textValue, integerValue: condition.integerValue,
-  }).from(condition).where(eq(condition.collectionId, sql`ANY(${coordinates})`))
   const titleScope = platformQueryTitleScope
   const titleScopes = await db.select({ collectionId: titleScope.collectionId, rdjb: titleScope.rdjb })
     .from(titleScope).where(eq(titleScope.collectionId, sql`ANY(${coordinates})`))
-  const byCondition = Map.groupBy(conditions, row => row.collectionId)
   const byTitle = Map.groupBy(titleScopes, row => row.collectionId)
-  return rows.map(({ id, collection }) => {
+  return rows.map(({ id, collection, conditions, unfinished }) => {
     const coordinate = collection.id, evidencePresent = ['captured', 'conflict'].includes(collection.provenanceState)
-    const values = byCondition.get(coordinate)
     const scopeOrder = collection.rdjb.split(',')
-    return { id, collection, evidencePresent, pages: pages.get(coordinate) ?? [], unfinished: unfinished.get(coordinate) ?? [],
-      conditions: evidencePresent && values ? Object.fromEntries(values.filter(r => r.valueKind !== 'absent').map(r => [r.name, r.valueKind === 'text' ? r.textValue : r.valueKind === 'boolean' ? Boolean(r.integerValue) : r.integerValue])) : null,
+    return { id, collection, evidencePresent, pages: pages.get(coordinate) ?? [],
+      unfinished: projectPostgresUnfinishedPositions(coordinate, unfinished),
+      conditions: evidencePresent ? projectPostgresComparisonConditions(conditions) : null,
       scopes: (byTitle.get(coordinate) ?? []).map(row => row.rdjb).sort((a,b) => scopeOrder.indexOf(a) - scopeOrder.indexOf(b)), }
   })
 }
@@ -199,7 +190,7 @@ export function previewPostgresRecordCorrespondenceImpact(db: NodePgDatabase, ra
   return db.transaction(async tx => {
     const source = await selectComparison(tx, input)
     const comparison = await runComparison(tx, source, signal, false)
-    const d = differenceReason, q = platformLegacyQueryAlias, a = platformLegacyRelationAlias
+    const d = differenceReason, q = platformCollection, a = platformBusinessObservation
     const reasonIds = input.asOf ? (await tx.select({ id: d.id, recordedAt: d.recordedAt }).from(d))
       .filter(row => comparisonBefore(row.recordedAt, input.asOf)).map(row => row.id) : null
     const cutoff = reasonIds ? eq(d.id, sql`ANY(${numbers(reasonIds)})`) : sql`true`
@@ -211,10 +202,10 @@ export function previewPostgresRecordCorrespondenceImpact(db: NodePgDatabase, ra
     }).from(d)
     const pageReasons = await tx.select({
       id: d.id, enterpriseId: d.enterpriseId, titleCode: d.titleCode, direction: d.direction, status: d.status,
-      reasonCode: d.reasonCode, measureCode: d.measureCode, evidenceQueryId: q.oldId, evidenceRelationId: a.oldId,
+      reasonCode: d.reasonCode, measureCode: d.measureCode, evidenceQueryId: q.publicId, evidenceRelationId: a.publicId,
       verificationStatus: d.verificationStatus, recordedAt: d.recordedAt,
-    }).from(d).leftJoin(q, eq(q.collectionId, d.evidenceQueryId))
-      .leftJoin(a, eq(a.observationId, d.evidenceRelationId)).where(where).orderBy(d.id)
+    }).from(d).leftJoin(q, eq(q.id, d.evidenceQueryId))
+      .leftJoin(a, eq(a.id, d.evidenceRelationId)).where(where).orderBy(d.id)
       .limit(input.pageSize).offset(Math.min(Number.MAX_SAFE_INTEGER, (input.page - 1) * input.pageSize))
     const owners = await tx.selectDistinct({ id: enterprise.id, uscc: enterprise.usccNorm })
       .from(enterprise).innerJoin(record, eq(record.enterpriseId, enterprise.id)).where(and(

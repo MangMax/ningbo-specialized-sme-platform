@@ -36,8 +36,8 @@ beforeAll(async () => {
       ] },
       platformQueries: [
         { interface: 'business_list', queryKey: uscc, rdjb: '2', queriedAt: '2026-10-20T00:00:00Z', status: 'success', rawResponse: 'SYNTHETIC_RAW', relations: [
-          { sequenceNo: 1, nameRaw: 'Alpha企业', usccRaw: uscc, matchBasis: 'uscc', verificationStatus: 'confirmed', rawFields: { large: raw } },
-          { sequenceNo: 2, nameRaw: 'Unassigned候选', matchBasis: 'none', verificationStatus: 'pending', rawFields: { original: 'SYNTHETIC_PENDING' } },
+          { sequenceNo: 1, nameRaw: 'Alpha企业', usccRaw: uscc, matchBasis: 'uscc', verificationStatus: 'confirmed', rawFields: { large: { body: raw } } },
+          { sequenceNo: 2, nameRaw: 'Unassigned候选', matchBasis: 'none', verificationStatus: 'pending', rawFields: { original: { text: 'SYNTHETIC_PENDING' } } },
         ] },
         { interface: 'apply_list', queryKey: 'name:Gamma企业', queriedAt: '2026-10-20T00:00:00Z', status: 'failed', rawResponse: 'Explicit synthetic failed response', failureReason: 'synthetic failure' },
         { interface: 'business_list', queryKey: 'name:Gamma企业', rdjb: '1', queriedAt: '2026-10-20T00:00:01Z', status: 'no_record', rawResponse: 'Explicit synthetic empty response' },
@@ -68,7 +68,7 @@ describe('comparison lightweight list public HTTP seam', () => {
     expect(await get('?view=full')).toEqual(legacy)
     expect(Object.keys(legacy).sort()).toEqual(['counts', 'curatedCounts', 'platform', 'reconcile', 'rows', 'total'])
     const alpha = legacy.rows.find((row: { enterpriseId: number }) => row.enterpriseId === alphaId)
-    expect(alpha.platform.queries[0].relations[0].rawFields.large).toBe(raw)
+    expect(JSON.stringify(alpha.platform)).not.toContain('SYNTHETIC_RELATION_')
     expect(alpha.platform.queries[0].relations).toHaveLength(2)
     expect(alpha.platform.queries[0].relations[1]).toMatchObject({ nameRaw: 'Unassigned候选', matchBasis: 'none', verificationStatus: 'pending' })
     expect(alpha.explanation.evidence.records[0].original).toBe('SYNTHETIC_CACHE_'.repeat(6000))
@@ -89,7 +89,7 @@ describe('comparison lightweight list public HTTP seam', () => {
     expect(Buffer.byteLength(JSON.stringify(summary))).toBeLessThan(4096)
   })
 
-  it('retrieves the exact full comparison row and every original relation through the advertised evidence path', async () => {
+  it('retrieves the exact comparison row and all extracted records from query history', async () => {
     const summary = await get('?view=summary')
     const alpha = summary.rows.find((row: { enterpriseId: number }) => row.enterpriseId === alphaId)
     const detail = await get(alpha.detailUrl.slice('/api/comparison'.length))
@@ -97,23 +97,17 @@ describe('comparison lightweight list public HTTP seam', () => {
     expect(detail.rows).toHaveLength(1)
     expect(detail.rows[0]).toEqual((await get()).rows.find((row: { enterpriseId: number }) => row.enterpriseId === alphaId))
     const queryId = detail.rows[0].platform.queries[0].id
-    const ids = await (await fetch(app.url(`/api/platform/queries/${queryId}/evidence?field=relations&pageSize=1`))).json()
-    expect(ids).toMatchObject({ total: 2, rows: [{ sequenceNo: 1 }] })
-    const secondPage = await (await fetch(app.url(`/api/platform/queries/${queryId}/evidence?field=relations&pageSize=1&page=2`))).json()
-    expect(secondPage).toMatchObject({ total: 2, rows: [{ sequenceNo: 2 }] })
-    const pendingChunk = await (await fetch(app.url(`/api/platform/queries/${queryId}/evidence?field=relation&relationId=${secondPage.rows[0].id}`))).json()
-    expect(JSON.parse(Buffer.from(pendingChunk.data, 'base64').toString('utf8'))).toMatchObject({ enterpriseId: null, verificationStatus: 'pending', rawFields: { original: 'SYNTHETIC_PENDING' } })
-    const chunks: Buffer[] = []
-    let offset = 0
-    for (;;) {
-      const response = await fetch(app.url(`/api/platform/queries/${queryId}/evidence?field=relation&relationId=${ids.rows[0].id}&offset=${offset}&length=65536`))
-      expect(response.status).toBe(200)
-      const chunk = await response.json()
-      chunks.push(Buffer.from(chunk.data, 'base64'))
-      offset += chunk.byteLength
-      if (!chunk.hasMore) break
-    }
-    expect(JSON.parse(Buffer.concat(chunks).toString('utf8')).rawFields.large).toBe(raw)
+    const response = await fetch(app.url(`/api/platform/queries?queryId=${queryId}`))
+    expect(response.status).toBe(200)
+    const history = await response.json()
+    expect(history).toMatchObject({ total: 1, rows: [{ query: { id: queryId, relationCount: 2 }, relations: [
+      { sequenceNo: 1 }, { sequenceNo: 2, enterpriseId: null, verificationStatus: 'pending' },
+    ] }] })
+    expect(history.rows[0].relations.map((row: { id: number }) => row.id)).toEqual(
+      detail.rows[0].platform.queries[0].relations.map((row: { id: number }) => row.id),
+    )
+    expect(JSON.stringify(history)).not.toMatch(/SYNTHETIC_PENDING|SYNTHETIC_RAW/)
+
   })
 
   it('rejects invalid summary selectors and never widens a missing exact enterprise into the global list', async () => {

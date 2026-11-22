@@ -27,6 +27,6 @@ export async function seedPostgresPlatformQuery(db: Pick<NodePgDatabase, 'transa
       const { projection } = await writePostgresObservation(tx, collection, row, assignments[index]!, batch!.id)
       relationIds.push(projection.relationId)
     }
-    return { queryId: collection.queryAlias, relationIds }
+    return { queryId: collection.queryId, relationIds }
   })
 }

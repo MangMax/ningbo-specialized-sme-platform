@@ -8,7 +8,7 @@ import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../db/postgr
 import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
 import { differenceReason, rosterLegacyMember } from '../../../db/postgresql/roster-selection-tables'
 import { importBatch } from '../../../db/postgresql/import-tables'
-import { platformLegacyQueryAlias } from '../../../db/postgresql/platform-tables'
+import { platformCollection } from '../../../db/postgresql/platform-tables'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { readPostgresFingerprintQueries, readPostgresFingerprintRelations } from '../../../layers/sme-roster/server/utils/postgres-platform-fingerprint'
 import { createRosterImportHandler } from '../../../layers/sme-roster/server/utils/roster-import-route'
@@ -68,12 +68,12 @@ let duplicateEvent: number
 let enterprises: KnownEnterprise[]
 
 async function nativeQueryRows() {
-  const ids = await db.select({ id: platformLegacyQueryAlias.oldId }).from(platformLegacyQueryAlias).orderBy(platformLegacyQueryAlias.oldId)
+  const ids = await db.select({ id: platformCollection.publicId }).from(platformCollection).orderBy(platformCollection.publicId)
   return [...(await readPostgresFingerprintQueries(db, ids.map(row => row.id))).values()].map(row => row.query)
 }
 
 async function nativeRelationRows() {
-  const ids = await db.select({ id: platformLegacyQueryAlias.oldId }).from(platformLegacyQueryAlias).orderBy(platformLegacyQueryAlias.oldId)
+  const ids = await db.select({ id: platformCollection.publicId }).from(platformCollection).orderBy(platformCollection.publicId)
   return (await Promise.all(ids.map(row => readPostgresFingerprintRelations(db, row.id)))).flat()
 }
 

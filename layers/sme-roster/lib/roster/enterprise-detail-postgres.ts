@@ -4,8 +4,8 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterprise as enterpriseTable, enterpriseAlias, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { platformBusinessObservation as observation, platformCollection as collection,
-  platformExportBatch as exportBatch, platformExportRow as exportRow, platformLegacyQueryAlias as queryAlias,
-  platformLegacyRelationAlias as relationAlias, platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
+  platformExportBatch as exportBatch, platformExportRow as exportRow,
+  platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import type * as schema from '../../../../db/schema'
 import { normalizeName, normalizeUscc } from '../domain'
@@ -40,15 +40,15 @@ async function readSources(db: Reader, enterprise: Enterprise, evidenceIds: numb
       .where(and(eq(newer.observationId, assignment.observationId), gt(newer.revision, assignment.revision)))))).as('owned')
   const sourceRows = await db.select({ collectionId: collection.id, provenanceState: collection.provenanceState,
     lastCollectedAt: collection.lastCollectedAt, ownedCollectionId: owned.collectionId,
-    query: { id: queryAlias.oldId, interface: collection.interface, queryKey: collection.queryKey, rdjb: collection.rdjb,
+    query: { id: collection.publicId, interface: collection.interface, queryKey: collection.queryKey, rdjb: collection.rdjb,
       titleCode: collection.titleCode, queriedAt: collection.queriedAt, status: collection.status,
       failureReason: collection.failureReason, createdAt: collection.createdAt },
-  }).from(collection).innerJoin(queryAlias, eq(queryAlias.collectionId, collection.id))
+  }).from(collection)
     .leftJoin(owned, eq(owned.collectionId, collection.id))
-    .where(or(isNotNull(owned.collectionId), eq(collection.queryKey, nameKey), inIds(queryAlias.oldId, evidenceIds),
-      uscc ? qualificationUsccCandidate(collection.queryKey, [uscc]) : undefined)).orderBy(queryAlias.oldId)
+    .where(or(isNotNull(owned.collectionId), eq(collection.queryKey, nameKey), inIds(collection.publicId, evidenceIds),
+      uscc ? qualificationUsccCandidate(collection.queryKey, [uscc]) : undefined)).orderBy(collection.publicId)
   type SourceQuery = Omit<PlatformStoredQuery, 'rawResponse' | 'collectionEvidence' | 'lastCollectedAt'>
-    & Pick<PostgresDisplayOwner['query'], 'collectionEvidence' | 'legacyProvenance'> & { relationCount: number }
+    & Pick<PostgresDisplayOwner['query'], 'collectionEvidence'> & { relationCount: number }
   const rows = sourceRows.map(({ query, ownedCollectionId, ...row }) => ({
     ...row, owned: ownedCollectionId !== null, query: { ...query, relationCount: 0 } as SourceQuery,
   }))
@@ -58,13 +58,13 @@ async function readSources(db: Reader, enterprise: Enterprise, evidenceIds: numb
   const owner = db.select({ observationId: assignment.observationId, enterpriseId: assignment.enterpriseId }).from(assignment)
     .where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('owner')
   const recognizedScope = inIds(observation.collectionId, recognized)
-  const selectedPointers = await db.select({ id: relationAlias.oldId, queryId: queryAlias.oldId,
+  const selectedPointers = await db.select({ id: observation.publicId, queryId: collection.publicId,
     collectionId: observation.collectionId, owner: owner.enterpriseId,
-  }).from(observation).innerJoin(relationAlias, eq(relationAlias.observationId, observation.id))
-    .innerJoin(queryAlias, eq(queryAlias.collectionId, observation.collectionId))
+  }).from(observation)
+    .innerJoin(collection, eq(collection.id, observation.collectionId))
     .leftJoinLateral(owner, eq(owner.observationId, observation.id))
     .where(or(and(inIds(observation.collectionId, selected.map(row => row.collectionId)),
-      or(recognizedScope, eq(owner.enterpriseId, id))), inIds(queryAlias.oldId, evidenceIds)))
+      or(recognizedScope, eq(owner.enterpriseId, id))), inIds(collection.publicId, evidenceIds)))
     .orderBy(observation.id)
   const recognizedCollections = new Set(recognized)
   const pointers = selectedPointers.map(row => ({
@@ -73,12 +73,11 @@ async function readSources(db: Reader, enterprise: Enterprise, evidenceIds: numb
   const displayOwners: PostgresDisplayOwner<SourceQuery>[] = selected.map(({ collectionId, provenanceState, query }) => ({
     collectionId: String(collectionId), provenanceState, query,
   }))
-  const displays = await readPostgresDisplayRows(db, displayOwners, false, pointers.filter(row => row.displayed).map(row => row.id))
+  const displays = await readPostgresDisplayRows(db, displayOwners, pointers.filter(row => row.displayed).map(row => row.id))
   const byQuery = new Map(displays.map(row=>[row.query.id,row]))
   const queries: PlatformStoredQuery[] = [...new Map([...selected,...explain].map(row=>[row.query.id,row])).values()].map(row=>({
     ...row.query,rawResponse:null,collectionEvidence:byQuery.get(row.query.id)?.query.collectionEvidence ?? null,lastCollectedAt:row.lastCollectedAt,
   }))
-  const platformLegacyById = new Map(displays.flatMap(row=>row.query.legacyProvenance ? [[row.query.id,row.query.legacyProvenance] as const] : []))
   const platformPositionsById: NonNullable<RosterDetailArchive['platformPositionsById']> = new Map()
   const relations: PlatformStoredRelation[] = []
   for (const display of displays) {
@@ -90,7 +89,7 @@ async function readSources(db: Reader, enterprise: Enterprise, evidenceIds: numb
       relations.push(relation)
     }
   }
-  return { archive:selectRosterDetailArchive(enterprise,{ queries,relations,platformLegacyById,platformPositionsById }),queries,pointers,platformPositionsById }
+  return { archive:selectRosterDetailArchive(enterprise,{ queries,relations,platformPositionsById }),queries,pointers,platformPositionsById }
 }
 
 async function readExportMembership(db: Reader, enterprise: Enterprise) {

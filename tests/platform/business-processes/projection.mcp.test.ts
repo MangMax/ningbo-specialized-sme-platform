@@ -52,8 +52,17 @@ describe('business_list typed projection through public MCP import tools', () =>
       declareKind: 'review', businessYear: 2023, status: '终审通过', batch: '2023-2', awardBatchLabel: '第三批', province: '浙江省',
     })
 
-    const replay = await commit.handler({ ...input, idempotencyKey: 'mcp-business-projection-replay' } as never, {} as never) as { summary: { canonicalProjection: Record<string, number> } }
-    expect(replay.summary.canonicalProjection).toMatchObject({ businessProjectionsCreated: 0, businessProjectionsReused: 1 })
+    expect(await commit.handler(input as never, {} as never)).toEqual(saved)
+    const legacyReplay = await commit.handler({ ...input, idempotencyKey: 'mcp-business-projection-replay' } as never, {} as never)
+    expect(legacyReplay).toMatchObject({ status: 'failed', items: [{ error: { code: 'query_replay_offline' } }] })
+    const { rawResponse: _original, relations, ...coordinates } = payload.platformQueries[0]!
+    const reference = await commit.handler({
+      ...input, idempotencyKey: 'mcp-business-projection-reference',
+      payload: { platformQueries: [{ ...coordinates, reuseExisting: true,
+        relations: relations.map(({ sequenceNo, relationKey }) => ({ sequenceNo, relationKey })) }] },
+    } as never, {} as never)
+    expect(reference).toMatchObject({ status: 'committed', summary: { written: 0, skipped: 1 },
+      items: [{ detail: { reuseExisting: true, rowsWritten: 0 } }] })
     expect(Number((await db.execute<{ n: string }>(sql`SELECT count(*) n FROM business.platform_business_projection WHERE observation_id IS NULL`)).rows[0]!.n)).toBe(1)
   })
 })

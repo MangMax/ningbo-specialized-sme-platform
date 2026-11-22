@@ -26,7 +26,7 @@ const backLabel = computed(() => {
     [ROSTER_LEDGER_PATH]: ENTERPRISE_LIST_TITLE,
     '/comparison': ENTERPRISE_LIST_TITLE,
     '/ocr': '识别校对',
-    '/platform-queries': '平台查询证据',
+    '/platform-queries': '平台查询历史',
   }
   return names[path] ?? '上一页'
 })

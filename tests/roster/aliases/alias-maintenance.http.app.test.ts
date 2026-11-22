@@ -5,10 +5,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { createHash } from 'node:crypto'
 import { sql } from 'drizzle-orm'
-import { platformCollection, platformLegacyQueryAlias } from '../../../db/postgresql/platform-tables'
-import { platformArchiveValue, platformCollectionArchiveRef } from '../../../db/postgresql/platform-archive-tables'
+import { platformCollection } from '../../../db/postgresql/platform-tables'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { enterprise, enterpriseAlias, enterpriseAliasAudit } from '../../../db/postgresql/enterprise-tables'
 import { record as ledgerRecord, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
@@ -87,8 +85,9 @@ it('corrects and withdraws without changing original facts then explicitly resto
   expect(history).toMatchObject({ total: 3, rows: [{ action: 'withdraw', before: { name: '别名生命周期有效写法' }, after: { verificationStatus: 'withdrawn' } }] })
   const detail = await read(`/api/roster/enterprises/${ent.id}`)
   expect(detail.platform.relations).toMatchObject([{ id: rel.id, nameRaw: alias.name }])
-  const raw = await read(`/api/platform/queries/${query.id}/evidence?field=rawResponse`)
-  expect(Buffer.from(raw.data, 'base64').toString()).toBe('SECRET_RAW_QUERY')
+  const queryHistory = await read(`/api/platform/queries?queryId=${query.id}`)
+  expect(queryHistory.rows[0].relations).toMatchObject([{ id: rel.id, nameRaw: alias.name, enterpriseId: ent.id }])
+  expect(JSON.stringify(queryHistory)).not.toContain('SECRET_RAW_QUERY')
 })
 
 async function rpc(method: string, params: Record<string, unknown>, token = true) {
@@ -232,21 +231,21 @@ it('corrects source references using import identity validation and preserves th
   expect((await mutate(row.id, decision('confirm', 2, 'source-confirm'))).status).toBe(200)
   expect((await mutate(row.id, decision('correct', 3, 'source-null', { changes: { validFrom: null, note: null } }))).status).toBe(200)
   expect(await read(`${base()}/${row.id}`)).toMatchObject({ version: 4, validFrom: null, note: null, sourceRefId: source.id, originalSourceRefId: 987654 })
-  const raw = await read(`/api/platform/queries/${source.queryId}/evidence?field=relation&relationId=${source.id}`)
-  expect(JSON.parse(Buffer.from(raw.data, 'base64').toString())).toMatchObject({ id: source.id, nameRaw: source.nameRaw, enterpriseId: ent.id })
+  const history = await read(`/api/platform/queries?queryId=${source.queryId}`)
+  expect(history.rows[0].relations).toContainEqual(expect.objectContaining({ id: source.id, nameRaw: source.nameRaw, enterpriseId: ent.id }))
 })
 
-it('keeps fixed pages and exact history unchanged as unrelated aliases, audit rows and raw archives grow', async () => {
+it('keeps fixed pages and exact history unchanged as unrelated aliases, audit rows and unrelated query records grow', async () => {
   const fixed = await read(`${base()}?page=2&pageSize=2`)
   const fixedHistory = await read(`${base()}/${alias.id}/history?pageSize=1`)
   const other = (await db.insert(enterprise).values({ name: '分页缩放无关企业', nameNorm: '分页缩放无关企业' }).returning())[0]!
-  const samples: Array<{ scale: number; aliases: number; rawBytes: number; milliseconds: number[]; listBytes: number; historyBytes: number }> = []
+  const samples: Array<{ scale: number; aliases: number; unrelatedQueries: number; milliseconds: number[]; listBytes: number; historyBytes: number }> = []
   let seeded = 0
   for (const scale of [1, 2, 5]) {
     const target = 100 * scale
     const createdAt = '2026-10-19T00:00:00Z'
     const ordinals = Array.from({ length: target - seeded }, (_, index) => seeded + index + 1)
-    const noise = Buffer.from('SECRET_UNRELATED_RAW'.repeat(500))
+    const failureReason = 'UNRELATED_QUERY_FAILURE'.repeat(500)
     const note = JSON.stringify({ note: 'irrelevant'.repeat(500) })
     await db.transaction(async tx => {
       const aliases = await tx.insert(enterpriseAlias).values(ordinals.map(ordinal => ({
@@ -256,20 +255,12 @@ it('keeps fixed pages and exact history unchanged as unrelated aliases, audit ro
         aliasId: alias.id, enterpriseId: other.id, action: 'confirm', actor: 'synthetic', basis: 'synthetic',
         idempotencyKey: alias.name, requestHash: 'noise', before: note, after: note, createdAt,
       })))
-      const captures = await tx.insert(platformCollection).values(ordinals.map(ordinal => ({
+      await tx.insert(platformCollection).values(ordinals.map(ordinal => ({
+        publicId: 10_000 + ordinal,
         interface: 'business_list', rdjb: '1', queriedAt: createdAt, createdAt, queryKey: `noise-${ordinal}`,
-        status: 'not_queried', completeness: 'unknown', parseState: 'absent', provenanceState: 'unknown', ruleVersion: 'synthetic-noise',
-      }))).returning({ id: platformCollection.id, key: platformCollection.queryKey })
-      const hash = createHash('sha256').update(noise).digest('hex')
-      const raw = await tx.insert(platformArchiveValue).values(captures.map(() => ({
-        storageClass: 'text', bytes: noise, byteLength: noise.length, sha256: hash, createdAt,
-      }))).returning({ id: platformArchiveValue.id })
-      await tx.insert(platformLegacyQueryAlias).values(captures.map(capture => ({
-        collectionId: capture.id, oldId: 10_000 + Number(capture.key.slice('noise-'.length)),
+        status: 'failed', failureReason, completeness: 'unknown', parseState: 'absent', provenanceState: 'unknown', ruleVersion: 'synthetic-noise',
       })))
-      await tx.insert(platformCollectionArchiveRef).values(captures.map((capture, index) => ({
-        ownerId: capture.id, archiveId: raw[index]!.id, field: 'rawResponse', sealed: 1,
-      })))
+
     })
     seeded = target
     const durations: number[] = []
@@ -286,10 +277,10 @@ it('keeps fixed pages and exact history unchanged as unrelated aliases, audit ro
       durations.push(performance.now() - start)
       expect(JSON.parse(raw)).toEqual(fixed)
       expect(history).toEqual(fixedHistory)
-      expect(raw).not.toContain('SECRET_UNRELATED_RAW')
+      expect(raw).not.toContain('UNRELATED_QUERY_FAILURE')
       expect(listBytes + historyBytes).toBeLessThan(256 * 1024)
     }
-    samples.push({ scale, aliases: seeded, rawBytes: seeded * Buffer.byteLength('SECRET_UNRELATED_RAW'.repeat(500)), milliseconds: durations, listBytes, historyBytes })
+    samples.push({ scale, aliases: seeded, unrelatedQueries: seeded, milliseconds: durations, listBytes, historyBytes })
   }
 
   console.info('alias99 bounded synthetic samples', JSON.stringify(samples))

@@ -2,7 +2,6 @@ import { execFileSync } from 'node:child_process'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { createServer } from 'node:http'
-import { createHash } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
@@ -22,7 +21,8 @@ const dir = mkdtempSync(join(tmpdir(), 'issue298-raw-json-http-'))
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 const nativeFetch = globalThis.fetch
 const token = 'synthetic-raw-archive-token'
-const input = { source: 'queryBusList', name: '合成', rdjb: ['2'], pageSize: 1, rawDataVersion: 1 }
+const batchInput = { source: 'queryBusList', name: '合成', rdjb: ['2'], pageSize: 1 }
+const input = { ...batchInput, rawDataVersion: 1 }
 const typed = JSON.parse('{"id":"same","qymc":"合成","x":null,"n":1,"b":true,"o":{"a":1},"arr":[null,false,2,{"unknown":true}],"__proto__":{"own":true},"constructor":"own"}')
 let raw: string
 let pageBodies: Map<number, string> | undefined
@@ -61,8 +61,7 @@ beforeAll(async () => {
   for (const path of ['query_platform', 'preflight_roster_batch', 'save_roster_batch', 'list_platform_queries', 'get_platform_batch', 'get_platform_batch_item', 'submit_platform_batch', 'retry_platform_batch']) tools.push((await import(`../../../layers/sme-roster/server/mcp/tools/${path}.ts`)).default)
   const queryRoute = (await import('../../../layers/sme-roster/server/api/platform/query.post')).default
   const readRoute = (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default
-  const evidenceRoute = (await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default
-  const router = createRouter().post('/api/platform/query', queryRoute).get('/api/platform/queries', readRoute).get('/api/platform/queries/:queryId/evidence', evidenceRoute)
+  const router = createRouter().post('/api/platform/query', queryRoute).get('/api/platform/queries', readRoute)
   const { createRosterImportHandler } = await import('../../../layers/sme-roster/server/utils/roster-import-route')
   for (const action of ['preflight', 'commit'] as const) router.post(`/api/roster/import/${action}`, createRosterImportHandler(action))
   const { createPlatformBatchRoute } = await import('../../../layers/sme-roster/server/utils/platform-batch-route')
@@ -100,10 +99,12 @@ afterAll(async () => {
 })
 const plain = Object.fromEntries(Object.entries(typed).filter(([key]) => !['__proto__', 'constructor'].includes(key)))
 const cases = [plain, { id: 'same', qymc: '合成', x: '', n: '1', b: 'true', o: '{"a":1}', arr: '[null,false,2,{"unknown":true}]' }, typed]
-it.each([0, 1, 2])('real HTTP or MCP archive roundtrip preserves versioned raw envelope case %i with stable IDs and immutable replay', async index => {
+it.each([0, 1, 2])('real HTTP or MCP exposes raw envelope case %i live and reads extracted history with stable IDs', async index => {
   const row = cases[index]
   const discovered = await client.listTools()
   expect(discovered.tools.find(t => t.name === 'query_platform')!.inputSchema.properties).toHaveProperty('rawDataVersion')
+  expect(discovered.tools.find(t => t.name === 'list_platform_queries')!.inputSchema.properties).not.toHaveProperty('includeRawResponse')
+  expect(discovered.tools.map(t => t.name)).not.toContain('get_platform_query_evidence')
   raw = source(row)
   const response = index === 0 ? await post('/api/platform/query', input) : null
   if (response) expect(response.headers.get('cache-control')).toBe('no-store')
@@ -124,35 +125,52 @@ it.each([0, 1, 2])('real HTTP or MCP archive roundtrip preserves versioned raw e
   const history: any = index === 0 ? await (await nativeFetch(`${base}/api/platform/queries?queryId=${queryId}`)).json() : await call('list_platform_queries', { queryId })
   expect(history.rows).toHaveLength(1)
   const archived = history.rows[0]
-  expect(archived.query.collectionEvidence).toEqual(result)
-  expect(archived.relations.map((relation: any) => relation.rawFields)).toEqual(result.rawData.rows)
+  expect(archived.query).toMatchObject({ id: queryId, relationCount: 1 })
+  expect(archived.relations[0]).toMatchObject({ relationKey: row.id, sourceRdjb: '2', sourcePage: 1 })
+  expect(archived.query).not.toHaveProperty('rawResponse')
+  expect(archived.query.collectionEvidence).not.toHaveProperty('rawData')
+  expect(archived.query.collectionEvidence).not.toHaveProperty('rows')
+  expect(archived.relations[0].rawFields?.arr).not.toBeInstanceOf(Array)
   expect(archived.relations.map((relation: any) => relation.id)).toEqual(saved.items.find((item: any) => item.kind === 'platform_query').detail.relations)
-  const reused = { ...request, idempotencyKey: `${request.idempotencyKey}-reuse` }
+  const originalQuery = request.payload.platformQueries[0]!
+  const { rawResponse: _rawResponse, collectionEvidence: _collectionEvidence, relations, ...coordinates } = originalQuery
+  const reused = { ...request, idempotencyKey: `${request.idempotencyKey}-reuse`, payload: { platformQueries: [{
+    ...coordinates, reuseExisting: true, relations: relations?.map(({ sequenceNo, relationKey }) => ({ sequenceNo, relationKey })),
+  }] } }
   const reuse: any = index === 0 ? await (await post('/api/roster/import/commit', reused)).json() : await call('save_roster_batch', reused)
   expect(reuse.status).toBe('committed')
   expect(reuse.items.find((item: any) => item.kind === 'platform_query').ref).toBe(`query:${queryId}`)
-  const changed = structuredClone(request)
-  changed.idempotencyKey += '-conflict'
-  const changedRow = changed.payload.platformQueries[0]?.collectionEvidence?.rawData?.rows[0]
-  if (!changedRow) throw new Error('Expected the collected raw row for the conflict request')
-  changedRow.n = 999
-  const conflict: any = index === 0 ? await (await post('/api/roster/import/commit', changed)).json() : await call('save_roster_batch', changed)
-  expect(conflict.status).toBe('failed')
+  const exactReplay = { ...request, idempotencyKey: `${request.idempotencyKey}-offline` }
+  const conflict: any = index === 0 ? await (await post('/api/roster/import/commit', exactReplay)).json() : await call('save_roster_batch', exactReplay)
+  expect(conflict).toMatchObject({ status: 'failed', items: [expect.objectContaining({ error: expect.objectContaining({ code: 'query_replay_offline' }) })] })
   const after: any = await call('list_platform_queries', { queryId })
   expect(after.rows).toEqual(history.rows)
 })
-it('real batch HTTP submit and MCP item preserve typed source in persisted segments and respect the complete byte budget', async () => {
-  raw = source(typed)
-  const submitted: any = await (await post('/api/platform/batches', { items: [{ query: input }], limits: { maxResultBytes: 65536 } })).json()
+it('real HTTP submission and MCP item retain typed batch business rows within the structured-result budget', async () => {
+  const businessRow = { id: 'batch-one', qymc: '合成', rdjb: 2, rddqrq: '2027', cszt: '已认定', sqsj: '2026-07-03', x: null, n: 1 }
+  raw = source({ ...businessRow, rawFields: { rawTransportOnly: 'remove-row-copy' }, rawResponse: 'remove-response-copy' }) + ' '.repeat(70000)
+  const invalid = await post('/api/platform/batches', { items: [{ query: input }] })
+  expect(invalid.status).toBe(400)
+  const response = await post('/api/platform/batches', { items: [{ query: batchInput }], limits: { maxResultBytes: 65536 } })
+  expect(response.status).toBe(202)
+  const submitted: any = await response.json()
   await waitForBatch(submitted.batchId)
   const item: any = await call('get_platform_batch_item', { batchId: submitted.batchId, itemId: submitted.itemIds[0] })
-  expect(item).toMatchObject({ status: 'success', segments: [{ rawData: { version: 1, rows: [typed], pages: [{ body: raw }] } }] })
-  expect(Object.hasOwn(item.segments[0].rawData.rows[0], '__proto__')).toBe(true)
-  raw = source({ id: 'large', n: 1 }) + ' '.repeat(70000)
-  const limited: any = await (await post('/api/platform/batches', { items: [{ query: input }], limits: { maxResultBytes: 65536 } })).json()
+  expect(item).toMatchObject({ status: 'success', segments: [{
+    rows: [{ id: 'batch-one', rdjb: '2', rddqrq: '2027', cszt: '已认定', sqsj: '2026-07-03', x: '', n: '1' }],
+    dataRows: [businessRow], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, status: 'success', fetchedCount: 1 }],
+  }] })
+  expect(item.segments[0]).not.toHaveProperty('rawData')
+  expect(JSON.stringify(item)).not.toMatch(/remove-row-copy|remove-response-copy/)
+  const savedBatch = snapshotBusinessData()
+  expect(savedBatch.includes(Buffer.from('remove-row-copy'))).toBe(false)
+  expect(savedBatch.includes(Buffer.from('remove-response-copy'))).toBe(false)
+
+  raw = source({ id: 'large', qymc: '宽'.repeat(70000) })
+  const limited: any = await (await post('/api/platform/batches', { items: [{ query: batchInput }], limits: { maxResultBytes: 65536 } })).json()
   await waitForBatch(limited.batchId)
   const rejected: any = await call('get_platform_batch_item', { batchId: limited.batchId, itemId: limited.itemIds[0] })
-  expect(rejected).toMatchObject({ status: 'partial', segments: [{ error: { code: 'safety_limit' }, rawData: { rows: [], pages: [] } }], unfinished: [{ page: 1 }] })
+  expect(rejected).toMatchObject({ status: 'partial', segments: [{ error: { code: 'safety_limit' }, rows: [], dataRows: [] }], unfinished: [{ page: 1 }] })
   expect(Buffer.byteLength(JSON.stringify(rejected))).toBeLessThan(65536)
 })
 
@@ -177,43 +195,34 @@ it.each(['HTTP', 'MCP'])('real %s query rejects a sensitive source without leaki
 it('real MCP batch retry appends typed source segments and retains the accepted checkpoint and original times', async () => {
   pageBodies = new Map([[1, source({ id: 'first', n: 1 }, 1, 2)], [2, source({ id: 'second', n: '1' }, 2, 2)]])
   try {
-    const receipt: any = await call('submit_platform_batch', { items: [{ query: { ...input, maxRequests: 1 } }] })
+    const receipt: any = await call('submit_platform_batch', { items: [{ query: { ...batchInput, maxRequests: 1 } }] })
     await waitForBatch(receipt.batchId)
     const prior: any = await call('get_platform_batch_item', { batchId: receipt.batchId, itemId: receipt.itemIds[0] })
-    expect(prior).toMatchObject({ status: 'partial', segments: [{ rawData: { rows: [{ id: 'first', n: 1 }], pages: [{ page: 1 }] } }], unfinished: [{ page: 2 }] })
+    expect(prior).toMatchObject({ status: 'partial', segments: [{ dataRows: [{ id: 'first', n: 1 }], pages: [{ page: 1 }] }], unfinished: [{ page: 2 }] })
     const retried: any = await call('retry_platform_batch', { batchId: receipt.batchId, itemIds: receipt.itemIds })
     expect(retried).toMatchObject({ batchId: receipt.batchId, itemIds: receipt.itemIds })
     await waitForBatch(receipt.batchId)
     const after: any = await call('get_platform_batch_item', { batchId: receipt.batchId, itemId: receipt.itemIds[0] })
     expect(after.status).toBe('success')
     expect(after.segments[0]).toEqual(prior.segments[0])
-    expect(after.segments[1].rawData).toMatchObject({ version: 1, rows: [{ id: 'second', n: '1' }], pages: [{ page: 2, body: pageBodies.get(2) }] })
+    expect(after.segments[1]).toMatchObject({ dataRows: [{ id: 'second', n: '1' }], pages: [{ page: 2, status: 'success' }] })
+    expect(after.segments[1]).not.toHaveProperty('rawData')
   } finally { pageBodies = undefined }
 })
 
-it('new raw envelope counts against the public archive read budget and remains byte exact through bounded evidence chunks', async () => {
-  raw = source({ id: 'large-read', x: null, n: 1, unknown: '🙂' }) + ' '.repeat(4194304)
+it('returns extracted history for a live result with a large original page', async () => {
+  raw = source({ id: 'large-read', x: null, n: 1, unknown: { archiveOnly: 'large-offline-marker' } }) + ' '.repeat(4194304)
   const result: any = await (await post('/api/platform/query', input)).json()
   expect(result.status).toBe('success')
+  expect(result.rawData.pages[0].body).toBe(raw)
   const saved: any = await (await post('/api/roster/import/commit', { idempotencyKey: 'large-read-envelope', sourceKind: 'alias_evidence', sourceIdentity: 'issue298-synthetic', payload: { platformQueries: [recognizedResultToImport(result)] } })).json()
   expect(saved.status).toBe('committed')
   const queryId = Number(saved.items.find((item: any) => item.kind === 'platform_query').ref.replace('query:', ''))
-  expect((await nativeFetch(`${base}/api/platform/queries?queryId=${queryId}`)).status).toBe(413)
-  const chunks: Buffer[] = []
-  let offset = 0
-  while (true) {
-    const response = await nativeFetch(`${base}/api/platform/queries/${queryId}/evidence?field=collectionEvidence&offset=${offset}&length=65536`)
-    expect(response.status).toBe(200)
-    const chunk: any = await response.json()
-    expect(chunk.byteLength).toBeLessThanOrEqual(65536)
-    const bytes = Buffer.from(chunk.data, 'base64')
-    expect(bytes.length).toBe(chunk.byteLength)
-    chunks.push(bytes); offset += bytes.length
-    if (!chunk.hasMore) { expect(offset).toBe(chunk.totalBytes); break }
-    expect(bytes.length).toBeGreaterThan(0)
-  }
-  const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
-  expect(hash(Buffer.concat(chunks))).toBe(hash(JSON.stringify(result)))
+  const response = await nativeFetch(`${base}/api/platform/queries?queryId=${queryId}`)
+  expect(response.status).toBe(200)
+  const stored = await response.json()
+  expect(stored).toMatchObject({ total: 1, rows: [{ query: { id: queryId }, relations: [{ relationKey: 'large-read', sourcePage: 1 }] }] })
+  expect(JSON.stringify(stored)).not.toContain('large-offline-marker')
 })
 
 const htmlReviewCases = [
@@ -258,11 +267,11 @@ it('real MCP batch retains the first safe page but never accepts the second sens
   const second = `<input name="csrfToken" value="synthetic-review-later-token"><script>(function(data){})(${source({ id: 'unsafe-second' }, 2, 2).trim()});</script>`
   pageBodies = new Map([[1, first], [2, second]])
   try {
-    const receipt = await call('submit_platform_batch', { items: [{ query: input }] })
+    const receipt = await call('submit_platform_batch', { items: [{ query: batchInput }] })
     await waitForBatch(receipt.batchId)
     const item = await call('get_platform_batch_item', { batchId: receipt.batchId, itemId: receipt.itemIds[0] })
-    expect(item).toMatchObject({ status: 'partial', segments: [{ fetchedCount: 1, error: { code: 'sensitive_response' }, rawData: { rows: [{ id: 'safe-first', n: 1 }], pages: [{ page: 1, body: first }] } }], unfinished: [{ page: 2 }] })
-    expect(item.segments[0].rawData.pages).toHaveLength(1)
+    expect(item).toMatchObject({ status: 'partial', segments: [{ fetchedCount: 1, error: { code: 'sensitive_response' }, dataRows: [{ id: 'safe-first', n: 1 }] }], unfinished: [{ page: 2 }] })
+    expect(item.segments[0]).not.toHaveProperty('rawData')
     expect(item.segments[0].pages).toEqual([expect.objectContaining({ page: 1, status: 'success', fetchedCount: 1 }), expect.objectContaining({ page: 2, status: 'failed', fetchedCount: 0 })])
     expect(JSON.stringify(item)).not.toContain('synthetic-review-later-token')
   } finally { pageBodies = undefined }

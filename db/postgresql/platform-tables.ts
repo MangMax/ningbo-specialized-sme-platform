@@ -1,10 +1,29 @@
-import { bigint, customType, text } from 'drizzle-orm/pg-core'
+import { bigint, boolean, customType, jsonb, text } from 'drizzle-orm/pg-core'
 import { businessSchema } from './business-schema'
+import type { CollectionConditionFacts, CollectionUnfinishedPosition } from './platform-collection-scope'
 
 const bytea = customType<{ data: Buffer }>({ dataType: () => 'bytea' })
 
+export type PlatformRefreshMetadata = { json: string | null; quoted: boolean | null }
+export type PlatformRefreshFacts = {
+  fields: { name: string; storageClass: string; hex: string }[]
+  business: string | null
+  quoted: boolean | null
+}
+
 export const platformCollection = businessSchema.table('platform_collection', {
+  publicId: bigint('public_id', { mode: 'number' }).notNull().unique().generatedByDefaultAsIdentity({ maxValue: 9007199254740991 }),
+  sourceCoverage: jsonb('source_coverage').$type<import('../../layers/sme-roster/lib/platform/read').PlatformCollectionCoverage>(),
+  conditionFacts: jsonb('condition_facts').$type<CollectionConditionFacts>(),
+  unfinishedPositions: jsonb('unfinished_positions').$type<CollectionUnfinishedPosition[]>().notNull().default([]),
+  rawResponseSha256: text('raw_response_sha256'),
+  reusableContentSha256: text('reusable_content_sha256'),
   id: bigint('id', { mode: 'number' }).primaryKey().generatedByDefaultAsIdentity(),
+  evidenceArchiveId: bigint('evidence_archive_id', { mode: 'number' }),
+  evidenceSha256: text('evidence_sha256'),
+  evidenceSealed: bigint('evidence_sealed', { mode: 'number' }),
+  sourceArchiveBytes: bigint('source_archive_bytes', { mode: 'number' }).notNull().default(0),
+  refreshMetadata: jsonb('refresh_metadata').$type<PlatformRefreshMetadata>(),
   interface: text('interface').notNull(),
   queryKey: text('query_key').notNull(),
   queriedAt: text('queried_at').notNull(),
@@ -31,12 +50,6 @@ export const platformCollection = businessSchema.table('platform_collection', {
   maxRows: bigint('max_rows', { mode: 'number' }),
   maxDurationMs: bigint('max_duration_ms', { mode: 'number' }),
   pageSize: bigint('page_size', { mode: 'number' }),
-  reconcileSlotState: text('reconcile_slot_state').notNull().default('uncaptured'),
-  reconcileSlotRule: text('reconcile_slot_rule'),
-  reconcileSlotRawArchiveId: bigint('reconcile_slot_raw_archive_id', { mode: 'number' }),
-  reconcileSlotRowCount: bigint('reconcile_slot_row_count', { mode: 'number' }),
-  reconcileSlotInputSha256: text('reconcile_slot_input_sha256'),
-  reconcileSlotReason: text('reconcile_slot_reason'),
   witnessGate: bigint('witness_gate', { mode: 'number' }),
   witnessRule: text('witness_rule'),
   witnessArchiveId: bigint('witness_archive_id', { mode: 'number' }),
@@ -66,6 +79,12 @@ export const platformCollectionPage = businessSchema.table('platform_collection_
 })
 
 export const platformBusinessObservation = businessSchema.table('platform_business_observation', {
+  publicId: bigint('public_id', { mode: 'number' }).notNull().unique().generatedByDefaultAsIdentity({ maxValue: 9007199254740991 }),
+  relationFacts: jsonb('relation_facts').$type<Record<string, unknown>>(),
+  businessFields: jsonb('business_fields').$type<Record<string, string | number | boolean>>(),
+  identityOnlySource: boolean('identity_only_source').notNull().default(false),
+  sourceRawBytes: bigint('source_raw_bytes', { mode: 'number' }).notNull().default(0),
+  refreshFacts: jsonb('refresh_facts').$type<PlatformRefreshFacts>(),
   id: bigint('id', { mode: 'number' }).primaryKey().generatedByDefaultAsIdentity(),
   collectionId: bigint('collection_id', { mode: 'number' }).notNull(),
   recordId: bigint('record_id', { mode: 'number' }),
@@ -128,16 +147,6 @@ export const platformObservationAssignment = businessSchema.table('platform_obse
   commandReceiptId: bigint('command_receipt_id', { mode: 'number' }),
   recordedAt: text('recorded_at'),
   origin: text('origin').notNull(),
-})
-
-export const platformLegacyQueryAlias = businessSchema.table('platform_legacy_query_alias', {
-  collectionId: bigint('collection_id', { mode: 'number' }).notNull(),
-  oldId: bigint('old_id', { mode: 'number' }).primaryKey(),
-})
-
-export const platformLegacyRelationAlias = businessSchema.table('platform_legacy_relation_alias', {
-  observationId: bigint('observation_id', { mode: 'number' }).notNull(),
-  oldId: bigint('old_id', { mode: 'number' }).primaryKey(),
 })
 
 export const platformRecognizedProjection = businessSchema.table('platform_recognized_projection', {
@@ -433,25 +442,6 @@ export const platformExportRow = businessSchema.table('platform_export_row', {
   nameRaw: text('name_raw'),
 })
 
-export const platformCollectionCondition = businessSchema.table('platform_collection_condition', {
-  collectionId: bigint('collection_id', { mode: 'number' }).notNull(),
-  name: text('name').notNull(),
-  valueKind: text('value_kind').notNull(),
-  textValue: text('text_value'),
-  integerValue: bigint('integer_value', { mode: 'number' }),
-  witnessKind: text('witness_kind'),
-  witnessValue: bytea('witness_value'),
-  witnessValueSqliteStorage: text('witness_value_sqlite_storage').notNull().default('null'),
-})
-
-export const platformCollectionUnfinished = businessSchema.table('platform_collection_unfinished', {
-  collectionId: bigint('collection_id', { mode: 'number' }).notNull(),
-  ordinal: bigint('ordinal', { mode: 'number' }).notNull(),
-  source: text('source'),
-  rdjb: text('rdjb'),
-  pageNo: bigint('page_no', { mode: 'number' }),
-})
-
 export const platformBusinessRecord = businessSchema.table('platform_business_record', {
   id: bigint('id', { mode: 'number' }).primaryKey().generatedByDefaultAsIdentity(),
   interface: text('interface').notNull(),
@@ -461,21 +451,10 @@ export const platformBusinessRecord = businessSchema.table('platform_business_re
 })
 
 export const platformBusinessRecordVersion = businessSchema.table('platform_business_record_version', {
+  businessFields: jsonb('business_fields').$type<Record<string, string | number | boolean>>(),
   id: bigint('id', { mode: 'number' }).primaryKey().generatedByDefaultAsIdentity(),
   recordId: bigint('record_id', { mode: 'number' }).notNull(),
   hashAlgorithm: text('hash_algorithm').notNull(),
   contentHash: text('content_hash').notNull(),
   createdAt: text('created_at').notNull(),
-  canonicalArchiveId: bigint('canonical_archive_id', { mode: 'number' }).notNull(),
-})
-
-export const platformObservationFingerprintBasis = businessSchema.table('platform_observation_fingerprint_basis', {
-  observationId: bigint('observation_id', { mode: 'number' }).primaryKey(),
-  scheme: text('scheme').notNull(),
-  inputArchiveId: bigint('input_archive_id', { mode: 'number' }),
-})
-
-export const platformLegacyAliasSequence = businessSchema.table('platform_legacy_alias_sequence', {
-  namespace: text('namespace').primaryKey(),
-  highWater: bigint('high_water', { mode: 'number' }).notNull(),
 })

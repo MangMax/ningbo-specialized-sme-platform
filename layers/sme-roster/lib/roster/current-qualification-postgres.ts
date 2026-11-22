@@ -8,7 +8,7 @@ import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/l
 import { officialEvidenceRowRevision } from '../../../../db/postgresql/official-evidence-tables'
 import {
   platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformCollection,
-  platformCollectionPage, platformLegacyQueryAlias, platformLegacyRelationAlias, platformObservationAssignment,
+  platformCollectionPage, platformObservationAssignment,
   platformRecognizedProjection,
 } from '../../../../db/postgresql/platform-tables'
 import { enterpriseFactRevision, titleCycleDispositionRevision } from '../../../../db/postgresql/qualification-tables'
@@ -123,15 +123,15 @@ async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], 
   const assignment = platformObservationAssignment
   const first = alias(assignment, 'first_assignment')
   const head = alias(assignment, 'head_assignment')
-  const relationAlias = platformLegacyRelationAlias
-  const queryAlias = platformLegacyQueryAlias
+
+
   const apply = platformApplyProjection
   const recognized = platformRecognizedProjection
   const business = platformBusinessProjection
   const uscc = hydrated ? assignment.usccRaw : first.usccRaw
   const latestRevision = db.select({ revision: max(head.revision) }).from(head).where(eq(head.observationId, observation.id))
   const query = db.select({
-    id: relationAlias.oldId, queryId: queryAlias.oldId, interface: collection.interface, queriedAt: collection.queriedAt,
+    id: observation.publicId, queryId: collection.publicId, interface: collection.interface, queriedAt: collection.queriedAt,
     collectionId: collection.id, sequenceNo: observation.sequenceNo, titleCode: collection.titleCode, rdjb: collection.rdjb,
     owner: assignment.enterpriseId, uscc,
     state: observation.candidateScopeState, rule: observation.candidateScopeRule, mask: observation.candidateScopeMask,
@@ -144,14 +144,12 @@ async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], 
       processBatch: business.exactBatch, batchStorage: business.exactBatchSqliteStorage,
     } : {}),
   }).from(observation)
-    .innerJoin(relationAlias, eq(relationAlias.observationId, observation.id))
     .innerJoin(collection, eq(collection.id, observation.collectionId))
-    .innerJoin(queryAlias, eq(queryAlias.collectionId, collection.id))
     .innerJoin(first, and(eq(first.observationId, observation.id), eq(first.revision, 1)))
     .innerJoin(assignment, and(eq(assignment.observationId, observation.id), eq(assignment.revision, latestRevision)))
     .where(or(inArray(assignment.enterpriseId, ids), codes.length
       ? and(isNull(assignment.enterpriseId), qualificationUsccCandidate(sql`${uscc}`, codes)) : undefined))
-    .orderBy(relationAlias.oldId)
+    .orderBy(observation.publicId)
   const rows = await (readCells ? query
     .leftJoin(business, eq(business.observationId, observation.id))
     .leftJoin(apply, eq(apply.observationId, observation.id))

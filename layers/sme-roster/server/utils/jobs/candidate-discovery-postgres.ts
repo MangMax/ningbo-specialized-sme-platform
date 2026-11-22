@@ -4,7 +4,7 @@ import { alias } from 'drizzle-orm/pg-core'
 import { enterprise, enterpriseAlias } from '../../../../../db/postgresql/enterprise-tables'
 import { record, recordEvent } from '../../../../../db/postgresql/ledger-tables'
 import {
-  platformBusinessObservation as observation, platformCollection as collection, platformLegacyQueryAlias as queryAlias,
+  platformBusinessObservation as observation, platformCollection as collection,
   platformObservationAssignment as assignment,
 } from '../../../../../db/postgresql/platform-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
@@ -42,8 +42,7 @@ function affectedByQuery(db: NodePgDatabase, queryId: number) {
     when '1' then 'innovative_sme' when '2' then 'specialized_sme' when '3' then 'little_giant' end)`
   const requestedLevel = sql`case ${record.titleCode} when 'innovative_sme' then '1'
     when 'specialized_sme' then '2' when 'little_giant' then '3' end`
-  return exists(db.select({ id: collection.id }).from(queryAlias)
-    .innerJoin(collection, eq(collection.id, queryAlias.collectionId)).where(and(eq(queryAlias.oldId, queryId),
+  return exists(db.select({ id: collection.id }).from(collection).where(and(eq(collection.publicId, queryId),
       or(eq(scopedTitle, record.titleCode), and(eq(collection.interface, 'recognized_list'), isNull(collection.titleCode),
         sql`${requestedLevel} = any(string_to_array(${collection.rdjb}, ','))`)),
       or(eq(collection.queryKey, canonical), eq(collection.queryKey, sql`'name:' || ${enterprise.nameNorm}`),

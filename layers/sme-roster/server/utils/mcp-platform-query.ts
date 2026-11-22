@@ -1,6 +1,5 @@
 import { platformBatchInputSchema, platformBatchStatusSchema, platformBatchItemSchema, platformBatchRetrySchema } from '../../lib/platform/batch-query'
 import { platformQueryInputSchema } from '../../lib/platform/live-query'
-import { platformEvidenceInputSchema } from '../../lib/platform/evidence-input'
 import type { LogContext } from '../../../core/lib/logging'
 
 /** Per-request toolkit hook passes server context through a non-wire symbol. */
@@ -17,7 +16,7 @@ export function platformQueryRpcError(body: unknown): Response | null {
     if (!entry || typeof entry !== 'object') continue
     const rpc = entry as { method?: string; params?: { name?: string; arguments?: unknown }; id?: unknown }
     if (rpc.method !== 'tools/call') continue
-    const contracts = { get_platform_query_evidence: platformEvidenceInputSchema, query_platform: platformQueryInputSchema, submit_platform_batch: platformBatchInputSchema, get_platform_batch: platformBatchStatusSchema, get_platform_batch_item: platformBatchItemSchema, retry_platform_batch: platformBatchRetrySchema } as const
+    const contracts = { query_platform: platformQueryInputSchema, submit_platform_batch: platformBatchInputSchema, get_platform_batch: platformBatchStatusSchema, get_platform_batch_item: platformBatchItemSchema, retry_platform_batch: platformBatchRetrySchema } as const
     if (!Object.hasOwn(contracts, rpc.params?.name ?? '')) continue
     const contract = contracts[rpc.params?.name as keyof typeof contracts]
     if (!contract) continue

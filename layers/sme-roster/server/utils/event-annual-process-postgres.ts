@@ -1,11 +1,9 @@
-import { and, between, desc, eq, exists, gt, inArray, isNull, notExists, or, sql } from 'drizzle-orm'
+import { and, between, desc, eq, gt, inArray, isNull, notExists, or, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise, enterpriseAlias } from '../../../../db/postgresql/enterprise-tables'
 import { storedFile } from '../../../../db/postgresql/file-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
-import { platformArchiveValue, platformObservationArchiveRef } from '../../../../db/postgresql/platform-archive-tables'
 import { platformBusinessObservation as observation, platformCollection as collection, platformCollectionPage as page,
-  platformLegacyQueryAlias as queryAlias, platformLegacyRelationAlias as relationAlias,
   platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { projectAnnualFinalQualification, validAnnualDecisionQuery, type AnnualWriteScope, type AnnualWriteStep } from './annual-correspondence-contract'
@@ -43,13 +41,13 @@ async function readAnnualSources(db: Reader, scope: AnnualEventScope, comparison
     .where(and(eq(assignment.enterpriseId, owner), notExists(db.select({ id: newer.observationId }).from(newer)
       .where(and(eq(newer.observationId, assignment.observationId), gt(newer.revision, assignment.revision))))))
   const collections = await db.select({
-    queryId: queryAlias.oldId, interface: collection.interface, queryKey: collection.queryKey, rdjb: collection.rdjb,
+    queryId: collection.publicId, interface: collection.interface, queryKey: collection.queryKey, rdjb: collection.rdjb,
     titleCode: collection.titleCode, queriedAt: collection.queriedAt, status: collection.status,
     completeness: sql<string | null>`nullif(${collection.completeness},'unknown')`, fullRangeValue: collection.fullRange,
     scopedTitle: queryTitle, named,
-  }).from(collection).innerJoin(queryAlias, eq(queryAlias.collectionId, collection.id))
+  }).from(collection)
     .where(and(inArray(collection.interface, ['apply_list', 'business_list']), or(named, originalIdentity, inArray(collection.id, assigned))))
-    .orderBy(queryAlias.oldId) as Coverage[]
+    .orderBy(collection.publicId) as Coverage[]
   if (!collections.length) return { queries: [], rows: [], titles: [], facts: new Map<number, AnnualObservationFacts>() }
   const latest = db.select({ enterpriseId: assignment.enterpriseId, verificationStatus: assignment.verificationStatus,
     matchBasis: assignment.matchBasis }).from(assignment).where(eq(assignment.observationId, observation.id))
@@ -57,26 +55,19 @@ async function readAnnualSources(db: Reader, scope: AnnualEventScope, comparison
   const sourcePage = db.select({ pageNo: page.pageNo, rdjb: page.rdjb }).from(page)
     .where(and(eq(page.collectionId, collection.id), eq(page.status, 'success'),
       between(observation.sequenceNo, page.sequenceStart, page.sequenceEnd))).orderBy(page.ordinal).limit(1).as('source_page')
-  const bytes = platformArchiveValue.bytes
-  const identityOnly = exists(db.select({ id: platformArchiveValue.id }).from(platformObservationArchiveRef)
-    .innerJoin(platformArchiveValue, eq(platformArchiveValue.id, platformObservationArchiveRef.archiveId))
-    .where(and(eq(platformObservationArchiveRef.ownerId, observation.id), eq(platformObservationArchiveRef.field, 'sourceText'),
-      sql`position(convert_to('转写','UTF8') in ${bytes})>0 and (position(convert_to('名称','UTF8') in ${bytes})>0
-        or encode(${bytes},'escape') ilike '%qymc%') and encode(${bytes},'escape') ilike '%platform-verify-aclass%'`)))
-  const matching = await db.select({ id: relationAlias.oldId, queryId: queryAlias.oldId, sequenceNo: observation.sequenceNo,
+  const matching = await db.select({ id: observation.publicId, queryId: collection.publicId, sequenceNo: observation.sequenceNo,
     relationKey: observation.sourceRelationKey, enterpriseId: latest.enterpriseId, usccRaw: original.usccRaw, nameRaw: original.nameRaw,
     verificationStatus: latest.verificationStatus, matchBasis: latest.matchBasis, observationId: observation.id,
     interface: collection.interface, titleCode: queryTitle, sourcePage: sourcePage.pageNo, sourceRdjb: sourcePage.rdjb,
-    identityOnlySource: sql<number>`(${identityOnly})::int`,
-  }).from(queryAlias).innerJoin(collection, eq(collection.id, queryAlias.collectionId))
+    identityOnlySource: sql<number>`(${observation.identityOnlySource})::int`,
+  }).from(collection)
     .innerJoin(observation, eq(observation.collectionId, collection.id))
-    .innerJoin(relationAlias, eq(relationAlias.observationId, observation.id))
     .innerJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
     .crossJoinLateral(latest).leftJoinLateral(sourcePage, sql`true`)
-    .where(and(sql`${queryAlias.oldId} = any(${sql.param(collections.map(row => row.queryId))}::bigint[])`, or(isNull(latest.enterpriseId), eq(latest.enterpriseId, owner)),
+    .where(and(sql`${collection.publicId} = any(${sql.param(collections.map(row => row.queryId))}::bigint[])`, or(isNull(latest.enterpriseId), eq(latest.enterpriseId, owner)),
       or(identity ? eq(uscc, identity) : and(eq(latest.enterpriseId, owner), eq(latest.verificationStatus, 'confirmed')),
         and(eq(uscc, ''), or(eq(latest.enterpriseId, owner), named)))))
-    .orderBy(queryAlias.oldId, observation.sequenceNo, relationAlias.oldId) as Observation[]
+    .orderBy(collection.publicId, observation.sequenceNo, observation.publicId) as Observation[]
   const matchedQueries = new Set(matching.map(row => row.queryId))
   const queries = collections.filter(q => (q.named || matchedQueries.has(q.queryId)) &&
     (q.scopedTitle === titleCode || q.scopedTitle === null && (q.interface === 'apply_list' || comparison)))
@@ -126,9 +117,9 @@ export async function readPostgresAnnualWriteScope(db: Reader, eventId: number) 
 
 async function projectPostgresAnnualScope(db: Reader, read: NonNullable<Awaited<ReturnType<typeof readPostgresAnnualProcess>>>) {
   const recordIds = annualScopeRecordIds(read)
-  const history = recordIds.length ? await db.select({ recordId: observation.recordId, relationId: relationAlias.oldId })
-    .from(observation).innerJoin(relationAlias, eq(relationAlias.observationId, observation.id))
-    .where(sql`${observation.recordId} = any(${sql.param(recordIds)}::bigint[])`).orderBy(relationAlias.oldId) : []
+  const history = recordIds.length ? await db.select({ recordId: observation.recordId, relationId: observation.publicId })
+    .from(observation)
+    .where(sql`${observation.recordId} = any(${sql.param(recordIds)}::bigint[])`).orderBy(observation.publicId) : []
   const byRecord = Map.groupBy(history, row => row.recordId)
   return projectAnnualWriteScope(read, matching => matching.flatMap(id => (byRecord.get(id) ?? []).map(row => row.relationId)))
 }
@@ -140,10 +131,9 @@ export async function readPostgresAnnualDecisionRefs(db: Reader, scope: AnnualWr
     && (row.role === 'context_only' || row.role === (scope.declareKind === 'apply' ? 'supports_award' : 'supports_review')))
   const valid = await readPostgresCorrespondenceRefs(db, { annualDecisionIds: priors.map(row => row.id) })
   const validity = new Map(valid.map(row => [row.id, row.requiresRevalidation]))
-  const contexts = priors.length ? await db.select({ id: relationAlias.oldId, titleCode: collection.titleCode, rdjb: collection.rdjb,
-    interface: collection.interface, status: collection.status }).from(relationAlias)
-    .innerJoin(observation, eq(observation.id, relationAlias.observationId)).innerJoin(collection, eq(collection.id, observation.collectionId))
-    .where(sql`${relationAlias.oldId} = any(${sql.param(relationIds)}::bigint[])`) : []
+  const contexts = priors.length ? await db.select({ id: observation.publicId, titleCode: collection.titleCode, rdjb: collection.rdjb,
+    interface: collection.interface, status: collection.status }).from(observation).innerJoin(collection, eq(collection.id, observation.collectionId))
+    .where(sql`${observation.publicId} = any(${sql.param(relationIds)}::bigint[])`) : []
   const queries = new Map(contexts.map(row => [row.id, row]))
   return priors.flatMap(row => {
     if (row.relationId === null) return []

@@ -44,7 +44,7 @@ it('cancels before transmission without manufacturing evidence',async()=>{
  expect(db.select().from(schema.platformCollection).all()).toEqual([])
 })
 
-it.skipIf(!pg19Bin)('writes PostgreSQL source evidence and reuses complete slots without requesting the platform again', async () => {
+it.skipIf(!pg19Bin)('collects fresh PostgreSQL slots even when prior slots are complete', async () => {
   await withHistoricalImportDatabase(`
     INSERT INTO enterprise(id,name,name_norm,uscc_norm)
       VALUES (1,'宁波上航测绘股份有限公司','宁波上航测绘股份有限公司','91330211255994457P');
@@ -60,9 +60,12 @@ it.skipIf(!pg19Bin)('writes PostgreSQL source evidence and reuses complete slots
       { interface: 'apply_list', status: 'success' },
       ...Array.from({ length: 3 }, () => ({ interface: 'business_list', status: 'no_record' })),
     ])
-    const again = await runPostgresPlatformReconcile(db, { ...options, fetchImpl: replay.fetchImpl, cookie: '' })
-    expect(again).toMatchObject({ usccCount: 1, queries: { network: 0, reused: 4 }, relations: 2, write: null })
-    expect(replay.calls).toHaveLength(4)
-    expect((await pool.query("SELECT interface,status FROM platform_collection ORDER BY interface,rdjb")).rows).toEqual(archived.rows)
+    const nextTime = () => new Date('2026-06-01T01:00:00Z')
+    const again = await runPostgresPlatformReconcile(db, { ...options, now: nextTime, fetchImpl: replay.fetchImpl, cookie: 'fixture' })
+    expect(again).toMatchObject({ usccCount: 1, queries: { network: 4, reused: 0 }, relations: 2, write: { status: 'committed' } })
+    expect(replay.calls).toHaveLength(8)
+    expect((await pool.query('SELECT DISTINCT queried_at FROM platform_collection ORDER BY queried_at')).rows).toEqual([
+      { queried_at: '2026-06-01T00:00:00.000Z' }, { queried_at: '2026-06-01T01:00:00.000Z' },
+    ])
   })
 }, 90_000)

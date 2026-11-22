@@ -104,7 +104,8 @@ function sourceProvenance(sources: ReadSources, edge: CorrespondenceEdge) {
     event: event ? versionedOfficialEvent(event.event) : null, record: event?.record ?? null, officialEnterprise: event?.enterprise ?? null,
     officialEvidence: event ? sources.evidence.get(event.event.id) ?? [] : [],
     predecessor: predecessor ? { ...predecessor, event: versionedOfficialEvent(predecessor.event), officialEvidence: sources.evidence.get(predecessor.event.id) ?? [] } : null,
-    relation: relation?.relation ?? null, query: relation?.query ?? null,
+    relation: relation?.provenance?.relation ?? relation?.relation ?? null,
+    query: relation?.provenance?.query ?? relation?.query ?? null,
     exportRow: exported?.exportRow ?? null, exportBatch: exported?.exportBatch ?? null,
   }
 }
@@ -259,7 +260,7 @@ export function buildRecordCorrespondencePlan(lookup: DecisionLookup, request: C
       if (!row || row.status !== 'candidate') fail('invalid_endpoint_type', 'Only a candidate can rebind source evidence')
       if (row.revision !== op.expectedRevision) fail('stale_revision', 'Correspondence revision changed')
       const source = sourceForEdge(observed, storedEdge(row), false)
-      if (source.sourceFingerprint === row.sourceFingerprint) fail('ambiguous_candidate', 'Same edge has no changed source evidence to revalidate')
+      if (recordedSourceMatches(observed, row, source.sourceFingerprint)) fail('ambiguous_candidate', 'Same edge has no changed source evidence to revalidate')
       targets.push({ correspondenceId: row.id, revision: row.revision, status: row.status, sourceFingerprint: row.sourceFingerprint, observedSourceFingerprint: source.sourceFingerprint, targetIdentity: source.targetIdentity })
       impact.audit++
     }
@@ -273,16 +274,16 @@ export function buildRecordCorrespondencePlan(lookup: DecisionLookup, request: C
         if (op.action === 'correct' && existing.status === 'candidate') {
           if (touched.has(existing.id)) fail('ambiguous_candidate', 'One plan cannot mutate the same replacement twice')
           touched.add(existing.id)
-          if (existing.sourceFingerprint !== source.sourceFingerprint) fail('plan_mismatch', 'Replacement candidate source changed; revalidation required')
+          if (!recordedSourceMatches(observed, existing, source.sourceFingerprint)) fail('plan_mismatch', 'Replacement candidate source changed; revalidation required')
           targets.push({ edge: op.edge, targetIdentity: source.targetIdentity, sourceFingerprint: source.sourceFingerprint, confirmId: existing.id, confirmRevision: existing.revision })
           impact.audit++
         } else if (op.action === 'correct' && existing.id === op.correspondenceId && existing.status === 'confirmed') {
           if (existing.revision !== op.expectedRevision) fail('stale_revision', 'Correspondence revision changed')
-          if (existing.sourceFingerprint === source.sourceFingerprint) fail('ambiguous_candidate', 'Same edge has no changed source evidence to revalidate')
+          if (recordedSourceMatches(observed, existing, source.sourceFingerprint)) fail('ambiguous_candidate', 'Same edge has no changed source evidence to revalidate')
           targets.push({ edge: op.edge, targetIdentity: source.targetIdentity, enterpriseId: source.enterpriseId, titleCode: source.titleCode, sourceFingerprint: source.sourceFingerprint, reconfirmId: existing.id })
           impact.audit++
         } else if (op.action !== 'create' || op.status !== 'candidate' || existing.status !== 'rejected' ||
-          (existing.ruleId === request.ruleId && existing.ruleVersion === request.ruleVersion && existing.sourceFingerprint === source.sourceFingerprint)) {
+          (existing.ruleId === request.ruleId && existing.ruleVersion === request.ruleVersion && recordedSourceMatches(observed, existing, source.sourceFingerprint))) {
           fail('ambiguous_candidate', 'Edge already has a decision; new evidence or rule version is required to repropose')
         } else {
           targets.push({ edge: op.edge, targetIdentity: source.targetIdentity, enterpriseId: source.enterpriseId, titleCode: source.titleCode, sourceFingerprint: source.sourceFingerprint, rejectedId: existing.id, rejectedRevision: existing.revision })
@@ -306,7 +307,7 @@ export function buildRecordCorrespondencePlan(lookup: DecisionLookup, request: C
       const observedSourceFingerprint = next === 'unlinked'
         ? hash(sourceProvenance(observed, storedEdge(row)))
         : sourceForEdge(observed, storedEdge(row), next === 'confirmed').sourceFingerprint
-      if (next !== 'unlinked' && observedSourceFingerprint !== row.sourceFingerprint) fail('plan_mismatch', 'Source row changed since correspondence decision')
+      if (next !== 'unlinked' && !recordedSourceMatches(observed, row, observedSourceFingerprint)) fail('plan_mismatch', 'Source row changed since correspondence decision')
       targets.push({ correspondenceId: row.id, revision: row.revision, status: row.status, sourceFingerprint: row.sourceFingerprint, observedSourceFingerprint })
       impact.audit++
       if (next === 'unlinked') impact.unlinked++
@@ -386,13 +387,27 @@ export function* recordCorrespondenceMutations(
 
 type EventRows = { event: typeof schema.recordEvent.$inferSelect; record: typeof schema.record.$inferSelect; enterprise: typeof schema.enterprise.$inferSelect }
 
-type RelationRows = { relation: PlatformStoredRelation; query: PlatformStoredQuery; facts: ReturnType<typeof readCorrespondenceTargetSources>[number]['facts']; observationId?: number }
+export type CorrespondenceRelationSource = {
+  relation: PlatformStoredRelation
+  query: PlatformStoredQuery
+  facts: ReturnType<typeof readCorrespondenceTargetSources>[number]['facts']
+  observationId?: number
+  provenance?: {
+    relation: Omit<PlatformStoredRelation, 'rawFields' | 'sourceText'>
+    query: Omit<PlatformStoredQuery, 'rawResponse'> & { rawResponseSha256: string | null }
+  }
+}
 
 type ExportRows = { exportRow: typeof schema.platformExportRow.$inferSelect; exportBatch: typeof schema.platformExportBatch.$inferSelect }
 
+function recordedSourceMatches(observed: ReadSources, row: StoredCorrespondence, sourceFingerprint: string) {
+  return observed.sourceValidity?.get(row.id) ?? (sourceFingerprint === row.sourceFingerprint)
+}
+
 export interface ReadSources {
+  sourceValidity?: ReadonlyMap<number, boolean>
   events: Map<number, EventRows>
-  relations: Map<number, RelationRows>
+  relations: Map<number, CorrespondenceRelationSource>
   exports: Map<number, ExportRows>
   enterprises: Map<number, typeof schema.enterprise.$inferSelect>
   titles: Set<string>
@@ -413,7 +428,7 @@ export function requestedCorrespondenceSources(request: CorrespondenceRequest, s
 export function projectObservedCorrespondence(row: StoredCorrespondence, observed: ReadSources): CorrespondenceRead {
   let requiresRevalidation = false
   if (row.status === 'confirmed' || row.status === 'candidate') {
-    try { requiresRevalidation = sourceForEdge(observed, storedEdge(row), row.status === 'confirmed').sourceFingerprint !== row.sourceFingerprint }
+    try { requiresRevalidation = !recordedSourceMatches(observed, row, sourceForEdge(observed, storedEdge(row), row.status === 'confirmed').sourceFingerprint) }
     catch { requiresRevalidation = true }
   }
   return { ...row, requiresRevalidation }

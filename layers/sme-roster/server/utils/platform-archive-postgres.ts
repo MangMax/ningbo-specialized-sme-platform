@@ -9,11 +9,9 @@ import {
   platformBusinessRecord as businessRecord,
   platformBusinessRecordVersion as recordVersion,
   platformCollection as collection,
-  platformLegacyQueryAlias as queryAlias,
-  platformLegacyRelationAlias as relationAlias,
   platformObservationAssignment as assignment,
 } from '../../../../db/postgresql/platform-tables'
-import { platformQueryTitleScope as titleScope } from '../../../../db/postgresql/platform-archive-tables'
+import { platformQueryTitleScope as titleScope } from '../../../../db/postgresql/platform-query-scope-tables'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { alias } from 'drizzle-orm/pg-core'
@@ -174,10 +172,8 @@ async function captureGate(tx: Reader, catalog: Catalog, recordId?: number) {
   const original = alias(assignment, 'original')
   const [missing] = await base.leftJoin(projection, eq(projection.observationId, observation.id))
     .leftJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
-    .leftJoin(queryAlias, eq(queryAlias.collectionId, collection.id))
-    .leftJoin(relationAlias, eq(relationAlias.observationId, observation.id))
     .where(and(eq(collection.interface, catalog.interface),
-      or(isNull(projection.id), capture, isNull(original.observationId), isNull(relationAlias.oldId), isNull(queryAlias.oldId))))
+      or(isNull(projection.id), capture, isNull(original.observationId))))
     .limit(1)
   if (missing) {
     if (process) fail(409, 'process_target_uncaptured', 'Process observation has uncaptured original facts or assignment')
@@ -414,17 +410,16 @@ async function listIsolated(tx: Reader, catalog: Catalog, filter: ArchiveFilter)
     [key, columnNamed(name)], [key + 'Storage', columnNamed(name + '_sqlite_storage')],
   ]))
   const observations = await query(tx.select({
-    relationId: relationAlias.oldId, queryId: queryAlias.oldId, queriedAt: col.queriedAt, queryKey: col.queryKey, queryStatus: col.status,
+    relationId: obs.publicId, queryId: col.publicId, queriedAt: col.queriedAt, queryKey: col.queryKey, queryStatus: col.status,
     sequenceNo: obs.sequenceNo, identityState: obs.identityState, contentState: obs.contentState,
     enterpriseId: current.enterpriseId, enterpriseName: enterprise.name,
     nameRaw: original.nameRaw, usccRaw: original.usccRaw, ...cells,
     titleScopes: catalog.interface === 'apply_list' ? sql<null>`NULL` : collectionScopes as SQL<string[]>,
-  }).from(obs).$dynamic()).innerJoin(queryAlias, eq(queryAlias.collectionId, col.id))
-    .innerJoin(relationAlias, eq(relationAlias.observationId, obs.id))
+  }).from(obs).$dynamic())
     .leftJoin(original, and(eq(original.observationId, obs.id), eq(original.revision, 1)))
     .where(criteria)
     // Drizzle 0.45 cannot express explicit bytewise collation.
-    .orderBy(desc(sql`${col.queriedAt} COLLATE "C"`), desc(relationAlias.oldId))
+    .orderBy(desc(sql`${col.queriedAt} COLLATE "C"`), desc(obs.publicId))
     .limit(pageSize).offset(offset)
   return {
     ...base, total: result!.total,
@@ -550,7 +545,7 @@ export function readPostgresPlatformArchiveDetail(db: NodePgDatabase, source: So
     }).from(recordCorrespondence).where(eq(recordCorrespondence.observationId, obs.id))
     const correspondenceRefs = scoped ? sql`coalesce((${links}), '[]'::json)` : sql<null>`NULL`
     const observations = await tx.select({
-      relationId: relationAlias.oldId, queryId: queryAlias.oldId, queriedAt: col.queriedAt,
+      relationId: obs.publicId, queryId: col.publicId, queriedAt: col.queriedAt,
       queryKey: col.queryKey, queryStatus: col.status, sequenceNo: obs.sequenceNo,
       identityState: obs.identityState, contentState: obs.contentState,
       enterpriseId: current.enterpriseId, enterpriseName: enterprise.name, keySource: obs.keySource,
@@ -559,12 +554,10 @@ export function readPostgresPlatformArchiveDetail(db: NodePgDatabase, source: So
       titleScopes: scoped ? collectionScopes as SQL<string[]> : sql<null>`NULL`,
       correspondenceRefs,
     }).from(obs).innerJoin(col, eq(col.id, obs.collectionId))
-      .innerJoin(queryAlias, eq(queryAlias.collectionId, col.id))
-      .innerJoin(relationAlias, eq(relationAlias.observationId, obs.id))
       .leftJoinLateral(current, eq(obs.id, obs.id)).leftJoin(enterprise, eq(enterprise.id, current.enterpriseId))
       .leftJoin(table, and(eq(table.versionId, obs.versionId), eq(table.recordId, obs.recordId)))
       .where(eq(obs.recordId, recordId))
-      .orderBy(desc(sql`${col.queriedAt} COLLATE "C"`), desc(relationAlias.oldId)).limit(catalog.limits.observations)
+      .orderBy(desc(sql`${col.queriedAt} COLLATE "C"`), desc(obs.publicId)).limit(catalog.limits.observations)
 
     const detailObservations = observations.map(({ projection, titleScopes, correspondenceRefs, ...fields }) => {
       const version = fields.versionId === null ? null : versionData(catalog, fields.versionId, projection)

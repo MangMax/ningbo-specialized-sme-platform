@@ -13,17 +13,13 @@ const orderedKeys: Readonly<Record<string, readonly string[]>> = {
     'witnessRdjbKind', 'witnessRdjbValue', 'witnessRdjbKey', 'witnessPageKind', 'witnessPageValue', 'witnessErrorName',
     'witnessError', 'witnessState',
   ],
-  platform_business_record_version: [
-    'id', 'recordId', 'hashAlgorithm', 'contentHash', 'canonicalRawJson', 'canonicalArchiveId',
-    'createdAt',
-  ],
   platform_collection: [
     'id', 'interface', 'queryKey', 'rdjb', 'titleCode', 'queriedAt',
     'createdAt', 'lastCollectedAt', 'status', 'failureReason', 'source', 'evidenceStatus',
     'completedAt', 'completeness', 'fullRange', 'fetchedCount', 'declaredTotal', 'scopeMode',
     'provenanceState', 'parseState', 'ruleVersion', 'errorCode', 'errorMessage', 'maxRequests',
-    'maxRows', 'maxDurationMs', 'pageSize', 'reconcileSlotState', 'reconcileSlotRule', 'reconcileSlotRawArchiveId',
-    'reconcileSlotRowCount', 'reconcileSlotInputSha256', 'reconcileSlotReason', 'witnessState', 'witnessGate', 'witnessRule',
+    'maxRows', 'maxDurationMs', 'pageSize',
+    'witnessState', 'witnessGate', 'witnessRule',
     'witnessArchiveId', 'witnessSha256', 'witnessErrorName', 'witnessError',
   ],
   platform_collection_page: [

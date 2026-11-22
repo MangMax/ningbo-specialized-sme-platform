@@ -6,7 +6,7 @@ import { readPostgresPlatformQueries } from '../../../lib/platform/postgres-quer
 import type { PlatformQueryFilter } from '../../../lib/platform/read'
 
 /**
- * 平台查询证据(契约 §7.6):工信部三个来源取回的**原始关系**,逐条可查。
+ * 平台查询历史保留工信部三个来源的查询记录和提取后的业务事实。
  *
  * 读接口**不鉴权**(与既有分法一致:读不鉴权,写/任务鉴权)。含 partial 的状态原样带出,
  * 由页面各自呈现 —— 读侧不把 `failed` 说成 `no_record`。
@@ -14,9 +14,9 @@ import type { PlatformQueryFilter } from '../../../lib/platform/read'
 defineRouteMeta({
   openAPI: {
     tags: ['比对'],
-    summary: '查平台查询证据',
+    summary: '查平台查询历史',
     description:
-      '按接口 / 查询键 / 企业 / 状态过滤，SQL分页及同范围计数。默认完整关系；view=summary 显式省略关系/采集原文，仅带 relationCount 和 relationsIncluded:false。完整原档单查询4MiB/单页8MiB预算，超限413；按ID分段取证见 /api/platform/queries/{queryId}/evidence。',
+      '按来源、查询键、企业和状态分页过滤。默认返回提取后的记录与来源定位。view=summary 仅返回查询元数据和记录数。',
     parameters: [
       {
         name: 'interface',
@@ -28,7 +28,7 @@ defineRouteMeta({
       { name: 'uscc', in: 'query', schema: { type: 'string' } },
       { name: 'queryKey', in: 'query', schema: { type: 'string' }, description: '查询键(统一社会信用代码或 `name:<nameNorm>`)。' },
       { name: 'queryId', in: 'query', schema: { type: 'integer', minimum: 1 }, description: '精确查询ID，与其他过滤取交集。' },
-      { name: 'view', in: 'query', schema: { type: 'string', enum: ['full', 'summary'], default: 'full' }, description: 'summary 仅元数据与完整关系数，不加载关系或原始采集结果。不能同时 includeRawResponse=true。' },
+      { name: 'view', in: 'query', schema: { type: 'string', enum: ['full', 'summary'], default: 'full' }, description: 'summary 仅返回查询元数据与记录数。full 返回提取后的记录。' },
       { name: 'enterpriseId', in: 'query', schema: { type: 'integer' }, description: '只看有关系归到该企业的查询。' },
       {
         name: 'status',
@@ -36,14 +36,13 @@ defineRouteMeta({
         schema: { type: 'string', enum: ['success', 'failed', 'no_record', 'not_queried', 'partial'] },
         description: '平台查询状态。**失败 ≠ 无记录**,四态各自取值。',
       },
-      { name: 'includeRawResponse', in: 'query', schema: { type: 'string', enum: ['true', 'false'] }, description: '`true` 时带出原始响应原文(默认不带,控制体量)。' },
       { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
       { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 25 } },
     ],
     responses: {
-      200: { description: '分页查询与全部关系(rows[{query,relations}]/total/page/pageSize/counts)。query.collectionEvidence 为原采集结果（旧记录 null）；relations 含原 rawFields、sourceRdjb/sourcePage 及真实查询/关系 id。完整转存/读回契约见 lib/platform/recognized-evidence.ts。' },
-      400: { description: 'interface / status 取值非法。' },
-      413: { description: '完整证据超出单查询4MiB或单页8MiB原档字节预算；使用 summary 和按ID分段取证，不会静默截断。' },
+      200: { description: '分页查询与提取后的记录（rows[{query,relations}]/total/page/pageSize/counts）。查询 ID 和记录 ID 可用于定位历史来源。' },
+      400: { description: '查询条件无效。' },
+      413: { description: '返回的提取记录超出读取上限，可按查询 ID 缩小范围，或用 summary 读取查询历史。' },
     },
   },
 })
@@ -80,7 +79,8 @@ export default defineEventHandler((event) => {
   const queryId = q.queryId != null ? Number(q.queryId) : undefined
   if (queryId != null && (!Number.isSafeInteger(queryId) || queryId < 1)) throw createError({ statusCode: 400, statusMessage: 'queryId must be a positive integer' })
   const view = str(q.view)
-  if ((view && view !== 'full' && view !== 'summary') || (view === 'summary' && q.includeRawResponse === 'true')) throw createError({ statusCode: 400, statusMessage: 'Invalid view or includeRawResponse combination' })
+  if (q.view !== undefined && view !== 'full' && view !== 'summary') throw createError({ statusCode: 400, statusMessage: 'Invalid view' })
+  if (q.includeRawResponse !== undefined) throw createError({ statusCode: 400, statusMessage: 'Unsupported query parameter: includeRawResponse' })
 
   const filter: PlatformQueryFilter = {
     queryId,
@@ -93,7 +93,6 @@ export default defineEventHandler((event) => {
     status: status as (typeof STATUSES)[number] | undefined,
     page: Math.max(1, Math.floor(num(q.page, 1))),
     pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25)))),
-    includeRawResponse: q.includeRawResponse === 'true',
   }
   const postgres = usePostgresDirectoryDb()
   return readPostgresPlatformQueries(postgres, filter)

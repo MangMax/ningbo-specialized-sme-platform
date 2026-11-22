@@ -1,6 +1,6 @@
 /** HTTP submission validates methods, authorization and the shared import envelope. */
 import { readApiToken, resolveApiAuth, unauthorizedApiMessage } from '../../../core/server/utils/api-auth'
-import { hasOfficialFactInput, validateImportRequest } from './roster-import-model'
+import { hasOfficialFactInput, validateImportRequest, validateNativeImportRequest } from './roster-import-model'
 import { runPostgresMixedImport } from './roster-mixed-import-postgres'
 import { ImportReceiptError } from './import-receipt-model'
 import { appLog, type LogContext } from '../../../core/lib/logging'
@@ -49,7 +49,7 @@ export function authorizeRosterWrite(
 export type ImportContext = { apiToken: string | null | undefined; filesDir?: string; logContext?: LogContext }
 
 export function handlePostgresRosterImportRequest(action: RosterImportAction, request: RosterHttpRequest, deps: ImportContext) {
-  return handleImportSubmission(action, request, deps, input => runPostgresMixedImport(action, input, deps.filesDir, deps.logContext))
+  return handleImportSubmission(action, request, deps, input => runPostgresMixedImport(action, input, deps.filesDir, deps.logContext), validateNativeImportRequest)
 }
 
 export async function handleImportSubmission(
@@ -57,6 +57,7 @@ export async function handleImportSubmission(
   request: RosterHttpRequest,
   deps: ImportContext,
   perform: (input: Parameters<typeof runPostgresMixedImport>[1]) => Promise<unknown>,
+  validate = validateImportRequest,
 ): Promise<RosterHttpResponse> {
   if (request.method !== 'POST') {
     return json(405, { message: `本端点是 POST：/api/roster/import/${action}` })
@@ -68,7 +69,7 @@ export async function handleImportSubmission(
     return { status: auth.status, headers: auth.headers, body: auth.body }
   }
 
-  const validated = validateImportRequest(request.body)
+  const validated = validate(request.body)
   if (!validated.ok) {
     appLog({ module: 'sme-roster', source: 'import', operation: `import.submission.${action}`, outcome: 'denied', errorCode: 'invalid_import_request' }, deps.logContext)
     return json(validated.status, { message: validated.message })

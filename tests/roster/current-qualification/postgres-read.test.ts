@@ -1,7 +1,9 @@
-import { readEffectiveQualifications } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { createCurrentQualificationAssessmentReader, readEffectiveQualifications } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { readPostgresCurrentWorkbookBatch } from '../../../layers/sme-roster/lib/roster/current-qualification-postgres'
 import { listCurrentQualified, type CurrentQualifiedFilter } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
 import { listPostgresCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query-postgres'
 import { expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
@@ -123,6 +125,16 @@ it.runIf(!!connectionString)('preserves three-title decisions and the public eff
       }
       expect(await readPostgresQueryCoverage(tx, subjects, titles)).toEqual(expectedCoverage)
       expect((await readPostgresRecognizedWitnesses(tx, witnessInput.relationIds))(witnessInput)).toEqual(expectedWitnesses)
+      const workbookIds = [giant.enterprise.id, platformOnly.id]
+      const workbook = await readPostgresCurrentWorkbookBatch(tx, workbookIds, 'specialized_sme', asOf)
+      const originalWorkbook = sqlite.sqlite.transaction(() => createCurrentQualificationAssessmentReader(sqlite.sqlite)
+        .readWorkbookRowsBatch(workbookIds, asOf, 'specialized_sme'))()
+      for (const [index, id] of workbookIds.entries()) {
+        const original = originalWorkbook[index]!
+        expect(workbook.get(id)?.workbookPublished).toEqual(original.workbookPublished)
+        expect(workbook.get(id)?.rows[0]?.assessment?.effectiveQualification)
+          .toEqual(original.rows.find(row => row.assessment?.titleCode === 'specialized_sme')?.assessment?.effectiveQualification)
+      }
       expect(await readPostgresEffectiveQualifications(tx, 999, asOf)).toBeNull()
       expect(await readPostgresEffectiveQualifications(tx, empty.id, asOf)).toEqual([])
       const qualification = await readPostgresCurrentQualification(tx, giant.enterprise.id, asOf)
@@ -198,8 +210,9 @@ async function copyQualificationsFixture(client: pg.Client, sqlite: ReturnType<t
     'platform_recognized_projection', 'platform_business_projection', 'platform_apply_projection',
     'platform_observation_assignment', 'platform_legacy_query_alias', 'platform_legacy_relation_alias',
     'platform_collection_page', 'platform_collection_condition', 'platform_collection_unfinished',
-    'platform_query_title_scope', 'platform_collection_archive_ref', 'platform_observation_archive_ref', 'platform_archive_value',
-    'platform_business_record', 'record_correspondence', 'difference_reason', 'title', 'platform_export_row', 'platform_export_batch',
+    'platform_query_title_scope', 'platform_collection_legacy_provenance', 'platform_collection_archive_ref', 'platform_observation_archive_ref', 'platform_archive_value',
+    'platform_business_record', 'platform_business_record_version', 'record_correspondence', 'difference_reason',
+    'title', 'platform_export_row', 'platform_export_batch',
     'service_credential',
   ]
   for (const table of tables) {
@@ -229,4 +242,26 @@ async function copyQualificationsFixture(client: pg.Client, sqlite: ReturnType<t
       await client.query(`insert into "${table}" values (${fields.map((_, i) => '$' + (i + 1)).join(', ')})`, row)
     }
   }
+  await client.query(`
+    ALTER TABLE platform_collection ADD COLUMN source_coverage jsonb, ADD COLUMN raw_response_sha256 text,
+      ADD COLUMN reusable_content_sha256 text, ADD COLUMN public_id bigint,
+      ADD COLUMN condition_facts jsonb, ADD COLUMN unfinished_positions jsonb NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE platform_business_observation ADD COLUMN relation_facts jsonb, ADD COLUMN business_fields jsonb,
+      ADD COLUMN public_id bigint;
+    ALTER TABLE platform_business_record_version ADD COLUMN business_fields jsonb;
+    UPDATE platform_collection c SET public_id=q.old_id FROM platform_legacy_query_alias q WHERE c.id=q.collection_id;
+    UPDATE platform_business_observation o SET public_id=r.old_id FROM platform_legacy_relation_alias r WHERE o.id=r.observation_id;
+    DROP TABLE platform_legacy_query_alias,platform_legacy_relation_alias;
+  `)
+  const sqlFixture = (script: string) => readFileSync(new URL('../../../db/postgresql/' + script, import.meta.url), 'utf8')
+  for (const script of ['platform-business-facts-columns.sql', 'platform-observation-snapshot.sql',
+    'platform-business-facts-backfill.sql', 'platform-offline-read-facts.sql']) {
+    await client.query(sqlFixture(script).replace('\\ir platform-legacy-coverage.sql', () => sqlFixture('platform-legacy-coverage.sql'))
+      .replace('\\ir platform-version-business-fields-projection.sql',
+      () => sqlFixture('platform-version-business-fields-projection.sql')))
+  }
+  const scopeBackfill = readFileSync(new URL('../../../upgrade/postgresql/backfill-platform-collection-scope.sql', import.meta.url), 'utf8')
+  await client.query(scopeBackfill.split('\\gexec')[1]!.replaceAll(':"scope_source"', 'business').replaceAll(':"target"', 'business'))
+  await client.query('DROP TABLE platform_collection_condition, platform_collection_unfinished')
+  await client.query('DROP FUNCTION platform_observation_snapshot(bigint, bytea); DROP TABLE platform_collection_legacy_provenance, platform_collection_archive_ref, platform_observation_archive_ref, platform_archive_value')
 }

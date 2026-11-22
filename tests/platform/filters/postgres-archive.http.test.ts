@@ -51,7 +51,6 @@ let pgClient: pg.Client
 const recordIds = new Map<NativeSource, number>()
 const isolatedIds = new Map<NativeSource, { text: number; blob: number }>()
 const rawArchive = '工信部原始响应🙂\n第二行'
-let evidenceCoordinates: { queryId: number; relationId: number }
 let reassignedCoordinates: { queryId: number; relationId: number; enterpriseId: number }
 let snapshotIds: { from: number; to: number; other: number }
 const capturedProjections = {
@@ -99,12 +98,6 @@ function installSqliteOracleAdapters() {
     return { ...actual, readPostgresPlatformQueries: async (db, filter) =>
       backend === 'sqlite' ? listPlatformQueries(fixture.db, filter) : actual.readPostgresPlatformQueries(db, filter) }
   })
-  vi.doMock(import('../../../layers/sme-roster/lib/platform/postgres-evidence-read'), async importOriginal => {
-    const actual = await importOriginal()
-    const { readPlatformQueryEvidence } = await import('../../../layers/sme-roster/lib/platform/evidence-read')
-    return { ...actual, readPostgresPlatformEvidence: async (db, input) =>
-      backend === 'sqlite' ? readPlatformQueryEvidence(fixture.db, input) : actual.readPostgresPlatformEvidence(db, input) }
-  })
   vi.doMock(import('../../../layers/sme-roster/server/utils/platform-snapshots-http-postgres'), async importOriginal => {
     const actual = await importOriginal()
     const { handlePlatformSnapshotRequest } = await import('../../../layers/sme-roster/server/utils/platform-snapshots-http')
@@ -131,7 +124,6 @@ beforeAll(async () => {
     const stored = source === 'declarations'
       ? submitNativePlatformQuery(fixture.db, { ...fixture.query(interfaceName, raw, '2'), rawResponse: rawArchive })
       : fixture.seed(interfaceName, raw, '2')
-    if (source === 'declarations') evidenceCoordinates = { queryId: stored.queryId, relationId: stored.relationIds[0]! }
     recordIds.set(interfaceName, stored.observations[0]!.recordId!)
     if (source === 'business-processes') {
       fixture.save(fixture.request('archive-review', [{
@@ -197,7 +189,6 @@ beforeAll(async () => {
     .get('/api/platform/queries', (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default)
     .get('/api/platform/snapshots', (await import('../../../layers/sme-roster/server/api/platform/snapshots.get')).default)
     .get('/api/platform/snapshots/diff', (await import('../../../layers/sme-roster/server/api/platform/snapshots/diff.get')).default)
-    .get('/api/platform/queries/:queryId/evidence', (await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default)
   request = toWebHandler(createApp().use(router))
 }, 30_000)
 
@@ -260,77 +251,6 @@ it.skipIf(!url)('reads historical query summaries with stable pages, title scope
     handler(input: { view: 'summary'; pageSize: number }): Promise<unknown>
   }
   expect(await tool.handler({ view: 'summary', pageSize: 2 })).toEqual(first.body)
-})
-
-it.skipIf(!url)('reads original bytes and persisted relation evidence through HTTP and MCP', async () => {
-  const { queryId, relationId } = evidenceCoordinates
-  const path = `queries/${queryId}/evidence`
-  const raw = Buffer.from(rawArchive)
-  for (const offset of [0, 1, raw.length, Number.MAX_SAFE_INTEGER - 65536]) {
-    const length = 3
-    const result = await read('postgres', path, { field: 'rawResponse', offset, length })
-    expect(result).toEqual(await read('sqlite', path, { field: 'rawResponse', offset, length }))
-    expect(result).toMatchObject({ status: 200, body: { data: raw.subarray(offset, offset + length).toString('base64'), totalBytes: raw.length, isNull: false } })
-  }
-  for (const field of ['collectionEvidence', 'legacyProvenance', 'relations']) {
-    expect(await read('postgres', path, { field })).toEqual(await read('sqlite', path, { field }))
-  }
-  const relation = { field: 'relation', relationId }
-  const result = await read('postgres', path, relation)
-  const previous = await read('sqlite', path, relation)
-  expect(result.status).toBe(200)
-  expect(JSON.parse(Buffer.from(result.body.data, 'base64').toString('utf8')))
-    .toEqual(JSON.parse(Buffer.from(previous.body.data, 'base64').toString('utf8')))
-  expect(await read('postgres', path, { field: 'relation', relationId: relationId + 2_000_000 }))
-    .toMatchObject({ status: 404, body: 'Platform evidence not found' })
-  expect(await read('postgres', path, { field: 'rawResponse', length: 65537 })).toMatchObject({ status: 400 })
-  const reassigned = await read('postgres', `queries/${reassignedCoordinates.queryId}/evidence`, {
-    field: 'relation', relationId: reassignedCoordinates.relationId,
-  })
-  expect(reassigned.status).toBe(200)
-  expect(JSON.parse(Buffer.from(reassigned.body.data, 'base64').toString('utf8'))).toMatchObject({
-    enterpriseId: reassignedCoordinates.enterpriseId, matchBasis: 'manual', verificationStatus: 'confirmed',
-  })
-
-  backend = 'postgres'
-  const tool = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_query_evidence')).default as unknown as {
-    handler(input: { queryId: number; field: 'rawResponse'; length: number }): Promise<unknown>
-  }
-  expect(await tool.handler({ queryId, field: 'rawResponse', length: 3 })).toMatchObject({
-    queryId, totalBytes: raw.length, data: raw.subarray(0, 3).toString('base64'),
-  })
-})
-
-it.skipIf(!url)('returns the original byte ranges of T04 and supplemented legacy provenance', async () => {
-  const { queryId } = evidenceCoordinates
-  const { rows: [collection] } = await pgClient.query('SELECT collection_id FROM business.platform_legacy_query_alias WHERE old_id=$1', [queryId])
-  const archiveId = 9_000_000
-  const raw = Buffer.from('{ "原档": "宁波🙂" }')
-  const fields: [string, string, string | Buffer][] = [
-    ['query_id', 'integer', String(queryId)], ['source_identity', 'text', 'fixture'],
-    ['source_sha256', 'text', 'a'.repeat(64)], ['segment_index', 'integer', '0'], ['collection', 'text', raw],
-    ['input_fingerprint', 'text', 'b'.repeat(64)], ['import_batch_id', 'integer', '1'], ['created_at', 'null', ''],
-  ]
-  const envelope = Buffer.concat([Buffer.from('T04-PROVENANCE\n'), ...fields.flatMap(([name, type, value]) => {
-    const bytes = typeof value === 'string' ? Buffer.from(value) : value
-    return [Buffer.from(`${name} ${type} ${bytes.length}\n`), bytes, Buffer.from('\n')]
-  })])
-  const path = `queries/${queryId}/evidence`
-  try {
-    await pgClient.query('INSERT INTO business.platform_archive_value VALUES ($1,$2,$3,$4)', [archiveId, 'blob', envelope, envelope.length])
-    await pgClient.query("INSERT INTO business.platform_collection_legacy_provenance VALUES ($1,'t04_envelope',$2)", [collection.collection_id, archiveId])
-    await pgClient.query("INSERT INTO business.platform_collection_archive_ref VALUES ($1,'legacyProvenance',$2,1)", [collection.collection_id, archiveId])
-    const expected = { status: 200, body: { isNull: false, totalBytes: raw.length, data: raw.subarray(6, 10).toString('base64') } }
-    expect(await read('postgres', path, { field: 'legacyProvenance', offset: 6, length: 4 })).toMatchObject(expected)
-    await pgClient.query("DELETE FROM business.platform_collection_archive_ref WHERE archive_id=$1", [archiveId])
-    await pgClient.query("UPDATE business.platform_collection_legacy_provenance SET origin='supplement' WHERE archive_id=$1", [archiveId])
-    await pgClient.query("UPDATE business.platform_archive_value SET storage_class='text', bytes=$2, byte_length=$3 WHERE id=$1", [archiveId, raw, raw.length])
-    expect(await read('postgres', path, { field: 'legacyProvenance', offset: 6, length: 4 })).toMatchObject(expected)
-  } finally {
-    await pgClient.query('DELETE FROM business.platform_collection_archive_ref WHERE archive_id=$1', [archiveId])
-    await pgClient.query('DELETE FROM business.platform_collection_legacy_provenance WHERE archive_id=$1', [archiveId])
-    await pgClient.query('DELETE FROM business.platform_archive_value WHERE id=$1', [archiveId])
-  }
 })
 
 it.skipIf(!url).each(Object.keys(sources) as Source[])('%s HTTP filters and exposes the matching archived version and all history', async source => {
@@ -516,15 +436,12 @@ it.skipIf(!url)('detail bounds version and observation history while retaining u
       VALUES (10000, 'HISTORY', 'apply_list', 'rule', '2025-01-01');
     INSERT INTO business.platform_business_record_version (id, record_id, hash_algorithm, content_hash, created_at)
       SELECT 10000 + n, 10000, 'sha256', lpad(n::text, 64, '0'), '2025-01-01' FROM generate_series(1, 101) n;
-    INSERT INTO business.platform_collection (id, interface, rdjb, queried_at, query_key, status)
-      VALUES (10000, 'apply_list', '2', '2026-01-01', 'archive-history', 'success');
-    INSERT INTO business.platform_legacy_query_alias (old_id, collection_id) VALUES (20000, 10000);
-    INSERT INTO business.platform_business_observation (id, collection_id, record_id, version_id, sequence_no,
+    INSERT INTO business.platform_collection (id, public_id, interface, rdjb, queried_at, query_key, status)
+      VALUES (10000, 20000, 'apply_list', '2', '2026-01-01', 'archive-history', 'success');
+    INSERT INTO business.platform_business_observation (id, public_id, collection_id, record_id, version_id, sequence_no,
       identity_state, content_state, key_source, projection_rule_version)
-      SELECT 10000 + n, 10000, 10000, 10000 + least(n, 101), n, 'resolved', 'verified', 'both', 'rule'
+      SELECT 10000 + n, 20000 + n, 10000, 10000, 10000 + least(n, 101), n, 'resolved', 'verified', 'both', 'rule'
       FROM generate_series(1, 201) n;
-    INSERT INTO business.platform_legacy_relation_alias (old_id, observation_id)
-      SELECT 20000 + n, 10000 + n FROM generate_series(1, 201) n;
     INSERT INTO business.platform_apply_projection (id, observation_id, exact_stored_state, sql_fact_title_state)
       SELECT 10000 + n, 10000 + n, 'captured', 'captured' FROM generate_series(1, 201) n;
   `)

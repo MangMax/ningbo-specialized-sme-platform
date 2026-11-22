@@ -2,7 +2,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { and, count, desc, eq, sql } from 'drizzle-orm'
 import type * as schema from '../../../../db/schema'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
-import { platformCollection, platformLegacyQueryAlias } from '../../../../db/postgresql/platform-tables'
+import { platformCollection } from '../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import { readPostgresQueryAssessments } from '../../lib/roster/query-assessment-postgres'
 import type { QueryAssessment } from '../../lib/roster/query-assessment'
@@ -112,11 +112,10 @@ export async function listPostgresDifferences(db: NodePgDatabase, input: ListDif
       status: head.status, reasonCode: head.reasonCode, measureCode: head.measureCode, verificationStatus: head.verificationStatus,
       recordedAt: head.recordedAt, factReferences: head.factReferences, movedInCity: head.movedInCity,
       movedInTitleCode: head.movedInTitleCode, movedInYear: head.movedInYear, movedInBatch: head.movedInBatch,
-      queryId: platformLegacyQueryAlias.oldId, queriedAt: platformCollection.queriedAt,
+      queryId: platformCollection.publicId, queriedAt: platformCollection.queriedAt,
       queryInterface: platformCollection.interface, queryStatus: platformCollection.status,
     }).from(head).innerJoin(enterprise, eq(enterprise.id, head.enterpriseId))
       .leftJoin(platformCollection, eq(platformCollection.id, head.evidenceQueryId))
-      .leftJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformCollection.id))
       .where(scope)
       // Drizzle 0.45 has no expression-level collation modifier.
       .orderBy(head.enterpriseId, sql`${head.titleCode} COLLATE "C"`, sql`${head.direction} COLLATE "C"`)

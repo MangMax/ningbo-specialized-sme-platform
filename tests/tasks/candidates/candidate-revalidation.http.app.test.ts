@@ -9,6 +9,7 @@ import pg from 'pg'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { record, recordEvent } from '../../../db/postgresql/ledger-tables'
+import { platformCollection } from '../../../db/postgresql/platform-tables'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { spawnOwnedChild, spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
@@ -69,7 +70,7 @@ async function save(request: ReturnType<typeof command>) {
 }
 async function source() {
   const native = await seedPostgresPlatformQuery(db, { interface: 'business_list', titleCode: 'specialized_sme', rdjb: '2', queryKey: owner.usccNorm!, queriedAt: `2026-01-01T00:00:${String(++serial).padStart(2, '0')}Z`, status: 'success', rawResponse: 'Explicit synthetic candidate source', relations: [{ sequenceNo: 1, enterpriseId: owner.id, usccRaw: owner.usccNorm, verificationStatus: 'confirmed', rawFields: { original: '旧原值', number: 7 } }] })
-  return { edge: { type: 'event_process', eventId: event.id, relationId: native.relationIds[0]!, role: 'context_only' } }
+  return { queryId: native.queryId, edge: { type: 'event_process', eventId: event.id, relationId: native.relationIds[0]!, role: 'context_only' } }
 }
 async function changeEventYear() {
   await db.update(recordEvent).set({ year: sql`${recordEvent.year} + 1` })
@@ -88,8 +89,9 @@ it.each(['confirmed', 'rejected'])('revalidates stale candidate then explicitly 
   expect(audit).toHaveLength(2)
   expect(audit[0]).toEqual(oldAudit[0])
   expect(audit[1].evidence.event.year).toBe(audit[0].evidence.event.year + 1)
-  expect(audit[0].evidence.relation.rawFields).toEqual({ original: '旧原值', number: 7 })
-  expect(audit[1]).toMatchObject({ fromStatus: 'candidate', toStatus: 'candidate', expectedRevision: 1, resultingRevision: 2, evidence: { relation: { rawFields: { original: '旧原值', number: 7 } } } })
+  expect(audit[0].evidence.relation).toMatchObject({ id: edge.relationId, usccRaw: owner.usccNorm, sequenceNo: 1 })
+  expect(audit[1]).toMatchObject({ fromStatus: 'candidate', toStatus: 'candidate', expectedRevision: 1, resultingRevision: 2, evidence: { relation: audit[0].evidence.relation } })
+  expect(audit[1].evidence.relation).not.toHaveProperty('rawFields')
   expect(await api('/commit', { request: refreshed.request, planHash: refreshed.plan.planHash })).toEqual({ status: 200, body: refreshed.receipt })
   expect((await api(`/${id}/audit`)).body.rows).toHaveLength(2)
   await save(command([{ action: 'decide', correspondenceId: id, expectedRevision: 2, status }]))
@@ -113,6 +115,22 @@ it('rejects changed source after preflight and stale revisions without altering 
   expect((await api('/preflight', { ...recovered.request, basis: '同键改载荷' })).body.error.code).toBe('idempotency_conflict')
   expect((await api('/preflight', command([{ action: 'revalidate', correspondenceId: id, expectedRevision: 2 }]))).status).toBe(422)
   expect((await api(`/${id}/audit`)).body.rows).toHaveLength(2)
+})
+it('binds a pending candidate decision to its captured query digest', async () => {
+  const { edge, queryId } = await source()
+  const created = await save(command([{ action: 'create', status: 'candidate', edge }]))
+  const id = created.receipt.correspondenceIds[0]
+  const request = command([{ action: 'decide', correspondenceId: id, expectedRevision: 1, status: 'confirmed' }])
+  const plan = await api('/preflight', request)
+  expect(plan.status).toBe(200)
+
+  await db.update(platformCollection).set({ rawResponseSha256: 'a'.repeat(64) })
+    .where(eq(platformCollection.publicId, queryId))
+
+  expect((await api(`/${id}`)).body).toMatchObject({ status: 'candidate', revision: 1, requiresRevalidation: true })
+  expect((await api('/commit', { request, planHash: plan.body.planHash })).status).toBe(409)
+  expect((await api(`/${id}/audit`)).body.rows).toHaveLength(1)
+  expect(await api('/commit', { request: created.request, planHash: created.plan.planHash })).toEqual({ status: 200, body: created.receipt })
 })
 it('keeps confirmed revalidation and rejected reproposal compatible', async () => {
   const { edge } = await source()

@@ -69,18 +69,16 @@ describe.skipIf(!bin)('PostgreSQL roster identity discovery over HTTP', () => {
       INSERT INTO platform_export_row (batch_id,source_row_no,uscc_raw,name_raw,created_at) VALUES
         (1,1,NULL,'宁波历史移除有限公司','2024-01-01'),
         (2,2,'${code}','宁波金叶机械集团有限公司','2025-01-01');
-      INSERT INTO platform_collection (id,interface,query_key,rdjb,queried_at,created_at,status,completeness,provenance_state,parse_state,rule_version) VALUES
-        (10,'business_list',U&'\\200B${code.toLowerCase()}\\3000','3','2024-01-01','2024-01-01','success','complete','captured','valid','fixture'),
-        (11,'apply_list','${code}','','2025-01-01','2025-01-01','success','complete','captured','valid','fixture'),
-        (12,'apply_list','name:${oldName}','','2025-02-01','2025-02-01','partial','partial','captured','valid','fixture');
-      INSERT INTO platform_legacy_query_alias VALUES (110,10),(111,11),(112,12);
+      INSERT INTO platform_collection (id,public_id,interface,query_key,rdjb,queried_at,created_at,status,completeness,provenance_state,parse_state,rule_version) VALUES
+        (10,110,'business_list',U&'\\200B${code.toLowerCase()}\\3000','3','2024-01-01','2024-01-01','success','complete','captured','valid','fixture'),
+        (11,111,'apply_list','${code}','','2025-01-01','2025-01-01','success','complete','captured','valid','fixture'),
+        (12,112,'apply_list','name:${oldName}','','2025-02-01','2025-02-01','partial','partial','captured','valid','fixture');
       INSERT INTO platform_business_observation
-        (id,collection_id,sequence_no,source_relation_key,position_state,identity_state,content_state)
-        VALUES (100,10,1,'wrong-code','unknown','not_indexed','not_indexed'),
-          (101,10,2,'original-authority','unknown','not_indexed','not_indexed'),
-          (102,11,1,'later-query','unknown','not_indexed','not_indexed'),
-          (103,12,1,'name-trace','unknown','not_indexed','not_indexed');
-      INSERT INTO platform_legacy_relation_alias VALUES (210,100),(211,101),(212,102),(213,103);
+        (id,public_id,collection_id,sequence_no,source_relation_key,position_state,identity_state,content_state)
+        VALUES (100,210,10,1,'wrong-code','unknown','not_indexed','not_indexed'),
+          (101,211,10,2,'original-authority','unknown','not_indexed','not_indexed'),
+          (102,212,11,1,'later-query','unknown','not_indexed','not_indexed'),
+          (103,213,12,1,'name-trace','unknown','not_indexed','not_indexed');
       INSERT INTO platform_observation_assignment (observation_id,revision,match_basis,verification_status,uscc_raw,name_raw,origin) VALUES
         (100,1,'none','pending','91330110MA2GMDFH58','${oldName}','migrated_current'),
         (101,1,'none','pending','${code}','${oldName}','migrated_current'),

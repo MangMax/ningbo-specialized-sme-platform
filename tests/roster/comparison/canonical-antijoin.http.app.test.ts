@@ -80,13 +80,8 @@ it('actual Nuxt preserves full summary differences and MCP evidence with canonic
     const rich = await get('/api/comparison?q=M2R')
     expect(await get('/api/comparison?view=full&q=M2R')).toEqual(rich)
     expect(rich.rows).toHaveLength(9)
-    const originals: string[] = []
-    for (const query of rich.rows[0].platform.queries) {
-      const original = await get(`/api/platform/queries/${query.id}/evidence?field=rawResponse`)
-      expect(original.hasMore).toBe(false)
-      originals.push(Buffer.from(original.data, 'base64').toString('utf8'))
-    }
-    expect(originals.sort()).toEqual(['SYNTHETIC_RAW_ONLY', 'SYNTHETIC_TIED'])
+    expect(rich.rows[0].platform.queries).toHaveLength(2)
+    expect(JSON.stringify(rich.rows[0].platform)).not.toMatch(/SYNTHETIC_RAW_ONLY|SYNTHETIC_TIED/)
     expect(rich.rows[0].platform.queries.flatMap((q: { relations: unknown[] }) => q.relations)).toHaveLength(2)
     expect(rich.rows[0].platform.disposition).toMatchObject({ status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review' })
     // ACK is the actual API transaction receipt, then the retained child must

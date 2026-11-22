@@ -74,7 +74,6 @@ export default defineAppModule({
     'get_platform_business_process',
     'get_platform_capabilities',
     'get_platform_declaration',
-    'get_platform_query_evidence',
     'get_platform_recognized_record',
     'get_record_correspondence',
     'get_record_correspondence_audit',

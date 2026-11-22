@@ -28,10 +28,9 @@ beforeAll(async () => {
 }, 45_000)
 beforeEach(async () => {
   await db.execute(sql`
-    TRUNCATE enterprise, record_event, record_evidence, platform_collection, platform_archive_value,
+    TRUNCATE enterprise, record_event, record_evidence, platform_collection,
       platform_business_record, import_batch,
-      record_correspondence, record_correspondence_audit, difference_reason,
-      evidence_review_receipt_114 RESTART IDENTITY CASCADE
+      record_correspondence, record_correspondence_audit, difference_reason RESTART IDENTITY CASCADE
   `)
 })
 afterAll(async () => {

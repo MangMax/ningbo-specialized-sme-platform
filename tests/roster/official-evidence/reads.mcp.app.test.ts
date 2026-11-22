@@ -385,9 +385,8 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
     expect(archived.status, JSON.stringify(archived.body)).toBe(200)
     expect(archived.body).toMatchObject({ status: 'committed' })
     const archiveCoordinates = z.object({ queryId: z.number().int().positive(), relationId: z.number().int().positive() })
-      .parse(await firstRow(`SELECT q.old_id::int AS "queryId",r.old_id::int AS "relationId" FROM platform_legacy_query_alias q
-        JOIN platform_collection c ON c.id=q.collection_id JOIN platform_business_observation o ON o.collection_id=c.id
-        JOIN platform_legacy_relation_alias r ON r.observation_id=o.id WHERE c.query_key=$1 AND c.queried_at=$2`, event.uscc, archivedAt))
+      .parse(await firstRow(`SELECT c.public_id::int AS "queryId",o.public_id::int AS "relationId" FROM platform_collection c
+        JOIN platform_business_observation o ON o.collection_id=c.id WHERE c.query_key=$1 AND c.queried_at=$2`, event.uscc, archivedAt))
 
     const refresh = await http('/api/roster/differences/refresh', { enterpriseIds: [firstOwner.id] })
     expect(refresh.status, JSON.stringify(refresh.body)).toBe(200)
@@ -833,18 +832,16 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
     const sourceArchive = await http('/api/roster/import/commit', archiveRequest)
     expect(sourceArchive.status, JSON.stringify(sourceArchive.body)).toBe(200)
     expect(sourceArchive.body).toMatchObject({ status: 'committed', summary: archiveReceipt.summary })
-    const originalRows = run('psql', ['-X','-w','-Atc', `SELECT c.interface, q.old_id, a.old_id, octet_length(v.bytes)
-      FROM business.platform_collection c JOIN business.platform_legacy_query_alias q ON q.collection_id=c.id
-      JOIN business.platform_business_observation o ON o.collection_id=c.id JOIN business.platform_legacy_relation_alias a ON a.observation_id=o.id
-      JOIN business.platform_observation_archive_ref r ON r.owner_id=o.id AND r.field='rawFields' AND r.sealed=1
-      JOIN business.platform_archive_value v ON v.id=r.archive_id WHERE o.source_relation_key LIKE 'pg-new-%' ORDER BY c.interface`]).toString().trim().split('\n')
-    expect(originalRows.map(row => row.split('|')[0])).toEqual(['apply_list', 'business_list', 'recognized_list'])
+    const sourceIdentities = run('psql', ['-X','-w','-Atc', `SELECT c.interface, c.public_id, o.public_id
+      FROM business.platform_collection c JOIN business.platform_business_observation o ON o.collection_id=c.id
+      WHERE o.source_relation_key LIKE 'pg-new-%' ORDER BY c.interface`]).toString().trim().split('\n')
+    expect(sourceIdentities.map(row => row.split('|')[0])).toEqual(['apply_list', 'business_list', 'recognized_list'])
     const conflict = structuredClone(archiveRequest)
     conflict.idempotencyKey = 'native-conflicting-archive'
     conflict.payload.platformQueries[0]!.rawResponse = '{"replacement":true}'
     const rejectedArchive = await stage(conflict)
     expect(await rejectedArchive.json()).toMatchObject({ status: 'failed', items: [expect.objectContaining({
-      error: expect.objectContaining({ code: 'query_payload_conflict' }),
+      error: expect.objectContaining({ code: 'query_replay_offline' }),
     })] })
     expect(await nativeTool('save_roster_batch', archiveRequest)).toMatchObject({ isError: false, body: { status:'committed', batchId: archiveReceipt.batchId } })
 
@@ -1008,17 +1005,11 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
     const provenance = { idempotencyKey:'native-legacy-page-provenance',sourceKind:'platform_archive',
       sourceIdentity:'synthetic-legacy-pages.json',payload:{platformLegacyProvenance:[provenanceInput]} }
     const legacyPlanResponse = await app.request('/api/roster/import/preflight',{method:'POST',body:JSON.stringify(provenance)})
-    expect(await legacyPlanResponse.json()).toMatchObject({ status:'preflight',preflight:{add:1,conflicts:[],
-      platformLegacyProvenanceSources:[{queryId,inputFingerprint:expect.stringMatching(/^[a-f0-9]{64}$/)}],
-    } })
-    const provenanceResponse = await stage(provenance)
-    const provenanceReceipt = await provenanceResponse.json()
-    expect(provenanceReceipt).toMatchObject({status:'committed',summary:{written:1},
-      items:[{kind:'platform_legacy_provenance',detail:{typedState:'unknown',relationCount:1}}] })
-    const legacyArchive = await nativeTool('get_platform_query_evidence',{queryId,field:'legacyProvenance'})
-    expect(legacyArchive).toMatchObject({isError:false,body:{data:Buffer.from(JSON.stringify(pagination)).toString('base64'),hasMore:false}})
-    const repeatProvenance = await stage({...provenance,idempotencyKey:'native-legacy-page-repeat'})
-    expect(await repeatProvenance.json()).toMatchObject({status:'committed',summary:{written:0,skipped:1}})
+    expect(legacyPlanResponse.status).toBe(400)
+    expect(await legacyPlanResponse.text()).toContain('platformLegacyProvenance 已停用')
+    expect((await stage(provenance)).status).toBe(400)
+    const history = await nativeTool('list_platform_queries', { queryId })
+    expect(history).toMatchObject({ isError: false, body: { rows: [{ query: { id: queryId }, relations: [{ relationKey: legacyRow.id }] }] } })
 
   } finally {
     await app.close()

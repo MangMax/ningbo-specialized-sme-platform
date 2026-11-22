@@ -10,7 +10,7 @@ import { nativeCatalogFixture } from '../../platform/fixtures/native-catalog'
 
 const connection = process.env.TEST_ROSTER_PG19_DATABASE
 
-test.runIf(Boolean(connection))('loads linked roster and platform evidence with exact bytes, protects it, and rejects replay', () => {
+test.runIf(Boolean(connection))('loads linked roster facts, keeps platform bytes offline and rejects replay', () => {
   const workspace = mkdtempSync(join(tmpdir(), 'roster-materialization-'))
   const suffix = randomUUID().replaceAll('-', '')
   const staging = 'roster_stage_' + suffix
@@ -44,10 +44,15 @@ test.runIf(Boolean(connection))('loads linked roster and platform evidence with 
           status,completeness,provenance_state,parse_state,rule_version)
           VALUES (41,'recognized_list','企业甲','','2025-01-01','2025-01-01',
             'success','complete','captured','valid','fixture');
+        INSERT INTO platform_legacy_query_alias(old_id,collection_id) VALUES (42,41);
         INSERT INTO platform_collection_condition(collection_id,name,value_kind)
           VALUES (41,'rddqrq','absent');
+        INSERT INTO platform_collection_condition(collection_id,name,value_kind,text_value)
+          VALUES (41,'combination','text','and');
+        INSERT INTO platform_collection_unfinished(collection_id,ordinal,source,rdjb,page_no)
+          VALUES (41,8,'queryBusList','3',2), (41,2,'queryBusList','2',NULL);
         UPDATE platform_collection_condition SET witness_kind='text', witness_value=' 01 '
-          WHERE collection_id=41;
+          WHERE collection_id=41 AND name='rddqrq';
       `)
       sqlite.exec("INSERT INTO import_batch(id,idempotency_key,source_kind,source_identity,status,created_at) VALUES(59,'raw-capture','announcement','fixture','committed','2025-01-01')")
       sqlite.prepare(`INSERT INTO official_evidence_row_revision(
@@ -82,11 +87,22 @@ test.runIf(Boolean(connection))('loads linked roster and platform evidence with 
       JOIN ${target}.record_evidence v ON v.record_event_id=e.id
       JOIN ${target}.roster_file_classification c ON c.title_code=r.title_code`))
       .toBe('7|17|29|2024|37| 附件一 |9')
-    expect(query(`SELECT r.owner_id,a.id,a.storage_class,encode(a.bytes,'hex'),
-      c.witness_value_sqlite_storage,encode(c.witness_value,'hex')
-      FROM ${target}.platform_archive_value a JOIN ${target}.platform_collection_archive_ref r ON a.id=r.archive_id
-      JOIN ${target}.platform_collection_condition c ON c.collection_id=r.owner_id`))
-      .toBe('41|47|blob|00ff0d0a|text|20303120')
+    expect(query(`SELECT id, public_id, raw_response_sha256 FROM ${target}.platform_collection`))
+      .toBe('41|42|' + createHash('sha256').update(Buffer.from('00ff0d0a', 'hex')).digest('hex'))
+    const scope = JSON.parse(query(`SELECT json_build_object('conditions',condition_facts,'unfinished',unfinished_positions)
+      FROM ${target}.platform_collection WHERE id=41`))
+    expect(scope).toEqual({
+      conditions: { values: { combination: { kind: 'text', value: 'and' } },
+        witnesses: { rddqrq: { kind: 'text', storage: 'text', bytes: 'IDAxIA==' } } },
+      unfinished: [
+        { ordinal: 2, source: 'queryBusList', rdjb: '2', pageNo: null },
+        { ordinal: 8, source: 'queryBusList', rdjb: '3', pageNo: 2 },
+      ],
+    })
+    expect(query(`SELECT to_regclass('${target}.platform_collection_condition') IS NULL AND
+      to_regclass('${target}.platform_collection_unfinished') IS NULL`)).toBe('t')
+    expect(query(`SELECT to_regclass('${target}.platform_archive_value') IS NULL`)).toBe('t')
+    expect(query(`SELECT encode(bytes,'hex') FROM ${staging}.platform_archive_value WHERE id=47`)).toBe('00ff0d0a')
     const migratedRaw = query(`SELECT json_build_object(
       'nameRaw', coalesce(name_raw_json::json, to_json(name_raw)),
       'usccRaw', coalesce(uscc_raw_json::json, to_json(uscc_raw)),
@@ -100,9 +116,8 @@ test.runIf(Boolean(connection))('loads linked roster and platform evidence with 
       expect(result.status).not.toBe(0)
       expect(result.stderr).toContain(error)
     }
-    rejected(`UPDATE ${target}.platform_archive_value SET bytes='\\x01020304' WHERE id=47`, 'append-only')
-    rejected(`UPDATE ${target}.platform_collection_condition SET witness_value=convert_to('changed','UTF8')
-      WHERE collection_id=41 AND name='rddqrq'`, 'append-only')
+    rejected(`UPDATE ${target}.platform_collection SET condition_facts = condition_facts - 'witnesses'
+      WHERE id=41`, 'witnesses are immutable')
     rejected(`INSERT INTO ${target}.record_event(record_id,event_type) VALUES(999,'award')`, 'foreign key constraint')
     query(`INSERT INTO ${target}.enterprise_merge VALUES (7,8)`)
     expect(query(`SELECT enterprise_id FROM ${target}.roster_legacy_member ORDER BY enterprise_id`)).toBe('7\n8')

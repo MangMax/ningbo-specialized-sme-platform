@@ -173,19 +173,10 @@ describe('independent legacy provenance', () => {
     expect(protectedRows()).toEqual(before)
   })
 
-  it('discovers explicit source locks on REST and MCP without claiming typed evidence', () => {
+  it('keeps the offline validation schema out of live REST and MCP discovery', () => {
     const mcp = z.toJSONSchema(rosterImportMcpPayloadSchema, { io: 'input' }) as any
     const rest = ['preflight', 'commit'].map(action => JSON.parse(readFileSync(new URL(`../../../layers/sme-roster/server/api/roster/import/${action}.post.ts`, import.meta.url), 'utf8').match(/payload: (\{\n[\s\S]*?\n\}),/)![1]!))
-    for (const payload of [mcp, ...rest]) {
-      expect(payload.properties.platformLegacyProvenance).toMatchObject({ type: 'array', minItems: 1, maxItems: 100, items: { additionalProperties: false, required: expect.arrayContaining(['queryId', 'interface', 'queryKey', 'rdjb', 'queriedAt', 'sourceSha256', 'segmentIndex', 'collection', 'relations']) } })
-    }
-    for (const payload of [mcp, ...rest]) {
-      const fields=payload.properties.platformLegacyProvenance.items.properties
-      expect(fields.collection.properties.source.enum ?? [fields.collection.properties.source.const]).toEqual(['businessList'])
-      expect(fields.collection.properties).not.toHaveProperty('rawData')
-      expect(fields.collection.properties).not.toHaveProperty('dataRows')
-      expect(fields.relations.maxItems).toBe(5000)
-    }
+    for (const payload of [mcp, ...rest]) expect(payload.properties).not.toHaveProperty('platformLegacyProvenance')
     expect(legacyPlatformProvenanceItemsSchema.safeParse([fixture().input]).success).toBe(true)
   })
 

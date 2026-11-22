@@ -3,7 +3,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { z } from 'zod'
 import { alias, QueryBuilder } from 'drizzle-orm/pg-core'
 import { enterprise } from '../../../../../db/postgresql/enterprise-tables'
-import { platformLegacyQueryAlias, platformLegacyRelationAlias } from '../../../../../db/postgresql/platform-tables'
+import { platformCollection, platformBusinessObservation } from '../../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../../db/postgresql/roster-selection-tables'
 import { type currentDecision102 } from '../decision-lifecycle-102'
 import { DecisionError102, publicVersion102, type decisionHistory102 } from '../decision-lifecycle-102/contract'
@@ -15,11 +15,11 @@ const p = alias(differenceReason, 'p')
 const decisionColumns = getTableColumns(p)
 const jsonFields = new Set(['actor', 'currentQualification', 'factReferences'])
 const qb = new QueryBuilder()
-const aliasOf = {
-  evidenceQueryId: qb.select({ id: platformLegacyQueryAlias.oldId }).from(platformLegacyQueryAlias)
-    .where(eq(platformLegacyQueryAlias.collectionId, p.evidenceQueryId)),
-  evidenceRelationId: qb.select({ id: platformLegacyRelationAlias.oldId }).from(platformLegacyRelationAlias)
-    .where(eq(platformLegacyRelationAlias.observationId, p.evidenceRelationId)),
+const publicIdOf = {
+  evidenceQueryId: qb.select({ id: platformCollection.publicId }).from(platformCollection)
+    .where(eq(platformCollection.id, p.evidenceQueryId)),
+  evidenceRelationId: qb.select({ id: platformBusinessObservation.publicId }).from(platformBusinessObservation)
+    .where(eq(platformBusinessObservation.id, p.evidenceRelationId)),
 }
 
 // Field order is part of persisted qualification assessment hashes.
@@ -30,7 +30,7 @@ const differencePublicFieldOrder = [
 export function postgresDifferenceRow(keys = differencePublicFieldOrder) {
   const fields = keys.map(key => {
     let value: SQL
-    if (key === 'evidenceQueryId' || key === 'evidenceRelationId') value = sql`(${aliasOf[key]})`
+    if (key === 'evidenceQueryId' || key === 'evidenceRelationId') value = sql`(${publicIdOf[key]})`
     else {
       const field = key as keyof typeof decisionColumns
       value = sql`${decisionColumns[field]}`

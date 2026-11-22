@@ -7,7 +7,7 @@ import { announcementValues, readPostgresAnnouncementEvents, readPostgresAnnounc
 import type { RosterImportItemResult, RosterImportPreflight, RosterImportRequest } from '../../lib/roster-import-client'
 import { advancePostgresOfficialEventRevision } from './evidence-revision-postgres'
 import { lockPostgresFilePaths, refreshPostgresDerivedFileParts } from './file-parts-postgres'
-import { ambiguousAnnouncementRepoints, evidenceRepointPlanFingerprint, evidenceRepointPlanFromItems, hasOfficialFactInput, indexedEvidenceHashes, projectAnnouncementRepoints, validateAnnouncementIdentityAndEvidence, validateAnnouncementRecord, validatePlatformProjectionPayload } from './roster-import-model'
+import { ambiguousAnnouncementRepoints, evidenceRepointPlanFingerprint, evidenceRepointPlanFromItems, hasOfficialFactInput, indexedEvidenceHashes, projectAnnouncementRepoints, validateAnnouncementIdentityAndEvidence, validateAnnouncementRecord } from './roster-import-model'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Target = NonNullable<ReturnType<typeof evidenceRepointPlanFromItems>>[number]
@@ -78,9 +78,6 @@ export async function planPostgresAnnouncementReplay(tx: Tx, request: RosterImpo
   if (hasOfficialFactInput(request)) {
     return reject(errorItem('official_evidence', 'payload', 'replay_facts_forbidden', 'Replay cannot capture, append or correct official facts'))
   }
-  const payloadError = validatePlatformProjectionPayload(request.payload as Record<string, unknown>, request.sourceKind)
-  if (payloadError) return reject(errorItem('platform_observation', 'payload', 'projection_payload_invalid', payloadError, 'platformRecordObservations'))
-
   const announcement = request.payload.announcement
   if (!announcement) return summarize([])
   const identityErrors = validateAnnouncementIdentityAndEvidence(announcement)

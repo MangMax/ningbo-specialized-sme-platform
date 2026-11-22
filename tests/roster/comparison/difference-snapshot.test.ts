@@ -15,8 +15,8 @@ import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/po
 import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { job } from '../../../db/postgresql/job-tables'
 import { record } from '../../../db/postgresql/ledger-tables'
-import { platformArchiveValue } from '../../../db/postgresql/platform-archive-tables'
 import { platformBusinessObservation, platformBusinessRecordVersion } from '../../../db/postgresql/platform-tables'
+import { readPostgresPlatformQueries } from '../../../layers/sme-roster/lib/platform/postgres-query-read'
 import { newJobId } from '../../../layers/core/lib/job'
 import { clearJobSpecs, registerJob } from '../../../layers/core/server/utils/job-spec-registry'
 import { getJob } from '../../../layers/core/server/utils/job-store'
@@ -325,10 +325,63 @@ describe('PostgreSQL snapshot public handlers', () => {
     expect(done.result).toMatchObject({counts:{enterprises:1,unfinished:0,rows:51,requests:8}})
     const result=done.result as {items:{segments:PlatformLiveQueryResult[]}[]}
     expect(result.items.every(i=>i.segments.every(segment=>!Object.hasOwn(segment,'rows')&&!Object.hasOwn(segment,'rawData')&&!Object.hasOwn(segment,'dataRows')))).toBe(true)
-    const versions = await db.select({ bytes: platformArchiveValue.bytes }).from(platformBusinessRecordVersion)
-      .innerJoin(platformArchiveValue, eq(platformArchiveValue.id, platformBusinessRecordVersion.canonicalArchiveId))
-    expect(versions.length).toBe(51)
-    expect(versions.every(v=>{const row=JSON.parse(v.bytes!.toString('utf8'));return row.qymc==='fixture provider'&&row.blank===null&&JSON.stringify(row.unknown)==='{"nested":[null,false,17]}'})).toBe(true)
+    const versions = await db.select({ id: platformBusinessRecordVersion.id }).from(platformBusinessRecordVersion)
+    expect(versions).toHaveLength(51)
+    const facts = await db.select({ fields: platformBusinessRecordVersion.businessFields }).from(platformBusinessRecordVersion)
+    expect(facts).toHaveLength(51)
+    expect(facts.every(({ fields }) => fields?.qymc === 'fixture provider' && !('blank' in fields) && !('unknown' in fields))).toBe(true)
+  }, 30_000)
+
+  it('reads identical display fields after moving repeated observations to one version payload', async () => {
+    const name = '共享版本合成企业'
+    const shared = { id: 'shared-version', qymc: name, accepted: true, blank: '', nested: { offline: true } }
+    const versionless = { qymc: name, count: 9 }
+    for (const day of ['01', '02']) {
+      const result = await commitPostgresPlatformCollection(db, {
+        idempotencyKey: 'version-payload:' + day, sourceKind: 'platform_archive', sourceIdentity: name,
+        payload: { platformQueries: [{
+          interface: 'apply_list', queryKey: 'name:' + name, queriedAt: '2026-06-' + day + 'T00:00:00Z',
+          status: 'success', rawResponse: '{}', relations: [
+            { sequenceNo: 1, relationKey: shared.id, nameRaw: name, rawFields: shared },
+            { sequenceNo: 2, nameRaw: name, rawFields: versionless },
+          ],
+        }] },
+      }, async () => {})
+      expect(result.status).toBe('committed')
+    }
+    const listing = async () => (await readPostgresPlatformQueries(db, { page: 1, pageSize: 10, view: 'full' }))
+      .rows.map(row => row.relations.map(relation => relation.rawFields))
+    const expected = [[{ id: shared.id, qymc: name, accepted: true }, versionless]]
+    const before = await listing()
+    expect(before).toEqual([...expected, ...expected])
+    const target = '--dbname=' + process.env.NUXT_POSTGRES_DIRECTORY_URL!
+    const sql = (statement: string) => fixture.psql([target, '-At', '-c', statement]).trim()
+    expect(sql(`
+      SELECT count(*) FILTER (WHERE version_id IS NOT NULL AND business_fields IS NULL),
+        count(*) FILTER (WHERE version_id IS NULL AND business_fields IS NOT NULL)
+      FROM business.platform_business_observation
+    `)).toBe('2|2')
+    expect(sql('SELECT count(*) FROM business.platform_business_record_version WHERE business_fields IS NOT NULL')).toBe('1')
+
+    sql('ALTER TABLE business.platform_business_observation DROP CONSTRAINT platform_observation_business_fields_owner')
+    sql(`UPDATE business.platform_business_observation o SET business_fields=v.business_fields
+      FROM business.platform_business_record_version v WHERE v.id=o.version_id`)
+    sql('ALTER TABLE business.platform_business_record_version DROP COLUMN business_fields')
+    const conflicted = sql(`UPDATE business.platform_business_observation SET business_fields=NULL
+      WHERE id=(SELECT min(id) FROM business.platform_business_observation WHERE version_id IS NOT NULL) RETURNING id`)
+      .split('\n')[0]!
+    const migrate = () => fixture.psql([target, '-f', 'upgrade/postgresql/install-platform-version-business-fields.sql'])
+    expect(migrate).toThrow('conflicting observation business fields')
+    expect(sql("SELECT count(*) FROM information_schema.columns WHERE table_schema='business' AND table_name='platform_business_record_version' AND column_name='business_fields'")).toBe('0')
+    sql(`UPDATE business.platform_business_observation SET business_fields='{"id":"shared-version","qymc":"共享版本合成企业","accepted":true}'::jsonb WHERE id=${Number(conflicted)}`)
+    const size = () => Number(sql(`SELECT coalesce(sum(pg_column_size(business_fields)),0)
+      FROM business.platform_business_observation`))
+    const legacySize = size()
+    migrate()
+    migrate()
+    expect(await listing()).toEqual(before)
+    expect(size() + Number(sql('SELECT sum(pg_column_size(business_fields)) FROM business.platform_business_record_version')))
+      .toBeLessThan(legacySize)
   }, 30_000)
 
   it.each(['short-tail','retained-total'] as const)('real provider public snapshot handles %s across retry without erasing attempts', async mode => {

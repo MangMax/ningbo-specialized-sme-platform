@@ -5,18 +5,9 @@ BEGIN
 END;
 $$;
 
-CREATE TRIGGER platform_archive_append_only BEFORE UPDATE OR DELETE ON platform_archive_value
-  FOR EACH ROW EXECUTE FUNCTION reject_roster_history_mutation();
 CREATE TRIGGER platform_assignment_append_only BEFORE UPDATE OR DELETE ON platform_observation_assignment
   FOR EACH ROW EXECUTE FUNCTION reject_roster_history_mutation();
-CREATE TRIGGER platform_provenance_append_only BEFORE UPDATE OR DELETE ON platform_collection_legacy_provenance
-  FOR EACH ROW EXECUTE FUNCTION reject_roster_history_mutation();
-CREATE TRIGGER platform_fingerprint_append_only BEFORE UPDATE OR DELETE ON platform_observation_fingerprint_basis
-  FOR EACH ROW EXECUTE FUNCTION reject_roster_history_mutation();
-CREATE TRIGGER platform_query_alias_append_only BEFORE UPDATE OR DELETE ON platform_legacy_query_alias
-  FOR EACH ROW EXECUTE FUNCTION reject_roster_history_mutation();
-CREATE TRIGGER platform_relation_alias_append_only BEFORE UPDATE OR DELETE ON platform_legacy_relation_alias
-  FOR EACH ROW EXECUTE FUNCTION reject_roster_history_mutation();
+\ir platform-public-id-triggers.sql
 CREATE TRIGGER platform_process_projection_append_only BEFORE UPDATE OR DELETE ON platform_business_projection
   FOR EACH ROW EXECUTE FUNCTION reject_roster_history_mutation();
 CREATE TRIGGER platform_apply_projection_append_only BEFORE UPDATE OR DELETE ON platform_apply_projection
@@ -32,61 +23,7 @@ CREATE TRIGGER roster_file_parse_append_only BEFORE UPDATE OR DELETE ON file_par
 CREATE TRIGGER correspondence_audit_append_only BEFORE UPDATE OR DELETE ON record_correspondence_audit
   FOR EACH ROW EXECUTE FUNCTION reject_roster_history_mutation();
 
-CREATE FUNCTION guard_platform_archive_binding() RETURNS trigger
-LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
-DECLARE owner_sealed boolean;
-BEGIN
-  IF TG_OP = 'DELETE' THEN
-    RAISE EXCEPTION 'Archive binding is append-only' USING ERRCODE = 'integrity_constraint_violation';
-  END IF;
-  EXECUTE format('SELECT 1 FROM %I WHERE id = $1 FOR NO KEY UPDATE', TG_ARGV[0]) USING NEW.owner_id;
-  IF TG_OP = 'UPDATE' THEN
-    IF OLD.sealed <> 0 OR NEW.sealed <> 1 OR (NEW.owner_id, NEW.field, NEW.archive_id)
-        IS DISTINCT FROM (OLD.owner_id, OLD.field, OLD.archive_id) THEN
-      RAISE EXCEPTION 'Archive binding permits only sealing' USING ERRCODE = 'integrity_constraint_violation';
-    END IF;
-  ELSE
-    EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I WHERE owner_id = $1 AND sealed = 1)', TG_TABLE_NAME)
-      INTO STRICT owner_sealed USING NEW.owner_id;
-    IF owner_sealed THEN
-      RAISE EXCEPTION 'Archive owner is sealed' USING ERRCODE = 'integrity_constraint_violation';
-    END IF;
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER platform_collection_archive_binding
-  BEFORE INSERT OR UPDATE OR DELETE ON platform_collection_archive_ref
-  FOR EACH ROW EXECUTE FUNCTION guard_platform_archive_binding('platform_collection');
-CREATE TRIGGER platform_observation_archive_binding
-  BEFORE INSERT OR UPDATE OR DELETE ON platform_observation_archive_ref
-  FOR EACH ROW EXECUTE FUNCTION guard_platform_archive_binding('platform_business_observation');
-CREATE TRIGGER platform_version_archive_binding
-  BEFORE INSERT OR UPDATE OR DELETE ON platform_version_archive_ref
-  FOR EACH ROW EXECUTE FUNCTION guard_platform_archive_binding('platform_business_record_version');
-
-\ir platform-canonical-archive-triggers.sql
-\ir platform-observation-snapshot.sql
-
-CREATE FUNCTION guard_platform_projection_owner() RETURNS trigger
-LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
-BEGIN
-  IF (NEW.record_id IS NOT NULL AND NOT EXISTS (
-      SELECT 1 FROM platform_business_record WHERE id = NEW.record_id AND interface = TG_ARGV[0]
-    )) OR (NEW.observation_id IS NOT NULL AND NOT EXISTS (
-      SELECT 1 FROM platform_business_observation o JOIN platform_collection c ON c.id = o.collection_id
-      WHERE o.id = NEW.observation_id AND c.interface = TG_ARGV[0]
-    )) OR (NEW.source_archive_id IS NOT NULL AND NOT EXISTS (
-      SELECT 1 FROM platform_observation_archive_ref
-      WHERE owner_id = NEW.observation_id AND archive_id = NEW.source_archive_id
-        AND field = 'rawFields' AND sealed = 1
-    )) THEN
-    RAISE EXCEPTION 'Projection source or archive owner mismatch' USING ERRCODE = 'integrity_constraint_violation';
-  END IF;
-  RETURN NEW;
-END;
-$$;
+\ir platform-projection-owner.sql
 
 CREATE TRIGGER platform_apply_projection_owner BEFORE INSERT ON platform_apply_projection
   FOR EACH ROW EXECUTE FUNCTION guard_platform_projection_owner('apply_list');
@@ -170,15 +107,7 @@ CREATE TRIGGER platform_observation_source
   BEFORE INSERT OR UPDATE OF record_id ON platform_business_observation
   FOR EACH ROW EXECUTE FUNCTION guard_platform_observation_source();
 
-CREATE TRIGGER platform_condition_witness_fixed BEFORE UPDATE ON platform_collection_condition
-  FOR EACH ROW WHEN (OLD.witness_kind IS NOT NULL
-    AND (NEW.collection_id, NEW.name, NEW.witness_kind, NEW.witness_value, NEW.witness_value_sqlite_storage)
-      IS DISTINCT FROM
-        (OLD.collection_id, OLD.name, OLD.witness_kind, OLD.witness_value, OLD.witness_value_sqlite_storage))
-  EXECUTE FUNCTION reject_roster_history_mutation();
-CREATE TRIGGER platform_condition_witness_retained BEFORE DELETE ON platform_collection_condition
-  FOR EACH ROW WHEN (OLD.witness_kind IS NOT NULL)
-  EXECUTE FUNCTION reject_roster_history_mutation();
+\ir platform-collection-scope-integrity.sql
 
 CREATE TRIGGER platform_collection_witness_fixed BEFORE UPDATE ON platform_collection
   FOR EACH ROW WHEN (OLD.witness_rule IS NOT NULL
@@ -212,9 +141,3 @@ CREATE TRIGGER platform_recognized_exact_title_fixed BEFORE UPDATE ON platform_r
       (OLD.exact_title_raw, OLD.exact_title_raw_sqlite_storage, OLD.exact_title_state, OLD.exact_title_origin,
         OLD.exact_title_archive_id, OLD.exact_title_sha256))
   EXECUTE FUNCTION reject_roster_history_mutation();
-
-CREATE TRIGGER platform_alias_counter_monotone BEFORE UPDATE ON platform_legacy_alias_sequence
-  FOR EACH ROW WHEN (NEW.namespace IS DISTINCT FROM OLD.namespace OR NEW.high_water < OLD.high_water)
-  EXECUTE FUNCTION reject_roster_history_mutation();
-CREATE TRIGGER platform_alias_counter_retained BEFORE DELETE ON platform_legacy_alias_sequence
-  FOR EACH ROW EXECUTE FUNCTION reject_roster_history_mutation();

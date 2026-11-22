@@ -72,14 +72,13 @@ const recognizedDirectoryQuery = (key: string) => {
   }
   return {}
 }
-// The public archive API has no revision token. Invalidate on every observable
-// summary identity change; never invent a version/cursor from missing fields.
+// Recreate the lazy detail when the selected query changes.
 const identity = (row: PlatformQueriesResult['rows'][number]) => JSON.stringify([scope.value, row.query])
 </script>
 
 <template>
   <div class="flex min-w-0 flex-col gap-4" :aria-busy="isLoading">
-    <PageHeader title="平台查询证据">
+    <PageHeader title="平台查询历史">
       <template #breadcrumb>
         <Breadcrumb aria-label="页面路径">
           <BreadcrumbList class="text-xs">
@@ -89,13 +88,13 @@ const identity = (row: PlatformQueriesResult['rows'][number]) => JSON.stringify(
               </BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator />
-            <BreadcrumbItem><BreadcrumbPage>平台查询证据</BreadcrumbPage></BreadcrumbItem>
+            <BreadcrumbItem><BreadcrumbPage>平台查询历史</BreadcrumbPage></BreadcrumbItem>
           </BreadcrumbList>
         </Breadcrumb>
       </template>
     </PageHeader>
     <div class="relative" :class="{ 'min-h-6': isLoading }">
-      <TableLoadingStatus kind="comparison" :loading="isLoading" label="正在加载平台查询证据…" />
+      <TableLoadingStatus kind="comparison" :loading="isLoading" label="正在加载平台查询历史…" />
       <p v-if="data || queryKey || enterpriseId || queryId" class="text-muted-foreground wrap-anywhere text-xs" aria-live="polite">
         <template v-if="queryId">原查询 #{{ queryId }}</template>
         <template v-else-if="data">共 {{ data.total.toLocaleString('zh-CN') }} 次查询 · 第 {{ sourcePage }} 页</template>
@@ -105,7 +104,7 @@ const identity = (row: PlatformQueriesResult['rows'][number]) => JSON.stringify(
     </div>
     <TableFailureState v-if="error" :title="`查询摘要第 ${page} 页加载失败`" :description="`${error}${data ? `；保留第 ${sourcePage} 页结果。` : ''}`" :pending="isLoading" @retry="load" />
     <template v-if="isLoading && !rows.length"><Skeleton v-for="i in 3" :key="i" class="h-24 w-full" /></template>
-    <Empty v-else-if="!error && !rows.length"><EmptyHeader><EmptyMedia variant="icon"><GitCompareArrows aria-hidden="true" /></EmptyMedia><EmptyTitle>{{ queryId ? '未找到原查询' : '暂无平台查询证据' }}</EmptyTitle></EmptyHeader></Empty>
+    <Empty v-else-if="!error && !rows.length"><EmptyHeader><EmptyMedia variant="icon"><GitCompareArrows aria-hidden="true" /></EmptyMedia><EmptyTitle>{{ queryId ? '未找到原查询' : '暂无平台查询历史' }}</EmptyTitle></EmptyHeader></Empty>
     <Card v-for="row in rows" :key="identity(row)" class="min-w-0 gap-0 overflow-hidden py-0" :data-query-id="row.query.id">
       <CardHeader class="gap-2 border-b px-5 py-4">
         <div class="flex flex-wrap items-center gap-2">
@@ -113,7 +112,7 @@ const identity = (row: PlatformQueriesResult['rows'][number]) => JSON.stringify(
           <Badge variant="secondary">{{ PLATFORM_RDJBS[row.query.rdjb] ?? (row.query.rdjb || '未记录') }}</Badge>
           <Badge :variant="statusVariant(row.query.status)">{{ label(PLATFORM_QUERY_STATUSES, row.query.status) }}</Badge>
           <span class="text-muted-foreground break-all font-mono text-xs">{{ row.query.queryKey }}</span>
-          <span class="text-muted-foreground text-xs">查询 #{{ row.query.id }} · {{ row.query.queriedAt }} · {{ row.query.relationCount }} 条关系</span>
+          <span class="text-muted-foreground text-xs">查询 #{{ row.query.id }} · {{ row.query.queriedAt }} · {{ row.query.relationCount }} 条记录</span>
           <NuxtLink v-if="row.query.interface === 'business_list'" :to="{ path: '/platform-business-processes', query: { q: row.query.queryKey } }" class="text-xs hover:underline">本地办理记录</NuxtLink>
           <NuxtLink v-if="row.query.interface === 'recognized_list'" :to="{ path: '/platform-recognized-directory', query: recognizedDirectoryQuery(row.query.queryKey) }" class="text-xs hover:underline">本地目录记录</NuxtLink>
         </div>

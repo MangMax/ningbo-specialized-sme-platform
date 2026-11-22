@@ -28,8 +28,8 @@ it.runIf(!!pgBin)('keeps withdrawn decision versions and original scope order in
       CREATE SCHEMA business;
       CREATE TABLE enterprise (id bigint PRIMARY KEY, name_norm text NOT NULL, uscc_norm text);
       INSERT INTO enterprise VALUES (7, 'synthetic-enterprise', NULL);
-      CREATE TABLE platform_legacy_query_alias (old_id bigint, collection_id bigint);
-      CREATE TABLE platform_legacy_relation_alias (old_id bigint, observation_id bigint);
+      CREATE TABLE platform_collection (id bigint, public_id bigint);
+      CREATE TABLE platform_business_observation (id bigint, public_id bigint);
       ${readFileSync(new URL('../../../db/postgresql/roster-review-schema.sql', import.meta.url), 'utf8')}
     `)
     const db = drizzle({ client: pool })

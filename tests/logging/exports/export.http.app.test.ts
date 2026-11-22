@@ -84,7 +84,7 @@ async function businessDigest() {
   try {
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
     const hash = createHash('sha256')
-    for (const table of ['enterprise', 'enterprise_alias', 'record', 'record_event', 'record_evidence', 'platform_collection', 'platform_business_observation', 'platform_observation_assignment', 'platform_archive_value', 'platform_collection_archive_ref', 'platform_observation_archive_ref', 'difference_reason', 'record_correspondence']) {
+    for (const table of ['enterprise', 'enterprise_alias', 'record', 'record_event', 'record_evidence', 'platform_collection', 'platform_business_observation', 'platform_observation_assignment', 'platform_business_record_version', 'difference_reason', 'record_correspondence']) {
       const result = await client.query<{ content: string }>(`SELECT to_jsonb(t)::text AS content FROM business.${table} t ORDER BY content`)
       for (const row of result.rows) hash.update(row.content)
     }

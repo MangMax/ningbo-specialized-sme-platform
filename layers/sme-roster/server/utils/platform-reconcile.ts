@@ -402,7 +402,7 @@ export function isFreshReconcileDecision(latest: { verificationStatus: string; r
 }
 
 export async function runPlatformReconcileWithStore(options: ReconcileRunOptions, store: {
-  prepare(filter: ReconcileTargetFilter, cutoffIso: string): Promise<{ collected: CollectedTargets; reused: Map<string, Map<string, StoredSlot>> }>
+  prepare(filter: ReconcileTargetFilter, cutoffIso: string): Promise<{ collected: CollectedTargets; reused?: Map<string, Map<string, StoredSlot>> }>
   freshDecision(target: ReconcileTarget, cutoffIso: string, complete: boolean): boolean | Promise<boolean>
   writer(): ReconcileWriter
 }): Promise<ReconcileReport> {
@@ -428,7 +428,7 @@ export async function runPlatformReconcileWithStore(options: ReconcileRunOptions
   // 先按槽位判「哪些新鲜可复用、哪些必须实查」—— 一次都不查的话不需要凭据。
   const planned = new Map<string, { reused: Map<string, StoredSlot>; missing: typeof SLOTS }>()
   for (const uscc of usccs) {
-    const reused = storedSlots.get(uscc)!
+    const reused = storedSlots?.get(uscc) ?? new Map<string, StoredSlot>()
     planned.set(uscc, { reused, missing: SLOTS.filter((slot) => !reused.has(slotKey(slot))) })
   }
   const missingSlots = [...planned.values()].reduce((sum, entry) => sum + entry.missing.length, 0)

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { platformQueryInputSchema, platformQueryResultShape, type PlatformLiveQueryInput, type PlatformLiveQueryResult, type PlatformQueryPosition, type PlatformQueryStatus } from './live-query'
+import { platformQueryInputShape, platformQueryResultShape, validPlatformQueryConditions, type PlatformLiveQueryInput, type PlatformLiveQueryResult, type PlatformQueryPosition, type PlatformQueryStatus } from './live-query'
 
 export const platformBatchLimitsShape = {
   maxRequests: z.number().int().min(1).max(200).default(200),
@@ -7,8 +7,12 @@ export const platformBatchLimitsShape = {
   maxDurationMs: z.number().int().min(1).max(120000).default(120000),
   maxResultBytes: z.number().int().min(65536).max(8388608).default(2097152),
 }
+const { rawDataVersion: _rawDataVersion, ...platformBatchQueryInputShape } = platformQueryInputShape
+const platformBatchQueryInputSchema = z.strictObject(platformBatchQueryInputShape)
+  .refine(validPlatformQueryConditions, { message: 'Invalid conditions for platform source' })
+
 export const platformBatchInputShape = {
-  items: z.array(z.strictObject({ query: platformQueryInputSchema })).min(1).max(50),
+  items: z.array(z.strictObject({ query: platformBatchQueryInputSchema })).min(1).max(50),
   limits: z.strictObject(platformBatchLimitsShape).default(() => ({ maxRequests: 200, maxRows: 5000, maxDurationMs: 120000, maxResultBytes: 2097152 })),
 }
 export const platformBatchInputSchema = z.strictObject(platformBatchInputShape)
@@ -25,12 +29,14 @@ export interface PlatformBatchParams {
   limits: { maxRequests: number; maxRows: number; maxDurationMs: number; maxResultBytes: number }
   retryItemIds?: string[]
 }
+export type PlatformBatchSegment = Omit<PlatformLiveQueryResult, 'rawData'>
+
 export interface PlatformBatchItem {
   itemId: string
   status: PlatformQueryStatus
   completeness: 'complete' | 'partial' | 'not_queried'
-  /** Append-only query segments retain original page rows, query times and failure history. */
-  segments: PlatformLiveQueryResult[]
+  /** Ordered business rows, query times and pagination outcomes for each attempt. */
+  segments: PlatformBatchSegment[]
   unfinished: PlatformQueryPosition[]
 }
 export interface PlatformBatchResult {
@@ -40,9 +46,10 @@ export interface PlatformBatchResult {
   usage: { requests: number; rows: number }
   limits: PlatformBatchParams['limits']
 }
+const { rawData: _rawData, ...platformBatchSegmentShape } = platformQueryResultShape
 export const platformBatchItemResultShape = {
   itemId: z.string(), status: platformQueryResultShape.status, completeness: platformQueryResultShape.completeness,
-  segments: z.array(z.object(platformQueryResultShape)), unfinished: platformQueryResultShape.unfinished,
+  segments: z.array(z.strictObject(platformBatchSegmentShape)), unfinished: platformQueryResultShape.unfinished,
 }
 export const platformBatchReceiptShape = { batchId: z.string(), itemIds: z.array(z.string()), state: z.string() }
 export const platformBatchResultShape = {

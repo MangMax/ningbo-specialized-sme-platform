@@ -33,9 +33,8 @@ test.runIf(Boolean(pg19Bin))('stores native evidence IDs while retaining legacy 
       await tx.execute(sql`
         INSERT INTO platform_collection_page(collection_id,ordinal,rdjb,status,fetched_count,position_state)
           VALUES (11,0,'2','success',1,'unknown');
-        INSERT INTO platform_business_observation(id,collection_id,sequence_no,position_state,source_relation_key,identity_state,content_state)
-          VALUES (22,11,1,'unknown','published','not_indexed','not_indexed');
-        INSERT INTO platform_legacy_relation_alias(old_id,observation_id) VALUES (99,22);
+        INSERT INTO platform_business_observation(id,public_id,collection_id,sequence_no,position_state,source_relation_key,identity_state,content_state)
+          VALUES (22,99,11,1,'unknown','published','not_indexed','not_indexed');
         INSERT INTO platform_observation_assignment(observation_id,revision,enterprise_id,match_basis,verification_status,uscc_raw,origin)
           VALUES (22,1,7,'uscc','confirmed','91330200717865622U','migrated_current');
       `)

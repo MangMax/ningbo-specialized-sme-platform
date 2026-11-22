@@ -2,6 +2,7 @@ import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createApp, defineEventHandler, toNodeListener } from 'h3'
 import { createServer, type Server } from 'node:http'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -42,7 +43,7 @@ afterAll(async () => {
   vi.unstubAllGlobals()
 })
 const post = (value: unknown) => fetch(base + '/command', { method: 'POST', headers: { 'content-type': 'application/json', origin: base, 'sec-fetch-site': 'same-origin' }, body: JSON.stringify(value) })
-it('first browser registration roundtrips null metadata and history while stale concurrent writes and retries preserve raw facts', async () => {
+it('first browser registration roundtrips null metadata and history while stale concurrent writes and retries preserve query provenance', async () => {
   const query = new URLSearchParams(Object.entries(scope).map(([k,v]) => [k,String(v)]))
   expect(await (await fetch(base + '/current?' + query)).json()).toMatchObject({ versionId: null, current: null })
   const first = body('first'); const ok = await post(first); expect(ok.status).toBe(200)
@@ -54,10 +55,9 @@ it('first browser registration roundtrips null metadata and history while stale 
   const history = await (await fetch(base + '/history?' + query)).json()
   expect(history.total).toBe(2); expect(history.rows[0]).toMatchObject({ previousId: receipt.versionId, actor: null, ruleVersion: null })
   const db = usePostgresDirectoryDb()
-  const archive = await db.execute<{ bytes: Buffer }>(sql`
-    select v.bytes from platform_archive_value v join platform_collection_archive_ref r on r.archive_id = v.id
-    where r.owner_id = 1 and r.field = 'rawResponse'
+  const { rows } = await db.execute<{ digest: string }>(sql`
+    SELECT raw_response_sha256 AS digest FROM platform_collection WHERE id = 1
   `)
-  expect(archive.rows[0]!.bytes.toString()).toBe('{"synthetic":"unaltered"}')
-  expect((await db.execute(sql`select * from evidence_review_receipt_114`)).rows).toHaveLength(0)
+  expect(rows).toEqual([{ digest: createHash('sha256').update('{"synthetic":"unaltered"}').digest('hex') }])
+  expect((await db.execute(sql`SELECT * FROM evidence_review_receipt_114`)).rows).toHaveLength(0)
 })

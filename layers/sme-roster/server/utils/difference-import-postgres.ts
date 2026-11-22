@@ -6,7 +6,7 @@ import { enterprise, enterpriseMerge } from '../../../../db/postgresql/enterpris
 import { differenceReason as d } from '../../../../db/postgresql/roster-selection-tables'
 import { evidenceReviewReceipt114 as receipt } from '../../../../db/postgresql/evidence-review-tables'
 import { platformBusinessObservation as observation, platformCollection, platformCollectionPage as page,
-  platformLegacyQueryAlias as queryAlias, platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
+  platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { TITLE_ORDER } from '../../lib/labels'
@@ -51,10 +51,10 @@ async function locateEnterprise(tx: Tx, difference: RosterImportDifference, lock
 async function findCollection(tx: Tx, aliasId: number) {
   if (!Number.isSafeInteger(aliasId) || aliasId < 1) return undefined
   const [collection] = await tx.select({
-    id: queryAlias.oldId, nativeId: platformCollection.id, interface: platformCollection.interface,
+    id: platformCollection.publicId, nativeId: platformCollection.id, interface: platformCollection.interface,
     queryKey: platformCollection.queryKey, rdjb: platformCollection.rdjb,
-  }).from(platformCollection).innerJoin(queryAlias, eq(queryAlias.collectionId, platformCollection.id))
-    .where(eq(queryAlias.oldId, aliasId))
+  }).from(platformCollection)
+    .where(eq(platformCollection.publicId, aliasId))
   return collection
 }
 

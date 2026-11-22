@@ -16,7 +16,7 @@ it('starts with filtered summary only, preserves unknown fields and rejects late
   expect(fetch.mock.calls[0]![1].query).toMatchObject({ view: 'summary', enterpriseId: '42', queryKey: 'old', page: 1 })
   route.query.queryKey = 'new'; await flushPromises()
   expect(w.text()).toContain('new')
-  expect(w.text()).toContain('尚未加载')
+  expect(w.text()).toContain('查看查询记录')
   expect(w.text()).not.toContain('这条查询没有关系记录')
   old(summary('old')); await flushPromises()
   expect(w.text()).not.toContain('old')
@@ -57,7 +57,7 @@ it('requests only the original query ID and links its breadcrumb to the actual c
   expect(fetch.mock.calls[0]![1].query).toMatchObject({ queryId: '7', view: 'summary', page: 1 })
   expect(w.findAll('[data-query-id]').map(card => card.attributes('data-query-id'))).toEqual(['7'])
   expect(w.get('nav[aria-label="页面路径"] a').attributes('href')).toBe('/platform-recognized-directory')
-  expect(w.get('nav[aria-label="页面路径"] [aria-current="page"]').text()).toBe('平台查询证据')
+  expect(w.get('nav[aria-label="页面路径"] [aria-current="page"]').text()).toBe('平台查询历史')
   expect(w.find('[data-table-pagination]').exists()).toBe(false)
   route.query.queryId = '8'
   await flushPromises()
@@ -86,6 +86,6 @@ it.each(['failed', 'not_queried', 'no_record', 'unrecognized-status'])('preserve
   await flushPromises()
   const expected: Record<string, string> = { failed: '查询失败', not_queried: '未查询', no_record: '无记录' }
   expect(w.text()).toContain(expected[status] ?? status)
-  expect(w.text()).toContain('1 条关系')
-  expect(w.text()).toContain('尚未加载')
+  expect(w.text()).toContain('1 条记录')
+  expect(w.text()).toContain('查看查询记录')
 })

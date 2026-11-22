@@ -18,7 +18,19 @@ const params = JSON.stringify({ limits, items: [{ itemId }, { itemId: emptyItemI
 const now = '2026-11-22T12:00:00Z'
 const unfinished = [{ source: 'queryList', rdjb: null, page: 3 }]
 const failure = { code: 'upstream_failed', message: '平台请求失败，未完成查询。' }
-const firstSegment = String.raw`{"queriedAt":"2026-11-21T12:00:00Z","rows":[{"qymc":"字面\\u0000、空字符\u0000、保留项\ud800、原转义\u005cu"}],"pages":[{"source":"queryList","rdjb":null,"page":1,"status":"success","fetchedCount":1,"declaredTotal":3,"error":null}],"rawData":{"version":1,"rows":[],"pages":[{"source":"queryList","rdjb":null,"page":1,"format":"json","body":" \n{\"raw\":\"\\u0000\"}\n"}]},"error":null}`
+const firstBusinessRow = String.raw`{"id":"row-one","qymc":"字面\\u0000、空字符\u0000、保留项\ud800、原转义\u005cu","cszt":"已认定","sqsj":"2026-01-02","year":"2026","\\u0000":"literal","\u0000":"NUL key"}`
+const firstTypedRow = firstBusinessRow.replace('"year":"2026"', '"year":2026')
+const firstPage = { source: 'queryList', rdjb: null, page: 1, status: 'success', fetchedCount: 1, declaredTotal: 3, error: null }
+const firstTime = '2026-11-21T12:00:00Z'
+const originalBusinessRow = firstBusinessRow.slice(0, -1) + ',"rawFields":"original row snapshot","rawResponse":"original row bytes"}'
+const originalTypedRow = firstTypedRow.slice(0, -1) + ',"rawFields":{"legacy":true},"rawResponse":"original row bytes"}'
+const rawData = JSON.stringify({ version: 1, rows: [], pages: [{ source: 'queryList', rdjb: null, page: 1, format: 'json', body: 'original upstream body' }] })
+const firstSegment = '{"queriedAt":' + JSON.stringify(firstTime) + ',"rows":[' + originalBusinessRow + '],"pages":['
+  + JSON.stringify(firstPage) + '],"rawData":' + rawData.replace('"rows":[]', '"rows":[' + originalTypedRow + ']')
+  + ',"rawFields":{"extra":true},"error":null}'
+const firstStructuredSegment = {
+  queriedAt: firstTime, rows: [JSON.parse(firstBusinessRow)], dataRows: [JSON.parse(firstTypedRow)], pages: [firstPage], error: null,
+}
 const secondSegment = JSON.stringify({
   queriedAt: now, rows: [{ qymc: '保留第二页' }],
   pages: [
@@ -54,19 +66,20 @@ async function assertCompactBatch(client: pg.Client) {
   const preserved = await client.query(
     'SELECT payload FROM business.platform_batch_segment WHERE job_id = $1 ORDER BY segment_index', [batchId],
   )
-  expect(preserved.rows).toEqual([{ payload: firstSegment }, { payload: secondSegment }])
+  expect(preserved.rows.map(row => JSON.parse(row.payload))).toEqual([firstStructuredSegment, JSON.parse(secondSegment)])
+  expect(preserved.rows[1].payload).toBe(secondSegment)
   const db = drizzle({ client })
   const batch = await getPostgresPlatformBatch(db, { batchId })
   expect(batch).toMatchObject({ batchId, itemIds: [itemId, emptyItemId], state: 'failed', attempt: 2 })
   expect(batch.items).toEqual([
-    { ...item, segments: [JSON.parse(firstSegment), JSON.parse(secondSegment)] },
+    { ...item, segments: [firstStructuredSegment, JSON.parse(secondSegment)] },
     { ...emptyItem, segments: [] },
   ])
   expect(await getPostgresPlatformBatchItem(db, { batchId, itemId })).toEqual(batch.items[0])
 }
 
-it.skipIf(!bin).each(['PostgreSQL', 'SQLite'] as const)(
-  'separates stored batch segments without losing original result bytes or continuation metadata from %s',
+it.skipIf(!bin).each(['PostgreSQL', 'already separated PostgreSQL', 'SQLite'] as const)(
+  'retains batch business rows and continuation metadata while removing transport material from %s',
   async source => {
     const dir = mkdtempSync(join(tmpdir(), 'pg-platform-batch-migration-'))
     const sourcePath = join(dir, 'source.db')
@@ -78,10 +91,14 @@ it.skipIf(!bin).each(['PostgreSQL', 'SQLite'] as const)(
       client = new pg.Client({ connectionString: runtime.url })
       await client.connect()
 
-      if (source === 'PostgreSQL') {
-        // Model an existing PostgreSQL release that still stores batch segments in job.result.
-        await client.query('DROP TABLE business.platform_batch_segment')
+      if (source !== 'SQLite') {
+        if (source === 'PostgreSQL') await client.query('DROP TABLE business.platform_batch_segment')
         await client.query('INSERT INTO business.job (id, kind, params, state, result, created_at) VALUES ($1,$2,$3,$4,$5,$6)', records)
+        if (source === 'already separated PostgreSQL') {
+          runtime.psql(['-f', 'upgrade/postgresql/split-platform-batch-results.sql'])
+          expect((await client.query('SELECT payload FROM business.platform_batch_segment WHERE segment_index = 0')).rows)
+            .toEqual([{ payload: firstSegment }])
+        }
         runtime.psql(['-f', 'upgrade/postgresql/compact-platform-batch-results.sql'])
         await assertCompactBatch(client)
         runtime.psql(['-f', 'upgrade/postgresql/compact-platform-batch-results.sql'])

@@ -31,7 +31,7 @@ export function postgresIdentityExportFixture() {
 
   async function resetBusiness() {
     await pool!.query(`truncate business.enterprise, business.record, business.record_event, business.record_evidence,
-      business.platform_collection, business.platform_archive_value, business.platform_business_record,
+      business.platform_collection, business.platform_business_record,
       business.import_batch, business.difference_reason, business.evidence_review_receipt_114 restart identity cascade`)
     identities.clear()
   }

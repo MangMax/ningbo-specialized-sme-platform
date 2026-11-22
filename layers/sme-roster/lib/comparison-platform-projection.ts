@@ -1,4 +1,4 @@
-import type { PlatformStoredQuery, PlatformStoredRelation } from './platform/read'
+import type { PlatformCollectionCoverage, PlatformStoredQuery, PlatformStoredRelation } from './platform/read'
 import type { PlatformObservationFact } from './platform/observation-facts'
 import { sourcePositionForSequence } from './platform/recognized-evidence'
 import type { PlatformNormalizationConflict } from './platform/normalization'
@@ -62,7 +62,7 @@ export interface ComparisonRelation {
 }
 
 export interface ComparisonQuerySummary {
-  collectionEvidence?: import('./platform/live-query').PlatformLiveQueryResult | null
+  collectionEvidence?: PlatformCollectionCoverage | null
   titleCode?: string | null
   id: number
   interface: string

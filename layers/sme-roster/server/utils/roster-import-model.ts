@@ -81,7 +81,22 @@ export type ValidateResult =
   | { ok: true; value: RosterImportRequest }
   | { ok: false; status: number; message: string }
 
-export function validateImportRequest(raw: unknown): ValidateResult {
+export function validateNativeImportRequest(raw: unknown): ValidateResult {
+  return validateImportRequest(raw, (payload, sourceKind) => {
+    const retired = retiredPlatformImportField(payload)
+    if (retired) return retired + ' 已停用，历史平台原始资料请通过离线归档处理'
+    if (sourceKind === 'platform_archive' && (!Array.isArray(payload.platformQueries) || !payload.platformQueries.length)) {
+      return 'platform_archive requires platformQueries'
+    }
+    return null
+  })
+}
+
+export function retiredPlatformImportField(payload: object) {
+  return ['platformRecordObservations', 'platformLegacyProvenance'].find(field => Object.hasOwn(payload, field))
+}
+
+export function validateImportRequest(raw: unknown, validatePayload = validatePlatformProjectionPayload): ValidateResult {
   if (!isObject(raw)) return { ok: false, status: 400, message: '请求体必须是 JSON 对象' }
 
   const idempotencyKey = optionalString(raw.idempotencyKey)
@@ -103,7 +118,7 @@ export function validateImportRequest(raw: unknown): ValidateResult {
   if (!isObject(raw.payload)) {
     return { ok: false, status: 400, message: '缺少 payload（写入载荷）或它不是对象' }
   }
-  const projectionError = validatePlatformProjectionPayload(raw.payload, sourceKind)
+  const projectionError = validatePayload(raw.payload, sourceKind)
   if (projectionError) return { ok: false, status: 400, message: projectionError }
 
   return {

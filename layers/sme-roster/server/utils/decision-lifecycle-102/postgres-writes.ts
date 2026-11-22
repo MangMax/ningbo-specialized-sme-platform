@@ -4,10 +4,9 @@ import { alias } from 'drizzle-orm/pg-core'
 import { enterprise as enterpriseTable } from '../../../../../db/postgresql/enterprise-tables'
 import { evidenceReviewReceipt114 } from '../../../../../db/postgresql/evidence-review-tables'
 import { enterpriseFactRevision } from '../../../../../db/postgresql/qualification-tables'
-import { platformArchiveValue, platformVersionArchiveRef } from '../../../../../db/postgresql/platform-archive-tables'
 import { differenceReason } from '../../../../../db/postgresql/roster-selection-tables'
 import {
-  platformBusinessObservation, platformBusinessRecordVersion, platformCollection, platformLegacyQueryAlias, platformObservationAssignment,
+  platformBusinessObservation, platformBusinessRecordVersion, platformCollection, platformObservationAssignment,
 } from '../../../../../db/postgresql/platform-tables'
 import type * as schema from '../../../../../db/schema'
 import { decodePostgresExactCell } from '../../../../../db/postgresql/exact-cell'
@@ -58,10 +57,10 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins:
   const relation = d.evidenceRelationId ? (await readPostgresDifferenceObservations(tx, [d.evidenceRelationId])).get(d.evidenceRelationId) : null
   checkDecisionRelation102(enterprise, d, relation)
   const queryId = d.evidenceQueryId ?? relation?.queryId
-  const c = alias(platformCollection, 'c'), a = platformLegacyQueryAlias
+  const c = alias(platformCollection, 'c')
   const targetQuery = queryId ? (await tx.select({
-    id: a.oldId, collection: sql<typeof schema.platformCollection.$inferSelect>`${postgresRosterRow(platformCollection, 'c')}`,
-  }).from(a).innerJoin(c, eq(c.id, a.collectionId)).where(eq(a.oldId, queryId)))[0] : null
+    id: c.publicId, collection: sql<typeof schema.platformCollection.$inferSelect>`${postgresRosterRow(platformCollection, 'c')}`,
+  }).from(c).where(eq(c.publicId, queryId)))[0] : null
   const collection = targetQuery?.collection
   const needsPages = relation && collection?.rdjb.includes(',')
   const sourceScope = collection && (capturePins || needsPages) ? (await readPostgresCollectionScopes(tx, [collection])).get(collection.id)! : null
@@ -70,16 +69,9 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins:
   if (!capturePins) return { previous, d, targetQuery, relation, pins: null }
   const observation = relation ? await readObservationPin(tx, relation.observationId) : null
   const v = alias(platformBusinessRecordVersion, 'p'), assignmentTable = alias(platformObservationAssignment, 'p')
-  const archiveRef = platformVersionArchiveRef, archive = platformArchiveValue
-  // The original text and field order are part of existing qualification plan hashes.
   const version = observation?.versionId ? (await tx.select({
-    row: sql<typeof schema.platformBusinessRecordVersion.$inferSelect>`${postgresRosterRow(platformBusinessRecordVersion, 'p', {
-      canonicalRawJson: sql`convert_from(${archive.bytes}, 'UTF8')`,
-    })}`,
-  }).from(v).innerJoin(archiveRef, and(eq(archiveRef.ownerId, v.id), eq(archiveRef.archiveId, v.canonicalArchiveId),
-    eq(archiveRef.field, 'canonicalRawJson'), eq(archiveRef.sealed, 1)))
-    .innerJoin(archive, and(eq(archive.id, archiveRef.archiveId), eq(archive.storageClass, 'text')))
-    .where(eq(v.id, observation.versionId)))[0]?.row : null
+    id: v.id, recordId: v.recordId, hashAlgorithm: v.hashAlgorithm, contentHash: v.contentHash, createdAt: v.createdAt,
+  }).from(v).where(eq(v.id, observation.versionId)))[0] : null
   const assignment = observation ? (await tx.select({
     row: sql<typeof schema.platformObservationAssignment.$inferSelect>`${postgresRosterRow(platformObservationAssignment, 'p')}`,
   }).from(assignmentTable).where(eq(assignmentTable.observationId, observation.id)).orderBy(desc(assignmentTable.revision)).limit(1))[0]?.row : null

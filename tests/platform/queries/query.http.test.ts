@@ -12,7 +12,11 @@ const dir = mkdtempSync(join(tmpdir(), 'platform-query-http-'))
 const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 let server: ReturnType<typeof createServer>, base: string
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
-const id = submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: 'synthetic:http', queriedAt: '2026-10-19', status: 'partial', rawResponse: '完整原文🙂' }).queryId
+const earlier = submitNativePlatformQuery(db, {
+  interface: 'apply_list', queryKey: 'synthetic:http', queriedAt: '2026-10-19', status: 'partial', rawResponse: '完整原文🙂',
+  relations: [{ sequenceNo: 1, relationKey: 'apply-42', nameRaw: '合成企业', rawFields: { id: 'apply-42', qymc: '合成企业', hiddenOriginal: { text: '离线字段' } } }],
+})
+const id = earlier.queryId
 const laterId = submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: 'synthetic:http', queriedAt: '2026-10-20', status: 'partial', rawResponse: '再次采集' }).queryId
 beforeAll(async () => {
   postgres = await postgresRuntimeFixture({dir, sourcePath: join(dir, 'test.sqlite')})
@@ -21,8 +25,7 @@ beforeAll(async () => {
   vi.stubGlobal('getQuery', getQuery)
   vi.stubGlobal('createError', createError)
   const list = (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default
-  const evidence = (await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default
-  const router = createRouter().get('/api/platform/queries-no-store', defineEventHandler(event => { setHeader(event, 'cache-control', 'no-store'); return list(event) })).get('/api/platform/queries', list).get('/api/platform/queries/:queryId/evidence', evidence)
+  const router = createRouter().get('/api/platform/queries-no-store', defineEventHandler(event => { setHeader(event, 'cache-control', 'no-store'); return list(event) })).get('/api/platform/queries', list)
   server = createServer(toNodeListener(createApp({ debug: false }).use(router)))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as any).port}`
@@ -36,24 +39,31 @@ afterAll(async () => {
   db.$client.close()
   rmSync(dir, { recursive: true, force: true })
 })
-it('public HTTP exact ID opens the earlier original evidence when two captures share a query key', async () => {
+it('the exact query ID opens the earlier extracted record when two captures share a query key', async () => {
   const history = await fetch(`${base}/api/platform/queries?queryKey=synthetic%3Ahttp&view=summary`)
   expect(history.status).toBe(200)
   expect((await history.json()).rows.map((row: { query: { id: number } }) => row.query.id)).toEqual([laterId, id])
   const response = await fetch(`${base}/api/platform/queries?queryId=${id}&view=summary`)
   expect(response.status).toBe(200)
   const summary = await response.json()
-  expect(summary).toMatchObject({ total: 1, counts: { partial: 1 }, rows: [{ relationsIncluded: false, query: { id, status: 'partial', relationCount: 0 } }] })
+  expect(summary).toMatchObject({ total: 1, counts: { partial: 1 }, rows: [{ relationsIncluded: false, query: { id, status: 'partial', relationCount: 1 } }] })
   expect(summary.rows).toHaveLength(1)
-  const chunk = await fetch(`${base}/api/platform/queries/${id}/evidence?field=rawResponse&offset=0&length=65536`)
-  expect(chunk.headers.get('cache-control')).toBe('no-store')
-  expect(await chunk.json()).toMatchObject({ data: Buffer.from('完整原文🙂').toString('base64'), hasMore: false })
+  const full = await fetch(`${base}/api/platform/queries?queryId=${id}&view=full`)
+  expect(full.status).toBe(200)
+  const body = await full.json()
+  expect(body).toMatchObject({
+    total: 1,
+    rows: [{ query: { id, relationCount: 1 }, relations: [{ id: earlier.relationIds[0], queryId: id, sequenceNo: 1, relationKey: 'apply-42', nameRaw: '合成企业' }] }],
+  })
+  expect(body.rows[0].query).not.toHaveProperty('rawResponse')
+  expect(JSON.stringify(body)).not.toMatch(/离线字段|完整原文/)
 })
-it('public HTTP rejects unsupported selectors and ranges with typed 400 and missing IDs with 404', async () => {
-  for (const query of ['view=garbage', 'queryId=0', 'queryId=1.5', 'view=summary&includeRawResponse=true', 'interface=garbage', 'titleCode=garbage', 'status=garbage']) expect((await fetch(`${base}/api/platform/queries?${query}`)).status).toBe(400)
-  for (const query of ['field=garbage', 'field=rawResponse&offset=-1', 'field=rawResponse&length=65537', 'field=relation', 'field=relations&pageSize=201']) expect((await fetch(`${base}/api/platform/queries/${id}/evidence?${query}`)).status).toBe(400)
-  expect((await fetch(`${base}/api/platform/queries/9999/evidence?field=rawResponse`)).status).toBe(404)
-  expect((await fetch(`${base}/api/platform/queries/garbage/evidence?field=rawResponse`)).status).toBe(400)
+
+it('rejects unsupported query selectors and serves no historical byte replay route', async () => {
+  for (const query of ['view=garbage', 'queryId=0', 'queryId=1.5', 'includeRawResponse=true', 'interface=garbage', 'titleCode=garbage', 'status=garbage']) {
+    expect((await fetch(`${base}/api/platform/queries?${query}`)).status).toBe(400)
+  }
+  expect((await fetch(`${base}/api/platform/queries/${id}/evidence?field=rawResponse`)).status).toBe(404)
 })
 
 it('public summary returns the same evidence with credentials and no-store directives', async () => {

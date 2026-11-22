@@ -28,7 +28,7 @@ export interface PlatformQueryFilter {
 export type PlatformStoredQuery = Pick<typeof schema.platformCollection.$inferSelect,
   'id'|'interface'|'queryKey'|'rdjb'|'titleCode'|'queriedAt'|'lastCollectedAt'|'status'|'failureReason'|'createdAt'> & {
   rawResponse: string | null
-  collectionEvidence: import('./live-query').PlatformLiveQueryResult | null
+  collectionEvidence: PlatformCollectionCoverage | null
 }
 export interface PlatformStoredRelation {
   id: number; queryId: number; sequenceNo: number; relationKey: string | null; enterpriseId: number | null
@@ -69,6 +69,8 @@ export interface PlatformRelationRow<I extends PlatformInterface = PlatformInter
   rawFields: Record<string, unknown> | null
 }
 
+export type PlatformCollectionCoverage = Omit<import('./live-query').PlatformLiveQueryResult, 'rows' | 'dataRows' | 'rawData'>
+
 export interface PlatformQueryRow {
   /** false only in the explicitly requested summary view; [] does not mean no relations. */
   relationsIncluded?: false
@@ -82,7 +84,7 @@ export interface PlatformQueryRow {
     status: string
     failureReason: string | null
     rawResponse?: string | null
-    collectionEvidence?: import('./live-query').PlatformLiveQueryResult | null
+    collectionEvidence?: PlatformCollectionCoverage | null
     legacyProvenance?: LegacyProvenanceDisplay
     createdAt: string
     relationCount: number

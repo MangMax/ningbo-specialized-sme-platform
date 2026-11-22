@@ -44,10 +44,8 @@ CREATE INDEX platform_business_projection_uscc_idx ON platform_business_projecti
 CREATE UNIQUE INDEX platform_business_projection_version_uq ON platform_business_projection (version_id);
 CREATE INDEX platform_business_projection_year_idx ON platform_business_projection (business_year);
 CREATE UNIQUE INDEX platform_business_record_identity_uq ON platform_business_record(interface, platform_key);
-CREATE INDEX platform_business_version_canonical_archive_idx ON platform_business_record_version(canonical_archive_id);
 CREATE UNIQUE INDEX platform_business_version_hash_uq ON platform_business_record_version(record_id, hash_algorithm, content_hash);
 CREATE UNIQUE INDEX platform_business_version_owner_uq ON platform_business_record_version(id, record_id);
-CREATE UNIQUE INDEX platform_collection_archive_ref_archive_id_unique ON platform_collection_archive_ref (archive_id);
 CREATE UNIQUE INDEX platform_collection_identity_uq ON platform_collection (interface,query_key,rdjb,queried_at);
 CREATE INDEX platform_collection_key_idx ON platform_collection (query_key, id);
 CREATE UNIQUE INDEX platform_collection_page_ordinal_uq ON platform_collection_page (collection_id,ordinal);
@@ -57,9 +55,6 @@ CREATE INDEX platform_collection_title_idx ON platform_collection (title_code,id
 CREATE UNIQUE INDEX platform_export_batch_identity_uq ON platform_export_batch (title_code,year,sha256);
 CREATE INDEX platform_export_row_identity_113_idx ON platform_export_row(batch_id,upper(trim(uscc_raw)),name_raw);
 CREATE UNIQUE INDEX platform_export_row_identity_uq ON platform_export_row (batch_id,source_row_no);
-CREATE UNIQUE INDEX platform_legacy_query_alias_collection_id_unique ON platform_legacy_query_alias (collection_id);
-CREATE UNIQUE INDEX platform_legacy_relation_alias_observation_id_unique ON platform_legacy_relation_alias (observation_id);
-CREATE UNIQUE INDEX platform_observation_archive_ref_archive_id_unique ON platform_observation_archive_ref (archive_id);
 CREATE UNIQUE INDEX platform_observation_collection_sequence_uq ON platform_business_observation (collection_id,sequence_no);
 CREATE INDEX platform_observation_position_idx ON platform_business_observation (collection_id,page_id,sequence_no);
 CREATE INDEX platform_query_title_scope_rdjb_collection_idx ON platform_query_title_scope(rdjb,collection_id);
@@ -73,7 +68,6 @@ CREATE INDEX platform_recognized_projection_uscc_idx ON platform_recognized_proj
 CREATE INDEX platform_recognized_projection_validity_idx ON platform_recognized_projection (validity_date_raw);
 CREATE UNIQUE INDEX platform_recognized_projection_version_uq ON platform_recognized_projection (version_id);
 CREATE INDEX platform_recognized_projection_year_idx ON platform_recognized_projection (maintenance_year);
-CREATE UNIQUE INDEX platform_version_archive_ref_archive_id_unique ON platform_version_archive_ref (archive_id);
 CREATE INDEX record_correspondence_audit_edge_idx ON record_correspondence_audit (correspondence_id,id);
 CREATE UNIQUE INDEX record_correspondence_edge_uq ON record_correspondence (edge_key);
 CREATE INDEX record_correspondence_enterprise_idx ON record_correspondence (enterprise_id,title_code);
@@ -155,13 +149,7 @@ ALTER TABLE platform_apply_projection
 ALTER TABLE platform_apply_projection
   ADD FOREIGN KEY (record_id) REFERENCES platform_business_record(id) ON DELETE RESTRICT;
 ALTER TABLE platform_apply_projection
-  ADD FOREIGN KEY (source_archive_id) REFERENCES platform_archive_value(id) ON DELETE RESTRICT;
-ALTER TABLE platform_apply_projection
   ADD FOREIGN KEY (version_id,record_id) REFERENCES platform_business_record_version(id,record_id) ON DELETE RESTRICT;
-ALTER TABLE platform_business_observation
-  ADD FOREIGN KEY (candidate_scope_archive_id) REFERENCES platform_archive_value(id) ON DELETE RESTRICT;
-ALTER TABLE platform_business_observation
-  ADD FOREIGN KEY (witness_archive_id) REFERENCES platform_archive_value(id) ON DELETE RESTRICT;
 ALTER TABLE platform_business_observation
   ADD FOREIGN KEY (collection_id) REFERENCES platform_collection(id) ON DELETE RESTRICT;
 ALTER TABLE platform_business_observation
@@ -185,34 +173,12 @@ ALTER TABLE platform_business_projection
 ALTER TABLE platform_business_projection
   ADD FOREIGN KEY (record_id) REFERENCES platform_business_record(id) ON DELETE RESTRICT;
 ALTER TABLE platform_business_projection
-  ADD FOREIGN KEY (source_archive_id) REFERENCES platform_archive_value(id) ON DELETE RESTRICT;
-ALTER TABLE platform_business_projection
   ADD FOREIGN KEY (version_id,record_id) REFERENCES platform_business_record_version(id,record_id) ON DELETE RESTRICT;
 ALTER TABLE platform_business_record_version
   ADD FOREIGN KEY (record_id) REFERENCES platform_business_record(id) ON DELETE RESTRICT;
-ALTER TABLE platform_business_record_version
-  ADD FOREIGN KEY (canonical_archive_id) REFERENCES platform_archive_value(id);
-ALTER TABLE platform_collection
-  ADD FOREIGN KEY (reconcile_slot_raw_archive_id) REFERENCES platform_archive_value(id) ON DELETE RESTRICT;
-ALTER TABLE platform_collection
-  ADD FOREIGN KEY (witness_archive_id) REFERENCES platform_archive_value(id) ON DELETE RESTRICT;
 ALTER TABLE platform_collection
   ADD FOREIGN KEY (title_code) REFERENCES title(code) ON DELETE RESTRICT;
-ALTER TABLE platform_collection_archive_ref
-  ADD FOREIGN KEY (owner_id) REFERENCES platform_collection(id) ON DELETE RESTRICT;
-ALTER TABLE platform_collection_archive_ref
-  ADD FOREIGN KEY (archive_id) REFERENCES platform_archive_value(id) ON DELETE RESTRICT;
-ALTER TABLE platform_collection_condition
-  ADD FOREIGN KEY (collection_id) REFERENCES platform_collection(id) ON DELETE RESTRICT;
-ALTER TABLE platform_collection_legacy_provenance
-  ADD FOREIGN KEY (collection_id) REFERENCES platform_collection(id) ON DELETE RESTRICT;
-ALTER TABLE platform_collection_legacy_provenance
-  ADD FOREIGN KEY (import_batch_id) REFERENCES import_batch(id) ON DELETE RESTRICT;
-ALTER TABLE platform_collection_legacy_provenance
-  ADD FOREIGN KEY (archive_id) REFERENCES platform_archive_value(id) ON DELETE RESTRICT;
 ALTER TABLE platform_collection_page
-  ADD FOREIGN KEY (collection_id) REFERENCES platform_collection(id) ON DELETE RESTRICT;
-ALTER TABLE platform_collection_unfinished
   ADD FOREIGN KEY (collection_id) REFERENCES platform_collection(id) ON DELETE RESTRICT;
 ALTER TABLE platform_export_batch
   ADD FOREIGN KEY (title_code) REFERENCES title(code);
@@ -224,29 +190,13 @@ ALTER TABLE platform_export_batch
   ADD FOREIGN KEY (replaced_batch_id) REFERENCES platform_export_batch(id);
 ALTER TABLE platform_export_row
   ADD FOREIGN KEY (batch_id) REFERENCES platform_export_batch(id) ON DELETE CASCADE;
-ALTER TABLE platform_legacy_query_alias
-  ADD FOREIGN KEY (collection_id) REFERENCES platform_collection(id) ON DELETE RESTRICT;
-ALTER TABLE platform_legacy_relation_alias
-  ADD FOREIGN KEY (observation_id) REFERENCES platform_business_observation(id) ON DELETE RESTRICT;
-ALTER TABLE platform_observation_archive_ref
-  ADD FOREIGN KEY (owner_id) REFERENCES platform_business_observation(id) ON DELETE RESTRICT;
-ALTER TABLE platform_observation_archive_ref
-  ADD FOREIGN KEY (archive_id) REFERENCES platform_archive_value(id) ON DELETE RESTRICT;
 ALTER TABLE platform_observation_assignment
   ADD FOREIGN KEY (observation_id) REFERENCES platform_business_observation(id) ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED;
 ALTER TABLE platform_observation_assignment
   ADD FOREIGN KEY (enterprise_id) REFERENCES enterprise(id) ON DELETE RESTRICT;
-ALTER TABLE platform_observation_fingerprint_basis
-  ADD FOREIGN KEY (input_archive_id) REFERENCES platform_archive_value(id) ON DELETE RESTRICT;
-ALTER TABLE platform_observation_fingerprint_basis
-  ADD FOREIGN KEY (observation_id) REFERENCES platform_business_observation(id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
 ALTER TABLE platform_query_title_scope
   ADD FOREIGN KEY (collection_id) REFERENCES platform_collection(id) ON DELETE RESTRICT;
-ALTER TABLE platform_query_title_scope_error
-  ADD FOREIGN KEY (collection_id) REFERENCES platform_collection(id) ON DELETE RESTRICT;
-ALTER TABLE platform_recognized_projection
-  ADD FOREIGN KEY (exact_title_archive_id) REFERENCES platform_archive_value(id) ON DELETE RESTRICT;
 ALTER TABLE platform_recognized_projection
   ADD FOREIGN KEY (observation_id) REFERENCES platform_business_observation(id) ON DELETE RESTRICT;
 ALTER TABLE platform_recognized_projection
@@ -254,13 +204,7 @@ ALTER TABLE platform_recognized_projection
 ALTER TABLE platform_recognized_projection
   ADD FOREIGN KEY (record_id) REFERENCES platform_business_record(id) ON DELETE RESTRICT;
 ALTER TABLE platform_recognized_projection
-  ADD FOREIGN KEY (source_archive_id) REFERENCES platform_archive_value(id) ON DELETE RESTRICT;
-ALTER TABLE platform_recognized_projection
   ADD FOREIGN KEY (version_id,record_id) REFERENCES platform_business_record_version(id,record_id) ON DELETE RESTRICT;
-ALTER TABLE platform_version_archive_ref
-  ADD FOREIGN KEY (owner_id) REFERENCES platform_business_record_version(id) ON DELETE RESTRICT;
-ALTER TABLE platform_version_archive_ref
-  ADD FOREIGN KEY (archive_id) REFERENCES platform_archive_value(id) ON DELETE RESTRICT;
 ALTER TABLE record
   ADD FOREIGN KEY (enterprise_id) REFERENCES enterprise(id);
 ALTER TABLE record

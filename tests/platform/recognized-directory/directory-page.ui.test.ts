@@ -54,17 +54,20 @@ const directoryLinkCases = [
   ['a scope: key', 'scope:queryBusList:1:%7B%22whpcyear%22%3A%222024%22%7D', {}],
 ] as const
 
-describe('查询证据卡片的目录深链', () => {
+describe('查询历史卡片的目录深链', () => {
   it.each(directoryLinkCases)('links a recognized query card with %s', async (_label, queryKey, expectedQuery) => {
     vi.stubGlobal('useRoute', () => ({ query: {} }))
-    vi.stubGlobal('$fetch', vi.fn(async () => queryCardResponse(queryKey)))
+    const fetch = vi.fn(async () => queryCardResponse(queryKey))
+    vi.stubGlobal('$fetch', fetch)
     const view = mountQueriesPage()
     try {
       await flushPromises()
       const link = view.findAll('a').find(anchor => anchor.text() === '本地目录记录')!
       expect(JSON.parse(link.attributes('data-to')!)).toEqual({ path: '/platform-recognized-directory', query: expectedQuery })
-      // The evidence reader still renders on the same card.
-      expect(view.text()).toContain('尚未加载')
+      const history = view.get('[data-query-id="7"] button[aria-expanded]')
+      expect(history.text()).toBe('查看查询记录')
+      expect(history.attributes('aria-expanded')).toBe('false')
+      expect(fetch).toHaveBeenCalledTimes(1)
     } finally { view.unmount(); vi.unstubAllGlobals() }
   })
 })

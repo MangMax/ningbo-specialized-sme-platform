@@ -23,7 +23,9 @@ beforeAll(async () => {
   const contract = await readDevelopmentDiscovery()
   expect(contract.paths['/api/roster/import/preflight'].post).toBeDefined()
   expect(contract.paths['/api/roster/import/commit'].post).toBeDefined()
-  expect(contract.paths['/api/platform/queries/{queryId}/evidence'].get).toBeDefined()
+  expect(contract.paths['/api/platform/queries'].get).toBeDefined()
+  expect(contract.paths['/api/platform/queries/{queryId}/evidence']).toBeUndefined()
+  expect(JSON.stringify(contract.paths['/api/platform/queries'].get)).not.toContain('includeRawResponse')
   client = createRosterImportClient({ baseUrl: baseUrl, token })
 }, 90000)
 afterAll(async () => {
@@ -36,16 +38,9 @@ function input(label: string, source: 'apply_list' | 'business_list', relations:
   return { idempotencyKey: `249:${label}`, sourceKind: 'alias_evidence', sourceIdentity: `synthetic:249:${label}`, payload: { platformQueries: [{ interface: source, queryKey: `synthetic:249:${label}`, queriedAt: '2026-10-23T00:00:00.000Z', status: 'success', rawResponse: '原始响应 🙂\n', relations }] } }
 }
 async function read(label: string) {
-  const response = await fetch(`${baseUrl}/api/platform/queries?queryKey=${encodeURIComponent(`synthetic:249:${label}`)}&includeRawResponse=true`)
+  const response = await fetch(`${baseUrl}/api/platform/queries?queryKey=${encodeURIComponent(`synthetic:249:${label}`)}`)
   expect(response.status).toBe(200)
   return response.json()
-}
-async function original(queryId: number, relationId: number) {
-  const response = await fetch(`${baseUrl}/api/platform/queries/${queryId}/evidence?field=relation&relationId=${relationId}`)
-  expect(response.status).toBe(200)
-  const chunk = await response.json()
-  expect(chunk.hasMore).toBe(false)
-  return JSON.parse(Buffer.from(chunk.data, 'base64').toString('utf8'))
 }
 async function api(path: string, body?: unknown, method = 'POST') {
   const response = await fetch(baseUrl + path, { method: body ? method : 'GET', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) })
@@ -53,32 +48,28 @@ async function api(path: string, body?: unknown, method = 'POST') {
   return response.json()
 }
 
-it.each(['apply_list', 'business_list'] as const)('equivalent declare kinds archive and replay over real HTTP without changing raw evidence: %s', async (source) => {
+it.each(['apply_list', 'business_list'] as const)('equivalent declare kinds remain stable on HTTP readback and import replay: %s', async (source) => {
   const pairs = [['申请', 'apply'], ['更新', 'update'], ['复核', 'review']] as const
   const relations = pairs.flatMap(([chinese, english], i) => [
-    { sequenceNo: i * 2 + 1, declareKind: chinese, rawFields: { sblx: english, cszt: '终审通过', sourceOnly: '留证 🙂\n' } },
-    { sequenceNo: i * 2 + 2, declareKind: english, rawFields: { sblx: chinese, cszt: '终审通过', sourceOnly: '留证 🙂\n' } },
+    { sequenceNo: i * 2 + 1, declareKind: chinese, rawFields: { sblx: english, cszt: '终审通过', sourceOnly: { note: '留证 🙂\n' } } },
+    { sequenceNo: i * 2 + 2, declareKind: english, rawFields: { sblx: chinese, cszt: '终审通过', sourceOnly: { note: '留证 🙂\n' } } },
   ])
   const request = input(source, source, relations)
   expect((await client.preflight(request)).preflight.conflicts).toEqual([])
   expect((await client.commit(request)).status).toBe('committed')
   const page = await read(source)
   const archived = page.rows[0]
-  expect(archived.query.rawResponse).toBe('原始响应 🙂\n')
+  expect(archived.query).not.toHaveProperty('rawResponse')
+  expect(JSON.stringify(archived)).not.toContain('留证')
   expect(archived.relations).toHaveLength(6)
-  const originals = []
   for (const [i, row] of archived.relations.entries()) {
-    expect(row).toMatchObject({ declareKind: pairs[Math.floor(i / 2)]![1], rawFields: relations[i]!.rawFields, normalizationConflicts: [] })
-    const evidence = await original(archived.query.id, row.id)
-    expect(evidence).toMatchObject({ declareKind: row.declareKind, rawFields: relations[i]!.rawFields })
-    originals.push(evidence)
+    expect(row).toMatchObject({ declareKind: pairs[Math.floor(i / 2)]![1], normalizationConflicts: [] })
   }
   expect((await client.commit(request)).status).toBe('committed')
   expect(await read(source)).toEqual(page)
-  for (const [i, row] of archived.relations.entries()) expect(await original(archived.query.id, row.id)).toEqual(originals[i])
 }, 20_000)
 
-it('unknown and prototype-named declare kinds survive HTTP archive and exact evidence reads', async () => {
+it('unknown and prototype-named declare kinds survive extracted HTTP readback', async () => {
   const values = ['新事项', '__proto__', 'constructor', 'toString', 'APPLY']
   const relations = values.map((value, i) => ({ sequenceNo: i + 1, declareKind: value, rawFields: { sblx: value } }))
   const request = input('unknown', 'business_list', relations)
@@ -87,8 +78,7 @@ it('unknown and prototype-named declare kinds survive HTTP archive and exact evi
   const archived = (await read('unknown')).rows[0]
   expect(archived.relations).toHaveLength(values.length)
   for (const [i, row] of archived.relations.entries()) {
-    expect(row).toMatchObject({ declareKind: values[i], rawFields: relations[i]!.rawFields, normalizationConflicts: [] })
-    expect(await original(archived.query.id, row.id)).toMatchObject({ declareKind: values[i], rawFields: relations[i]!.rawFields })
+    expect(row).toMatchObject({ declareKind: values[i], normalizationConflicts: [] })
   }
 })
 
@@ -129,12 +119,11 @@ it('identical full raw reuses a content version across stored synonyms while cha
   for (const label of ['content-first', 'content-second', 'content-changed']) {
     const archived = (await read(label)).rows[0], row = archived.relations[0]
     expect(row).toMatchObject({ declareKind: 'apply', normalizationConflicts: [] })
-    expect((await original(archived.query.id, row.id)).rawFields).toEqual(label === 'content-changed' ? { ...raw, sblx: 'apply' } : raw)
   }
   expect(await versions()).toEqual(before)
 })
 
-it('synonym reads preserve full raw source fingerprints and cannot clear stale source qualification', async () => {
+it('synonym reads preserve decision fingerprints and cannot clear stale source qualification', async () => {
   const name = '合成同义来源资格企业', uscc = '91330211000000001F'
   const announcement: RosterImportRequest = { idempotencyKey: '249:official', sourceKind: 'announcement', sourceIdentity: 'synthetic:249:official', payload: { announcement: { sourceDocument: { source: 'jxj', title: '合成来源资格公告' }, records: [{ enterprise: { name, uscc }, titleCode: 'innovative_sme', events: [{ eventType: 'award', year: 2025 }] }] } } }
   const staged = await client.commit(announcement)
@@ -160,11 +149,11 @@ it('synonym reads preserve full raw source fingerprints and cannot clear stale s
   )).rows[0]!
   const before = await persisted()
   const { comparisonProofIds: _proofs, ...provenance } = JSON.parse(before.provenance)
-  expect(provenance.relation.rawFields).toEqual(request.payload.platformQueries![0]!.relations![0]!.rawFields)
+  expect(provenance.relation).not.toHaveProperty('rawFields')
+  expect(provenance.relation).toMatchObject({ id: relationId })
   expect(provenance.relation).not.toHaveProperty('normalizationConflicts')
   expect(before.fingerprint).toBe(createHash('sha256').update(JSON.stringify(provenance)).digest('hex'))
   expect(plan.targets[0].sourceFingerprint).toBe(before.fingerprint)
-  const originalBytes = await original(archived.query.id, relationId)
   expect(await api(`/api/roster/correspondences/${id}`)).toMatchObject({ status: 'confirmed', requiresRevalidation: false })
   expect((await api(`/api/roster/correspondences/relations/${relationId}`)).source).toMatchObject({ declareKind: 'apply', normalizationConflicts: [] })
   expect(await persisted()).toEqual(before)
@@ -174,5 +163,4 @@ it('synonym reads preserve full raw source fingerprints and cannot clear stale s
   expect((await api(`/api/roster/correspondences/relations/${relationId}`)).source).toMatchObject({ declareKind: 'apply', normalizationConflicts: [] })
   expect(await api(`/api/roster/correspondences/${id}`)).toMatchObject({ requiresRevalidation: true })
   expect(await persisted()).toEqual(before)
-  expect(await original(archived.query.id, relationId)).toEqual(originalBytes)
 }, 20_000)

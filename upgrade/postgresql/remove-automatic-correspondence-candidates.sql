@@ -15,7 +15,7 @@ SELECT edge.id AS edge_id, audit.id AS audit_id, batch.id AS batch_id
 FROM record_correspondence edge
 JOIN record_correspondence_audit audit ON audit.correspondence_id = edge.id
 JOIN import_batch batch ON batch.id = audit.batch_id
-JOIN platform_legacy_relation_alias relation ON relation.observation_id = edge.observation_id
+JOIN platform_business_observation observation ON observation.id = edge.observation_id
 WHERE edge.status = 'candidate'
   AND edge.revision = 1
   AND edge.decided_at IS NULL
@@ -35,7 +35,7 @@ WHERE edge.status = 'candidate'
   AND batch.source_identity ~ '^candidate-job/[^/:]+$'
   AND audit.idempotency_key = batch.idempotency_key
   AND batch.idempotency_key = 'candidate-job:' || substr(batch.source_identity, length('candidate-job/') + 1)
-    || ':' || edge.event_id || ':' || relation.old_id
+    || ':' || edge.event_id || ':' || observation.public_id
   AND NOT EXISTS (
     SELECT FROM record_correspondence_audit other
     WHERE other.correspondence_id = edge.id AND other.id <> audit.id
@@ -60,7 +60,10 @@ SELECT EXISTS (SELECT FROM retired_automatic_candidates) AS has_retired_candidat
 CREATE INDEX retire_auto_candidate_event_batch_idx ON event_correction_audit (batch_id);
 CREATE INDEX retire_auto_candidate_evidence_batch_idx ON official_evidence_row_revision (import_batch_id);
 CREATE INDEX retire_auto_candidate_observation_batch_idx ON platform_business_observation (batch_id);
+SELECT to_regclass('platform_collection_legacy_provenance') IS NOT NULL AS has_legacy_provenance \gset
+\if :has_legacy_provenance
 CREATE INDEX retire_auto_candidate_provenance_batch_idx ON platform_collection_legacy_provenance (import_batch_id);
+\endif
 CREATE INDEX retire_auto_candidate_export_batch_idx ON platform_export_batch (import_batch_id);
 CREATE INDEX retire_auto_candidate_audit_batch_idx ON record_correspondence_audit (batch_id);
 
@@ -77,8 +80,11 @@ WHERE batch.id = retired.batch_id
   AND NOT EXISTS (SELECT FROM import_receipt receipt WHERE receipt.batch_id = batch.id);
 
 DROP INDEX retire_auto_candidate_event_batch_idx, retire_auto_candidate_evidence_batch_idx,
-  retire_auto_candidate_observation_batch_idx, retire_auto_candidate_provenance_batch_idx,
+  retire_auto_candidate_observation_batch_idx,
   retire_auto_candidate_export_batch_idx, retire_auto_candidate_audit_batch_idx;
+\if :has_legacy_provenance
+DROP INDEX retire_auto_candidate_provenance_batch_idx;
+\endif
 \endif
 
 COMMIT;

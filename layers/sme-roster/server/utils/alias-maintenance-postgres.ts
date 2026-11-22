@@ -6,7 +6,7 @@ import { enterprise as enterpriseTable, enterpriseAlias as aliases, enterpriseAl
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { sourceDocument } from '../../../../db/postgresql/official-evidence-tables'
 import { platformBusinessObservation as observation, platformCollection as collection,
-  platformLegacyRelationAlias as legacy, platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
+  platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { z } from 'zod'
 import { lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeUscc } from '../../lib/domain'
@@ -86,13 +86,12 @@ async function checkSource(db: Db, alias: Alias) {
   const latest = db.select({ enterpriseId: assignment.enterpriseId, observationId: assignment.observationId }).from(assignment)
     .where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('latest')
   const [source] = await db.select({ interface: collection.interface, enterpriseId: latest.enterpriseId,
-    uscc: enterpriseTable.usccNorm, originalUscc: original.usccRaw, originalName: original.nameRaw }).from(legacy)
-    .innerJoin(observation, eq(observation.id, legacy.observationId))
+    uscc: enterpriseTable.usccNorm, originalUscc: original.usccRaw, originalName: original.nameRaw }).from(observation)
     .innerJoin(collection, eq(collection.id, observation.collectionId))
     .innerJoin(enterpriseTable, eq(enterpriseTable.id, enterpriseId))
     .innerJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
     .innerJoinLateral(latest, eq(latest.observationId, observation.id))
-    .where(eq(legacy.oldId, sourceRefId))
+    .where(eq(observation.publicId, sourceRefId))
   if (!source) return failAlias(400, 'alias_source_evidence_required', '平台别名必须引用真实平台关系')
   const expectedInterface = sourceKind === 'platform_business' ? 'business_list' : 'apply_list'
   if (source.interface !== expectedInterface || !source.uscc || normalizeUscc(source.originalUscc) !== source.uscc || source.originalName !== name) {

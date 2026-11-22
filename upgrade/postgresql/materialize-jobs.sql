@@ -11,6 +11,7 @@ FROM :"staging".job;
 \ir ../../db/postgresql/job-integrity.sql
 \ir ../../db/postgresql/platform-batch-segments.sql
 \ir split-platform-batch-results.sql
+\ir project-platform-batch-business-rows.sql
 
 ANALYZE business.job;
 COMMIT;

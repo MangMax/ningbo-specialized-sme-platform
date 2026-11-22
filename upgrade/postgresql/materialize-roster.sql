@@ -20,6 +20,7 @@ DO $$ BEGIN RAISE EXCEPTION 'Roster materialization requires a distinct native t
 
 \ir ../../db/postgresql/roster-schema.sql
 \ir ../../db/postgresql/roster-platform-schema.sql
+\ir staging-platform-archives.sql
 \ir ../../db/postgresql/roster-review-schema.sql
 
 -- The source staging schema remains an exact copy. Retiring the native proof
@@ -207,7 +208,7 @@ INSERT INTO platform_business_observation (
   witness_collection_id, witness_sequence_no, witness_archive_id, witness_sha256, witness_ordinal,
   witness_rdjb_kind, witness_rdjb_value, witness_rdjb_value_sqlite_storage, witness_rdjb_key,
   witness_page_kind, witness_page_value, witness_page_value_sqlite_storage, witness_error_name,
-  witness_error, witness_state
+  witness_error, witness_state, public_id
 )
 SELECT process_exact_owner_id, process_exact_state, process_sql_fact_title_state, apply_exact_owner_id,
   apply_exact_state, apply_sql_fact_title_state, id, collection_id, sequence_no, page_id, page_row_no,
@@ -218,8 +219,9 @@ SELECT process_exact_owner_id, process_exact_state, process_sql_fact_title_state
   witness_collection_id, witness_sequence_no, witness_archive_id, witness_sha256, witness_ordinal,
   witness_rdjb_kind, witness_rdjb_value, witness_rdjb_value_sqlite_storage, witness_rdjb_key,
   witness_page_kind, witness_page_value, witness_page_value_sqlite_storage, witness_error_name,
-  witness_error, witness_state
-FROM :"staging".platform_business_observation;
+  witness_error, witness_state,
+  (SELECT alias.old_id FROM :"staging".platform_legacy_relation_alias alias WHERE alias.observation_id = source.id)
+FROM :"staging".platform_business_observation AS source;
 
 INSERT INTO platform_business_projection (
   exact_status_sqlite_storage, exact_declare_kind_sqlite_storage, exact_applied_at_sqlite_storage,
@@ -270,28 +272,25 @@ SELECT id, interface, platform_key, identity_rule_version, created_at
 FROM :"staging".platform_business_record;
 
 INSERT INTO platform_business_record_version (
-  id, record_id, hash_algorithm, content_hash, created_at, canonical_archive_id
+  id, record_id, hash_algorithm, content_hash, created_at
 )
-SELECT id, record_id, hash_algorithm, content_hash, created_at, canonical_archive_id
+SELECT id, record_id, hash_algorithm, content_hash, created_at
 FROM :"staging".platform_business_record_version;
 
 INSERT INTO platform_collection (
   id, interface, query_key, rdjb, title_code, queried_at, created_at, last_collected_at, status,
   failure_reason, source, evidence_status, completed_at, completeness, full_range, fetched_count,
   declared_total, scope_mode, provenance_state, parse_state, rule_version, error_code, error_message,
-  max_requests, max_rows, max_duration_ms, page_size, reconcile_slot_state, reconcile_slot_rule,
-  reconcile_slot_raw_archive_id, reconcile_slot_row_count, reconcile_slot_input_sha256,
-  reconcile_slot_reason, witness_gate, witness_rule, witness_archive_id, witness_sha256, witness_error_name,
-  witness_error, witness_state
+  max_requests, max_rows, max_duration_ms, page_size, witness_gate, witness_rule, witness_archive_id, witness_sha256, witness_error_name,
+  witness_error, witness_state, public_id
 )
 SELECT id, interface, query_key, rdjb, title_code, queried_at, created_at, last_collected_at, status,
   failure_reason, source, evidence_status, completed_at, completeness, full_range, fetched_count,
   declared_total, scope_mode, provenance_state, parse_state, rule_version, error_code, error_message,
-  max_requests, max_rows, max_duration_ms, page_size, reconcile_slot_state, reconcile_slot_rule,
-  reconcile_slot_raw_archive_id, reconcile_slot_row_count, reconcile_slot_input_sha256,
-  reconcile_slot_reason, witness_gate, witness_rule, witness_archive_id, witness_sha256, witness_error_name,
-  witness_error, witness_state
-FROM :"staging".platform_collection;
+  max_requests, max_rows, max_duration_ms, page_size, witness_gate, witness_rule, witness_archive_id, witness_sha256, witness_error_name,
+  witness_error, witness_state,
+  (SELECT alias.old_id FROM :"staging".platform_legacy_query_alias alias WHERE alias.collection_id = source.id)
+FROM :"staging".platform_collection AS source;
 
 INSERT INTO platform_collection_archive_ref (
   owner_id, field, archive_id, sealed
@@ -299,15 +298,8 @@ INSERT INTO platform_collection_archive_ref (
 SELECT owner_id, field, archive_id, sealed
 FROM :"staging".platform_collection_archive_ref;
 
-INSERT INTO platform_collection_condition (
-  collection_id, name, value_kind, text_value, integer_value, witness_kind, witness_value,
-  witness_value_sqlite_storage
-)
-SELECT collection_id, name, value_kind, text_value, integer_value, witness_kind, witness_value,
-  witness_value_sqlite_storage
-FROM :"staging".platform_collection_condition;
-
-\ir compact-platform-collection-conditions.sql
+\set scope_source :staging
+\ir backfill-platform-collection-scope.sql
 
 INSERT INTO platform_collection_legacy_provenance (
   collection_id, origin, source_identity, source_sha256, segment_index, input_fingerprint, import_batch_id,
@@ -325,12 +317,6 @@ SELECT id, collection_id, ordinal, source, rdjb, page_no, max_page, fetched_coun
   error_code, error_message, sequence_start, sequence_end, position_state, max_page_present
 FROM :"staging".platform_collection_page;
 
-INSERT INTO platform_collection_unfinished (
-  collection_id, ordinal, source, rdjb, page_no
-)
-SELECT collection_id, ordinal, source, rdjb, page_no
-FROM :"staging".platform_collection_unfinished;
-
 INSERT INTO platform_export_batch (
   id, title_code, year, collected_on, original_filename, sha256, row_count, import_status,
   source_document_id, import_batch_id, replaced_batch_id, created_at
@@ -347,24 +333,6 @@ SELECT id, batch_id, source_row_no, uscc_raw, name_raw, district, province, city
   created_at
 FROM :"staging".platform_export_row;
 
-INSERT INTO platform_legacy_alias_sequence (
-  namespace, high_water
-)
-SELECT namespace, high_water
-FROM :"staging".platform_legacy_alias_sequence;
-
-INSERT INTO platform_legacy_query_alias (
-  old_id, collection_id
-)
-SELECT old_id, collection_id
-FROM :"staging".platform_legacy_query_alias;
-
-INSERT INTO platform_legacy_relation_alias (
-  old_id, observation_id
-)
-SELECT old_id, observation_id
-FROM :"staging".platform_legacy_relation_alias;
-
 INSERT INTO platform_observation_archive_ref (
   owner_id, field, archive_id, sealed
 )
@@ -379,28 +347,11 @@ SELECT observation_id, revision, enterprise_id, match_basis, verification_status
   alias_name_raw, actor, basis, command_receipt_id, recorded_at, origin
 FROM :"staging".platform_observation_assignment;
 
-CREATE TEMP TABLE legacy_platform_fingerprint_release ON COMMIT DROP AS
-SELECT observation_id, input_archive_id AS archive_id
-FROM :"staging".platform_observation_fingerprint_basis
-WHERE scheme IN ('legacy-indexed-v1', 'legacy-bootstrap-v1') AND input_archive_id IS NOT NULL;
-
-INSERT INTO platform_observation_fingerprint_basis (
-  observation_id, scheme, input_archive_id
-)
-SELECT observation_id, scheme, CASE WHEN scheme = 'target-command-v1' THEN input_archive_id END
-FROM :"staging".platform_observation_fingerprint_basis;
-
 INSERT INTO platform_query_title_scope (
   collection_id, rdjb
 )
 SELECT collection_id, rdjb
 FROM :"staging".platform_query_title_scope;
-
-INSERT INTO platform_query_title_scope_error (
-  collection_id
-)
-SELECT collection_id
-FROM :"staging".platform_query_title_scope_error;
 
 INSERT INTO platform_recognized_projection (
   source_recognized_at, source_valid_flag, source_valid_flag_sqlite_storage, source_invalidated_at,
@@ -441,26 +392,6 @@ SELECT source_recognized_at, source_valid_flag, source_valid_flag_sqlite_storage
   exact_title_raw_sqlite_storage, exact_title_state, exact_title_origin, exact_title_archive_id,
   exact_title_sha256
 FROM :"staging".platform_recognized_projection;
-
-INSERT INTO platform_version_archive_ref (
-  owner_id, field, archive_id, sealed
-)
-SELECT owner_id, field, archive_id, sealed
-FROM :"staging".platform_version_archive_ref;
-
--- Source staging retains the duplicate text so the first materialization can prove byte equality.
-SELECT EXISTS (
-  SELECT 1
-  FROM :"staging".platform_business_record_version v
-  LEFT JOIN platform_version_archive_ref r
-    ON r.owner_id = v.id AND r.archive_id = v.canonical_archive_id AND r.field = 'canonicalRawJson' AND r.sealed = 1
-  LEFT JOIN platform_archive_value a ON a.id = r.archive_id AND a.storage_class = 'text'
-  WHERE a.id IS NULL OR a.bytes IS DISTINCT FROM convert_to(v.canonical_raw_json, 'UTF8')
-) AS invalid_canonical_archive
-\gset
-\if :invalid_canonical_archive
-DO $$ BEGIN RAISE EXCEPTION 'Staged canonical platform version has no matching sealed text archive'; END $$;
-\endif
 
 INSERT INTO record (
   id, enterprise_id, title_code, source, district, uscc_raw, name_raw, quality_flags
@@ -602,7 +533,6 @@ WITH owned_sequences(table_name, column_name) AS (
     ('import_batch', 'id'),
     ('import_receipt', 'id'),
     ('platform_apply_projection', 'id'),
-    ('platform_archive_value', 'id'),
     ('platform_business_observation', 'id'),
     ('platform_business_projection', 'id'),
     ('platform_business_record', 'id'),
@@ -637,11 +567,28 @@ FROM pg_temp.roster_sequence_restart
 
 DROP FUNCTION pg_temp.roster_sequence_high_water(text, text);
 
+WITH highest AS (
+  SELECT greatest(coalesce(max(public_id), 0),
+    coalesce((SELECT high_water FROM :"staging".platform_legacy_alias_sequence WHERE namespace='query'),0)) AS last
+  FROM platform_collection
+)
+SELECT setval(pg_get_serial_sequence('platform_collection','public_id'),greatest(last,1),last>0) FROM highest;
+
+WITH highest AS (
+  SELECT greatest(coalesce(max(public_id), 0),
+    coalesce((SELECT high_water FROM :"staging".platform_legacy_alias_sequence WHERE namespace='relation'),0)) AS last
+  FROM platform_business_observation
+)
+SELECT setval(pg_get_serial_sequence('platform_business_observation','public_id'),greatest(last,1),last>0) FROM highest;
+
 \ir ../../db/postgresql/roster-constraints.sql
 \ir ../../db/postgresql/roster-triggers.sql
-\ir ../../db/postgresql/platform-fingerprint-legacy-verify.sql
-\ir ../../db/postgresql/platform-fingerprint-legacy-prune.sql
-\ir ../../db/postgresql/platform-observation-snapshot-compaction.sql
+\ir ../../db/postgresql/platform-observation-snapshot.sql
+\ir ../../db/postgresql/platform-business-facts-backfill.sql
+\ir ../../db/postgresql/platform-offline-read-facts.sql
+DROP FUNCTION platform_observation_snapshot(bigint, bytea);
+DROP TABLE platform_observation_archive_ref, platform_collection_archive_ref,
+  platform_collection_legacy_provenance, platform_archive_value;
 
 SELECT format('ANALYZE %I.%I', :'target', tablename)
 FROM pg_tables
@@ -651,15 +598,14 @@ WHERE schemaname = :'target' AND tablename IN (
   'event_correction_audit', 'evidence_correction_audit', 'evidence_correction_batch',
   'evidence_review_receipt_114',
   'file_declaration_669', 'file_parse_audit_105', 'import_batch', 'import_receipt',
-  'official_evidence_row_revision', 'platform_apply_projection', 'platform_archive_value',
+  'official_evidence_row_revision', 'platform_apply_projection',
   'platform_business_observation', 'platform_business_projection', 'platform_business_record',
-  'platform_business_record_version', 'platform_collection', 'platform_collection_archive_ref',
-  'platform_collection_condition', 'platform_collection_legacy_provenance', 'platform_collection_page',
-  'platform_collection_unfinished', 'platform_export_batch', 'platform_export_row',
-  'platform_legacy_alias_sequence', 'platform_legacy_query_alias', 'platform_legacy_relation_alias',
-  'platform_observation_archive_ref',
-  'platform_observation_assignment', 'platform_observation_fingerprint_basis', 'platform_query_title_scope',
-  'platform_query_title_scope_error', 'platform_recognized_projection', 'platform_version_archive_ref',
+  'platform_business_record_version', 'platform_collection',
+  'platform_collection_page',
+  'platform_export_batch', 'platform_export_row',
+
+  'platform_observation_assignment', 'platform_query_title_scope',
+  'platform_recognized_projection',
   'record', 'record_correspondence', 'record_correspondence_audit', 'record_event',
   'record_evidence', 'roster_file_classification', 'source_document', 'stored_file_part', 'title',
   'title_cycle_disposition_receipt', 'title_cycle_disposition_revision', 'roster_announcement_intake',

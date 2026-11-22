@@ -5,12 +5,11 @@ import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { title } from '../../../../db/postgresql/title-table'
 import {
   platformBusinessProjection, platformExportBatch, platformExportRow,
-  platformLegacyRelationAlias, platformObservationAssignment,
+  platformBusinessObservation, platformObservationAssignment,
 } from '../../../../db/postgresql/platform-tables'
 import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { sourceQueryFields, sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
-import { postgresObservationSnapshot } from '../../lib/platform/postgres-observation-snapshot'
 import { correspondenceAttributionChanged, type CorrespondenceAttribution } from './record-correspondence-attribution'
 import type { CorrespondenceRefRow } from './record-correspondence'
 
@@ -23,12 +22,12 @@ const textJson = (value: SQL) => sql`to_json(${value})`
 const tableColumn = (alias: string, column: string) => sql`${sql.identifier(alias)}.${sql.identifier(column)}`
 
 function storedFields(table: Table, alias: string, saved: SQL, versioned = false) {
-  return sql.join(Object.entries(getTableColumns(table)).map(([key, column]) => {
+  return and(...Object.entries(getTableColumns(table)).map(([key, column]) => {
     const value = tableColumn(alias, column.name)
     const actual = legacyJsonFields.has(key) ? sql`${value}::json`
       : versioned && key === 'revision' ? textJson(sql`nullif(${value},1)`) : textJson(value)
     return jsonEqual(sql`(${saved})->${key}::text`, actual)
-  }), sql` AND `)
+  }))
 }
 
 function eventMatches(id: SQL, predecessor = false) {
@@ -55,49 +54,34 @@ function eventMatches(id: SQL, predecessor = false) {
 }
 
 function relationMatches(assignment: { enterpriseId: SQL; matchBasis: SQL; verificationStatus: SQL }) {
-  const cells = sql`json_array_elements(convert_from(${postgresObservationSnapshot(sql`o.id`, sql`snapshot.bytes`)},'UTF8')::json->'fields')`
-  const text = sql`convert_from(decode(cell->>'hex','hex'),'UTF8')`
-  const decoded = sql`CASE cell->>'storageClass'
-    WHEN 'text' THEN to_json(${text})
-    WHEN 'integer' THEN to_json((${text})::numeric)
-    WHEN 'real' THEN to_json((${text})::double precision)
-    ELSE 'null'::json END`
-  const overrides = {
-    id: sql`p.relation_id`, queryId: sql`qa.old_id`, ...assignment,
-  }
-  const fields = Object.entries(sourceRelationFields).map(([key, column]) => {
-    const saved = refValue('relation', key)
-    const actual = column.dataType === 'json'
-      ? sql`CASE WHEN cell->>'storageClass' <> 'null' THEN (${text})::json END`
-      : key in overrides ? textJson(overrides[key as keyof typeof overrides]) : decoded
-    return sql`WHEN ${column.name} THEN cell->>'storageClass' <> 'blob' AND ${jsonEqual(saved, actual)}`
+  const overrides = { id: sql`p.relation_id`, queryId: sql`c.public_id`, ...assignment }
+  const fields = Object.keys(sourceRelationFields).filter(key => key !== 'rawFields' && key !== 'sourceText').map(key => {
+    const actual = key in overrides ? textJson(overrides[key as keyof typeof overrides]) : sql`o.relation_facts->${key}::text`
+    return jsonEqual(refValue('relation', key), actual)
   })
   const query = Object.entries(sourceQueryFields).map(([key, column]) => {
     if (key === 'rawResponse') {
-      const digest = sql`(
-        SELECT encode(sha256(v.bytes),'hex')
-        FROM platform_collection_archive_ref r JOIN platform_archive_value v ON v.id=r.archive_id
-        WHERE r.owner_id=c.id AND r.field=${key})`
-      return jsonEqual(refValue('query', 'rawResponseSha256'), textJson(digest))
+      const saved = sql`coalesce(${refValue('query', 'rawResponseSha256')} #>> '{}', CASE
+        WHEN jsonb_typeof(${refValue('query', 'rawResponse')})='string'
+        THEN encode(sha256(convert_to(${refValue('query', 'rawResponse')} #>> '{}','UTF8')),'hex') END)`
+      return sql`${saved} IS NOT DISTINCT FROM c.raw_response_sha256`
     }
-    const value = key === 'collectionEvidence' ? sql`(
-      SELECT convert_from(v.bytes,'UTF8') FROM platform_collection_archive_ref r JOIN platform_archive_value v ON v.id=r.archive_id
-      WHERE r.owner_id=c.id AND r.field=${key})` : key === 'id' ? sql`qa.old_id` : tableColumn('c', column.name)
-    return jsonEqual(refValue('query', key), column.dataType === 'json' ? sql`(${value})::json` : textJson(value))
+    if (key === 'collectionEvidence') {
+      const saved = refValue('query', key)
+      const structured = sql`CASE WHEN jsonb_typeof(${saved})='object' THEN (${saved}) - ARRAY['rows','dataRows','rawData'] ELSE (${saved}) END`
+      return or(jsonEqual(structured, sql`c.source_coverage`),
+        and(jsonEqual(saved, NULL_JSON), sql`c.evidence_sha256 IS NULL`))
+    }
+    return jsonEqual(refValue('query', key), textJson(key === 'id' ? sql`c.public_id` : tableColumn('c', column.name)))
   })
   return sql`CASE WHEN p.observation_id IS NULL THEN
     ${jsonEqual(refValue('relation'), NULL_JSON)} AND ${jsonEqual(refValue('query'), NULL_JSON)}
     ELSE EXISTS(
       SELECT 1 FROM platform_business_observation o
       JOIN platform_collection c ON c.id=o.collection_id
-      JOIN platform_legacy_query_alias qa ON qa.collection_id=c.id
-      JOIN platform_observation_archive_ref r ON r.owner_id=o.id AND r.field='legacyRowSnapshot'
-      JOIN platform_archive_value snapshot ON snapshot.id=r.archive_id
-      WHERE o.id=p.observation_id
-        AND (SELECT count(*) FROM ${cells} AS x(cell) WHERE cell->>'name'=ANY(${sql.param(Object.values(sourceRelationFields).map(column => column.name))}::text[]))=${fields.length}
-        AND NOT EXISTS(SELECT 1 FROM ${cells} AS x(cell)
-          WHERE NOT (CASE cell->>'name' ${sql.join(fields, sql` `)} ELSE true END))
-        AND ${sql.join(query, sql` AND `)}
+      WHERE o.id=p.observation_id AND o.relation_facts IS NOT NULL
+        AND ${and(...fields)}
+        AND ${and(...query)}
     ) END`
 }
 
@@ -108,19 +92,20 @@ const exportMatches = sql`CASE WHEN p.export_row_id IS NULL THEN
       AND ${storedFields(platformExportBatch, 'b', refValue('exportBatch'))}) END`
 
 type RefSources = { eventIds: number[]; relationIds: number[]; exportRowIds: number[] }
-export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly number[] | RefSources | { annualDecisionIds: number[] }, witnessTitle?: string) {
-  const edge = recordCorrespondence, relation = platformLegacyRelationAlias
+export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly number[] | RefSources | { annualDecisionIds: number[] } | { validityIds: number[] }, witnessTitle?: string) {
+  const edge = recordCorrespondence, relation = platformBusinessObservation
   const anyId = (ids: readonly number[]) => sql`ANY(${sql.param(ids)}::bigint[])`
   let where: SQL | undefined
-  const annual = 'annualDecisionIds' in ids
-  if (annual) {
-    if (!ids.annualDecisionIds.length) return []
-    where = eq(edge.id, anyId(ids.annualDecisionIds))
+  const explicitValidity = 'annualDecisionIds' in ids || 'validityIds' in ids
+  if (explicitValidity) {
+    const selectedIds = 'annualDecisionIds' in ids ? ids.annualDecisionIds : ids.validityIds
+    if (!selectedIds.length) return []
+    where = eq(edge.id, anyId(selectedIds))
   } else if ('eventIds' in ids) {
     if (ids.eventIds.length + ids.relationIds.length + ids.exportRowIds.length === 0) return []
     const events = anyId(ids.eventIds)
     where = or(eq(edge.eventId, events), eq(edge.predecessorEventId, events),
-      eq(relation.oldId, anyId(ids.relationIds)), eq(edge.exportRowId, anyId(ids.exportRowIds)))
+      eq(relation.publicId, anyId(ids.relationIds)), eq(edge.exportRowId, anyId(ids.exportRowIds)))
   } else {
     if (!ids.length) return []
     where = eq(edge.enterpriseId, anyId(ids))
@@ -129,12 +114,12 @@ export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly numbe
     id: edge.id, type: edge.type, role: edge.role, status: edge.status, eventId: edge.eventId,
     predecessorEventId: edge.predecessorEventId, observationId: edge.observationId, exportRowId: edge.exportRowId,
     enterpriseId: edge.enterpriseId, titleCode: edge.titleCode, revision: edge.revision,
-    relation: sql`${relation.oldId}`.as('relation_id'),
-    provenance: sql`CASE WHEN ${annual ? sql`true` : eq(edge.status, 'confirmed')} THEN ${edge.provenance}::jsonb END`.as('provenance_json'),
-  }).from(edge).leftJoin(relation, eq(relation.observationId, edge.observationId))
+    relation: sql`${relation.publicId}`.as('relation_id'),
+    provenance: sql`CASE WHEN ${explicitValidity ? sql`true` : eq(edge.status, 'confirmed')} THEN ${edge.provenance}::jsonb END`.as('provenance_json'),
+  }).from(edge).leftJoin(relation, eq(relation.id, edge.observationId))
     .where(and(where, witnessTitle === undefined ? undefined : and(eq(edge.titleCode, witnessTitle),
       eq(edge.status, 'confirmed'), eq(edge.type, 'event_recognized'), eq(edge.role, 'recognized_corrob'),
-      isNotNull(edge.eventId), isNotNull(relation.oldId))))
+      isNotNull(edge.eventId), isNotNull(relation.publicId))))
   const p = new QueryBuilder().$with('p').as(selected)
   const a = platformObservationAssignment
   const target = alias(enterprise, 'target'), business = platformBusinessProjection
@@ -142,7 +127,7 @@ export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly numbe
     .from(a).where(eq(a.observationId, p.observationId)).orderBy(desc(a.revision)).limit(1).as('assignment')
   const noOpaqueStatus = notExists(db.select({ id: business.id }).from(business)
     .where(and(eq(business.observationId, p.observationId), eq(business.storedStatusSqliteStorage, 'blob'))))
-  const validate = annual ? sql`true` : eq(p.status, 'confirmed')
+  const validate = explicitValidity ? sql`true` : eq(p.status, 'confirmed')
   const relationMatch = relationMatches({
     enterpriseId: sql`${assignment.enterpriseId}`,
     matchBasis: sql`${assignment.matchBasis}`,
@@ -165,7 +150,7 @@ export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly numbe
     .leftJoin(target, eq(target.id, p.enterpriseId)).leftJoin(title, eq(title.code, p.titleCode))
     .orderBy(p.id)
   // Drizzle cannot mark a CTE MATERIALIZED. Retain the planner boundary before
-  // checking archived byte fields and saved JSON provenance.
+  // checking retained source fields and saved JSON provenance.
   const { rows } = await db.execute<{
     ref: CorrespondenceRefRow; matches: boolean; attribution: CorrespondenceAttribution | null
   }>(sql`WITH p AS MATERIALIZED (${selected}) ${projected}`)

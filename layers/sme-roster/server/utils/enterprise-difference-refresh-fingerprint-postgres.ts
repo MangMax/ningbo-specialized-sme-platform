@@ -1,16 +1,13 @@
-import { and, desc, eq, getTableColumns, gt, inArray, isNotNull, notExists, sql, type SQL } from 'drizzle-orm'
+import { and, desc, eq, getTableColumns, gt, inArray, isNotNull, notExists, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise, enterpriseAlias } from '../../../../db/postgresql/enterprise-tables'
 import { record, recordEvidence, recordEvent } from '../../../../db/postgresql/ledger-tables'
-import { platformCollectionArchiveRef as collectionRef, platformArchiveValue as archive,
-  platformObservationArchiveRef as observationRef } from '../../../../db/postgresql/platform-archive-tables'
 import { platformApplyProjection, platformBusinessProjection, platformRecognizedProjection,
-  platformBusinessObservation as observation, platformCollection as collection, platformLegacyQueryAlias as queryAlias,
-  platformLegacyRelationAlias as relationAlias, platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
+  platformBusinessObservation as observation, platformCollection as collection,
+  platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { recordCorrespondence as correspondence } from '../../../../db/postgresql/qualification-tables'
-import { refreshMetadataKeys, refreshRelationFields, refreshSourceKeys } from '../../lib/platform/difference-hash-keys'
+import { refreshRelationFields } from '../../lib/platform/difference-hash-keys'
 import { snapshotSchema } from '../../lib/platform/evidence-snapshot-model'
-import { postgresObservationSnapshot } from '../../lib/platform/postgres-observation-snapshot'
 import { CURRENT_TITLES } from '../../lib/roster/current-titles'
 import type { PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
 import { hashRefreshInputs, projectRefreshObservation, refreshProjectionColumns } from './enterprise-difference-refresh-contract'
@@ -19,44 +16,8 @@ type Tx = PostgresQualificationTransaction
 type Collection = Parameters<typeof projectRefreshObservation>[0]
 type Material = Record<string, unknown>
 
-// SQLite JSON paths take the first occurrence of a key. Keep JSON token
-// values intact for the existing JS number, string and nested object handling.
-function firstJsonFields(document: SQL, keys: readonly string[]) {
-  return sql`
-    SELECT DISTINCT ON (key COLLATE "C") key, value
-    FROM json_each(CASE WHEN json_typeof(${document})='object' THEN ${document} ELSE '{}'::json END)
-      WITH ORDINALITY fields(key, value, ordinal)
-    WHERE key COLLATE "C"=ANY(${sql.param(keys)}::text[])
-    ORDER BY key COLLATE "C", ordinal`
-}
-
-// json_each decodes strings as it scans, including fields we discard. Quote
-// escapes PostgreSQL text cannot represent, along with literal backslashes
-// that could be mistaken for the quoting, before projecting raw JSON tokens.
-function jsonProjectionInput(tx: Tx, value: SQL) {
-  const raw = sql`source_json.raw`
-  const codeUnit = 'u(?:0000|[dD][89a-fA-F][0-9a-fA-F]{2})'
-  const unsafeEscape = String.raw`\\${codeUnit}`
-  const tokens = String.raw`\\\\|\\(${codeUnit})`
-  const replacement = String.raw`\\\\|\1|`
-  return tx.select({
-    raw: sql<string | null>`${raw}`.as('raw'),
-    document: sql`CASE WHEN ${raw} IS JSON THEN
-      CASE WHEN ${raw} ~ ${unsafeEscape} THEN regexp_replace(${raw}, ${tokens}, ${replacement}, 'g')::json
-        ELSE ${raw}::json END
-      END`.as('document'),
-    quoted: sql<boolean | null>`${raw} ~ ${unsafeEscape}`.as('quoted'),
-    // A lateral VALUES row names the bytea conversion without reading another table.
-    // Drizzle 0.45.4 has no VALUES relation builder.
-  }).from(sql`(values (${value})) as source_json(raw)`).as('input')
-}
-
 function restoreJsonEscapes(text: string, quoted: boolean | null) {
   return quoted ? text.replace(/\\\\\|(u[0-9a-fA-F]{4})?\|/g, (_, escape: string | undefined) => escape ? '\\' + escape : '\\\\') : text
-}
-
-function archiveJsonText(bytes: SQL) {
-  return sql`CASE WHEN position(decode('00','hex') in ${bytes})>0 THEN '{' ELSE convert_from(${bytes},'UTF8') END`
 }
 
 function relationMaterial(snapshot: unknown, match_basis: string | null, verification_status: string, business: string | null, quoted: boolean | null) {
@@ -100,7 +61,7 @@ async function readPlatformMaterials(tx: Tx, enterpriseIds: readonly number[]) {
     rdjb: collection.rdjb, titleCode: collection.titleCode, queriedAt: collection.queriedAt, status: collection.status,
     rank: sql<number>`rank() over (partition by ${candidates.owner}, ${collection.interface}, ${collection.queryKey},
       ${collection.rdjb}, ${collection.titleCode} order by ${collection.queriedAt} collate "C" desc)`.as('rank'),
-  }).from(candidates).innerJoin(collection, eq(collection.id, candidates.id)).innerJoin(queryAlias, eq(queryAlias.collectionId, collection.id)))
+  }).from(candidates).innerJoin(collection, eq(collection.id, candidates.id)))
   const rows = (await tx.with(keys, candidates, latest).select({
     owner: latest.owner, id: latest.id, interface: latest.interface, queryKey: latest.queryKey,
     rdjb: latest.rdjb, titleCode: latest.titleCode, queriedAt: latest.queriedAt, status: latest.status,
@@ -109,55 +70,23 @@ async function readPlatformMaterials(tx: Tx, enterpriseIds: readonly number[]) {
   if (!collectionIds.length) return new Map<number, { titleCode: string | null; material: Material }[]>()
   // Keep the selected IDs in one bound array for large observation histories.
   const selected = sql`${sql.param(collectionIds)}::bigint[]`
-  // These lateral SQL projections retain JSON token order and first duplicate keys.
-  // Drizzle 0.45.4 has no builders for JSON set-returning functions with ordinality,
-  // bytea decoding or JSON token validation. Only selected fields leave PostgreSQL.
-  const snapshot = sql`convert_from(${postgresObservationSnapshot(observation.id, archive.bytes)}, 'UTF8')::json`
   const current = tx.select({ matchBasis: assignment.matchBasis, verificationStatus: assignment.verificationStatus })
     .from(assignment).where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('current_assignment')
-  const cells = tx.select({
-    selected: sql`json_agg(json_build_object('name',cell->>'name','storageClass',cell->>'storageClass','hex',cell->>'hex')
-      ORDER BY ordinal) FILTER (WHERE cell->>'name'=ANY(${sql.param(refreshRelationFields)}::text[]))`.as('selected'),
-    archiveBytes: sql`decode(max(cell->>'hex') FILTER
-      (WHERE cell->>'name'='raw_fields' AND cell->>'storageClass'<>'null'),'hex')`.as('archive_bytes'),
-  }).from(sql`json_array_elements(${snapshot}->'fields') WITH ORDINALITY entries(cell, ordinal)`).as('cells')
-  const input = jsonProjectionInput(tx, archiveJsonText(sql`${cells.archiveBytes}`))
-  const businessProjection = tx.select({ json: sql`coalesce(json_object_agg(key,value),'{}'::json)::text` })
-    .from(sql`(${firstJsonFields(sql`${input.document}`, refreshSourceKeys)}) fields`)
   const sources = await tx.select({
-    collectionId: observation.collectionId, match_basis: current.matchBasis, verification_status: current.verificationStatus,
-    snapshot: sql<unknown>`json_build_object('encoding',${snapshot}->>'encoding','fields',coalesce(${cells.selected},'[]'::json))`,
-    business: sql<string | null>`CASE WHEN ${input.raw} IS NULL THEN NULL
-      WHEN ${input.document} IS NULL OR json_typeof(${input.document})='null' THEN '{'
-      ELSE ${businessProjection} END`,
-    quoted: input.quoted,
-  }).from(observation).innerJoin(relationAlias, eq(relationAlias.observationId, observation.id))
-    .innerJoin(observationRef, and(eq(observationRef.ownerId, observation.id), eq(observationRef.field, 'legacyRowSnapshot')))
-    .innerJoin(archive, eq(archive.id, observationRef.archiveId)).innerJoinLateral(current, sql`true`)
-    .crossJoinLateral(cells).crossJoinLateral(input)
-    .where(sql`${observation.collectionId} = any(${selected})`)
+    collectionId: observation.collectionId, matchBasis: current.matchBasis, verificationStatus: current.verificationStatus,
+    facts: observation.refreshFacts,
+  }).from(observation)
+    .innerJoinLateral(current, sql`true`)
+    .where(and(sql`${observation.collectionId} = any(${selected})`, isNotNull(observation.refreshFacts)))
   const relations = Map.groupBy(sources.map(row => ({
-    collectionId: row.collectionId, material: relationMaterial(row.snapshot, row.match_basis, row.verification_status, row.business, row.quoted),
+    collectionId: row.collectionId,
+    material: relationMaterial({ encoding: 't05a-sqlite-cells-v1', fields: row.facts!.fields },
+      row.matchBasis, row.verificationStatus, row.facts!.business, row.facts!.quoted),
   })), row => row.collectionId)
-  const metadataInput = jsonProjectionInput(tx, archiveJsonText(sql`${archive.bytes}`))
-  const metadataPages = tx.select({ json: sql`coalesce(json_agg(CASE WHEN json_typeof(page)='null' THEN page
-    ELSE json_build_object('rdjb',page->'rdjb','status',page->'status','declaredTotal',page->'declaredTotal') END
-    ORDER BY ordinal),'[]'::json)` }).from(sql`json_array_elements(value) WITH ORDINALITY pages(page, ordinal)`)
-  const metadataProjection = tx.select({ json: sql`coalesce(json_object_agg(key,
-    CASE WHEN key='pages' THEN CASE WHEN json_typeof(value)='array' THEN ${metadataPages}
-      ELSE 'null'::json END ELSE value END),'{}'::json)::text` })
-    .from(sql`(${firstJsonFields(sql`${metadataInput.document}`, refreshMetadataKeys)}) fields`)
-  const metadataRows = await tx.select({
-    collectionId: collectionRef.ownerId,
-    quoted: metadataInput.quoted,
-    metadata: sql<string | null>`CASE WHEN ${archive.storageClass}='null' THEN NULL
-      WHEN ${metadataInput.document} IS NULL THEN '{' WHEN json_typeof(${metadataInput.document})='null' THEN 'null'
-      ELSE ${metadataProjection} END`,
-  }).from(collectionRef).innerJoin(archive, eq(archive.id, collectionRef.archiveId))
-    .crossJoinLateral(metadataInput)
-    .where(and(sql`${collectionRef.ownerId} = any(${selected})`, eq(collectionRef.field, 'collectionEvidence')))
-  const metadata = new Map(metadataRows.map(row => [row.collectionId,
-    row.metadata === null ? null : restoreJsonEscapes(row.metadata, row.quoted)]))
+  const metadataRows = await tx.select({ collectionId: collection.id, metadata: collection.refreshMetadata })
+    .from(collection).where(sql`${collection.id} = any(${selected})`)
+  const metadata = new Map(metadataRows.map(({ collectionId, metadata }) => [collectionId,
+    metadata?.json == null ? null : restoreJsonEscapes(metadata.json, metadata.quoted)]))
   const projectionTables = {
     platform_apply_projection: platformApplyProjection,
     platform_business_projection: platformBusinessProjection,

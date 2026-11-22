@@ -44,7 +44,7 @@ it('bounds fixed evidence preflight and history materialization across unrelated
     queriedAt: '2026-10-19', status: 'success', rawResponse: 'raw-sentinel'.repeat(1024),
     relations: [{ sequenceNo: 1, rawFields: { rawSentinel: 'raw-sentinel'.repeat(1024) } }] })
   const archiveObservation = await db.$client.query<{ observation_id: number }>(
-    'SELECT observation_id::integer FROM platform_legacy_relation_alias WHERE old_id=$1', [archive.relationIds[0]])
+    'SELECT id::integer AS observation_id FROM platform_business_observation WHERE public_id=$1', [archive.relationIds[0]])
   const { observation_id: observationId } = singlePostgresFixtureRow(archiveObservation.rows)
   const reader = usePostgresDirectoryDb()
   // Use the driver result to measure actual rows returned, across all connections.

@@ -98,12 +98,6 @@ export async function executePostgresRosterImport(db: NodePgDatabase, action: Po
   const bound = { ...request, sourceSha256: request.sourceSha256 ?? null }
   const hash = createHash('sha256').update(canonicalImportJson(bound)).digest('hex')
   const redact = await importPostgresReceiptRedactor(db)
-  const historicalProjection = request.payload.platformRecordObservations !== undefined
-  // The old conflict check looked at the redacted stored keys. Apply the same
-  // rule to their names without copying or redacting the request payload.
-  const marker = historicalProjection && request.sourceKind === 'platform_archive'
-    ? redact({ payload: { platformRecordObservations: true } }) as { payload?: { platformRecordObservations?: boolean } }
-    : null
   const attempt = await db.transaction(async tx => {
     await lockPostgresRosterImportKey(tx, key)
     if (action === 'commit') {
@@ -130,14 +124,13 @@ export async function executePostgresRosterImport(db: NodePgDatabase, action: Po
       .from(importReceipt).where(eq(importReceipt.batchId, batch.id)).orderBy(desc(importReceipt.id)).limit(1)
     if (action !== 'replay' && previous && previous.hash !== hash) {
       if (['committed','processing'].includes(previous.status)) conflict('Idempotency key belongs to a different request')
-      if (request.sourceKind === 'platform_archive' && (historicalProjection || previous.historicalProjection)) {
+      if (request.sourceKind === 'platform_archive' && previous.historicalProjection) {
         conflict('Historical projection key belongs to a different request')
       }
     }
     if (batch.status === 'committed' && action !== 'replay') return { batch, receipt: null, originalReceiptId: previous?.id }
     const [receipt] = await tx.insert(importReceipt).values({
       batchId: batch.id, operation: action, requestHash: hash,
-      historicalProjection: marker?.payload?.platformRecordObservations !== undefined,
       status: 'processing', createdAt: new Date().toISOString(),
     }).returning({ id: importReceipt.id })
     return { batch, receipt: receipt!.id }

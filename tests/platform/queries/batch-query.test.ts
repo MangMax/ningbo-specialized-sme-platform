@@ -117,6 +117,7 @@ it('running status checkpoints completed pages and restart reports failed withou
 it.each([
   ['empty', { items: [] }],
   ['too many', { items: Array.from({ length: 51 }, () => ({ query: { source: 'queryList', name: '合成' } })) }],
+  ['raw response option', { items: [{ query: { source: 'queryList', name: '合成', rawDataVersion: 1 } }] }],
   ['cookie input', { items: [{ query: { source: 'queryList', name: '合成', cookie } }] }],
   ['item credentials', { items: [{ query: { source: 'queryList', name: '合成' }, cookie }] }],
   ['wrong title type', { items: [{ query: { source: 'businessList', uscc, rdjb: ['1'] } }] }],
@@ -392,15 +393,21 @@ it('OpenAPI and MCP discovery expose bounded batch contracts and resolve shared 
   await import('../../../layers/sme-roster/server/api/platform/batches/[batchId]/items/[itemId].get')
   const single = captured.find(m => m.requestBody?.content?.['application/json']?.schema?.properties?.source)
   const submit = captured.find(m => m.requestBody?.content?.['application/json']?.schema?.properties?.items)
-  const queryRef = submit.requestBody.content['application/json'].schema.properties.items.items.properties.query.$ref
-  expect(queryRef).toBe('#/paths/~1api~1platform~1query/post/requestBody/content/application~1json/schema')
+  const [queryRef, batchRestriction] = submit.requestBody.content['application/json'].schema.properties.items.items.properties.query.allOf
+  expect(queryRef).toEqual({ $ref: '#/paths/~1api~1platform~1query/post/requestBody/content/application~1json/schema' })
+  expect(batchRestriction).toMatchObject({ not: { required: ['rawDataVersion'] } })
+  const status = captured.find(m => m.responses?.[200]?.content?.['application/json'].schema.properties?.batchId)
+  const [segmentRef, segmentShape] = status.responses[200].content['application/json'].schema.properties.items.items.properties.segments.items.allOf
+  expect(segmentRef).toEqual({ $ref: '#/paths/~1api~1platform~1query/post/responses/200/content/application~1json/schema' })
+  expect(segmentShape).toMatchObject({ not: { required: ['rawData'] }, properties: { dataRows: { type: 'array' } } })
   expect(single.requestBody.content['application/json'].schema.properties.source.enum).toEqual(['queryList', 'businessList', 'queryBusList'])
   expect(submit.security).toEqual([{ bearerAuth: [] }])
   expect(submit.requestBody.content['application/json'].schema.properties.items.maxItems).toBe(50)
   expect(submit.requestBody.content['application/json'].schema.properties.limits.properties.maxResultBytes.maximum).toBe(8388608)
   expect(captured).toHaveLength(5)
   const { platformQueryCapabilities } = await import('../../../layers/sme-roster/lib/platform/live-query')
-  expect(platformQueryCapabilities.batch).toMatchObject({ available: true, maxItems: 50, maxAttempts: 10 })
+  expect(platformQueryCapabilities.batch).toMatchObject({ available: true, maxItems: 50, maxAttempts: 10, rawPageBodies: false, typedBusinessRows: true })
+  expect(platformQueryCapabilities.rawData.scope).toBe('single_query')
   const { platformQueryRpcError } = await import('../../../layers/sme-roster/server/utils/mcp-platform-query')
   for (const [name, args] of [
     ['get_platform_batch', { batchId: '01M56FKFXYBPSBEN8FYTDH2JV4', cookie }],

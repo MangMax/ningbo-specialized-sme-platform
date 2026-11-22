@@ -1,11 +1,12 @@
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm'
+import { postgresCollectionConditionValues, projectPostgresComparisonConditions } from '../../lib/platform/postgres-collection-scope'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise, enterpriseAlias } from '../../../../db/postgresql/enterprise-tables'
 import { storedFile } from '../../../../db/postgresql/file-tables'
 import {
-  platformBusinessObservation, platformCollection, platformCollectionCondition, platformExportBatch,
-  platformLegacyQueryAlias, platformLegacyRelationAlias, platformObservationAssignment,
+  platformBusinessObservation, platformCollection, platformExportBatch,
+  platformObservationAssignment,
 } from '../../../../db/postgresql/platform-tables'
 import type * as schema from '../../../../db/schema'
 import { normalizeName } from '../../lib/domain'
@@ -18,19 +19,19 @@ type Reader = Pick<NodePgDatabase, 'select'>
 const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
 
 export async function readPostgresComparisonIdentities(db: Reader, queryIds: readonly number[]) {
-  const q = platformLegacyQueryAlias, o = platformBusinessObservation, ra = platformLegacyRelationAlias
+  const q = platformCollection, o = platformBusinessObservation
   const a = platformObservationAssignment, original = alias(a, 'original')
   type Link = Parameters<typeof projectSourceEnterpriseLinks>[0][number]
   const latest = db.select({ enterpriseId: a.enterpriseId, matchBasis: a.matchBasis, verificationStatus: a.verificationStatus })
     .from(a).where(eq(a.observationId, o.id)).orderBy(desc(a.revision)).limit(1).as('assignment')
   const rows = await db.select({
-    id: ra.oldId, relationId: ra.oldId, observationId: o.id, queryId: q.oldId, sequenceNo: o.sequenceNo,
+    id: o.publicId, relationId: o.publicId, observationId: o.id, queryId: q.publicId, sequenceNo: o.sequenceNo,
     relationKey: o.sourceRelationKey, enterpriseId: latest.enterpriseId, enterpriseName: enterprise.name,
     matchBasis: latest.matchBasis, verificationStatus: latest.verificationStatus, nameRaw: original.nameRaw, usccRaw: original.usccRaw,
-  }).from(q).innerJoin(o, eq(o.collectionId, q.collectionId)).innerJoin(ra, eq(ra.observationId, o.id))
+  }).from(q).innerJoin(o, eq(o.collectionId, q.id))
     .innerJoin(original, and(eq(original.observationId, o.id), eq(original.revision, 1)))
     .innerJoinLateral(latest, sql`true`).leftJoin(enterprise, eq(enterprise.id, latest.enterpriseId))
-    .where(eq(q.oldId, sql`ANY(${ids(queryIds)})`)).orderBy(ra.oldId)
+    .where(eq(q.publicId, sql`ANY(${ids(queryIds)})`)).orderBy(o.publicId)
   return rows as Link[]
 }
 
@@ -51,17 +52,16 @@ export function readPostgresRecordComparisonSources(db: NodePgDatabase, input: C
   signal?.throwIfAborted()
   const filter = comparisonSourceCatalogInput.parse(input)
   return db.transaction(async tx => {
-    const q = platformLegacyQueryAlias, b = alias(platformExportBatch, 'b'), c = alias(platformCollection, 'c')
-    const condition = platformCollectionCondition
-    const byId = (column: typeof q.oldId | typeof b.id) => filter.ids === undefined ? undefined : inArray(column, filter.ids)
+    const b = alias(platformExportBatch, 'b'), c = alias(platformCollection, 'c')
+    const byId = (column: typeof c.publicId | typeof b.id) => filter.ids === undefined ? undefined : inArray(column, filter.ids)
     const d = postgresOfficialSourceDirectory(tx)
     // Derived SQL aliases render unqualified in Drizzle 0.45, and stored_file
     // also has an id. Keep this reference qualified when joining file identity.
     const documentId = sql`${sql.identifier('official_directory')}.${sql.identifier('id')}`.mapWith(Number)
     const docFilter = filter.ids === undefined ? undefined : inArray(documentId, filter.ids)
-    const queryFilter = byId(q.oldId), batchFilter = byId(b.id)
+    const queryFilter = byId(c.publicId), batchFilter = byId(b.id)
     const [documentCount] = await tx.select({ n: count() }).from(d).where(docFilter)
-    const [queryCount] = await tx.select({ n: count() }).from(q).where(queryFilter)
+    const [queryCount] = await tx.select({ n: count() }).from(c).where(queryFilter)
     const [batchCount] = await tx.select({ n: count() }).from(b).where(batchFilter)
     const counts = { official_document: documentCount!.n, query: queryCount!.n, export_batch: batchCount!.n }
     signal?.throwIfAborted()
@@ -77,23 +77,17 @@ export function readPostgresRecordComparisonSources(db: NodePgDatabase, input: C
     const batches = bw.limit ? (await tx.select({
       row: sql<typeof schema.platformExportBatch.$inferSelect>`${postgresRosterRow(platformExportBatch,'b')}`,
     }).from(b).where(batchFilter).orderBy(b.id).limit(bw.limit).offset(bw.offset)).map(({ row }) => projectCatalogExport(row)) : []
-    const conditions = tx.select({
-      value: sql`CASE WHEN count(*)>0 THEN coalesce(json_object_agg(${condition.name}, CASE ${condition.valueKind}
-        WHEN 'text' THEN to_json(${condition.textValue}) WHEN 'boolean' THEN to_json(${condition.integerValue} <> 0)
-        ELSE to_json(${condition.integerValue}) END ORDER BY ${condition.name} COLLATE "C")
-        FILTER (WHERE ${condition.valueKind} <> 'absent'),'{}'::json) END`,
-    }).from(condition).where(eq(condition.collectionId, c.id))
     const queryPage = qw.limit ? await tx.select({
-      id: q.oldId,
+      id: c.publicId,
       collection: sql<typeof schema.platformCollection.$inferSelect>`${postgresRosterRow(platformCollection,'c')}`,
-      conditions: sql<Record<string, unknown> | null>`CASE WHEN ${c.provenanceState} IN ('captured','conflict') THEN (${conditions}) END`,
-    }).from(q).innerJoin(c, eq(c.id, q.collectionId)).where(queryFilter).orderBy(q.oldId).limit(qw.limit).offset(qw.offset) : []
+      conditions: postgresCollectionConditionValues(c.conditionFacts),
+    }).from(c).where(queryFilter).orderBy(c.publicId).limit(qw.limit).offset(qw.offset) : []
     signal?.throwIfAborted()
     const links = queryPage.length ? await readQueryEnterpriseLinks(tx, queryPage.map(row => row.id)) : new Map()
     const queries = queryPage.map(({ id, collection, conditions }) => {
       const present = ['captured', 'conflict'].includes(collection.provenanceState)
       return projectCatalogQuery({ ...collection, id, completeness: present ? collection.completeness : 'unknown',
-        fullRange: present ? collection.fullRange : null, conditions }, links)
+        fullRange: present ? collection.fullRange : null, conditions: present ? projectPostgresComparisonConditions(conditions) : null }, links)
     })
     signal?.throwIfAborted()
     return { rows: [...documents, ...queries, ...batches], total: filter.kind ? counts[filter.kind] : counts.official_document + counts.query + counts.export_batch,

@@ -121,6 +121,11 @@ function titleWideArchive(): PlatformLiveQueryResult {
   evidence.completedAt = '2026-10-18T02:25:00.000Z'
   return evidence
 }
+function coverage(result: PlatformLiveQueryResult) {
+  const { rows: _rows, dataRows: _dataRows, rawData: _rawData, ...metadata } = result
+  return metadata
+}
+
 function request(result = archive(), key = 'archive-complete') {
   return {
     idempotencyKey: key, sourceKind: 'alias_evidence' as const, sourceIdentity: 'synthetic-archive',
@@ -141,9 +146,10 @@ it('authenticated archive import preserves three-title pages, every same-code ro
   expect(saved.status).toBe('committed')
   const read = await (await fetch(`${baseUrl}/api/platform/queries?interface=recognized_list&queryKey=${USCC}`)).json()
   expect(read.total).toBe(1)
-  expect(read.rows[0].query).toMatchObject({ interface: 'recognized_list', queriedAt: time, relationCount: 4, collectionEvidence: archive() })
+  expect(read.rows[0].query).toMatchObject({ interface: 'recognized_list', queriedAt: time, relationCount: 4, collectionEvidence: coverage(archive()) })
   expect(read.rows[0].relations.map((r: any) => [r.sequenceNo, r.sourceRdjb, r.sourcePage])).toEqual([[1, '1', 1], [2, '1', 2], [3, '2', 1], [4, '3', 1]])
-  expect(read.rows[0].relations.map((r: any) => r.rawFields)).toEqual(archive().rows)
+  expect(read.rows[0].relations.map((r: any) => r.relationKey)).toEqual(['same-1', 'same-0', 'same-1', 'same-0'])
+  expect(read.rows[0].query.collectionEvidence).not.toHaveProperty('rows')
   const detail = saved.items.find((i: any) => i.kind === 'platform_query')!.detail!
   expect(detail.relations).toEqual(read.rows[0].relations.map((r: any) => r.id))
 })
@@ -203,7 +209,7 @@ it('archives complete zero, partial, login failure and not queried separately, w
   expect(read.rows).toHaveLength(2)
   expect(read.counts).toEqual({ success: 1, no_record: 1, partial: 1, failed: 1, not_queried: 1 })
   const zeroRead = await (await fetch(`${baseUrl}/api/platform/queries?interface=recognized_list&status=no_record`)).json()
-  expect(zeroRead.rows[0].query.collectionEvidence).toEqual(zero)
+  expect(zeroRead.rows[0].query.collectionEvidence).toEqual(coverage(zero))
   expect(zeroRead.rows[0].relations).toEqual([])
   const bad = request(structuredClone(partial), 'partial-as-zero')
   bad.payload.platformQueries[0]!.status = 'no_record'
@@ -215,7 +221,14 @@ it('same natural identity replays idempotently, conflicting archive cannot mutat
   const original = await client.commit(req as never)
   expect(await client.commit(req as never)).toEqual(original)
   const otherKey = request(archive(), 'same-archive-new-key')
-  expect((await client.commit(otherKey as never)).status).toBe('committed')
+  expect(await client.commit(otherKey as never)).toMatchObject({ status: 'failed', items: [expect.objectContaining({ error: expect.objectContaining({ code: 'query_replay_offline' }) })] })
+  const { collectionEvidence: _collection, relations, ...position } = otherKey.payload.platformQueries[0]!
+  const reference = {
+    ...otherKey, idempotencyKey: 'same-archive-reference', payload: { platformQueries: [{
+      ...position, interface: 'recognized_list' as const, status: 'success' as const, reuseExisting: true as const, relations: relations.map(({ sequenceNo, relationKey }) => ({ sequenceNo, relationKey })),
+    }] },
+  }
+  expect((await client.commit(reference)).status).toBe('committed')
   const before = await (await fetch(`${baseUrl}/api/platform/queries?interface=recognized_list`)).json()
   const conflicting = request(archive(), 'changed-archive')
   conflicting.payload.platformQueries[0]!.collectionEvidence.effectiveConditions.whpc = '3'
@@ -256,10 +269,10 @@ it('MCP history and enterprise detail match REST, preserve cross-source identica
   expect(await history.handler(input)).toEqual(rest)
   const detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_enterprise_detail')).default as any
   const after = JSON.parse(await detailTool.handler({ enterpriseId }))
-  expect(after.platform.queries.find((q: any) => q.queriedAt === evidence.queriedAt).collectionEvidence).toEqual(evidence)
+  expect(after.platform.queries.find((q: any) => q.queriedAt === evidence.queriedAt).collectionEvidence).toEqual(coverage(evidence))
   const allHistory = await (await fetch(`${baseUrl}/api/platform/queries?queryKey=${USCC}&pageSize=100`)).json()
   expect(after.platform.relations.map((r: any) => r.id).sort((a: number, b: number) => a-b)).toEqual(allHistory.rows.flatMap((q: any) => q.relations.map((r: any) => r.id)).sort((a: number, b: number) => a-b))
-  expect(after.platform.relations[0]).toMatchObject({ sourceRdjb: '1', sourcePage: 1, rawFields: evidence.rows[0] })
+  expect(after.platform.relations[0]).toMatchObject({ sourceRdjb: '1', sourcePage: 1, relationKey: evidence.rows[0]!.id })
   for (const key of ['enterprise', 'aliases', 'records', 'events', 'evidence'] as const) expect(after[key]).toEqual(before[key])
   // Coverage is additive read state; archival evidence must not change business decisions.
   const business = (rows: any[]) => rows.map(({ queryCoverage, currentDecision, explanationValidity, assessment, ...decision }) => decision)
@@ -272,8 +285,8 @@ it('MCP history and enterprise detail match REST, preserve cross-source identica
   expect(before.differences.find((d: any) => d.titleCode === 'innovative_sme')!.queryCoverage.sources.some((s: any) => s.queriedAt === evidence.queriedAt)).toBe(false)
   const comparison = await (await fetch(`${baseUrl}/api/comparison?title=innovative_sme&direction=missing_in_miit`)).json()
   const comparisonQuery = comparison.rows.find((r: any) => r.enterpriseId === enterpriseId).platform.queries.find((q: any) => q.queriedAt === evidence.queriedAt)
-  expect(comparisonQuery.collectionEvidence).toEqual(evidence)
-  expect(comparisonQuery.relations[0]).toMatchObject({ rawFields: evidence.rows[0], sourceRdjb: '1', sourcePage: 1 })
+  expect(comparisonQuery.collectionEvidence).toEqual(coverage(evidence))
+  expect(comparisonQuery.relations[0]).toMatchObject({ relationKey: evidence.rows[0]!.id, sourceRdjb: '1', sourcePage: 1 })
   const legacy = { ...request(evidence, 'legacy-same-id'), payload: { platformQueries: [{ interface: 'business_list' as const, queryKey: USCC, rdjb: '1', queriedAt: evidence.queriedAt, status: 'success' as const, rawResponse: JSON.stringify(evidence.rows), relations: [{ sequenceNo: 1, relationKey: evidence.rows[0]!.id, usccRaw: USCC, nameRaw: '合成企业' }] }] } }
   const legacySaved = await client.commit(legacy)
   expect(legacySaved.status, JSON.stringify(legacySaved)).toBe('committed')
@@ -316,7 +329,7 @@ it('synthetic paginated public live result transfers explicitly to PostgreSQL wi
   expect((await client.preflight(req)).preflight.conflicts).toEqual([])
   expect((await client.commit(req)).status).toBe('committed')
   const read = await (await fetch(`${baseUrl}/api/platform/queries?interface=recognized_list&pageSize=1`)).json()
-  expect(read.rows[0].query.collectionEvidence).toEqual(result)
+  expect(read.rows[0].query.collectionEvidence).toEqual(coverage(result))
   expect(read.rows[0].relations).toHaveLength(4)
   expect(new Set(read.rows[0].relations.map((r: any) => r.relationKey))).toEqual(new Set(['shared-live-id']))
 })
@@ -344,7 +357,7 @@ it('single-title name candidates remain unmatched and a completed continuation s
   expect(next.payload.platformQueries[0]!.status).toBe('partial')
   expect((await client.commit(next)).status).toBe('committed')
   const history = await (await fetch(`${baseUrl}/api/platform/queries?interface=recognized_list&status=partial`)).json()
-  expect(history.rows.find((r: any) => r.query.queriedAt === continuation.queriedAt).query.collectionEvidence).toEqual(continuation)
+  expect(history.rows.find((r: any) => r.query.queriedAt === continuation.queriedAt).query.collectionEvidence).toEqual(coverage(continuation))
 })
 
 it.each(['query-ref', 'row-ref', 'query-id', 'row-id'] as const)('rejects contradictory supplied USCC through REST and MCP for recognized %s without losing valid name fallback', async (kind) => {
@@ -408,7 +421,7 @@ it.each(['uscc', 'name'] as const)('archive-before-master %s query preserves eve
   const detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_enterprise_detail')).default as any
   assertEnterpriseDetailSnapshotEqual(JSON.parse(await detailTool.handler({ enterpriseId })), detail)
   expect(detail.platform.queries.map((q: any) => q.id)).toEqual([archived.query.id])
-  expect(detail.platform.queries[0]).toMatchObject({ relationCount: 4, collectionEvidence: evidence })
+  expect(detail.platform.queries[0]).toMatchObject({ relationCount: 4, collectionEvidence: coverage(evidence) })
   expect(detail.platform.relations.map((r: any) => r.id)).toEqual(archived.relations.map((r: any) => r.id))
   for (const row of detail.platform.relations) expect(row).toMatchObject({ enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending' })
   expect(detail.platform.relations.map((r: any) => [r.rawFields, r.sourceRdjb, r.sourcePage])).toEqual(archived.relations.map((r: any) => [r.rawFields, r.sourceRdjb, r.sourcePage]))
@@ -432,8 +445,8 @@ it('imports a complete title-wide recognized archive through public preflight an
   expect((await client.commit(req as never)).status).toBe('committed')
   const read = await (await fetch(`${baseUrl}/api/platform/queries?interface=recognized_list&queryKey=synthetic-title-wide-archive`)).json()
   expect(read.total).toBe(1)
-  expect(read.rows[0].query.collectionEvidence).toEqual(evidence)
-  expect(read.rows[0].relations[0]).toMatchObject({ sequenceNo: 1, sourceRdjb: '2', sourcePage: 1, rawFields: evidence.rows[0] })
+  expect(read.rows[0].query.collectionEvidence).toEqual(coverage(evidence))
+  expect(read.rows[0].relations[0]).toMatchObject({ sequenceNo: 1, sourceRdjb: '2', sourcePage: 1, relationKey: evidence.rows[0]!.id })
 })
 it('preserves title-wide zero and partial archives through public import', async () => {
   const { recognizedResultToImport } = await import('../../../layers/sme-roster/lib/platform/recognized-evidence')
@@ -455,7 +468,7 @@ it('preserves title-wide zero and partial archives through public import', async
     expect((await client.preflight(req)).preflight.conflicts).toEqual([])
     expect((await client.commit(req)).status).toBe('committed')
     const read = await (await fetch(`${baseUrl}/api/platform/queries?interface=recognized_list&queryKey=${encodeURIComponent(item.queryKey)}`)).json()
-    expect(read.rows.find((row: any) => row.query.queriedAt === evidence.queriedAt).query.collectionEvidence).toEqual(evidence)
+    expect(read.rows.find((row: any) => row.query.queriedAt === evidence.queriedAt).query.collectionEvidence).toEqual(coverage(evidence))
   }
 })
 it('rejects malformed title-wide conditions, title scope and page proof through public preflight and commit', async () => {

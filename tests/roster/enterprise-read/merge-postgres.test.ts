@@ -96,15 +96,13 @@ it.skipIf(!url)('resolves chained merges from either an old ID or an old unified
 it.skipIf(!url)('binds staged platform evidence by its public IDs and appends a new assignment revision', async () => {
   await fixture(async tx => {
     await tx.execute(sql`
-      INSERT INTO platform_collection (id,interface,query_key,rdjb,queried_at,created_at,status,
+      INSERT INTO platform_collection (id,public_id,interface,query_key,rdjb,queried_at,created_at,status,
         completeness,provenance_state,parse_state,rule_version)
-      VALUES (7401,'recognized_list','fixture','3','2026-11-20','2026-11-20','success',
+      VALUES (7401,8401,'recognized_list','fixture','3','2026-11-20','2026-11-20','success',
         'complete','captured','valid','fixture');
-      INSERT INTO platform_legacy_query_alias (old_id,collection_id) VALUES (8401,7401);
-      INSERT INTO platform_business_observation (id,collection_id,sequence_no,position_state,source_relation_key,identity_state,content_state)
-      VALUES (7501,7401,1,'unknown','original','not_indexed','not_indexed'),
-             (7502,7401,2,'unknown','different','not_indexed','not_indexed');
-      INSERT INTO platform_legacy_relation_alias (old_id,observation_id) VALUES (8501,7501),(8502,7502);
+      INSERT INTO platform_business_observation (id,public_id,collection_id,sequence_no,position_state,source_relation_key,identity_state,content_state)
+      VALUES (7501,8501,7401,1,'unknown','original','not_indexed','not_indexed'),
+             (7502,8502,7401,2,'unknown','different','not_indexed','not_indexed');
       INSERT INTO platform_observation_assignment (observation_id,revision,enterprise_id,match_basis,verification_status,
         uscc_raw,name_raw,alias_name_raw,origin)
       VALUES (7501,1,7001,'alias','confirmed',' raw code ',' raw name ',' captured alias ','migrated_current'),

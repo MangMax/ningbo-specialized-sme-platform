@@ -1,5 +1,4 @@
 import { createServer } from 'node:http'
-import { createHash } from 'node:crypto'
 
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -14,8 +13,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { eq, sql } from 'drizzle-orm'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
-import { platformArchiveValue } from '../../../db/postgresql/platform-archive-tables'
-import { platformBusinessRecordVersion, platformLegacyRelationAlias } from '../../../db/postgresql/platform-tables'
+import { platformBusinessObservation } from '../../../db/postgresql/platform-tables'
 import { recordCorrespondence, recordCorrespondenceAudit } from '../../../db/postgresql/qualification-tables'
 import { runPostgresMixedImport } from '../../../layers/sme-roster/server/utils/roster-mixed-import-postgres'
 import { updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
@@ -30,7 +28,8 @@ const dir = mkdtempSync(join(tmpdir(), 'issue327-typed-archive-'))
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 const nativeFetch = globalThis.fetch
 const token = 'synthetic-raw-archive-token'
-const input = { source: 'queryBusList', name: '合成', rdjb: ['2'], pageSize: 1, rawDataVersion: 1 }
+const batchInput = { source: 'queryBusList', name: '合成', rdjb: ['2'], pageSize: 1 }
+const input = { ...batchInput, rawDataVersion: 1 }
 const typed = JSON.parse('{"id":"same","qymc":"合成","x":null,"n":1,"b":true,"o":{"a":1},"arr":[null,false,2,{"unknown":true}],"__proto__":{"own":true},"constructor":"own"}')
 let raw: string
 let pageBodies: Map<number, string> | undefined
@@ -59,9 +58,8 @@ beforeAll(async () => {
   for (const path of ['query_platform', 'preflight_roster_batch', 'save_roster_batch', 'list_platform_queries', 'get_platform_batch', 'get_platform_batch_item', 'submit_platform_batch', 'retry_platform_batch']) tools.push((await import(`../../../layers/sme-roster/server/mcp/tools/${path}.ts`)).default)
   const queryRoute = (await import('../../../layers/sme-roster/server/api/platform/query.post')).default
   const readRoute = (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default
-  const evidenceRoute = (await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default
   const declarationsRoute = (await import('../../../layers/sme-roster/server/api/platform/declarations.get')).default
-  const router = createRouter().post('/api/platform/query', queryRoute).get('/api/platform/queries', readRoute).get('/api/platform/queries/:queryId/evidence', evidenceRoute).get('/api/platform/declarations', declarationsRoute)
+  const router = createRouter().post('/api/platform/query', queryRoute).get('/api/platform/queries', readRoute).get('/api/platform/declarations', declarationsRoute)
   for (const action of ['preflight', 'commit'] as const) {
     vi.stubGlobal('defineRouteMeta', (value: any) => { importMetadata[action] = value.openAPI })
     router.post(`/api/roster/import/${action}`, (await import(`../../../layers/sme-roster/server/api/roster/import/${action}.post.ts`)).default)
@@ -221,8 +219,11 @@ for (const transport of ['REST', 'MCP'] as const) {
       const saved = await submit(transport, 'commit', body)
       expect(saved.status).toBe('committed')
       const { row: stored, projection } = await readSaved(saved)
-      expect(stored.query.collectionEvidence).toEqual(evidence)
-      expect(stored.relations[0].rawFields).toEqual(row)
+      expect(stored.query).toMatchObject({ queriedAt: evidence.queriedAt, relationCount: 1 })
+      expect(stored.relations[0]).toMatchObject({ relationKey: key, nameRaw: '合成', sourcePage: 1 })
+      expect(stored.query.collectionEvidence).not.toHaveProperty('rawData')
+      expect(stored.query.collectionEvidence).not.toHaveProperty('rows')
+      expect(stored.relations[0].rawFields).not.toHaveProperty('arr')
       expect(stored.relations[0].id).toBe(projection.relationId)
       versions.push(projection.versionId); records.push(projection.recordId); relationIds.push(projection.relationId)
       const committed = await businessState()
@@ -244,9 +245,9 @@ for (const transport of ['REST', 'MCP'] as const) {
     const before = await businessState()
     const upgrade = await submit(transport, 'commit', request([converted]))
     expect(upgrade.status).toBe('failed')
-    expect(upgrade.items.some((i: any) => i.error?.code === 'observation_payload_conflict')).toBe(true)
+    expect(upgrade.items.some((i: any) => i.error?.code === 'query_replay_offline')).toBe(true)
     expect(await businessState()).toEqual(before)
-    expect((await readSaved(saved)).row.relations[0].rawFields).toEqual(old.rows[0])
+    expect((await readSaved(saved)).row.relations[0]).toMatchObject({ relationKey: `${transport}-conversion`, nameRaw: '合成', sourcePage: 1 })
   })
 
   it(`${transport} all three source interfaces retain independent identity and existing process normalization`, async () => {
@@ -258,7 +259,7 @@ for (const transport of ['REST', 'MCP'] as const) {
     const ids = []
     for (let i = 0; i < 3; i++) {
       const stored = await readSaved(saved, i); ids.push(stored.projection.recordId)
-      expect(stored.row.relations[0].rawFields).toEqual(row)
+      expect(stored.row.relations[0]).toMatchObject({ relationKey: row.id, nameRaw: row.qymc, sourcePage: 1 })
       if (i < 2) expect(stored.row.relations[0]).toMatchObject({ declareKind: 'apply', status: '待审', year: 2025 })
       else expect(stored.row.relations[0]).toMatchObject({ declareKind: null, status: null, year: null })
     }
@@ -285,39 +286,17 @@ for (const transport of ['REST', 'MCP'] as const) {
     expect(await businessState()).toEqual(before)
   })
 
-  it(`${transport} hash collision during commit rolls back earlier sibling and leaves historical rows unchanged`, async () => {
-    const e = await collect({ id: `${transport}-collision`, qymc: '合成', n: 1 }, transport)
-    const first = await submit(transport, 'commit', request([archive(e)]))
-    expect(first.status).toBe('committed')
-    const { projection } = await readSaved(first)
-    // Seed a deliberately inconsistent archive in this disposable fixture. The online guard remains installed.
-    await usePostgresDirectoryDb().transaction(async tx => {
-      const [version] = await tx.select({ archiveId: platformBusinessRecordVersion.canonicalArchiveId })
-        .from(platformBusinessRecordVersion).where(eq(platformBusinessRecordVersion.id, projection.versionId))
-      const bytes = Buffer.from('{"syntheticCollision":true}')
-      await tx.execute(sql`ALTER TABLE business.platform_archive_value DISABLE TRIGGER platform_archive_append_only`)
-      await tx.update(platformArchiveValue).set({ bytes, byteLength: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') })
-        .where(eq(platformArchiveValue.id, BigInt(version!.archiveId)))
-      await tx.execute(sql`ALTER TABLE business.platform_archive_value ENABLE TRIGGER platform_archive_append_only`)
-    })
-    const sibling = archive(await collect({ id: `${transport}-collision-sibling`, n: 2 }, transport))
-    const again = archive(await collect(e.rawData!.rows[0]!, transport))
-    const before = await businessState()
-    const saved = await submit(transport, 'commit', request([sibling, again]))
-    expect(saved.status).toBe('failed')
-    expect(saved.items.some((i: any) => i.error?.code === 'platform_content_hash_conflict'), JSON.stringify(saved)).toBe(true)
-    expect(await businessState()).toEqual(before)
-  })
+
 }
 
 it('public REST metadata and MCP discovery describe typed selection while preserving their actual auth boundaries', async () => {
   for (const action of ['preflight', 'commit']) {
     const payload = importMetadata[action].requestBody.content['application/json'].schema.properties.payload
-    expect(payload.description).toContain('rawData.version=1')
+    expect(payload.description).toContain('reuseExisting:true')
     expect(payload.properties.platformQueries.items.properties.collectionEvidence.anyOf.find((branch: any) => branch.type === 'object').properties.rawData).toMatchObject({ required: ['version', 'rows', 'pages'], properties: { version: { const: 1 }, rows: { items: { additionalProperties: {} } } } })
   }
   const discovered = await client.listTools()
-  for (const name of ['preflight_roster_batch', 'save_roster_batch']) expect(discovered.tools.find(t => t.name === name)?.description).toContain('rawData.version=1')
+  for (const name of ['preflight_roster_batch', 'save_roster_batch']) expect(discovered.tools.find(t => t.name === name)?.description).toContain('reuseExisting:true')
   const evidence = await collect({ id: 'auth', n: 1 }), body = request([recognizedResultToImport(evidence)])
   const before = await businessState()
   for (const action of ['preflight', 'commit']) {
@@ -343,16 +322,16 @@ it('typed apply_list archive feeds the declaration projection without rewriting 
   const saved = await submit('REST', 'commit', request([platformResultToImport(evidence)]))
   expect(saved.status).toBe('committed')
   const stored = await readSaved(saved)
-  expect(stored.row.relations[0].rawFields).toEqual(typedRow)
+  expect(stored.row.relations[0]).toMatchObject({ relationKey: typedRow.id, nameRaw: typedRow.qymc, sourcePage: 1 })
   const response = await nativeFetch(`${base}/api/platform/declarations?platformKey=SQ-DECL-TYPED`)
   const listed: any = await response.json()
   expect(response.status, JSON.stringify(listed)).toBe(200)
   expect(listed.rows).toHaveLength(1)
   expect(listed.rows[0].matchedVersion).toMatchObject({ declareKind: 'apply', declarationYear: 2024, appliedAt: '2024-03-01 09:00:00', status: '待审核', nameRaw: '合成申报企业', usccRaw: '91330211255994457P' })
-  expect(stored.row.relations[0].rawFields).toEqual(typedRow)
+  expect(stored.row.relations[0]).toMatchObject({ relationKey: typedRow.id, nameRaw: typedRow.qymc, sourcePage: 1 })
 })
 
-it('public typed archival ignores object key order for versions while preserving array order and original row objects', async () => {
+it('typed version identity ignores object key order and preserves array order', async () => {
   const rows = [
     { id: 'key-order', nested: { b: 2, a: 1 }, arr: [1, 2] },
     { arr: [1, 2], nested: { a: 1, b: 2 }, id: 'key-order' },
@@ -364,13 +343,13 @@ it('public typed archival ignores object key order for versions while preserving
     const saved = await submit('REST', 'commit', request([recognizedResultToImport(result)]))
     expect(saved.status).toBe('committed')
     const stored = await readSaved(saved)
-    expect(stored.row.relations[0].rawFields).toEqual(row)
+    expect(stored.row.relations[0]).toMatchObject({ relationKey: row.id, sourcePage: 1 })
     versions.push(stored.projection.versionId)
   }
   expect(versions[0]).toBe(versions[1]); expect(versions[1]).not.toBe(versions[2])
 })
 
-it('MCP typed prototype keys are retained in relation and version while strict REST rejects the same body', async () => {
+it('MCP typed prototype keys stay out of history while strict REST rejects the same import', async () => {
   const evidence = await collect(typed, 'MCP')
   const body = request([recognizedResultToImport(evidence)])
   const before = await businessState()
@@ -379,19 +358,16 @@ it('MCP typed prototype keys are retained in relation and version while strict R
   const saved = await submit('MCP', 'commit', body)
   expect(saved.status).toBe('committed')
   const stored = await readSaved(saved)
-  expect(stored.row.relations[0].rawFields).toEqual(typed)
-  expect(Object.hasOwn(stored.row.relations[0].rawFields, '__proto__')).toBe(true)
-  const [version] = await usePostgresDirectoryDb().select({ bytes: platformArchiveValue.bytes }).from(platformBusinessRecordVersion)
-    .innerJoin(platformArchiveValue, eq(platformArchiveValue.id, platformBusinessRecordVersion.canonicalArchiveId))
-    .where(eq(platformBusinessRecordVersion.id, stored.projection.versionId))
-  expect(JSON.parse(version!.bytes!.toString('utf8'))).toEqual(typed)
+  expect(stored.row.relations[0]).toMatchObject({ relationKey: typed.id, sourcePage: 1 })
+  expect(JSON.stringify(stored.row)).not.toContain('__proto__')
+
 })
 
-it('MCP batch partial and resumed segments archive with exact original page positions and reusable typed versions', async () => {
+it('MCP batch partial and resumed segments import business facts with exact original page positions and typed versions', async () => {
   const rows = [{ id: 'segments', n: null }, { id: 'segments', n: '' }, { id: 'segments', n: null }]
   pageBodies = new Map(rows.map((row, i) => [i + 1, source(row, i + 1, 3)]))
   try {
-    const receipt = await call('submit_platform_batch', { items: [{ query: { ...input, maxRequests: 1 } }] })
+    const receipt = await call('submit_platform_batch', { items: [{ query: { ...batchInput, maxRequests: 1 } }] })
     await waitForBatch(receipt.batchId)
     for (let i = 0; i < 2; i++) {
       await call('retry_platform_batch', { batchId: receipt.batchId, itemIds: receipt.itemIds }); await waitForBatch(receipt.batchId)
@@ -400,13 +376,16 @@ it('MCP batch partial and resumed segments archive with exact original page posi
     expect(item.status).toBe('success'); expect(item.segments).toHaveLength(3)
     const versions = []
     for (const [i, segment] of item.segments.entries()) {
-      expect(segment.rawData.pages).toEqual([{ source: 'queryBusList', rdjb: '2', page: i + 1, format: 'json', body: pageBodies.get(i + 1) }])
+      expect(segment.pages[0]).toMatchObject({ source: 'queryBusList', rdjb: '2', page: i + 1, status: 'success', fetchedCount: 1 })
+      expect(segment.dataRows).toEqual([rows[i]])
+      expect(segment).not.toHaveProperty('rawData')
       const saved = await submit('MCP', 'commit', request([recognizedResultToImport(segment)]))
       expect(saved.status).toBe('committed')
       const stored = await readSaved(saved)
       expect(stored.row.query.status).toBe('partial')
-      expect(stored.row.query.collectionEvidence).toEqual(segment)
-      expect(stored.row.relations[0]).toMatchObject({ rawFields: rows[i], sourceRdjb: '2', sourcePage: i + 1 })
+      expect(stored.row.query.collectionEvidence?.pages?.[0]).toMatchObject({ rdjb: '2', page: i + 1, status: 'success' })
+      expect(stored.row.query.collectionEvidence).not.toHaveProperty('rawData')
+      expect(stored.row.relations[0]).toMatchObject({ relationKey: 'segments', sourceRdjb: '2', sourcePage: i + 1 })
       versions.push(stored.projection.versionId)
     }
     expect(versions[0]).not.toBe(versions[1]); expect(versions[2]).toBe(versions[0])
@@ -420,8 +399,8 @@ it('new typed observations leave old string hashes, IDs, explicit decisions and 
   expect(saved.status).toBe('committed')
   const { projection } = await readSaved(saved)
   const db = usePostgresDirectoryDb()
-  const [observation] = await db.select().from(platformLegacyRelationAlias).where(eq(platformLegacyRelationAlias.oldId, projection.relationId))
-  const [edge] = await db.insert(recordCorrespondence).values({ edgeKey: 'issue327-old-edge', type: 'event_recognized', role: 'context_only', observationId: observation!.observationId, titleCode: 'specialized_sme', status: 'confirmed', revision: 1, targetIdentity: JSON.stringify({ synthetic: true }), provenance: JSON.stringify({ originalRelation: projection.relationId }), sourceFingerprint: 'synthetic-old-fingerprint', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-01-01' }).returning()
+  const [observation] = await db.select().from(platformBusinessObservation).where(eq(platformBusinessObservation.publicId, projection.relationId))
+  const [edge] = await db.insert(recordCorrespondence).values({ edgeKey: 'issue327-old-edge', type: 'event_recognized', role: 'context_only', observationId: observation!.id, titleCode: 'specialized_sme', status: 'confirmed', revision: 1, targetIdentity: JSON.stringify({ synthetic: true }), provenance: JSON.stringify({ originalRelation: projection.relationId }), sourceFingerprint: 'synthetic-old-fingerprint', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-01-01' }).returning()
   await db.insert(recordCorrespondenceAudit).values({ correspondenceId: edge!.id, batchId: saved.batchId, idempotencyKey: 'issue327-old-audit', toStatus: 'confirmed', expectedRevision: 0, resultingRevision: 1, actorType: 'agent', actorId: 'issue327', basis: 'synthetic prior decision', ruleId: 'manual', ruleVersion: '1', evidence: JSON.stringify({ originalRelation: projection.relationId }), decidedAt: '2026-01-01' })
   const before = await businessState()
   const fresh = await collect(e.rawData!.rows[0]!)
@@ -431,11 +410,8 @@ it('new typed observations leave old string hashes, IDs, explicit decisions and 
   expect(newer.projection.recordId).toBe(projection.recordId)
   expect(newer.projection.versionId).not.toBe(projection.versionId)
   const after = await businessState()
-  for (const table of Object.keys(before).filter(name => name !== 'platform_legacy_alias_sequence')) expect(after[table]).toEqual(expect.arrayContaining(before[table] as unknown[]))
-  for (const row of before.platform_legacy_alias_sequence as { namespace: string; high_water: number }[]) {
-    const next = (after.platform_legacy_alias_sequence as { namespace: string; high_water: number }[]).find(value => value.namespace === row.namespace)
-    expect(next?.high_water).toBeGreaterThanOrEqual(row.high_water)
-  }
+  for (const table of Object.keys(before)) expect(after[table]).toEqual(expect.arrayContaining(before[table] as unknown[]))
+  expect(newer.projection.relationId).toBeGreaterThan(projection.relationId)
   expect(after.record_correspondence).toEqual(before.record_correspondence)
   expect(after.record_correspondence_audit).toEqual(before.record_correspondence_audit)
 })

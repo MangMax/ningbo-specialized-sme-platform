@@ -34,12 +34,12 @@ it('public source-bound own qualification reaches query detail filters and downl
    const item = receipt.items.find(item => item.kind === 'platform_query')!
    const id = item.ref.split(':')[1]
    const [relationId] = item.detail?.relations as number[]
-   const path = '/api/platform/queries/' + id + '/evidence?field=relation&relationId=' + relationId
+   const path = '/api/platform/queries?queryId=' + id
    const evidence = await fetch(f.url(path))
    expect(evidence.status, await evidence.clone().text()).toBe(200)
-   const encoded = await evidence.json()
-   expect(JSON.parse(Buffer.from(encoded.data, 'base64').toString('utf8'))).toMatchObject({
-     enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending',
+   const history = await evidence.json()
+   expect(history.rows[0].relations[0]).toMatchObject({
+     id: relationId, enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending',
    })
  }
  const current = async () => {

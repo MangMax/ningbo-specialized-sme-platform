@@ -104,16 +104,16 @@ function numberParam(params: Record<string, unknown>, key: string): number | und
 export const reconcileSpec: JobSpec = {
   openAPIParams: {
     order: 50,
-    description: '`reconcile`:`{ titles?: string[](称号代号), directions?: ("missing_in_miit"|"extra_in_miit")[], usccs?: string[](只查这几个统一社会信用代码), limit?: number(最多处理多少个差异目标), concurrency?: 1–12(默认 4), freshnessHours?: number(复用新鲜查询与判定的窗口,默认 24), write?: boolean(默认 true;false = 只采集预览不回写) }` —— 需要配置页保存 Cookie 或服务端配好 `MIIT_COOKIE`,未配时任务**明确失败且一行不写**(不产出一片「未查询」的假证据)。',
+    description: '`reconcile`:`{ titles?: string[](称号代号), directions?: ("missing_in_miit"|"extra_in_miit")[], usccs?: string[](只查这几个统一社会信用代码), limit?: number(最多处理多少个差异目标), concurrency?: 1–12(默认 4), freshnessHours?: number(保留既有待核处理状态的时限（默认 24 小时）), write?: boolean(默认 true;false = 只采集预览不回写) }` —— 需要配置页保存 Cookie 或服务端配好 `MIIT_COOKIE`,未配时任务**明确失败且一行不写**(不产出一片「未查询」的假证据)。',
   },
   kind: 'reconcile',
   status: 'ready',
-  summary: '批量平台核查(工信部 businessList / applyList),保存查询证据，原因由代理核实',
+  summary: '现场批量查询工信部 businessList / applyList，保存核查结果，原因由代理核实',
   paramsHint:
     '可选:{ titles?: string[](称号代号,如 specialized_sme/innovative_sme/little_giant);' +
     ' directions?: ("missing_in_miit"|"extra_in_miit")[]; usccs?: string[](只查这几个统一社会信用代码,小样本实查用);' +
     ' limit?: number(最多处理多少个差异目标,分批长跑用);offset?: number(跳过前 N 个,与 limit 配成分页);' +
-    ' concurrency?: 1–12(默认 4);freshnessHours?: number(复用新鲜查询/判定的窗口,默认 24);' +
+    ' concurrency?: 1–12(默认 4);freshnessHours?: number(保留既有待核处理状态的时限（默认 24 小时）);' +
     ' write?: boolean(默认 true;false = 只采集预览不回写) }',
   note: '通过配置页 Cookie 或 MIIT_COOKIE 查询，有统代的差异才能实查。',
   parse: parseReconcileParams,

@@ -2,7 +2,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { and, eq, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import {
-  platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformLegacyRelationAlias,
+  platformApplyProjection, platformBusinessObservation, platformBusinessProjection,
   platformObservationAssignment, platformRecognizedProjection,
 } from '../../../../db/postgresql/platform-tables'
 import { normalizeUscc } from '../../lib/domain'
@@ -57,16 +57,16 @@ export function groupBusinessDetails(groups: ReturnType<typeof readPlatformBusin
 
 async function loadPostgresFacts(db: Pg, table: Projection, ids: number[]) {
   if (!ids.length) return []
-  const a = platformLegacyRelationAlias
+
   const o = platformBusinessObservation
   const version = alias(table, 'version_projection')
   const first = platformObservationAssignment
-  return db.select({ relationId: a.oldId, source: table, version, originalName: first.nameRaw, originalUscc: first.usccRaw })
-    .from(a).innerJoin(o, eq(o.id, a.observationId)).innerJoin(table, eq(table.observationId, o.id))
+  return db.select({ relationId: o.publicId, source: table, version, originalName: first.nameRaw, originalUscc: first.usccRaw })
+    .from(o).innerJoin(table, eq(table.observationId, o.id))
     .leftJoin(version, and(eq(version.versionId, o.versionId), eq(version.recordId, o.recordId)))
     .innerJoin(first, and(eq(first.observationId, o.id), eq(first.revision, 1)))
     // A single array bind preserves global relation order without the parameter-count limit.
-    .where(sql`${a.oldId} = ANY(${sql.param(ids)}::bigint[])`).orderBy(a.oldId)
+    .where(sql`${o.publicId} = ANY(${sql.param(ids)}::bigint[])`).orderBy(o.publicId)
 }
 
 export async function readPostgresPlatformDetailFacts(db: Pg, queries: RosterPlatformQueryRow[], relations: PlatformStoredRelation[]) {

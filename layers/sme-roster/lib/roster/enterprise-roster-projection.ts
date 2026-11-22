@@ -1,6 +1,6 @@
 import type { DifferenceQualification } from './current-difference'
 import { enterpriseBusinessTimeline } from './enterprise-business-timeline'
-import type { PlatformStoredQuery } from '../platform/read'
+import type { PlatformCollectionCoverage, PlatformStoredQuery } from '../platform/read'
 import type { PlatformStoredRelation } from '../platform/read'
 import type { PublishedPresentation } from './correspondence-view'
 import type { QueryAssessment } from './query-assessment'
@@ -641,7 +641,7 @@ export interface RosterPlatformQueryRow {
   status: string
   failureReason: string | null
   relationCount: number
-  collectionEvidence?: import('../platform/live-query').PlatformLiveQueryResult | null
+  collectionEvidence?: PlatformCollectionCoverage | null
   titleCode?: string | null
 }
 
@@ -813,7 +813,7 @@ export function projectEnterpriseDifferenceUniverse(snap: Pick<Snapshot, 'differ
   return rows
 }
 
-export type RosterDetailArchive = Pick<Snapshot, 'queries' | 'relations'> & Pick<ReturnType<typeof readEnterpriseSnapshot>, 'platformLegacyById' | 'platformPositionsById'>
+export type RosterDetailArchive = Pick<Snapshot, 'queries' | 'relations'> & Partial<Pick<ReturnType<typeof readEnterpriseSnapshot>, 'platformLegacyById' | 'platformPositionsById'>>
 export type RosterDetailHistory = Pick<Snapshot, 'enterprises' | 'aliases' | 'records' | 'eventsByRecord' | 'recordsByEnterprise' | 'evidence' | 'exportRows' | 'exportBatches'>
 
 export function selectRosterDetailArchive(enterprise: Snapshot['enterprises'][number], archive: RosterDetailArchive) {

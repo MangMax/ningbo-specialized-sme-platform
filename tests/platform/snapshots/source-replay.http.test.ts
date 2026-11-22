@@ -13,7 +13,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
 import { asc, eq, sql } from 'drizzle-orm'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
-import { platformCollection, platformExportBatch, platformLegacyQueryAlias } from '../../../db/postgresql/platform-tables'
+import { platformCollection, platformExportBatch } from '../../../db/postgresql/platform-tables'
 import { importBatch, importReceipt } from '../../../db/postgresql/import-tables'
 import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
@@ -102,25 +102,18 @@ async function submit(action: 'preflight' | 'commit', body: RosterImportRequest)
 }
 async function readQuery(queryId: number) {
   if (realTransport) {
-    const result = await mcpClient.callTool({ name: 'list_platform_queries', arguments: { queryId, includeRawResponse: true } })
+    const result = await mcpClient.callTool({ name: 'list_platform_queries', arguments: { queryId } })
     expect(result.isError).not.toBe(true)
     return result.structuredContent ?? JSON.parse((result.content as any)[0].text)
   }
-  const response = await fetch(`${base}/api/platform/queries?queryId=${queryId}&includeRawResponse=true`)
+  const response = await fetch(`${base}/api/platform/queries?queryId=${queryId}`)
   expect(response.status).toBe(200)
   return response.json()
 }
 const replayTables = [
   'platform_collection',
   'platform_collection_page',
-  'platform_collection_condition',
-  'platform_legacy_query_alias',
-  'platform_legacy_relation_alias',
   'platform_observation_assignment',
-  'platform_archive_value',
-  'platform_collection_archive_ref',
-  'platform_observation_archive_ref',
-  'platform_version_archive_ref',
   'platform_business_record',
   'platform_business_record_version',
   'platform_business_observation',
@@ -142,9 +135,8 @@ async function state() {
 }
 
 function knownQueries(queryKey: string) {
-  return db.select({ id: platformLegacyQueryAlias.oldId })
+  return db.select({ id: platformCollection.publicId })
     .from(platformCollection)
-    .innerJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformCollection.id))
     .where(eq(platformCollection.queryKey, queryKey))
 }
 
@@ -160,18 +152,19 @@ async function rejectAtomically(body: RosterImportRequest, code: string) {
   expect(await state()).toEqual(before)
 }
 
+function reference(q: RosterImportPlatformQuery): RosterImportPlatformQuery {
+  return { interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, queriedAt: q.queriedAt, reuseExisting: true }
+}
+
 const changes: [string, (q: RosterImportPlatformQuery) => void][] = [
   ['response', q => { q.rawResponse = '{"changed":true}' }],
-  ['status', q => { q.status = 'failed' }],
-  ['title', q => { q.titleCode = 'little_giant' }],
-  ['failure', q => { q.failureReason = 'changed' }],
   ['collection', q => { q.collectionEvidence = { source: 'businessList' } as any }],
 ]
 it.each(changes)(`${protocol} rejects query %s changes across keys and preserves sibling atomicity`, async (_name, mutate) => {
   const original = query()
   expect((await submit('commit', request({ platformQueries: [original] }))).status).toBe('committed')
   const changed = structuredClone(original); mutate(changed)
-  await rejectAtomically(request({ platformQueries: [query(), changed] }), _name === 'collection' ? 'collection_evidence_invalid' : 'query_payload_conflict')
+  await rejectAtomically(request({ platformQueries: [query(), changed] }), 'query_replay_offline')
 })
 it.each([
   ['name', (s: RosterImportExportSnapshot) => { s.rows[0]!.nameRaw = '异名' }],
@@ -183,16 +176,20 @@ it.each([
   const changed = structuredClone(original); mutate(changed)
   await rejectAtomically(request({ platformQueries: [query()], exportSnapshot: changed }), 'export_row_payload_conflict')
 })
-it(`${protocol} reuses identical sources across keys, returns the original same-key receipt, and permits distinct observation times and new snapshot bytes`, async () => {
+it(`${protocol} reuses stable collection references across keys, returns the original same-key receipt, and permits distinct observation times and new snapshot bytes`, async () => {
   const q = query(), s = snapshot(), body = request({ platformQueries: [q], exportSnapshot: s })
   const saved = await submit('commit', body); expect(saved.status).toBe('committed')
   const before = await state()
   const queryId = Number(saved.items.find((item: any) => item.kind === 'platform_query').ref.slice(6))
   const read = await readQuery(queryId)
-  expect(read.rows[0].query).toMatchObject({ id: queryId, queryKey: q.queryKey, rawResponse: q.rawResponse, status: q.status, titleCode: q.titleCode })
-  expect(read.rows[0].relations[0]).toMatchObject({ sequenceNo: 1, rawFields: q.relations![0]!.rawFields })
+  expect(read.rows[0].query).toMatchObject({ id: queryId, queryKey: q.queryKey, status: q.status, titleCode: q.titleCode })
+  expect(read.rows[0].query).not.toHaveProperty('rawResponse')
+  const history = JSON.stringify(read.rows[0])
+  expect(history).not.toMatch(/"conditionFacts"|"unfinishedPositions"|"witnesses"/)
+  expect(read.rows[0].relations[0]).toMatchObject({ sequenceNo: 1 })
+  expect(read.rows[0].relations[0].rawFields).toMatchObject({ qymc: '合成' })
   expect(await submit('commit', body)).toEqual(saved)
-  const copy = request(structuredClone(body.payload)); copy.payload.exportSnapshot!.collectedOn = '2026-10-02'; copy.payload.exportSnapshot!.originalFilename = '重命名.xlsx'
+  const copy = request(structuredClone(body.payload)); copy.payload.platformQueries = [{ ...reference(q), relations: [{ sequenceNo: 1 }] }]; copy.payload.exportSnapshot!.collectedOn = '2026-10-02'; copy.payload.exportSnapshot!.originalFilename = '重命名.xlsx'
   const plan = await submit('preflight', copy); expect(plan.preflight).toMatchObject({ add: 0, update: 0, conflicts: [] })
   const reused = await submit('commit', copy)
   expect(reused.status).toBe('committed'); expect(reused.summary).toMatchObject({ written: 0, skipped: 2 })
@@ -204,15 +201,15 @@ it(`${protocol} reuses identical sources across keys, returns the original same-
 })
 it(`${protocol} new native collections require original evidence and explicit reuse cannot create missing sources`, async () => {
   const q = query(); delete q.rawResponse
-  await rejectAtomically(request({ platformQueries: [{ ...q, reuseExisting: true } as any] }), 'query_reuse_missing')
+  await rejectAtomically(request({ platformQueries: [reference(q)] }), 'query_reuse_missing')
   await rejectAtomically(request({ platformQueries: [q] }), 'query_source_required')
 })
 it(`${protocol} ordinary query and snapshot replays cannot add new sequence numbers or silently omit rows`, async () => {
   const q = query(), s = snapshot()
   expect((await submit('commit', request({ platformQueries: [q], exportSnapshot: s }))).status).toBe('committed')
-  const appended = structuredClone(q); appended.relations!.push({ sequenceNo: 2, relationKey: 'extra', rawFields: { id: 'extra' } })
+  const appended = { ...reference(q), relations: [{ sequenceNo: 2, relationKey: 'extra' }] }
   await rejectAtomically(request({ platformQueries: [appended] }), 'query_relation_set_conflict')
-  await rejectAtomically(request({ platformQueries: [{ ...q, relations: [] }] }), 'query_relation_set_conflict')
+  await rejectAtomically(request({ platformQueries: [{ ...q, relations: [] }] }), 'query_replay_offline')
   const extra = structuredClone(s); extra.rows.push({ sourceRowNo: 3, nameRaw: 'extra' })
   await rejectAtomically(request({ exportSnapshot: extra }), 'export_row_set_conflict')
   await rejectAtomically(request({ exportSnapshot: { ...s, rows: [] } }), 'export_row_set_conflict')
@@ -225,7 +222,7 @@ it(`${protocol} concurrent different-key submissions keep one immutable source a
   const q = query()
   const responses = await Promise.all([submit('commit', request({ platformQueries: [q] })), submit('commit', request({ platformQueries: [{ ...q, rawResponse: 'competing' }] }))])
   expect(responses.map(r => r.status).sort()).toEqual(['committed', 'failed'])
-  expect(responses.find(r => r.status === 'failed').items).toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'query_payload_conflict' }) })]))
+  expect(responses.find(r => r.status === 'failed').items).toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'query_replay_offline' }) })]))
   expect(await knownQueries(q.queryKey)).toHaveLength(1)
 })
 it(`${protocol} transaction failure rolls back a preceding query and preserves old references, then the same key can retry`, async () => {
@@ -264,22 +261,18 @@ it(`${protocol} transaction failure rolls back a preceding query and preserves o
   expect((await submit('commit', body)).status).toBe('committed')
 })
 
-it.each(['failed', 'partial'] as const)(`${protocol} preserves existing %s collection status when omitted and rejects explicit replacement under both reuse modes`, async status => {
+it.each(['failed', 'partial'] as const)(`${protocol} preserves existing %s collection status when omitted and rejects explicit replacement through stable references`, async status => {
   const q = { ...query(), status, failureReason: 'original collection incomplete' }
   expect((await submit('commit', request({ platformQueries: [q] }))).status).toBe('committed')
   const before = await state()
-  for (const explicit of [false, true]) {
-    const reference = { interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, queriedAt: q.queriedAt, ...(explicit ? { reuseExisting: true as const } : {}) }
-    expect((await submit('preflight', request({ platformQueries: [reference] }))).preflight.conflicts).toEqual([])
-    expect((await submit('commit', request({ platformQueries: [reference] }))).status).toBe('committed')
-    await rejectAtomically(request({ platformQueries: [{ ...reference, status: 'success' }] }), 'query_payload_conflict')
-    await rejectAtomically(request({ platformQueries: [{ ...reference, titleCode: null }] }), 'query_payload_conflict')
-    await rejectAtomically(request({ platformQueries: [{ ...reference, rawResponse: 'null' }] }), 'query_payload_conflict')
-    await rejectAtomically(request({ platformQueries: [{ ...reference, rawResponse: '{"explicit":true}' }] }), 'query_payload_conflict')
-    await rejectAtomically(request({ platformQueries: [{ ...reference, relations: [{ ...q.relations![0]!, nameRaw: 'changed' }] }] }), 'relation_payload_conflict')
-    await rejectAtomically(request({ platformQueries: [{ ...reference, relations: [{ ...q.relations![0]!, rawFields: null }] }] }), 'observation_payload_conflict')
-    await rejectAtomically(request({ platformQueries: [{ ...reference, relations: [{ sequenceNo: 2 }] }] }), 'query_relation_set_conflict')
-  }
+  const existing = reference(q)
+  expect((await submit('preflight', request({ platformQueries: [existing] }))).preflight.conflicts).toEqual([])
+  expect((await submit('commit', request({ platformQueries: [existing] }))).status).toBe('committed')
+  await rejectAtomically(request({ platformQueries: [{ ...existing, status: 'success' }] }), 'query_payload_conflict')
+  await rejectAtomically(request({ platformQueries: [{ ...existing, titleCode: null }] }), 'query_payload_conflict')
+  await rejectAtomically(request({ platformQueries: [{ ...existing, rawResponse: 'null' }] }), 'query_replay_offline')
+  await rejectAtomically(request({ platformQueries: [{ ...existing, relations: [{ sequenceNo: 2 }] }] }), 'query_relation_set_conflict')
+  await rejectAtomically(request({ platformQueries: [{ ...existing, relations: [{ sequenceNo: 1, relationKey: 'different' }] }] }), 'observation_payload_conflict')
   expect(await state()).toEqual(before)
 })
 
@@ -300,98 +293,40 @@ it(`${protocol} recognized typed envelope remains immutable while omitted status
   expect(evidence.status).toBe('success')
   const q = recognizedResultToImport(evidence)
   const saved = await submit('commit', request({ platformQueries: [q] })); expect(saved.status).toBe('committed')
-  const before = await state(), reference = structuredClone(q)
-  delete reference.titleCode; delete reference.status
-  expect((await submit('commit', request({ platformQueries: [reference] }))).status).toBe('committed')
+  const before = await state()
   const minimal = { interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, queriedAt: q.queriedAt, reuseExisting: true as const }
   expect((await submit('commit', request({ platformQueries: [minimal] }))).status).toBe('committed')
   await rejectAtomically(request({ platformQueries: [{ ...minimal, status: 'failed' }] }), 'query_payload_conflict')
   const changed = structuredClone(q); changed.collectionEvidence!.completedAt = '2099-01-01T00:00:00Z'
-  await rejectAtomically(request({ platformQueries: [changed] }), 'collection_evidence_conflict')
-  await rejectAtomically(request({ platformQueries: [{ ...minimal, relations: [{ sequenceNo: 1, rawFields: { ...row, typedNull: 'null' } }] }] }), 'observation_payload_conflict')
+  await rejectAtomically(request({ platformQueries: [changed] }), 'query_replay_offline')
+  await rejectAtomically(request({ platformQueries: [{ ...minimal, relations: [{ sequenceNo: 1, rawFields: { ...row, typedNull: 'null' } }] }] }), 'query_replay_offline')
   expect(await state()).toEqual(before)
   const read = await readQuery(Number(saved.items[0].ref.slice(6)))
-  expect(read.rows[0].query.collectionEvidence).toEqual(evidence)
-  expect(read.rows[0].relations[0].rawFields).toEqual(row)
+  const metadata = read.rows[0].query.collectionEvidence
+  expect(metadata).toMatchObject({ source: 'queryBusList', completeness: 'complete', fetchedCount: 1 })
+  expect(metadata).not.toHaveProperty('rawData')
+  expect(metadata).not.toHaveProperty('rows')
+  expect(read.rows[0].relations[0]).toMatchObject({ sequenceNo: 1, relationKey: row.id })
 })
-it(`${protocol} accepts same-payload references that omit raw assertions and rejects explicit source-field changes before commit`, async () => {
-  const q = query()
-  expect((await submit('commit', request({ platformQueries: [q] }))).status).toBe('committed')
-  const omitted = { ...q, relations: [{ sequenceNo: 1, relationKey: q.relations![0]!.relationKey }] }
-  const body = request({ platformQueries: [omitted, q] })
-  const plan = await submit('preflight', body)
-  expect(plan.preflight.conflicts).toEqual([])
-  expect(plan.preflight.canonicalProjection).toHaveLength(2)
-  for (const projection of plan.preflight.canonicalProjection) expect(projection).toMatchObject({ identityState: 'resolved', contentState: 'verified', keySource: 'both' })
-  expect((await submit('commit', body)).status).toBe('committed')
-  const duplicated = query(); duplicated.relations!.push({ sequenceNo: 1 })
-  const duplicateBody = request({ platformQueries: [duplicated] })
-  await rejectAtomically(duplicateBody,'sequence_no_invalid')
-  const fresh = query(), changed = { ...fresh, relations: [{ ...fresh.relations![0]!, nameRaw: 'different' }] }
-  await rejectAtomically(request({ platformQueries: [fresh, changed] }), 'relation_payload_conflict')
-})
-
-it.each([
-  { name: 'one-to-empty', first: [1], next: [], accepted: false },
-  { name: 'empty-to-one', first: [], next: [1], accepted: false },
-  { name: 'deleted-subset', first: [1, 2], next: [2], accepted: false },
-  { name: 'reordered-same-set', first: [1, 2], next: [2, 1], accepted: true },
-])(`${protocol} full row-set $name has the same preflight and commit outcome for staged and stored sources`, async ({ first, next, accepted }) => {
-  for (const stored of [false, true]) {
-    const original = query()
-    const rows = (sequences: number[]) => sequences.map(sequenceNo => ({ sequenceNo, relationKey: `${original.queryKey}-r${sequenceNo}`, rawFields: { id: `${original.queryKey}-r${sequenceNo}`, value: sequenceNo } }))
-    original.relations = rows(first)
-    if (stored) expect((await submit('commit', request({ platformQueries: [original] }))).status).toBe('committed')
-    const replay = { ...original, relations: rows(next) }
-    const body = request({ platformQueries: stored ? [replay] : [original, replay] })
-    if (!accepted) {
-      await rejectAtomically(body, 'query_relation_set_conflict')
-      continue
-    }
-    const before = await state()
-    const plan = await submit('preflight', body)
-    expect(plan.preflight.conflicts).toEqual([])
-    expect(await state()).toEqual(before)
-    const result = await submit('commit', body)
-    expect(result.status).toBe('committed')
-    expect(result.summary.written).toBe(stored ? 0 : 3)
-    const saved = await knownQueries(original.queryKey)
-    expect(saved).toHaveLength(1)
-    const read = await readQuery(saved[0]!.id)
-    expect(read.rows[0].query.rawResponse).toBe(original.rawResponse)
-    expect(read.rows[0].relations.map((row: { sequenceNo: number }) => row.sequenceNo)).toEqual([1, 2])
-    expect(read.rows[0].relations.map((row: { rawFields: unknown }) => row.rawFields)).toEqual(rows([1, 2]).map(row => row.rawFields))
-    if (stored) expect(await state()).toEqual(before)
-  }
-})
-
-it.each(['explicit-reuse', 'legacy-response-omission'] as const)(`${protocol} %s permits row subsets without declaring a complete staged or stored source`, async mode => {
+it(protocol + ' accepts stable row references within one payload and from committed collections', async () => {
   for (const stored of [false, true]) for (const subset of [[], [2]]) {
     const original = query()
-    original.relations = [1, 2].map(sequenceNo => ({ sequenceNo, relationKey: `${original.queryKey}-r${sequenceNo}`, rawFields: { id: `${original.queryKey}-r${sequenceNo}`, value: sequenceNo } }))
+    original.relations = [1, 2].map(sequenceNo => ({ sequenceNo, relationKey: original.queryKey + '-r' + sequenceNo,
+      rawFields: { id: original.queryKey + '-r' + sequenceNo, value: sequenceNo } }))
     if (stored) expect((await submit('commit', request({ platformQueries: [original] }))).status).toBe('committed')
-    const reference = {
-      ...original,
-      ...(mode === 'explicit-reuse' ? { reuseExisting: true as const } : { rawResponse: null }),
-      relations: subset.map(sequenceNo => ({ sequenceNo })),
-    }
-    const body = request({ platformQueries: stored ? [reference] : [original, reference] })
+    const existing = { ...reference(original), relations: subset.map(sequenceNo => ({ sequenceNo })) }
+    const body = request({ platformQueries: stored ? [existing] : [original, existing] })
     const before = await state()
     expect((await submit('preflight', body)).preflight.conflicts).toEqual([])
     expect(await state()).toEqual(before)
     const result = await submit('commit', body)
     expect(result.status).toBe('committed')
     expect(result.summary.written).toBe(stored ? 0 : 3)
-    const replayItem = result.items[result.items.length - 1]
-    expect(replayItem.detail.rowsWritten).toBe(0)
-    expect(replayItem.detail.canonicalProjection).toHaveLength(subset.length)
-    expect(replayItem.detail.canonicalProjection.every((projection: { observationCreated: boolean }) => !projection.observationCreated)).toBe(true)
+    expect(result.items.at(-1).detail).toMatchObject({ rowsWritten: 0, skipped: subset.length, reuseExisting: true })
     if (stored) expect(await state()).toEqual(before)
     const saved = await knownQueries(original.queryKey)
     expect(saved).toHaveLength(1)
     const read = await readQuery(saved[0]!.id)
-    expect(read.rows[0].query.rawResponse).toBe(original.rawResponse)
     expect(read.rows[0].relations.map((row: { sequenceNo: number }) => row.sequenceNo)).toEqual([1, 2])
-    expect(read.rows[0].relations.map((row: { rawFields: unknown }) => row.rawFields)).toEqual(original.relations.map(row => row.rawFields))
   }
 })

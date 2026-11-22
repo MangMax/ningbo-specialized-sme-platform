@@ -3,8 +3,6 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import {
   platformBusinessObservation as observation,
   platformCollection as collection,
-  platformLegacyQueryAlias as queryAlias,
-  platformLegacyRelationAlias as relationAlias,
   platformObservationAssignment as assignment,
 } from '../../../../db/postgresql/platform-tables'
 import { describeRef, normalizeRef, type NormalizedRef } from './roster-import-model'
@@ -17,9 +15,8 @@ export type PostgresImportRelation = { id:number; observationId:number; collecti
 
 const fail = (code:string,field:string,message:string): ErrorResult => ({ ok:false,error:{code,field,message} })
 async function findQueries(db: Reader, ref: NormalizedRef): Promise<Query[]> {
-  return db.select({ id: queryAlias.oldId, collectionId: collection.id, interface: collection.interface })
+  return db.select({ id: collection.publicId, collectionId: collection.id, interface: collection.interface })
     .from(collection)
-    .innerJoin(queryAlias, eq(queryAlias.collectionId, collection.id))
     .where(and(eq(collection.interface, ref.interface), eq(collection.queryKey, ref.queryKey),
       eq(collection.rdjb, ref.rdjb), ref.queriedAt ? eq(collection.queriedAt, ref.queriedAt) : undefined))
 }
@@ -38,18 +35,16 @@ async function relations(db: Reader, condition: SQL | undefined): Promise<Postgr
     .from(assignment).where(eq(assignment.observationId, observation.id))
     .orderBy(desc(assignment.revision)).limit(1).as('owner')
   return db.select({
-    id: relationAlias.oldId, observationId: observation.id, collectionId: collection.id, interface: collection.interface,
+    id: observation.publicId, observationId: observation.id, collectionId: collection.id, interface: collection.interface,
     enterpriseId: owner.enterpriseId, usccRaw: owner.usccRaw, nameRaw: owner.nameRaw,
-    queryId: queryAlias.oldId, key: observation.sourceRelationKey,
+    queryId: collection.publicId, key: observation.sourceRelationKey,
   }).from(collection)
-    .innerJoin(queryAlias, eq(queryAlias.collectionId, collection.id))
     .innerJoin(observation, eq(observation.collectionId, collection.id))
-    .innerJoin(relationAlias, eq(relationAlias.observationId, observation.id))
     .innerJoinLateral(owner, eq(owner.observationId, observation.id)).where(condition)
 }
 
 export async function findPostgresImportRelationById(db: Reader, id: number) {
-  return (await relations(db, eq(relationAlias.oldId, id)))[0] ?? null
+  return (await relations(db, eq(observation.publicId, id)))[0] ?? null
 }
 
 export async function findPostgresImportRelation(db: Reader,raw: unknown,field: string) {

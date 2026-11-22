@@ -53,5 +53,13 @@ export async function installArchiveFixture(pg: pg.Client, sqlite: Database.Data
     }
   }
   await pg.query(`SET search_path TO business, pg_catalog;
-    ${readFileSync(new URL('../../../db/postgresql/platform-observation-snapshot.sql', import.meta.url), 'utf8')}`)
+    ${readFileSync(new URL('../../../db/postgresql/platform-observation-snapshot.sql', import.meta.url), 'utf8')}
+    ALTER TABLE platform_collection ADD COLUMN public_id bigint, ADD COLUMN evidence_sha256 text;
+    UPDATE platform_collection c SET evidence_sha256=encode(sha256(a.bytes),'hex')
+    FROM platform_collection_archive_ref r JOIN platform_archive_value a ON a.id=r.archive_id
+    WHERE r.owner_id=c.id AND r.field='collectionEvidence' AND r.sealed=1;
+    ALTER TABLE platform_business_observation ADD COLUMN public_id bigint;
+    UPDATE platform_collection c SET public_id=q.old_id FROM platform_legacy_query_alias q WHERE q.collection_id=c.id;
+    UPDATE platform_business_observation o SET public_id=r.old_id FROM platform_legacy_relation_alias r WHERE r.observation_id=o.id;
+    DROP TABLE platform_legacy_query_alias, platform_legacy_relation_alias;`)
 }

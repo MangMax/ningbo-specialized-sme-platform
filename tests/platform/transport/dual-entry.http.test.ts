@@ -25,7 +25,7 @@ beforeAll(async () => {
   })))
 })
 
-it('normal replay and retained relationId verification expose the same literal fields without changing archived identities', async () => {
+it('structured readback and reference reuse preserve all three sources across rejected offline replay and write recovery', async () => {
   const retained = process.env.ACCEPTANCE_598_DIR
   const dir = retained ?? mkdtempSync(join(tmpdir(), 'dual-entry-598-'))
   const checkpoint = join(dir, 'before-replay.pg')
@@ -60,12 +60,12 @@ it('normal replay and retained relationId verification expose the same literal f
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   const base = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`
   const receipts: unknown[] = []
-  const post = async (action: string, body: unknown) => {
+  const post = async (action: string, body: unknown, expectedStatus = 200) => {
     const response = await fetch(`${base}/api/roster/import/${action}`, { method: 'POST', headers: { authorization: 'Bearer 598-isolated-token', 'content-type': 'application/json' }, body: JSON.stringify(body) })
-    expect(response.status).toBe(200)
+    expect(response.status).toBe(expectedStatus)
     const result = await response.json(); receipts.push(result); return result
   }
-  const invariantTables = ['platform_apply_projection', 'platform_business_projection', 'platform_recognized_projection', 'platform_collection', 'platform_legacy_query_alias', 'platform_legacy_relation_alias', 'platform_observation_assignment', 'platform_archive_value', 'platform_business_record', 'platform_business_record_version', 'platform_business_observation', 'enterprise', 'record', 'record_event', 'enterprise_alias', 'record_correspondence', 'record_correspondence_audit', 'difference_reason']
+  const invariantTables = ['platform_apply_projection', 'platform_business_projection', 'platform_recognized_projection', 'platform_collection', 'platform_observation_assignment', 'platform_business_record', 'platform_business_record_version', 'platform_business_observation', 'enterprise', 'record', 'record_event', 'enterprise_alias', 'record_correspondence', 'record_correspondence_audit', 'difference_reason']
   const snapshot = async () => Object.fromEntries(await Promise.all(invariantTables.map(async table => {
     const result = await db.execute<{ content: string }>(sql`SELECT row_to_json(item)::text AS content
       FROM business.${sql.identifier(table)} AS item ORDER BY (row_to_json(item)::text) COLLATE "C"`)
@@ -108,18 +108,21 @@ it('normal replay and retained relationId verification expose the same literal f
     expect(before.difference_reason).toHaveLength(1)
     expect(before.record_correspondence).toHaveLength(1)
     expect(before.record_correspondence_audit).toHaveLength(1)
-    // Preserve a consistent checkpoint before replay and injected failure.
     execFileSync(join(process.env.ROSTER_TEST_POSTGRES_BIN!, 'pg_dump'), ['--format=custom', '--schema=business', '--file=' + checkpoint, postgres.url])
-    // Native replay verifies sealed source projections without destructive repair.
-    expect((await post('commit', request('598-normal-repair', { platformQueries: queries }))).summary.platformFields).toMatchObject({ status: 'ready' })
-    await check(); expect(await snapshot()).toEqual(before)
-    const { rows: ids } = await db.execute<{ id: string }>(sql`SELECT old_id id FROM platform_legacy_relation_alias ORDER BY old_id`)
+    const replay = await post('commit', request('598-offline-replay', { platformQueries: queries }))
+    expect(replay).toMatchObject({ status: 'failed', items: expect.arrayContaining([
+      expect.objectContaining({ error: expect.objectContaining({ code: 'query_replay_offline' }) }),
+    ]) })
+    const referenced = queries.map(({ rawResponse: _raw, collectionEvidence: _coverage, relations, ...position }) => ({
+      ...position, reuseExisting: true as const, relations: relations?.map(({ sequenceNo, relationKey }) => ({ sequenceNo, relationKey })),
+    }))
+    const reuse = await post('commit', request('598-reference-reuse', { platformQueries: referenced }))
+    expect(reuse).toMatchObject({ status: 'committed', summary: { written: 0 } })
+    const { rows: ids } = await db.execute<{ id: string }>(sql`SELECT public_id id FROM platform_business_observation ORDER BY public_id`)
     const repair = request('598-maintenance', { platformRecordObservations: ids.map(({ id }) => ({ relationId: Number(id) })) })
-    expect((await post('preflight', repair)).preflight.conflicts).toEqual([])
-    const receipt = await post('commit', repair)
-    expect(receipt.status).toBe('committed')
-    await check(); expect(await snapshot()).toEqual(before)
-    expect(await post('commit', repair)).toEqual(receipt)
+    await post('preflight', repair, 400)
+    await post('commit', repair, 400)
+    await check()
     expect(await snapshot()).toEqual(before)
     // The original submitted file is outside the PostgreSQL transaction. A hard
     // third-source failure must retain its exact bytes and the failed receipt.

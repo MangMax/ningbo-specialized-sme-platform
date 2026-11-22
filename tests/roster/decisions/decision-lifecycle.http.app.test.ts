@@ -26,7 +26,7 @@ const curatedPath = join(dir, 'legacy.json')
 const sourceDb = initializeDb({ create: true, dbPath })
 const enterprise = sourceDb.insert(schema.enterprise).values({ name: '合成决定企业', nameNorm: '合成决定企业', usccNorm: '91330211255994457P' }).returning().get()
 const queryNative = submitNativePlatformQuery(sourceDb, { interface: 'apply_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'success', rawResponse: 'SYNTHETIC_RAW_UNCHANGED' })
-const query = { id: queryNative.queryId, collectionId: queryNative.collectionId }
+const query = { id: queryNative.queryId }
 sourceDb.$client.close()
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 let pool: Pool
@@ -317,6 +317,9 @@ describe('ticket 102 public decision lifecycle', () => {
   })
   it('serializes competing expected versions, rejects key reuse, and rolls back an injected post-insert failure', async () => {
     const before = await json(await fetch(api('current?' + scope)))
+    const sourcePath = service.baseUrl + '/api/platform/queries?queryId=' + query.id
+    const originalSource = await json(await fetch(sourcePath))
+    expect(originalSource.rows[0].query.id).toBe(query.id)
     const a = request('race-a', before.versionId), b = request('race-b', before.versionId)
     const raced = await Promise.all([post(a), post(b)])
     expect(raced.map(r => r.status).sort()).toEqual([200,409])
@@ -345,11 +348,8 @@ describe('ticket 102 public decision lifecycle', () => {
     expect((await json(await fetch(service.baseUrl + '/api/roster/differences'))).rows.find((r: any) => r.enterpriseId === enterprise.id)).toMatchObject({ status: 'needs_review', reasonCode: null })
     expect(value(await rpc('list_differences', {})).rows.find((r: any) => r.enterpriseId === enterprise.id)).toMatchObject({ status: 'needs_review', reasonCode: null })
     expect((await json(await fetch(service.baseUrl + '/api/roster/enterprises/' + enterprise.id))).differences[0]).toMatchObject({ status: 'needs_review', reasonCode: null })
-    const { rows: [archive] } = await db.execute<{ bytes: Buffer }>(sql`
-      select v.bytes from platform_archive_value v join platform_collection_archive_ref r on r.archive_id = v.id
-      where r.owner_id = ${query.collectionId} and r.field = 'rawResponse'
-    `)
-    expect(archive!.bytes.toString()).toBe('SYNTHETIC_RAW_UNCHANGED')
+    expect(await json(await fetch(sourcePath))).toEqual(originalSource)
+    expect(JSON.stringify(originalSource)).not.toContain('SYNTHETIC_RAW_UNCHANGED')
   })
 
   it('previews exact legacy mappings and conflicts without promoting reviewed annotations or modifying either store', async () => {

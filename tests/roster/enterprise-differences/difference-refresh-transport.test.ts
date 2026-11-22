@@ -15,6 +15,8 @@ import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
 import { readPostgresCurrentQualification } from '../../../layers/sme-roster/lib/roster/current-qualification-postgres'
 import { refreshEnterpriseDifferences } from '../../../layers/sme-roster/server/utils/enterprise-difference-refresh'
+import { readPostgresRefreshFingerprints } from '../../../layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres'
+import { readPostgresCandidateSourceBytes } from '../../../layers/sme-roster/server/utils/candidate-source-bytes-postgres'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 vi.mock('@nuxtjs/mcp-toolkit/server',()=>({defineMcpTool:(value:unknown)=>value}))
 const sqlite=new Database(':memory:'),db=drizzle(sqlite,{schema})
@@ -166,6 +168,7 @@ async function seedHistoricalStatusArchive() {
   interface: 'business_list', titleCode: 'specialized_sme', rdjb: '2', queryKey: 'name:' + name,
   queriedAt: '2026-05-31T00:00:00Z', status: 'success', rawResponse: '{}',
   relations: [{ enterpriseId, sequenceNo: 1, relationKey: 'historical-status', nameRaw: name,
+   sourceText: 'PLATFORM-VERIFY-ACLASS 从 QYMC 转写',
    rawFields: { cszt: '终审通过', CSZT: 'case-sensitive extra field', transportDetails: 'x'.repeat(256 * 1024),
     rdxx: { retained: '\u0000', literal: '\\|u0000|', surrogate: '\ud800' } } }],
  })
@@ -231,6 +234,25 @@ it('PostgreSQL HTTP and MCP refresh preserve migrated fingerprints and judgments
    enterpriseId: historical.enterpriseId,
    comparisons: historicalBaseline.enterprises[0]!.comparisons.map(row => ({ ...row, refreshedAt: '2026-06-02T00:00:00.000Z' })),
   }] })
+  const readFingerprints = () => usePostgresDirectoryDb().transaction(tx =>
+   readPostgresRefreshFingerprints(tx, [1, historical.enterpriseId]), { isolationLevel: 'repeatable read', accessMode: 'read only' })
+  expect(await readFingerprints()).toHaveLength(2)
+  const expectedBytes = Number(migrated.psql(['-At', '-c', `
+   SELECT SUM(a.byte_length)
+   FROM fixture_business.platform_legacy_relation_alias l
+   JOIN fixture_business.platform_business_observation o ON o.id=l.observation_id
+   JOIN fixture_business.platform_archive_value a ON a.id IN (
+    SELECT archive_id FROM fixture_business.platform_collection_archive_ref WHERE owner_id=o.collection_id AND field IN ('rawResponse','collectionEvidence')
+    UNION ALL SELECT archive_id FROM fixture_business.platform_observation_archive_ref WHERE owner_id=o.id AND field='rawFields'
+   )
+   WHERE l.old_id=${historical.relationId}
+  `]).trim())
+  expect(expectedBytes).toBeGreaterThan(256 * 1024)
+  expect(migrated.psql(['-At', '-c', `SELECT identity_only_source FROM business.platform_business_observation o
+   WHERE o.public_id=${historical.relationId}
+  `]).trim()).toBe('t')
+  expect(migrated.psql(['-At', '-c', "SELECT to_regclass('business.platform_archive_value') IS NULL"]).trim()).toBe('t')
+  expect(await readPostgresCandidateSourceBytes(usePostgresDirectoryDb(), historical.relationId)).toBe(expectedBytes)
   psql("UPDATE business.record SET name_raw='变更公布名' WHERE enterprise_id=1 AND title_code='specialized_sme'")
   vi.setSystemTime(new Date('2026-06-03T00:00:00Z'))
   const [toolResult, competing] = await Promise.all([

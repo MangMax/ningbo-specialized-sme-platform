@@ -47,7 +47,7 @@ export async function runPlatformBatch(ctx: BatchContext, raw: Record<string, un
   await persist()
   for (const [index, item] of result.items.entries()) {
     if (item.completeness === 'complete' || (params.retryItemIds && !params.retryItemIds.includes(item.itemId))) continue
-    const original = params.items[index]!.query
+    const { rawDataVersion: _legacyRawDataVersion, ...original } = params.items[index]!.query
     const itemStarted = Date.now()
     const itemStartRequests = result.usage.requests
     const itemStartRows = result.usage.rows
@@ -93,7 +93,7 @@ export async function runPlatformBatch(ctx: BatchContext, raw: Record<string, un
         for (; page < query.startPage && acceptedPages.get(title)?.has(page); page++) count += acceptedPages.get(title)!.get(page)!
         if (page === query.startPage) priorFetchedCounts.set(title, count)
       }
-      const segment = await runPlatformLiveQuery(query, { cookie, declaredTotals, priorFetchedCounts, maxResultBytes: available, onProgress: admit,
+      const segment = await runPlatformLiveQuery(query, { cookie, declaredTotals, priorFetchedCounts, maxResultBytes: available, onProgress: admit, businessRowsOnly: true,
         logContext: { ...logContext, resourceType: 'platform_batch_item', resourceId: item.itemId } })
       await admit(segment)
       // Authentication is not automatically retried. Other independent items still

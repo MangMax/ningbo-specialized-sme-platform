@@ -2,9 +2,8 @@ import { and, eq, exists, inArray, ne, or, sql, type SQLWrapper } from 'drizzle-
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise, enterpriseAlias } from '../../../../db/postgresql/enterprise-tables'
 import { recordCorrespondence as correspondence } from '../../../../db/postgresql/qualification-tables'
-import { platformQueryTitleScope as titleScope } from '../../../../db/postgresql/platform-archive-tables'
+import { platformQueryTitleScope as titleScope } from '../../../../db/postgresql/platform-query-scope-tables'
 import { platformBusinessObservation as observation, platformCollection as collection, platformCollectionPage as page,
-  platformLegacyQueryAlias as queryAlias, platformLegacyRelationAlias as relationAlias,
   platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { projectLegacyComparisonCycles } from '../../lib/roster/current-qualification-model'
 import { readPostgresLegacyQualification, type PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
@@ -55,9 +54,9 @@ async function readAnnualComparisonProcesses(tx: Tx, request: Parameters<typeof 
   const eventIds = [...new Set(request.eventIds)]
   if (eventIds.length > 40) throw new Error('input_resource_limit')
   const decisions = await tx.select({
-    relationId: relationAlias.oldId, eventId: correspondence.eventId,
+    relationId: observation.publicId, eventId: correspondence.eventId,
     predecessorEventId: correspondence.predecessorEventId, enterpriseId: correspondence.enterpriseId, titleCode: correspondence.titleCode,
-  }).from(correspondence).leftJoin(relationAlias, eq(relationAlias.observationId, correspondence.observationId))
+  }).from(correspondence).leftJoin(observation, eq(observation.id, correspondence.observationId))
     .where(or(
       inArray(correspondence.eventId, eventIds), inArray(correspondence.predecessorEventId, eventIds),
       and(eq(correspondence.enterpriseId, request.enterpriseId), eq(correspondence.titleCode, request.titleCode)),
@@ -78,17 +77,19 @@ async function readAnnualComparisonProcesses(tx: Tx, request: Parameters<typeof 
   }
   const refs = entries.flatMap(({ read }) => [...read.sourceRefs.observations, ...read.sourceRefs.titleScopeRefs])
   const recordIds = [...new Set(refs.flatMap(row => row.recordId === null ? [] : [row.recordId]))]
-  const historicalQueries = await tx.select({ recordId: observation.recordId, relationId: relationAlias.oldId, queryId: queryAlias.oldId })
-    .from(observation).innerJoin(relationAlias, eq(relationAlias.observationId, observation.id))
-    .innerJoin(queryAlias, eq(queryAlias.collectionId, observation.collectionId))
-    .where(or(matchesIds(observation.recordId, recordIds), matchesIds(relationAlias.oldId, refs.map(row => row.relationId))))
-    .orderBy(relationAlias.oldId)
+  const historicalQueries = await tx.select({ recordId: observation.recordId, relationId: observation.publicId, queryId: collection.publicId })
+    .from(observation)
+    .innerJoin(collection, eq(collection.id, observation.collectionId))
+    .where(or(matchesIds(observation.recordId, recordIds), matchesIds(observation.publicId, refs.map(row => row.relationId))))
+    .orderBy(observation.publicId)
   const history = new Map([...Map.groupBy(historicalQueries, row => row.recordId)].flatMap(([id, rows]) =>
     id === null ? [] : [[id, rows.map(row => row.relationId)] as const]))
   const queryIds = [...new Set([...entries.flatMap(({ read }) => read.sourceRefs.coverage.map(row => row.queryId)),
     ...refs.map(row => row.queryId), ...historicalQueries.map(row => row.queryId)])]
-  const queryRows = await tx.select({ id: queryAlias.oldId, collection }).from(collection)
-    .innerJoin(queryAlias, eq(queryAlias.collectionId, collection.id)).where(matchesIds(queryAlias.oldId, queryIds)) as AnnualInputs['queryRows']
+  const queryRows = await tx.select({ id: collection.publicId, collection: {
+    id: collection.id, rdjb: collection.rdjb, titleCode: collection.titleCode,
+    interface: collection.interface, parseState: collection.parseState, scopeMode: collection.scopeMode,
+  } }).from(collection).where(matchesIds(collection.publicId, queryIds)) as AnnualInputs['queryRows']
   const collectionIds = queryRows.map(row => row.collection.id)
   const pages = await tx.select({ collectionId: page.collectionId, rdjb: page.rdjb }).from(page)
     .where(matchesIds(page.collectionId, collectionIds))

@@ -39,7 +39,6 @@ INSERT INTO enterprise_source_list_type (code, name) VALUES
 INSERT INTO title (code, name_zh, level, rank)
 SELECT row.code, row."nameZh", row.level, row.rank
 FROM jsonb_to_recordset(:'titles'::jsonb) AS row(code text, "nameZh" text, level text, rank bigint);
-INSERT INTO platform_legacy_alias_sequence (namespace, high_water) VALUES ('query', 0), ('relation', 0);
 \endif
 
 CREATE SCHEMA runtime_logs;

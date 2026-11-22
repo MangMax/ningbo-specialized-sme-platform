@@ -1,7 +1,7 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { eq,sql } from 'drizzle-orm'
 import { platformBusinessObservation as observation, platformBusinessRecord as businessRecord,
-  platformBusinessRecordVersion as version, platformLegacyRelationAlias as relation } from '../../../../db/postgresql/platform-tables'
+  platformBusinessRecordVersion as version } from '../../../../db/postgresql/platform-tables'
 import { recordCorrespondence as correspondence } from '../../../../db/postgresql/qualification-tables'
 import { normalizeUscc } from '../../lib/domain'
 import type { PlatformBusinessGroup,PlatformBusinessMetadata,PlatformBusinessObservationRef,PlatformCorrespondenceRef,ScopedPlatformObservation } from '../../lib/platform/business-record'
@@ -11,15 +11,15 @@ export type { readPlatformBusinessGroups } from './platform-business-record-read
 
 type BusinessMetadataRow = ReturnType<typeof readPlatformBusinessMetadata> extends Map<number,infer T> ? T : never
 // Drizzle inArray binds each ID separately. Use one bound array for large scoped reads.
-const postgresRelationScope = (ids: readonly number[]) => sql`${relation.oldId} = ANY(${sql.param(ids)}::bigint[])`
+const postgresRelationScope = (ids: readonly number[]) => sql`${observation.publicId} = ANY(${sql.param(ids)}::bigint[])`
 
 export async function readPostgresPlatformBusinessMetadata(db: Pick<NodePgDatabase, 'select'>, relationIds: readonly number[]) {
   if (!relationIds.length) return new Map<number, BusinessMetadataRow>()
-  const rows = await db.select({ relationId: relation.oldId, recordId: observation.recordId, versionId: observation.versionId,
+  const rows = await db.select({ relationId: observation.publicId, recordId: observation.recordId, versionId: observation.versionId,
     interface: businessRecord.interface, platformKey: businessRecord.platformKey, identityState: observation.identityState,
     contentState: observation.contentState, keySource: observation.keySource, projectionRuleVersion: observation.projectionRuleVersion,
     hashAlgorithm: version.hashAlgorithm, contentHash: version.contentHash,
-  }).from(relation).innerJoin(observation, eq(observation.id, relation.observationId))
+  }).from(observation)
     .leftJoin(businessRecord, eq(businessRecord.id, observation.recordId))
     .leftJoin(version, eq(version.id, observation.versionId)).where(postgresRelationScope(relationIds))
   return new Map<number, BusinessMetadataRow>(rows.map(row => [row.relationId, row as BusinessMetadataRow]))
@@ -47,12 +47,12 @@ export async function readPostgresPlatformBusinessCorrespondences(
   db: Pick<NodePgDatabase, 'select'>, relationIds: readonly number[],
 ): Promise<PlatformCorrespondenceRef[]> {
   if (!relationIds.length) return []
-  return db.select({ id: correspondence.id, relationId: relation.oldId, exportRowId: correspondence.exportRowId,
+  return db.select({ id: correspondence.id, relationId: observation.publicId, exportRowId: correspondence.exportRowId,
     eventId: correspondence.eventId, predecessorEventId: correspondence.predecessorEventId, enterpriseId: correspondence.enterpriseId,
     titleCode: correspondence.titleCode, type: correspondence.type, role: correspondence.role, status: correspondence.status,
     revision: correspondence.revision, ruleId: correspondence.ruleId, ruleVersion: correspondence.ruleVersion,
     createdAt: correspondence.createdAt, decidedAt: correspondence.decidedAt, endedAt: correspondence.endedAt,
-  }).from(correspondence).innerJoin(relation, eq(relation.observationId, correspondence.observationId))
+  }).from(correspondence).innerJoin(observation, eq(observation.id, correspondence.observationId))
     .where(postgresRelationScope(relationIds)).orderBy(correspondence.id)
 }
 
