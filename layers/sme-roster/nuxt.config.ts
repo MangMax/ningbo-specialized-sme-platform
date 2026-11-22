@@ -8,10 +8,6 @@ export default defineNuxtConfig({
     pathPrefix: false,
     ignore: ['**/index.ts'],
   }],
-  runtimeConfig: {
-    // 本地人工标注;生产/测试可用 NUXT_CURATED_PATH 覆盖。
-    curatedPath: fileURLToPath(new URL('../../data/reconciliation-curated.json', import.meta.url)),
-  },
   hooks: {
     'nitro:init'(nitro) {
       // Register the lazy virtual source before Rollup constructs its plugins;

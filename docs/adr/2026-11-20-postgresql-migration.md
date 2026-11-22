@@ -55,7 +55,6 @@ Compose 从 `ROSTER_ENV_FILE` 读取连接配置。隔离环境可用 `postgres-
 
 名录工作簿的生成、下载、任务历史和过期清理共用 `NUXT_ROSTER_EXPORT_DIR`。Compose 通过 `ROSTER_EXPORT_DIR` 配置，默认使用持久卷上的 `/state/data/roster.db.exports`。已有部署升级时，将它配置为当前工作簿目录。换目录时，在恢复任务执行前迁移产物文件，并为所有实例配置同一路径。
 
-`NUXT_CURATED_PATH` 提供人工标注，供比对、比对导出与标注接口使用。`NUXT_RECONCILE_PATH` 提供历史核对摘要，供比对查询使用。这两个配置指向 Compose 的持久目录。
 
 冻结隔离源库的业务和日志写入后，使用 PostgreSQL 19 客户端和本机 Unix socket 运行以下演练。源库表的二进制 COPY 校验与 `pg_dump` 使用同一个导出快照，按主键或完整唯一键顺序计算 SHA-256，并比较序列的 `last_value` 和 `is_called`。序列状态不受事务快照保护，演练期间须保持源库冻结。临时恢复库沿用源库编码及 locale，退出时清理该库及归档。文件库原件与应用恢复后的业务请求另行验收。
 

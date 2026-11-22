@@ -226,7 +226,7 @@ it('preserves rejected export requests and records semantic denials without quer
   for (const [path, init, operation, status] of [
     [endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientRequestId: privateText }) }, 'export.current.submission', 401],
     [endpoint, { method: 'POST', headers, body: JSON.stringify({ clientRequestId: privateText, titleCode: privateText }) }, 'export.current.submission', 400],
-    ['/api/export?mode=comparison&q=' + privateText, { headers }, 'export.legacy.comparison.summary', 400],
+    ['/api/export?mode=comparison&q=' + privateText, { headers }, 'export.legacy.records.summary', 400],
     ['/api/roster/export?title=' + privateText, { headers }, 'export.legacy.enterprises.summary', 400],
   ] as const) {
     const response = await fetch(url(path), init)

@@ -35,7 +35,6 @@ services:
       NUXT_ROSTER_EXPORT_DIR: ${ROSTER_EXPORT_DIR:-/state/data/roster.db.exports}
       NUXT_FILES_DIR: /state/files
       NUXT_INCOMING_DIR: /state/incoming
-      NUXT_CURATED_PATH: /state/data/reconciliation-curated.json
       NUXT_TUS_ALLOWED_ORIGINS: "http://localhost:${ROSTER_PORT:-3480},http://127.0.0.1:${ROSTER_PORT:-3480}"
     ports:
       - "127.0.0.1:${ROSTER_PORT:-3480}:3000"

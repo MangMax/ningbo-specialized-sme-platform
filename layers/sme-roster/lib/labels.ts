@@ -424,7 +424,6 @@ export const COMPARISON_LABELS = {
   missing_in_miit: '应纳未纳',
   extra_in_miit: '应出未出',
 } as const
-export const COMPARISON_NO_USCC = '无统代,另一侧无可匹配身份'
 
 /** 旧 JSON 解释缓存的原因词表；保留历史读取与 pipeline 兼容。 */
 export const RECONCILE_LABELS = {
