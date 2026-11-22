@@ -147,8 +147,8 @@ it.each([0, 1, 2])('real HTTP or MCP exposes raw envelope case %i live and reads
   expect(after.rows).toEqual(history.rows)
 })
 it('real HTTP submission and MCP item retain typed batch business rows within the structured-result budget', async () => {
-  const businessRow = { id: 'batch-one', qymc: '合成', rdjb: 2, rddqrq: '2027', cszt: '已认定', sqsj: '2026-07-03', x: null, n: 1 }
-  raw = source({ ...businessRow, rawFields: { rawTransportOnly: 'remove-row-copy' }, rawResponse: 'remove-response-copy' }) + ' '.repeat(70000)
+  const businessRow = { id: 'batch-one', qymc: '合成', rdjb: 2, rddqrq: '2027', cszt: '已认定', sqsj: '2026-07-03', n: 0, flag: false, nested: { blank: '', absent: null }, whitespace: ' ' }
+  raw = source({ ...businessRow, blank: '', nil: null, rawFields: { rawTransportOnly: 'remove-row-copy' }, rawResponse: 'remove-response-copy' }) + ' '.repeat(70000)
   const invalid = await post('/api/platform/batches', { items: [{ query: input }] })
   expect(invalid.status).toBe(400)
   const response = await post('/api/platform/batches', { items: [{ query: batchInput }], limits: { maxResultBytes: 65536 } })
@@ -157,10 +157,16 @@ it('real HTTP submission and MCP item retain typed batch business rows within th
   await waitForBatch(submitted.batchId)
   const item: any = await call('get_platform_batch_item', { batchId: submitted.batchId, itemId: submitted.itemIds[0] })
   expect(item).toMatchObject({ status: 'success', segments: [{
-    rows: [{ id: 'batch-one', rdjb: '2', rddqrq: '2027', cszt: '已认定', sqsj: '2026-07-03', x: '', n: '1' }],
+    rows: [{ id: 'batch-one', rdjb: '2', rddqrq: '2027', cszt: '已认定', sqsj: '2026-07-03', n: '0', flag: 'false', nested: '{"blank":"","absent":null}', whitespace: ' ' }],
     dataRows: [businessRow], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, status: 'success', fetchedCount: 1 }],
   }] })
   expect(item.segments[0]).not.toHaveProperty('rawData')
+  expect(item.segments[0].rows[0]).not.toHaveProperty('blank')
+  expect(item.segments[0].rows[0]).not.toHaveProperty('nil')
+  const persisted = await usePostgresDirectoryDb().$client.query('SELECT payload FROM business.platform_batch_segment WHERE job_id = $1', [submitted.batchId])
+  const stored = JSON.parse(persisted.rows[0].payload)
+  expect(stored).not.toHaveProperty('rows')
+  expect(stored.dataRows).toEqual([businessRow])
   expect(JSON.stringify(item)).not.toMatch(/remove-row-copy|remove-response-copy/)
   const savedBatch = snapshotBusinessData()
   expect(savedBatch.includes(Buffer.from('remove-row-copy'))).toBe(false)

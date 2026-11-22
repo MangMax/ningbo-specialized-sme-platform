@@ -1,3 +1,7 @@
+-- Keep V1 evidence only until the native refresh transition verifies stored decisions.
+ALTER TABLE platform_collection ADD COLUMN IF NOT EXISTS refresh_metadata jsonb;
+ALTER TABLE platform_business_observation ADD COLUMN IF NOT EXISTS refresh_facts jsonb;
+
 -- Project only the historically hashed fields. Preserve the first duplicate key and JSON token values.
 CREATE OR REPLACE FUNCTION pg_temp.platform_refresh_tokens(payload bytea)
 RETURNS TABLE(raw text, document json, quoted boolean) LANGUAGE sql AS $body$

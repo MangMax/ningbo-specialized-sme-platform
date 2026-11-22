@@ -19,7 +19,7 @@ export const recordCorrespondence = businessSchema.table('record_correspondence'
   status: text('status').$type<Correspondence['status']>().notNull(),
   revision: bigint('revision', { mode: 'number' }).notNull(),
   targetIdentity: text('target_identity').notNull(),
-  provenance: text('provenance').notNull(),
+  provenance: text('provenance'),
   sourceFingerprint: text('source_fingerprint').notNull(),
   ruleId: text('rule_id').notNull(),
   ruleVersion: text('rule_version').notNull(),

@@ -22,7 +22,6 @@ CREATE INDEX platform_apply_projection_applied_idx ON platform_apply_projection 
 CREATE INDEX platform_apply_projection_kind_idx ON platform_apply_projection (declare_kind);
 CREATE UNIQUE INDEX platform_apply_projection_observation_uq ON platform_apply_projection (observation_id);
 CREATE INDEX platform_apply_projection_record_idx ON platform_apply_projection (record_id);
-CREATE INDEX platform_apply_projection_source_archive_idx ON platform_apply_projection(source_archive_id);
 CREATE INDEX platform_apply_projection_status_idx ON platform_apply_projection (status);
 CREATE INDEX platform_apply_projection_title_version_idx ON platform_apply_projection (title_raw,version_id);
 CREATE INDEX platform_apply_projection_uscc_idx ON platform_apply_projection (uscc_raw);
@@ -37,7 +36,6 @@ CREATE INDEX platform_business_projection_batch_idx ON platform_business_project
 CREATE INDEX platform_business_projection_kind_idx ON platform_business_projection (declare_kind);
 CREATE UNIQUE INDEX platform_business_projection_observation_uq ON platform_business_projection (observation_id);
 CREATE INDEX platform_business_projection_record_idx ON platform_business_projection (record_id);
-CREATE INDEX platform_business_projection_source_archive_idx ON platform_business_projection(source_archive_id);
 CREATE INDEX platform_business_projection_status_idx ON platform_business_projection (status);
 CREATE INDEX platform_business_projection_title_version_idx ON platform_business_projection (title_raw,version_id);
 CREATE INDEX platform_business_projection_uscc_idx ON platform_business_projection (uscc_raw);
@@ -62,7 +60,6 @@ CREATE INDEX platform_recognized_projection_batch_idx ON platform_recognized_pro
 CREATE INDEX platform_recognized_projection_district_idx ON platform_recognized_projection (district);
 CREATE UNIQUE INDEX platform_recognized_projection_observation_uq ON platform_recognized_projection (observation_id);
 CREATE INDEX platform_recognized_projection_record_idx ON platform_recognized_projection (record_id);
-CREATE INDEX platform_recognized_projection_source_archive_idx ON platform_recognized_projection(source_archive_id);
 CREATE INDEX platform_recognized_projection_title_version_idx ON platform_recognized_projection (title_raw,version_id);
 CREATE INDEX platform_recognized_projection_uscc_idx ON platform_recognized_projection (uscc_raw);
 CREATE INDEX platform_recognized_projection_validity_idx ON platform_recognized_projection (validity_date_raw);

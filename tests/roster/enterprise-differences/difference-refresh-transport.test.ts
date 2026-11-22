@@ -16,6 +16,7 @@ import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledg
 import { readPostgresCurrentQualification } from '../../../layers/sme-roster/lib/roster/current-qualification-postgres'
 import { refreshEnterpriseDifferences } from '../../../layers/sme-roster/server/utils/enterprise-difference-refresh'
 import { readPostgresRefreshFingerprints } from '../../../layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres'
+import { installPlatformRefreshV2 } from '../../../upgrade/postgresql/platform-refresh-v2-migration'
 import { readPostgresCandidateSourceBytes } from '../../../layers/sme-roster/server/utils/candidate-source-bytes-postgres'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 vi.mock('@nuxtjs/mcp-toolkit/server',()=>({defineMcpTool:(value:unknown)=>value}))
@@ -193,6 +194,12 @@ it('PostgreSQL HTTP and MCP refresh preserve migrated fingerprints and judgments
   expect(historicalBaseline).toMatchObject({ refreshed: 3, unchanged: 0 })
   addHistoricalDuplicateStatus(historical.relationId, '终审不通过')
   expect(refreshEnterpriseDifferences(db, historicalInput)).toEqual({ ...historicalBaseline, refreshed: 0, unchanged: 3 })
+  const [stale] = db.insert(schema.enterprise).values({ name: '待重新核对', nameNorm: '待重新核对' }).returning().all()
+  refreshEnterpriseDifferences(db, { enterpriseIds: [stale!.id] })
+  sqlite.prepare(`
+   UPDATE enterprise_difference_comparison SET business_fingerprint=?
+   WHERE enterprise_id=? AND title_code='specialized_sme'
+  `).run('0'.repeat(64), stale!.id)
   installLeadListSchema(sqlite)
   const snapshot = join(dir, 'source.sqlite')
   await sqlite.backup(snapshot)
@@ -208,6 +215,13 @@ it('PostgreSQL HTTP and MCP refresh preserve migrated fingerprints and judgments
   const psql = (command: string) => migrated!.psql(['-c', command])
   psql(`INSERT INTO business.difference_reason(enterprise_id,title_code,direction,status,recorded_at,created_at)
    VALUES (1,'specialized_sme','missing_in_miit','confirmed_no_diff','2026-06-01T01:00:00Z','2026-06-01T01:00:00Z')`)
+  expect(await installPlatformRefreshV2(usePostgresDirectoryDb())).toEqual({ status: 'already_native', existing: 9 })
+  expect(migrated.psql(['-At', '-c', 'SELECT count(state_fingerprint),count(*) FROM business.enterprise_difference_comparison']).trim())
+   .toBe('8|9')
+  expect(migrated.psql(['-At', '-c', `
+   SELECT business_fingerprint,state_fingerprint IS NULL FROM business.enterprise_difference_comparison
+   WHERE enterprise_id=${stale!.id} AND title_code='specialized_sme'
+  `]).trim()).toBe('0'.repeat(64) + '|t')
   vi.setSystemTime(new Date('2026-06-02T00:00:00Z'))
   let largestFieldBytes = 0
   const originalParser = types.getTypeParser
@@ -261,16 +275,25 @@ it('PostgreSQL HTTP and MCP refresh preserve migrated fingerprints and judgments
   ])
   expect(competing.status).toBe(200)
   const receipts = [JSON.parse(toolResult.content[0]!.text), await competing.json()].sort((a, b) => b.refreshed - a.refreshed)
-  expect(receipts[0]).toEqual(sqliteChanged)
-  expect(receipts[1]).toEqual({ ...sqliteChanged, refreshed: 0, unchanged: 3 })
+  const nativeDigest = (await readFingerprints())[0]!.fingerprints.get('specialized_sme')
+  expect(nativeDigest).not.toBe(specialized(sqliteChanged)!.businessFingerprint)
+  const expectedChanged = { ...sqliteChanged, enterprises: sqliteChanged.enterprises.map(enterprise => ({
+   ...enterprise, comparisons: enterprise.comparisons.map(comparison => comparison.titleCode === 'specialized_sme'
+    ? { ...comparison, businessFingerprint: nativeDigest } : comparison),
+  })) }
+  expect(receipts[0]).toEqual(expectedChanged)
+  expect(receipts[1]).toEqual({ ...expectedChanged, refreshed: 0, unchanged: 3 })
   const readback = await (await request('GET', undefined, '?enterpriseIds=1')).json()
-  expect(readback.enterprises).toEqual(sqliteChanged.enterprises)
+  expect(readback.enterprises).toEqual(expectedChanged.enterprises)
   psql("UPDATE business.record SET name_raw='传输合成' WHERE enterprise_id=1 AND title_code='specialized_sme'")
   vi.setSystemTime(new Date('2026-06-04T00:00:00Z'))
   const restored = await (await request('POST', input)).json()
   expect(restored).toMatchObject({ refreshed: 1, unchanged: 2 })
   expect(specialized(restored)).toEqual({ ...specialized(baseline),
+   businessFingerprint: (await readFingerprints())[0]!.fingerprints.get('specialized_sme'),
    changedAt: '2026-06-04T00:00:00.000Z', refreshedAt: '2026-06-04T00:00:00.000Z' })
+  const revalidated = await (await request('POST', { enterpriseIds: [stale!.id] })).json()
+  expect(revalidated).toMatchObject({ refreshed: 1, unchanged: 2 })
 
   for (const invalid of [{ enterpriseIds: [1, 1] }, { enterpriseIds: [1, 9001] }]) {
    expect((await request('POST', invalid)).status).toBe(400)

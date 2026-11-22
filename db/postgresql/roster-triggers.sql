@@ -133,11 +133,4 @@ CREATE TRIGGER platform_observation_witness_fixed BEFORE UPDATE ON platform_busi
           OLD.witness_error_name, OLD.witness_error, OLD.witness_state))
   EXECUTE FUNCTION reject_roster_history_mutation();
 
-CREATE TRIGGER platform_recognized_exact_title_fixed BEFORE UPDATE ON platform_recognized_projection
-  FOR EACH ROW WHEN (
-    (NEW.exact_title_raw, NEW.exact_title_raw_sqlite_storage, NEW.exact_title_state, NEW.exact_title_origin,
-      NEW.exact_title_archive_id, NEW.exact_title_sha256)
-    IS DISTINCT FROM
-      (OLD.exact_title_raw, OLD.exact_title_raw_sqlite_storage, OLD.exact_title_state, OLD.exact_title_origin,
-        OLD.exact_title_archive_id, OLD.exact_title_sha256))
-  EXECUTE FUNCTION reject_roster_history_mutation();
+\ir platform-recognized-title-trigger.sql

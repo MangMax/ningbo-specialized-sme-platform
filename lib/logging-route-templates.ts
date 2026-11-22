@@ -5,6 +5,7 @@
  * `node scripts/generate-logging-route-templates.mjs` after a route change.
  */
 export const APPLICATION_LOG_ROUTES: ReadonlySet<string> = new Set([
+  "/api/**:unmatched",
   "/api/comparison",
   "/api/comparison/curated",
   "/api/core/dictionaries/:kind",

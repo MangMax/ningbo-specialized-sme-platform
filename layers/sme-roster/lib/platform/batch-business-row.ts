@@ -6,5 +6,6 @@ const excludedRowFields = new Set([
 ])
 
 export function platformBatchBusinessRow<Cell>(row: Record<string, Cell>): Record<string, Cell> {
-  return Object.fromEntries(Object.entries(row).filter(([key]) => !excludedRowFields.has(key.toLowerCase())))
+  return Object.fromEntries(Object.entries(row).filter(([key, value]) =>
+    value !== null && value !== '' && !excludedRowFields.has(key.toLowerCase())))
 }

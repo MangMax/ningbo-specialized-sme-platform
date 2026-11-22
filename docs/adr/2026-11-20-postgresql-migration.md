@@ -46,6 +46,7 @@ psql -X -w -v staging=staged_business -f upgrade/postgresql/materialize-jobs.sql
 psql -X -w -v staging=staged_business -f upgrade/postgresql/materialize-file-and-lead-lists.sql
 psql -X -w -v staging=staged_business -f upgrade/postgresql/materialize-roster.sql
 psql -X -w -v staging=staged_logs -f upgrade/postgresql/materialize-runtime-logs.sql
+node upgrade/postgresql/install-platform-refresh-v2.mjs
 ```
 
 早期隔离副本若已物化 `business.job` 但缺少任务运行字段，可单独执行 [install-job-runtime.sql](../../upgrade/postgresql/install-job-runtime.sql)。
@@ -54,10 +55,10 @@ psql -X -w -v staging=staged_logs -f upgrade/postgresql/materialize-runtime-logs
 
 ## 已有 PostgreSQL 库的数据精简
 
-停止应用及后台任务，在精简前用 `pg_dump -Fc` 保留完整原库并记录 SHA-256。将备份恢复到隔离库，用 [平台归档清单](../../upgrade/postgresql/platform-archive-manifest.sh) 逐表核对采集字节和来源坐标。原库备份作为历史原文的离线归档。验证后先在隔离副本执行精简。
+停止应用及后台任务，在精简前用 `pg_dump -Fc` 保留完整原库并记录 SHA-256。将备份恢复到隔离库，用 [平台归档清单](../../upgrade/postgresql/platform-archive-manifest.sh) 逐表核对采集字节和来源坐标。原库备份作为历史原文的离线归档。验证后先在隔离副本执行精简。使用同一组 PostgreSQL 客户端连接环境变量，并显式设置 `PGDATABASE`。
 
 ```sh
-psql -X -w -f upgrade/postgresql/apply-data-compaction.sql
+bash upgrade/postgresql/compact-database.sh
 ```
 
 - 成功的健康探针和任务轮询不进入日志，失败仍保留。日志每条仅保存一份事件，列表从同一事件投影。

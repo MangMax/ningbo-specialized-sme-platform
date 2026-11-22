@@ -12,6 +12,7 @@ SELECT to_regclass('business.platform_archive_value') IS NOT NULL AS platform_on
 \ir retire-platform-online-archives.sql
 \endif
 \ir install-platform-collection-scope.sql
+\ir install-platform-projection-compaction.sql
 \ir install-correspondence-query-evidence-compaction.sql
 \ir compact-import-receipts.sql
 \ir compact-platform-batch-results.sql

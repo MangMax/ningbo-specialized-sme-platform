@@ -64,6 +64,7 @@ export const enterpriseDifferenceComparison = businessSchema.table('enterprise_d
   reasons: text('reasons').notNull(),
   comparisonError: text('comparison_error'),
   businessFingerprint: text('business_fingerprint').notNull(),
+  stateFingerprint: text('state_fingerprint'),
   changedAt: text('changed_at').notNull(),
   refreshedAt: text('refreshed_at').notNull(),
   decisionCutoffId: bigint('decision_cutoff_id', { mode: 'number' }).notNull(),

@@ -80,8 +80,10 @@ export function projectRefreshObservation(q: RefreshCollection, { relations, typ
 
 export function hashRefreshInputs({ enterprise, aliases, formal, evidence, correspondences, observations }: {
   enterprise: unknown; aliases: unknown[]; formal: unknown[]; evidence: unknown[]; correspondences: unknown[]; observations: unknown[]
-}) {
-  return createHash('sha256').update(canonical({ enterprise, aliases: setRows(aliases), formal: sortedRows(formal),
+}, version?: string) {
+  const hash = createHash('sha256')
+  if (version !== undefined) hash.update(version + '\n')
+  return hash.update(canonical({ enterprise, aliases: setRows(aliases), formal: sortedRows(formal),
     evidence: sortedRows(evidence), correspondences: setRows(correspondences), observations: setRows(observations) })).digest('hex')
 }
 

@@ -13,7 +13,6 @@ CREATE TABLE platform_collection (
   evidence_sha256 text,
   evidence_sealed bigint,
   source_archive_bytes bigint NOT NULL DEFAULT 0,
-  refresh_metadata jsonb,
   interface text NOT NULL,
   query_key text NOT NULL,
   rdjb text NOT NULL,
@@ -122,7 +121,6 @@ CREATE TABLE platform_business_observation (
   CONSTRAINT platform_observation_business_fields_owner CHECK (version_id IS NULL OR business_fields IS NULL),
   identity_only_source boolean NOT NULL DEFAULT false,
   source_raw_bytes bigint NOT NULL DEFAULT 0,
-  refresh_facts jsonb,
   process_exact_owner_id bigint,
   process_exact_state text,
   process_sql_fact_title_state text,
@@ -291,47 +289,32 @@ CREATE TABLE platform_apply_projection (
   source_title_number_text text,
   source_title_boolean bigint,
   source_title_rule_version text,
-  source_archive_id bigint,
   parse_state text,
-  stored_province_kind text,
   stored_province text,
-  parsed_province_kind text,
   parsed_province text,
   reconciled_province text,
   province_conflict bigint,
-  stored_status_kind text,
   stored_status text,
-  parsed_status_kind text,
   parsed_status text,
   reconciled_status text,
   status_conflict bigint,
-  stored_batch_kind text,
   stored_batch text,
-  parsed_batch_kind text,
   parsed_batch text,
   reconciled_batch text,
   batch_conflict bigint,
-  stored_declare_kind_kind text,
   stored_declare_kind text,
-  parsed_declare_kind_kind text,
   parsed_declare_kind text,
   reconciled_declare_kind text,
   declare_kind_conflict bigint,
-  stored_applied_at_kind text,
   stored_applied_at text,
-  parsed_applied_at_kind text,
   parsed_applied_at text,
   reconciled_applied_at text,
   applied_at_conflict bigint,
-  stored_award_batch_label_kind text,
   stored_award_batch_label text,
-  parsed_award_batch_label_kind text,
   parsed_award_batch_label text,
   reconciled_award_batch_label text,
   award_batch_label_conflict bigint,
-  stored_year_kind text,
   stored_year bigint,
-  parsed_year_kind text,
   parsed_year bigint,
   reconciled_year bigint,
   year_conflict bigint,
@@ -344,31 +327,6 @@ CREATE TABLE platform_apply_projection (
   CONSTRAINT platform_apply_projection_version_id_ck CHECK (version_id BETWEEN 1 AND 9007199254740991),
   CONSTRAINT platform_apply_projection_record_id_ck CHECK (record_id BETWEEN 1 AND 9007199254740991),
   CONSTRAINT platform_apply_projection_observation_id_ck CHECK (observation_id BETWEEN 1 AND 9007199254740991),
-  CONSTRAINT platform_apply_projection_source_archive_id_ck CHECK (source_archive_id BETWEEN 1 AND 9007199254740991),
-  CONSTRAINT platform_apply_projection_capture_ck CHECK ((observation_id IS NULL AND source_title_kind IS
-    NULL AND source_title_text IS NULL AND source_title_number_text IS NULL AND source_title_boolean IS NULL
-    AND source_title_rule_version IS NULL AND source_archive_id IS NULL AND parse_state IS NULL AND stored_province_kind
-    IS NULL AND stored_province IS NULL AND parsed_province_kind IS NULL AND parsed_province IS NULL AND reconciled_province
-    IS NULL AND province_conflict IS NULL AND stored_status_kind IS NULL AND stored_status IS NULL AND parsed_status_kind
-    IS NULL AND parsed_status IS NULL AND reconciled_status IS NULL AND status_conflict IS NULL AND stored_batch_kind
-    IS NULL AND stored_batch IS NULL AND parsed_batch_kind IS NULL AND parsed_batch IS NULL AND reconciled_batch
-    IS NULL AND batch_conflict IS NULL AND stored_declare_kind_kind IS NULL AND stored_declare_kind IS NULL
-    AND parsed_declare_kind_kind IS NULL AND parsed_declare_kind IS NULL AND reconciled_declare_kind IS NULL
-    AND declare_kind_conflict IS NULL AND stored_applied_at_kind IS NULL AND stored_applied_at IS NULL AND
-    parsed_applied_at_kind IS NULL AND parsed_applied_at IS NULL AND reconciled_applied_at IS NULL AND applied_at_conflict
-    IS NULL AND stored_award_batch_label_kind IS NULL AND stored_award_batch_label IS NULL AND parsed_award_batch_label_kind
-    IS NULL AND parsed_award_batch_label IS NULL AND reconciled_award_batch_label IS NULL AND award_batch_label_conflict
-    IS NULL AND stored_year_kind IS NULL AND stored_year IS NULL AND parsed_year_kind IS NULL AND parsed_year
-    IS NULL AND reconciled_year IS NULL AND year_conflict IS NULL) OR (observation_id IS NOT NULL AND source_title_kind
-    IS NOT NULL AND source_title_rule_version IS NOT NULL AND source_archive_id IS NOT NULL AND parse_state
-    IS NOT NULL AND stored_province_kind IS NOT NULL AND parsed_province_kind IS NOT NULL AND stored_status_kind
-    IS NOT NULL AND parsed_status_kind IS NOT NULL AND stored_batch_kind IS NOT NULL AND parsed_batch_kind
-    IS NOT NULL AND stored_declare_kind_kind IS NOT NULL AND parsed_declare_kind_kind IS NOT NULL AND stored_applied_at_kind
-    IS NOT NULL AND parsed_applied_at_kind IS NOT NULL AND stored_award_batch_label_kind IS NOT NULL AND parsed_award_batch_label_kind
-    IS NOT NULL AND stored_year_kind IS NOT NULL AND parsed_year_kind IS NOT NULL AND province_conflict IS
-    NOT NULL AND status_conflict IS NOT NULL AND batch_conflict IS NOT NULL AND declare_kind_conflict IS NOT
-    NULL AND applied_at_conflict IS NOT NULL AND award_batch_label_conflict IS NOT NULL AND year_conflict
-    IS NOT NULL)),
   CONSTRAINT platform_apply_projection_title_ck CHECK (source_title_kind IS NULL OR (source_title_kind IN
     ('absent','null','array','object','invalid') AND source_title_text IS NULL AND source_title_number_text
     IS NULL AND source_title_boolean IS NULL) OR (source_title_kind = 'text' AND source_title_text IS NOT
@@ -382,80 +340,32 @@ CREATE TABLE platform_apply_projection (
     AND ((basis = 'unavailable') = (parse_state <> 'valid')))),
   CONSTRAINT platform_apply_projection_rule_ck CHECK (source_title_rule_version IS NULL OR (source_title_rule_version
     IS NOT NULL AND length(trim(source_title_rule_version)) > 0)),
-  CONSTRAINT platform_apply_projection_stored_province_kind_ck CHECK (stored_province_kind IS NULL OR (stored_province_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (stored_province_kind NOT
-    IN ('absent','null','array','object','invalid','boolean') OR stored_province IS NULL))),
-  CONSTRAINT platform_apply_projection_parsed_province_kind_ck CHECK (parsed_province_kind IS NULL OR (parsed_province_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (parsed_province_kind NOT
-    IN ('absent','null','array','object','invalid','boolean') OR parsed_province IS NULL))),
   CONSTRAINT platform_apply_projection_province_reconcile_ck CHECK (observation_id IS NULL OR (province_conflict
     IS NOT NULL AND province_conflict = (stored_province IS NOT NULL AND parsed_province IS NOT NULL AND stored_province
     <> parsed_province)::integer AND reconciled_province IS NOT DISTINCT FROM (CASE WHEN province_conflict
     = 1 THEN NULL ELSE coalesce(stored_province,parsed_province) END))),
-  CONSTRAINT platform_apply_projection_stored_status_kind_ck CHECK (stored_status_kind IS NULL OR (stored_status_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (stored_status_kind NOT
-    IN ('absent','null','array','object','invalid','boolean') OR stored_status IS NULL))),
-  CONSTRAINT platform_apply_projection_parsed_status_kind_ck CHECK (parsed_status_kind IS NULL OR (parsed_status_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (parsed_status_kind NOT
-    IN ('absent','null','array','object','invalid','boolean') OR parsed_status IS NULL))),
   CONSTRAINT platform_apply_projection_status_reconcile_ck CHECK (observation_id IS NULL OR (status_conflict
     IS NOT NULL AND status_conflict = (stored_status IS NOT NULL AND parsed_status IS NOT NULL AND stored_status
     <> parsed_status)::integer AND reconciled_status IS NOT DISTINCT FROM (CASE WHEN status_conflict = 1 THEN
     NULL ELSE coalesce(stored_status,parsed_status) END))),
-  CONSTRAINT platform_apply_projection_stored_batch_kind_ck CHECK (stored_batch_kind IS NULL OR (stored_batch_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (stored_batch_kind NOT IN
-    ('absent','null','array','object','invalid','boolean') OR stored_batch IS NULL))),
-  CONSTRAINT platform_apply_projection_parsed_batch_kind_ck CHECK (parsed_batch_kind IS NULL OR (parsed_batch_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (parsed_batch_kind NOT IN
-    ('absent','null','array','object','invalid','boolean') OR parsed_batch IS NULL))),
   CONSTRAINT platform_apply_projection_batch_reconcile_ck CHECK (observation_id IS NULL OR (batch_conflict
     IS NOT NULL AND batch_conflict = (stored_batch IS NOT NULL AND parsed_batch IS NOT NULL AND stored_batch
     <> parsed_batch)::integer AND reconciled_batch IS NOT DISTINCT FROM (CASE WHEN batch_conflict = 1 THEN
     NULL ELSE coalesce(stored_batch,parsed_batch) END))),
-  CONSTRAINT platform_apply_projection_stored_declare_kind_kind_ck CHECK (stored_declare_kind_kind IS NULL
-    OR (stored_declare_kind_kind IN ('absent','null','text','number','boolean','array','object','invalid')
-    AND (stored_declare_kind_kind NOT IN ('absent','null','array','object','invalid','boolean') OR stored_declare_kind
-    IS NULL))),
-  CONSTRAINT platform_apply_projection_parsed_declare_kind_kind_ck CHECK (parsed_declare_kind_kind IS NULL
-    OR (parsed_declare_kind_kind IN ('absent','null','text','number','boolean','array','object','invalid')
-    AND (parsed_declare_kind_kind NOT IN ('absent','null','array','object','invalid','boolean') OR parsed_declare_kind
-    IS NULL))),
   CONSTRAINT platform_apply_projection_declare_kind_reconcile_ck CHECK (observation_id IS NULL OR (declare_kind_conflict
     IS NOT NULL AND declare_kind_conflict = (stored_declare_kind IS NOT NULL AND parsed_declare_kind IS NOT
     NULL AND stored_declare_kind <> parsed_declare_kind)::integer AND reconciled_declare_kind IS NOT DISTINCT
     FROM (CASE WHEN declare_kind_conflict = 1 THEN NULL ELSE coalesce(stored_declare_kind,parsed_declare_kind)
     END))),
-  CONSTRAINT platform_apply_projection_stored_applied_at_kind_ck CHECK (stored_applied_at_kind IS NULL OR
-    (stored_applied_at_kind IN ('absent','null','text','number','boolean','array','object','invalid') AND
-    (stored_applied_at_kind NOT IN ('absent','null','array','object','invalid','boolean') OR stored_applied_at
-    IS NULL))),
-  CONSTRAINT platform_apply_projection_parsed_applied_at_kind_ck CHECK (parsed_applied_at_kind IS NULL OR
-    (parsed_applied_at_kind IN ('absent','null','text','number','boolean','array','object','invalid') AND
-    (parsed_applied_at_kind NOT IN ('absent','null','array','object','invalid','boolean') OR parsed_applied_at
-    IS NULL))),
   CONSTRAINT platform_apply_projection_applied_at_reconcile_ck CHECK (observation_id IS NULL OR (applied_at_conflict
     IS NOT NULL AND applied_at_conflict = (stored_applied_at IS NOT NULL AND parsed_applied_at IS NOT NULL
     AND stored_applied_at <> parsed_applied_at)::integer AND reconciled_applied_at IS NOT DISTINCT FROM (CASE
     WHEN applied_at_conflict = 1 THEN NULL ELSE coalesce(stored_applied_at,parsed_applied_at) END))),
-  CONSTRAINT platform_apply_projection_stored_award_batch_label_kind_ck CHECK (stored_award_batch_label_kind
-    IS NULL OR (stored_award_batch_label_kind IN ('absent','null','text','number','boolean','array','object','invalid')
-    AND (stored_award_batch_label_kind NOT IN ('absent','null','array','object','invalid','boolean') OR stored_award_batch_label
-    IS NULL))),
-  CONSTRAINT platform_apply_projection_parsed_award_batch_label_kind_ck CHECK (parsed_award_batch_label_kind
-    IS NULL OR (parsed_award_batch_label_kind IN ('absent','null','text','number','boolean','array','object','invalid')
-    AND (parsed_award_batch_label_kind NOT IN ('absent','null','array','object','invalid','boolean') OR parsed_award_batch_label
-    IS NULL))),
   CONSTRAINT platform_apply_projection_award_batch_label_reconcile_ck CHECK (observation_id IS NULL OR (award_batch_label_conflict
     IS NOT NULL AND award_batch_label_conflict = (stored_award_batch_label IS NOT NULL AND parsed_award_batch_label
     IS NOT NULL AND stored_award_batch_label <> parsed_award_batch_label)::integer AND reconciled_award_batch_label
     IS NOT DISTINCT FROM (CASE WHEN award_batch_label_conflict = 1 THEN NULL ELSE coalesce(stored_award_batch_label,parsed_award_batch_label)
     END))),
-  CONSTRAINT platform_apply_projection_stored_year_kind_ck CHECK (stored_year_kind IS NULL OR (stored_year_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (stored_year_kind NOT IN
-    ('absent','null','array','object','invalid','boolean') OR stored_year IS NULL))),
-  CONSTRAINT platform_apply_projection_parsed_year_kind_ck CHECK (parsed_year_kind IS NULL OR (parsed_year_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (parsed_year_kind NOT IN
-    ('absent','null','array','object','invalid','boolean') OR parsed_year IS NULL))),
   CONSTRAINT platform_apply_projection_stored_year_ck CHECK (stored_year BETWEEN -9007199254740991 AND 9007199254740991),
   CONSTRAINT platform_apply_projection_parsed_year_ck CHECK (parsed_year BETWEEN -9007199254740991 AND 9007199254740991),
   CONSTRAINT platform_apply_projection_reconciled_year_ck CHECK (reconciled_year BETWEEN -9007199254740991
@@ -549,21 +459,16 @@ CREATE TABLE platform_business_projection (
   source_title_number_text text,
   source_title_boolean bigint,
   source_title_rule_version text,
-  source_archive_id bigint,
   parse_state text,
-  stored_province_kind text,
   stored_province text,
-  parsed_province_kind text,
   parsed_province text,
   reconciled_province text,
   province_conflict bigint,
-  stored_status_kind text,
   stored_status bytea,
   stored_status_sqlite_storage text NOT NULL DEFAULT 'null'
     CHECK ((stored_status_sqlite_storage = 'null' AND stored_status IS NULL)
     OR (stored_status_sqlite_storage IN ('text', 'blob') AND stored_status IS NOT NULL)
     OR (stored_status_sqlite_storage IN ('integer', 'real') AND octet_length(stored_status) IS NOT DISTINCT FROM 8)),
-  parsed_status_kind text,
   parsed_status text,
   reconciled_status bytea,
   reconciled_status_sqlite_storage text NOT NULL DEFAULT 'null'
@@ -571,33 +476,23 @@ CREATE TABLE platform_business_projection (
     OR (reconciled_status_sqlite_storage IN ('text', 'blob') AND reconciled_status IS NOT NULL)
     OR (reconciled_status_sqlite_storage IN ('integer', 'real') AND octet_length(reconciled_status) IS NOT DISTINCT FROM 8)),
   status_conflict bigint,
-  stored_batch_kind text,
   stored_batch text,
-  parsed_batch_kind text,
   parsed_batch text,
   reconciled_batch text,
   batch_conflict bigint,
-  stored_declare_kind_kind text,
   stored_declare_kind text,
-  parsed_declare_kind_kind text,
   parsed_declare_kind text,
   reconciled_declare_kind text,
   declare_kind_conflict bigint,
-  stored_applied_at_kind text,
   stored_applied_at text,
-  parsed_applied_at_kind text,
   parsed_applied_at text,
   reconciled_applied_at text,
   applied_at_conflict bigint,
-  stored_award_batch_label_kind text,
   stored_award_batch_label text,
-  parsed_award_batch_label_kind text,
   parsed_award_batch_label text,
   reconciled_award_batch_label text,
   award_batch_label_conflict bigint,
-  stored_year_kind text,
   stored_year bigint,
-  parsed_year_kind text,
   parsed_year bigint,
   reconciled_year bigint,
   year_conflict bigint,
@@ -610,31 +505,6 @@ CREATE TABLE platform_business_projection (
   CONSTRAINT platform_business_projection_version_id_ck CHECK (version_id BETWEEN 1 AND 9007199254740991),
   CONSTRAINT platform_business_projection_record_id_ck CHECK (record_id BETWEEN 1 AND 9007199254740991),
   CONSTRAINT platform_business_projection_observation_id_ck CHECK (observation_id BETWEEN 1 AND 9007199254740991),
-  CONSTRAINT platform_business_projection_source_archive_id_ck CHECK (source_archive_id BETWEEN 1 AND 9007199254740991),
-  CONSTRAINT platform_business_projection_capture_ck CHECK ((observation_id IS NULL AND source_title_kind
-    IS NULL AND source_title_text IS NULL AND source_title_number_text IS NULL AND source_title_boolean IS
-    NULL AND source_title_rule_version IS NULL AND source_archive_id IS NULL AND parse_state IS NULL AND stored_province_kind
-    IS NULL AND stored_province IS NULL AND parsed_province_kind IS NULL AND parsed_province IS NULL AND reconciled_province
-    IS NULL AND province_conflict IS NULL AND stored_status_kind IS NULL AND stored_status IS NULL AND parsed_status_kind
-    IS NULL AND parsed_status IS NULL AND reconciled_status IS NULL AND status_conflict IS NULL AND stored_batch_kind
-    IS NULL AND stored_batch IS NULL AND parsed_batch_kind IS NULL AND parsed_batch IS NULL AND reconciled_batch
-    IS NULL AND batch_conflict IS NULL AND stored_declare_kind_kind IS NULL AND stored_declare_kind IS NULL
-    AND parsed_declare_kind_kind IS NULL AND parsed_declare_kind IS NULL AND reconciled_declare_kind IS NULL
-    AND declare_kind_conflict IS NULL AND stored_applied_at_kind IS NULL AND stored_applied_at IS NULL AND
-    parsed_applied_at_kind IS NULL AND parsed_applied_at IS NULL AND reconciled_applied_at IS NULL AND applied_at_conflict
-    IS NULL AND stored_award_batch_label_kind IS NULL AND stored_award_batch_label IS NULL AND parsed_award_batch_label_kind
-    IS NULL AND parsed_award_batch_label IS NULL AND reconciled_award_batch_label IS NULL AND award_batch_label_conflict
-    IS NULL AND stored_year_kind IS NULL AND stored_year IS NULL AND parsed_year_kind IS NULL AND parsed_year
-    IS NULL AND reconciled_year IS NULL AND year_conflict IS NULL) OR (observation_id IS NOT NULL AND source_title_kind
-    IS NOT NULL AND source_title_rule_version IS NOT NULL AND source_archive_id IS NOT NULL AND parse_state
-    IS NOT NULL AND stored_province_kind IS NOT NULL AND parsed_province_kind IS NOT NULL AND stored_status_kind
-    IS NOT NULL AND parsed_status_kind IS NOT NULL AND stored_batch_kind IS NOT NULL AND parsed_batch_kind
-    IS NOT NULL AND stored_declare_kind_kind IS NOT NULL AND parsed_declare_kind_kind IS NOT NULL AND stored_applied_at_kind
-    IS NOT NULL AND parsed_applied_at_kind IS NOT NULL AND stored_award_batch_label_kind IS NOT NULL AND parsed_award_batch_label_kind
-    IS NOT NULL AND stored_year_kind IS NOT NULL AND parsed_year_kind IS NOT NULL AND province_conflict IS
-    NOT NULL AND status_conflict IS NOT NULL AND batch_conflict IS NOT NULL AND declare_kind_conflict IS NOT
-    NULL AND applied_at_conflict IS NOT NULL AND award_batch_label_conflict IS NOT NULL AND year_conflict
-    IS NOT NULL)),
   CONSTRAINT platform_business_projection_title_ck CHECK (source_title_kind IS NULL OR (source_title_kind
     IN ('absent','null','array','object','invalid') AND source_title_text IS NULL AND source_title_number_text
     IS NULL AND source_title_boolean IS NULL) OR (source_title_kind = 'text' AND source_title_text IS NOT
@@ -648,25 +518,10 @@ CREATE TABLE platform_business_projection (
     AND ((basis = 'unavailable') = (parse_state <> 'valid')))),
   CONSTRAINT platform_business_projection_rule_ck CHECK (source_title_rule_version IS NULL OR (source_title_rule_version
     IS NOT NULL AND length(trim(source_title_rule_version)) > 0)),
-  CONSTRAINT platform_business_projection_stored_province_kind_ck CHECK (stored_province_kind IS NULL OR (stored_province_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (stored_province_kind NOT
-    IN ('absent','null','array','object','invalid','boolean') OR stored_province IS NULL))),
-  CONSTRAINT platform_business_projection_parsed_province_kind_ck CHECK (parsed_province_kind IS NULL OR (parsed_province_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (parsed_province_kind NOT
-    IN ('absent','null','array','object','invalid','boolean') OR parsed_province IS NULL))),
   CONSTRAINT platform_business_projection_province_reconcile_ck CHECK (observation_id IS NULL OR (province_conflict
     IS NOT NULL AND province_conflict = (stored_province IS NOT NULL AND parsed_province IS NOT NULL AND stored_province
     <> parsed_province)::integer AND reconciled_province IS NOT DISTINCT FROM (CASE WHEN province_conflict
     = 1 THEN NULL ELSE coalesce(stored_province,parsed_province) END))),
-  CONSTRAINT platform_business_projection_stored_status_kind_ck CHECK (stored_status_kind IS NULL OR (stored_status_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (stored_status_kind NOT
-    IN ('absent','null','array','object','invalid','boolean') OR stored_status IS NULL) AND stored_status_sqlite_storage
-    IN ('null','text')) OR (stored_status_kind = 'blob' AND stored_status_sqlite_storage = 'blob')),
-  CONSTRAINT platform_business_projection_parsed_status_kind_ck CHECK (parsed_status_kind IS NULL OR (parsed_status_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (parsed_status_kind NOT
-    IN ('absent','null','array','object','invalid','boolean') OR parsed_status IS NULL))),
-  CONSTRAINT platform_business_projection_stored_status_ck CHECK (stored_status_sqlite_storage IN ('null','text')
-    OR (stored_status_sqlite_storage = 'blob' AND stored_status_kind IS NOT DISTINCT FROM 'blob')),
   CONSTRAINT platform_business_projection_reconciled_status_ck CHECK (reconciled_status_sqlite_storage IN
     ('null','text','blob')),
   CONSTRAINT platform_business_projection_status_reconcile_ck CHECK (
@@ -686,60 +541,24 @@ CREATE TABLE platform_business_projection (
       END
     )
   ),
-  CONSTRAINT platform_business_projection_stored_batch_kind_ck CHECK (stored_batch_kind IS NULL OR (stored_batch_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (stored_batch_kind NOT IN
-    ('absent','null','array','object','invalid','boolean') OR stored_batch IS NULL))),
-  CONSTRAINT platform_business_projection_parsed_batch_kind_ck CHECK (parsed_batch_kind IS NULL OR (parsed_batch_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (parsed_batch_kind NOT IN
-    ('absent','null','array','object','invalid','boolean') OR parsed_batch IS NULL))),
   CONSTRAINT platform_business_projection_batch_reconcile_ck CHECK (observation_id IS NULL OR (batch_conflict
     IS NOT NULL AND batch_conflict = (stored_batch IS NOT NULL AND parsed_batch IS NOT NULL AND stored_batch
     <> parsed_batch)::integer AND reconciled_batch IS NOT DISTINCT FROM (CASE WHEN batch_conflict = 1 THEN
     NULL ELSE coalesce(stored_batch,parsed_batch) END))),
-  CONSTRAINT platform_business_projection_stored_declare_kind_kind_ck CHECK (stored_declare_kind_kind IS NULL
-    OR (stored_declare_kind_kind IN ('absent','null','text','number','boolean','array','object','invalid')
-    AND (stored_declare_kind_kind NOT IN ('absent','null','array','object','invalid','boolean') OR stored_declare_kind
-    IS NULL))),
-  CONSTRAINT platform_business_projection_parsed_declare_kind_kind_ck CHECK (parsed_declare_kind_kind IS NULL
-    OR (parsed_declare_kind_kind IN ('absent','null','text','number','boolean','array','object','invalid')
-    AND (parsed_declare_kind_kind NOT IN ('absent','null','array','object','invalid','boolean') OR parsed_declare_kind
-    IS NULL))),
   CONSTRAINT platform_business_projection_declare_kind_reconcile_ck CHECK (observation_id IS NULL OR (declare_kind_conflict
     IS NOT NULL AND declare_kind_conflict = (stored_declare_kind IS NOT NULL AND parsed_declare_kind IS NOT
     NULL AND stored_declare_kind <> parsed_declare_kind)::integer AND reconciled_declare_kind IS NOT DISTINCT
     FROM (CASE WHEN declare_kind_conflict = 1 THEN NULL ELSE coalesce(stored_declare_kind,parsed_declare_kind)
     END))),
-  CONSTRAINT platform_business_projection_stored_applied_at_kind_ck CHECK (stored_applied_at_kind IS NULL
-    OR (stored_applied_at_kind IN ('absent','null','text','number','boolean','array','object','invalid') AND
-    (stored_applied_at_kind NOT IN ('absent','null','array','object','invalid','boolean') OR stored_applied_at
-    IS NULL))),
-  CONSTRAINT platform_business_projection_parsed_applied_at_kind_ck CHECK (parsed_applied_at_kind IS NULL
-    OR (parsed_applied_at_kind IN ('absent','null','text','number','boolean','array','object','invalid') AND
-    (parsed_applied_at_kind NOT IN ('absent','null','array','object','invalid','boolean') OR parsed_applied_at
-    IS NULL))),
   CONSTRAINT platform_business_projection_applied_at_reconcile_ck CHECK (observation_id IS NULL OR (applied_at_conflict
     IS NOT NULL AND applied_at_conflict = (stored_applied_at IS NOT NULL AND parsed_applied_at IS NOT NULL
     AND stored_applied_at <> parsed_applied_at)::integer AND reconciled_applied_at IS NOT DISTINCT FROM (CASE
     WHEN applied_at_conflict = 1 THEN NULL ELSE coalesce(stored_applied_at,parsed_applied_at) END))),
-  CONSTRAINT platform_business_projection_stored_award_batch_label_kind_ck CHECK (stored_award_batch_label_kind
-    IS NULL OR (stored_award_batch_label_kind IN ('absent','null','text','number','boolean','array','object','invalid')
-    AND (stored_award_batch_label_kind NOT IN ('absent','null','array','object','invalid','boolean') OR stored_award_batch_label
-    IS NULL))),
-  CONSTRAINT platform_business_projection_parsed_award_batch_label_kind_ck CHECK (parsed_award_batch_label_kind
-    IS NULL OR (parsed_award_batch_label_kind IN ('absent','null','text','number','boolean','array','object','invalid')
-    AND (parsed_award_batch_label_kind NOT IN ('absent','null','array','object','invalid','boolean') OR parsed_award_batch_label
-    IS NULL))),
   CONSTRAINT platform_business_projection_award_batch_label_reconcile_ck CHECK (observation_id IS NULL OR
     (award_batch_label_conflict IS NOT NULL AND award_batch_label_conflict = (stored_award_batch_label IS
     NOT NULL AND parsed_award_batch_label IS NOT NULL AND stored_award_batch_label <> parsed_award_batch_label)::integer
     AND reconciled_award_batch_label IS NOT DISTINCT FROM (CASE WHEN award_batch_label_conflict = 1 THEN NULL
     ELSE coalesce(stored_award_batch_label,parsed_award_batch_label) END))),
-  CONSTRAINT platform_business_projection_stored_year_kind_ck CHECK (stored_year_kind IS NULL OR (stored_year_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (stored_year_kind NOT IN
-    ('absent','null','array','object','invalid','boolean') OR stored_year IS NULL))),
-  CONSTRAINT platform_business_projection_parsed_year_kind_ck CHECK (parsed_year_kind IS NULL OR (parsed_year_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (parsed_year_kind NOT IN
-    ('absent','null','array','object','invalid','boolean') OR parsed_year IS NULL))),
   CONSTRAINT platform_business_projection_stored_year_ck CHECK (stored_year BETWEEN -9007199254740991 AND 9007199254740991),
   CONSTRAINT platform_business_projection_parsed_year_ck CHECK (parsed_year BETWEEN -9007199254740991 AND 9007199254740991),
   CONSTRAINT platform_business_projection_reconciled_year_ck CHECK (reconciled_year BETWEEN -9007199254740991
@@ -799,47 +618,32 @@ CREATE TABLE platform_recognized_projection (
   source_title_number_text text,
   source_title_boolean bigint,
   source_title_rule_version text,
-  source_archive_id bigint,
   parse_state text,
-  stored_province_kind text,
   stored_province text,
-  parsed_province_kind text,
   parsed_province text,
   reconciled_province text,
   province_conflict bigint,
-  stored_status_kind text,
   stored_status text,
-  parsed_status_kind text,
   parsed_status text,
   reconciled_status text,
   status_conflict bigint,
-  stored_batch_kind text,
   stored_batch text,
-  parsed_batch_kind text,
   parsed_batch text,
   reconciled_batch text,
   batch_conflict bigint,
-  stored_declare_kind_kind text,
   stored_declare_kind text,
-  parsed_declare_kind_kind text,
   parsed_declare_kind text,
   reconciled_declare_kind text,
   declare_kind_conflict bigint,
-  stored_applied_at_kind text,
   stored_applied_at text,
-  parsed_applied_at_kind text,
   parsed_applied_at text,
   reconciled_applied_at text,
   applied_at_conflict bigint,
-  stored_award_batch_label_kind text,
   stored_award_batch_label text,
-  parsed_award_batch_label_kind text,
   parsed_award_batch_label text,
   reconciled_award_batch_label text,
   award_batch_label_conflict bigint,
-  stored_year_kind text,
   stored_year bigint,
-  parsed_year_kind text,
   parsed_year bigint,
   reconciled_year bigint,
   year_conflict bigint,
@@ -851,9 +655,6 @@ CREATE TABLE platform_recognized_projection (
     OR (exact_title_raw_sqlite_storage IN ('text', 'blob') AND exact_title_raw IS NOT NULL)
     OR (exact_title_raw_sqlite_storage IN ('integer', 'real') AND octet_length(exact_title_raw) IS NOT DISTINCT FROM 8)),
   exact_title_state text,
-  exact_title_origin text,
-  exact_title_archive_id bigint,
-  exact_title_sha256 text,
   CONSTRAINT platform_recognized_projection_owner_ck CHECK (( version_id IS NOT NULL AND record_id IS NOT
     NULL AND observation_id IS NULL AND basis = 'verified_raw') OR (version_id IS NULL AND record_id IS NULL
     AND observation_id IS NOT NULL AND basis IN ('observation_reconciliation','unavailable'))),
@@ -861,31 +662,6 @@ CREATE TABLE platform_recognized_projection (
   CONSTRAINT platform_recognized_projection_version_id_ck CHECK (version_id BETWEEN 1 AND 9007199254740991),
   CONSTRAINT platform_recognized_projection_record_id_ck CHECK (record_id BETWEEN 1 AND 9007199254740991),
   CONSTRAINT platform_recognized_projection_observation_id_ck CHECK (observation_id BETWEEN 1 AND 9007199254740991),
-  CONSTRAINT platform_recognized_projection_source_archive_id_ck CHECK (source_archive_id BETWEEN 1 AND 9007199254740991),
-  CONSTRAINT platform_recognized_projection_capture_ck CHECK ((observation_id IS NULL AND source_title_kind
-    IS NULL AND source_title_text IS NULL AND source_title_number_text IS NULL AND source_title_boolean IS
-    NULL AND source_title_rule_version IS NULL AND source_archive_id IS NULL AND parse_state IS NULL AND stored_province_kind
-    IS NULL AND stored_province IS NULL AND parsed_province_kind IS NULL AND parsed_province IS NULL AND reconciled_province
-    IS NULL AND province_conflict IS NULL AND stored_status_kind IS NULL AND stored_status IS NULL AND parsed_status_kind
-    IS NULL AND parsed_status IS NULL AND reconciled_status IS NULL AND status_conflict IS NULL AND stored_batch_kind
-    IS NULL AND stored_batch IS NULL AND parsed_batch_kind IS NULL AND parsed_batch IS NULL AND reconciled_batch
-    IS NULL AND batch_conflict IS NULL AND stored_declare_kind_kind IS NULL AND stored_declare_kind IS NULL
-    AND parsed_declare_kind_kind IS NULL AND parsed_declare_kind IS NULL AND reconciled_declare_kind IS NULL
-    AND declare_kind_conflict IS NULL AND stored_applied_at_kind IS NULL AND stored_applied_at IS NULL AND
-    parsed_applied_at_kind IS NULL AND parsed_applied_at IS NULL AND reconciled_applied_at IS NULL AND applied_at_conflict
-    IS NULL AND stored_award_batch_label_kind IS NULL AND stored_award_batch_label IS NULL AND parsed_award_batch_label_kind
-    IS NULL AND parsed_award_batch_label IS NULL AND reconciled_award_batch_label IS NULL AND award_batch_label_conflict
-    IS NULL AND stored_year_kind IS NULL AND stored_year IS NULL AND parsed_year_kind IS NULL AND parsed_year
-    IS NULL AND reconciled_year IS NULL AND year_conflict IS NULL) OR (observation_id IS NOT NULL AND source_title_kind
-    IS NOT NULL AND source_title_rule_version IS NOT NULL AND source_archive_id IS NOT NULL AND parse_state
-    IS NOT NULL AND stored_province_kind IS NOT NULL AND parsed_province_kind IS NOT NULL AND stored_status_kind
-    IS NOT NULL AND parsed_status_kind IS NOT NULL AND stored_batch_kind IS NOT NULL AND parsed_batch_kind
-    IS NOT NULL AND stored_declare_kind_kind IS NOT NULL AND parsed_declare_kind_kind IS NOT NULL AND stored_applied_at_kind
-    IS NOT NULL AND parsed_applied_at_kind IS NOT NULL AND stored_award_batch_label_kind IS NOT NULL AND parsed_award_batch_label_kind
-    IS NOT NULL AND stored_year_kind IS NOT NULL AND parsed_year_kind IS NOT NULL AND province_conflict IS
-    NOT NULL AND status_conflict IS NOT NULL AND batch_conflict IS NOT NULL AND declare_kind_conflict IS NOT
-    NULL AND applied_at_conflict IS NOT NULL AND award_batch_label_conflict IS NOT NULL AND year_conflict
-    IS NOT NULL)),
   CONSTRAINT platform_recognized_projection_title_ck CHECK (source_title_kind IS NULL OR (source_title_kind
     IN ('absent','null','array','object','invalid') AND source_title_text IS NULL AND source_title_number_text
     IS NULL AND source_title_boolean IS NULL) OR (source_title_kind = 'text' AND source_title_text IS NOT
@@ -899,80 +675,32 @@ CREATE TABLE platform_recognized_projection (
     AND ((basis = 'unavailable') = (parse_state <> 'valid')))),
   CONSTRAINT platform_recognized_projection_rule_ck CHECK (source_title_rule_version IS NULL OR (source_title_rule_version
     IS NOT NULL AND length(trim(source_title_rule_version)) > 0)),
-  CONSTRAINT platform_recognized_projection_stored_province_kind_ck CHECK (stored_province_kind IS NULL OR
-    (stored_province_kind IN ('absent','null','text','number','boolean','array','object','invalid') AND (stored_province_kind
-    NOT IN ('absent','null','array','object','invalid','boolean') OR stored_province IS NULL))),
-  CONSTRAINT platform_recognized_projection_parsed_province_kind_ck CHECK (parsed_province_kind IS NULL OR
-    (parsed_province_kind IN ('absent','null','text','number','boolean','array','object','invalid') AND (parsed_province_kind
-    NOT IN ('absent','null','array','object','invalid','boolean') OR parsed_province IS NULL))),
   CONSTRAINT platform_recognized_projection_province_reconcile_ck CHECK (observation_id IS NULL OR (province_conflict
     IS NOT NULL AND province_conflict = (stored_province IS NOT NULL AND parsed_province IS NOT NULL AND stored_province
     <> parsed_province)::integer AND reconciled_province IS NOT DISTINCT FROM (CASE WHEN province_conflict
     = 1 THEN NULL ELSE coalesce(stored_province,parsed_province) END))),
-  CONSTRAINT platform_recognized_projection_stored_status_kind_ck CHECK (stored_status_kind IS NULL OR (stored_status_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (stored_status_kind NOT
-    IN ('absent','null','array','object','invalid','boolean') OR stored_status IS NULL))),
-  CONSTRAINT platform_recognized_projection_parsed_status_kind_ck CHECK (parsed_status_kind IS NULL OR (parsed_status_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (parsed_status_kind NOT
-    IN ('absent','null','array','object','invalid','boolean') OR parsed_status IS NULL))),
   CONSTRAINT platform_recognized_projection_status_reconcile_ck CHECK (observation_id IS NULL OR (status_conflict
     IS NOT NULL AND status_conflict = (stored_status IS NOT NULL AND parsed_status IS NOT NULL AND stored_status
     <> parsed_status)::integer AND reconciled_status IS NOT DISTINCT FROM (CASE WHEN status_conflict = 1 THEN
     NULL ELSE coalesce(stored_status,parsed_status) END))),
-  CONSTRAINT platform_recognized_projection_stored_batch_kind_ck CHECK (stored_batch_kind IS NULL OR (stored_batch_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (stored_batch_kind NOT IN
-    ('absent','null','array','object','invalid','boolean') OR stored_batch IS NULL))),
-  CONSTRAINT platform_recognized_projection_parsed_batch_kind_ck CHECK (parsed_batch_kind IS NULL OR (parsed_batch_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (parsed_batch_kind NOT IN
-    ('absent','null','array','object','invalid','boolean') OR parsed_batch IS NULL))),
   CONSTRAINT platform_recognized_projection_batch_reconcile_ck CHECK (observation_id IS NULL OR (batch_conflict
     IS NOT NULL AND batch_conflict = (stored_batch IS NOT NULL AND parsed_batch IS NOT NULL AND stored_batch
     <> parsed_batch)::integer AND reconciled_batch IS NOT DISTINCT FROM (CASE WHEN batch_conflict = 1 THEN
     NULL ELSE coalesce(stored_batch,parsed_batch) END))),
-  CONSTRAINT platform_recognized_projection_stored_declare_kind_kind_ck CHECK (stored_declare_kind_kind IS
-    NULL OR (stored_declare_kind_kind IN ('absent','null','text','number','boolean','array','object','invalid')
-    AND (stored_declare_kind_kind NOT IN ('absent','null','array','object','invalid','boolean') OR stored_declare_kind
-    IS NULL))),
-  CONSTRAINT platform_recognized_projection_parsed_declare_kind_kind_ck CHECK (parsed_declare_kind_kind IS
-    NULL OR (parsed_declare_kind_kind IN ('absent','null','text','number','boolean','array','object','invalid')
-    AND (parsed_declare_kind_kind NOT IN ('absent','null','array','object','invalid','boolean') OR parsed_declare_kind
-    IS NULL))),
   CONSTRAINT platform_recognized_projection_declare_kind_reconcile_ck CHECK (observation_id IS NULL OR (declare_kind_conflict
     IS NOT NULL AND declare_kind_conflict = (stored_declare_kind IS NOT NULL AND parsed_declare_kind IS NOT
     NULL AND stored_declare_kind <> parsed_declare_kind)::integer AND reconciled_declare_kind IS NOT DISTINCT
     FROM (CASE WHEN declare_kind_conflict = 1 THEN NULL ELSE coalesce(stored_declare_kind,parsed_declare_kind)
     END))),
-  CONSTRAINT platform_recognized_projection_stored_applied_at_kind_ck CHECK (stored_applied_at_kind IS NULL
-    OR (stored_applied_at_kind IN ('absent','null','text','number','boolean','array','object','invalid') AND
-    (stored_applied_at_kind NOT IN ('absent','null','array','object','invalid','boolean') OR stored_applied_at
-    IS NULL))),
-  CONSTRAINT platform_recognized_projection_parsed_applied_at_kind_ck CHECK (parsed_applied_at_kind IS NULL
-    OR (parsed_applied_at_kind IN ('absent','null','text','number','boolean','array','object','invalid') AND
-    (parsed_applied_at_kind NOT IN ('absent','null','array','object','invalid','boolean') OR parsed_applied_at
-    IS NULL))),
   CONSTRAINT platform_recognized_projection_applied_at_reconcile_ck CHECK (observation_id IS NULL OR (applied_at_conflict
     IS NOT NULL AND applied_at_conflict = (stored_applied_at IS NOT NULL AND parsed_applied_at IS NOT NULL
     AND stored_applied_at <> parsed_applied_at)::integer AND reconciled_applied_at IS NOT DISTINCT FROM (CASE
     WHEN applied_at_conflict = 1 THEN NULL ELSE coalesce(stored_applied_at,parsed_applied_at) END))),
-  CONSTRAINT platform_recognized_projection_stored_award_batch_label_kind_ck CHECK (stored_award_batch_label_kind
-    IS NULL OR (stored_award_batch_label_kind IN ('absent','null','text','number','boolean','array','object','invalid')
-    AND (stored_award_batch_label_kind NOT IN ('absent','null','array','object','invalid','boolean') OR stored_award_batch_label
-    IS NULL))),
-  CONSTRAINT platform_recognized_projection_parsed_award_batch_label_kind_ck CHECK (parsed_award_batch_label_kind
-    IS NULL OR (parsed_award_batch_label_kind IN ('absent','null','text','number','boolean','array','object','invalid')
-    AND (parsed_award_batch_label_kind NOT IN ('absent','null','array','object','invalid','boolean') OR parsed_award_batch_label
-    IS NULL))),
   CONSTRAINT platform_recognized_projection_award_batch_label_reconcile_ck CHECK (observation_id IS NULL OR
     (award_batch_label_conflict IS NOT NULL AND award_batch_label_conflict = (stored_award_batch_label IS
     NOT NULL AND parsed_award_batch_label IS NOT NULL AND stored_award_batch_label <> parsed_award_batch_label)::integer
     AND reconciled_award_batch_label IS NOT DISTINCT FROM (CASE WHEN award_batch_label_conflict = 1 THEN NULL
     ELSE coalesce(stored_award_batch_label,parsed_award_batch_label) END))),
-  CONSTRAINT platform_recognized_projection_stored_year_kind_ck CHECK (stored_year_kind IS NULL OR (stored_year_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (stored_year_kind NOT IN
-    ('absent','null','array','object','invalid','boolean') OR stored_year IS NULL))),
-  CONSTRAINT platform_recognized_projection_parsed_year_kind_ck CHECK (parsed_year_kind IS NULL OR (parsed_year_kind
-    IN ('absent','null','text','number','boolean','array','object','invalid') AND (parsed_year_kind NOT IN
-    ('absent','null','array','object','invalid','boolean') OR parsed_year IS NULL))),
   CONSTRAINT platform_recognized_projection_stored_year_ck CHECK (stored_year BETWEEN -9007199254740991 AND
     9007199254740991),
   CONSTRAINT platform_recognized_projection_parsed_year_ck CHECK (parsed_year BETWEEN -9007199254740991 AND
@@ -983,13 +711,10 @@ CREATE TABLE platform_recognized_projection (
     IS NOT NULL AND year_conflict = (stored_year IS NOT NULL AND parsed_year IS NOT NULL AND stored_year <>
     parsed_year)::integer AND reconciled_year IS NOT DISTINCT FROM (CASE WHEN year_conflict = 1 THEN NULL
     ELSE coalesce(stored_year,parsed_year) END))),
-  CONSTRAINT platform_recognized_projection_no_process_parse_ck CHECK (observation_id IS NULL OR parsed_province
-    IS NULL AND parsed_province_kind = 'absent' AND parsed_status IS NULL AND parsed_status_kind = 'absent'
-    AND parsed_batch IS NULL AND parsed_batch_kind = 'absent' AND parsed_declare_kind IS NULL AND parsed_declare_kind_kind
-    = 'absent' AND parsed_applied_at IS NULL AND parsed_applied_at_kind = 'absent' AND parsed_award_batch_label
-    IS NULL AND parsed_award_batch_label_kind = 'absent' AND parsed_year IS NULL AND parsed_year_kind = 'absent'),
   CONSTRAINT platform_recognized_projection_fidelity_ck CHECK (source_maintenance_year_absent IN (0,1))
 );
+
+\ir platform-projection-comparison-constraints.sql
 
 CREATE TABLE platform_export_batch (
   id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,

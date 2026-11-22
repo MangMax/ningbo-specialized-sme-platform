@@ -1,4 +1,4 @@
-import { APPLY_GRID, APPLY_LIST_PATH, BUSINESS_GRID, BUSINESS_LIST_PATH, RECOGNIZED_GRID, RECOGNIZED_LIST_PATH, PlatformSessionExpiredError, parsePlatformPage } from '../../lib/platform/adapter'
+import { APPLY_GRID, APPLY_LIST_PATH, BUSINESS_GRID, BUSINESS_LIST_PATH, RECOGNIZED_GRID, RECOGNIZED_LIST_PATH, PlatformSessionExpiredError, parsePlatformPage, platformDataRowStringProjection } from '../../lib/platform/adapter'
 import { cookieRedactor, PlatformHttpError, postPlatformRequest, type PlatformQueryOptions } from '../../lib/platform/client'
 import { platformQueryInputSchema, platformQueryTitles, recognizedConditionShape, type PlatformLiveQueryResult, type PlatformQueryPage, type PlatformQueryError } from '../../lib/platform/live-query'
 import type { CredentialReadContext } from '../../../core/server/utils/credential-resolution'
@@ -148,8 +148,9 @@ export async function runPlatformLiveQuery(input: unknown, ctx: PlatformLiveQuer
           }
           maxPageForTitle = maxPage
         }
-        const pageRows = ctx.businessRowsOnly ? parsedPage.rows.map(platformBatchBusinessRow) : parsedPage.rows
-        const dataRows = result.dataRows ? [...result.dataRows, ...parsedPage.rawRows.map(platformBatchBusinessRow)] : undefined
+        const pageDataRows = ctx.businessRowsOnly ? parsedPage.rawRows.map(platformBatchBusinessRow) : undefined
+        const pageRows = pageDataRows ? pageDataRows.map(platformDataRowStringProjection) : parsedPage.rows
+        const dataRows = result.dataRows && pageDataRows ? [...result.dataRows, ...pageDataRows] : undefined
         const rawData = result.rawData ? {
           version: 1 as const, rows: [...result.rawData.rows, ...parsedPage.rawRows],
           pages: [...result.rawData.pages, { ...pos, format: parsedPage.source, body: raw }],

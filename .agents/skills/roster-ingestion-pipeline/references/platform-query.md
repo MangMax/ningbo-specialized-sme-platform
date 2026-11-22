@@ -60,7 +60,7 @@
 
 三接口业务采集任务使用 `difference_snapshot`，先备份，再按原编号入库全部业务字段；无需保留请求或响应原文。可选 `enterpriseIds` 测试少量公布企业。
 
-需要离线留存完整原页时，在单查对象中显式设置 `rawDataVersion:1`。将返回的 `rawData.rows`、已接受的 `rawData.pages` 原文和位置保存到业务档案。原文敏感或超预算的页会拒收，按 `unfinished` 查漏。批量结果保留结构化 `segments[].rows`、可用的 `dataRows` 与分页状态；批量查询参数中没有 `rawDataVersion`。
+需要离线留存完整原页时，在单查对象中显式设置 `rawDataVersion:1`。将返回的 `rawData.rows`、已接受的 `rawData.pages` 原文和位置保存到业务档案。原文敏感或超预算的页会拒收，按 `unfinished` 查漏。批量结果保留结构化 `segments[].rows`、可用的 `dataRows` 与分页状态。批量行省略供应商返回的顶层空字符串与 null；保留 0、false、空白字符、嵌套业务值和全部行位置。批量查询参数中没有 `rawDataVersion`。
 
 `recognizedResultToImport` 用原时间、页位置与提取的业务字段生成转存请求。单查带类型的行使用 `rawData.rows`，批量带类型的行使用 `dataRows`。核对输入类型、查询状态和来源事实，缺少结束证明的范围继续待处理。
 

@@ -211,7 +211,8 @@ async function copyQualificationsFixture(client: pg.Client, sqlite: ReturnType<t
     'platform_observation_assignment', 'platform_legacy_query_alias', 'platform_legacy_relation_alias',
     'platform_collection_page', 'platform_collection_condition', 'platform_collection_unfinished',
     'platform_query_title_scope', 'platform_collection_legacy_provenance', 'platform_collection_archive_ref', 'platform_observation_archive_ref', 'platform_archive_value',
-    'platform_business_record', 'platform_business_record_version', 'record_correspondence', 'difference_reason',
+    'platform_business_record', 'platform_business_record_version', 'record_correspondence', 'record_correspondence_audit',
+    'difference_reason',
     'title', 'platform_export_row', 'platform_export_batch',
     'service_credential',
   ]

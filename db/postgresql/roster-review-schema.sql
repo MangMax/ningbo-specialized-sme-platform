@@ -39,6 +39,7 @@ CREATE TABLE enterprise_difference_comparison (
   comparison_error text,
   decision_cutoff_id bigint NOT NULL DEFAULT 0,
   business_fingerprint text NOT NULL,
+  state_fingerprint text,
   changed_at text NOT NULL,
   refreshed_at text NOT NULL,
   PRIMARY KEY(enterprise_id,title_code)
@@ -77,7 +78,7 @@ CREATE TABLE record_correspondence (
   status text NOT NULL,
   revision bigint NOT NULL,
   target_identity text NOT NULL,
-  provenance text NOT NULL,
+  provenance text,
   source_fingerprint text NOT NULL,
   rule_id text NOT NULL,
   rule_version text NOT NULL,

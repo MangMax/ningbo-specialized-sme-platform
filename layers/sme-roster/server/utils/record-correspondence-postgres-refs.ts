@@ -1,4 +1,4 @@
-import { and, desc, eq, getTableColumns, isNotNull, notExists, or, sql, type SQL, type Table } from 'drizzle-orm'
+import { and, desc, eq, getTableColumns, isNotNull, notExists, or, sql, type SQL, type SQLWrapper, type Table } from 'drizzle-orm'
 import { alias, QueryBuilder } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
@@ -7,11 +7,12 @@ import {
   platformBusinessProjection, platformExportBatch, platformExportRow,
   platformBusinessObservation, platformObservationAssignment,
 } from '../../../../db/postgresql/platform-tables'
-import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
+import { recordCorrespondence, recordCorrespondenceAudit } from '../../../../db/postgresql/qualification-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { sourceQueryFields, sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
 import { correspondenceAttributionChanged, type CorrespondenceAttribution } from './record-correspondence-attribution'
 import type { CorrespondenceRefRow } from './record-correspondence'
+import type { StoredCorrespondence } from './record-correspondence-model'
 
 type Db = Pick<NodePgDatabase, 'execute' | 'select'>
 const NULL_JSON = sql`'null'::jsonb`
@@ -20,6 +21,17 @@ const jsonEqual = (saved: SQL, actual: SQL) => sql`coalesce((${saved})::jsonb,${
 const legacyJsonFields = new Set(['qualityFlags', 'formalValidity', 'rawFields'])
 const textJson = (value: SQL) => sql`to_json(${value})`
 const tableColumn = (alias: string, column: string) => sql`${sql.identifier(alias)}.${sql.identifier(column)}`
+
+export function postgresCorrespondenceProvenance(
+  db: Pick<NodePgDatabase, 'select'>,
+  edge: { id: SQLWrapper; revision: SQLWrapper; provenance: SQLWrapper },
+) {
+  const audit = recordCorrespondenceAudit
+  const snapshot = db.select({ evidence: audit.evidence }).from(audit)
+    .where(and(eq(audit.correspondenceId, edge.id), eq(audit.resultingRevision, edge.revision)))
+    .orderBy(desc(audit.id)).limit(1)
+  return sql<StoredCorrespondence['provenance']>`coalesce(${edge.provenance}, (${snapshot}))::json`
+}
 
 function storedFields(table: Table, alias: string, saved: SQL, versioned = false) {
   return and(...Object.entries(getTableColumns(table)).map(([key, column]) => {
@@ -115,7 +127,7 @@ export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly numbe
     predecessorEventId: edge.predecessorEventId, observationId: edge.observationId, exportRowId: edge.exportRowId,
     enterpriseId: edge.enterpriseId, titleCode: edge.titleCode, revision: edge.revision,
     relation: sql`${relation.publicId}`.as('relation_id'),
-    provenance: sql`CASE WHEN ${explicitValidity ? sql`true` : eq(edge.status, 'confirmed')} THEN ${edge.provenance}::jsonb END`.as('provenance_json'),
+    provenance: sql`CASE WHEN ${explicitValidity ? sql`true` : eq(edge.status, 'confirmed')} THEN ${postgresCorrespondenceProvenance(db, edge)}::jsonb END`.as('provenance_json'),
   }).from(edge).leftJoin(relation, eq(relation.id, edge.observationId))
     .where(and(where, witnessTitle === undefined ? undefined : and(eq(edge.titleCode, witnessTitle),
       eq(edge.status, 'confirmed'), eq(edge.type, 'event_recognized'), eq(edge.role, 'recognized_corrob'),

@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import { platformQueryInputSchema, platformQueryInputShape, platformQueryResultShape, recognizedConditionShape, validRecognizedConditionPairing, type PlatformLiveQueryResult } from './live-query'
 import type { RosterImportPlatformQuery } from '../roster-import-client'
-import { APPLY_GRID, BUSINESS_GRID, RECOGNIZED_GRID, parsePlatformPage, type PlatformRawRow, type PlatformRow } from './adapter'
+import { APPLY_GRID, BUSINESS_GRID, RECOGNIZED_GRID, parsePlatformPage, platformDataRowStringProjection, type PlatformRawRow, type PlatformRow } from './adapter'
 
 export const RDJB_TITLE_CODES: Record<string, string> = { '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' }
 export const TITLE_RDJB_CODES: Record<string, string> = Object.fromEntries(Object.entries(RDJB_TITLE_CODES).map(([rdjb, title]) => [title, rdjb]))
@@ -68,7 +68,7 @@ function platformEvidenceEnvelopeError(value: unknown, legacySupplement: boolean
   if (Object.hasOwn(original, 'dataRows')) {
     if (original.rawData) return 'Choose dataRows or rawData, never both'
     if (!original.dataRows || original.dataRows.length !== original.rows.length) return 'Typed business rows must cover every accepted row'
-    const projection = original.dataRows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value == null ? '' : typeof value === 'string' ? value : typeof value === 'object' ? JSON.stringify(value) : String(value)])))
+    const projection = original.dataRows.map(platformDataRowStringProjection)
     if (JSON.stringify(projection) !== JSON.stringify(original.rows)) return 'Typed business rows must match their string projection'
   }
   if (Object.hasOwn(original, 'rawData')) {

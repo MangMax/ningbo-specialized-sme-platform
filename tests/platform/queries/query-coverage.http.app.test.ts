@@ -47,6 +47,15 @@ afterAll(async () => {
   await app.close()
   rmSync(dir, { recursive: true, force: true })
 })
+it('returns a JSON 404 for retired historical original downloads', async () => {
+  const response = await fetch(base + '/api/platform/queries/1/evidence?field=rawResponse', {
+    headers: { accept: 'application/json' },
+  })
+  expect(response.status).toBe(404)
+  expect(response.headers.get('content-type')).toContain('application/json')
+  expect(await response.json()).toMatchObject({ statusCode: 404 })
+})
+
 async function get(url: string) {
   const response = await fetch(base + url)
   expect(response.status).toBe(200)

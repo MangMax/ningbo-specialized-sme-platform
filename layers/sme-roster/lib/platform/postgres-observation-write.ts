@@ -90,10 +90,10 @@ function persistedFields(row: RosterImportRelation, source: Source, createdAt: s
 }
 
 function writeObservationProjection(tx: Tx, source: Source, observationId: number, plan: Content,
-  raw: Record<string,unknown> | null, fields: ReturnType<typeof persistedFields>, inputFingerprint: string) {
+  raw: Record<string,unknown> | null, fields: ReturnType<typeof persistedFields>) {
   const title = raw?.rdjb
   const common = { observationId,createdAt:fields.createdAt,basis:raw === null ? 'unavailable' as const : 'observation_reconciliation' as const,
-    parseState:raw === null ? 'absent' as const : 'valid' as const,sourceArchiveId:observationId,
+    parseState:raw === null ? 'absent' as const : 'valid' as const,
     sourceTitleKind:sourceValueKind(title),sourceTitleText:typeof title === 'string' ? title : null,
     sourceTitleNumberText:typeof title === 'number' ? String(title) : null, sourceTitleBoolean:typeof title === 'boolean' ? Number(title) : null,
     sourceTitleRuleVersion:source === 'business_list' ? BUSINESS_STATUS_V2 : 't05b-source-projections-v1' }
@@ -127,7 +127,7 @@ function writeObservationProjection(tx: Tx, source: Source, observationId: numbe
   return tx.insert(schema.platformRecognizedProjection).values({ ...common,...(plan.recognizedProjection ?? parseRecognizedRecord(raw)),
       ...fidelity, sourceMaintenanceYearAbsent: fidelity ? Number(fidelity.sourceMaintenanceYearAbsent) : undefined,
       ...qualification,ruleVersion:RECOGNIZED_PROJECTION_RULE,
-      exactTitleState:'captured',exactTitleOrigin:'commandInput',exactTitleArchiveId:observationId,exactTitleSha256:inputFingerprint,
+      exactTitleState:'captured',
       ...sourceFieldComparison('recognized_list',original,raw,common.parseState),
     ...encodePlatformExactCell('exactTitleRaw',fields.titleRaw),...encodePlatformExactCell('sourceValidFlag',sourceValidFlag) })
 }
@@ -167,20 +167,15 @@ export async function writePostgresObservation(tx: Tx, collection: Collection, r
   const rawText = raw === null ? null : JSON.stringify(raw)
   const data = { ...fields,id:relationId,queryId:collection.queryId,sequenceNo:row.sequenceNo,enterpriseId:assignment.enterpriseId ?? null,
     rawFields:rawText,matchBasis:assignment.matchBasis,verificationStatus:assignment.verificationStatus }
-  const cells = relationEvidenceColumns.map(([key,name]) => {
-    const value = Reflect.get(data,key) as string | number | null | undefined
-    return { name,storageClass:value == null ? 'null' : typeof value === 'number' ? 'integer' : 'text',
-      hex:value == null ? '' : Buffer.from(String(value)).toString('hex').toUpperCase() }
-  })
   const relationFacts = Object.fromEntries(relationEvidenceColumns.flatMap(([key, column]) => {
     if (column === 'raw_fields' || column === 'source_text') return []
     return [[key, Reflect.get(data,key) ?? null]]
   }))
   await tx.update(schema.platformBusinessObservation).set({
     relationFacts, businessFields: values.versionId === null ? businessFields : null,
-    ...capturePostgresObservationFacts(cells, row.sourceText ?? null, rawText),
+    ...capturePostgresObservationFacts(row.sourceText ?? null, rawText),
   }).where(eq(schema.platformBusinessObservation.id, observationId))
-  await writeObservationProjection(tx,source,observationId,content,raw,fields,inputFingerprint)
+  await writeObservationProjection(tx,source,observationId,content,raw,fields)
   const prefix = source === 'apply_list' ? 'apply' : source === 'business_list' ? 'business' : 'recognized'
   const projection: PlatformProjectionResult = { relationId,recordId:values.recordId,versionId:values.versionId,identityState:content.identityState,
     contentState:content.contentState,keySource:content.keySource,projectionRuleVersion:PLATFORM_PROJECTION_RULE,inputFingerprint,

@@ -28,8 +28,9 @@ WITH removed AS (
   WHERE policy.id = 1 AND (
     logs.timestamp < to_char((now() AT TIME ZONE 'UTC') - make_interval(days => policy."retentionDays"::integer),
       'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-    OR (logs.level = 'debug' AND logs.operation = 'db.query.select'
-      AND logs.detail::json->'origin'->>'integration' = 'drizzle')
+    OR (logs.level = 'debug' AND logs.source = 'system' AND logs.operation IN (
+      'db.query.select', 'db.query.insert', 'db.query.update', 'db.query.delete', 'db.query.other'
+    ))
     OR (logs.source = 'http' AND logs.operation = 'http.request' AND logs.outcome = 'success' AND (
       (logs.detail::json->>'httpRoute' = '/api/health' AND logs.detail::json->>'httpMethod' IN ('GET', 'HEAD'))
       OR (logs.detail::json->>'httpMethod' = 'GET' AND logs.detail::json->>'httpRoute' IN (

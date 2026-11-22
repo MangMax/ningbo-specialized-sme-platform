@@ -145,7 +145,10 @@ it('synonym reads preserve decision fingerprints and cannot clear stale source q
   const receipt = await api('/api/roster/correspondences/commit', { request: decision, planHash: plan.planHash })
   const id = receipt.correspondenceIds[0]
   const persisted = async () => (await pool!.query<{ fingerprint: string; provenance: string }>(
-    'SELECT source_fingerprint AS fingerprint, provenance FROM record_correspondence WHERE id = $1', [id],
+    `SELECT edge.source_fingerprint AS fingerprint, audit.evidence AS provenance
+      FROM record_correspondence edge JOIN record_correspondence_audit audit
+        ON audit.correspondence_id = edge.id AND audit.resulting_revision = edge.revision
+      WHERE edge.id = $1`, [id],
   )).rows[0]!
   const before = await persisted()
   const { comparisonProofIds: _proofs, ...provenance } = JSON.parse(before.provenance)

@@ -3,6 +3,11 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { PlatformBatchItem, PlatformBatchResult, PlatformBatchSegment } from '../../lib/platform/batch-query'
 import type { PlatformQueryError } from '../../lib/platform/live-query'
 import { platformBatchSegment } from '../../lib/platform/postgres-batch-segment-table'
+import { platformDataRowStringProjection } from '../../lib/platform/adapter'
+
+type StoredPlatformBatchSegment = PlatformBatchSegment | (
+  Omit<PlatformBatchSegment, 'rows' | 'dataRows'> & { dataRows: NonNullable<PlatformBatchSegment['dataRows']> }
+)
 
 export type PlatformBatchCheckpointItem = Omit<PlatformBatchItem, 'segments'> & { error: PlatformQueryError | null }
 export type PlatformBatchCheckpoint = Omit<PlatformBatchResult, 'items'> & { items: PlatformBatchCheckpointItem[] }
@@ -22,7 +27,8 @@ export interface PlatformBatchSegmentUpdate {
 
 export async function savePostgresPlatformBatchSegment(db: NodePgDatabase, jobId: string, update: PlatformBatchSegmentUpdate) {
   const { itemId, segmentIndex, segment } = update
-  const payload = JSON.stringify(segment)
+  const { rows: _projection, ...metadata } = segment
+  const payload = JSON.stringify(metadata.dataRows ? metadata : segment)
   await db.insert(platformBatchSegment).values({ jobId, itemId, segmentIndex, payload }).onConflictDoUpdate({
     target: [platformBatchSegment.jobId, platformBatchSegment.itemId, platformBatchSegment.segmentIndex],
     set: { payload: sql`excluded.payload` },
@@ -40,7 +46,8 @@ export async function readPostgresPlatformBatchSegments(db: NodePgDatabase, jobI
   const segments = new Map<string, PlatformBatchSegment[]>()
   for (const row of rows) {
     const item = segments.get(row.itemId) ?? []
-    item.push(JSON.parse(row.payload) as PlatformBatchSegment)
+    const segment = JSON.parse(row.payload) as StoredPlatformBatchSegment
+    item.push('rows' in segment ? segment : { ...segment, rows: segment.dataRows.map(platformDataRowStringProjection) })
     segments.set(row.itemId, item)
   }
   return segments

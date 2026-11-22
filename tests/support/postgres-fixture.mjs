@@ -82,6 +82,7 @@ export async function postgresRuntimeFixture({ dir, sourcePath, bin = process.en
         }
         node(['upgrade/postgresql/stage-sqlite.mjs', resolve(sourcePath), 'fixture_business'])
         for (const name of materializers) materialize(name, 'fixture_business')
+        node(['upgrade/postgresql/install-platform-refresh-v2.mjs'])
       }
       const logSource = await createEmptyLogSource(join(fixture, 'source-logs'))
       node(['upgrade/postgresql/stage-sqlite.mjs', logSource, 'fixture_logs'])

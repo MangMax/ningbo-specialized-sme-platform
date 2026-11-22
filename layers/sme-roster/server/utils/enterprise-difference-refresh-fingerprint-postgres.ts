@@ -3,11 +3,10 @@ import { alias } from 'drizzle-orm/pg-core'
 import { enterprise, enterpriseAlias } from '../../../../db/postgresql/enterprise-tables'
 import { record, recordEvidence, recordEvent } from '../../../../db/postgresql/ledger-tables'
 import { platformApplyProjection, platformBusinessProjection, platformRecognizedProjection,
-  platformBusinessObservation as observation, platformCollection as collection,
+  platformBusinessObservation as observation, platformBusinessRecordVersion as version, platformCollection as collection,
   platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { recordCorrespondence as correspondence } from '../../../../db/postgresql/qualification-tables'
-import { refreshRelationFields } from '../../lib/platform/difference-hash-keys'
-import { snapshotSchema } from '../../lib/platform/evidence-snapshot-model'
+import { refreshRelationFields, refreshSourceKeys } from '../../lib/platform/difference-hash-keys'
 import { CURRENT_TITLES } from '../../lib/roster/current-titles'
 import type { PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
 import { hashRefreshInputs, projectRefreshObservation, refreshProjectionColumns } from './enterprise-difference-refresh-contract'
@@ -15,28 +14,38 @@ import { hashRefreshInputs, projectRefreshObservation, refreshProjectionColumns 
 type Tx = PostgresQualificationTransaction
 type Collection = Parameters<typeof projectRefreshObservation>[0]
 type Material = Record<string, unknown>
+const NATIVE_REFRESH_STATE = 'platform-business-state-v2'
 
-function restoreJsonEscapes(text: string, quoted: boolean | null) {
-  return quoted ? text.replace(/\\\\\|(u[0-9a-fA-F]{4})?\|/g, (_, escape: string | undefined) => escape ? '\\' + escape : '\\\\') : text
+const sourceKeys = new Set<string>(refreshSourceKeys)
+
+async function readNativePlatformRefreshFacts(tx: Tx, selected: ReturnType<typeof sql>) {
+  const current = tx.select({ matchBasis: assignment.matchBasis, verificationStatus: assignment.verificationStatus })
+    .from(assignment).where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('current_assignment')
+  const sources = await tx.select({
+    collectionId: observation.collectionId, matchBasis: current.matchBasis, verificationStatus: current.verificationStatus,
+    relation: observation.relationFacts, versionId: observation.versionId,
+    observationFields: observation.businessFields, versionFields: version.businessFields,
+  }).from(observation).leftJoin(version, eq(version.id, observation.versionId)).innerJoinLateral(current, sql`true`)
+    .where(and(sql`${observation.collectionId} = any(${selected})`, isNotNull(observation.relationFacts)))
+  const relations = Map.groupBy(sources.map(row => {
+    const stored = row.relation!
+    const fields = Object.fromEntries(refreshRelationFields.map(name => [
+      name, stored[name.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())] ?? null,
+    ]))
+    const raw = row.versionId === null ? row.observationFields : row.versionFields
+    const sourceBusiness = raw === null ? undefined : Object.fromEntries(Object.entries(raw).filter(([name]) => sourceKeys.has(name)))
+    return { collectionId: row.collectionId, material: {
+      ...fields, match_basis: row.matchBasis, verification_status: row.verificationStatus,
+      ...(sourceBusiness === undefined ? {} : { sourceBusiness }),
+    } as Material }
+  }), row => row.collectionId)
+  const metadataRows = await tx.select({ id: collection.id, coverage: collection.sourceCoverage })
+    .from(collection).where(sql`${collection.id} = any(${selected})`)
+  const metadata = new Map(metadataRows.map(({ id, coverage }) => [id, coverage === null ? null : JSON.stringify(coverage)]))
+  return { relations, metadata }
 }
 
-function relationMaterial(snapshot: unknown, match_basis: string | null, verification_status: string, business: string | null, quoted: boolean | null) {
-  const cells = new Map(snapshotSchema.parse(snapshot).fields.map(cell => [cell.name, cell]))
-  const original = (name: string) => {
-    const cell = cells.get(name)
-    if (!cell || cell.storageClass === 'null') return null
-    const value = Buffer.from(cell.hex, 'hex').toString('utf8')
-    if (cell.storageClass === 'integer' || cell.storageClass === 'real') return Number(value)
-    if (cell.storageClass === 'blob') throw new Error('Difference refresh cannot hash a binary relation field')
-    return value
-  }
-  const fields = { ...Object.fromEntries(refreshRelationFields.map(name => [name, original(name)])), match_basis, verification_status }
-  if (business === null) return fields
-  if (business === '{') return { ...fields, sourceBusinessMalformed: true }
-  return { ...fields, sourceBusiness: JSON.parse(restoreJsonEscapes(business, quoted)) }
-}
-
-async function readPlatformMaterials(tx: Tx, enterpriseIds: readonly number[]) {
+async function readPlatformMaterials(tx: Tx, enterpriseIds: readonly number[], readFacts: typeof readNativePlatformRefreshFacts) {
   const owners = inArray(enterprise.id, enterpriseIds)
   // Drizzle 0.45.4 has no coalesce, concatenation or window rank builders.
   const keys = tx.$with('keys').as(tx.select({
@@ -70,23 +79,7 @@ async function readPlatformMaterials(tx: Tx, enterpriseIds: readonly number[]) {
   if (!collectionIds.length) return new Map<number, { titleCode: string | null; material: Material }[]>()
   // Keep the selected IDs in one bound array for large observation histories.
   const selected = sql`${sql.param(collectionIds)}::bigint[]`
-  const current = tx.select({ matchBasis: assignment.matchBasis, verificationStatus: assignment.verificationStatus })
-    .from(assignment).where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('current_assignment')
-  const sources = await tx.select({
-    collectionId: observation.collectionId, matchBasis: current.matchBasis, verificationStatus: current.verificationStatus,
-    facts: observation.refreshFacts,
-  }).from(observation)
-    .innerJoinLateral(current, sql`true`)
-    .where(and(sql`${observation.collectionId} = any(${selected})`, isNotNull(observation.refreshFacts)))
-  const relations = Map.groupBy(sources.map(row => ({
-    collectionId: row.collectionId,
-    material: relationMaterial({ encoding: 't05a-sqlite-cells-v1', fields: row.facts!.fields },
-      row.matchBasis, row.verificationStatus, row.facts!.business, row.facts!.quoted),
-  })), row => row.collectionId)
-  const metadataRows = await tx.select({ collectionId: collection.id, metadata: collection.refreshMetadata })
-    .from(collection).where(sql`${collection.id} = any(${selected})`)
-  const metadata = new Map(metadataRows.map(({ collectionId, metadata }) => [collectionId,
-    metadata?.json == null ? null : restoreJsonEscapes(metadata.json, metadata.quoted)]))
+  const { relations, metadata } = await readFacts(tx, selected)
   const projectionTables = {
     platform_apply_projection: platformApplyProjection,
     platform_business_projection: platformBusinessProjection,
@@ -115,7 +108,7 @@ async function readPlatformMaterials(tx: Tx, enterpriseIds: readonly number[]) {
     [owner, collections.map(({ collection }) => ({ titleCode: collection.titleCode, material: projections.get(collection.id)! }))]))
 }
 
-export async function readPostgresRefreshFingerprints(tx: Tx, enterpriseIds: readonly number[]) {
+export async function readPostgresRefreshFingerprints(tx: Tx, enterpriseIds: readonly number[], readFacts = readNativePlatformRefreshFacts) {
   const enterprises = await tx.select({ id: enterprise.id, enterprise: {
     name: enterprise.name, name_norm: enterprise.nameNorm, uscc_norm: enterprise.usccNorm, city: enterprise.city, district: enterprise.district,
   } }).from(enterprise).where(inArray(enterprise.id, enterpriseIds)).orderBy(enterprise.id)
@@ -148,7 +141,7 @@ export async function readPostgresRefreshFingerprints(tx: Tx, enterpriseIds: rea
     rows.map(({ owner, title, ...material }) => ({ owner, title, material })), row => row.owner + ':' + row.title,
   )
   const formalByTitle = group(formal), evidenceByTitle = group(evidence), correspondenceByTitle = group(correspondences)
-  const platform = await readPlatformMaterials(tx, enterpriseIds)
+  const platform = await readPlatformMaterials(tx, enterpriseIds, readFacts)
   return enterprises.map(({ id, enterprise }) => ({
     subject: { id, ...enterprise },
     fingerprints: new Map(CURRENT_TITLES.map(title => {
@@ -158,7 +151,7 @@ export async function readPostgresRefreshFingerprints(tx: Tx, enterpriseIds: rea
         evidence: (evidenceByTitle.get(key) ?? []).map(row => row.material),
         correspondences: (correspondenceByTitle.get(key) ?? []).map(row => row.material),
         observations: (platform.get(id) ?? []).filter(row => row.titleCode === null || row.titleCode === title).map(row => row.material),
-      })
+      }, readFacts === readNativePlatformRefreshFacts ? NATIVE_REFRESH_STATE : undefined)
       return [title, fingerprint]
     })),
   }))

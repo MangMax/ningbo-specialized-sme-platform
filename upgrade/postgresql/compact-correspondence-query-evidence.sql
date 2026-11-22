@@ -51,3 +51,34 @@ SET evidence = (CASE WHEN jsonb_typeof(compacted.coverage) = 'object'
   THEN jsonb_set(compacted.evidence, '{query,collectionEvidence}', compacted.coverage - ARRAY['rows','dataRows','rawData'])
   ELSE compacted.evidence END)::text
 FROM compacted WHERE audit.id = compacted.id;
+
+ALTER TABLE :"target".record_correspondence ALTER COLUMN provenance DROP NOT NULL;
+
+-- The matching immutable revision already retains the source facts. The
+-- raw-response digest is internal and is redacted from the public audit.
+WITH latest AS MATERIALIZED (
+  SELECT edge.id, edge.provenance, audit.id AS audit_id, audit.evidence
+  FROM :"target".record_correspondence edge
+  JOIN LATERAL (
+    SELECT id, evidence FROM :"target".record_correspondence_audit
+    WHERE correspondence_id = edge.id AND resulting_revision = edge.revision
+    ORDER BY id DESC LIMIT 1
+  ) audit ON true
+  WHERE edge.provenance IS NOT NULL
+), reusable AS MATERIALIZED (
+  SELECT * FROM latest
+  WHERE provenance COLLATE "C" = evidence COLLATE "C"
+    OR (provenance::jsonb::text COLLATE "C" = provenance COLLATE "C"
+      AND evidence::jsonb::text COLLATE "C" = evidence COLLATE "C"
+      AND jsonb_typeof(provenance::jsonb #> '{query,rawResponseSha256}') = 'string'
+      AND (provenance::jsonb #- '{query,rawResponseSha256}') = evidence::jsonb)
+), retained AS (
+  UPDATE :"target".record_correspondence_audit AS audit SET evidence = reusable.provenance
+  FROM reusable
+  WHERE audit.id = reusable.audit_id AND reusable.provenance COLLATE "C" <> reusable.evidence COLLATE "C"
+  RETURNING audit.id
+)
+UPDATE :"target".record_correspondence AS edge SET provenance = NULL
+FROM reusable
+WHERE edge.id = reusable.id AND (reusable.provenance COLLATE "C" = reusable.evidence COLLATE "C"
+  OR reusable.audit_id IN (SELECT id FROM retained));

@@ -364,7 +364,7 @@ it('MCP typed prototype keys stay out of history while strict REST rejects the s
 })
 
 it('MCP batch partial and resumed segments import business facts with exact original page positions and typed versions', async () => {
-  const rows = [{ id: 'segments', n: null }, { id: 'segments', n: '' }, { id: 'segments', n: null }]
+  const rows = [{ id: 'segments', n: 0, blank: null }, { id: 'segments', n: '0', blank: '' }, { id: 'segments', n: 0, blank: '' }]
   pageBodies = new Map(rows.map((row, i) => [i + 1, source(row, i + 1, 3)]))
   try {
     const receipt = await call('submit_platform_batch', { items: [{ query: { ...batchInput, maxRequests: 1 } }] })
@@ -377,7 +377,7 @@ it('MCP batch partial and resumed segments import business facts with exact orig
     const versions = []
     for (const [i, segment] of item.segments.entries()) {
       expect(segment.pages[0]).toMatchObject({ source: 'queryBusList', rdjb: '2', page: i + 1, status: 'success', fetchedCount: 1 })
-      expect(segment.dataRows).toEqual([rows[i]])
+      expect(segment.dataRows).toEqual([{ id: 'segments', n: rows[i]!.n }])
       expect(segment).not.toHaveProperty('rawData')
       const saved = await submit('MCP', 'commit', request([recognizedResultToImport(segment)]))
       expect(saved.status).toBe('committed')
@@ -390,6 +390,32 @@ it('MCP batch partial and resumed segments import business facts with exact orig
     }
     expect(versions[0]).not.toBe(versions[1]); expect(versions[2]).toBe(versions[0])
   } finally { pageBodies = undefined }
+})
+
+it.each([
+  { source: 'queryList', grid: 'applyGrid', expectedInterface: 'apply_list', sourceRdjb: null },
+  { source: 'businessList', grid: 'businessListGrid', expectedInterface: 'business_list', sourceRdjb: '2' },
+])('sparse batch process rows import with the explicit $source scope', async ({ source, grid, expectedInterface, sourceRdjb }) => {
+  const uscc = '91330211255994457P'
+  const businessRow = { id: source + '-sparse', qymc: '合成企业', tyshxydm: uscc, cszt: '已认定', sqsj: '2026-07-03', year: 2026, flag: false }
+  raw = JSON.stringify({ zrarData: { grid: { [grid]: {
+    pageSet: [{ ...businessRow, nil: null, blank: '' }], page: 1, pageSize: 1, maxCount: 1, maxPage: 1,
+  } } } })
+  const query = { source, uscc, pageSize: 1, ...(sourceRdjb ? { rdjb: sourceRdjb } : {}) }
+  const { batchId, itemIds } = await call('submit_platform_batch', { items: [{ query }] })
+  await waitForBatch(batchId)
+  const item = await call('get_platform_batch_item', { batchId, itemId: itemIds[0] })
+  expect(item.status).toBe('success')
+  const [segment] = item.segments
+  expect(segment.dataRows).toEqual([businessRow])
+  expect(segment.pages[0]).toMatchObject({ source, rdjb: sourceRdjb, page: 1 })
+  const collected = platformResultToImport(segment)
+  expect(collected).toMatchObject({ interface: expectedInterface, queryKey: uscc, rdjb: sourceRdjb ?? '' })
+  const saved = await submit('MCP', 'commit', request([collected]))
+  expect(saved.status).toBe('committed')
+  const { row } = await readSaved(saved)
+  expect(row.query).toMatchObject({ interface: expectedInterface, queryKey: uscc })
+  expect(row.relations[0]).toMatchObject({ relationKey: businessRow.id, sourcePage: 1, sourceRdjb })
 })
 
 it('new typed observations leave old string hashes, IDs, explicit decisions and append-only audit untouched', async () => {

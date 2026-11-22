@@ -2,7 +2,7 @@ import { createPlatformBatchRoute } from '../../../utils/platform-batch-route'
 defineRouteMeta({ openAPI: {
   tags: ['平台实时查询'], summary: '批次状态、真实进度和逐项结果（no-store）',
   parameters: [{ in: 'path', name: 'batchId', required: true, schema: { type: 'string' } }],
-  responses: { 200: { description: '状态独立于完整性；failed保留成功项，重启后不得视作运行中。segments按原查询时间保留多关系和页状态。rows 为业务字符串投影，dataRows 存在时保留业务字段类型。', content: { 'application/json': { schema: {
+  responses: { 200: { description: '状态独立于完整性；failed保留成功项，重启后不得视作运行中。segments按原查询时间保留多关系和页状态。rows 为业务字符串投影，dataRows 存在时保留业务字段类型。行省略顶层空字符串和 null，仍保留全部行位置。', content: { 'application/json': { schema: {
     type: 'object', required: ['batchId', 'itemIds', 'state', 'progress', 'completeness', 'attempt', 'items', 'limits', 'usage'], properties: {
       batchId: { type: 'string' }, itemIds: { type: 'array', items: { type: 'string' } }, state: { type: 'string', enum: ['queued', 'running', 'done', 'failed', 'cancelled'] },
       progress: { type: 'object', properties: { done: { type: 'integer' }, total: { type: 'integer' } } }, completeness: { type: 'string', enum: ['complete', 'partial'] }, attempt: { type: 'integer' },

@@ -40,6 +40,7 @@ async function fixture(awardYear = 2021, titleCode = 'specialized_sme') {
   const { correspondenceRoute } = await import('../../../layers/sme-roster/server/utils/record-correspondence-route')
   router.use('/api/roster/correspondences/preflight', correspondenceRoute('preflight'))
   router.use('/api/roster/correspondences/commit', correspondenceRoute('commit'))
+  router.use('/api/roster/correspondences/:id/audit', correspondenceRoute('audit', { id: true }))
   router.use('/api/roster/correspondences/:id', correspondenceRoute('get', { id: true }))
   app.use(router)
   const listener = createServer(toNodeListener(app))
@@ -302,10 +303,19 @@ it('marks direct and predecessor confirmations stale after correction and after 
     expect(pre.status).toBe(200)
     const confirmed = await f.rawPost('/api/roster/correspondences/commit', { request: create, planHash: pre.body.planHash })
     const ids = confirmed.body.correspondenceIds as number[]
+    const readAudit = (id: number) => f.read(`/api/roster/correspondences/${id}/audit`)
+    const originalAudit = (await readAudit(ids[0]!)).body
+    expect(originalAudit.rows).toMatchObject([
+      { toStatus: 'candidate', evidence: { event: { id: f.event.id, year: 2021 } } },
+      { toStatus: 'confirmed', evidence: { event: { id: f.event.id, year: 2021 } } },
+    ])
+    expect(originalAudit.rows[1].evidence.query).not.toHaveProperty('rawResponseSha256')
     // Seed exactly the pre-0016 fingerprint format (no event revision) as historical data.
     for (const id of ids) {
-      const stored = (await f.db.$client.query<{ provenance: string }>('SELECT provenance FROM record_correspondence WHERE id = $1', [id])).rows[0]!
-      const provenance = JSON.parse(stored.provenance)
+      const snapshot = (await f.db.$client.query<{ evidence: string }>(
+        'SELECT evidence FROM record_correspondence_audit WHERE correspondence_id = $1 AND to_status = $2', [id, 'confirmed'],
+      )).rows[0]!
+      const provenance = JSON.parse(snapshot.evidence)
       delete provenance.comparisonProofIds
       const { rawResponseSha256, collectionEvidence, createdAt, ...query } = provenance.query
       expect(rawResponseSha256).toBe(createHash('sha256').update('Explicit synthetic correspondence source').digest('hex'))
@@ -320,6 +330,8 @@ it('marks direct and predecessor confirmations stale after correction and after 
     expect(plan.body.impact.requiresRevalidation).toBe(2)
     expect((await f.post('commit', { request: edit, planHash: plan.body.planHash })).status).toBe(200)
     for (const id of ids) expect((await f.read(`/api/roster/correspondences/${id}`)).body).toMatchObject({ status: 'confirmed', requiresRevalidation: true })
+    expect((await readAudit(ids[0]!)).body).toEqual(originalAudit)
+    expect((await f.rawPost('/api/roster/correspondences/commit', { request: create, planHash: pre.body.planHash })).body).toEqual(confirmed.body)
     const undo = f.request('restore-values', { year: 2021, decidedYear: 2021 }); undo.operations[0]!.expectedRevision = 2
     const undoPlan = await f.post('preflight', undo)
     expect((await f.post('commit', { request: undo, planHash: undoPlan.body.planHash })).status).toBe(200)
@@ -330,6 +342,12 @@ it('marks direct and predecessor confirmations stale after correction and after 
     expect((await f.rawPost('/api/roster/correspondences/commit', { request: reconfirm, planHash: re.body.planHash })).status).toBe(200)
     expect((await f.read(`/api/roster/correspondences/${ids[0]}`)).body).toMatchObject({ requiresRevalidation: false, revision: 4 })
     expect((await f.read(`/api/roster/correspondences/${ids[1]}`)).body.requiresRevalidation).toBe(true)
+    const reconfirmed = (await readAudit(ids[0]!)).body
+    expect(reconfirmed.rows.slice(0, 2)).toEqual(originalAudit.rows)
+    expect(reconfirmed.rows.slice(2)).toMatchObject([
+      { toStatus: 'unlinked', evidence: { event: originalAudit.rows[1].evidence.event } },
+      { toStatus: 'confirmed', evidence: { event: { revision: 3 } } },
+    ])
   } finally { await f.close() }
 })
 
