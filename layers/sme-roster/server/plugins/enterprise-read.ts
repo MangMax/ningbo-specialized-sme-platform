@@ -8,7 +8,7 @@ export default defineNitroPlugin(app => {
   app.hooks.hook('mcp:config:resolved', ({ config, event }) => {
     const context = requestLogContext(event)
     config.tools = config.tools.map(tool => {
-      if (!['list_enterprises', 'get_enterprise_detail', 'list_current_qualified_enterprises'].includes(tool.name ?? '')) return tool
+      if (tool.name !== 'list_current_qualified_enterprises') return tool
       const handler = tool.handler as (...args: any[]) => any
       return { ...tool, handler: (input: any, extra: any) => handler(input, { ...extra, logContext: context }) }
     })

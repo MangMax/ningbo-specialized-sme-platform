@@ -1,0 +1,94 @@
+import { and, eq, inArray, notExists, or, gt } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/sqlite-core'
+import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { sqliteConnection } from '../platform/target-connection'
+import { targetSchema as s } from '../platform/target-schema'
+import { normalizeUscc } from '../domain'
+import { isValidUscc } from './uscc-research'
+import { projectPlatformQualificationFact, type PlatformFactSubject, type PlatformQualificationFact, type PlatformQualificationFactsReader } from './platform-qualification'
+
+/** Independent reads never retain keys from an earlier snapshot. */
+export function readPlatformQualificationFacts(db: BetterSQLite3Database<typeof s>, subjects: readonly PlatformFactSubject[]): PlatformQualificationFact[] {
+  return createPlatformQualificationFactsReader(db)(subjects)
+}
+
+/** Caller-owned snapshot only. Retain O(K) narrow raw keys, never owners or typed
+ * facts, and discard this reader when that snapshot ends. Each source is indexed
+ * lazily on the first read with a valid subject. */
+export function createPlatformQualificationFactsReader(db: BetterSQLite3Database<typeof s>): PlatformQualificationFactsReader {
+  type RawKey = { raw: string; ordinal: number }
+  const indexes = new Map<string, Map<string, RawKey[]>>()
+  function matchingKeys(query: { sql: string; params: unknown[] }, codes: Iterable<string>) {
+    let index = indexes.get(query.sql)
+    if (!index) {
+      index = new Map<string, RawKey[]>()
+      // Drizzle 0.45.4 SELECT has no iterator. Stream only the selected raw column;
+      // normalizeUscc cannot be replaced by SQL upper/trim.
+      const rows = sqliteConnection(db).prepare(query.sql).raw().iterate(...query.params) as Iterable<[string | null]>
+      let ordinal = 0
+      for (const [raw] of rows) {
+        if (raw != null) {
+          const code = normalizeUscc(raw)
+          const keys = index.get(code) ?? []
+          keys.push({ raw, ordinal }); index.set(code, keys)
+        }
+        ordinal++
+      }
+      indexes.set(query.sql, index)
+    }
+    const keys: RawKey[] = []
+    for (const code of codes) for (const key of index.get(code) ?? []) keys.push(key)
+    // Subject order must not change the original source enumeration/chunk order.
+    return keys.sort((a, b) => a.ordinal - b.ordinal).map(key => key.raw)
+  }
+  return readFacts
+
+  /** Latest observed content per stable business record, before filtering identity/title.
+   * A failed query with no observations cannot erase a previously captured fact.
+   * Re-observing an old content version makes that observed version current again.
+   * Enumerate raw identity keys through covering indexes, then read only matched typed rows. */
+  function readFacts(subjects: readonly PlatformFactSubject[]): PlatformQualificationFact[] {
+    const owners = new Map<string, Set<number>>()
+    for (const subject of subjects) {
+      const code = normalizeUscc(subject.uscc)
+      if (!isValidUscc(code)) continue
+      const ids = owners.get(code) ?? new Set<number>()
+      ids.add(subject.enterpriseId); owners.set(code, ids)
+    }
+    if (!owners.size) return []
+    const newer = alias(s.platformBusinessObservation, 'qualification_newer_observation')
+    const collection = alias(s.platformCollection, 'qualification_newer_collection')
+    const o = s.platformBusinessObservation, c = s.platformCollection
+    const latest = notExists(db.select({ id: newer.id }).from(newer)
+      .innerJoin(collection, eq(collection.id, newer.collectionId))
+      .where(and(eq(newer.recordId, o.recordId), eq(newer.contentState, 'verified'), or(gt(collection.queriedAt, c.queriedAt), and(eq(collection.queriedAt, c.queriedAt), gt(newer.id, o.id))))))
+    const facts: PlatformQualificationFact[] = []
+    const recognizedKeys = matchingKeys(db.selectDistinct({ raw: s.platformRecognizedProjection.usccRaw }).from(s.platformRecognizedProjection).toSQL(), owners.keys())
+    const businessKeys = matchingKeys(db.selectDistinct({ raw: s.platformBusinessProjection.usccRaw }).from(s.platformBusinessProjection).toSQL(), owners.keys())
+    const applyKeys = matchingKeys(db.selectDistinct({ raw: s.platformApplyProjection.usccRaw }).from(s.platformApplyProjection).toSQL(), owners.keys())
+    // Multiple raw spellings may normalize to one subject; chunk raw keys, not owners.
+    for (let offset = 0; offset < Math.max(recognizedKeys.length, businessKeys.length, applyKeys.length); offset += 400) {
+      const recognizedScope = recognizedKeys.slice(offset, offset + 400)
+      const businessScope = businessKeys.slice(offset, offset + 400)
+      const applyScope = applyKeys.slice(offset, offset + 400)
+      const common = { recordId: o.recordId, versionId: o.versionId, observationId: o.id, collectedAt: c.queriedAt }
+      const recognized = recognizedScope.length ? db.select({ ...common, p: { usccRaw: s.platformRecognizedProjection.usccRaw, titleRaw: s.platformRecognizedProjection.titleRaw, nameRaw: s.platformRecognizedProjection.nameRaw, qualificationFieldsRule: s.platformRecognizedProjection.qualificationFieldsRule, sourceValidFlag: s.platformRecognizedProjection.sourceValidFlag, sourceRecognizedAt: s.platformRecognizedProjection.sourceRecognizedAt, sourceValidityDate: s.platformRecognizedProjection.sourceValidityDate, sourceProvinceName: s.platformRecognizedProjection.sourceProvinceName, sourceCityName: s.platformRecognizedProjection.sourceCityName, sourceDistrictName: s.platformRecognizedProjection.sourceDistrictName, sourceInvalidatedAt: s.platformRecognizedProjection.sourceInvalidatedAt, sourceInvalidationReason: s.platformRecognizedProjection.sourceInvalidationReason } }).from(o)
+        .innerJoin(c, eq(c.id, o.collectionId))
+        .innerJoin(s.platformRecognizedProjection, eq(s.platformRecognizedProjection.versionId, o.versionId))
+        .where(and(latest, inArray(s.platformRecognizedProjection.usccRaw, recognizedScope))).all() : []
+      const business = businessScope.length ? db.select({ ...common, p: { usccRaw: s.platformBusinessProjection.usccRaw, titleRaw: s.platformBusinessProjection.titleRaw, nameRaw: s.platformBusinessProjection.nameRaw, declareKind: s.platformBusinessProjection.declareKind, status: s.platformBusinessProjection.status, businessYear: s.platformBusinessProjection.businessYear, appliedAt: s.platformBusinessProjection.appliedAt, province: s.platformBusinessProjection.province } }).from(o)
+        .innerJoin(c, eq(c.id, o.collectionId))
+        .innerJoin(s.platformBusinessProjection, eq(s.platformBusinessProjection.versionId, o.versionId))
+        .where(and(latest, inArray(s.platformBusinessProjection.usccRaw, businessScope))).all() : []
+      const declarations = applyScope.length ? db.select({ ...common, p: { usccRaw: s.platformApplyProjection.usccRaw, titleRaw: s.platformApplyProjection.titleRaw, nameRaw: s.platformApplyProjection.nameRaw, declareKind: s.platformApplyProjection.declareKind, status: s.platformApplyProjection.status, declarationYear: s.platformApplyProjection.declarationYear, appliedAt: s.platformApplyProjection.appliedAt } }).from(o)
+        .innerJoin(c, eq(c.id, o.collectionId))
+        .innerJoin(s.platformApplyProjection, eq(s.platformApplyProjection.versionId, o.versionId))
+        .where(and(latest, inArray(s.platformApplyProjection.usccRaw, applyScope))).all() : []
+      for (const row of [...recognized.map(r => ({ ...r, source: 'recognized_list' as const })), ...business.map(r => ({ ...r, source: 'business_list' as const })), ...declarations.map(r => ({ ...r, source: 'apply_list' as const }))]) {
+        const fact = projectPlatformQualificationFact(row, owners)
+        if (fact) facts.push(fact)
+      }
+    }
+    return facts.sort((a, b) => a.recordId - b.recordId)
+  }
+}

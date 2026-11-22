@@ -1,11 +1,6 @@
-import { requestLogContext } from '../../../core/lib/logging'
-import { readSummary } from '../utils/comparison-summary-read'
-import { withEnterpriseReadSignal } from '../../../core/server/utils/enterprise-read-signal'
-import { useDb } from '@db'
-import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '#sme-roster/lib/comparison'
-import { readWholeComparisonFull } from '#sme-roster/lib/comparison-full'
+import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '#sme-roster/lib/comparison-model'
 import { TITLE_ORDER } from '#sme-roster/lib/labels'
-import { MAX_PAGE_SIZE } from '#sme-roster/lib/query'
+import { MAX_PAGE_SIZE } from '#sme-roster/lib/query-limits'
 
 import { readPostgresWholeComparison } from '#sme-roster/lib/comparison-postgres'
 import { usePostgresRosterDb } from '../utils/postgres-roster-db'
@@ -117,15 +112,5 @@ export default defineEventHandler((event) => {
     page: Math.max(1, Math.floor(num(q.page, 1))),
     pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(num(q.pageSize, 25)))),
   }
-  const postgres = usePostgresRosterDb()
-  if (postgres) return readPostgresWholeComparison(postgres, options, q.view === 'summary' ? 'summary' : 'full')
-  const db = useDb()
-  if (q.view === 'summary') {
-    return withEnterpriseReadSignal(event, async signal => {
-      const result = await readSummary(db, options, signal, undefined, requestLogContext(event))
-      if (Buffer.isBuffer(result)) setHeader(event, 'content-type', 'application/json')
-      return result
-    })
-  }
-  return readWholeComparisonFull(db, options)
+  return readPostgresWholeComparison(usePostgresRosterDb(), options, q.view === 'summary' ? 'summary' : 'full')
 })

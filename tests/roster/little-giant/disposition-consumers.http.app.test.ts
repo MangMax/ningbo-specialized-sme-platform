@@ -6,13 +6,22 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import * as s from '../../../db/schema'
+import pg from 'pg'
 
 // Exact candidate build and process execution are owned by the parent merger.
 const f = qualificationExportFixture()
 const priorNodeOptions = process.env.NODE_OPTIONS
 const priorMcpToken = process.env.NUXT_MCP_TOKEN
 const client = new Client({name:'synthetic-disposition-consumers',version:'1'})
+function seed() {
+ const c=f.candidate('合成周期处置',[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
+ const event=f.db.select().from(s.recordEvent).all().find(e=>e.recordId===c.record.id)!
+ const file=f.db.insert(s.storedFile).values({relPath:'synthetic-cycle.pdf',filename:'synthetic-cycle.pdf',ext:'pdf',sha256:'a'.repeat(64),bytes:1,createdAt:'2026-01-01'}).returning().get()
+ return { c, event, file }
+}
+let seeded: ReturnType<typeof seed>
 beforeAll(async () => {
+ seeded = seed()
  const discovery = await readDevelopmentDiscovery()
  expect(JSON.stringify(discovery)).toContain('/api/roster/title-cycle-dispositions/preflight')
  const clock = join(f.dir,'clock.mjs')
@@ -28,10 +37,7 @@ afterAll(async () => { await client.close(); if(priorNodeOptions == null) delete
 const get = async(path:string) => { const r=await fetch(f.url(path),{headers:f.headers});expect(r.status,await r.clone().text()).toBe(200);return r.json() }
 const post = async(path:string, body:unknown) => { const r=await fetch(f.url(path),{method:'POST',headers:f.headers,body:JSON.stringify(body)});expect(r.status,await r.clone().text()).toBe(200);return r.json() }
 it('confirmed cycle dispositions keep HTTP detail filters and XLSX identities aligned across withdrawal and source replacement',async()=>{
- // The live MCP contract was inspected before issuing business commands.
- const c=f.candidate('合成周期处置',[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
- const event=f.db.select().from(s.recordEvent).all().find(e=>e.recordId===c.record.id)!
- const file=f.db.insert(s.storedFile).values({relPath:'synthetic-cycle.pdf',filename:'synthetic-cycle.pdf',ext:'pdf',sha256:'a'.repeat(64),bytes:1,createdAt:'2026-01-01'}).returning().get()
+ const { c, event, file } = seeded
  const run=async(operations:unknown[])=>{
   const current=await get(`/api/roster/title-cycle-dispositions/current?enterpriseIds=${c.enterprise.id}`)
   const request={operations,idempotencyKey:crypto.randomUUID(),expectedVersion:current.version,actor:{type:'agent',id:'synthetic'},basis:'合成周期依据'}
@@ -87,7 +93,12 @@ it('confirmed cycle dispositions keep HTTP detail filters and XLSX identities al
  const second=await run([{action:'assert',enterpriseId:c.enterprise.id,fact:{...fact,kind:'not_recommended'}}])
  await run([{action:'confirm',id:second.ids[0],revision:1}])
  await check(false,'second')
- f.db.$client.prepare('update stored_file set sha256=? where id=?').run('b'.repeat(64),file.id)
+ if (!f.postgresUrl) throw new Error('PostgreSQL fixture is not running')
+ const connection = new pg.Client({ connectionString: f.postgresUrl })
+ await connection.connect()
+ try {
+  await connection.query('UPDATE business.stored_file SET sha256 = $1 WHERE id = $2', ['b'.repeat(64), file.id])
+ } finally { await connection.end() }
  const revised=await check(true,'source-revised')
  expect(revised.giant.versions.sources).not.toBe(excluded.giant.versions.sources)
  expect((await f.download(before.job)).bytes.equals(before.bytes)).toBe(true)

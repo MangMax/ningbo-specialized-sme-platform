@@ -15,9 +15,9 @@ import {
   platformObservationAssignment as assignment,
 } from '../../../../db/postgresql/platform-tables'
 import { MAX_EVIDENCE_CHUNK_BYTES, PROVENANCE_CELL_NAMES, type PlatformEvidenceInput, type PlatformEvidenceResult } from './evidence-contract'
-import { platformEvidenceInputSchema } from './evidence-read'
-import { relationEvidenceColumns } from './relation-evidence-snapshot'
-import { snapshotSchema } from './target-evidence-read'
+import { platformEvidenceInputSchema } from './evidence-input'
+import { relationEvidenceColumns } from './relation-evidence-fields'
+import { snapshotSchema } from './evidence-snapshot-model'
 
 type Reader = Pick<NodePgDatabase, 'select'>
 export type PostgresPlatformArchive = { id: string; byteLength: string | null; storageClass: string; sealed: boolean }

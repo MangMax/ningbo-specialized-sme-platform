@@ -1,89 +1,23 @@
+import { postgresCandidateDiscoverySpec } from './candidate-discovery-postgres-spec'
+import { type CandidateJobParams, type CandidateJobResult, candidateResult, candidateSourceLimitError, candidateJobParams, updateCounts, candidateRequest, candidateCompletion, CANDIDATE_JOB_KIND, candidateJobInput } from './candidate-discovery-contract'
 import { whenImportWriterIdle } from '../import-write-barrier'
 import { setImmediate as yieldTurn } from 'node:timers/promises'
 import type { LogContext } from '../../../../core/lib/logging'
 import { createHash } from 'node:crypto'
 import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm'
-import { z } from 'zod'
 import * as schema from '../../../../../db/schema'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { correspondenceTable, externalRelationColumn } from '../record-correspondence-store'
 import { candidateTargetSourceBytes, targetCandidateTables } from '../candidate-target-sources'
-import {
-  discoverEventArchives,
-  EVENT_ARCHIVE_RULE_VERSION,
-  normalizedUscc,
-} from '../event-archive-discovery'
-import {
-  commitRecordCorrespondences,
-  preflightRecordCorrespondences,
-  type CorrespondenceEdge,
-} from '../record-correspondence'
+import { discoverEventArchives } from '../event-archive-discovery'
+import { EVENT_ARCHIVE_RULE_VERSION, normalizedUscc } from '../event-archive-discovery-model'
+import { commitRecordCorrespondences, preflightRecordCorrespondences } from '../record-correspondence'
 import { createJob, getJob, setJobResult } from '../../../../core/server/utils/job-store'
-import { JOB_ID_RE, newJobId } from '../../../../core/lib/job'
+import { newJobId } from '../../../../core/lib/job'
 import { stageAnnualCorrespondence, activateAnnualCorrespondence } from './annual-correspondence'
-import { runPostgresCandidateDiscovery, retryPostgresCandidateDiscovery } from './candidate-discovery-postgres'
-import { summarizePostgresCandidateJobs } from './candidate-summary'
-import {
-  ensureJobRunnerReady,
-  enqueuePersistedJob,
-  getJobSpec,
-  registerJob,
-  requeueFinishedJob,
-  submitJob,
-  type JobContext,
-  type JobSpec,
-} from '../../../../core/server/utils/job-runner'
-
+import { ensureJobRunnerReady, enqueuePersistedJob, requeueFinishedJob, submitJob, type JobContext, type JobSpec } from '../../../../core/server/utils/job-runner'
+import { getJobSpec, registerJob } from '../../../../core/server/utils/job-spec-registry'
 type Db = BetterSQLite3Database<typeof schema>
-export const CANDIDATE_JOB_KIND = 'event-archive-candidates'
-export const candidateJobInput = z
-  .object({
-    clientRequestId: z.string().trim().min(1).max(120),
-    eventIds: z.array(z.number().int().positive()).min(1).max(200).optional(),
-    titleCode: z
-      .enum(['specialized_sme', 'innovative_sme', 'little_giant'])
-      .optional(),
-    queryId: z.number().int().positive().optional(),
-    afterEventId: z.number().int().nonnegative().default(0),
-    throughEventId: z.number().int().positive().optional(),
-  })
-  .strict()
-  .refine(
-    (v) => [v.eventIds, v.titleCode, v.queryId].filter(Boolean).length === 1,
-    '恰选事件、称号或归档查询范围之一',
-  )
-// Internal continuation metadata; public submission keeps its existing shape.
-// The originating task identifies one archive generation and survives retries.
-export const candidateJobParams = candidateJobInput.safeExtend({
-  archiveGeneration: z.string().regex(JOB_ID_RE).optional(),
-})
-export type CandidateJobParams = z.infer<typeof candidateJobParams>
-export interface CandidateJobItem {
-  eventId: number
-  enterpriseId: number | null
-  status: 'pending' | 'running' | 'done' | 'failed'
-  page: number
-  rowIndex: number
-  created: number
-  existing: number
-  needsReview: boolean
-  errorCode?: string
-}
-export interface CandidateJobResult {
-  ruleVersion: string
-  attempt: number
-  items: CandidateJobItem[]
-  throughEventId: number
-  nextAfterEventId: number | null
-  continuationJobId?: string
-  counts: {
-    succeeded: number
-    needsReview: number
-    failed: number
-    created: number
-    existing: number
-  }
-}
 function fail(message: string, statusCode = 400): never {
   throw Object.assign(new Error(message), { statusCode })
 }
@@ -131,55 +65,8 @@ function initialize(db: Db, params: CandidateJobParams): CandidateJobResult {
     .all()
   return candidateResult(rows, high, params.eventIds)
 }
-export function candidateResult(rows: { eventId: number; enterpriseId: number }[], high: number, explicitEventIds?: number[]): CandidateJobResult {
-  const selected: { eventId: number; enterpriseId: number | null }[] =
-    rows.slice(0, 200)
-  // Explicit event IDs must not disappear as a successful empty task.
-  if (explicitEventIds)
-    for (const id of explicitEventIds)
-      if (!selected.some((r) => r.eventId === id))
-        selected.push({ eventId: id, enterpriseId: null })
-  return {
-    ruleVersion: EVENT_ARCHIVE_RULE_VERSION,
-    attempt: 0,
-    throughEventId: high,
-    nextAfterEventId: rows.length > 200 ? rows[199]!.eventId : null,
-    items: selected.map((row) => ({
-      ...row,
-      status: 'pending',
-      page: 1,
-      rowIndex: 0,
-      created: 0,
-      existing: 0,
-      needsReview: false,
-    })),
-    counts: {
-      succeeded: 0,
-      needsReview: 0,
-      failed: 0,
-      created: 0,
-      existing: 0,
-    },
-  }
-}
-export function updateCounts(result: CandidateJobResult) {
-  result.counts = {
-    succeeded: result.items.filter((i) => i.status === 'done').length,
-    needsReview: result.items.filter(
-      (i) => i.status === 'done' && i.needsReview,
-    ).length,
-    failed: result.items.filter((i) => i.status === 'failed').length,
-    created: result.items.reduce((n, i) => n + i.created, 0),
-    existing: result.items.reduce((n, i) => n + i.existing, 0),
-  }
-}
 // Bounds source hydration without imposing a domain import limit.
 const MAX_SOURCE_BYTES = 4 * 1024 * 1024
-/** The existing domain hydrates one selected source for its fingerprint and
- * audit. Bound that work before hydration; discovery never loads the corpus. */
-export function candidateSourceLimitError() {
-  return Object.assign(new Error('source_materialization_limit'), { statusCode: 422 })
-}
 function checkSourceBudget(db: Db, relationId: number) {
   const bytes = candidateTargetSourceBytes(db, relationId)
   if (bytes == null || bytes > MAX_SOURCE_BYTES)
@@ -359,63 +246,7 @@ async function run(ctx: JobContext, raw: Record<string, unknown>) {
   }
   return candidateCompletion(result, ctx.cancelled())
 }
-export function candidateCompletion(result: CandidateJobResult, cancelled: boolean) {
-  return {
-    result,
-    ...(result.counts.failed
-      ? {
-          error: result.items.some((item) => item.errorCode === 'source_materialization_limit')
-            ? '部分事件原档超过4 MiB任务处理上限；此原行未写入，原档与已完成候选保留。原档不变时重试仍会失败，请按原行核对。'
-            : '部分事件失败；已完成候选保留，可重试未完成项。',
-        }
-      : {}),
-    progress: {
-      done: result.counts.succeeded + result.counts.failed,
-      total: result.items.length,
-    },
-    ...(cancelled ? { cancelled: true } : {}),
-  }
-}
-export function candidateRequest(jobId: string, eventId: number, candidate: Record<string, unknown>) {
-  const edge = candidate.edge as CorrespondenceEdge & { eventId: number; relationId: number }
-  return {
-    idempotencyKey: `candidate-job:${jobId}:${eventId}:${edge.relationId}`,
-    sourceIdentity: `candidate-job/${jobId}`,
-    actor: { type: 'agent' as const, id: 'candidate-discovery-job' },
-    basis: '归档原行精确身份与称号匹配；仅生成待核候选，人工核对后决定。',
-    ruleId: String(candidate.ruleId),
-    ruleVersion: EVENT_ARCHIVE_RULE_VERSION,
-    operations: [{ action: 'create' as const, status: 'candidate' as const, edge }] as [{ action: 'create'; status: 'candidate'; edge: typeof edge }],
-  }
-}
-export const candidateDiscoverySpec: JobSpec = {
-  kind: CANDIDATE_JOB_KIND,
-  status: 'ready',
-  summary: '公布事件归档候选发现',
-  deduplicateRequest: true,
-  paramsHint:
-    '{clientRequestId,eventIds?:1..200个正式事件ID,titleCode?:称号,queryId?:归档ID,afterEventId?:0,throughEventId?:上界} 三种范围恰选一种；每片最多200事件，每页25原行，逐行事务，最多10次执行。',
-  parse: (raw) => {
-    const p = candidateJobParams.safeParse(raw)
-    return p.success
-      ? {
-          ok: true,
-          params: {
-            ...p.data,
-            eventIds: p.data.eventIds
-              ? [...new Set(p.data.eventIds)].sort((a, b) => a - b)
-              : undefined,
-          },
-        }
-      : { ok: false, message: '候选任务范围或请求标识无效' }
-  },
-  run,
-  postgres: {
-    run: runPostgresCandidateDiscovery,
-    allowBrowserCancel: true,
-    taskCenter: { summaries: summarizePostgresCandidateJobs, retry: (db, task) => retryPostgresCandidateDiscovery(db, task.id) },
-  },
-}
+export const candidateDiscoverySpec: JobSpec = { ...postgresCandidateDiscoverySpec, run }
 export function submitCandidateDiscovery(
   db: Db,
   input: unknown,
@@ -527,7 +358,6 @@ export function enqueueArchivedCandidates(
   }
   return ids
 }
-
 /** Main process only. Native import stages rows atomically, then its caller
  * adopts them into the one shared task runner after the commit receipt arrives. */
 export function activateCandidateDiscoveryTasks(
@@ -539,3 +369,4 @@ export function activateCandidateDiscoveryTasks(
   if (!getJobSpec(CANDIDATE_JOB_KIND)) registerJob(candidateDiscoverySpec)
   for (const id of ids) enqueuePersistedJob(db, id, filesDir, logContext)
 }
+export { CANDIDATE_JOB_KIND, candidateJobInput, candidateJobParams, type CandidateJobParams, type CandidateJobItem, type CandidateJobResult, candidateResult, updateCounts, candidateSourceLimitError, candidateCompletion, candidateRequest } from './candidate-discovery-contract'

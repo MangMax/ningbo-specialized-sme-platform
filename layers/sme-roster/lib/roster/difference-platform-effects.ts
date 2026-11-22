@@ -1,5 +1,3 @@
-/** Necessary target evidence seam for the existing qualification/effect reader.
- * No qualification rule or candidate admission rule is defined here. */
 import { and, eq, inArray, or, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/sqlite-core'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -8,7 +6,7 @@ import { targetSchema } from '../platform/target-schema'
 import { storedProcessProjection } from '../platform/process-stored-schema'
 import { currentDifferenceAssignment } from '../platform/difference-sources'
 import { normalizeUscc } from '../domain'
-import { RDJB_TITLE_CODES } from '../platform/recognized-evidence'
+import { platformEffectsForTitle } from './difference-platform-scope'
 import { candidateScopeObservation } from '../platform/candidate-scope-schema'
 import { CANDIDATE_SCOPE_RULE } from '../platform/candidate-scope-capture'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
@@ -66,17 +64,4 @@ export function readDifferencePlatformEffects(db: Db, enterpriseId: number, titl
   if (!rows.length) return []
   const pages = db.select().from(s.platformCollectionPage).where(inArray(s.platformCollectionPage.collectionId, [...new Set(rows.map(r => r.collectionId))])).orderBy(s.platformCollectionPage.ordinal).all()
   return platformEffectsForTitle(rows, pages, title).map(effectReference)
-}
-
-type EffectScope = Pick<ReturnType<typeof readEffectRows>[number], 'collectionId' | 'titleCode' | 'rdjb' | 'sequenceNo'>
-type PageScope = Pick<typeof s.platformCollectionPage.$inferSelect, 'collectionId' | 'status' | 'sequenceStart' | 'sequenceEnd' | 'rdjb'>
-export function platformEffectsForTitle<T extends EffectScope>(rows: T[], pages: PageScope[], title: string) {
-  return rows.filter(r => {
-    let rowTitle = r.titleCode ?? RDJB_TITLE_CODES[r.rdjb] ?? null
-    if (r.rdjb.includes(',')) {
-      const page = pages.find(p => p.collectionId === r.collectionId && p.status === 'success' && p.sequenceStart !== null && p.sequenceEnd !== null && r.sequenceNo >= p.sequenceStart && r.sequenceNo <= p.sequenceEnd)
-      rowTitle = page?.rdjb ? RDJB_TITLE_CODES[page.rdjb] ?? r.titleCode : r.titleCode
-    }
-    return rowTitle === title || rowTitle === null && r.rdjb.split(',').includes(({ innovative_sme: '1', specialized_sme: '2', little_giant: '3' } as Record<string, string>)[title]!)
-  })
 }

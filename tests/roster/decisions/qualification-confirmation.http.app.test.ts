@@ -14,6 +14,8 @@ const app = nativeAppAdapter({ dir, token, launch: ({ cwd, port }) => ({ args: [
 const client = new Client({ name: 'synthetic-qualification', version: '1' })
 let tools: Awaited<ReturnType<Client['listTools']>>
 let discovery: any
+const enterprise = app.db.insert(s.enterprise).values({ name: '合成迁入验收', nameNorm: '合成迁入验收', usccNorm: '91330211255994457P' }).returning().get()
+const source = submitNativePlatformQuery(app.db, { interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-11-16T00:00:00Z', status: 'success', rawResponse: '{}', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm!, nameRaw: enterprise.name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
 beforeAll(async () => {
  discovery = await readDevelopmentDiscovery()
  await app.start()
@@ -30,8 +32,6 @@ it('discovers and confirms source-bound qualification across real HTTP and MCP w
  }
  expect(JSON.stringify(discovery)).toContain('/api/roster/decision-lifecycle/qualification-preflight')
  expect(JSON.stringify(discovery)).toContain('/api/roster/decision-lifecycle/qualification-commit')
- const enterprise = app.db.insert(s.enterprise).values({ name: '合成迁入验收', nameNorm: '合成迁入验收', usccNorm: '91330211255994457P' }).returning().get()
- const source = submitNativePlatformQuery(app.db, { interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-11-16T00:00:00Z', status: 'success', rawResponse: '{}', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm!, nameRaw: enterprise.name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
  const qualification = { titleCode: 'specialized_sme', validFrom: '2025-07-22T00:00:00Z', validUntil: '2028-07-22T00:00:00Z', basis: '合成独立资格来源', publicationCheck: { status: 'not_found', scope: '合成公布范围' } }
  const command = { enterpriseId: enterprise.id, titleCode: 'specialized_sme', direction: 'extra_in_miit', action: 'replace', expectedCurrentId: null, idempotencyKey: 'app-confirm', actor: { type: 'agent', id: 'synthetic' }, basis: '合成核实', ruleVersion: 'manual', effectiveAt: '2026-11-16T00:00:00Z', decision: { status: 'confirmed_reason', reasonCode: 'moved_in', measureCode: 'record_moved_in', verificationStatus: 'confirmed', evidenceQueryId: source.queryId, evidenceRelationId: source.relationIds[0], movedIn: { city: '南通' }, currentQualification: qualification } }
  const invalid = await client.callTool({ name: 'preflight_qualification_decision', arguments: { ...command, unexpected: true } })

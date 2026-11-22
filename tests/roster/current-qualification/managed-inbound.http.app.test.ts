@@ -1,5 +1,6 @@
 import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
-import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
+import { syntheticRecognizedQuery } from '../fixtures/recognized-source'
+import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
 import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { schema as s } from '../../../db/client'
@@ -7,21 +8,45 @@ import { qualificationExportFixture } from '../current-export/fixtures/qualifica
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 
-// Process acceptance readiness: synthetic SQLite only; parent builds the exact candidate.
 const f = qualificationExportFixture()
 beforeAll(async () => {
  const discovery = await readDevelopmentDiscovery()
  expect(JSON.stringify(discovery)).toContain('/api/roster/decision-lifecycle/qualification-preflight')
- await f.start()
 }, 90000)
 afterAll(() => f.close())
 it('public source-bound own qualification reaches query detail filters and downloaded identities without formal history', async () => {
  const enterprise = f.db.insert(s.enterprise).values({ name:'合成迁入资格验收',nameNorm:'合成迁入资格验收',usccNorm:'91330211255994457P',city:'宁波市',district:'余姚市' }).returning().get()
  const source = submitNativePlatformQuery(f.db, { interface:'business_list',queryKey:enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:'2026-11-16T00:00:00Z',status:'success',rawResponse:'{}',relations:[{sequenceNo:1,enterpriseId:enterprise.id,usccRaw:enterprise.usccNorm!,nameRaw:enterprise.name,verificationStatus:'confirmed',matchBasis:'uscc'}] })
- const facts = (raw: Record<string, unknown> = {}) => submitSyntheticRecognizedCollection(f.db, { rdjb:'2',queriedAt:new Date(Date.now() + (++observation)*1000).toISOString(),rows:[{enterpriseId:null,raw:{id:'managed-source',qymc:'平台曾用名',tyshxydm:enterprise.usccNorm,rdjb:'2',rdtime:'2025-07-22',rddqrq:'2028-07-22',sfyx:'1',szsmc:'宁波市',...raw}}] })
  let observation = 0
- facts()
- const current = async () => fetch(f.url('/api/roster/current-enterprises?titleCode=specialized_sme')).then(r=>r.json())
+ const query = (raw: Record<string, unknown> = {}) => syntheticRecognizedQuery({ rdjb:'2',queriedAt:new Date(Date.now() + (++observation)*1000).toISOString(),rows:[{enterpriseId:null,raw:{id:'managed-source',qymc:'平台曾用名',tyshxydm:enterprise.usccNorm,rdjb:'2',rdtime:'2025-07-22',rddqrq:'2028-07-22',sfyx:'1',szsmc:'宁波市',...raw}}] })
+ submitNativePlatformQuery(f.db, query())
+ await f.start()
+ const client = createRosterImportClient({ baseUrl: f.url(''), token: f.token })
+ async function facts(raw: Record<string, unknown> = {}) {
+   const input = query(raw)
+   const request = {
+     idempotencyKey: 'managed-inbound-source-' + observation, sourceKind: 'alias_evidence' as const, sourceIdentity: 'managed-inbound',
+     payload: { platformQueries: [input] },
+   }
+   const receipt = await client.commit(request)
+   expect(receipt).toMatchObject({ status: 'committed', summary: { failed: 0 } })
+   if (receipt.status !== 'committed') throw new Error('The recognized collection was not committed')
+   const item = receipt.items.find(item => item.kind === 'platform_query')!
+   const id = item.ref.split(':')[1]
+   const [relationId] = item.detail?.relations as number[]
+   const path = '/api/platform/queries/' + id + '/evidence?field=relation&relationId=' + relationId
+   const evidence = await fetch(f.url(path))
+   expect(evidence.status, await evidence.clone().text()).toBe(200)
+   const encoded = await evidence.json()
+   expect(JSON.parse(Buffer.from(encoded.data, 'base64').toString('utf8'))).toMatchObject({
+     enterpriseId: null, matchBasis: 'none', verificationStatus: 'pending',
+   })
+ }
+ const current = async () => {
+  const response = await fetch(f.url('/api/roster/current-enterprises?titleCode=specialized_sme'))
+  expect(response.status, await response.clone().text()).toBe(200)
+  return response.json()
+ }
  expect((await current()).rows.map((r:any)=>r.uscc)).toEqual(['91330211255994457P'])
  const read = createCurrentQualificationAssessmentReader(f.db.$client)
  for (const [at, expected] of [
@@ -70,10 +95,10 @@ it('public source-bound own qualification reaches query detail filters and downl
  const partial = await fetch(f.url('/api/roster/current-enterprises?titleCode=specialized_sme&recognitionFrom=2025-07-22&recognitionTo=2025-07-22')).then(r=>r.json())
  expect(partial).toMatchObject({total:0,uncertainTotal:1,rows:[]})
  // Current content versions and source locality control qualification, not the withdrawn receipt.
- facts({szsmc:'南通市'})
+ await facts({szsmc:'南通市'})
  expect((await current()).rows).toEqual([])
- facts({sfyx:'0'})
+ await facts({sfyx:'0'})
  expect((await current()).rows).toEqual([])
- facts()
+ await facts()
  expect((await current()).rows.map((r:any)=>r.uscc)).toEqual(['91330211255994457P'])
 },60000)

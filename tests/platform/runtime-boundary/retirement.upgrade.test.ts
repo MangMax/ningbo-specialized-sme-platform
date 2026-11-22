@@ -11,7 +11,7 @@ import { upgradeTitleCycleDisposition } from '../../../db/title-cycle-dispositio
 import { retirePlatformModel } from '../../../upgrade/retire-platform-model'
 import { upgradeRosterFileClassification } from '../../../upgrade/roster-file-classification'
 import { createHash } from 'node:crypto'
-import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster-sqlite'
 
 const historicalTables = [
   'platform_query_legacy_provenance',

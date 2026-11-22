@@ -54,7 +54,7 @@ it('rejects typed row count and projection mismatches without relaxing raw respo
 })
 
 it('reuses complete identical collections without adding queries relations observations or versions and advances last collection time', async()=>{
- const {reuseCollectedPlatformResult}=await import('../../../layers/sme-roster/server/utils/platform-collection-reuse')
+ const {reuseCollectedPlatformResult}=await import('../../../layers/sme-roster/server/utils/platform-collection-reuse-sqlite')
  const directory=mkdtempSync(join(tmpdir(),'collection-reuse-'));directories.push(directory)
  const db=initializeDb({create:true,dbPath:join(directory,'fixture.sqlite')});stores.push(db)
  const enterprise=db.$client.prepare('insert into enterprise(name,name_norm,uscc_norm) values(?,?,?) returning id').get('fixture','fixture','91330200123456789X') as {id:number}

@@ -1,12 +1,9 @@
 import { eq } from 'drizzle-orm'
+import { usePostgresDirectoryDb } from '../../../../../../../db/postgresql/client'
 import { postgresLeadListExport } from '../../../../../../../db/postgresql/lead-tables'
-import { leadListExport } from '../../../../../schema'
-import { usePostgresLeadDb } from '../../../../utils/postgres-versions'
-import { useDb } from '@db'
 import { isJobId } from '#core/lib/job'
 import { requireTaskCenterAccess } from '#core/server/utils/task-center-access'
-import { getJob } from '#core/server/utils/job-store'
-import { getPostgresJob } from '#core/server/utils/job-store-postgres'
+import { getPostgresJob } from '#core/server/public'
 import { LEAD_LIST_EXPORT } from '../../../../../lib/export-contract'
 
 defineRouteMeta({ openAPI: {
@@ -18,16 +15,12 @@ export default defineEventHandler(async event => {
   requireTaskCenterAccess(event)
   const id = getRouterParam(event, 'jobId')
   if (!isJobId(id)) throw createError({ statusCode: 400, message: '任务编号有误' })
-  const pg = usePostgresLeadDb()
-  const sqlite = pg ? undefined : useDb()
-  const task = pg ? (await getPostgresJob(pg, id))?.row : getJob(sqlite!, id)
+  const db = usePostgresDirectoryDb()
+  const task = (await getPostgresJob(db, id))?.row
   if (task?.kind !== LEAD_LIST_EXPORT) throw createError({ statusCode: 404, message: '名单导出任务不存在' })
   if (task.state !== 'done') throw createError({ statusCode: 409, message: '名单导出尚未完成' })
-  const artifact = pg
-    ? (await pg.select({ versionId: postgresLeadListExport.versionId, content: postgresLeadListExport.content })
-        .from(postgresLeadListExport).where(eq(postgresLeadListExport.jobId, id)))[0]
-    : sqlite!.select({ versionId: leadListExport.versionId, content: leadListExport.content })
-        .from(leadListExport).where(eq(leadListExport.jobId, id)).get()
+  const [artifact] = await db.select({ versionId: postgresLeadListExport.versionId, content: postgresLeadListExport.content })
+    .from(postgresLeadListExport).where(eq(postgresLeadListExport.jobId, id))
   if (!artifact || artifact.versionId !== task.params.versionId) throw createError({ statusCode: 404, message: '名单导出文件不存在' })
   setHeader(event, 'Content-Type', 'text/csv; charset=utf-8')
   setHeader(event, 'Content-Disposition', `attachment; filename="lead-list-${artifact.versionId}.csv"`)

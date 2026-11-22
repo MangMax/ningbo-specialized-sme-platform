@@ -14,20 +14,21 @@ import {
 import { platformQueryTitleScope } from '../../../../db/postgresql/platform-archive-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import { sourceDocument } from '../../../../db/postgresql/official-evidence-tables'
-import * as schema from '../../../../db/schema'
+import type * as schema from '../../../../db/schema'
 import { fileNameOf } from '../../../core/lib/preview'
 import type { StoredFileContentIdentity } from '../../../core/server/utils/file-content-identity'
 import type { RecordComparisonInput } from '../../lib/roster/record-comparison'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
-import { postgresOfficialSourceDirectory } from './official-source-directory'
+import { postgresOfficialSourceDirectory } from './official-source-directory-postgres'
 import { readPostgresComparisonIdentities } from './record-comparison-catalog-postgres'
 import { readPostgresObservationComparisonFacts } from './record-correspondence-target-postgres'
 import { readPostgresCorrespondenceSelection } from './record-correspondence-postgres'
 import { readPostgresFingerprintQueries } from './postgres-platform-fingerprint'
-import { compareRecordInputs, comparisonBefore, projectLegacyComparisonImpact, validatedComparisonInput, type ComparisonRead, type SelectedRecordComparison, type VerifiedComparisonEvidence } from './record-comparison'
+import { compareRecordInputs, comparisonBefore, projectLegacyComparisonImpact, validatedComparisonInput, type ComparisonRead, type SelectedRecordComparison, type VerifiedComparisonEvidence } from './record-comparison-model'
 import { readPostgresComparisonProofHead, readPostgresCurrentProofSource, readPostgresOfficialProofSource } from './comparison-scope-proof-postgres'
-import { readPostgresPlatformBusinessMetadata } from './platform-business-record-read'
-import { ProofSourceError, type CurrentEvidence, type OfficialEvidence } from './comparison-scope-proof-source'
+import { readPostgresPlatformBusinessMetadata } from './platform-business-record-postgres'
+import { type CurrentEvidence, type OfficialEvidence } from './comparison-scope-proof-source-projection'
+import { ProofSourceError } from './comparison-scope-proof-source-model'
 
 type Reader = Pick<NodePgDatabase, 'execute' | 'select' | 'selectDistinct' | '$with' | 'with'>
 type QueryFacts = SelectedRecordComparison['queries'][number]['comparisonFacts']
@@ -57,16 +58,16 @@ async function readDocuments(db: Reader, ids: number[]): Promise<SelectedRecordC
 async function readQueryFacts(db: Reader, ids: number[]): Promise<QueryFacts[]> {
   const q = platformLegacyQueryAlias, c = alias(platformCollection, 'c')
   const rows = await db.select({
-    id: q.oldId, collection: sql<QueryFacts['collection']>`${postgresRosterRow(schema.platformCollection,'c')}`,
+    id: q.oldId, collection: sql<QueryFacts['collection']>`${postgresRosterRow(platformCollection,'c')}`,
   }).from(q).innerJoin(c, eq(c.id, q.collectionId)).where(eq(q.oldId, sql`ANY(${numbers(ids)})`)).orderBy(q.oldId)
   const coordinates = numbers(rows.map(row => row.collection.id))
   const page = alias(platformCollectionPage, 'p'), remaining = alias(platformCollectionUnfinished, 'p')
   const pages = Map.groupBy((await db.select({
-    row: sql<typeof schema.platformCollectionPage.$inferSelect>`${postgresRosterRow(schema.platformCollectionPage, 'p')}`,
+    row: sql<typeof schema.platformCollectionPage.$inferSelect>`${postgresRosterRow(platformCollectionPage, 'p')}`,
   }).from(page).where(eq(page.collectionId, sql`ANY(${coordinates})`))
     .orderBy(page.collectionId, page.ordinal)).map(({ row }) => row), row => row.collectionId)
   const unfinished = Map.groupBy((await db.select({
-    row: sql<typeof schema.platformCollectionUnfinished.$inferSelect>`${postgresRosterRow(schema.platformCollectionUnfinished, 'p')}`,
+    row: sql<typeof schema.platformCollectionUnfinished.$inferSelect>`${postgresRosterRow(platformCollectionUnfinished, 'p')}`,
   }).from(remaining).where(eq(remaining.collectionId, sql`ANY(${coordinates})`))
     .orderBy(remaining.collectionId, remaining.ordinal)).map(({ row }) => row), row => row.collectionId)
   const condition = platformCollectionCondition
@@ -123,7 +124,7 @@ async function selectComparison(db: Reader, input: RecordComparisonInput, verifi
   const facts = await readQueryFacts(db, input.queryIds)
   const batch = alias(platformExportBatch, 'p')
   const batches = (await db.select({
-    row: sql<typeof schema.platformExportBatch.$inferSelect>`${postgresRosterRow(schema.platformExportBatch, 'p')}`,
+    row: sql<typeof schema.platformExportBatch.$inferSelect>`${postgresRosterRow(platformExportBatch, 'p')}`,
   }).from(batch).where(eq(batch.id, sql`ANY(${numbers(input.exportBatchIds)})`)).orderBy(batch.id))
     .map(({ row }) => row).filter(row => row.importStatus === 'imported' && comparisonBefore(row.collectedOn, input.asOf))
   const documents = (await readDocuments(db, input.officialSourceDocumentIds)).filter(row => comparisonBefore(row.issueDate, input.asOf))
@@ -144,7 +145,7 @@ async function selectComparison(db: Reader, input: RecordComparisonInput, verifi
   const batchById = new Map(batches.map(row => [row.id, row]))
   const exportRow = alias(platformExportRow, 'p')
   const exports = (await db.select({
-    row: sql<typeof schema.platformExportRow.$inferSelect>`${postgresRosterRow(schema.platformExportRow, 'p')}`,
+    row: sql<typeof schema.platformExportRow.$inferSelect>`${postgresRosterRow(platformExportRow, 'p')}`,
   }).from(exportRow).where(eq(exportRow.batchId, sql`ANY(${numbers(input.exportBatchIds)})`)).orderBy(exportRow.id))
     .map(({ row }) => ({ row: { ...row, rawFields: null }, batch: batchById.get(row.batchId)! }))
   const edge = recordCorrespondence
@@ -169,8 +170,9 @@ type FormalEvent = ReturnType<typeof import('./record-comparison-formal').iterat
 
 async function readFormalEvents(db: Reader, input: RecordComparisonInput, request: FormalStep) {
   const e = recordEvent, r = record, v = recordEvidence
-  const chosen = db.$with('selected_events').as(db.selectDistinct({ id: sql<number>`${v.recordEventId}`.as('id') })
+  const chosen = db.$with('selected_events').as(db.selectDistinct({ id: sql<number>`${v.recordEventId}`.as('event_id') })
     .from(v).where(eq(v.sourceFile, sql`ANY(${sql.param(request.paths)}::text[])`)))
+  const chosenId = sql<number>`${sql.identifier('selected_events')}.${sql.identifier('event_id')}`
   const later = db.select({ id: r.id }).from(sql`json_array_elements(${JSON.stringify(request.laterOwners)}::json) AS l(target)`)
     .innerJoin(r, and(eq(r.enterpriseId, sql`(target->>'enterpriseId')::bigint`), eq(r.titleCode, sql`target->>'titleCode'`)))
   const relevant = db.$with('relevant_records').as(db.select({ id: r.id }).from(r)
@@ -182,10 +184,10 @@ async function readFormalEvents(db: Reader, input: RecordComparisonInput, reques
       sortKey: e.sortKey, reviewOutcome: e.reviewOutcome, decidedYear: e.decidedYear, revision: e.revision,
     },
     record: { id: r.id, enterpriseId: r.enterpriseId, titleCode: r.titleCode, source: r.source, usccRaw: r.usccRaw, nameRaw: r.nameRaw },
-    uscc: enterprise.usccNorm, inSelectedSource: isNotNull(chosen.id).mapWith(Boolean),
+    uscc: enterprise.usccNorm, inSelectedSource: isNotNull(chosenId).mapWith(Boolean),
   }).from(e).innerJoin(r, eq(r.id, e.recordId)).leftJoin(enterprise, eq(enterprise.id, r.enterpriseId))
-    .leftJoin(chosen, eq(e.id, chosen.id))
-    .where(and(or(isNotNull(chosen.id), inArray(r.id, db.select({ id: relevant.id }).from(relevant))),
+    .leftJoin(chosen, eq(e.id, chosenId))
+    .where(and(or(isNotNull(chosenId), inArray(r.id, db.select({ id: relevant.id }).from(relevant))),
       eq(r.source, 'jxj'), inArray(e.eventType, ['award', 'review']))).orderBy(e.id) satisfies PromiseLike<FormalEvent[]>
 }
 
@@ -206,7 +208,7 @@ async function runComparison(tx: Reader, source: SelectedRecordComparison, verif
       else {
         const evidence = alias(recordEvidence, 'p'), f = storedFile
         const rows = await tx.select({
-          evidence: sql<typeof schema.recordEvidence.$inferSelect>`${postgresRosterRow(schema.recordEvidence,'p')}`,
+          evidence: sql<typeof schema.recordEvidence.$inferSelect>`${postgresRosterRow(recordEvidence,'p')}`,
           registered: sql<StoredFileContentIdentity | null>`CASE WHEN ${f.id} IS NOT NULL THEN json_build_object(
             'fileId',${f.id},'relPath',${f.relPath},'bytes',${f.bytes},'sha256',${f.sha256}) END`,
         }).from(evidence).leftJoin(f, eq(f.relPath, evidence.sourceFile))

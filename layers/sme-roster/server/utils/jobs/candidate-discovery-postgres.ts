@@ -10,19 +10,18 @@ import {
 } from '../../../../../db/postgresql/platform-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { LogContext } from '../../../../core/lib/logging'
+import { ANNUAL_CORRESPONDENCE_KIND } from '../../../lib/roster/annual-correspondence'
 import { type PostgresJobContext, stagePostgresJob } from '../../../../core/server/utils/job-runner-postgres'
 import { getPostgresJob, reopenPostgresJob } from '../../../../core/server/utils/job-store-postgres'
 import { startPostgresJobs } from '../../../../core/server/utils/postgres-jobs'
-import { readPostgresCandidateSourceBytes } from '../candidate-target-sources'
-import { EVENT_ARCHIVE_RULE_VERSION, normalizedUscc } from '../event-archive-discovery'
+import { readPostgresCandidateSourceBytes } from '../candidate-source-bytes-postgres'
+import { EVENT_ARCHIVE_RULE_VERSION, normalizedUscc } from '../event-archive-discovery-model'
 import { importPostgresReceiptRedactor } from '../import-receipt-redaction'
 import { discoverPostgresEventArchives } from '../record-correspondence-candidates-postgres'
 import { commitPostgresCorrespondenceDecision, runPostgresCorrespondenceTransaction } from '../record-correspondence-write-postgres'
 import { stagePostgresAnnualCorrespondence } from './annual-correspondence-postgres'
-import {
-  CANDIDATE_JOB_KIND, candidateDiscoverySpec, candidateJobParams, candidateResult, candidateRequest,
-  candidateSourceLimitError, candidateCompletion, updateCounts, type CandidateJobResult, type CandidateJobParams,
-} from './candidate-discovery'
+import { postgresCandidateDiscoverySpec } from './candidate-discovery-postgres-spec'
+import { CANDIDATE_JOB_KIND, candidateJobParams, candidateResult, candidateRequest, candidateSourceLimitError, candidateCompletion, updateCounts, type CandidateJobResult, type CandidateJobParams } from './candidate-discovery-contract'
 
 const readOnly = { isolationLevel: 'repeatable read', accessMode: 'read only' } as const
 const fail = (message: string, statusCode = 400): never => { throw Object.assign(new Error(message), { statusCode }) }
@@ -143,19 +142,26 @@ export async function runPostgresCandidateDiscovery(ctx: PostgresJobContext, raw
     const identity = createHash('sha256').update(JSON.stringify({
       archiveGeneration, candidateJobId: ctx.jobId, throughEventId: result.throughEventId, eventIds,
     })).digest('hex')
-    const continuation = await runPostgresCorrespondenceTransaction(ctx.db, async tx => {
-      await stagePostgresAnnualCorrespondence(tx, { clientRequestId: 'archive-annual:' + identity, eventIds })
+    const continuation = await ctx.trackSubmissions(remember => runPostgresCorrespondenceTransaction(ctx.db, async tx => {
+      remember([])
+      const queued: { id: string; kind: string }[] = []
+      await stagePostgresAnnualCorrespondence(tx, { clientRequestId: 'archive-annual:' + identity, eventIds }, id => {
+        queued.push({ id, kind: ANNUAL_CORRESPONDENCE_KIND })
+      })
       if (!result.nextAfterEventId || result.counts.failed) {
         await ctx.checkpoint(result, tx)
+        remember(queued)
         return undefined
       }
       const paramsForNext = candidateJobParams.parse({ queryId: params.queryId, afterEventId: result.nextAfterEventId,
         throughEventId: result.throughEventId, archiveGeneration,
         clientRequestId: ['archive', params.queryId, archiveGeneration, result.nextAfterEventId, result.throughEventId].join(':') })
-      const { row } = await stagePostgresJob(tx, { kind: CANDIDATE_JOB_KIND, params: paramsForNext })
+      const { row, inserted } = await stagePostgresJob(tx, { kind: CANDIDATE_JOB_KIND, params: paramsForNext })
       await ctx.checkpoint({ ...result, continuationJobId: row.id }, tx)
+      if (inserted) queued.push(row)
+      remember(queued)
       return row.id
-    })
+    }))
     if (continuation) result.continuationJobId = continuation
   }
   return candidateCompletion(result, await ctx.cancelled())
@@ -167,7 +173,7 @@ async function checkPostgresCandidateSourceBudget(db: NodePgDatabase, relationId
 }
 
 export async function submitPostgresCandidateDiscovery(input: unknown, filesDir: string, logContext?: LogContext) {
-  const parsed = candidateDiscoverySpec.parse(input as Record<string, unknown>)
+  const parsed = postgresCandidateDiscoverySpec.parse(input as Record<string, unknown>)
   if (!parsed.ok) return fail(parsed.message)
   const runtime = startPostgresJobs(filesDir)
   if (!runtime) return fail('PostgreSQL 任务中心未启用', 503)

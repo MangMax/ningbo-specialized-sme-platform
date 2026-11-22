@@ -1,8 +1,6 @@
 import { setPostgresEnterpriseRemoved } from '../../../../utils/enterprise-directory-postgres-write'
-import { useDb } from '@db'
 import { z } from 'zod'
 import { requireApiToken } from '../../../../utils/api-guard'
-import { setEnterpriseRemoved } from '../../../../utils/enterprise-kernel'
 import { directoryInput, directoryResult, usePostgresDirectoryWriteDb, enterpriseId } from '../../../../utils/enterprise-directory-route'
 
 defineRouteMeta({ openAPI: {
@@ -21,6 +19,6 @@ export default defineEventHandler(async event => {
   const body = directoryInput(membership, await readBody(event))
   return directoryResult(() => {
     const db = usePostgresDirectoryWriteDb()
-    return db ? setPostgresEnterpriseRemoved(db, id, body.expectedRevision, body.removedReason) : setEnterpriseRemoved(useDb(), id, body.expectedRevision, body.removedReason)
+    return setPostgresEnterpriseRemoved(db, id, body.expectedRevision, body.removedReason)
   })
 })

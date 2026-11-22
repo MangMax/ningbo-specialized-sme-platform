@@ -2,7 +2,9 @@ import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { createHash } from 'node:crypto'
-import { writeFileSync, renameSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { dirname, join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -14,6 +16,7 @@ import type { CurrentQualificationSnapshot } from '../../../layers/sme-roster/li
 import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 let fixture: ReturnType<typeof qualificationFileFixture> | undefined
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let child: ReturnType<typeof spawnOwnedChild> | undefined
 let client: Client | undefined
 let base = '', output = '', year = 0
@@ -32,11 +35,12 @@ beforeAll(async () => {
   f.platform(eligibleId, 'failed')
   f.recognized(pendingId, pending.events[0]!.id, { rddqrq: '2028-06-01', whpc: '2024-2' })
   const cwd = resolve(import.meta.dirname, '../../..'), root = dirname(f.sqlite.name)
-  writeFileSync(join(root, 'empty.env'), '')
+  installLeadListSchema(f.sqlite)
+  postgres = await postgresRuntimeFixture({ dir: root, sourcePath: f.sqlite.name })
   const port = await reserveLoopbackPort()
   base = `http://127.0.0.1:${port}`
   child = spawnCompiledApp(port, {
-    cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(root, 'nuxt'), NUXT_LOG_DIR: join(root, 'logs'), NUXT_OCR_TOKEN: 'synthetic408-ocr-token', MIIT_COOKIE: 'synthetic408-cookie', NUXT_DB_PATH: f.sqlite.name, NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_API_TOKEN: 'synthetic408-http-token', NUXT_MCP_TOKEN: 'synthetic408-mcp-token' },
+    cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...postgres.env, NUXT_BUILD_DIR: join(root, 'nuxt'), NUXT_LOG_DIR: join(root, 'logs'), NUXT_OCR_TOKEN: 'synthetic408-ocr-token', MIIT_COOKIE: 'synthetic408-cookie', NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'), NUXT_API_TOKEN: 'synthetic408-http-token', NUXT_MCP_TOKEN: 'synthetic408-mcp-token' },
   })
   for (const stream of [child.stdout, child.stderr]) stream?.on('data', data => { output = (output + String(data)).slice(-12000) })
   try {
@@ -49,28 +53,22 @@ beforeAll(async () => {
     client = undefined
     try { if (child) await stopOwnedChild(child) } catch (stopError) { failures.push(stopError) }
     child = undefined
-    try { f.close() } catch (dbError) { failures.push(dbError) }
+    try { postgres?.close(); postgres = undefined; f.close() } catch (dbError) { failures.push(dbError) }
     fixture = undefined
     throw new AggregateError(failures, 'Synthetic408 Nuxt startup failed: ' + output)
   }
 }, 90000)
 afterAll(async () => {
   try { await client?.close() } finally {
-    try { if (child) await stopOwnedChild(child) } finally { fixture?.close() }
+    try { if (child) await stopOwnedChild(child) } finally { postgres?.close(); postgres = undefined; fixture?.close() }
   }
 })
 
 function databaseContent() {
-  const db = fixture!.sqlite
-  // All main database DDL and table content, including jobs/receipts/decisions,
-  // not merely result rows. These tests submit no work or business writes.
-  const schema = db.prepare("select type,name,tbl_name,sql from sqlite_master order by type,name").all()
-  const tables = db.prepare("select name from sqlite_master where type='table' order by name").all() as { name: string }[]
-  const rows = tables.map(({ name }) => {
-    const quoted = '"' + name.replaceAll('"', '""') + '"'
-    return [name, db.prepare(`select * from ${quoted}`).all().map(row => JSON.stringify(row)).sort()]
-  })
-  return hash([schema, rows])
+  const bytes = execFileSync(join(process.env.ROSTER_TEST_POSTGRES_BIN!, 'pg_dump'), [
+    '--restrict-key=StableFixtureKey', '--no-owner', '--no-privileges', '--schema=business', postgres!.url,
+  ])
+  return createHash('sha256').update(bytes).digest('hex')
 }
 function verifySnapshot(snapshot: CurrentQualificationSnapshot, result: CurrentQualifiedResult) {
   expect(snapshot.asOf).toBe(result.snapshotStartedAt)
@@ -85,7 +83,7 @@ async function http(query: Record<string, string> = {}) {
   const before = databaseContent(), started = Date.now()
   const response = await fetch(base + '/api/roster/current-enterprises?' + new URLSearchParams({ titleCode: 'innovative_sme', ...query }))
   const body: CurrentQualifiedResult = await response.json()
-  expect(response.status).toBe(200)
+  expect(response.status, JSON.stringify(body)).toBe(200)
   expect(response.headers.get('cache-control')).toContain('no-store')
   expect(Date.parse(body.snapshotStartedAt)).toBeGreaterThanOrEqual(started)
   expect(Date.parse(body.snapshotStartedAt)).toBeLessThanOrEqual(Date.now())
@@ -200,15 +198,13 @@ it("real_http_400_and_sdk_original_argument_validation_keep_bounds", async () =>
 })
 
 it("real_executor_unavailable_is_503_then_retry_recovers_not_zero", async () => {
-  const before = databaseContent(), path = fixture!.sqlite.name, unavailable = path + '.temporarily-unavailable'
-  // Only this owned synthetic file is renamed, with no writes while absent.
-  // The actual native executor realpath check must fail; nothing is mocked.
-  renameSync(path, unavailable)
+  const before = databaseContent()
+  postgres!.psql(['-c', 'ALTER TABLE business.record RENAME TO record_temporarily_unavailable'])
   try {
     const response = await fetch(base + '/api/roster/current-enterprises?titleCode=innovative_sme')
     expect(response.status).toBe(503)
     expect(await response.text()).not.toContain('"rows":[]')
-  } finally { renameSync(unavailable, path) }
+  } finally { postgres!.psql(['-c', 'ALTER TABLE business.record_temporarily_unavailable RENAME TO record']) }
   expect((await http()).rows.map(row => row.enterpriseId)).toEqual([eligibleId])
   expect(databaseContent()).toBe(before)
 })

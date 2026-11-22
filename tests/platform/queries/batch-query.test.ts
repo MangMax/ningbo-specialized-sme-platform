@@ -5,8 +5,13 @@ import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
 import { updateCredential } from '../../../layers/core/server/utils/credential-state'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { handleSqlitePlatformBatchRequest } from '../../../layers/sme-roster/server/utils/platform-batch-http-sqlite'
 import { handlePlatformBatchRequest } from '../../../layers/sme-roster/server/utils/platform-batch-http'
 import { MAX_BATCH_ATTEMPTS } from '../../../layers/sme-roster/lib/platform/batch-query'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
 
 const dir = mkdtempSync(join(tmpdir(), 'platform-batch-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'test.sqlite') })
@@ -14,7 +19,7 @@ const cookie = 'session=synthetic-batch-secret'
 const token = 'synthetic-task-token'
 const upstream = vi.fn()
 const uscc = '91330211255994457P'
-const invoke = (action: 'submit' | 'status' | 'item' | 'retry', body?: unknown, batchId?: string, itemId?: string, authorized = true) => handlePlatformBatchRequest(action, { body, batchId, itemId, headers: authorized ? { authorization: `Bearer ${token}` } : {} }, { db, apiToken: token, filesDir: dir })
+const invoke = (action: 'submit' | 'status' | 'item' | 'retry', body?: unknown, batchId?: string, itemId?: string, authorized = true) => handleSqlitePlatformBatchRequest(action, { body, batchId, itemId, headers: authorized ? { authorization: `Bearer ${token}` } : {} }, { db, apiToken: token, filesDir: dir })
 function response(grid: string, rows: Record<string, string>[], page = 1, total = rows.length) {
   // Recognized queries require size metadata; legacy fixtures leave it optional.
   return { ok: true, status: 200, text: async () => JSON.stringify({ zrarData: { grid: { [grid]: { pageSet: rows, page, ...(grid === 'businessGrid' ? { pageSize: 1 } : {}), maxCount: total, maxPage: Math.max(1, total) } } } }) }
@@ -95,14 +100,14 @@ it('running status checkpoints completed pages and restart reports failed withou
     const restartPath = join(dir, 'restart.sqlite')
     writeFileSync(restartPath, db.$client.serialize())
     const restarted = initializeDb({ create: true,  dbPath: restartPath })
-    const restored = await handlePlatformBatchRequest('status', { batchId: receipt.batchId }, { db: restarted, filesDir: dir })
+    const restored = await handleSqlitePlatformBatchRequest('status', { batchId: receipt.batchId }, { db: restarted, filesDir: dir })
     expect(restored.body).toMatchObject({ state: 'failed', completeness: 'partial' })
     expect((restored.body as any).items[0]).toEqual(running.items[0])
     expect((restored.body as any).error).toContain('重启')
     release(); await whenIdle()
-    const retried = await handlePlatformBatchRequest('retry', { batchId: receipt.batchId, body: { itemIds: receipt.itemIds }, headers: { authorization: `Bearer ${token}` } }, { db: restarted, apiToken: token, filesDir: dir })
+    const retried = await handleSqlitePlatformBatchRequest('retry', { batchId: receipt.batchId, body: { itemIds: receipt.itemIds }, headers: { authorization: `Bearer ${token}` } }, { db: restarted, apiToken: token, filesDir: dir })
     expect(retried.status).toBe(202); await whenIdle()
-    const recovered = (await handlePlatformBatchRequest('status', { batchId: receipt.batchId }, { db: restarted, filesDir: dir })).body as any
+    const recovered = (await handleSqlitePlatformBatchRequest('status', { batchId: receipt.batchId }, { db: restarted, filesDir: dir })).body as any
     expect(recovered).toMatchObject({ state: 'done', completeness: 'complete', attempt: 2 })
     expect(recovered.items[0].segments[0]).toEqual(running.items[0].segments[0])
     expect(recovered.items[0].segments[1].pages.map((page: any) => page.page)).toEqual([2])
@@ -277,35 +282,53 @@ it('all batches singles and legacy retry backoff share the process-wide maximum 
   } finally { releaseBackoff(); await legacy }
 })
 it('MCP batch submit status item and retry return schema-valid equivalent REST business results', async () => {
-  vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-  const submit = (await import('../../../layers/sme-roster/server/mcp/tools/submit_platform_batch')).default as any
-  const status = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_batch')).default as any
-  const item = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_batch_item')).default as any
-  const retry = (await import('../../../layers/sme-roster/server/mcp/tools/retry_platform_batch')).default as any
-  const { z } = await import('zod')
-  vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: dir }))
-  let failing = true
-  upstream.mockImplementation(async (_url: string, init: any) => {
-    const n = Number(new URLSearchParams(init.body).get('pageNum'))
-    return failing && n === 2 ? { ok: false, status: 503, text: async () => '' } : response('applyGrid', [{ qymc: '合成多关系', relation: String(n), tyshxydm: uscc }], n, 2)
-  })
-  const wire = await submit.handler({ items: [{ query: { source: 'queryList', name: '合成', pageSize: 1 } }] })
-  const receipt = wire.structuredContent
-  expect(JSON.parse(wire.content[0].text)).toEqual(receipt)
-  expect(z.object(submit.outputSchema).safeParse(receipt).success).toBe(true)
-  expect(submit.enabled({ context: { mcpAuth: { writeAuthorized: false } } })).toBe(false)
-  expect(retry.enabled({ context: { mcpAuth: { writeAuthorized: true } } })).toBe(true)
-  await whenIdle()
-  const a = (await status.handler({ batchId: receipt.batchId })).structuredContent
-  const b = (await invoke('status', undefined, receipt.batchId)).body
-  expect(a).toEqual(b)
-  expect(z.object(status.outputSchema).safeParse(a).success).toBe(true)
-  const individual = (await item.handler({ batchId: receipt.batchId, itemId: receipt.itemIds[0] })).structuredContent
-  expect(individual).toEqual((await invoke('item', undefined, receipt.batchId, receipt.itemIds[0])).body)
-  failing = false
-  await retry.handler({ batchId: receipt.batchId, itemIds: receipt.itemIds }); await whenIdle()
-  expect((await status.handler({ batchId: receipt.batchId })).structuredContent).toMatchObject({ completeness: 'complete', attempt: 2 })
-})
+  const postgres = await postgresRuntimeFixture({ dir })
+  const priorUrl = process.env.NUXT_POSTGRES_DIRECTORY_URL
+  const priorReadonly = process.env.NUXT_DB_READONLY
+  process.env.NUXT_POSTGRES_DIRECTORY_URL = postgres.url
+  process.env.NUXT_DB_READONLY = '0'
+  const request = (action: 'status' | 'item', batchId: string, itemId?: string) =>
+    handlePlatformBatchRequest(action, { batchId, itemId }, { apiToken: token, filesDir: dir })
+  try {
+    await updatePostgresCredentialState(usePostgresDirectoryDb(), { 'sme-roster.miitCookie': cookie })
+    vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
+    const submit = (await import('../../../layers/sme-roster/server/mcp/tools/submit_platform_batch')).default as any
+    const status = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_batch')).default as any
+    const item = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_batch_item')).default as any
+    const retry = (await import('../../../layers/sme-roster/server/mcp/tools/retry_platform_batch')).default as any
+    const { z } = await import('zod')
+    vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: dir }))
+    let failing = true
+    upstream.mockImplementation(async (_url: string, init: any) => {
+      const n = Number(new URLSearchParams(init.body).get('pageNum'))
+      return failing && n === 2 ? { ok: false, status: 503, text: async () => '' } : response('applyGrid', [{ qymc: '合成多关系', relation: String(n), tyshxydm: uscc }], n, 2)
+    })
+    const wire = await submit.handler({ items: [{ query: { source: 'queryList', name: '合成', pageSize: 1 } }] })
+    const receipt = wire.structuredContent
+    expect(JSON.parse(wire.content[0].text)).toEqual(receipt)
+    expect(z.object(submit.outputSchema).safeParse(receipt).success).toBe(true)
+    expect(submit.enabled({ context: { mcpAuth: { writeAuthorized: false } } })).toBe(false)
+    expect(retry.enabled({ context: { mcpAuth: { writeAuthorized: true } } })).toBe(true)
+    await expect.poll(async () => (await status.handler({ batchId: receipt.batchId })).structuredContent.state).toBe('failed')
+    const a = (await status.handler({ batchId: receipt.batchId })).structuredContent
+    const b = (await request('status', receipt.batchId)).body
+    expect(a).toEqual(b)
+    expect(z.object(status.outputSchema).safeParse(a).success).toBe(true)
+    const individual = (await item.handler({ batchId: receipt.batchId, itemId: receipt.itemIds[0] })).structuredContent
+    expect(individual).toEqual((await request('item', receipt.batchId, receipt.itemIds[0])).body)
+    failing = false
+    await retry.handler({ batchId: receipt.batchId, itemIds: receipt.itemIds })
+    await expect.poll(async () => (await status.handler({ batchId: receipt.batchId })).structuredContent).toMatchObject({ completeness: 'complete', attempt: 2 })
+  } finally {
+    await stopPostgresJobs()
+    await closePostgresDirectoryDb()
+    if (priorUrl === undefined) delete process.env.NUXT_POSTGRES_DIRECTORY_URL
+    else process.env.NUXT_POSTGRES_DIRECTORY_URL = priorUrl
+    if (priorReadonly === undefined) delete process.env.NUXT_DB_READONLY
+    else process.env.NUXT_DB_READONLY = priorReadonly
+    postgres.close()
+  }
+}, 60_000)
 it('credential echoes in otherwise valid query conditions are rejected before any task parameter is persisted', async () => {
   const before = db.$client.prepare('SELECT count(*) AS n FROM job').get()
   const response = await invoke('submit', { items: [{ query: { source: 'queryList', name: `合成${cookie}` } }] })

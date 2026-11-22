@@ -1,1 +1,1 @@
-export { canonicalEnterpriseId, currentEnterpriseIdentity, hasEnterpriseMergeIdentity } from '../../../core/server/public'
+export { canonicalEnterpriseId, currentEnterpriseIdentity, hasEnterpriseMergeIdentity } from '../../../core/server/public-sqlite'

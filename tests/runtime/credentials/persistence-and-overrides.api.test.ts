@@ -1,3 +1,4 @@
+import { sqliteCredentialStorage, type CredentialContext } from '../../../layers/core/server/utils/credential-state'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -6,8 +7,13 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterEach, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { handleCredentialsRequest } from '../../../layers/core/server/utils/credentials-http'
+import { handleCredentialsRequest as handle } from '../../../layers/core/server/utils/credentials-http'
 import { startHttpFixture, type HttpFixture } from '../../support/http'
+
+const handleCredentialsRequest = (
+  action: Parameters<typeof handle>[0], request: Parameters<typeof handle>[1], ctx: CredentialContext, revealKey?: string,
+) => handle(action, request, ctx, sqliteCredentialStorage(ctx), revealKey)
+
 let dir: string
 let db: ReturnType<typeof useDb>
 let server: HttpFixture

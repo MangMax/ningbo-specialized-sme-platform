@@ -97,7 +97,7 @@ export interface PlatformQueryOptions {
   sleep?: (ms: number) => Promise<void>
   /** 查询时点取值;默认当前时间。测试注入以固定 `queried_at`。 */
   now?: () => string
-  shouldCancel?: () => boolean
+  shouldCancel?: () => boolean | Promise<boolean>
   maxRequests?: number
   maxRows?: number
   maxDurationMs?: number
@@ -199,7 +199,7 @@ async function postWithoutBudget(
       if (source) appLog({ module: 'sme-roster', source: 'platform', operation: platformOperation(source, 'retry', body.rdjb ?? null), outcome: 'started', counts: { done: attempt },
         ...(Number.isSafeInteger(Number(body.pageNum)) && Number(body.pageNum) > 0 ? { page: Number(body.pageNum) } : {}) }, logContext)
     }
-    if (options.shouldCancel?.()) throw new Error('平台查询已取消。')
+    if (await options.shouldCancel?.()) throw new Error('平台查询已取消。')
     if (options.deadlineMs != null && Date.now() >= options.deadlineMs) throw new DOMException('平台查询超时。', 'TimeoutError')
     try {
       const response = await fetchImpl(new URL(path, base).toString(), {
@@ -356,7 +356,7 @@ export async function queryPlatformSlots(
       const pageTime = options.now?.() ?? new Date().toISOString()
       try {
         if (credentialError) throw new Error('平台凭据不可用，请检查凭据来源。')
-        if (options.shouldCancel?.()) throw new Error('平台查询已取消。')
+        if (await options.shouldCancel?.()) throw new Error('平台查询已取消。')
         if (Date.now() >= deadlineMs) throw new DOMException('平台查询超时。', 'TimeoutError')
         if (collection.requestCount >= maxRequests || rows.length >= maxRows) throw new PlatformResponseError('平台查询达到安全上限，仍有未完成页。')
         const path = slot.interface === 'business_list' ? BUSINESS_LIST_PATH : APPLY_LIST_PATH

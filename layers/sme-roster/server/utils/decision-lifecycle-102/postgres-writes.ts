@@ -8,18 +8,14 @@ import { differenceReason } from '../../../../../db/postgresql/roster-selection-
 import {
   platformBusinessObservation, platformBusinessRecordVersion, platformCollection, platformLegacyQueryAlias, platformObservationAssignment,
 } from '../../../../../db/postgresql/platform-tables'
-import * as schema from '../../../../../db/schema'
+import type * as schema from '../../../../../db/schema'
 import { decodePostgresExactCell } from '../../../../../db/postgresql/exact-cell'
 import { readPostgresDifferenceObservations } from '../../../lib/platform/difference-sources-postgres'
 import { readPostgresEvidenceImpacts113 } from '../../../lib/roster/query-assessment-postgres'
 import { readPostgresCollectionScopes } from '../../../lib/roster/query-coverage-postgres'
 import { postgresRosterRow } from '../../../lib/roster/postgres-rows'
-import {
-  checkDecisionFact102, checkDecisionHead102, checkDecisionPriorTime102, checkDecisionQuery102, checkDecisionRelation102,
-  decisionContent102, DecisionError102, decisionReceipt102, decisionRequestHash102, decisionValues102, internalDecisionCommand102,
-  parse102, qualificationCommit102, qualificationPlanHash, qualificationPlanRule, qualificationPreflight102, type DecisionCommand102,
-} from '../decision-lifecycle-102'
-import { evidenceKeys113 } from '../evidence-impact-113'
+import { checkDecisionFact102, checkDecisionHead102, checkDecisionPriorTime102, checkDecisionQuery102, checkDecisionRelation102, decisionContent102, DecisionError102, decisionReceipt102, decisionRequestHash102, decisionValues102, internalDecisionCommand102, parse102, qualificationCommit102, qualificationPlanHash, qualificationPlanRule, qualificationPreflight102, type DecisionCommand102 } from '../decision-lifecycle-102/contract'
+import { evidenceKeys113 } from '../evidence-impact-model'
 import { readPostgresDecisionHead102, requirePostgresDecisionEnterprise } from './postgres-reads'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -33,7 +29,7 @@ export function lockPostgresDecisionOwnership102(tx: Tx) {
 async function readObservationPin(tx: Tx, id: number) {
   const p = alias(platformBusinessObservation, 'p')
   const [stored] = await tx.select({
-    observation: sql<Observation>`${postgresRosterRow(schema.platformBusinessObservation, 'p')}`,
+    observation: sql<Observation>`${postgresRosterRow(platformBusinessObservation, 'p')}`,
     rdjb: p.witnessRdjbValue, rdjbType: p.witnessRdjbValueSqliteStorage,
     page: p.witnessPageValue, pageType: p.witnessPageValueSqliteStorage,
   }).from(p).where(eq(p.id, id))
@@ -55,7 +51,7 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins:
   const refs = d.factReferences ?? []
   const fact = alias(enterpriseFactRevision, 'p')
   const factsById = refs.length ? await tx.selectDistinctOn([fact.factId], {
-    fact: sql<Fact>`${postgresRosterRow(schema.enterpriseFactRevision, 'p')}`,
+    fact: sql<Fact>`${postgresRosterRow(enterpriseFactRevision, 'p')}`,
   }).from(fact).where(and(eq(fact.enterpriseId, command.enterpriseId), inArray(fact.factId, refs.map(ref => ref.factId))))
     .orderBy(fact.factId, desc(fact.revision)) : []
   const facts = refs.map(ref => {
@@ -68,7 +64,7 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins:
   const queryId = d.evidenceQueryId ?? relation?.queryId
   const c = alias(platformCollection, 'c'), a = platformLegacyQueryAlias
   const targetQuery = queryId ? (await tx.select({
-    id: a.oldId, collection: sql<typeof schema.platformCollection.$inferSelect>`${postgresRosterRow(schema.platformCollection, 'c')}`,
+    id: a.oldId, collection: sql<typeof schema.platformCollection.$inferSelect>`${postgresRosterRow(platformCollection, 'c')}`,
   }).from(a).innerJoin(c, eq(c.id, a.collectionId)).where(eq(a.oldId, queryId)))[0] : null
   const collection = targetQuery?.collection
   const needsPages = relation && collection?.rdjb.includes(',')
@@ -79,10 +75,10 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins:
   const observation = relation ? await readObservationPin(tx, relation.observationId) : null
   const v = alias(platformBusinessRecordVersion, 'p'), assignmentTable = alias(platformObservationAssignment, 'p')
   const version = observation?.versionId ? (await tx.select({
-    row: sql<typeof schema.platformBusinessRecordVersion.$inferSelect>`${postgresRosterRow(schema.platformBusinessRecordVersion, 'p')}`,
+    row: sql<typeof schema.platformBusinessRecordVersion.$inferSelect>`${postgresRosterRow(platformBusinessRecordVersion, 'p')}`,
   }).from(v).where(eq(v.id, observation.versionId)))[0]?.row : null
   const assignment = observation ? (await tx.select({
-    row: sql<typeof schema.platformObservationAssignment.$inferSelect>`${postgresRosterRow(schema.platformObservationAssignment, 'p')}`,
+    row: sql<typeof schema.platformObservationAssignment.$inferSelect>`${postgresRosterRow(platformObservationAssignment, 'p')}`,
   }).from(assignmentTable).where(eq(assignmentTable.observationId, observation.id)).orderBy(desc(assignmentTable.revision)).limit(1))[0]?.row : null
   const sourceVersions = observation?.recordId ? await tx.select({ id: v.id, contentHash: v.contentHash })
     .from(v).where(eq(v.recordId, observation.recordId)).orderBy(desc(v.id)).limit(1) : []

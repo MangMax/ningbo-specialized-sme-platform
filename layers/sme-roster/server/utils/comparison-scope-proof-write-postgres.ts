@@ -2,8 +2,9 @@ import { eq, inArray, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { comparisonScopeProof, comparisonScopeProofAudit } from '../../../../db/postgresql/comparison-proof-tables'
 import { importBatch } from '../../../../db/postgresql/import-tables'
-import { comparisonProofPlanSteps, ProofError, proofRequest, type ComparisonProofPlan, type ProofRequest, type ProofStatus } from './comparison-scope-proof'
-import { fingerprint, ProofSourceError, type CurrentEvidence, type OfficialEvidence } from './comparison-scope-proof-source'
+import { comparisonProofPlanSteps, ProofError, proofRequest, type ComparisonProofPlan, type ProofRequest, type ProofStatus } from './comparison-scope-proof-model'
+import { type CurrentEvidence, type OfficialEvidence } from './comparison-scope-proof-source-projection'
+import { fingerprint, ProofSourceError } from './comparison-scope-proof-source-model'
 import {
   readPostgresComparisonProofHead, readPostgresCurrentProofSource, readPostgresOfficialProofSource,
 } from './comparison-scope-proof-postgres'

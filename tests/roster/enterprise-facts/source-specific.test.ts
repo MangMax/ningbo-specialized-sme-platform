@@ -9,7 +9,7 @@ import { generateCandidates } from '../../../layers/sme-roster/server/utils/reco
 import { readEventAnnualProcess } from '../../../layers/sme-roster/server/utils/event-annual-process-read'
 import { handleEventAnnualProcessRequest, dispatchEventAnnualProcessMcp } from '../../../layers/sme-roster/server/utils/event-annual-process-api'
 import { handleRecordCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-api'
-import { dispatchRecordCorrespondenceMcp } from '../../../layers/sme-roster/server/utils/mcp-record-correspondence'
+import { dispatchRecordCorrespondenceMcp } from '../../../layers/sme-roster/server/utils/mcp-record-correspondence-sqlite'
 import { startHttpFixture } from '../../support/http'
 
 const cleanup: Array<() => void> = []

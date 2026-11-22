@@ -1,28 +1,25 @@
-import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
-import { initializeDb } from '../../../db/client'
+import { execFileSync } from 'node:child_process'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { createServer } from 'node:http'
 import { createHash } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createApp, createRouter, toNodeListener, defineEventHandler, readBody, setHeader, setResponseStatus, getQuery, createError } from 'h3'
+import { createApp, createRouter, toNodeListener, defineEventHandler, readBody, setHeader, setResponseStatus, getQuery, getHeader, getRouterParam, createError } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { useDb } from '../../../db'
-import { updateCredential } from '../../../layers/core/server/utils/credential-state'
-import { handlePlatformBatchRequest } from '../../../layers/sme-roster/server/utils/platform-batch-http'
+import { updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
+import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import { recognizedResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
-import { whenIdle } from '../../../layers/core/server/utils/job-runner'
-import { platformSummaryCache } from '../../../layers/sme-roster/server/utils/platform-summary-cache'
-import { importExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
 import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
 
 const dir = mkdtempSync(join(tmpdir(), 'issue298-raw-json-http-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 const nativeFetch = globalThis.fetch
 const token = 'synthetic-raw-archive-token'
 const input = { source: 'queryBusList', name: '合成', rdjb: ['2'], pageSize: 1, rawDataVersion: 1 }
@@ -42,24 +39,34 @@ async function call(name: string, args: Record<string, unknown>) {
   if (result.structuredContent) expect(result.content).toContainEqual({ type: 'text', text: JSON.stringify(result.structuredContent) })
   return result.structuredContent ?? JSON.parse((result.content as any)[0].text)
 }
+async function waitForBatch(batchId: string) {
+  await expect.poll(async () => (await call('get_platform_batch', { batchId })).state).toMatch(/^(done|failed)$/)
+}
+
+function snapshotBusinessData() {
+  return execFileSync(join(postgres!.env.NUXT_POSTGRES_BIN, 'pg_dump'), [
+    '--dbname', postgres!.url, '--data-only', '--schema', 'business',
+    '--restrict-key', 'RawArchiveTestFixture',
+  ], { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024 })
+}
+
 beforeAll(async () => {
-  vi.spyOn(importExecutor, 'execute').mockImplementation(executeNativeImport)
-  vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubEnv('MIIT_COOKIE', ''); vi.stubEnv('MIIT_COOKIE_FILE', '')
-  updateCredential('sme-roster.miitCookie', 'sid=synthetic-raw-wire-secret', { db })
-  for (const [key, value] of Object.entries({ defineEventHandler, readBody, setHeader, setResponseStatus, getQuery, createError, useRuntimeConfig: () => ({ filesDir: dir, apiToken: token }) })) vi.stubGlobal(key, value)
+  await updatePostgresCredentialState(usePostgresDirectoryDb(), { 'sme-roster.miitCookie': 'sid=synthetic-raw-wire-secret' })
+  for (const [key, value] of Object.entries({ defineEventHandler, readBody, setHeader, setResponseStatus, getQuery, getHeader, getRouterParam, createError, useRuntimeConfig: () => ({ filesDir: dir, apiToken: token }) })) vi.stubGlobal(key, value)
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (value: unknown) => value }))
-  for (const path of ['query_platform', 'preflight_roster_batch', 'save_roster_batch', 'list_platform_queries', 'get_platform_batch_item', 'submit_platform_batch', 'retry_platform_batch']) tools.push((await import(`../../../layers/sme-roster/server/mcp/tools/${path}.ts`)).default)
+  for (const path of ['query_platform', 'preflight_roster_batch', 'save_roster_batch', 'list_platform_queries', 'get_platform_batch', 'get_platform_batch_item', 'submit_platform_batch', 'retry_platform_batch']) tools.push((await import(`../../../layers/sme-roster/server/mcp/tools/${path}.ts`)).default)
   const queryRoute = (await import('../../../layers/sme-roster/server/api/platform/query.post')).default
   const readRoute = (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default
   const evidenceRoute = (await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default
   const router = createRouter().post('/api/platform/query', queryRoute).get('/api/platform/queries', readRoute).get('/api/platform/queries/:queryId/evidence', evidenceRoute)
   const { createRosterImportHandler } = await import('../../../layers/sme-roster/server/utils/roster-import-route')
   for (const action of ['preflight', 'commit'] as const) router.post(`/api/roster/import/${action}`, createRosterImportHandler(action))
-  router.post('/api/platform/batches', defineEventHandler(async event => {
-    const out = await handlePlatformBatchRequest('submit', { body: await readBody(event), headers: { authorization: event.node.req.headers.authorization } }, { db, apiToken: token, filesDir: dir })
-    setResponseStatus(event, out.status); return out.body
-  }))
+  const { createPlatformBatchRoute } = await import('../../../layers/sme-roster/server/utils/platform-batch-route')
+  router.post('/api/platform/batches', createPlatformBatchRoute('submit'))
   const listener = toNodeListener(createApp().use(router))
   server = createServer((req, res) => {
     if (req.url !== '/mcp') { listener(req, res); return }
@@ -82,13 +89,14 @@ beforeAll(async () => {
   })
   client = new Client({ name: 'issue298-wire-client', version: '1' })
   await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: `Bearer ${token}` } } }))
-})
+}, 60_000)
 afterAll(async () => {
-  await whenIdle(); await client?.close()
+  await stopPostgresJobs(); await client?.close()
   for (const transport of transports) await transport.close()
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
-  await importExecutor.close()
-  vi.restoreAllMocks(); platformSummaryCache.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true })
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); rmSync(dir, { recursive: true, force: true })
 })
 const plain = Object.fromEntries(Object.entries(typed).filter(([key]) => !['__proto__', 'constructor'].includes(key)))
 const cases = [plain, { id: 'same', qymc: '合成', x: '', n: '1', b: 'true', o: '{"a":1}', arr: '[null,false,2,{"unknown":true}]' }, typed]
@@ -108,10 +116,10 @@ it.each([0, 1, 2])('real HTTP or MCP archive roundtrip preserves versioned raw e
   expect(preview.preflight.conflicts).toEqual([])
   const saved: any = index === 0 ? await (await post('/api/roster/import/commit', request)).json() : await call('save_roster_batch', request)
   expect(saved.status).toBe('committed')
-  const beforeReplay = db.$client.serialize()
+  const beforeReplay = snapshotBusinessData()
   const replay: any = index === 0 ? await (await post('/api/roster/import/commit', request)).json() : await call('save_roster_batch', request)
   expect(replay).toEqual(saved)
-  expect(db.$client.serialize().equals(beforeReplay), 'database bytes remain unchanged').toBe(true)
+  expect(snapshotBusinessData().equals(beforeReplay), 'durable business data remains unchanged').toBe(true)
   const queryId = Number(saved.items.find((item: any) => item.kind === 'platform_query').ref.replace('query:', ''))
   const history: any = index === 0 ? await (await nativeFetch(`${base}/api/platform/queries?queryId=${queryId}`)).json() : await call('list_platform_queries', { queryId })
   expect(history.rows).toHaveLength(1)
@@ -136,13 +144,13 @@ it.each([0, 1, 2])('real HTTP or MCP archive roundtrip preserves versioned raw e
 it('real batch HTTP submit and MCP item preserve typed source in persisted segments and respect the complete byte budget', async () => {
   raw = source(typed)
   const submitted: any = await (await post('/api/platform/batches', { items: [{ query: input }], limits: { maxResultBytes: 65536 } })).json()
-  await whenIdle()
+  await waitForBatch(submitted.batchId)
   const item: any = await call('get_platform_batch_item', { batchId: submitted.batchId, itemId: submitted.itemIds[0] })
   expect(item).toMatchObject({ status: 'success', segments: [{ rawData: { version: 1, rows: [typed], pages: [{ body: raw }] } }] })
   expect(Object.hasOwn(item.segments[0].rawData.rows[0], '__proto__')).toBe(true)
   raw = source({ id: 'large', n: 1 }) + ' '.repeat(70000)
   const limited: any = await (await post('/api/platform/batches', { items: [{ query: input }], limits: { maxResultBytes: 65536 } })).json()
-  await whenIdle()
+  await waitForBatch(limited.batchId)
   const rejected: any = await call('get_platform_batch_item', { batchId: limited.batchId, itemId: limited.itemIds[0] })
   expect(rejected).toMatchObject({ status: 'partial', segments: [{ error: { code: 'safety_limit' }, rawData: { rows: [], pages: [] } }], unfinished: [{ page: 1 }] })
   expect(Buffer.byteLength(JSON.stringify(rejected))).toBeLessThan(65536)
@@ -151,31 +159,31 @@ it('real batch HTTP submit and MCP item preserve typed source in persisted segme
 it('existing strict HTTP archive body rejects prototype-named keys atomically while MCP retains them', async () => {
   raw = source(typed)
   const result: any = await call('query_platform', input)
-  const before = db.$client.serialize()
+  const before = snapshotBusinessData()
   const rejected = await post('/api/roster/import/commit', { idempotencyKey: 'http-prototype-boundary', sourceKind: 'alias_evidence', sourceIdentity: 'issue298-synthetic', payload: { platformQueries: [recognizedResultToImport(result)] } })
   expect(rejected.status).toBe(400)
-  expect(db.$client.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
+  expect(snapshotBusinessData().equals(before), 'durable business data remains unchanged').toBe(true)
 })
 
 it.each(['HTTP', 'MCP'])('real %s query rejects a sensitive source without leaking raw data or writing business state', async transport => {
   raw = source({ id: 'secret', unknown: { accessToken: 'never-return-this-value' } })
-  const before = db.$client.serialize()
+  const before = snapshotBusinessData()
   const result: any = transport === 'HTTP' ? await (await post('/api/platform/query', input)).json() : await call('query_platform', input)
   expect(result).toMatchObject({ status: 'failed', error: { code: 'sensitive_response' }, rawData: { rows: [], pages: [] } })
   expect(JSON.stringify(result)).not.toContain('never-return-this-value')
-  expect(db.$client.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
+  expect(snapshotBusinessData().equals(before), 'durable business data remains unchanged').toBe(true)
 })
 
 it('real MCP batch retry appends typed source segments and retains the accepted checkpoint and original times', async () => {
   pageBodies = new Map([[1, source({ id: 'first', n: 1 }, 1, 2)], [2, source({ id: 'second', n: '1' }, 2, 2)]])
   try {
     const receipt: any = await call('submit_platform_batch', { items: [{ query: { ...input, maxRequests: 1 } }] })
-    await whenIdle()
+    await waitForBatch(receipt.batchId)
     const prior: any = await call('get_platform_batch_item', { batchId: receipt.batchId, itemId: receipt.itemIds[0] })
     expect(prior).toMatchObject({ status: 'partial', segments: [{ rawData: { rows: [{ id: 'first', n: 1 }], pages: [{ page: 1 }] } }], unfinished: [{ page: 2 }] })
     const retried: any = await call('retry_platform_batch', { batchId: receipt.batchId, itemIds: receipt.itemIds })
     expect(retried).toMatchObject({ batchId: receipt.batchId, itemIds: receipt.itemIds })
-    await whenIdle()
+    await waitForBatch(receipt.batchId)
     const after: any = await call('get_platform_batch_item', { batchId: receipt.batchId, itemId: receipt.itemIds[0] })
     expect(after.status).toBe('success')
     expect(after.segments[0]).toEqual(prior.segments[0])
@@ -251,7 +259,7 @@ it('real MCP batch retains the first safe page but never accepts the second sens
   pageBodies = new Map([[1, first], [2, second]])
   try {
     const receipt = await call('submit_platform_batch', { items: [{ query: input }] })
-    await whenIdle()
+    await waitForBatch(receipt.batchId)
     const item = await call('get_platform_batch_item', { batchId: receipt.batchId, itemId: receipt.itemIds[0] })
     expect(item).toMatchObject({ status: 'partial', segments: [{ fetchedCount: 1, error: { code: 'sensitive_response' }, rawData: { rows: [{ id: 'safe-first', n: 1 }], pages: [{ page: 1, body: first }] } }], unfinished: [{ page: 2 }] })
     expect(item.segments[0].rawData.pages).toHaveLength(1)

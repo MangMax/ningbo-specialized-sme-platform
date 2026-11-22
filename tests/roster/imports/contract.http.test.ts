@@ -13,7 +13,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { schema } from '../../../db'
 import { normalizeName } from '../../../layers/sme-roster/lib/domain'
-import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster-sqlite'
 import {
   RosterImportApiError,
   type RosterImportRequest,

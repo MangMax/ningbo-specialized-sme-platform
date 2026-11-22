@@ -1,44 +1,79 @@
-import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
+import { singlePostgresFixtureRow, useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
+import { usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { handlePostgresOfficialEvidenceRead } from '../../../layers/sme-roster/server/utils/official-evidence-read-postgres'
+import { handlePostgresEvidenceCorrectionWrite } from '../../../layers/sme-roster/server/utils/roster-evidence-correction-write-postgres'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { record as recordTable, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
+import { storedFile } from '../../../db/postgresql/file-tables'
+import { rosterFileClassification } from '../../../db/postgresql/roster-file-tables'
+import { evidenceCorrectionAudit } from '../../../db/postgresql/official-evidence-tables'
+import { recordCorrespondence } from '../../../db/postgresql/qualification-tables'
+import pg from 'pg'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, it } from 'vitest'
-import { initializeDb, schema } from '../../../db/client'
-import { handleEvidenceCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-evidence-correction-api'
+import { expect, it, vi } from 'vitest'
 import { startHttpFixture } from '../../support/http'
 import { minimalPdf } from '../../support/minimal-pdf'
+
+const createDatabase = useIsolatedPostgresCases()
 
 it('bounds fixed evidence preflight and history materialization across unrelated source growth', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'evidence101-bounded-')), filesDir = join(dir, 'files')
   mkdirSync(filesDir)
   const bytes = minimalPdf({ pages: 3 }); writeFileSync(join(filesDir, 'notice.pdf'), bytes)
-  const db = initializeDb({ create: true,  dbPath: join(dir, 'isolated.db') })
-  createClassifiedFile(db, { relPath: 'notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: Buffer.byteLength(bytes), sha256: createHash('sha256').update(bytes).digest('hex') }, { source: 'jxj', kind: 'announcement' })
-  const owner = db.insert(schema.enterprise).values({ name: '固定目标', nameNorm: '固定目标' }).returning().get()
-  const record = db.insert(schema.record).values({ enterpriseId: owner.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
-  const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2022 }).returning().get()
-  const evidence = db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'notice.pdf', attachment: '附件1', listNo: 1, page: 1 }).returning().get()
-  const before = { coordinate: { sourceFile: 'notice.pdf', page: 1 }, file: { sha256: 'historical-file-identity' } }
-  db.transaction(() => { for (let i = 0; i < 210; i++) db.insert(schema.evidenceCorrectionAudit).values({ evidenceId: evidence.id, eventId: event.id, entryPoint: 'legacy_pages', actor: { type: 'legacy', id: 'synthetic-fixture' }, basis: 'synthetic historical fixture', before, after: before, createdAt: '2026-10-19' }).run() })
-  // Instrument the real driver's materialized rows; results are never replaced.
+  const db = createDatabase()
+  const file = singlePostgresFixtureRow(await db.insert(storedFile).values({
+    relPath: 'notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: BigInt(Buffer.byteLength(bytes)),
+    sha256: createHash('sha256').update(bytes).digest('hex'), createdAt: '2026-10-19',
+  }).returning())
+  await db.insert(rosterFileClassification).values({ fileId: file.id, source: 'jxj', kind: 'announcement' })
+  const owner = singlePostgresFixtureRow(await db.insert(enterprise).values({ name: '固定目标', nameNorm: '固定目标' }).returning())
+  const record = singlePostgresFixtureRow(await db.insert(recordTable).values({ enterpriseId: owner.id, titleCode: 'specialized_sme', source: 'jxj' }).returning())
+  const event = singlePostgresFixtureRow(await db.insert(recordEvent).values({ recordId: record.id, eventType: 'award', year: 2022 }).returning())
+  const evidence = singlePostgresFixtureRow(await db.insert(recordEvidence).values({ recordEventId: event.id, sourceFile: 'notice.pdf', attachment: '附件1', listNo: 1, page: 1 }).returning())
+  const before = JSON.stringify({ coordinate: { sourceFile: 'notice.pdf', page: 1 }, file: { sha256: 'historical-file-identity' } })
+  await db.insert(evidenceCorrectionAudit).values(Array.from({ length: 210 }, () => ({
+    evidenceId: evidence.id, eventId: event.id, entryPoint: 'legacy_pages' as const,
+    actor: JSON.stringify({ type: 'legacy', id: 'synthetic-fixture' }), basis: 'synthetic historical fixture',
+    before, after: before, createdAt: '2026-10-19',
+  })))
+  const archive = await seedPostgresPlatformQuery(db, { interface: 'business_list', queryKey: 'unrelated-source', rdjb: '2',
+    queriedAt: '2026-10-19', status: 'success', rawResponse: 'raw-sentinel'.repeat(1024),
+    relations: [{ sequenceNo: 1, rawFields: { rawSentinel: 'raw-sentinel'.repeat(1024) } }] })
+  const archiveObservation = await db.$client.query<{ observation_id: number }>(
+    'SELECT observation_id::integer FROM platform_legacy_relation_alias WHERE old_id=$1', [archive.relationIds[0]])
+  const { observation_id: observationId } = singlePostgresFixtureRow(archiveObservation.rows)
+  const reader = usePostgresDirectoryDb()
+  // Use the driver result to measure actual rows returned, across all connections.
   let calls = 0, rows = 0, materializedBytes = 0, rawReads = 0
-  const size = (v: unknown): number => typeof v === 'string' ? Buffer.byteLength(v) : typeof v === 'number' ? 8 : v && typeof v === 'object' ? Object.values(v).reduce<number>((n, x) => n + size(x), 0) : 0
-  const prepare = db.$client.prepare.bind(db.$client)
-  db.$client.prepare = ((...args: Parameters<typeof prepare>) => {
-    const statement = prepare(...args)
-    for (const method of ['get', 'all'] as const) {
-      const execute = statement[method].bind(statement)
-      Object.assign(statement, { [method]: (...params: unknown[]) => { const result = execute(...params); calls++; rows += method === 'all' ? (result as unknown[]).length : result ? 1 : 0; materializedBytes += size(result); if (/raw_response|raw_fields|provenance/.test(args[0])) rawReads++; return result } })
+  const query = pg.Client.prototype.query
+  const observe = vi.spyOn(pg.Client.prototype, 'query').mockImplementation(function (this: pg.Client, ...args: unknown[]) {
+    const result = Reflect.apply(query, this, args)
+    if (result instanceof Promise) {
+      return result.then((output: pg.QueryResult) => {
+        const input = args[0] as string | pg.QueryConfig
+        const statement = typeof input === 'string' ? input : input.text
+        if (!/^\s*(select|with)\b/i.test(statement)) return output
+        calls++
+        rows += output.rows.length
+        const materialized = JSON.stringify(output.rows)
+        materializedBytes += Buffer.byteLength(materialized)
+        if (/raw_response|raw_fields|provenance/.test(statement) || materialized.includes('raw-sentinel')) rawReads++
+        return output
+      })
     }
-    return statement
-  }) as typeof prepare
+    return result
+  } as typeof query)
   const app = await startHttpFixture({ routes: {
-    '/point': r => handleEvidenceCorrectionRequest({ ...r, action: 'get', id: evidence.id }, { db }),
-    '/audit': r => handleEvidenceCorrectionRequest({ ...r, action: 'audit', id: evidence.id }, { db }),
-    '/preflight': r => handleEvidenceCorrectionRequest({ ...r, action: 'preflight' }, { db, filesDir, apiToken: 'synthetic-token' }),
+    '/point': r => handlePostgresOfficialEvidenceRead({ ...r, kind: 'evidence', action: 'get', id: evidence.id }, { db: reader }),
+    '/audit': r => handlePostgresOfficialEvidenceRead({ ...r, kind: 'evidence', action: 'audit', id: evidence.id }, { db: reader }),
+    '/preflight': r => handlePostgresEvidenceCorrectionWrite({ ...r, action: 'preflight' }, { filesDir, apiToken: 'synthetic-token' }),
   } })
+  // Establish the connection before measuring the first point request.
+  await reader.$client.query('SELECT 1')
   const observations: Record<string, unknown>[] = []
   const measure = async (path: string, unrelated: number, body?: unknown) => {
     calls = 0; rows = 0; materializedBytes = 0; rawReads = 0
@@ -48,22 +83,30 @@ it('bounds fixed evidence preflight and history materialization across unrelated
     const raw = await response.text()
     const measured = { path, unrelated, calls, rows, materializedBytes, rawReads, responseBytes: Buffer.byteLength(raw), milliseconds: performance.now() - started }
     observations.push(measured)
+    expect(calls).toBeGreaterThan(0)
+    expect(rows).toBeGreaterThan(0)
     expect(rawReads).toBe(0)
     expect(rows).toBeLessThanOrEqual(path === '/audit?page=5&pageSize=50' ? 54 : 10)
     expect(materializedBytes).toBeLessThan(64 * 1024)
     return { value: JSON.parse(raw), measured }
   }
   try {
-    const q = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'unrelated-source', rdjb: '2', queriedAt: '2026-10-19', status: 'success', rawResponse: 'raw-sentinel'.repeat(1024), relations: [{ sequenceNo: 1, rawFields: { rawSentinel: 'raw-sentinel'.repeat(1024) } }] })
     let baseMetrics: unknown
     for (const unrelated of [0, 200, 1000]) {
-      if (unrelated > 0) db.transaction(() => {
+      if (unrelated > 0) await db.transaction(async tx => {
         const existing = unrelated === 200 ? 0 : 200
-        for (let i = existing; i < unrelated; i++) {
-          const otherEvent = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2000 + i }).returning().get()
-          db.insert(schema.recordEvidence).values({ recordEventId: otherEvent.id, sourceFile: 'unrelated/' + i + '.pdf', listNo: 1, page: 1 }).run()
-          db.insert(schema.recordCorrespondence).values({ edgeKey: 'unrelated-' + i, type: 'event_process', role: 'context_only', eventId: otherEvent.id, predecessorEventId: otherEvent.id, observationId: q.observations[0]!.observationId, titleCode: 'specialized_sme', status: 'candidate', revision: 1, targetIdentity: {}, provenance: { rawSentinel: 'raw-sentinel'.repeat(1024) }, sourceFingerprint: 'synthetic', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-10-19' }).run()
-        }
+        const otherEvents = await tx.insert(recordEvent).values(Array.from({ length: unrelated - existing }, (_, i) => ({
+          recordId: record.id, eventType: 'award' as const, year: 2000 + existing + i,
+        }))).returning({ id: recordEvent.id })
+        await tx.insert(recordEvidence).values(otherEvents.map((row, i) => ({
+          recordEventId: row.id, sourceFile: 'unrelated/' + (existing + i) + '.pdf', listNo: 1, page: 1,
+        })))
+        await tx.insert(recordCorrespondence).values(otherEvents.map((row, i) => ({
+          edgeKey: 'unrelated-' + (existing + i), type: 'event_process' as const, role: 'context_only',
+          eventId: row.id, predecessorEventId: row.id, observationId, titleCode: 'specialized_sme',
+          status: 'candidate' as const, revision: 1, targetIdentity: '{}', provenance: JSON.stringify({ rawSentinel: 'raw-sentinel'.repeat(1024) }),
+          sourceFingerprint: 'synthetic', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-10-19',
+        })))
       })
       const point = await measure('/point', unrelated)
       const req = { idempotencyKey: 'bounded', actor: { type: 'agent', id: 'synthetic' }, basis: 'explicit verified source', operations: [{ evidenceId: evidence.id, eventId: event.id, recordId: record.id, enterpriseId: owner.id, expectedVersion: point.value.version, coordinate: { sourceFile: 'notice.pdf', attachment: '附件1', listNo: 1, page: 2 } }] }
@@ -76,6 +119,7 @@ it('bounds fixed evidence preflight and history materialization across unrelated
     }
 
     console.info('TICKET101_DRIVER_MATERIALIZATION ' + JSON.stringify(observations))
-    console.info('TICKET101_COORDINATE_EXPLAIN ' + JSON.stringify(db.$client.prepare('EXPLAIN QUERY PLAN SELECT id FROM record_evidence WHERE source_file = ? AND list_no = ?').all('notice.pdf', 1)))
-  } finally { await app.close(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) }
+    const plan = await db.$client.query("EXPLAIN (FORMAT JSON) SELECT id FROM record_evidence WHERE source_file = $1 AND list_no = $2", ['notice.pdf', 1])
+    console.info('TICKET101_COORDINATE_EXPLAIN ' + JSON.stringify(plan.rows))
+  } finally { await app.close(); observe.mockRestore(); rmSync(dir, { recursive: true, force: true }) }
 }, 30000)

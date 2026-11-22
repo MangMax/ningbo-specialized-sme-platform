@@ -6,10 +6,11 @@ import { platformBusinessObservation, platformCollection, platformLegacyQueryAli
 import { platformArchiveValue, platformCollectionArchiveRef, platformCollectionLegacyProvenance as provenance, platformObservationArchiveRef } from '../../../../db/postgresql/platform-archive-tables'
 import { writePostgresArchiveValue } from '../../lib/platform/postgres-archive-write'
 import { legacyEnvelopeCollection, readPlatformArchiveBytes } from '../../lib/platform/postgres-evidence-read'
-import { rejectLegacyProvenance as reject, type originalLegacyProvenanceInput } from '../../lib/platform/legacy-provenance-command'
+import { rejectLegacyProvenance as reject } from '../../lib/platform/legacy-provenance-error'
+import type { originalLegacyProvenanceInput } from '../../lib/platform/legacy-provenance-command'
 import type { LegacyPlatformProvenanceInput } from '../../lib/platform/legacy-provenance'
-import { snapshotSchema } from '../../lib/platform/target-evidence-read'
-import { legacyProvenanceFingerprint } from './platform-legacy-provenance'
+import { snapshotSchema } from '../../lib/platform/evidence-snapshot-model'
+import { legacyProvenanceFingerprint } from './platform-legacy-provenance-fingerprint'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Original = ReturnType<typeof originalLegacyProvenanceInput>

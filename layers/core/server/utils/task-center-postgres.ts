@@ -64,7 +64,7 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
   setHeader(event, 'cache-control', 'no-store')
   registerJobSpecs()
   const config = useRuntimeConfig(event)
-  const db = usePostgresJobsDb()!
+  const db = usePostgresJobsDb()
   const writable = postgresJobsEnabled()
   if (action === 'cancel' || action === 'retry') requirePostgresJobsWritable()
   const apiAuthorized = resolveApiAuth({ given: readApiToken({

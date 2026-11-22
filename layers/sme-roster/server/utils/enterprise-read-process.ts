@@ -9,11 +9,7 @@ import { fileURLToPath } from 'node:url'
  * Explicit V8 flags override inherited NODE_OPTIONS, unlike Worker resourceLimits.
  * No application heap setting or timeout is changed. */
 export function createEnterpriseReadProcess(entry: URL, sourceLoader?: string) {
-  // Complete raw strings survive every IPC await in old/large-object space.
-  // Reserve room for the SQLite JSON text + parsed string (2x raw bytes),
-  // rather than giving most of the executor's allowance to short-lived tokens.
-  // Redistribute the existing budget: 256 + 3*16 = 304MiB effective V8 heap,
-  // below the former 128 + 3*64 = 320MiB. The app's heap is unchanged.
+  // Keep the worker heap bounded while holding query results and streaming JSON.
   const args = ['--max-old-space-size=256', '--max-semi-space-size=16']
   let bootstrapDir: string | undefined
   if (sourceLoader) {
@@ -47,7 +43,6 @@ export function createEnterpriseReadProcess(entry: URL, sourceLoader?: string) {
       child.ref()
       return new Promise(resolve => {
         child.once('exit', () => resolve())
-        // A blocking native SQLite call cannot process a cooperative stop message.
         child.kill('SIGKILL')
       })
     },

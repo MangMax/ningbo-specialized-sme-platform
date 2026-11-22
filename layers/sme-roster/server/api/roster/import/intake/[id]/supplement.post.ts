@@ -1,8 +1,6 @@
-import { useDb } from '@db'
 import { usePostgresRosterDb } from '../../../../../utils/postgres-roster-db'
 import { supplementPostgresAnnouncement } from '../../../../../utils/announcement-supplement-postgres'
-import { supplementSchema } from '../../../../../utils/announcement-intake'
-import { importExecutor } from '../../../../../utils/import-execution'
+import { supplementSchema } from '../../../../../utils/announcement-intake-model'
 import { intakeRoute } from '../../../../../utils/announcement-intake-route'
 
 defineRouteMeta({ openAPI: {
@@ -19,8 +17,7 @@ defineRouteMeta({ openAPI: {
   } } } },
   responses: { 200: { description: '预检结果或一次性补充回执及企业和来源 ID' }, 409: { description: '身份、来源版本或回执冲突' } },
 } })
-export default intakeRoute((id, input, filesDir, context) => {
+export default intakeRoute((id, input, filesDir) => {
   const postgres = usePostgresRosterDb(true)
-  return postgres ? supplementPostgresAnnouncement(postgres, id, input, filesDir)
-    : importExecutor.supplement(useDb(), id, input, filesDir, context)
+  return supplementPostgresAnnouncement(postgres, id, input, filesDir)
 }, supplementSchema)

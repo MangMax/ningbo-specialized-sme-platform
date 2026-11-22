@@ -1,6 +1,6 @@
 import { normalizeMarkdownBody } from '../../lib/ocr-markdown'
 import { OcrApiError, pagesFromJsonl } from './ocr-api'
-import { pagesFromInput, type OcrPageWrite } from './ocr-result'
+import { pagesFromInput, type OcrPageWrite } from './ocr-result-contract'
 
 /**
  * **把「人手里的一份识别结果」翻成要写哪些页** —— 通路 b 在页面上的两种形态。

@@ -12,10 +12,10 @@ import { formerPlatformMembers } from '../../lib/roster/enterprise-list-postgres
 import { duplicateCandidatesFromBatch } from '../../lib/roster/duplicate-merge'
 import type { RosterImportItemResult, RosterImportPreflight } from '../../lib/roster-import-client'
 import { planPostgresPlatformQueries } from './collection-import-postgres'
-import { duplicateMergeSourceIdentity, findIndexedUsccEvidence, projectDuplicateMerge, type PlatformEvidenceIndex, type PlatformEvidenceQuery, type PlatformEvidenceRelation } from './roster-duplicate-merge'
+import { duplicateMergeSourceIdentity, findIndexedUsccEvidence, projectDuplicateMerge, type PlatformEvidenceIndex, type PlatformEvidenceQuery, type PlatformEvidenceRelation } from './roster-duplicate-merge-model'
 import { prepareUsccClaims, type UsccQueryParse } from './uscc-research-query'
-import { platformOnlyUsccTargets, selectUsccTargetRows } from './uscc-research-read'
-import { pageUsccChecklist, prepareUsccResearch, projectUsccDictionary, projectUsccResearch, projectUsccTargets, type UsccTargetSnapshot } from './uscc-research'
+import { platformOnlyUsccTargets, selectUsccTargetRows } from './uscc-target-selection'
+import { pageUsccChecklist, prepareUsccResearch, projectUsccDictionary, projectUsccResearch, projectUsccTargets, type UsccTargetSnapshot } from './uscc-research-model'
 
 type Reader = Pick<NodePgDatabase, 'select'>
 // Drizzle inArray binds each element separately. The checklist and its evidence

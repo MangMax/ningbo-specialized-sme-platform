@@ -11,7 +11,7 @@ import { TITLE_ORDER } from './labels'
 import {
   MAX_PAGE_SIZE, matchesLedgerDerivedFilters, projectLedgerRows,
   prepareLedgerExportProjection, projectEnterpriseDetail, type RecordQuery, type RecordFilterQuery,
-} from './query'
+} from './query-projection'
 
 const groupFields = { enterpriseId: record.enterpriseId, titleCode: record.titleCode }
 const sourceFields = {

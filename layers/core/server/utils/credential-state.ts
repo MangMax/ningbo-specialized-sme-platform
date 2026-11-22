@@ -4,28 +4,17 @@ import { useDb } from '../../../../db'
 import { serviceCredential } from '../../../../db/schema'
 import { isCredentialKey, registeredCredentials, type CredentialKey } from '../../../../lib/app-modules'
 
-export interface CredentialValue { value: string; updatedAt: string }
-type State = Partial<Record<CredentialKey, CredentialValue>>
-export interface CredentialContext {
+import {
+  credentialContext, credentialState, credentialStatus as statusFromState,
+  resolveFromState, storageError, type CredentialReadContext, type CredentialState,
+} from './credential-resolution'
+export { credentialContext, credentialState, resolveFromState } from './credential-resolution'
+
+export interface CredentialContext extends CredentialReadContext {
   db?: BetterSQLite3Database<typeof import('../../../../db/schema')>
-  ocrToken?: string
-  env?: Record<string, string | undefined>
-}
-export function credentialContext(): CredentialContext {
-  const config: { ocrToken?: string } = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : {}
-  return { ocrToken: config.ocrToken }
-}
-const storageError = () => Object.assign(new Error('凭据配置存储不可用，请检查数据库后重试。'), { statusCode: 503 })
-export function credentialState(rows: { key: string; value: string; updatedAt: string }[]) {
-  const state: State = {}
-  for (const row of rows) {
-    if (!isCredentialKey(row.key) || typeof row.value !== 'string' || !row.value.trim() || typeof row.updatedAt !== 'string') throw storageError()
-    state[row.key] = { value: row.value, updatedAt: row.updatedAt }
-  }
-  return state
 }
 
-function readState(ctx: CredentialContext): State {
+function readState(ctx: CredentialContext): CredentialState {
   try {
     return credentialState((ctx.db ?? useDb()).select().from(serviceCredential).all())
   } catch { throw storageError() }
@@ -35,23 +24,8 @@ export function resolveCredential(key: CredentialKey, ctx: CredentialContext = c
   if (override?.trim()) return { value: override.trim(), source: 'override', updatedAt: null, hasSaved: false }
   return resolveFromState(key, ctx, readState(ctx))
 }
-export function resolveFromState(key: CredentialKey, ctx: CredentialContext, state: State) {
-  const saved = state[key]
-  if (saved) return { ...saved, source: 'saved', hasSaved: true }
-  const env = ctx.env ?? process.env
-  for (const source of registeredCredentials.get(key)?.environment ?? []) {
-    const runtimeValue = source === 'NUXT_OCR_TOKEN' ? ctx.ocrToken?.trim() : undefined
-    const value = runtimeValue || env[source]?.trim()
-    if (value) return { value, source, updatedAt: null, hasSaved: false }
-  }
-  return { value: '', source: 'none', updatedAt: null, hasSaved: false }
-}
-export function credentialStatus(ctx: CredentialContext, state = readState(ctx)) {
-  const status = (key: CredentialKey) => {
-    const { value, ...rest } = resolveFromState(key, ctx, state)
-    return { ...rest, configured: !!value, masked: !value ? '' : value.length <= 8 ? '********' : `${value.slice(0, 3)}********${value.slice(-3)}` }
-  }
-  return Object.fromEntries(Array.from(registeredCredentials.keys(), key => [key, status(key)])) as Record<CredentialKey, ReturnType<typeof status>>
+export function credentialStatus(ctx: CredentialContext) {
+  return statusFromState(ctx, readState(ctx))
 }
 export function updateCredential(key: CredentialKey, value: string | null, ctx: CredentialContext): void {
   updateCredentials({ [key]: value }, ctx)
@@ -70,4 +44,14 @@ export function updateCredentials(values: Partial<Record<CredentialKey, string |
       }
     })
   } catch { throw storageError() }
+}
+
+export function sqliteCredentialStorage(ctx: CredentialContext) {
+  return {
+    read: () => readState(ctx),
+    update(values: Partial<Record<CredentialKey, string | null>>) {
+      updateCredentials(values, ctx)
+      return readState(ctx)
+    },
+  }
 }

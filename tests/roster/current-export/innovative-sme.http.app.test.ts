@@ -1,4 +1,3 @@
-import { resetExportRows } from './fixtures/reset-rows'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { CURRENT_RULE_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { readDevelopmentDiscovery, businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './fixtures/specialized-export'
@@ -7,29 +6,30 @@ import { createHash } from 'node:crypto'
 
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import ExcelJS from 'exceljs'
 import { eq } from 'drizzle-orm'
-import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
-import { initializeDb, schema as s } from '../../../db/client'
-import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
+import { schema as s } from '../../../db/client'
+import { nativeAppAdapter } from '../../support/native-app'
 
 // Only synthetic fixtures are written here. Assertions use real HTTP and XLSX bytes.
 const dir = mkdtempSync(join(tmpdir(), 'export-119-'))
-let generation=0
-let dbPath = join(dir, 'synthetic.db')
-let db = initializeDb({ create: true,  dbPath })
+vi.setConfig({ testTimeout: 60_000 })
 const titleCode = 'innovative_sme'
 const endpoint = '/api/roster/exports/current/innovative-sme'
 const token = 'synthetic-export-119-token'
+const app = nativeAppAdapter({ dir, token })
+let db = app.db
 const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` }
 const year = new Date().getFullYear()
-let service: { baseUrl: string; stop: () => Promise<void> } | undefined
-const url = (path: string) => service!.baseUrl + path
+let starting: Promise<void> | undefined
+const url = app.url
 const json = (response: Response): Promise<any> => response.json()
-const submit = (clientRequestId: string, extra = {}) => fetch(url(endpoint), {
-  method: 'POST', headers, body: JSON.stringify({ clientRequestId, ...extra }),
-})
+const submit = async (clientRequestId: string, extra = {}) => {
+  await startService()
+  return fetch(url(endpoint), { method: 'POST', headers, body: JSON.stringify({ clientRequestId, ...extra }) })
+}
 
 type Event = Pick<typeof s.recordEvent.$inferInsert, 'eventType' | 'year' | 'decidedYear' | 'reviewOutcome' | 'batchSeq'>
 const award: Event = { eventType: 'award', year, batchSeq: 1 }
@@ -100,27 +100,20 @@ async function workbook(key: string, extra = {}) {
   expect(job.result.artifact.availability).toBe('available')
   return { job, ...await download(job) }
 }
-async function startService() {
-  const cwd = resolve(import.meta.dirname, '../../..')
-  const port = await reserveLoopbackPort()
-  const child = spawnCompiledApp(port, {
-    cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') },
-  })
-  let output = ''
-  for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-12000) })
-  service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
-  try { await waitForHttp(url('/api/jobs/kinds'), { timeoutMs: 60000, child }) }
-  catch (error) { await service.stop(); throw new Error(String(error) + output) }
-}
+function startService() { return starting ??= app.start() }
 let discovery: any
-beforeAll(async () => { discovery = await readDevelopmentDiscovery(); await startService() }, 90000)
-beforeEach(() => resetExportRows(db.$client))
+beforeAll(async () => { discovery = await readDevelopmentDiscovery() }, 90000)
+beforeEach(async () => {
+  await starting?.catch(() => {})
+  await app.resetBusiness()
+  db = app.db
+  starting = undefined
+}, 90_000)
 
 
 afterAll(async () => {
-  await service?.stop()
-  db.$client.close()
-  rmSync(dir, { recursive: true, force: true })
+  try { await starting?.catch(() => {}); await app.close() }
+  finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
 it('创新型专用入口交付六表与共享任务产物', async () => {
@@ -210,6 +203,7 @@ it('创新型空集保留六表表头与真实零计数', async () => {
 })
 
 it('创新型入口鉴权参数边界与OpenAPI可发现', async () => {
+  await startService()
   const spec = discovery
   const operation = spec.paths[endpoint].post
   expect(operation.security).toEqual([{ bearerAuth: [] }])

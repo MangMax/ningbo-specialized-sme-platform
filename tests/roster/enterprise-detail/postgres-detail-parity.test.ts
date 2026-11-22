@@ -7,7 +7,7 @@ import { expect, it } from 'vitest'
 import { enterprise, platformCollectionPage, platformObservationAssignment } from '../../../db/schema'
 import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { readPostgresRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-detail-postgres'
-import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster-sqlite'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { businessSource, nativeImportDb } from '../imports/fixtures/native-import'
 

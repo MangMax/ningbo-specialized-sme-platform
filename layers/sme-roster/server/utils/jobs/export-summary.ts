@@ -1,23 +1,11 @@
-import { rosterTaskError } from './task-presentation'
-import type { TaskSummaryAccess } from '../../../../core/server/utils/job-runner-postgres'
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { resolveDbPath } from '../../../../../db/client'
-import type { TaskSummary } from '../../../lib/sme-roster/task-summary'
-import { TASK_EXPORTS } from '../../../lib/sme-roster/task-exports'
-import { isJobId, type JobState } from '../../../../core/lib/job'
-import type { TaskSummaryProjection } from '../../../../core/lib/task-center'
-import type { useApplicationDb } from '../../../../../db/client'
-import { currentArtifact, currentExportDbPath } from '../current-export-artifact'
+import { sql } from 'drizzle-orm'
+import { postgresExportDirectory } from '../current-export-artifact'
+import * as schema from '../../../../../db/schema'
 import type { ProjectedTask } from './task-summary'
-import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
-import { job as pgJob } from '../../../../../db/postgresql/job-tables'
-import { schema } from '../../../../../db/client'
-interface ExportRead {
-  regenerateOf: string | null; phase: string; generatedAt: string | null; snapshotStartedAt: string | null
-  ruleVersion: string; dataVersion: string
-  counts: NonNullable<TaskSummary['export']>['counts']
-  artifact: Omit<NonNullable<NonNullable<TaskSummary['export']>['artifact']>, 'downloadUrl' | 'filename' | 'availability'>
-}
+import { projectExportSummary } from './export-summary-postgres'
+
+export { exportRetryReason, exportTaskLabel, exportTaskProgress } from './export-summary-postgres'
+
 const j = schema.job
 export const exportProjection = {
   exportTitle: sql<string>`substr(json_extract(${j.params}, '$.titleCode'),1,40)`,
@@ -26,91 +14,7 @@ export const exportProjection = {
 
 export const exportTitleFilter = (title: string) => sql`json_extract(${j.params}, '$.titleCode') = ${title}`
 
-export const exportRetryReason = '导出不重放任务；请显式重新生成，新任务保留原任务关联。'
-
-export function exportTaskLabel(titleCode: string | null | undefined) {
-  const title = TASK_EXPORTS.find(task => task.titleCode === titleCode)
-  return title ? `${title.label}导出` : undefined
-}
-
-export function exportTaskProgress(state: JobState, phase: string | undefined) {
-  return {
-    unit: '家企业',
-    stage: state === 'queued' ? '等待执行' : state === 'running'
-      ? phase === 'workbook' ? '生成工作簿' : '固定数据快照'
-      : '执行结束',
-    totalVisible: phase === 'workbook' || state === 'done',
-  }
-}
-
-type ExportSummaryRow = Pick<ProjectedTask, 'id' | 'kind' | 'state' | 'exportMeta'> & { exportTitle: string | null }
-
-export function readExportSummary(row: ProjectedTask, authorized: boolean, db: ReturnType<typeof useApplicationDb>) {
-  return projectExportSummary(row, authorized, row.kind === 'current-roster-export' ? currentExportDbPath(db) : '', true)
-}
-
-async function projectExportSummary(row: ExportSummaryRow, authorized: boolean, dbPath: string, writable: boolean) {
-  const active = row.state === 'queued' || row.state === 'running'
-  let exported: TaskSummary['export']
-  if (row.kind === 'current-roster-export') {
-    const meta = JSON.parse(row.exportMeta || '{}') as ExportRead
-    const title = TASK_EXPORTS.find(t => t.titleCode === row.exportTitle)
-    const date = (value: unknown): string | null => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(value) && Number.isFinite(Date.parse(value)) ? value : null
-    const raw = meta.artifact
-    let artifact: NonNullable<TaskSummary['export']>['artifact'] = null
-    if (title && row.state === 'done' && raw?.id === row.id && Number.isSafeInteger(raw.size) && raw.size > 0 && /^[a-f0-9]{64}$/.test(raw.sha256) && date(raw.generatedAt) && date(raw.expiresAt)) {
-      // Reuse the artifact authority on a bounded, whitelisted projection. Never
-      // load the full job result or forward its path/URL/filename fields.
-      artifact = await currentArtifact({ id: row.id, kind: row.kind, state: row.state,
-        result: { artifact: { ...raw, filename: `current-${title.titleCode}.xlsx`, downloadUrl: `/api/job-artifacts/${row.id}` } } }, dbPath)
-    }
-    exported = {
-      titleCode: title?.titleCode ?? null, regenerateOf: isJobId(meta.regenerateOf) ? meta.regenerateOf : null,
-      phase: ['starting','workbook','complete'].includes(meta.phase) ? meta.phase : 'unknown',
-      generatedAt: date(meta.generatedAt), snapshotStartedAt: date(meta.snapshotStartedAt),
-      // This is a displayed label, not a qualification policy selector.
-      ruleVersion: /^current-roster-116-v[1-9]\d*$/.test(meta.ruleVersion) ? meta.ruleVersion : null,
-      dataVersion: /^sha256:[a-f0-9]{64}$/.test(meta.dataVersion) ? meta.dataVersion : null,
-      counts: meta.counts && Object.values(meta.counts).every(n => Number.isSafeInteger(n) && Number(n) >= 0) ? meta.counts : null,
-      artifact, canDownload: authorized && artifact?.availability === 'available', canRegenerate: writable && authorized && !active && !!title,
-    }
-  }
-  return exported
-}
-
-export async function readPostgresExportSummaries(db: NodePgDatabase, ids: string[], _detail: boolean, { authorized, writable }: TaskSummaryAccess) {
-  // Drizzle 0.45.4 lacks PostgreSQL JSON path and bounded text projection builders.
-  const params = sql`business.job_params_for_query(${pgJob.params})`
-  const resultJson = sql`${pgJob.result}::json`
-  const rows = await db.select({
-    id: pgJob.id, kind: pgJob.kind, state: pgJob.state,
-    hasError: isNotNull(pgJob.error).mapWith(Boolean),
-    restarted: sql<boolean>`coalesce(position('服务重启' in ${pgJob.error}),0)>0`,
-    exportTitle: sql<string | null>`left(${params}->>'titleCode',40)`,
-    exportMeta: sql<string>`json_build_object(
-      'regenerateOf',left(${params}->>'regenerateOf',26),
-      'phase',left(${resultJson}->>'phase',20),'generatedAt',left(${resultJson}->>'generatedAt',30),
-      'snapshotStartedAt',left(${resultJson}->>'snapshotStartedAt',30),
-      'ruleVersion',left(${resultJson}->>'ruleVersion',60),'dataVersion',left(${resultJson}->>'dataVersion',72),
-      'counts',json_build_object('eligible',${resultJson}#>'{counts,eligible}',
-        'pending',${resultJson}#>'{counts,pending}','excluded',${resultJson}#>'{counts,excluded}'),
-      'artifact',json_build_object('id',left(${resultJson}#>>'{artifact,id}',26),
-        'size',${resultJson}#>'{artifact,size}','sha256',left(${resultJson}#>>'{artifact,sha256}',64),
-        'generatedAt',left(${resultJson}#>>'{artifact,generatedAt}',30),
-        'expiresAt',left(${resultJson}#>>'{artifact,expiresAt}',30)))::text`,
-  }).from(pgJob).where(and(eq(pgJob.kind, 'current-roster-export'), inArray(pgJob.id, ids)))
-  const dbPath = resolveDbPath()
-  const result = new Map<string, TaskSummaryProjection>()
-  for (const row of rows) {
-    const exported = await projectExportSummary(row, authorized, dbPath, writable)
-    const { unit, stage, totalVisible } = exportTaskProgress(row.state, exported?.phase)
-    result.set(row.id, {
-      export: exported,
-      error: rosterTaskError(row),
-      label: exportTaskLabel(exported?.titleCode),
-      progress: { unit, stage, ...(totalVisible ? {} : { total: null }) },
-      capabilities: { cancel: false, retry: false, retryItemIds: [], reason: exportRetryReason },
-    })
-  }
-  return result
+export function readExportSummary(row: ProjectedTask, authorized: boolean) {
+  const directory = row.kind === 'current-roster-export' ? postgresExportDirectory() : undefined
+  return projectExportSummary(row, authorized, directory, true)
 }

@@ -1,45 +1,18 @@
+import { parseEventCorrectionWrite, eventCorrectionOutput, eventCorrectionError } from './roster-event-correction-http-model'
 import { z } from 'zod'
 import { isDeepStrictEqual } from 'node:util'
-import { eventReadSchema, officialReadQuery, readPublicOfficialEvidence } from './official-evidence-read'
+import { eventReadSchema, officialReadQuery } from './official-evidence-read'
+import { readPublicOfficialEvidence } from './official-evidence-read-sqlite'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import * as schema from '../../../../db/schema'
+import type * as schema from '../../../../db/schema'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
-import { sanitizeEvidence } from './record-correspondence-read'
+import { sanitizeEvidence } from './evidence-redaction'
 import { cookieRedactor } from '../../lib/platform/client'
-import { credentialContext, resolveCredential } from '../../../core/server/utils/credential-state'
-import { eventCorrectionFailure, commitEventCorrections, eventCorrectionRequestSchema, finalizedCorrectionReadback, preflightEventCorrections, readEventCorrectionAudit, readOfficialEvent } from './roster-event-correction'
-
+import { credentialContext, resolveFromState } from '../../../core/server/utils/credential-resolution'
+import { readRosterFixtureCredentials } from './roster-fixture-credentials'
+import { commitEventCorrections, preflightEventCorrections, readEventCorrectionAudit, readOfficialEvent } from './roster-event-correction'
 export type EventCorrectionAction = 'get' | 'audit' | 'preflight' | 'commit'
 const integer = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER)
-const commitSchema = z.strictObject({ request: eventCorrectionRequestSchema, planHash: z.string().regex(/^[a-f0-9]{64}$/) })
-
-export function parseEventCorrectionWrite(action: 'preflight' | 'commit', body: unknown) {
-  if (Buffer.byteLength(JSON.stringify(body) ?? '', 'utf8') > 1024 * 1024) return eventCorrectionFailure(413, 'request_limit', 'Event correction request exceeds 1 MiB')
-  if (action === 'preflight') {
-    const parsed = eventCorrectionRequestSchema.safeParse(body)
-    if (!parsed.success) return eventCorrectionFailure(400, 'invalid_request', 'Invalid event correction request; use the documented strict whitelist')
-    return { request: parsed.data, planHash: null }
-  }
-  const parsed = commitSchema.safeParse(body)
-  if (!parsed.success) return eventCorrectionFailure(400, 'invalid_request', 'Original correction request and planHash required')
-  return parsed.data
-}
-
-export function eventCorrectionOutput(result: unknown, safety: Parameters<typeof finalizedCorrectionReadback>[1], redactors: ReadonlyArray<(text: string) => string>) {
-  const finalized = finalizedCorrectionReadback(result, safety)
-  if (!finalized) return sanitizeEvidence(result, redactors)
-  const legacy = sanitizeEvidence(finalized.legacy, redactors)
-  if (!legacy || typeof legacy !== 'object' || Array.isArray(legacy)) throw new Error('Invalid sanitized correction result')
-  return { ...legacy, qualificationReadback: finalized.value }
-}
-
-export function eventCorrectionError(error: unknown) {
-  const known = error as { statusCode?: number; code?: string; message?: string }
-  return known.statusCode && known.code
-    ? { status: known.statusCode, code: known.code, message: known.message ?? 'Correction rejected' }
-    : { status: 500, code: 'transaction_failed', message: 'Event correction failed; no partial changes committed' }
-}
-
 export function handleEventCorrectionRequest(input: { action: EventCorrectionAction; method: string; id?: unknown; query?: Record<string, unknown>; body?: unknown; headers?: Record<string, string | undefined> }, context: { db: BetterSQLite3Database<typeof schema>; apiToken?: string | null }) {
   const headers = { 'cache-control': 'no-store' }
   const fail = (status: number, code: string, message: string) => ({ status, headers, body: { error: { code, message } } })
@@ -49,9 +22,10 @@ export function handleEventCorrectionRequest(input: { action: EventCorrectionAct
   if(input.action==='get' && input.query && 'official' in input.query && !resolveApiAuth({given:readApiToken(input.headers),configured:context.apiToken}).writeAuthorized) return fail(401,'unauthorized','Configured API token required')
   try {
     // Resolve before mutations; never let credential lookup fail after commit.
-    const credentials = { ...credentialContext(), db: context.db }
+    const credentials = credentialContext()
+    const saved = readRosterFixtureCredentials(context.db)
     const runtime = typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : null
-    const secrets = [context.apiToken, runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN, resolveCredential('sme-roster.miitCookie', credentials).value, resolveCredential('core.ocrToken', credentials).value].filter((s): s is string => !!s)
+    const secrets = [context.apiToken, runtime?.apiToken, runtime?.mcpToken, process.env.NUXT_API_TOKEN, process.env.NUXT_MCP_TOKEN, resolveFromState('sme-roster.miitCookie', credentials, saved).value, resolveFromState('core.ocrToken', credentials, saved).value].filter((s): s is string => !!s)
     const redactors = [...new Set(secrets)].map(cookieRedactor)
     const qualificationSafety = (value: unknown) => isDeepStrictEqual(value, sanitizeEvidence(value, redactors))
     let result: unknown
@@ -83,3 +57,4 @@ export function handleEventCorrectionRequest(input: { action: EventCorrectionAct
     return fail(rejection.status, rejection.code, rejection.message)
   }
 }
+export { parseEventCorrectionWrite, eventCorrectionOutput, eventCorrectionError } from './roster-event-correction-http-model'

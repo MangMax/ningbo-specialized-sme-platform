@@ -1,6 +1,6 @@
 import { MAX_PAGE_NO } from '../../../lib/ocr-markdown'
 import { describeOcrFile, fileRefFromQuery, readOcrFileResults, resolveOcrFileTarget } from '../../utils/ocr-files'
-import { formatOcrMarkdown } from '../../utils/ocr-result'
+import { formatOcrMarkdown } from '../../utils/ocr-result-contract'
 
 /**
  * **导出 OCR 结果 markdown**。`GET /api/ocr-results/markdown?file=…|fileId=…[&page=3]`

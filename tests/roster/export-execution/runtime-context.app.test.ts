@@ -6,9 +6,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb, schema } from '../../../db/client'
 import { captureReceiptRuntimeContext, validateReceiptRuntimeContext } from '../../../layers/sme-roster/server/utils/receipt-runtime-context'
-import { importReceiptRedactor } from '../../../layers/sme-roster/server/utils/import-receipt-redaction'
+import { importReceiptRedactor } from '../../../layers/sme-roster/server/utils/import-receipt-redaction-sqlite'
 import { createCurrentQualificationAssessmentReader, readCurrentQualificationAssessment } from '../../../layers/sme-roster/lib/roster/current-qualification'
-import { readOfficialPublishedPresentation } from '../../../layers/sme-roster/lib/roster/official-published-presentation'
+import { readOfficialPublishedPresentation } from '../../../layers/sme-roster/lib/roster/official-published-presentation-sqlite'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
@@ -21,6 +21,7 @@ import { preflightRosterImport, commitRosterImport } from '../../../layers/sme-r
 import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { minimalPdf } from '../../support/minimal-pdf'
 import { HEADERS_409 } from '../../fixtures/current-export-409'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 let root: string, db: ReturnType<typeof initializeDb>
 beforeEach(() => {
@@ -188,16 +189,28 @@ function legalWorkerSeed409() {
   }
 }
 
-function workerBusinessDigest409() {
+function workerBusinessDigest409(postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>) {
   const hash = createHash('sha256')
   for (const table of ['enterprise','record','record_event','record_evidence','official_evidence_row_revision','stored_file']) {
     const order = table === 'official_evidence_row_revision' ? 'evidence_id, revision' : 'id'
-    for (const row of db.$client.prepare('select * from ' + table + ' order by ' + order).iterate()) hash.update(JSON.stringify(row))
+    hash.update(postgres.psql(['-At', '-c', `SELECT row_to_json(t) FROM business.${table} t ORDER BY ${order}`]))
   }
   return hash.digest('hex')
 }
 
-async function actualWorker409(mode: typeof workerModes409[number], context: unknown, caseId: string) {
+async function actualWorker409(mode: typeof workerModes409[number], context: unknown, caseId: string, breakCredentialStorage = false) {
+  const postgres = await postgresRuntimeFixture({ dir: root, sourcePath: join(root, 'synthetic.db') })
+  try {
+    for (const [name, value] of Object.entries(postgres.env)) vi.stubEnv(name, value)
+    if (breakCredentialStorage) postgres.psql(['-c', 'DROP TABLE business.service_credential'])
+    const digest = workerBusinessDigest409(postgres)
+    const result = await observeWorker409(mode, context, caseId)
+    expect(workerBusinessDigest409(postgres)).toBe(digest)
+    return result
+  } finally { postgres.close() }
+}
+
+async function observeWorker409(mode: typeof workerModes409[number], context: unknown, caseId: string) {
   assertWorkerArtifactPins409()
   const temporaryPath = join(root,'private.part'), finalPath = join(root,'published.xlsx')
   const worker = mode === 'source' ? createCurrentExportWorker() : createEnterpriseReadProcess(pathToFileURL(workerArtifactEntry409))
@@ -218,7 +231,7 @@ async function actualWorker409(mode: typeof workerModes409[number], context: unk
   const deadline = new Promise<never>((_,reject) => { timer = setTimeout(() => reject(new Error('409 test observation deadline')),20000) })
   try {
     // JSON roundtrip restricts these actual controls to values expressible on startup IPC.
-    worker.postMessage({ dbPath: join(root,'synthetic.db'), title: 'specialized_sme', temporaryPath, jobId: 'actual-worker-409', receiptRuntime: JSON.parse(JSON.stringify(context)) })
+    worker.postMessage({ title: 'specialized_sme', temporaryPath, jobId: 'actual-worker-409', receiptRuntime: JSON.parse(JSON.stringify(context)) })
     const [message,exit] = await Promise.race([Promise.all([terminal,exited]),deadline])
     expect(finalCount).toBe(1)
     // Existing child disconnect handler deliberately exits1 after its terminal message.
@@ -244,7 +257,6 @@ it.each([{ mode: 'source' as const, ...ocrPartitions409[0] }, { mode: 'compiled'
   vi.stubEnv('NUXT_API_TOKEN',W409.envApi); vi.stubEnv('NUXT_MCP_TOKEN',W409.envMcp)
   vi.stubEnv('MIIT_COOKIE',' ' + W409.envCookie + ' '); vi.stubEnv('NUXT_OCR_TOKEN',partition.envOcr)
   vi.stubEnv('PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN',' ' + W409.paddle + ' ')
-  const before = workerBusinessDigest409()
   const { message,progress,temporaryPath } = await actualWorker409(partition.mode,{ apiToken: W409.runtimeApi, mcpToken: W409.runtimeMcp, ocrToken: partition.runtimeOcr },'B3-' + partition.id)
   expect(message.type).toBe('done')
   if (message.type !== 'done') throw new Error('Expected actual workbook completion')
@@ -279,7 +291,6 @@ it.each([{ mode: 'source' as const, ...ocrPartitions409[0] }, { mode: 'compiled'
   expect(workbook.getWorksheet('未认定')!.getCell('M3').value).toBe('未认定')
   for (const token of selected) expect(JSON.stringify(cells)).not.toContain(token)
   for (const token of Object.values(W409).filter(value => !selected.includes(value))) expect(String(workbook.getWorksheet('有效企业')!.getCell('H2').value)).toContain(token)
-  expect(workerBusinessDigest409()).toBe(before)
 },30000)
 
 // B09 above retains all invalid-value partitions and byte boundaries in-process.
@@ -296,9 +307,7 @@ it.each(workerModes409.map(mode => ({ mode, id: 'null', value: null })))('B4 act
 
 it.each(workerModes409)('B4 actual worker %s credential storage fault never publishes incomplete workbook', async mode => {
   legalWorkerSeed409()
-  db.$client.exec('drop table service_credential')
-  const before = workerBusinessDigest409()
-  const result = await actualWorker409(mode,{ apiToken: W409.runtimeApi, mcpToken: W409.runtimeMcp, ocrToken: W409.runtimeOcr },'B4-storage')
+  const result = await actualWorker409(mode,{ apiToken: W409.runtimeApi, mcpToken: W409.runtimeMcp, ocrToken: W409.runtimeOcr },'B4-storage', true)
   expect(result.message).toEqual({ type: 'failure', message: W409_SAFE_FAILURE })
   expect(JSON.stringify(result.message)).not.toContain(root)
   for (const token of Object.values(W409)) expect(JSON.stringify(result.message)).not.toContain(token)
@@ -308,5 +317,4 @@ it.each(workerModes409)('B4 actual worker %s credential storage fault never publ
     const workbook = new ExcelJS.Workbook()
     await expect(workbook.xlsx.readFile(result.temporaryPath)).rejects.toThrow()
   }
-  expect(workerBusinessDigest409()).toBe(before)
 },30000)

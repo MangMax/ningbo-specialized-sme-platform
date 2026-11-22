@@ -7,46 +7,15 @@ import type { Database } from 'better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { TITLE_ORDER } from '../labels'
 import { isPageCapable } from './evidence-page'
-import { computeFirstAward } from './lifecycle'
-import { matchesRecognitionQuery, summarizeFirstRecognition, type RecognitionEvent } from './first-recognition'
-import type { RosterRecognitionFilter, RosterRecognitionRow, RosterRecognitionsResult } from './recognitions'
+import { matchesRecognitionQuery } from './first-recognition'
+import { compareRecognitionCoordinates, summarizeRecognitionAwards, type RecognitionCoordinate, type RosterRecognitionFilter, type RosterRecognitionRow, type RosterRecognitionsResult } from './recognition-projection'
 
 type Db = BetterSQLite3Database<typeof schema>
-interface Coordinate { enterpriseId: number; name: string; titleCode: string }
-type AwardRow = Coordinate & RecognitionEvent & { hasEvidence: boolean }
-
-function rank(code: string) {
-  const index = TITLE_ORDER.indexOf(code)
-  return index < 0 ? TITLE_ORDER.length : index
-}
-
-export function compareRecognitionCoordinates(a: Coordinate, b: Coordinate) {
-  return rank(a.titleCode) - rank(b.titleCode) || a.name.localeCompare(b.name) || a.enterpriseId - b.enterpriseId
-}
-
-export function* summarizeRecognitionAwards(rows: Iterable<AwardRow>) {
-  let coordinate: Coordinate | undefined
-  let events: AwardRow[] = []
-  const finish = () => {
-    const lifecycle = computeFirstAward(events)
-    const hasEvidence = events.some(event => event.id === lifecycle.firstRecognitionEventId && event.hasEvidence)
-    return { ...coordinate!, ...summarizeFirstRecognition({ titleCode: coordinate!.titleCode, lifecycle, events, hasEvidence })! }
-  }
-  for (const row of rows) {
-    if (coordinate?.enterpriseId !== row.enterpriseId || coordinate?.titleCode !== row.titleCode) {
-      if (coordinate) yield finish()
-      coordinate = { enterpriseId: row.enterpriseId, name: row.name, titleCode: row.titleCode }
-      events = []
-    }
-    events.push(row)
-  }
-  if (coordinate) yield finish()
-}
 
 /** At most one enterprise/title history is materialized at a time. Review,
  * maintenance and nurture cannot affect first recognition, so only award events
  * are needed by the shared first-award calculation and status predicates. */
-function* summaries(db: Db, titles?: string[], selected?: Coordinate[]) {
+function* summaries(db: Db, titles?: string[], selected?: RecognitionCoordinate[]) {
   const r = schema.record, v = schema.recordEvent, e = schema.enterprise
   const query = db.select({
     enterpriseId: e.id, name: e.name, titleCode: r.titleCode, source: r.source,
@@ -73,7 +42,7 @@ function* summaries(db: Db, titles?: string[], selected?: Coordinate[]) {
 export function readRecognitionPage(db: Db, filter: RosterRecognitionFilter, page: number, pageSize: number): RosterRecognitionsResult {
   // Keep only three light scalars per matching pair for the existing JS locale
   // ordering. Counts are accumulated before pagination, without full profiles.
-  const coordinates: Coordinate[] = []
+  const coordinates: RecognitionCoordinate[] = []
   const enterpriseIds = new Set<number>()
   const titles: Record<string, number> = Object.fromEntries(TITLE_ORDER.map(code => [code, 0]))
   const query = { title: filter.title, firstYear: filter.year, firstStatus: filter.status }

@@ -10,9 +10,8 @@ import { platformBusinessObservation as observation, platformCollection as colle
 import { z } from 'zod'
 import { lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeUscc } from '../../lib/domain'
-import {
-  aliasDecisionSchema, aliasListInput, aliasPageInput, boundedAliasPage, decideEnterpriseAlias, failAlias, parseAliasInput, positiveAliasId,
-} from './alias-maintenance'
+import { fail as failAlias, parse as parseAliasInput, positiveId as positiveAliasId } from './alias-maintenance-model'
+import { aliasDecisionSchema, aliasListInput, aliasPageInput, boundedAliasPage, decideEnterpriseAlias } from './alias-maintenance-model'
 import { capturePostgresIdentityChange, readPostgresIdentityMaterial } from './postgres-identity-evidence'
 
 type Db = NodePgDatabase
@@ -125,7 +124,7 @@ async function checkConflict(db: Db, alias: Alias) {
 }
 
 export function maintainPostgresEnterpriseAlias(db: Db, enterpriseId: unknown, aliasId: unknown, input: unknown) {
-  if (process.env.NUXT_POSTGRES_DIRECTORY_WRITE !== '1') failAlias(503, 'write_unavailable', 'PostgreSQL 企业别名处于只读模式')
+  if (process.env.NUXT_DB_READONLY === '1') failAlias(503, 'write_unavailable', 'PostgreSQL 企业别名处于只读模式')
   const request = parseAliasInput(aliasDecisionSchema, input)
   const requestHash = createHash('sha256').update(JSON.stringify(request)).digest('hex')
   return db.transaction(async tx => {

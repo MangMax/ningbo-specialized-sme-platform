@@ -1,12 +1,12 @@
 import { z } from 'zod'
-import { evidenceReadSchema, officialReadQuery, readPublicOfficialEvidence } from './official-evidence-read'
+import { evidenceReadSchema, officialReadQuery } from './official-evidence-read'
+import { readPublicOfficialEvidence } from './official-evidence-read-sqlite'
 import { OfficialEvidenceError } from './official-evidence'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
-import { commitPostgresEvidenceCorrection, preflightPostgresEvidenceCorrection } from './roster-evidence-correction-postgres'
-import { usePostgresRosterDb } from './postgres-roster-db'
 import { authorizeRosterWrite } from './roster-import-http'
-import { EvidenceCorrectionError, evidenceCorrectionRequestSchema, preflightEvidenceCorrection, readExactEvidence, commitEvidenceCorrection, readEvidenceCorrectionBatch, readEvidenceCorrectionAudit } from './roster-evidence-correction'
+import { preflightEvidenceCorrection, readExactEvidence, commitEvidenceCorrection, readEvidenceCorrectionBatch, readEvidenceCorrectionAudit } from './roster-evidence-correction'
+import { EvidenceCorrectionError, evidenceCorrectionRequestSchema } from './roster-evidence-correction-model'
 export type EvidenceCorrectionAction = 'get' | 'preflight' | 'commit' | 'audit' | 'batch'
 const headers = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
 export async function handleEvidenceCorrectionRequest(input: { action: EvidenceCorrectionAction; method: string; headers?: Record<string, string | undefined>; body?: unknown; id?: unknown; key?: unknown; query?: Record<string, unknown> }, context: { db: BetterSQLite3Database<typeof schema>; apiToken?: string | null; filesDir?: string }) {
@@ -20,20 +20,17 @@ export async function handleEvidenceCorrectionRequest(input: { action: EvidenceC
     if (input.action === 'preflight') {
       const parsed = evidenceCorrectionRequestSchema.safeParse(input.body)
       if (!parsed.success) return error(400, 'invalid_request', 'Provide exact evidence/event/owner IDs, version, full coordinate, actor and basis; maximum 100 operations')
-      const native = usePostgresRosterDb(true)
-      return ok(native ? await preflightPostgresEvidenceCorrection(native, parsed.data, context.filesDir)
-        : await preflightEvidenceCorrection(context.db, parsed.data, context.filesDir))
+      return ok(await preflightEvidenceCorrection(context.db, parsed.data, context.filesDir))
     }
     if (input.action === 'commit') {
       const parsed = z.strictObject({ request: evidenceCorrectionRequestSchema, planHash: z.string().regex(/^[a-f0-9]{64}$/) }).safeParse(input.body)
       if (!parsed.success) return error(400, 'invalid_request', 'Request and preflight planHash required')
-      const native = usePostgresRosterDb(true)
-      return ok(native ? await commitPostgresEvidenceCorrection(native, parsed.data.request, parsed.data.planHash, context.filesDir)
-        : await commitEvidenceCorrection(context.db, parsed.data.request, parsed.data.planHash, context.filesDir))
+      return ok(await commitEvidenceCorrection(context.db, parsed.data.request, parsed.data.planHash, context.filesDir))
     }
+    const db = context.db
     if (input.action === 'batch') {
       if (typeof input.key !== 'string' || !input.key.trim() || input.key.length > 200) return error(400, 'invalid_request', 'Idempotency key required')
-      const batch = readEvidenceCorrectionBatch(context.db, input.key)
+      const batch = readEvidenceCorrectionBatch(db, input.key)
       return batch ? ok(batch) : error(404, 'not_found', 'Receipt not found')
     }
     const id = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).safeParse(input.id)
@@ -41,14 +38,14 @@ export async function handleEvidenceCorrectionRequest(input: { action: EvidenceC
     if (input.action === 'audit') {
       const paging = z.strictObject({ page: z.coerce.number().int().positive().max(1000000).default(1), pageSize: z.coerce.number().int().positive().max(200).default(50) }).safeParse(input.query ?? {})
       if (!paging.success) return error(400, 'invalid_request', 'Invalid audit pagination')
-      return ok(context.db.transaction(tx => readEvidenceCorrectionAudit(tx, id.data, paging.data.page, paging.data.pageSize)))
+      return ok(db.transaction(tx => readEvidenceCorrectionAudit(tx, id.data, paging.data.page, paging.data.pageSize)))
     }
     if (input.action === 'get') {
       const query=input.query??{}
-      if (!('official' in query)) return ok(context.db.transaction(tx=>readExactEvidence(tx,id.data)))
+      if (!('official' in query)) return ok(db.transaction(tx=>readExactEvidence(tx,id.data)))
       const parsed=evidenceReadSchema.safeParse(officialReadQuery({...query,id:id.data}))
       if(!parsed.success || !parsed.data.official) return error(400,'invalid_query','Invalid bounded official evidence query')
-      return ok(context.db.transaction(tx=>({...readExactEvidence(tx,id.data),official:readPublicOfficialEvidence(tx as typeof context.db,'evidence',parsed.data)})))
+      return ok(db.transaction(tx=>({...readExactEvidence(tx,id.data),official:readPublicOfficialEvidence(tx as typeof db,'evidence',parsed.data)})))
     }
     return error(404, 'not_found', 'Operation unavailable')
   } catch (caught) {

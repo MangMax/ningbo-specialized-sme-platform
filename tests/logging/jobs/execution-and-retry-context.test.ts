@@ -1,16 +1,17 @@
+import { prepareRuntimeLogs } from '../fixtures/runtime'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
+import { applicationLogs } from '../../../layers/core/lib/logging'
 import { __resetJobRunner, clearJobSpecs, registerJob, submitJob, whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { getJob } from '../../../layers/core/server/utils/job-store'
 const dir = mkdtempSync(join(tmpdir(), 'jobs184-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'fixture.db') })
-const previous = process.env.NUXT_LOG_DIR
-beforeAll(() => { process.env.NUXT_LOG_DIR = join(dir, 'logs'); initializeWorkerLogging() })
-afterAll(async () => { await whenIdle(); __resetJobRunner(); clearJobSpecs(); await closeApplicationLogging(); db.$client.close(); if (previous === undefined) delete process.env.NUXT_LOG_DIR; else process.env.NUXT_LOG_DIR=previous; rmSync(dir,{recursive:true,force:true}) })
+let runtime: Awaited<ReturnType<typeof prepareRuntimeLogs>>
+beforeAll(async () => { runtime = await prepareRuntimeLogs(dir) })
+afterAll(async () => { await whenIdle(); __resetJobRunner(); clearJobSpecs(); await runtime?.close(); db.$client.close(); rmSync(dir,{recursive:true,force:true}) })
 it('retains submission context after return and logs one terminal with bounded progress and no payload', async () => {
   let release!: () => void
   const gate = new Promise<void>(resolve => { release=resolve })

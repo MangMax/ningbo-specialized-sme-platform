@@ -6,7 +6,8 @@ import { platformArchiveValue as archive, platformCollectionArchiveRef as ref } 
 import { platformBusinessObservation as o, platformBusinessRecord as b, platformCollection as c, platformCollectionCondition as condition,
   platformLegacyQueryAlias as qa, platformLegacyRelationAlias as ra, platformObservationAssignment as assignment,
   platformRecognizedProjection as p } from '../../../../db/postgresql/platform-tables'
-import { projectRecognizedWitnesses, type RecognizedWitnessRow } from './recognized-witness-target'
+import { projectRecognizedWitnesses } from './recognized-witness-projection'
+import type { RecognizedWitnessRow } from './recognized-witness-target'
 import type { RecognizedWitnessReader } from './recognized-witness-reader'
 
 type Reader = Pick<NodePgDatabase, 'select'>

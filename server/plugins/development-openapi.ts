@@ -2,8 +2,8 @@ import { getRequestURL } from 'h3'
 import { registeredCredentials } from '../../lib/app-modules'
 import { extendCredentialOpenApi, type CredentialOpenApiDocument } from '../../layers/core/server/utils/credential-openapi'
 import { extendFileOpenApi, type FileOpenApiDocument } from '../../layers/core/server/utils/file-openapi'
-import { jobSpecs } from '../../layers/core/server/utils/job-runner'
-import { serverFileCategories } from '../file-store'
+import { jobSpecs } from '../../layers/core/server/utils/job-spec-registry'
+import { serverFileCategories } from '../../layers/core/server/utils/file-category-runtime'
 
 type JobParamsContent = {
   content?: { 'application/json'?: { schema?: { properties?: { params?: { description?: string } } } } }

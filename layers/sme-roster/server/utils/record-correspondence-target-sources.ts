@@ -10,7 +10,8 @@ import { storedApplyProjection } from '../../lib/platform/apply-stored-schema'
 import type { PlatformNormalizationConflict } from '../../lib/platform/normalization'
 import { storedProcessProjection } from '../../lib/platform/process-stored-schema'
 import { storedRecognizedProjection } from '../../lib/platform/recognized-stored-schema'
-import { cellExpression,snapshotSchema } from '../../lib/platform/target-evidence-read'
+import { cellExpression } from '../../lib/platform/target-evidence-read'
+import { snapshotSchema } from '../../lib/platform/evidence-snapshot-model'
 import { targetSchema as s } from '../../lib/platform/target-schema'
 
 type Db = BetterSQLite3Database<typeof legacy>

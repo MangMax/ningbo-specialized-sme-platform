@@ -6,7 +6,8 @@ import { Worker } from 'node:worker_threads'
 import { createHash } from 'node:crypto'
 import Database from 'better-sqlite3'
 import { SQLITE_WORKER } from '../../../layers/core/lib/logging/sqlite-worker'
-import type { LogService, LogServiceOptions } from '../../../layers/core/lib/logging/service'
+import type { LogService } from '../../../layers/core/lib/logging/service'
+import type { LogServiceOptions } from '../../../layers/core/lib/logging/sqlite-service'
 
 const roots: string[] = [], services: LogService[] = []
 const realSetTimeout = setTimeout
@@ -28,7 +29,7 @@ async function fixture(treatment?: string, options: Partial<LogServiceOptions> =
     vi.doMock('../../../layers/core/lib/logging/sqlite-worker', () => ({ SQLITE_WORKER: modified }))
   }
   vi.resetModules()
-  const { createLogService } = await import('../../../layers/core/lib/logging/service')
+  const { createLogService } = await import('../../../layers/core/lib/logging/sqlite-service')
   const root = mkdtempSync(join(tmpdir(), 'logging-write-outcome-180-')); roots.push(root)
   const service = createLogService({ directory: root, ...options }); services.push(service)
   return { service, root }

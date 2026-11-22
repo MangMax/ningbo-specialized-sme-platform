@@ -8,11 +8,8 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
 import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
-import {
-  getRosterEnterpriseDetail,
-  listRosterDifferences,
-  listRosterEnterprises,
-} from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { listRosterEnterprises } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail, listRosterDifferences } from '../../../layers/sme-roster/lib/roster/enterprise-roster-sqlite'
 import type { PlatformInterface } from '../../../layers/sme-roster/lib/labels'
 import { executeNativeImport, startRosterApi, type RosterApiServer } from '../imports/fixtures/import-server'
 

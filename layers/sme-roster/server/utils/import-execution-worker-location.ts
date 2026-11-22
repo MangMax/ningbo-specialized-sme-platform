@@ -1,6 +1,6 @@
 import { createEnterpriseReadProcess } from './enterprise-read-process'
 
-/** Nitro replaces this source loader with a packaged, relocatable entry. */
+/** Legacy SQLite worker used by explicit offline and test callers. */
 export function createImportExecutionWorker() {
   return createEnterpriseReadProcess(new URL('../../lib/roster/import-execution-source-loader.mjs', import.meta.url))
 }

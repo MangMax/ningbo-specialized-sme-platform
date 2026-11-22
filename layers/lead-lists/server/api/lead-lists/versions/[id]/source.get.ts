@@ -1,13 +1,11 @@
 import { createReadStream } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import { relative } from 'node:path'
-import { useDb } from '@db'
-import { verifyFileRead } from '#core/server/utils/file-read-identity'
+import { usePostgresDirectoryDb } from '../../../../../../../db/postgresql/client'
 import { verifyRegisteredFileRead } from '#core/server/public'
-import { resolveInsideRoot } from '#core/server/utils/file-store'
+import { resolveInsideRoot } from '#core/server/utils/file-store-contract'
 import { leadListId } from '../../../../../lib/contracts'
-import { readLeadVersionSource } from '../../../../utils/versions'
-import { readPostgresLeadVersionSource, usePostgresLeadDb } from '../../../../utils/postgres-versions'
+import { readPostgresLeadVersionSource } from '../../../../utils/postgres-versions'
 
 defineRouteMeta({ openAPI: {
   tags: ['线索名单'], summary: '下载名单版本登记的原文件',
@@ -17,9 +15,7 @@ defineRouteMeta({ openAPI: {
 export default defineEventHandler(async event => {
   const id = leadListId.safeParse(Number(getRouterParam(event, 'id')))
   if (!id.success) throw createError({ statusCode: 400, message: '名单版本编号有误' })
-  const postgres = usePostgresLeadDb()
-  const postgresFile = postgres ? await readPostgresLeadVersionSource(postgres, id.data) : null
-  const source = postgresFile ?? readLeadVersionSource(useDb(), id.data)
+  const source = await readPostgresLeadVersionSource(usePostgresDirectoryDb(), id.data)
   const root = useRuntimeConfig(event).filesDir
   const path = resolveInsideRoot(root, source.relPath)
   if (!path) throw createError({ statusCode: 403, message: '原文件位置无效' })
@@ -34,11 +30,8 @@ export default defineEventHandler(async event => {
     if ((error as { code?: string }).code === 'ENOENT') throw createError({ statusCode: 404, message: '原文件不存在' })
     throw error
   }
-  const { status, registered } = await (postgresFile
-    ? verifyRegisteredFileRead(root, postgresFile)
-    : verifyFileRead(useDb(), root, source.relPath))
-  const expectedSha = postgresFile?.versionSha ?? source.sha256
-  if (status !== 'verified' || registered?.fileId !== source.fileId || registered.sha256 !== expectedSha) {
+  const { status, registered } = await verifyRegisteredFileRead(root, source)
+  if (status !== 'verified' || registered?.fileId !== source.fileId || registered.sha256 !== source.versionSha) {
     throw createError({ statusCode: 409, message: '原文件与版本登记不符' })
   }
   setHeader(event, 'Content-Type', 'application/octet-stream')

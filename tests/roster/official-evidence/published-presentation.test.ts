@@ -12,18 +12,20 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../../../db/schema'
 import type { OfficialPublishedRow, RosterImportPayload, RosterImportRecord } from '../../../layers/sme-roster/lib/roster-import-client'
 import { preflightRosterImport, commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
-import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http-sqlite'
 import { handleEvidenceCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-evidence-correction-api'
 import { readCurrentQualificationAssessment, createCurrentQualificationAssessmentReader, readCurrentCandidate, type CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
 import { startHttpFixture } from '../../support/http'
 import { minimalPdf } from '../../support/minimal-pdf'
 import * as official from '../../../layers/sme-roster/server/utils/official-evidence'
-import { assertOfficialPublishedBudget, readOfficialPublishedPresentation, OfficialPublishedPresentationError, type OfficialPublishedFact } from '../../../layers/sme-roster/lib/roster/official-published-presentation'
+import { assertOfficialPublishedBudget, OfficialPublishedPresentationError, type OfficialPublishedFact } from '../../../layers/sme-roster/lib/roster/official-published-presentation'
+import { readOfficialPublishedPresentation } from '../../../layers/sme-roster/lib/roster/official-published-presentation-sqlite'
 import { currentWorkbookValues } from '../../../layers/sme-roster/lib/roster/current-workbook-presentation'
-import * as receiptRedaction from '../../../layers/sme-roster/server/utils/import-receipt-redaction'
-import * as credentialState from '../../../layers/core/server/utils/credential-state'
-import { readPublicPublishedNames, getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import * as receiptRedaction from '../../../layers/sme-roster/server/utils/import-receipt-redaction-sqlite'
+import type { ReceiptRedactionMode } from '../../../layers/sme-roster/server/utils/import-receipt-redaction'
+import { readPublicPublishedNames } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster-sqlite'
 import { listCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
 
 // Retain the original logical per-event page assertions while observing the new
@@ -491,7 +493,7 @@ function literal391(evidenceId: number, eventId = 1, nameRaw: string | null = 'N
 }
 function redactor391(db: ReturnType<typeof fixture391>['db'], token = 'cx391-only-A7mN5p9Q') {
   const real = receiptRedaction.importReceiptRedactor(db, { additionalSecrets: [token] })
-  return Object.assign(vi.fn((value: unknown, mode?: receiptRedaction.ReceiptRedactionMode) => real(value, mode)), { knownRedactors: real.knownRedactors })
+  return Object.assign(vi.fn((value: unknown, mode?: ReceiptRedactionMode) => real(value, mode)), { knownRedactors: real.knownRedactors })
 }
 function secrets391(db: ReturnType<typeof fixture391>['db']) {
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'rt391-api-distinct', mcpToken: 'rt391-mcp-distinct' }))
@@ -502,12 +504,10 @@ function secrets391(db: ReturnType<typeof fixture391>['db']) {
 
 it('factory_union_order preserves the complete context runtime env and credential set', () => {
   const f = fixture391(); secrets391(f.db)
-  const credentials = vi.spyOn(credentialState, 'resolveCredential')
   const redact = receiptRedaction.importReceiptRedactor(f.db, { additionalSecrets: ['cx391-only-A7mN5p9Q', null, '', 'cx391-only-A7mN5p9Q'] })
   const actual = redact({ name: 'cx391-only-A7mN5p9Q rt391-api-distinct rt391-mcp-distinct env391-api-distinct env391-mcp-distinct saved391-cookie-distinct saved391-ocr-distinct',
     'cx391-only-A7mN5p9Q': 'ok', nested: '{"name":"cx391-only-A7mN5p9Q","token":"arbitrary"}', bearer: 'Bearer arbitrary-value' })
   expect(actual).toEqual({ name: '[REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED]', '[REDACTED]': 'ok', nested: '{"name":"[REDACTED]","token":"[REDACTED]"}', bearer: 'Bearer [REDACTED]' })
-  expect(credentials.mock.calls.map(call => call[0])).toEqual(['sme-roster.miitCookie', 'core.ocrToken'])
   expect(redact).toHaveProperty('knownRedactors')
   expect(redact.knownRedactors).toHaveLength(7)
   expect(redact.knownRedactors.map(r => r('cx391-only-A7mN5p9Q rt391-api-distinct rt391-mcp-distinct env391-api-distinct env391-mcp-distinct saved391-cookie-distinct saved391-ocr-distinct'))).toEqual([
@@ -532,12 +532,11 @@ it('factory_default_compatibility keeps omitted and empty options equivalent wit
   expect(receiptRedaction.importReceiptRedactor(f.db, { additionalSecrets: ['second391-request'] })('first391-request second391-request')).toBe('first391-request [REDACTED]')
 })
 
-it.each([1, 2])("factory_credential_fault fails closed on read %i", read => {
-  const f = fixture391(), original = credentialState.resolveCredential
-  let n = 0
-  vi.spyOn(credentialState, 'resolveCredential').mockImplementation((...args) => { if (++n === read) throw new Error('synthetic-private-storage'); return original(...args) })
-  expect(() => receiptRedaction.importReceiptRedactor(f.db, { additionalSecrets: ['context391'] })).toThrow('synthetic-private-storage')
-  expect(n).toBe(read)
+it('receipt redaction refuses to return data when stored credentials cannot be read', () => {
+  const f = fixture391()
+  f.sqlite.exec('ALTER TABLE service_credential RENAME TO unavailable_service_credential')
+  expect(() => receiptRedaction.importReceiptRedactor(f.db, { additionalSecrets: ['context391'] }))
+    .toThrow(expect.objectContaining({ statusCode: 503 }))
 })
 
 it.each([0, 1, 40, 41, 81])("batch_distinct reads all %i events in bounded chunks", count => {
@@ -618,7 +617,7 @@ it('late_batch_atomicity never publishes forty successful facts when event forty
 it('callback_failure_atomicity returns only a safe failure without partial facts', () => {
   const f = fixture391(); f.event(1); f.capture(1); f.capture(2)
   const real = receiptRedaction.importReceiptRedactor(f.db)
-  const callback = Object.assign(vi.fn((value: unknown, mode?: receiptRedaction.ReceiptRedactionMode) => { if ((value as { evidenceId: number }).evidenceId === 2) throw new Error('private SQL context391'); return real(value, mode) }), { knownRedactors: real.knownRedactors })
+  const callback = Object.assign(vi.fn((value: unknown, mode?: ReceiptRedactionMode) => { if ((value as { evidenceId: number }).evidenceId === 2) throw new Error('private SQL context391'); return real(value, mode) }), { knownRedactors: real.knownRedactors })
   expect(readPublicPublishedNames(f.db, f.selected(), f.selected(), 1, 1, callback)).toEqual({ availability: 'unavailable', error: 'read_failed', facts: [] })
   expect(callback).toHaveBeenCalledTimes(2)
 })
@@ -730,7 +729,6 @@ it.each([
 
 it.each([true, false])("typed_name_union shares one closure with context %s", includeContext => {
   const f = fixture391(); secrets391(f.db)
-  const credentials = vi.spyOn(credentialState, 'resolveCredential')
   const redact = includeContext
     ? receiptRedaction.importReceiptRedactor(f.db, { additionalSecrets: ['cx391-only-A7mN5p9Q', null, '', 'cx391-only-A7mN5p9Q'] })
     : receiptRedaction.importReceiptRedactor(f.db)
@@ -742,7 +740,6 @@ it.each([true, false])("typed_name_union shares one closure with context %s", in
   const input = { evidenceId: 17, eventId: 9, revision: 3, availability: 'captured', nameRaw, sourceBindingKnown: true }
   const typedFirst = redact(input, 'official_published_name'), genericFirst = redact({ name: nameRaw })
   const typedSecond = redact(input, 'official_published_name'), genericSecond = redact(nameRaw)
-  expect(credentials.mock.calls.map(call => call[0])).toEqual(['sme-roster.miitCookie', 'core.ocrToken'])
   expect(redact.knownRedactors).toBe(known)
   expect(known).toHaveLength(includeContext ? 7 : 6)
   expect(genericFirst).toEqual({ name: expected }); expect(genericSecond).toBe(expected)
@@ -752,7 +749,7 @@ it.each([true, false])("typed_name_union shares one closure with context %s", in
 it.each(['undefined', 'object', 'number'] as const)("typed_name_result rejects %s atomically", kind => {
   const f = fixture391(); f.event(1); f.capture(1); f.capture(2)
   const real = receiptRedaction.importReceiptRedactor(f.db)
-  const callback = Object.assign(vi.fn((value: unknown, mode?: receiptRedaction.ReceiptRedactionMode) => {
+  const callback = Object.assign(vi.fn((value: unknown, mode?: ReceiptRedactionMode) => {
     if ((value as { evidenceId: number }).evidenceId === 2) return kind === 'undefined' ? undefined : kind === 'object' ? {} : 17
     return real(value, mode)
   }), { knownRedactors: real.knownRedactors })

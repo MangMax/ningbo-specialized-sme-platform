@@ -7,12 +7,12 @@ import {
   platformBusinessObservation, platformCollection, platformCollectionCondition, platformExportBatch,
   platformLegacyQueryAlias, platformLegacyRelationAlias, platformObservationAssignment,
 } from '../../../../db/postgresql/platform-tables'
-import * as schema from '../../../../db/schema'
+import type * as schema from '../../../../db/schema'
 import { normalizeName } from '../../lib/domain'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { comparisonSourceCatalogInput, type ComparisonSourceCatalogInput } from '../../lib/roster/record-comparison'
-import { postgresOfficialSourceDirectory, type OfficialSourceDocument } from './official-source-directory'
-import { comparisonCatalogWindows, projectCatalogDocument, projectCatalogExport, projectCatalogQuery, projectSourceEnterpriseLinks } from './record-comparison'
+import { postgresOfficialSourceDirectory, type OfficialSourceDocument } from './official-source-directory-postgres'
+import { comparisonCatalogWindows, projectCatalogDocument, projectCatalogExport, projectCatalogQuery, projectSourceEnterpriseLinks } from './record-comparison-model'
 
 type Reader = Pick<NodePgDatabase, 'select'>
 const ids = (values: readonly number[]) => sql`${sql.param(values)}::bigint[]`
@@ -75,7 +75,7 @@ export function readPostgresRecordComparisonSources(db: NodePgDatabase, input: C
         row as OfficialSourceDocument, registered ? { ...registered, bytes: Number(registered.bytes) } : null,
       )) : []
     const batches = bw.limit ? (await tx.select({
-      row: sql<typeof schema.platformExportBatch.$inferSelect>`${postgresRosterRow(schema.platformExportBatch,'b')}`,
+      row: sql<typeof schema.platformExportBatch.$inferSelect>`${postgresRosterRow(platformExportBatch,'b')}`,
     }).from(b).where(batchFilter).orderBy(b.id).limit(bw.limit).offset(bw.offset)).map(({ row }) => projectCatalogExport(row)) : []
     const conditions = tx.select({
       value: sql`CASE WHEN count(*)>0 THEN coalesce(json_object_agg(${condition.name}, CASE ${condition.valueKind}
@@ -85,7 +85,7 @@ export function readPostgresRecordComparisonSources(db: NodePgDatabase, input: C
     }).from(condition).where(eq(condition.collectionId, c.id))
     const queryPage = qw.limit ? await tx.select({
       id: q.oldId,
-      collection: sql<typeof schema.platformCollection.$inferSelect>`${postgresRosterRow(schema.platformCollection,'c')}`,
+      collection: sql<typeof schema.platformCollection.$inferSelect>`${postgresRosterRow(platformCollection,'c')}`,
       conditions: sql<Record<string, unknown> | null>`CASE WHEN ${c.provenanceState} IN ('captured','conflict') THEN (${conditions}) END`,
     }).from(q).innerJoin(c, eq(c.id, q.collectionId)).where(queryFilter).orderBy(q.oldId).limit(qw.limit).offset(qw.offset) : []
     signal?.throwIfAborted()

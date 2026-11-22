@@ -2,9 +2,7 @@ import { maintainPostgresFile } from '../../utils/file-maintenance-postgres'
 import { usePostgresFileDb } from '../../utils/file-store-postgres'
 import { requestLogContext } from '../../../lib/logging'
 import { requireApiToken } from '../../utils/api-guard'
-import { hasFileMaintenanceControls, splitFileMaintenanceBody } from '../../utils/file-maintenance'
-import { useDb } from '@db'
-import { handleStoredFilePatchRequest } from '../../utils/stored-file-patch-http'
+import { hasFileMaintenanceControls, splitFileMaintenanceBody } from '../../utils/file-maintenance-shared'
 
 /**
  * 改文件元数据,或只改用户可见名称。改名不改磁盘 `filename` / `relPath`、文件 ID、OCR、页图或出处,
@@ -103,26 +101,12 @@ export default defineEventHandler(async (event) => {
   setHeader(event, 'cache-control', 'no-store')
   if (hasFileMaintenanceControls(body)) requireApiToken(event)
   const pg = usePostgresFileDb()
-  if (pg) {
-    const id = Number(getRouterParam(event, 'id'))
-    if (!Number.isSafeInteger(id) || id <= 0) throw createError({ statusCode: 400, message: '文件 id 非法' })
-    try {
-      const { options, patch } = splitFileMaintenanceBody(body, 'update')
-      return await maintainPostgresFile(pg, useRuntimeConfig().filesDir, id, 'update', patch, options, requestLogContext(event))
-    } catch (error) {
-      throw createError({ statusCode: (error as { statusCode?: number }).statusCode ?? 500, message: (error as Error).message })
-    }
+  const id = Number(getRouterParam(event, 'id'))
+  if (!Number.isSafeInteger(id) || id <= 0) throw createError({ statusCode: 400, message: '文件 id 非法' })
+  try {
+    const { options, patch } = splitFileMaintenanceBody(body, 'update')
+    return await maintainPostgresFile(pg, useRuntimeConfig().filesDir, id, 'update', patch, options, requestLogContext(event))
+  } catch (error) {
+    throw createError({ statusCode: (error as { statusCode?: number }).statusCode ?? 500, message: (error as Error).message })
   }
-  const result = handleStoredFilePatchRequest(
-    'PATCH',
-    getRouterParam(event, 'id'),
-    body,
-    useDb(),
-    requestLogContext(event),
-  )
-  if (result.status !== 200) {
-    const message = (result.body as { message?: string }).message ?? '文件更新失败'
-    throw createError({ statusCode: result.status, message })
-  }
-  return result.body
 })

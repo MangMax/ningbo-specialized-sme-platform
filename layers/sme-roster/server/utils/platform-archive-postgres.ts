@@ -23,7 +23,7 @@ import { DECLARATION_OBSERVATION_LIMIT, DECLARATION_VERSION_LIMIT, type Declarat
 import type { PlatformFilterOptionsQuery } from '../../lib/platform/filter-options'
 import { normalizeDeclareKind } from '../../lib/platform/identity'
 import { RECOGNIZED_DIRECTORY_OBSERVATION_LIMIT, RECOGNIZED_DIRECTORY_VERSION_LIMIT, type RecognizedDirectoryFilter } from '../../lib/platform/recognized-directory'
-import { fail, orderedScopes, pageOf } from './platform-business-read'
+import { fail, orderedScopes, pageOf } from './platform-business-projection'
 
 type Reader = Pick<NodePgDatabase, 'select' | 'selectDistinct' | '$with' | 'with' | '$count'>
 type Source = PlatformFilterOptionsQuery['source']
@@ -348,7 +348,8 @@ async function listRecords(tx: Reader, catalog: Catalog, filter: ArchiveFilter) 
     platformKey: record.platformKey,
     matchedVersionCount: pageRows.matchedVersionCount,
     versionId: version.id,
-    projectedVersion: versionFields(catalog, projection),
+    // Drizzle uses the first field of a joined object to detect a missing row.
+    projectedVersion: { projectionId: projection.id, ...versionFields(catalog, projection) },
     summary: {
       versionCount: summary.versionCount, observationCount: summary.observationCount,
       enterpriseIds: summary.enterpriseIds, enterpriseNames: summary.enterpriseNames, titleScopes: summary.titleScopes,
@@ -554,7 +555,7 @@ export function readPostgresPlatformArchiveDetail(db: NodePgDatabase, source: So
       identityState: obs.identityState, contentState: obs.contentState,
       enterpriseId: current.enterpriseId, enterpriseName: enterprise.name, keySource: obs.keySource,
       projectionRuleVersion: obs.projectionRuleVersion, versionId: obs.versionId,
-      projection: projectionFields,
+      projection: { projectionId: table.id, ...projectionFields },
       titleScopes: scoped ? collectionScopes as SQL<string[]> : sql<null>`NULL`,
       correspondenceRefs,
     }).from(obs).innerJoin(col, eq(col.id, obs.collectionId))

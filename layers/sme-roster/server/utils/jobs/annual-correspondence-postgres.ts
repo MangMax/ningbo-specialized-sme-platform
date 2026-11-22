@@ -2,20 +2,21 @@ import { job } from '../../../../../db/postgresql/job-tables'
 import { and, eq, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { newJobId } from '../../../../core/lib/job'
+import type { LogContext } from '../../../../core/lib/logging'
 import type { PostgresJobContext, PostgresJobTransaction } from '../../../../core/server/utils/job-runner-postgres'
 import {
   createPostgresJob, getPostgresJob, lockPostgresJobAdmission, reopenPostgresJob, setPostgresJobResult,
 } from '../../../../core/server/utils/job-store-postgres'
-import { startPostgresJobs } from '../../../../core/server/utils/postgres-jobs'
+import { requirePostgresJobsWritable, startPostgresJobs } from '../../../../core/server/utils/postgres-jobs'
 import {
   ANNUAL_CORRESPONDENCE_KIND as KIND, ANNUAL_CORRESPONDENCE_VERSION as VERSION,
   type AnnualTaskDto, type AnnualTaskResult,
 } from '../../../lib/roster/annual-correspondence'
-import { annualFail, annualHash, planAnnualStep, projectAnnualFinalQualification, type AnnualWriteScope } from '../annual-correspondence'
-import { readPostgresCandidateSourceBytes } from '../candidate-target-sources'
+import { annualFail, annualHash, planAnnualStep, projectAnnualFinalQualification, type AnnualWriteScope } from '../annual-correspondence-contract'
+import { readPostgresCandidateSourceBytes } from '../candidate-source-bytes-postgres'
 import { readPostgresAnnualDecisionRefs, readPostgresAnnualWriteScope } from '../event-annual-process-postgres'
 import { commitPostgresCorrespondenceDecision, runPostgresCorrespondenceTransaction } from '../record-correspondence-write-postgres'
-import { annualErrorCode, annualTaskInput, annualTaskReceipt, initialAnnualResult, type AnnualTaskParams } from './annual-correspondence'
+import { annualErrorCode, annualTaskInput, annualTaskReceipt, initialAnnualResult, type AnnualTaskParams } from './annual-correspondence-job-contract'
 
 type Tx = PostgresJobTransaction
 const snapshot = { isolationLevel: 'repeatable read', accessMode: 'read only' } as const
@@ -29,7 +30,7 @@ async function generations(db: NodePgDatabase, eventIds: readonly number[]) {
   return result
 }
 
-export async function stagePostgresAnnualCorrespondence(tx: Tx, raw: unknown) {
+export async function stagePostgresAnnualCorrespondence(tx: Tx, raw: unknown, onCreated?: (id: string) => void) {
   const parsed = annualTaskInput.safeParse(raw)
   if (!parsed.success) annualFail('invalid_annual_task_request', 400)
   const { clientRequestId } = parsed.data
@@ -45,7 +46,7 @@ export async function stagePostgresAnnualCorrespondence(tx: Tx, raw: unknown) {
   const sourceGenerations = await generations(tx, eventIds)
   const serverIdentity = annualHash({ sourceGenerations, ruleVersion: VERSION })
   const [sameScope] = await tx.select({ id: job.id }).from(job).where(and(eq(job.kind, KIND),
-    eq(sql<string>`${job.params}::json->>'serverIdentity'`, serverIdentity))).limit(1)
+    eq(sql<string>`${job.params}::json->>'serverIdentity'`, serverIdentity))).limit(1).for('no key update')
   if (sameScope) {
     const { row } = (await getPostgresJob(tx, sameScope.id))!
     const params = row.params as AnnualTaskParams
@@ -56,13 +57,17 @@ export async function stagePostgresAnnualCorrespondence(tx: Tx, raw: unknown) {
   const params: AnnualTaskParams = { eventIds, clientRequestIds: [clientRequestId], serverIdentity, sourceGenerations, ruleVersion: VERSION }
   const { row, claimToken } = await createPostgresJob(tx, { id: newJobId(), kind: KIND, params, progress: { done: 0, total: eventIds.length } })
   await setPostgresJobResult(tx, row.id, { state: 'queued', claimToken }, initialAnnualResult(sourceGenerations))
+  onCreated?.(row.id)
   return annualTaskReceipt(row)
 }
 
-export async function submitPostgresAnnualCorrespondence(db: NodePgDatabase, raw: unknown, filesDir: string) {
-  const receipt = await runPostgresCorrespondenceTransaction(db, tx => stagePostgresAnnualCorrespondence(tx, raw))
-  startPostgresJobs(filesDir)
-  return receipt
+export function submitPostgresAnnualCorrespondence(db: NodePgDatabase, raw: unknown, filesDir: string, logContext?: LogContext) {
+  requirePostgresJobsWritable()
+  const { runner } = startPostgresJobs(filesDir)!
+  return runner.trackSubmission(remember => runPostgresCorrespondenceTransaction(db, tx => {
+    remember([])
+    return stagePostgresAnnualCorrespondence(tx, raw, id => remember([{ id, kind: KIND }]))
+  }, [20, 50, 100, 200, 350, 600]), logContext)
 }
 
 async function qualify(db: NodePgDatabase, scope: AnnualWriteScope, generation: string) {

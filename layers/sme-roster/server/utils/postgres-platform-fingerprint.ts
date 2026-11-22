@@ -1,7 +1,7 @@
 import { and, between, desc, eq, getTableColumns, isNotNull, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
-import * as schema from '../../../../db/schema'
+import type { platformCollection as LegacyCollection } from '../../../../db/schema'
 import { platformArchiveValue, platformCollectionArchiveRef, platformObservationArchiveRef } from '../../../../db/postgresql/platform-archive-tables'
 import {
   platformBusinessObservation, platformCollection, platformCollectionPage,
@@ -10,15 +10,57 @@ import {
 import type { PlatformStoredQuery, PlatformStoredRelation } from '../../lib/platform/read'
 import { legacyFingerprintRaw } from '../../lib/platform/legacy-fingerprint-raw'
 import { sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
-import { snapshotSchema } from '../../lib/platform/target-evidence-read'
+import { snapshotSchema } from '../../lib/platform/evidence-snapshot-model'
 type Db = Pick<NodePgDatabase, 'select'>
 type Cell = ReturnType<typeof snapshotSchema.parse>['fields'][number]
-type Collection = typeof schema.platformCollection.$inferSelect
+type Collection = typeof LegacyCollection.$inferSelect
 
 const pgCollectionColumns = getTableColumns(platformCollection)
 // Preserve legacy collection field order for callers that fingerprint its projection.
-const collectionColumns = Object.fromEntries(Object.keys(getTableColumns(schema.platformCollection))
-  .map(key => [key, pgCollectionColumns[key as keyof Collection]])) as typeof pgCollectionColumns
+const collectionFieldOrder = [
+  'id',
+  'interface',
+  'queryKey',
+  'rdjb',
+  'titleCode',
+  'queriedAt',
+  'createdAt',
+  'lastCollectedAt',
+  'status',
+  'failureReason',
+  'source',
+  'evidenceStatus',
+  'completedAt',
+  'completeness',
+  'fullRange',
+  'fetchedCount',
+  'declaredTotal',
+  'scopeMode',
+  'provenanceState',
+  'parseState',
+  'ruleVersion',
+  'errorCode',
+  'errorMessage',
+  'maxRequests',
+  'maxRows',
+  'maxDurationMs',
+  'pageSize',
+  'reconcileSlotState',
+  'reconcileSlotRule',
+  'reconcileSlotRawArchiveId',
+  'reconcileSlotRowCount',
+  'reconcileSlotInputSha256',
+  'reconcileSlotReason',
+  'witnessState',
+  'witnessGate',
+  'witnessRule',
+  'witnessArchiveId',
+  'witnessSha256',
+  'witnessErrorName',
+  'witnessError',
+] as const satisfies readonly (keyof typeof pgCollectionColumns)[]
+const collectionColumns = Object.fromEntries(collectionFieldOrder
+  .map(key => [key, pgCollectionColumns[key]])) as typeof pgCollectionColumns
 
 function originalValue(cell: Cell) {
   const bytes = Buffer.from(cell.hex, 'hex')

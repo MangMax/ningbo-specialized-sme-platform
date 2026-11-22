@@ -18,6 +18,9 @@ import {
 
 import type { PostgresJobSpec } from './job-runner-postgres'
 
+import { getJobSpec } from './job-spec-registry'
+export { registerJob, getJobSpec, jobSpecs, clearJobSpecs } from './job-spec-registry'
+
 type Db = BetterSQLite3Database<typeof schema>
 
 // ---------------------------------------------------------------------------
@@ -123,33 +126,12 @@ export interface JobSpec {
   run?: (ctx: JobContext, params: Record<string, unknown>) => Promise<JobCompletion>
 }
 
-const specs = new Map<string, JobSpec>()
-
-/** 登记一个 kind。同名重复登记**抛错** —— 静默覆盖会让「注册了但跑的是另一个」很难查。 */
-export function registerJob(spec: JobSpec): void {
-  if (specs.has(spec.kind)) throw new Error(`任务种类重复登记:${spec.kind}`)
-  specs.set(spec.kind, spec)
-}
-
-export function getJobSpec(kind: string): JobSpec | undefined {
-  return specs.get(kind)
-}
-
-/** 已登记的全部 kind(按名字排序,便于文档与断言比对)。 */
-export function jobSpecs(): JobSpec[] {
-  return [...specs.values()].sort((a, b) => a.kind.localeCompare(b.kind))
-}
-
-/** 清空注册表(测试用 —— 每个用例都要从干净状态起)。 */
-export function clearJobSpecs(): void {
-  specs.clear()
-}
-
 // ---------------------------------------------------------------------------
 // 队列
 // ---------------------------------------------------------------------------
 
 interface QueueEntry {
+  specOverride?: JobSpec
   logContext: Readonly<LogContext>
   run: NonNullable<JobSpec['run']>
   jobId: string
@@ -224,8 +206,8 @@ function jobContext(row: JobRow, input?: LogContext): Readonly<LogContext> {
  * 调用方(路由)必须**先**用 `getJobSpec` 判过 kind 与参数 —— 这里只做落库与排队,
  * 不做校验:校验的结果要变成 HTTP 状态码,那是路由的事。
  */
-export function submitJob(db: Db, input: SubmitInput): JobRow {
-  const spec = getJobSpec(input.kind)
+export function submitJob(db: Db, input: SubmitInput, specOverride?: JobSpec): JobRow {
+  const spec = specOverride ?? getJobSpec(input.kind)
   if (!spec) throw new Error(`任务种类未登记:${input.kind}`)
   if (spec.status !== 'ready' || !spec.run) throw new Error(`任务种类尚未接入:${input.kind}`)
 
@@ -251,7 +233,7 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
     logContext: input.logContext,
   })
 
-  queue.push({ run, jobId: row.id, kind: input.kind, db, filesDir: input.filesDir, logContext: jobContext(row, input.logContext) })
+  queue.push({ run, specOverride, jobId: row.id, kind: input.kind, db, filesDir: input.filesDir, logContext: jobContext(row, input.logContext) })
   drainQueue()
   return row
 }
@@ -262,14 +244,14 @@ export function submitJob(db: Db, input: SubmitInput): JobRow {
  * 依赖捕获（`prepare`）抛错时**不重开**：重开就是丢掉旧终态与旧 `result`，
  * 而这一次执行连开始都没开始。调用方拿到异常（带它的 `statusCode`）后如实拒绝，
  * 已完成/部分结果原样留在任务里。 */
-export function requeueFinishedJob(db: Db, input: { id: string; kind: string; params: Record<string, unknown>; filesDir: string; logContext?: LogContext }): boolean {
-  const spec = getJobSpec(input.kind)
+export function requeueFinishedJob(db: Db, input: { id: string; kind: string; params: Record<string, unknown>; filesDir: string; logContext?: LogContext }, specOverride?: JobSpec): boolean {
+  const spec = specOverride ?? getJobSpec(input.kind)
   if (!spec?.run) return false
   const run = spec.prepare?.(input.params, db) ?? spec.run
   const row = reopenJob(db, input.id, input.kind, input.params)
   if (!row) return false
   appLog({ module: jobLogModule(row.kind), source: 'task', operation: 'task.requeued', outcome: 'started', taskId: row.id }, input.logContext)
-  queue.push({ run, jobId: row.id, kind: row.kind, db, filesDir: input.filesDir, logContext: jobContext(row, input.logContext) })
+  queue.push({ run, specOverride, jobId: row.id, kind: row.kind, db, filesDir: input.filesDir, logContext: jobContext(row, input.logContext) })
   drainQueue()
   return true
 }
@@ -328,7 +310,7 @@ async function runOne(entry: QueueEntry): Promise<void> {
     const running = markJobRunning(db, jobId, logContext)
     if (!running) return
 
-    const spec = getJobSpec(running.kind)
+    const spec = entry.specOverride ?? getJobSpec(running.kind)
     if (!spec?.run) {
       finishJob(db, jobId, { state: 'failed', error: `任务种类尚未接入:${running.kind}` }, logContext)
       return

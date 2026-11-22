@@ -7,8 +7,8 @@ import { normalizeReviewedUscc } from '../../../core/public'
 import { normalizeName } from '../../lib/domain'
 import type { RosterImportAnnouncement } from '../../lib/roster-import-client'
 import { applyPostgresReviewedRosterIdentity } from './postgres-identity-evidence'
-import type { supplementSchema } from './announcement-intake'
-import { ImportReceiptError } from './import-receipts'
+import type { supplementSchema } from './announcement-intake-model'
+import { ImportReceiptError } from './import-receipt-model'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Review = z.infer<typeof supplementSchema>

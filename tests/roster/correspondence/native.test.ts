@@ -1,3 +1,4 @@
+import { handleRecordCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-api'
 import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { eq } from 'drizzle-orm'
 import { mkdtempSync,rmSync } from 'node:fs'
@@ -7,7 +8,7 @@ import { afterEach,expect,it } from 'vitest'
 import { initializeDb } from '../../../db/client'
 import * as schema from '../../../db/schema'
 import type { RosterImportPlatformQuery } from '../../../layers/sme-roster/lib/roster-import-client'
-import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster-sqlite'
 import { commitComparisonScopeProofs,preflightComparisonScopeProofs,readComparisonScopeProof,type ProofRequest } from '../../../layers/sme-roster/server/utils/comparison-scope-proof'
 import { commitRecordCorrespondences,getRecordCorrespondenceAudit,listRecordCorrespondences,preflightRecordCorrespondences,type CorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
@@ -119,7 +120,7 @@ it('preflights and commits native correspondence from the same-origin browser wi
   const f = fixture(), source = submitNativePlatformQuery(f.db, f.query('2026-10-01T00:00:00Z'))
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   const app = createApp()
-  for (const action of ['preflight', 'commit'] as const) app.use('/' + action, browserCorrespondenceRoute(action, () => ({ db: f.db })))
+  for (const action of ['preflight', 'commit'] as const) app.use('/' + action, browserCorrespondenceRoute(action, input => handleRecordCorrespondenceRequest(input, { db: f.db, browserAuthorized: true })))
   const server = createServer(toNodeListener(app))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()

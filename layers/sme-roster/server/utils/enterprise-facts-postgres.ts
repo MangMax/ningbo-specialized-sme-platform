@@ -1,13 +1,10 @@
 import { eq, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import * as schema from '../../../../db/schema'
+import type * as schema from '../../../../db/schema'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { enterpriseFactReceipt, enterpriseFactRevision } from '../../../../db/postgresql/qualification-tables'
-import { EnterpriseProfileError } from './enterprise-profile'
-import {
-  enterpriseFactCommandSchema, enterpriseFactCommitSchema, enterpriseFactHash, enterpriseFactRevisions,
-  parseEnterpriseFactInput, planEnterpriseFact, projectEnterpriseFactState,
-} from './enterprise-facts'
+import { EnterpriseProfileError } from './enterprise-profile-model'
+import { enterpriseFactCommandSchema, enterpriseFactCommitSchema, enterpriseFactHash, enterpriseFactRevisions, parseEnterpriseFactInput, planEnterpriseFact, projectEnterpriseFactState } from './enterprise-fact-model'
 
 type Executor = Pick<NodePgDatabase, 'execute' | 'select'>
 const readSnapshot = { isolationLevel: 'repeatable read', accessMode: 'read only' } as const

@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLogService, type LogServiceOptions } from '../../../layers/core/lib/logging/service'
+import { createLogService, type LogServiceOptions } from '../../../layers/core/lib/logging/sqlite-service'
 import { LOG_DEFAULTS, type LogInput } from '../../../layers/core/lib/logging/contract'
 import { safeLogEvent } from '../../../layers/core/lib/logging/privacy'
 

@@ -10,7 +10,7 @@ import { createTus, TUS_PATH } from '../../../layers/core/server/utils/tus'
 import {
   parseUploadDeclaration,
   registerStoredFile,
-} from '../../../layers/sme-roster/server/modules/sme-roster/file-upload'
+} from '../../../layers/sme-roster/server/modules/sme-roster/file-upload-sqlite'
 import { UploadRegistrationError } from '../../../layers/core/server/utils/file-store'
 import { listStoredFiles } from '../../../layers/core/server/utils/stored-files'
 

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { enterpriseAlias } from '../../../../db/schema'
+import { enterpriseAlias } from '../../../../db/postgresql/enterprise-tables'
 import { PLATFORM_INTERFACE_VALUES } from '../../lib/labels'
 import type { RosterImportAlias, RosterPlatformRef } from '../../lib/roster-import-client'
 

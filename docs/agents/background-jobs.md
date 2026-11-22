@@ -5,7 +5,7 @@
 以线索名单 CSV 导出为例，业务模块声明“导出名单版本”，平台负责登记、领取、记录进度和终态。列表里的名称和分组来自[模块清单](../../layers/lead-lists/manifest.ts)，名单版本的读取、内容生成及下载权限由[导出实现](../../layers/lead-lists/server/utils/export-job.ts)和业务路由负责。
 
 1. 在模块清单的 `jobKinds` 登记全局唯一且稳定的 `kind`、业务人员看到的 `label`、`group` 和服务端导出名 `spec`。若总数要到某个阶段才有意义，可声明 `progressPhase`。修改显示名称时保留原 kind，历史任务按原标识可查。
-2. 从 [core 服务端公共入口](../../layers/core/server/public.ts) 引入 `JobSpec`、`PostgresJobSpec` 类型。在所属模块导出同名 spec，加入[应用装配](../../server/install-application.ts)使用的该模块 spec 集合。用 `parse` 在提交时校验参数，用 `postgres.run` 执行任务。仍对 SQLite 开放的任务同时提供相应 handler。`GET /api/jobs/kinds` 可查当前运行模式实际开放的能力。
+2. 从 [core 服务端公共入口](../../layers/core/server/public.ts) 引入 `JobSpec`、`PostgresJobSpec` 类型。在所属模块导出同名 spec，加入[应用装配](../../server/install-application.ts)使用的该模块 spec 集合。用 `parse` 在提交时校验参数，用 `postgres.run` 执行任务。`GET /api/jobs/kinds` 可查当前可用的能力。
 3. 通用提交接口是 `POST /api/jobs`。有业务准入条件时由业务路由校验后提交，返回 `202`、`jobId` 和指向任务的 `Location`。业务变更与任务必须同时生效时，在同一个 PostgreSQL 事务内调用 `stagePostgresJob(tx, input)`。确需重复请求去重的任务声明 `deduplicateRequest`，一次用户操作重试时沿用同一个 `clientRequestId`。
 4. handler 使用传入的 `ctx`。按有业务意义的完成单位上报进度，PostgreSQL 下等待 `ctx.progress(done, total)` 完成；长批次在工作单元之间检查 `await ctx.cancelled()`。若需要中断后保留部分成果，用 `ctx.checkpoint(result, tx)` 与对应业务写入一起提交。返回 `{ result }`，部分失败或取消时保留已完成部分。运行中断后的安全重试条件由任务所属模块判断。
 
@@ -21,7 +21,7 @@
 
 业务页面使用 [useTaskSnapshot](../../layers/core/app/composables/useTaskSnapshot.ts)，传入查询条件和读取函数。同一页面的列表、详情和业务面板共用一条 `GET /api/task-center/events` 连接。收到 `ready` 时读取当前快照，收到 `changed` 时合并刷新。首连、断线重连和漏过多次变化都可以用一次快照恢复。任务中心读取 `/api/task-center` 或 `/api/task-center/{id}`，业务页面也可按原契约读取自己的结果。取消和重试沿用现有 HTTP 命令。
 
-PostgreSQL 在事务提交后向应用的共享监听连接发信号，回滚不产生通知。一次事务可以合并多个变化，客户端按最新状态渲染。SQLite 兼容模式返回 HTTP 204，页面继续定时读取；PostgreSQL 的事件流不可用期间也保留刷新能力。已有 PostgreSQL 任务库先用 psql 执行可重复运行的 [install-job-runtime.sql](../../upgrade/postgresql/install-job-runtime.sql)，再上线应用。代理转发本路由时须支持流式响应并关闭响应缓冲。
+PostgreSQL 在事务提交后向应用的共享监听连接发信号，回滚不产生通知。一次事务可以合并多个变化，客户端按最新状态渲染。事件流不可用期间，页面保留定时刷新。已有 PostgreSQL 任务库先用 psql 执行可重复运行的 [install-job-runtime.sql](../../upgrade/postgresql/install-job-runtime.sql)，再上线应用。代理转发本路由时须支持流式响应并关闭响应缓冲。
 
 ## 验收
 

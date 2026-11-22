@@ -11,15 +11,16 @@ import { recordCorrespondence } from '../../../../db/postgresql/qualification-ta
 import { platformArchiveValue, platformCollectionArchiveRef } from '../../../../db/postgresql/platform-archive-tables'
 import { title } from '../../../../db/postgresql/title-table'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import * as schema from '../../../../db/schema'
+import type * as schema from '../../../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
-import { EVENT_ARCHIVE_RULE_VERSION, normalizedUscc, type EventArchiveInput } from './event-archive-discovery'
+import { type EventArchiveInput } from './event-archive-discovery'
+import { EVENT_ARCHIVE_RULE_VERSION, normalizedUscc } from './event-archive-discovery-model'
 import { readPostgresCorrespondenceSources } from './record-correspondence-postgres'
-import { safeCollectionEvidence } from './record-correspondence-read'
+import { safeCollectionEvidence } from './evidence-redaction'
 import type { ReceiptRedactor } from './import-receipt-redaction'
-import { readPostgresPlatformBusinessGroups } from './platform-business-record-read'
-import { projectCandidateRows, type CandidateInput } from './record-correspondence-candidates'
+import { readPostgresPlatformBusinessGroups } from './platform-business-record-postgres'
+import { projectCandidateRows, type CandidateInput } from './record-correspondence-candidate-projection'
 import { readPostgresObservationComparisonFacts } from './record-correspondence-target-postgres'
 
 type Reader = Pick<NodePgDatabase, 'execute' | 'select'>
@@ -125,20 +126,20 @@ export async function generatePostgresCandidates(db: Reader, input: CandidateInp
   const e = alias(recordEvent, 'e'), r = alias(record, 'r')
   type Event = NonNullable<Sources['event']>
   const event = input.eventId ? (await db.select({
-    event: sql<Event['event']>`${postgresRosterRow(schema.recordEvent,'e')}`,
-    record: sql<Event['record']>`${postgresRosterRow(schema.record,'r')}`,
+    event: sql<Event['event']>`${postgresRosterRow(recordEvent,'e')}`,
+    record: sql<Event['record']>`${postgresRosterRow(record,'r')}`,
   }).from(e).innerJoin(r, eq(r.id, e.recordId)).where(and(eq(e.id, input.eventId), eq(r.source, 'jxj'))))[0] : null
   if (input.eventId && !event) return null
   const enterpriseId = event?.record.enterpriseId ?? input.enterpriseId!, titleCode = event?.record.titleCode ?? input.titleCode!
   const owner = alias(enterprise, 'p')
-  const [ownerRow] = await db.select({ row: sql<typeof schema.enterprise.$inferSelect>`${postgresRosterRow(schema.enterprise,'p')}` })
+  const [ownerRow] = await db.select({ row: sql<typeof schema.enterprise.$inferSelect>`${postgresRosterRow(enterprise,'p')}` })
     .from(owner).where(and(eq(owner.id, enterpriseId), exists(db.select({ code: title.code }).from(title).where(eq(title.code, titleCode)))))
   if (!ownerRow) return null
   const identity = normalizeUscc(event?.record.usccRaw ?? ownerRow.row.usccNorm)
   const queries = await readPostgresCandidateQueries(db,input.queryIds)
   const b = alias(platformExportBatch, 'p')
   const batches = (await db.select({
-    row: sql<typeof schema.platformExportBatch.$inferSelect>`${postgresRosterRow(schema.platformExportBatch,'p')}`,
+    row: sql<typeof schema.platformExportBatch.$inferSelect>`${postgresRosterRow(platformExportBatch,'p')}`,
   }).from(b).where(eq(b.id, sql`ANY(${ids(input.exportBatchIds)})`)).orderBy(b.id)).map(({ row }) => row)
   if (queries.length !== new Set(input.queryIds).size || batches.length !== new Set(input.exportBatchIds).size) return null
   const targetPage = selection ? null : await pageCandidateGroups(db,input,enterpriseId,identity,titleCode)

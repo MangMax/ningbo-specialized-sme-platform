@@ -5,7 +5,7 @@ import {
 import { record, recordEvent } from '../../../../db/postgresql/ledger-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { evidenceDigest113 } from './evidence-impact-113'
+import { evidenceDigest113 } from './evidence-digest'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Revision = {

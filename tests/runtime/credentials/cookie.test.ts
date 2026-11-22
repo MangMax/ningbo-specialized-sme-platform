@@ -1,3 +1,4 @@
+import { sqliteCredentialStorage, type CredentialContext } from '../../../layers/core/server/utils/credential-state'
 import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -8,9 +9,14 @@ import { afterAll, afterEach, beforeEach, expect, it } from 'vitest'
 import { useDb } from '../../../db'
 import { credentialStatus, updateCredential } from '../../../layers/core/server/utils/credential-state'
 import { resolvePlatformCookie } from '../../../layers/sme-roster/server/utils/platform-credential'
-import { handleCredentialsRequest } from '../../../layers/core/server/utils/credentials-http'
+import { handleCredentialsRequest as handle } from '../../../layers/core/server/utils/credentials-http'
 import { queryAllRdjb } from '../../../layers/sme-roster/lib/platform/client'
 import { EMPTY_APPLY_RESPONSE, platformFixture } from '../../platform/fixtures/source-replay'
+
+const handleCredentialsRequest = (
+  action: Parameters<typeof handle>[0], request: Parameters<typeof handle>[1], ctx: CredentialContext, revealKey?: string,
+) => handle(action, request, ctx, sqliteCredentialStorage(ctx), revealKey)
+
 const dir = mkdtempSync(join(tmpdir(), 'cookie-credentials-'))
 let db: ReturnType<typeof useDb>
 let sequence = 0

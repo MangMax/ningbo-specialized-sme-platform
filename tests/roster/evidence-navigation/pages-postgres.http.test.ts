@@ -43,9 +43,7 @@ beforeAll(async () => {
   } finally { await client.end() }
 
   vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
-  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_WRITE', '1')
-  vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
-  vi.stubEnv('NUXT_DB_READONLY', '1')
+  vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: token, filesDir: folder }))
   vi.doMock('@db', () => ({ useDb: () => { throw new Error('Unexpected SQLite access in PostgreSQL mode') } }))
   const pages = (await import('../../../layers/sme-roster/server/api/roster/evidence/pages.post')).default

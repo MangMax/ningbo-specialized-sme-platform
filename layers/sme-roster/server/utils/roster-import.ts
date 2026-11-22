@@ -1,82 +1,44 @@
-import { insertEnterprise, insertEnterpriseAlias, moveEnterpriseAlias, updateEnterprise } from '../../../core/server/public'
-import { collectionImportSource,collectionImportPreview,writeImportedCollection,verifyImportedCollectionFields,historicalObservationPlan,ensureHistoricalObservation } from './collection-import-target'
+import { enumSet, optionalString, isObject, optionalInt, type NormalizedRef, type RefError, describeRef, type EvidenceRepointTarget, groupNewAnnouncementEvidence, matchesEventCoordinates, eventCoordinates, announcementEvidenceCoordinate, hasOfficialFactInput, failure, validatePlatformProjectionPayload, validateAnnouncementIdentityAndEvidence, evidenceRepointPlanFingerprint, SOURCES, type EvidenceContentHashIndex, validateAnnouncementRecord, type EvidenceContentHashConflict, type EventCoordinates, indexedEvidenceHashes, TITLE_CODES, ambiguousAnnouncementRepoints, type EvidenceRepointPlan, evidenceContentHashMatch, projectAnnouncementRepoints, normalizeRef, PLATFORM_INTERFACE_SET, exportSnapshotRowConflict, validateExportSnapshot, projectExportSnapshotRow, type MergeLineage, readSummaryOf, publicRosterImportItems, evidenceRepointPlanFromItems, replayBatchKey } from './roster-import-model'
+import { insertEnterprise, insertEnterpriseAlias, moveEnterpriseAlias, updateEnterprise } from '../../../core/server/public-sqlite'
+import { collectionImportSource, collectionImportPreview, writeImportedCollection, verifyImportedCollectionFields, historicalObservationPlan, ensureHistoricalObservation } from './collection-import-target'
 import { withFingerprintVerificationSnapshot } from '../../lib/platform/fingerprint-verifier'
 import { sqliteConnection } from '../../lib/platform/target-connection'
 import { targetCandidateTables } from './candidate-target-sources'
 import { targetDifferenceReason } from '../../lib/platform/difference-reference-target'
-import { readDifferenceCollection,readDifferenceCollectionScope,readDifferenceObservation } from '../../lib/platform/difference-sources'
+import { readDifferenceCollection, readDifferenceCollectionScope, readDifferenceObservation } from '../../lib/platform/difference-sources'
 import { queryEvidenceError } from '../../lib/platform/query-evidence'
-import { platformQuerySourceConflict,stagedPlatformQuerySource,type PlatformQueryReplaySource } from '../../lib/platform/query-replay'
+import { platformQuerySourceConflict, stagedPlatformQuerySource, type PlatformQueryReplaySource } from '../../lib/platform/query-replay'
 import { enqueueArchivedCandidates } from './jobs/candidate-discovery'
 import { managedDecision102 } from './decision-lifecycle-102'
-import { applyProjectionPreview,businessProjectionPreview,planPlatformObservation,PlatformProjectionError,projectionPreview,recognizedProjectionPreview } from './platform-business-record'
-import type { PlatformProjectionResult,PlatformProjectionSummary } from '../../lib/platform/business-record'
-import { isDeepStrictEqual } from 'node:util'
+import { applyProjectionPreview, businessProjectionPreview, planPlatformObservation, PlatformProjectionError, projectionPreview, recognizedProjectionPreview } from './platform-business-record'
+import type { PlatformProjectionResult, PlatformProjectionSummary } from '../../lib/platform/business-record'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import { normalizePlatformRelation } from '../../lib/platform/normalization'
 import { platformRelationInputSchema } from './roster-import-platform-schema'
-/**
- * 名录统一导入的**核心实现**（RL-11）—— 预检与单批事务提交（契约 §8）。
- *
- * 本文件是纯逻辑（只吃 `db` 与请求对象），不碰 h3/runtimeConfig：
- *  - HTTP 那一层（鉴权判据、状态码、JSON 形状）在 `layers/sme-roster/server/utils/roster-import-http.ts`；
- *  - 两个路由文件只是把 event 翻成本模块的入参。
- *
- * ── 两条硬约束 ──────────────────────────────────────────────────────────
- * 1. **单批事务**：要么整批 `committed`，要么 `failed` 且 `error` 说明原因 ——
- *    绝不部分提交。业务写入全在一个 SQLite 事务里；批次行本身是**记账**（不在事务内读回），
- *    这样事务回滚后仍能记下「失败原因 + 逐项错误」。
- * 2. **逐项错误不静默丢行**：每个载荷项都产出 `{ ok, kind, ref }`；任何一项不合法 ⇒
- *    整批 `failed`、业务数据一行不落，`items` 里带着每项的错误码与字段名。
- *
- * ── 为什么先「计划」再「执行」───────────────────────────────────────────
- * 预检若自己算一套、提交再算一套，两边迟早会漂。这里**同一份 `planRosterImport`**
- * 既用于预检（只报数），也用于提交（照计划执行）—— 预检报的影响就是提交真会发生的事。
- */
-
 import { createHash } from 'node:crypto'
-import { and,desc,eq,inArray,isNull,ne,sql,type SQL } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, ne, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { isPageCapable } from '../../lib/roster/evidence-page'
-import { normalizeName,normalizeUscc } from '../../lib/domain'
+import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { duplicateCandidatesFromBatch, duplicateTwinKey } from '../../lib/roster/duplicate-merge'
-import { missingUsccSourceFields,usccFormatVerdict } from '../../lib/roster/uscc-research'
-import { diagnoseOfficialEventFields,readCurrentQualificationAssessment } from '../../lib/roster/current-qualification'
-import { PLATFORM_INTERFACE_VALUES,TITLE_ORDER,type PlatformInterface } from '../../lib/labels'
-import type {
-DuplicateNameCandidate,
-RosterImportAlias,
-RosterImportAnnouncement,
-RosterImportDifference,
-RosterImportEvidence,
-RosterImportEvent,
-RosterImportExportSnapshot,
-RosterImportItemResult,
-RosterImportMerge,
-RosterImportPayload,
-RosterImportPlatformQuery,RosterImportPreflight,
-RosterImportQualificationDiagnostic,
-RosterImportHistoricalQualificationDiagnostics,
-RosterImportAfterQualificationReadback,
-RosterImportReplayResponse,
-RosterImportRequest,
-RosterImportSummary,
-RosterImportUsccBackfill
-} from '../../lib/roster-import-client'
-import { officialAppendSchema,officialPublishedRowSchema,planOfficialEvidenceChanges,resolveOfficialDeclaration,verifyOfficialDeclaration,writeOfficialPublishedRow,readOfficialFile,officialPlanDigest,OfficialFactError,type OfficialClaimChange,type OfficialCoordinate } from './official-evidence-plan'
+import { missingUsccSourceFields, usccFormatVerdict } from '../../lib/roster/uscc-research'
+import { diagnoseOfficialEventFields, readCurrentQualificationAssessment } from '../../lib/roster/current-qualification'
+import type { PlatformInterface } from '../../lib/labels'
+import type { DuplicateNameCandidate, RosterImportAlias, RosterImportAnnouncement, RosterImportDifference, RosterImportEvent, RosterImportExportSnapshot, RosterImportItemResult, RosterImportMerge, RosterImportPayload, RosterImportPlatformQuery, RosterImportPreflight, RosterImportQualificationDiagnostic, RosterImportHistoricalQualificationDiagnostics, RosterImportAfterQualificationReadback, RosterImportReplayResponse, RosterImportRequest, RosterImportSummary, RosterImportUsccBackfill } from '../../lib/roster-import-client'
+import { planOfficialEvidenceChanges, resolveOfficialDeclaration, verifyOfficialDeclaration, writeOfficialPublishedRow } from './official-evidence-plan'
+import { officialAppendSchema, officialPublishedRowSchema, readOfficialFile, officialPlanDigest, OfficialFactError, type OfficialClaimChange, type OfficialCoordinate } from './official-evidence-claim-model'
 import { OfficialEvidenceError } from './official-evidence'
-import { evidenceCorrectionRequestSchema,planEvidenceCorrectionTargets,writeImportedEvidenceCorrection } from './roster-evidence-correction'
+import { planEvidenceCorrectionTargets, writeImportedEvidenceCorrection } from './roster-evidence-correction'
+import { evidenceCorrectionRequestSchema } from './roster-evidence-correction-model'
 import { advanceOfficialEventRevision } from './roster-event-version'
-import { ensureBatchRow,findBatchByKey } from './roster-batch-ledger'
-import { captureIdentityRevision113,identityMaterial113,selectedSnapshot113,captureSnapshotRevision113,captureOfficialEventRevision113 } from './evidence-impact-113'
+import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
+import { captureIdentityRevision113, identityMaterial113, selectedSnapshot113, captureSnapshotRevision113, captureOfficialEventRevision113 } from './evidence-impact-113'
 import { recordImportReceipt } from './import-receipt-ledger'
 import { refreshDerivedFileParts } from './file-parts'
-import { legacyPlatformProvenanceItemsSchema } from '../../lib/platform/legacy-provenance'
-import { inspectLegacyPlatformProvenance,writeLegacyPlatformProvenance,LegacyProvenanceError } from './platform-legacy-provenance'
-import { canonicalEnterpriseId,currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
+import { inspectLegacyPlatformProvenance, writeLegacyPlatformProvenance, LegacyProvenanceError } from './platform-legacy-provenance'
+import { canonicalEnterpriseId, currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
 import { mergeTargetEnterpriseIdentity } from './enterprise-merge-target'
-
 type Db = BetterSQLite3Database<typeof schema>
 /** Internal persistence only; the public summary keeps its existing counts/projection shape. */
 type StoredImportDiagnosticBinding = {
@@ -91,39 +53,14 @@ type StoredImportSummary = RosterImportSummary & {
 /** 事务内外都能用的执行器（`tx` 与本连接在 select/insert/update/delete 上同形）。 */
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 export type Executor = Db | Tx
-
-// ---------------------------------------------------------------------------
-// 校验用的取值集
-// ---------------------------------------------------------------------------
-//
-// 这些集合**不重述取值** —— 一律从既有的冻结出处派生：
-//  - 表列的枚举取自 `db/schema.ts` 的 `*.enumValues`（drizzle 把 `text('c',{enum:[…]})`
-//    的取值挂在列对象上），于是「表的枚举」与「写入侧的校验」不可能各自漂移；
-//  - 没有表列的（称号、平台接口）取自 `layers/sme-roster/lib/labels.ts` / `db/titles.ts` 的既有常量。
-// 旧写法是把 `not_queried` / `failed` / … 逐个再抄一遍，抄漏一个就成了静默放行。
-
-/** 把一列已冻结的枚举取值变成校验集合。 */
-function enumSet(values: readonly string[]): Set<string> {
-  return new Set(values)
-}
-
-/** 称号字典（`db/titles.ts` 的种子；不引 runtime）。 */
-const TITLE_CODES = new Set<string>(TITLE_ORDER)
-const EVENT_TYPES = enumSet(schema.recordEvent.eventType.enumValues)
-const REVIEW_OUTCOMES = enumSet(schema.recordEvent.reviewOutcome.enumValues)
-const SOURCES = enumSet(schema.record.source.enumValues)
 const ALIAS_SOURCE_KINDS = enumSet(schema.enterpriseAlias.sourceKind.enumValues)
 const VERIFICATION_STATUSES = enumSet(schema.enterpriseAlias.verificationStatus.enumValues)
-/** 平台接口取值集 = `layers/sme-roster/lib/labels.ts` 的唯一出处（契约 §2.4）。 */
-const PLATFORM_INTERFACE_SET = new Set<string>(PLATFORM_INTERFACE_VALUES)
 const QUERY_STATUSES = enumSet(schema.platformCollection.status.enumValues)
 const MATCH_BASES = enumSet(schema.platformObservationAssignment.matchBasis.enumValues)
 const DIRECTIONS = enumSet(schema.differenceReason.direction.enumValues)
 const DIFFERENCE_STATUSES = enumSet(schema.differenceReason.status.enumValues)
 const DIFFERENCE_REASONS = enumSet(schema.differenceReason.reasonCode.enumValues)
 const DIFFERENCE_MEASURES = enumSet(schema.differenceReason.measureCode.enumValues)
-// Correspondence decisions share the batch ledger, but are never a roster-import payload.
-const IMPORT_SOURCE_KINDS = new Set<string>(['announcement', 'platform_export', 'platform_archive', 'alias_evidence'])
 /** `sblx` 的字典取值；之外的**原样入库 + 标待核**（不因未知取值崩溃）。 */
 
 // ---------------------------------------------------------------------------
@@ -137,110 +74,9 @@ const IMPORT_SOURCE_KINDS = new Set<string>(['announcement', 'platform_export', 
 function usccOrNull(raw: unknown): string | null {
   return normalizeUscc(raw) || null
 }
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value)
-}
-
-function optionalString(value: unknown): string | null {
-  if (typeof value !== 'string') return null
-  const trimmed = value.trim()
-  return trimmed || null
-}
-
-function optionalInt(value: unknown): number | null {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null
-  return Math.trunc(value)
-}
-
-/** Typed coordinates are verbatim; the old legacy grouping/write rules stay local. */
-export function announcementEvidenceCoordinate(evidence: { sourceFile: string; attachment?: unknown; listNo?: unknown; page?: unknown; publishedRow?: unknown }, grouped = false): OfficialCoordinate {
-  if (evidence.publishedRow !== undefined) return {
-    sourceFile: evidence.sourceFile,
-    attachment: typeof evidence.attachment === 'string' ? evidence.attachment : null,
-    listNo: typeof evidence.listNo === 'number' ? evidence.listNo : null,
-    page: typeof evidence.page === 'number' ? evidence.page : null,
-  }
-  const sourceFile = grouped ? optionalString(evidence.sourceFile) ?? evidence.sourceFile : evidence.sourceFile
-  return { sourceFile, attachment: optionalString(evidence.attachment), listNo: optionalInt(evidence.listNo), page: isPageCapable(sourceFile) ? optionalInt(evidence.page) : null }
-}
-
-/** 一条 item 级错误。 */
-function failure(kind: string, ref: string, code: string, message: string, field?: string): RosterImportItemResult {
-  return { ok: false, kind, ref, error: { code, ...(field ? { field } : {}), message } }
-}
-
 function success(kind: string, ref: string, detail?: Record<string, unknown>): RosterImportItemResult {
   return { ok: true, kind, ref, ...(detail ? { detail } : {}) }
 }
-
-// ---------------------------------------------------------------------------
-// 请求校验
-// ---------------------------------------------------------------------------
-
-export type ValidateResult =
-  | { ok: true; value: RosterImportRequest }
-  | { ok: false; status: number; message: string }
-
-export function validateImportRequest(raw: unknown): ValidateResult {
-  if (!isObject(raw)) return { ok: false, status: 400, message: '请求体必须是 JSON 对象' }
-
-  const idempotencyKey = optionalString(raw.idempotencyKey)
-  if (!idempotencyKey) {
-    return { ok: false, status: 400, message: '缺少 idempotencyKey（幂等键）' }
-  }
-  const sourceKind = optionalString(raw.sourceKind)
-  if (!sourceKind || !IMPORT_SOURCE_KINDS.has(sourceKind)) {
-    return {
-      ok: false,
-      status: 400,
-      message: `sourceKind 必须是 announcement / platform_export / platform_archive / alias_evidence 之一，收到：${sourceKind ?? '(空)'}`,
-    }
-  }
-  const sourceIdentity = optionalString(raw.sourceIdentity)
-  if (!sourceIdentity) {
-    return { ok: false, status: 400, message: '缺少 sourceIdentity（来源身份：文件相对路径或逻辑标识）' }
-  }
-  if (!isObject(raw.payload)) {
-    return { ok: false, status: 400, message: '缺少 payload（写入载荷）或它不是对象' }
-  }
-  const projectionError = validatePlatformProjectionPayload(raw.payload, sourceKind)
-  if (projectionError) return { ok: false, status: 400, message: projectionError }
-
-  return {
-    ok: true,
-    value: {
-      idempotencyKey,
-      sourceKind: sourceKind as RosterImportRequest['sourceKind'],
-      sourceIdentity,
-      sourceSha256: optionalString(raw.sourceSha256),
-      payload: raw.payload as RosterImportPayload,
-    },
-  }
-}
-
-/** Strict additive field validation: malformed/empty projection commands cannot silently succeed. */
-export function validatePlatformProjectionPayload(payload: Record<string, unknown>, sourceKind: string): string | null {
-  if (Object.hasOwn(payload, 'platformLegacyProvenance')) {
-    if (sourceKind !== 'platform_archive') return 'platformLegacyProvenance requires sourceKind=platform_archive'
-    const parsed = legacyPlatformProvenanceItemsSchema.safeParse(payload.platformLegacyProvenance)
-    if (!parsed.success) return `platformLegacyProvenance: ${parsed.error.issues.map(issue => issue.message).join('; ')}`
-  }
-  if (Object.hasOwn(payload, 'platformRecordObservations')) {
-    const rows = payload.platformRecordObservations
-    if (sourceKind !== 'platform_archive') return 'platformRecordObservations requires sourceKind=platform_archive'
-    if (!Array.isArray(rows) || rows.length < 1 || rows.length > 100) return 'platformRecordObservations must contain 1..100 observations'
-    const seen = new Set<number>()
-    for (const row of rows) {
-      if (!isObject(row) || Object.keys(row).length !== 1 || !Number.isSafeInteger(row.relationId) || (row.relationId as number) < 1) return 'platformRecordObservations items require only a positive safe integer relationId'
-      if (seen.has(row.relationId as number)) return 'platformRecordObservations relationId must be unique per request'
-      seen.add(row.relationId as number)
-    }
-  }
-  if (sourceKind === 'platform_archive' && !Object.hasOwn(payload, 'platformLegacyProvenance') && !Object.hasOwn(payload, 'platformRecordObservations') && (!Array.isArray(payload.platformQueries) || !payload.platformQueries.length)) return 'platform_archive requires platformQueries, platformRecordObservations or platformLegacyProvenance'
-  return null
-}
-
 // ---------------------------------------------------------------------------
 // 企业身份解析（读）
 // ---------------------------------------------------------------------------
@@ -251,10 +87,8 @@ interface ResolvedEnterprise {
   nameNorm: string
   usccNorm: string | null
 }
-
 /** 按身份规则定位企业的入参（`name` / `uscc` 至少给一个；`uscc` 空串等同没给）。 */
 type EnterpriseSpec = { name?: string | null; uscc?: string | null }
-
 /**
  * 定位企业时要取的列 —— **只有**这四列（{@link ResolvedEnterprise} 的形状）。
  *
@@ -267,7 +101,6 @@ const enterpriseColumns = {
   nameNorm: schema.enterprise.nameNorm,
   usccNorm: schema.enterprise.usccNorm,
 }
-
 /**
  * 按统代定位企业（**唯一**的身份键之一；重名候选与归并读侧共用这一份）。
  *
@@ -284,7 +117,6 @@ export function findEnterpriseByUscc(db: Executor, usccNorm: string): ResolvedEn
     .get()
   return row ? findEnterpriseById(db, row.id) : null
 }
-
 /** 按行 id 定位企业（归并/候选在写入阶段解析真 id 时用）—— RL-18：命中主键。 */
 export function findEnterpriseById(db: Executor, id: number): ResolvedEnterprise | null {
   const canonicalId = canonicalEnterpriseId(db, id)
@@ -295,7 +127,6 @@ export function findEnterpriseById(db: Executor, id: number): ResolvedEnterprise
     .where(eq(schema.enterprise.id, canonicalId))
     .get() ?? null
 }
-
 /**
  * 按归一化名定位企业 —— RL-18：命中 `enterprise_name_norm_idx`。
  *
@@ -317,7 +148,6 @@ function findEnterpriseByNorm(db: Executor, nameNorm: string): ResolvedEnterpris
     .where(and(eq(schema.enterprise.nameNorm, nameNorm), currentEnterpriseIdentity(db)))
     .get() ?? null
 }
-
 /**
  * **全部**同名行（`name_norm` 相同）—— 不论它有没有统代。重名候选的判据基础。
  *
@@ -332,7 +162,6 @@ function findEnterprisesByNorm(db: Executor, nameNorm: string): ResolvedEnterpri
     .where(and(eq(schema.enterprise.nameNorm, nameNorm), currentEnterpriseIdentity(db)))
     .all()
 }
-
 /**
  * 按 {@link upsertEnterprise} 的**身份规则**定位企业：有统代只按统代、无统代才按名。
  *
@@ -346,7 +175,6 @@ function findEnterpriseByIdentity(db: Executor, spec: EnterpriseSpec): ResolvedE
   const name = optionalString(spec.name)
   return name ? findEnterpriseByNorm(db, normalizeName(name)) : null
 }
-
 /**
  * 按身份键定位企业：**统代优先，缺失时按归一化名**（既有决策，不改）。
  * 定位不到时返回 `null`（由调用方决定是新建还是报错）。
@@ -361,14 +189,12 @@ function locateEnterprise(db: Executor, spec: EnterpriseSpec): ResolvedEnterpris
   if (name) return findEnterpriseByNorm(db, normalizeName(name))
   return null
 }
-
 /** 与某查询键完全相等的企业（只按**统代**，是 `match_basis='uscc'` 的判据，不是模糊匹配）。 */
 function enterpriseByExactUscc(db: Executor, usccRaw: unknown): number | null {
   const uscc = usccOrNull(usccRaw)
   if (!uscc) return null
   return findEnterpriseByUscc(db, uscc)?.id ?? null
 }
-
 // ---------------------------------------------------------------------------
 // 重名候选（RL-14）：把「静默多出一行」变成**显式的一条报告项**
 // ---------------------------------------------------------------------------
@@ -390,19 +216,16 @@ interface PendingEnterpriseCreate {
   nameNorm: string
   uscc: string | null
 }
-
 /** 一条待写的重名候选：`candidate.newEnterpriseId` 在预检阶段为 `null`（那一行还没建）。 */
 interface PlannedDuplicateCandidate {
   candidate: DuplicateNameCandidate
   /** 既有侧的解析口径（执行阶段据此取真 id）。 */
   existing: { kind: 'enterprise'; id: number } | { kind: 'batch'; name: string; uscc: string | null }
 }
-
 /** 身份键（与 {@link pendingKeys} 同一套写法）：有统代按统代、无统代按归一化名。 */
 function identityKeyOf(spec: { name: string; uscc: string | null }): string {
   return spec.uscc ? usccKey(spec.uscc) : nameKey(normalizeName(spec.name))
 }
-
 interface AnnouncementBatchIdentityPlan {
   reviewedOwners?: ReadonlyMap<number, number>
   reviewedCreates?: ReadonlySet<number>
@@ -410,7 +233,6 @@ interface AnnouncementBatchIdentityPlan {
   identityUsccByRecord: Map<number, string | null>
   ambiguousNameOnlyRecords: Set<number>
 }
-
 /**
  * 从整份公告为 name-only 项解析稳定的身份。候选集合同时包含既有同名企业和本批显式 USCC；
  * 只有合并后恰好一个身份时才归组，多个候选失败关闭。
@@ -470,7 +292,6 @@ function planAnnouncementBatchIdentity(
 
   return { identityUsccByRecord, ambiguousNameOnlyRecords }
 }
-
 /**
  * 本批**会新建**的企业（按 `records` 下标对齐；不会新建的是 `null`）。
  *
@@ -482,7 +303,6 @@ function announcementOwner(db: Executor, plan: AnnouncementBatchIdentityPlan, in
   const owner = plan.reviewedOwners?.get(index)
   return owner === undefined ? findEnterpriseByIdentity(db, { name, uscc }) : findEnterpriseById(db, owner)
 }
-
 function planEnterpriseCreates(
   db: Executor,
   records: RosterImportAnnouncement['records'],
@@ -525,7 +345,6 @@ function planEnterpriseCreates(
   })
   return out
 }
-
 /**
  * 一条新建企业的重名候选：库里（或本批更早）**同名**的行各成一条候选。
  *
@@ -572,12 +391,10 @@ function duplicateNameCandidates(
     ),
   ]
 }
-
 /** 候选的稳定引用（同一批次里唯一，供逐项追溯与去重）。 */
 function duplicateCandidateRef(candidate: DuplicateNameCandidate): string {
   return `duplicate_candidate:${candidate.newUscc ?? candidate.nameNorm}~${duplicateTwinKey(candidate)}`
 }
-
 /**
  * 执行阶段**补齐 id**：新建行这时才存在。既有侧若本就在库里，其 id 计划时就有
  * （条目描述的正是当时看到的那个状态，故保持原值）；本批更早的同名行这时也已插入，按身份解析。
@@ -592,7 +409,6 @@ function resolveDuplicateCandidate(tx: Executor, planned: PlannedDuplicateCandid
   const resolved: DuplicateNameCandidate = { ...candidate, existingEnterpriseId, newEnterpriseId }
   return success('duplicate_candidate', duplicateCandidateRef(candidate), { candidate: resolved })
 }
-
 /**
  * **本批将新建**的企业键（`uscc:<norm>` / `name:<norm>`）。
  *
@@ -603,11 +419,9 @@ function resolveDuplicateCandidate(tx: Executor, planned: PlannedDuplicateCandid
  * 真正的 id 在**执行时**解析（那时前面的项已经插入了）;预检只用它判「能不能解析到」。
  */
 type PendingEnterprises = Set<string>
-
 /** 身份键的两种写法。**只在这里拼**：{@link pendingKeys} 全给、{@link identityKeyOf} 按偏好给一个。 */
 const usccKey = (uscc: string) => `uscc:${uscc}`
 const nameKey = (nameNorm: string) => `name:${nameNorm}`
-
 function pendingKeys(spec: EnterpriseSpec): string[] {
   const keys: string[] = []
   const uscc = usccOrNull(spec.uscc)
@@ -616,13 +430,11 @@ function pendingKeys(spec: EnterpriseSpec): string[] {
   if (name) keys.push(nameKey(normalizeName(name)))
   return keys
 }
-
 /** 该企业是否**已存在或本批将新建**（预检判据）。 */
 function enterpriseKnown(db: Executor, pending: PendingEnterprises, spec: EnterpriseSpec): boolean {
   if (locateEnterprise(db, spec)) return true
   return pendingKeys(spec).some((key) => pending.has(key))
 }
-
 // ---------------------------------------------------------------------------
 // 平台查询 / 关系的**批内自然键**引用（与上面的「本批新建企业」同一套机制）
 //
@@ -653,9 +465,7 @@ interface PendingPlatformRef {
     nameRaw: string | null
   }>
 }
-
 type PendingPlatformRefs = PendingPlatformRef[]
-
 /** 从载荷里收集「本批将写入」的平台查询自然键。 */
 function collectPendingPlatformRefs(payload: RosterImportPayload): PendingPlatformRefs {
   const out: PendingPlatformRefs = []
@@ -694,52 +504,6 @@ function collectPendingPlatformRefs(payload: RosterImportPayload): PendingPlatfo
   }
   return out
 }
-
-/** 归一后的自然键（`queriedAt` 可空 = 要求 `(interface, queryKey, rdjb)` 唯一）。 */
-export interface NormalizedRef {
-  interface: string
-  queryKey: string
-  rdjb: string
-  queriedAt: string | null
-  sequenceNo: number | null
-  /**
-   * 关系的**权威锚点**（`RL-06` 增量：父代理 2026-10-16，两个复查代理都实测「平台的排序可能
-   * 与其解析顺序不同，`sequenceNo` 只作参考」）。
-   *
-   * 给 `relationKey` 时：解析出的那条关系**必须**就是它；`sequenceNo` 同时给了却指到别的行
-   * ⇒ **报错**（`relation_ref_mismatch`），**不按其中一个猜**。不给则保持原行为（按 `sequenceNo`）。
-   */
-  relationKey: string | null
-}
-
-type RefError = { code: string; field: string; message: string }
-
-/** 校验自然键的形状（不查库）。 */
-export function normalizeRef(ref: unknown, field: string): { ok: true; value: NormalizedRef } | { ok: false; error: RefError } {
-  if (!isObject(ref)) {
-    return { ok: false, error: { code: 'ref_shape_invalid', field, message: `引用必须是对象 { interface, queryKey, rdjb?, queriedAt?, sequenceNo? }` } }
-  }
-  const iface = optionalString(ref.interface)
-  if (!iface || !PLATFORM_INTERFACE_SET.has(iface)) {
-    return { ok: false, error: { code: 'ref_interface_unknown', field: `${field}.interface`, message: `引用缺少 interface 或取值不在字典内：${String(ref.interface)}` } }
-  }
-  const queryKey = optionalString(ref.queryKey)
-  if (!queryKey) {
-    return { ok: false, error: { code: 'ref_query_key_required', field: `${field}.queryKey`, message: '引用缺少 queryKey' } }
-  }
-  return {
-    ok: true,
-    value: {
-      interface: iface,
-      queryKey,
-      rdjb: optionalString(ref.rdjb) ?? '',
-      queriedAt: optionalString(ref.queriedAt),
-      sequenceNo: optionalInt(ref.sequenceNo),
-      relationKey: optionalString(ref.relationKey),
-    },
-  }
-}
-
 /**
  * 自然键（除 `sequenceNo`）→ SQL 谓词。**只在这里拼**：{@link refCandidates}、
  * {@link resolveQueryIdAt} 都靠它，于是「按自然键找查询」的口径只有一处。
@@ -754,7 +518,6 @@ export function normalizeRef(ref: unknown, field: string): { ok: true; value: No
 function importPlatformTables(db: Executor) {
   return targetCandidateTables(db)
 }
-
 function platformQueryWhere(ref: NormalizedRef, q: ReturnType<typeof importPlatformTables>['q']) {
   const conditions = [
     eq(q.interface, ref.interface as PlatformInterface),
@@ -764,7 +527,6 @@ function platformQueryWhere(ref: NormalizedRef, q: ReturnType<typeof importPlatf
   if (ref.queriedAt) conditions.push(eq(q.queriedAt, ref.queriedAt))
   return and(...conditions)
 }
-
 /** 按自然键在「库内 + 本批将写入」两处找候选查询。 */
 function refCandidates(source: Executor, pending: PendingPlatformRefs, ref: NormalizedRef) {
   const { q } = importPlatformTables(source)
@@ -783,7 +545,6 @@ function refCandidates(source: Executor, pending: PendingPlatformRefs, ref: Norm
     pendingHits: pending.filter(matches).filter(candidate => !findQueryRow(source, { interface: candidate.interface as PlatformInterface, queryKey: candidate.queryKey, rdjb: candidate.rdjb, queriedAt: candidate.queriedAt })),
   }
 }
-
 /** 预检阶段的「查询能不能解析」。 */
 function resolveQueryRefPlan(source: Executor, pending: PendingPlatformRefs, ref: NormalizedRef, field: string): { ok: true } | { ok: false; error: RefError } {
   const { dbHits, pendingHits } = refCandidates(source, pending, ref)
@@ -797,7 +558,6 @@ function resolveQueryRefPlan(source: Executor, pending: PendingPlatformRefs, ref
   }
   return { ok: true }
 }
-
 /** 预检阶段的「关系能不能解析」。 */
 function resolveRelationRefPlan(source: Executor, pending: PendingPlatformRefs, ref: NormalizedRef, field: string): { ok: true } | { ok: false; error: RefError } {
   const { r } = importPlatformTables(source)
@@ -864,15 +624,6 @@ function resolveRelationRefPlan(source: Executor, pending: PendingPlatformRefs, 
   }
   return { ok: true }
 }
-
-export function describeRef(ref: NormalizedRef): string {
-  const parts = [`interface=${ref.interface}`, `queryKey=${ref.queryKey}`, `rdjb=${ref.rdjb || "''"}`]
-  if (ref.queriedAt) parts.push(`queriedAt=${ref.queriedAt}`)
-  if (ref.sequenceNo != null) parts.push(`sequenceNo=${ref.sequenceNo}`)
-  if (ref.relationKey) parts.push(`relationKey=${ref.relationKey}`)
-  return parts.join(' ')
-}
-
 /** 执行阶段：解析出**真实**的 `platform_query.id`。 */
 function resolveQueryIdAt(source: Executor, ref: NormalizedRef): number | null {
   const { q } = importPlatformTables(source)
@@ -885,21 +636,18 @@ function resolveQueryIdAt(source: Executor, ref: NormalizedRef): number | null {
   if (ref.queriedAt) return hits[0]!.id
   return hits.length === 1 ? hits[0]!.id : null
 }
-
 /** 执行阶段：解析出**真实**的 `platform_relation.id`。 */
 function resolveRelationIdAt(source: Executor, ref: NormalizedRef): number | null {
   if (ref.sequenceNo == null) return null
   const queryId = resolveQueryIdAt(source, ref)
   if (queryId == null) return null
   return findRelationRow(source, { queryId, sequenceNo: ref.sequenceNo })?.id ?? null}
-
 interface PlatformAliasRelationEvidence {
   interface: string
   enterpriseId: number | null
   usccRaw: string | null
   nameRaw: string | null
 }
-
 /** Load the actual platform row facts used to validate a platform-sourced alias. */
 export function findPlatformAliasRelationEvidence(source: Executor, relationId: number): PlatformAliasRelationEvidence | null {
   const { q, r } = importPlatformTables(source)
@@ -915,7 +663,6 @@ export function findPlatformAliasRelationEvidence(source: Executor, relationId: 
     .where(eq(sql<number>`${r.id}`, relationId))
     .get() ?? null
 }
-
 /** Get the asserted row facts for a relation that will be inserted by this request. */
 function findPendingPlatformAliasRelationEvidence(
   pending: PendingPlatformRefs,
@@ -943,7 +690,6 @@ function findPendingPlatformAliasRelationEvidence(
     )
   return matches.length === 1 ? matches[0]! : null
 }
-
 /** Validate the existing row facts; never infer a missing USCC or qymc from a name. */
 export function platformAliasEvidenceMismatch(
   source: Executor,
@@ -970,7 +716,6 @@ export function platformAliasEvidenceMismatch(
   }
   return null
 }
-
 // ---------------------------------------------------------------------------
 // 计划（预检与提交共用）
 // ---------------------------------------------------------------------------
@@ -998,27 +743,8 @@ interface PlannedItem {
   /** 确实要执行时才有的写入闭包（提交阶段调用）。 */
   run?: (tx: Executor) => RosterImportItemResult
 }
-
-/** 一条已冻结的出处指针更新，供 commit 与显式 replay 执行同一计划。 */
-interface EvidenceRepointTarget {
-  id: number
-  recordId: number
-  recordEventId: number
-  fromSourceFile: string
-  sourceFile: string
-}
-
-type EvidenceContentHashIndex = Map<string, Set<string>>
-type EvidenceContentHashConflict = 'unknown' | 'mismatch'
-
-interface EvidenceRepointPlan {
-  targets: EvidenceRepointTarget[]
-  hashConflicts: Set<EvidenceContentHashConflict>
-}
-
 /** 公布文件记录的计划口径：正常写入 / 只收敛出处指针。 */
 type AnnouncementPlanMode = 'write' | 'converge'
-
 interface Plan {
   platformLegacyProvenanceSources?: RosterImportPreflight['platformLegacyProvenanceSources']
   items: PlannedItem[]
@@ -1026,7 +752,6 @@ interface Plan {
   platformObservationSources?: RosterImportPreflight['platformObservationSources']
   officialEvidencePlanHash?: string
 }
-
 /** 汇总计划的影响计数。 */
 function summarizePlan(plan: Plan): RosterImportPreflight {
   let add = 0
@@ -1049,7 +774,6 @@ function summarizePlan(plan: Plan): RosterImportPreflight {
   const canonicalProjection = plan.items.flatMap(p => (p.item.detail?.canonicalProjection as NonNullable<RosterImportPreflight['canonicalProjection']> | undefined) ?? [])
   return { ...(plan.platformLegacyProvenanceSources ? { platformLegacyProvenanceSources: plan.platformLegacyProvenanceSources } : {}), ...(plan.officialEvidencePlanHash ? { officialEvidencePlanHash: plan.officialEvidencePlanHash } : {}), add, update, remove, review, conflicts: plan.conflicts, evidenceRepoints, duplicateCandidates, ...(canonicalProjection.length ? { canonicalProjection } : {}), ...(plan.platformObservationSources ? { platformObservationSources: plan.platformObservationSources } : {}) }
 }
-
 /**
  * 同一批次里尚不存在的相同事件坐标先按安全的企业身份汇总出处，再只由首次出现项插入。
  * 不同来源文件是不同证据关系，全部保留；完全相同的关系只插入一次。无统代名称本身不唯一时
@@ -1109,143 +833,6 @@ function planNewEventEvidence(
     return !!existingEvent
   })
 }
-
-export function groupNewAnnouncementEvidence(
-  announcement: RosterImportAnnouncement,
-  records: readonly RosterImportAnnouncement['records'][number][],
-  identity: (index: number, name: string) => { key: string; ambiguous?: boolean },
-  alreadyStored: (recordIndex: number, titleCode: string, source: 'jxj' | 'miit', event: RosterImportEvent) => boolean,
-): { eventsByRecord: Map<number, RosterImportEvent[]>; groupedOccurrences: Set<string> } {
-  interface Occurrence {
-    recordIndex: number
-    eventIndex: number
-    event: RosterImportEvent
-  }
-
-  const planned = new Map<number, RosterImportEvent[]>()
-  const groupedOccurrences = new Set<string>()
-  const groups = new Map<string, Occurrence[]>()
-  for (const [recordIndex, record] of records.entries()) {
-    const events = Array.isArray(record?.events) ? record.events : []
-    planned.set(
-      recordIndex,
-      events.map((event) => {
-        const candidate: unknown = event
-        // Keep malformed array entries for planAnnouncementRecord's structured validation.
-        // In particular, JSON null must not throw here before it can become an item error.
-        if (!isObject(candidate)) return event
-        const evidence = candidate.evidence
-        return {
-          ...candidate,
-          evidence: Array.isArray(evidence) ? [...evidence] : (evidence ?? []),
-        } as unknown as RosterImportEvent
-      }),
-    )
-
-    const name = optionalString(record?.enterprise?.name)
-    const titleCode = optionalString(record?.titleCode)
-    const source = record?.source ?? announcement.sourceDocument?.source
-    if (!name || !titleCode || !TITLE_CODES.has(titleCode) || !SOURCES.has(String(source))) continue
-    const group = identity(recordIndex, name)
-    events.forEach((event, eventIndex) => {
-      if (!EVENT_TYPES.has(String(event?.eventType))) return
-      const coordinates = eventCoordinates(0, event)
-      const occurrence: Occurrence = {
-        recordIndex,
-        eventIndex,
-        event,
-      }
-
-      // 一条不唯一的名称无法确认企业身份，不能按名称查询碰巧返回的第一家参与归组。
-      // planAnnouncementRecord 会在任何写入解析前拒绝这条 name-only 记录。
-      const identityKey = group.ambiguous ? `ambiguous:${recordIndex}:${eventIndex}` : group.key
-      const key = JSON.stringify([identityKey, titleCode, source, coordinates])
-      const occurrences = groups.get(key) ?? []
-      occurrences.push(occurrence)
-      groups.set(key, occurrences)
-    })
-  }
-
-  for (const occurrences of groups.values()) {
-    if (occurrences.length < 2) continue
-    const first = occurrences[0]
-    if (!first) continue
-    const representative = records[first.recordIndex]
-    if (!representative) continue
-    const name = optionalString(representative?.enterprise?.name)
-    const titleCode = optionalString(representative?.titleCode)
-    const source = representative?.source ?? announcement.sourceDocument?.source
-    if (!name || !titleCode || !SOURCES.has(String(source))) continue
-    if (alreadyStored(first.recordIndex, titleCode, source, first.event)) continue
-
-    const uniqueEvidence = new Map<string, RosterImportEvidence>()
-    const invalidEvidence: unknown[] = []
-    for (const occurrence of occurrences) {
-      const evidenceValues: unknown[] = Array.isArray(occurrence.event.evidence) ? occurrence.event.evidence : []
-      for (const rawEvidence of evidenceValues) {
-        // Keep malformed entries in the planned event. The original payload is validated below,
-        // and these entries must become structured record_evidence errors rather than disappear.
-        if (!isObject(rawEvidence)) {
-          invalidEvidence.push(rawEvidence)
-          continue
-        }
-        if (typeof rawEvidence.sourceFile !== 'string' || !optionalString(rawEvidence.sourceFile)) {
-          invalidEvidence.push(rawEvidence)
-          continue
-        }
-        const normalized: RosterImportEvidence = {
-          ...(rawEvidence.publishedRow !== undefined ? { publishedRow: rawEvidence.publishedRow as import('../../lib/roster-import-client').OfficialPublishedRow } : {}),
-          ...announcementEvidenceCoordinate({ ...rawEvidence, sourceFile: rawEvidence.sourceFile }, true),
-        }
-        const key = JSON.stringify([
-          normalized.sourceFile,
-          normalized.attachment ?? null,
-          normalized.listNo ?? null,
-          normalized.page ?? null,
-        ])
-        uniqueEvidence.set(key, normalized)
-      }
-    }
-    const mergedEvidence = [...uniqueEvidence.entries()]
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-      .map(([, evidence]) => evidence)
-    mergedEvidence.push(...(invalidEvidence as RosterImportEvidence[]))
-    const [firstOccurrence, ...duplicates] = occurrences
-    for (const occurrence of occurrences) groupedOccurrences.add(`${occurrence.recordIndex}:${occurrence.eventIndex}`)
-    if (firstOccurrence) {
-      const event = planned.get(firstOccurrence.recordIndex)?.[firstOccurrence.eventIndex]
-      if (event) planned.get(firstOccurrence.recordIndex)![firstOccurrence.eventIndex] = { ...event, evidence: mergedEvidence }
-    }
-    for (const duplicate of duplicates) {
-      const event = planned.get(duplicate.recordIndex)?.[duplicate.eventIndex]
-      if (event) planned.get(duplicate.recordIndex)![duplicate.eventIndex] = { ...event, evidence: [] }
-    }
-  }
-
-  return { eventsByRecord: planned, groupedOccurrences }
-}
-
-/** 对象键及集合数组顺序不影响公告载荷的快照指纹;重复项仍按重数保留。 */
-function canonicalEvidencePlanJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalEvidencePlanJson).sort().join(',')}]`
-  }
-  if (value !== null && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, child]) => child !== undefined)
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    return `{${entries.map(([key, child]) => `${JSON.stringify(key)}:${canonicalEvidencePlanJson(child)}`).join(',')}}`
-  }
-  return JSON.stringify(value) ?? 'null'
-}
-
-/** 同一幂等键若被复用于不同公告载荷或默认来源,不应复用旧的收敛目标快照。 */
-export function evidenceRepointPlanFingerprint(request: RosterImportRequest): string {
-  return createHash('sha256')
-    .update(canonicalEvidencePlanJson(request.payload?.announcement ?? null))
-    .digest('hex')
-}
-
 /**
  * 把载荷翻成一份**只读**计划。所有身份解析（企业、记录、查询）都在这里发生，
  * 因此预检报的 add/update/remove/review 就是提交真会发生的事。
@@ -1255,10 +842,6 @@ export function evidenceRepointPlanFingerprint(request: RosterImportRequest): st
  * 一行不加、一行不删，那几类都可能写新行，故它们根本没有执行闭包可跑。
  */
 interface OfficialImportState { declarations: Map<string, number>; batchId?: number; changedEvents?: Map<number, number> }
-export function hasOfficialFactInput(request: RosterImportRequest): boolean {
-  const payload = request.payload
-  return ['officialEvidenceAppends', 'officialEvidenceCorrections', 'officialEvidencePlanHash'].some(key => Object.hasOwn(payload, key)) || (Array.isArray(payload.announcement?.records) && payload.announcement.records.some(record => Array.isArray(record?.events) && record.events.some(event => Array.isArray(event?.evidence) && event.evidence.some(evidence => evidence && Object.hasOwn(evidence, 'publishedRow')))))
-}
 function prepareOfficialImport(db: Executor, request: RosterImportRequest, items: PlannedItem[], identities: AnnouncementBatchIdentityPlan, filesDir: string | undefined, state: OfficialImportState, plannedEvents: ReadonlyMap<number, RosterImportEvent[]>, groupedOccurrences: ReadonlySet<string>) {
   function fail(code: string, message: string): never { throw new OfficialFactError(code, message, 409) }
   if (request.payload.announcement && !Array.isArray(request.payload.announcement.records)) fail('invalid_input', 'announcement.records must be an array')
@@ -1393,14 +976,12 @@ function prepareOfficialImport(db: Executor, request: RosterImportRequest, items
   }
   return { planHash, item }
 }
-
 interface ReviewedAnnouncementPlan {
   owners: ReadonlyMap<number, number>
   created: ReadonlySet<number>
   decision: string
   planHash?: string
 }
-
 export function planRosterImport(
   db: Executor,
   request: RosterImportRequest,
@@ -1660,7 +1241,6 @@ export function planRosterImport(
   }
   return { items, conflicts, officialEvidencePlanHash, ...(platformLegacyProvenanceSources.length ? { platformLegacyProvenanceSources } : {}), ...(platformObservationSources.length ? { platformObservationSources } : {}) }
 }
-
 function projectionItem(tx: Executor, relationId: number, batchId?: number, expected?: string): RosterImportItemResult {
   try {
     return success('platform_observation', `relation:${relationId}`, { canonicalProjection: [ensureHistoricalObservation(tx, relationId, batchId, expected)], rowsWritten: 0 })
@@ -1669,119 +1249,6 @@ function projectionItem(tx: Executor, relationId: number, batchId?: number, expe
     return failure('platform_observation', `relation:${relationId}`, error.code, error.message)
   }
 }
-
-/**
- * Validate the two announcement-only values whose malformed forms can change identity or evidence
- * meaning. Generic `optionalInt` remains shared by years and batch fields and is not changed here.
- */
-export function validateAnnouncementIdentityAndEvidence(
-  announcement: RosterImportAnnouncement | null | undefined,
-): RosterImportItemResult[] {
-  if (!announcement || !Array.isArray(announcement.records)) return []
-
-  const errors: RosterImportItemResult[] = []
-  announcement.records.forEach((record, recordIndex) => {
-    const enterprise = isObject(record?.enterprise) ? record.enterprise : null
-    const rawUscc = enterprise?.uscc
-    const hasNonblankUscc =
-      rawUscc !== null &&
-      rawUscc !== undefined &&
-      (typeof rawUscc !== 'string' || normalizeUscc(rawUscc) !== '')
-    if (hasNonblankUscc) {
-      const verdict = usccFormatVerdict(rawUscc)
-      if (verdict !== 'ok') {
-        const why =
-          verdict === 'length' ? '长度不是 18 位' : verdict === 'charset' ? '含字符集外的字符' : '校验位不符'
-        errors.push(
-          failure(
-            'record',
-            `record:${recordIndex}`,
-            'uscc_format_invalid',
-            `统一社会信用代码不合法（${why}）：${String(rawUscc)}`,
-            'enterprise.uscc',
-          ),
-        )
-      }
-    }
-
-    const events = Array.isArray(record?.events) ? record.events : []
-    events.forEach((event, eventIndex) => {
-      const evidence = Array.isArray(event?.evidence) ? event.evidence : []
-      evidence.forEach((item, evidenceIndex) => {
-        if (!isObject(item)) return
-        const sourceFile = optionalString(item.sourceFile)
-        if (!sourceFile || item.page === null || item.page === undefined) return
-        const ref = `record:${recordIndex}#${eventIndex}/e${evidenceIndex}`
-        if (!isPageCapable(sourceFile)) {
-          errors.push(
-            failure(
-              'record_evidence',
-              ref,
-              'not_page_capable',
-              `${sourceFile} 不是 PDF，不能提供可复核的实际页码；请移除 page 或设为 null`,
-              'evidence.page',
-            ),
-          )
-          return
-        }
-        const page = item.page
-        if (typeof page !== 'number' || !Number.isFinite(page) || !Number.isInteger(page) || page < 1) {
-          errors.push(
-            failure(
-              'record_evidence',
-              ref,
-              'page_invalid',
-              `PDF 出处 page 必须是正整数，收到：${String(page)}`,
-              'evidence.page',
-            ),
-          )
-        }
-      })
-    })
-  })
-
-  return errors
-}
-
-// --- 公布文件 --------------------------------------------------------------
-
-export function validateAnnouncementRecord(
-  announcement: RosterImportAnnouncement, record: RosterImportAnnouncement['records'][number], index: number,
-) {
-  const ref = `record:${index}`
-  const name = optionalString(record?.enterprise?.name)
-  if (!name) {
-    return { error: failure('record', ref, 'enterprise_name_required', '记录缺少企业名称', 'records[].enterprise.name') } as const
-  }
-  const titleCode = optionalString(record.titleCode)
-  if (!titleCode || !TITLE_CODES.has(titleCode)) {
-    return { error: failure('record', ref, 'title_unknown', `称号不在字典内：${titleCode ?? '(空)'}`, 'titleCode') } as const
-  }
-  const source = record.source ?? announcement.sourceDocument.source
-  if (!SOURCES.has(String(source))) {
-    return { error: failure('record', ref, 'source_unknown', `来源必须是 jxj / miit，收到：${String(source)}`, 'source') } as const
-  }
-  const events = Array.isArray(record.events) ? record.events : []
-  for (let i = 0; i < events.length; i += 1) {
-    const event = events[i]!
-    const eventRef = `record:${index}#${i}`
-    if (!EVENT_TYPES.has(String(event?.eventType))) {
-      return { error: failure('record_event', eventRef, 'event_type_unknown', `事件类型不在字典内：${String(event?.eventType)}`, 'eventType') } as const
-    }
-    if (event.reviewOutcome != null && !REVIEW_OUTCOMES.has(String(event.reviewOutcome))) {
-      return { error: failure('record_event', eventRef, 'review_outcome_unknown', `复核结论必须是 passed / failed，收到：${String(event.reviewOutcome)}`, 'reviewOutcome') } as const
-    }
-    const evidence = Array.isArray(event.evidence) ? event.evidence : []
-    for (let k = 0; k < evidence.length; k += 1) {
-      if (!optionalString(evidence[k]?.sourceFile)) {
-        return { error: failure('record_evidence', `${eventRef}/e${k}`, 'source_file_required', '出处缺少 sourceFile', 'evidence.sourceFile') } as const
-      }
-    }
-  }
-
-  return { name, titleCode, source, events }
-}
-
 function planAnnouncementRecord(
   db: Executor,
   request: RosterImportRequest,
@@ -1977,11 +1444,9 @@ function planAnnouncementRecord(
     }
   }
 }
-
 interface AnnouncementWriteReason {
   existingRecord?: { id: number }
 }
-
 function writeAnnouncementRecord(
   tx: Executor,
   request: RosterImportRequest,
@@ -2101,7 +1566,6 @@ function writeAnnouncementRecord(
       writtenEvidence.length,
   })
 }
-
 /**
  * 定位或新建来源文件。返回 `created` —— 本项**真的插了一行**才为真。
  * 「重放时一行没写」这个事实必须能报出来(`summary.written`,见 `summarizeCommit`)。
@@ -2134,7 +1598,6 @@ function upsertSourceDocument(
     .get().id
   return { id, created: true }
 }
-
 /** 定位或新建企业。返回 `created`(同 {@link upsertSourceDocument})。 */
 function upsertEnterprise(
   tx: Executor,
@@ -2154,7 +1617,6 @@ function upsertEnterprise(
     })
   return { id, created: true }
 }
-
 /** 定位或新建记录(企业 × 称号 × 来源)。返回 `created`(同 {@link upsertSourceDocument})。 */
 function upsertRecord(
   tx: Executor,
@@ -2193,46 +1655,6 @@ function upsertRecord(
     .get().id
   return { id, created: true }
 }
-
-/**
- * 事件的**坐标**(重放判重与收敛比对共用同一份取值)。
- *
- * 为什么抽出来:预检(算「将要更新几行」)与执行(真的改哪几行)必须**同一条判据** ——
- * 两处各算一次迟早会漂,而漂了以后预检报的就不再是提交真会发生的事(本文件开头的承诺)。
- */
-interface EventCoordinates {
-  recordId: number
-  eventType: string
-  year: number | null
-  batchSeq: number | null
-  reviewOutcome: string | null
-  decidedYear: number | null
-}
-
-/** 由载荷里的一条事件 + 它所属记录算出坐标。 */
-export function eventCoordinates(recordId: number, event: RosterImportEvent): EventCoordinates {
-  return {
-    recordId,
-    eventType: String(event.eventType),
-    year: optionalInt(event.year),
-    batchSeq: optionalInt(event.batchSeq),
-    reviewOutcome: event.reviewOutcome == null ? null : String(event.reviewOutcome),
-    decidedYear: optionalInt(event.decidedYear),
-  }
-}
-
-/** 一行 `record_event` 是不是这个坐标。 */
-export function matchesEventCoordinates(row: EventCoordinates, values: EventCoordinates): boolean {
-  return (
-    row.recordId === values.recordId &&
-    row.eventType === values.eventType &&
-    (row.year ?? null) === values.year &&
-    (row.batchSeq ?? null) === values.batchSeq &&
-    (row.reviewOutcome ?? null) === values.reviewOutcome &&
-    (row.decidedYear ?? null) === values.decidedYear
-  )
-}
-
 /** 同坐标的**完全相同**事件(含复核结论与结论年份)—— 命中即跳过,保证重放不堆行。 */
 function findExistingEvent(tx: Executor, values: EventCoordinates): { id: number } | undefined {
   return tx
@@ -2251,151 +1673,12 @@ function findExistingEvent(tx: Executor, values: EventCoordinates): { id: number
     .limit(1)
     .get()
 }
-
-// ---------------------------------------------------------------------------
-// 重放时的**出处指针收敛**(RL-16)
-// ---------------------------------------------------------------------------
-//
-// 背景:来源文件入库后,同一份内容的标识从**库外路径**变成**库内路径**。若重放既有事件时
-// 只「跳过」,`record_evidence.source_file` 就永远指着库外路径,名录行点开预览解析不到文件。
-//
-// 三条边界(为什么这样做是安全的):
-//  1. **事件事实不变**。事件坐标(类型/年份/批次/结论/结论年份)逐字相同才进入这条路径,
-//     事件与出处行一行不加、一行不删；只收敛来源指针,并按目标文件类型清理不可靠页码。
-//  2. 附件、序号逐字匹配；页码只对目标 PDF 参与匹配。目标格式没有稳定分页时,两侧 page 都归一为
-//     null,且只有事件内唯一的 (附件, 序号) 行才允许收敛；多个候选视为歧义并跳过,不把一行错配给另一行。
-//     非 PDF 目标还会清理历史伪页码；PDF 的既有实际页码原样保留。路径只是「同一份文档在库里的位置」,不是身份。
-//     旧路径与目标路径还必须各自有唯一可验证的 SHA-256 且完全相同;缺失 / 冲突 / 不同都报告冲突并保留旧出处。
-//  3. **收敛的触发权在幂等键上**。键含来源标识(见 `layers/sme-roster/lib/roster/little-giant-import.ts`):
-//     只有携带**同一份来源内容**、且来源标识变了的批次才会走到这里。
-
-/** 出处行的坐标字段(路径不参与 —— 它正是要被收敛的那一项)。 */
-interface EvidenceCoordinateRow {
-  id: number
-  sourceFile: string
-  attachment: string | null
-  listNo: number | null
-  page: number | null
-}
-
-/** 收集只与其精确路径身份绑定的 SHA-256；逻辑身份不能替另一条出处路径背书。 */
-export function indexedEvidenceHashes(request: RosterImportRequest, sources: readonly { path: string; sha256: string | null }[]) {
-  const index: EvidenceContentHashIndex = new Map()
-  const add = (path: string | null | undefined, rawHash: unknown) => {
-    const sha256 = optionalString(rawHash)
-    if (!path || !sha256 || !/^[a-f0-9]{64}$/i.test(sha256)) return
-    const hashes = index.get(path) ?? new Set<string>()
-    hashes.add(sha256.toLowerCase())
-    index.set(path, hashes)
-  }
-
-  for (const { path, sha256 } of sources) add(path, sha256)
-  add(request.sourceIdentity, request.sourceSha256)
-  return index
-}
-
 function evidenceContentHashIndex(db: Executor, request: RosterImportRequest): EvidenceContentHashIndex {
   const files = db.select({ path: schema.storedFile.relPath, sha256: schema.storedFile.sha256 }).from(schema.storedFile).all()
   const batches = db.select({ path: schema.importBatch.sourceIdentity, sha256: schema.importBatch.sourceSha256 })
     .from(schema.importBatch).where(and(eq(schema.importBatch.status, 'committed'), eq(schema.importBatch.sourceKind, 'announcement'))).all()
   return indexedEvidenceHashes(request, [...files, ...batches])
 }
-
-function verifiedEvidenceContentHash(index: EvidenceContentHashIndex, path: string): string | null {
-  const hashes = index.get(path)
-  return hashes?.size === 1 ? [...hashes][0] ?? null : null
-}
-
-function evidenceContentHashMatch(
-  index: EvidenceContentHashIndex,
-  oldPath: string,
-  targetPath: string,
-): EvidenceContentHashConflict | 'same' {
-  const oldHash = verifiedEvidenceContentHash(index, oldPath)
-  const targetHash = verifiedEvidenceContentHash(index, targetPath)
-  if (!oldHash || !targetHash) return 'unknown'
-  return oldHash === targetHash ? 'same' : 'mismatch'
-}
-
-interface CandidateEvidencePaths {
-  pathsByRow: Map<number, Set<string>>
-  hashConflicts: Set<EvidenceContentHashConflict>
-}
-
-/** 页码只在目标来源是 PDF 时作为坐标；其它格式把请求值和存储值都归一成 null。 */
-function evidencePageCoordinate(sourceFile: string, page: unknown): number | null {
-  return isPageCapable(sourceFile) ? (optionalInt(page) ?? null) : null
-}
-
-/** 已存在出处行的格式化坐标是否与载荷里的那条出处相同。 */
-function matchesEvidenceCoordinates(row: EvidenceCoordinateRow, wanted: RosterImportEvidence): boolean {
-  return (
-    (row.attachment ?? null) === (optionalString(wanted.attachment) ?? null) &&
-    (row.listNo ?? null) === (optionalInt(wanted.listNo) ?? null) &&
-    evidencePageCoordinate(wanted.sourceFile, row.page) === evidencePageCoordinate(wanted.sourceFile, wanted.page)
-  )
-}
-
-/**
- * 算出**这次要改哪几条出处行**。一进一出各一条、按行一一对应(同一条已存在的行不会被
- * 两条载荷出处重复认领),且只在 `source_file` 真的不同时才改。
- */
-function repointTargets(
-  recordId: number,
-  recordEventId: number,
-  existing: readonly EvidenceCoordinateRow[],
-  wanted: readonly RosterImportEvidence[],
-  taken: Set<number> = new Set(),
-  ambiguous: ReadonlySet<number> = new Set(),
-  evidenceContentHashes: EvidenceContentHashIndex,
-): EvidenceRepointPlan {
-  const { pathsByRow: targetPathsByRow, hashConflicts } = candidateTargetPathsByRow(existing, wanted, evidenceContentHashes)
-  const existingById = new Map(existing.map((row) => [row.id, row]))
-  const out: EvidenceRepointTarget[] = []
-  for (const [id, paths] of targetPathsByRow) {
-    // 一条既有行若有多个不同目标路径或已被整份载荷判为冲突，不按载荷顺序猜一个。
-    if (taken.has(id) || ambiguous.has(id) || paths.size !== 1) continue
-    const [sourceFile] = paths
-    if (!sourceFile) continue
-    const current = existingById.get(id)
-    if (!current) continue
-    taken.add(id)
-    out.push({ id, recordId, recordEventId, fromSourceFile: current.sourceFile, sourceFile })
-  }
-  return { targets: out, hashConflicts }
-}
-
-/** 每个唯一坐标行收集本组载荷里实际需要改到的路径；同路径 no-op 不参与认领。 */
-function candidateTargetPathsByRow(
-  existing: readonly EvidenceCoordinateRow[],
-  wanted: readonly RosterImportEvidence[],
-  evidenceContentHashes: EvidenceContentHashIndex,
-): CandidateEvidencePaths {
-  const targetPathsByRow = new Map<number, Set<string>>()
-  const hashConflicts = new Set<EvidenceContentHashConflict>()
-  for (const rawCandidate of wanted as readonly unknown[]) {
-    if (!isObject(rawCandidate)) continue
-    const candidate = rawCandidate as unknown as RosterImportEvidence
-    const sourceFile = optionalString(candidate.sourceFile)
-    if (!sourceFile) continue
-    // 按目标格式归一坐标后必须只命中一行。非 PDF 的 page 不参与坐标；PDF 页号仍精确参与。
-    // 同路径候选是 no-op，不认领该行；这样后续有效路径仍可更新它。
-    const matches = existing.filter((row) => matchesEvidenceCoordinates(row, candidate))
-    if (matches.length !== 1) continue
-    const [hit] = matches
-    if (!hit || hit.sourceFile === sourceFile) continue
-    const hashMatch = evidenceContentHashMatch(evidenceContentHashes, hit.sourceFile, sourceFile)
-    if (hashMatch !== 'same') {
-      hashConflicts.add(hashMatch)
-      continue
-    }
-    const paths = targetPathsByRow.get(hit.id) ?? new Set<string>()
-    paths.add(sourceFile)
-    targetPathsByRow.set(hit.id, paths)
-  }
-  return { pathsByRow: targetPathsByRow, hashConflicts }
-}
-
 /**
  * 扫描整份公告载荷，把同一既有出处行被不同记录指向多个路径的情况标为歧义。
  * 这样预检、普通提交与显式重放对跨记录重复键也采用同一决定。
@@ -2446,66 +1729,6 @@ function ambiguousEvidenceRepointIds(
 
   return ambiguousAnnouncementRepoints(records, recordIdByIndex, eventRows, evidenceRows, evidenceContentHashes)
 }
-
-export function ambiguousAnnouncementRepoints(records: readonly RosterImportAnnouncement['records'][number][],
-  recordIdByIndex: ReadonlyMap<number, number>, eventRows: typeof schema.recordEvent.$inferSelect[],
-  evidenceRows: readonly (EvidenceCoordinateRow & { recordEventId: number })[], evidenceContentHashes: EvidenceContentHashIndex) {
-  const eventsByRecord = new Map<number, typeof eventRows>()
-  for (const row of eventRows) {
-    const rows = eventsByRecord.get(row.recordId) ?? []
-    rows.push(row)
-    eventsByRecord.set(row.recordId, rows)
-  }
-  const evidenceByEvent = new Map<number, EvidenceCoordinateRow[]>()
-  for (const row of evidenceRows) {
-    const rows = evidenceByEvent.get(row.recordEventId) ?? []
-    rows.push(row)
-    evidenceByEvent.set(row.recordEventId, rows)
-  }
-
-  const targetPathsByEvidence = new Map<number, Set<string>>()
-  for (const [index, recordId] of recordIdByIndex) {
-    const storedEvents = eventsByRecord.get(recordId) ?? []
-    const requestEvents = Array.isArray(records[index]?.events) ? records[index]!.events! : []
-    for (const rawEvent of requestEvents) {
-      // Invalid event elements must reach planAnnouncementRecord's structured validation.
-      if (!isObject(rawEvent)) continue
-      const event = rawEvent as unknown as RosterImportEvent
-      const coords = eventCoordinates(recordId, event)
-      const existingEvent = storedEvents.find((row) => matchesEventCoordinates(row, coords))
-      if (!existingEvent) continue
-      const candidates = candidateTargetPathsByRow(
-        evidenceByEvent.get(existingEvent.id) ?? [],
-        Array.isArray(event.evidence) ? event.evidence : [],
-        evidenceContentHashes,
-      )
-      for (const [evidenceId, paths] of candidates.pathsByRow) {
-        const allPaths = targetPathsByEvidence.get(evidenceId) ?? new Set<string>()
-        for (const path of paths) allPaths.add(path)
-        targetPathsByEvidence.set(evidenceId, allPaths)
-      }
-    }
-  }
-
-  return new Set([...targetPathsByEvidence].filter(([, paths]) => paths.size > 1).map(([id]) => id))
-}
-
-/** 将重复出现的同一事件坐标合并，之后一次性按出处行解析目标与歧义。 */
-function groupEventEvidenceById(
-  events: readonly RosterImportEvent[],
-  eventIdFor: (event: RosterImportEvent) => number | undefined,
-): Map<number, RosterImportEvidence[]> {
-  const byEvent = new Map<number, RosterImportEvidence[]>()
-  for (const event of events) {
-    const eventId = eventIdFor(event)
-    if (eventId == null) continue
-    const evidence = byEvent.get(eventId) ?? []
-    evidence.push(...(event.evidence ?? []))
-    byEvent.set(eventId, evidence)
-  }
-  return byEvent
-}
-
 /** 执行计划期冻结的收敛目标；路径或事件已被别的操作改变时安全跳过。 */
 function applyEvidenceRepointTargets(tx: Executor, targets: readonly EvidenceRepointTarget[], deferredRevisions?: Map<number, number>): number {
   let repointed = 0
@@ -2541,7 +1764,6 @@ function applyEvidenceRepointTargets(tx: Executor, targets: readonly EvidenceRep
   }
   return repointed
 }
-
 /** 已提交批次的目标快照只在原路径仍然存在时重放，已到达目标则自然成为 no-op。 */
 function evidenceRepointsFromSavedPlan(
   db: Executor,
@@ -2585,7 +1807,6 @@ function evidenceRepointsFromSavedPlan(
   }
   return { targets, hashConflicts }
 }
-
 /**
  * 本次载荷会把**已存在出处行**的 `source_file` 收敛掉几条 —— 预检用。
  * 与执行阶段同一份 `repointTargets`,故预检报的 `evidenceRepoints` 就是提交真会改的行数。
@@ -2627,30 +1848,6 @@ function countEvidenceRepoints(
     .all()
 
   return projectAnnouncementRepoints(recordId, events, eventRows, evidenceRows, taken, ambiguous, evidenceContentHashes)
-}
-
-export function projectAnnouncementRepoints(recordId: number, events: readonly RosterImportEvent[],
-  eventRows: readonly typeof schema.recordEvent.$inferSelect[], evidenceRows: readonly (EvidenceCoordinateRow & { recordEventId: number })[],
-  taken: Set<number>, ambiguous: ReadonlySet<number>, evidenceContentHashes: EvidenceContentHashIndex) {
-  const byEvent = new Map<number, EvidenceCoordinateRow[]>()
-  for (const row of evidenceRows) {
-    const list = byEvent.get(row.recordEventId)
-    if (list) list.push(row)
-    else byEvent.set(row.recordEventId, [row])
-  }
-
-  const targets: EvidenceRepointTarget[] = []
-  const hashConflicts = new Set<EvidenceContentHashConflict>()
-  const wantedByEvent = groupEventEvidenceById(events, (event) => {
-    const coords = eventCoordinates(recordId, event)
-    return eventRows.find((row) => matchesEventCoordinates(row, coords))?.id
-  })
-  for (const [eventId, wanted] of wantedByEvent) {
-    const plan = repointTargets(recordId, eventId, byEvent.get(eventId) ?? [], wanted, taken, ambiguous, evidenceContentHashes)
-    for (const conflict of plan.hashConflicts) hashConflicts.add(conflict)
-    targets.push(...plan.targets)
-  }
-  return { targets, hashConflicts }
 }
 // ---------------------------------------------------------------------------
 // 既有行查找（预检与执行阶段**共用同一份**谓词）
@@ -2700,7 +1897,6 @@ function findAliasRow(
     )
     .get()
 }
-
 /** 查询身份：`(interface, query_key, rdjb, queried_at)`（契约 §1.3）。 */
 function findQueryRow(
   db: Executor,
@@ -2720,7 +1916,6 @@ function findQueryRow(
     )
     .get()
 }
-
 /** 关系身份：`(query_id, sequence_no)`（契约 §1.4）。 */
 function findRelationRow(
   db: Executor,
@@ -2738,7 +1933,6 @@ function findRelationRow(
     )
     .get()
 }
-
 /** 差异身份：`(enterprise_id, title_code, direction, recorded_at)`（契约 §1.5）。 */
 function findDifferenceRow(
   db: Executor,
@@ -2760,9 +1954,7 @@ function findDifferenceRow(
     )
     .get()
 }
-
 type DifferenceRow = typeof schema.differenceReason.$inferSelect
-
 function findDifferenceContentRow(
   db: Executor,
   spec: { enterpriseId: number; titleCode: string; direction: string; recordedAt: string },
@@ -2780,7 +1972,6 @@ function findDifferenceContentRow(
     )
     .get()
 }
-
 /** Legacy-only deduplication; lifecycle-managed histories are rejected before reaching this path. */
 function sameDifferenceContent(left: DifferenceRow, right: DifferenceRow): boolean {
   return left.status === right.status &&
@@ -2796,7 +1987,6 @@ function sameDifferenceContent(left: DifferenceRow, right: DifferenceRow): boole
     left.movedInBatch === right.movedInBatch &&
     left.verificationStatus === right.verificationStatus
 }
-
 /** Identity reassignment cannot preserve a managed command's original scope/hash/replay. */
 function findMergeDifferenceLifecycleConflict(db: Executor, fromEnterpriseId: number, intoEnterpriseId: number | null) {
   if (fromEnterpriseId === intoEnterpriseId) return null
@@ -2817,7 +2007,6 @@ function findMergeDifferenceLifecycleConflict(db: Executor, fromEnterpriseId: nu
   return { code: 'merge_difference_lifecycle_conflict',
     message: `差异决定版本 ${affected.id}（企业 ${affected.enterpriseId}/${affected.titleCode}/${affected.direction}）已接管；归并将改变历史归属或写入旧解释，当前入口不支持保留原范围重放的归并，原 ID、历史和接管状态须保留` }
 }
-
 /** #99: inspect only affected alias IDs; never materialize audit payloads. */
 function aliasMergeLifecycleConflict(db: Executor, sourceAlias: Pick<typeof schema.enterpriseAlias.$inferSelect, 'id' | 'verificationStatus'>, survivor: { id: number }): { code: string; message: string } | null {
   const survivorState = db.select({ verificationStatus: schema.enterpriseAlias.verificationStatus }).from(schema.enterpriseAlias).where(eq(schema.enterpriseAlias.id, survivor.id)).get()!
@@ -2843,7 +2032,6 @@ function findMergeAliasLifecycleConflict(db: Executor, fromEnterpriseId: number,
   }
   return null
 }
-
 function findMergeDifferenceConflict(
   db: Executor,
   fromEnterpriseId: number,
@@ -2865,7 +2053,6 @@ function findMergeDifferenceConflict(
   }
   return null
 }
-
 // --- 别名 ------------------------------------------------------------------
 
 function planAlias(
@@ -3040,13 +2227,11 @@ function planAlias(
     },
   })
 }
-
 // --- 平台查询与关系 --------------------------------------------------------
 
 function archivedPlatformQuerySource(db: Executor, queryId: number): PlatformQueryReplaySource {
   return collectionImportSource(db, queryId)
 }
-
 function planPlatformQuery(
   db: Executor,
   query: RosterImportPlatformQuery,
@@ -3155,7 +2340,6 @@ function planPlatformQuery(
   })
   return source
 }
-
 function writePlatformQuery(
   tx: Executor,
   query: RosterImportPlatformQuery,
@@ -3163,7 +2347,6 @@ function writePlatformQuery(
 ): RosterImportItemResult {
   return writeImportedCollection(tx, query, batchId)
 }
-
 // --- 导出快照 --------------------------------------------------------------
 
 /** Compare only the submitted snapshot's rows, in bounded chunks; never append to an old file. */
@@ -3179,71 +2362,16 @@ function exportReplayConflict(db: Executor, snapshot: RosterImportExportSnapshot
   }
   return null
 }
-
-export function exportSnapshotRowConflict(rows: NonNullable<RosterImportExportSnapshot['rows']>, stored: ReadonlyMap<number, typeof schema.platformExportRow.$inferSelect>) {
-  for (const row of rows) {
-    const original = stored.get(row.sourceRowNo)
-    if (!original) return failure('export_row', `export:row:${row.sourceRowNo}`, 'export_row_set_conflict', 'Existing file cannot acquire new source rows', 'rows')
-    for (const field of ['nameRaw', 'usccRaw', 'district', 'province', 'city', 'regStatus', 'rawFields'] as const) {
-      if (!Object.hasOwn(row, field)) continue
-      const value = field === 'rawFields' ? row[field] ?? null : optionalString(row[field])
-      if (!isDeepStrictEqual(original[field], value)) return failure('export_row', `export:row:${row.sourceRowNo}`, 'export_row_payload_conflict', `Existing file row has different ${field}`, `rows.${field}`)
-    }
-  }
-  return null
-}
-
-export function projectExportSnapshotRow(batchId: number, row: NonNullable<RosterImportExportSnapshot['rows']>[number]) {
-  return {
-    batchId,
-    sourceRowNo: optionalInt(row.sourceRowNo)!,
-    usccRaw: optionalString(row.usccRaw),
-    nameRaw: optionalString(row.nameRaw),
-    district: optionalString(row.district),
-    province: optionalString(row.province),
-    city: optionalString(row.city),
-    regStatus: optionalString(row.regStatus),
-    rawFields: row.rawFields == null ? null : JSON.stringify(row.rawFields),
-    createdAt: new Date().toISOString(),
-  }
-}
-
 function findExportBatch(db: Executor, snapshot: RosterImportExportSnapshot) {
   return db.select({ id: schema.platformExportBatch.id }).from(schema.platformExportBatch)
     .where(and(eq(schema.platformExportBatch.titleCode, snapshot.titleCode), eq(schema.platformExportBatch.year, snapshot.year), eq(schema.platformExportBatch.sha256, snapshot.sha256)))
     .get()
 }
-
 function latestExportBatch(db: Executor, snapshot: RosterImportExportSnapshot, excludeSameSha = false) {
   return db.select({ id: schema.platformExportBatch.id }).from(schema.platformExportBatch)
     .where(and(eq(schema.platformExportBatch.titleCode, snapshot.titleCode), eq(schema.platformExportBatch.year, snapshot.year), excludeSameSha ? ne(schema.platformExportBatch.sha256, snapshot.sha256) : undefined))
     .orderBy(desc(schema.platformExportBatch.id)).limit(1).get()
 }
-
-export function validateExportSnapshot(snapshot: RosterImportExportSnapshot): RosterImportItemResult | null {
-  const ref = 'export:snapshot'
-  if (!TITLE_CODES.has(String(snapshot?.titleCode))) {
-    return failure('export_batch', ref, 'title_unknown', `称号不在字典内：${String(snapshot?.titleCode)}`, 'titleCode')
-  }
-  if (!optionalInt(snapshot.year) || !optionalString(snapshot.collectedOn) || !optionalString(snapshot.originalFilename) || !optionalString(snapshot.sha256)) {
-    return failure('export_batch', ref, 'export_identity_incomplete', '快照缺少 year / collectedOn / originalFilename / sha256', 'exportSnapshot')
-  }
-  const rows = Array.isArray(snapshot.rows) ? snapshot.rows : []
-  const seen = new Set<number>()
-  for (let i = 0; i < rows.length; i += 1) {
-    const rowNo = optionalInt(rows[i]?.sourceRowNo)
-    if (rowNo == null) {
-      return failure('export_row', `export:row:${i}`, 'source_row_no_required', '快照行缺少 sourceRowNo', 'rows[].sourceRowNo')
-    }
-    if (seen.has(rowNo)) {
-      return failure('export_row', `export:row:${rowNo}`, 'source_row_no_duplicate', `快照行号重复：${rowNo}`, 'rows[].sourceRowNo')
-    }
-    seen.add(rowNo)
-  }
-
-  return null
-}
-
 function planExportSnapshot(
   db: Executor,
   snapshot: RosterImportExportSnapshot,
@@ -3275,7 +2403,6 @@ function planExportSnapshot(
     run: (tx) => writeExportSnapshot(tx, snapshot, context),
   })
 }
-
 function writeExportSnapshot(
   tx: Executor,
   snapshot: RosterImportExportSnapshot,
@@ -3347,7 +2474,6 @@ function writeExportSnapshot(
     rowsWritten: (batchCreated ? 1 : 0) + pendingCount,
   })
 }
-
 // --- 差异原因与措施 --------------------------------------------------------
 
 /** 差异项的证据指针（每列：裸 id 或自然键）。 */
@@ -3357,7 +2483,6 @@ interface EvidenceRefs {
   relationIdLiteral: number | null
   relationRef: NormalizedRef | null
 }
-
 /**
  * 校验并解析差异项的两列证据指针。返回 `null` 表示已把逐项错误 push 出去。
  * 规则：同一列**裸 id 与自然键恰给其一**（两个都给 ⇒ 逐项报错，不静默取一个）；
@@ -3400,7 +2525,6 @@ function collectEvidenceRefs(
   }
   return { queryIdLiteral, queryRef, relationIdLiteral, relationRef }
 }
-
 /** Validate new-source evidence against its actual subject/title and query identity. */
 function targetImportDifferenceEvidenceError(db: Executor, pending: PendingPlatformRefs, refs: EvidenceRefs, difference: RosterImportDifference): string | null {
   const queryAt = (id: number | null, ref: NormalizedRef | null) => {
@@ -3447,11 +2571,9 @@ function targetImportDifferenceEvidenceError(db: Executor, pending: PendingPlatf
   } else if (source.queryKey !== uscc) return 'Query-only evidence requires an exact subject USCC query'
   return null
 }
-
 function recognizedDifferenceEvidenceError(db: Executor, pending: PendingPlatformRefs, refs: EvidenceRefs, difference: RosterImportDifference): string | null {
   return targetImportDifferenceEvidenceError(db, pending, refs, difference)
 }
-
 function lifecycleOwnsDifference102(db: Executor, enterpriseId: number, titleCode: string, direction: string): boolean {
   return !!db.select({ id: schema.differenceReason.id }).from(schema.differenceReason).where(and(
     eq(schema.differenceReason.enterpriseId, enterpriseId), eq(schema.differenceReason.titleCode, titleCode),
@@ -3459,7 +2581,6 @@ function lifecycleOwnsDifference102(db: Executor, enterpriseId: number, titleCod
     managedDecision102(),
   )).limit(1).get()
 }
-
 function planDifference(
   db: Executor,
   pending: PendingEnterprises,
@@ -3580,36 +2701,6 @@ function planDifference(
     },
   })
 }
-
-// --- 归并与回填（契约 §5.2）------------------------------------------------
-
-/** 归并血缘：from → to，以及迁了哪些 record / event / evidence。 */
-export interface MergeLineage {
-  fromEnterpriseId: number
-  fromEnterpriseName: string
-  intoEnterpriseId: number
-  intoUscc: string
-  /** 规范行**最终**的名字（给了 `merges[].canonicalName` 就是导出表侧的名字）。 */
-  canonicalName: string
-  /**
-   * **主名称改名**（§5.3 ①）：给 `canonicalName` 且与原名不同时记下 `from → to`，
-   * 以及被顶掉原名落成的那条别名 id；没改名是 `null`。
-   */
-  rename: { from: string; to: string; aliasId: number | null } | null
-  aliasId: number | null
-  /** 支撑本次归并的查询证据（裸 id 或自然键解析所得）；未给为 null。 */
-  evidenceQueryId: number | null
-  childRowsMoved: { aliases: number; differences: number; relations: number; records: number }
-  /** 直接改指规范行的记录 id（无同坐标冲突）。 */
-  recordsMoved: number[]
-  /** 折进规范行同坐标记录的记录 id → 规范行记录 id。 */
-  recordsFolded: Array<{ fromRecordId: number; intoRecordId: number; fromRecordSnapshot?: typeof schema.record.$inferSelect; eventIds?: number[] }>
-  /** 被并企业名下（原）事件 id —— 事件一条都没删，只是记录变了。 */
-  eventsMoved: number[]
-  /** 随之归入规范行的出处 id（含页码，供回溯「第几页」）。 */
-  evidenceMoved: number[]
-}
-
 interface MergePlan {
   merge: RosterImportMerge
   /** 当时能唯一定位的来源主体；本批新建且唯一时保留 null，写入阶段再按名唯一解析。 */
@@ -3619,7 +2710,6 @@ interface MergePlan {
   /** 支撑归并的查询证据的自然键（执行阶段解析成真 id，只进血缘）。 */
   evidenceQueryRef: NormalizedRef | null
 }
-
 function planMerge(
   db: Executor,
   pending: PendingEnterprises,
@@ -3769,7 +2859,6 @@ function planMerge(
     run: (tx) => executeMerge(tx, plan),
   })
 }
-
 // --- 补录统一社会信用代码（RL-06，契约 §8.10）-------------------------------
 
 /**
@@ -3788,14 +2877,12 @@ export interface UsccBackfillLineage {
   source: RosterImportUsccBackfill['source']
   note: string | null
 }
-
 interface UsccBackfillPlan {
   ref: string
   backfill: RosterImportUsccBackfill
   enterpriseId: number
   uscc: string
 }
-
 /**
  * 计划一条补录（契约 §8.10）。判据**全部是客观的**，一条都不靠名称相似：
  *
@@ -3912,7 +2999,6 @@ function planUsccBackfill(
     run: (tx) => executeUsccBackfill(tx, plan),
   })
 }
-
 /**
  * 执行一条补录：把 `uscc_norm` 填上，并摘掉 `quality_flags` 里的 `uscc_missing`。
  *
@@ -3952,7 +3038,6 @@ function executeUsccBackfill(tx: Executor, plan: UsccBackfillPlan): RosterImport
     lineage,
   })
 }
-
 /**
  * 取或建一条曾用名 —— 唯一键 `(enterprise_id, name_norm, source_kind, source_ref_id)`（§1.2）。
  * 归并要写**两条**别名（被并方的名字、被顶掉的规范行原名），规则只此一份。
@@ -4018,7 +3103,6 @@ function ensureEnterpriseAlias(
     })
   return { id, created: true }
 }
-
 /**
  * 执行归并（契约 §5.2 五步）。**事件与出处一条都不合并、不折叠、不删除**：
  * 同坐标记录冲突时，把被并记录的事件**改指**规范行那条记录（`record_event.record_id`），
@@ -4246,7 +3330,6 @@ function executeMerge(tx: Executor, plan: MergePlan): RosterImportItemResult {
     rowsWritten: (mergeAlias.created ? 1 : 0) + (renameAlias.created ? 1 : 0),
   })
 }
-
 // ---------------------------------------------------------------------------
 // 批次行（记账，独立于业务事务）
 // ---------------------------------------------------------------------------
@@ -4262,7 +3345,6 @@ class ExecStageFailure extends Error {
     this.name = 'ExecStageFailure'
   }
 }
-
 /** Ancillary before/current readback: at most one complete shared assessment, never a write gate.
  * Other payload commands may affect additional subjects; this first slice does not certify them.
  */
@@ -4292,7 +3374,6 @@ function readPreflightQualification(db: Db, request: RosterImportRequest, plan: 
     return { qualificationDiagnostics, qualificationReadback: { stage: 'before', status: 'unavailable', reason: 'read_unavailable', target } }
   }
 }
-
 /**
  * 只读预检（契约 §8.1）：**不写业务数据**，只算影响并落一条 `status='preflight'` 的批次。
  * 同一幂等键重复调用：复用既有批次行、刷新它的预检结果。
@@ -4336,7 +3417,6 @@ function preflightRosterImportCore(
     .run()
   return { batchId: batch.id, status: 'preflight', preflight }
 }
-
 // ---------------------------------------------------------------------------
 // 提交
 // ---------------------------------------------------------------------------
@@ -4364,7 +3444,6 @@ function captureAnnouncementDiagnostics(plan: Plan, items: readonly RosterImport
   })
   return retained
 }
-
 function captureAnnouncementQualification(db: Db, request: RosterImportRequest, items: readonly RosterImportItemResult[]): RosterImportAfterQualificationReadback {
   if (Object.entries(request.payload).some(([key, value]) => key !== 'announcement' && key !== 'officialEvidencePlanHash' && value != null && (!Array.isArray(value) || value.length > 0))) {
     return { stage: 'after', status: 'not_retained', reason: 'scope_not_established', target: null }
@@ -4392,7 +3471,6 @@ function captureAnnouncementQualification(db: Db, request: RosterImportRequest, 
     return { stage: 'after', status: 'unavailable', reason: 'read_unavailable', target }
   }
 }
-
 /**
  * 事务提交（契约 §8.2）。
  *
@@ -4530,67 +3608,6 @@ function commitRosterImportCore(
     .run()
   return { batchId: batch.id, status: 'committed', summary, items: publicRosterImportItems(items, batch.id), error: null, ...(qualificationReadback ? { qualificationReadback } : {}) }
 }
-
-/** Keep replay snapshots in the batch ledger, but expose only caller-facing item details. */
-export function publicRosterImportItems(items: readonly RosterImportItemResult[], batchId?: number): RosterImportItemResult[] {
-  return items.map((item, itemIndex) => {
-    if (!item.detail) return item
-    const detail = { ...item.detail }
-    const lineage = detail.lineage as MergeLineage | undefined
-    if (Array.isArray(lineage?.recordsFolded) && lineage.recordsFolded.some(fold => isObject(fold) && (fold.fromRecordSnapshot !== undefined || fold.eventIds !== undefined))) {
-      detail.lineage = { ...lineage, recordsFolded: lineage.recordsFolded.map(fold => { if (!isObject(fold)) return fold; const { fromRecordSnapshot: _snapshot, eventIds: _events, ...old } = fold; return old }), ...(batchId !== undefined ? { snapshotRef: { source: 'private_batch', batchId, itemIndex } } : {}) }
-    }
-    delete detail.evidenceRepointTargets
-    delete detail.evidenceRepointPlanFingerprint
-    if (Object.keys(detail).length === Object.keys(item.detail).length && detail.lineage === item.detail.lineage) return item
-    const publicItem = { ...item }
-    delete publicItem.detail
-    return Object.keys(detail).length > 0 ? { ...publicItem, detail } : publicItem
-  })
-}
-
-// ---------------------------------------------------------------------------
-// 出处指针收敛的**重放**（RL-19，契约 §8.9.3）
-// ---------------------------------------------------------------------------
-
-/**
- * 收敛重放的记账键：`<原幂等键>#repoint`。
- *
- * 为什么不是原键：`import_batch.idempotency_key` 唯一，而原键那条批次已经 `committed`；
- * 重放是**同一个请求的第二次动作**，它既要能重复跑（可重试），又要留下自己的账目。
- * 派生键确定了这个派生是**确定性的** —— 同一份请求重放多少次都是同一行记账，
- * 且一眼能看出它是哪一批的收敛。
- */
-export function replayBatchKey(idempotencyKey: string): string {
-  return `${idempotencyKey}#repoint`
-}
-
-/** 从原提交批次读取目标快照；旧批次没有快照时返回 undefined，保留兼容重算路径。 */
-export function evidenceRepointPlanFromItems(items: unknown, fingerprint: string): EvidenceRepointTarget[] | undefined {
-  if (!Array.isArray(items)) return undefined
-  let hasPlan = false
-  let samePayload = true
-  const targets: EvidenceRepointTarget[] = []
-  for (const item of items) {
-    if (!isObject(item) || !isObject(item.detail) || !Array.isArray(item.detail.evidenceRepointTargets)) continue
-    hasPlan = true
-    if (item.detail.evidenceRepointPlanFingerprint !== fingerprint) samePayload = false
-    for (const raw of item.detail.evidenceRepointTargets) {
-      if (!isObject(raw)) continue
-      const { id, recordId, recordEventId, fromSourceFile, sourceFile } = raw
-      if (
-        typeof id === 'number' && Number.isInteger(id) &&
-        typeof recordId === 'number' && Number.isInteger(recordId) &&
-        typeof recordEventId === 'number' && Number.isInteger(recordEventId) &&
-        typeof fromSourceFile === 'string' && typeof sourceFile === 'string'
-      ) {
-        targets.push({ id, recordId, recordEventId, fromSourceFile, sourceFile })
-      }
-    }
-  }
-  return hasPlan && samePayload ? targets : undefined
-}
-
 /**
  * **出处指针收敛重放**（RL-19，契约 §8.9.3）。
  *
@@ -4666,7 +3683,6 @@ function replayRosterImportCore(db: Db, request: RosterImportRequest): RosterImp
 
   return { batchId: batch.id, status: 'replayed', update, evidenceRepointed, items: publicRosterImportItems(items, batch.id), error: null }
 }
-
 export function preflightRosterImport(db: Db, request: RosterImportRequest, pageCountErrors: readonly RosterImportItemResult[] = [], context: import('../../../core/lib/logging').LogContext & { filesDir?: string } = {}) {
   return recordImportReceipt(db, 'preflight', request, () => withFingerprintVerificationSnapshot(sqliteConnection(db), () => preflightRosterImportCore(db, request, pageCountErrors, context.filesDir)), context)
 }
@@ -4685,7 +3701,6 @@ export function commitRosterImport(db: Db, request: RosterImportRequest, pageCou
 export function replayRosterImport(db: Db, request: RosterImportRequest, context: import('../../../core/lib/logging').LogContext = {}) {
   return recordImportReceipt(db, 'replay', request, () => replayRosterImportCore(db, request), context)
 }
-
 /**
  * `written` = 本次**真正插进库里的行数**；`skipped` = 命中的既有行/重复事件。
  *
@@ -4750,13 +3765,11 @@ function summarizeCommit(plan: Plan, items: RosterImportItemResult[]): RosterImp
   }
   return { written, skipped, failed: 0, evidenceRepointed, ...(projections.length ? { canonicalProjection } : {}) }
 }
-
 /** 执行器自报的**真正插入行数**（见 `summarizeCommit`）；未自报算 0。 */
 function rowsWritten(item: RosterImportItemResult): number {
   const value = item.detail?.rowsWritten
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0
 }
-
 /**
  * 执行器自报的**真正收敛的出处行数**（RL-16/RL-19）；未自报算 0。
  * 与 {@link rowsWritten} **分开**：收敛不是新增，不该进 `written`；但也不能不收账 ——
@@ -4766,32 +3779,6 @@ function rowsRepointed(item: RosterImportItemResult): number {
   const value = item.detail?.evidenceRepointed
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0
 }
-
-// ---------------------------------------------------------------------------
-// 往返一致性（写入后可用它查回「写了什么」）-------------------------------
-// ---------------------------------------------------------------------------
-
-/**
- * 读回 `import_batch.summary`，把**本票之前**提交的批次缺的 `evidenceRepointed` 补成 0。
- *
- * 摘要 JSON 是**当次**写下的：RL-19 引入 `evidenceRepointed` 之前提交的行里没有这一项，
- * 而类型里它是必填 —— 不补，调用方就会拿到 `undefined` 并静默算错。缺这一项恰好等价于
- * 「那一批没收敛过任何出处行」，所以补 0 是**事实**，不是猜测。没有摘要则返回 `null`
- * （预检批还没提交过，与既有口径一致）。
- */
-export function readSummaryOf(raw: unknown): RosterImportSummary | null {
-  if (!isObject(raw)) return null
-  const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
-  return {
-    written: num(raw.written),
-    skipped: num(raw.skipped),
-    failed: num(raw.failed),
-    evidenceRepointed: num(raw.evidenceRepointed),
-    ...(isObject(raw.platformFields) ? { platformFields: raw.platformFields as unknown as RosterImportSummary['platformFields'] } : {}),
-    ...(isObject(raw.canonicalProjection) ? { canonicalProjection: raw.canonicalProjection as unknown as PlatformProjectionSummary } : {}),
-  }
-}
-
 /** 从批次行读出可查询的结果摘要（契约：`item_results` / `summary` 可查）。 */
 export function readImportBatchOutcome(db: Db, idempotencyKey: string) {
   const batch = findBatchByKey(db, idempotencyKey)
@@ -4813,7 +3800,6 @@ export function readImportBatchOutcome(db: Db, idempotencyKey: string) {
     committedAt: batch.committedAt,
   }
 }
-
 /**
  * 取回某批**新建企业时发现的重名候选**（RL-14）。
  *
@@ -4826,7 +3812,6 @@ export function readDuplicateCandidates(db: Db, idempotencyKey: string): Duplica
   if (!batch) return []
   return duplicateCandidatesFromBatch(batch.itemResults as RosterImportItemResult[] | null, batch.preflightResult as RosterImportPreflight | null)
 }
-
 /** 取回某条 item 的归并血缘（`merges` 项）。 */
 export function readMergeLineage(db: Db, idempotencyKey: string, fromEnterpriseId: number): MergeLineage | null {
   const items = (findBatchByKey(db, idempotencyKey)?.itemResults as RosterImportItemResult[] | null) ?? []
@@ -4836,12 +3821,10 @@ export function readMergeLineage(db: Db, idempotencyKey: string, fromEnterpriseI
   }
   return null
 }
-
 /** 供测试/调用方按 id 直接取企业（验证归并后只剩规范行）。 */
 export function enterpriseExists(db: Db, id: number): boolean {
   return findEnterpriseById(db, id) != null
 }
-
 /** 归并后按现名或曾用名搜索命中同一企业（契约 §5.1 的搜索口径：现名 + **已确认**曾用名）。 */
 export function searchEnterpriseIdsByName(db: Db, raw: string): number[] {
   const norm = normalizeName(raw)
@@ -4853,7 +3836,6 @@ export function searchEnterpriseIdsByName(db: Db, raw: string): number[] {
   }
   return [...ids].sort((a, b) => a - b)
 }
-
 /** 表名 → 行数（测试与预检自检用；不含批次表）。 */
 export function rosterRowCounts(db: Db): Record<string, number> {
   return {
@@ -4870,3 +3852,4 @@ export function rosterRowCounts(db: Db): Record<string, number> {
     source_document: db.select().from(schema.sourceDocument).all().length,
   }
 }
+export { announcementEvidenceCoordinate, type ValidateResult, validateImportRequest, validatePlatformProjectionPayload, type NormalizedRef, normalizeRef, describeRef, groupNewAnnouncementEvidence, evidenceRepointPlanFingerprint, hasOfficialFactInput, validateAnnouncementIdentityAndEvidence, validateAnnouncementRecord, eventCoordinates, matchesEventCoordinates, indexedEvidenceHashes, ambiguousAnnouncementRepoints, projectAnnouncementRepoints, exportSnapshotRowConflict, projectExportSnapshotRow, validateExportSnapshot, type MergeLineage, publicRosterImportItems, replayBatchKey, evidenceRepointPlanFromItems, readSummaryOf } from './roster-import-model'

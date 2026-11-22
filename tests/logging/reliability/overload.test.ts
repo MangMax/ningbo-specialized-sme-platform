@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLogService, type LogServiceOptions } from '../../../layers/core/lib/logging/service'
+import { createLogService, type LogServiceOptions } from '../../../layers/core/lib/logging/sqlite-service'
 const owned: { root: string; service: ReturnType<typeof createLogService> }[] = []
 function fixture(options: Omit<Partial<LogServiceOptions>, 'directory'> = {}) {
   const root = mkdtempSync(join(tmpdir(), 'logging-overload-180-'))

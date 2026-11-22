@@ -1,27 +1,23 @@
+import { prepareRuntimeLogs } from '../fixtures/runtime'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { appLog, applicationLogs, closeApplicationLogging, initializeWorkerLogging, requestLogContext } from '../../../layers/core/lib/logging'
+import { appLog, applicationLogs, requestLogContext } from '../../../layers/core/lib/logging'
 import { projectEvlog, safeLogEvent } from '../../../layers/core/lib/logging/privacy'
 import { safeHttpMethod, safeHttpRoute } from '../../../layers/core/lib/logging/http'
 
 /**
- * #180 runtime-log usability. Uses the real evlog -> allowlist -> SQLite drain;
+ * #180 runtime-log usability. Uses the real evlog -> allowlist -> PostgreSQL drain;
  * no test-only projection. The business side is untouched.
  */
 const directory = mkdtempSync(join(tmpdir(), 'log-usability-180-'))
-const previous = process.env.NUXT_LOG_DIR
+let runtime: Awaited<ReturnType<typeof prepareRuntimeLogs>>
 const PRIVATE = 'PRIVATE180_DO_NOT_PERSIST'
 
-beforeAll(() => {
-  process.env.NUXT_LOG_DIR = directory
-  initializeWorkerLogging()
-})
+beforeAll(async () => { runtime = await prepareRuntimeLogs(directory) })
 afterAll(async () => {
-  await closeApplicationLogging()
-  if (previous === undefined) delete process.env.NUXT_LOG_DIR
-  else process.env.NUXT_LOG_DIR = previous
+  await runtime?.close()
   rmSync(directory, { recursive: true, force: true })
 })
 
@@ -199,7 +195,7 @@ it('drops non-template applicationLog routes from stdout and SQLite while keepin
   }
   const known = (await applicationLogs().list({ operation: 'http.known_fixture', limit: 1 })).rows[0]!
   expect(known.httpRoute).toBe('/api/files/:id')
-  const db = readFileSync(join(directory, 'events.db')).toString()
+  const db = runtime.psql(['-c', 'SELECT row_to_json(event) FROM runtime_logs.log_events AS event'])
   const printed = writes.join('')
   for (const route of rejected) {
     expect(printed, route).not.toContain(route)
@@ -211,7 +207,7 @@ it('drops non-template applicationLog routes from stdout and SQLite while keepin
 
 it('still lists and reads rows written before the new fields and list counts existed', async () => {
   const legacyDirectory = mkdtempSync(join(tmpdir(), 'log-usability-legacy-'))
-  const { createLogService } = await import('../../../layers/core/lib/logging/service')
+  const { createLogService } = await import('../../../layers/core/lib/logging/sqlite-service')
   const service = createLogService({ directory: legacyDirectory })
   try {
     service.emit({ source: 'worker', operation: 'legacy.fixture', outcome: 'failure', errorCode: 'old_code', counts: { done: 1 }, taskId: 'task-legacy' })

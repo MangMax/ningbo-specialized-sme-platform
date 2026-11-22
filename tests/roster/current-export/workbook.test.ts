@@ -11,7 +11,7 @@ import { initializeDb, schema as s } from '../../../db/client'
 import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
 import { createCurrentQualificationAssessmentReader, readCurrentQualificationAssessment, readCurrentCandidate } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { currentWorkbookValues } from '../../../layers/sme-roster/lib/roster/current-workbook-presentation'
-import { readOfficialPublishedPresentation } from '../../../layers/sme-roster/lib/roster/official-published-presentation'
+import { readOfficialPublishedPresentation } from '../../../layers/sme-roster/lib/roster/official-published-presentation-sqlite'
 
 vi.mock('node:fs', async importOriginal => {
   const filesystem = await importOriginal<typeof import('node:fs')>()

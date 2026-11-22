@@ -1,8 +1,5 @@
-import type { LogContext } from '../../../../core/lib/logging'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
-import { enterpriseReads } from '../../utils/enterprise-read'
 import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 import { readPostgresRosterEnterpriseDetail } from '../../../lib/roster/enterprise-detail-postgres'
 
@@ -27,15 +24,9 @@ export default defineMcpTool({
   inputSchema: {
     enterpriseId: z.number().int().positive().describe('企业 id'),
   },
-  handler: async ({ enterpriseId }, extra) => {
-    const pg = usePostgresRosterDb()
-    if (pg) {
-      const detail = await readPostgresRosterEnterpriseDetail(pg,enterpriseId)
-      if (!detail) throw createError({ statusCode:404,statusMessage:'not found' })
-      return JSON.stringify(detail)
-    }
-    const detail = await enterpriseReads.json(useDb().$client.name, { operation: 'detail',enterpriseId }, extra?.signal, (extra as typeof extra & { logContext?: LogContext })?.logContext)
-    if (!detail.found) throw createError({ statusCode: 404, statusMessage: 'not found' })
-    return detail.body.toString('utf8')
+  handler: async ({ enterpriseId }) => {
+    const detail = await readPostgresRosterEnterpriseDetail(usePostgresRosterDb(), enterpriseId)
+    if (!detail) throw createError({ statusCode: 404, statusMessage: 'not found' })
+    return JSON.stringify(detail)
   },
 })

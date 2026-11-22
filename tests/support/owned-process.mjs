@@ -12,10 +12,10 @@ function childIsRunning(child) {
 // inherit it even if their launcher exits before cleanup; no PID-tree sampling.
 const ownedGroups = new WeakMap()
 function processTable() {
-  return execFileSync('ps', ['-A', '-o', 'pid=,pgid=,lstart='], { encoding: 'utf8' })
+  return execFileSync('ps', ['-A', '-o', 'pid=,pgid=,stat=,lstart='], { encoding: 'utf8' })
     .trim().split('\n').map(line => {
-      const [pid, group, ...started] = line.trim().split(/\s+/)
-      return { pid: Number(pid), group: Number(group), started: started.join(' ') }
+      const [pid, group, state, ...started] = line.trim().split(/\s+/)
+      return { pid: Number(pid), group: Number(group), state, started: started.join(' ') }
     })
 }
 function inOwnedGroup(start) {
@@ -101,7 +101,7 @@ export async function stopOwnedChild(child) {
     // A reused leader PID means the original group has already disappeared.
     if (leader && owner.started && leader.started !== owner.started) return []
     if (leader && !owner.started && !childIsRunning(child)) throw new Error('Cannot verify exited service group identity')
-    return table.filter(row => row.group === group)
+    return table.filter(row => row.group === group && !row.state?.startsWith('Z'))
   }
   const signal = value => {
     try { process.kill(-group, value); return true }
@@ -112,8 +112,6 @@ export async function stopOwnedChild(child) {
   }
   const wait = async duration => {
     const deadline = Date.now() + duration
-    // macOS can return EPERM to kill(-pgid, 0) while a group is exiting.
-    // Read actual membership, including zombies awaiting reap, instead.
     while (members().length && Date.now() < deadline) await sleep(25)
   }
   if (members().length) signal('SIGTERM')

@@ -7,11 +7,7 @@ import { announcementValues, readPostgresAnnouncementEvents, readPostgresAnnounc
 import type { RosterImportItemResult, RosterImportPreflight, RosterImportRequest } from '../../lib/roster-import-client'
 import { advancePostgresOfficialEventRevision } from './evidence-revision-postgres'
 import { lockPostgresFilePaths, refreshPostgresDerivedFileParts } from './file-parts-postgres'
-import {
-  ambiguousAnnouncementRepoints, evidenceRepointPlanFingerprint, evidenceRepointPlanFromItems, hasOfficialFactInput,
-  indexedEvidenceHashes, projectAnnouncementRepoints, validateAnnouncementIdentityAndEvidence, validateAnnouncementRecord,
-  validatePlatformProjectionPayload,
-} from './roster-import'
+import { ambiguousAnnouncementRepoints, evidenceRepointPlanFingerprint, evidenceRepointPlanFromItems, hasOfficialFactInput, indexedEvidenceHashes, projectAnnouncementRepoints, validateAnnouncementIdentityAndEvidence, validateAnnouncementRecord, validatePlatformProjectionPayload } from './roster-import-model'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Target = NonNullable<ReturnType<typeof evidenceRepointPlanFromItems>>[number]

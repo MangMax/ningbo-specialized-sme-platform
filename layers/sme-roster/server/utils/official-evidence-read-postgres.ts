@@ -5,10 +5,11 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { z } from 'zod'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
 import { importPostgresReceiptRedactor } from './import-receipt-redaction'
-import { sanitizeEvidence } from './record-correspondence-read'
+import { sanitizeEvidence } from './evidence-redaction'
 import { readPostgresExactEvidence, readPostgresOfficialEvent, readPostgresPublicOfficialEvidence } from './official-evidence-postgres'
 import { evidenceReadSchema, eventReadSchema, officialReadQuery } from './official-evidence-read'
 import { usePostgresRosterDb } from './postgres-roster-db'
+import { isEventCorrectionMcpResult } from './mcp-event-correction-runtime'
 const headers = { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' }
 const failure = (status: number, code: string, message: string) => ({ status, headers, body: { error: { code, message } } })
 const ok = (body: object) => ({ status: 200, headers, body })
@@ -107,7 +108,6 @@ export async function dispatchPostgresOfficialEvidenceMcp(
   kind: Input['kind'], action: Input['action'], args: Record<string, unknown>, authorized = false,
 ) {
   const db = usePostgresRosterDb()
-  if (!db) return undefined
   const idKey = kind === 'event' ? 'eventId' : 'id'
   const query = Object.fromEntries(Object.entries(args).filter(([key, value]) =>
     value !== undefined && key !== idKey && (action === 'get' || action === 'audit' && ['page', 'pageSize'].includes(key))))
@@ -120,5 +120,6 @@ export async function dispatchPostgresOfficialEvidenceMcp(
     throw Object.assign(new Error(args.official !== undefined ? JSON.stringify(output.body) : error.message),
       { code: error.code, statusCode: output.status })
   }
+  if (!isEventCorrectionMcpResult(output.body)) throw Object.assign(new Error('Invalid official evidence MCP result'), { code: 'internal_error', statusCode: 500 })
   return output.body
 }

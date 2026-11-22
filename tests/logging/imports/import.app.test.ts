@@ -1,49 +1,96 @@
-import { EventEmitter } from 'node:events'
+import pg from 'pg'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { EventEmitter, once } from 'node:events'
 import Database from 'better-sqlite3'
-import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
+import { createImportExecutionWorker } from '../../../layers/sme-roster/server/utils/import-execution-worker-location'
 
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { createImportExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
 import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { handlePostgresRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
+import { readRuntimeImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipts-runtime'
 import { initializeDb } from '../../../db/client'
-import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http-sqlite'
 import { readImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipts'
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
 
 
-// Preserve real IPC, worker logging and durable commits using the artifact CI builds.
-const createImportExecutionWorker = () => createEnterpriseReadProcess(new URL('../../../.output/server/import-execution-worker.mjs', import.meta.url))
-
 const cleanups: (() => unknown | Promise<unknown>)[] = []
-afterEach(async () => { await closeApplicationLogging(); for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
-function fixture(options: Parameters<typeof createImportExecutor>[0] = {}) {
+let root: string, database: string
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+let admin: pg.Pool | undefined
+let serial = 0
+
+beforeAll(async () => {
+  root = mkdtempSync(join(tmpdir(), 'postgres-import-logs-'))
+  runtime = await postgresRuntimeFixture({ dir: root })
+  admin = new pg.Pool({ connectionString: runtime.url })
+}, 90_000)
+
+beforeEach(async () => {
+  // The worker and the direct PostgreSQL command each see fresh runtime logs.
+  database = 'import_logs_' + ++serial
+  await admin!.query('CREATE DATABASE ' + database + ' TEMPLATE postgres')
+  const url = new URL(runtime!.url)
+  url.pathname = '/' + database
+  for (const [key, value] of Object.entries(runtime!.env)) vi.stubEnv(key, value)
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url.href)
+  vi.stubEnv('NUXT_POSTGRES_LOG_URL', url.href)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  initializeWorkerLogging()
+}, 30_000)
+
+afterEach(async () => {
+  try {
+    for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+  } finally {
+    await closeApplicationLogging()
+    await closePostgresDirectoryDb()
+    await admin?.query('DROP DATABASE IF EXISTS ' + database)
+    vi.unstubAllEnvs()
+  }
+}, 30_000)
+
+afterAll(async () => {
+  await admin?.end()
+  runtime?.close()
+  if (root) rmSync(root, { recursive: true, force: true })
+}, 30_000)
+
+const input = { idempotencyKey: 'PRIVATE_KEY_187', sourceKind: 'platform_export', sourceIdentity: '/PRIVATE_PATH_187.xlsx', payload: { exportSnapshot: {
+  titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-20', originalFilename: 'PRIVATE_NAME_187.xlsx', sha256: 'fixture187', rows: [{ sourceRowNo: 3, rawFields: { original: 'PRIVATE_TEXT_187' } }],
+} } } satisfies RosterImportRequest
+
+function postgresFixture() {
+  const post = (action: 'preflight' | 'commit', body: unknown = input) => handlePostgresRosterImportRequest(
+    action, { method: 'POST', headers: { authorization: 'Bearer fixture-token' }, body },
+    { apiToken: 'fixture-token', filesDir: root, logContext: { requestId: 'req-187', traceId: 'trace-187', taskId: 'task-187' } },
+  )
+  return { post, input, flush: () => applicationLogs().flush() }
+}
+
+function historicalWorkerFixture(options: Parameters<typeof createImportExecutor>[0] = {}) {
   const root = mkdtempSync(join(tmpdir(), 'import187-'))
   cleanups.push(() => rmSync(root, { recursive: true, force: true }))
-  const old = process.env.NUXT_LOG_DIR
-  process.env.NUXT_LOG_DIR = join(root, 'logs')
-  cleanups.push(() => { if (old === undefined) delete process.env.NUXT_LOG_DIR; else process.env.NUXT_LOG_DIR = old })
-  initializeWorkerLogging()
   const db = initializeDb({ create: true,  dbPath: join(root, 'roster.db') })
   cleanups.push(() => db.$client.close())
   const executor = createImportExecutor({ createWorker: createImportExecutionWorker, ...options })
   cleanups.push(() => executor.close())
-  const input = { idempotencyKey: 'PRIVATE_KEY_187', sourceKind: 'platform_export', sourceIdentity: '/PRIVATE_PATH_187.xlsx', payload: { exportSnapshot: {
-    titleCode: 'specialized_sme', year: 2026, collectedOn: '2026-10-20', originalFilename: 'PRIVATE_NAME_187.xlsx', sha256: 'fixture187', rows: [{ sourceRowNo: 3, rawFields: { original: 'PRIVATE_TEXT_187' } }],
-  } } } satisfies RosterImportRequest
   const post = (action: 'preflight' | 'commit' | 'replay', body: unknown = input) => handleRosterImportRequest(action, { method: 'POST', headers: { authorization: 'Bearer fixture-token' }, body }, { db, apiToken: 'fixture-token', executeImport: executor.execute, logContext: { requestId: 'req-187', traceId: 'trace-187', taskId: 'task-187' } })
   return { db, input, post, flush: async () => { await executor.close(); await applicationLogs().flush() } }
 }
 
 it('same-key commit recovery logs replay without claiming another commit or changing its receipt', async () => {
-  const { db, post, flush } = fixture()
+  const { post, flush } = postgresFixture()
   const first = await post('commit')
   expect(first).toMatchObject({ status: 200, body: { status: 'committed', summary: { written: 2, failed: 0 } } })
-  const receipt = readImportReceipt(db, 'get', { idempotencyKey: 'PRIVATE_KEY_187' }) as { batchId: number; receiptId: number }
+  const receipt = await readRuntimeImportReceipt('get', { idempotencyKey: 'PRIVATE_KEY_187' }) as { batchId: number; receiptId: number }
   expect(await post('commit')).toEqual(first)
-  expect(readImportReceipt(db, 'history', { idempotencyKey: 'PRIVATE_KEY_187' })).toMatchObject({ total: 1 })
+  expect(await readRuntimeImportReceipt('history', { idempotencyKey: 'PRIVATE_KEY_187' })).toMatchObject({ total: 1 })
   await flush()
   const commits = await applicationLogs().list({ operation: 'import.commit' })
   const replays = await applicationLogs().list({ operation: 'import.commit.replay' })
@@ -52,10 +99,10 @@ it('same-key commit recovery logs replay without claiming another commit or chan
   const details = await Promise.all([...commits.rows, ...replays.rows].map(row => applicationLogs().detail(row.id)))
   expect(details).toEqual(expect.arrayContaining([expect.objectContaining({ outcome: 'success', batchId: receipt.batchId, receiptId: receipt.receiptId, requestId: 'req-187', traceId: 'trace-187', taskId: 'task-187' })]))
   expect(JSON.stringify(details)).not.toContain('PRIVATE_')
-}, 20_000)
+}, 60_000)
 
 it('preflight conflicts and failed batches never emit successful imports and source conflicts stay distinct', async () => {
-  const { input, post, flush } = fixture()
+  const { input, post, flush } = postgresFixture()
   const invalid = { ...input, payload: { exportSnapshot: { ...input.payload.exportSnapshot, titleCode: 'invalid-title' } } }
   expect(await post('preflight', invalid)).toMatchObject({ status: 200, body: { status: 'preflight', preflight: { conflicts: [expect.anything()] } } })
   expect(await post('commit', invalid)).toMatchObject({ status: 200, body: { status: 'failed', summary: { written: 0 } } })
@@ -75,28 +122,39 @@ it('preflight conflicts and failed batches never emit successful imports and sou
   const rejected = events.find(row => row.operation === 'import.submission.commit')!
   expect(await applicationLogs().detail(rejected.id)).toMatchObject({ errorCode: 'idempotency_conflict' })
   expect(JSON.stringify(await Promise.all(events.map(row => applicationLogs().detail(row.id))))).not.toContain('PRIVATE_')
-}, 20_000)
+}, 60_000)
 
 it('busy admission and lost IPC remain distinct while durable receipt recovery never repeats the commit', async () => {
+  // The legacy source loader compiles before the test exercises IPC admission.
+  const workers = await Promise.all([0, 1].map(async () => {
+    const owned = createImportExecutionWorker()
+    cleanups.push(() => owned.terminate())
+    const [ready] = await once(owned, 'message')
+    expect(ready).toMatchObject({ type: 'ready', pid: expect.any(Number) })
+    return { owned, ready }
+  }))
   let starts = 0, dispatched!: () => void
   const active = new Promise<void>(resolve => { dispatched = resolve })
-  const { db, input, post, flush } = fixture({ maxPending: 1, createWorker: () => {
-    const owned = createImportExecutionWorker(), proxy = new EventEmitter(), drop = ++starts === 1
-    let pid = 0
+  const { db, input, post, flush } = historicalWorkerFixture({ maxPending: 1, createWorker: () => {
+    const { owned, ready } = workers[starts++]!
+    const proxy = new EventEmitter(), drop = starts === 1
     owned.on('message', message => {
-      if (message.type === 'ready') pid = message.pid
-      if (drop && message.type === 'result') { process.kill(pid, 'SIGKILL'); return }
+      if (drop && message.type === 'result') { process.kill(ready.pid, 'SIGKILL'); return }
       proxy.emit('message', message)
     })
     owned.on('error', error => proxy.emit('error', error))
     owned.on('exit', (...args) => proxy.emit('exit', ...args))
+    queueMicrotask(() => proxy.emit('message', ready))
     return Object.assign(proxy, { postMessage: (message: unknown) => { owned.postMessage(message); dispatched() }, ref: owned.ref.bind(owned), unref: owned.unref.bind(owned), terminate: owned.terminate.bind(owned) })
   } })
   const blocker = new Database(db.$client.name)
   cleanups.push(() => { if (blocker.inTransaction) blocker.exec('ROLLBACK'); blocker.close() })
   blocker.exec('BEGIN IMMEDIATE')
   const first = post('commit')
-  await active
+  await Promise.race([
+    active,
+    first.then(result => { throw new Error('Expected an active import before completion: ' + result.status) }),
+  ])
   expect(await post('commit', { ...input, idempotencyKey: 'PRIVATE_BUSY_KEY' })).toMatchObject({ status: 503, body: { error: { code: 'import_busy' } } })
   blocker.exec('ROLLBACK')
   expect(await first).toMatchObject({ status: 503, body: { error: { code: 'import_outcome_unknown' } } })
@@ -111,11 +169,11 @@ it('busy admission and lost IPC remain distinct while durable receipt recovery n
     expect.objectContaining({ operation: 'import.commit.replay', outcome: 'success', traceId: 'trace-187' }),
   ]))
   expect(rows.filter(row => row.operation === 'import.execution' && row.outcome === 'success')).toHaveLength(0)
-}, 20_000)
+}, 60_000)
 
 it('an enclosing transaction rollback cannot leave a successful commit log for an absent receipt', async () => {
   const { commitRosterImport } = await import('../../../layers/sme-roster/server/utils/roster-import')
-  const { db, input, flush } = fixture()
+  const { db, input, flush } = historicalWorkerFixture()
   expect(() => db.transaction(() => {
     expect(commitRosterImport(db, input)).toMatchObject({ status: 'committed' })
     throw new Error('fixture outer rollback')
@@ -123,4 +181,4 @@ it('an enclosing transaction rollback cannot leave a successful commit log for a
   expect(() => readImportReceipt(db, 'get', { idempotencyKey: input.idempotencyKey })).toThrow('Import batch or receipt not found')
   await flush()
   expect((await applicationLogs().list({ operation: 'import.commit', outcome: 'success' })).rows).toHaveLength(0)
-})
+}, 60_000)

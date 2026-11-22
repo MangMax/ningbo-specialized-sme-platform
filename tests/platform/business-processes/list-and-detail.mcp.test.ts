@@ -1,3 +1,5 @@
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { mkdtempSync,rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,8 +13,8 @@ vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) =>
 
 const dir = mkdtempSync(join(tmpdir(), 'business-processes-mcp-'))
 const dbPath = join(dir, 'business.sqlite')
-vi.stubEnv('NUXT_DB_PATH', dbPath)
 const db = initializeDb({ create: true, dbPath })
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let listTool: typeof import('../../../layers/sme-roster/server/mcp/tools/list_platform_business_processes').default
 let detailTool: typeof import('../../../layers/sme-roster/server/mcp/tools/get_platform_business_process').default
 let recordId = 0
@@ -26,10 +28,14 @@ beforeAll(async () => {
       rawFields: { id: 'SQ-MCP-READ', qymc: enterprise.name, tyshxydm: enterprise.usccNorm, sblx: '复核', year: '2023', sqsj: '2023-02-01', cszt: '终审通过', whpc: '2023-2', personuuid: '第三批', szsfmc: '浙江省', unknownSensitiveField: 'PRIVATE-MCP-MARKER' } }],
   })
   recordId = written.observations[0]!.recordId!
+  postgres = await postgresRuntimeFixture({ dir, sourcePath: dbPath })
+  for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
   listTool = (await import('../../../layers/sme-roster/server/mcp/tools/list_platform_business_processes')).default
   detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_business_process')).default
-})
-afterAll(() => {
+}, 30_000)
+afterAll(async () => {
+  await closePostgresDirectoryDb()
+  postgres?.close()
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true })
 })
 

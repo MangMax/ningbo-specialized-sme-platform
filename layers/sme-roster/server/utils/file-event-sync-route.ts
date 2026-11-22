@@ -1,9 +1,8 @@
 import { getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
 import { z } from 'zod'
-import { useDb } from '@db'
 import { requireApiToken } from '../../../core/server/utils/api-guard'
 import { checkBrowserReviewRequest } from './browser-review-102'
-import { syncRequestSchema, preflightFileEventSync, commitFileEventSync } from './file-event-sync'
+import { syncRequestSchema } from './file-event-sync-model'
 import { preflightPostgresFileEventSync, commitPostgresFileEventSync } from './file-event-sync-postgres'
 import { usePostgresRosterDb } from './postgres-roster-db'
 const business = syncRequestSchema.omit({ actor: true })
@@ -53,19 +52,9 @@ export function fileEventSyncRoute(action: 'preflight' | 'commit', browser = fal
       const input = parsed.data,
         request = 'request' in input ? input.request : input
       const pg = usePostgresRosterDb(true)
-      if (pg) return 'request' in input
+      return 'request' in input
         ? await commitPostgresFileEventSync(pg,id,request,input.planHash,input.chunk,config.filesDir)
         : await preflightPostgresFileEventSync(pg,id,request,config.filesDir)
-      return 'request' in input
-        ? await commitFileEventSync(
-            useDb(),
-            id,
-            request,
-            input.planHash,
-            input.chunk,
-            config.filesDir,
-          )
-        : await preflightFileEventSync(useDb(), id, request, config.filesDir)
     } catch (error) {
       const e = error as {
         statusCode?: number

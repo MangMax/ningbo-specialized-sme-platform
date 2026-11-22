@@ -6,14 +6,13 @@ import { z } from 'zod'
 import type { Executor } from '../../server/utils/roster-import'
 import { targetSchema as s } from './target-schema'
 import { sqliteConnection } from './target-connection'
-import { cellExpression, provenancePresence, snapshotSchema, targetProvenanceCells } from './target-evidence-read'
+import { cellExpression, provenancePresence, targetProvenanceCells } from './target-evidence-read'
+import { snapshotSchema } from './evidence-snapshot-model'
 import { insertArchiveValue } from './target-archive'
 import type { LegacyPlatformProvenanceInput } from './legacy-provenance'
 
-export class LegacyProvenanceError extends Error {
-  constructor(public code: string, message: string) { super(message) }
-}
-export function rejectLegacyProvenance(code: string, message: string): never { throw new LegacyProvenanceError(code, message) }
+import { rejectLegacyProvenance } from './legacy-provenance-error'
+export { LegacyProvenanceError, rejectLegacyProvenance } from './legacy-provenance-error'
 const drift = (message: string): never => rejectLegacyProvenance('legacy_source_drift', message)
 
 const scalar = z.union([z.string(), z.number(), z.instanceof(Buffer), z.null()])

@@ -5,8 +5,8 @@ import { alias, QueryBuilder } from 'drizzle-orm/pg-core'
 import { enterprise } from '../../../../../db/postgresql/enterprise-tables'
 import { platformLegacyQueryAlias, platformLegacyRelationAlias } from '../../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../../db/postgresql/roster-selection-tables'
-import { differencePublicColumns } from '../../../lib/platform/difference-reference-target'
-import { DecisionError102, publicVersion102, type currentDecision102, type decisionHistory102 } from '../decision-lifecycle-102'
+import { type currentDecision102 } from '../decision-lifecycle-102'
+import { DecisionError102, publicVersion102, type decisionHistory102 } from '../decision-lifecycle-102/contract'
 
 type Reader = Pick<NodePgDatabase,'select'>
 type Scope = Parameters<typeof currentDecision102>[1]
@@ -22,7 +22,12 @@ const aliasOf = {
     .where(eq(platformLegacyRelationAlias.observationId, p.evidenceRelationId)),
 }
 
-export function postgresDifferenceRow(keys = Object.keys(differencePublicColumns({}))) {
+// Field order is part of persisted qualification assessment hashes.
+const differencePublicFieldOrder = [
+  'id', 'enterpriseId', 'titleCode', 'direction', 'status', 'reasonCode', 'reasonNote', 'measureCode', 'measureNote', 'evidenceQueryId', 'evidenceRelationId', 'movedInCity', 'movedInTitleCode', 'movedInYear', 'movedInBatch', 'factReferences', 'currentQualification', 'verificationStatus', 'recordedAt', 'lifecycleAction', 'previousId', 'actor', 'basis', 'ruleVersion', 'effectiveAt', 'idempotencyKey', 'requestHash', 'createdAt'
+]
+
+export function postgresDifferenceRow(keys = differencePublicFieldOrder) {
   const fields = keys.map(key => {
     let value: SQL
     if (key === 'evidenceQueryId' || key === 'evidenceRelationId') value = sql`(${aliasOf[key]})`

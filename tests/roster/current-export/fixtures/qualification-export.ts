@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { createHash } from 'node:crypto'
 import ExcelJS from 'exceljs'
+import pg from 'pg'
 import { expect } from 'vitest'
 import { reviewCurrentExportDecision } from '../../fixtures/qualification-decisions'
 import { schema as s } from '../../../../db/client'
@@ -68,7 +69,23 @@ export function qualificationExportFixture() {
     for (const table of businessTables) for (const row of app.db.$client.prepare('select * from ' + table + ' order by rowid').iterate()) hash.update(JSON.stringify(row))
     return hash.digest('hex')
   }
-  return { dir, get dbPath(){return app.dbPath}, get db(){return app.db}, headers, token, url, json, submit, start, terminal, download, workbook, candidate, addRecord, decision, resetBusiness, businessDigest,
+  async function runtimeBusinessRows(tables: readonly string[]) {
+    if (!app.postgresUrl) throw new Error('PostgreSQL fixture is not running')
+    const client = new pg.Client({ connectionString: app.postgresUrl })
+    await client.connect()
+    try {
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
+      const result: unknown[][] = []
+      for (const table of tables) {
+        if (!/^[a-z_]+$/.test(table)) throw new Error('Invalid fixture table')
+        const rows = await client.query(`SELECT to_jsonb(t) AS content FROM business.${table} t ORDER BY to_jsonb(t)::text COLLATE "C"`)
+        result.push(rows.rows.map(row => row.content))
+      }
+      await client.query('COMMIT')
+      return result
+    } finally { await client.end() }
+  }
+  return { dir, get dbPath(){return app.dbPath}, get postgresUrl(){return app.postgresUrl}, get db(){return app.db}, headers, token, url, json, submit, start, terminal, download, workbook, candidate, addRecord, decision, resetBusiness, businessDigest, runtimeBusinessRows,
     async close() { try { await app.close();  } finally { rmSync(dir,{recursive:true,force:true}) } },
   }
 }

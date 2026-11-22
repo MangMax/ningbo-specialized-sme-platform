@@ -7,17 +7,18 @@ import { record, recordEvidence, recordEvent } from '../../../../db/postgresql/l
 import { platformExportBatch, platformExportRow, platformLegacyRelationAlias } from '../../../../db/postgresql/platform-tables'
 import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { title } from '../../../../db/postgresql/title-table'
-import * as schema from '../../../../db/schema'
+import type * as schema from '../../../../db/schema'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { readPostgresRelationDisplays } from '../../lib/platform/postgres-query-display'
 import { readPostgresPublishedNames } from '../../lib/roster/official-published-presentation-postgres'
 import { readPostgresCurrentProofCoverage } from './comparison-scope-proof-postgres'
 import { readPostgresCorrespondenceRefs } from './record-correspondence-postgres-refs'
-import { sanitizeRelationDisplays } from './platform-relation-evidence-display-target'
-import { correspondencePublishedScope, correspondenceSourceSelections, projectCorrespondenceSources, type SourceSelection } from './record-correspondence-read'
+import { sanitizeRelationDisplays } from './relation-evidence-projection'
+import { correspondencePublishedScope, correspondenceSourceSelections, projectCorrespondenceSources, type SourceSelection } from './record-correspondence-projection'
 import type { ReceiptRedactor } from './import-receipt-redaction'
 import { readPostgresCorrespondenceTargetSources } from './record-correspondence-target-postgres'
-import { projectObservedCorrespondence, type CorrespondenceFilter, type CorrespondencePaging, type CorrespondenceRead, type ReadSources, type SourceReference, type StoredCorrespondence } from './record-correspondence'
+import { type CorrespondenceFilter, type CorrespondencePaging, type CorrespondenceRead, type ReadSources, type SourceReference } from './record-correspondence'
+import { projectObservedCorrespondence, type StoredCorrespondence } from './record-correspondence-model'
 
 type Db = Pick<NodePgDatabase, 'execute' | 'select'>
 type Evidence = ReadSources['evidence'] extends Map<number, (infer T)[]> ? T : never
@@ -29,13 +30,13 @@ async function readEventsAndEvidence(db: Db, eventIds: number[]) {
   const v = alias(recordEvidence, 'v'), f = storedFile
   type Event = ReadSources['events'] extends Map<number, infer V> ? V : never
   const events = await db.select({
-    event: sql<Event['event']>`${postgresRosterRow(schema.recordEvent, 'ev')}`,
-    record: sql<Event['record']>`${postgresRosterRow(schema.record, 'r')}`,
-    enterprise: sql<Event['enterprise']>`${postgresRosterRow(schema.enterprise, 'e')}`,
+    event: sql<Event['event']>`${postgresRosterRow(recordEvent, 'ev')}`,
+    record: sql<Event['record']>`${postgresRosterRow(record, 'r')}`,
+    enterprise: sql<Event['enterprise']>`${postgresRosterRow(enterprise, 'e')}`,
   }).from(ev).innerJoin(r, eq(r.id, ev.recordId)).innerJoin(e, eq(e.id, r.enterpriseId))
     .where(eq(ev.id, sql`ANY(${ids(eventIds)})`))
   const evidence = await db.select({
-    evidence: sql<Evidence['evidence']>`${postgresRosterRow(schema.recordEvidence, 'v')}`,
+    evidence: sql<Evidence['evidence']>`${postgresRosterRow(recordEvidence, 'v')}`,
     storedFile: sql<Evidence['storedFile']>`CASE WHEN ${f.id} IS NOT NULL THEN json_build_object(
       'id',${f.id},'relPath',${f.relPath},'bytes',${f.bytes},'sha256',${f.sha256},'removedAt',${f.removedAt}) END`,
   }).from(v).leftJoin(f, eq(f.relPath, v.sourceFile))
@@ -47,8 +48,8 @@ async function readExports(db: Db, rowIds: number[]) {
   const r = alias(platformExportRow, 'r'), b = alias(platformExportBatch, 'b')
   type Export = ReadSources['exports'] extends Map<number, infer V> ? V : never
   return db.select({
-    exportRow: sql<Export['exportRow']>`${postgresRosterRow(schema.platformExportRow, 'r')}`,
-    exportBatch: sql<Export['exportBatch']>`${postgresRosterRow(schema.platformExportBatch, 'b')}`,
+    exportRow: sql<Export['exportRow']>`${postgresRosterRow(platformExportRow, 'r')}`,
+    exportBatch: sql<Export['exportBatch']>`${postgresRosterRow(platformExportBatch, 'b')}`,
   }).from(r).innerJoin(b, eq(b.id, r.batchId)).where(eq(r.id, sql`ANY(${ids(rowIds)})`))
 
 }
@@ -65,7 +66,7 @@ export async function observePostgresCorrespondences(db: Db,
   const owner = alias(enterprise, 'p')
   const ownerIds = present([...scoped.map(row => row.enterpriseId), ...relations.map(row => row.relation.enterpriseId)])
   const enterprises = await db.select({
-    row: sql<typeof schema.enterprise.$inferSelect>`${postgresRosterRow(schema.enterprise, 'p')}`,
+    row: sql<typeof schema.enterprise.$inferSelect>`${postgresRosterRow(enterprise, 'p')}`,
   }).from(owner).where(eq(owner.id, sql`ANY(${ids(ownerIds)})`))
   const titles = await db.select({ code: title.code }).from(title)
     .where(eq(title.code, sql`ANY(${sql.param([...new Set(scoped.map(row => row.titleCode))])}::text[])`))

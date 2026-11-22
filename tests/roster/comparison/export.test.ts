@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -15,21 +14,17 @@ import type { ReadStream } from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema } from '../../../db'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
-import { assertSqliteRuntime } from '../../../db/runtime-mode'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { patchCuration } from '../../../layers/sme-roster/lib/curation'
 import { getPostgresComparison } from '../../../layers/sme-roster/lib/comparison'
 import { readBaselineComparison } from './oracles/enterprise-title-antijoin'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-comparison-export-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'test.db') })
-vi.doMock('@db', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  useDb: () => {
-    assertSqliteRuntime()
-    return db
-  },
-}))
+const snapshot = join(dir, 'test.db')
+const db = initializeDb({ create: true, dbPath: snapshot })
+const pgBin = process.env.TEST_ROSTER_COMPARISON_PG_BIN ?? process.env.ROSTER_TEST_POSTGRES_BIN
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 let server: Server
 let baseUrl: string
 let query: Record<string, unknown>
@@ -37,6 +32,7 @@ let headers: Record<string, string> = {}
 let handler: (event: unknown) => Promise<Uint8Array | Readable>
 
 beforeAll(async () => {
+  if (!pgBin) return
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
   vi.stubGlobal('getQuery', (event: Parameters<typeof h3Query>[0]) => event.node ? h3Query(event) : query)
   vi.stubGlobal('setHeader', (_event: unknown, name: string, value: string) => {
@@ -93,16 +89,30 @@ beforeAll(async () => {
     }).returning({ id: schema.recordEvent.id }).get().id
     db.insert(schema.recordEvidence).values({ recordEventId: eventId, sourceFile: `${source}-出处.docx`, attachment: '附件一', listNo: 7 }).run()
   }
+  const company = db.select({ id: schema.enterprise.id }).from(schema.enterprise).where(eq(schema.enterprise.usccNorm, 'USCC1')).get()!
+  db.insert(schema.enterpriseAlias).values([
+    { enterpriseId: company.id, name: '可信曾用名', nameNorm: '可信曾用名', sourceKind: 'manual', verificationStatus: 'confirmed' },
+    { enterpriseId: company.id, name: '待核曾用名', nameNorm: '待核曾用名', sourceKind: 'manual', verificationStatus: 'pending' },
+  ]).run()
+  installLeadListSchema(db.$client)
+  postgres = await postgresRuntimeFixture({ dir, sourcePath: snapshot, bin: pgBin })
+  for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
+  vi.stubEnv('NUXT_DB_READONLY', '1')
   const app = createApp()
   app.use('/api/export', handler as never)
   server = createServer(toNodeListener(app))
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`
-})
+}, 30_000)
 afterAll(async () => {
   if (server) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
-  vi.unstubAllGlobals()
-  rmSync(dir, { recursive: true, force: true })
+  try { await closePostgresDirectoryDb() } finally {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    postgres?.close()
+    db.$client.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 async function exported(params: Record<string, unknown>) {
@@ -114,7 +124,7 @@ async function exported(params: Record<string, unknown>) {
   return wb.worksheets[0]!
 }
 
-describe('comparison export route', () => {
+describe.skipIf(!pgBin)('PostgreSQL comparison export route', () => {
   it('preserves ledger count grain and combined source event year filters over HTTP', async () => {
     const all = await fetch(`${baseUrl}/api/export?${new URLSearchParams({ q: '宁波文本', page: '9', pageSize: '1' })}`)
     const fullSheet = (await readExportWorkbook(new Uint8Array(await all.arrayBuffer()))).worksheets[0]!
@@ -284,46 +294,13 @@ describe('comparison export route', () => {
       await expect(handler({})).rejects.toMatchObject({ statusCode: 400 })
     }
   })
-})
 
-const pgBin = process.env.TEST_ROSTER_COMPARISON_PG_BIN
-
-it.runIf(Boolean(pgBin))('exports all filtered comparison rows over HTTP in PostgreSQL-only mode', async () => {
-  const fixture = mkdtempSync('/tmp/roster-comparison-pg-')
-  const cluster = join(fixture, 'cluster')
-  const snapshot = join(fixture, 'source.sqlite')
-  const curatedPath = join(fixture, 'curation.json')
-  const env = {
-    PATH: process.env.PATH, LC_ALL: 'C', PGHOST: fixture, PGPORT: '5432',
-    PGDATABASE: 'postgres', PGUSER: 'fixture', PGSQL_BIN: pgBin!,
-  }
-  const run = (program: string, args: string[]) =>
-    execFileSync(join(pgBin!, program), args, { env, stdio: 'pipe' })
-  let started = false
-  try {
-    installLeadListSchema(db.$client)
-    const company = db.select({ id: schema.enterprise.id }).from(schema.enterprise).where(eq(schema.enterprise.usccNorm, 'USCC1')).get()!
-    db.insert(schema.enterpriseAlias).values([
-      { enterpriseId: company.id, name: '可信曾用名', nameNorm: '可信曾用名', sourceKind: 'manual', verificationStatus: 'confirmed' },
-      { enterpriseId: company.id, name: '待核曾用名', nameNorm: '待核曾用名', sourceKind: 'manual', verificationStatus: 'pending' },
-    ]).run()
+  it('matches the independent offline comparison and applies curated and confirmed alias filters over HTTP', async () => {
+    const curatedPath = join(dir, 'curated-with-exclusion.json')
     patchCuration(curatedPath, { uscc: 'USCC26', titleCode: 'specialized_sme', direction: 'missing_in_miit', curated: true })
-    const baseline = readBaselineComparison(db)
-    await db.$client.backup(snapshot)
-    run('initdb', ['-D', cluster, '-A', 'trust', '-U', env.PGUSER, '--locale=C', '-E', 'UTF8'])
-    run('pg_ctl', ['-D', cluster, '-l', join(fixture, 'pg.log'), '-o', `-h '' -k ${fixture}`, '-w', 'start'])
-    started = true
-    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', snapshot, 'staged'], { env, stdio: 'pipe' })
-    for (const layer of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
-      run('psql', ['-Xqw', '-v', 'staging=staged', '-f', `upgrade/postgresql/materialize-${layer}.sql`])
-    }
-    vi.stubEnv('NUXT_DB_MODE', 'postgresql')
-    vi.stubEnv('NUXT_DB_READONLY', '1')
-    vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
-    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', `postgresql://fixture@localhost/postgres?host=${encodeURIComponent(fixture)}`)
     vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath }))
-
-    const comparison = await usePostgresDirectoryDb()!.transaction(tx => getPostgresComparison(tx),
+    const baseline = readBaselineComparison(db)
+    const comparison = await usePostgresDirectoryDb().transaction(tx => getPostgresComparison(tx),
       { isolationLevel: 'repeatable read', accessMode: 'read only' })
     expect(comparison).toEqual(baseline)
 
@@ -349,10 +326,5 @@ it.runIf(Boolean(pgBin))('exports all filtered comparison rows over HTTP in Post
     expect(await rows({ direction: 'extra_in_miit' })).toEqual([
       [undefined, '反方向', '=001234567890123456', '鄞州区', '专精特新中小企业', '应出未出', '嘉兴市', '注销', ''],
     ])
-  } finally {
-    await closePostgresDirectoryDb()
-    vi.unstubAllEnvs()
-    if (started) run('pg_ctl', ['-D', cluster, '-m', 'fast', '-w', 'stop'])
-    rmSync(fixture, { recursive: true, force: true })
-  }
-}, 60_000)
+  })
+})

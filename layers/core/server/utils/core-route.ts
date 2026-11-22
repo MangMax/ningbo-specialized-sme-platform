@@ -61,7 +61,7 @@ export interface CoreResponse {
 /**
  * 把一个核心函数挂成 Nitro 事件处理器。
  *
- * `buildCtx` 由**调用方的工厂**给(每条写入口自己知道要 `useDb()` 还是别的依赖);
+ * `buildCtx` 由调用方工厂提供，写入口明确传入所需依赖。
  * 运行时配置也由它读 —— 让每条路由各自再读一遍就是几份会各自漂的实现。
  */
 export function createCoreRouteHandler<Ctx>(

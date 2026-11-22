@@ -4,10 +4,9 @@ import type { LogContext } from '../../lib/logging'
 import {
   fileMaintenanceRequestHash, fileMaintenanceSnapshot, logFileMaintenance, normalizeFileMaintenancePatch,
   parseFileMaintenanceOptions, validateFileMaintenancePage, type FileMaintenanceAction, type FileMaintenanceOptions,
-} from './file-maintenance'
-import { FileMaintenanceError, verifyFileRestorationBytes, type FileRow } from './file-store'
-import { updatePostgresFileMetadata } from '../../../../server/file-store'
-import { extensionSnapshot, parseMetadataPatch } from './stored-files'
+} from './file-maintenance-shared'
+import { FileMaintenanceError, verifyFileRestorationBytes, type FileRow } from './file-store-contract'
+import { postgresFileCategoryRules } from './file-category-runtime'
 import {
   activePostgresPhysicalIntent, lockPostgresFile, readPostgresFile, requirePostgresFileWrite, type PostgresFileDb,
 } from './file-store-postgres'
@@ -88,7 +87,7 @@ export async function applyPostgresFileMaintenance(
     })
     after = { ...current, displayName }
   } else if (action === 'update' && !('displayName' in patch) && Object.keys(patch).length) {
-    await updatePostgresFileMetadata(db, current, patch)
+    await postgresFileCategoryRules.updatePostgresFileMetadata(db, current, patch)
     after = await readPostgresFile(db, id)
   }
 
@@ -102,8 +101,8 @@ async function recordPostgresFileMaintenance(
     revision: number; action: FileMaintenanceAction; options: FileMaintenanceOptions; hash?: string; now: string
   },
 ) {
-  const beforeJson = JSON.stringify(fileMaintenanceSnapshot(current, extensionSnapshot(current)))
-  const afterValues = fileMaintenanceSnapshot(after, extensionSnapshot(after))
+  const beforeJson = JSON.stringify(fileMaintenanceSnapshot(current, postgresFileCategoryRules.extensionSnapshot(current)))
+  const afterValues = fileMaintenanceSnapshot(after, postgresFileCategoryRules.extensionSnapshot(after))
   const afterJson = JSON.stringify(afterValues)
   if (options.idempotencyKey || beforeJson !== afterJson) {
     const requestHash = hash ?? fileMaintenanceRequestHash(current.id, action, afterValues, options)
@@ -128,7 +127,7 @@ export function maintainPostgresFile(
   const run = async () => {
     requirePostgresFileWrite()
     const options = parseFileMaintenanceOptions(rawOptions)
-    const patch = normalizeFileMaintenancePatch(action, rawPatch, options, parseMetadataPatch)
+    const patch = normalizeFileMaintenancePatch(action, rawPatch, options, postgresFileCategoryRules.parseMetadataPatch)
     const hash = fileMaintenanceRequestHash(id, action, patch, options)
     const key = options.idempotencyKey
     if (key?.includes('\0') || options.actor?.includes('\0') || options.basis?.includes('\0')) {

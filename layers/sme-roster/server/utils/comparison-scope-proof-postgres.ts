@@ -10,12 +10,10 @@ import {
   platformCollectionCondition, platformCollectionPage, platformCollectionUnfinished, platformExportBatch, platformExportRow,
 } from '../../../../db/postgresql/platform-tables'
 import { rosterFileClassification } from '../../../../db/postgresql/roster-file-tables'
-import * as schema from '../../../../db/schema'
+import type * as schema from '../../../../db/schema'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
-import {
-  currentProofFingerprint, currentProofInputs, officialProofFingerprint, officialProofReferences,
-  ProofSourceError, validateCurrentProofBinding, validateOfficialProofScope, type CurrentEvidence, type OfficialEvidence,
-} from './comparison-scope-proof-source'
+import { currentProofFingerprint, currentProofInputs, officialProofFingerprint, officialProofReferences, validateCurrentProofBinding, validateOfficialProofScope, type CurrentEvidence, type OfficialEvidence } from './comparison-scope-proof-source-projection'
+import { ProofSourceError } from './comparison-scope-proof-source-model'
 import { readPostgresFingerprintQuery, readPostgresFingerprintRelations } from './postgres-platform-fingerprint'
 
 type Db = Pick<NodePgDatabase, 'execute' | 'select'>
@@ -42,7 +40,7 @@ export async function readPostgresOfficialProofSource(db: Db, evidence: Official
   validateOfficialProofScope(evidence)
   const d = alias(sourceDocument, 'd')
   const documents = (await db.select({
-    row: sql<typeof schema.sourceDocument.$inferSelect>`${postgresRosterRow(schema.sourceDocument, 'd')}`,
+    row: sql<typeof schema.sourceDocument.$inferSelect>`${postgresRosterRow(sourceDocument, 'd')}`,
   }).from(d).where(eq(d.id, sql`ANY(${idArray(evidence.sourceDocuments.map(ref => ref.id))})`))
     .orderBy(d.id)).map(({ row }) => row)
   const files = await proofFiles(db, evidence.sourceDocuments.map(ref => ref.fileId))
@@ -61,13 +59,13 @@ export async function readPostgresOfficialProofSource(db: Db, evidence: Official
     evidence.enterpriseIds === null ? undefined : eq(r.enterpriseId, sql`ANY(${idArray(evidence.enterpriseIds)})`))
   const eventScope = or(between(e.year, evidence.fromYear, evidence.throughYear), between(e.decidedYear, evidence.fromYear, evidence.throughYear))
   const records = (await db.select({
-    row: sql<typeof schema.record.$inferSelect>`${postgresRosterRow(schema.record, 'r')}`,
+    row: sql<typeof schema.record.$inferSelect>`${postgresRosterRow(record, 'r')}`,
   }).from(r).where(recordScope).orderBy(r.id)).map(({ row }) => row)
   const events = (await db.select({
-    row: sql<typeof schema.recordEvent.$inferSelect>`${postgresRosterRow(schema.recordEvent, 'e')}`,
+    row: sql<typeof schema.recordEvent.$inferSelect>`${postgresRosterRow(recordEvent, 'e')}`,
   }).from(e).innerJoin(r, eq(r.id, e.recordId)).where(and(recordScope, eventScope)).orderBy(e.id)).map(({ row }) => row)
   const eventEvidence = (await db.select({
-    row: sql<typeof schema.recordEvidence.$inferSelect>`${postgresRosterRow(schema.recordEvidence, 'p')}`,
+    row: sql<typeof schema.recordEvidence.$inferSelect>`${postgresRosterRow(recordEvidence, 'p')}`,
   }).from(v).innerJoin(e, eq(e.id, v.recordEventId)).innerJoin(r, eq(r.id, e.recordId))
     .where(and(recordScope, eventScope)).orderBy(v.id)).map(({ row }) => row)
   return officialProofFingerprint(evidence, refs, records, events, eventEvidence)
@@ -77,7 +75,7 @@ export async function readPostgresCurrentProofSource(db: Db, evidence: CurrentEv
   const target = await readPostgresFingerprintQuery(db, evidence.queryId)
   const b = alias(platformExportBatch, 'p')
   const [entry] = await db.select({
-    row: sql<typeof schema.platformExportBatch.$inferSelect>`${postgresRosterRow(schema.platformExportBatch, 'p')}`,
+    row: sql<typeof schema.platformExportBatch.$inferSelect>`${postgresRosterRow(platformExportBatch, 'p')}`,
   }).from(b).where(eq(b.id, evidence.exportBatchId))
   const batch = entry?.row
   const id = target?.collection.id
@@ -101,14 +99,14 @@ export async function readPostgresCurrentProofSource(db: Db, evidence: CurrentEv
   const queryRows = await readPostgresFingerprintRelations(db, evidence.queryId)
   const r = alias(platformExportRow, 'p')
   const exportRows = (await db.select({
-    row: sql<typeof schema.platformExportRow.$inferSelect>`${postgresRosterRow(schema.platformExportRow, 'p')}`,
+    row: sql<typeof schema.platformExportRow.$inferSelect>`${postgresRosterRow(platformExportRow, 'p')}`,
   }).from(r).where(eq(r.batchId, inputs.batch.id)).orderBy(r.id)).map(({ row }) => row)
   return currentProofFingerprint(evidence, inputs.target.query, inputs.batch, freeze, queryRows, exportRows)
 }
 
 const p = alias(comparisonScopeProof, 'p')
 const proofSelection = {
-  proof: sql<Proof>`${postgresRosterRow(schema.comparisonScopeProof, 'p')}`,
+  proof: sql<Proof>`${postgresRosterRow(comparisonScopeProof, 'p')}`,
 }
 function latestProofAudit(db: Db) {
   const a = comparisonScopeProofAudit

@@ -5,7 +5,8 @@ import * as s from '../../../../db/schema'
 import { targetSchema } from '../../lib/platform/target-schema'
 import { normalizeUscc } from '../../lib/domain'
 import { identityFunctions } from '../../lib/roster/enterprise-read-snapshot'
-import type { AnnualEventScope, AnnualSourceRows } from './event-annual-process-read'
+import type { AnnualSourceRows } from './event-annual-process-read'
+import type { AnnualEventScope } from './event-annual-process-model'
 import { readTargetDeclarationFacts } from './platform-declarations-target'
 import { readTargetBusinessProcessFacts } from './platform-business-processes-target'
 
@@ -15,7 +16,8 @@ const c = s.platformCollection, qa = s.platformLegacyQueryAlias
 const original = alias(a, 'annual_original'), newer = alias(a, 'annual_newer')
 const batches = <T>(items: T[]) => Array.from({ length: Math.ceil(items.length / 300) }, (_, i) => items.slice(i * 300, i * 300 + 300))
 const queryTitle = (title: string | null, rdjb: string) => title ?? ({ '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' }[rdjb] ?? null)
-export const ANNUAL_COMPARISON_RAW_LIMIT = 4096
+import { ANNUAL_COMPARISON_RAW_LIMIT } from './annual-process-limits'
+export { ANNUAL_COMPARISON_RAW_LIMIT } from './annual-process-limits'
 
 /** Annual membership and process facts come only from structured target owners.
  * Source text is a historical transcription annotation, not parsed business data. */

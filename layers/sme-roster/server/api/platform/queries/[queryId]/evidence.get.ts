@@ -1,6 +1,5 @@
 import { defineEventHandler, getQuery, getRouterParam, setHeader } from 'h3'
-import { useDb } from '@db'
-import { readPlatformQueryEvidence, type PlatformEvidenceInput } from '../../../../../lib/platform/evidence-read'
+import { type PlatformEvidenceInput } from '../../../../../lib/platform/evidence-read'
 import { readPostgresPlatformEvidence } from '../../../../../lib/platform/postgres-evidence-read'
 import { usePostgresDirectoryDb } from '../../../../../../../db/postgresql/client'
 
@@ -32,5 +31,5 @@ export default defineEventHandler(event => {
     relationId: num('relationId'), offset: num('offset'), length: num('length'), page: num('page'), pageSize: num('pageSize'),
   }
   const postgres = usePostgresDirectoryDb()
-  return postgres ? readPostgresPlatformEvidence(postgres, input) : readPlatformQueryEvidence(useDb(), input)
+  return readPostgresPlatformEvidence(postgres, input)
 })

@@ -52,13 +52,13 @@ describe('skill consumer through real toolkit transport', () => {
     directory = await mkdtemp(join(tmpdir(), 'fact-protocol-'))
     app = nativeAppAdapter({ dir: directory, token, launch: ({ cwd, port }) => ({ args: [join(cwd, '.output/server/index.mjs')], env: { HOST: '127.0.0.1', PORT: String(port), NUXT_MCP_TOKEN: token } }) })
     db = app.db
-    await app.start()
-    base = app.url('')
-    const url = new URL(base)
     ids = Array.from({ length: 3 }, () => {
       const name = `合成MCP事实协议-${randomUUID()}`
       return db.insert(schema.enterprise).values({ name, nameNorm: name }).returning().get().id
     })
+    await app.start()
+    base = app.url('')
+    const url = new URL(base)
     await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', url), { requestInit: { headers: { authorization: `Bearer ${token}` } } }))
     tools = await client.listTools()
   }, 60000)

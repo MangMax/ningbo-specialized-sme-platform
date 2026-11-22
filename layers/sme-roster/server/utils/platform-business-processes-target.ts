@@ -1,21 +1,20 @@
-/** Native business process reader. */
-import { getTableColumns,and,count,countDistinct,desc,eq,exists,inArray,isNull,max,min,ne,or,sql } from 'drizzle-orm';
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { alias } from 'drizzle-orm/sqlite-core';
-import { groupBy } from 'es-toolkit';
-import { platformBusinessRecord as b,platformCollection as c,enterprise as e,platformLegacyQueryAlias as qa,platformBusinessRecordVersion as v } from '../../../../db/schema';
-import { normalizeName,normalizeUscc } from '../../lib/domain';
-import { BUSINESS_PROCESS_OBSERVATION_LIMIT,BUSINESS_PROCESS_VERSION_LIMIT,businessProcessFilterSchema,type BusinessProcessDetail,type BusinessProcessFilter,type BusinessProcessIsolatedRow,type BusinessProcessListResult,type BusinessProcessView } from '../../lib/platform/business-processes';
-import { readObservationCorrespondenceRefs } from '../../lib/platform/correspondence-target';
-import type { PlatformFilterOptions } from '../../lib/platform/filter-options';
-import { normalizeDeclareKind } from '../../lib/platform/identity';
-import { platformNormalizationConflict,type PlatformNormalizationConflict } from '../../lib/platform/normalization';
-import { withArchiveProcessFacts,type PlatformObservationFact } from '../../lib/platform/observation-facts';
-import { processStoredInstalled } from '../../lib/platform/process-stored-catalog';
-import { storedProcessProjection as p } from '../../lib/platform/process-stored-schema';
-import { sqliteConnection } from '../../lib/platform/target-connection';
-import { platformObservationAssignment as a,platformBusinessObservation as o,platformLegacyRelationAlias as ra,platformQueryTitleScope as scope,targetSchema } from '../../lib/platform/target-schema';
-import { fail,orderedScopes,pageOf } from './platform-business-read';
+import { projectBusinessProcessObservationFact } from './platform-business-processes-projection'
+import { getTableColumns, and, count, countDistinct, desc, eq, exists, inArray, isNull, max, min, ne, or, sql } from 'drizzle-orm'
+import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { alias } from 'drizzle-orm/sqlite-core'
+import { groupBy } from 'es-toolkit'
+import { platformBusinessRecord as b, platformCollection as c, enterprise as e, platformLegacyQueryAlias as qa, platformBusinessRecordVersion as v } from '../../../../db/schema'
+import { normalizeName, normalizeUscc } from '../../lib/domain'
+import { BUSINESS_PROCESS_OBSERVATION_LIMIT, BUSINESS_PROCESS_VERSION_LIMIT, businessProcessFilterSchema, type BusinessProcessDetail, type BusinessProcessFilter, type BusinessProcessIsolatedRow, type BusinessProcessListResult, type BusinessProcessView } from '../../lib/platform/business-processes'
+import { readObservationCorrespondenceRefs } from '../../lib/platform/correspondence-target'
+import type { PlatformFilterOptions } from '../../lib/platform/filter-options'
+import { normalizeDeclareKind } from '../../lib/platform/identity'
+import type { PlatformObservationFact } from '../../lib/platform/observation-facts'
+import { processStoredInstalled } from '../../lib/platform/process-stored-catalog'
+import { storedProcessProjection as p } from '../../lib/platform/process-stored-schema'
+import { sqliteConnection } from '../../lib/platform/target-connection'
+import { platformObservationAssignment as a, platformBusinessObservation as o, platformLegacyRelationAlias as ra, platformQueryTitleScope as scope, type targetSchema } from '../../lib/platform/target-schema'
+import { fail, orderedScopes, pageOf } from './platform-business-projection'
 // Explicit table queries use the injected session/logger, never db.query.
 type Db = BetterSQLite3Database<typeof targetSchema> | BetterSQLite3Database<typeof import('../../../../db/schema')>;
 // SQLite's original non-STRICT cells can be BLOB/REAL; keep that explicit here.
@@ -156,12 +155,9 @@ export function getTargetBusinessProcess(db: Db, recordId: number): BusinessProc
             }), counts: { versions: versionTotal, observations: observationTotal, versionsTruncated: versionTotal > versions.length, observationsTruncated: observationTotal > observations.length } };
     });
 }
-
-const vp = alias(p, 'version_projection');
+export const vp = alias(p, 'version_projection');
 const { id: versionIdentity, ...versionProjectionFields } = getTableColumns(vp);
 const versionColumns = { id: versionIdentity, ...versionProjectionFields };
-const comparisonFields = ['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'] as const;
-const modeledFields = ['declareKind', 'year', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province', 'nameRaw', 'usccRaw'] as const;
 export function readTargetBusinessProcessFacts(db: Db, relationIds: number[], options: { scope?: 'selected' } = {}): Map<number, PlatformObservationFact> {
     const result = new Map<number, PlatformObservationFact>();
     return db.transaction(tx => {
@@ -180,34 +176,4 @@ export function readTargetBusinessProcessFacts(db: Db, relationIds: number[], op
         return result;
     });
 }
-
-
-export function projectBusinessProcessObservationFact(row: {
-    relationId: number; source: typeof p.$inferSelect;
-    version: typeof vp.$inferSelect | null;
-    originalName: string | null; originalUscc: string | null;
-}): PlatformObservationFact {
-    const source = row.source, version = row.version, typed = version?.versionId != null;
-    const normalized = { province: source.reconciledProvince, status: source.reconciledStatus, batch: source.reconciledBatch, declareKind: source.reconciledDeclareKind, appliedAt: source.reconciledAppliedAt, awardBatchLabel: source.reconciledAwardBatchLabel, year: source.reconciledYear };
-    const comparisons = {
-        province: [source.provinceConflict, source.storedProvince, source.parsedProvince], status: [source.statusConflict, source.storedStatus, source.parsedStatus], batch: [source.batchConflict, source.storedBatch, source.parsedBatch],
-        declareKind: [source.declareKindConflict, source.storedDeclareKind, source.parsedDeclareKind], appliedAt: [source.appliedAtConflict, source.storedAppliedAt, source.parsedAppliedAt], awardBatchLabel: [source.awardBatchLabelConflict, source.storedAwardBatchLabel, source.parsedAwardBatchLabel], year: [source.yearConflict, source.storedYear, source.parsedYear],
-    } satisfies Record<typeof comparisonFields[number], [
-        number | null,
-        string | number | Buffer | null,
-        string | number | null
-    ]>;
-    const conflicts: PlatformNormalizationConflict[] = comparisonFields.flatMap(field => {
-        const [conflict, storedValue, rawValue] = comparisons[field];
-        return conflict && storedValue != null && rawValue != null ? [platformNormalizationConflict(field, storedValue, rawValue)] : [];
-    });
-    const rawName = typeof row.originalName === 'string' ? row.originalName : null, rawUscc = typeof row.originalUscc === 'string' ? row.originalUscc : null;
-    return withArchiveProcessFacts({
-        relationId: row.relationId, interface: 'business_list',
-        nameRaw: typed ? version.nameRaw : rawName, usccRaw: typed ? version.usccRaw : rawUscc, titleRaw: source.sqlFactTitle,
-        validityDateRaw: null, maintenanceYear: null, maintenanceBatch: null, district: null, awardNote: null, normalizationConflicts: conflicts,
-        projectionVersionId: typed ? version.versionId : null, projectionRuleVersion: typed ? version.ruleVersion : null, modeledFields: typed ? modeledFields : [],
-        declareKind: typed ? version.declareKind : normalized.declareKind, year: typed ? version.businessYear : normalized.year, appliedAt: typed ? version.appliedAt : normalized.appliedAt, status: typed ? version.status : normalized.status,
-        batch: typed ? version.batch : normalized.batch, awardBatchLabel: typed ? version.awardBatchLabel : normalized.awardBatchLabel, province: typed ? version.province : normalized.province,
-    }, normalized);
-}
+export { projectBusinessProcessObservationFact } from './platform-business-processes-projection'

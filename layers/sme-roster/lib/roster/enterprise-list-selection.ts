@@ -9,8 +9,11 @@ import * as schema from '../../../../db/schema'
 import { normalizeName } from '../domain'
 import { TITLE_ORDER, DIFFERENCE_STATUS_ORDER } from '../labels'
 import { identityFunctions, identityNameSql, identityUsccSql } from './enterprise-read-snapshot'
-import type { RosterEnterpriseFilter, RosterEnterpriseDifference, RosterState, RosterCounts } from './enterprise-roster'
+import type { RosterEnterpriseFilter, RosterState, RosterCounts } from './enterprise-roster'
 import { currentEnterpriseIdentity } from './enterprise-identity'
+import { compareEnterpriseSelection, type EnterpriseSelection } from './enterprise-selection'
+
+export { compareEnterpriseSelection, type EnterpriseSelection } from './enterprise-selection'
 
 type Db = BetterSQLite3Database<typeof schema>
 const rank = (column: SQL, values: string[]) => sql`case ${sql.join(values.map((value, i) => sql`when ${column} = ${value} then ${i}`), sql` `)} else ${values.length} end`
@@ -60,20 +63,6 @@ export function removedEnterpriseIds(db: Db, ids: number[]): Set<number> {
   const removed = db.select({ id: membership.id }).from(membership)
     .where(and(eq(membership.current, 0), inArray(membership.id, ids)))
   return new Set(db.all<{ member_enterprise_id: number }>(sql`with ${ctes} ${removed.getSQL()}`).map(row => row.member_enterprise_id))
-}
-
-export interface EnterpriseSelection {
-  id: number
-  name: string
-  year: number | null
-  rank: number
-  state: RosterState
-  difference: RosterEnterpriseDifference
-}
-export function compareEnterpriseSelection(sort: RosterEnterpriseFilter['sort'], a: EnterpriseSelection, b: EnterpriseSelection) {
-  if (sort === 'title' && a.rank !== b.rank) return a.rank - b.rank
-  if (sort !== 'name' && sort !== 'title' && a.year !== b.year) return a.year == null ? 1 : b.year == null ? -1 : b.year - a.year
-  return a.name.localeCompare(b.name) || a.id - b.id
 }
 
 export function selectEnterpriseCoordinates(db: Db, filter: RosterEnterpriseFilter, limit?: number) {

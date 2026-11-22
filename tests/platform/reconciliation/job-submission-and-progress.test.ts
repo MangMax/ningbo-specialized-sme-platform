@@ -1,10 +1,16 @@
-import {afterEach,afterAll,beforeAll,beforeEach,describe,expect,it,vi} from 'vitest'
-import {clearJobSpecs,getJobSpec,jobSpecs,type JobSpec,type JobContext} from '../../../layers/core/server/utils/job-runner'
+import { closeApplicationLogging } from '../../../layers/core/lib/logging'
+import {afterEach,afterAll,beforeEach,describe,expect,it,vi} from 'vitest'
+import {clearJobSpecs,getJobSpec,jobSpecs,type JobSpec} from '../../../layers/core/server/utils/job-runner'
 import {registerJobSpecs} from '../../../server/utils/job-specs'
-import {reconcileSpec} from '../../../layers/sme-roster/server/utils/jobs/reconcile'
-import {nativeImportDb} from '../../roster/imports/fixtures/native-import'
-import * as schema from '../../../db/schema'
-import * as database from '../../../db'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { record } from '../../../db/postgresql/ledger-tables'
+import { platformCollection } from '../../../db/postgresql/platform-tables'
+import { updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import {platformReplay,emptyReply} from '../fixtures/source-replay'
 describe('参数校验:错参数在**提交那一刻**就被挡住', () => {
   let spec: JobSpec
@@ -17,11 +23,11 @@ describe('参数校验:错参数在**提交那一刻**就被挡住', () => {
 
   it('接入后 status 是 ready 且带 run 与 paramsHint', () => {
     expect(spec.status).toBe('ready')
-    expect(spec.run).toBeTypeOf('function')
+    expect(spec.postgres?.run).toBeTypeOf('function')
     expect(spec.paramsHint).toContain('titles')
     expect(spec.paramsHint).toContain('concurrency')
     expect(jobSpecs().map((entry) => entry.kind)).toEqual(['current-roster-export', 'difference-snapshot', 'event-annual-correspondence', 'event-archive-candidates', 'lead-lists-version-export', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages', 'roster_export_cleanup'])
-    expect(getJobSpec('event-archive-candidates')).toMatchObject({ status: 'ready', run: expect.any(Function), deduplicateRequest: true })
+    expect(getJobSpec('event-archive-candidates')).toMatchObject({ status: 'ready', postgres: { run: expect.any(Function) }, deduplicateRequest: true })
     expect(getJobSpec('event-archive-candidates')!.parse({ queryId: 1, clientRequestId: 'catalog-archive' })).toMatchObject({ ok: true, params: { queryId: 1 } })
   })
 
@@ -73,18 +79,39 @@ describe('参数校验:错参数在**提交那一刻**就被挡住', () => {
 
 afterAll(()=>clearJobSpecs())
 afterEach(()=>{vi.unstubAllEnvs();vi.unstubAllGlobals();vi.restoreAllMocks()})
-it('executes the current job with native read-only collection and reports actual progress',async()=>{
- const db=nativeImportDb()
- vi.spyOn(database,'useDb').mockReturnValue(db)
- try{
- const e=db.insert(schema.enterprise).values({name:'Native job',nameNorm:'native job',usccNorm:'91330211255994457P'}).returning().get()
- db.insert(schema.record).values({enterpriseId:e.id,source:'miit',titleCode:'specialized_sme'}).run()
- const upstream=platformReplay(emptyReply);vi.stubGlobal('fetch',upstream.fetchImpl);vi.stubEnv('MIIT_COOKIE','synthetic-job-cookie')
- const progress:number[][]=[]
- const context:JobContext={jobId:'native-reconcile',db,filesDir:'/tmp',progress:(done,total)=>progress.push([done,total]),cancelled:()=>false}
- const result=await reconcileSpec.run!(context,{titles:['specialized_sme'],write:false})
- expect(result.error).toBeUndefined();expect(result.result).toMatchObject({usccCount:1,queries:{network:4,reused:0}})
- expect(progress[0]).toEqual([0,1]);expect(progress.at(-1)).toEqual([1,1])
- expect(db.select().from(schema.platformCollection).all()).toEqual([])
- }finally{db.$client.close()}
-})
+it('executes the current job with native read-only collection and reports actual progress', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'platform-reconcile-job-'))
+  let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+  try {
+    postgres = await postgresRuntimeFixture({ dir })
+    for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
+    vi.stubEnv('NUXT_DB_READONLY', '0')
+    const db = usePostgresDirectoryDb()
+    const [target] = await db.insert(enterprise).values({ name: 'Native job', nameNorm: 'native job', usccNorm: '91330211255994457P' }).returning()
+    await db.insert(record).values({ enterpriseId: target!.id, source: 'miit', titleCode: 'specialized_sme' })
+    await updatePostgresCredentialState(db, { 'sme-roster.miitCookie': 'synthetic-job-cookie' })
+    const upstream = platformReplay(emptyReply)
+    vi.stubGlobal('fetch', upstream.fetchImpl)
+    clearJobSpecs()
+    registerJobSpecs()
+    const progress: number[][] = []
+    const result = await getJobSpec('reconcile')!.postgres!.run({
+      db, jobId: 'native-reconcile', filesDir: dir, logContext: {},
+      signal: new AbortController().signal,
+      progress: async (done, total) => { progress.push([done, total]) },
+      checkpoint: async () => {},
+      cancelled: async () => false,
+      trackSubmissions: run => run(queued => expect(queued).toEqual([])),
+    }, { titles: ['specialized_sme'], write: false }, undefined)
+    expect(result.error).toBeUndefined()
+    expect(result.result).toMatchObject({ usccCount: 1, queries: { network: 4, reused: 0 } })
+    expect(progress[0]).toEqual([0, 1])
+    expect(progress.at(-1)).toEqual([1, 1])
+    expect(await db.select().from(platformCollection)).toEqual([])
+  } finally {
+    await closeApplicationLogging()
+    await closePostgresDirectoryDb()
+    postgres?.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+}, 30_000)

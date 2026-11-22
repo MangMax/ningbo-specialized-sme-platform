@@ -15,11 +15,17 @@ import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { schema, useDb } from '../../../db'
-import { runPlatformReconcile } from '../../../layers/sme-roster/server/utils/platform-reconcile'
-import { whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { runPlatformReconcile } from '../../../layers/sme-roster/server/utils/platform-reconcile-sqlite'
+import { clearJobSpecs, registerJob, whenIdle } from '../../../layers/core/server/utils/job-runner'
+import { candidateDiscoverySpec } from '../../../layers/sme-roster/server/utils/jobs/candidate-discovery'
 import { emptyReply, platformFixture, platformReplay, type PlatformCall } from '../fixtures/source-replay'
+
+beforeAll(() => {
+  clearJobSpecs()
+  registerJob(candidateDiscoverySpec)
+})
 
 const fixture = platformFixture
 

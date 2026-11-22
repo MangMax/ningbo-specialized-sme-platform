@@ -1,15 +1,13 @@
 import { isCredentialKey, registeredCredentials, type CredentialKey } from '../../../../lib/app-modules'
-import { credentialStatus, resolveCredential, resolveFromState, updateCredentials, type CredentialContext } from './credential-state'
-import { readPostgresCredentialState, selectedCredentialDb, updatePostgresCredentialState } from './credential-state-postgres'
+import { credentialStatus, resolveFromState, type CredentialReadContext, type CredentialStorage } from './credential-resolution'
 import type { CoreRequest, CoreResponse } from './core-route'
-export async function handleCredentialsRequest(action: 'state' | 'reveal', request: CoreRequest, ctx: CredentialContext, revealKey?: string): Promise<CoreResponse> {
+export async function handleCredentialsRequest(action: 'state' | 'reveal', request: CoreRequest, ctx: CredentialReadContext, storage: CredentialStorage, revealKey?: string): Promise<CoreResponse> {
   const json = (status: number, body: unknown): CoreResponse => ({ status, body, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } })
   try {
     if (action === 'reveal') {
       if (request.method !== 'POST') return json(405, { message: '仅支持 POST' })
       if (!isCredentialKey(revealKey)) return json(404, { message: '未登记的凭据' })
-      const pg = selectedCredentialDb(ctx)
-      const value = pg ? resolveFromState(revealKey, ctx, await readPostgresCredentialState(pg)) : resolveCredential(revealKey, ctx)
+      const value = resolveFromState(revealKey, ctx, await storage.read())
       return json(200, { value: value.value })
     }
     const values: Partial<Record<CredentialKey, string | null>> = {}
@@ -31,14 +29,8 @@ export async function handleCredentialsRequest(action: 'state' | 'reveal', reque
         }
       }
     } else if (request.method !== 'GET') return json(405, { message: '不支持的方法' })
-    const pg = selectedCredentialDb(ctx)
-    const writes = Object.keys(values).length > 0
-    if (pg) {
-      const state = writes ? await updatePostgresCredentialState(pg, values) : await readPostgresCredentialState(pg)
-      return json(200, credentialStatus(ctx, state))
-    }
-    if (writes) updateCredentials(values, ctx)
-    return json(200, credentialStatus(ctx))
+    const state = Object.keys(values).length ? await storage.update(values) : await storage.read()
+    return json(200, credentialStatus(ctx, state))
   } catch {
     // Never forward SQL errors, credentials or upstream exceptions.
     return json(503, { message: '配置存储不可用，请检查数据库后重试。' })

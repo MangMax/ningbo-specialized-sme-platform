@@ -9,7 +9,7 @@ import { queryPlatformSlots } from '../../../layers/sme-roster/lib/platform/clie
 import { buildPlatformWritePayload } from '../../../layers/sme-roster/lib/platform/payload'
 import { commitRosterImport, preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 import { readImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipts'
-import { runPlatformReconcile } from '../../../layers/sme-roster/server/utils/platform-reconcile'
+import { runPlatformReconcile } from '../../../layers/sme-roster/server/utils/platform-reconcile-sqlite'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { emptyReply, platformReplay } from '../fixtures/source-replay'
 import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'

@@ -1,3 +1,4 @@
+import { refreshRelationFields, refreshSourceKeys, refreshMetadataKeys } from './difference-hash-keys'
 /** Original inputs to the existing #113/refresh hashes. Evidence-only owner:
  * callers must use structured sources for identity, filtering, scope and paging. */
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm'
@@ -30,9 +31,6 @@ export function readDifferenceRevisionMaterials(db: Db, observationIds: number[]
   if (rows.length !== observationIds.length) throw new Error('Difference original hash input missing')
   return new Map(rows.map(row => [row.id, JSON.parse(row.material) as unknown[]]))
 }
-export const refreshRelationFields = ['relation_key','uscc_raw','name_raw','alias_name_raw','province','status','batch','declare_kind','applied_at','award_batch_label','year'] as const
-export const refreshSourceKeys = ['id','rdjb','rddqrq','whpcyear','whpc','cszt','year','sqsj','sblx','personuuid','szsfmc','szq','rdxx','qymc','tyshxydm'] as const
-export const refreshMetadataKeys = ['source','status','effectiveConditions','titleScope','completeness','fullRange','pages'] as const
 
 export function readDifferenceRefreshRows(db: Db, collectionId: number) {
   const raw = cell('raw_fields')
@@ -69,3 +67,4 @@ export function orderDifferenceEnvelopeConditions(db: Db, collectionId: number, 
   const keys: string[] = row ? JSON.parse(row.keys) : []
   return Object.fromEntries([...new Set([...keys,...Object.keys(conditions)])].filter(key => Object.hasOwn(conditions,key)).map(key => [key,conditions[key]]))
 }
+export { refreshRelationFields, refreshSourceKeys, refreshMetadataKeys } from './difference-hash-keys'

@@ -48,6 +48,7 @@ import { listUsccChecklist, planUsccResearch, usccResearchIdempotencyKey } from 
 import { normalizeUsccVerdicts, type UsccVerdictFile } from '../../../layers/sme-roster/server/utils/uscc-verdicts'
 import { parseUsccChecklistQuery, parseUsccResearchBody } from '../../../layers/sme-roster/server/utils/uscc-research-query'
 import { readImportBatchOutcome } from '../../../layers/sme-roster/server/utils/roster-import'
+import { migratedSourceReader } from './fixtures/migrated-source'
 import { startEvidenceServer, type EvidenceServer } from '../../platform/fixtures/evidence-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-uscc-research-'))
@@ -161,6 +162,7 @@ const unprovenTwin = seedEnterprise({ name: '宁波启明灯饰制造股份有�
 
 let server: EvidenceServer
 let currentQuery: Record<string, unknown> = {}
+const migrated = migratedSourceReader(dir, db.$client)
 const client = () => createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
 const getJson = async <T>(path: string): Promise<T> => {
   const response = await fetch(`${server.baseUrl}${path}`)
@@ -179,7 +181,6 @@ beforeAll(async () => {
     curatedPath: join(dir, 'none.json'),
     reconcilePath: join(dir, 'none.json'),
   }))
-  vi.doMock('@db', () => ({ useDb: () => db }))
 
   const routes = {
     get: (await import('../../../layers/sme-roster/server/api/roster/uscc-research.get')).default as unknown as (event: unknown) => unknown,
@@ -196,13 +197,9 @@ beforeAll(async () => {
       // 路由模块的默认导出是 `async`，所以这里要 await 它 —— 否则夹具拿到的响应体是个
       // 未决的 Promise，`JSON.stringify` 出来是 `{}`。
       '/api/roster/uscc-research': async (request) => {
-        if (request.method === 'POST') {
-          currentQuery = (request.body ?? {}) as Record<string, unknown>
-          const out = await routes.post({})
-          return { status: 200, body: out }
-        }
-        currentQuery = request.query
-        return { status: 200, body: await routes.get({}) }
+        currentQuery = request.method === 'POST' ? (request.body ?? {}) as Record<string, unknown> : request.query
+        const body = await migrated.read(() => (request.method === 'POST' ? routes.post : routes.get)({}))
+        return { status: 200, body }
       },
     },
   })
@@ -211,7 +208,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await server?.close()
   vi.unstubAllGlobals()
-  vi.doUnmock('@db')
+  await migrated.close()
+  db.$client.close()
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -358,7 +356,7 @@ describe('B · 待查清单：名称 / 地区 / 称号 / 来源文件与页码 /
     expect(body.checklist.rows[0]!.coreWord).toBe('上航测绘')
     expect(body.plan.counts.targets).toBe(1)
     expect(body.plan.counts.notFound).toBe(0)
-  })
+  }, 60_000)
 })
 
 // ---------------------------------------------------------------------------
@@ -464,7 +462,7 @@ describe('C · 库内核心词 → 候选 → 平台原始关系逐字验证', (
     // 计划是**只读**的：此刻库里一行都没动。
     expect(db.select().from(schema.enterprise).all().find((e) => e.id === target)!.usccNorm).toBeNull()
     expect(report.request!.payload.merges).toHaveLength(1)
-  })
+  }, 20_000)
 
   it('④ 两个不同统代都自称这个名字 ⇒ **冲突**（同名多主体），一个都不并', () => {
     const rollback = new Error('Explicit synthetic transaction rollback')
@@ -1639,7 +1637,7 @@ describe('G · 判定文件归一化 + 平台证据认领', () => {
     ).json()) as { plan: { request: unknown; counts: { filled: number } } }
     expect(replay.plan.counts.filled).toBe(0)
     expect(replay.plan.request).toBeNull()
-  })
+  }, 60_000)
 })
 
 describe('F · 回归 91330211255994457P：计划 → 执行 → 两行合一、一条不丢', () => {
@@ -1710,7 +1708,7 @@ describe('F · 回归 91330211255994457P：计划 → 执行 → 两行合一、
     expect(byAlias.map((r) => r.enterpriseId)).toEqual([canonical])
     expect(byName.map((r) => r.enterpriseId)).toEqual([canonical])
     expect(byAlias[0]!.aliasNames).toContain(OLD_NAME)
-  })
+  }, 60_000)
 
   it('★ 补齐之后不再进入待查清单（票面第 6 条）', () => {
     const ids = listUsccChecklist(db, { pageSize: 500 }).rows.map((r) => r.enterpriseId)
@@ -1756,4 +1754,4 @@ it('keeps an absent-source verdict manual without reserving its USCC or writing 
   expect(combined.ready.map(row => row.targetId)).toEqual([captured])
   expect(combined.request?.payload.merges).toMatchObject([{ fromEnterpriseId: captured, intoUscc: USCC }])
   expect(snapshot()).toEqual(before)
-})
+}, 60_000)

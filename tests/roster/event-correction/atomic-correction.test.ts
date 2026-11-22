@@ -1,29 +1,36 @@
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { singlePostgresFixtureRow, useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
+import { failEventUpdate } from './fixtures/postgres'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
-import { afterAll, expect, it, vi } from 'vitest'
-import Database from 'better-sqlite3'
-import { initializeDb, schema } from '../../../db/client'
-import { readCurrentCandidate } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { expect, it, vi } from 'vitest'
+import { enterprise as enterprises } from '../../../db/postgresql/enterprise-tables'
+import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
+import { storedFile } from '../../../db/postgresql/file-tables'
+import { readPostgresCurrentDetailBatch } from '../../../layers/sme-roster/lib/roster/current-qualification-postgres'
+import type { CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-qualification'
 
-const dirs: string[] = []
-afterAll(() => { vi.unstubAllGlobals(); for (const dir of dirs) rmSync(dir, { recursive: true, force: true }) })
+const schema = { enterprise: enterprises, record, recordEvent, recordEvidence, storedFile }
+const createDatabase = useIsolatedPostgresCases()
+const asOf = Date.parse('2026-10-19T04:00:00Z')
+
+async function currentCandidate(f: Awaited<ReturnType<typeof fixture>>, title: CurrentTitle) {
+  const id = f.enterprise.id
+  const rows = (await f.db.transaction(tx => readPostgresCurrentDetailBatch(tx, [id], title, asOf), { isolationLevel: 'repeatable read' })).get(id)!.rows
+  return rows.find(row => row.assessment?.titleCode === title)!
+}
+
 async function fixture(awardYear = 2021, titleCode = 'specialized_sme') {
-  const dir = mkdtempSync(join(tmpdir(), 'event-correction-100-')); dirs.push(dir)
-  const dbPath = join(dir, 'test.db'), db = initializeDb({ create: true,  dbPath })
-  const enterprise = db.insert(schema.enterprise).values({ name: '合成事件企业', nameNorm: '合成事件企业' }).returning().get()
-  const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode, source: 'jxj', nameRaw: enterprise.name }).returning().get()
-  const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: awardYear, decidedYear: awardYear, batchSeq: 1, sortKey: awardYear }).returning().get()
-  db.insert(schema.storedFile).values({ relPath: 'synthetic/notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: 123, sha256: 'synthetic-sha' }).run()
-  const evidence = db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic/notice.pdf', attachment: '附件一', listNo: 7, page: 2 }).returning().get()
+  const db = createDatabase()
+  const enterprise = singlePostgresFixtureRow(await db.insert(schema.enterprise).values({ name: '合成事件企业', nameNorm: '合成事件企业' }).returning())
+  const record = singlePostgresFixtureRow(await db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode, source: 'jxj', nameRaw: enterprise.name }).returning())
+  const event = singlePostgresFixtureRow(await db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: awardYear, decidedYear: awardYear, batchSeq: 1, sortKey: awardYear }).returning())
+  await db.insert(schema.storedFile).values({ relPath: 'synthetic/notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: 123n, sha256: 'synthetic-sha', createdAt: '2026-10-19' })
+  const evidence = singlePostgresFixtureRow(await db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic/notice.pdf', attachment: '附件一', listNo: 7, page: 2 }).returning())
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'test-api' }))
-  const oldPath = process.env.NUXT_DB_PATH; process.env.NUXT_DB_PATH = dbPath
   const { eventCorrectionRoute } = await import('../../../layers/sme-roster/server/utils/roster-event-correction-route')
   const app = createApp(), router = createRouter()
   router.use('/api/roster/events/corrections/preflight', eventCorrectionRoute('preflight'))
@@ -42,7 +49,7 @@ async function fixture(awardYear = 2021, titleCode = 'specialized_sme') {
   const request = (key = 'correct-1', patch: Record<string, unknown> = { year: 2022, decidedYear: 2022 }) => ({ idempotencyKey: key, sourceIdentity: 'synthetic:notice-review', actor: { type: 'agent', id: 'test' }, basis: 'Verified original announcement row', operations: [{ eventId: event.id, recordId: record.id, enterpriseId: enterprise.id, expectedRevision: 1, patch }] })
   const read = async (path = `/api/roster/events/${event.id}`) => { const r = await fetch(base + path); return { status: r.status, body: await r.json(), headers: r.headers } }
   const post = async (action: string, body: unknown, token: string | null = 'test-api') => { const r = await fetch(base + '/api/roster/events/corrections/' + action, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: typeof body === 'string' ? body : JSON.stringify(body) }); return { status: r.status, body: await r.json(), headers: r.headers } }
-  return { db, dbPath, event, evidence, record, enterprise, request, read, post, rawPost, close: async () => { await new Promise<void>(resolve => listener.close(() => resolve())); if (oldPath == null) delete process.env.NUXT_DB_PATH; else process.env.NUXT_DB_PATH = oldPath } }
+  return { db, event, evidence, record, enterprise, request, read, post, rawPost, close: async () => { await new Promise<void>(resolve => listener.close(() => resolve())) } }
 }
 
 it('corrects the exact official event in place and replays the receipt with preserved evidence and audit', async () => {
@@ -69,16 +76,16 @@ it('corrects review origin and conclusion independently without guessing its bat
   const f = await fixture(2022)
   try {
     // Synthetic legacy import: publication year was placed in the origin field.
-    const review = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2025 }).returning().get()
-    f.db.insert(schema.recordEvidence).values({ recordEventId: review.id, sourceFile: 'synthetic/notice.pdf', attachment: '附件2', listNo: 9, page: 17 }).run()
-    const other = f.db.insert(schema.record).values({ enterpriseId: f.enterprise.id, titleCode: 'innovative_sme', source: 'jxj', nameRaw: f.enterprise.name }).returning().get()
-    const otherAward = f.db.insert(schema.recordEvent).values({ recordId: other.id, eventType: 'award', year: 2023, batchSeq: 1 }).returning().get()
-    const otherReview = f.db.insert(schema.recordEvent).values({ recordId: other.id, eventType: 'review', year: 2023, decidedYear: 2026, batchSeq: 1, reviewOutcome: 'failed' }).returning().get()
-    for (const event of [otherAward, otherReview]) f.db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic/notice.pdf', page: 2 }).run()
+    const review = singlePostgresFixtureRow(await f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2025 }).returning())
+    await f.db.insert(schema.recordEvidence).values({ recordEventId: review.id, sourceFile: 'synthetic/notice.pdf', attachment: '附件2', listNo: 9, page: 17 })
+    const other = singlePostgresFixtureRow(await f.db.insert(schema.record).values({ enterpriseId: f.enterprise.id, titleCode: 'innovative_sme', source: 'jxj', nameRaw: f.enterprise.name }).returning())
+    const otherAward = singlePostgresFixtureRow(await f.db.insert(schema.recordEvent).values({ recordId: other.id, eventType: 'award', year: 2023, batchSeq: 1 }).returning())
+    const otherReview = singlePostgresFixtureRow(await f.db.insert(schema.recordEvent).values({ recordId: other.id, eventType: 'review', year: 2023, decidedYear: 2026, batchSeq: 1, reviewOutcome: 'failed' }).returning())
+    for (const event of [otherAward, otherReview]) await f.db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic/notice.pdf', page: 2 })
     const before = (await f.read(`/api/roster/events/${review.id}`)).body
     const otherBefore = (await f.read(`/api/roster/events/${otherReview.id}`)).body
-    const candidate = () => readCurrentCandidate(f.db.$client, f.enterprise.id, 'specialized_sme', 2026)
-    expect(candidate().group).toBe('excluded')
+    const candidate = () => currentCandidate(f, 'specialized_sme')
+    expect((await candidate()).group).toBe('excluded')
     const correct = async (key: string, expectedRevision: number, patch: Record<string, unknown>) => {
       const request = f.request(key)
       request.operations = [{ eventId: review.id, recordId: f.record.id, enterpriseId: f.enterprise.id, expectedRevision, patch }]
@@ -93,19 +100,19 @@ it('corrects review origin and conclusion independently without guessing its bat
     expect(corrected).toMatchObject({ event: { id: review.id, recordId: f.record.id, year: 2022, decidedYear: 2025, reviewOutcome: 'passed', batchSeq: null, revision: 2 }, lifecycle: { firstRecognitionYear: 2022, firstRecognitionEventId: f.event.id, state: 'none', needsReview: true, anchorYear: 2022, dueYear: null } })
     expect(corrected.evidence).toEqual(before.evidence)
     expect(corrected.files).toEqual(before.files)
-    expect(candidate()).toMatchObject({ group: 'eligible', firstYear: 2022, basis: `event:${f.event.id}@1 award 2022/1 结论年:2022\nevent:${review.id}@2 review 2022/ 结论年:2025` })
+    expect(await candidate()).toMatchObject({ group: 'eligible', firstYear: 2022, basis: `event:${f.event.id}@1 award 2022/1 结论年:2022\nevent:${review.id}@2 review 2022/ 结论年:2025` })
     // Recording the original batch improves diagnostics; the recorded passed period already permits eligibility.
     const verified = await correct('review-batch-verified', 2, { batchSeq: 1 })
     expect(verified).toMatchObject({ event: { id: review.id, recordId: f.record.id, year: 2022, decidedYear: 2025, batchSeq: 1, reviewOutcome: 'passed', revision: 3 }, lifecycle: { firstRecognitionYear: 2022, firstRecognitionEventId: f.event.id, state: 'active', needsReview: false, anchorYear: 2025, dueYear: 2028 } })
     expect(verified.evidence).toEqual(before.evidence)
     expect(verified.files).toEqual(before.files)
-    expect(candidate().group).toBe('eligible')
+    expect((await candidate()).group).toBe('eligible')
     const unknown = await correct('review-outcome-unknown', 3, { reviewOutcome: null })
     expect(unknown.lifecycle).toMatchObject({ firstRecognitionYear: 2022, state: 'none', needsReview: true, dueYear: null })
-    expect(candidate().group).toBe('excluded')
+    expect((await candidate()).group).toBe('excluded')
     const failed = await correct('review-explicit-failure', 4, { reviewOutcome: 'failed' })
     expect(failed.lifecycle).toMatchObject({ firstRecognitionYear: 2022, state: 'terminated', needsReview: false, dueYear: null })
-    expect(candidate().group).toBe('excluded')
+    expect((await candidate()).group).toBe('excluded')
     expect((await f.read(`/api/roster/events/${f.event.id}`)).body.event).toMatchObject({ id: f.event.id, year: 2022, revision: 1 })
     expect((await f.read(`/api/roster/events/${otherReview.id}`)).body).toEqual(otherBefore)
     const audit = (await f.read(`/api/roster/events/${review.id}/audit`)).body
@@ -123,16 +130,16 @@ it('atomically corrects a confirmed award batch and its 2022-origin 2025 review 
   try {
     // Synthetic legacy facts; batch 1 is an explicit source-scope decision,
     // never inferred by the API from the file name or platform maintenance tag.
-    f.db.$client.prepare('update record_event set batch_seq = null where id = ?').run(f.event.id)
-    const review = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2025 }).returning().get()
-    f.db.insert(schema.recordEvidence).values({ recordEventId: review.id, sourceFile: 'synthetic/notice.pdf', attachment: '附件2', listNo: 139, page: 17 }).run()
-    const controlRecord = f.db.insert(schema.record).values({ enterpriseId: f.enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
-    const control = f.db.insert(schema.recordEvent).values({ recordId: controlRecord.id, eventType: 'review', year: 2023, decidedYear: 2026, batchSeq: 1, reviewOutcome: 'failed' }).returning().get()
+    await f.db.$client.query('UPDATE record_event SET batch_seq = null WHERE id = $1', [f.event.id])
+    const review = singlePostgresFixtureRow(await f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2025 }).returning())
+    await f.db.insert(schema.recordEvidence).values({ recordEventId: review.id, sourceFile: 'synthetic/notice.pdf', attachment: '附件2', listNo: 139, page: 17 })
+    const controlRecord = singlePostgresFixtureRow(await f.db.insert(schema.record).values({ enterpriseId: f.enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning())
+    const control = singlePostgresFixtureRow(await f.db.insert(schema.recordEvent).values({ recordId: controlRecord.id, eventType: 'review', year: 2023, decidedYear: 2026, batchSeq: 1, reviewOutcome: 'failed' }).returning())
     const before = await Promise.all([f.read(), f.read(`/api/roster/events/${review.id}`), f.read(`/api/roster/events/${control.id}`)])
-    const counts = () => ['enterprise', 'record', 'record_event', 'record_evidence'].map(table => f.db.$client.prepare(`select count(*) as n from ${table}`).get())
-    const countsBefore = counts()
-    const candidate = () => readCurrentCandidate(f.db.$client, f.enterprise.id, 'innovative_sme', 2026)
-    expect(candidate().group).toBe('excluded')
+    const counts = () => Promise.all(['enterprise', 'record', 'record_event', 'record_evidence'].map(async table => (await f.db.$client.query(`SELECT count(*) AS n FROM ${table}`)).rows[0]))
+    const countsBefore = await counts()
+    const candidate = () => currentCandidate(f, 'innovative_sme')
+    expect((await candidate()).group).toBe('excluded')
     const request = f.request('confirmed-batch-pair')
     request.basis = 'Explicitly confirmed original award batch 1; attachment 2 page 17 proves review conclusion in 2025, passed, for the 2022 cycle'
     request.operations = [
@@ -156,7 +163,7 @@ it('atomically corrects a confirmed award batch and its 2022-origin 2025 review 
     expect(receipt.status).toBe(200)
     expect(receipt.body.eventIds).toEqual([f.event.id, review.id])
     expect((await f.post('commit', { request, planHash: plan.body.planHash })).body).toEqual(receipt.body)
-    expect(candidate()).toMatchObject({ group: 'eligible', firstYear: 2022 })
+    expect(await candidate()).toMatchObject({ group: 'eligible', firstYear: 2022 })
     for (const [index, id] of [f.event.id, review.id].entries()) {
       const after = (await f.read(`/api/roster/events/${id}`)).body
       expect(after.event).toMatchObject({ id, recordId: f.record.id, revision: 2, year: 2022, batchSeq: 1 })
@@ -177,14 +184,14 @@ it('atomically corrects a confirmed award batch and its 2022-origin 2025 review 
     wrongYear.operations = [{ eventId: review.id, recordId: f.record.id, enterpriseId: f.enterprise.id, expectedRevision: 2, patch: { year: 2026, decidedYear: 2025 } }]
     expect((await f.post('preflight', wrongYear)).body).toMatchObject({ error: { code: 'invalid_event_combination' } })
     expect((await f.read(`/api/roster/events/${review.id}`)).body.event).toMatchObject({ year: 2022, decidedYear: 2025, revision: 2 })
-    expect(candidate().group).toBe('eligible')
+    expect((await candidate()).group).toBe('eligible')
     await changeReview('missing-outcome', 2, { reviewOutcome: null })
-    expect(candidate().group).toBe('excluded')
+    expect((await candidate()).group).toBe('excluded')
     await changeReview('failed-outcome', 3, { reviewOutcome: 'failed' })
-    expect(candidate().group).toBe('excluded')
+    expect((await candidate()).group).toBe('excluded')
     await changeReview('missing-conclusion-year', 4, { reviewOutcome: 'passed', decidedYear: null })
-    expect(candidate().group).toBe('excluded')
-    expect(counts()).toEqual(countsBefore)
+    expect((await candidate()).group).toBe('excluded')
+    expect(await counts()).toEqual(countsBefore)
     expect((await f.read(`/api/roster/events/${control.id}`)).body).toEqual(before[2]!.body)
   } finally { await f.close() }
 })
@@ -236,8 +243,8 @@ it('allows review unknown/null transitions and recomputes termination without re
 it('rejects natural-key collisions including two targets converging in the same batch', async () => {
   const f = await fixture()
   try {
-    const other = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'award', year: 2023, decidedYear: 2023, batchSeq: 1 }).returning().get()
-    f.db.insert(schema.recordEvidence).values({ recordEventId: other.id, sourceFile: 'synthetic/other.pdf' }).run()
+    const other = singlePostgresFixtureRow(await f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'award', year: 2023, decidedYear: 2023, batchSeq: 1 }).returning())
+    await f.db.insert(schema.recordEvidence).values({ recordEventId: other.id, sourceFile: 'synthetic/other.pdf' })
     expect((await f.post('preflight', f.request('collision', { year: 2023, decidedYear: 2024 }))).body).toMatchObject({ error: { code: 'natural_key_conflict' } })
     const request = f.request('converging'); request.operations.push({ ...request.operations[0]!, eventId: other.id })
     expect((await f.post('preflight', request)).body).toMatchObject({ error: { code: 'natural_key_conflict' } })
@@ -246,47 +253,47 @@ it('rejects natural-key collisions including two targets converging in the same 
 })
 
 it('binds source snapshots and rejects evidence drift, stale concurrent plans and changed idempotent requests', async () => {
-  const f = await fixture(), external = new Database(f.dbPath)
+  const f = await fixture(), external = f.db.$client
   try {
     const request = f.request(), first = await f.post('preflight', request)
-    external.prepare('UPDATE record_evidence SET page = 4 WHERE id = ?').run(f.evidence.id)
+    await external.query('UPDATE record_evidence SET page = 4 WHERE id = $1', [f.evidence.id])
     expect((await f.post('commit', { request, planHash: first.body.planHash })).body).toMatchObject({ error: { code: 'plan_mismatch' } })
-    external.prepare('UPDATE record_evidence SET page = 2 WHERE id = ?').run(f.evidence.id)
-    external.prepare('UPDATE stored_file SET sha256 = ? WHERE rel_path = ?').run('changed-source-sha', 'synthetic/notice.pdf')
+    await external.query('UPDATE record_evidence SET page = 2 WHERE id = $1', [f.evidence.id])
+    await external.query('UPDATE stored_file SET sha256 = $1 WHERE rel_path = $2', ['changed-source-sha', 'synthetic/notice.pdf'])
     expect((await f.post('commit', { request, planHash: first.body.planHash })).body).toMatchObject({ error: { code: 'plan_mismatch' } })
-    external.prepare('UPDATE stored_file SET sha256 = ? WHERE rel_path = ?').run('synthetic-sha', 'synthetic/notice.pdf')
+    await external.query('UPDATE stored_file SET sha256 = $1 WHERE rel_path = $2', ['synthetic-sha', 'synthetic/notice.pdf'])
     const concurrent = f.request('other-writer', { year: 2023, decidedYear: 2023 }), second = await f.post('preflight', concurrent)
     expect((await f.post('commit', { request: concurrent, planHash: second.body.planHash })).status).toBe(200)
     expect((await f.post('commit', { request, planHash: first.body.planHash })).body).toMatchObject({ error: { code: 'stale_revision' } })
     const changed = structuredClone(concurrent); changed.basis = 'different request'
     expect((await f.post('preflight', changed)).body).toMatchObject({ error: { code: 'idempotency_conflict' } })
     expect((await f.read()).body.event).toMatchObject({ year: 2023, revision: 2 })
-  } finally { external.close(); await f.close() }
+  } finally { await f.close() }
 })
 
 it('rolls back the first update, revisions, audit and receipt if a later update fails, then recovers the same key', async () => {
-  const f = await fixture(), external = new Database(f.dbPath)
+  const f = await fixture()
   try {
-    const other = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'passed' }).returning().get()
-    f.db.insert(schema.recordEvidence).values({ recordEventId: other.id, sourceFile: 'synthetic/review.pdf' }).run()
+    const other = singlePostgresFixtureRow(await f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2021, decidedYear: 2024, reviewOutcome: 'passed' }).returning())
+    await f.db.insert(schema.recordEvidence).values({ recordEventId: other.id, sourceFile: 'synthetic/review.pdf' })
     const request = f.request(); request.operations.push({ ...request.operations[0]!, eventId: other.id, patch: { decidedYear: 2025 } })
     const plan = await f.post('preflight', request)
-    external.exec(`CREATE TRIGGER fail_second_event BEFORE UPDATE ON record_event WHEN OLD.id = ${other.id} BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`)
+    const restore = await failEventUpdate(f.db, other.id)
     expect((await f.post('commit', { request, planHash: plan.body.planHash })).body).toMatchObject({ error: { code: 'transaction_failed' } })
     expect((await f.read()).body.event).toMatchObject({ year: 2021, revision: 1 })
     expect((await f.read(`/api/roster/events/${f.event.id}/audit`)).body.total).toBe(0)
     expect((await f.post('preflight', request)).body.batchStatus).toBe('preflight')
-    external.exec('DROP TRIGGER fail_second_event')
+    await restore()
     expect((await f.post('commit', { request, planHash: plan.body.planHash })).body).toMatchObject({ eventIds: [f.event.id, other.id] })
     expect((await f.read()).body.event.revision).toBe(2)
-  } finally { external.close(); await f.close() }
+  } finally { await f.close() }
 })
 
 it('marks direct and predecessor confirmations stale after correction and after restoring original values until explicit reconfirmation', async () => {
   const f = await fixture()
   try {
-    const native = submitNativePlatformQuery(f.db, { interface: 'business_list', queryKey: 'synthetic', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'success', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: f.enterprise.id, verificationStatus: 'confirmed', declareKind: 'apply', appliedAt: '2026-01-01' }] })
-    const relation = { id: native.relationIds[0]! }
+    const { relationIds } = await seedPostgresPlatformQuery(f.db, { interface: 'business_list', queryKey: 'synthetic', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'success', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: f.enterprise.id, verificationStatus: 'confirmed', declareKind: 'apply', appliedAt: '2026-01-01' }] })
+    const relation = { id: relationIds[0]! }
     const create = { idempotencyKey: 'correspondence', sourceIdentity: 'synthetic:relation', actor: { type: 'agent', id: 'test' }, basis: 'Explicit row context', ruleId: 'manual', ruleVersion: '1', operations: [
       { action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: f.event.id, relationId: relation.id, role: 'context_only' } },
       { action: 'create', status: 'confirmed', edge: { type: 'later_process', enterpriseId: f.enterprise.id, titleCode: 'specialized_sme', predecessorEventId: f.event.id, relationId: relation.id, role: 'followup_apply' } },
@@ -297,13 +304,13 @@ it('marks direct and predecessor confirmations stale after correction and after 
     const ids = confirmed.body.correspondenceIds as number[]
     // Seed exactly the pre-0016 fingerprint format (no event revision) as historical data.
     for (const id of ids) {
-      const stored = f.db.$client.prepare('SELECT provenance FROM record_correspondence WHERE id = ?').get(id) as { provenance: string }
+      const stored = (await f.db.$client.query<{ provenance: string }>('SELECT provenance FROM record_correspondence WHERE id = $1', [id])).rows[0]!
       const provenance = JSON.parse(stored.provenance)
       delete provenance.comparisonProofIds
       if (provenance.event) delete provenance.event.revision
       if (provenance.predecessor) delete provenance.predecessor.event.revision
       const legacyHash = createHash('sha256').update(JSON.stringify(provenance)).digest('hex')
-      f.db.$client.prepare('UPDATE record_correspondence SET source_fingerprint = ? WHERE id = ?').run(legacyHash, id)
+      await f.db.$client.query('UPDATE record_correspondence SET source_fingerprint = $1 WHERE id = $2', [legacyHash, id])
       expect((await f.read(`/api/roster/correspondences/${id}`)).body.requiresRevalidation).toBe(false)
     }
     const edit = f.request(), plan = await f.post('preflight', edit)
@@ -331,13 +338,13 @@ it.each([
   try {
     // A source-scoped batch is explicit fixture evidence, never inferred from
     // the award. The null control preserves the original legacy review shape.
-    const review = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2021, decidedYear: 2024, batchSeq, reviewOutcome: 'passed' }).returning().get()
-    f.db.insert(schema.recordEvidence).values({ recordEventId: review.id, sourceFile: 'synthetic/review.pdf' }).run()
+    const review = singlePostgresFixtureRow(await f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2021, decidedYear: 2024, batchSeq, reviewOutcome: 'passed' }).returning())
+    await f.db.insert(schema.recordEvidence).values({ recordEventId: review.id, sourceFile: 'synthetic/review.pdf' })
     const before = (await f.read(`/api/roster/events/${review.id}`)).body
     const awardBefore = (await f.read()).body
-    const candidate = () => readCurrentCandidate(f.db.$client, f.enterprise.id, 'specialized_sme', 2026)
+    const candidate = () => currentCandidate(f, 'specialized_sme')
     expect(before).toMatchObject({ event: { id: review.id, batchSeq, revision: 1, reviewOutcome: 'passed' }, lifecycle: { firstRecognitionYear: 2021, ...initial } })
-    expect(candidate().group).toBe(group)
+    expect((await candidate()).group).toBe(group)
     const request = f.request('review-failed', { reviewOutcome: 'failed' }); request.operations[0]!.eventId = review.id
     const pre = await f.post('preflight', request)
     expect(pre.status).toBe(200)
@@ -350,7 +357,7 @@ it.each([
     expect(afterFailure).toMatchObject({ event: { id: review.id, recordId: f.record.id, year: 2021, decidedYear: 2024, batchSeq, reviewOutcome: 'failed', revision: 2 }, lifecycle: { firstRecognitionYear: 2021, ...failed } })
     expect(afterFailure.evidence).toEqual(before.evidence)
     expect(afterFailure.files).toEqual(before.files)
-    expect(candidate().group).toBe(failedGroup)
+    expect((await candidate()).group).toBe(failedGroup)
     const recover = f.request('review-reconfirmed', { reviewOutcome: 'passed' }); recover.operations[0]!.eventId = review.id; recover.operations[0]!.expectedRevision = 2
     const next = await f.post('preflight', recover)
     expect(next.status).toBe(200)
@@ -361,7 +368,7 @@ it.each([
     expect(after).toMatchObject({ event: { id: review.id, recordId: f.record.id, year: 2021, decidedYear: 2024, batchSeq, reviewOutcome: 'passed', revision: 3 }, lifecycle: { firstRecognitionYear: 2021, ...initial } })
     expect(after.evidence).toEqual(before.evidence)
     expect(after.files).toEqual(before.files)
-    expect(candidate().group).toBe(group)
+    expect((await candidate()).group).toBe(group)
     const awardAfter = (await f.read()).body
     expect(awardAfter.event).toEqual(awardBefore.event)
     expect(awardAfter.evidence).toEqual(awardBefore.evidence)
@@ -369,48 +376,48 @@ it.each([
       { before: { id: review.id, revision: 1, reviewOutcome: 'passed' }, after: { id: review.id, revision: 2, reviewOutcome: 'failed' }, evidence: before.evidence },
       { before: { id: review.id, revision: 2, reviewOutcome: 'failed' }, after: { id: review.id, revision: 3, reviewOutcome: 'passed' }, evidence: before.evidence },
     ] })
-    expect(f.db.$client.prepare('SELECT id FROM record_event ORDER BY id').all()).toEqual([{ id: f.event.id }, { id: review.id }])
+    expect((await f.db.select({ id: schema.recordEvent.id }).from(schema.recordEvent).orderBy(schema.recordEvent.id))).toEqual([{ id: f.event.id }, { id: review.id }])
   } finally { await f.close() }
 })
 
 it('retains failed review history while a later passed review or new award supplies a current cycle', async () => {
   const f = await fixture(2020)
   try {
-    const failed = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2020, decidedYear: 2023, batchSeq: 1, reviewOutcome: 'failed' }).returning().get()
-    f.db.insert(schema.recordEvidence).values({ recordEventId: failed.id, sourceFile: 'synthetic/failed-review.pdf', page: 1 }).run()
+    const failed = singlePostgresFixtureRow(await f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2020, decidedYear: 2023, batchSeq: 1, reviewOutcome: 'failed' }).returning())
+    await f.db.insert(schema.recordEvidence).values({ recordEventId: failed.id, sourceFile: 'synthetic/failed-review.pdf', page: 1 })
     const failureBefore = (await f.read(`/api/roster/events/${failed.id}`)).body
-    const candidate = () => readCurrentCandidate(f.db.$client, f.enterprise.id, 'specialized_sme', 2026)
+    const candidate = () => currentCandidate(f, 'specialized_sme')
     expect(failureBefore.lifecycle).toMatchObject({ firstRecognitionYear: 2020, state: 'terminated', needsReview: false, dueYear: null })
-    expect(candidate().group).toBe('excluded')
-    const passed = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2020, decidedYear: 2024, batchSeq: 1, reviewOutcome: 'passed' }).returning().get()
-    f.db.insert(schema.recordEvidence).values({ recordEventId: passed.id, sourceFile: 'synthetic/later-passed-review.pdf', page: 1 }).run()
+    expect((await candidate()).group).toBe('excluded')
+    const passed = singlePostgresFixtureRow(await f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'review', year: 2020, decidedYear: 2024, batchSeq: 1, reviewOutcome: 'passed' }).returning())
+    await f.db.insert(schema.recordEvidence).values({ recordEventId: passed.id, sourceFile: 'synthetic/later-passed-review.pdf', page: 1 })
     expect((await f.read()).body.lifecycle).toMatchObject({ firstRecognitionYear: 2020, state: 'none', needsReview: true, dueYear: null })
-    expect(candidate().group).toBe('eligible')
+    expect((await candidate()).group).toBe('eligible')
     const retainedFailure = (await f.read(`/api/roster/events/${failed.id}`)).body
     expect(retainedFailure.event).toEqual(failureBefore.event)
     expect(retainedFailure.evidence).toEqual(failureBefore.evidence)
     expect((await f.read(`/api/roster/events/${passed.id}`)).body.event).toMatchObject({ id: passed.id, year: 2020, decidedYear: 2024, reviewOutcome: 'passed', revision: 1 })
-    const reaward = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'award', year: 2025, decidedYear: 2025, batchSeq: 1 }).returning().get()
-    f.db.insert(schema.recordEvidence).values({ recordEventId: reaward.id, sourceFile: 'synthetic/new-award.pdf', page: 1 }).run()
+    const reaward = singlePostgresFixtureRow(await f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'award', year: 2025, decidedYear: 2025, batchSeq: 1 }).returning())
+    await f.db.insert(schema.recordEvidence).values({ recordEventId: reaward.id, sourceFile: 'synthetic/new-award.pdf', page: 1 })
     expect((await f.read()).body.lifecycle).toMatchObject({ firstRecognitionYear: 2020, firstRecognitionEventId: f.event.id, state: 'active', needsReview: false, anchorYear: 2025, dueYear: 2028 })
-    expect(candidate().group).toBe('eligible')
+    expect((await candidate()).group).toBe('eligible')
     const failureAfter = (await f.read(`/api/roster/events/${failed.id}`)).body
     expect(failureAfter.event).toEqual(failureBefore.event)
     expect(failureAfter.evidence).toEqual(failureBefore.evidence)
     expect(failureAfter.files).toEqual(failureBefore.files)
     expect((await f.read(`/api/roster/events/${failed.id}/audit`)).body).toMatchObject({ total: 0, rows: [] })
-    expect(f.db.$client.prepare('SELECT id FROM record_event ORDER BY id').all()).toEqual([{ id: f.event.id }, { id: failed.id }, { id: passed.id }, { id: reaward.id }])
+    expect((await f.db.select({ id: schema.recordEvent.id }).from(schema.recordEvent).orderBy(schema.recordEvent.id))).toEqual([{ id: f.event.id }, { id: failed.id }, { id: passed.id }, { id: reaward.id }])
   } finally { await f.close() }
 })
 
 it('rejects missing official evidence and platform-maintenance targets without changing unrelated rows', async () => {
   const f = await fixture()
   try {
-    const bare = f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'award', year: 2020 }).returning().get()
+    const bare = singlePostgresFixtureRow(await f.db.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'award', year: 2020 }).returning())
     const request = f.request(); request.operations[0]!.eventId = bare.id
     expect((await f.post('preflight', request)).body).toMatchObject({ error: { code: 'basis_required' } })
-    const platform = f.db.insert(schema.record).values({ enterpriseId: f.enterprise.id, titleCode: 'specialized_sme', source: 'miit' }).returning().get()
-    const event = f.db.insert(schema.recordEvent).values({ recordId: platform.id, eventType: 'maintain', year: 2026 }).returning().get()
+    const platform = singlePostgresFixtureRow(await f.db.insert(schema.record).values({ enterpriseId: f.enterprise.id, titleCode: 'specialized_sme', source: 'miit' }).returning())
+    const event = singlePostgresFixtureRow(await f.db.insert(schema.recordEvent).values({ recordId: platform.id, eventType: 'maintain', year: 2026 }).returning())
     request.operations[0]!.eventId = event.id; request.operations[0]!.recordId = platform.id
     expect((await f.post('preflight', request)).status).toBe(404)
     expect((await f.read()).body).toMatchObject({ evidence: [f.evidence], event: { id: f.event.id, year: 2021, revision: 1 } })
@@ -423,12 +430,14 @@ it('keeps exact reads and audit pages fixed when unrelated raw evidence and even
     const request = f.request(), pre = await f.post('preflight', request)
     await f.post('commit', { request, planHash: pre.body.planHash })
     const before = await f.read(), auditBefore = await f.read(`/api/roster/events/${f.event.id}/audit?pageSize=1`)
-    const other = f.db.insert(schema.enterprise).values({ name: '无关合成企业', nameNorm: '无关合成企业' }).returning().get()
-    const record = f.db.insert(schema.record).values({ enterpriseId: other.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
-    f.db.transaction(tx => {
-      for (let i = 0; i < 2000; i++) tx.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2000 + i % 25, batchSeq: i + 1 }).run()
-      for (let i = 0; i < 100; i++) submitNativePlatformQuery(tx, { interface: 'business_list', queryKey: `unrelated-${i}`, rdjb: '2', queriedAt: '2026-10-19', status: 'success', rawResponse: 'UNRELATED-RAW'.repeat(5000) })
-    })
+    const other = singlePostgresFixtureRow(await f.db.insert(schema.enterprise).values({ name: '无关合成企业', nameNorm: '无关合成企业' }).returning())
+    const record = singlePostgresFixtureRow(await f.db.insert(schema.record).values({ enterpriseId: other.id, source: 'jxj', titleCode: 'specialized_sme' }).returning())
+    await f.db.insert(schema.recordEvent).values(Array.from({ length: 2_000 }, (_, i) => ({
+      recordId: record.id, eventType: 'award' as const, year: 2000 + i % 25, batchSeq: i + 1,
+    })))
+    for (let i = 0; i < 100; i++) {
+      await seedPostgresPlatformQuery(f.db, { interface: 'business_list', queryKey: `unrelated-${i}`, rdjb: '2', queriedAt: '2026-10-19', status: 'success', rawResponse: 'UNRELATED-RAW'.repeat(5000) })
+    }
     const after = await f.read()
     expect(after.body).toEqual(before.body)
     expect((await f.read(`/api/roster/events/${f.event.id}/audit?pageSize=1`)).body).toEqual(auditBefore.body)
@@ -440,12 +449,14 @@ it('accepts the 300-target bound and rejects an extra target before any event ch
   const f = await fixture()
   try {
     const request = f.request('bounded-300')
-    f.db.transaction(tx => {
-      for (let i = 1; i < 300; i++) {
-        const event = tx.insert(schema.recordEvent).values({ recordId: f.record.id, eventType: 'award', year: 2021, decidedYear: 2021, batchSeq: i + 1 }).returning().get()
-        tx.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic/notice.pdf', listNo: i + 1 }).run()
-        request.operations.push({ ...request.operations[0]!, eventId: event.id })
-      }
+    await f.db.transaction(async tx => {
+      const events = await tx.insert(schema.recordEvent).values(Array.from({ length: 299 }, (_, i) => ({
+        recordId: f.record.id, eventType: 'award' as const, year: 2021, decidedYear: 2021, batchSeq: i + 2,
+      }))).returning({ id: schema.recordEvent.id, batchSeq: schema.recordEvent.batchSeq })
+      await tx.insert(schema.recordEvidence).values(events.map(event => ({
+        recordEventId: event.id, sourceFile: 'synthetic/notice.pdf', listNo: event.batchSeq,
+      })))
+      for (const event of events) request.operations.push({ ...request.operations[0]!, eventId: event.id })
     })
     const accepted = await f.post('preflight', request)
     expect(accepted.status).toBe(200)

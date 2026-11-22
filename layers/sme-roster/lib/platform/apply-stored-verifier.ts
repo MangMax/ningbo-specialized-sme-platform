@@ -1,5 +1,5 @@
 /** Bounded same-owner authentication only; never used for query membership. */
-import Database from 'better-sqlite3'
+import type Database from 'better-sqlite3'
 import { and, eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { isDeepStrictEqual } from 'node:util'
@@ -26,7 +26,8 @@ export function verifyApplyStored(t:Database.Database,id:number,source:{kind:'co
   if(projection.exactStoredOrigin!=='command_materialized')throw new Error('apply_stored_conflict: command origin')
   const m=applyMaterialization(db,source.input.row,text)
   if(!assignment||assignment.nameRaw!==m.nameRaw||assignment.usccRaw!==m.usccRaw||pair.sourceRelationKey!==m.sourceRelationKey)throw new Error('apply_stored_conflict: revision1/key')
-  const oracle=new Database(':memory:')
+  const Connection = t.constructor as typeof Database
+  const oracle = new Connection(':memory:')
   try{oracle.exec('CREATE TABLE cells(status TEXT,declare_kind TEXT,applied_at TEXT,year INTEGER,title_raw TEXT)');oracle.prepare('INSERT INTO cells VALUES(?,?,?,?,?)').run(m.exactStatus,m.exactDeclareKind,m.exactAppliedAt,m.exactYear,m.exactTitleRaw);expected=rowSnapshot(oracle,'cells','rowid',1)}finally{oracle.close()}
  }else{
   if(!['legacy_source','sealed_snapshot'].includes(projection.exactStoredOrigin??''))throw new Error('apply_stored_conflict: legacy origin')

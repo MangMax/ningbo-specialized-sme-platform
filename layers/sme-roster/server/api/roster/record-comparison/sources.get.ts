@@ -1,7 +1,5 @@
 import { ZodError } from 'zod'
-import { useDb } from '@db'
 import { comparisonSourceCatalogInput } from '#sme-roster/lib/roster/record-comparison'
-import { readRecordComparisonSources } from '#sme-roster/server/utils/record-comparison-read'
 import { readPostgresRecordComparisonSources } from '#sme-roster/server/utils/record-comparison-catalog-postgres'
 import { usePostgresRosterDb } from '#sme-roster/server/utils/postgres-roster-db'
 
@@ -22,7 +20,7 @@ export default defineEventHandler(async event => {
   try {
     const input = comparisonSourceCatalogInput.parse({ kind: query.kind, ids: query.ids === undefined ? undefined : (Array.isArray(query.ids) ? query.ids : [query.ids]).flatMap(value => String(value).split(',')).map(value => /^-?\d+$/.test(value.trim()) ? Number(value.trim()) : NaN), page: query.page === undefined ? undefined : Number(query.page), pageSize: query.pageSize === undefined ? undefined : Number(query.pageSize) })
     const pg = usePostgresRosterDb()
-    return await (pg ? readPostgresRecordComparisonSources(pg, input, controller.signal) : readRecordComparisonSources(useDb(), input, controller.signal))
+    return await readPostgresRecordComparisonSources(pg, input, controller.signal)
   } catch (error) {
     if (error instanceof ZodError) throw createError({ statusCode: 400, statusMessage: error.message })
     throw error

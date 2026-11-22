@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { nativeAppAdapter } from '../../support/native-app'
-import { reserveLoopbackPort } from '../../support/owned-process.mjs'
+import pg from 'pg'
+import { reserveLoopbackPort, spawnCompiledApp, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
 
 const bin = process.env.ROSTER_TEST_POSTGRES_BIN
 
@@ -12,7 +12,9 @@ describe.skipIf(!bin)('PostgreSQL first recognition and ledger years', () => {
   let dir: string
   let data: string
   let started = false
-  let app: ReturnType<typeof nativeAppAdapter>
+  let app: ReturnType<typeof spawnCompiledApp>
+  let postgres: pg.Pool
+  let base: string
   const command = (name: string, args: string[], input?: string) =>
     execFileSync(join(bin!, name), args, { input, stdio: ['pipe', 'pipe', 'pipe'] })
 
@@ -41,22 +43,30 @@ describe.skipIf(!bin)('PostgreSQL first recognition and ledger years', () => {
       INSERT INTO record_evidence VALUES (21,10,'公告.pdf','附件一',6,3), (22,10,'名单.xlsx',NULL,7,2),
         (23,11,'同年后录.pdf',NULL,8,4);
     `)
-    app = nativeAppAdapter({
-      dir, token: 'isolated-recognition-test',
-      launch: ({ cwd, port }) => ({
-        args: [join(cwd, '.output/server/index.mjs')],
-        env: {
-          NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port),
-          NUXT_DB_READONLY: '1', NUXT_POSTGRES_DIRECTORY_URL: url, NUXT_POSTGRES_ROSTER_READ: '1',
-        },
-      }),
+    postgres = new pg.Pool({ connectionString: url })
+    const appPort = await reserveLoopbackPort()
+    base = `http://127.0.0.1:${appPort}`
+    app = spawnCompiledApp(appPort, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        NUXT_DB_READONLY: '1', NUXT_POSTGRES_DIRECTORY_URL: url,
+        NUXT_POSTGRES_LOG_URL: url,
+        NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'),
+      },
     })
-    await app.start()
+    let output = ''
+    for (const stream of [app.stdout, app.stderr]) stream?.on('data', chunk => { output = (output + chunk).slice(-6000) })
+    try {
+      await waitForHttp(base + '/api/jobs/kinds', { child: app, timeoutMs: 10_000 })
+    } catch (cause) {
+      throw new Error(output || 'Roster recognition app did not start', { cause })
+    }
   }, 60_000)
 
   afterAll(async () => {
     try {
-      await app?.close()
+      if (app) await stopOwnedChild(app)
+      await postgres?.end()
     } finally {
       if (started) command('pg_ctl', ['-D', data, '-w', '-m', 'fast', 'stop'])
       if (dir) rmSync(dir, { recursive: true, force: true })
@@ -64,7 +74,7 @@ describe.skipIf(!bin)('PostgreSQL first recognition and ledger years', () => {
   })
 
   async function read(path: string) {
-    const response = await app.request('/api/roster/' + path)
+    const response = await fetch(base + '/api/roster/' + path, { signal: AbortSignal.timeout(5000) })
     expect(response.status, await response.clone().text()).toBe(200)
     return response.json()
   }
@@ -93,5 +103,35 @@ describe.skipIf(!bin)('PostgreSQL first recognition and ledger years', () => {
 
   it('returns distinct ledger event years and earliest recognition years from PostgreSQL', async () => {
     expect(await read('ledger-years')).toEqual({ eventYears: [2019, 2020, 2021, 2022, 2024], firstRecognitionYears: [2020, 2022] })
+  })
+
+  it('serves unrelated requests while PostgreSQL waits to read recognition evidence', async () => {
+    const path = 'recognitions?pageSize=1&title=specialized_sme&status=confirmed'
+    const expected = await read(path)
+    expect(expected.rows).toHaveLength(1)
+
+    const lock = await postgres.connect()
+    let completion: Promise<unknown> | undefined
+    try {
+      const { rows: [holder] } = await lock.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')
+      await lock.query('BEGIN')
+      await lock.query('LOCK TABLE business.record_evidence IN ACCESS EXCLUSIVE MODE')
+      completion = read(path)
+      void completion.catch(() => {})
+      await expect.poll(async () => {
+        const { rows } = await postgres.query<{ waiting: boolean }>(`
+          SELECT EXISTS (
+            SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock'
+              AND $1 = ANY(pg_blocking_pids(pid))
+          ) AS waiting
+        `, [holder!.pid])
+        return rows[0]?.waiting
+      }).toBe(true)
+      const other = await fetch(base + '/api/jobs/kinds', { signal: AbortSignal.timeout(1000) })
+      expect(other.status).toBe(200)
+    } finally {
+      try { await lock.query('ROLLBACK') } finally { lock.release() }
+    }
+    expect(await completion).toEqual(expected)
   })
 })

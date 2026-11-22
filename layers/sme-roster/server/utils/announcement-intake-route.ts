@@ -1,8 +1,8 @@
 import { z } from 'zod'
 import { requireApiToken } from '../../../core/server/utils/api-guard'
 import { EnterpriseKernelError } from '../../../core/server/public'
-import { ImportReceiptError } from './import-receipts'
-import { OfficialFactError } from './official-evidence-plan'
+import { ImportReceiptError } from './import-receipt-model'
+import { OfficialFactError } from './official-evidence-claim-model'
 import { requestLogContext, type LogContext } from '../../../core/lib/logging'
 
 const idSchema = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER)

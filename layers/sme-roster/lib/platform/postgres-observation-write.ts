@@ -3,9 +3,10 @@ import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/postgresql/platform-tables'
 import { platformArchiveValue, platformVersionArchiveRef } from '../../../../db/postgresql/platform-archive-tables'
-import { BUSINESS_STATUS_V2 } from '../../../../db/business-status'
+import { BUSINESS_STATUS_V2 } from '../../../../db/business-status-contract'
 import type { RosterImportRelation } from '../roster-import-client'
 import type { PlatformProjectionResult } from './business-record'
+import { PlatformProjectionError } from './projection-error'
 import { normalizePlatformRelation } from './normalization'
 import { allocatePostgresPlatformAlias, bindPostgresArchive, sealPostgresArchive, writePostgresArchiveValue } from './postgres-archive-write'
 import { encodePlatformExactCell } from './postgres-platform-insert'
@@ -16,7 +17,7 @@ import { parseBusinessProcess, BUSINESS_PROJECTION_RULE } from './business-proje
 import { parseRecognizedRecord, parseRecognizedQualificationFields, parseRecognizedSourceFidelity, RECOGNIZED_PROJECTION_RULE } from './recognized-projection'
 import { planPlatformObservation, canonicalPlatformJson, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE } from './observation-plan'
 import { sourceFieldComparison, sourceValueKind } from './source-extraction'
-import { relationEvidenceColumns } from './relation-evidence-snapshot'
+import { relationEvidenceColumns } from './relation-evidence-fields'
 import { slotFallbackColumns, type SlotRelation } from './reconcile-slot-capture'
 import type { ApplyTargetInput } from './apply-target-writer'
 
@@ -86,7 +87,7 @@ export async function ensurePostgresObservationContent(tx: Tx, source: Source, p
     .where(and(eq(versionTable.recordId, recordId), eq(versionTable.hashAlgorithm, PLATFORM_RAW_HASH_RULE),
       eq(versionTable.contentHash, plan.contentHash)))
   if (version && (version.text !== plan.canonicalRawJson || !version.valid)) {
-    throw new Error('platform_content_hash_conflict')
+    throw new PlatformProjectionError('platform_content_hash_conflict', 'Stored canonical platform evidence disagrees with its content hash')
   }
   let versionId: number
   if (version) {

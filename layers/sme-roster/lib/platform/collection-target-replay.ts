@@ -4,7 +4,8 @@ import { ensureProcessStoredReady } from './process-stored-catalog';
 import { reconcileSlotWriteInstalled,verifyReconcileSlot } from './reconcile-slot-write';
 import { verifyWitnessCollection,verifyWitnessObservation } from './recognized-witness-write';
 import { verifyCandidateObservation } from './candidate-scope-write';
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
+import { sqliteConnection } from './target-connection';
 import { verifyFingerprint,FingerprintVerificationError,withFingerprintVerificationSnapshot } from './fingerprint-verifier';
 import { bootstrapFingerprint } from './fingerprint-bootstrap';
 import { requireCaptureForeignKeys } from './fingerprint-capture';
@@ -30,14 +31,8 @@ import { writeNewCollectionTarget,type NewCollectionTargetCommand } from './coll
 /** Drizzle exposes $client on the database and the same client on a nested session.
  * C's native snapshot/savepoint seams must use that exact connection. */
 function replayConnection(db: object): Database.Database {
-    const direct: unknown = Reflect.get(db, '$client');
-    if (direct instanceof Database)
-        return direct;
-    const session: unknown = Reflect.get(db, 'session');
-    const nested: unknown = session && typeof session === 'object' ? Reflect.get(session, 'client') : null;
-    if (nested instanceof Database)
-        return nested;
-    throw new Error('Replay requires its original SQLite connection');
+    try { return sqliteConnection(db); }
+    catch { throw new Error('Replay requires its original SQLite connection'); }
 }
 function fingerprintFailure(error: unknown): never {
     if (error instanceof FingerprintVerificationError)

@@ -4,21 +4,30 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { initializeDb } from '../../../db/client'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { decisionCommand102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
 
 // Only the framework registration shell is replaced; the exported tool handler,
-// parser, error mapping, output redaction and SQLite remain real.
+// parser, error mapping, output redaction and PostgreSQL remain real.
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
-vi.mock('@db', () => ({ useDb: () => db }))
 const dir = mkdtempSync(join(tmpdir(), 'decision-102-handler-'))
-const db = initializeDb({ create: true,  dbPath: join(dir, 'synthetic.db') })
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let handler: (typeof import('../../../layers/sme-roster/server/mcp/tools/save_difference_decision'))['default']['handler']
 beforeAll(async () => {
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: '', mcpToken: '' }))
   handler = (await import('../../../layers/sme-roster/server/mcp/tools/save_difference_decision')).default.handler
+}, 30_000)
+afterAll(async () => {
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+  rmSync(dir, { recursive: true, force: true })
 })
-afterAll(() => { vi.unstubAllGlobals(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 
 it.each([
   { case: 'maintain-without-reviewed-evidence', action: 'maintain', includeDecision: false },
@@ -35,6 +44,7 @@ it.each([
   const result = await handler({ ...shapeParsed, decision: shapeParsed.decision, reviewedEvidence: shapeParsed.reviewedEvidence }, {} as never) as { isError: boolean; content: Array<{ text: string }> }
   expect(result.isError).toBe(true)
   expect(JSON.parse(result.content[0]!.text)).toEqual({ error: { code: 'invalid_request', message: 'Invalid decision request; see decision-lifecycle contract' } })
-  expect(db.get(sql`select count(*) as n from difference_reason`)).toEqual({ n: 0 })
-  expect(db.get(sql`select count(*) as n from evidence_review_receipt_114`)).toEqual({ n: 0 })
+  const db = usePostgresDirectoryDb()
+  expect((await db.execute(sql`select count(*)::int as n from difference_reason`)).rows).toEqual([{ n: 0 }])
+  expect((await db.execute(sql`select count(*)::int as n from evidence_review_receipt_114`)).rows).toEqual([{ n: 0 }])
 })

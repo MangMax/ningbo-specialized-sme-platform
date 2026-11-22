@@ -49,6 +49,12 @@ test.runIf(Boolean(connection))('loads linked roster and platform evidence with 
         UPDATE platform_collection_condition SET witness_kind='text', witness_value=' 01 '
           WHERE collection_id=41;
       `)
+      sqlite.exec("INSERT INTO import_batch(id,idempotency_key,source_kind,source_identity,status,created_at) VALUES(59,'raw-capture','announcement','fixture','committed','2025-01-01')")
+      sqlite.prepare(`INSERT INTO official_evidence_row_revision(
+        evidence_id,revision,event_id,captured_record_id,captured_enterprise_id,name_raw,uscc_raw,district_raw,
+        source_binding_known,actor,basis,command_kind,import_batch_id,created_at
+      ) VALUES(37,1,29,17,7,?,?,?,0,'{"type":"agent","id":"fixture"}','literal source','import',59,'2025-01-01')`)
+        .run('公布名' + String.fromCharCode(0) + '🙂', ' 原统代 ', null)
       const bytes = Buffer.from('00ff0d0a', 'hex')
       sqlite.prepare("INSERT INTO platform_archive_value(id,storage_class,bytes,byte_length,sha256) VALUES (47,'blob',?,?,?)")
         .run(bytes, bytes.length, createHash('sha256').update(bytes).digest('hex'))
@@ -81,6 +87,12 @@ test.runIf(Boolean(connection))('loads linked roster and platform evidence with 
       FROM ${target}.platform_archive_value a JOIN ${target}.platform_collection_archive_ref r ON a.id=r.archive_id
       JOIN ${target}.platform_collection_condition c ON c.collection_id=r.owner_id`))
       .toBe('41|47|blob|00ff0d0a|text|20303120')
+    const migratedRaw = query(`SELECT json_build_object(
+      'nameRaw', coalesce(name_raw_json::json, to_json(name_raw)),
+      'usccRaw', coalesce(uscc_raw_json::json, to_json(uscc_raw)),
+      'districtRaw', coalesce(district_raw_json::json, to_json(district_raw)))
+      FROM ${target}.official_evidence_row_revision WHERE evidence_id=37 AND revision=1`)
+    expect(JSON.parse(migratedRaw)).toEqual({ nameRaw: '公布名' + String.fromCharCode(0) + '🙂', usccRaw: ' 原统代 ', districtRaw: null })
     expect(query(`SELECT last_value,is_called FROM ${target}.record_evidence_id_seq`)).toBe('71|f')
 
     const rejected = (sql: string, error: string) => {

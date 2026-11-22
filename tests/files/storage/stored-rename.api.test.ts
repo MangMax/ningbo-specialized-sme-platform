@@ -12,7 +12,7 @@ import { handleStoredFilePatchRequest } from '../../../layers/core/server/utils/
 import { renderPdfPages } from '../../../layers/core/server/utils/pdf-pages'
 import { resolveInsideRoot } from '../../../layers/core/server/utils/file-store'
 import { listStoredFiles } from '../../../layers/core/server/utils/stored-files'
-import { registerStoredFile } from '../../../layers/sme-roster/server/modules/sme-roster/file-upload'
+import { registerStoredFile } from '../../../layers/sme-roster/server/modules/sme-roster/file-upload-sqlite'
 import { startHttpFixture, type HttpFixture } from '../../support/http'
 import { minimalPdf } from '../../support/minimal-pdf'
 

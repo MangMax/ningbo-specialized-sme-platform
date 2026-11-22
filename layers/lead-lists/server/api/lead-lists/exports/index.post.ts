@@ -1,8 +1,5 @@
-import { usePostgresLeadDb } from '../../../utils/postgres-versions'
-import { useDb } from '@db'
 import { requestLogContext } from '#core/lib/logging'
 import { requireTaskCenterAccess } from '#core/server/utils/task-center-access'
-import { ensureJobRunnerReady, submitJob } from '#core/server/utils/job-runner'
 import { startPostgresJobs } from '#core/server/public'
 import { LEAD_LIST_EXPORT, leadListExportInput } from '../../../../lib/export-contract'
 
@@ -20,16 +17,9 @@ export default defineEventHandler(async event => {
   const parsed = leadListExportInput.safeParse(await readBody(event))
   if (!parsed.success) throw createError({ statusCode: 400, message: '请提交版本编号和请求 UUID' })
   const input = { kind: LEAD_LIST_EXPORT, params: parsed.data, filesDir: useRuntimeConfig(event).filesDir, logContext: requestLogContext(event) }
-  let task
-  if (usePostgresLeadDb()) {
-    const runtime = startPostgresJobs(input.filesDir)
-    if (!runtime) throw createError({ statusCode: 503, message: '需要启用 PostgreSQL 任务中心' })
-    task = await runtime.runner.submit(input)
-  } else {
-    const db = useDb()
-    ensureJobRunnerReady(db)
-    task = submitJob(db, input)
-  }
+  const runtime = startPostgresJobs(input.filesDir)
+  if (!runtime) throw createError({ statusCode: 503, message: '需要启用 PostgreSQL 任务中心' })
+  const task = await runtime.runner.submit(input)
   setResponseStatus(event, 202)
   setHeader(event, 'location', `/api/jobs/${task.id}`)
   return { jobId: task.id }

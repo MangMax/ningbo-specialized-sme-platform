@@ -1,22 +1,20 @@
-import { platformNormalizationConflict } from '../../lib/platform/normalization';
-/** Native recognition directory reader. */
-import { getTableColumns,and,count,countDistinct,desc,eq,exists,inArray,isNull,max,min,ne,or,sql } from 'drizzle-orm';
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { alias } from 'drizzle-orm/sqlite-core';
-import { groupBy } from 'es-toolkit';
-import type * as legacySchema from '../../../../db/schema';
-import { platformBusinessRecord as b,platformCollection as c,enterprise as e,platformLegacyQueryAlias as qa,platformBusinessRecordVersion as v } from '../../../../db/schema';
-import { normalizeName,normalizeUscc } from '../../lib/domain';
-import { readObservationCorrespondenceRefs } from '../../lib/platform/correspondence-target';
-import type { PlatformFilterOptions } from '../../lib/platform/filter-options';
-import type { PlatformNormalizationConflict } from '../../lib/platform/normalization';
-import { legacyRowTitle,withArchiveProcessFacts,type PlatformObservationFact } from '../../lib/platform/observation-facts';
-import { RECOGNIZED_DIRECTORY_OBSERVATION_LIMIT,RECOGNIZED_DIRECTORY_VERSION_LIMIT,recognizedDirectoryFilterSchema,type RecognizedDirectoryDetail,type RecognizedDirectoryFilter,type RecognizedDirectoryIsolatedRow,type RecognizedDirectoryListResult,type RecognizedDirectoryView } from '../../lib/platform/recognized-directory';
-import { recognizedStoredInstalled } from '../../lib/platform/recognized-stored-catalog';
-import { storedRecognizedProjection as p } from '../../lib/platform/recognized-stored-schema';
-import { sqliteConnection } from '../../lib/platform/target-connection';
-import { platformObservationAssignment as a,platformBusinessObservation as o,platformLegacyRelationAlias as ra,platformQueryTitleScope as scope,targetSchema } from '../../lib/platform/target-schema';
-import { fail,orderedScopes,pageOf } from './platform-business-read';
+import { projectRecognizedObservationFact } from './platform-recognized-projection'
+import { getTableColumns, and, count, countDistinct, desc, eq, exists, inArray, isNull, max, min, ne, or, sql } from 'drizzle-orm'
+import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { alias } from 'drizzle-orm/sqlite-core'
+import { groupBy } from 'es-toolkit'
+import type * as legacySchema from '../../../../db/schema'
+import { platformBusinessRecord as b, platformCollection as c, enterprise as e, platformLegacyQueryAlias as qa, platformBusinessRecordVersion as v } from '../../../../db/schema'
+import { normalizeName, normalizeUscc } from '../../lib/domain'
+import { readObservationCorrespondenceRefs } from '../../lib/platform/correspondence-target'
+import type { PlatformFilterOptions } from '../../lib/platform/filter-options'
+import type { PlatformObservationFact } from '../../lib/platform/observation-facts'
+import { RECOGNIZED_DIRECTORY_OBSERVATION_LIMIT, RECOGNIZED_DIRECTORY_VERSION_LIMIT, recognizedDirectoryFilterSchema, type RecognizedDirectoryDetail, type RecognizedDirectoryFilter, type RecognizedDirectoryIsolatedRow, type RecognizedDirectoryListResult, type RecognizedDirectoryView } from '../../lib/platform/recognized-directory'
+import { recognizedStoredInstalled } from '../../lib/platform/recognized-stored-catalog'
+import { storedRecognizedProjection as p } from '../../lib/platform/recognized-stored-schema'
+import { sqliteConnection } from '../../lib/platform/target-connection'
+import { platformObservationAssignment as a, platformBusinessObservation as o, platformLegacyRelationAlias as ra, platformQueryTitleScope as scope, type targetSchema } from '../../lib/platform/target-schema'
+import { fail, orderedScopes, pageOf } from './platform-business-projection'
 type Db = BetterSQLite3Database<typeof targetSchema> | BetterSQLite3Database<typeof legacySchema>;
 type TargetIsolatedRow = Omit<RecognizedDirectoryIsolatedRow, 'titleRaw'> & {
     titleRaw: unknown;
@@ -152,7 +150,6 @@ export function getTargetRecognizedRecord(db: Db, recordId: number): RecognizedD
             }), counts: { versions: versionTotal, observations: observationTotal, versionsTruncated: versionTotal > versions.length, observationsTruncated: observationTotal > observations.length }, conflicts: summaries(tx, [recordId]).get(recordId)!.conflicts };
     });
 }
-
 /** Recognition content and reconciled observation facts retain their separate owners. */
 export function readTargetRecognizedFacts(db: Db, relationIds: number[]): Map<number, PlatformObservationFact> {
     const result = new Map<number, PlatformObservationFact>();
@@ -175,31 +172,4 @@ export function readTargetRecognizedFacts(db: Db, relationIds: number[]): Map<nu
         return result;
     });
 }
-
-
-export function projectRecognizedObservationFact(row: {
-    relationId: number; source: typeof p.$inferSelect;
-    version: typeof p.$inferSelect | null;
-    originalName: string | null; originalUscc: string | null;
-}): PlatformObservationFact {
-    const source = row.source, version = row.version, typed = version?.versionId != null;
-    const normalized = { province: source.reconciledProvince, status: source.reconciledStatus, batch: source.reconciledBatch, declareKind: source.reconciledDeclareKind, appliedAt: source.reconciledAppliedAt, awardBatchLabel: source.reconciledAwardBatchLabel, year: source.reconciledYear };
-    const comparisons = {
-        province: [source.provinceConflict, source.storedProvince, source.parsedProvince], status: [source.statusConflict, source.storedStatus, source.parsedStatus], batch: [source.batchConflict, source.storedBatch, source.parsedBatch],
-        declareKind: [source.declareKindConflict, source.storedDeclareKind, source.parsedDeclareKind], appliedAt: [source.appliedAtConflict, source.storedAppliedAt, source.parsedAppliedAt], awardBatchLabel: [source.awardBatchLabelConflict, source.storedAwardBatchLabel, source.parsedAwardBatchLabel], year: [source.yearConflict, source.storedYear, source.parsedYear],
-    } satisfies Record<keyof typeof normalized, [number | null, string | number | null, string | number | null]>;
-    const conflicts: PlatformNormalizationConflict[] = (['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'] as const).flatMap(field => {
-        const [conflict, storedValue, rawValue] = comparisons[field];
-        return conflict && storedValue != null && rawValue != null ? [platformNormalizationConflict(field, storedValue, rawValue)] : [];
-    });
-    const title = source.sourceTitleKind === 'text' ? legacyRowTitle({ rdjb: source.sourceTitleText }) : null;
-    return withArchiveProcessFacts({
-        relationId: row.relationId, interface: 'recognized_list', projectionVersionId: typed ? version.versionId : null, projectionRuleVersion: typed ? version.ruleVersion : null,
-        modeledFields: typed ? ['validityDateRaw', 'maintenanceYear', 'maintenanceBatch', 'district', 'awardNote', 'titleRaw', 'nameRaw', 'usccRaw'] : [],
-        ...normalized, titleRaw: typed ? version.titleRaw ?? title : title,
-        nameRaw: typed ? version.nameRaw : row.originalName, usccRaw: typed ? version.usccRaw : row.originalUscc,
-        validityDateRaw: typed ? version.validityDateRaw : null, maintenanceYear: typed ? version.maintenanceYear : null,
-        maintenanceBatch: typed ? version.maintenanceBatch : null, district: typed ? version.district : null, awardNote: typed ? version.awardNote : null,
-        normalizationConflicts: conflicts,
-    }, normalized);
-}
+export { projectRecognizedObservationFact } from './platform-recognized-projection'

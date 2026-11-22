@@ -1,7 +1,7 @@
 import { verifyCandidateObservation } from './candidate-scope-write'
 import { storedProcessProjection } from './process-stored-schema'
 import { reconstructWitnessCollectionSource } from './recognized-witness-write'
-import Database from 'better-sqlite3'
+import type Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
@@ -55,7 +55,8 @@ function verifyCommandInSnapshot(target:Database.Database,predecessor:Database.D
   if(!alias||!queryAlias)throw new Error('Command alias owner missing')
   const bytes=Buffer.from(canonicalPlatformJson({collectionId:input.collectionId,position:input.position,row:input.row,assignment:input.assignment,...(input.batchId===undefined?{}:{batchId:input.batchId})}))
   if(hash(bytes)!==observation.inputFingerprint)throw new Error('Command fingerprint conflict')
-  const scratch=new Database(predecessor.serialize());scratch.pragma('foreign_keys=ON')
+  const Connection = predecessor.constructor as typeof Database
+  const scratch = new Connection(predecessor.serialize());scratch.pragma('foreign_keys=ON')
   try {
     const expected=drizzle(scratch,{schema:s})
     const collection=actual.select().from(s.platformCollection).where(eq(s.platformCollection.id,input.collectionId)).get()

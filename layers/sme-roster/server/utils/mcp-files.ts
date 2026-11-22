@@ -1,4 +1,5 @@
-import { resolveFileRef, type AgentFailure, type FileRefInput, type FileRefOptions } from '../../../core/server/utils/file-agent-reference'
+import { resolveFileRef } from '../../../core/server/utils/file-agent-reference-sqlite'
+import type { AgentFailure, FileRefInput, FileRefOptions } from '../../../core/server/utils/file-agent-reference'
 import { appLog, type LogContext } from '../../../core/lib/logging'
 import { eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'

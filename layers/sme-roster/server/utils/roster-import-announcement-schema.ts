@@ -1,7 +1,8 @@
 import { z } from 'zod'
-import { record, recordEvent, sourceDocument } from '../../../../db/schema'
+import { record, recordEvent } from '../../../../db/postgresql/ledger-tables'
+import { sourceDocument } from '../../../../db/postgresql/official-evidence-tables'
 import { TITLE_ORDER } from '../../lib/labels'
-import { officialPublishedRowSchema } from './official-evidence-plan'
+import { officialPublishedRowSchema } from './official-evidence-claim-model'
 
 // Discovery describes commands; legacy normalization and item errors remain in roster-import.
 export const announcementDiscoverySchema = z.looseObject({

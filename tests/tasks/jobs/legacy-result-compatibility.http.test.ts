@@ -3,19 +3,29 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as h3 from 'h3'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { initializeDb } from '../../../db/client'
-import { __resetJobRunner, clearJobSpecs, registerJob, whenIdle } from '../../../layers/core/server/utils/job-runner'
-import { setJobResult } from '../../../layers/core/server/utils/job-store'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { clearJobSpecs, registerJob } from '../../../layers/core/server/utils/job-spec-registry'
+import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import type { PostgresJobSpec } from '../../../layers/core/server/utils/job-runner-postgres'
+import { currentRosterExportSpec } from '../../../layers/sme-roster/server/utils/jobs/current-roster-export'
+import { observeJobSelects } from './fixtures/query-observation'
 
-const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
-vi.mock('@db', () => ({ useDb: () => active.db }))
-let dir: string, db: ReturnType<typeof initializeDb>, server: ReturnType<typeof createServer>, base: string
+const dir = mkdtempSync(join(tmpdir(), 'jobs-legacy-result-'))
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
+let server: ReturnType<typeof createServer>, base: string
 let release: (() => void) | undefined
+beforeAll(async () => { runtime = await postgresRuntimeFixture({ dir }) })
+afterAll(async () => {
+  runtime?.close()
+  rmSync(dir, { recursive: true, force: true })
+})
 beforeEach(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'main-a9bc-jobs-'))
-  db = initializeDb({ create: true,  dbPath: join(dir, 'synthetic.sqlite') }); active.db = db
-  __resetJobRunner(); clearJobSpecs()
+  runtime.psql(['-c', 'TRUNCATE business.job CASCADE'])
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', runtime.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  clearJobSpecs()
   for (const [key, value] of Object.entries(h3)) vi.stubGlobal(key, value)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-a9bc-key', filesDir: dir, browserTasksEnabled: false }))
   const list = (await import('../../../layers/core/server/api/jobs/index.get')).default
@@ -35,11 +45,28 @@ beforeEach(async () => {
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
 })
 afterEach(async () => {
-  release?.(); await whenIdle(); release = undefined
+  release?.(); release = undefined
+  await stopPostgresJobs()
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
-  __resetJobRunner(); clearJobSpecs(); db.$client.close()
-  rmSync(dir, { recursive: true, force: true }); vi.unstubAllGlobals()
+  clearJobSpecs()
+  await closePostgresDirectoryDb()
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
 })
+
+function registerExecutor(run: PostgresJobSpec['run']) {
+  registerJob({
+    ...currentRosterExportSpec,
+    parse: params => ({ ok: true, params }),
+    postgres: {
+      ...currentRosterExportSpec.postgres,
+      parse: undefined,
+      prepare: undefined,
+      validateSubmission: undefined,
+      run,
+    },
+  })
+}
 const headers = { authorization: 'Bearer synthetic-a9bc-key', 'content-type': 'application/json' }
 async function submit() {
   const response = await fetch(base + '/api/jobs', { method: 'POST', headers,
@@ -50,14 +77,17 @@ async function submit() {
 
 it('composes fresh export artifact availability with full redaction while summary stays body-free', async () => {
   // Public submission persists an executor-produced synthetic receipt. No direct DB seed.
-  registerJob({ kind: 'current-roster-export', status: 'ready', summary: 'synthetic receipt executor',
-    parse: params => ({ ok: true, params }), run: async ctx => ({ result: {
+  registerExecutor(async ctx => ({ result: {
       phase: 'complete', reference: 'synthetic/ordered-result.json', token: 'stored-secret',
       hostPath: '/Users/synthetic/private/file.xlsx', rows: [{ id: 2 }, { id: 1 }],
       artifact: { id: ctx.jobId, filename: 'current-specialized_sme.xlsx', size: 7, sha256: 'a'.repeat(64),
         generatedAt: '2026-10-01T00:00:00Z', expiresAt: '2099-10-01T00:00:00Z', downloadUrl: `/api/job-artifacts/${ctx.jobId}` },
-    } }) })
-  const id = await submit(); await whenIdle()
+  } }))
+  const id = await submit()
+  await vi.waitFor(async () => {
+    const state = await (await fetch(base + '/api/jobs/' + id + '?view=summary')).json()
+    expect(state.state).toBe('done')
+  })
   const response = await fetch(base + '/api/jobs/' + id)
   expect(response.status).toBe(200)
   const full = await response.json()
@@ -66,14 +96,14 @@ it('composes fresh export artifact availability with full redaction while summar
       reference: 'synthetic/ordered-result.json', rows: [{ id: 2 }, { id: 1 }], artifact: { availability: 'missing' } } })
   expect((await (await fetch(base + '/api/jobs?kind=current-roster-export')).json()).rows).toEqual([full])
   expect(await (await fetch(base + '/api/jobs/' + id + '?view=full')).json()).toEqual(full)
-  const prepared = vi.spyOn(db.$client, 'prepare')
+  const observed = observeJobSelects()
   try {
     const summary = await (await fetch(base + '/api/jobs/' + id + '?view=summary')).json()
     expect(summary).toMatchObject({ id, percent: 100, resultSummary: { available: true }, detailUrl: '/api/jobs/' + id })
     expect(summary).not.toHaveProperty('params'); expect(summary).not.toHaveProperty('result')
-    const sql = prepared.mock.calls.map(([q]) => q).join('\n')
+    const sql = observed.queries.map(row => row.sql).join('\n')
     expect(sql).not.toMatch(/select \*|select "params"|select "result"|from "credential/)
-  } finally { prepared.mockRestore() }
+  } finally { observed.close() }
   for (const suffix of ['?view=summary', '?view=full']) {
     expect((await fetch(base + '/api/job-artifacts/' + id + suffix)).status).toBe(401)
     expect((await fetch(base + '/api/job-artifacts/' + id + suffix, { headers })).status).toBe(404)
@@ -85,29 +115,15 @@ it('retains unknown export progress in generic summary and task-center without b
   let started!: () => void
   const running = new Promise<void>(resolve => { started = resolve })
   const blocked = new Promise<void>(resolve => { release = resolve })
-  registerJob({ kind: 'current-roster-export', status: 'ready', summary: 'synthetic checkpoint executor',
-    parse: params => ({ ok: true, params }), run: async ctx => {
-      setJobResult(ctx.db, ctx.jobId, { phase: 'synthetic-unknown-phase'.repeat(4096), token: 'stored-secret', original: 'body-must-stay-out' })
-      started(); await blocked
-      return { result: { phase: 'complete' }, cancelled: ctx.cancelled() }
-    } })
+  registerExecutor(async ctx => {
+    await ctx.checkpoint({ phase: 'synthetic-unknown-phase'.repeat(4096), token: 'stored-secret', original: 'body-must-stay-out' })
+    started(); await blocked
+    return { result: { phase: 'complete' }, cancelled: await ctx.cancelled() }
+  })
   const id = await submit(); await running
   const full = await (await fetch(base + '/api/jobs/' + id)).json()
   expect(full.percent).toBeNull()
-  let largestRead = 0
-  const prepare = db.$client.prepare.bind(db.$client)
-  const observed = vi.spyOn(db.$client, 'prepare').mockImplementation((...args) => {
-    const statement = prepare(...args)
-    for (const method of ['get', 'all'] as const) {
-      const read = statement[method].bind(statement)
-      Object.assign(statement, { [method]: (...params: unknown[]) => {
-        const value = read(...params)
-        largestRead = Math.max(largestRead, Buffer.byteLength(JSON.stringify(value) ?? ''))
-        return value
-      } })
-    }
-    return statement
-  })
+  const observed = observeJobSelects()
   try {
     for (const path of ['/api/jobs/' + id + '?view=summary', '/api/jobs?kind=current-roster-export&view=summary']) {
       const response = await fetch(base + path); expect(response.status).toBe(200)
@@ -115,10 +131,11 @@ it('retains unknown export progress in generic summary and task-center without b
       expect(summary).toMatchObject({ id, state: 'running', percent: null, resultSummary: { available: true } })
       expect(summary).not.toHaveProperty('params'); expect(summary).not.toHaveProperty('result')
     }
-    // A legacy/unrecognized phase may be huge. Only a finite progress discriminator
-    // may cross SQLite; omitting it later from the HTTP JSON is insufficient.
-    expect(largestRead).toBeLessThan(2048)
-  } finally { observed.mockRestore() }
+    // Check the driver response as well as the public summary. The server
+    // transfers a bounded phase discriminator even for very large old inputs.
+    expect(observed.queries).toHaveLength(3)
+    expect(Math.max(...observed.queries.map(row => row.bytes))).toBeLessThan(2048)
+  } finally { observed.close() }
   for (const path of ['/api/task-center?view=summary', '/api/task-center/' + id + '?view=summary']) {
     const read = await fetch(base + path); expect(read.headers.get('cache-control')).toBe('no-store')
     const body = await read.json(), task = body.rows?.[0] ?? body

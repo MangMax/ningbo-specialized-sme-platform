@@ -4,14 +4,25 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { sql } from 'drizzle-orm'
-import { initializeDb, schema } from '../../../db/client'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
+import pg from 'pg'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { differenceReason } from '../../../db/postgresql/roster-selection-tables'
+import { evidenceReviewReceipt114 } from '../../../db/postgresql/evidence-review-tables'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { postgresFixtureRows } from './fixtures/postgres-rows'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'review-108-browser-'))
-const dbPath = join(dir, 'synthetic.db')
-const db = initializeDb({ create: true,  dbPath })
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+let pool: pg.Pool
+let db: NodePgDatabase
+let readFirst: ReturnType<typeof postgresFixtureRows>['readFirst']
+async function seedEnterprise(name: string, usccNorm?: string) {
+  const [row] = await db.insert(enterprise).values({ name, nameNorm: name, usccNorm }).returning()
+  return row!
+}
 const contextPath = '/api/roster/evidence-review/browser-context'
 const commandPath = '/api/roster/evidence-review/browser-commands'
 const externalPath = '/api/roster/decision-lifecycle/commands'
@@ -54,7 +65,8 @@ async function start(env: Record<string, string>): Promise<Server> {
     env: {
       ...process.env,
       NUXT_BUILD_DIR: join(dir, 'build-' + port),
-      NUXT_DB_PATH: dbPath,
+      ...postgres!.env,
+      NUXT_DB_READONLY: '0',
       NUXT_CURATED_PATH: join(dir, 'curated.json'),
       NUXT_FILES_DIR: join(dir, 'files'),
       NUXT_INCOMING_DIR: join(dir, 'incoming'),
@@ -68,39 +80,44 @@ async function start(env: Record<string, string>): Promise<Server> {
   const baseUrl = `http://127.0.0.1:${port}`
   const server: Server = { baseUrl, stop: () => stopOwnedChild(child), output: () => output }
   try {
-    await waitForHttp(baseUrl + '/api/roster/differences', { timeoutMs: 60000, child })
+    await waitForHttp(baseUrl + '/api/health', { timeoutMs: 60000, child })
   } catch (error) {
     await server.stop()
     throw new Error(String(error) + output)
   }
   return server
 }
-function rowCount() {
-  return (db.get(sql`select count(*) as n from difference_reason`) as { n: number }).n
+async function rowCount() {
+  return (await readFirst('select count(*) as n from difference_reason'))!.n
 }
 
 beforeAll(async () => {
+  postgres = await postgresRuntimeFixture({ dir })
+  pool = new pg.Pool({ connectionString: postgres.url, options: '-c search_path=business,public' })
+  db = drizzle({ client: pool })
+  readFirst = postgresFixtureRows(pool).readFirst
   enabled = await start({ NUXT_API_TOKEN: apiToken, })
 }, 120000)
 afterAll(async () => {
-  if (enabled) await enabled.stop()
-  for (const child of children) await stopOwnedChild(child).catch(() => {})
-  rmSync(dir, { recursive: true, force: true })
-})
-afterEach(async () => {
-  // Leave the enabled fixture running; only per-test short-lived servers are stopped.
+  try {
+    if (enabled) await enabled.stop()
+  } finally {
+    for (const child of children) await stopOwnedChild(child).catch(() => {})
+    try { await pool?.end() }
+    finally { postgres?.close(); rmSync(dir, { recursive: true, force: true }) }
+  }
 })
 
 describe("ticket browser review capability", () => {
   it.each(['replace', 'maintain'] as const)('replays original browser null-envelope receipts after supersession: %s', async action => {
-    const enterprise = db.insert(schema.enterprise).values({ name: '原浏览器回执-' + action, nameNorm: '原浏览器回执-' + action }).returning().get()
+    const enterprise = await seedEnterprise('原浏览器回执-' + action)
     const key = 'original-browser-' + action
-    const row = db.insert(schema.differenceReason).values({
+    const [row] = await db.insert(differenceReason).values({
       ...coordinate(enterprise.id), lifecycleAction: 'replace', status: 'needs_review',
-      measureCode: 'manual_review', verificationStatus: 'pending', actor: sql`'null'`,
-      recordedAt: '2026-10-19T00:00:00.000Z',
-    }).returning().get()
-    const body = action === 'replace' ? replace(enterprise.id, key, null) : maintain(enterprise.id, key, row.id)
+      measureCode: 'manual_review', verificationStatus: 'pending', actor: 'null',
+      recordedAt: '2026-10-19T00:00:00.000Z', createdAt: '2026-10-19T00:00:00.000Z',
+    }).returning()
+    const body = action === 'replace' ? replace(enterprise.id, key, null) : maintain(enterprise.id, key, row!.id)
     // Frozen schema order from 4020270's internal browser envelope.
     const normalized = {
       ...coordinate(enterprise.id), action, actor: null, ruleVersion: null,
@@ -110,29 +127,29 @@ describe("ticket browser review capability", () => {
       ...('reviewedEvidence' in body ? { reviewedEvidence: body.reviewedEvidence } : {}),
     }
     const hash = createHash('sha256').update(JSON.stringify(normalized)).digest('hex')
-    const receipt = { versionId: row.id, currentId: row.id, previousId: null, action,
-      recordedAt: row.recordedAt, ...(action === 'maintain' ? { reviewedRevisionId: 0 } : {}) }
+    const receipt = { versionId: row!.id, currentId: row!.id, previousId: null, action,
+      recordedAt: row!.recordedAt, ...(action === 'maintain' ? { reviewedRevisionId: 0 } : {}) }
     if (action === 'replace') {
-      db.run(sql`update difference_reason set idempotency_key=${key},request_hash=${hash} where id=${row.id}`)
+      await pool.query('update difference_reason set idempotency_key=$1, request_hash=$2 where id=$3', [key, hash, row!.id])
     } else {
-      db.insert(schema.evidenceReviewReceipt114).values({ ...coordinate(enterprise.id), idempotencyKey: key, requestHash: hash,
-        kind: action, decisionId: row.id, sourceDecisionId: row.id, reviewedRevisionId: 0,
-        actor: sql`'null'`, basis: body.basis, ruleVersion: null, effectiveAt: body.effectiveAt,
-        response: receipt, recordedAt: row.recordedAt }).run()
+      await db.insert(evidenceReviewReceipt114).values({ ...coordinate(enterprise.id), idempotencyKey: key, requestHash: hash,
+        kind: action, decisionId: row!.id, sourceDecisionId: row!.id, reviewedRevisionId: 0,
+        actor: 'null', basis: body.basis, ruleVersion: null, effectiveAt: body.effectiveAt,
+        response: JSON.stringify(receipt), recordedAt: row!.recordedAt })
     }
-    db.insert(schema.differenceReason).values({ ...coordinate(enterprise.id), lifecycleAction: 'replace', status: 'needs_review',
-      measureCode: 'manual_review', verificationStatus: 'pending', recordedAt: '2026-10-19T01:00:00.000Z' }).run()
-    const before = rowCount()
+    await db.insert(differenceReason).values({ ...coordinate(enterprise.id), lifecycleAction: 'replace', status: 'needs_review',
+      measureCode: 'manual_review', verificationStatus: 'pending', recordedAt: '2026-10-19T01:00:00.000Z', createdAt: '2026-10-19T01:00:00.000Z' })
+    const before = await rowCount()
     const replay = await browserPost(enabled, body)
     expect(replay.status).toBe(200)
     expect(await json(replay)).toEqual(receipt)
     const conflict = await browserPost(enabled, { ...body, basis: 'different request' })
     expect(conflict.status).toBe(409)
     expect(await json(conflict)).toMatchObject({ error: { code: 'idempotency_conflict' } })
-    expect(rowCount()).toBe(before)
+    expect(await rowCount()).toBe(before)
     const stored = action === 'replace'
-      ? db.get(sql`select request_hash as hash from difference_reason where id=${row.id}`)
-      : db.get(sql`select request_hash as hash from evidence_review_receipt_114 where idempotency_key=${key}`)
+      ? await readFirst('select request_hash as hash from difference_reason where id=$1', [row!.id])
+      : await readFirst('select request_hash as hash from evidence_review_receipt_114 where idempotency_key=$1', [key])
     expect(stored).toEqual({ hash })
   })
 
@@ -147,15 +164,15 @@ describe("ticket browser review capability", () => {
   })
 
   it("writes browser maintain and replace with real JSON-null metadata through the single writer", async () => {
-    const enterprise = db.insert(schema.enterprise).values({ name: '浏览器复核主体', nameNorm: '浏览器复核主体', usccNorm: 'BROWSER-108-A' }).returning().get()
+    const enterprise = await seedEnterprise('浏览器复核主体', 'BROWSER-108-A')
     const first = await browserPost(enabled, replace(enterprise.id, 'browser-replace-1', null))
     expect(first.status, await first.clone().text()).toBe(200)
     const replaced = await json(first)
     expect(replaced).toMatchObject({ action: 'replace', versionId: expect.any(Number), currentId: expect.any(Number) })
 
-    const rawDecision = db.get(sql`select actor, rule_version as ruleVersion from difference_reason where id=${replaced.versionId}`) as any
-    expect(JSON.parse(rawDecision.actor)).toBeNull()
-    expect(rawDecision.ruleVersion).toBeNull()
+    const rawDecision = await readFirst('select actor, rule_version as "ruleVersion" from difference_reason where id=$1', [replaced.versionId])
+    expect(JSON.parse(String(rawDecision!.actor))).toBeNull()
+    expect(rawDecision!.ruleVersion).toBeNull()
     // Freeze the original browser null-envelope order independently of the writer.
     // External historical compatibility must not invalidate browser receipts.
     const browserEnvelope = {
@@ -164,7 +181,7 @@ describe("ticket browser review capability", () => {
       basis: '这次证据没有改变原判断，维持并登记复核', effectiveAt: '2026-10-20T00:00:00Z', decision,
     }
     const originalHash = createHash('sha256').update(JSON.stringify(browserEnvelope)).digest('hex')
-    expect(db.get(sql`select request_hash as hash from difference_reason where id=${replaced.versionId}`)).toEqual({ hash: originalHash })
+    expect(await readFirst('select request_hash as hash from difference_reason where id=$1', [replaced.versionId])).toEqual({ hash: originalHash })
     const replacementReplay = await browserPost(enabled, replace(enterprise.id, 'browser-replace-1', null))
     expect(replacementReplay.status).toBe(200)
     expect(await json(replacementReplay)).toEqual(replaced)
@@ -176,8 +193,11 @@ describe("ticket browser review capability", () => {
     expect(maintained.status, await maintained.clone().text()).toBe(200)
     const receipt = await json(maintained)
     expect(receipt).toMatchObject({ versionId: replaced.versionId, currentId: replaced.versionId, action: 'maintain', reviewedRevisionId: 0 })
-    const rawReceipt = db.get(sql`select actor, actor is not null as actorNotNull, json_type(actor) as actorType, rule_version as ruleVersion from evidence_review_receipt_114 where idempotency_key='browser-maintain-1'`) as any
-    expect(rawReceipt).toMatchObject({ actor: 'null', actorNotNull: 1, actorType: 'null', ruleVersion: null })
+    const rawReceipt = await readFirst(
+      'select actor, actor is not null as "actorNotNull", json_typeof(actor::json) as "actorType", rule_version as "ruleVersion" from evidence_review_receipt_114 where idempotency_key=$1',
+      ['browser-maintain-1'],
+    )
+    expect(rawReceipt).toMatchObject({ actor: 'null', actorNotNull: true, actorType: 'null', ruleVersion: null })
 
     const list = await json(await fetch(enabled.baseUrl + '/api/roster/evidence-impacts?' + new URLSearchParams({ enterpriseId: String(enterprise.id), state: 'reviewed', view: 'current' })))
     expect(list.rows).toHaveLength(1)
@@ -199,7 +219,7 @@ describe("ticket browser review capability", () => {
   })
 
   it('keeps concurrent replace resolution and idempotent replay through the browser route', async () => {
-    const enterprise = db.insert(schema.enterprise).values({ name: '浏览器并发主体', nameNorm: '浏览器并发主体', usccNorm: 'BROWSER-108-B' }).returning().get()
+    const enterprise = await seedEnterprise('浏览器并发主体', 'BROWSER-108-B')
     const base = await json(await browserPost(enabled, replace(enterprise.id, 'browser-race-base', null)))
     const a = replace(enterprise.id, 'browser-race-a', base.versionId)
     const b = replace(enterprise.id, 'browser-race-b', base.versionId)
@@ -212,15 +232,15 @@ describe("ticket browser review capability", () => {
     const winningBody = raced[0]!.status === 200 ? a : b
     expect(await json(await browserPost(enabled, winningBody))).toEqual(won)
     expect((await browserPost(enabled, { ...winningBody, basis: '同一提交标识但不同请求' })).status).toBe(409)
-    const raw = db.get(sql`select actor, rule_version as ruleVersion from difference_reason where id=${won.versionId}`) as any
-    expect(JSON.parse(raw.actor)).toBeNull()
-    expect(raw.ruleVersion).toBeNull()
+    const raw = await readFirst('select actor, rule_version as "ruleVersion" from difference_reason where id=$1', [won.versionId])
+    expect(JSON.parse(String(raw!.actor))).toBeNull()
+    expect(raw!.ruleVersion).toBeNull()
   })
 
   it('rejects missing, cross-site, mismatched origins and non-JSON bodies before any write', async () => {
-    const enterprise = db.insert(schema.enterprise).values({ name: '浏览器闸门主体', nameNorm: '浏览器闸门主体', usccNorm: 'BROWSER-108-C' }).returning().get()
+    const enterprise = await seedEnterprise('浏览器闸门主体', 'BROWSER-108-C')
     const body = replace(enterprise.id, 'browser-gate-1', null)
-    const before = rowCount()
+    const before = await rowCount()
     const noOrigin = await fetch(enabled.baseUrl + commandPath, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
     expect(noOrigin.status).toBe(403)
     expect(await json(noOrigin)).toMatchObject({ error: { code: 'origin_required' } })
@@ -241,13 +261,13 @@ describe("ticket browser review capability", () => {
     const badContent = await browserPost(enabled, body, { 'content-type': 'text/plain' })
     expect(badContent.status).toBe(415)
     expect(await json(badContent)).toMatchObject({ error: { code: 'unsupported_media_type' } })
-    expect(rowCount()).toBe(before)
+    expect(await rowCount()).toBe(before)
   })
 
   it('rejects actor, ruleVersion, withdraw and unknown fields with a strict schema', async () => {
-    const enterprise = db.insert(schema.enterprise).values({ name: '浏览器字段主体', nameNorm: '浏览器字段主体', usccNorm: 'BROWSER-108-D' }).returning().get()
+    const enterprise = await seedEnterprise('浏览器字段主体', 'BROWSER-108-D')
     const body = replace(enterprise.id, 'browser-fields-base', null)
-    const before = rowCount()
+    const before = await rowCount()
     for (const spoof of [
       { ...body, actor: { type: 'agent', id: 'forged' } },
       { ...body, ruleVersion: 'forged-version' },
@@ -259,18 +279,18 @@ describe("ticket browser review capability", () => {
       expect(response.status, JSON.stringify(spoof)).toBe(400)
       expect(await json(response)).toMatchObject({ error: { code: 'invalid_request' } })
     }
-    expect(rowCount()).toBe(before)
+    expect(await rowCount()).toBe(before)
   })
 
   it('ignores spoofed forwarded host headers but still requires an exact Origin', async () => {
-    const enterprise = db.insert(schema.enterprise).values({ name: '浏览器转发头主体', nameNorm: '浏览器转发头主体', usccNorm: 'BROWSER-108-E' }).returning().get()
+    const enterprise = await seedEnterprise('浏览器转发头主体', 'BROWSER-108-E')
     const first = await json(await browserPost(enabled, replace(enterprise.id, 'browser-forward-base', null)))
     const response = await browserPost(enabled, maintain(enterprise.id, 'browser-forward-maintain', first.versionId), { 'x-forwarded-host': 'evil.example', 'x-forwarded-proto': 'https' })
     expect(response.status, (await response.clone().text()) + '\n' + enabled.output().slice(-3000)).toBe(200)
   })
 
   it('keeps the external HTTP/MCP identity contract unchanged', async () => {
-    const enterprise = db.insert(schema.enterprise).values({ name: '外部契约主体', nameNorm: '外部契约主体', usccNorm: 'BROWSER-108-F' }).returning().get()
+    const enterprise = await seedEnterprise('外部契约主体', 'BROWSER-108-F')
     const input = { ...replace(enterprise.id, 'external-identity-1', null), actor: { type: 'agent', id: 'synthetic-agent' }, ruleVersion: 'manual-rule-1' }
     const external = await fetch(enabled.baseUrl + externalPath, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${apiToken}` }, body: JSON.stringify(input) })
     expect(external.status).toBe(200)

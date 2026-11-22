@@ -5,15 +5,12 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { RosterImportItemResult, RosterImportRequest } from '../../lib/roster-import-client'
 import { advancePostgresOfficialEventRevision } from './evidence-revision-postgres'
 import { lockPostgresFilePaths, refreshPostgresDerivedFileParts } from './file-parts-postgres'
-import {
-  officialAppendSchema, officialFactFailure, officialPlanDigest, readOfficialFile, type OfficialClaimChange,
-  type OfficialCoordinate, type OfficialEvidenceLocatorMove,
-} from './official-evidence-plan'
+import { officialAppendSchema, officialFactFailure, officialPlanDigest, readOfficialFile, type OfficialClaimChange, type OfficialCoordinate, type OfficialEvidenceLocatorMove } from './official-evidence-claim-model'
 import { planPostgresOfficialEvidenceChanges } from './official-evidence-plan-postgres'
 import { writePostgresOfficialPublishedRow } from './official-evidence-write-postgres'
-import { EvidenceCorrectionError, evidenceCorrectionRequestSchema } from './roster-evidence-correction'
+import { EvidenceCorrectionError, evidenceCorrectionRequestSchema } from './roster-evidence-correction-model'
 import { planPostgresEvidenceCorrectionTargets, writePostgresEvidenceCorrection } from './roster-evidence-correction-postgres'
-import { hasOfficialFactInput } from './roster-import'
+import { hasOfficialFactInput } from './roster-import-model'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]

@@ -2,7 +2,7 @@ import { readRuntimeEnterpriseFacts, preflightRuntimeEnterpriseFact, commitRunti
 import { getRouterParam, readBody, setHeader } from 'h3'
 import { semanticRouteHandler } from '../../../core/server/utils/core-route'
 import { requireApiToken } from '../../../core/server/utils/api-guard'
-import { EnterpriseProfileError } from './enterprise-profile'
+import { EnterpriseProfileError } from './enterprise-profile-model'
 
 export function enterpriseFactsRoute(action: 'get' | 'preflight' | 'commit') {
   return semanticRouteHandler(`maintenance.enterprise_facts.${action}`, async event => {

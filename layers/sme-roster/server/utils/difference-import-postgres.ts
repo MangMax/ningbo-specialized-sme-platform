@@ -1,6 +1,7 @@
 import { and, eq, exists, gte, isNotNull, notExists, or, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { differenceReason } from '../../../../db/schema'
+import { differenceMeasures, differenceReasons, differenceStatuses } from '../../../../db/difference-codes'
+import { COMPARISON_DIRECTIONS } from '../../lib/comparison-model'
 import { enterprise, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
 import { differenceReason as d } from '../../../../db/postgresql/roster-selection-tables'
 import { evidenceReviewReceipt114 as receipt } from '../../../../db/postgresql/evidence-review-tables'
@@ -105,17 +106,17 @@ async function planDifference(tx: Tx, difference: RosterImportDifference, index:
     item: { ok: false, kind: 'difference', ref, error: { code, message, field } },
   })
   if (!titleCodes.has(String(difference?.titleCode))) return reject('title_unknown', `称号不在字典内：${String(difference?.titleCode)}`, 'titleCode')
-  if (!differenceReason.direction.enumValues.includes(difference.direction)) {
+  if (!COMPARISON_DIRECTIONS.includes(difference.direction)) {
     return reject('direction_unknown', 'direction 必须是 missing_in_miit / extra_in_miit', 'direction')
   }
-  if (difference.status != null && !differenceReason.status.enumValues.includes(difference.status)) {
+  if (difference.status != null && !differenceStatuses.includes(difference.status)) {
     return reject('difference_status_unknown', `status 不在状态机内：${difference.status}`, 'status')
   }
-  const reasonCode = differenceReason.reasonCode.enumValues.find(code => code === difference.reasonCode) ?? null
+  const reasonCode = differenceReasons.find(code => code === difference.reasonCode) ?? null
   if (difference.reasonCode != null && reasonCode === null) {
     return reject('reason_unknown', `reasonCode 不在字典内：${difference.reasonCode}`, 'reasonCode')
   }
-  const measureCode = differenceReason.measureCode.enumValues.find(code => code === difference.measureCode) ?? null
+  const measureCode = differenceMeasures.find(code => code === difference.measureCode) ?? null
   if (difference.measureCode != null && measureCode === null) {
     return reject('measure_unknown', `measureCode 不在字典内：${difference.measureCode}`, 'measureCode')
   }

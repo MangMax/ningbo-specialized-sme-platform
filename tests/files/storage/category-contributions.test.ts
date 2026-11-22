@@ -5,16 +5,28 @@ import { join } from 'node:path'
 import * as h3 from 'h3'
 import { inArray, sql } from 'drizzle-orm'
 import { initializeDb } from '../../../db/client'
-import { rosterFileClassification, storedFile } from '../../../db/schema'
+import { storedFile } from '../../../db/schema'
 import { createFileStore, sha256Of, type FileCategoryServer, type FileStoreDb, type FileQueryFilters, type RegistrationWriter } from '../../../layers/core/server/utils/file-store'
 import { extendFileOpenApi } from '../../../layers/core/server/utils/file-openapi'
+import { rosterFileSqliteCategory } from '../../../layers/sme-roster/server/modules/sme-roster/files-sqlite'
 import { rosterFileServerCategory } from '../../../layers/sme-roster/server/modules/sme-roster/files'
 import { createTus, TUS_PATH } from '../../../layers/core/server/utils/tus'
 import { libraryFileServerCategory } from '../../../layers/core/server/utils/library-file-category'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { lockOrRegisterPostgresFile } from '../../../layers/core/server/utils/file-store-postgres'
+import { storedFile as postgresFile } from '../../../db/postgresql/file-tables'
+import { rosterFileClassification as postgresClassification } from '../../../db/postgresql/roster-file-tables'
+import { businessSchema } from '../../../db/postgresql/business-schema'
+import { bigint, text } from 'drizzle-orm/pg-core'
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { usePostgresDirectoryDb, closePostgresDirectoryDb } from '../../../db/postgresql/client'
 
 let dir: string
 beforeAll(() => { dir = mkdtempSync(join(tmpdir(), 'file-categories-')) })
-afterAll(() => rmSync(dir, { recursive: true, force: true }))
+afterAll(() => {
+  try { runtime?.close() }
+  finally { rmSync(dir, { recursive: true, force: true }) }
+})
 
 const isCatalogPath = (path: string) => path.startsWith('catalog/')
 const catalog = {
@@ -70,7 +82,44 @@ const catalog = {
     },
   },
 }
-const categories = [rosterFileServerCategory, catalog] as const
+const collectionFile = businessSchema.table('collection_file', {
+  fileId: bigint('file_id', { mode: 'number' }).primaryKey(),
+  collection: text().notNull(),
+})
+const postgresCatalog = {
+  ...catalog,
+  postgres: {
+    async readFields(db: NodePgDatabase, ids: readonly number[]) {
+      const rows = await db.select().from(collectionFile).where(inArray(collectionFile.fileId, [...ids]))
+      return new Map(rows.map(({ fileId, collection }) => [fileId, { collection }]))
+    },
+    constraint(filters: FileQueryFilters) {
+      if (!filters.collection?.length) return
+      // Use a relational membership test so multiple category filters intersect.
+      return sql`exists (select 1 from ${collectionFile} where ${collectionFile.fileId} = ${postgresFile.id} and ${inArray(collectionFile.collection, [...filters.collection])})`
+    },
+  },
+  registration: {
+    ...catalog.registration,
+    preparePostgres(input: Record<string, unknown>): RegistrationWriter<NodePgDatabase> {
+      const relPath = String(input.relPath)
+      if (!/^catalog\/[^/]+\.pdf ?$/.test(relPath) || Object.keys(input).length !== 1) {
+        throw h3.createError({ statusCode: 400 })
+      }
+      return async (db, { filename, abs, bytes }) => {
+        const sha256 = await sha256Of(abs)
+        return db.transaction(async tx => {
+          const result = await lockOrRegisterPostgresFile(tx, { relPath, filename, ext: 'pdf', bytes, sha256 })
+          if (result.created) await tx.insert(collectionFile).values({ fileId: result.row.id, collection: 'local' })
+          return { ...result, row: { ...result.row, collection: 'local' } }
+        })
+      }
+    },
+  },
+}
+const postgresCategories = [rosterFileServerCategory, postgresCatalog] as const
+
+const categories = [rosterFileSqliteCategory, catalog] as const
 
 function createDb(name: string) {
   const db = initializeDb({ create: true, dbPath: join(dir, name + '.sqlite') })
@@ -113,18 +162,22 @@ it('composes a second registered category for backfill, fields, filters, placeme
   expect(files.listStoredFiles(db, { collection: ['remote', 'local'] }).total).toBe(1)
 })
 
-async function uploadAndRegisterFixture(name: string, installed: readonly FileCategoryServer[] = categories, db = createDb(name)) {
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+const live = it.skipIf(!process.env.ROSTER_TEST_POSTGRES_BIN)
+
+async function uploadAndRegisterFixture(name: string, installed: readonly FileCategoryServer[] = postgresCategories) {
   const filesDir = join(dir, name)
+  runtime ??= await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', runtime.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  runtime.psql(['-c', 'TRUNCATE business.stored_file CASCADE; DROP TABLE IF EXISTS business.collection_file; CREATE TABLE business.collection_file (file_id bigint PRIMARY KEY, collection text NOT NULL)'])
+  const db = usePostgresDirectoryDb()
+  const registry = await import('../../../layers/core/server/utils/file-category-runtime')
+  registry.configurePostgresFileCategories(installed)
   const tus = createTus({
     filesDir, incomingDir: join(dir, name + '-incoming'), allowedOrigins: [],
-    landing: createFileStore(installed).resolveUploadPlacement,
+    landing: metadata => registry.postgresFileCategoryRules.resolveUploadPlacement(metadata, { postgres: true }),
   })
-  // Install the second module at the application composition boundary. HTTP handlers,
-  // tus protocol, file-store dispatch and SQLite run unchanged.
-  vi.resetModules()
-  const { configureFileStore } = await import('../../../server/file-store')
-  configureFileStore(installed)
-  vi.doMock('@db', () => ({ useDb: () => db }))
   for (const key of ['defineEventHandler', 'createError', 'readBody', 'setResponseStatus', 'getQuery', 'setHeader', 'getRouterParam'] as const) {
     vi.stubGlobal(key, h3[key])
   }
@@ -181,13 +234,14 @@ async function uploadAndRegisterFixture(name: string, installed: readonly FileCa
   }
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await closePostgresDirectoryDb()
+  vi.unstubAllEnvs()
   vi.unstubAllGlobals()
-  vi.doUnmock('@db')
 })
 
-it('uploads ordinary files without roster classification and lists shared originals by scope', async () => {
-  const { upload, request, db } = await uploadAndRegisterFixture('library-and-roster', [libraryFileServerCategory, ...categories])
+live('uploads ordinary files without roster classification and lists shared originals by scope', async () => {
+  const { upload, request, db } = await uploadAndRegisterFixture('library-and-roster', [libraryFileServerCategory, ...postgresCategories])
   const plain = await upload({ fileCategory: 'core', filename: '入库培育附件.txt' }, 'abc')
   expect(plain).toBe('uploads/入库培育附件.txt')
   const original = await request('/api/files/register', { fileCategory: 'core', relPath: plain })
@@ -209,40 +263,39 @@ it('uploads ordinary files without roster classification and lists shared origin
     status: 200, body: { total: 1, rows: [{ id: registeredNotice.body.id, source: 'jxj', year: 2024, parts: [] }] },
   })
   expect(await request('/api/sme-roster/files?q=入库培育附件')).toEqual({ status: 200, body: { total: 0, rows: [] } })
-  expect(db.select({ id: rosterFileClassification.fileId }).from(rosterFileClassification).all()).toEqual([{ id: registeredNotice.body.id }])
-})
+  expect(await db.select({ id: postgresClassification.fileId }).from(postgresClassification)).toEqual([{ id: registeredNotice.body.id }])
+}, 30_000)
 
-function expectNoRegistrationRows(db: FileStoreDb) {
-  expect(db.select().from(storedFile).all()).toEqual([])
-  expect(db.select().from(rosterFileClassification).all()).toEqual([])
-  expect(db.all(sql`select * from collection_file`)).toEqual([])
+async function expectNoRegistrationRows(db: NodePgDatabase) {
+  expect(await db.select().from(postgresFile)).toEqual([])
+  expect(await db.select().from(postgresClassification)).toEqual([])
+  expect(await db.select().from(collectionFile)).toEqual([])
 }
 
-it('rejects a category with a placement and writer but no path routing declaration', async () => {
+live('rejects a category with a placement and writer but no path routing declaration', async () => {
   const name = 'no-matcher'
-  const db = createDb(name)
-  const registration = { ...catalog.registration }
+  const registration = { ...postgresCatalog.registration }
   // Simulate a declaration that reaches composition without static type checking.
   Reflect.deleteProperty(registration, 'matchesPath')
   try {
     const attempt = async () => {
       const { upload, request } = await uploadAndRegisterFixture(name, [
-        rosterFileServerCategory, { ...catalog, registration },
-      ], db)
+        rosterFileServerCategory, { ...postgresCatalog, registration },
+      ])
       const relPath = await upload({ fileCategory: 'catalog', filename: 'guide.pdf' })
       expect(relPath).toBe('catalog/guide.pdf')
       return request('/api/files/register', { relPath })
     }
     await expect(attempt()).rejects.toThrow('catalog: registration requires matchesPath')
-    expectNoRegistrationRows(db)
+    await expectNoRegistrationRows(usePostgresDirectoryDb())
   } finally {
-    db.$client.close()
+    await closePostgresDirectoryDb()
   }
 })
 
-it('rejects overlapping registration path claims without choosing a writer', async () => {
+live('rejects overlapping registration path claims without choosing a writer', async () => {
   const { db, uploadResponse, request } = await uploadAndRegisterFixture('ambiguous', [
-    ...categories, { ...catalog, id: 'other-catalog' },
+    ...postgresCategories, { ...postgresCatalog, id: 'other-catalog' },
   ])
   try {
     const upload = await uploadResponse({ fileCategory: 'catalog', filename: 'guide.pdf' })
@@ -252,16 +305,16 @@ it('rejects overlapping registration path claims without choosing a writer', asy
     expect((await request('/api/files/register', { relPath })).status).toBe(400)
     expect((await request('/api/files/register', { relPath, fileCategory: 'catalog' })).status).toBe(400)
     expect(await request('/api/files')).toMatchObject({ status: 200, body: { total: 0, rows: [] } })
-    expectNoRegistrationRows(db)
+    await expectNoRegistrationRows(db)
   } finally {
-    db.$client.close()
+    await closePostgresDirectoryDb()
   }
 })
 
-it('rejects a collision suffix that would route the landed file to a different writer', async () => {
+live('rejects a collision suffix that would route the landed file to a different writer', async () => {
   const { db, upload, uploadResponse } = await uploadAndRegisterFixture('collision', [
     rosterFileServerCategory,
-    { ...catalog, registration: { ...catalog.registration, matchesPath: path => path === 'catalog/guide.pdf' } },
+    { ...postgresCatalog, registration: { ...postgresCatalog.registration, matchesPath: path => path === 'catalog/guide.pdf' } },
   ])
   try {
     expect(await upload({ fileCategory: 'catalog', filename: 'guide.pdf' })).toBe('catalog/guide.pdf')
@@ -270,13 +323,13 @@ it('rejects a collision suffix that would route the landed file to a different w
     expect(second.headers.get('X-Upload-Path')).toBeNull()
     expect(await second.text()).toContain('上传分类与实际落位不符')
     expect(readdirSync(join(dir, 'collision', 'catalog'))).toEqual(['guide.pdf'])
-    expectNoRegistrationRows(db)
+    await expectNoRegistrationRows(db)
   } finally {
-    db.$client.close()
+    await closePostgresDirectoryDb()
   }
 })
 
-it.each([true, false])('registers only the catalog classification after tus upload (explicit selector: %s)', async explicit => {
+live.each([true, false])('registers only the catalog classification after tus upload (explicit selector: %s)', async explicit => {
   const { db, upload, request } = await uploadAndRegisterFixture(explicit ? 'explicit' : 'implicit')
   try {
     const relPath = await upload({ fileCategory: 'catalog', filename: 'guide.pdf' })
@@ -290,16 +343,16 @@ it.each([true, false])('registers only the catalog classification after tus uplo
       collection: 'local',
     }
     expect(registered.body).toMatchObject(file)
-    expect(db.select().from(rosterFileClassification).all()).toEqual([])
+    expect(await db.select().from(postgresClassification)).toEqual([])
     expect(await request('/api/files?collection=local')).toMatchObject({ status: 200, body: { total: 1, rows: [file] } })
     expect(await request('/api/files?categoryState=unset')).toMatchObject({ status: 200, body: { total: 0, rows: [] } })
     expect(await request(`/api/files/${file.id}/maintenance`)).toMatchObject({ status: 200, body: { file } })
   } finally {
-    db.$client.close()
+    await closePostgresDirectoryDb()
   }
 })
 
-it.each([true, false])('registers the exact landed path and bytes (explicit selector: %s)', async explicit => {
+live.each([true, false])('registers the exact landed path and bytes (explicit selector: %s)', async explicit => {
   const { db, upload, request } = await uploadAndRegisterFixture(`exact-path-${explicit}`)
   try {
     const sibling = await upload({ fileCategory: 'catalog', filename: 'guide.pdf' })
@@ -311,18 +364,18 @@ it.each([true, false])('registers the exact landed path and bytes (explicit sele
       status: 201,
       body: { relPath, filename: 'guide.pdf ', sha256: '3608bca1e44ea6c4d268eb6db02260269892c0b42b86bbf1e77a6fa16c3c9282' },
     })
-    expect(db.select({ relPath: storedFile.relPath }).from(storedFile).all()).toEqual([{ relPath }])
+    expect(await db.select({ relPath: postgresFile.relPath }).from(postgresFile)).toEqual([{ relPath }])
   } finally {
-    db.$client.close()
+    await closePostgresDirectoryDb()
   }
 })
 
-it.each([true, false])('rejects catalog admission before either writer persists (explicit selector: %s)', async explicit => {
+live.each([true, false])('rejects catalog admission before either writer persists (explicit selector: %s)', async explicit => {
   const name = explicit ? 'denied-explicit' : 'denied-implicit'
   const { db, errors, upload, request } = await uploadAndRegisterFixture(name, [
     rosterFileServerCategory,
     {
-      ...catalog,
+      ...postgresCatalog,
       admission: (path, siblings) => path === 'catalog/guide.pdf' && siblings?.has('exclusion.pdf')
         ? { inScope: false, reason: 'catalog-denied', detail: 'catalog exclusion' }
         : { inScope: true, reason: 'in-scope', detail: 'catalog eligible' },
@@ -338,13 +391,13 @@ it.each([true, false])('rejects catalog admission before either writer persists 
     })
     expect(errors).toEqual(['catalog exclusion'])
     expect(await request('/api/files')).toMatchObject({ status: 200, body: { total: 0, rows: [] } })
-    expectNoRegistrationRows(db)
+    await expectNoRegistrationRows(db)
   } finally {
-    db.$client.close()
+    await closePostgresDirectoryDb()
   }
 })
 
-it.each([
+live.each([
   ['入库培育.pdf', null, 'nurture', '文件名含「入库培育」—— 培育对象不构成称号,按 lib/file-store-scope.ts 排除'],
   ['名单.doc', '名单.docx', 'duplicate-doc', '同目录已有同名 .docx(可预览的转出件)—— 重复的旧版 .doc 不入库'],
   ['识别.docx', '识别.pdf', 'human-ocr-docx', '同目录已有同名 .pdf —— 该 .docx 是人工 OCR 产物,PDF 才是权威原件'],
@@ -357,15 +410,15 @@ it.each([
     for (const selector of [{}, { fileCategory: 'sme-roster' }]) {
       const result = await request('/api/files/register', { relPath, ...layout, ...selector })
       expect(result).toMatchObject({ status: 400, body: { data: { reason } } })
-      expectNoRegistrationRows(db)
+      await expectNoRegistrationRows(db)
     }
     expect(errors).toEqual([detail, detail])
   } finally {
-    db.$client.close()
+    await closePostgresDirectoryDb()
   }
 })
 
-it('rejects unknown and mismatched selectors and preserves legacy no-selector registration', async () => {
+live('rejects unknown and mismatched selectors and preserves legacy no-selector registration', async () => {
   const { db, upload, request } = await uploadAndRegisterFixture('legacy')
   try {
     const relPath = await upload({ fileCategory: 'catalog', filename: 'guide.pdf' })
@@ -385,6 +438,6 @@ it('rejects unknown and mismatched selectors and preserves legacy no-selector re
     expect(await request('/api/files/register', input)).toMatchObject({ status: 200, body: { id: result.body.id } })
     expect(await request('/api/files?collection=local')).toMatchObject({ status: 200, body: { total: 0, rows: [] } })
   } finally {
-    db.$client.close()
+    await closePostgresDirectoryDb()
   }
 })

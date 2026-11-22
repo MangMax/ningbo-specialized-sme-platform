@@ -6,10 +6,10 @@ import { platformBusinessObservation as observation, platformCollection as colle
   platformCollectionPage as page, platformCollectionUnfinished as uncollected, platformLegacyQueryAlias as legacy,
   platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { normalizeUscc } from '../domain'
-import { projectDifferenceCollectionScope, type DifferenceCollectionScopeRows } from '../platform/difference-sources'
+import { projectDifferenceCollectionScope, type DifferenceCollectionScopeRows } from '../platform/difference-collection-scope'
 import { TITLE_RDJB_CODES } from '../platform/recognized-evidence'
 import { qualificationUsccCandidate } from './platform-qualification-postgres'
-import { projectQueryCoverage } from './query-assessment'
+import { projectQueryCoverage } from './query-assessment-projection'
 
 type ScopeReader = Pick<NodePgDatabase, 'select'>
 type Reader = Pick<NodePgDatabase, '$with' | 'with' | 'select' | 'selectDistinct'>

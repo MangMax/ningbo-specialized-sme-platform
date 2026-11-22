@@ -4,7 +4,7 @@ import { platformCollection as collection, platformLegacyQueryAlias as queryAlia
 import { platformCollectionArchiveRef as archive } from '../../../../db/postgresql/platform-archive-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { getPostgresComparison } from '../../lib/comparison'
+import { getPostgresComparison } from '../../lib/comparison-heads-postgres'
 import type { LegacySlotCollection } from '../../lib/platform/client'
 import type { ReconcileQueryEvidence } from '../../lib/platform/reconcile'
 import { snapshotStoredReplayInput } from '../../lib/platform/reconcile-replay-input'
@@ -66,7 +66,7 @@ async function readSlot(tx: Tx, selected: SelectedSlot, cutoffIso: string): Prom
   }
 }
 
-export function runPostgresPlatformReconcile(db: NodePgDatabase, options: Omit<ReconcileRunOptions,'db'|'targetSlots'|'writer'>) {
+export function runPostgresPlatformReconcile(db: NodePgDatabase, options: ReconcileRunOptions) {
   return runPlatformReconcileWithStore(options,{
     prepare: (filter,cutoffIso)=>db.transaction(async tx=>{
       const directions = filter.directions?.length ? filter.directions : [undefined]

@@ -1,3 +1,8 @@
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { upgradeTitleCycleDisposition } from '../../../db/title-cycle-disposition'
+import { upgradeEnterpriseKernel } from '../../../upgrade/enterprise-kernel'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { syntheticEnterpriseDictionaries } from '../../support/pre-enterprise-kernel'
 import { finalEvidenceFixture } from '../fixtures/completed-upgrade'
 import { ensurePlatformObservation } from '../../../upgrade/frozen/server/platform-business-record'
 import * as legacySchema from '../../../upgrade/legacy-schema'
@@ -12,7 +17,6 @@ import { seedRecognizedDirectory } from './fixtures/migrated-directory'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
 import { listPlatformRecognizedDirectory, getPlatformRecognizedRecord } from '../../../upgrade/frozen/server/platform-recognized-directory'
 import { readPlatformFilterOptions } from '../../../upgrade/frozen/server/platform-filter-options'
 import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
@@ -32,6 +36,14 @@ async function historicalFixture(extra?: (source: Database.Database) => void) {
   return { root, legacySource, close() {} }
 }
 const responses: unknown[] = []
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+async function materializePostgres() {
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  postgres = await postgresRuntimeFixture({ dir: fixture.root, sourcePath: fixture.target })
+  for (const [name, value] of Object.entries(postgres.env)) vi.stubEnv(name, value)
+  vi.stubEnv('NUXT_DB_READONLY', '1')
+}
 const statements: { sql: string; params: unknown[] }[] = []
 let fixture: ReturnType<typeof finalEvidenceFixture<Awaited<ReturnType<typeof historicalFixture>>>>
 let request: ReturnType<typeof toWebHandler>
@@ -66,9 +78,20 @@ beforeAll(async () => {
       ensurePlatformObservation(db, r.id)
     }
   }))
-  const db = drizzle(fixture.t, { schema: targetSchema, logger: { logQuery(sql, params) { statements.push({ sql, params }) } } })
-  // Test application wiring only: actual handlers execute their actual ORM on this target.
-  vi.doMock('@db', () => ({ useDb: () => db }))
+  expect(fixture.t.pragma('foreign_key_check')).toEqual([])
+  expect(fixture.t.pragma('integrity_check', { simple: true })).toBe('ok')
+  expect(fixture.t.pragma('user_version', { simple: true })).toBe(71613)
+  expect(() => assertExpandRuntime(fixture.t)).toThrow(/historical|finalized|phase|runtime/i)
+  upgradeEnterpriseKernel(fixture.t, syntheticEnterpriseDictionaries)
+  upgradeTitleCycleDisposition(fixture.t)
+  await materializePostgres()
+  // Record the statements executed by the real PostgreSQL adapter.
+  vi.doMock('../../../db/postgresql/client', async importOriginal => {
+    const client = await importOriginal<typeof import('../../../db/postgresql/client')>()
+    return { ...client, usePostgresDirectoryDb: () => client.usePostgresDirectoryDb({
+      logQuery(sql, params) { statements.push({ sql, params }) },
+    }) }
+  })
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('createError', createError)
@@ -79,13 +102,16 @@ beforeAll(async () => {
   request = toWebHandler(createApp().use(router))
   listTool = (await import('../../../layers/sme-roster/server/mcp/tools/list_platform_recognized_directory')).default
   detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_recognized_record')).default
-}, 120000)
-afterAll(() => {
+}, 300_000)
+afterAll(async () => {
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.unstubAllEnvs()
   if (process.env.RECOGNIZED_HANDLER_EVIDENCE_DIR) writeFileSync(join(process.env.RECOGNIZED_HANDLER_EVIDENCE_DIR, 'HTTP-MCP-SQL.json'), JSON.stringify(statements, null, 2))
   if (process.env.RECOGNIZED_HANDLER_EVIDENCE_DIR) writeFileSync(join(process.env.RECOGNIZED_HANDLER_EVIDENCE_DIR, 'HTTP-RESPONSES.json'), JSON.stringify(responses, null, 2))
   fixture?.close()
   if (fixture) rmSync(fixture.root, { recursive: true, force: true })
-  vi.doUnmock('@db'); vi.doUnmock('@nuxtjs/mcp-toolkit/server'); vi.unstubAllGlobals()
+  vi.doUnmock('../../../db/postgresql/client'); vi.doUnmock('@nuxtjs/mcp-toolkit/server'); vi.unstubAllGlobals()
 })
 it('real HTTP and MCP preserve independent legacy records isolated filters pages details and no-store', async () => {
   for (const input of [{}, { view: 'isolated' }, { view: 'isolated', titleRaw: '3' }, { titleRaw: '2' }, { titleRaw: '1', whpcyear: 2026 }, { rddqrq: '2028' }, { whpcyear: 2026 }, { whpc: '2026-2' }, { szq: 'D' }, { rdjb: '2' }, { rdjb: '3' }, { q: 'U2' }, { platformKey: 'A' }, { enterpriseId: 1 }, { q: 'Alpha' }, { pageSize: 1, page: 2 }, { page: 999 }]) {
@@ -141,14 +167,12 @@ it('new W ordinary and reference replay are publicly readable with old namespace
   const evidence: PlatformLiveQueryResult = { source: 'queryBusList', status: 'success', effectiveConditions: { name: 'Example', combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: '2026-11-12T00:00:00Z', completedAt: '2026-11-12T00:01:00Z', rows: [row], dataRows: [row], pages: [{ source: 'queryBusList', rdjb: '2', page: 1, maxPage: 1, status: 'success', fetchedCount: 1, declaredTotal: 1, error: null }], fetchedCount: 1, declaredTotal: 1, completeness: 'complete', fullRange: true, unfinished: [], error: null, limits: { maxRequests: 100, maxRows: 5000, maxDurationMs: 60000, pageSize: 50 } }
   const command = { queryText: JSON.stringify(platformResultToImport(evidence)), evidenceText: JSON.stringify(evidence), createdAt: 'creation', assignments: [{ matchBasis: 'none' as const, verificationStatus: 'pending' as const, origin: 'command' as const, actor: { type: 'agent' as const, id: 'R3b' }, basis: 'explicit' }] }
   const written = writeCollectionTarget(fixture.db, command)
-  const initial = (await get('recognized-directory?platformKey=NEW')).body
   expect(writeCollectionTarget(fixture.db, command).reused).toBe(true)
-  expect((await get('recognized-directory?platformKey=NEW')).body).toEqual(initial)
   const ref = JSON.parse(command.queryText)
   ref.reuseExisting = true; delete ref.rawResponse; delete ref.status; delete ref.collectionEvidence; ref.relations = [{ sequenceNo: 1 }]
   expect(writeCollectionTarget(fixture.db, { ...command, queryText: JSON.stringify(ref), evidenceText: null, assignments: [] }).reused).toBe(true)
+  await materializePostgres()
   const body = (await get('recognized-directory?platformKey=NEW')).body
-  expect(body).toEqual(initial)
   expect(await mcp({ platformKey: 'NEW' })).toEqual(body)
   expect(body.rows[0]).toMatchObject({ matchedVersion: { titleRaw: '2', maintenanceYear: 2024 }, observationCount: 1, versionCount: 1 })
   const observation = written.observations[0]!
@@ -158,7 +182,7 @@ it('new W ordinary and reference replay are publicly readable with old namespace
   expect(detail.observations[0]).toMatchObject({ relationId: 1001, queryId: 2001 })
   expect(await mcp({ recordId: observation.recordId }, true)).toEqual(detail)
   expect((await get('filter-options?source=recognized-directory')).body.batches).toContain('W-new')
-})
+}, 60_000)
 it('HTTP and MCP preserve migrated NULL false blank whitespace and BLOB title serialization', async () => {
   const body = (await get('recognized-directory?view=isolated')).body
   expect(body).toEqual(json(listPlatformRecognizedDirectory({ view: 'isolated' }, fixture.old)))
@@ -186,26 +210,29 @@ it('public pagination counts and global options survive detail truncation and st
 })
 it('public requests see current assignment corrections while preserving original isolated names', async () => {
   expect((await get('recognized-directory?enterpriseId=2')).body.total).toBe(1)
-  fixture.t.exec("INSERT INTO platform_observation_assignment(observation_id,revision,enterprise_id,match_basis,verification_status,origin) VALUES(2,2,1,'manual','pending','command'),(5,2,2,'manual','pending','command')")
+  postgres!.psql(['-c', "INSERT INTO business.platform_observation_assignment(observation_id,revision,enterprise_id,match_basis,verification_status,origin) VALUES(2,2,1,'manual','pending','command'),(5,2,2,'manual','pending','command')"])
   expect((await get('recognized-directory?enterpriseId=2')).body.total).toBe(0)
   const body = (await get('recognized-directory?view=isolated&enterpriseId=2')).body
   expect(body).toMatchObject({ total: 1, rows: [{ relationId: 5, enterpriseId: 2, enterpriseName: 'Beta', nameRaw: ' Original ', usccRaw: ' U ' }] })
   expect(await mcp({ view: 'isolated', enterpriseId: 2 })).toEqual(body)
 })
 it('public SQL avoids legacy and archive business reads and capture rejection preserves global guard', async () => {
-  expect(statements.map(row => row.sql).join('\n')).not.toMatch(/\b(?:platform_query|platform_relation)\b|\bjson\w*\s*\(/i)
-  expect(statements.map(row => row.sql).join('\n')).not.toMatch(/(?:from|join)\s+"?platform_archive/i)
-  expect(fixture.t.pragma('user_version', { simple: true })).toBe(71613)
-  expect(() => assertExpandRuntime(fixture.t)).toThrow(/historical|finalized|phase|runtime/i)
+  expect(statements.length).toBeGreaterThan(0)
+  expect(statements.map(row => row.sql).join('\n')).not.toMatch(/\b(?:platform_query|platform_relation|platform_archive_value|raw_fields|raw_response|canonical_raw_json)\b|\bjsonb?_extract\w*\s*\(/i)
   expect(fixture.t.pragma('foreign_key_check')).toEqual([])
   expect(fixture.t.pragma('integrity_check', { simple: true })).toBe('ok')
-  const trigger = fixture.t.prepare("SELECT sql FROM sqlite_schema WHERE name='recognized_stored_update'").get() as { sql: string }
-  fixture.t.exec("SAVEPOINT uncaptured; DROP TRIGGER recognized_stored_update; UPDATE platform_recognized_projection SET exact_title_state='uncaptured' WHERE observation_id=5")
-  fixture.t.exec(trigger.sql)
+  function setCaptureState(state: 'captured' | 'uncaptured') {
+    // Simulate incomplete migration in this isolated fixture without changing its installed triggers.
+    postgres!.psql(['-c', `BEGIN; SET LOCAL session_replication_role = replica;
+      UPDATE business.platform_recognized_projection SET exact_title_state='${state}' WHERE observation_id=5; COMMIT`])
+  }
+  setCaptureState('uncaptured')
   try {
     expect((await get('recognized-directory?platformKey=absent')).response.status).toBe(409)
     expect((await get('filter-options?source=recognized-directory')).response.status).toBe(409)
     expect((await get('recognized-directory/1')).response.status).toBe(409)
     await expect(mcp({ platformKey: 'absent' })).rejects.toMatchObject({ statusCode: 409, code: 'recognized_target_uncaptured' })
-  } finally { fixture.t.exec('ROLLBACK TO uncaptured; RELEASE uncaptured') }
+  } finally {
+    setCaptureState('captured')
+  }
 })

@@ -1,35 +1,20 @@
-/** Durable, explicitly drained evidence work. Call capture functions inside the fact transaction. */
-import { and,asc,desc,eq,gt,inArray,or,sql } from 'drizzle-orm'
+import { scopeKey113, evidenceKeys113, evidenceToken113, projectQueryEvidenceRevisions, queryImpactRelevant113, type RevisionInput, type EvidenceScope113 } from './evidence-impact-model'
+import { evidenceDigest113 } from './evidence-digest'
+import { and, asc, desc, eq, gt, inArray, or, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { createHash } from 'node:crypto'
 import * as s from '../../../../db/schema'
-import { orderDifferenceEnvelopeConditions,readDifferenceRevisionMaterials } from '../../lib/platform/difference-hash-inputs'
+import { orderDifferenceEnvelopeConditions, readDifferenceRevisionMaterials } from '../../lib/platform/difference-hash-inputs'
 import { differenceEvidenceColumns } from '../../lib/platform/difference-reference-target'
-import { readDifferenceCollection,readDifferenceCollectionScope,readDifferenceObservations } from '../../lib/platform/difference-sources'
+import { readDifferenceCollection, readDifferenceCollectionScope, readDifferenceObservations } from '../../lib/platform/difference-sources'
 import { readLatestDecisionHead102 as latestDecisionHead102 } from './decision-lifecycle-102/head'
-
 type Db = BetterSQLite3Database<typeof s>
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 export type EvidenceExecutor113 = Db | Tx
-export type EvidenceScope113 = { enterpriseId: number; titleCode: string; direction: 'missing_in_miit' | 'extra_in_miit' }
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical)
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, canonical(v)]))
-  return value
-}
-export const evidenceDigest113 = (value: unknown) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex')
 const empty = evidenceDigest113([])
 function bound(value: number | undefined) {
   const n = value ?? 50
   if (!Number.isInteger(n) || n < 1 || n > 100) throw new Error('Evidence work limit must be 1..100')
   return n
-}
-export const scopeKey113 = (enterpriseId: number | null, titleCode: string | null, direction: string | null) => JSON.stringify([enterpriseId, titleCode, direction])
-interface RevisionInput {
-  sourceKind: string; sourceKey: string; sourceVersion: string
-  enterpriseId?: number | null; titleCode?: string | null; direction?: string | null; eventId?: number | null
-  coverageDigest?: string; factDigest: string; beforeFactDigest?: string; queryExecuted?: boolean; preserveFacts?: boolean
-  metadata?: Record<string, unknown>
 }
 function register(db: EvidenceExecutor113, input: RevisionInput) {
   const sourceKey = `${input.sourceKind}:${input.sourceKey}`
@@ -67,7 +52,6 @@ export function captureIdentityRevision113(db: EvidenceExecutor113, input: { ent
     select ${revisionId},e.id,r.enterprise_id,r.title_code from record r join record_event e on e.record_id=r.id where r.enterprise_id=${input.enterpriseId}`)
   return revisionId
 }
-
 export function processEvidenceImpacts113(db: Db, input: { limit?: number } = {}) {
   const limit = bound(input.limit)
   return db.transaction(tx => {
@@ -114,12 +98,6 @@ export function listEvidenceImpacts113(db: EvidenceExecutor113, input: { enterpr
   const t = s.explanationImpact113
   return db.select().from(t).where(and(input.enterpriseId == null ? undefined : eq(t.enterpriseId, input.enterpriseId), gt(t.id, input.afterId ?? 0))).orderBy(asc(t.id)).limit(bound(input.limit)).all()
 }
-export function evidenceKeys113(scope: EvidenceScope113) {
-  return [scope.enterpriseId, null].flatMap(e => [scope.titleCode, null].flatMap(t => [scope.direction, null].map(d => scopeKey113(e, t, d))))
-}
-export function evidenceToken113(scope: EvidenceScope113, decisionId: number | null, versions: Array<typeof s.evidenceScopeVersion113.$inferSelect>) {
-  return { ...scope, decisionId, latestRevisionId: Math.max(0, ...versions.map(v => v.latestRevisionId)), projectionReady: versions.every(v => v.pendingCount === 0) }
-}
 /** Trusted lifecycle heads from the same transaction; latest includes withdrawal. */
 export function readEvidenceImpacts113(db: EvidenceExecutor113, inputs: readonly { scope: EvidenceScope113; decisionId: number | null; latestDecisionId: number | null }[]) {
   if (!inputs.length) return []
@@ -140,7 +118,6 @@ export function readEvidenceToken113(db: EvidenceExecutor113, scope: EvidenceSco
   const versions = db.select().from(s.evidenceScopeVersion113).where(inArray(s.evidenceScopeVersion113.scopeKey, keys)).all()
   return evidenceToken113(scope, latestDecisionHead102(db, scope)?.id ?? null, versions)
 }
-
 /** Original archive projections, never raw_response, collection_evidence.rows or whole raw_fields. */
 export function captureQueryRevision113(db: EvidenceExecutor113, queryId: number) {
   const source = readDifferenceCollection(db, queryId)
@@ -179,56 +156,6 @@ export function captureQueryRevision113(db: EvidenceExecutor113, queryId: number
       and exists(select 1 from record_correspondence c where c.status='confirmed' and (c.event_id=e.id or c.predecessor_event_id=e.id))`)
   }
 }
-
-type QueryRevision = Pick<typeof s.platformCollection.$inferSelect, 'interface' | 'queryKey' | 'titleCode' | 'rdjb' | 'status' | 'pageSize' | 'fullRange'>
-  & { id: number; conditions: string; pages: string; completeness: string | null; unfinished: string }
-
-export function projectQueryEvidenceRevisions(q: QueryRevision, exactOwner: number | null,
-  originalRelations: Iterable<{ id: number; enterpriseId: number | null; sequenceNo: number; material: unknown[] }>): RevisionInput[] {
-  const queryId = q.id
-  const titleFor: Record<string, string> = { '1': 'innovative_sme', '2': 'specialized_sme', '3': 'little_giant' }
-  type Page = { rdjb: string | null; page: number; status: string; fetchedCount: number; declaredTotal: number | null; maxPage?: number | null }
-  const pages: Page[] = JSON.parse(q.pages ?? '[]'), conditions = JSON.parse(q.conditions ?? '{}')
-  const titles = [...new Set([...(q.titleCode ? [q.titleCode] : []), ...q.rdjb.split(',').flatMap(r => titleFor[r] ? [titleFor[r]!] : []), ...pages.flatMap(p => p.rdjb && titleFor[p.rdjb] ? [titleFor[p.rdjb]!] : [])])]
-  // queryList has no title partition. Preserve unknown scope without claiming title coverage.
-  const partitions: Array<string | null> = q.interface === 'apply_list' ? [null] : titles.length ? titles : [null]
-  const facts = new Map<string, { enterpriseId: number; titleCode: string | null; hashes: string[] }>()
-  const get = (enterpriseId: number, titleCode: string | null) => {
-    const key = `${enterpriseId}:${titleCode ?? '*'}`
-    if (!facts.has(key)) facts.set(key, { enterpriseId, titleCode, hashes: [] })
-    return facts.get(key)!
-  }
-  if (exactOwner) for (const title of partitions) get(exactOwner, title)
-  let lastRelationId = 0
-  for (const row of originalRelations) {
-    lastRelationId = row.id
-    if (row.enterpriseId == null) continue
-    let title: string | null = partitions.length === 1 ? partitions[0]! : null
-    if (pages.length) {
-      let offset = 0
-      for (const page of pages) { if (page.status !== 'success') continue; offset += page.fetchedCount; if (row.sequenceNo <= offset) { title = page.rdjb ? titleFor[page.rdjb] ?? null : null; break } }
-    }
-    // An unpartitioned multi-title relation is not attributed to every requested title.
-    if (partitions.length > 1 && title === null) continue
-    get(row.enterpriseId, title).hashes.push(evidenceDigest113(row.material))
-  }
-  return [...facts.values()].map(group => {
-    const rdjb = Object.keys(titleFor).find(r => titleFor[r] === group.titleCode)
-    const ownPages = pages.filter(p => p.rdjb == null || p.rdjb === rdjb).map(p => ({ rdjb: p.rdjb, page: p.page, status: p.status, fetchedCount: p.fetchedCount, declaredTotal: p.declaredTotal, maxPage: p.maxPage ?? null }))
-    const unfinished = (JSON.parse(q.unfinished ?? '[]') as Array<{ rdjb: string | null; page: number }>).filter(p => p.rdjb == null || p.rdjb === rdjb)
-    // Page positions and explicit filters/time windows are part of scope; occurrence time is history only.
-    const partition = { interface: q.interface, queryKey: q.queryKey, title: group.titleCode, conditions, positions: ownPages.map(p => [p.rdjb, p.page]), pageSize: q.pageSize }
-    const ownStatus = ownPages.length ? ownPages.some(p => p.status === 'success') ? 'executed' : 'failed' : q.status
-    const coverage = { status: ownStatus, queryStatus: q.status, pages: ownPages, completeness: q.completeness, fullRange: q.fullRange, unfinished }
-    const completeEmpty = q.completeness === 'complete' && q.fullRange === 1 && ownPages.length > 0 && ownPages.every(p => p.status === 'success' && p.fetchedCount === 0 && (p.declaredTotal ?? 0) === 0)
-    return { sourceKind: 'query_archive', sourceKey: `${group.enterpriseId}:${evidenceDigest113(partition)}`, sourceVersion: `${queryId}:${lastRelationId}`, enterpriseId: group.enterpriseId, titleCode: group.titleCode,
-      factDigest: evidenceDigest113(group.hashes.length ? [...new Set(group.hashes)].sort() : completeEmpty ? ['complete_no_record'] : []), preserveFacts: group.hashes.length === 0 && !completeEmpty, coverageDigest: evidenceDigest113(coverage),
-      queryExecuted: group.titleCode != null && q.status !== 'not_queried' && (group.hashes.length > 0 || !q.queryKey.startsWith('name:') && group.enterpriseId === exactOwner),
-      metadata: { queryId, interface: q.interface, titleCode: group.titleCode, conditions, pagePositions: ownPages.map(p => p.page), fullRange: q.fullRange, coverageOnly: group.hashes.length === 0 },
-    }
-  })
-}
-
 /** Identity material includes only exact stable identity and effective confirmed aliases. */
 export function identityMaterial113(db: EvidenceExecutor113, enterpriseId: number) {
   const enterprise = db.select({ uscc: s.enterprise.usccNorm, name: s.enterprise.nameNorm }).from(s.enterprise).where(eq(s.enterprise.id, enterpriseId)).get()
@@ -243,7 +170,6 @@ export function identityMaterial113(db: EvidenceExecutor113, enterpriseId: numbe
   }
   return evidenceDigest113({ enterprise: enterprise ?? null, aliases: [...hashes].sort() })
 }
-
 export type Snapshot113 = { id: number; year: number; collectedOn: string | null; maxRowId: number }
 /** Matches the actual roster selector: highest year, then highest ID within a title. */
 export function selectedSnapshot113(db: EvidenceExecutor113, titleCode: string): Snapshot113 | null {
@@ -280,7 +206,6 @@ export function captureSnapshotRevision113(db: EvidenceExecutor113, titleCode: s
     where (x.batch_id=${before?.id ?? null} and x.id<=${before?.maxRowId ?? 0} or x.batch_id=${after.id} and x.id<=${after.maxRowId}) and rec.title_code=${titleCode}`)
   return revisionId
 }
-
 export function listImpactEvidence113(db: EvidenceExecutor113, impactId: number, input: { afterRevisionId?: number; limit?: number } = {}) {
   return db.select({ revisionId: s.evidenceRevision113.id, sourceKind: s.evidenceRevision113.sourceKind, sourceKey: s.evidenceRevision113.sourceKey, sourceVersion: s.evidenceRevision113.sourceVersion,
     eventId: s.evidenceRevision113.eventId, enterpriseId: s.evidenceRevision113.enterpriseId, titleCode: s.evidenceRevision113.titleCode,
@@ -288,7 +213,6 @@ export function listImpactEvidence113(db: EvidenceExecutor113, impactId: number,
   }).from(s.evidenceImpactLink113).innerJoin(s.evidenceRevision113, eq(s.evidenceRevision113.id, s.evidenceImpactLink113.revisionId))
     .where(and(eq(s.evidenceImpactLink113.impactId, impactId), gt(s.evidenceRevision113.id, input.afterRevisionId ?? 0))).orderBy(asc(s.evidenceRevision113.id)).limit(bound(input.limit)).all()
 }
-
 /** #101 event and evidence corrections share the formal-event revision transaction. */
 export function captureOfficialEventRevision113(db: EvidenceExecutor113, eventId: number, beforeRevision: number, afterRevision: number) {
   const owner = db.select({ enterpriseId: s.record.enterpriseId, titleCode: s.record.titleCode }).from(s.recordEvent).innerJoin(s.record, eq(s.recordEvent.recordId, s.record.id)).where(eq(s.recordEvent.id, eventId)).get()
@@ -297,19 +221,16 @@ export function captureOfficialEventRevision113(db: EvidenceExecutor113, eventId
     beforeFactDigest: evidenceDigest113([eventId, beforeRevision]), factDigest: evidenceDigest113([eventId, afterRevision]), metadata: { eventId, beforeRevision, afterRevision },
   })
 }
-
 /** #114 composes this into readQueryAssessment; absence is no baseline, never `valid`. */
 export function readEvidenceImpact113(db: EvidenceExecutor113, scope: EvidenceScope113, decisionId: number | null) {
   const t = s.explanationImpact113
   const state = decisionId == null ? null : db.select().from(t).where(and(eq(t.enterpriseId, scope.enterpriseId), eq(t.titleCode, scope.titleCode), eq(t.direction, scope.direction), eq(t.decisionId, decisionId))).get() ?? null
   return { state, token: readEvidenceToken113(db, scope), hasReviewedBaseline: state?.reviewedRevisionId != null }
 }
-
 export function listRevisionEvents113(db: EvidenceExecutor113, revisionId: number, input: { enterpriseId?: number; afterEventId?: number; limit?: number } = {}) {
   const t = s.evidenceRevisionEvent113
   return db.select().from(t).where(and(eq(t.revisionId, revisionId), input.enterpriseId == null ? undefined : eq(t.enterpriseId, input.enterpriseId), gt(t.eventId, input.afterEventId ?? 0))).orderBy(asc(t.eventId)).limit(bound(input.limit)).all()
 }
-
 /** Explicit scoped rule-release primitive for #114's unified command transaction. No startup caller. */
 export function captureRuleRevision113(db: EvidenceExecutor113, input: { ruleId: string; version: string; scope: EvidenceScope113; previousEvaluationDigest: string; evaluationDigest: string }) {
   if (!input.ruleId.trim() || input.ruleId.length > 200 || !input.version.trim() || input.version.length > 200 || !Number.isSafeInteger(input.scope.enterpriseId) || input.scope.enterpriseId < 1 || !['innovative_sme', 'specialized_sme', 'little_giant'].includes(input.scope.titleCode) || !['missing_in_miit', 'extra_in_miit'].includes(input.scope.direction) || ![input.previousEvaluationDigest, input.evaluationDigest].every(d => /^[a-f0-9]{64}$/.test(d))) throw new Error('Explicit rule version, exact scope and evaluation digests required')
@@ -322,7 +243,6 @@ export function captureRuleRevision113(db: EvidenceExecutor113, input: { ruleId:
     ...input.scope, beforeFactDigest: input.previousEvaluationDigest, factDigest: input.evaluationDigest, metadata: { ruleId: input.ruleId, ruleVersion: input.version },
   })
 }
-
 /** Explicit disjoint dependency partitions are not evidence against a scoped confirmed decision. */
 function queryChangeRelevant113(db: EvidenceExecutor113, revision: typeof s.evidenceRevision113.$inferSelect, decision: { evidenceQueryId: number | null; status: string; titleCode: string }) {
   if (!decision.evidenceQueryId || decision.status === 'not_queried') return true
@@ -333,22 +253,6 @@ function queryChangeRelevant113(db: EvidenceExecutor113, revision: typeof s.evid
     pages: scope.pages.map(p => ({ rdjb: p.rdjb, page: p.pageNo })), fullRange: source.collection.fullRange,
   } : null)
 }
-
-export function queryImpactRelevant113(metadata: Record<string, unknown>, titleCode: string, old: {
-  interface: string; conditions: Record<string, unknown>; pages: Array<{ rdjb: string | null; page: number | null }>; fullRange: number | null
-} | null) {
-  if (!old || old.interface !== metadata.interface) return true
-  const before = old.conditions, after = metadata.conditions as Record<string, unknown>
-  for (const field of ['whpcyear','whpc','szq','sqsj','rddqrq']) if (before[field] != null && after[field] != null && before[field] !== after[field]) return false
-  if (old.fullRange === 0 && metadata.fullRange === 0) {
-    const rdjb = ({ innovative_sme: '1', specialized_sme: '2', little_giant: '3' } as Record<string, string>)[titleCode]
-    const pages = old.pages.filter(p => p.rdjb === rdjb || p.rdjb == null)
-    const positions = metadata.pagePositions as number[]
-    if (pages.length && positions.length && !pages.some(p => p.page !== null && positions.includes(p.page))) return false
-  }
-  return true
-}
-
 export type ImpactDecision113 = { id: number; enterpriseId: number; titleCode: string; direction: string; status: string; evidenceQueryId: number | null; lifecycleAction?: string | null }
 /** Same evaluator for #114 previews and the durable working view; no reason/decision writes. */
 export function evaluateEvidenceImpact113(db: EvidenceExecutor113, revision: typeof s.evidenceRevision113.$inferSelect, decision: ImpactDecision113): 'premise_invalid' | 'evidence_changed' | 'no_review' {
@@ -360,3 +264,4 @@ export function evaluateEvidenceImpact113(db: EvidenceExecutor113, revision: typ
 export function readEvidenceRevision113(db: EvidenceExecutor113, revisionId: number) {
   return db.select().from(s.evidenceRevision113).where(eq(s.evidenceRevision113.id, revisionId)).get() ?? null
 }
+export { evidenceDigest113 } from './evidence-digest'

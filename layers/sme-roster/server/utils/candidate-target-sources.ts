@@ -1,10 +1,6 @@
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-/** Candidate-specific structured selection. External query/relation IDs never stand for PKs. */
-import { and,count,eq,inArray,max,or,sql,sum } from 'drizzle-orm'
+import { and, count, eq, inArray, max, or, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { alias } from 'drizzle-orm/sqlite-core'
-import { platformArchiveValue as archive, platformCollectionArchiveRef as collectionRef, platformObservationArchiveRef as observationRef } from '../../../../db/postgresql/platform-archive-tables'
-import { platformBusinessObservation as observation, platformLegacyRelationAlias as relation } from '../../../../db/postgresql/platform-tables'
 import * as s from '../../../../db/schema'
 import type { PlatformFactInterface } from '../../lib/platform/observation-facts'
 import { targetSchema as t } from '../../lib/platform/target-schema'
@@ -12,7 +8,6 @@ import { identityFunctions } from '../../lib/roster/enterprise-read-snapshot'
 import { readTargetBusinessProcessFacts } from './platform-business-processes-target'
 import { readTargetDeclarationFacts } from './platform-declarations-target'
 import { readTargetRecognizedFacts } from './platform-recognized-target'
-
 type Db = BetterSQLite3Database<typeof s>
 const c = s.platformCollection, qa = s.platformLegacyQueryAlias
 const o = t.platformBusinessObservation, ra = t.platformLegacyRelationAlias, a = t.platformObservationAssignment
@@ -67,7 +62,6 @@ export function readCandidateTargetPositions(db: Db, ids: number[]) {
     .leftJoin(p, and(eq(p.collectionId, r.collectionId), eq(p.status, 'success'), sql`${r.sequenceNo} between ${p.sequenceStart} and ${p.sequenceEnd}`))
     .where(inArray(r.id, ids)).all().map(row => [row.id, { sourceRdjb: row.sourceRdjb, sourcePage: row.sourcePage }]))
 }
-
 /** Same three original byte owners as the historical envelope; no snapshot/request double charge. */
 export function candidateTargetSourceBytes(db: Db, relationId: number) {
   const cr = s.platformCollectionArchiveRef, rr = t.platformObservationArchiveRef, v = s.platformArchiveValue
@@ -79,22 +73,6 @@ export function candidateTargetSourceBytes(db: Db, relationId: number) {
     .where(and(eq(rr.ownerId, owner.observationId), eq(rr.field, 'rawFields'))).get()!.n
   return collection + row
 }
-
-export async function readPostgresCandidateSourceBytes(db: Pick<NodePgDatabase, 'select'>, relationId: number) {
-  const collectionBytes = db.select({ bytes: sum(archive.byteLength).as('collection_bytes') })
-    .from(collectionRef).innerJoin(archive, eq(archive.id, collectionRef.archiveId))
-    .where(and(eq(collectionRef.ownerId, observation.collectionId), inArray(collectionRef.field, ['rawResponse', 'collectionEvidence'])))
-    .as('collection_totals')
-  const observationBytes = db.select({ bytes: sum(archive.byteLength).as('observation_bytes') })
-    .from(observationRef).innerJoin(archive, eq(archive.id, observationRef.archiveId))
-    .where(and(eq(observationRef.ownerId, observation.id), eq(observationRef.field, 'rawFields')))
-    .as('observation_totals')
-  const [row] = await db.select({ collection: collectionBytes.bytes, observation: observationBytes.bytes })
-    .from(relation).innerJoin(observation, eq(observation.id, relation.observationId))
-    .crossJoinLateral(collectionBytes).crossJoinLateral(observationBytes).where(eq(relation.oldId, relationId))
-  return row ? Number(row.collection) + Number(row.observation) : undefined
-}
-
 /** Generic candidates group business versions, while event discovery pages observations.
  * Count and select the business groups in SQLite before hydrating their source facts. */
 export function selectCandidateTargetPage(db: Db, input: { queryIds: number[]; enterpriseId: number; identity: string | null; titleCode: string; event: boolean; page: number; pageSize: number }) {
@@ -127,3 +105,4 @@ export function selectCandidateTargetPage(db: Db, input: { queryIds: number[]; e
   const ids = selected.length ? db.with(eligible).select({ id: eligible.id }).from(eligible).where(inArray(eligible.groupKey, selected.map(r => r.key))).orderBy(sql`${eligible.ordinal}`).all().map(r => r.id) : []
   return { total, ids }
 }
+export { readPostgresCandidateSourceBytes } from './candidate-source-bytes-postgres'

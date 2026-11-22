@@ -1,20 +1,14 @@
+import { canonicalImportJson } from './import-request-canonical'
 import { createHash } from 'node:crypto'
 import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { hasAnnouncementRows, type RosterImportRequest } from '../../lib/roster-import-client'
 import { ensureBatchRow } from './roster-batch-ledger'
-import { ImportReceiptError } from './import-receipts'
-import { importReceiptRedactor } from './import-receipt-redaction'
+import { ImportReceiptError } from './import-receipt-model'
+import { importReceiptRedactor } from './import-receipt-redaction-sqlite'
 import { appLog, type LogContext } from '../../../core/lib/logging'
-
 type Db = BetterSQLite3Database<typeof schema>
-export function canonicalImportJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(item => canonicalImportJson(item ?? null)).join(',')}]`
-  if (value && typeof value === 'object') return `{${Object.entries(value).filter(([, item]) => item !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => `${JSON.stringify(key)}:${canonicalImportJson(item)}`).join(',')}}`
-  return JSON.stringify(value) ?? 'null'
-}
-
 /** Keep the original import body/response protocol; add durable recovery bookkeeping. */
 export function recordImportReceipt<T extends { status: string }>(db: Db, operation: 'preflight' | 'commit' | 'replay', request: RosterImportRequest, run: () => T, context: LogContext = {}): T {
   const enclosingTransaction = (db as Db & { $client?: { inTransaction: boolean } }).$client?.inTransaction ?? false
@@ -86,3 +80,4 @@ export function recordImportReceipt<T extends { status: string }>(db: Db, operat
   } catch { /* Non-fatal logging projection. */ }
   return result
 }
+export { canonicalImportJson } from './import-request-canonical'

@@ -6,9 +6,10 @@ import { evidenceRevisionEvent113 } from '../../../../db/postgresql/evidence-rev
 import { record, recordEvent } from '../../../../db/postgresql/ledger-tables'
 import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import type { RosterImportExportSnapshot, RosterImportItemResult, RosterImportPreflight } from '../../lib/roster-import-client'
-import { exportSnapshotRowConflict, projectExportSnapshotRow, validateExportSnapshot } from './roster-import'
+import { exportSnapshotRowConflict, projectExportSnapshotRow, validateExportSnapshot } from './roster-import-model'
 import { appendPostgresEvidenceRevision } from './evidence-revision-postgres'
-import { evidenceDigest113, type Snapshot113 } from './evidence-impact-113'
+import { type Snapshot113 } from './evidence-impact-113'
+import { evidenceDigest113 } from './evidence-digest'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Reader = Pick<NodePgDatabase, 'select'>

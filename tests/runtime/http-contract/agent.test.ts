@@ -49,7 +49,7 @@ import { parseRenderPagesParams } from '../../../layers/core/server/utils/jobs/r
 import { shouldHideOpenApiPath } from '../../../layers/core/server/utils/openapi-guard'
 import { registerJobSpecs } from '../../../server/utils/job-specs'
 import { minimalPdf } from '../../support/minimal-pdf'
-import { parseUploadDeclaration, registerStoredFile } from '../../../layers/sme-roster/server/modules/sme-roster/file-upload'
+import { parseUploadDeclaration, registerStoredFile } from '../../../layers/sme-roster/server/modules/sme-roster/file-upload-sqlite'
 
 /**
  * 票 19 —— 面向代理的 HTTP 能力面(异步任务)+ Nitro 内建 OpenAPI。
@@ -203,11 +203,9 @@ describe('任务种类注册表', () => {
     registerJobSpecs()
     const kinds = jobSpecs()
     expect(kinds.map((s) => s.kind)).toEqual(['current-roster-export', 'difference-snapshot', 'event-annual-correspondence', 'event-archive-candidates', 'lead-lists-version-export', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages', 'roster_export_cleanup'])
-    // 票 14 把 ocr 从 todo 接上了;RL-03 收尾把 reconcile 也接上了(核心逻辑搬进 app)。
-    // 三个已接入的 kind 都要有 run。
     for (const k of ['render-pages', 'ocr', 'reconcile']) {
       expect(getJobSpec(k)!.status).toBe('ready')
-      expect(getJobSpec(k)!.run).toBeTypeOf('function')
+      expect(getJobSpec(k)!.postgres?.run).toBeTypeOf('function')
     }
     // 「怎么拼 params」是给代理看的,不能只报名字。
     expect(getJobSpec('reconcile')!.paramsHint).toMatch(/titles/)
@@ -934,7 +932,7 @@ describe('Nitro 内建 OpenAPI 的暴露面', () => {
 
 describe('render-pages 的 run(真 pdfium + sharp)', () => {
   it('批量渲染 2 份夹具:逐份报结果;中间夹一份坏的**不停下整批**', async () => {
-    const { renderPagesSpec } = await import('../../../layers/core/server/utils/jobs/render-pages')
+    const { renderPagesSqliteSpec: renderPagesSpec } = await import('../../../layers/core/server/utils/jobs/render-pages-sqlite')
     const root = mkdtempSync(join(tmpdir(), 'spztx-render-batch-'))
     const rel = 'jxj/announcement/2024/1/fixture.pdf'
     const badRel = 'jxj/announcement/2024/1/broken.pdf'
@@ -992,7 +990,7 @@ describe('render-pages 的 run(真 pdfium + sharp)', () => {
   }, 60_000)
 
   it('取消时**带着部分产出**收尾,而不是丢掉明细', async () => {
-    const { renderPagesSpec } = await import('../../../layers/core/server/utils/jobs/render-pages')
+    const { renderPagesSqliteSpec: renderPagesSpec } = await import('../../../layers/core/server/utils/jobs/render-pages-sqlite')
     const root = mkdtempSync(join(tmpdir(), 'spztx-render-cancel-'))
     const a = 'jxj/announcement/2024/1/a.pdf'
     const b = 'jxj/announcement/2024/1/b.pdf'
@@ -1032,7 +1030,7 @@ describe('render-pages 的 run(真 pdfium + sharp)', () => {
   }, 60_000)
 
   it('幂等:同一份渲染两次,第二次 written=0', async () => {
-    const { renderPagesSpec } = await import('../../../layers/core/server/utils/jobs/render-pages')
+    const { renderPagesSqliteSpec: renderPagesSpec } = await import('../../../layers/core/server/utils/jobs/render-pages-sqlite')
     const root = mkdtempSync(join(tmpdir(), 'spztx-render-idem-'))
     const rel = 'jxj/announcement/2024/1/idem.pdf'
     await mkdir(join(root, 'jxj/announcement/2024/1'), { recursive: true })

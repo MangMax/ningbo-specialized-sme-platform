@@ -12,9 +12,10 @@ import { targetReplaySource } from '../../lib/platform/collection-target-replay'
 import { withFingerprintVerificationSnapshot } from '../../lib/platform/fingerprint-verifier'
 import { snapshotStoredReplayInput } from '../../lib/platform/reconcile-replay-input'
 import type { ReconcileQueryEvidence } from '../../lib/platform/reconcile'
-import type { StoredSlot, ReconcileRunOptions } from './platform-reconcile'
+import type { StoredSlot } from './platform-reconcile'
+import type { SqliteReconcileOptions } from './platform-reconcile-sqlite'
 
-type Db = ReconcileRunOptions['db']
+type Db = SqliteReconcileOptions['db']
 type CandidateOrder = { collection: Pick<typeof s.platformCollection.$inferSelect, 'queriedAt'>; id: number }
 /** id is the public query alias. Physical collection IDs never break a tie. */
 export function compareReconcileSlotCollections(a: CandidateOrder, b: CandidateOrder) {

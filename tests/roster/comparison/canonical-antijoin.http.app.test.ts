@@ -11,11 +11,13 @@ import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedCh
 import { minimalPdf } from '../../support/minimal-pdf'
 import { seedDifferenceReadFixture, assertDifferenceReadState } from './fixtures/difference-read-boundaries'
 import { readBaselineComparison } from './oracles/enterprise-title-antijoin'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 it('actual Nuxt preserves full summary differences and MCP evidence with canonical matches, legacy sources and acknowledged commits', async () => {
   const root = resolve(import.meta.dirname, '../../..'), dir = mkdtempSync(join(tmpdir(), 'comparison-canonical-http-'))
   const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true, dbPath })
   const nativeLog = join(dir, 'native-pids.jsonl'), manifest = join(dir, 'owned.json')
+  let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
   let child: ChildProcess | undefined, output = ''
   try {
     // Real migrated schema/indexes: a canonical matched pair must disappear.
@@ -34,10 +36,11 @@ it('actual Nuxt preserves full summary differences and MCP evidence with canonic
     const preload = join(dir, 'observe.cjs'), driver = createRequire(import.meta.url).resolve('better-sqlite3')
     // Lifecycle observation only, on the real native driver in main and child.
     writeFileSync(preload, `const fs=require('node:fs'),D=require(${JSON.stringify(driver)}),p=D.prototype.prepare;let logged=false;D.prototype.prepare=function(...a){if(!logged){logged=true;fs.appendFileSync(${JSON.stringify(nativeLog)},JSON.stringify({pid:process.pid})+'\\n')}return p.apply(this,a)};`)
+    postgres = await postgresRuntimeFixture({ dir, sourcePath: dbPath })
     const port = await reserveLoopbackPort(), base = `http://127.0.0.1:${port}`
     child = spawnCompiledApp(port, {
       cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env,
-        NODE_OPTIONS: `--require=${preload}`, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath,
+        ...postgres.env, NODE_OPTIONS: `--require=${preload}`, NUXT_BUILD_DIR: join(dir, 'build'),
         NUXT_API_TOKEN: 'synthetic-canonical', NUXT_MCP_TOKEN: 'synthetic-canonical', NUXT_CURATED_PATH: join(dir, 'curated.json'),
         NUXT_RECONCILE_PATH: join(dir, 'reconcile.json'), NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'),
       },
@@ -112,6 +115,7 @@ it('actual Nuxt preserves full summary differences and MCP evidence with canonic
   } catch (error) { throw new Error(String(error) + '\n' + output, { cause: error }) }
   finally {
     if (child) await stopOwnedChild(child)
+    postgres?.close()
     db.$client.close()
     const nativePids = existsSync(nativeLog) ? [...new Set(readFileSync(nativeLog, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line).pid as number))] : []
     const remaining = nativePids.filter(pid => { try { process.kill(pid, 0); return true } catch { return false } })

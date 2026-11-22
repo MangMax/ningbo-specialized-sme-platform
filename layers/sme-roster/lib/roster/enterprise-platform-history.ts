@@ -15,7 +15,8 @@ import { resolveSelectedLegacyProvenance } from '../platform/target-legacy-prove
 import { assertTargetDisplayBudget } from '../platform/target-query-budget'
 import { readTargetCollectionDisplay } from '../platform/target-query-display'
 import { readTargetRelationDisplay } from '../platform/target-relation-display'
-import { cellExpression, snapshotSchema } from '../platform/target-evidence-read'
+import { cellExpression } from '../platform/target-evidence-read'
+import { snapshotSchema } from '../platform/evidence-snapshot-model'
 
 type Db = BetterSQLite3Database<typeof s>
 const chunks = <T>(items: T[]) => Array.from({ length: Math.ceil(items.length / 300) }, (_, i) => items.slice(i * 300, i * 300 + 300))

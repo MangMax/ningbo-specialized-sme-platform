@@ -9,7 +9,7 @@ import { normalizeUsccVerdicts, type UsccVerdictFile } from './uscc-verdicts'
  */
 import type { UsccChecklistFilter, UsccPlatformClaim, UsccResearchClaim } from '../../lib/roster/uscc-research'
 import { TITLE_ORDER } from '../../lib/labels'
-import { MAX_PAGE_SIZE } from '../../lib/query'
+import { MAX_PAGE_SIZE } from '../../lib/query-limits'
 
 export type UsccQueryParse =
   | {

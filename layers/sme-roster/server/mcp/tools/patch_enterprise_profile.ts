@@ -1,8 +1,7 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
 import { writeGuard } from '../../../../core/server/utils/mcp-guard'
-import { enterpriseProfilePatchSchema, patchEnterpriseProfile } from '../../utils/enterprise-profile'
+import { enterpriseProfilePatchSchema } from '../../utils/enterprise-profile-model'
 import { patchPostgresEnterpriseProfile } from '../../utils/enterprise-profile-postgres'
 import { usePostgresDirectoryDb } from '../../../../../db/postgresql/client'
 export default defineMcpTool({
@@ -13,6 +12,6 @@ export default defineMcpTool({
   inputSchema: { enterpriseId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), request: enterpriseProfilePatchSchema },
   handler: async ({ enterpriseId, request }) => {
     const pg = usePostgresDirectoryDb()
-    return pg ? patchPostgresEnterpriseProfile(pg, enterpriseId, request) : patchEnterpriseProfile(useDb(), enterpriseId, request)
+    return patchPostgresEnterpriseProfile(pg, enterpriseId, request)
   },
 })

@@ -184,12 +184,18 @@ INSERT INTO official_evidence_row_revision (
   evidence_id, revision, format_version, event_id, captured_record_id, captured_enterprise_id, name_raw,
   uscc_raw, district_raw, source_document_id, stored_file_id, path, sha256, bytes, attachment, section_key,
   list_no, page, source_binding_known, actor, basis, command_kind, import_batch_id, correction_batch_key,
-  created_at
+  created_at, name_raw_json, uscc_raw_json, district_raw_json
 )
-SELECT evidence_id, revision, format_version, event_id, captured_record_id, captured_enterprise_id, name_raw,
-  uscc_raw, district_raw, source_document_id, stored_file_id, path, sha256, bytes, attachment, section_key,
+SELECT evidence_id, revision, format_version, event_id, captured_record_id, captured_enterprise_id,
+  CASE WHEN pg_input_is_valid(name_raw, 'jsonb') THEN name_raw::json #>> '{}' END,
+  CASE WHEN pg_input_is_valid(uscc_raw, 'jsonb') THEN uscc_raw::json #>> '{}' END,
+  CASE WHEN pg_input_is_valid(district_raw, 'jsonb') THEN district_raw::json #>> '{}' END,
+  source_document_id, stored_file_id, path, sha256, bytes, attachment, section_key,
   list_no, page, source_binding_known, actor, basis, command_kind, import_batch_id, correction_batch_key,
-  created_at
+  created_at,
+  CASE WHEN NOT pg_input_is_valid(name_raw, 'jsonb') THEN name_raw END,
+  CASE WHEN NOT pg_input_is_valid(uscc_raw, 'jsonb') THEN uscc_raw END,
+  CASE WHEN NOT pg_input_is_valid(district_raw, 'jsonb') THEN district_raw END
 FROM :"staging".official_evidence_row_revision;
 
 INSERT INTO platform_apply_projection (

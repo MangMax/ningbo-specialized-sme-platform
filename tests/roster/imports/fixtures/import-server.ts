@@ -2,11 +2,11 @@
 
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
-import { authorizeRosterWrite, handleRosterImportRequest, type RosterImportAction } from '../../../../layers/sme-roster/server/utils/roster-import-http'
+import { authorizeRosterWrite, handleRosterImportRequest, type RosterImportAction } from '../../../../layers/sme-roster/server/utils/roster-import-http-sqlite'
 import { readAnnouncementIntake, supplementAnnouncement, supplementSchema } from '../../../../layers/sme-roster/server/utils/announcement-intake'
 import { ImportReceiptError } from '../../../../layers/sme-roster/server/utils/import-receipts'
 import { EnterpriseKernelError } from '../../../../layers/core/server/public'
-import { handleEvidencePagesRequest } from '../../../../layers/sme-roster/server/utils/roster-evidence-pages'
+import { handleEvidencePagesRequest } from '../../../../layers/sme-roster/server/utils/roster-evidence-pages-sqlite'
 import { startHttpFixture, type FixtureHandler } from '../../../support/http'
 import type { importExecutor } from '../../../../layers/sme-roster/server/utils/import-execution'
 import { commitRosterImport, preflightRosterImport } from '../../../../layers/sme-roster/server/utils/roster-import'

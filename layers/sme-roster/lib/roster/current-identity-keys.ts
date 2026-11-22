@@ -6,15 +6,6 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { targetSchema } from '../platform/target-schema'
 
 export type IdentityKeyVariants = ReadonlyMap<string, readonly string[]>
-/** Execution-local, narrow identity keys only. Canonical keys need no entry.
- * Iterate existing covering indexes once per pinned export, not once per row.
- * No business writes, source bodies, persistent cache or truncation.
- */
-export function identityKeys(variants: IdentityKeyVariants, uscc: string | null): string[] {
-  const normalized = normalizeUscc(uscc)
-  return normalized ? [normalized, ...variants.get(normalized) ?? []] : []
-}
-
 /** Completed-target request scope. Only current unassigned revisions contribute
  * relation keys; collection keys retain their original spelling and name keys.
  * Drizzle builds these narrow DISTINCT projections; the driver streams them. */

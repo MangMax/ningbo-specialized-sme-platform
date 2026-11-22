@@ -1,4 +1,4 @@
-import { parseHistory105, parseRead105, parseSave105, parsePreflightMcp310, parseCommitMcp310 } from './parse-maintenance-105'
+import { parseHistory105, parseRead105, parseSave105, parsePreflightMcp310, parseCommitMcp310 } from './parse-maintenance-contract'
 /** Validate original arguments before the toolkit strips unknown fields. */
 export function parseRpcError105(body: unknown): Response | null {
   for (const entry of Array.isArray(body) ? body : [body]) {

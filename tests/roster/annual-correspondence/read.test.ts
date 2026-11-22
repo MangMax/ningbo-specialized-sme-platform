@@ -10,8 +10,13 @@ import {qualifyAnnualFinal,readAnnualDecisionRefs,reconcileAnnualStep} from '../
 import {submitNativePlatformQuery} from '../../platform/fixtures/native-query'
 import {commitRecordCorrespondences,preflightRecordCorrespondences,type CorrespondenceRequest,listRecordCorrespondences} from '../../../layers/sme-roster/server/utils/record-correspondence'
 import {clearJobSpecs,__resetJobRunner,whenIdle} from '../../../layers/core/server/utils/job-runner'
-import {handleAnnualTaskRequest} from '../../../layers/sme-roster/server/utils/annual-correspondence-api'
-import {getJob} from '../../../layers/core/server/utils/job-store'
+import {handlePostgresAnnualTaskRequest} from '../../../layers/sme-roster/server/utils/annual-correspondence-runtime'
+import {getPostgresJob} from '../../../layers/core/server/utils/job-store-postgres'
+import {stopPostgresJobs} from '../../../layers/core/server/utils/postgres-jobs'
+import {closePostgresDirectoryDb,usePostgresDirectoryDb} from '../../../db/postgresql/client'
+import {job} from '../../../db/postgresql/job-tables'
+import {registerJobSpecs} from '../../../server/utils/job-specs'
+import {postgresRuntimeFixture} from '../../support/postgres-fixture.mjs'
 let active:ReturnType<typeof initializeDb>
 vi.mock('@nuxtjs/mcp-toolkit/server',()=>({defineMcpTool:(definition:unknown)=>definition}))
 vi.mock('@db',()=>({useDb:()=>active}))
@@ -91,14 +96,33 @@ it('blocks enrichment of stale generation instead of attaching a new-scope final
  expect({jobs:f.db.select().from(s.job).all(),ledger:f.db.select().from(s.importBatch).all(),audit:f.db.select().from(s.recordCorrespondenceAudit).all()}).toEqual(before)
 })
 it('runs the registered MCP handlers with independent credentials and the actual annual read and queue',async()=>{
- const f=fixture();f.add();const submit=(await import('../../../layers/sme-roster/server/mcp/tools/submit_event_annual_correspondence_task')).default
- const get=(await import('../../../layers/sme-roster/server/mcp/tools/get_event_annual_correspondence_task')).default
- expect(await submit.handler({clientRequestId:'handler-deny',eventIds:[f.event.id]},{} as never)).toMatchObject({isError:true});expect(f.db.select().from(s.job).all()).toEqual([])
- const result=await submit.handler({clientRequestId:'handler-allow',eventIds:[f.event.id]},{requestInfo:{headers:{authorization:'Bearer mcp-251'}}} as never) as any
- await whenIdle();expect(getJob(f.db,result.jobId)?.state).toBe('done');expect(await get.handler({id:result.jobId},{} as never)).toMatchObject({status:'done',result:{events:[{finalQualification:{status:'confirmed'}}]}})
- const rest=await handleAnnualTaskRequest('submit',{method:'POST',headers:{authorization:'Bearer rest-251'},body:{clientRequestId:'rest-same-scope',eventIds:[f.event.id]}},{db:f.db,readScope:readAnnualWriteScope,filesDir:f.dir,apiToken:'rest-251'})
- expect(rest.body).toMatchObject({jobId:result.jobId})
-})
+ const f=fixture()
+ f.add()
+ const sourcePath = f.db.$client.name
+ f.db.$client.close()
+ const postgres = await postgresRuntimeFixture({ dir: f.dir, sourcePath })
+ vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+ vi.stubEnv('NUXT_DB_READONLY', '0')
+ registerJobSpecs()
+ try {
+  const db = usePostgresDirectoryDb()
+  const submit=(await import('../../../layers/sme-roster/server/mcp/tools/submit_event_annual_correspondence_task')).default
+  const get=(await import('../../../layers/sme-roster/server/mcp/tools/get_event_annual_correspondence_task')).default
+  expect(await submit.handler({clientRequestId:'handler-deny',eventIds:[f.event.id]},{} as never)).toMatchObject({isError:true})
+  expect(await db.select().from(job)).toEqual([])
+  const result=await submit.handler({clientRequestId:'handler-allow',eventIds:[f.event.id]},{requestInfo:{headers:{authorization:'Bearer mcp-251'}}} as never) as {jobId:string}
+  expect(result).toMatchObject({jobId:expect.any(String)})
+  await vi.waitFor(async () => expect((await getPostgresJob(db,result.jobId))?.row.state).toBe('done'), {timeout:5000})
+  expect(await get.handler({id:result.jobId},{} as never)).toMatchObject({status:'done',result:{events:[{finalQualification:{status:'confirmed'}}]}})
+  const rest=await handlePostgresAnnualTaskRequest('submit',{method:'POST',headers:{authorization:'Bearer rest-251'},body:{clientRequestId:'rest-same-scope',eventIds:[f.event.id]}},{filesDir:f.dir,apiToken:'rest-251'})
+  expect(rest.body).toMatchObject({jobId:result.jobId})
+ } finally {
+  await stopPostgresJobs()
+  await closePostgresDirectoryDb()
+  postgres.close()
+  vi.unstubAllEnvs()
+ }
+}, 20_000)
 it('reads same-state same-version confirmation from its actual old observation without duplicating the latest observation',()=>{
  const f=fixture(),old=f.add();f.manual('same-version-confirmation',[{action:'create',status:'confirmed',edge:{type:'event_process',eventId:f.event.id,relationId:old.relation.id,role:'context_only'}}]);const current=f.add()
  const audits=f.db.select().from(s.recordCorrespondenceAudit).all();expect(f.scope().steps[0]!.preferredRelationId).toBe(current.relation.id)

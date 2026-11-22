@@ -34,8 +34,8 @@ import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/
 import type { PlatformRawRow } from '../../../layers/sme-roster/lib/platform/types'
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 import { processFactsFromRow } from '../../../layers/sme-roster/lib/platform/identity'
-import { readPlatformQualificationFacts } from '../../../layers/sme-roster/lib/roster/platform-qualification'
-import * as platformQualification from '../../../layers/sme-roster/lib/roster/platform-qualification'
+import { readPlatformQualificationFacts } from '../../../layers/sme-roster/lib/roster/platform-qualification-sqlite'
+import * as platformQualification from '../../../layers/sme-roster/lib/roster/platform-qualification-sqlite'
 import { createCurrentTargetContext } from '../../../layers/sme-roster/lib/roster/current-target-context'
 import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
 function collectionCommand(row: PlatformRawRow, queriedAt: string, source: PlatformLiveQueryResult['source'] = 'queryBusList'): NewCollectionTargetCommand {

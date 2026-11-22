@@ -6,7 +6,7 @@ import { activePostgresPhysicalIntent, requirePostgresFileWrite, type PostgresFi
 import {
   compareOcrPageVersion, DEFAULT_OCR_ENGINE, ocrHistoricalBinding, ocrVersionExpectations,
   pageRelPathOf, validOcrExpectedVersion, validateOcrPages, type OcrWriteInput, type OcrWriteResult, type OcrResultRow,
-} from './ocr-result'
+} from './ocr-result-contract'
 import { reviseOcrProvenance } from './ocr-provenance'
 
 type Provenance = NonNullable<Parameters<typeof ocrHistoricalBinding>[0]>

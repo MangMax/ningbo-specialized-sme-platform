@@ -1,7 +1,7 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { registeredCredentials } from '../../../../lib/app-modules'
 import { postgresJobHandler } from './job-runner-postgres'
-import type { JobDto } from './job-store'
+import type { JobDto } from './job-contract'
 import { readPostgresCredentialState } from './credential-state-postgres'
 
 const sensitiveKey = /cookie|password|passwd|token|secret|credential|authorization|authentication|api.?key|session|raw.?response/i

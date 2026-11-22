@@ -1,26 +1,59 @@
 import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
-import { reviewFixtureRows } from './fixtures/reviewed-announcement'
+import { reviewPostgresFixtureRows } from './fixtures/reviewed-announcement-postgres'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
-import { spawnCompiledApp } from '../../support/owned-process.mjs'
+import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { request as httpRequest } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { sql } from 'drizzle-orm'
-import { initializeDb, schema } from '../../../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { desc, eq, sql } from 'drizzle-orm'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
+import pg from 'pg'
+import { importBatch, importReceipt } from '../../../db/postgresql/import-tables'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { sourceDocument } from '../../../db/postgresql/official-evidence-tables'
 
 const dir = mkdtempSync(join(tmpdir(), 'spec98-import-receipts-'))
-const dbPath = join(dir, 'synthetic.db')
-const db = initializeDb({ create: true,  dbPath })
-const legacy = db.insert(schema.importBatch).values({ idempotencyKey: 'legacy/key?精确=1', sourceKind: 'announcement', sourceIdentity: 'synthetic/legacy', status: 'preflight' }).returning().get()
-const processing = db.insert(schema.importBatch).values({ idempotencyKey: 'interrupted-worker', sourceKind: 'announcement', sourceIdentity: 'synthetic/processing' }).returning().get()
-db.insert(schema.importReceipt).values({ batchId: processing.id, operation: 'commit', requestHash: 'synthetic-hash', requestBody: '{}', status: 'processing', createdAt: '2026-10-19T00:00:00Z' }).run()
-const foreignBatch = db.insert(schema.importBatch).values({ idempotencyKey: 'correspondence-only', sourceKind: 'correspondence_decision', sourceIdentity: 'synthetic/correspondence' }).returning().get()
-const longLegacy = db.insert(schema.importBatch).values({ idempotencyKey: 'K'.repeat(4100), sourceKind: 'announcement', sourceIdentity: 'S'.repeat(4100), status: 'committed', summary: { written: 1, skipped: 0, failed: 0 }, itemResults: [{ ok: true, kind: 'record', ref: 'record:991', detail: { raw: 'LEGACY_RAW_ONLY'.repeat(8192) } }] }).returning().get()
-db.run(sql`CREATE TRIGGER synthetic_receipt_rollback BEFORE INSERT ON record WHEN NEW.name_raw = '合成触发回滚企业' BEGIN SELECT RAISE(ABORT, 'synthetic transaction rollback'); END`)
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+let pool: pg.Pool | undefined
+let db: NodePgDatabase
+let legacy: { id: number; idempotencyKey: string }
+let processing: { id: number }
+let foreignBatch: { id: number }
+let longLegacy: { id: number }
+
+async function seedReceiptFixture() {
+  const createdAt = '2026-10-19T00:00:00Z'
+  const [legacyRow, processingRow, foreignRow, longRow] = await db.insert(importBatch).values([
+    { idempotencyKey: 'legacy/key?精确=1', sourceKind: 'announcement', sourceIdentity: 'synthetic/legacy', createdAt },
+    { idempotencyKey: 'interrupted-worker', sourceKind: 'announcement', sourceIdentity: 'synthetic/processing', createdAt },
+    { idempotencyKey: 'correspondence-only', sourceKind: 'correspondence_decision', sourceIdentity: 'synthetic/correspondence', createdAt },
+    { idempotencyKey: 'K'.repeat(4100), sourceKind: 'announcement', sourceIdentity: 'S'.repeat(4100), createdAt,
+      status: 'committed', summary: JSON.stringify({ written: 1, skipped: 0, failed: 0 }),
+      itemResults: JSON.stringify([{ ok: true, kind: 'record', ref: 'record:991', detail: { raw: 'LEGACY_RAW_ONLY'.repeat(8192) } }]) },
+  ]).returning({ id: importBatch.id, idempotencyKey: importBatch.idempotencyKey })
+  legacy = legacyRow!
+  processing = processingRow!
+  foreignBatch = foreignRow!
+  longLegacy = longRow!
+  await db.insert(importReceipt).values({
+    batchId: processing.id, operation: 'commit', requestHash: 'synthetic-hash', requestBody: '{}', status: 'processing', createdAt,
+  })
+  await db.execute(sql`
+    CREATE FUNCTION business.synthetic_receipt_rollback() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RAISE EXCEPTION 'synthetic transaction rollback';
+    END;
+    $$
+  `)
+  await db.execute(sql`
+    CREATE TRIGGER synthetic_receipt_rollback BEFORE INSERT ON business.record
+    FOR EACH ROW WHEN (NEW.name_raw = '合成触发回滚企业') EXECUTE FUNCTION business.synthetic_receipt_rollback()
+  `)
+}
 let service: { baseUrl: string; stop: () => Promise<void> }
 const apiToken = 'synthetic-api-103'
 const mcpToken = 'synthetic-mcp-103'
@@ -32,7 +65,7 @@ async function supplement(body: RosterImportRequest) {
   const staged = await client.commit(body)
   if (staged.status !== 'staged') throw new Error(JSON.stringify(staged))
   const intake = await client.readIntake(staged.intakeId)
-  const review = intake.review ?? reviewFixtureRows(db, staged.sourceDigest, body)
+  const review = intake.review ?? await reviewPostgresFixtureRows(db, staged.sourceDigest, body)
   return client.supplement(staged.intakeId, review)
 }
 async function rpc(name: string, args: Record<string, unknown>, token: string | null = mcpToken, method = 'tools/call') {
@@ -45,20 +78,41 @@ const value = (result: any) => JSON.parse(result.body.result.content[0].text)
 const request = (key: string) => ({ idempotencyKey: key, sourceKind: 'announcement' as const, sourceIdentity: `synthetic/${key}`, payload: { announcement: { sourceDocument: { source: 'jxj' as const, title: '合成回执公告' }, records: [{ enterprise: { name: '合成回执企业' }, titleCode: 'specialized_sme', events: [{ eventType: 'award' as const, year: 2026 }] }] } } })
 
 async function startService(configured = true) {
-  await readDevelopmentDiscovery()
   const cwd = resolve(import.meta.dirname, '../../..')
   const port = await reserveLoopbackPort()
-  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, configured ? 'nuxt-build' : 'nuxt-unconfigured'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: configured ? apiToken : '', NUXT_MCP_TOKEN: configured ? mcpToken : '', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') } })
+  const child = spawnCompiledApp(port, {
+    cwd, stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...postgres!.env, NUXT_DB_READONLY: '0',
+      NUXT_BUILD_DIR: join(dir, configured ? 'nuxt-build' : 'nuxt-unconfigured'),
+      NUXT_ROSTER_EXPORT_DIR: join(dir, 'exports'),
+      NUXT_API_TOKEN: configured ? apiToken : '', NUXT_MCP_TOKEN: configured ? mcpToken : '',
+      NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'),
+    },
+  })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output += data })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) }
   catch (error) { await service.stop(); throw new Error(`${String(error)}\n${output.slice(-8000)}`) }
 }
-beforeAll(() => startService(), 90000)
-afterAll(async () => { if (service) await service.stop(); rmSync(dir, { recursive: true, force: true }) })
+beforeAll(async () => {
+  postgres = await postgresRuntimeFixture({ dir })
+  pool = new pg.Pool({ connectionString: postgres.url })
+  db = drizzle({ client: pool })
+  await seedReceiptFixture()
+  await readDevelopmentDiscovery()
+  await startService()
+}, 90_000)
 
-describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
+afterAll(async () => {
+  await service?.stop()
+  await pool?.end()
+  postgres?.close()
+  rmSync(dir, { recursive: true, force: true })
+})
+
+describe('import receipts through real HTTP and MCP on isolated PostgreSQL', () => {
   it('reads an exact legacy batch by ID or key without creating a receipt', async () => {
     const response = await get(`?batchId=${legacy.id}`)
     expect(response.status).toBe(200)
@@ -85,7 +139,7 @@ describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
   it('recovers a committed original-body submission after losing its response without replaying it', async () => {
     const submitted = request('disconnect/精确?key=103')
     const staged = await (await post('commit', submitted)).json()
-    const review = reviewFixtureRows(db, staged.sourceDigest, submitted)
+    const review = await reviewPostgresFixtureRows(db, staged.sourceDigest, submitted)
     await new Promise<void>((resolve, reject) => {
       const outgoing = httpRequest(`${service.baseUrl}/api/roster/import/intake/${staged.intakeId}/supplement`, { method: 'POST', headers: { authorization: `Bearer ${apiToken}`, 'content-type': 'application/json' } }, response => { response.destroy(); resolve() })
       outgoing.on('error', reject)
@@ -148,9 +202,10 @@ describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
     expect((await post('preflight', submitted)).status).toBe(200)
     const committed = await supplement(submitted)
     expect(committed.status).toBe('supplemented')
-    const shared = db.get<{ body: string; owner: number }>(sql`SELECT request_body AS body, body_receipt_id AS owner FROM import_receipt WHERE batch_id=${committed.batchId} ORDER BY id DESC LIMIT 1`)!
-    expect(shared.body).toBe('')
-    expect(shared.owner).toBeGreaterThan(0)
+    const [shared] = await db.select({ body: importReceipt.requestBody, owner: importReceipt.bodyReceiptId })
+      .from(importReceipt).where(eq(importReceipt.batchId, committed.batchId)).orderBy(desc(importReceipt.id)).limit(1)
+    expect(shared!.body).toBe('')
+    expect(shared!.owner).toBeGreaterThan(0)
     const summary = await (await get(`?batchId=${committed.batchId}`)).json()
     expect(JSON.stringify(summary)).not.toContain('RAW_ONLY_103')
     expect(summary.originalRequest).toBe('redacted')
@@ -197,6 +252,11 @@ describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
     submitted.payload.announcement.records[0]!.enterprise.name = '合成触发回滚企业'
     const failure = await supplement(submitted)
     expect(failure).toMatchObject({ status: 'failed', summary: { written: 0, failed: 1 } })
+    expect(JSON.stringify(failure)).not.toContain('synthetic transaction rollback')
+    expect(await db.select({ id: enterprise.id }).from(enterprise)
+      .where(eq(enterprise.name, submitted.payload.announcement.records[0]!.enterprise.name))).toEqual([])
+    expect(await db.select({ id: sourceDocument.id }).from(sourceDocument)
+      .where(eq(sourceDocument.title, submitted.payload.announcement.sourceDocument.title))).toEqual([])
     const receipt = await (await get(`?batchId=${failure.batchId}`)).json()
     expect(receipt.status).toBe('failed')
     expect(await (await get(`/items?receiptId=${receipt.receiptId}`)).json()).toMatchObject({ rows: [{ ok: false, errorCode: 'commit_rolled_back' }] })
@@ -253,11 +313,17 @@ describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
     const itemBefore = await (await get(`/items${path}&page=3&pageSize=50`)).text()
     expect(JSON.parse(itemBefore)).toMatchObject({ total: 120, page: 3, rows: Array.from({ length: 20 }, (_, i) => ({ index: 100 + i, ok: true })) })
     const padding = 'UNRELATED_RAW_PADDING'.repeat(8192)
-    db.transaction(() => {
-      for (let i = 0; i < 30; i++) {
-        const batch = db.insert(schema.importBatch).values({ idempotencyKey: `bounded-unrelated-${i}`, sourceKind: 'announcement', sourceIdentity: `synthetic/unrelated-${i}`, status: 'committed', itemResults: [{ ok: true, kind: 'record', ref: 'unrelated', detail: { padding } }] }).returning().get()
-        db.insert(schema.importReceipt).values({ batchId: batch.id, operation: 'commit', requestHash: 'synthetic', requestBody: JSON.stringify({ padding }), status: 'committed', createdAt: '2026-10-19T00:00:00Z', completedAt: '2026-10-19T00:01:00Z', itemResults: [{ ok: true, kind: 'record', ref: 'unrelated', detail: { padding } }] }).run()
-      }
+    const createdAt = '2026-10-19T00:00:00Z'
+    const itemResults = JSON.stringify([{ ok: true, kind: 'record', ref: 'unrelated', detail: { padding } }])
+    await db.transaction(async tx => {
+      const batches = await tx.insert(importBatch).values(Array.from({ length: 30 }, (_, i) => ({
+        idempotencyKey: `bounded-unrelated-${i}`, sourceKind: 'announcement', sourceIdentity: `synthetic/unrelated-${i}`,
+        status: 'committed', itemResults, createdAt,
+      }))).returning({ id: importBatch.id })
+      await tx.insert(importReceipt).values(batches.map(batch => ({
+        batchId: batch.id, operation: 'commit', requestHash: 'synthetic', requestBody: JSON.stringify({ padding }),
+        status: 'committed', createdAt, completedAt: '2026-10-19T00:01:00Z', itemResults,
+      })))
     })
     const after = await (await get(path)).text()
     expect(after).toBe(before)
@@ -268,7 +334,7 @@ describe('import receipts through real HTTP and MCP on isolated SQLite', () => {
     expect(value(await rpc('list_roster_import_items', { batchId: committed.batchId, page: 3, pageSize: 50 }))).toEqual(JSON.parse(itemAfter))
     const raw = await (await get(`/request${path}&maxBytes=4096`)).json()
     expect(Buffer.from(raw.data, 'base64')).toHaveLength(4096)
-  })
+  }, 30_000)
   it('disables protected reads when credentials are unconfigured', async () => {
     await service.stop()
     await startService(false)

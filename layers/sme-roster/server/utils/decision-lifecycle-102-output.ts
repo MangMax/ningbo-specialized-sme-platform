@@ -1,26 +1,15 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { importPostgresReceiptRedactor } from './import-receipt-redaction'
 import { usePostgresRosterDb } from './postgres-roster-db'
-import { cookieRedactor } from '../../lib/platform/client'
-import { credentialContext, resolveCredential } from '../../../core/server/utils/credential-state'
-import { sanitizeEvidence } from './record-correspondence-read'
+import { sanitizeEvidence } from './evidence-redaction'
 import { z } from 'zod'
-import { DecisionError102, decisionScope102, type DecisionDb } from './decision-lifecycle-102'
-/** Resolve redactors before a write so output preparation cannot fail after commit. */
-export function decisionOutput102(db: DecisionDb) {
-  const runtime = useRuntimeConfig()
-  const credentials = { ...credentialContext(), db }
-  const values = [runtime.apiToken, runtime.mcpToken, resolveCredential('sme-roster.miitCookie', credentials).value, resolveCredential('core.ocrToken', credentials).value]
-  const redactors = [...new Set(values.filter((v): v is string => typeof v === 'string' && !!v))].map(cookieRedactor)
-  return projectDecisionOutput(redactors)
-}
-
+import { DecisionError102, decisionScope102 } from './decision-lifecycle-102/contract'
 export async function postgresDecisionOutput102(db: NodePgDatabase) {
   const { knownRedactors } = await importPostgresReceiptRedactor(db)
   return projectDecisionOutput(knownRedactors)
 }
 
-function projectDecisionOutput(redactors: Parameters<typeof sanitizeEvidence>[1]) {
+export function projectDecisionOutput(redactors: Parameters<typeof sanitizeEvidence>[1]) {
   return (value: Record<string, unknown>) => {
     const safe = sanitizeEvidence(value, redactors)
     // Only this strict numeric/domain version object may pass a token-named key.
@@ -33,20 +22,10 @@ export function decisionFailure102(error: unknown) {
   const typed = error instanceof DecisionError102 ? error : new DecisionError102(500, 'transaction_failed', 'Decision operation failed; no partial changes committed')
   return { status: typed.statusCode, body: { error: { code: typed.code, message: typed.message } } }
 }
-export function decisionMcp102(db: DecisionDb, operation: () => Record<string, unknown>) {
-  try { const output = decisionOutput102(db); return output(operation()) }
-  catch (error) { return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify(decisionFailure102(error).body) }] } }
-}
-
-export async function decisionReadMcp102(db: () => DecisionDb, legacy: (tx: DecisionDb) => Record<string, unknown>,
-  postgres: (tx: NodePgDatabase) => Promise<Record<string, unknown>>, pinned = true,
+export async function decisionReadMcp102(postgres: (tx: NodePgDatabase) => Promise<Record<string, unknown>>, pinned = true,
 ) {
   try {
     const native = usePostgresRosterDb()
-    if (!native) {
-      const sqlite = db()
-      return decisionMcp102(sqlite, () => sqlite.transaction(() => legacy(sqlite)))
-    }
     if (!pinned) return (await postgresDecisionOutput102(native))(await postgres(native))
     return await native.transaction(async tx => (await postgresDecisionOutput102(tx))(await postgres(tx)), {
       isolationLevel: 'repeatable read', accessMode: 'read only',
@@ -56,15 +35,10 @@ export async function decisionReadMcp102(db: () => DecisionDb, legacy: (tx: Deci
   }
 }
 
-export async function decisionWriteMcp102(db: () => DecisionDb, legacy: (db: DecisionDb) => Record<string, unknown>,
-  postgres: (db: NodePgDatabase) => Promise<Record<string, unknown>>, write = true,
+export async function decisionWriteMcp102(postgres: (db: NodePgDatabase) => Promise<Record<string, unknown>>, write = true,
 ) {
   try {
     const native = usePostgresRosterDb(write)
-    if (!native) {
-      const sqlite = db()
-      return decisionMcp102(sqlite, () => legacy(sqlite))
-    }
     const output = await postgresDecisionOutput102(native)
     return output(await postgres(native))
   } catch (error) {

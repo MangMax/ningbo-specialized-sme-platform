@@ -1,10 +1,11 @@
+import { setTimeout as delay } from 'node:timers/promises'
 import { and, eq, getTableColumns, inArray, or, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
 import { importBatch } from '../../../../db/postgresql/import-tables'
 import { platformLegacyRelationAlias } from '../../../../db/postgresql/platform-tables'
 import { recordCorrespondence, recordCorrespondenceAudit } from '../../../../db/postgresql/qualification-tables'
-import { buildRecordCorrespondencePlan, correspondenceEdgeKey, correspondenceHash, CorrespondenceError, recordCorrespondenceMutations, requestedCorrespondenceSources, type CorrespondencePlan, type CorrespondenceReceipt, type CorrespondenceRequest, type StoredCorrespondence } from './record-correspondence'
+import { buildRecordCorrespondencePlan, correspondenceEdgeKey, correspondenceHash, CorrespondenceError, recordCorrespondenceMutations, requestedCorrespondenceSources, type CorrespondencePlan, type CorrespondenceReceipt, type CorrespondenceRequest, type StoredCorrespondence } from './record-correspondence-model'
 import { observePostgresCorrespondences } from './record-correspondence-postgres'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -14,7 +15,9 @@ type Batch = {
 }
 const fail = (code: CorrespondenceError['code'], message: string): never => { throw new CorrespondenceError(code, message) }
 
-export async function runPostgresCorrespondenceTransaction<T>(db: NodePgDatabase, run: (tx: Tx) => Promise<T>) {
+export async function runPostgresCorrespondenceTransaction<T>(
+  db: NodePgDatabase, run: (tx: Tx) => Promise<T>, retryDelays: readonly number[] = [0, 0],
+) {
   for (let attempt = 0; ; attempt++) {
     try { return await db.transaction(run, { isolationLevel: 'serializable' }) }
     catch (error) {
@@ -23,7 +26,9 @@ export async function runPostgresCorrespondenceTransaction<T>(db: NodePgDatabase
       const constraint = cause.constraint ?? cause.cause?.constraint
       if (code === '23505' && constraint === 'record_correspondence_edge_uq') fail('plan_mismatch', 'Another request committed this edge; preflight again')
       if (code !== '40001') throw error
-      if (attempt === 2) fail('plan_mismatch', 'Concurrent source change; preflight again')
+      const wait = retryDelays[attempt]
+      if (wait === undefined) fail('plan_mismatch', 'Concurrent source change; preflight again')
+      if (wait) await delay(wait)
     }
   }
 }

@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { LogFieldControls, LogFieldControlsPatch } from '../../../layers/core/lib/logging/contract'
 import { LOG_FIELD_PROFILES } from '../../../layers/core/lib/logging/field-controls'
-import { createLogService } from '../../../layers/core/lib/logging/service'
+import { createLogService } from '../../../layers/core/lib/logging/sqlite-service'
 
 vi.mock('motion-v', async (original) => {
   const actual = await original<typeof import('motion-v')>()

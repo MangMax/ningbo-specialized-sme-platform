@@ -1,3 +1,4 @@
+import { handleRecordCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-api'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,7 +9,6 @@ import { afterAll, expect, it, vi } from 'vitest'
 import { initializeDb, schema } from '../../../db/client'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { browserCorrespondenceRoute } from '../../../layers/sme-roster/server/utils/browser-correspondence'
-import { handleRecordCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-api'
 
 const dir = mkdtempSync(join(tmpdir(), 'browser-correspondence-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'test.db') })
@@ -21,7 +21,7 @@ const edge = (n: number) => ({ type: 'event_process', eventId: event.id, relatio
 const config = { apiToken: 'synthetic-private-token', }
 vi.stubGlobal('defineEventHandler', defineEventHandler)
 const app = createApp()
-for (const action of ['preflight', 'commit'] as const) app.use('/' + action, browserCorrespondenceRoute(action, () => ({ db, config })))
+for (const action of ['preflight', 'commit'] as const) app.use('/' + action, browserCorrespondenceRoute(action, input => handleRecordCorrespondenceRequest(input, { db: db, browserAuthorized: true })))
 const server = createServer(toNodeListener(app))
 await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`

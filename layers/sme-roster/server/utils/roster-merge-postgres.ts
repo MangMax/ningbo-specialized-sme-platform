@@ -10,7 +10,7 @@ import { differenceReason } from '../../../../db/postgresql/roster-selection-tab
 import { applyPostgresEnterpriseMerge, findPostgresEnterpriseMergeAliasConflict, lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import type { RosterImportItemResult, RosterImportMerge } from '../../lib/roster-import-client'
-import { evidenceDigest113 } from './evidence-impact-113'
+import { evidenceDigest113 } from './evidence-digest'
 import { appendPostgresEvidenceRevision } from './evidence-revision-postgres'
 import { attachPostgresIdentityRevisionEvents, readPostgresIdentityMaterial } from './postgres-identity-evidence'
 import type { MergeLineage } from './roster-import'

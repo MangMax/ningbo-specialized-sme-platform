@@ -14,7 +14,7 @@ import {
   platformQueryTitleScope as titleScope,
   platformQueryTitleScopeError as titleScopeError,
 } from '../../../../db/postgresql/platform-archive-tables'
-import { MAX_PAGE_SIZE } from '../query'
+import { MAX_PAGE_SIZE } from '../query-limits'
 import type { PlatformQueriesResult, PlatformQueryFilter } from './read'
 import { RDJB_TITLE_CODES } from './recognized-evidence'
 import { readPostgresQueryDisplays } from './postgres-query-display'

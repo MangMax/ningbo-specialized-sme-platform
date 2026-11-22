@@ -1,14 +1,10 @@
-import { requestLogContext } from '../../../../core/lib/logging'
 import { admitEnterpriseResponse } from '../../utils/enterprise-read-response'
-import { useDb } from '@db'
 import {
   DIFF_STATUS_NONE,
   ROSTER_ENTERPRISE_SORTS,
   ROSTER_STATES,
-} from '#sme-roster/lib/roster/enterprise-roster'
+} from '#sme-roster/lib/roster/enterprise-roster-projection'
 import { parseRosterEnterpriseQuery } from '../../utils/roster-read-query'
-import { enterpriseReads } from '../../utils/enterprise-read'
-import { withEnterpriseReadSignal } from '../../../../core/server/utils/enterprise-read-signal'
 import { listPostgresRosterEnterprises } from '../../../lib/roster/enterprise-list-postgres'
 import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 
@@ -105,7 +101,7 @@ defineRouteMeta({
     ],
     responses: {
       200: { description: '企业总表(`rows` / `counts` / `page` / `pageSize`)。' },
-      503: { description: '企业读取队列或响应并发已满，或执行器暂时不可用；可重试，不表示无记录。' },
+      503: { description: '响应并发已满或服务暂时不可用；可重试，不表示无记录。' },
       400: { description: '`title` / `rosterState` / `source` / `eventType` / `firstStatus` / `diffStatus` / `sort` 取值非法。' },
     },
   },
@@ -114,11 +110,5 @@ defineRouteMeta({
 export default defineEventHandler((event) => {
   const filter = parseRosterEnterpriseQuery(getQuery(event))
   admitEnterpriseResponse(event)
-  const pg = usePostgresRosterDb()
-  if (pg) return listPostgresRosterEnterprises(pg, filter)
-  return withEnterpriseReadSignal(event, async signal => {
-    const result = await enterpriseReads.json(useDb().$client.name, { operation: 'list',filter }, signal, requestLogContext(event))
-    setHeader(event, 'content-type', 'application/json; charset=utf-8')
-    return result.body
-  })
+  return listPostgresRosterEnterprises(usePostgresRosterDb(), filter)
 })

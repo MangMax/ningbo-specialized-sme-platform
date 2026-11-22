@@ -1,7 +1,5 @@
 import { usePostgresRosterDb } from '../../../utils/postgres-roster-db'
 import { readPostgresDuplicateMerge } from '../../../utils/identity-discovery-postgres'
-import { useDb } from '@db'
-import { planDuplicateMerge } from '#sme-roster/server/utils/roster-duplicate-merge'
 
 /**
  * **重名候选报告**（RL-14）：某批导入报出的重名候选，以及「哪些有证据可并、哪些待核」。
@@ -55,7 +53,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: '缺少 batchKey（导入批次幂等键）' })
   }
   const postgres = usePostgresRosterDb()
-  const report = postgres ? await readPostgresDuplicateMerge(postgres, batchKey) : await planDuplicateMerge(useDb(), batchKey)
+  const report = await readPostgresDuplicateMerge(postgres, batchKey)
   if (report?.batchId == null) {
     throw createError({ statusCode: 404, statusMessage: `没有这个导入批次：${batchKey}` })
   }

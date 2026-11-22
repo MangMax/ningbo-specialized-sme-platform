@@ -1,11 +1,9 @@
 import { defineEventHandler, readBody, getQuery, createError, setResponseStatus, setHeader } from 'h3'
 import { useRuntimeConfig } from '#imports'
-import { useDb } from '@db'
 import type { CurrentTitle } from '../../lib/roster/current-qualification'
 import { startPostgresJobs } from '../../../core/server/public'
-import { usePostgresRosterDb } from './postgres-roster-db'
 import { requireTaskCenterAccess } from '../../../core/server/utils/task-center-access'
-import { ensureJobRunnerReady, getJobSpec, submitJob } from '../../../core/server/utils/job-runner'
+import { getJobSpec } from '../../../core/server/utils/job-spec-registry'
 import { registerJobSpecs } from '../../../../server/utils/job-specs'
 import { appLog, requestLogContext } from '../../../core/lib/logging'
 /** Dedicated routes fix the title; only their OpenAPI descriptions differ. */
@@ -22,16 +20,9 @@ export function currentExportRoute(titleCode: CurrentTitle) {
     if (!parsed.ok) throw createError({statusCode:400,message:parsed.message})
     if (parsed.params.regenerateOf) operation = 'export.current.regenerate'
     const input = {kind:'current-roster-export',params:parsed.params,filesDir:useRuntimeConfig(event).filesDir,logContext}
-    let job
-    if (usePostgresRosterDb()) {
-      const runtime = startPostgresJobs(input.filesDir)
-      if (!runtime) throw createError({statusCode:503,message:'需要启用 PostgreSQL 任务中心'})
-      job = await runtime.runner.submit(input)
-    } else {
-      const db = useDb()
-      ensureJobRunnerReady(db)
-      job = submitJob(db,input)
-    }
+    const runtime = startPostgresJobs(input.filesDir)
+    if (!runtime) throw createError({ statusCode: 503, message: '需要启用 PostgreSQL 任务中心' })
+    const job = await runtime.runner.submit(input)
     appLog({ module: 'sme-roster', source: 'export', operation, outcome: 'success', taskId: job.id, ...(parsed.params.regenerateOf ? { resourceType: 'export_job', resourceId: String(parsed.params.regenerateOf) } : {}) }, logContext)
     setResponseStatus(event,202); setHeader(event,'location',`/api/jobs/${job.id}`)
     return {jobId:job.id,kind:job.kind,state:job.state}

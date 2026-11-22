@@ -1,23 +1,19 @@
-import '../../support/compiled-enterprise-reader'
-import { createServer } from 'node:http'
+import { reserveLoopbackPort, spawnCompiledApp, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import * as h3 from 'h3'
 import ExcelJS from 'exceljs'
-import { afterAll, beforeAll, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, expect, it } from 'vitest'
 import { initializeDb, schema as s } from '../../../db/client'
-import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { writeCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook'
 import { createCurrentCandidateReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { qualificationCycleCases } from "./fixtures/cycle-cases"
 import { qualificationReferenceCases } from "./fixtures/reference-cases"
 
-const active = vi.hoisted(() => ({ db: null as ReturnType<typeof initializeDb> | null }))
-vi.mock('@db', () => ({ useDb: () => active.db }))
-vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 const dir = mkdtempSync(join(tmpdir(), 'issue305-cycles-'))
-const db = initializeDb({ create: true,  dbPath: join(dir, 'issue305.sqlite') }); active.db = db
+const db = initializeDb({ create: true,  dbPath: join(dir, 'issue305.sqlite') })
 const titles = ['little_giant', 'specialized_sme', 'innovative_sme'] as const
 type Event = { eventType: 'award' | 'review'; year: number | null; decidedYear: number | null; batchSeq: number | null; reviewOutcome?: 'passed' | 'failed' | null }
 const award = (year: number, batchSeq = 1): Event => ({ eventType: 'award', year, decidedYear: year, batchSeq })
@@ -37,13 +33,26 @@ const cases = [
   { id: 'passed', events: [award(2020), review(2020, currentYear - 2, 'passed')], sheet: '有效企业', due: currentYear + 1 },
   { id: 'overdue-plan', events: [award(2020)], sheet: '待确认', due: 2023 },
 ] as const
-let server: ReturnType<typeof createServer>, base: string
-let recordsTool: any, currentTool: any
+let child: ReturnType<typeof spawnCompiledApp> | undefined
+let base: string
 const ids = new Map<string, number>()
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+async function stopRuntime() {
+  try { if (child) await stopOwnedChild(child) }
+  finally { child = undefined; postgres?.close(); postgres = undefined }
+}
+async function stageRuntime() {
+  await stopRuntime()
+  installLeadListSchema(db.$client)
+  postgres = await postgresRuntimeFixture({ dir, sourcePath: db.$client.name })
+  const port = await reserveLoopbackPort()
+  base = 'http://127.0.0.1:' + port
+  child = spawnCompiledApp(port, { stdio: ['ignore', 'ignore', 'inherit'], env: {
+    ...postgres.env, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'),
+  } })
+  await waitForHttp(base + '/api/health', { child, timeoutMs: 60000 })
+}
 beforeAll(async () => {
-  await enterpriseReads.start()
-  for (const [key, value] of Object.entries(h3)) vi.stubGlobal(key, value)
-  vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: dir }))
   for (const title of titles) for (const c of cases) {
     const name = `issue305-${title}-${c.id}`
     const enterprise = db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: name, city: '宁波市' }).returning().get()
@@ -54,32 +63,33 @@ beforeAll(async () => {
       db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'issue305/synthetic.pdf', attachment: c.id, listNo: event.id, page: 1 }).run()
     }
   }
-  const records = (await import('../../../layers/sme-roster/server/api/records.get')).default
-  const current = (await import('../../../layers/sme-roster/server/api/roster/current-enterprises.get')).default
-  const detail = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default
-  recordsTool = (await import('../../../layers/sme-roster/server/mcp/tools/query_records')).default
-  currentTool = (await import('../../../layers/sme-roster/server/mcp/tools/list_current_qualified_enterprises')).default
-  server = createServer(h3.toNodeListener(h3.createApp().use(h3.createRouter()
-    .get('/api/records', records).get('/api/roster/current-enterprises', current).get('/api/roster/enterprises/:id', detail))))
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
-  base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
-})
+  await stageRuntime()
+}, 90000)
 afterAll(async () => {
-  if (server) await new Promise<void>(resolve => server.close(() => resolve()))
-  await enterpriseReads.close(); db.$client.close(); vi.unstubAllGlobals(); rmSync(dir, { recursive: true, force: true })
+  try { await stopRuntime() } finally { db.$client.close(); rmSync(dir, { recursive: true, force: true }) }
 })
+async function mcp(name: string, args: object) {
+  const response = await fetch(base + '/mcp', {
+    method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+  })
+  expect(response.status).toBe(200)
+  const raw = await response.text()
+  const wire = JSON.parse(raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : raw)
+  return wire.result.structuredContent ?? JSON.parse(wire.result.content[0].text)
+}
 async function get(path: string) {
-  const response = await fetch(base + path); expect(response.status).toBe(200); return response.json()
+  const response = await fetch(base + path); expect(response.status, await response.clone().text()).toBe(200); return response.json()
 }
 
 it('keeps failed-pass, cross-batch and unknown facts out of a definite review plan over HTTP and MCP', async () => {
   for (const title of titles) {
     const rest = await get('/api/records?' + new URLSearchParams({ title, pageSize: '200' }))
-    const mcp = await recordsTool.handler({ title: [title], pageSize: 200 })
+    const tools = await mcp('query_records', { title: [title], pageSize: 200 })
     expect(rest.rows).toHaveLength(cases.length)
     for (const c of cases) {
       const name = `issue305-${title}-${c.id}`
-      for (const rows of [rest.rows, mcp.rows]) {
+      for (const rows of [rest.rows, tools.rows]) {
         const row = rows.find((r: any) => r.name === name)
         expect.soft(row.lifecycle.dueYear, name).toBe(c.due)
         expect(row.lifecycle.firstRecognitionYear, name).toBe(c.events[0].year)
@@ -106,7 +116,7 @@ it('keeps failed-pass, cross-batch and unknown facts out of a definite review pl
 it('keeps current HTTP and MCP qualification equal to the five current status XLSX partitions', async () => {
   for (const title of titles) {
     const rest = await get('/api/roster/current-enterprises?' + new URLSearchParams({ titleCode: title, pageSize: '200' }))
-    const mcp = JSON.parse(await currentTool.handler({ titleCode: title, pageSize: 200 }))
+    const tools = await mcp('list_current_qualified_enterprises', { titleCode: title, pageSize: 200 })
     // Failed-pass cannot revive the original cycle; the distinct new award survives.
     const currentEligible = ['reaward', 'cross-batch', 'missing-result', 'missing-date', 'missing-batch', 'unknown-origin', 'same-year-reaward', 'passed', 'overdue-plan']
     const supportingTitles = title === 'little_giant' ? ['little_giant'] : title === 'specialized_sme' ? ['little_giant', 'specialized_sme'] : [...titles]
@@ -115,7 +125,7 @@ it('keeps current HTTP and MCP qualification equal to the five current status XL
     const expectedNames = supportingTitles.flatMap(t => ownEligible(t).map(id => `issue305-${t}-${id}`))
     const expected = expectedNames.map(name => ids.get(name)).sort((a, b) => a! - b!)
     expect(rest.rows.map((r: any) => r.enterpriseId)).toEqual(expected)
-    expect(mcp.rows.map((r: any) => r.enterpriseId)).toEqual(expected)
+    expect(tools.rows.map((r: any) => r.enterpriseId)).toEqual(expected)
     const file = join(dir, `issue305-${title}.xlsx`)
     const result = await writeCurrentWorkbook(db.$client, title, file, () => {})
     expect(result.counts).toEqual({ eligible: expectedNames.length, pending: 0, excluded: 11 * supportingTitles.length - expectedNames.length })
@@ -134,7 +144,7 @@ it('keeps current HTTP and MCP qualification equal to the five current status XL
     expect(expired.getCell(7).text).toContain('2024')
     expect(expired.getCell(13).text).toBe(title === 'little_giant' ? '已到期' : '有效企业')
   }
-}, 30000)
+}, 90000)
 
 it('preserves the existing R4 and R5 qualification decisions with real SQLite facts', () => {
   const year = new Date().getFullYear()
@@ -161,7 +171,7 @@ it('retains an old giant award but honors a complete source bound formal interva
     { id: 'sourced-current-interval', through: `${currentYear}-12-31`, status: 'effective', sheet: '有效企业' },
     { id: 'sourced-expired-interval', through: `${currentYear - 1}-12-31`, status: 'expired', sheet: '已到期' },
   ] as const
-  for (const c of controls) {
+  const seeded = controls.map(c => {
     const name = `source-bound-giant-${c.id}`
     const enterprise = db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: name, city: '宁波市' }).returning().get()
     const record = db.insert(s.record).values({ enterpriseId: enterprise.id, titleCode: 'little_giant', source: 'jxj', nameRaw: name }).returning().get()
@@ -169,6 +179,10 @@ it('retains an old giant award but honors a complete source bound formal interva
     const file = db.insert(s.storedFile).values({ relPath: `${name}.pdf`, filename: `${name}.pdf`, ext: 'pdf', sha256: 'a'.repeat(64), bytes: 1 }).returning().get()
     const evidence = db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: file.relPath, page: 2 }).returning().get()
     if (c.through) db.$client.prepare('update record_event set formal_validity=? where id=?').run(JSON.stringify({ evidenceId: evidence.id, sourceSha256: file.sha256, statementPages: [2], interval: { validFrom: '2020-01-01', validThrough: c.through } }), event.id)
+    return { c, name, enterprise, file }
+  })
+  await stageRuntime()
+  for (const { c, name, enterprise, file } of seeded) {
     const detail = await get(`/api/roster/enterprises/${enterprise.id}`)
     const giant = detail.qualificationAssessment.titles.find((t: any) => t.titleCode === 'little_giant')
     expect(giant).toMatchObject({ group: c.status === 'effective' ? 'eligible' : 'excluded', effectiveQualification: { status: c.status } })
@@ -180,8 +194,8 @@ it('retains an old giant award but honors a complete source bound formal interva
     }
     const query = { titleCode: 'little_giant', status: c.status, pageSize: 200 }
     const http = await get('/api/roster/current-enterprises?' + new URLSearchParams({ ...query, pageSize: '200' }))
-    const mcp = JSON.parse(await currentTool.handler(query))
-    for (const result of [http, mcp]) expect(result.rows.filter((r: any) => r.uscc === name).map((r: any) => r.enterpriseId)).toEqual([enterprise.id])
+    const tools = await mcp('list_current_qualified_enterprises', query)
+    for (const result of [http, tools]) expect(result.rows.filter((r: any) => r.uscc === name).map((r: any) => r.enterpriseId)).toEqual([enterprise.id])
     const path = join(dir, `${name}.xlsx`)
     await writeCurrentWorkbook(db.$client, 'little_giant', path, () => {})
     const wb = new ExcelJS.Workbook(); await wb.xlsx.readFile(path)

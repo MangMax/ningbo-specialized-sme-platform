@@ -5,7 +5,7 @@ import { preRetirementFixture } from '../runtime-boundary/fixtures/pre-retiremen
 import { retirePlatformModel } from '../../../upgrade/retire-platform-model'
 import { targetSchema as schema } from '../../../layers/sme-roster/lib/platform/target-schema'
 import { writeCollectionTarget } from '../../../layers/sme-roster/lib/platform/collection-target-command'
-import { reuseCollectedPlatformResult } from '../../../layers/sme-roster/server/utils/platform-collection-reuse'
+import { reuseCollectedPlatformResult } from '../../../layers/sme-roster/server/utils/platform-collection-reuse-sqlite'
 import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 import type { PlatformRawRow } from '../../../layers/sme-roster/lib/platform/adapter'

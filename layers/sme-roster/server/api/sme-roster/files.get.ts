@@ -1,13 +1,7 @@
-import { useDb } from '@db'
-import { inArray } from 'drizzle-orm'
-import { rosterFileClassification, storedFile } from '@db/schema'
-import { createFileStore } from '#core/server/utils/file-store'
 import { fileListQuery } from '#core/server/utils/file-list-query'
 import { listPostgresFiles, usePostgresFileDb } from '#core/server/utils/file-store-postgres'
 import { rosterFileServerCategory } from '../../modules/sme-roster/files'
 import { rosterFileMembership } from '../../utils/roster-file-postgres'
-
-const { listStoredFiles } = createFileStore([rosterFileServerCategory])
 
 defineRouteMeta({
   openAPI: {
@@ -29,8 +23,5 @@ export default defineEventHandler(event => {
   const query = getQuery(event)
   const filter = { ...query, includeRemoved: false, ...fileListQuery(query) }
   const postgres = usePostgresFileDb()
-  if (postgres) return listPostgresFiles(postgres, filter, { categories: [rosterFileServerCategory], membership: rosterFileMembership })
-  const db = useDb()
-  const membership = inArray(storedFile.id, db.select({ id: rosterFileClassification.fileId }).from(rosterFileClassification))
-  return listStoredFiles(db, filter, membership)
+  return listPostgresFiles(postgres, filter, { categories: [rosterFileServerCategory], membership: rosterFileMembership })
 })

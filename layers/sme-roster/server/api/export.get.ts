@@ -1,9 +1,8 @@
 import { legacyExportSheet, writeLegacyXlsx } from '../utils/legacy-export-xlsx'
 import { appLog, requestLogContext } from '../../../core/lib/logging'
-import { useDb } from '@db'
 import { usePostgresRosterDb } from '../utils/postgres-roster-db'
 import { allPostgresLedgerRecords } from '../../lib/query-postgres'
-import { allRecords, type EventType } from '#sme-roster/lib/query'
+import type { EventType } from '#sme-roster/lib/query'
 import {
   TITLES,
   SOURCES,
@@ -11,19 +10,11 @@ import {
   COMPARISON_LABELS,
   COMPARISON_NO_USCC,
 } from '#sme-roster/lib/labels'
-import { attachPlatformEvidence } from '#sme-roster/lib/comparison-platform'
 import { readPostgresComparisonExport } from '../../lib/comparison-postgres'
-import { getCuratedComparison } from '#sme-roster/lib/curation'
-import { filterComparisonRows } from '#sme-roster/lib/comparison-filter'
 import {
   COMPARISON_DIRECTIONS,
   type ComparisonDirection,
-} from '#sme-roster/lib/comparison'
-
-function readSqliteComparisonExport(curatedPath: string, filter: Parameters<typeof filterComparisonRows>[1]) {
-  const db = useDb()
-  return filterComparisonRows(attachPlatformEvidence(getCuratedComparison(db, curatedPath).rows, db), filter)
-}
+} from '#sme-roster/lib/comparison-model'
 
 const EVENT_TYPES: EventType[] = ['award', 'review', 'maintain', 'nurture']
 
@@ -134,10 +125,7 @@ export default defineEventHandler(async (event) => {
       district: str(q.district),
       showCurated: str(q.showCurated) === 'true',
     }
-    const postgres = usePostgresRosterDb()
-    const rows = postgres
-      ? await readPostgresComparisonExport(postgres, curatedPath, filter)
-      : readSqliteComparisonExport(curatedPath, filter)
+    const rows = await readPostgresComparisonExport(usePostgresRosterDb(), curatedPath, filter)
     summarized = true
     appLog({ module: 'sme-roster', source: 'export', operation, outcome: 'success', counts: { done: rows.length, total: rows.length } }, logContext)
     writeWorkbook = async (wb, pace) => {
@@ -175,8 +163,7 @@ export default defineEventHandler(async (event) => {
       q: str(q.q),
       flags: str(q.flags),
     }
-    const db = usePostgresRosterDb()
-    const rows = db ? await allPostgresLedgerRecords(db, filter) : allRecords(useDb(), filter)
+    const rows = await allPostgresLedgerRecords(usePostgresRosterDb(), filter)
 
     const enterprises = new Set(rows.map((r) => r.enterpriseId)).size
     summarized = true

@@ -6,7 +6,7 @@ import { verifyRecognizedStored } from './recognized-stored';
 import { verifyApplyStored, APPLY_STORED_KEYS } from './apply-stored-verifier';
 import type { ApplyTargetInput } from './apply-target-writer';
 /** Offline read-snapshot verifier, separately callable for planned and exact-original owners. */
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { TextDecoder } from 'node:util';
 import { and, eq } from 'drizzle-orm';
@@ -53,7 +53,8 @@ export function withFingerprintVerificationSnapshot<T>(t: Database.Database, ope
 /** Empty model used only to recompute expected business fingerprints. */
 export function emptyFingerprintTarget(t: Database.Database): Database.Database {
     const snapshot = fingerprintSnapshots.get(t);
-    const scratch = new Database(snapshot?.emptyTemplate ?? ':memory:');
+    const Connection = t.constructor as typeof Database;
+    const scratch = new Connection(snapshot?.emptyTemplate ?? ':memory:');
     scratch.pragma('foreign_keys=ON');
     try {
         if (snapshot?.emptyTemplate)

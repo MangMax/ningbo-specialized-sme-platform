@@ -2,9 +2,8 @@ import { createError, type H3Event } from 'h3'
 
 const admitted = new WeakSet<object>()
 let inFlight = 0
-/** Keep at most one native execution plus16 admitted responses, through Node's
- * finish/close event. Slow clients cannot keep admitting unbounded large bodies
- * after native computation has finished. No response payload is retained here. */
+/** Limit retained JSON responses across roster routes. A slow client keeps its
+ * admission slot until the HTTP response finishes or closes. */
 export function admitEnterpriseResponse(event: H3Event): void {
   const response = event.node?.res
   if (!response || admitted.has(response)) return

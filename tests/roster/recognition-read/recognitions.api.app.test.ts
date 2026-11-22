@@ -1,16 +1,12 @@
-import '../../support/compiled-enterprise-reader'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { initializeDb } from '../../../db/client'
-import { decodeJsonRead } from '../../support/json-read'
+import { nativeAppAdapter } from '../../support/native-app'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Readable } from 'node:stream'
+import pg from 'pg'
 import { readExportWorkbook } from '../../support/read-workbook'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { schema, useDb } from '../../../db'
-
-
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { schema } from '../../../db/client'
 
 /**
  * RL-08 —— 首次认定的**接口面**(契约 §7.5 + 增量)。
@@ -24,7 +20,7 @@ import { schema, useDb } from '../../../db'
  */
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-recognitions-api-'))
-let db = initializeDb({ create: true, dbPath: join(dir, 'api.db') })
+const app = nativeAppAdapter({ dir, token: 'recognition-contract-token' })
 
 const FILE_2022 = 'jxj/announcement/2022/甬经信中小〔2022〕145号关于公布宁波市“专精特新”中小企业名单的通知.pdf'
 
@@ -43,6 +39,7 @@ function seed(
     evidence?: { sourceFile: string; attachment?: string | null; listNo?: number | null; page?: number | null }[]
   }[],
 ) {
+  const db = app.db
   const id = db
     .insert(schema.enterprise)
     .values({ name, nameNorm: name, usccNorm: uscc, district })
@@ -80,9 +77,6 @@ function seed(
   return id
 }
 
-let query: Record<string, unknown> = {}
-let headers: Record<string, string> = {}
-
 type RecognitionRow = {
   enterpriseId: number
   name: string
@@ -97,31 +91,43 @@ type RecognitionRow = {
   evidence: { sourceFile: string; attachment: string | null; listNo: number | null; page: number | null }[]
   undatedAwardIds: number[]
 }
-let handlerRecognitions: (event: unknown) => Promise<{
+type RecognitionResponse = {
   rows: RecognitionRow[]
   counts: { titlePairs: number; enterprises: number; titles: Record<string, number> }
   page: number
   pageSize: number
-}>
-let handlerEnterprises: (event: unknown) => Promise<{
-  rows: { enterpriseId: number; name: string; firstRecognition: { titleCode: string; year: number | null; status: string }[] }[]
+}
+type EnterpriseResponse = {
+  rows: { enterpriseId: number; name: string }[]
   counts: { total: number; titlePairs: number; recognitionPairs: number }
-}>
-let handlerExport: (event: unknown) => Promise<Uint8Array | Readable>
-let handlerYears: (event: unknown) => { eventYears: number[]; firstRecognitionYears: number[] }
+}
+
+function request(path: string, query: Record<string, string | string[]> = {}) {
+  const params = new URLSearchParams()
+  for (const [key, values] of Object.entries(query)) {
+    for (const value of Array.isArray(values) ? values : [values]) params.append(key, value)
+  }
+  return fetch(app.url('/api/roster/' + path + '?' + params), { signal: AbortSignal.timeout(10000) })
+}
+
+async function readJson<T>(path: string, query?: Record<string, string | string[]>) {
+  const response = await request(path, query)
+  expect(response.status, await response.clone().text()).toBe(200)
+  return response.json() as Promise<T>
+}
+
+const readRecognitions = (query?: Record<string, string | string[]>) => readJson<RecognitionResponse>('recognitions', query)
+const readEnterprises = (query?: Record<string, string | string[]>) => readJson<EnterpriseResponse>('enterprises', query)
+const readYears = () => readJson<{ eventYears: number[]; firstRecognitionYears: number[] }>('ledger-years')
+
+async function readWorkbook(query?: Record<string, string | string[]>) {
+  const response = await request('export', query)
+  expect(response.status).toBe(200)
+  expect(response.headers.get('content-type')).toContain('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  return readExportWorkbook(new Uint8Array(await response.arrayBuffer()))
+}
 
 beforeAll(async () => {
-  vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
-  vi.stubGlobal('defineRouteMeta', () => undefined)
-  vi.stubGlobal('getQuery', () => query)
-  vi.stubGlobal('setHeader', (_event: unknown, name: string, value: string) => {
-    headers[name] = value
-  })
-  vi.stubGlobal('createError', (opts: { statusMessage?: string; statusCode?: number }) =>
-    Object.assign(new Error(opts.statusMessage ?? 'Bad request'), opts),
-  )
-  vi.doMock('@db', () => ({ useDb: () => db }))
-
   // 甲:2021 认定 → 2024 复核未通过 → 2025 再次获批。首次仍是 2021,出处指到 2022 年那份公布件。
   jiaId = seed('宁波甲接口测试股份有限公司', '91330211AAAAAAA101X', '鄞州区', 'specialized_sme', [
     { eventType: 'award', year: 2021, evidence: [{ sourceFile: FILE_2022, attachment: '附件一', listNo: 74, page: 74 }] },
@@ -133,18 +139,16 @@ beforeAll(async () => {
     { eventType: 'award', year: 2021 },
   ])
 
-  handlerRecognitions = (await import('../../../layers/sme-roster/server/api/roster/recognitions.get')).default as unknown as typeof handlerRecognitions
-  handlerEnterprises = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default) as unknown as typeof handlerEnterprises
-  handlerExport = (await import('../../../layers/sme-roster/server/api/roster/export.get')).default as unknown as typeof handlerExport
-  handlerYears = (await import('../../../layers/sme-roster/server/api/roster/ledger-years.get')).default as unknown as typeof handlerYears
-})
+  await app.start()
+}, 90000)
 
-afterAll(() => rmSync(dir, { recursive: true, force: true }))
+afterAll(async () => {
+  try { await app.close() } finally { rmSync(dir, { recursive: true, force: true }) }
+})
 
 describe('GET /api/roster/recognitions(契约 §7.5)', () => {
   it('不筛 = 全部;信封是 rows / counts / page / pageSize', async () => {
-    query = {}
-    const out = await handlerRecognitions({})
+    const out = await readRecognitions()
     expect(Object.keys(out).sort()).toEqual(['counts', 'page', 'pageSize', 'rows'])
     expect(out.page).toBe(1)
     expect(out.pageSize).toBe(50)
@@ -156,8 +160,7 @@ describe('GET /api/roster/recognitions(契约 §7.5)', () => {
   })
 
   it('行形状 = §7.5 的五个字段 + 增量(身份、状态、待确认原因、出处、无法定年的事件)', async () => {
-    query = {}
-    const row = (await handlerRecognitions({})).rows.find((r) => r.enterpriseId === jiaId)!
+    const row = (await readRecognitions()).rows.find((r) => r.enterpriseId === jiaId)!
     expect(Object.keys(row).sort()).toEqual([
       'district',
       'enterpriseId',
@@ -184,89 +187,73 @@ describe('GET /api/roster/recognitions(契约 §7.5)', () => {
   })
 
   it('★ 出处可回到「哪个文件、哪个附件、哪个序号」—— 不是只给一个年份数字', async () => {
-    query = {}
-    const row = (await handlerRecognitions({})).rows.find((r) => r.enterpriseId === jiaId)!
+    const row = (await readRecognitions()).rows.find((r) => r.enterpriseId === jiaId)!
     expect(row.evidence).toEqual([
       { sourceFile: FILE_2022, attachment: '附件一', listNo: 74, page: 74 },
     ])
     expect(row.firstEventId).not.toBeNull()
     // 出处必须挂在**首次认定那条事件**上:它在库里查得到。
-    const evidence = db
-      .select()
-      .from(schema.recordEvidence)
-      .all()
-      .filter((v) => v.recordEventId === row.firstEventId)
-    expect(evidence.map((v) => v.listNo)).toEqual([74])
+    const connectionString = app.postgresUrl
+    if (!connectionString) throw new Error('PostgreSQL fixture is not running')
+    const client = new pg.Client({ connectionString })
+    await client.connect()
+    try {
+      const evidence = await client.query<{ list_no: string }>('SELECT list_no FROM business.record_evidence WHERE record_event_id = $1', [row.firstEventId])
+      expect(evidence.rows.map(v => v.list_no)).toEqual(['74'])
+    } finally { await client.end() }
   })
 
   it('待确认的企业如实带出状态与原因', async () => {
-    query = { status: 'pending' }
-    const out = await handlerRecognitions({})
+    const out = await readRecognitions({ status: 'pending' })
     expect(out.rows.map((r) => r.enterpriseId)).toEqual([yiId])
     expect(out.rows[0]!.status).toBe('pending')
     expect(out.rows[0]!.pendingReason).toBe('no_evidence')
     expect(out.rows[0]!.evidence).toEqual([])
-    query = {}
   })
 
   it('title / year / status 可筛,多值取或;三者之间取与', async () => {
-    query = { title: 'specialized_sme' }
-    expect((await handlerRecognitions({})).rows).toHaveLength(2)
-    query = { year: '2021' }
-    expect((await handlerRecognitions({})).rows).toHaveLength(2)
-    query = { year: '1999' }
-    expect((await handlerRecognitions({})).rows).toHaveLength(0)
-    query = { title: 'specialized_sme', status: 'pending' }
-    expect((await handlerRecognitions({})).rows.map((r) => r.enterpriseId)).toEqual([yiId])
-    query = { status: ['confirmed', 'pending'] }
-    expect((await handlerRecognitions({})).rows).toHaveLength(2)
-    query = {}
+    expect((await readRecognitions({ title: 'specialized_sme' })).rows).toHaveLength(2)
+    expect((await readRecognitions({ year: '2021' })).rows).toHaveLength(2)
+    expect((await readRecognitions({ year: '1999' })).rows).toHaveLength(0)
+    expect((await readRecognitions({ title: 'specialized_sme', status: 'pending' })).rows.map((r) => r.enterpriseId)).toEqual([yiId])
+    expect((await readRecognitions({ status: ['confirmed', 'pending'] })).rows).toHaveLength(2)
   })
 
   it('分页参数生效,非法值退回默认而不是报错', async () => {
-    query = { pageSize: '1' }
-    const one = await handlerRecognitions({})
+    const one = await readRecognitions({ pageSize: '1' })
     expect(one.rows).toHaveLength(1)
     expect(one.counts.titlePairs).toBe(2) // 计数与筛选同口径、先于分页
-    query = { pageSize: 'abc', page: '0' }
-    const fallback = await handlerRecognitions({})
+    const fallback = await readRecognitions({ pageSize: 'abc', page: '0' })
     expect(fallback.page).toBe(1)
     expect(fallback.pageSize).toBe(50)
-    query = {}
   })
 
-  it('unknown title / status ⇒ 400(取值说不清就不猜)', () => {
-    query = { title: 'nope' }
-    expect(() => handlerRecognitions({})).toThrowError(/title/)
-    query = { status: 'maybe' }
-    expect(() => handlerRecognitions({})).toThrowError(/status/)
-    query = {}
+  it('unknown title / status ⇒ 400(取值说不清就不猜)', async () => {
+    for (const [key, value] of [['title', 'nope'], ['status', 'maybe']] as const) {
+      const response = await request('recognitions', { [key]: value })
+      expect(response.status).toBe(400)
+      expect(await response.text()).toContain(key)
+    }
   })
-
 
 })
 
 describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也被导出继承)', () => {
   it('总表认 firstYear / firstStatus,并在 counts 里给出「企业 × 称号」计数', async () => {
-    query = { firstYear: '2021' }
-    const out = (await handlerEnterprises({}))
+    const out = await readEnterprises({ firstYear: '2021' })
     expect(out.rows.map((r) => r.enterpriseId).sort()).toEqual([yiId, jiaId].sort())
-    query = { firstStatus: 'pending' }
-    expect((await handlerEnterprises({})).rows.map((r) => r.enterpriseId)).toEqual([yiId])
-    query = {}
-    expect((await handlerEnterprises({})).counts.recognitionPairs).toBe(2)
+    expect((await readEnterprises({ firstStatus: 'pending' })).rows.map((r) => r.enterpriseId)).toEqual([yiId])
+    expect((await readEnterprises()).counts.recognitionPairs).toBe(2)
   })
 
-  it('firstStatus 取值非法 ⇒ 400', () => {
-    query = { firstStatus: 'sure' }
-    expect(() => handlerEnterprises({})).toThrowError(/firstStatus/)
-    query = {}
+  it('firstStatus 取值非法 ⇒ 400', async () => {
+    const response = await request('enterprises', { firstStatus: 'sure' })
+    expect(response.status).toBe(400)
+    expect(await response.text()).toContain('firstStatus')
   })
 
   it('导出与列表同筛选:firstYear 生效,且首次认定列带出处与待确认', async () => {
-    query = { firstYear: '2021' }
-    headers = {}
-    const wb = await readExportWorkbook(await handlerExport({}))
+    const wb = await readWorkbook({ firstYear: '2021' })
     const ws = wb.worksheets[0]!
     expect(String(ws.getRow(1).getCell(1).value)).toContain('2 家企业')
     // 列按下标找,不写死:表头改了列序,这条用例不该跟着假红。
@@ -281,12 +268,10 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
     expect(text).toContain('附件一')
     expect(text).toContain('序号 74')
     expect(text).toContain('待确认')
-    query = {}
   })
 
   it('导出继承 firstStatus=pending,只导出待确认企业', async () => {
-    query = { firstStatus: 'pending' }
-    const wb = await readExportWorkbook(await handlerExport({}))
+    const wb = await readWorkbook({ firstStatus: 'pending' })
     const ws = wb.worksheets[0]!
     expect(String(ws.getRow(1).getCell(1).value)).toContain('1 家企业')
     expect(ws.rowCount).toBe(3) // 说明 + 表头 + 乙企业
@@ -296,61 +281,41 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
     expect(String(ws.getRow(3).getCell(col('企业名称')).value)).toBe('宁波乙接口测试有限公司')
     expect(String(ws.getRow(3).getCell(col('首次认定')).value)).toContain('待确认')
     expect(String(ws.getRow(3).getCell(col('首次认定出处')).value)).toContain('待确认')
-    query = {}
   })
 
   it('导出的筛选继承是**同一份**解析:非法 firstYear 不炸(与既有 year 同口径,非数字剔除)', async () => {
-    query = { firstYear: 'abc' }
-    headers = {}
-    const wb = await readExportWorkbook(await handlerExport({}))
+    const wb = await readWorkbook({ firstYear: 'abc' })
     // 全被剔除 ⇒ 等于没筛 ⇒ 两家都在。
     expect(String(wb.worksheets[0]!.getRow(1).getCell(1).value)).toContain('2 家企业')
-    query = {}
   })
 
-
-
-  it('台账年份选项不读取无关平台原文，保留结论年份口径', () => {
-    const previousDb = db
-    try {
-      db = initializeDb({ create: true, dbPath: join(dir, 'ledger-years.db') })
-      seed('年份选项合成企业', '91330211STATS00001X', null, 'specialized_sme', [
-        { eventType: 'award', year: 2022, decidedYear: 2024 },
-        { eventType: 'review', year: 2022, decidedYear: 2025 },
-      ])
-      submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'unrelated-ledger-years', queriedAt: '2026-10-19', status: 'success', rawResponse: 'unrelated'.repeat(1000) })
-      query = {}
-      expect(handlerYears({})).toEqual({ eventYears: [2022], firstRecognitionYears: [2024] })
-    } finally {
-      db = previousDb
-      query = {}
-    }
-  })
+  it('台账年份选项不读取无关平台原文，保留结论年份口径', async () => {
+    await app.resetBusiness()
+    seed('年份选项合成企业', '91330211STATS00001X', null, 'specialized_sme', [
+      { eventType: 'award', year: 2022, decidedYear: 2024 },
+      { eventType: 'review', year: 2022, decidedYear: 2025 },
+    ])
+    submitNativePlatformQuery(app.db, { interface: 'business_list', queryKey: 'unrelated-ledger-years', queriedAt: '2026-10-19', status: 'success', rawResponse: 'unrelated'.repeat(1000) })
+    await app.start()
+    expect(await readYears()).toEqual({ eventYears: [2022], firstRecognitionYears: [2024] })
+  }, 90000)
 
   it('空库返回空的首次认定、企业列表、年份选项和导出', async () => {
-    const previousDb = db
-    try {
-      db = initializeDb({ create: true, dbPath: join(dir, 'empty.db') })
-      query = {}
+    await app.resetBusiness()
+    await app.start()
 
-      const recognitions = await handlerRecognitions({})
-      expect(recognitions.rows).toEqual([])
-      expect(recognitions.counts).toMatchObject({ titlePairs: 0, enterprises: 0 })
+    const recognitions = await readRecognitions()
+    expect(recognitions.rows).toEqual([])
+    expect(recognitions.counts).toMatchObject({ titlePairs: 0, enterprises: 0 })
 
-      const enterprises = (await handlerEnterprises({}))
-      expect(enterprises.rows).toEqual([])
-      expect(enterprises.counts).toMatchObject({ total: 0, titlePairs: 0, recognitionPairs: 0 })
+    const enterprises = await readEnterprises()
+    expect(enterprises.rows).toEqual([])
+    expect(enterprises.counts).toMatchObject({ total: 0, titlePairs: 0, recognitionPairs: 0 })
 
-      expect(handlerYears({})).toEqual({ eventYears: [], firstRecognitionYears: [] })
+    expect(await readYears()).toEqual({ eventYears: [], firstRecognitionYears: [] })
 
-      const workbook = await readExportWorkbook(await handlerExport({}))
-      expect(workbook.worksheets[0]!.rowCount).toBe(2) // 说明 + 表头,无数据行
-      expect(String(workbook.worksheets[0]!.getRow(1).getCell(1).value)).toContain('0 家企业')
-    } finally {
-      db = previousDb
-      query = {}
-    }
-  })
-
-
+    const workbook = await readWorkbook()
+    expect(workbook.worksheets[0]!.rowCount).toBe(2)
+    expect(String(workbook.worksheets[0]!.getRow(1).getCell(1).value)).toContain('0 家企业')
+  }, 90000)
 })

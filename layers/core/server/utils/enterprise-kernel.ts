@@ -1,13 +1,17 @@
 import type Database from 'better-sqlite3'
-import { createHash } from 'node:crypto'
 import { and, asc, desc, eq, inArray, ne, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
 import * as s from '../../../../db/schema'
+import {
+  EnterpriseKernelError, enterpriseDetailsSchema, enterpriseProfileVersion,
+  type EnterpriseFields, type EnterpriseProfile, type EnterpriseSource, type ReviewedSubject,
+} from './enterprise-contract'
 import { normalizeEnterpriseName } from '../../lib/enterprise-name'
-import { normalizeReviewedUscc, usccFormatVerdict } from '../../lib/enterprise-uscc'
+import { normalizeReviewedUscc } from '../../lib/enterprise-uscc'
 import { directoryColumns, directoryOrder, directorySource, enterpriseSourcesSelection, type DirectoryQuery, type DirectoryRow } from './enterprise-directory-query'
 import { currentEnterpriseIdentity } from './enterprise-identity'
+export * from './enterprise-contract'
 
 type Db = BetterSQLite3Database<typeof s> & { $client: Database.Database }
 type Writer = Pick<Db, 'insert' | 'update' | 'delete'>
@@ -43,23 +47,9 @@ export function insertEnterpriseMerge(tx: Writer, values: typeof s.enterpriseMer
   tx.insert(s.enterpriseMerge).values(values).run()
 }
 
-export class EnterpriseKernelError extends Error {
-  constructor(readonly statusCode: number, readonly code: string, message: string) { super(message) }
-}
 function conflict(code: string, message: string): never {
   throw new EnterpriseKernelError(409, code, message)
 }
-
-const text = (length: number) => z.string().trim().min(1).max(length).refine(s => s.isWellFormed() && !s.includes('\0'))
-const regionalCode = z.string().regex(/^\d+$/).nullable().optional()
-export const enterpriseFieldsSchema = z.strictObject({
-  name: text(300).refine(value => normalizeEnterpriseName(value).length > 0).optional(),
-  uscc: text(80).transform(normalizeReviewedUscc).refine(value => usccFormatVerdict(value) === 'ok', 'Invalid USCC checksum or format').nullable().optional(),
-  districtCode: regionalCode,
-  townshipCode: regionalCode,
-  industryCode: z.string().regex(/^\d{4}$/).nullable().optional(),
-})
-export type EnterpriseFields = z.infer<typeof enterpriseFieldsSchema>
 
 function directory(db: Db, id: number) {
   return db.$client.prepare(`SELECT ${directoryColumns} ${directorySource} WHERE e.id=?`)
@@ -86,7 +76,6 @@ function existingUscc(db: Db, candidate: string) {
   return [...exact, ...legacy.filter(row => normalizeReviewedUscc(row.uscc) === candidate)]
 }
 
-export interface EnterpriseProfile { enterpriseId: number; name: string; city: string | null; district: string | null }
 export function enterpriseProfileState(db: Pick<Db, 'select'>, enterpriseId: number) {
   const row = db.select({
     name: s.enterprise.name, nameNorm: s.enterprise.nameNorm, city: s.enterprise.city,
@@ -98,12 +87,6 @@ export function enterpriseProfileState(db: Pick<Db, 'select'>, enterpriseId: num
   const profile: EnterpriseProfile = { enterpriseId, name: row.name, city: row.city, district: row.district }
   return { profile, row, key: last?.key ?? null }
 }
-export function enterpriseProfileVersion({ profile, row, key }: {
-  profile: EnterpriseProfile; row: { usccNorm: string | null; nameNorm: string }; key: string | null
-}) {
-  return createHash('sha256').update(JSON.stringify({ profile, uscc: row.usccNorm, nameNorm: row.nameNorm, lastWrite: key })).digest('hex')
-}
-
 type ProfileWriter = Writer & Pick<Db, 'select'>
 type ProfileAuditContext = Pick<typeof s.enterpriseProfileAudit.$inferInsert, 'idempotencyKey' | 'requestHash' | 'actor' | 'basis'>
 
@@ -165,10 +148,6 @@ export function applyEnterpriseProfileChange(db: ProfileWriter, current: ReturnT
   })
 }
 
-export type ReviewedSubject =
-  | { action: 'create'; fields: EnterpriseFields & { name: string } }
-  | { action: 'attach'; enterpriseId: number; expectedRevision: number; fields?: EnterpriseFields; audit: ProfileAuditContext }
-
 export function applyReviewedEnterprise(db: Db, subject: ReviewedSubject) {
   if (!db.$client.inTransaction) throw new Error('Reviewed enterprise write requires a caller transaction')
   const fields = subject.fields ?? {}
@@ -210,12 +189,6 @@ function writeDirectoryFields(db: Db, id: number, revision: number, fields: Pick
     .run(id, fields.districtCode, fields.townshipCode, fields.industryCode, revision)
 }
 
-export const enterpriseDetailsSchema = enterpriseFieldsSchema.pick({ districtCode: true, townshipCode: true, industryCode: true }).extend({
-  expectedRevision: z.number().int().positive(),
-  registeredAddress: text(500).nullable(),
-  operatingAddress: text(500).nullable(),
-})
-
 export function readEnterpriseDetails(db: Db, id: number) {
   const row = directory(db, id)
   if (!row) throw new EnterpriseKernelError(404, 'enterprise_not_found', '未找到企业。')
@@ -240,11 +213,6 @@ export function saveEnterpriseDetails(db: Db, id: number, input: z.infer<typeof 
     if (rows.length) db.insert(s.enterpriseAddress).values(rows).run()
     return readEnterpriseDetails(db, id)
   }).immediate()
-}
-
-export type EnterpriseSource = {
-  module: string; businessTable: string; versionKey: string; channel: string; listType: string;
-  acquiredOn: string | null; series: string; fileId: number | null; sha256: string | null;
 }
 
 export function registerEnterpriseSource({ $client }: Connection, input: EnterpriseSource, enterpriseIds: readonly number[]) {

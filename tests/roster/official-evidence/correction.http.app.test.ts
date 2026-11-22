@@ -1,31 +1,49 @@
-import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import Database from 'better-sqlite3'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
+import pg from 'pg'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { initializeDb, schema } from '../../../db/client'
+import { enterprise as enterpriseTable } from '../../../db/postgresql/enterprise-tables'
+import { record as recordTable, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
+import { storedFile } from '../../../db/postgresql/file-tables'
+import { rosterFileClassification, storedFilePart } from '../../../db/postgresql/roster-file-tables'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { minimalPdf } from '../../support/minimal-pdf'
 import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'evidence-correction-101-'))
-const dbPath = join(dir, 'synthetic.db')
 const filesDir = join(dir, 'files')
 mkdirSync(filesDir)
 const bytes = minimalPdf({ pages: 3 })
 writeFileSync(join(filesDir, 'notice.pdf'), bytes)
 const sha256 = createHash('sha256').update(bytes).digest('hex')
-const db = initializeDb({ create: true,  dbPath })
-const file = createClassifiedFile(db, { relPath: 'notice.pdf', filename: 'notice.pdf', ext: 'pdf', bytes: Buffer.byteLength(bytes), sha256 }, { source: 'jxj', kind: 'announcement' })
-const enterprise = db.insert(schema.enterprise).values({ name: '合成出处核对企业', nameNorm: '合成出处核对企业' }).returning().get()
-const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning().get()
-const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2022 }).returning().get()
-const seedEvidence = (listNo: number) => db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: 'notice.pdf', attachment: '附件1', listNo, page: 1 }).returning().get()
-const evidence = seedEvidence(6)
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+let pool: pg.Pool
+let db: NodePgDatabase
+let file: { id: number }
+let enterprise: typeof enterpriseTable.$inferSelect
+let record: typeof recordTable.$inferSelect
+let event: typeof recordEvent.$inferSelect
+let evidence: typeof recordEvidence.$inferSelect
+async function classifyPdf(path: string, contents: string | Buffer, digest: string) {
+  const [file] = await db.insert(storedFile).values({
+    relPath: path, filename: path, ext: 'pdf', bytes: BigInt(Buffer.byteLength(contents)), sha256: digest,
+    createdAt: '2026-10-19',
+  }).returning({ id: storedFile.id })
+  await db.insert(rosterFileClassification).values({ fileId: file!.id, source: 'jxj', kind: 'announcement' })
+  return file!
+}
+async function seedEvidence(listNo: number) {
+  const [row] = await db.insert(recordEvidence).values({
+    recordEventId: event.id, sourceFile: 'notice.pdf', attachment: '附件1', listNo, page: 1,
+  }).returning()
+  return row!
+}
 let service: { baseUrl: string; stop: () => Promise<void> }
 const api = (path: string) => `${service.baseUrl}/api/roster/${path}`
 const post = (path: string, body: unknown, authorized = true) => fetch(api(path), { method: 'POST', headers: { 'content-type': 'application/json', ...(authorized ? { authorization: 'Bearer synthetic-api-token' } : {}) }, body: JSON.stringify(body) })
@@ -42,15 +60,29 @@ const mcpValue = (r: any) => JSON.parse(r.body.result.content[0].text)
 let discovery: any
 beforeAll(async () => {
   discovery = await readDevelopmentDiscovery()
+  postgres = await postgresRuntimeFixture({ dir })
+  pool = new pg.Pool({ connectionString: postgres.url, options: '-c search_path=business,public' })
+  db = drizzle({ client: pool })
+  file = await classifyPdf('notice.pdf', bytes, sha256)
+  enterprise = (await db.insert(enterpriseTable).values({ name: '合成出处核对企业', nameNorm: '合成出处核对企业' }).returning())[0]!
+  record = (await db.insert(recordTable).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj' }).returning())[0]!
+  event = (await db.insert(recordEvent).values({ recordId: record.id, eventType: 'award', year: 2022 }).returning())[0]!
+  evidence = await seedEvidence(6)
   const cwd = resolve(import.meta.dirname, '../../..')
   const port = await reserveLoopbackPort()
-  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt-build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: filesDir, NUXT_INCOMING_DIR: join(dir, 'incoming') } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt-build'), ...postgres.env, NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: filesDir, NUXT_INCOMING_DIR: join(dir, 'incoming') } })
   let startupOutput = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { startupOutput = (startupOutput + data).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) } catch (error) { await service.stop(); throw new Error(`${String(error)}\n${startupOutput}`) }
 }, 90000)
-afterAll(async () => { if (service) await service.stop(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => {
+  try { if (service) await service.stop() }
+  finally {
+    try { await pool?.end() }
+    finally { postgres?.close(); rmSync(dir, { recursive: true, force: true }) }
+  }
+})
 
 describe("ticket exact evidence correction through HTTP and MCP", () => {
   it('preflights the exact evidence and event with old and new coordinates and file identity', async () => {
@@ -67,7 +99,7 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
     expect((await read(evidence.id)).coordinate.page).toBe(1)
   })
   it('commits atomically with stable IDs and durable audit receipt and replay', async () => {
-    const target = seedEvidence(7)
+    const target = await seedEvidence(7)
     const row = await read(target.id)
     const req = request('commit-audit', row)
     const plan = await json(await post('evidence/corrections/preflight', req))
@@ -89,7 +121,7 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
   })
 
   it('exposes equivalent authenticated correction tools and bounded audit over real MCP', async () => {
-    const target = seedEvidence(8)
+    const target = await seedEvidence(8)
     const listed = await rpc('tools/list', {}, false)
     expect(listed.body.result.tools.map((t: any) => t.name)).toContain('get_roster_evidence')
     expect(listed.body.result.tools.map((t: any) => t.name)).not.toContain('commit_roster_evidence_corrections')
@@ -107,7 +139,7 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
   })
 
   it('keeps legacy partial application and records the same coordinate audit', async () => {
-    const target = seedEvidence(9)
+    const target = await seedEvidence(9)
     const result = await post('evidence/pages', { entries: [
       { sourceFile: 'notice.pdf', listNo: 9, page: 2, enterpriseId: enterprise.id, basis: '旧入口已核对页图' },
       { sourceFile: 'notice.pdf', listNo: 9, page: 3 },
@@ -123,7 +155,7 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
   })
 
   it('rejects bare locators mismatched owners and missing basis without changing evidence', async () => {
-    const target = seedEvidence(10), row = await read(target.id)
+    const target = await seedEvidence(10), row = await read(target.id)
     const req = request('invalid-locator', row)
     for (const bad of [{ ...req, basis: ' ' }, { ...req, operations: [{ listNo: 10, page: 2 }] }, { ...req, operations: [{ ...req.operations[0], evidenceId: undefined }] }]) {
       expect((await post('evidence/corrections/preflight', bad)).status).toBe(400)
@@ -136,20 +168,20 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
     expect((await fetch(api('evidence/999999'))).status).toBe(404)
   })
   it('validates PDF limits file identity and declared attachments and changes all coordinate fields', async () => {
-    const target = seedEvidence(11), row = await read(target.id)
+    const target = await seedEvidence(11), row = await read(target.id)
     const req = request('source-repoint', row, 4)
     expect(await json(await post('evidence/corrections/preflight', req))).toMatchObject({ error: { code: 'page_invalid' } })
     const nextBytes = minimalPdf({ pages: 2 })
     writeFileSync(join(filesDir, 'corrected.pdf'), nextBytes)
     const nextHash = createHash('sha256').update(nextBytes).digest('hex')
-    const nextFile = createClassifiedFile(db, { relPath: 'corrected.pdf', filename: 'corrected.pdf', ext: 'pdf', bytes: Buffer.byteLength(nextBytes), sha256: nextHash }, { source: 'jxj', kind: 'announcement' })
-    db.insert(schema.storedFilePart).values({ fileId: nextFile.id, titleCode: 'specialized_sme', eventKind: 'award', year: 2022, batch: null, attachment: '附件2', origin: 'agent' }).run()
+    const nextFile = await classifyPdf('corrected.pdf', nextBytes, nextHash)
+    await db.insert(storedFilePart).values({ fileId: nextFile.id, titleCode: 'specialized_sme', eventKind: 'award', year: 2022, batch: null, attachment: '附件2', origin: 'agent' })
     req.operations[0]!.coordinate = { sourceFile: 'corrected.pdf', attachment: '附件1', listNo: 22, page: 2 }
     expect(await json(await post('evidence/corrections/preflight', req))).toMatchObject({ error: { code: 'attachment_conflict' } })
     req.operations[0]!.coordinate.attachment = '附件二'
-    db.$client.prepare('UPDATE stored_file_part SET has_conflict = 1 WHERE file_id = ?').run(nextFile.id)
+    await pool.query('UPDATE stored_file_part SET has_conflict = 1 WHERE file_id = $1', [nextFile.id])
     expect(await json(await post('evidence/corrections/preflight', req))).toMatchObject({ error: { code: 'attachment_conflict' } })
-    db.$client.prepare('UPDATE stored_file_part SET has_conflict = 0 WHERE file_id = ?').run(nextFile.id)
+    await pool.query('UPDATE stored_file_part SET has_conflict = 0 WHERE file_id = $1', [nextFile.id])
     const plan = await json(await post('evidence/corrections/preflight', req))
     expect(plan.targets[0].after).toEqual({ sourceFile: 'corrected.pdf', attachment: '附件2', listNo: 22, page: 2 })
     expect((await post('evidence/corrections/commit', { request: req, planHash: plan.planHash })).status).toBe(200)
@@ -167,7 +199,7 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
     writeFileSync(join(filesDir, 'corrected.pdf'), nextBytes)
   })
   it('rejects database and same batch coordinate conflicts and duplicate evidence IDs atomically', async () => {
-    const a = seedEvidence(12), b = seedEvidence(13)
+    const a = await seedEvidence(12), b = await seedEvidence(13)
     const ar = await read(a.id), br = await read(b.id)
     const req = request('coordinate-conflicts', ar, 2)
     req.operations[0]!.coordinate.listNo = 13
@@ -182,7 +214,7 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
     expect(await read(b.id)).toEqual(br)
   })
   it('serializes competing commits and detects external connection changes and key reuse', async () => {
-    const target = seedEvidence(14), row = await read(target.id)
+    const target = await seedEvidence(14), row = await read(target.id)
     const a = request('race-a', row, 2), b = request('race-b', row, 3)
     const ap = await json(await post('evidence/corrections/preflight', a)), bp = await json(await post('evidence/corrections/preflight', b))
     const responses = await Promise.all([post('evidence/corrections/commit', { request: a, planHash: ap.planHash }), post('evidence/corrections/commit', { request: b, planHash: bp.planHash })])
@@ -190,20 +222,28 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
     expect((await json(await fetch(api('evidence/' + target.id + '/audit')))).total).toBe(1)
     const current = await read(target.id), req = request('external-stale', current, 1)
     const plan = await json(await post('evidence/corrections/preflight', req))
-    const connection = new Database(dbPath)
-    try { connection.prepare('UPDATE record_event SET decided_year = 2023 WHERE id = ?').run(event.id) } finally { connection.close() }
+    await pool.query('UPDATE record_event SET decided_year = 2023 WHERE id = $1', [event.id])
     expect(await json(await post('evidence/corrections/commit', { request: req, planHash: plan.planHash }))).toMatchObject({ error: { code: 'stale_version' } })
     expect((await read(target.id)).coordinate.page).toBe(current.coordinate.page)
     const winner = responses[0]!.status === 200 ? a : b, winnerPlan = responses[0]!.status === 200 ? ap : bp
     expect(await json(await post('evidence/corrections/commit', { request: { ...winner, basis: 'different basis' }, planHash: winnerPlan.planHash }))).toMatchObject({ error: { code: 'idempotency_conflict' } })
   })
   it('rolls back every coordinate audit and receipt if a later write fails', async () => {
-    const a = seedEvidence(15), b = seedEvidence(16)
+    const a = await seedEvidence(15), b = await seedEvidence(16)
     const ar = await read(a.id), br = await read(b.id)
     const req = { ...request('rollback-batch', ar, 2), operations: [...request('a', ar, 2).operations, ...request('b', br, 2).operations] }
     const plan = await json(await post('evidence/corrections/preflight', req))
-    db.$client.exec('CREATE TRIGGER fail_evidence_101 BEFORE UPDATE ON record_evidence WHEN NEW.id = ' + b.id + " BEGIN SELECT RAISE(ABORT, 'synthetic fault'); END")
-    try { expect((await post('evidence/corrections/commit', { request: req, planHash: plan.planHash })).status).toBe(500) } finally { db.$client.exec('DROP TRIGGER fail_evidence_101') }
+    await pool.query(`
+      CREATE FUNCTION fail_evidence_update() RETURNS trigger LANGUAGE plpgsql AS
+      $$ BEGIN RAISE EXCEPTION 'synthetic fault'; END; $$;
+      CREATE TRIGGER fail_evidence_101 BEFORE UPDATE ON record_evidence
+      FOR EACH ROW WHEN (NEW.id = ${b.id}) EXECUTE FUNCTION fail_evidence_update();
+    `)
+    try {
+      expect((await post('evidence/corrections/commit', { request: req, planHash: plan.planHash })).status).toBe(500)
+    } finally {
+      await pool.query('DROP TRIGGER fail_evidence_101 ON record_evidence; DROP FUNCTION fail_evidence_update()')
+    }
     expect(await read(a.id)).toEqual(ar)
     expect(await read(b.id)).toEqual(br)
     for (const id of [a.id, b.id]) expect((await json(await fetch(api('evidence/' + id + '/audit')))).total).toBe(0)
@@ -212,9 +252,9 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
   })
 
   it('marks confirmed related correspondences stale and permits explicit revalidation', async () => {
-    const target = seedEvidence(17)
-    const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'synthetic-101', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'partial', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, nameRaw: enterprise.name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
-    const relation = { id: native.relationIds[0]! }
+    const target = await seedEvidence(17)
+    const { relationIds } = await seedPostgresPlatformQuery(db, { interface: 'business_list', queryKey: 'synthetic-101', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'partial', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, nameRaw: enterprise.name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
+    const relation = { id: relationIds[0]! }
     const decision = { idempotencyKey: 'edge-before-101', sourceIdentity: 'synthetic/manual-101', actor: { type: 'agent', id: 'test' }, basis: '明确核对公开来源', ruleId: 'manual', ruleVersion: '1', operations: [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: event.id, relationId: relation.id, role: 'context_only' } }] }
     const edgePlan = await json(await post('correspondences/preflight', decision))
     const edgeReceipt = await json(await post('correspondences/commit', { request: decision, planHash: edgePlan.planHash }))
@@ -252,21 +292,21 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
   })
 
   it('shares registered source validation between legacy dry run apply and exact correction', async () => {
-    const target = seedEvidence(18)
+    const target = await seedEvidence(18)
     const legacy = { entries: [{ sourceFile: 'notice.pdf', listNo: 18, page: 2, enterpriseId: enterprise.id }] }
-    db.$client.prepare('UPDATE stored_file SET sha256 = ? WHERE id = ?').run('0'.repeat(64), file.id)
+    await pool.query('UPDATE stored_file SET sha256 = $1 WHERE id = $2', ['0'.repeat(64), file.id])
     try {
       const row = await read(target.id)
       expect(await json(await post('evidence/corrections/preflight', request('source-validation-parity', row, 2)))).toMatchObject({ error: { code: 'file_changed' } })
       for (const dryRun of [true, false]) expect(await json(await post('evidence/pages', { ...legacy, dryRun }))).toMatchObject({ summary: { assigned: 0, written: 0, pending: 1 }, pending: [{ reason: 'ambiguous' }] })
       expect((await read(target.id)).coordinate.page).toBe(1)
-    } finally { db.$client.prepare('UPDATE stored_file SET sha256 = ? WHERE id = ?').run(sha256, file.id) }
+    } finally { await pool.query('UPDATE stored_file SET sha256 = $1 WHERE id = $2', [sha256, file.id]) }
   })
 
   it.each(['atomic', 'legacy'])('keeps direct and predecessor confirmations stale after %s coordinate ABA', async mode => {
-    const target = seedEvidence(mode === 'atomic' ? 30 : 31)
-    const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'aba-' + mode, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'success', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, verificationStatus: 'confirmed', declareKind: 'apply', appliedAt: '2026-01-01' }] })
-    const relation = { id: native.relationIds[0]! }
+    const target = await seedEvidence(mode === 'atomic' ? 30 : 31)
+    const { relationIds } = await seedPostgresPlatformQuery(db, { interface: 'business_list', queryKey: 'aba-' + mode, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19', status: 'success', rawResponse: 'Explicit synthetic correspondence source', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, verificationStatus: 'confirmed', declareKind: 'apply', appliedAt: '2026-01-01' }] })
+    const relation = { id: relationIds[0]! }
     const edges = [
       { type: 'event_process', eventId: event.id, relationId: relation.id, role: 'context_only' },
       { type: 'later_process', enterpriseId: enterprise.id, titleCode: 'specialized_sme', predecessorEventId: event.id, relationId: relation.id, role: 'followup_apply' },
@@ -294,9 +334,9 @@ describe("ticket exact evidence correction through HTTP and MCP", () => {
     const replan = await json(await post('correspondences/preflight', reconfirm))
     expect((await post('correspondences/commit', { request: reconfirm, planHash: replan.planHash })).status).toBe(200)
     for (const id of ids) expect((await edgeRead(id)).requiresRevalidation).toBe(false)
-  })
+  }, 15_000)
   it('advances one event revision per changed atomic batch and never for noops replay or dry runs', async () => {
-    const a = seedEvidence(32), b = seedEvidence(33)
+    const a = await seedEvidence(32), b = await seedEvidence(33)
     const ar = await read(a.id), br = await read(b.id), revision = ar.event.revision
     const req = { ...request('one-event-many-evidence', ar, 2), operations: [...request('a', ar, 2).operations, ...request('b', br, 2).operations] }
     const plan = await json(await post('evidence/corrections/preflight', req))

@@ -3,28 +3,22 @@ import type { LogContext } from '../../../core/lib/logging'
 import { operationLogContext } from '../../../core/server/utils/operation-log-context'
 import { isJobId } from '../../../core/lib/job'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
-import {
-  CANDIDATE_JOB_KIND,
-  submitCandidateDiscovery,
-} from './jobs/candidate-discovery'
-import { submitPostgresCandidateDiscovery, retryPostgresCandidateDiscovery } from './jobs/candidate-discovery-postgres'
-import { usePostgresRosterDb } from './postgres-roster-db'
-import { cancelPostgresJob, getPostgresJobSummary } from '../../../core/server/utils/job-store-postgres'
-import { postgresJobsEnabled } from '../../../core/server/utils/postgres-jobs'
-import { readPostgresTaskCenterEntry } from '../../../core/server/utils/task-center-postgres'
+import { submitCandidateDiscovery } from './jobs/candidate-discovery'
+import { CANDIDATE_JOB_KIND } from './jobs/candidate-discovery-contract'
 import { getJobSummary } from '../../../core/server/utils/job-store'
 import { handleTaskCenterRequest } from './task-center-http'
 import { ensureJobRunnerReady } from '../../../core/server/utils/job-runner'
-import { registerJobSpecs } from '../../../../server/utils/job-specs'
 export type CandidateJobAction = 'submit' | 'detail' | 'cancel' | 'retry'
-type Context = {
+export type CandidateContext = {
   db: ReturnType<typeof useApplicationDb>
+} & CandidateRuntimeContext
+export type CandidateRuntimeContext = {
   filesDir: string
   apiToken?: string | null
   browserAuthorized?: boolean
   logContext?: LogContext
 }
-type Request = {
+export type CandidateRequest = {
   method: string
   path: string
   headers?: Record<string, string | undefined>
@@ -33,8 +27,8 @@ type Request = {
 }
 export async function handleCandidateJobRequest(
   action: CandidateJobAction,
-  req: Request,
-  ctx: Context,
+  req: CandidateRequest,
+  ctx: CandidateContext,
 ) {
   const headers = { 'cache-control': 'no-store' }
   const error = (status: number, message: string) => ({
@@ -52,28 +46,6 @@ export async function handleCandidateJobRequest(
     }).writeAuthorized
   if (action !== 'detail' && !authorized) return error(401, '任务操作需要授权')
   try {
-    registerJobSpecs()
-    const postgres = usePostgresRosterDb()
-    if (postgres) {
-      const writable = postgresJobsEnabled() && process.env.NUXT_POSTGRES_DIRECTORY_WRITE === '1'
-      if (action !== 'detail' && !writable) return error(403, '当前数据库只读')
-      if (action === 'submit') {
-        const receipt = await submitPostgresCandidateDiscovery(req.body, ctx.filesDir, ctx.logContext)
-        return { status: 202, headers: { ...headers, location: `/api/task-center/${receipt.jobId}` }, body: receipt }
-      }
-      const id = req.id
-      if (!isJobId(id)) return error(400, '无效任务编号')
-      if ((await getPostgresJobSummary(postgres, id))?.kind !== CANDIDATE_JOB_KIND) return error(404, '候选任务不存在')
-      if (action === 'detail') {
-        const body = await readPostgresTaskCenterEntry(postgres, id, () => authorized && writable)
-        return body ? { status: 200, headers, body } : error(404, '候选任务不存在')
-      }
-      if (action === 'retry') return { status: 202, headers, body: await retryPostgresCandidateDiscovery(postgres, id) }
-      const cancelled = await cancelPostgresJob(postgres, id, ctx.logContext)
-      const task = await readPostgresTaskCenterEntry(postgres, id, () => authorized && writable)
-      if (!cancelled || !task) return error(404, '候选任务不存在')
-      return { status: cancelled.cancelRequested ? 202 : 200, headers, body: { task, cancelRequested: cancelled.cancelRequested } }
-    }
     ensureJobRunnerReady(ctx.db)
     if (action === 'submit') {
       const receipt = submitCandidateDiscovery(ctx.db, req.body, ctx.filesDir, ctx.logContext)
@@ -93,7 +65,7 @@ export async function handleCandidateJobRequest(
         ...req,
         path: `/api/task-center/${id}${action === 'detail' ? '' : `/${action}`}`,
       },
-      { ...ctx, apiToken: ctx.apiToken ?? undefined },
+      { ...ctx, db: ctx.db, apiToken: ctx.apiToken ?? undefined },
     )
   } catch (cause) {
     const status = (cause as { statusCode?: number }).statusCode
@@ -110,7 +82,7 @@ export async function handleCandidateJobRequest(
 export async function dispatchCandidateJobMcp(
   action: CandidateJobAction,
   args: Record<string, unknown>,
-  ctx: Omit<Context, 'apiToken' | 'browserAuthorized'> & {
+  ctx: Omit<CandidateContext, 'apiToken' | 'browserAuthorized'> & {
     authorized?: boolean
   },
 ) {

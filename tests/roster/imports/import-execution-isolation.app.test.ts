@@ -1,5 +1,5 @@
 import { createImportExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
-import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
+import { createImportExecutionWorker } from '../../../layers/sme-roster/server/utils/import-execution-worker-location'
 import { serialize } from 'node:v8'
 import { mkdtempSync, rmSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -9,9 +9,6 @@ import { afterEach, expect, it } from 'vitest'
 import { initializeDb } from '../../../db/client'
 import { startRosterApi } from './fixtures/import-server'
 import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
-
-// Exercise CI's compiled worker through real child-process IPC, without JIT startup.
-const createImportExecutionWorker = () => createEnterpriseReadProcess(new URL('../../../.output/server/import-execution-worker.mjs', import.meta.url))
 
 const cleanups: (() => unknown | Promise<unknown>)[] = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
@@ -74,7 +71,7 @@ it('a worker that dies before readiness fails its admitted request without spawn
 
 async function isolatedApi(options: Parameters<typeof import('../../../layers/sme-roster/server/utils/import-execution').createImportExecutor>[0] = {}) {
   const { createImportExecutor } = await import('../../../layers/sme-roster/server/utils/import-execution')
-  const { handleRosterImportRequest } = await import('../../../layers/sme-roster/server/utils/roster-import-http')
+  const { handleRosterImportRequest } = await import('../../../layers/sme-roster/server/utils/roster-import-http-sqlite')
   const { readImportReceipt } = await import('../../../layers/sme-roster/server/utils/import-receipts')
   const { handleRecordCorrespondenceRequest } = await import('../../../layers/sme-roster/server/utils/record-correspondence-api')
   const { startHttpFixture } = await import('../../support/http')

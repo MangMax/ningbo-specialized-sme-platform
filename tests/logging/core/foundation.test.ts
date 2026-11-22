@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { createLogService } from '../../../layers/core/lib/logging/service'
+import { createLogService } from '../../../layers/core/lib/logging/sqlite-service'
 
 const dirs: string[] = []
 const services: ReturnType<typeof createLogService>[] = []

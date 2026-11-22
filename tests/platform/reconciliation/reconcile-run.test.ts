@@ -1,6 +1,6 @@
 import {afterEach,expect,it} from 'vitest'
 import * as schema from '../../../db/schema'
-import {runPlatformReconcile} from '../../../layers/sme-roster/server/utils/platform-reconcile'
+import {runPlatformReconcile} from '../../../layers/sme-roster/server/utils/platform-reconcile-sqlite'
 import { runPostgresPlatformReconcile } from '../../../layers/sme-roster/server/utils/platform-reconcile-postgres'
 import { pg19Bin, withHistoricalImportDatabase } from '../../roster/imports/fixtures/postgres-historical-import'
 import {preflightRosterImport,commitRosterImport} from '../../../layers/sme-roster/server/utils/roster-import'

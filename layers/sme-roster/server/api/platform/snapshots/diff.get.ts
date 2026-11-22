@@ -1,6 +1,5 @@
-import { useDb } from '@db'
 import { usePostgresDirectoryDb } from '../../../../../../db/postgresql/client'
-import { handlePlatformSnapshotRequest, handlePostgresPlatformSnapshotRequest } from '../../../utils/platform-snapshots-http'
+import { handlePostgresPlatformSnapshotRequest } from '../../../utils/platform-snapshots-http-postgres'
 
 /**
  * **比较两个导出快照**(RL-05 验收:新增 / 消失 / 字段变化,并追溯到原始行)。
@@ -31,9 +30,7 @@ defineRouteMeta({
 export default defineEventHandler(async (event) => {
   const request = { method: getMethod(event), query: getQuery(event) as Record<string, unknown> }
   const postgres = usePostgresDirectoryDb()
-  const response = postgres
-    ? await handlePostgresPlatformSnapshotRequest('diff', request, postgres)
-    : handlePlatformSnapshotRequest('diff', request, { db: useDb() })
+  const response = await handlePostgresPlatformSnapshotRequest('diff', request, postgres)
   setResponseStatus(event, response.status)
   for (const [name, value] of Object.entries(response.headers)) setHeader(event, name, value)
   return response.body

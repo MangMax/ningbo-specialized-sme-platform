@@ -1,8 +1,9 @@
+import { prepareRuntimeLogs } from '../fixtures/runtime'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
+import { applicationLogs, closeApplicationLogging } from '../../../layers/core/lib/logging'
 import { clientPage } from '../../../layers/core/lib/client-logging/contract'
 import { createClientErrorTransport } from '../../../layers/core/lib/client-logging/transport'
 import { createClientLogIntake } from '../../../layers/core/server/utils/client-log-intake'
@@ -18,17 +19,15 @@ const manifests = [...appManifests, defineAppModule({
 })]
 
 const dirs: string[] = []
-const oldDir = process.env.NUXT_LOG_DIR
-beforeEach(() => {
+let runtime: Awaited<ReturnType<typeof prepareRuntimeLogs>>
+beforeEach(async () => {
   installAppModules(manifests)
-  const dir = mkdtempSync(join(tmpdir(), "client189-")); dirs.push(dir); process.env.NUXT_LOG_DIR = dir
-  initializeWorkerLogging()
+  const dir = mkdtempSync(join(tmpdir(), "client189-")); dirs.push(dir)
+  runtime = await prepareRuntimeLogs(dir)
 })
 afterEach(async () => {
   vi.unstubAllGlobals()
-  await closeApplicationLogging()
-  if (oldDir === undefined) delete process.env.NUXT_LOG_DIR
-  else process.env.NUXT_LOG_DIR = oldDir
+  await runtime?.close()
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 it.each([

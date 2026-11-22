@@ -1,3 +1,4 @@
+import { differenceStatuses, differenceReasons, differenceMeasures } from './difference-codes'
 import { businessStatusCell, businessStatusChecks } from './business-status'
 import type { FilePart } from './file-part'
 import type { FormalValidity } from './record-event-formal-validity'
@@ -1401,36 +1402,19 @@ export function differenceReasonFields() { return {
     }).notNull(),
     /** 状态机取值,见上。默认 `not_queried`(「还没查」而不是「没有」)。 */
     status: text('status', {
-      enum: [
-        'not_queried',
-        'query_failed',
-        'no_record',
-        'confirmed_no_diff',
-        'confirmed_reason',
-        'needs_review',
-      ],
+      enum: differenceStatuses,
     })
       .notNull()
       .default('not_queried'),
     /** 已知原因;`needs_review` / `confirmed_no_diff` 时可为空。 */
     reasonCode: text('reason_code', {
-      enum: ['moved_out', 'deregistered', 'renamed', 'platform_stale', 'pending_review', 'moved_in', 'other'],
+      enum: differenceReasons,
     }),
     /** 原因的说明(新原因在这里写清,并配 `other`)。 */
     reasonNote: text('reason_note'),
     /** 与原因**成对**的后续措施。 */
     measureCode: text('measure_code', {
-      enum: [
-        'keep_history',
-        'mark_platform_snapshot',
-        'follow_review',
-        'mark_moved_out',
-        'mark_deregistered',
-        'update_current_name',
-        'record_moved_in',
-        'manual_review',
-        'none',
-      ],
+      enum: differenceMeasures,
     }),
     measureNote: text('measure_note'),
     /** 迁入承载:原城市 / 原称号 / 年份 / 批次。缺项留空待核。 */

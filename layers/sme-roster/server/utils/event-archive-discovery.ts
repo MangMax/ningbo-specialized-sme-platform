@@ -1,23 +1,16 @@
-import { and,asc,count,eq,inArray,or,sql,type SQLWrapper } from 'drizzle-orm'
+import { normalizedUscc, EVENT_ARCHIVE_RULE_VERSION } from './event-archive-discovery-model'
+import { and, asc, count, eq, inArray, or, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { normalizeUscc } from '../../lib/domain'
-import { readCandidateTargetQueries,targetCandidateTables,targetCandidateTitle } from './candidate-target-sources'
+import { readCandidateTargetQueries, targetCandidateTables, targetCandidateTitle } from './candidate-target-sources'
 import type { ReceiptRedactor } from './import-receipt-redaction'
-import { CorrespondenceError } from './record-correspondence'
+import { CorrespondenceError } from './record-correspondence-model'
 import { generateCandidates } from './record-correspondence-candidates'
-import { eventSource,safeCollectionEvidence } from './record-correspondence-read'
-
-export const EVENT_ARCHIVE_RULE_VERSION = 'event-archive-212-v1'
+import { eventSource, safeCollectionEvidence } from './record-correspondence-read'
 export interface EventArchiveInput { eventId: number; page: number; pageSize: number; queryPage: number; queryPageSize: number }
 type Db = BetterSQLite3Database<typeof schema>
 const offset = (page: number, size: number) => Math.min(Number.MAX_SAFE_INTEGER, (page - 1) * size)
-/** Same whitespace set as domain.normalizeUscc, evaluated before the bounded select. */
-export function normalizedUscc(column: SQLWrapper) {
-  let value = sql`upper(coalesce(${column}, ''))`
-  for (const character of '\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u200b\u200c\u200d\u2028\u2029\u202f\u205f\u3000\ufeff') value = sql`replace(${value}, ${character}, '')`
-  return value
-}
 /** Row title follows the original successful page partition, never the latest state. */
 
 /** Single-event read-only seam for REST, MCP and jobs. No network, persistence or automatic decisions.
@@ -71,3 +64,4 @@ function discoverSnapshot(db: Db, input: EventArchiveInput, redactor?: ReceiptRe
     interfaces: (['business_list', 'apply_list', 'recognized_list'] as const).map(source => ({ interface: source, states: states.filter(row => row.interface === source).map(({ status, count }) => ({ status, count })), queried: states.some(row => row.interface === source && row.status !== 'not_queried') })),
   }
 }
+export { EVENT_ARCHIVE_RULE_VERSION, normalizedUscc } from './event-archive-discovery-model'

@@ -1,34 +1,42 @@
-import { initializeDb } from '../../../db/client'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
-import { schema, useDb } from '../../../db'
 const dir = mkdtempSync(join(tmpdir(), 'facts-browser-307-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'test.db') })
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let server: Server, base: string
 beforeAll(async () => {
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic', }))
-  vi.doMock('@db', () => ({ useDb: () => db }))
   const { browserEnterpriseFactsRoute } = await import('../../../layers/sme-roster/server/utils/browser-enterprise-facts')
   const get = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id]/facts.get')).default
   server = createServer(toNodeListener(createApp().use(createRouter().get('/:id', get).post('/:id/preflight', browserEnterpriseFactsRoute('preflight')).post('/:id/commit', browserEnterpriseFactsRoute('commit')))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
-})
+}, 30_000)
 afterAll(async () => {
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
-  db.$client.close(); rmSync(dir, { recursive: true, force: true }); vi.unstubAllGlobals(); vi.doUnmock('@db')
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  rmSync(dir, { recursive: true, force: true })
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
 })
 async function http(id: number, action = '', body?: unknown, origin?: string) {
   const response = await fetch(`${base}/${id}${action}`, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', origin: origin ?? base }, ...(body ? { body: JSON.stringify(body) } : {}) })
   return { status: response.status, body: await response.json() }
 }
 it('browser lifecycle records actual adapter with preflight replay and rejects cross-origin disabled and forged actor commands', async () => {
-  const id = db.insert(schema.enterprise).values({ name: '合成307', nameNorm: '合成307' }).returning().get().id
+  const [saved] = await usePostgresDirectoryDb().insert(enterprise).values({ name: '合成307', nameNorm: '合成307' }).returning({ id: enterprise.id })
+  const id = saved!.id
   const initial = (await http(id)).body
   const fact = { kind: 'moved_in', source: { reference: '合成来源', statement: '迁入宁波，来源地未知' }, city: null, observed: { precision: 'month', value: '2026-10' }, effective: { precision: 'unknown', value: null } }
   let sequence = 0

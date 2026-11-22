@@ -16,11 +16,11 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import {
   assessCurrentQualificationInputs, assessLegacyQualificationInputs, currentQualificationSnapshot, evaluateLoadedCurrentQualification, formatQualificationCorrespondence,
   type CandidateEvent, type CandidateFile, type CurrentQualificationInput, type LoadedCurrentQualificationInput, type LegacyQualificationInput, type QualificationDisposition,
-} from './current-qualification'
+} from './current-qualification-model'
 import { CURRENT_TITLES, type CurrentTitle } from './current-titles'
 import { evaluateEnterpriseFactEffects, type EnterpriseFactEffectRow } from './enterprise-fact-effects'
 import { qualificationUsccCandidate, createPostgresPlatformQualificationReader, type PostgresPlatformQualificationReader } from './platform-qualification-postgres'
-import { platformEffectsForTitle } from './difference-platform-effects'
+import { platformEffectsForTitle } from './difference-platform-scope'
 import { currentCandidateIdBlocks } from './current-candidate-reader'
 import type { PlatformInterface } from '../labels'
 import { normalizeUscc } from '../domain'
@@ -31,6 +31,7 @@ import { createPostgresPublishedPresentationReader } from './official-published-
 import { officialPublishedError, projectOfficialPublishedNames, type OfficialPublishedScope, type OfficialPublishedFact } from './official-published-presentation'
 import type { PublishedPresentation } from './correspondence-view'
 import { importPostgresReceiptRedactor } from '../../server/utils/import-receipt-redaction'
+import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
 import { CANDIDATE_SCOPE_RULE } from '../platform/candidate-scope-capture'
 import { readPostgresCorrespondenceRefs } from '../../server/utils/record-correspondence-postgres-refs'
 
@@ -309,13 +310,13 @@ export async function readPostgresCurrentStatusBatch(tx: PostgresQualificationTr
 }
 
 async function prepareDetailedQualificationSources(tx: PostgresQualificationTransaction,
-  loaded: Awaited<ReturnType<typeof readQualificationInputs>>, titles: readonly CurrentTitle[]) {
+  loaded: Awaited<ReturnType<typeof readQualificationInputs>>, titles: readonly CurrentTitle[], receiptRuntime?: ReceiptRuntimeContext) {
   const owners = [...new Map(loaded.map(([, inputs]) => {
     const subject = inputs.get(titles[0]!)!.enterprise
     return [subject.id, subject] as const
   })).values()]
   const coverage = await readPostgresQueryCoverage(tx, owners, titles)
-  const redact = await importPostgresReceiptRedactor(tx)
+  const redact = await importPostgresReceiptRedactor(tx, {}, receiptRuntime)
   const eventIds = [...new Set(loaded.flatMap(([, inputs]) => titles.flatMap(title => inputs.get(title)!.evidence.map(row => row.eventId))))]
   const readPublished = createPostgresPublishedPresentationReader(tx, redact, eventIds)
   for (const [, inputs] of loaded) {
@@ -334,14 +335,14 @@ async function prepareDetailedQualificationSources(tx: PostgresQualificationTran
   return { coverage, readPublished }
 }
 
-async function readPostgresDetailedAssessments(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, mode: 'detail' | 'workbook', readPlatform?: PostgresPlatformQualificationReader) {
+async function readPostgresDetailedAssessments(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, mode: 'detail' | 'workbook', readPlatform?: PostgresPlatformQualificationReader, receiptRuntime?: ReceiptRuntimeContext) {
   const hydrated: [number, { rows: import('./current-qualification').CurrentRow[];
     snapshot: ReturnType<typeof currentQualificationSnapshot>; publishedPresentation?: PublishedPresentation;
     workbookPublished: Map<number, OfficialPublishedFact> }][] = []
   if (!ids.length) return new Map(hydrated)
   const loaded = await readQualificationInputs(tx, ids, asOf, { mode, title }, readPlatform)
   const titles = mode === 'workbook' ? CURRENT_TITLES.slice(0, CURRENT_TITLES.indexOf(title) + 1) : CURRENT_TITLES
-  const { readPublished } = await prepareDetailedQualificationSources(tx, loaded, titles)
+  const { readPublished } = await prepareDetailedQualificationSources(tx, loaded, titles, receiptRuntime)
   for (const [id, inputs] of loaded) {
     let presentationScope: readonly OfficialPublishedScope[] | undefined
     let presentationFacts: readonly OfficialPublishedFact[] | undefined
@@ -381,8 +382,8 @@ export function readPostgresCurrentDetailBatch(tx: PostgresQualificationTransact
   return readPostgresDetailedAssessments(tx, ids, title, asOf, 'detail', readPlatform)
 }
 
-export function readPostgresCurrentWorkbookBatch(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, readPlatform?: PostgresPlatformQualificationReader) {
-  return readPostgresDetailedAssessments(tx, ids, title, asOf, 'workbook', readPlatform)
+export function readPostgresCurrentWorkbookBatch(tx: PostgresQualificationTransaction, ids: readonly number[], title: CurrentTitle, asOf: number, readPlatform?: PostgresPlatformQualificationReader, receiptRuntime?: ReceiptRuntimeContext) {
+  return readPostgresDetailedAssessments(tx, ids, title, asOf, 'workbook', readPlatform, receiptRuntime)
 }
 
 export async function readPostgresEffectiveQualificationsBatch(tx: PostgresQualificationTransaction, enterpriseIds: readonly number[], asOf: number) {
@@ -406,8 +407,9 @@ export async function readPostgresEffectiveQualifications(tx: PostgresQualificat
 
 export async function readPostgresDifferenceQualifications(tx: PostgresQualificationTransaction, ids: readonly number[], asOf: number) {
   const loaded = await readQualificationInputs(tx, ids, asOf, { mode: 'detail', title: 'specialized_sme' })
-  await prepareDetailedQualificationSources(tx, loaded, CURRENT_TITLES)
+  const { coverage } = await prepareDetailedQualificationSources(tx, loaded, CURRENT_TITLES)
   return {
+    coverage,
     assessed: loaded.flatMap(([enterpriseId, inputs]) =>
       [...evaluateLoadedCurrentQualification(asOf, inputs).values()].map(result => ({ enterpriseId, assessment: result.row.assessment! }))),
     facts: loaded.flatMap(([, inputs]) => inputs.get('specialized_sme')!.readPlatformFacts()),

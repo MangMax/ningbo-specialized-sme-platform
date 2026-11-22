@@ -1,5 +1,3 @@
-import { useDb } from '@db'
-import { readAnnouncementIntake } from '../../../../utils/announcement-intake'
 import { intakeRoute } from '../../../../utils/announcement-intake-route'
 import { readPostgresAnnouncementIntake } from '../../../../utils/announcement-intake-postgres'
 import { usePostgresRosterDb } from '../../../../utils/postgres-roster-db'
@@ -10,5 +8,5 @@ defineRouteMeta({ openAPI: {
 } })
 export default intakeRoute(id => {
   const pg = usePostgresRosterDb()
-  return pg ? readPostgresAnnouncementIntake(pg, id) : readAnnouncementIntake(useDb(), id)
+  return readPostgresAnnouncementIntake(pg, id)
 })

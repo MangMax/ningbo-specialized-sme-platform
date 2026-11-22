@@ -46,7 +46,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
 import * as schema from '../../../db/schema'
-import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster-sqlite'
 
 it('detail binds the timeline and qualification summary to the requested snapshot day', () => {
   const dir = mkdtempSync(join(tmpdir(), 'detail-813-'))

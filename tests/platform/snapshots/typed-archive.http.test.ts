@@ -1,32 +1,31 @@
-import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
-import { preflightRosterImport, commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
-import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
 
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createApp, createRouter, toNodeListener, defineEventHandler, readBody, setHeader, setResponseStatus, getQuery, createError } from 'h3'
+import { createApp, createRouter, toNodeListener, defineEventHandler, readBody, setHeader, setResponseStatus, getQuery, getHeader, getRouterParam, createError } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { schema } from '../../../db'
 import { eq, sql } from 'drizzle-orm'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { platformBusinessRecordVersion, platformLegacyRelationAlias } from '../../../db/postgresql/platform-tables'
+import { recordCorrespondence, recordCorrespondenceAudit } from '../../../db/postgresql/qualification-tables'
+import { runPostgresMixedImport } from '../../../layers/sme-roster/server/utils/roster-mixed-import-postgres'
+import { updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
+import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 import type { RosterImportPlatformQuery } from '../../../layers/sme-roster/lib/roster-import-client'
-import { updateCredential } from '../../../layers/core/server/utils/credential-state'
-import { handlePlatformBatchRequest } from '../../../layers/sme-roster/server/utils/platform-batch-http'
 import { recognizedResultToImport, platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
-import { whenIdle } from '../../../layers/core/server/utils/job-runner'
-import { platformSummaryCache } from '../../../layers/sme-roster/server/utils/platform-summary-cache'
-import { importExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
 import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
 
 const dir = mkdtempSync(join(tmpdir(), 'issue327-typed-archive-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 const nativeFetch = globalThis.fetch
 const token = 'synthetic-raw-archive-token'
 const input = { source: 'queryBusList', name: '合成', rdjb: ['2'], pageSize: 1, rawDataVersion: 1 }
@@ -48,13 +47,14 @@ async function call(name: string, args: Record<string, unknown>) {
   return result.structuredContent ?? JSON.parse((result.content as any)[0].text)
 }
 beforeAll(async () => {
-  vi.spyOn(importExecutor, 'execute').mockImplementation(executeNativeImport)
-  vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubEnv('MIIT_COOKIE', ''); vi.stubEnv('MIIT_COOKIE_FILE', '')
-  updateCredential('sme-roster.miitCookie', 'sid=synthetic-raw-wire-secret', { db })
-  for (const [key, value] of Object.entries({ defineEventHandler, readBody, setHeader, setResponseStatus, getQuery, createError, useRuntimeConfig: () => ({ filesDir: dir, apiToken: token }) })) vi.stubGlobal(key, value)
+  await updatePostgresCredentialState(usePostgresDirectoryDb(), { 'sme-roster.miitCookie': 'sid=synthetic-raw-wire-secret' })
+  for (const [key, value] of Object.entries({ defineEventHandler, readBody, setHeader, setResponseStatus, getQuery, getHeader, getRouterParam, createError, useRuntimeConfig: () => ({ filesDir: dir, apiToken: token }) })) vi.stubGlobal(key, value)
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (value: unknown) => value }))
-  for (const path of ['query_platform', 'preflight_roster_batch', 'save_roster_batch', 'list_platform_queries', 'get_platform_batch_item', 'submit_platform_batch', 'retry_platform_batch']) tools.push((await import(`../../../layers/sme-roster/server/mcp/tools/${path}.ts`)).default)
+  for (const path of ['query_platform', 'preflight_roster_batch', 'save_roster_batch', 'list_platform_queries', 'get_platform_batch', 'get_platform_batch_item', 'submit_platform_batch', 'retry_platform_batch']) tools.push((await import(`../../../layers/sme-roster/server/mcp/tools/${path}.ts`)).default)
   const queryRoute = (await import('../../../layers/sme-roster/server/api/platform/query.post')).default
   const readRoute = (await import('../../../layers/sme-roster/server/api/platform/queries.get')).default
   const evidenceRoute = (await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default
@@ -64,10 +64,8 @@ beforeAll(async () => {
     vi.stubGlobal('defineRouteMeta', (value: any) => { importMetadata[action] = value.openAPI })
     router.post(`/api/roster/import/${action}`, (await import(`../../../layers/sme-roster/server/api/roster/import/${action}.post.ts`)).default)
   }
-  router.post('/api/platform/batches', defineEventHandler(async event => {
-    const out = await handlePlatformBatchRequest('submit', { body: await readBody(event), headers: { authorization: event.node.req.headers.authorization } }, { db, apiToken: token, filesDir: dir })
-    setResponseStatus(event, out.status); return out.body
-  }))
+  const { createPlatformBatchRoute } = await import('../../../layers/sme-roster/server/utils/platform-batch-route')
+  router.post('/api/platform/batches', createPlatformBatchRoute('submit'))
   const listener = toNodeListener(createApp().use(router))
   server = createServer((req, res) => {
     if (req.url !== '/mcp') { listener(req, res); return }
@@ -90,13 +88,15 @@ beforeAll(async () => {
   })
   client = new Client({ name: 'issue298-wire-client', version: '1' })
   await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: `Bearer ${token}` } } }))
-})
+}, 60_000)
 afterAll(async () => {
-  await whenIdle(); await client?.close()
+  await stopPostgresJobs(); await client?.close()
   for (const transport of transports) await transport.close()
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
-  await importExecutor.close(); vi.restoreAllMocks()
-  platformSummaryCache.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true })
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals(); vi.unstubAllEnvs(); rmSync(dir, { recursive: true, force: true })
 })
 
 let serial = 0
@@ -138,9 +138,25 @@ async function readSaved(saved: any, index = 0) {
   const history = await call('list_platform_queries', { queryId })
   return { row: history.rows[0], projection: item.detail.canonicalProjection[0] }
 }
-function businessState() {
-  const tables = db.$client.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND (name LIKE 'platform_%' OR name IN ('record_correspondence', 'record_correspondence_audit', 'difference_reason')) ORDER BY name").all() as { name: string }[]
-  return Object.fromEntries(tables.map(({ name }) => [name, db.$client.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()]))
+async function businessState() {
+  return usePostgresDirectoryDb().transaction(async tx => {
+    const tables = await tx.execute<{ name: string }>(sql`
+      SELECT tablename AS name FROM pg_tables WHERE schemaname = 'business' AND (
+        tablename LIKE 'platform_%' OR tablename IN ('record_correspondence', 'record_correspondence_audit', 'difference_reason')
+      ) ORDER BY tablename
+    `)
+    const snapshot: Record<string, Record<string, unknown>[]> = {}
+    for (const { name } of tables.rows) {
+      const { rows } = await tx.execute<{ row: Record<string, unknown> }>(sql`
+        SELECT row_to_json(t) AS row FROM business.${sql.identifier(name)} AS t ORDER BY row_to_json(t)::text
+      `)
+      snapshot[name] = rows.map(item => item.row)
+    }
+    return snapshot
+  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
+}
+async function waitForBatch(batchId: string) {
+  await expect.poll(async () => (await call('get_platform_batch', { batchId })).state).toMatch(/^(done|failed)$/)
 }
 
   const mutations: [string, (q: RosterImportPlatformQuery) => void][] = [
@@ -176,10 +192,12 @@ for (const sourceName of ['queryBusList', 'queryList', 'businessList']) it.each(
   ])
   const [valid, bad] = structuredClone(nativePairs.get(sourceName)!)
   mutate(bad)
-  const before = businessState(), body = request([valid, bad])
-  expect(preflightRosterImport(db, body).preflight.conflicts).not.toEqual([])
-  expect(commitRosterImport(db, body).status).toBe('failed')
-  expect(businessState()).toEqual(before)
+  const before = await businessState(), body = request([valid, bad])
+  const preview = await runPostgresMixedImport('preflight', body, dir)
+  if (!('preflight' in preview) || !preview.preflight) throw new Error('Expected preflight conflict details')
+  expect(preview.preflight.conflicts).not.toEqual([])
+  expect((await runPostgresMixedImport('commit', body, dir)).status).toBe('failed')
+  expect(await businessState()).toEqual(before)
 })
 const transportMutations = mutations.filter(([name]) => ['typed-row', 'page-source', 'page-title', 'source-interface', 'owner', 'name-only-confirm'].includes(name))
 
@@ -194,10 +212,10 @@ for (const transport of ['REST', 'MCP'] as const) {
       const row = { id: key, qymc: '合成', ...(value === undefined ? {} : { unknown: value }), arr: [null, false, 2] }
       const evidence = await collect(row, transport)
       const body = request([archive(evidence)])
-      const before = businessState()
+      const before = await businessState()
       const plan = await submit(transport, 'preflight', body)
       expect(plan.preflight.conflicts).toEqual([])
-      expect(businessState()).toEqual(before)
+      expect(await businessState()).toEqual(before)
       const saved = await submit(transport, 'commit', body)
       expect(saved.status).toBe('committed')
       const { row: stored, projection } = await readSaved(saved)
@@ -205,9 +223,9 @@ for (const transport of ['REST', 'MCP'] as const) {
       expect(stored.relations[0].rawFields).toEqual(row)
       expect(stored.relations[0].id).toBe(projection.relationId)
       versions.push(projection.versionId); records.push(projection.recordId); relationIds.push(projection.relationId)
-      const committed = businessState()
+      const committed = await businessState()
       expect(await submit(transport, 'commit', body)).toEqual(saved)
-      expect(businessState()).toEqual(committed)
+      expect(await businessState()).toEqual(committed)
     }
     expect(versions[0]).not.toBe(versions[1]); expect(versions[2]).toBe(versions[0])
     expect(new Set(records).size).toBe(1); expect(new Set(relationIds).size).toBe(3)
@@ -221,11 +239,11 @@ for (const transport of ['REST', 'MCP'] as const) {
     const legacy = recognizedResultToImport(old)
     const saved = await submit(transport, 'commit', request([legacy]))
     expect(saved.status).toBe('committed')
-    const before = businessState()
+    const before = await businessState()
     const upgrade = await submit(transport, 'commit', request([converted]))
     expect(upgrade.status).toBe('failed')
     expect(upgrade.items.some((i: any) => i.error?.code === 'observation_payload_conflict')).toBe(true)
-    expect(businessState()).toEqual(before)
+    expect(await businessState()).toEqual(before)
     expect((await readSaved(saved)).row.relations[0].rawFields).toEqual(old.rows[0])
   })
 
@@ -248,21 +266,21 @@ for (const transport of ['REST', 'MCP'] as const) {
   it.each(transportMutations)(`${transport} rejects %s atomically with a valid sibling and no fallback`, async (_label, mutate) => {
     const valid = archive(await collect({ id: `sibling-${serial}`, qymc: '合成', n: 1 }, transport))
     const bad = archive(await collect({ id: `bad-${serial}`, qymc: '合成', n: 1 }, transport)); mutate(bad)
-    const before = businessState(), body = request([valid, bad])
+    const before = await businessState(), body = request([valid, bad])
     const plan = await submit(transport, 'preflight', body)
     expect(plan.preflight.conflicts).not.toEqual([])
     const result = await submit(transport, 'commit', body)
     expect(result.status).toBe('failed')
-    expect(businessState()).toEqual(before)
+    expect(await businessState()).toEqual(before)
   })
 
   for (const sourceName of ['queryList', 'businessList']) it.each(transportMutations)(`${transport} ${sourceName} rejects %s with its own envelope`, async (_label, mutate) => {
     const valid = platformResultToImport(await collect({ id: `valid-${serial}`, n: 1 }, transport, sourceName))
     const bad = platformResultToImport(await collect({ id: `bad-${serial}`, n: 1 }, transport, sourceName)); mutate(bad)
-    const before = businessState(), body = request([valid, bad])
+    const before = await businessState(), body = request([valid, bad])
     expect((await submit(transport, 'preflight', body)).preflight.conflicts).not.toEqual([])
     expect((await submit(transport, 'commit', body)).status).toBe('failed')
-    expect(businessState()).toEqual(before)
+    expect(await businessState()).toEqual(before)
   })
 
   it(`${transport} hash collision during commit rolls back earlier sibling and leaves historical rows unchanged`, async () => {
@@ -270,15 +288,20 @@ for (const transport of ['REST', 'MCP'] as const) {
     const first = await submit(transport, 'commit', request([archive(e)]))
     expect(first.status).toBe('committed')
     const { projection } = await readSaved(first)
-    // Simulate a stored hash hit with different bytes, rather than replacing the hash algorithm.
-    db.run(sql`UPDATE platform_business_record_version SET canonical_raw_json='{"syntheticCollision":true}' WHERE id=${projection.versionId}`)
+    // Seed a deliberately inconsistent archive in this disposable fixture. The online guard remains installed.
+    await usePostgresDirectoryDb().transaction(async tx => {
+      await tx.execute(sql`ALTER TABLE business.platform_business_record_version DISABLE TRIGGER platform_version_canonical_archive`)
+      await tx.update(platformBusinessRecordVersion).set({ canonicalRawJson: '{"syntheticCollision":true}' })
+        .where(eq(platformBusinessRecordVersion.id, projection.versionId))
+      await tx.execute(sql`ALTER TABLE business.platform_business_record_version ENABLE TRIGGER platform_version_canonical_archive`)
+    })
     const sibling = archive(await collect({ id: `${transport}-collision-sibling`, n: 2 }, transport))
     const again = archive(await collect(e.rawData!.rows[0]!, transport))
-    const before = businessState()
+    const before = await businessState()
     const saved = await submit(transport, 'commit', request([sibling, again]))
     expect(saved.status).toBe('failed')
     expect(saved.items.some((i: any) => i.error?.code === 'platform_content_hash_conflict'), JSON.stringify(saved)).toBe(true)
-    expect(businessState()).toEqual(before)
+    expect(await businessState()).toEqual(before)
   })
 }
 
@@ -291,7 +314,7 @@ it('public REST metadata and MCP discovery describe typed selection while preser
   const discovered = await client.listTools()
   for (const name of ['preflight_roster_batch', 'save_roster_batch']) expect(discovered.tools.find(t => t.name === name)?.description).toContain('rawData.version=1')
   const evidence = await collect({ id: 'auth', n: 1 }), body = request([recognizedResultToImport(evidence)])
-  const before = businessState()
+  const before = await businessState()
   for (const action of ['preflight', 'commit']) {
     const result = await nativeFetch(`${base}/api/roster/import/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
     expect(result.status).toBe(401)
@@ -306,7 +329,7 @@ it('public REST metadata and MCP discovery describe typed selection while preser
     const value = plan.structuredContent ?? JSON.parse((plan.content as { text: string }[])[0]!.text)
     expect(value).toMatchObject({ preflight: { conflicts: [] } })
   } finally { await anonymous.close() }
-  expect(businessState()).toEqual(before)
+  expect(await businessState()).toEqual(before)
 })
 
 it('typed apply_list archive feeds the declaration projection without rewriting its raw identity', async () => {
@@ -345,16 +368,16 @@ it('public typed archival ignores object key order for versions while preserving
 it('MCP typed prototype keys are retained in relation and version while strict REST rejects the same body', async () => {
   const evidence = await collect(typed, 'MCP')
   const body = request([recognizedResultToImport(evidence)])
-  const before = businessState()
+  const before = await businessState()
   expect((await post('/api/roster/import/commit', body)).status).toBe(400)
-  expect(businessState()).toEqual(before)
+  expect(await businessState()).toEqual(before)
   const saved = await submit('MCP', 'commit', body)
   expect(saved.status).toBe('committed')
   const stored = await readSaved(saved)
   expect(stored.row.relations[0].rawFields).toEqual(typed)
   expect(Object.hasOwn(stored.row.relations[0].rawFields, '__proto__')).toBe(true)
-  const version = db.$client.prepare('SELECT canonical_raw_json FROM platform_business_record_version WHERE id=?').get(stored.projection.versionId) as { canonical_raw_json: string }
-  expect(JSON.parse(version.canonical_raw_json)).toEqual(typed)
+  const [version] = await usePostgresDirectoryDb().select().from(platformBusinessRecordVersion).where(eq(platformBusinessRecordVersion.id, stored.projection.versionId))
+  expect(JSON.parse(version!.canonicalRawJson)).toEqual(typed)
 })
 
 it('MCP batch partial and resumed segments archive with exact original page positions and reusable typed versions', async () => {
@@ -362,9 +385,9 @@ it('MCP batch partial and resumed segments archive with exact original page posi
   pageBodies = new Map(rows.map((row, i) => [i + 1, source(row, i + 1, 3)]))
   try {
     const receipt = await call('submit_platform_batch', { items: [{ query: { ...input, maxRequests: 1 } }] })
-    await whenIdle()
+    await waitForBatch(receipt.batchId)
     for (let i = 0; i < 2; i++) {
-      await call('retry_platform_batch', { batchId: receipt.batchId, itemIds: receipt.itemIds }); await whenIdle()
+      await call('retry_platform_batch', { batchId: receipt.batchId, itemIds: receipt.itemIds }); await waitForBatch(receipt.batchId)
     }
     const item = await call('get_platform_batch_item', { batchId: receipt.batchId, itemId: receipt.itemIds[0] })
     expect(item.status).toBe('success'); expect(item.segments).toHaveLength(3)
@@ -389,17 +412,18 @@ it('new typed observations leave old string hashes, IDs, explicit decisions and 
   const saved = await submit('REST', 'commit', request([recognizedResultToImport(old)]))
   expect(saved.status).toBe('committed')
   const { projection } = await readSaved(saved)
-  const observation = db.select().from(schema.platformLegacyRelationAlias).where(eq(schema.platformLegacyRelationAlias.oldId, projection.relationId)).get()!
-  const edge = db.insert(schema.recordCorrespondence).values({ edgeKey: 'issue327-old-edge', type: 'event_recognized', role: 'context_only', observationId: observation.observationId, titleCode: 'specialized_sme', status: 'confirmed', revision: 1, targetIdentity: { synthetic: true }, provenance: { originalRelation: projection.relationId }, sourceFingerprint: 'synthetic-old-fingerprint', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-01-01' }).returning().get()
-  db.insert(schema.recordCorrespondenceAudit).values({ correspondenceId: edge.id, batchId: saved.batchId, idempotencyKey: 'issue327-old-audit', toStatus: 'confirmed', expectedRevision: 0, resultingRevision: 1, actorType: 'agent', actorId: 'issue327', basis: 'synthetic prior decision', ruleId: 'manual', ruleVersion: '1', evidence: { originalRelation: projection.relationId }, decidedAt: '2026-01-01' }).run()
-  const before = businessState()
+  const db = usePostgresDirectoryDb()
+  const [observation] = await db.select().from(platformLegacyRelationAlias).where(eq(platformLegacyRelationAlias.oldId, projection.relationId))
+  const [edge] = await db.insert(recordCorrespondence).values({ edgeKey: 'issue327-old-edge', type: 'event_recognized', role: 'context_only', observationId: observation!.observationId, titleCode: 'specialized_sme', status: 'confirmed', revision: 1, targetIdentity: JSON.stringify({ synthetic: true }), provenance: JSON.stringify({ originalRelation: projection.relationId }), sourceFingerprint: 'synthetic-old-fingerprint', ruleId: 'manual', ruleVersion: '1', createdAt: '2026-01-01' }).returning()
+  await db.insert(recordCorrespondenceAudit).values({ correspondenceId: edge!.id, batchId: saved.batchId, idempotencyKey: 'issue327-old-audit', toStatus: 'confirmed', expectedRevision: 0, resultingRevision: 1, actorType: 'agent', actorId: 'issue327', basis: 'synthetic prior decision', ruleId: 'manual', ruleVersion: '1', evidence: JSON.stringify({ originalRelation: projection.relationId }), decidedAt: '2026-01-01' })
+  const before = await businessState()
   const fresh = await collect(e.rawData!.rows[0]!)
   const added = await submit('REST', 'commit', request([recognizedResultToImport(fresh)]))
   expect(added.status).toBe('committed')
   const newer = await readSaved(added)
   expect(newer.projection.recordId).toBe(projection.recordId)
   expect(newer.projection.versionId).not.toBe(projection.versionId)
-  const after = businessState()
+  const after = await businessState()
   for (const table of Object.keys(before).filter(name => name !== 'platform_legacy_alias_sequence')) expect(after[table]).toEqual(expect.arrayContaining(before[table] as unknown[]))
   for (const row of before.platform_legacy_alias_sequence as { namespace: string; high_water: number }[]) {
     const next = (after.platform_legacy_alias_sequence as { namespace: string; high_water: number }[]).find(value => value.namespace === row.namespace)

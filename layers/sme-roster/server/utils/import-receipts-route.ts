@@ -1,7 +1,7 @@
 import { getHeader, getQuery, setHeader, setResponseStatus } from 'h3'
 import { readRuntimeImportReceipt } from './import-receipts-runtime'
 import { authorizeRosterWrite } from './roster-import-http'
-import { ImportReceiptError, type ImportReceiptAction } from './import-receipts'
+import { ImportReceiptError, type ImportReceiptAction } from './import-receipt-model'
 
 export function importReceiptRoute(action: ImportReceiptAction) {
   return defineEventHandler(async event => {

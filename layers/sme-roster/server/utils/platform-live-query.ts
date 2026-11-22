@@ -1,7 +1,7 @@
 import { APPLY_GRID, APPLY_LIST_PATH, BUSINESS_GRID, BUSINESS_LIST_PATH, RECOGNIZED_GRID, RECOGNIZED_LIST_PATH, PlatformSessionExpiredError, parsePlatformPage } from '../../lib/platform/adapter'
 import { cookieRedactor, PlatformHttpError, postPlatformRequest, type PlatformQueryOptions } from '../../lib/platform/client'
 import { platformQueryInputSchema, platformQueryTitles, recognizedConditionShape, type PlatformLiveQueryResult, type PlatformQueryPage, type PlatformQueryError } from '../../lib/platform/live-query'
-import type { CredentialContext } from '../../../core/server/utils/credential-state'
+import type { CredentialReadContext } from '../../../core/server/utils/credential-resolution'
 import { resolveRuntimeCredential } from '../../../core/server/utils/credential-state-postgres'
 import { newLogContext, type LogContext } from '../../../core/lib/logging'
 import { logPlatformResult, platformOperation, platformQueryOperation } from '../../lib/platform/logging'
@@ -10,7 +10,7 @@ export interface PlatformLiveQueryContext {
   logContext?: LogContext
   onProgress?: (result: PlatformLiveQueryResult) => void | Promise<void>
   maxResultBytes?: number
-  credentials?: CredentialContext
+  credentials?: CredentialReadContext
   /** In-memory snapshot for batch consumers; never put this context in persistent job params. */
   cookie?: string
   /** Previously observed per-title totals constrain explicit batch continuations. */

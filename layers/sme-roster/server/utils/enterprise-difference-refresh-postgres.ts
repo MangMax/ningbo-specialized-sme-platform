@@ -5,7 +5,7 @@ import { differenceReason as d, enterpriseDifferenceComparison as c } from '../.
 import { createError } from 'h3'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
-import { parseEnterpriseDifferenceRefreshInput, projectRefreshComparison, refreshComparisonFailure } from './enterprise-difference-refresh'
+import { parseEnterpriseDifferenceRefreshInput, projectRefreshComparison, refreshComparisonFailure } from './enterprise-difference-refresh-contract'
 import { preparePostgresRefreshComparison } from './enterprise-difference-refresh-comparison-postgres'
 import { readPostgresRefreshFingerprints } from './enterprise-difference-refresh-fingerprint-postgres'
 

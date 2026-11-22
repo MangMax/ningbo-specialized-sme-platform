@@ -2,11 +2,8 @@ import { postgresJobReadProjector } from '../../utils/job-read-postgres'
 import { requirePostgresJobsWritable, usePostgresJobsDb } from '../../utils/postgres-jobs'
 import { cancelPostgresJob, getPostgresJobDetail } from '../../utils/job-store-postgres'
 import { requestLogContext } from '../../../lib/logging'
-import { useDb } from '@db'
 import { isJobId } from '#core/lib/job'
 import { requireApiToken } from '../../utils/api-guard'
-import { ensureJobRunnerReady, requestJobCancel } from '../../utils/job-runner'
-import { getJob, toJobDto } from '../../utils/job-store'
 import { registerJobSpecs } from '../../../../../server/utils/job-specs'
 
 /**
@@ -53,37 +50,15 @@ export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
   if (!isJobId(id)) throw createError({ statusCode: 400, message: `任务 id 非法(应为 26 位 ULID):${id}` })
 
-  const postgres = usePostgresJobsDb()
-  if (postgres) {
-    requirePostgresJobsWritable()
-    const config = useRuntimeConfig(event)
-    const db = postgres
-    const project = await postgresJobReadProjector(db, config)
-    const cancelled = await cancelPostgresJob(db, id, requestLogContext(event))
-    if (!cancelled) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
-    const { state: _stateAtCancellation, ...outcome } = cancelled
-    const job = await getPostgresJobDetail(db, id)
-    if (!job) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
-    if (outcome.cancelRequested) setResponseStatus(event, 202)
-    return { ...await project(job, false), ...outcome }
-  }
-
-  const db = useDb()
-  ensureJobRunnerReady(db)
-
-  const outcome = requestJobCancel(db, id, requestLogContext(event))
-  if (!outcome.ok) throw createError({ statusCode: 404, message: outcome.message })
-
-  // 运行中的取消请求是**异步**生效的(下一个检查点),用 202 把这个区别说清楚;
-  // 排队中/已结束都是当场有结论的,200。
-  const accepted = 'cancelRequested' in outcome && outcome.cancelRequested
-  if (accepted) setResponseStatus(event, 202)
-
-  return {
-    ...toJobDto(getJob(db, id)!),
-    cancelled: outcome.cancelled,
-    alreadyFinished: 'alreadyFinished' in outcome ? outcome.alreadyFinished : false,
-    cancelRequested: accepted,
-    note: outcome.note,
-  }
+  const db = usePostgresJobsDb()
+  requirePostgresJobsWritable()
+  const config = useRuntimeConfig(event)
+  const project = await postgresJobReadProjector(db, config)
+  const cancelled = await cancelPostgresJob(db, id, requestLogContext(event))
+  if (!cancelled) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
+  const { state: _stateAtCancellation, ...outcome } = cancelled
+  const job = await getPostgresJobDetail(db, id)
+  if (!job) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
+  if (outcome.cancelRequested) setResponseStatus(event, 202)
+  return { ...await project(job, false), ...outcome }
 })

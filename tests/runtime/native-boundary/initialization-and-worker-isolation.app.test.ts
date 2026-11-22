@@ -9,10 +9,11 @@ import { initializeDb, useApplicationDb } from '../../../db/client'
 import { RETIRED_PLATFORM_TABLES } from '../../../db/schema-phase'
 import * as s from '../../../db/schema'
 import { commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { createEnterpriseReadExecutor } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { createImportExecutionWorker } from '../../../layers/sme-roster/server/utils/import-execution-worker-location'
 import { listTargetBusinessProcesses } from '../../../layers/sme-roster/server/utils/platform-business-processes-target'
-import { runPlatformReconcile } from '../../../layers/sme-roster/server/utils/platform-reconcile'
+import { runPlatformReconcile } from '../../../layers/sme-roster/server/utils/platform-reconcile-sqlite'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
 import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 
@@ -75,45 +76,36 @@ it('refuses non-native databases at application and actual source worker entries
   expect((await response)[0]).toMatchObject({type:'failure',error:{message:'Unsupported final platform runtime schema'}})
 },30000)
 
-it('serves native source read workers and commits an import through the actual source worker',async()=>{
-  const {db,path}=fixture()
-  db.insert(s.enterprise).values({name:'Native current',nameNorm:'Native current',usccNorm:'91330200712345678C'}).run()
-  const entity=db.select().from(s.enterprise).get()!
-  db.insert(s.rosterLegacyMember).values({enterpriseId:entity.id}).run()
-  const record=db.insert(s.record).values({enterpriseId:entity.id,titleCode:'little_giant',source:'jxj',nameRaw:entity.name}).returning().get()
-  db.insert(s.recordEvent).values({recordId:record.id,eventType:'award',year:2025,batchSeq:1}).run()
-  const reads=createEnterpriseReadExecutor();cleanup.push(()=>reads.close())
-  expect((await reads.list(path,{pageSize:5})).rows).toHaveLength(1)
-  const current=await reads.currentQualifiedJson(path,{titleCode:'little_giant',pageSize:5})
-  expect(current.found).toBe(true)
-  const currentBody=JSON.parse(current.body.toString())
-  expect(currentBody).toMatchObject({total:1,rows:[{enterpriseId:entity.id}]})
-  const currentTitle=currentBody.rows[0].qualificationAssessment.titles.find((title:{titleCode:string})=>title.titleCode==='little_giant')
-  expect(currentTitle).toMatchObject({titleCode:'little_giant',effectiveQualification:{status:'effective'},evidence:[{eventType:'award',year:2025,batchSeq:1}]})
-  expect(currentTitle.versions.facts).toMatch(/^[a-f0-9]{64}$/)
-  const stat=statSync(path),identity={dev:stat.dev,ino:stat.ino,schemaVersion:db.$client.pragma('schema_version',{simple:true}),migration:db.$client.prepare('SELECT hash,created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1').get()}
-  const worker=createImportExecutionWorker();cleanup.push(()=>worker.terminate())
-  expect((await once(worker,'message'))[0]).toMatchObject({type:'ready'})
-  for(const [index,action] of ['preflight','commit'] .entries()){
-    const response=once(worker,'message')
-    worker.postMessage({id:index+1,dbPath:path,readonly:false,identity,action,payload:serialize(sourceRequest('native-worker')),pageCountErrors:[]})
-    expect((await response)[0]).toMatchObject({type:'result',id:index+1,result:{status:action==='preflight'?'preflight':'committed'}})
-  }
-  expect(listTargetBusinessProcesses({},db).rows).toHaveLength(1)
-  db.$client.prepare('UPDATE record_event SET year=1999 WHERE record_id=?').run(record.id)
-  const fresh=await reads.currentQualifiedJson(path,{titleCode:'little_giant',pageSize:5})
-  expect(fresh.found).toBe(true)
-  const freshBody=JSON.parse(fresh.body.toString())
-  // Original little-giant awards do not expire by age; the worker must still
-  // reread the changed fact and expose a new content version, not a stale row.
-  expect(freshBody).toMatchObject({total:1})
-  expect(freshBody.rows.map((row:{enterpriseId:number})=>row.enterpriseId)).toEqual([entity.id])
-  const freshTitle=freshBody.rows[0].qualificationAssessment.titles.find((title:{titleCode:string})=>title.titleCode==='little_giant')
-  expect(freshTitle).toMatchObject({titleCode:'little_giant',effectiveQualification:{status:'effective'},evidence:[{eventType:'award',year:1999,batchSeq:1}]})
-  expect(freshTitle.versions.facts).toMatch(/^[a-f0-9]{64}$/)
-  expect(freshTitle.versions.facts).not.toBe(currentTitle.versions.facts)
-  expectNative(db.$client)
-},30000)
+it('reads changed facts from PostgreSQL through the qualification worker', async () => {
+  const { db, path } = fixture()
+  const entity = db.insert(s.enterprise).values({ name: 'Native current', nameNorm: 'Native current' }).returning().get()
+  db.insert(s.rosterLegacyMember).values({ enterpriseId: entity.id }).run()
+  const record = db.insert(s.record).values({ enterpriseId: entity.id, titleCode: 'little_giant', source: 'jxj', nameRaw: entity.name }).returning().get()
+  db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2025, batchSeq: 1 }).run()
+  const pg = await postgresRuntimeFixture({ dir: join(path, '..'), sourcePath: path })
+  cleanup.push(() => pg.close())
+  for (const [key, value] of Object.entries(pg.env)) vi.stubEnv(key, value)
+  cleanup.push(() => { vi.unstubAllEnvs() })
+  const reads = createEnterpriseReadExecutor()
+  cleanup.push(() => reads.close())
+  const filter = { titleCode: 'little_giant' as const, pageSize: 5 }
+  const read = async () => JSON.parse((await reads.currentQualifiedJson(filter)).body.toString())
+  const current = await read()
+  expect(current).toMatchObject({ total: 1, rows: [{ enterpriseId: entity.id }] })
+  const initial = current.rows[0].qualificationAssessment.titles.find((title: { titleCode: string }) => title.titleCode === 'little_giant')
+  expect(initial).toMatchObject({
+    effectiveQualification: { status: 'effective' }, evidence: [{ eventType: 'award', year: 2025, batchSeq: 1 }],
+  })
+  pg.psql(['-c', 'UPDATE business.record_event SET year = 1999'])
+  const fresh = await read()
+  expect(fresh).toMatchObject({ total: 1, rows: [{ enterpriseId: entity.id }] })
+  const updated = fresh.rows[0].qualificationAssessment.titles.find((title: { titleCode: string }) => title.titleCode === 'little_giant')
+  expect(updated).toMatchObject({
+    effectiveQualification: { status: 'effective' }, evidence: [{ eventType: 'award', year: 1999, batchSeq: 1 }],
+  })
+  expect(updated.versions.facts).toMatch(/^[a-f0-9]{64}$/)
+  expect(updated.versions.facts).not.toBe(initial.versions.facts)
+}, 30_000)
 
 it('captures four native reconcile slots and reuses them without network or duplicate archives',async()=>{
   const {db}=fixture(),uscc='91330200712345678C',time='2026-11-14T04:00:00Z'

@@ -1,5 +1,5 @@
 import { appLog, type LogContext } from '../../../core/lib/logging'
-import { ImportReceiptError } from './import-receipts'
+import { ImportReceiptError } from './import-receipt-model'
 
 /** Only application-owned codes cross the logging boundary; never error text or keys. */
 export function logImportFailure(operation: string, error: unknown, context: LogContext = {}) {

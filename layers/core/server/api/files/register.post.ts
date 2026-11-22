@@ -1,8 +1,6 @@
 import { registerPostgresFile, usePostgresFileDb } from '../../utils/file-store-postgres'
-import { useDb } from '@db'
 import { requestLogContext } from '../../../lib/logging'
-import { FileMaintenanceError, UploadRegistrationError } from '../../utils/file-store'
-import { registerUploadedFile } from '../../utils/stored-files'
+import { FileMaintenanceError, UploadRegistrationError } from '../../utils/file-store-contract'
 
 defineRouteMeta({
   openAPI: {
@@ -46,9 +44,7 @@ export default defineEventHandler(async (event) => {
     const pg = usePostgresFileDb()
     const root = useRuntimeConfig().filesDir
     const context = requestLogContext(event)
-    const { row, created } = pg
-      ? await registerPostgresFile(pg, root, input, context)
-      : await registerUploadedFile(useDb(), root, input, context)
+    const { row, created } = await registerPostgresFile(pg, root, input, context)
     if (created) setResponseStatus(event, 201)
     return row
   } catch (error) {

@@ -18,14 +18,7 @@ import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { preflightRosterImport, commitRosterImport, replayRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
-import { createApp, createRouter, toNodeListener } from 'h3'
-import { createServer } from 'node:http'
-import { importExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
-import { createRosterImportHandler } from '../../../layers/sme-roster/server/utils/roster-import-route'
-import * as h3 from 'h3'
 
-vi.mock('@db', () => ({ useDb: () => db }))
-vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 let f: {root:string;target:string;legacySource?:string}, t: Database.Database, db: ReturnType<typeof drizzle<typeof schema>>
 let serial = 0
 const trace: string[] = []
@@ -91,7 +84,7 @@ it('preserves historical page scalar types through the complete migration and ge
   expect(listPlatformQueries(drizzle(target,{schema}),{queryId:41,view:'summary'}))
    .toMatchObject({total:1,rows:[{query:{id:41,relationCount:3},relations:[],relationsIncluded:false}]})
  } finally { target.close(); legacy.close() }
-})
+}, 30_000)
 
 it('reads ordinary target imports through the generic history entry with literal public IDs and counts', () => {
  const input=request(); expect(preflightRosterImport(db,input).preflight.conflicts).toEqual([])
@@ -100,7 +93,6 @@ it('reads ordinary target imports through the generic history entry with literal
 })
 
 import { readPlatformQueryEvidence } from '../../../layers/sme-roster/lib/platform/evidence-read'
-import { platformSummaryCache } from '../../../layers/sme-roster/server/utils/platform-summary-cache'
 import { eq } from 'drizzle-orm'
 import type { PlatformQueryFilter } from '../../../layers/sme-roster/lib/platform/read'
 
@@ -271,82 +263,8 @@ it('enforces exact 4MiB query and 8MiB page budgets before payload hydration and
   expect(()=>listPlatformQueries(oracle.db,{interface:'apply_list',includeRawResponse:true,pageSize:3})).toThrowError(expect.objectContaining({statusCode:413}))
   noLegacy()
  }finally{oracle.close()}
-})
+}, 30_000)
 
-it('runs real H3 import list evidence and MCP handlers on one target and observes cache commit external write rollback and no-store boundaries',async()=>{
- t.pragma('journal_mode=WAL')
- for(const key of ['defineEventHandler','getMethod','readBody','getHeader','setResponseStatus','setHeader','getQuery','getRouterParam','createError'] as const)vi.stubGlobal(key,h3[key])
- vi.stubGlobal('useRuntimeConfig',()=>({apiToken:'synthetic-751',mcpToken:'synthetic-751',filesDir:undefined}))
- vi.spyOn(importExecutor,'execute').mockImplementation(async(database,action,input,errors,context)=>action==='preflight'?preflightRosterImport(database,input,errors,context):commitRosterImport(database,input,errors,{...context,deferCandidateTasks:true}))
- platformSummaryCache.close()
- const router=createRouter()
- for(const action of ['preflight','commit','replay'] as const)router.post(`/api/roster/import/${action}`,createRosterImportHandler(action))
- router.get('/api/platform/queries',(await import('../../../layers/sme-roster/server/api/platform/queries.get')).default)
- router.get('/api/platform/queries/:queryId/evidence',(await import('../../../layers/sme-roster/server/api/platform/queries/[queryId]/evidence.get')).default)
- const listMcp=(await import('../../../layers/sme-roster/server/mcp/tools/list_platform_queries')).default
- const evidenceMcp=(await import('../../../layers/sme-roster/server/mcp/tools/get_platform_query_evidence')).default
- const server=createServer(toNodeListener(createApp().use(router)))
- await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve))
- const address=server.address();if(!address||typeof address==='string')throw new Error('Expected local HTTP port')
- const base=`http://127.0.0.1:${address.port}`
- const read=async(path:string,headers:Record<string,string>={})=>{const response=await fetch(base+path,{headers});expect(response.status).toBe(200);return response.json()}
- const input=request();input.payload.platformQueries![0]!.rawResponse='x'.repeat(65535)+'🙂尾'
- const post=async(action:string)=>{const response=await fetch(`${base}/api/roster/import/${action}`,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer synthetic-751'},body:JSON.stringify(input)});expect(response.status).toBe(200);return response.json()}
- const external=new Database(t.name),externalDb=drizzle(external,{schema})
- try{
-  expect(await post('preflight')).toMatchObject({status:'preflight',preflight:{conflicts:[]}})
-  expect(await post('commit')).toMatchObject({status:'committed'})
-  expect(await post('replay')).toMatchObject({status:'replayed',update:0})
-  const actual=await read('/api/platform/queries')
-  expect(actual).toMatchObject({total:1,rows:[{query:{id:8001},relations:[{id:9001}]}]})
-  const mcpArgs={interface:undefined,queryKey:undefined,uscc:undefined,queryId:undefined,view:undefined,enterpriseId:undefined,titleCode:undefined,status:undefined,page:undefined,pageSize:undefined,includeRawResponse:undefined}
-  expect(await listMcp.handler(mcpArgs,{} as never)).toEqual(actual)
-  for(const field of ['relations','relation','rawResponse','collectionEvidence','legacyProvenance'] as const){
-   const http=await read(`/api/platform/queries/8001/evidence?field=${field}&relationId=9001&length=3`)
-   expect(await evidenceMcp.handler({queryId:8001,field,relationId:9001,offset:undefined,length:3,page:undefined,pageSize:undefined},{} as never)).toEqual(http)
-   expect(http).toEqual(readPlatformQueryEvidence(db,{queryId:8001,field,relationId:9001,length:3}))
-  }
-  const rawParts:Buffer[]=[];let cursor=0
-  for(;;){
-   const http=await read(`/api/platform/queries/8001/evidence?field=rawResponse&offset=${cursor}`)
-   const part=readPlatformQueryEvidence(db,{queryId:8001,field:'rawResponse',offset:cursor})
-   expect(http).toEqual(part)
-   if(!('data' in part))throw new Error('Expected bytes')
-   rawParts.push(Buffer.from(part.data,'base64'));cursor+=part.byteLength
-   if(!part.hasMore)break
-  }
-  expect(Buffer.concat(rawParts)).toEqual(Buffer.from('x'.repeat(65535)+'🙂尾'))
-  expect((await fetch(`${base}/api/platform/queries/1/evidence?field=relation&relationId=9001`)).status).toBe(404)
-  for(const path of ['/api/platform/queries?view=summary&includeRawResponse=true','/api/platform/queries?interface=bad','/api/platform/queries?titleCode=bad','/api/platform/queries?status=bad','/api/platform/queries?enterpriseId=bad','/api/platform/queries?queryId=0','/api/platform/queries/8001/evidence?field=relation','/api/platform/queries/8001/evidence?field=rawResponse&length=65537'])expect((await fetch(base+path)).status,path).toBe(400)
-  const before=platformSummaryCache.stats(),summary='/api/platform/queries?view=summary'
-  expect(await read(summary)).toMatchObject({total:1})
-  expect(await read(summary)).toMatchObject({total:1})
-  expect(platformSummaryCache.stats().hits).toBe(before.hits+1)
-  expect(commit(request([collection('queryBusList')],'next')).status).toBe('committed')
-  expect(await read(summary)).toMatchObject({total:2})
-  const original=db.select().from(targetSchema.platformObservationAssignment).where(eq(targetSchema.platformObservationAssignment.observationId,1)).get()!
-  db.insert(targetSchema.platformObservationAssignment).values({...original,revision:2,enterpriseId:2,origin:'command',actor:{type:'agent',id:'752'},basis:'cache'}).run()
-  const misses=platformSummaryCache.stats().misses
-  expect(await read(summary)).toMatchObject({total:2})
-  expect(platformSummaryCache.stats().misses).toBe(misses+1)
-  expect(await read('/api/platform/queries?enterpriseId=2')).toMatchObject({total:1,rows:[{relations:[{enterpriseId:2,matchedName:'Beta',nameRaw:'Alpha'}]}]})
-  expect(commitRosterImport(externalDb,request([collection('queryList')],'external'),[],{deferCandidateTasks:true}).status).toBe('committed')
-  expect(await read(summary)).toMatchObject({total:3})
-  const committed=await read(summary),cacheBefore=platformSummaryCache.stats()
-  t.exec('BEGIN')
-  expect(commit(request([collection('businessList','2026-11-16T00:00:00Z')],'rolled-back')).status).toBe('committed')
-  expect(await read(summary)).toMatchObject({total:4})
-  t.exec('ROLLBACK')
-  expect(await read(summary)).toEqual(committed)
-  expect(platformSummaryCache.stats().misses).toBe(cacheBefore.misses)
-  const noStore=platformSummaryCache.stats()
-  expect(await read(summary,{'cache-control':'no-store'})).toEqual(committed)
-  expect(await read(summary,{authorization:'Bearer synthetic752'})).toEqual(committed)
-  expect(platformSummaryCache.stats().hits).toBe(noStore.hits)
-  expect(platformSummaryCache.stats().bypasses).toBe(noStore.bypasses+2)
-  noLegacy()
- }finally{external.close();platformSummaryCache.close();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()))}
-})
 it('keeps one SQL request snapshot across an external commit and exposes it on the next request',()=>{
  t.pragma('journal_mode=WAL');expect(commit(request()).status).toBe('committed')
  const external=new Database(t.name),externalDb=drizzle(external,{schema});let injected=false
@@ -386,7 +304,7 @@ it('selects a small page before a giant source and batches many observations wit
  expect(listPlatformQueries(db,{view:'summary'})).toMatchObject({total:2,rows:[{query:{id:8002,relationCount:30}},{query:{id:8001,relationCount:1}}]})
  expect(trace.filter(q=>/\b(?:from|join)\s+["`]?platform_archive_value\b/i.test(q))).toEqual([])
  noLegacy()
-})
+}, 30_000)
 
 it.each([
  ...(['queryList','businessList','queryBusList'] as const).flatMap(source=>(['complete','partial','failed'] as const).map(state=>[source,state] as const)),

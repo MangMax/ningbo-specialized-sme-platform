@@ -1,4 +1,5 @@
-import '../../support/compiled-enterprise-reader'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { initializeDb } from '../../../db/client'
 import { decodeJsonRead } from '../../support/json-read'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -10,7 +11,7 @@ import { Readable } from 'node:stream'
 import { createServer, type Server } from 'node:http'
 import { createApp, toNodeListener, getQuery as h3Query, setHeader as h3Header, createError as h3Error } from 'h3'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { schema, useDb } from '../../../db'
+import { schema } from '../../../db'
 
 /**
  * RL-04 的三个读接口(契约 §7.1 / §7.2 / §7.3)。
@@ -80,6 +81,7 @@ let handlerExport: (event: unknown) => Promise<Uint8Array | Readable>
 /** 只有工信部一侧的企业 ⇒ 专精特新上「平台有而公布无」。 */
 let sideOnlyId = 0
 
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
   vi.stubGlobal('defineRouteMeta', () => undefined)
@@ -90,7 +92,7 @@ beforeAll(async () => {
     if ((_event as Parameters<typeof h3Header>[0]).node) h3Header(_event as Parameters<typeof h3Header>[0], name, value)
   })
   vi.stubGlobal('createError', h3Error)
-  vi.doMock('@db', () => ({ useDb: () => db }))
+
 
   enterpriseId = seed('宁波接口测试股份有限公司', USCC, '鄞州区', 'specialized_sme', 'jxj', 'award')
   // 两侧都有的记录 ⇒ 不是差异;用来验证筛选不会把非差异混进来。
@@ -138,6 +140,10 @@ beforeAll(async () => {
     })
     .run()
 
+  postgres = await postgresRuntimeFixture({ dir: dir, sourcePath: join(dir, 'api.db') })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+
   handlerEnterprises = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default) as unknown as typeof handlerEnterprises
   handlerDetail = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default) as unknown as typeof handlerDetail
   handlerDifferences = (await import('../../../layers/sme-roster/server/api/roster/differences.get')).default as unknown as typeof handlerDifferences
@@ -147,11 +153,12 @@ beforeAll(async () => {
   server = createServer(toNodeListener(app))
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`
-})
+}, 60_000)
 
-afterAll(async () => {
+afterAll(async () => { await closePostgresDirectoryDb(); postgres?.close(); vi.unstubAllEnvs();
   if (server) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
   vi.unstubAllGlobals()
+  db.$client.close()
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -251,7 +258,7 @@ describe('GET /api/roster/enterprises/:id(契约 §7.2)', () => {
     routerParam = '999999'
     await expect(handlerDetail({})).rejects.toThrowError(/not found/)
     routerParam = 'abc'
-    expect(() => handlerDetail({})).toThrowError(/invalid id/)
+    await expect(handlerDetail({})).rejects.toThrowError(/invalid id/)
     routerParam = undefined
   })
 })

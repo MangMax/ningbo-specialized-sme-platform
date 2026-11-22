@@ -12,7 +12,7 @@ import { rosterImportMcpPayloadSchema } from '../../../layers/sme-roster/server/
 import { commitRosterImport, preflightRosterImport, readImportBatchOutcome } from '../../../layers/sme-roster/server/utils/roster-import'
 import { startRosterApi } from './fixtures/import-server'
 import { listEnterprises } from '../../../layers/sme-roster/server/utils/mcp-roster'
-import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster-sqlite'
 import { getPlatformExportRows, listPlatformSnapshots } from '../../../layers/sme-roster/lib/platform-snapshots'
 
 it('preserves legacy HTTP item errors, numeric normalization and idempotent receipts after MCP discovery parsing', async () => {

@@ -1,5 +1,7 @@
 import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
 import { initializeDb } from '../../../db/client'
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -16,6 +18,8 @@ let imports: Awaited<ReturnType<typeof startRosterApi>>
 let server: Server
 let base: string
 let batch = 0
+let stagedBatch = 0
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 
 function syntheticUscc(n: number) {
   const alphabet = '0123456789ABCDEFGHJKLMNPQRTUWXY'
@@ -69,7 +73,6 @@ beforeAll(async () => {
   vi.stubGlobal('getQuery', getQuery)
   vi.stubGlobal('createError', createError)
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: join(dir, 'curated.json'), reconcilePath: join(dir, 'reconcile.json') }))
-  vi.doMock('@db', () => ({ useDb: () => db }))
   imports = await startRosterApi({ db, apiToken: 'synthetic-source-selection', executeImport: executeNativeImport })
   const handler = (await import('../../../layers/sme-roster/server/api/comparison.get')).default
   server = createServer(toNodeListener(createApp().use(createRouter().get('/api/comparison', handler))))
@@ -89,13 +92,25 @@ beforeAll(async () => {
 afterAll(async () => {
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
   await imports?.close()
-  vi.unstubAllGlobals(); vi.doUnmock('@db')
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
   db.$client.close(); rmSync(dir, { recursive: true, force: true })
 })
 
 async function read(query = '') {
+  // The reviewed import builds an independent SQLite input. Each HTTP phase
+  // reads the corresponding materialized PostgreSQL generation.
+  if (stagedBatch !== batch || !postgres) {
+    await closePostgresDirectoryDb()
+    postgres?.close()
+    postgres = await postgresRuntimeFixture({ dir, sourcePath: db.$client.name })
+    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+    stagedBatch = batch
+  }
   const response = await fetch(base + query)
-  expect(response.status).toBe(200)
+  expect(response.status, await response.clone().text()).toBe(200)
   return response.json()
 }
 const coordinates = (rows: ComparisonRow[]) => rows.map(row => [row.name, row.titleCode, row.direction, row.district])
@@ -158,7 +173,7 @@ it('preserves full and summary HTTP membership, representatives, global counts, 
     expect(coordinates((await read(`?view=${view}&page=2&pageSize=2`)).rows)).toEqual(expectedCoordinates.slice(2, 4))
     expect(await read(`?view=${view}&page=99&pageSize=2`)).toMatchObject({ total: 5, rows: [], counts })
   }
-})
+}, 30_000)
 
 it('keeps distinct stored USCC identities and title scopes separate while retaining the first source district', async () => {
   await seed([
@@ -189,7 +204,7 @@ it('keeps distinct stored USCC identities and title scopes separate while retain
     expect(twins.map((row: ComparisonRow) => row.uscc)).toEqual([syntheticUscc(200), syntheticUscc(201)])
     expect(twins[0].enterpriseId).toBeLessThan(twins[1].enterpriseId)
   }
-})
+}, 30_000)
 
 it('returns all zero title buckets for an empty source set', () => {
   const empty = initializeDb({ create: true, dbPath: join(dir, 'empty.db') })

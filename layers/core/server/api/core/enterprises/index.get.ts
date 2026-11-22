@@ -1,10 +1,8 @@
-import { useDb } from '@db'
 import { normalizeReviewedUscc } from '#core/lib/enterprise-uscc'
 import { enterpriseLibrarySortFields } from '#core/lib/core/enterprise-library'
 import { z } from 'zod'
 import { usePostgresDirectoryDb } from '../../../../../../db/postgresql/client'
 import { listPostgresDirectoryEnterprises } from '../../../utils/enterprise-directory-postgres'
-import { listDirectoryEnterprises } from '../../../utils/enterprise-kernel'
 import { directoryInput, enterpriseId } from '../../../utils/enterprise-directory-route'
 
 defineRouteMeta({ openAPI: {
@@ -68,5 +66,5 @@ const filters = z.strictObject({
 export default defineEventHandler(event => {
   const input = directoryInput(filters, getQuery(event))
   const postgres = usePostgresDirectoryDb()
-  return postgres ? listPostgresDirectoryEnterprises(postgres, input) : listDirectoryEnterprises(useDb(), input)
+  return listPostgresDirectoryEnterprises(postgres, input)
 })

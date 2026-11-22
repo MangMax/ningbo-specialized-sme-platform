@@ -1,7 +1,5 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
-import { getEnterpriseProfileHistory } from '../../utils/enterprise-profile'
 import { getPostgresEnterpriseProfileHistory } from '../../utils/enterprise-profile-postgres'
 import { usePostgresDirectoryDb } from '../../../../../db/postgresql/client'
 export default defineMcpTool({
@@ -11,6 +9,6 @@ export default defineMcpTool({
   inputSchema: { enterpriseId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), page: z.number().int().min(1).max(10000).optional(), pageSize: z.number().int().min(1).max(100).optional() },
   handler: async ({ enterpriseId, ...paging }) => {
     const pg = usePostgresDirectoryDb()
-    return pg ? getPostgresEnterpriseProfileHistory(pg, enterpriseId, paging) : getEnterpriseProfileHistory(useDb(), enterpriseId, paging)
+    return getPostgresEnterpriseProfileHistory(pg, enterpriseId, paging)
   },
 })

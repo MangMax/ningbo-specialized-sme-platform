@@ -49,7 +49,6 @@ beforeAll(async () => {
   finally { await client.end() }
   vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
   vi.stubEnv('NUXT_DB_READONLY', '1')
-  vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('getQuery', getQuery)
   vi.stubGlobal('setHeader', setHeader)

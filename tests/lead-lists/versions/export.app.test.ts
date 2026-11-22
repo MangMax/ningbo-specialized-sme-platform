@@ -1,29 +1,35 @@
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
-import { qualificationExportFixture } from '../../roster/current-export/fixtures/qualification-export'
+import { schema as s } from '../../../db/client'
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
+import { postgresLeadFixture } from './fixtures/postgres-leads'
 
-const fixture = qualificationExportFixture()
+const fixture = postgresLeadFixture()
+const { app } = fixture
 const base = '/api/lead-lists'
 const filename = 'research-source.csv'
 let qualifiedId: number
 
 beforeAll(async () => {
-  fixture.db.$client.transaction(() => installLeadListSchema(fixture.db.$client))()
-  const qualified = fixture.candidate('核对取得资格企业')
-  qualifiedId = qualified.enterprise.id
-  fixture.db.$client.prepare("UPDATE record SET title_code='little_giant' WHERE id=?").run(qualified.record.id)
-  mkdirSync(join(fixture.dir, 'files'))
-  writeFileSync(join(fixture.dir, 'files', filename), '企业名称\r\n核对取得资格企业\r\n')
-  await fixture.start()
+  await fixture.start(({ db, filesDir }) => {
+    const name = '核对取得资格企业'
+    const qualified = db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: 'SYNTHETIC-LEAD-EXPORT', district: '鄞州区', city: '宁波市' }).returning().get()
+    qualifiedId = qualified.id
+    const record = db.insert(s.record).values({ enterpriseId: qualifiedId, source: 'jxj', titleCode: 'little_giant', nameRaw: name }).returning().get()
+    const year = Number(new Intl.DateTimeFormat('en', { timeZone: 'Asia/Shanghai', year: 'numeric' }).format(new Date()))
+    const event = db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year, batchSeq: 1 }).returning().get()
+    db.insert(s.recordEvidence).values({
+      recordEventId: event.id, sourceFile: 'jxj/announcement/fixture.xlsx', attachment: '专精特新“小巨人”企业名单', listNo: qualifiedId,
+    }).run()
+    writeFileSync(join(filesDir, filename), '企业名称\r\n核对取得资格企业\r\n')
+  })
 }, 60_000)
-afterAll(() => fixture.close())
+afterAll(fixture.close)
 
 async function post(path: string, body: object, status: number) {
-  const response = await fetch(fixture.url(path), { headers: fixture.headers, method: 'POST', body: JSON.stringify(body) })
+  const response = await app.request(path, { method: 'POST', body: JSON.stringify(body) })
   const result = await response.json()
   expect(response.status, JSON.stringify(result)).toBe(status)
   return result
@@ -38,9 +44,9 @@ it('exports preserved lead rows with effective roster titles for linked enterpri
     series: '调研批次', channel: 'research', listType: 'lead', acquiredOn: '2026-11-18', fileId: file.id,
     rows: [{ rowNumber: 3, name: '原表名称', note: '需保留' }, { rowNumber: 8, name: '未关联企业', note: '=1+1' }],
   }, 201)
-  const detail = await (await fetch(fixture.url(`${base}/versions/${version.id}`))).json()
-  const directory = await (await fetch(fixture.url('/api/core/enterprises?name=核对取得资格企业'))).json()
-  const current = await (await fetch(fixture.url('/api/roster/current-enterprises?titleCode=specialized_sme&q=核对取得资格企业'))).json()
+  const detail = await (await app.request(`${base}/versions/${version.id}`)).json()
+  const directory = await (await app.request('/api/core/enterprises?name=核对取得资格企业')).json()
+  const current = await (await app.request('/api/roster/current-enterprises?titleCode=specialized_sme&q=核对取得资格企业')).json()
   expect(current.rows[0].enterpriseId).toBe(qualifiedId)
   await post(`${base}/versions/${version.id}/supplement`, {
     actor: { type: 'agent', id: '证据核对' }, basis: '人工核实为同一企业',
@@ -49,15 +55,15 @@ it('exports preserved lead rows with effective roster titles for linked enterpri
   const body = { versionId: version.id, clientRequestId: randomUUID() }
   const accepted = await post(`${base}/exports`, body, 202)
   expect(await post(`${base}/exports`, body, 202)).toEqual(accepted)
-  const job = await fixture.terminal(accepted.jobId)
+  const job = await app.terminal(accepted.jobId)
   expect(job).toMatchObject({ kind: 'lead-lists-version-export', state: 'done', result: { versionId: version.id, rowCount: 2 } })
-  const tasks = await (await fetch(fixture.url('/api/task-center?tab=lead-lists'), { headers: fixture.headers })).json()
+  const tasks = await (await app.request('/api/task-center?tab=lead-lists')).json()
   expect(tasks.rows).toContainEqual(expect.objectContaining({
     id: accepted.jobId, module: 'lead-lists', label: '导出名单版本', group: 'export',
   }))
-  const unauthenticated = await fetch(fixture.url(job.result.downloadUrl))
+  const unauthenticated = await fetch(app.url(job.result.downloadUrl))
   expect(unauthenticated.status).toBe(401)
-  const downloaded = await fetch(fixture.url(job.result.downloadUrl), { headers: fixture.headers })
+  const downloaded = await app.request(job.result.downloadUrl)
   expect(downloaded.status).toBe(200)
   expect(downloaded.headers.get('content-type')).toBe('text/csv; charset=utf-8')
   const csv = await downloaded.text()

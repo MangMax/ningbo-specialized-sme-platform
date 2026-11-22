@@ -5,7 +5,7 @@ import { storedFile } from '../../../../db/postgresql/file-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { sourceDocument } from '../../../../db/postgresql/official-evidence-tables'
 import { rosterFileClassification } from '../../../../db/postgresql/roster-file-tables'
-import { projectOfficialDeclaration, projectOfficialEvidenceChanges } from './official-evidence-plan'
+import { projectOfficialDeclaration, projectOfficialEvidenceChanges } from './official-evidence-claim-model'
 import { readPostgresOfficialPlanFacts } from './official-evidence-postgres'
 
 type Db = Pick<NodePgDatabase, 'execute' | 'select'>

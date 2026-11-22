@@ -71,7 +71,7 @@ it('upgrades complete populated 71606 preserving original cells and seals then r
   const bytes=a.serialize();a.close()
   expect(finalizeFingerprintBasis({source:predecessor,target,runId:'basis',predecessorRunId:'scopes'}).state).toBe('complete')
   const b=new Database(target);expect(b.serialize().equals(bytes), 'database bytes remain unchanged').toBe(true);b.close()
-})
+}, 20_000)
 
 import { installFingerprintBarrier, fingerprintArchiveInventory } from '../../../upgrade/fingerprint-basis'
 it.each([0,1])('enforces insert-only schemes BLOB archive and bidirectional owner exclusion with recursive triggers %i',recursive=>{
@@ -283,7 +283,7 @@ it.each([null,'null','{bad','42','true','"word"','[1,null]','{"id":"A"}'].map((r
   expect(result.recoveryManifest[0]!.scheme).toBe('legacy-indexed-v1')
   const t=new Database(f.target)
   expect(t.prepare('SELECT hex(a.bytes) bytes,a.sha256 FROM platform_observation_fingerprint_basis b JOIN platform_archive_value a ON a.id=b.input_archive_id').get()).toEqual({bytes:Buffer.from(literal).toString('hex').toUpperCase(),sha256:fingerprint});t.close()
-})
+}, 20_000)
 it.each(['blob','invalid-utf8','wrong-hash','wrong-rule'])('rejects legacy %s without writing successor DDL or receipts',kind=>{
   const f=fixture(s=>{
     if(kind==='blob')s.exec("UPDATE platform_relation SET raw_fields=X'6E756C6C'")

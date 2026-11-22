@@ -1,6 +1,5 @@
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
-import { readPlatformQueryEvidence, platformEvidenceInputSchema } from '../../../lib/platform/evidence-read'
+import { platformEvidenceInputSchema } from '../../../lib/platform/evidence-input'
 import { readPostgresPlatformEvidence } from '../../../lib/platform/postgres-evidence-read'
 import { usePostgresDirectoryDb } from '../../../../../db/postgresql/client'
 export default defineMcpTool({
@@ -10,6 +9,6 @@ export default defineMcpTool({
   inputSchema: platformEvidenceInputSchema.shape,
   handler: async input => {
     const postgres = usePostgresDirectoryDb()
-    return { ...(postgres ? await readPostgresPlatformEvidence(postgres, input) : readPlatformQueryEvidence(useDb(), input)) }
+    return { ...await readPostgresPlatformEvidence(postgres, input) }
   },
 })

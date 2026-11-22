@@ -11,7 +11,7 @@ import { defaultLogCollection } from '../../../layers/core/lib/logging/policy'
 import coreManifest from '../../../layers/core/lib/core/manifest'
 import rosterManifest from '../../../layers/sme-roster/manifest'
 
-const bin = process.env.TEST_POSTGRES_STARTUP_BIN
+const bin = process.env.TEST_POSTGRES_STARTUP_BIN || process.env.ROSTER_TEST_POSTGRES_BIN
 
 vi.mock('../../../server/install-application', () => ({ installApplicationServer() {} }))
 
@@ -105,7 +105,6 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
       const child = spawnCompiledApp(port, {
         stdio: ['ignore', 'pipe', 'pipe'],
         env: {
-          NUXT_DB_MODE: 'postgresql',
           NUXT_DB_PATH: dbPath,
           NUXT_DB_READONLY: readOnly ? '1' : '0',
           NUXT_POSTGRES_DIRECTORY_URL: `postgresql://fixture@localhost/roster?host=${encodeURIComponent(dir)}`,

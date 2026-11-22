@@ -25,6 +25,7 @@ const copyHeader = Buffer.from('5047434f50590aff0d0a000000000000000000', 'hex')
 const copyEnd = Buffer.from([255, 255])
 const nullLength = Buffer.from([255, 255, 255, 255])
 // SQLite's exact evidence cells can hold raw text, binary or numeric values.
+const officialRawColumns = new Set(['name_raw', 'uscc_raw', 'district_raw'])
 const exactCells = new Set([
   'platform_collection_condition.witness_value',
   'platform_business_observation.witness_rdjb_value',
@@ -72,6 +73,12 @@ function postgresType(table, column) {
 
 function fieldBytes(table, column, sqliteType, value) {
   if (sqliteType === 'null') return null
+  // Keep NUL-bearing captured raw strings representable in PostgreSQL.
+  if (table === 'official_evidence_row_revision' && officialRawColumns.has(column.name) && sqliteType === 'text') {
+    const text = value.toString('utf8')
+    if (Buffer.from(text).equals(value)) return Buffer.from(JSON.stringify(text))
+    throw new Error(`Invalid UTF-8 in SQLite text at ${table}.${column.name}`)
+  }
   if ((column.exact || column.target === 'bigint') && sqliteType === 'integer') return toBigEndian(value)
   if (column.target === 'text' && sqliteType === 'text' && !value.includes(0)) return value
   if ((column.target === 'bytea' && sqliteType === 'blob') || (column.exact && sqliteType === 'text')) return value

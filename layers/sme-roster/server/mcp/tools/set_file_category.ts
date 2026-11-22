@@ -1,14 +1,12 @@
 import type { LogContext } from '../../../../core/lib/logging'
 import { legacyFileMaintenanceControlShape } from '../../../../core/server/utils/file-maintenance-contract'
-import { parseFileMaintenanceOptions } from '../../../../core/server/utils/file-maintenance'
+import { parseFileMaintenanceOptions } from '../../../../core/server/utils/file-maintenance-shared'
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
 import { TITLE_ORDER } from '#sme-roster/lib/labels'
 import { fileRefShape, requirePostgresFileRef } from '../../../../core/server/utils/file-agent-reference'
 import { maintainPostgresFile } from '../../../../core/server/utils/file-maintenance-postgres'
 import { usePostgresFileDb } from '../../../../core/server/utils/file-store-postgres'
-import { setFileCategoryForAgent } from '../../utils/mcp-files'
 import { writeGuard } from '../../../../core/server/utils/mcp-guard'
 
 /**
@@ -17,8 +15,7 @@ import { writeGuard } from '../../../../core/server/utils/mcp-guard'
  * 这是**票 12「分类回写」的代理通路**:文件上传时没定来源/年份/批次(或定错了),
  * 代理看出它是哪一批、哪一类之后从这里写回。
  *
- * 复用的是页面那条 PATCH 的**同一个写入口**(`setFileCategoryForAgent` →
- * `parseMetadataPatch` + `updateStoredFile`)—— 白名单、三态(未提供 / 置空 / 置值)、
+ * 复用的是页面那条 PATCH 的**同一个写入口**(`maintainPostgresFile`)—— 白名单、三态(未提供 / 置空 / 置值)、
  * 以及「分类补齐后自动把 `category_state` 从 `unset` 提升为 `set`」全部照旧。
  * 所以从 MCP 写进去和从页面写进去是**同一件事**,不存在「代理有后门改库」这条通路。
  *
@@ -77,18 +74,13 @@ export default defineMcpTool({
     const options = parseFileMaintenanceOptions(input)
     const context = (extra as { logContext?: LogContext } | undefined)?.logContext
     const pg = usePostgresFileDb()
-    if (pg) {
-      const file = await requirePostgresFileRef(pg, input)
-      if (!Object.keys(meta).length) throw createError({ statusCode: 400, message: '至少给一个分类字段:source / kind / year / batch / titleCode' })
-      try {
-        const row = await maintainPostgresFile(pg, useRuntimeConfig().filesDir, file.id, 'update', meta, options, context, { requireActive: true })
-        return { file: row }
-      } catch (error) {
-        throw createError({ statusCode: (error as { statusCode?: number }).statusCode ?? 500, message: (error as Error).message })
-      }
+    const file = await requirePostgresFileRef(pg, input)
+    if (!Object.keys(meta).length) throw createError({ statusCode: 400, message: '至少给一个分类字段:source / kind / year / batch / titleCode' })
+    try {
+      const row = await maintainPostgresFile(pg, useRuntimeConfig().filesDir, file.id, 'update', meta, options, context, { requireActive: true })
+      return { file: row }
+    } catch (error) {
+      throw createError({ statusCode: (error as { statusCode?: number }).statusCode ?? 500, message: (error as Error).message })
     }
-    const result = setFileCategoryForAgent(useDb(), input, meta, undefined, options, context)
-    if (!result.ok) throw createError({ statusCode: result.statusCode, message: result.message })
-    return { file: { ...result.row } }
   },
 })

@@ -1,31 +1,19 @@
-import Database from 'better-sqlite3'
+import { type EvidenceReviewAnchor, decodeImpactCursor, invalidImpactCursor, impactList114, impactScopeFilter114, pageImpactRows, type impactPreview114, type impactSources114, type impactEvents114, type workCommand114 } from './evidence-review-114-contract'
+import type Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { createDrizzleLogger } from '../../../core/lib/logging/drizzle'
 import { setTimeout as scheduleExpiry, clearTimeout as cancelExpiry } from 'node:timers'
-/** Bounded public review view over committed #113 evidence; business writes stay in #102. */
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
-import { and, eq, sql, type SQL } from 'drizzle-orm'
-import { z } from 'zod'
+import { randomUUID } from 'node:crypto'
+import { and, eq, sql } from 'drizzle-orm'
+import type { z } from 'zod'
 import * as s from '../../../../db/schema'
-import { DecisionError102, decisionScope102, parse102, readDecision102, currentDecision102, type DecisionDb } from './decision-lifecycle-102'
-import { captureRuleRevision113, evidenceDigest113, evaluateEvidenceImpact113, processEvidenceImpacts113, readEvidenceRevision113, readEvidenceToken113 } from './evidence-impact-113'
+import { readDecision102, currentDecision102, type DecisionDb } from './decision-lifecycle-102'
+import { DecisionError102, parse102 } from './decision-lifecycle-102/contract'
+import { captureRuleRevision113, evaluateEvidenceImpact113, processEvidenceImpacts113, readEvidenceRevision113, readEvidenceToken113 } from './evidence-impact-113'
+import { evidenceDigest113 } from './evidence-digest'
 import { readQueryCoverage } from '../../lib/roster/query-assessment'
 import { differenceEvidenceColumns } from '../../lib/platform/difference-reference-target'
 import { currentEnterpriseIdentity } from '../../lib/roster/enterprise-identity'
-const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
-const limit = positive.max(100).default(50), cursor = z.string().min(1).max(2048).optional()
-const filters = decisionScope102.partial().extend({ decisionId: positive.optional() })
-export const impactList114 = filters.extend({ eventId: positive.optional(), view: z.enum(['current','historical','all']).default('current'), state: z.enum(['pending','reviewed','all']).default('pending'), limit, cursor })
-export const impactGet114 = z.strictObject({ id: positive })
-export const impactSources114 = impactGet114.extend({ limit, cursor })
-export const impactEvents114 = z.strictObject({ revisionId: positive, enterpriseId: positive.optional(), limit, cursor })
-export const impactPreview114 = filters.extend({ revisionId: positive, limit, cursor })
-const envelope = z.strictObject({ idempotencyKey: z.string().trim().min(1).max(200), actor: z.strictObject({ type: z.enum(['user','agent']), id: z.string().trim().min(1).max(200) }), basis: z.string().trim().min(1).max(4000) })
-export const processCommand114 = envelope.extend({ action: z.literal('process'), limit: positive.max(100) })
-const digest = z.string().regex(/^[a-f0-9]{64}$/)
-export const ruleCommand114 = envelope.extend({ action: z.literal('release_rule'), ruleId: z.string().trim().min(1).max(200), version: z.string().trim().min(1).max(200), scopes: z.array(decisionScope102.extend({ previousEvaluationDigest: digest, evaluationDigest: digest })).min(1).max(50) }).superRefine((v,c) => { if(new Set(v.scopes.map(x=>JSON.stringify([x.enterpriseId,x.titleCode,x.direction]))).size !== v.scopes.length) c.addIssue({code:'custom',message:'Duplicate rule scopes'}) })
-export const workCommand114 = z.discriminatedUnion('action',[processCommand114,ruleCommand114])
-const secret = randomBytes(32)
 // File-backed WAL read snapshots freeze both immutable links and inherited mutable
 // legacy ownership across pages. Reads never write a cache table or copy archives.
 // Bound held readers/time so anonymous cursors cannot retain unlimited WAL history.
@@ -47,8 +35,9 @@ export function closeReviewSnapshots114() {
 }
 function openSnapshot(db: DecisionDb) {
   while (snapshots.size >= 64) closeSnapshot(snapshots.keys().next().value!)
-  const path = (db as DecisionDb & { $client: { name: string } }).$client.name
-  const client = new Database(path, { readonly: true, fileMustExist: true })
+  const source = (db as DecisionDb & { $client: { name: string } }).$client
+  const Connection = source.constructor as typeof Database
+  const client = new Connection(source.name, { readonly: true, fileMustExist: true })
   try { client.exec('BEGIN') } catch (error) { client.close(); throw error }
   const id = randomUUID(), timer = scheduleExpiry(() => closeSnapshot(id), 120000)
   timer.unref()
@@ -56,13 +45,10 @@ function openSnapshot(db: DecisionDb) {
   snapshots.set(id, snapshot)
   return { id, ...snapshot }
 }
-export type EvidenceReviewAnchor = { revision: number; impact: number; decision: number; receipt: number; snapshotId?: string }
 function anchor(db: DecisionDb): EvidenceReviewAnchor {
   return db.get<EvidenceReviewAnchor>(sql`select coalesce((select min(revision_id)-1 from evidence_impact_progress_113 where done=0),(select max(id) from evidence_revision_113),0) revision,
     coalesce((select max(id) from explanation_impact_113),0) impact, coalesce((select max(id) from difference_reason),0) decision,coalesce((select max(id) from evidence_review_receipt_114),0) receipt`)!
 }
-function signature(body: string) { return createHmac('sha256',secret).update(body).digest() }
-function encode(operation: string, filter: unknown, asOf: EvidenceReviewAnchor, after: number) { const body = Buffer.from(JSON.stringify({operation,filter:evidenceDigest113(filter),asOf,after})).toString('base64url'); return body+'.'+signature(body).toString('base64url') }
 function pageContext(db: DecisionDb, operation: string, input: {cursor?:string}) {
   const {cursor: token,...filter}=input
   if(!token) {
@@ -75,38 +61,6 @@ function pageContext(db: DecisionDb, operation: string, input: {cursor?:string})
   const snapshot = operation === 'list' ? snapshots.get(cursor.asOf.snapshotId!) : null
   if (operation === 'list' && !snapshot) throw invalidImpactCursor()
   return { ...cursor, filter, db: snapshot?.db ?? db }
-}
-
-export function invalidImpactCursor() {
-  return new DecisionError102(400, 'invalid_cursor', 'Cursor is invalid, expired, evicted or belongs to different filters; restart the read')
-}
-
-export function decodeImpactCursor(operation: string, filter: unknown, token: string) {
-  try {
-    const [body,mac,...extra] = token.split('.')
-    if (!body || !mac || extra.length) throw invalidImpactCursor()
-    const expected = signature(body), given = Buffer.from(mac, 'base64url')
-    if (given.length !== expected.length || !timingSafeEqual(expected, given)) throw invalidImpactCursor()
-    const value = JSON.parse(Buffer.from(body, 'base64url').toString())
-    if (value.operation !== operation || value.filter !== evidenceDigest113(filter) || !Number.isSafeInteger(value.after) ||
-        value.after < 0 || !value.asOf || !['revision','impact','decision','receipt'].every(key =>
-          Number.isSafeInteger(value.asOf[key]) && value.asOf[key] >= 0)) throw invalidImpactCursor()
-    return { asOf: value.asOf as EvidenceReviewAnchor, after: value.after as number }
-  } catch { throw invalidImpactCursor() }
-}
-
-export function pageImpactRows<T>(rows: T[], max: number, operation: string,
-  context: { asOf: EvidenceReviewAnchor; filter: unknown }, key: (value: T) => number) {
-  const more = rows.length > max, selected = rows.slice(0, max)
-  return { rows: selected, nextCursor: more ? encode(operation, context.filter, context.asOf, key(selected.at(-1)!)) : null, asOf: context.asOf }
-}
-export function impactScopeFilter114(input: z.infer<typeof filters>, alias: 'i'|'d') {
-  const fragments: SQL[]=[]
-  if(input.enterpriseId!=null)fragments.push(sql`${sql.raw(alias+'.enterprise_id')}=${input.enterpriseId}`)
-  if(input.titleCode!=null)fragments.push(sql`${sql.raw(alias+'.title_code')}=${input.titleCode}`)
-  if(input.direction!=null)fragments.push(sql`${sql.raw(alias+'.direction')}=${input.direction}`)
-  if(input.decisionId!=null)fragments.push(sql`${sql.raw(alias==='i'?'i.decision_id':'d.id')}=${input.decisionId}`)
-  return fragments.length ? sql.join(fragments, sql` and `) : sql`true`
 }
 const headAt = (a:EvidenceReviewAnchor) => sql`select d.id from difference_reason d where d.enterprise_id=i.enterprise_id and d.title_code=i.title_code and d.direction=i.direction and d.id<=${a.decision} order by d.recorded_at desc,d.id desc limit 1`
 function impactRows(db:DecisionDb,input:z.infer<typeof impactList114>,a:EvidenceReviewAnchor,after:number,id?:number) {
@@ -210,3 +164,4 @@ export function work114(db:DecisionDb,command:z.infer<typeof workCommand114>) {
     return response
   },{behavior:'immediate'})
 }
+export { impactList114, impactGet114, impactSources114, impactEvents114, impactPreview114, processCommand114, ruleCommand114, workCommand114, type EvidenceReviewAnchor, invalidImpactCursor, decodeImpactCursor, pageImpactRows, impactScopeFilter114 } from './evidence-review-114-contract'

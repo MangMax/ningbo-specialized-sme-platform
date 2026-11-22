@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { expect, it } from 'vitest'
-import { createLogService } from '../../../layers/core/lib/logging/service'
+import { createLogService } from '../../../layers/core/lib/logging/sqlite-service'
 
 it('keeps historical events unmarked and combines module with other list and clear filters', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'log-module-migration-'))

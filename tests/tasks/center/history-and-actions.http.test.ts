@@ -1,10 +1,18 @@
 import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initializeDb, schema } from '../../../db/client'
 import { eq } from 'drizzle-orm'
+import { createServer } from 'node:http'
+import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { job as postgresJob } from '../../../db/postgresql/job-tables'
+import { handlePostgresTaskCenter } from '../../../layers/core/server/utils/task-center-postgres'
+import { batchSpec } from '../../../layers/sme-roster/server/utils/platform-batch-query-postgres'
+import { createPostgresJobRunner } from '../../../layers/core/server/utils/job-runner-postgres'
 import { __resetJobRunner, clearJobSpecs, ensureJobRunnerReady, registerJob, submitJob, whenIdle } from '../../../layers/core/server/utils/job-runner'
 import { newJobId } from '../../../layers/core/lib/job'
 import { handleTaskCenterRequest } from '../../../layers/sme-roster/server/utils/task-center-http'
@@ -99,30 +107,54 @@ it('keeps running cancellation pending until a real executor checkpoint and prot
 })
 
 it('exposes safe retry only for unfinished terminal batch items and enforces execution limit', async () => {
+  const pg = await postgresRuntimeFixture({ dir })
+  for (const [key, value] of Object.entries(pg.env)) vi.stubEnv(key, value)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'fixture-key' }))
+  const onlineDb = usePostgresDirectoryDb()
+  const runner = createPostgresJobRunner(onlineDb, dir)
   const unfinished = newJobId(), complete = newJobId()
-  db.update(schema.job).set({ params: { items: [{ itemId: complete, query: { source: 'queryList', startPage: 1 } }, { itemId: unfinished, query: { source: 'queryList', startPage: 1 } }] }, result: { attempt: 2, items: [{ itemId: complete, status: 'success', completeness: 'complete', segments: [], unfinished: [] }, { itemId: unfinished, status: 'failed', completeness: 'partial', segments: [], unfinished: [{ source: 'queryList', rdjb: null, page: 2 }] }] } }).where(eq(schema.job.id, ids.batch)).run()
-  registerJob({ kind: 'platform-query-batch', status: 'ready', summary: 'synthetic isolated executor', parse: raw => ({ ok: true, params: raw }), run: async (_ctx, params) => {
-    // Isolated execution boundary: re-querying the completed item produces a
-    // visible failed item, so a wrong retry selection goes red through HTTP.
-    const selected = params.retryItemIds as string[]
-    return { result: { attempt: 3, items: [
-      { itemId: complete, status: selected.includes(complete) ? 'failed' : 'success', completeness: selected.includes(complete) ? 'partial' : 'complete', unfinished: [] },
-      { itemId: unfinished, status: selected.includes(unfinished) ? 'success' : 'failed', completeness: selected.includes(unfinished) ? 'complete' : 'partial', unfinished: [] },
-    ] } }
-  } })
-  const headers = { authorization: 'Bearer fixture-key' }
-  const detail = await (await fetch(`${api.baseUrl}/api/task-center/${ids.batch}`, { headers })).json()
-  expect(detail.capabilities).toMatchObject({ retry: true, retryItemIds: [unfinished] })
-  expect((await fetch(`${api.baseUrl}/api/task-center/${ids.batch}/retry`, { method: 'POST' })).status).toBe(401)
-  expect((await fetch(`${api.baseUrl}/api/task-center/${ids.batch}/retry`, { method: 'POST', headers })).status).toBe(202)
-  await whenIdle()
-  const retried = await (await fetch(`${api.baseUrl}/api/task-center/${ids.batch}`, { headers })).json()
-  expect(retried).toMatchObject({ id: ids.batch, state: 'done', outcome: { complete: 2, failed: 0, attempt: 3 } })
-  db.update(schema.job).set({ result: { attempt: 10, items: [{ itemId: unfinished, status: 'failed', completeness: 'partial', unfinished: [{ source: 'queryList', rdjb: null, page: 2 }] }] } }).where(eq(schema.job.id, ids.batch)).run()
-  const limited = await (await fetch(`${api.baseUrl}/api/task-center/${ids.batch}`, { headers })).json()
-  expect(limited.capabilities.retry).toBe(false)
-  expect((await fetch(`${api.baseUrl}/api/task-center/${ids.batch}/retry`, { method: 'POST', headers })).status).toBe(409)
-})
+  const router = createRouter()
+    .get('/api/task-center/:id', defineEventHandler(event => handlePostgresTaskCenter('detail', event)))
+    .post('/api/task-center/:id/retry', defineEventHandler(event => handlePostgresTaskCenter('retry', event)))
+  const server = createServer(toNodeListener(createApp().use(router)))
+  try {
+    clearJobSpecs()
+    registerJob({ ...batchSpec, postgres: { ...batchSpec.postgres!, async run(_ctx, params) {
+      const selected = params.retryItemIds as string[]
+      return { result: { attempt: 3, items: [
+        { itemId: complete, status: selected.includes(complete) ? 'failed' : 'success', completeness: selected.includes(complete) ? 'partial' : 'complete', unfinished: [] },
+        { itemId: unfinished, status: selected.includes(unfinished) ? 'success' : 'failed', completeness: selected.includes(unfinished) ? 'complete' : 'partial', unfinished: [] },
+      ] } }
+    } } })
+    const failed = { itemId: unfinished, status: 'failed', completeness: 'partial', segments: [], unfinished: [{ source: 'queryList', rdjb: null, page: 2 }] }
+    await onlineDb.insert(postgresJob).values({ id: ids.batch, kind: 'platform-query-batch', state: 'failed',
+      createdAt: '2026-10-19T00:00:00Z', params: JSON.stringify({ items: [complete, unfinished].map(itemId => ({ itemId, query: { source: 'queryList', startPage: 1 } })) }),
+      result: JSON.stringify({ attempt: 2, items: [{ itemId: complete, status: 'success', completeness: 'complete', segments: [], unfinished: [] }, failed] }),
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const url = 'http://127.0.0.1:' + (server.address() as { port: number }).port + '/api/task-center/' + ids.batch
+    const headers = { authorization: 'Bearer fixture-key' }
+    const detail = await (await fetch(url, { headers })).json()
+    expect(detail.capabilities).toMatchObject({ retry: true, retryItemIds: [unfinished] })
+    expect((await fetch(url + '/retry', { method: 'POST' })).status).toBe(401)
+    expect((await fetch(url + '/retry', { method: 'POST', headers })).status).toBe(202)
+    await runner.wake()
+    const retried = await (await fetch(url, { headers })).json()
+    expect(retried).toMatchObject({ id: ids.batch, state: 'done', outcome: { complete: 2, failed: 0, attempt: 3 } })
+    await onlineDb.update(postgresJob).set({ result: JSON.stringify({ attempt: 10, items: [failed] }) }).where(eq(postgresJob.id, ids.batch))
+    const limited = await (await fetch(url, { headers })).json()
+    expect(limited.capabilities.retry).toBe(false)
+    expect((await fetch(url + '/retry', { method: 'POST', headers })).status).toBe(409)
+  } finally {
+    if (server.listening) await new Promise<void>(resolve => server.close(() => resolve()))
+    await runner.stop()
+    await closePostgresDirectoryDb()
+    pg.close()
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  }
+}, 30_000)
 
 it('does not invent completed platform items before first checkpoint', async () => {
   db.update(schema.job).set({ state: 'queued', result: null, error: null, params: { items: [{ itemId: newJobId(), query: { source: 'queryList' } }, { itemId: newJobId(), query: { source: 'queryList' } }] } }).where(eq(schema.job.id, ids.batch)).run()

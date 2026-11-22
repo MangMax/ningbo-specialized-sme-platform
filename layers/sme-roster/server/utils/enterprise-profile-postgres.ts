@@ -7,9 +7,8 @@ import {
   applyPostgresEnterpriseProfileChange, enterpriseProfileVersion, lockPostgresReviewedEnterpriseBatch,
   postgresCanonicalEnterpriseId, postgresEnterpriseProfileState, type EnterpriseProfile,
 } from '../../../core/server/public'
-import {
-  boundedEnterpriseProfileHistory, EnterpriseProfileError, enterpriseProfilePatchSchema, parseEnterpriseProfileHistoryQuery,
-} from './enterprise-profile'
+import { EnterpriseProfileError } from './enterprise-profile-model'
+import { boundedEnterpriseProfileHistory, enterpriseProfilePatchSchema, parseEnterpriseProfileHistoryQuery } from './enterprise-profile-model'
 import { capturePostgresIdentityChange, readPostgresIdentityMaterial } from './postgres-identity-evidence'
 
 export function getPostgresEnterpriseProfile(db: NodePgDatabase, enterpriseId: number) {
@@ -26,7 +25,7 @@ function profileAudit(row: typeof audit.$inferSelect) {
 }
 
 export function patchPostgresEnterpriseProfile(db: NodePgDatabase, enterpriseId: number, body: unknown) {
-  if (process.env.NUXT_POSTGRES_DIRECTORY_WRITE !== '1') {
+  if (process.env.NUXT_DB_READONLY === '1') {
     throw new EnterpriseProfileError(503, 'write_unavailable', 'PostgreSQL 企业资料处于只读模式')
   }
   const parsed = enterpriseProfilePatchSchema.safeParse(body)

@@ -1,9 +1,8 @@
 import { getHeader, getQuery, getRouterParam, readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
-import { useDb } from '@db'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
-import { DecisionError102, parse102 } from './decision-lifecycle-102'
-import { decisionOutput102, decisionFailure102, postgresDecisionOutput102 } from './decision-lifecycle-102-output'
-import { impactList114, impactGet114, impactSources114, impactEvents114, impactPreview114, workCommand114, listImpacts114, getImpact114, listSources114, listEvents114, previewImpacts114, work114 } from './evidence-review-114'
+import { DecisionError102, parse102 } from './decision-lifecycle-102/contract'
+import { decisionFailure102, postgresDecisionOutput102 } from './decision-lifecycle-102-output'
+import { impactList114, impactGet114, impactSources114, impactEvents114, impactPreview114, workCommand114 } from './evidence-review-114-contract'
 import { usePostgresRosterDb } from './postgres-roster-db'
 import { workPostgresEvidenceReview } from './evidence-review-work-postgres'
 
@@ -19,34 +18,20 @@ export function reviewRoute114(action:'list'|'get'|'sources'|'events'|'preview'|
         let body:unknown;try{body=await readBody(event)}catch{throw new DecisionError102(400,'invalid_request','Malformed JSON request body')}
         const command = parse102(workCommand114, body)
         const native = usePostgresRosterDb(true)
-        if (native) {
-          const output = await postgresDecisionOutput102(native)
-          return output(await workPostgresEvidenceReview(native, command))
-        }
-        const sqlite = useDb()
-        return decisionOutput102(sqlite)(work114(sqlite, command))
+        const output = await postgresDecisionOutput102(native)
+        return output(await workPostgresEvidenceReview(native, command))
       }
       const raw={...getQuery(event),...(getRouterParam(event,'id')?{id:getRouterParam(event,'id')}:{}),...(getRouterParam(event,'revisionId')?{revisionId:getRouterParam(event,'revisionId')}:{})}
       const q=Object.fromEntries(Object.entries(raw).map(([k,v])=>[k,['enterpriseId','decisionId','eventId','revisionId','id','limit'].includes(k)&&typeof v==='string'&&/^\d+$/.test(v)?Number(v):v]))
       const postgres = usePostgresRosterDb()
-      if (postgres) {
-        if (action === 'list') return (await postgresDecisionOutput102(postgres))(await listPostgresImpacts114(parse102(impactList114, q)))
-        return postgres.transaction(async tx => {
-          const output = await postgresDecisionOutput102(tx)
-          if (action === 'get') return output(await getPostgresImpact114(tx, parse102(impactGet114, q).id))
-          if (action === 'sources') return output(await listPostgresImpactSources114(tx, parse102(impactSources114, q)))
-          if (action === 'events') return output(await listPostgresRevisionEvents114(tx, parse102(impactEvents114, q)))
-          return output(await previewPostgresImpacts114(tx, parse102(impactPreview114, q)))
-        }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
-      }
-      const db = useDb(), output = decisionOutput102(db)
-      return db.transaction(()=>{
-        if(action==='get')return output(getImpact114(db,parse102(impactGet114,q).id))
-        if(action==='sources')return output(listSources114(db,parse102(impactSources114,q)))
-        if(action==='events')return output(listEvents114(db,parse102(impactEvents114,q)))
-        if(action==='preview')return output(previewImpacts114(db,parse102(impactPreview114,q)))
-        return output(listImpacts114(db,parse102(impactList114,q)))
-      })
+      if (action === 'list') return (await postgresDecisionOutput102(postgres))(await listPostgresImpacts114(parse102(impactList114, q)))
+      return await postgres.transaction(async tx => {
+        const output = await postgresDecisionOutput102(tx)
+        if (action === 'get') return output(await getPostgresImpact114(tx, parse102(impactGet114, q).id))
+        if (action === 'sources') return output(await listPostgresImpactSources114(tx, parse102(impactSources114, q)))
+        if (action === 'events') return output(await listPostgresRevisionEvents114(tx, parse102(impactEvents114, q)))
+        return output(await previewPostgresImpacts114(tx, parse102(impactPreview114, q)))
+      }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
     }catch(error){const f=decisionFailure102(error);if(f.status===401)setHeader(event,'www-authenticate','Bearer realm="agent-api"');setResponseStatus(event,f.status);return f.body}
   })
 }

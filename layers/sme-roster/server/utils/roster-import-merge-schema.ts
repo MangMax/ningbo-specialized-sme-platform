@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { enterpriseAlias } from '../../../../db/schema'
+import { enterpriseAlias } from '../../../../db/postgresql/enterprise-tables'
 import type { RosterImportMerge } from '../../lib/roster-import-client'
 import { platformRefDiscoverySchema, relationRefDiscoverySchema } from './roster-import-alias-schema'
 

@@ -5,7 +5,7 @@ const fixture=()=>{const f=nativeCatalogFixture();fixtures.push(f);return f}
 afterEach(()=>{for(const f of fixtures.splice(0))f.close()})
 
 import { handleRecordCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-api'
-import { dispatchRecordCorrespondenceMcp } from '../../../layers/sme-roster/server/utils/mcp-record-correspondence'
+import { dispatchRecordCorrespondenceMcp } from '../../../layers/sme-roster/server/utils/mcp-record-correspondence-sqlite'
 import { startHttpFixture } from '../../support/http'
 it('native HTTP and MCP candidates expose identical scoped business provenance without private raw fields',async()=>{
  const f=fixture(),seed=f.seed('business_list',f.raw('WIRE',{sblx:'申请',year:2024,private:'PRIVATE-CANDIDATE'}))

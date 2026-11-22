@@ -7,12 +7,7 @@ import { eventCorrectionAudit } from '../../../../db/postgresql/official-evidenc
 import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { readPostgresLegacyQualification, type PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
-import {
-  assertEventCorrectionBatch, eventCorrectionCapture, eventCorrectionCommitBatch, eventCorrectionCommitReplay,
-  eventCorrectionFailure, eventCorrectionPreflightReplay, eventCorrectionPreflightResult, eventCorrectionReadbackScope,
-  eventCorrectionResult, projectEventCorrectionPlan, validateEventCorrectionTargets, type EventCorrectionInputs,
-  type EventCorrectionRequest, type CorrectionQualificationSafety,
-} from './roster-event-correction'
+import { assertEventCorrectionBatch, eventCorrectionCapture, eventCorrectionCommitBatch, eventCorrectionCommitReplay, eventCorrectionFailure, eventCorrectionPreflightReplay, eventCorrectionPreflightResult, eventCorrectionReadbackScope, eventCorrectionResult, projectEventCorrectionPlan, validateEventCorrectionTargets, type EventCorrectionInputs, type EventCorrectionRequest, type CorrectionQualificationSafety } from './roster-event-correction-model'
 import { lockPostgresRosterImportKey } from './roster-export-import-postgres'
 import { advancePostgresOfficialEventRevision } from './evidence-revision-postgres'
 import { lockPostgresFilePaths, refreshPostgresDerivedFileParts } from './file-parts-postgres'

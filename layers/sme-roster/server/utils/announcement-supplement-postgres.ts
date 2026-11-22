@@ -8,20 +8,20 @@ import type {
   SupplementAnnouncementPreflightResult, SupplementAnnouncementResponse,
 } from '../../lib/roster-import-client'
 import { readPostgresLegacyQualification } from '../../lib/roster/current-qualification-postgres'
-import { lockPostgresRosterImportBatch, lockPostgresRosterImportKey } from './roster-export-import-postgres'
-import { announcementIntakeDigest, type supplementSchema } from './announcement-intake'
+import { isPostgresImportWriteRejection, lockPostgresRosterImportBatch, lockPostgresRosterImportKey } from './roster-export-import-postgres'
+import { announcementIntakeDigest, type supplementSchema } from './announcement-intake-model'
 import { readPostgresIntakeRow } from './announcement-intake-postgres'
 import { reviewPostgresAnnouncementSubjects } from './announcement-subjects-postgres'
 import { planPostgresAnnouncement } from './announcement-plan-postgres'
 import { attachPostgresAnnouncementSources, writePostgresAnnouncement } from './announcement-write-postgres'
-import { ImportReceiptError } from './import-receipts'
+import { ImportReceiptError } from './import-receipt-model'
 import { applyPostgresOfficialImport, createPostgresOfficialImportState, finishPostgresOfficialImport } from './official-evidence-import-postgres'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
 import { runPostgresCorrespondenceTransaction } from './record-correspondence-write-postgres'
 import { importPostgresReceiptRedactor } from './import-receipt-redaction'
-import { publicRosterImportItems } from './roster-import'
+import { publicRosterImportItems } from './roster-import-model'
 import { createPostgresImportSteps, executePostgresImportSteps } from './roster-mixed-import-postgres'
-import { eventCorrectionCapture, eventCorrectionReadbackScope } from './roster-event-correction'
+import { eventCorrectionCapture, eventCorrectionReadbackScope } from './roster-event-correction-model'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Review = z.infer<typeof supplementSchema>
@@ -31,7 +31,7 @@ class Preview extends Error {
   constructor(readonly result: SupplementAnnouncementPreflightResult) { super('Announcement preview') }
 }
 class Conflicts extends Error {
-  constructor(readonly items: RosterImportItemResult[]) { super('Announcement conflicts') }
+  constructor(readonly items: RosterImportItemResult[], readonly rollbackMessage?: string) { super('Announcement conflicts') }
 }
 
 async function qualification(tx: Tx, owners: ReadonlyMap<number, number>): Promise<RosterImportAfterQualificationReadback> {
@@ -110,10 +110,20 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
         if (plan.errors.length) throw new Conflicts(plan.errors)
         const activeBatchId = batchId ?? previous?.id ?? await createBatch(nested)
         const evidence = createPostgresOfficialImportState()
-        const items = await writePostgresAnnouncement(nested, request, activeBatchId, plan, evidence)
-        if (plan.officialPlan) items.push(await applyPostgresOfficialImport(nested, plan.officialPlan, activeBatchId,
-          preflight ? plan.official! : officialEvidencePlanHash, evidence))
-        await finishPostgresOfficialImport(nested, evidence)
+        let items: RosterImportItemResult[]
+        try {
+          items = await writePostgresAnnouncement(nested, request, activeBatchId, plan, evidence)
+          if (plan.officialPlan) items.push(await applyPostgresOfficialImport(nested, plan.officialPlan, activeBatchId,
+            preflight ? plan.official! : officialEvidencePlanHash, evidence))
+          await finishPostgresOfficialImport(nested, evidence)
+        } catch (error) {
+          if (preflight || !isPostgresImportWriteRejection(error)) throw error
+          const message = '公布原行写入失败，已整批回滚，未写入任何数据'
+          throw new Conflicts(plan.rows.map(row => ({
+            ok: false, kind: 'record_event', ref: 'record:' + row.index,
+            error: { code: 'commit_rolled_back', message },
+          })), message)
+        }
         const sourceIds = await attachPostgresAnnouncementSources(nested, id, activeBatchId, request, owners, filesDir)
         const members = [...new Set(owners.values())].map(enterpriseId => ({ enterpriseId, intakeId: id }))
         for (let offset = 0; offset < members.length; offset += 30_000) {
@@ -158,7 +168,7 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
       if (error instanceof Preview) return error.result
       if (!(error instanceof Conflicts)) throw error
       const summary = { ...emptySummary, failed: error.items.length }
-      const message = '批次校验未通过：' + error.items.length + ' 项有误，未写入任何数据'
+      const message = error.rollbackMessage ?? ('批次校验未通过：' + error.items.length + ' 项有误，未写入任何数据')
       const items = publicRosterImportItems(error.items, batchId!)
       const completedAt = new Date().toISOString()
       await tx.update(importBatch).set({

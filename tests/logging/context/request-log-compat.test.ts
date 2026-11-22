@@ -2,19 +2,19 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { requestLogContext } from '../../../layers/core/lib/logging'
 import { safeLogEvent } from '../../../layers/core/lib/logging/privacy'
 
-const reads = vi.hoisted(() => ({ json: vi.fn() }))
-vi.mock('@db', () => ({ useDb: () => ({ $client: { name: 'context-compat.db' } }) }))
+const reads = vi.hoisted(() => ({ currentQualifiedJson: vi.fn() }))
+vi.mock('h3', async importOriginal => ({ ...await importOriginal<typeof import('h3')>(),
+  getQuery: () => ({ titleCode: 'little_giant' }), setHeader: vi.fn(),
+}))
 vi.mock('../../../layers/sme-roster/server/utils/enterprise-read', () => ({ enterpriseReads: reads }))
 
 describe('request log context compatibility', () => {
   let handler: (event: unknown) => Promise<unknown>
   beforeAll(async () => {
     vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
-    vi.stubGlobal('getQuery', () => ({}))
-    vi.stubGlobal('setHeader', vi.fn())
-    handler = (await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default as unknown as typeof handler
+    handler = (await import('../../../layers/sme-roster/server/api/roster/current-enterprises.get')).default as unknown as typeof handler
   })
-  beforeEach(() => reads.json.mockReset())
+  beforeEach(() => reads.currentQualifiedJson.mockReset())
   afterAll(() => vi.unstubAllGlobals())
 
   it.each([
@@ -22,10 +22,10 @@ describe('request log context compatibility', () => {
     { name: 'empty context', event: { context: {} } },
   ])('preserves the business read result with $name', async ({ event }) => {
     const body = Buffer.from('{"rows":[{"enterpriseId":42}],"counts":{"total":1},"page":1,"pageSize":50}')
-    reads.json.mockResolvedValueOnce({ body })
+    reads.currentQualifiedJson.mockResolvedValueOnce({ body })
     await expect(handler(event)).resolves.toBe(body)
-    expect(reads.json).toHaveBeenLastCalledWith(
-      'context-compat.db', expect.objectContaining({ operation: 'list' }), expect.any(AbortSignal), {},
+    expect(reads.currentQualifiedJson).toHaveBeenLastCalledWith(
+      expect.objectContaining({ titleCode: 'little_giant' }), expect.any(AbortSignal), {},
     )
     expect(event).not.toHaveProperty('context.applicationLogContext')
   })
@@ -43,10 +43,10 @@ describe('request log context compatibility', () => {
       context: Object.freeze({ applicationLogContext: metadata, matchedRoute: { path: '/api/roster/enterprises' } }),
     })
     const body = Buffer.from('{"rows":[],"counts":{"total":0}}')
-    reads.json.mockResolvedValueOnce({ body })
+    reads.currentQualifiedJson.mockResolvedValueOnce({ body })
     await expect(handler(event)).resolves.toBe(body)
-    expect(reads.json).toHaveBeenLastCalledWith(
-      'context-compat.db', expect.objectContaining({ operation: 'list' }), expect.any(AbortSignal),
+    expect(reads.currentQualifiedJson).toHaveBeenLastCalledWith(
+      expect.objectContaining({ titleCode: 'little_giant' }), expect.any(AbortSignal),
       { requestId: 'req-compat', traceId: 'trace-compat', taskId: 'task-compat', module: 'sme-roster', httpMethod: 'GET', httpRoute: '/api/roster/enterprises' },
     )
     expect(event.context.applicationLogContext).toBe(metadata)

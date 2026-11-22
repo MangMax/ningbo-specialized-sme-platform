@@ -1,5 +1,4 @@
 import { captureDiscovery, readDiscoveryArtifact } from '../../../support/development-discovery.mjs'
-import { resetExportRows } from './reset-rows'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { normalizeUscc } from '../../../../layers/sme-roster/lib/domain'
@@ -10,6 +9,7 @@ import { join } from 'node:path'
 
 import { createHash } from 'node:crypto'
 import ExcelJS from 'exceljs'
+import pg from 'pg'
 import { expect } from 'vitest'
 import { reviewCurrentExportDecision } from '../../fixtures/qualification-decisions'
 import { type initializeDb, schema as s } from '../../../../db/client'
@@ -28,14 +28,25 @@ export function specializedExportFixture() {
   const token = 'synthetic-export-118-token'
   const app = nativeAppAdapter({ dir, token })
   const { headers, url, terminal } = app
-  let started = false
-  async function start() { if (!started) { await app.start(); started = true } }
+  let starting: Promise<void> | undefined
+  function start() { return starting ??= app.start() }
   async function resetBusiness() {
-    if (!started) { await app.resetBusiness(); return }
-    resetExportRows(app.db.$client)
+    await starting?.catch(() => {})
+    await app.resetBusiness()
+    starting = undefined
   }
   const json = (response: Response): Promise<any> => response.json()
-  const submit = (key: string, extra = {}) => app.request(route, { method: 'POST', body: JSON.stringify({ clientRequestId: key, ...extra }) })
+  const submit = async (key: string, extra = {}) => {
+    await start()
+    return app.request(route, { method: 'POST', body: JSON.stringify({ clientRequestId: key, ...extra }) })
+  }
+  async function runtimeQuery(statement: string, values: unknown[]) {
+    if (!app.postgresUrl) throw new Error('PostgreSQL export fixture has not started')
+    const client = new pg.Client({ connectionString: app.postgresUrl })
+    await client.connect()
+    try { return await client.query(statement, values) }
+    finally { await client.end() }
+  }
   async function download(job: any) {
     const { response, bytes } = await app.download(job.result.artifact.downloadUrl)
     expect(response.status).toBe(200)
@@ -84,8 +95,11 @@ export function specializedExportFixture() {
     }
     return hash.digest('hex')
   }
-  return { dir, get processId() { return app.processId }, get dbPath() { return app.dbPath }, get db() { return app.db }, headers, token, url, json, submit, start, terminal, download, workbook, candidate, addRecord, decision, resetBusiness, businessDigest,
-    async close() { try { await app.close() } finally { if (!process.env.CURRENT_CANDIDATE_READER_EVIDENCE_DIR) rmSync(dir,{recursive:true,force:true}) } },
+  return { dir, get processId() { return app.processId }, get dbPath() { return app.dbPath }, get db() { return app.db }, headers, token, url, json, submit, start, terminal, download, workbook, candidate, addRecord, decision, resetBusiness, businessDigest, runtimeQuery,
+    async close() {
+      try { await starting?.catch(() => {}); await app.close() }
+      finally { if (!process.env.CURRENT_CANDIDATE_READER_EVIDENCE_DIR) rmSync(dir,{recursive:true,force:true}) }
+    },
   }
 }
 export function rows(wb: ExcelJS.Workbook, sheet: string) {

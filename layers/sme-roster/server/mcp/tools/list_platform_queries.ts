@@ -1,8 +1,6 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
 import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER } from '../../../lib/labels'
-import { listPlatformQueries } from '../../../lib/platform/read'
 import { readPostgresPlatformQueries } from '../../../lib/platform/postgres-query-read'
 import { usePostgresDirectoryDb } from '../../../../../db/postgresql/client'
 
@@ -19,6 +17,6 @@ export default defineMcpTool({
   },
   handler: async input => {
     const postgres = usePostgresDirectoryDb()
-    return { ...(postgres ? await readPostgresPlatformQueries(postgres, input) : listPlatformQueries(useDb(), input)) }
+    return { ...await readPostgresPlatformQueries(postgres, input) }
   },
 })

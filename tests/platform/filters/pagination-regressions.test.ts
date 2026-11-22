@@ -5,8 +5,13 @@ import { join } from 'node:path'
 import { initializeDb } from '../../../db/client'
 import { updateCredential } from '../../../layers/core/server/utils/credential-state'
 import { whenIdle } from '../../../layers/core/server/utils/job-runner'
-import { handlePlatformBatchRequest } from '../../../layers/sme-roster/server/utils/platform-batch-http'
+import { handleSqlitePlatformBatchRequest } from '../../../layers/sme-roster/server/utils/platform-batch-http-sqlite'
 
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
+
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 const dir = mkdtempSync(join(tmpdir(), 'pagination-regressions-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'test.sqlite') })
 const cookie = 'session=synthetic-pagination-secret'
@@ -23,8 +28,11 @@ function response(source: string, rows: Record<string, string>[], metadata: Reco
   // businessList's embedded JSON is a supported, independent response form.
   return { ok: true, status: 200, text: async () => source === 'businessList' ? `<script>(function(data){} )(${data});</script>` : data }
 }
-const batch = (action: 'submit' | 'status' | 'retry', value?: unknown, batchId?: string) => handlePlatformBatchRequest(action, { body: value, batchId, headers: { authorization: 'Bearer synthetic-task' } }, { db, apiToken: 'synthetic-task', filesDir: dir })
+const batch = (action: 'submit' | 'status' | 'retry', value?: unknown, batchId?: string) => handleSqlitePlatformBatchRequest(action, { body: value, batchId, headers: { authorization: 'Bearer synthetic-task' } }, { db, apiToken: 'synthetic-task', filesDir: dir })
 beforeAll(async () => {
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  await updatePostgresCredentialState(usePostgresDirectoryDb(), { 'sme-roster.miitCookie': cookie })
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
   vi.stubEnv('MIIT_COOKIE', '')
   vi.stubEnv('MIIT_COOKIE_FILE', '')
@@ -40,9 +48,17 @@ beforeAll(async () => {
     expect(JSON.parse(wire.content[0].text)).toEqual(wire.structuredContent)
     return wire.structuredContent
   }
-})
+}, 60_000)
 beforeEach(() => { updateCredential('sme-roster.miitCookie', cookie, { db }); upstream.mockReset(); vi.stubGlobal('fetch', upstream) })
-afterAll(async () => { await whenIdle(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => {
+  await whenIdle()
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+  db.$client.close()
+  rmSync(dir, { recursive: true, force: true })
+})
 
 it.each([true, false, [], [1], ' ', {}, -1, 1.5, 'NaN', '9007199254740992'])('REST and MCP keep malformed totals unknown and traverse every relation (case %#)', async total => {
   for (const source of ['queryList', 'businessList']) {
@@ -299,7 +315,7 @@ it.each([
       restarted = initializeDb({ create: true,  dbPath: path })
     }
   } finally { release(); await whenIdle() }
-  const invoke = (action: 'status' | 'retry', value?: unknown) => handlePlatformBatchRequest(action, { batchId: receipt.batchId, body: value, headers: { authorization: 'Bearer synthetic-task' } }, { db: restarted ?? db, apiToken: 'synthetic-task', filesDir: dir })
+  const invoke = (action: 'status' | 'retry', value?: unknown) => handleSqlitePlatformBatchRequest(action, { batchId: receipt.batchId, body: value, headers: { authorization: 'Bearer synthetic-task' } }, { db: restarted ?? db, apiToken: 'synthetic-task', filesDir: dir })
   try {
     const first = (await invoke('status')).body as any
     expect(first).toMatchObject({ state: 'failed', completeness: 'partial' })

@@ -1,8 +1,9 @@
+import { prepareRuntimeLogs } from '../fixtures/runtime'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
+import { applicationLogs } from '../../../layers/core/lib/logging'
 import { initializeDb } from '../../../db/client'
 import { maintainStoredFile } from '../../../layers/core/server/utils/file-maintenance'
 import { handleStoredFilePatchRequest } from '../../../layers/core/server/utils/stored-file-patch-http'
@@ -14,17 +15,14 @@ import { handleStoredFilePatchRequest } from '../../../layers/core/server/utils/
  */
 const dir = mkdtempSync(join(tmpdir(), 'file-log-180-'))
 const db = initializeDb({ create: true,  dbPath: join(dir, 'fixture.db') })
-const previous = process.env.NUXT_LOG_DIR
+let runtime: Awaited<ReturnType<typeof prepareRuntimeLogs>>
 
-beforeAll(() => {
-  process.env.NUXT_LOG_DIR = join(dir, 'logs')
-  initializeWorkerLogging()
+beforeAll(async () => {
+  runtime = await prepareRuntimeLogs(dir)
 })
 afterAll(async () => {
-  await closeApplicationLogging()
+  await runtime?.close()
   db.$client.close()
-  if (previous === undefined) delete process.env.NUXT_LOG_DIR
-  else process.env.NUXT_LOG_DIR = previous
   rmSync(dir, { recursive: true, force: true })
 })
 

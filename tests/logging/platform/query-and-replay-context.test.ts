@@ -1,15 +1,17 @@
+import { join } from 'node:path'
+
+import { prepareRuntimeLogs } from '../fixtures/runtime'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { initializeWorkerLogging, applicationLogs, closeApplicationLogging } from '../../../layers/core/lib/logging'
+import { applicationLogs } from '../../../layers/core/lib/logging'
 import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
 
 // Application seam + actual upstream HTTP + real evlog drain. This is not actual Nuxt.
 const root = mkdtempSync(join(tmpdir(), 'platform-logging185-'))
-const priorDir = process.env.NUXT_LOG_DIR
+let runtime: Awaited<ReturnType<typeof prepareRuntimeLogs>>
 let baseUrl: string
 let status = 200
 let rows = [{ qymc: 'PRIVATE185_RECORD', tyshxydm: '91330211255994457P' }]
@@ -19,15 +21,13 @@ const upstream = createServer(async (req, res) => {
   res.end(JSON.stringify({ zrarData: { grid: { applyGrid: { page: 1, pageSize: 50, pageSet: rows, maxCount: rows.length } } } }))
 })
 beforeAll(async () => {
-  process.env.NUXT_LOG_DIR = join(root, 'logs')
-  initializeWorkerLogging()
+  runtime = await prepareRuntimeLogs(root)
   upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening')
   baseUrl = `http://127.0.0.1:${(upstream.address() as { port: number }).port}`
 })
 afterAll(async () => {
-  await closeApplicationLogging()
+  await runtime?.close()
   await new Promise<void>(resolve => upstream.close(() => resolve()))
-  if (priorDir === undefined) delete process.env.NUXT_LOG_DIR; else process.env.NUXT_LOG_DIR = priorDir
   rmSync(root, { recursive: true, force: true })
 })
 async function events(requestId: string) {
@@ -90,7 +90,7 @@ it('legacy retry records transport retry separately from one semantic slot outco
 it('batch retry preserves accepted pages and correlates only unfinished item collection', async () => {
   const { initializeDb } = await import('../../../db/client')
   const { updateCredential } = await import('../../../layers/core/server/utils/credential-state')
-  const { handlePlatformBatchRequest } = await import('../../../layers/sme-roster/server/utils/platform-batch-http')
+  const { handleSqlitePlatformBatchRequest } = await import('../../../layers/sme-roster/server/utils/platform-batch-http-sqlite')
   const { whenIdle } = await import('../../../layers/core/server/utils/job-runner')
   const db = initializeDb({ dbPath: join(root, 'batch.db'), create: true })
   updateCredential('sme-roster.miitCookie', 'session=PRIVATE185_COOKIE', { db })
@@ -103,7 +103,7 @@ it('batch retry preserves accepted pages and correlates only unfinished item col
     visited.push(number)
     return new Response(number === 2 && failSecond ? 'PRIVATE185_ERROR' : JSON.stringify({ zrarData: { grid: { applyGrid: { page: number, pageSize: 1, pageSet: [{ qymc: 'PRIVATE185_RECORD', relation: String(number) }], maxCount: 2 } } } }), { status: number === 2 && failSecond ? 503 : 200 })
   }
-  const invoke = (action: 'submit' | 'retry' | 'status', body?: unknown, batchId?: string) => handlePlatformBatchRequest(action, {
+  const invoke = (action: 'submit' | 'retry' | 'status', body?: unknown, batchId?: string) => handleSqlitePlatformBatchRequest(action, {
     body, batchId, headers: { authorization: 'Bearer fixture185' },
   }, { db, apiToken: 'fixture185', filesDir: root, logContext: { requestId: action === 'retry' ? 'req185-batch-retry' : 'req185-batch', traceId: action === 'retry' ? 'trace185-batch-retry' : 'trace185-batch' } })
   try {

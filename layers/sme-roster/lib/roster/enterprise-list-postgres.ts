@@ -7,9 +7,9 @@ import { differenceReason, enterpriseDifferenceComparison, rosterAnnouncementInt
 import type { FormalValidity } from '../../../../db/record-event-formal-validity'
 import { normalizeName, normalizeUscc } from '../domain'
 import { DIFFERENCE_STATUS_ORDER, TITLE_ORDER } from '../labels'
-import { compareEnterpriseSelection, type EnterpriseSelection } from './enterprise-list-selection'
+import { compareEnterpriseSelection, type EnterpriseSelection } from './enterprise-selection'
 import { isPageCapable } from './evidence-page'
-import { projectRosterEnterprisePage, rosterPageOf, type RosterCounts, type RosterEnterpriseFilter, type RosterEnterprisesResult } from './enterprise-roster'
+import { projectRosterEnterprisePage, rosterPageOf, type RosterCounts, type RosterEnterpriseFilter, type RosterEnterprisesResult } from './enterprise-roster-projection'
 
 type Reader = Pick<NodePgDatabase, 'select' | 'selectDistinctOn' | '$with' | 'with'>
 

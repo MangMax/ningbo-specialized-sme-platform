@@ -1,35 +1,36 @@
-import { executeNativeImport } from '../../roster/imports/fixtures/import-server'
-import { importExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
-import { initializeDb } from '../../../db/client'
+import { closeApplicationLogging } from '../../../layers/core/lib/logging'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createError } from 'h3'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { sql } from 'drizzle-orm'
-import { useDb } from '../../../db'
 
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 
-const dirs: string[] = []
-const dir = mkdtempSync(join(tmpdir(), 'business457-mcp-')); dirs.push(dir)
-const dbPath = join(dir, 'roster.db')
+const dir = mkdtempSync(join(tmpdir(), 'business-projection-mcp-'))
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let preflight: typeof import('../../../layers/sme-roster/server/mcp/tools/preflight_roster_batch').default
 let commit: typeof import('../../../layers/sme-roster/server/mcp/tools/save_roster_batch').default
 
 beforeAll(async () => {
-  vi.spyOn(importExecutor, 'execute').mockImplementation(executeNativeImport)
-  vi.stubEnv('NUXT_DB_PATH', dbPath)
+  postgres = await postgresRuntimeFixture({ dir })
+  for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
   vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubGlobal('createError', createError)
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: join(dir, 'files'), mcpToken: 'synthetic-mcp-token' }))
   preflight = (await import('../../../layers/sme-roster/server/mcp/tools/preflight_roster_batch')).default
   commit = (await import('../../../layers/sme-roster/server/mcp/tools/save_roster_batch')).default
-})
-afterAll(() => {
-  try { useDb({ dbPath }).$client.close() } catch { /* already closed */ }
-  vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs()
-  dirs.forEach(path => rmSync(path, { recursive: true, force: true }))
+}, 30_000)
+afterAll(async () => {
+  await closeApplicationLogging()
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+  rmSync(dir, { recursive: true, force: true })
 })
 
 const raw = { id: 'SQ-MCP-B', qymc: 'MCP 办理企业', tyshxydm: '91330211255994457P', sblx: '复核', year: '2023', sqsj: '2023-02-01', cszt: '终审通过', whpc: '2023-2', personuuid: '第三批', szsfmc: '浙江省' }
@@ -38,21 +39,21 @@ const input = { idempotencyKey: 'mcp-business-projection', sourceKind: 'platform
 
 describe('business_list typed projection through public MCP import tools', () => {
   it('plans only, then commits typed fields and returns typed receipt counts', async () => {
-    const db = initializeDb({ create: true, dbPath })
+    const db = usePostgresDirectoryDb()
     const plan = await preflight.handler(input as never, {} as never) as { preflight: { canonicalProjection: unknown[] } }
     expect(plan.preflight.canonicalProjection[0]).toMatchObject({
       businessProjection: { declareKind: 'review', businessYear: 2023, status: '终审通过', batch: '2023-2', awardBatchLabel: '第三批', province: '浙江省', ruleVersion: 'platform-business-v1' },
     })
-    expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_business_projection WHERE observation_id IS NULL`)!.n).toBe(0)
+    expect(Number((await db.execute<{ n: string }>(sql`SELECT count(*) n FROM business.platform_business_projection WHERE observation_id IS NULL`)).rows[0]!.n)).toBe(0)
 
     const saved = await commit.handler(input as never, {} as never) as { summary: { canonicalProjection: Record<string, number> } }
     expect(saved.summary.canonicalProjection).toMatchObject({ businessProjectionsCreated: 1, businessProjectionsReused: 0 })
-    expect(db.get(sql`SELECT declare_kind AS declareKind, business_year AS businessYear, status, batch, award_batch_label AS awardBatchLabel, province FROM platform_business_projection WHERE observation_id IS NULL`)).toEqual({
+    expect((await db.execute(sql`SELECT declare_kind AS "declareKind", business_year::integer AS "businessYear", status, batch, award_batch_label AS "awardBatchLabel", province FROM business.platform_business_projection WHERE observation_id IS NULL`)).rows[0]).toEqual({
       declareKind: 'review', businessYear: 2023, status: '终审通过', batch: '2023-2', awardBatchLabel: '第三批', province: '浙江省',
     })
 
     const replay = await commit.handler({ ...input, idempotencyKey: 'mcp-business-projection-replay' } as never, {} as never) as { summary: { canonicalProjection: Record<string, number> } }
     expect(replay.summary.canonicalProjection).toMatchObject({ businessProjectionsCreated: 0, businessProjectionsReused: 1 })
-    expect(db.get<{ n: number }>(sql`SELECT count(*) n FROM platform_business_projection WHERE observation_id IS NULL`)!.n).toBe(1)
+    expect(Number((await db.execute<{ n: string }>(sql`SELECT count(*) n FROM business.platform_business_projection WHERE observation_id IS NULL`)).rows[0]!.n)).toBe(1)
   })
 })

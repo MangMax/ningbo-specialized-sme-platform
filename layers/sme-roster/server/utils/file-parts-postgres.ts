@@ -27,7 +27,7 @@ export async function refreshPostgresDerivedFileParts(tx: Db, paths: Iterable<st
     year: recordEvent.year, batch: recordEvent.batchSeq, attachment: recordEvidence.attachment,
   }).from(recordEvidence).innerJoin(recordEvent, eq(recordEvent.id, recordEvidence.recordEventId))
     .innerJoin(record, eq(record.id, recordEvent.recordId))
-    .where(sql`${recordEvidence.sourceFile} = ANY(${pathsSql(names)})`)
+    .where(sql`${recordEvidence.sourceFile} COLLATE "C" = ANY(${pathsSql(names)})`)
   const byPath = Map.groupBy(rows, row => row.relPath)
   for (const file of files) {
     const parts = aggregateParts((byPath.get(file.relPath) ?? []).map(row => ({ ...row, attachment: normalizeAttachment(row.attachment) })))

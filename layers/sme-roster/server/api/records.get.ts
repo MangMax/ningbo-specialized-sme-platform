@@ -1,5 +1,3 @@
-import { useDb } from '@db'
-import { listRecords } from '#sme-roster/lib/query'
 import { parseRecordQuery } from '../utils/roster-read-query'
 import { usePostgresRosterDb } from '../utils/postgres-roster-db'
 import { listPostgresLedgerRecords } from '../../lib/query-postgres'
@@ -8,7 +6,7 @@ import { listPostgresLedgerRecords } from '../../lib/query-postgres'
  * 通用台账查询(一行 = 企业 × 称号；行内保留全部来源、事件与出处)。
  *
  * query 参数**手写** —— Nitro 的 spec 生成只自动推断**路径参数**,query / header
- * 没有运行时 schema 可推(见票 19)。这里写的形状与下面 `listRecords` 的入参一一对应。
+ * 没有运行时 schema 可推(见票 19)。这里写的形状与 `parseRecordQuery` 的入参一一对应。
  */
 defineRouteMeta({
   openAPI: {
@@ -78,6 +76,5 @@ defineRouteMeta({
 
 export default defineEventHandler((event) => {
   const filter = parseRecordQuery(getQuery(event))
-  const pg = usePostgresRosterDb()
-  return pg ? listPostgresLedgerRecords(pg, filter) : listRecords(useDb(), filter)
+  return listPostgresLedgerRecords(usePostgresRosterDb(), filter)
 })

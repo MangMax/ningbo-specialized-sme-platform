@@ -1,17 +1,13 @@
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import * as schema from '../../../../db/schema'
-import { handleRecordCorrespondenceRequest, handlePostgresCorrespondenceRequest, type CorrespondenceAction, type CorrespondenceApiInput } from './record-correspondence-api'
+import type { CorrespondenceAction, CorrespondenceApiInput, CorrespondenceApiOutput } from './record-correspondence-api'
+import { handlePostgresCorrespondenceRequest } from './record-correspondence-runtime'
 
 /** Same application adapter as REST; MCP middleware and tool discovery guard write calls. */
-export async function dispatchRecordCorrespondenceMcp(action: CorrespondenceAction, args: Record<string, unknown>, context: { db: BetterSQLite3Database<typeof schema>; authorized?: boolean }) {
+export async function dispatchRecordCorrespondenceMcp(action: CorrespondenceAction, args: Record<string, unknown>, context: { authorized?: boolean } = {}, execute: (input: CorrespondenceApiInput, apiToken: string | null) => CorrespondenceApiOutput | Promise<CorrespondenceApiOutput> = handlePostgresCorrespondenceRequest) {
   try {
-    // Tool contexts defer useDb() with a getter so acquisition failures are
-    // sanitized by this same application boundary, including uncached opens.
     const write = ['preflight', 'commit', 'batch'].includes(action)
     const input: CorrespondenceApiInput = { action, method: ['list', 'get', 'audit', 'source', 'batch'].includes(action) ? 'GET' : 'POST', query: action === 'list' ? args : action === 'audit' ? { page: args.page, pageSize: args.pageSize } : undefined, body: action === 'commit' ? { request: args.request, planHash: args.planHash } : args, id: args.id, kind: args.kind, key: args.idempotencyKey, headers: write && context.authorized ? { authorization: 'Bearer mcp-internal-authorized' } : undefined }
     const apiToken = write ? 'mcp-internal-authorized' : null
-    const output = await handlePostgresCorrespondenceRequest(input, apiToken)
-      ?? handleRecordCorrespondenceRequest(input, { db: context.db, apiToken })
+    const output = await execute(input, apiToken)
     if (output.status !== 200) {
       const { error } = output.body as { error: { code: string; message: string } }
       // Validation diagnostics can include arbitrary rejected keys from input.

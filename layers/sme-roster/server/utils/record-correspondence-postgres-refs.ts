@@ -4,14 +4,14 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { title } from '../../../../db/postgresql/title-table'
 import {
-  platformBusinessObservation, platformBusinessProjection, platformExportRow,
+  platformBusinessObservation, platformBusinessProjection, platformExportBatch, platformExportRow,
   platformLegacyQueryAlias, platformLegacyRelationAlias, platformObservationAssignment,
 } from '../../../../db/postgresql/platform-tables'
 import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
-import * as schema from '../../../../db/schema'
+import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { sourceQueryFields, sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
 import { readPostgresCurrentProofCoverage } from './comparison-scope-proof-postgres'
-import { correspondenceAttributionChanged, type CorrespondenceAttribution } from './record-correspondence-ref-validity'
+import { correspondenceAttributionChanged, type CorrespondenceAttribution } from './record-correspondence-attribution'
 import type { CorrespondenceRefRow } from './record-correspondence'
 
 type Db = Pick<NodePgDatabase, 'execute' | 'select'>
@@ -19,13 +19,14 @@ type ProofReference = Parameters<typeof readPostgresCurrentProofCoverage>[1][num
 const NULL_JSON = sql`'null'::jsonb`
 const refValue = (...segments: string[]) => sql`p.provenance_json #> ${sql.param(segments)}::text[]`
 const jsonEqual = (saved: SQL, actual: SQL) => sql`coalesce((${saved})::jsonb,${NULL_JSON}) = coalesce((${actual})::jsonb,${NULL_JSON})`
+const legacyJsonFields = new Set(['qualityFlags', 'formalValidity', 'rawFields'])
 const textJson = (value: SQL) => sql`to_json(${value})`
 const tableColumn = (alias: string, column: string) => sql`${sql.identifier(alias)}.${sql.identifier(column)}`
 
 function storedFields(table: Table, alias: string, saved: SQL, versioned = false) {
   return sql.join(Object.entries(getTableColumns(table)).map(([key, column]) => {
     const value = tableColumn(alias, column.name)
-    const actual = column.dataType === 'json' ? sql`${value}::json`
+    const actual = legacyJsonFields.has(key) ? sql`${value}::json`
       : versioned && key === 'revision' ? textJson(sql`nullif(${value},1)`) : textJson(value)
     return jsonEqual(sql`(${saved})->${key}::text`, actual)
   }), sql` AND `)
@@ -39,15 +40,15 @@ function eventMatches(id: SQL, predecessor = false) {
     ELSE EXISTS (
       SELECT 1 FROM record_event ev JOIN record r ON r.id=ev.record_id JOIN enterprise e ON e.id=r.enterprise_id
       WHERE ev.id=${id}
-        AND ${storedFields(schema.recordEvent, 'ev', refValue(...prefix, 'event'), true)}
-        AND ${storedFields(schema.record, 'r', refValue(...prefix, 'record'))}
-        AND ${storedFields(schema.enterprise, 'e', refValue(...prefix, predecessor ? 'enterprise' : 'officialEnterprise'))}
+        AND ${storedFields(recordEvent, 'ev', refValue(...prefix, 'event'), true)}
+        AND ${storedFields(record, 'r', refValue(...prefix, 'record'))}
+        AND ${storedFields(enterprise, 'e', refValue(...prefix, predecessor ? 'enterprise' : 'officialEnterprise'))}
         AND jsonb_array_length(${evidence})=(SELECT count(*) FROM record_evidence v WHERE v.record_event_id=ev.id)
         AND NOT EXISTS (
           SELECT 1 FROM record_evidence v LEFT JOIN stored_file f ON f.rel_path=v.source_file
           WHERE v.record_event_id=ev.id AND NOT EXISTS (
             SELECT 1 FROM jsonb_array_elements(${evidence}) AS s(saved)
-            WHERE ${storedFields(schema.recordEvidence, 'v', sql`saved->'evidence'`)}
+            WHERE ${storedFields(recordEvidence, 'v', sql`saved->'evidence'`)}
               AND ${jsonEqual(sql`saved->'storedFile'`, sql`CASE WHEN f.id IS NOT NULL THEN ${file} END`)}
           )
         )
@@ -98,8 +99,8 @@ function relationMatches(assignment: { enterpriseId: SQL; matchBasis: SQL; verif
 const exportMatches = sql`CASE WHEN p.export_row_id IS NULL THEN
   ${jsonEqual(refValue('exportRow'), NULL_JSON)} AND ${jsonEqual(refValue('exportBatch'), NULL_JSON)}
   ELSE EXISTS(SELECT 1 FROM platform_export_row e JOIN platform_export_batch b ON b.id=e.batch_id
-    WHERE e.id=p.export_row_id AND ${storedFields(schema.platformExportRow, 'e', refValue('exportRow'))}
-      AND ${storedFields(schema.platformExportBatch, 'b', refValue('exportBatch'))}) END`
+    WHERE e.id=p.export_row_id AND ${storedFields(platformExportRow, 'e', refValue('exportRow'))}
+      AND ${storedFields(platformExportBatch, 'b', refValue('exportBatch'))}) END`
 
 type RefSources = { eventIds: number[]; relationIds: number[]; exportRowIds: number[] }
 export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly number[] | RefSources | { annualDecisionIds: number[] }, witnessTitle?: string) {

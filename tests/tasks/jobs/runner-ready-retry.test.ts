@@ -1,9 +1,11 @@
-import { createHash } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
+import pg from 'pg'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import * as h3 from 'h3'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { initializeDb } from '../../../db/client'
@@ -19,6 +21,7 @@ const ownedDbs: Array<ReturnType<typeof initializeDb>> = []
 
 beforeAll(async () => {
   for (const [name, value] of Object.entries(h3)) vi.stubGlobal(name, value)
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: '' }))
   listJobsRoute = (await import('../../../layers/core/server/api/jobs/index.get')).default
 })
 
@@ -87,65 +90,32 @@ describe('ensureJobRunnerReady 对账就绪缓存', () => {
     expect(ensureJobRunnerReady(db)).toBe(0)
     db.$client.close()
   })
-
-  it('公开任务读取首次故障后可恢复中断任务，后续读取不重复执行对账', async () => {
-    const { dbPath } = fixturePath()
-    vi.stubEnv('NUXT_DB_PATH', dbPath)
-    vi.stubEnv('NUXT_DB_READONLY', '0')
-    const db = initializeDb({ create: true,  dbPath })
-    ownedDbs.push(db)
-    db.$client.pragma('busy_timeout = 0')
-    const id = newJobId()
-    createJob(db, { id, kind: 'issue-313-http', params: {} })
-    db.$client.exec(`
-      create table issue313_updates (n integer not null);
-      insert into issue313_updates values (0);
-      create trigger issue313_job_update after update of state on job
-      begin update issue313_updates set n = n + 1; end;
-    `)
-    const baseUrl = await startPublicJobsRoute()
-    const holder = holdWriterLock(dbPath)
-
-    const failed = await fetch(`${baseUrl}/api/jobs?kind=issue-313-http`)
-    expect(failed.status).toBe(500)
-    expect(getJob(db, id)?.state).toBe('queued')
-
-    holder.exec('ROLLBACK')
-    holder.close()
-    const recovered = await fetch(`${baseUrl}/api/jobs?kind=issue-313-http`)
-    expect(recovered.status).toBe(200)
-    const recoveredBody = await recovered.json()
-    expect(recoveredBody).toMatchObject({ total: 1, rows: [{ id, state: 'failed', error: expect.stringContaining('服务重启') }] })
-    const finishedAt = recoveredBody.rows[0].finishedAt
-
-    const repeated = await fetch(`${baseUrl}/api/jobs?kind=issue-313-http`)
-    expect(repeated.status).toBe(200)
-    expect((await repeated.json()).rows[0].finishedAt).toBe(finishedAt)
-    expect(db.$client.prepare('select n from issue313_updates').get()).toEqual({ n: 1 })
-    db.$client.close()
-  })
-
-  it('只读公开入口不会为恢复中断任务打开写能力', async () => {
-    const { dbPath } = fixturePath()
-    const writer = initializeDb({ create: true,  dbPath })
-    ownedDbs.push(writer)
-    const id = newJobId()
-    createJob(writer, { id, kind: 'issue-313-readonly', params: {} })
-    writer.$client.close()
-    const before = createHash('sha256').update(readFileSync(dbPath)).digest('hex')
-
-    vi.stubEnv('NUXT_DB_PATH', dbPath)
-    vi.stubEnv('NUXT_DB_READONLY', '1')
-    const baseUrl = await startPublicJobsRoute()
-    const response = await fetch(`${baseUrl}/api/jobs?kind=issue-313-readonly`)
-    expect(response.status).toBe(500)
-    expect(createHash('sha256').update(readFileSync(dbPath)).digest('hex')).toBe(before)
-
-    const observer = new Database(dbPath, { readonly: true, fileMustExist: true })
-    ownedConnections.push(observer)
-    expect(observer.prepare('select state from job where id = ?').get(id)).toEqual({ state: 'queued' })
-    const readOnly = initializeDb({ create: true,  dbPath, readOnly: true })
-    ownedDbs.push(readOnly)
-    readOnly.$client.close()
-  })
 })
+
+it.each(['0', '1'])('task history reads a locked queued job without recovering it (readonly=%s)', async readOnly => {
+  const { directory } = fixturePath()
+  const fixture = await postgresRuntimeFixture({ dir: directory })
+  const admin = new pg.Client({ connectionString: fixture.url })
+  try {
+    await admin.connect()
+    const id = newJobId()
+    await admin.query("INSERT INTO business.job(id,kind,params,created_at) VALUES($1,'fixture','{}','2026-01-01Z')", [id])
+    await admin.query('BEGIN')
+    await admin.query('SELECT id FROM business.job WHERE id=$1 FOR UPDATE', [id])
+    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', fixture.url)
+    vi.stubEnv('NUXT_DB_READONLY', readOnly)
+    const baseUrl = await startPublicJobsRoute()
+    for (let i = 0; i < 2; i++) {
+      const response = await fetch(baseUrl + '/api/jobs?kind=fixture', { signal: AbortSignal.timeout(2000) })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({ total: 1, rows: [{ id, state: 'queued', finishedAt: null }] })
+    }
+    await admin.query('ROLLBACK')
+    expect((await admin.query('SELECT state, finished_at FROM business.job WHERE id=$1', [id])).rows)
+      .toEqual([{ state: 'queued', finished_at: null }])
+  } finally {
+    await admin.end()
+    await closePostgresDirectoryDb()
+    fixture.close()
+  }
+}, 30_000)

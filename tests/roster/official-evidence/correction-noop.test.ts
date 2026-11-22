@@ -1,36 +1,22 @@
-import { completeInProcessIntake } from '../imports/fixtures/in-process-intake'
-import { createRuntimeSchema } from '../../../db/create-runtime'
+import { completeInProcessPostgresIntake } from '../imports/fixtures/in-process-intake-postgres'
+import { useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
+import { postgresFixtureRows } from './fixtures/postgres-rows'
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, defineEventHandler } from 'h3'
-import Database from 'better-sqlite3'
-import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import * as schema from '../../../db/schema'
 import type { OfficialPublishedRow, RosterImportPayload, RosterImportRequest, RosterImportRecord } from '../../../layers/sme-roster/lib/roster-import-client'
 import type { EvidenceCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-evidence-correction'
-import { commitRosterImport, preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 
-type Execute = typeof import('../../../layers/sme-roster/server/utils/import-execution')['importExecutor']['execute']
-const current = vi.hoisted((): { db?: BetterSQLite3Database<typeof schema>; filesDir: string } => ({ filesDir: '' }))
-vi.mock('@db', () => ({ useDb: () => { if (!current.db) throw new Error('Synthetic database not initialized'); return current.db } }))
-// Replace only process admission; real production routes/planners/writers run in H3/SQLite.
-vi.mock('../../../layers/sme-roster/server/utils/import-execution', () => ({ importExecutor: {
-  stage: async (db: Parameters<Execute>[0], request: Parameters<Execute>[2], errors: NonNullable<Parameters<Execute>[3]>) => {
-    const { stageAnnouncement } = await import('../../../layers/sme-roster/server/utils/announcement-intake')
-    return stageAnnouncement(db as Parameters<typeof stageAnnouncement>[0], request, errors)
-  },
-  execute: async (...[db, action, request, errors, context, source]: Parameters<Execute>) => action === 'preflight' ? preflightRosterImport(db, request, errors, { ...context, ...source }) : commitRosterImport(db, request, errors, { ...context, ...source }) } }))
+const createDatabase = useIsolatedPostgresCases()
 const closes: (() => void | Promise<void>)[] = []
 afterEach(async () => { for (const close of closes.splice(0).reverse()) await close() })
-afterAll(() => { vi.unstubAllGlobals() })
 const router = createRouter()
 beforeAll(async () => {
   vi.stubGlobal('defineEventHandler', defineEventHandler)
-  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-r3', filesDir: current.filesDir }))
   router.post('/api/roster/import/preflight', (await import('../../../layers/sme-roster/server/api/roster/import/preflight.post')).default)
   router.post('/api/roster/import/commit', (await import('../../../layers/sme-roster/server/api/roster/import/commit.post')).default)
   router.post('/api/roster/evidence/corrections/preflight', (await import('../../../layers/sme-roster/server/api/roster/evidence/corrections/preflight.post')).default)
@@ -45,15 +31,15 @@ const evidenceRow = z.object({ id: z.number(), record_event_id: z.number(), sour
 async function fixture() {
   const dir = mkdtempSync('/tmp/issue350-r3-noop-'), filesDir = join(dir, 'files'); mkdirSync(filesDir)
   for (const path of ['notice.txt', 'other.txt']) writeFileSync(join(filesDir, path), text)
-  const sqlite = new Database(join(dir, 'synthetic.sqlite')); sqlite.pragma('foreign_keys=ON')
-  closes.push(() => { expect(sqlite.pragma('foreign_keys', { simple: true })).toBe(1); sqlite.close() })
-  const db = drizzle(sqlite, { schema }); createRuntimeSchema(sqlite)
-  // Infrastructure catalog only. All enterprise/record/event/evidence/declaration state below is public-command produced.
+  closes.push(() => rmSync(dir, { recursive: true, force: true }))
+  const db = createDatabase(), client = db.$client
+  const { readRows, readFirst } = postgresFixtureRows(client)
+  // Infrastructure catalog only. All enterprise and evidence facts are produced by public commands.
   for (const [id, path] of [[1, 'notice.txt'], [2, 'other.txt']] as const) {
-    sqlite.prepare('INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES(?,?,?,\'txt\',?,?,\'synthetic\')').run(id, path, path, Buffer.byteLength(text), sha256)
-    sqlite.prepare("INSERT INTO roster_file_classification(file_id, source, kind, title_code) VALUES (?, 'jxj', 'announcement', 'specialized_sme')").run(id)
+    await client.query("INSERT INTO stored_file(id,rel_path,filename,ext,bytes,sha256,created_at) VALUES($1,$2,$2,'txt',$3,$4,'synthetic')", [id, path, Buffer.byteLength(text), sha256])
+    await client.query("INSERT INTO roster_file_classification(file_id,source,kind,title_code) VALUES($1,'jxj','announcement','specialized_sme')", [id])
   }
-  current.db = db; current.filesDir = filesDir
+  vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-r3', filesDir }))
   const server = createServer(toNodeListener(createApp().use(router)))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   closes.push(() => new Promise<void>(resolve => server.close(() => resolve())))
@@ -67,7 +53,7 @@ async function fixture() {
   }
   const post = async (action: 'preflight' | 'commit', body: RosterImportRequest) => {
     const response = await http(`/api/roster/import/${action}`, body); expect(response.status).toBe(200)
-    return importResult.parse(await completeInProcessIntake(db, response.body, body, filesDir))
+    return importResult.parse(await completeInProcessPostgresIntake(db, response.body, body, filesDir))
   }
   const request = (payload: RosterImportPayload, key: string): RosterImportRequest => ({ idempotencyKey: key, sourceKind: 'announcement', sourceIdentity: 'synthetic-r3', payload })
   const commit = async (input: RosterImportRequest) => {
@@ -82,20 +68,26 @@ async function fixture() {
   const evidence = (sourceFile: string, listNo: number, publishedRow?: OfficialPublishedRow) => ({ sourceFile, attachment: null, listNo, page: null, ...(publishedRow ? { publishedRow } : {}) })
   const record = (name: 'Alpha' | 'Beta', year: number, entries: NonNullable<RosterImportRecord['events']>[number]['evidence']): RosterImportRecord => ({ enterprise: { name, ...(name === 'Beta' ? { uscc: '91330211255994457P' } : {}) }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year, evidence: entries }] })
   const announcement = (records: RosterImportRecord[]): RosterImportPayload => ({ announcement: { sourceDocument: { source: 'jxj', title: 'Declared publication' }, records } })
-  const snapshot = () => Object.fromEntries(['enterprise', 'record', 'record_event', 'record_evidence', 'source_document', 'official_evidence_row_revision', 'evidence_correction_audit', 'evidence_revision_113', 'evidence_revision_event_113'].map(table => [table, sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]))
-  const rows = () => z.array(evidenceRow).parse(sqlite.prepare('SELECT * FROM record_evidence ORDER BY id').all())
+  const order = {
+    enterprise: 'id', record: 'id', record_event: 'id', record_evidence: 'id', source_document: 'id',
+    official_evidence_row_revision: 'evidence_id, revision', evidence_correction_audit: 'id',
+    evidence_revision_113: 'id', evidence_revision_event_113: 'revision_id, event_id',
+  }
+  const snapshot = async () => Object.fromEntries(await Promise.all(Object.entries(order).map(async ([table, columns]) =>
+    [table, await readRows(`SELECT * FROM ${table} ORDER BY ${columns}`)] as const)))
+  const rows = async () => z.array(evidenceRow).parse(await readRows('SELECT * FROM record_evidence ORDER BY id'))
   const setup = async (sameEvent: boolean, unknown: boolean) => {
     const initial = row({ kind: 'independent', sourceDocument: { source: 'jxj', title: 'Declared publication', docNumber: null, issueDate: null, path: 'notice.txt' }, basis: 'Explicit independently verified declaration' })
     await commit(request(announcement([record('Alpha', 2022, [evidence('notice.txt', 10, initial), ...(sameEvent ? [evidence('other.txt', 20)] : [])])]), 'seed-known'))
-    const knownId = rows().find(r => r.list_no === 10)?.id; if (!knownId) throw new Error('Known capture missing')
+    const knownId = (await rows()).find(r => r.list_no === 10)?.id; if (!knownId) throw new Error('Known capture missing')
     if (!sameEvent) await commit(request(announcement([record('Alpha', 2020, [evidence('other.txt', 20)])]), 'seed-target-other-event'))
-    const targetId = rows().find(r => r.list_no === 20)?.id; if (!targetId) throw new Error('Correction target missing')
+    const targetId = (await rows()).find(r => r.list_no === 20)?.id; if (!targetId) throw new Error('Correction target missing')
     await commit(request(announcement([record('Alpha', 2022, [evidence('other.txt', 10)])]), 'legacy-move-known'))
     expect(await exact(knownId)).toMatchObject({ coordinate: { sourceFile: 'other.txt', listNo: 10 } })
-    const knownBefore = sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=?').all(knownId)
+    const knownBefore = await readRows('SELECT * FROM official_evidence_row_revision WHERE evidence_id=$1', [knownId])
     expect(knownBefore).toMatchObject([{ revision: 1, path: 'notice.txt', name_raw: 'Alpha original', uscc_raw: 'printed code', district_raw: 'printed district' }])
     if (unknown) await commit(request(announcement([record('Beta', 2025, [evidence('notice.txt', 10)])]), 'legacy-unknown-beta'))
-    const source = z.object({ source_document_id: z.number() }).parse(sqlite.prepare('SELECT source_document_id FROM official_evidence_row_revision WHERE evidence_id=?').get(knownId))
+    const source = z.object({ source_document_id: z.number() }).parse(await readFirst('SELECT source_document_id FROM official_evidence_row_revision WHERE evidence_id=$1', [knownId]))
     const publishedRow = row({ kind: 'existing', sourceDocumentId: source.source_document_id, basis: 'Verified declaration' })
     const correction = async (key: string, revision = 0): Promise<EvidenceCorrectionRequest> => {
       const target = await exact(targetId)
@@ -103,11 +95,11 @@ async function fixture() {
     }
     return { knownId, targetId, knownBefore, publishedRow, correction }
   }
-  return { sqlite, http, post, request, commit, exact, snapshot, rows, setup }
+  return { readRows, readFirst, http, post, request, commit, exact, snapshot, rows, setup }
 }
 
 for (const entry of ['import', 'standalone'] as const) for (const sameEvent of [true, false]) it(`R3 S1 ${entry} ${sameEvent ? 'same-event' : 'cross-event'} correction rejects Beta unknown atomically`, async () => {
-  const f = await fixture(), state = await f.setup(sameEvent, true), correction = await state.correction('reject-unknown'), before = f.snapshot()
+  const f = await fixture(), state = await f.setup(sameEvent, true), correction = await state.correction('reject-unknown'), before = await f.snapshot()
   if (entry === 'import') {
     const { idempotencyKey: key, ...command } = correction, input = f.request({ officialEvidenceCorrections: command }, key)
     const plan = await f.post('preflight', input)
@@ -121,16 +113,16 @@ for (const entry of ['import', 'standalone'] as const) for (const sameEvent of [
     const result = await f.http('/api/roster/evidence/corrections/commit', { request: correction, planHash: planHash.success ? planHash.data.planHash : '0'.repeat(64) })
     expect(plan.status).toBe(409); expect(errorResult.parse(plan.body).error.code).toBe('ambiguity')
     expect(result.status).toBe(409); expect(errorResult.parse(result.body).error.code).toBe('ambiguity')
-    expect(f.sqlite.prepare('SELECT count(*) n FROM evidence_correction_batch').get()).toEqual({ n: 0 })
+    expect(await f.readFirst('SELECT count(*) n FROM evidence_correction_batch')).toEqual({ n: 0 })
   }
-  expect(f.snapshot()).toEqual(before)
+  expect(await f.snapshot()).toEqual(before)
   expect(await f.exact(state.targetId)).toMatchObject({ coordinate: { sourceFile: 'other.txt', listNo: 20 } })
 })
 
 const auditValue = z.object({ coordinate: z.object({ sourceFile: z.string(), listNo: z.number() }), row: z.null().optional(), rowRevision: z.number().optional(), publishedRow: z.object({ nameRaw: z.string(), usccRaw: z.string(), districtRaw: z.string() }).optional(), importBatchId: z.number().optional() })
 for (const entry of ['import', 'standalone'] as const) for (const sameEvent of [true, false]) it(`R3 S1 ${entry} ${sameEvent ? 'same-event' : 'cross-event'} compatible correction keeps named ID raw audit CAS113 and receipt`, async () => {
   const f = await fixture(), state = await f.setup(sameEvent, false), correction = await state.correction('compatible'), prior = await f.exact(state.targetId)
-  const revisions = f.sqlite.prepare('SELECT * FROM evidence_revision_113 ORDER BY id').all(), records = f.sqlite.prepare('SELECT * FROM record ORDER BY id').all()
+  const revisions = await f.readRows('SELECT * FROM evidence_revision_113 ORDER BY id'), records = await f.readRows('SELECT * FROM record ORDER BY id')
   if (entry === 'import') {
     const { idempotencyKey: key, ...command } = correction
     const { result } = await f.commit(f.request({ officialEvidenceCorrections: command }, key))
@@ -142,25 +134,25 @@ for (const entry of ['import', 'standalone'] as const) for (const sameEvent of [
     expect(result.status).toBe(200); expect(result.body).toMatchObject({ status: 'committed', evidenceIds: [state.targetId], impact: { updated: 1, audit: 1 } })
     expect(await f.http('/api/roster/evidence/corrections/commit', bound)).toEqual(result)
   }
-  expect(f.rows()).toHaveLength(2)
+  expect(await f.rows()).toHaveLength(2)
   expect(await f.exact(state.targetId)).toMatchObject({ evidenceId: state.targetId, eventId: prior.eventId, coordinate: { sourceFile: 'notice.txt', listNo: 10 }, event: { revision: prior.event.revision + 1 } })
-  expect(f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=?').all(state.knownId)).toEqual(state.knownBefore)
-  expect(f.sqlite.prepare('SELECT * FROM record ORDER BY id').all()).toEqual(records)
-  expect(f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=?').all(state.targetId)).toMatchObject([{ revision: 1, name_raw: 'Alpha original', uscc_raw: 'printed code', district_raw: 'printed district', path: 'notice.txt', list_no: 10 }])
-  const audits = z.array(z.object({ evidence_id: z.number(), event_id: z.number(), batch_key: z.string().nullable(), before: z.string(), after: z.string() })).parse(f.sqlite.prepare('SELECT * FROM evidence_correction_audit ORDER BY id').all())
+  expect(await f.readRows('SELECT * FROM official_evidence_row_revision WHERE evidence_id=$1', [state.knownId])).toEqual(state.knownBefore)
+  expect(await f.readRows('SELECT * FROM record ORDER BY id')).toEqual(records)
+  expect(await f.readRows('SELECT * FROM official_evidence_row_revision WHERE evidence_id=$1', [state.targetId])).toMatchObject([{ revision: 1, name_raw: 'Alpha original', uscc_raw: 'printed code', district_raw: 'printed district', path: 'notice.txt', list_no: 10 }])
+  const audits = z.array(z.object({ evidence_id: z.number(), event_id: z.number(), batch_key: z.string().nullable(), before: z.string(), after: z.string() })).parse(await f.readRows('SELECT * FROM evidence_correction_audit ORDER BY id'))
   expect(audits).toHaveLength(1)
   const audit = audits[0]; if (!audit) throw new Error('Expected correction audit')
   expect(audit).toMatchObject({ evidence_id: state.targetId, event_id: prior.eventId, batch_key: entry === 'import' ? null : 'compatible' })
   expect(auditValue.parse(JSON.parse(audit.before))).toMatchObject({ coordinate: { sourceFile: 'other.txt', listNo: 20 }, row: null })
   expect(auditValue.parse(JSON.parse(audit.after))).toMatchObject({ coordinate: { sourceFile: 'notice.txt', listNo: 10 }, rowRevision: 1, publishedRow: { nameRaw: 'Alpha original', usccRaw: 'printed code', districtRaw: 'printed district' } })
-  expect(f.sqlite.prepare('SELECT * FROM evidence_revision_113 ORDER BY id').all()).toHaveLength(revisions.length + 1)
+  expect(await f.readRows('SELECT * FROM evidence_revision_113 ORDER BY id')).toHaveLength(revisions.length + 1)
 })
 
 it("S1 genuine append no-op reuses known association without propagating historical locator or unknown state", async () => {
-  const f = await fixture(), state = await f.setup(true, true), known = await f.exact(state.knownId), before = f.snapshot()
+  const f = await fixture(), state = await f.setup(true, true), known = await f.exact(state.knownId), before = await f.snapshot()
   const { result } = await f.commit(f.request({ officialEvidenceAppends: [{ eventId: known.eventId, recordId: known.recordId, enterpriseId: known.enterpriseId, expectedVersion: known.event.revision, evidence: { sourceFile: 'notice.txt', attachment: null, listNo: 10, page: null, publishedRow: state.publishedRow } }] }, 'append-noop'))
   expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({ detail: expect.objectContaining({ evidence: [{ evidenceId: state.knownId, eventId: known.eventId, unchanged: true }] }) })]))
-  expect(f.snapshot()).toEqual(before)
+  expect(await f.snapshot()).toEqual(before)
   expect(await f.exact(state.knownId)).toEqual(known)
 })
 
@@ -175,21 +167,21 @@ for (const entry of ['import', 'standalone'] as const) it(`R3 S1 ${entry} genuin
     return result
   }
   await apply(await state.correction('first-change'))
-  const before = f.snapshot(), exact = await f.exact(state.targetId)
+  const before = await f.snapshot(), exact = await f.exact(state.targetId)
   await apply(await state.correction('genuine-unchanged', 1))
-  expect(f.snapshot()).toEqual(before); expect(await f.exact(state.targetId)).toEqual(exact)
+  expect(await f.snapshot()).toEqual(before); expect(await f.exact(state.targetId)).toEqual(exact)
 })
 
 type PublicFixture = Awaited<ReturnType<typeof fixture>>
 type CorrectionOperation = EvidenceCorrectionRequest['operations'][number]
 async function finalOperation(f: PublicFixture, id: number, publishedRow: OfficialPublishedRow): Promise<CorrectionOperation> {
   const target = await f.exact(id)
-  const latest = f.sqlite.prepare('SELECT revision FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision DESC LIMIT 1').get(id)
+  const latest = await f.readFirst('SELECT revision FROM official_evidence_row_revision WHERE evidence_id=$1 ORDER BY revision DESC LIMIT 1', [id])
   if (publishedRow.path === null) throw new Error('Explicit synthetic path required')
   return { evidenceId: id, eventId: target.eventId, recordId: target.recordId, enterpriseId: target.enterpriseId, expectedVersion: target.version, expectedRowRevision: latest === undefined ? 0 : z.object({ revision: z.number() }).parse(latest).revision, coordinate: { sourceFile: publishedRow.path, attachment: publishedRow.attachment, listNo: publishedRow.listNo, page: publishedRow.page }, publishedRow }
 }
 async function submitFinalCorrections(f: PublicFixture, entry: 'import' | 'standalone', operations: CorrectionOperation[], key: string, rejected?: string) {
-  const command = { actor: { type: 'agent' as const, id: 'synthetic' }, basis: 'Explicit verified final corrections', operations }, before = f.snapshot()
+  const command = { actor: { type: 'agent' as const, id: 'synthetic' }, basis: 'Explicit verified final corrections', operations }, before = await f.snapshot()
   if (entry === 'import') {
     const input = f.request({ officialEvidenceCorrections: command }, key)
     const plan = await f.post('preflight', input)
@@ -216,7 +208,7 @@ async function submitFinalCorrections(f: PublicFixture, entry: 'import' | 'stand
     expect(plan.status).toBe(409); expect(errorResult.parse(plan.body).error.code).toBe(rejected)
     expect(result.status).toBe(409); expect(errorResult.parse(result.body).error.code).toBe(rejected)
   }
-  expect(f.snapshot()).toEqual(before)
+  expect(await f.snapshot()).toEqual(before)
 }
 async function setupFinalClaims(entry: 'import' | 'standalone', secondKnown: boolean, sameEvent = true) {
   const f = await fixture(), state = await f.setup(sameEvent, false)
@@ -229,23 +221,23 @@ async function setupFinalClaims(entry: 'import' | 'standalone', secondKnown: boo
 }
 const finalAudit = z.object({ coordinate: z.object({ sourceFile: z.string(), listNo: z.number() }), row: z.object({ nameRaw: z.string() }).nullable().optional(), rowRevision: z.number().optional(), publishedRow: z.object({ nameRaw: z.string() }).optional(), importBatchId: z.number().optional() })
 for (const entry of ['import', 'standalone'] as const) for (const secondKnown of [true, false]) for (const reverse of [false, true]) it(`R4 S1 ${entry} ${secondKnown ? 'two-known raw-only' : 'known-plus-legacy'} final corrections commit in ${reverse ? 'reverse' : 'forward'} order`, async () => {
-  const { f, state, next, ids } = await setupFinalClaims(entry, secondKnown), before = f.snapshot()
+  const { f, state, next, ids } = await setupFinalClaims(entry, secondKnown), before = await f.snapshot()
   const exactBefore = await Promise.all(ids.map(id => f.exact(id)))
   if (secondKnown) for (const t of exactBefore) expect(t.coordinate).toEqual({ sourceFile: 'notice.txt', attachment: null, listNo: 10, page: null })
-  const auditsBefore = z.object({ n: z.number() }).parse(f.sqlite.prepare('SELECT count(*) n FROM evidence_correction_audit').get()).n
-  const revisionsBefore = z.object({ n: z.number() }).parse(f.sqlite.prepare('SELECT count(*) n FROM evidence_revision_113').get()).n
-  const history = ids.map(id => f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision').all(id))
+  const auditsBefore = z.object({ n: z.number() }).parse(await f.readFirst('SELECT count(*) n FROM evidence_correction_audit')).n
+  const revisionsBefore = z.object({ n: z.number() }).parse(await f.readFirst('SELECT count(*) n FROM evidence_revision_113')).n
+  const history = await Promise.all(ids.map(id => f.readRows('SELECT * FROM official_evidence_row_revision WHERE evidence_id=$1 ORDER BY revision', [id])))
   const operations = await Promise.all(ids.map(id => finalOperation(f, id, next)))
   await submitFinalCorrections(f, entry, reverse ? operations.reverse() : operations, 'joint-final')
-  expect(f.rows().map(row => row.id)).toEqual(ids)
+  expect((await f.rows()).map(row => row.id)).toEqual(ids)
   for (let i = 0; i < ids.length; i++) {
     const id = ids[i], prior = exactBefore[i]; if (id === undefined || !prior) throw new Error('Expected exact target')
     expect(await f.exact(id)).toMatchObject({ evidenceId: id, eventId: prior.eventId, coordinate: { sourceFile: 'notice.txt', listNo: 10 }, event: { revision: prior.event.revision + 1 } })
-    const facts = f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision').all(id)
+    const facts = await f.readRows('SELECT * FROM official_evidence_row_revision WHERE evidence_id=$1 ORDER BY revision', [id])
     expect(facts.slice(0, -1)).toEqual(history[i])
     expect(facts.at(-1)).toMatchObject({ revision: i === 0 || secondKnown ? 2 : 1, name_raw: 'Alpha corrected', uscc_raw: 'printed code', district_raw: 'printed district', path: 'notice.txt', list_no: 10 })
   }
-  const audits = z.array(z.object({ evidence_id: z.number(), batch_key: z.string().nullable(), before: z.string(), after: z.string() })).parse(f.sqlite.prepare('SELECT * FROM evidence_correction_audit ORDER BY id').all()).slice(auditsBefore)
+  const audits = z.array(z.object({ evidence_id: z.number(), batch_key: z.string().nullable(), before: z.string(), after: z.string() })).parse(await f.readRows('SELECT * FROM evidence_correction_audit ORDER BY id')).slice(auditsBefore)
   expect(audits.map(a => a.evidence_id).sort((a, b) => a - b)).toEqual(ids)
   for (const a of audits) {
     const prior = finalAudit.parse(JSON.parse(a.before)), after = finalAudit.parse(JSON.parse(a.after))
@@ -254,14 +246,14 @@ for (const entry of ['import', 'standalone'] as const) for (const secondKnown of
     expect(a.batch_key).toBe(entry === 'import' ? null : 'joint-final')
     if (entry === 'import') { expect(after.importBatchId).toBeTypeOf('number'); expect(after.importBatchId).toBe(prior.importBatchId) }
   }
-  expect(f.sqlite.prepare('SELECT count(*) n FROM evidence_revision_113').get()).toEqual({ n: revisionsBefore + 1 })
-  const after = f.snapshot(); expect(after.record).toEqual(before.record); expect(after.enterprise).toEqual(before.enterprise)
+  expect(await f.readFirst('SELECT count(*) n FROM evidence_revision_113')).toEqual({ n: revisionsBefore + 1 })
+  const after = await f.snapshot(); expect(after.record).toEqual(before.record); expect(after.enterprise).toEqual(before.enterprise)
 })
 
 for (const entry of ['import', 'standalone'] as const) it(`R4 S1 ${entry} known-plus-legacy sequential control reaches the same final raw`, async () => {
   const { f, next, ids } = await setupFinalClaims(entry, false)
   for (const id of ids) await submitFinalCorrections(f, entry, [await finalOperation(f, id, next)], `sequential-${id}`)
-  for (const id of ids) expect(f.sqlite.prepare('SELECT name_raw FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision DESC LIMIT 1').get(id)).toEqual({ name_raw: 'Alpha corrected' })
+  for (const id of ids) expect(await f.readFirst('SELECT name_raw FROM official_evidence_row_revision WHERE evidence_id=$1 ORDER BY revision DESC LIMIT 1', [id])).toEqual({ name_raw: 'Alpha corrected' })
 })
 for (const entry of ['import', 'standalone'] as const) it(`R4 S1 ${entry} cross-event compatible final corrections commit`, async () => {
   const { f, next, ids } = await setupFinalClaims(entry, true, false), prior = await Promise.all(ids.map(id => f.exact(id)))
@@ -281,27 +273,27 @@ it("S1 true stored append no-op survives multiple planned mutations in the same 
   const row20 = { ...state.publishedRow, listNo: 20 }, row30 = { ...state.publishedRow, listNo: 30 }
   const mutation = await finalOperation(f, state.targetId, row20)
   const append = (publishedRow: OfficialPublishedRow) => ({ eventId: known.eventId, recordId: known.recordId, enterpriseId: known.enterpriseId, expectedVersion: known.event.revision, evidence: { sourceFile: 'notice.txt', attachment: null, listNo: publishedRow.listNo, page: null, publishedRow } })
-  const original = f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision').all(state.knownId)
+  const original = await f.readRows('SELECT * FROM official_evidence_row_revision WHERE evidence_id=$1 ORDER BY revision', [state.knownId])
   const { result } = await f.commit(f.request({ officialEvidenceCorrections: { actor: { type: 'agent', id: 'synthetic' }, basis: 'Explicit mutation', operations: [mutation] }, officialEvidenceAppends: [append(row30), append(state.publishedRow)] }, 'stored-noop-with-mutations'))
   expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({ detail: expect.objectContaining({ evidence: expect.arrayContaining([{ evidenceId: state.knownId, eventId: known.eventId, unchanged: true }]) }) })]))
-  expect(f.rows()).toHaveLength(ids.length + 1)
-  expect(f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision').all(state.knownId)).toEqual(original)
+  expect(await f.rows()).toHaveLength(ids.length + 1)
+  expect(await f.readRows('SELECT * FROM official_evidence_row_revision WHERE evidence_id=$1 ORDER BY revision', [state.knownId])).toEqual(original)
   expect(await f.exact(state.knownId)).toMatchObject({ coordinate: known.coordinate, event: { revision: known.event.revision + 1 } })
 })
 it("S1 append reuses planned numeric final facts without reading old latest or swallowing correction", async () => {
   const { f, next, ids, state } = await setupFinalClaims('import', true), known = await f.exact(state.knownId)
   const operations = await Promise.all(ids.map(id => finalOperation(f, id, next)))
   const { result } = await f.commit(f.request({ officialEvidenceCorrections: { actor: { type: 'agent', id: 'synthetic' }, basis: 'Explicit final corrections', operations }, officialEvidenceAppends: [{ eventId: known.eventId, recordId: known.recordId, enterpriseId: known.enterpriseId, expectedVersion: known.event.revision, evidence: { sourceFile: 'notice.txt', attachment: null, listNo: 10, page: null, publishedRow: next } }] }, 'planned-is-not-stored'))
-  expect(f.rows().map(row => row.id)).toEqual(ids)
+  expect((await f.rows()).map(row => row.id)).toEqual(ids)
   expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({ detail: expect.objectContaining({ evidence: expect.arrayContaining([expect.objectContaining({ evidenceId: state.knownId, unchanged: true })]) }) })]))
-  for (const id of ids) expect(f.sqlite.prepare('SELECT revision,name_raw FROM official_evidence_row_revision WHERE evidence_id=? ORDER BY revision DESC LIMIT 1').get(id)).toEqual({ revision: 2, name_raw: 'Alpha corrected' })
+  for (const id of ids) expect(await f.readFirst('SELECT revision,name_raw FROM official_evidence_row_revision WHERE evidence_id=$1 ORDER BY revision DESC LIMIT 1', [id])).toEqual({ revision: 2, name_raw: 'Alpha corrected' })
 })
 it("S1 two new append proposals cannot supply each other with a stable association", async () => {
   const { f, state } = await setupFinalClaims('import', false), known = await f.exact(state.knownId), row = { ...state.publishedRow, listNo: 30 }
   const append = { eventId: known.eventId, recordId: known.recordId, enterpriseId: known.enterpriseId, expectedVersion: known.event.revision, evidence: { sourceFile: 'notice.txt', attachment: null, listNo: 30, page: null, publishedRow: row } }
-  const before = f.snapshot(), input = f.request({ officialEvidenceAppends: [append, append] }, 'new-appends-are-not-stored')
+  const before = await f.snapshot(), input = f.request({ officialEvidenceAppends: [append, append] }, 'new-appends-are-not-stored')
   expect((await f.post('preflight', input)).preflight?.conflicts).toMatchObject([{ error: { code: 'ambiguity' } }])
-  expect((await f.post('commit', input)).status).toBe('failed'); expect(f.snapshot()).toEqual(before)
+  expect((await f.post('commit', input)).status).toBe('failed'); expect(await f.snapshot()).toEqual(before)
 })
 
 function publishedFixtureRow(sourceDocumentId?: number): OfficialPublishedRow {
@@ -315,9 +307,9 @@ async function acceptedStoredPair(reverse: boolean, onlyOne = false, cross = fal
   const f = await fixture(), initial = { ...publicLocator('notice.txt', 10), publishedRow: publishedFixtureRow() }, legacy = publicLocator('other.txt', 20)
   await f.commit(f.request(publicAnnouncement('Alpha', 2022, cross ? [initial] : reverse ? [legacy, initial] : [initial, legacy]), 'pair-capture'))
   if (cross) await f.commit(f.request(publicAnnouncement('Alpha', 2020, [legacy]), 'pair-other-event'))
-  const known = f.rows().find(row => row.list_no === 10), target = f.rows().find(row => row.list_no === 20)
+  const known = (await f.rows()).find(row => row.list_no === 10), target = (await f.rows()).find(row => row.list_no === 20)
   if (!known || !target) throw new Error('Expected public-created pair')
-  const source = z.object({ source_document_id: z.number() }).parse(f.sqlite.prepare('SELECT source_document_id FROM official_evidence_row_revision WHERE evidence_id=?').get(known.id))
+  const source = z.object({ source_document_id: z.number() }).parse(await f.readFirst('SELECT source_document_id FROM official_evidence_row_revision WHERE evidence_id=$1', [known.id]))
   const row = publishedFixtureRow(source.source_document_id)
   await submitFinalCorrections(f, 'import', [await finalOperation(f, target.id, row)], 'pair-compatible')
   if (onlyOne) await submitFinalCorrections(f, 'import', [await finalOperation(f, target.id, { ...row, listNo: 40 })], 'pair-move-away')
@@ -335,33 +327,33 @@ async function commitStoredConsumer(f: PublicFixture, input: RosterImportRequest
 async function compatibleStoredConsumer(kind: typeof publicKinds[number], reverse: boolean, onlyOne: boolean) {
   const { f, row, knownId, targetId } = await acceptedStoredPair(reverse, onlyOne), owner = await f.exact(knownId)
   if (kind.endsWith('correction')) await f.commit(f.request(publicAnnouncement('Alpha', 2024, [publicLocator('other.txt', 30)]), 'third-legacy'))
-  const before = f.snapshot(), oldEvidence = f.sqlite.prepare('SELECT * FROM record_evidence ORDER BY id').all(), oldFacts = f.sqlite.prepare('SELECT * FROM official_evidence_row_revision ORDER BY evidence_id,revision').all()
+  const before = await f.snapshot(), oldEvidence = await f.readRows('SELECT * FROM record_evidence ORDER BY id'), oldFacts = await f.readRows('SELECT * FROM official_evidence_row_revision ORDER BY evidence_id,revision')
   if (kind === 'append') {
     const { result } = await commitStoredConsumer(f, f.request({ officialEvidenceAppends: [{ eventId: owner.eventId, recordId: owner.recordId, enterpriseId: owner.enterpriseId, expectedVersion: owner.event.revision, evidence: { ...publicLocator('notice.txt', 10), publishedRow: row } }] }, 'pair-exact-append'))
     const details = z.array(z.object({ kind: z.string(), detail: z.unknown().optional() }).passthrough()).parse(result.items)
     const detail = details.find(item => item.kind === 'official_evidence'); if (!detail) throw new Error('Expected official receipt')
     const receipt = z.object({ evidence: z.array(z.object({ evidenceId: z.number(), unchanged: z.literal(true) })) }).parse(detail.detail)
     expect(receipt.evidence).toHaveLength(1); expect([knownId, targetId]).toContain(receipt.evidence[0]?.evidenceId)
-    expect(f.snapshot()).toEqual(before)
+    expect(await f.snapshot()).toEqual(before)
   } else if (kind === 'capture') {
     await commitStoredConsumer(f, f.request(publicAnnouncement('Alpha', 2024, [{ ...publicLocator('notice.txt', 10), publishedRow: row }]), 'pair-cross-capture'))
-    expect(f.rows()).toHaveLength(3)
-    expect(f.sqlite.prepare('SELECT * FROM record_evidence WHERE id IN (?,?) ORDER BY id').all(knownId, targetId)).toEqual(oldEvidence)
-    expect(f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id IN (?,?) ORDER BY evidence_id,revision').all(knownId, targetId)).toEqual(oldFacts)
+    expect(await f.rows()).toHaveLength(3)
+    expect(await f.readRows('SELECT * FROM record_evidence WHERE id IN ($1,$2) ORDER BY id', [knownId, targetId])).toEqual(oldEvidence)
+    expect(await f.readRows('SELECT * FROM official_evidence_row_revision WHERE evidence_id IN ($1,$2) ORDER BY evidence_id,revision', [knownId, targetId])).toEqual(oldFacts)
   } else {
-    const target = f.rows().find(r => r.list_no === 30); if (!target) throw new Error('Expected public legacy target')
-    const exact = await f.exact(target.id), revisions = z.object({ n: z.number() }).parse(f.sqlite.prepare('SELECT count(*) n FROM evidence_revision_113').get()).n
+    const target = (await f.rows()).find(r => r.list_no === 30); if (!target) throw new Error('Expected public legacy target')
+    const exact = await f.exact(target.id), revisions = z.object({ n: z.number() }).parse(await f.readFirst('SELECT count(*) n FROM evidence_revision_113')).n
     await submitFinalCorrections(f, kind === 'import-correction' ? 'import' : 'standalone', [await finalOperation(f, target.id, row)], 'pair-cross-correction')
     expect(await f.exact(target.id)).toMatchObject({ evidenceId: target.id, coordinate: { sourceFile: 'notice.txt', listNo: 10 }, event: { revision: exact.event.revision + 1 } })
-    expect(f.sqlite.prepare('SELECT count(*) n FROM evidence_revision_113').get()).toEqual({ n: revisions + 1 })
-    expect(f.sqlite.prepare('SELECT * FROM official_evidence_row_revision WHERE evidence_id IN (?,?) ORDER BY evidence_id,revision').all(knownId, targetId)).toEqual(oldFacts)
+    expect(await f.readFirst('SELECT count(*) n FROM evidence_revision_113')).toEqual({ n: revisions + 1 })
+    expect(await f.readRows('SELECT * FROM official_evidence_row_revision WHERE evidence_id IN ($1,$2) ORDER BY evidence_id,revision', [knownId, targetId])).toEqual(oldFacts)
   }
 }
 for (const kind of publicKinds) for (const reverse of [false, true]) it(`R5 S1 compatible ${kind} with two accepted stored IDs in ${reverse ? 'reverse' : 'forward'} order`, async () => { await compatibleStoredConsumer(kind, reverse, false) })
 for (const kind of publicKinds) it(`R5 S1 compatible ${kind} with only one stored claim control`, async () => { await compatibleStoredConsumer(kind, false, true) })
 for (const entry of ['import', 'standalone'] as const) for (const reverse of [false, true]) it(`R5 S1 ${entry} unchanged correction preserves accepted stored pair in ${reverse ? 'reverse' : 'forward'} order`, async () => {
-  const { f, row, knownId } = await acceptedStoredPair(reverse), before = f.snapshot()
-  await submitFinalCorrections(f, entry, [await finalOperation(f, knownId, row)], 'pair-unchanged'); expect(f.snapshot()).toEqual(before)
+  const { f, row, knownId } = await acceptedStoredPair(reverse), before = await f.snapshot()
+  await submitFinalCorrections(f, entry, [await finalOperation(f, knownId, row)], 'pair-unchanged'); expect(await f.snapshot()).toEqual(before)
 })
 for (const entry of ['import', 'standalone'] as const) for (const variant of ['raw-conflict', 'unknown-raw', 'unknown-binding', 'different-full-fields'] as const) it(`R5 S1 ${entry} stored pair ${variant} stays rejected atomically`, async () => {
   const { f, row, knownId } = await acceptedStoredPair(false)
@@ -369,9 +361,9 @@ for (const entry of ['import', 'standalone'] as const) for (const variant of ['r
   await submitFinalCorrections(f, entry, [await finalOperation(f, knownId, next)], 'pair-negative', variant === 'raw-conflict' ? 'source_row_conflict' : 'ambiguity')
 })
 it("S1 compatible append also preserves two accepted stored IDs across distinct events", async () => {
-  const { f, row, knownId } = await acceptedStoredPair(false, false, true), owner = await f.exact(knownId), before = f.snapshot()
+  const { f, row, knownId } = await acceptedStoredPair(false, false, true), owner = await f.exact(knownId), before = await f.snapshot()
   await f.commit(f.request({ officialEvidenceAppends: [{ eventId: owner.eventId, recordId: owner.recordId, enterpriseId: owner.enterpriseId, expectedVersion: owner.event.revision, evidence: { ...publicLocator('notice.txt', 10), publishedRow: row } }] }, 'cross-stored-noop'))
-  expect(f.snapshot()).toEqual(before)
+  expect(await f.snapshot()).toEqual(before)
 })
 
 // Full six-order priority matrix lives in claim-priority.test.ts.
@@ -382,8 +374,9 @@ for (const entry of ['import', 'standalone'] as const) for (const variant of ['o
   const third = publicAnnouncement(variant === 'owner' ? 'Beta' : 'Alpha', 2025, [publicLocator('other.txt', 40)]).announcement
   if (!alpha || !third) throw new Error('Expected explicit announcements')
   await f.commit(f.request({ announcement: { sourceDocument: alpha.sourceDocument, records: [...alpha.records, ...third.records] } }, 'priority-legacy'))
-  const source = z.object({ id: z.number() }).parse(f.sqlite.prepare('SELECT id FROM source_document ORDER BY id LIMIT 1').get()), row = publishedFixtureRow(source.id)
-  const ids = [20, 30, 40].map(n => { const target = f.rows().find(r => r.list_no === n); if (!target) throw new Error('Expected public target'); return target.id })
+  const source = z.object({ id: z.number() }).parse(await f.readFirst('SELECT id FROM source_document ORDER BY id LIMIT 1')), row = publishedFixtureRow(source.id)
+  const storedRows = await f.rows()
+  const ids = [20, 30, 40].map(n => { const target = storedRows.find(r => r.list_no === n); if (!target) throw new Error('Expected public target'); return target.id })
   const facts = [{ ...row, usccRaw: null }, row, variant === 'raw' ? { ...row, nameRaw: 'Conflicting confirmed raw' } : row]
   const operations = await Promise.all(ids.map((id, i) => { const fact = facts[i]; if (!fact) throw new Error('Expected explicit fact'); return finalOperation(f, id, fact) }))
   for (const order of claimOrders) {

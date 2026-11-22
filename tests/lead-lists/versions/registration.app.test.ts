@@ -1,12 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
-import { nativeAppAdapter } from '../../support/native-app'
+import { postgresLeadFixture } from './fixtures/postgres-leads'
 
-const dir = mkdtempSync(join(tmpdir(), 'lead-list-version-'))
-const app = nativeAppAdapter({ dir, token: 'isolated-lead-list-token' })
+const fixture = postgresLeadFixture()
+const { app, dir } = fixture
 const endpoint = '/api/lead-lists/versions'
 const sourcePath = 'research-example.csv'
 const raw = '企业名称\r\n样例企业\r\n'
@@ -15,14 +13,9 @@ const input = {
   rows: [{ rowNumber: 4, name: '样例企业', uscc: '原表格式待核对', district: '鄞州区' }, { rowNumber: 7, name: '后来匹配企业' }],
 }
 beforeAll(async () => {
-  app.db.$client.transaction(() => installLeadListSchema(app.db.$client))()
-  mkdirSync(join(dir, 'files'))
-  writeFileSync(join(dir, 'files', sourcePath), raw)
-  await app.start()
+  await fixture.start(({ filesDir }) => writeFileSync(join(filesDir, sourcePath), raw))
 }, 60_000)
-afterAll(async () => {
-  try { await app.close() } finally { rmSync(dir, { force: true, recursive: true }) }
-})
+afterAll(fixture.close)
 
 async function post(path: string, body: object, status: number) {
   const response = await app.request(path, { method: 'POST', body: JSON.stringify(body) })

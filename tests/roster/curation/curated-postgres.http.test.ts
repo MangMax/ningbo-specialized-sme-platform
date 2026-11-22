@@ -30,9 +30,7 @@ beforeAll(async () => {
   } finally { await client.end() }
 
   vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
-  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_WRITE', '1')
-  vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
-  vi.stubEnv('NUXT_DB_READONLY', '1')
+  vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: token, curatedPath: path }))
   for (const [name, fn] of Object.entries({ createError, defineEventHandler, readBody, setHeader, setResponseStatus })) {
     vi.stubGlobal(name, fn)

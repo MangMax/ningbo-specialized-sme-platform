@@ -1,7 +1,7 @@
 /** Real in-process HTTP contracts. Worker isolation is verified in its dedicated suite. */
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../db/schema'
-import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
+import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http-sqlite'
 import { executeNativeImport, matchFixtureIntakeRoute } from '../../roster/imports/fixtures/import-server'
 import { startHttpFixture, type FixtureHandler } from '../../support/http'
 

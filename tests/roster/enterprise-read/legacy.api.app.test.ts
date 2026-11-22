@@ -1,11 +1,12 @@
-import '../../support/compiled-enterprise-reader'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { initializeDb } from '../../../db/client'
 import { decodeJsonRead } from '../../support/json-read'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { schema, useDb } from '../../../db'
+import { schema } from '../../../db'
 
 /**
  * Characterize the real GET route handlers against a read-only synthetic legacy snapshot.
@@ -63,9 +64,10 @@ const legacyEvidence = [
 
 let listHandler: (event: unknown) => Promise<unknown>
 let detailHandler: (event: unknown) => Promise<unknown>
-let db: ReturnType<typeof useDb>
+let db: ReturnType<typeof initializeDb>
 const tempDir = mkdtempSync(join(tmpdir(), 'roster-enterprise-legacy-api-'))
 
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 beforeAll(async () => {
   db = initializeDb({ create: true, dbPath: join(tempDir, 'roster.db') })
   db.insert(schema.enterprise).values(enterprise).run()
@@ -79,15 +81,19 @@ beforeAll(async () => {
   vi.stubGlobal('defineRouteMeta', vi.fn())
   vi.stubGlobal('getQuery', () => ({}))
   vi.stubGlobal('getRouterParam', () => String(enterprise.id))
-  vi.doMock('@db', () => ({ useDb: () => db }))
+
+
+  postgres = await postgresRuntimeFixture({ dir: tempDir, sourcePath: join(tempDir, 'roster.db') })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
 
   listHandler = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default) as unknown as typeof listHandler
   detailHandler = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default) as unknown as typeof detailHandler
-})
+}, 60_000)
 
-afterAll(() => {
-  vi.doUnmock('@db')
+afterAll(async () => { await closePostgresDirectoryDb(); postgres?.close(); vi.unstubAllEnvs();
   vi.unstubAllGlobals()
+  db?.$client.close()
   rmSync(tempDir, { recursive: true, force: true })
 })
 

@@ -1,3 +1,4 @@
+import { readEffectiveQualifications } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { listCurrentQualified, type CurrentQualifiedFilter } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
 import { listPostgresCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query-postgres'
 import { expect, it, vi } from 'vitest'
@@ -17,7 +18,7 @@ import { readPostgresRecognizedWitnesses } from '../../../layers/sme-roster/lib/
 import { readPostgresCurrentCandidateIds } from '../../../layers/sme-roster/lib/roster/current-candidates-postgres'
 import { createTargetCurrentCandidateReader } from '../../../layers/sme-roster/lib/roster/current-candidates-target'
 import { targetSchema } from '../../../layers/sme-roster/lib/platform/target-schema'
-import { readEffectiveQualifications, readPostgresCurrentQualification, readPostgresEffectiveQualifications, readPostgresEffectiveQualificationsBatch } from '../../../layers/sme-roster/public'
+import { readPostgresCurrentQualification, readPostgresEffectiveQualifications, readPostgresEffectiveQualificationsBatch } from '../../../layers/sme-roster/public'
 import { AS_OF_408, currentQualificationFixture, qualificationMatrix, qualificationReferenceLiterals } from '../fixtures/qualification-matrix'
 
 const asOf = Date.parse(AS_OF_408)

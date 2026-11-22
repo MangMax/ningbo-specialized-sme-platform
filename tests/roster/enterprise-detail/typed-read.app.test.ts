@@ -1,4 +1,5 @@
-import '../../support/compiled-enterprise-reader'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
 import type { RosterImportRelation } from '../../../layers/sme-roster/lib/roster-import-client'
@@ -10,7 +11,7 @@ import { createServer } from 'node:http'
 import { createApp, createError, createRouter, defineEventHandler, getRouterParam, setHeader, toNodeListener } from 'h3'
 import { afterEach, expect, it, vi } from 'vitest'
 import { schema } from '../../../db'
-import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster-sqlite'
 
 const cleanup: Array<() => void | Promise<void>> = []
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.unstubAllEnvs(); vi.unstubAllGlobals() })
@@ -104,7 +105,10 @@ it('HTTP enterprise detail returns typed observations and preserves source origi
   const projected = f.row({ source: 'recognized_list', raw, queriedAt: '2026-10-05T00:00:00Z' })
   const marker = 'CANONICAL-BODY-MUST-NOT-LEAK-455'
   const direct = f.detail()
-  vi.stubEnv('NUXT_DB_PATH', join(f.dir, 'roster.db'))
+  const postgres = await postgresRuntimeFixture({ dir: f.dir, sourcePath: join(f.dir, 'roster.db') })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  cleanup.push(async () => { await closePostgresDirectoryDb(); postgres.close() })
   for (const [key, value] of Object.entries({ defineEventHandler, getRouterParam, createError, setHeader })) vi.stubGlobal(key, value)
   const handler = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default
   const server = createServer(toNodeListener(createApp().use(createRouter().get('/api/roster/enterprises/:id', handler))))
@@ -123,4 +127,4 @@ it('HTTP enterprise detail returns typed observations and preserves source origi
   expect(body.platform.businessRecords.flatMap((b: any) => b.observationRefs).find((o: any) => o.relationId === projected.relation.id).typedFields).toMatchObject({
     validityDateRaw: '2030-12-31', maintenanceYear: 2025, maintenanceBatch: '2025-1', district: '330211', awardNote: 'HTTP 原认定说明',
   })
-})
+}, 30_000)

@@ -1,12 +1,14 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { and, desc, eq, ne, or } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../../../../db/schema'
 import { compareFileContentIdentity, readStoredFileContentIdentity } from './file-content-identity'
 import { fileMaintenanceRevision, maintainStoredFileSync, requireVersionedFileMaintenanceOptions, type FileMaintenanceOptions } from './file-maintenance'
 import { getStoredFile } from './stored-files'
-import { FileMaintenanceError } from './file-store'
+import { FileMaintenanceError } from './file-store-contract'
+import { filePhysicalReceipt, filePhysicalRequestHash } from './file-physical-receipt'
 import { movePhysicalFile, verifyPhysicalOriginal } from './file-physical-disk'
+export * from './file-physical-receipt'
 
 type Db = BetterSQLite3Database<typeof schema>
 type Intent = typeof schema.filePhysicalIntent.$inferSelect
@@ -20,18 +22,11 @@ function registered(db: Db, intent: Intent) {
 function checkRevision(db: Db, id: number, options: FileMaintenanceOptions) {
   if (fileMaintenanceRevision(db, id) !== options.expectedRevision) fail('文件维护修订已变化,请重新读取')
 }
-export function filePhysicalRequestHash(id: number, action: string, intentId: string | undefined, options: FileMaintenanceOptions) {
-  return createHash('sha256').update(JSON.stringify([id, action, intentId ?? null, options.expectedRevision, options.actor, options.basis])).digest('hex')
-}
 function keyAvailable(db: Db, key: string) {
   const row = db.select().from(table).where(or(eq(table.deleteKey, key), eq(table.recoverKey, key))).get()
   if (row) fail('幂等键已用于其他物理命令')
   if (db.select({ id: schema.fileMaintenanceAudit.id }).from(schema.fileMaintenanceAudit).where(eq(schema.fileMaintenanceAudit.idempotencyKey, key)).get()) fail('幂等键已用于普通维护命令')
 }
-export function filePhysicalReceipt(row: Pick<NonNullable<ReturnType<typeof getStoredFile>>, 'removedAt' | 'referenceCount'>, intent: Intent) {
-  return { removed: row.removedAt !== null, diskDeleted: false, diskQuarantined: intent.state === 'quarantined', referenceCount: row.referenceCount, intent: { id: intent.id, fileId: intent.fileId, relPath: intent.relPath, sha256: intent.sha256, bytes: intent.bytes, state: intent.state } }
-}
-
 /** The intent commit precedes any rename. A later SQL rollback never claims to undo disk changes. */
 export function quarantineStoredFile(db: Db, root: string, id: number, rawOptions: FileMaintenanceOptions) {
   const options = requireVersionedFileMaintenanceOptions(rawOptions), key = options.idempotencyKey!

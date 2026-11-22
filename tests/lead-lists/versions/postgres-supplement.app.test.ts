@@ -1,52 +1,24 @@
-import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import pg from 'pg'
+import type pg from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createLogService } from '../../../layers/core/lib/logging/service'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
-import { nativeAppAdapter } from '../../support/native-app'
-import { reserveLoopbackPort } from '../../support/owned-process.mjs'
+import { postgresLeadFixture } from './fixtures/postgres-leads'
 
-const bin = process.env.LEAD_TEST_POSTGRES_BIN
 const versions = '/api/lead-lists/versions'
 const agent = { actor: { type: 'agent', id: 'lead-review' }, basis: '逐行核对原件' }
 const sourceBytes = Buffer.from('name\n原始企业\n')
 const sourceSha = createHash('sha256').update(sourceBytes).digest('hex')
 
-describe.skipIf(!bin)('PostgreSQL-only lead versions', () => {
-  let dir: string
-  let data: string
-  const command = (name: string, args: string[], options = {}) =>
-    execFileSync(join(bin!, name), args, { stdio: 'pipe', ...options })
-  let port: number
-  let started = false
+describe('PostgreSQL lead versions', () => {
+  const fixture = postgresLeadFixture()
+  const { app, dir } = fixture
   let db: pg.Pool
-  let app: ReturnType<typeof nativeAppAdapter>
 
   beforeAll(async () => {
-    dir = mkdtempSync(join(tmpdir(), 'lead-pg-'))
-    data = join(dir, 'pg')
-    mkdirSync(join(dir, 'files'))
-    writeFileSync(join(dir, 'files', 'fixture.csv'), sourceBytes)
-    app = nativeAppAdapter({
-      dir, token: 'isolated-lead-pg-token',
-      launch: ({ cwd, port: httpPort }) => ({
-        args: [join(cwd, '.output/server/index.mjs')],
-        env: {
-          NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(httpPort),
-          NUXT_DB_MODE: 'postgresql', NUXT_DB_READONLY: '0',
-          NUXT_DB_PATH: join(dir, 'legacy-runtime', 'business.db'),
-          NUXT_LOG_DIR: join(dir, 'legacy-logs'),
-          NUXT_POSTGRES_DIRECTORY_URL: `postgresql://lead_fixture@127.0.0.1:${port}/postgres`,
-          NUXT_POSTGRES_LOG_URL: `postgresql://lead_fixture@127.0.0.1:${port}/postgres`,
-        },
-      }),
-    })
-    installLeadListSchema(app.db.$client)
-    app.db.$client.exec(`
+    db = await fixture.start(({ db, filesDir }) => {
+      writeFileSync(join(filesDir, 'fixture.csv'), sourceBytes)
+      db.$client.exec(`
       INSERT INTO stored_file (id,rel_path,filename,ext,sha256,bytes,created_at)
         VALUES (91,'fixture.csv','fixture.csv','csv','${sourceSha}',${sourceBytes.length},'2026-11-18');
       INSERT INTO lead_list_version (id,series,channel_code,list_type_code,acquired_on,file_id,file_sha256,request_hash,created_at)
@@ -57,42 +29,11 @@ describe.skipIf(!bin)('PostgreSQL-only lead versions', () => {
                (201,12,2,'其他名单行',NULL), (202,12,3,'同一名单另一行',NULL);
       INSERT INTO enterprise_source (id,module,business_table,version_key,channel_code,list_type_code,acquired_on,series,file_id,sha256)
         VALUES (71,'lead-lists','lead_list_version','11','research','lead','2026-11-18','走访名单',91,'${sourceSha}');
-      PRAGMA wal_checkpoint(TRUNCATE);
-    `)
-    port = await reserveLoopbackPort()
-    command('initdb', ['-D', data, '-U', 'lead_fixture', '-A', 'trust', '--no-locale', '-E', 'UTF8'])
-    command('pg_ctl', ['-D', data, '-l', join(dir, 'postgres.log'), '-o', `-h 127.0.0.1 -p ${port} -k ${dir}`, '-w', 'start'])
-    started = true
-    const env = {
-      ...process.env, PGHOST: '127.0.0.1', PGPORT: String(port), PGUSER: 'lead_fixture', PGDATABASE: 'postgres',
-      PGSQL_BIN: join(bin!, 'psql'),
-    }
-    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', app.dbPath, 'lead_staging'], { env })
-    for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
-      command('psql', ['-X', '-w', '-v', 'staging=lead_staging', '-f', `upgrade/postgresql/materialize-${name}.sql`], { env })
-    }
-    const stagedLogs = join(dir, 'staged-logs')
-    const logs = createLogService({ directory: stagedLogs })
-    try {
-      await logs.policy()
-    } finally {
-      await logs.close()
-    }
-    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', join(stagedLogs, 'events.db'), 'logs_staging'], { env })
-    command('psql', ['-X', '-w', '-v', 'staging=logs_staging', '-f', 'upgrade/postgresql/materialize-runtime-logs.sql'], { env })
-    db = new pg.Pool({ host: '127.0.0.1', port, user: 'lead_fixture', database: 'postgres', options: '-c search_path=business,public' })
-    await app.start()
+      `)
+    })
   }, 60_000)
 
-  afterAll(async () => {
-    try {
-      await app?.close()
-    } finally {
-      await db?.end()
-      if (started) command('pg_ctl', ['-D', data, '-w', '-m', 'fast', 'stop'])
-      if (dir) rmSync(dir, { recursive: true, force: true })
-    }
-  })
+  afterAll(fixture.close)
 
   const submit = (id: number, body: object, headers: HeadersInit = app.headers) =>
     app.request(`${versions}/${id}/supplement`, { method: 'POST', headers, body: JSON.stringify(body) })

@@ -7,7 +7,6 @@ import * as schema from './schema'
 import { assertApplicationSchema } from './schema-phase'
 import { createRuntimeSchema } from './create-runtime'
 import { readOwnerIdentity, sameReadOwner, type ReadOwnerIdentity } from './read-owner-identity'
-import { assertSqliteRuntime } from './runtime-mode'
 
 export interface DbOptions {
   /** SQLite 文件路径。默认 `NUXT_DB_PATH` → `<cwd>/data/roster.db`。 */
@@ -36,9 +35,7 @@ export function getDbOwnerIdentity(owner: unknown): ReadOwnerIdentity | undefine
   } catch { return }
 }
 
-/** Runtime connections only open an existing, initialized database. */
 export function useRuntimeDb(opts: DbOptions = {}) {
-  assertSqliteRuntime()
   const path = resolveDbPath(opts)
   const readOnly = opts.readOnly ?? process.env.NUXT_DB_READONLY === '1'
   const cacheKey = `${path}\u0000${readOnly ? 'readonly' : 'readwrite'}`
@@ -49,11 +46,11 @@ export function useRuntimeDb(opts: DbOptions = {}) {
   if (readOnly) {
     // Validation must not start the long-lived snapshot's first WAL read.
     const validation = new Database(path, { readonly: true, fileMustExist: true })
-    try { validateDatabase(validation) } finally { validation.close() }
+    try { assertApplicationSchema(validation) } finally { validation.close() }
   }
   const sqlite = new Database(path, { readonly: readOnly, fileMustExist: true })
   try {
-    if (!readOnly) validateDatabase(sqlite)
+    if (!readOnly) assertApplicationSchema(sqlite)
     const afterOpen = readOwnerIdentity(path)
     if (!readOnly) sqlite.pragma('journal_mode = WAL')
     sqlite.pragma('foreign_keys = ON')
@@ -67,21 +64,11 @@ export function useRuntimeDb(opts: DbOptions = {}) {
   }
 }
 
-function validateDatabase(sqlite: Database.Database) {
-  assertApplicationSchema(sqlite)
-}
-
-/** Public application entry accepts only a connection admitted at open.
- * Runtime schema is immutable for the connection lifetime; offline upgrades close
- * connections and restart the process. Polling PRAGMA here would block the main
- * event loop on an exclusive lock before an off-main read can be dispatched. */
 export function useApplicationDb(opts: DbOptions = {}) {
   return useRuntimeDb(opts)
 }
 
-/** Explicit native initialization; existing databases must already be final. */
 export function initializeDb(opts: DbOptions & { create?: boolean } = {}) {
-  assertSqliteRuntime()
   const path = resolveDbPath(opts)
   const readOnly = opts.readOnly ?? process.env.NUXT_DB_READONLY === '1'
   if (readOnly) return useRuntimeDb(opts)

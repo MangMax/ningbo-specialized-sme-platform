@@ -1,5 +1,5 @@
 import { readHttpFileIdentity, verifyHttpFileRead } from '../utils/file-content-http'
-import { verifyRenderedPageRead } from '../utils/file-read-identity'
+import { verifyRenderedPageRead } from '../utils/file-read'
 import { createReadStream } from 'node:fs'
 import { DEFAULT_DPI, isPdfPath, normalizeDpi } from '#core/lib/pdf-page'
 import { listPdfPages, pageImagePath, resolveWithinRoot } from '../utils/pdf-pages'

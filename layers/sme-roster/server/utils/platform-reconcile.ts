@@ -5,10 +5,8 @@
  */
 
 import { createHash } from 'node:crypto'
-import { eq } from 'drizzle-orm'
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import * as schema from '../../../../db/schema'
-import { getComparison,type ComparisonDirection } from '../../lib/comparison'
+import type * as schema from '../../../../db/schema'
+import type { ComparisonRow, ComparisonDirection } from '../../lib/comparison'
 import { normalizeName } from '../../lib/domain'
 import type { PlatformInterface } from '../../lib/labels'
 import {
@@ -41,11 +39,7 @@ RosterImportCommitResponse,
 RosterImportPreflightResponse,
 RosterImportRequest,
 } from '../../lib/roster-import-client'
-import { commitRosterImport,preflightRosterImport } from './roster-import'
-import { createReconcileTargetSlotReader,type ReconcileTargetSlotReader } from './platform-reconcile-target-slots'
-import { sqliteConnection } from '../../lib/platform/target-connection'
 
-type Db = BetterSQLite3Database<typeof schema>
 
 /** 四个查询槽位:`businessList` 的 `rdjb=1/2/3` 加申报接口。 */
 const SLOTS: { interface: PlatformInterface; rdjb: string }[] = [
@@ -77,31 +71,13 @@ export interface ReconcileWriter {
   commit(request: RosterImportRequest): Promise<RosterImportCommitResponse>
 }
 
-export function inProcessReconcileWriter(db: Db): ReconcileWriter {
-  return {
-    async preflight(request) {
-      return preflightRosterImport(db, request)
-    },
-    async commit(request) {
-      const result = commitRosterImport(db, request)
-      if (result.status !== 'committed') {
-        const detail = result.items
-          .filter((item) => !item.ok)
-          .map((item) => `${item.kind}${item.ref ? ` ${item.ref}` : ''}:${item.error?.code ?? '?'} ${item.error?.message ?? ''}`)
-          .join(';')
-        throw new Error(`名录导入批次未提交(${result.status}):${result.error ?? ''} ${detail}`.trim())
-      }
-      return result
-    },
-  }
-}
+
 
 // ---------------------------------------------------------------------------
 // 选项与报告
 // ---------------------------------------------------------------------------
 
 export interface ReconcileRunOptions {
-  db: Db
   /** 只处理这些称号;缺省全部。 */
   titles?: string[]
   /** 只处理这些方向;缺省双向。 */
@@ -141,12 +117,10 @@ export interface ReconcileRunOptions {
   sleep?: (ms: number) => Promise<void>
   /** `false` = 只采集预览不回写(试跑)。默认回写。 */
   write?: boolean
-  writer?: ReconcileWriter
   /** Explicit completed capture target, bound to this service's native connection. */
-  targetSlots?: ReconcileTargetSlotReader
   now?: () => Date
   onProgress?: (done: number, total: number) => void | Promise<void>
-  shouldCancel?: () => boolean
+  shouldCancel?: () => boolean | Promise<boolean>
   isWriteCancelled?: () => boolean | Promise<boolean>
 }
 
@@ -277,46 +251,11 @@ export interface CollectedTargets {
  * `getComparison` 的 `direction` 是**单值**筛选,所以多方向要各调一次再合并 ——
  * 判据本身仍然只有 `layers/sme-roster/lib/comparison.ts` 一份(不在这里另写一套差异口径)。
  */
-function getComparisonAllDirections(
-  db: Db,
-  filter: { titles?: string[]; directions?: ComparisonDirection[] },
-): ReturnType<typeof getComparison>['rows'] {
-  const directions: (ComparisonDirection | undefined)[] = filter.directions?.length
-    ? filter.directions
-    : [undefined]
-  const rows: ReturnType<typeof getComparison>['rows'] = []
-  const seen = new Set<string>()
-  for (const direction of directions) {
-    for (const row of getComparison(db, { title: filter.titles, direction }).rows) {
-      const signature = `${row.enterpriseId}|${row.titleCode}|${row.direction}`
-      if (seen.has(signature)) continue
-      seen.add(signature)
-      rows.push(row)
-    }
-  }
-  return rows
-}
 
-export function collectReconcileTargets(
-  db: Db,
-  filter: { titles?: string[]; directions?: ComparisonDirection[]; usccs?: string[]; limit?: number; offset?: number } = {},
-): CollectedTargets {
-  const comparison = getComparisonAllDirections(db, filter)
-  const enterprises = db
-    .select({
-      id: schema.enterprise.id,
-      name: schema.enterprise.name,
-      nameNorm: schema.enterprise.nameNorm,
-      uscc: schema.enterprise.usccNorm,
-    })
-    .from(schema.enterprise)
-    .all()
-  return projectReconcileTargets(comparison, enterprises, filter)
-}
 
 type ReconcileTargetFilter = Pick<ReconcileRunOptions, 'titles'|'directions'|'usccs'|'limit'|'offset'>
 export function projectReconcileTargets(
-  comparison: ReturnType<typeof getComparison>['rows'], enterprises: KnownEnterprise[], filter: ReconcileTargetFilter,
+  comparison: ComparisonRow[], enterprises: KnownEnterprise[], filter: ReconcileTargetFilter,
 ): CollectedTargets {
   const byId = new Map(enterprises.map((enterprise) => [enterprise.id, enterprise]))
 
@@ -454,37 +393,7 @@ export function reconcileIdempotencyKey(input: {
 }
 
 /** 已确认结论由代理维护；采集只复用处理状态，不用新查询覆盖确认。失败仍可重试。 */
-function hasFreshDecision(db: Db, target: ReconcileTarget, cutoffIso: string, complete = true): boolean {
-  const matching = db
-    .select()
-    .from(schema.differenceReason)
-    .where(eq(schema.differenceReason.enterpriseId, target.enterpriseId))
-    .all()
-    .filter((row) => row.titleCode === target.titleCode && row.direction === target.direction)
-    .sort((left, right) => left.recordedAt.localeCompare(right.recordedAt))
-  const latest = matching[matching.length - 1]
 
-  return isFreshReconcileDecision(latest, cutoffIso, complete)
-}
-
-// ---------------------------------------------------------------------------
-// 主流程
-// ---------------------------------------------------------------------------
-
-export async function runPlatformReconcile(options: ReconcileRunOptions): Promise<ReconcileReport> {
-  const { db } = options
-  const connection = sqliteConnection(db)
-  const targetSlots = options.targetSlots ?? createReconcileTargetSlotReader(connection)
-  targetSlots.assertConnection(db)
-  return runPlatformReconcileWithStore(options, {
-    async prepare(filter, cutoffIso) {
-      const collected = collectReconcileTargets(db, filter)
-      return { collected, reused: new Map([...collected.byUscc.keys()].map(uscc => [uscc,targetSlots.read(db,uscc,cutoffIso)])) }
-    },
-    freshDecision: (target,cutoffIso,complete) => hasFreshDecision(db,target,cutoffIso,complete),
-    writer: () => options.writer ?? inProcessReconcileWriter(db),
-  })
-}
 
 export function isFreshReconcileDecision(latest: { verificationStatus: string; recordedAt: string; status:string } | undefined,
   cutoffIso: string, complete: boolean) {
@@ -492,7 +401,7 @@ export function isFreshReconcileDecision(latest: { verificationStatus: string; r
     && latest.status !== 'query_failed'
 }
 
-export async function runPlatformReconcileWithStore(options: Omit<ReconcileRunOptions, 'db'|'targetSlots'|'writer'>, store: {
+export async function runPlatformReconcileWithStore(options: ReconcileRunOptions, store: {
   prepare(filter: ReconcileTargetFilter, cutoffIso: string): Promise<{ collected: CollectedTargets; reused: Map<string, Map<string, StoredSlot>> }>
   freshDecision(target: ReconcileTarget, cutoffIso: string, complete: boolean): boolean | Promise<boolean>
   writer(): ReconcileWriter
@@ -543,7 +452,7 @@ export async function runPlatformReconcileWithStore(options: Omit<ReconcileRunOp
   let completed = 0
 
   await mapWithConcurrency(usccs, options.concurrency ?? 4, async (uscc) => {
-    if (options.shouldCancel?.()) {
+    if (await options.shouldCancel?.()) {
       cancelled = true
       return
     }
@@ -583,7 +492,7 @@ export async function runPlatformReconcileWithStore(options: Omit<ReconcileRunOp
         })
       }
     }
-    if (options.shouldCancel?.()) cancelled = true
+    if (await options.shouldCancel?.()) cancelled = true
     slots.sort((a, b) => slotOrder(a.evidence) - slotOrder(b.evidence))
     slotsByUscc.set(uscc, slots)
     await options.onProgress?.(++completed, total)
@@ -685,7 +594,7 @@ export async function runPlatformReconcileWithStore(options: Omit<ReconcileRunOp
     cancelled,
   }
 
-  if (options.shouldCancel?.()) { cancelled = true; report.cancelled = true }
+  if (await options.shouldCancel?.()) { cancelled = true; report.cancelled = true }
   if (cancelled || options.write === false || (differenceDecisions.length === 0 && networkCount === 0)) {
     report.finishedAt = now().toISOString()
     return report
@@ -717,7 +626,7 @@ export async function runPlatformReconcileWithStore(options: Omit<ReconcileRunOp
 
   const writer = store.writer()
   await writer.preflight(request)
-  if (options.shouldCancel?.() || await options.isWriteCancelled?.()) {
+  if (await options.shouldCancel?.() || await options.isWriteCancelled?.()) {
     report.cancelled = true
     report.finishedAt = now().toISOString()
     return report

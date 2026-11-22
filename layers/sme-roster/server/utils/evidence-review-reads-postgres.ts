@@ -12,12 +12,9 @@ import { usePostgresDirectoryDb } from '../../../../db/postgresql/client'
 import { readPostgresQueryCoverage } from '../../lib/roster/query-coverage-postgres'
 import { readPostgresEvidenceImpacts113 } from '../../lib/roster/query-assessment-postgres'
 import { currentPostgresDecisions102, readPostgresDecision102, readPostgresDecisionHead102 } from './decision-lifecycle-102/postgres-reads'
-import { DecisionError102, parse102 } from './decision-lifecycle-102'
+import { DecisionError102, parse102 } from './decision-lifecycle-102/contract'
 import { classifyPostgresEvidenceImpacts, readPostgresEvidenceRevision, readPostgresImpactDecisions } from './evidence-impact-postgres'
-import {
-  decodeImpactCursor, impactList114, invalidImpactCursor, pageImpactRows,
-  type EvidenceReviewAnchor, type impactSources114, type impactEvents114, type impactPreview114,
-} from './evidence-review-114'
+import { decodeImpactCursor, impactList114, invalidImpactCursor, pageImpactRows, type EvidenceReviewAnchor, type impactSources114, type impactEvents114, type impactPreview114 } from './evidence-review-114-contract'
 
 type List = z.infer<typeof impactList114>
 type Impact = { id: number; enterpriseId: number; titleCode: string; direction: 'missing_in_miit' | 'extra_in_miit';

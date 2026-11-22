@@ -12,11 +12,10 @@ import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest'
 const jszip = createRequire(createRequire(import.meta.url).resolve('exceljs/package.json'))('jszip')
 
 const source = vi.hoisted(() => ({ rows: [] as object[], read: 0 }))
-vi.mock('@db', () => ({ useDb: () => ({}) }))
-vi.mock('../../../layers/sme-roster/lib/query', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../../layers/sme-roster/lib/query')>(),
-  allRecords: () => source.rows,
-}))
+// Inject workbook input at the reader boundary. These transport cases include
+// JavaScript strings (NUL and lone surrogates) outside PostgreSQL text's domain.
+vi.mock('../../../layers/sme-roster/server/utils/postgres-roster-db', () => ({ usePostgresRosterDb: () => ({}) }))
+vi.mock('../../../layers/sme-roster/lib/query-postgres', () => ({ allPostgresLedgerRecords: async () => source.rows }))
 
 let handler: (event: ReturnType<typeof createEvent>) => Promise<unknown>
 
@@ -54,7 +53,10 @@ async function server() {
       if (result instanceof Readable) { downloads.push(result); await sendStream(event, result) }
       results.push(result)
     }
-    catch (error) { results.push(error) }
+    catch (error) {
+      results.push(error)
+      if (!res.headersSent) res.statusCode = 500
+    }
     finally {
       if (!res.destroyed && !res.writableEnded) res.end()
       resolveCompleted(results[0])

@@ -1,7 +1,6 @@
-import { describeFileRead, describeFileReadAtLocator } from '../../utils/file-read-identity'
+import { describeFileReadAtLocator } from '../../utils/file-read'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { fileRefShape, requireFileRef, requirePostgresFileRef } from '../../utils/file-agent-reference'
-import { openFileStore } from '../../../../../server/mcp-file-store'
+import { fileRefShape, requirePostgresFileRef } from '../../utils/file-agent-reference'
 import { readPostgresFileIdentity, usePostgresFileDb } from '../../utils/file-store-postgres'
 
 /**
@@ -23,18 +22,9 @@ export default defineMcpTool({
   inputSchema: fileRefShape,
   handler: async (input) => {
     const pg = usePostgresFileDb()
-    if (pg) {
-      const row = await pg.transaction(tx => requirePostgresFileRef(tx, input, { allowRemoved: true }),
-        { isolationLevel: 'repeatable read', accessMode: 'read only' })
-      const contentIdentity = await describeFileReadAtLocator(useRuntimeConfig().filesDir, row.relPath, path => readPostgresFileIdentity(pg, path))
-      return { ...row, contentIdentity }
-    }
-    const { db, root } = await openFileStore()
-    // 读 tool:已移出库的文件也认(见上)。
-    const row = requireFileRef(db, input, { allowRemoved: true })
-    // 摊平成对象字面量再返回:tool handler 的返回类型是 `Record<string, unknown>`,
-    // 而 `StoredFileRow` 是 interface(没有隐式索引签名),直接返回过不了类型检查。
-    const contentIdentity = await describeFileRead(db, root, row.relPath)
+    const row = await pg.transaction(tx => requirePostgresFileRef(tx, input, { allowRemoved: true }),
+      { isolationLevel: 'repeatable read', accessMode: 'read only' })
+    const contentIdentity = await describeFileReadAtLocator(useRuntimeConfig().filesDir, row.relPath, path => readPostgresFileIdentity(pg, path))
     return { ...row, contentIdentity }
   },
 })

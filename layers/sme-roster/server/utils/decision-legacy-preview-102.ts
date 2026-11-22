@@ -1,11 +1,10 @@
-import * as s from '../../../../db/schema'
 import { closeSync, existsSync, openSync, readSync } from 'node:fs'
 import { eq } from 'drizzle-orm'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { readPostgresDecisionHead102 } from './decision-lifecycle-102/postgres-reads'
 import { z } from 'zod'
-import { latestDecisionHead102, decisionScope102, DecisionError102, type DecisionDb } from './decision-lifecycle-102'
+import { decisionScope102, DecisionError102 } from './decision-lifecycle-102/contract'
 
 export const legacyPreviewInput102 = z.strictObject({ legacyKey: z.string().min(1).max(1000).optional(), page: z.number().int().positive().max(1000000).default(1), pageSize: z.number().int().positive().max(50).default(50) })
 const MAX_BYTES = 2 * 1024 * 1024
@@ -30,7 +29,7 @@ function legacyFile(path: string): Record<string, unknown> {
 }
 type PreviewInput = z.infer<typeof legacyPreviewInput102>
 type Candidate = { id:number; name:string; uscc:string | null }
-type Head = Pick<NonNullable<ReturnType<typeof latestDecisionHead102>>, 'id'|'status'|'lifecycleAction'>
+type Head = Pick<NonNullable<Awaited<ReturnType<typeof readPostgresDecisionHead102>>>, 'id'|'status'|'lifecycleAction'>
 
 function legacyPage(path: string,input: PreviewInput) {
   const annotations = legacyFile(path)
@@ -67,21 +66,6 @@ function boundedPreview(rows: ReturnType<typeof projectRow>[],total:number,input
   const preview = { rows,total,page:input.page,pageSize:input.pageSize,migrationApplied:false }
   if (Buffer.byteLength(JSON.stringify(preview))>256*1024) throw new DecisionError102(413,'preview_response_too_large','Preview exceeds 256 KiB; request a smaller page or an exact legacyKey')
   return preview
-}
-
-export function previewLegacyDecision102(db: DecisionDb,path:string,input:PreviewInput) {
-  const page = legacyPage(path,input)
-  const rows = page.rows.map(row=>{
-    if (!row.tuple) return projectRow(row,[])
-    const [identity,titleCode,direction] = row.tuple
-    const fields = { id:s.enterprise.id,name:s.enterprise.name,uscc:s.enterprise.usccNorm }
-    const candidates = db.select(fields).from(s.enterprise)
-      .where(identity.startsWith('name:') ? eq(s.enterprise.nameNorm,identity.slice(5)) : eq(s.enterprise.usccNorm,identity))
-      .orderBy(s.enterprise.id).limit(2).all()
-    const current = candidates.length===1 ? latestDecisionHead102(db,{enterpriseId:candidates[0]!.id,titleCode,direction}) : null
-    return projectRow(row,candidates,current)
-  })
-  return boundedPreview(rows,page.total,input)
 }
 
 export async function previewPostgresLegacyDecision102(db: Pick<NodePgDatabase,'execute' | 'select'>,path:string,input:PreviewInput) {

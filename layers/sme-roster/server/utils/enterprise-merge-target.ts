@@ -1,4 +1,4 @@
-import { insertEnterpriseMerge } from '../../../core/server/public'
+import { insertEnterpriseMerge } from '../../../core/server/public-sqlite'
 import { eq } from 'drizzle-orm'
 import type { Executor } from './roster-import'
 import { targetSchema as s } from '../../lib/platform/target-schema'

@@ -1,3 +1,4 @@
+import { readEffectiveQualifications } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,15 +9,16 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as schema from '../../../db/schema'
-import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster-sqlite'
 import { readCurrentCandidate } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { reviewCurrentExportDecision } from '../fixtures/qualification-decisions'
 import { saveDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
 import { preflightRecordCorrespondences, commitRecordCorrespondences, type CorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence'
 import * as correspondenceReads from '../../../layers/sme-roster/server/utils/record-correspondence'
-import * as publishedReads from '../../../layers/sme-roster/lib/roster/official-published-presentation'
+import * as publishedReads from '../../../layers/sme-roster/lib/roster/official-published-presentation-sqlite'
+import * as publishedProjection from '../../../layers/sme-roster/lib/roster/official-published-presentation'
 import { readEvidenceToken113 } from '../../../layers/sme-roster/server/utils/evidence-impact-113'
-import { readEffectiveQualifications } from '../../../layers/sme-roster/public'
+
 
 const AS_OF = Date.parse('2026-06-01T00:00:00Z')
 let fixtureDir: string
@@ -279,7 +281,7 @@ it.each([
 ])('uses per-evidence published facts for completeness: $case', ({ recordName, availability, nameRaw, gap }) => {
   const { enterprise, record, event, evidence } = formalEnterprise()
   db.update(schema.record).set({ nameRaw: recordName }).where(eq(schema.record.id, record.id)).run()
-  const fact: publishedReads.OfficialPublishedFact = availability === 'captured'
+  const fact: publishedProjection.OfficialPublishedFact = availability === 'captured'
     ? { evidenceId: evidence.id, eventId: event.id, availability, revision: 1, nameRaw, sourceBindingKnown: true }
     : { evidenceId: evidence.id, eventId: event.id, availability, revision: null, nameRaw: null, sourceBindingKnown: null }
   // Isolate the completeness consumer; capture/SQL semantics have their own public tests.
@@ -313,7 +315,7 @@ it.each([false, true])('keeps verified migration qualification independent of la
 
 it('keeps published-name read failure distinct from missing capture and reuses one read', () => {
   const { enterprise, evidence } = formalEnterprise()
-  const read = vi.spyOn(publishedReads, 'readOfficialPublishedPresentation').mockImplementation(() => { throw new publishedReads.OfficialPublishedPresentationError('response_limit') })
+  const read = vi.spyOn(publishedReads, 'readOfficialPublishedPresentation').mockImplementation(() => { throw new publishedProjection.OfficialPublishedPresentationError('response_limit') })
   const detail = getRosterEnterpriseDetail(db, enterprise.id, AS_OF)!
   const value = detail.qualificationAssessment.titles.find(t => t.titleCode === 'innovative_sme')!
   expect(detail.publishedPresentation).toMatchObject({ availability: 'unavailable', error: 'response_limit' })
@@ -326,9 +328,9 @@ it('keeps published-name read failure distinct from missing capture and reuses o
 
 it('keeps final display failure separate from verified published-name completeness', () => {
   const { enterprise, event, evidence } = formalEnterprise()
-  const fact: publishedReads.OfficialPublishedFact = { evidenceId: evidence.id, eventId: event.id, availability: 'captured', revision: 1, nameRaw: '实际公布名', sourceBindingKnown: true }
+  const fact: publishedProjection.OfficialPublishedFact = { evidenceId: evidence.id, eventId: event.id, availability: 'captured', revision: 1, nameRaw: '实际公布名', sourceBindingKnown: true }
   const read = vi.spyOn(publishedReads, 'readOfficialPublishedPresentation').mockReturnValue(new Map([[evidence.id, fact]]))
-  vi.spyOn(publishedReads, 'projectOfficialPublishedNames').mockImplementation(() => { throw new publishedReads.OfficialPublishedPresentationError('response_limit') })
+  vi.spyOn(publishedProjection, 'projectOfficialPublishedNames').mockImplementation(() => { throw new publishedProjection.OfficialPublishedPresentationError('response_limit') })
   const detail = getRosterEnterpriseDetail(db, enterprise.id, AS_OF)!
   const value = detail.qualificationAssessment.titles.find(t => t.titleCode === 'innovative_sme')!
   expect(detail.publishedPresentation).toEqual({ availability: 'unavailable', error: 'response_limit', facts: [] })

@@ -10,7 +10,7 @@
  * 而不知道为什么。
  */
 import { parseCsvQuery } from '../../../core/lib/csv'
-import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '../../lib/comparison'
+import { COMPARISON_DIRECTIONS, type ComparisonDirection } from '../../lib/comparison-model'
 import {
   DIFFERENCE_REASONS,
   DIFFERENCE_STATUSES,
@@ -23,9 +23,9 @@ import {
   type RosterDifferenceFilter,
   type RosterEnterpriseFilter,
   type RosterState,
-} from '../../lib/roster/enterprise-roster'
+} from '../../lib/roster/enterprise-roster-projection'
 import { FIRST_RECOGNITION_STATUS_VALUES } from '../../lib/roster/first-recognition'
-import type { RosterRecognitionFilter } from '../../lib/roster/recognitions'
+import type { RosterRecognitionFilter } from '../../lib/roster/recognition-projection'
 import {
   DEFAULT_ROSTER_ENTERPRISE_SORT,
   ROSTER_DIFFERENCE_FILTER_VALUES,

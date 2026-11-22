@@ -1,62 +1,25 @@
-import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { lstat, readdir, realpath, stat } from 'node:fs/promises'
-import { dirname, join, resolve, sep } from 'node:path'
+import { readdir, stat } from 'node:fs/promises'
+import { join, resolve, sep } from 'node:path'
 import { and, eq, isNull, like, or, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import * as schema from '../../../../db/schema'
 import { baseName, directoryOf, extensionOf, siblingIndex } from '../../lib/core/file-path'
-import { evaluateFileAdmission, type FileAdmissionPolicy, type FileFilter, type FileLanding, type ResolveUploadPlacement, type UploadMetadata } from '../../lib/core/file-categories'
+import { type evaluateFileAdmission, type FileAdmissionPolicy, type FileFilter, type FileLanding } from '../../lib/core/file-categories'
 import { compareFileContentIdentity, type FileContentConflict } from './file-content-identity'
-import { appLog, type LogContext } from '../../lib/logging'
+import type { LogContext } from '../../lib/logging'
+import {
+  FileMaintenanceError, MAX_PAGE_SIZE, registerLandedFile, selectedFileFilters, sha256Of,
+  verifyFileRestorationBytes,
+  type FileQuery, type FileQueryFilters, type FileRegistrationResult, type FileRow, type RegistrationFile, type ScannedFile,
+} from './file-store-contract'
+
+export * from './file-store-contract'
+import { createFileCategoryRules } from './file-category-rules'
 
 export type FileStoreDb = BetterSQLite3Database<typeof schema>
 
-export interface FileQuery {
-  q?: string
-  includeRemoved?: boolean
-  page?: number
-  pageSize?: number
-}
-
-export type FileQueryFilters = Readonly<Record<string, readonly string[] | undefined>>
-
-export function selectedFileFilters(filters: readonly FileFilter[], params: Record<string, unknown>): FileQueryFilters {
-  return Object.fromEntries(filters.flatMap(filter => {
-    const raw = params[filter.key]
-    const values = (Array.isArray(raw) ? raw : [raw])
-      .flatMap(value => typeof value === 'string' ? value.split(',').map(part => part.trim()) : [])
-      .filter(value => filter.options.some(option => option.value === value))
-    return values.length ? [[filter.key, values]] : []
-  }))
-}
-
-export interface FileRegistrationResult {
-  row: FileRow
-  created: boolean
-}
-
-export interface RegistrationFile {
-  relPath: string
-  filename: string
-  abs: string
-  bytes: number
-}
-
 export type RegistrationWriter<Database = FileStoreDb> = (db: Database, file: RegistrationFile) => Promise<FileRegistrationResult>
-
-export class UploadRegistrationError extends Error {
-  constructor(
-    message: string,
-    readonly statusCode = 400,
-    readonly conflict?: FileContentConflict,
-    readonly reason?: string,
-  ) {
-    super(message)
-    this.name = 'UploadRegistrationError'
-  }
-}
 
 export interface FileCategoryServer {
   readonly id: string
@@ -76,7 +39,7 @@ export interface FileCategoryServer {
   readonly metadata?: {
     readonly properties: Record<string, object>
     parse(input: Record<string, unknown>): object
-    write(db: FileStoreDb, id: number, patch: Record<string, unknown>): boolean
+    write?(db: FileStoreDb, id: number, patch: Record<string, unknown>): boolean
     writePostgres?(db: NodePgDatabase, file: FileRow, patch: Record<string, unknown>): Promise<boolean>
   }
   readonly landing?: FileLanding
@@ -86,7 +49,7 @@ export interface FileCategoryServer {
     /** Claims a path for registration even when the request omits fileCategory. */
     matchesPath(relPath: string): boolean
     /** Validates the declaration and returns a writer that runs only after admission. */
-    prepare(input: Record<string, unknown>): RegistrationWriter | Promise<RegistrationWriter>
+    prepare?(input: Record<string, unknown>): RegistrationWriter | Promise<RegistrationWriter>
     preparePostgres?(input: Record<string, unknown>): RegistrationWriter<NodePgDatabase> | Promise<RegistrationWriter<NodePgDatabase>>
   }
   readonly snapshot?: (fields: FileRow) => Record<string, unknown>
@@ -117,64 +80,9 @@ function readBaseRows(db: FileStoreDb, where: SQL | undefined) {
   return db.select(fileColumns).from(schema.storedFile).where(where).all()
 }
 
-export type FileRow = FileColumnsRow & {
-  referenceCount?: number
-  contentIdentity?: { registered: { fileId: number; relPath: string; sha256: string; bytes: number }; status: 'unknown'; historical: 'unknown' }
-}
-
-export const MAX_PAGE_SIZE = 200
-
-/** 扫描到的磁盘事实。 */
-export interface ScannedFile {
-  relPath: string
-  filename: string
-  ext: string
-  bytes: number
-  sha256: string
-}
-
 /** 跳过系统/临时文件(以 `.` 或 `~` 开头):`.DS_Store`、`.~xxx.docx`、`~$xxx`。 */
 function isSystemFile(name: string): boolean {
   return name.startsWith('.') || name.startsWith('~')
-}
-
-/** 计算文件的 SHA-256(流式,避免把大文件整个读进内存)。 */
-export function sha256Of(absPath: string): Promise<string> {
-  return new Promise((resolveHash, reject) => {
-    const hash = createHash('sha256')
-    const stream = createReadStream(absPath)
-    stream.on('data', (chunk) => hash.update(chunk))
-    stream.on('error', reject)
-    stream.on('end', () => resolveHash(hash.digest('hex')))
-  })
-}
-
-export async function fileRegistrationFacts({ relPath, filename, abs, bytes }: RegistrationFile): Promise<ScannedFile> {
-  return { relPath, filename, ext: extensionOf(filename), bytes, sha256: await sha256Of(abs) }
-}
-
-/**
- * 把一个库内相对路径**锁在文件库根内**,返回绝对路径;越界返回 `null`。
- *
- * 用 `resolve` 之后再比对前缀,而不是字符串过滤 `..` —— 符号链接与编码变体都绕不过
- * resolve。加 `sep` 是为了避免 `/root-evil` 被 `/root` 前缀匹配上。
- *
- * 三个地方需要同一条判据(回填/删除、预览路由、上传登记),各写一份的话
- * 修一处漏两处 —— 故收在这一处。
- */
-export function resolveInsideRoot(root: string, relPath: string): string | null {
-  const base = resolve(root)
-  const abs = resolve(join(base, relPath))
-  if (abs !== base && !abs.startsWith(base + sep)) return null
-  return abs
-}
-
-export function splitRegistrationPath(relPath: string): string[] {
-  const segments = relPath.split('/')
-  if (segments.some(segment => !segment || segment === '.' || segment === '..' || segment.includes('\\') || segment.includes('\0'))) {
-    throw new UploadRegistrationError(`落位路径非法:${relPath}`)
-  }
-  return segments
 }
 
 /** Prepare the declaration, then enforce disk admission before calling any category writer. */
@@ -190,39 +98,6 @@ export async function runFileRegistration(
     const write = await prepare()
     return file => write(db, file)
   }, checkAdmission, context)
-}
-
-export async function registerLandedFile(
-  root: string,
-  relPath: string,
-  prepare: () => Promise<(file: RegistrationFile) => Promise<FileRegistrationResult>>,
-  checkAdmission: (path: string, siblings: ReadonlySet<string>) => ReturnType<typeof evaluateFileAdmission>,
-  context: LogContext,
-): Promise<FileRegistrationResult> {
-  const startedAt = Date.now()
-  try {
-    const write = await prepare()
-    const filename = splitRegistrationPath(relPath).at(-1)!
-    const abs = resolveInsideRoot(root, relPath)
-    if (!abs) throw new UploadRegistrationError(`落位路径越界:${relPath}`)
-    let info
-    try {
-      info = await stat(abs)
-    } catch {
-      throw new UploadRegistrationError(`落位文件不存在:${relPath}`)
-    }
-    if (!info.isFile()) throw new UploadRegistrationError(`落位路径不是一个文件:${relPath}`)
-    const siblings = await readdir(dirname(abs), { withFileTypes: true })
-    const exclusion = checkAdmission(relPath, new Set(siblings.filter(entry => entry.isFile()).map(entry => entry.name)))
-    if (exclusion) throw new UploadRegistrationError(exclusion.detail, 400, undefined, exclusion.reason)
-
-    const result = await write({ relPath, filename, abs, bytes: info.size })
-    appLog({ module: 'core', source: 'file', operation: result.created ? 'file.register' : 'file.register.refresh', outcome: 'success', fileId: result.row.id, durationMs: Date.now() - startedAt }, context)
-    return result
-  } catch (error) {
-    appLog({ module: 'core', source: 'file', operation: 'file.register', outcome: error instanceof UploadRegistrationError ? 'denied' : 'failure', level: 'error', errorCode: error instanceof UploadRegistrationError ? 'file_registration_rejected' : 'file_registration_failed', durationMs: Date.now() - startedAt }, context)
-    throw error
-  }
 }
 
 /**
@@ -279,49 +154,6 @@ export interface BackfillStats {
   excluded: BackfillExclusion[]
 }
 
-/** 解析用户可见文件名。这个字段不会被用于路径或磁盘操作。 */
-export function parseDisplayNamePatch(body: unknown): string {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    throw new Error('请求体必须是对象')
-  }
-  const patch = body as Record<string, unknown>
-  const keys = Object.keys(patch)
-  if (keys.length !== 1 || keys[0] !== 'displayName') {
-    throw new Error('改显示名称时只能提供 displayName')
-  }
-  if (typeof patch.displayName !== 'string') throw new Error('显示名称必须是字符串')
-  const displayName = patch.displayName.trim()
-  if (!displayName) throw new Error('显示名称不能为空')
-  if (Array.from(displayName).length > 255) throw new Error('显示名称不能超过 255 个字符')
-  if (/[\u0000-\u001f\u007f-\u009f]/.test(displayName)) throw new Error('显示名称不能包含控制字符')
-  return displayName
-}
-
-export class FileMaintenanceError extends Error {
-  constructor(public statusCode: number, message: string) { super(message) }
-}
-
-export async function verifyFileRestorationBytes(root: string, current: Pick<FileRow, 'relPath' | 'bytes' | 'sha256'>) {
-  const abs = resolveInsideRoot(root, current.relPath)
-  if (!abs) throw new FileMaintenanceError(409, '文件路径越界')
-  try {
-    const physicalRoot = await realpath(root)
-    const physical = await realpath(abs)
-    if (!physical.startsWith(physicalRoot + sep) || !(await lstat(abs)).isFile()) {
-      throw new FileMaintenanceError(409, '恢复必须指向库内原始普通文件')
-    }
-    const before = await stat(abs)
-    const hash = await sha256Of(abs)
-    const after = await stat(abs)
-    if (before.size !== current.bytes || hash !== current.sha256 || before.ino !== after.ino || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) {
-      throw new FileMaintenanceError(409, '文件字节数或哈希不匹配,不能恢复')
-    }
-  } catch (error) {
-    if (error instanceof FileMaintenanceError) throw error
-    throw new FileMaintenanceError(409, '恢复文件不存在或不可读取')
-  }
-}
-
 export function createFileStore<const Categories extends readonly FileCategoryServer[]>(registered: Categories) {
   type Row = FileRow & Record<string, unknown> & Partial<UnionToIntersection<CategoryFields<Categories[number]>>>
   const categories: readonly FileCategoryServer[] = registered
@@ -330,23 +162,8 @@ export function createFileStore<const Categories extends readonly FileCategorySe
   const metadataByKey = new Map(categories.flatMap(category => category.metadata
     ? Object.keys(category.metadata.properties).map(key => [key, category.metadata!] as const)
     : []))
-  for (const category of categories) {
-    if (category.registration && typeof category.registration.matchesPath !== 'function') {
-      throw new Error(`${category.id}: registration requires matchesPath`)
-    }
-    if (category.registration && typeof category.registration.prepare !== 'function') {
-      throw new Error(`${category.id}: registration requires a writer`)
-    }
-    if (category.landing && !category.registration) {
-      throw new Error(`${category.id}: upload placement requires registration`)
-    }
-  }
-  const defaults = categories.filter(category => category.defaultLanding)
-  if (defaults.length > 1) throw new Error('Multiple default file categories')
-  const [defaultCategory] = defaults
-  if (defaultCategory && !defaultCategory.landing) {
-    throw new Error(`${defaultCategory.id}: default file category requires upload placement`)
-  }
+  const { checkAdmission, resolveUploadPlacement, resolveFileRegistration, divideMetadata, parseMetadataPatch,
+    updatePostgresFileMetadata, extensionSnapshot } = createFileCategoryRules(categories)
   const rollbackMetadata = Symbol('metadata write declined')
 
   function extendRows(db: FileStoreDb, rows: FileColumnsRow[]): Row[] {
@@ -366,10 +183,6 @@ export function createFileStore<const Categories extends readonly FileCategorySe
         },
       }, ...contributions, counts.length ? { referenceCount: counts.reduce((sum, count) => sum + count, 0) } : {}) as Row
     })
-  }
-
-  function checkAdmission(relPath: string, siblings?: ReadonlySet<string>) {
-    return evaluateFileAdmission(categories, relPath, siblings)
   }
 
   function listStoredFiles(db: FileStoreDb, params: FileQuery & Record<string, unknown> = {}, membership?: SQL) {
@@ -401,10 +214,6 @@ export function createFileStore<const Categories extends readonly FileCategorySe
       const rows = readBaseRows(tx, eq(schema.storedFile.id, id))
       return extendRows(tx, rows)[0] ?? null
     })
-  }
-
-  function extensionSnapshot(row: Row) {
-    return Object.assign({}, ...categories.map(category => category.snapshot?.(row)))
   }
 
   /** 只更新用户可见名称并追加历史;`filename` / `relPath` 与磁盘内容保持不变。 */
@@ -518,80 +327,11 @@ export function createFileStore<const Categories extends readonly FileCategorySe
     return backfillStoredFiles(db, await scanFileStore(root))
   }
 
-  function registrationCategory(relPath: string) {
-    const owners = categories.filter(category => category.registration?.matchesPath(relPath))
-    if (owners.length > 1) throw new UploadRegistrationError('落位路径匹配多个上传分类')
-    return owners[0] ?? defaultCategory
-  }
-
-  function resolveUploadPlacement(metadata: UploadMetadata, { postgres = false } = {}): ReturnType<ResolveUploadPlacement> {
-    const requested = metadata.fileCategory
-    const category = requested ? categories.find(item => item.id === requested) : defaultCategory
-    if (!category?.landing) throw { status_code: 400, body: '未登记上传落位规则\n' }
-    if (postgres && !category.registration?.preparePostgres) {
-      throw { status_code: 503, body: '此文件分类尚未接入 PostgreSQL 文件库\n' }
-    }
-    const segments = category.landing(metadata)
-    function assertOwnership(relPath: string) {
-      try {
-        splitRegistrationPath(relPath)
-        if (registrationCategory(relPath) !== category) {
-          throw new UploadRegistrationError('上传分类与实际落位不符')
-        }
-      } catch (error) {
-        if (!(error instanceof UploadRegistrationError)) throw error
-        throw { status_code: error.statusCode, body: `${error.message}\n` }
-      }
-    }
-    assertOwnership(segments.join('/'))
-    return { segments, assertOwnership }
-  }
-
-  function resolveFileRegistration(body: unknown) {
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      throw new UploadRegistrationError('请求体必须是对象')
-    }
-    const { fileCategory, ...input } = body as Record<string, unknown>
-    const requested = fileCategory === undefined ? undefined : categories.find(category => category.id === fileCategory)
-    if (fileCategory !== undefined && !requested?.registration) {
-      throw new UploadRegistrationError('未登记上传分类')
-    }
-
-    let relPath: string
-    try {
-      // Tus returns the actual disk path, including any surrounding whitespace.
-      relPath = String(input.relPath ?? '')
-    } catch (error) {
-      throw new UploadRegistrationError((error as Error).message)
-    }
-    const owner = registrationCategory(relPath)
-    if (requested && owner !== requested) {
-      throw new UploadRegistrationError('上传分类与实际落位不符')
-    }
-    if (!owner?.registration) throw new UploadRegistrationError('无法确定登记上传分类')
-    return { registration: owner.registration, relPath, input: { ...input, relPath } }
-  }
-
   function registerUploadedFile(db: FileStoreDb, root: string, body: unknown, context: LogContext) {
     const { registration, relPath, input } = resolveFileRegistration(body)
-    return runFileRegistration(db, root, relPath, () => registration.prepare(input), checkAdmission, context)
-  }
-
-  function divideMetadata(input: object) {
-    const groups = new Map<NonNullable<FileCategoryServer['metadata']>, Record<string, unknown>>()
-    for (const [key, value] of Object.entries(input)) {
-      const owner = metadataByKey.get(key)
-      if (!owner) throw new Error(`不可修改的字段:${key}`)
-      const group = groups.get(owner) ?? {}
-      group[key] = value
-      groups.set(owner, group)
-    }
-    return groups
-  }
-
-  function parseMetadataPatch(input: unknown): Record<string, unknown> {
-    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('请求体必须是对象')
-    return Object.assign({}, ...Array.from(divideMetadata(input), ([owner, fields]) => owner.parse(fields)))
+    const prepare = registration.prepare
+    if (!prepare) throw new Error('File category does not support SQLite registration')
+    return runFileRegistration(db, root, relPath, () => prepare(input), checkAdmission, context)
   }
 
   function updateStoredFile(db: FileStoreDb, id: number, patch: object): Row | null {
@@ -599,20 +339,13 @@ export function createFileStore<const Categories extends readonly FileCategorySe
     try {
       return db.transaction(tx => {
         for (const [owner, fields] of groups) {
-          if (!owner.write(tx, id, fields)) throw rollbackMetadata
+          if (!owner.write?.(tx, id, fields)) throw rollbackMetadata
         }
         return getStoredFile(tx, id)
       }, { behavior: 'immediate' })
     } catch (error) {
       if (error === rollbackMetadata) return null
       throw error
-    }
-  }
-
-  async function updatePostgresFileMetadata(db: NodePgDatabase, file: FileRow, patch: object) {
-    for (const [owner, fields] of divideMetadata(patch)) {
-      if (!owner.writePostgres) throw new FileMaintenanceError(503, '业务分类元数据尚未接入 PostgreSQL 文件库')
-      if (!await owner.writePostgres(db, file, fields)) throw new FileMaintenanceError(404, '未找到可更新的文件分类')
     }
   }
 

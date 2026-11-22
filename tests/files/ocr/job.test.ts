@@ -1,3 +1,4 @@
+import { resolveOcrConfig } from '../../../layers/core/server/utils/ocr-config-sqlite'
 import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -5,13 +6,13 @@ import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { parseOcrParams, runOcr } from '../../../layers/core/server/utils/jobs/ocr'
+import { parseOcrParams } from '../../../layers/core/server/utils/jobs/ocr'
+import { runOcr } from '../../../layers/core/server/utils/jobs/ocr-sqlite'
 import { listOcrResults, writeOcrResult } from '../../../layers/core/server/utils/ocr-result'
 import {
   DEFAULT_OCR_OPTIONAL_PAYLOAD,
   ocrRequestVariant,
   pagesFromJsonl,
-  resolveOcrConfig,
 } from '../../../layers/core/server/utils/ocr-api'
 import { ocrPageCacheDirAbs, ocrPageCacheKey } from '../../../layers/core/server/utils/ocr-page-cache'
 import { DEFAULT_DPI } from '../../../layers/core/lib/pdf-page'
@@ -835,7 +836,7 @@ it('fails closed with a sanitized error when the credential database is unavaila
 
 it('queued OCR retains its submission credential for submit and poll without persisting it in job history', async () => {
   const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../../../layers/core/server/utils/job-runner')
-  const { ocrSpec } = await import('../../../layers/core/server/utils/jobs/ocr')
+  const { ocrSqliteSpec: ocrSpec } = await import('../../../layers/core/server/utils/jobs/ocr-sqlite')
   const { getJob } = await import('../../../layers/core/server/utils/job-store')
   const { updateCredential } = await import('../../../layers/core/server/utils/credential-state')
   let release: (() => void) | undefined
@@ -862,7 +863,7 @@ it('queued OCR retains its submission credential for submit and poll without per
 
 it.each([{ name: 'failed', failed: true }, { name: 'successful', failed: false }])('keeps encoded OCR credentials out of persisted job history and OCR rows ($name)', async ({ failed }) => {
   const { clearJobSpecs, registerJob, submitJob, whenIdle } = await import('../../../layers/core/server/utils/job-runner')
-  const { ocrSpec } = await import('../../../layers/core/server/utils/jobs/ocr')
+  const { ocrSqliteSpec: ocrSpec } = await import('../../../layers/core/server/utils/jobs/ocr-sqlite')
   const { getJob } = await import('../../../layers/core/server/utils/job-store')
   const { updateCredential } = await import('../../../layers/core/server/utils/credential-state')
   const token = 'synthetic-"quoted"\\+/=task-secret'

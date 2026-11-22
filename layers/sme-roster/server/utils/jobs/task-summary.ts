@@ -1,12 +1,18 @@
 import { readSnapshotSummary, snapshotTaskLinks } from './snapshot-summary'
-import { annualProjection, readAnnualSummary, annualTaskLinks } from './annual-summary'
-import { readCandidateSummary, candidateProjection, candidateTaskLinks } from './candidate-summary'
+import { readAnnualSummary, annualTaskLinks } from './annual-summary'
+import { annualProjection } from './annual-summary-sqlite'
+import { readCandidateSummary, candidateTaskLinks } from './candidate-summary'
+import { candidateProjection } from './candidate-summary-sqlite'
 import { readExportSummary, exportProjection, exportRetryReason, exportTaskLabel, exportTaskProgress } from './export-summary'
-import { readReconcileSummary, reconcileProjection } from './reconcile-summary'
-import { readBatchSummary, batchProjection } from './batch-summary'
-import { readOcrLinks, ocrProjection } from '../../../../core/server/utils/jobs/ocr-summary'
+import { readReconcileSummary } from './reconcile-summary'
+import { reconcileProjection } from './reconcile-summary-sqlite'
+import { readBatchSummary } from './batch-summary'
+import { batchProjection } from './batch-summary-sqlite'
+import { readOcrLinks } from '../../../../core/server/utils/jobs/ocr-summary'
+import { ocrProjection } from '../../../../core/server/utils/jobs/ocr-summary-sqlite'
 import { desc, sql, type SQL } from 'drizzle-orm'
-import { schema, type useApplicationDb } from '../../../../../db/client'
+import * as schema from '../../../../../db/schema'
+import type { useApplicationDb } from '../../../../../db/client'
 import { type TaskSummary } from '../../../lib/sme-roster/task-summary'
 import { taskSummaryBase, taskSummaryCapabilities } from '../../../../core/server/utils/task-summary'
 import { annualTaskReason, platformTaskLinks, rosterTaskError, taskRetryReason } from './task-presentation'
@@ -44,7 +50,7 @@ export async function summarize(row: ProjectedTask, authorized: boolean, db: Db,
   else if (annual) links.push(...annualTaskLinks(row.id))
   else if (candidate.discovery) links.push(...candidateTaskLinks(candidate, detail))
   else if (base.module === 'sme-roster' && base.group === 'platform') links.push(...platformTaskLinks())
-  const exported = await readExportSummary(row, authorized, db)
+  const exported = await readExportSummary(row, authorized)
   const exportProgress = isRosterExport ? exportTaskProgress(row.state, exported?.phase) : undefined
 
   return {

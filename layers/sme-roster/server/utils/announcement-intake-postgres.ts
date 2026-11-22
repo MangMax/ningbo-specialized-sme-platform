@@ -3,8 +3,8 @@ import { importReceipt } from '../../../../db/postgresql/import-tables'
 import { rosterAnnouncementIntake as intake } from '../../../../db/postgresql/roster-selection-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { RosterImportRequest, RosterImportItemResult } from '../../lib/roster-import-client'
-import { announcementIntakeDigest, checkAnnouncementRemoval, projectAnnouncementIntake, stagedAnnouncement, validateAnnouncementIntakeRows, type IntakeRow } from './announcement-intake'
-import { ImportReceiptError } from './import-receipts'
+import { announcementIntakeDigest, checkAnnouncementRemoval, projectAnnouncementIntake, stagedAnnouncement, validateAnnouncementIntakeRows, type IntakeRow } from './announcement-intake-model'
+import { ImportReceiptError } from './import-receipt-model'
 import { committedPostgresImportResult, lockPostgresRosterImportBatch, lockPostgresRosterImportKey } from './roster-export-import-postgres'
 import { usePostgresRosterDb } from './postgres-roster-db'
 
@@ -33,7 +33,6 @@ export function removePostgresAnnouncementIntake(db: NodePgDatabase, id: number,
 
 export async function stagePostgresAnnouncement(request: RosterImportRequest, pageErrors: readonly RosterImportItemResult[]) {
   const db = usePostgresRosterDb(true)
-  if (!db) return undefined
   const invalid = validateAnnouncementIntakeRows(request, pageErrors)
   if (invalid) return invalid
   const digest = announcementIntakeDigest(request)

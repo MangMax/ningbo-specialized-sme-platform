@@ -1,5 +1,5 @@
 import type { getRecordComparison, listRecordComparisonSources } from '../../server/utils/record-comparison'
-import type { OfficialEvidence, CurrentEvidence } from '../../server/utils/comparison-scope-proof-source'
+import type { OfficialEvidence, CurrentEvidence } from '../../server/utils/comparison-scope-proof-source-projection'
 import type { RecordComparisonInput } from './record-comparison'
 
 export type RecordComparisonResult = ReturnType<typeof getRecordComparison>

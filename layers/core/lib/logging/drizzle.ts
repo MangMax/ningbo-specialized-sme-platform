@@ -11,7 +11,7 @@ type DrizzleConnection = typeof DRIZZLE_CONNECTIONS[number]
  * This is only an attempt: preparation failures may never reach this hook.
  * Inspect only a bounded SQL prefix to choose a fixed first-verb category;
  * comments/CTEs/other statements stay `other`. Never retain SQL or params.
- * The independent runtime-log store uses raw better-sqlite3, never this hook.
+ * The independent runtime log connection omits this hook to avoid recursion.
  */
 export function createDrizzleLogger(options: { connection: DrizzleConnection; context?: LogContext; execution?: LogOrigin['execution'] }): Logger {
   return {

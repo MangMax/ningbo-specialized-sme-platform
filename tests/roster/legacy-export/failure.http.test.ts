@@ -1,4 +1,3 @@
-import { initializeDb } from '../../../db/client'
 import { createServer, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { Writable } from 'node:stream'
@@ -6,10 +5,11 @@ import { mkdtempSync, existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createApp, createError, defineEventHandler, getQuery, setHeader, toNodeListener } from 'h3'
-import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { useDb } from '../../../db'
+import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { legacyExportSheet, writeLegacyXlsx } from '../../../layers/sme-roster/server/utils/legacy-export-xlsx'
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging, newLogContext } from '../../../layers/core/lib/logging'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 const state = vi.hoisted(() => ({ fail: false, directories: [] as string[], slowRead: false, slowWrite: false, generationRows: 0, settledRequests: 0 }))
 // Inject failure at the external filesystem boundary; queries and XLSX serialization stay real.
@@ -38,12 +38,12 @@ vi.mock('node:fs', async (original) => {
   }
 })
 const dir = mkdtempSync(join(tmpdir(), 'legacy-export-failure-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'empty.db') })
-vi.doMock('@db', () => ({ useDb: () => db }))
-let server: Server
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+let server: Server | undefined
 let baseUrl: string
 beforeAll(async () => {
-  vi.stubEnv('NUXT_LOG_DIR', join(dir, 'logs'))
+  postgres = await postgresRuntimeFixture({ dir })
+  for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
   initializeWorkerLogging()
   for (const [name, value] of Object.entries({ defineEventHandler, getQuery, setHeader, createError })) vi.stubGlobal(name, value)
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: join(dir, 'curation.json') }))
@@ -57,17 +57,24 @@ beforeAll(async () => {
       await sheet.addRow({ text: randomBytes(2048).toString('hex') })
     }
   })))
-  server = createServer(toNodeListener(app))
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`
-})
+  const listener = createServer(toNodeListener(app))
+  server = listener
+  await new Promise<void>((resolve) => listener.listen(0, '127.0.0.1', resolve))
+  baseUrl = `http://127.0.0.1:${(listener.address() as { port: number }).port}`
+}, 90_000)
 afterAll(async () => {
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
-  vi.unstubAllGlobals()
-  await closeApplicationLogging()
-  vi.unstubAllEnvs()
-  rmSync(dir, { recursive: true, force: true })
+  try {
+    if (server?.listening) await new Promise<void>((resolve, reject) => server!.close(error => error ? reject(error) : resolve()))
+    try { await closeApplicationLogging() }
+    finally { await closePostgresDirectoryDb() }
+  } finally {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    postgres?.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
+afterEach(() => { state.fail = false })
 it('returns HTTP 500 without attachment headers and removes partial files on disk failure', async () => {
   state.fail = true
   for (const route of ['/api/export', '/api/roster/export']) {
@@ -85,7 +92,6 @@ it('returns HTTP 500 without attachment headers and removes partial files on dis
     expect(state.directories.length).toBeGreaterThan(0)
     expect(state.directories.every((folder) => !existsSync(folder))).toBe(true)
   }
-  state.fail = false
 })
 it('preserves validation errors without leaving staged files even when the disk fails', async () => {
   state.fail = true
@@ -93,7 +99,6 @@ it('preserves validation errors without leaving staged files even when the disk 
   expect(response.status).toBe(400)
   expect((await response.json()).statusMessage).toBe('Comparison export requires a valid title and direction')
   expect(state.directories.every((folder) => !existsSync(folder))).toBe(true)
-  state.fail = false
 })
 
 it('settles an interrupted HTTP download and removes its staged workbook', async () => {

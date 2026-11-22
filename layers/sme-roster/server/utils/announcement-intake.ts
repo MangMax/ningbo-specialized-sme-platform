@@ -1,66 +1,28 @@
+import { type IntakeRow, validateAnnouncementIntakeRows, announcementIntakeDigest, stagedAnnouncement, projectAnnouncementIntake, checkAnnouncementRemoval, hash, type supplementSchema } from './announcement-intake-model'
 import type Database from 'better-sqlite3'
-import { createHash } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { z } from 'zod'
+import type { z } from 'zod'
 import * as schema from '../../../../db/schema'
-import {
-  applyReviewedEnterprise, enterpriseFieldsSchema, EnterpriseKernelError, registerEnterpriseSource, type LogContext,
-} from '../../../core/server/public'
+import { applyReviewedEnterprise, EnterpriseKernelError, registerEnterpriseSource } from '../../../core/server/public-sqlite'
+import type { LogContext } from '../../../core/lib/logging'
 import type { RosterAnnouncementIntake, RosterAnnouncementIntakeFailure, RosterImportItemResult, RosterImportRequest, SupplementAnnouncementPreflightRequest, SupplementAnnouncementPreflightResult, SupplementAnnouncementRequest, SupplementAnnouncementResponse, SupplementAnnouncementResult } from '../../lib/roster-import-client'
 import { normalizeReviewedUscc } from '../../../core/public'
 import { normalizeName } from '../../lib/domain'
 import { canonicalEnterpriseId } from '../../lib/roster/enterprise-identity'
 import { captureIdentityRevision113, identityMaterial113 } from './evidence-impact-113'
-import { commitRosterImport, hasOfficialFactInput, planRosterImport, validateAnnouncementIdentityAndEvidence } from './roster-import'
-import { ImportReceiptError } from './import-receipts'
-import { canonicalImportJson, recordImportReceipt } from './import-receipt-ledger'
+import { commitRosterImport, planRosterImport } from './roster-import'
+import { ImportReceiptError } from './import-receipt-model'
+import { recordImportReceipt } from './import-receipt-ledger'
 import { ensureBatchRow, findBatchByKey } from './roster-batch-ledger'
 import { validateRosterImportPageCounts } from './roster-import-page-validation'
-import { readOfficialFile } from './official-evidence-plan'
-
+import { readOfficialFile } from './official-evidence-claim-model'
 type Db = BetterSQLite3Database<typeof schema> & { $client: Database.Database }
-const hash = z.string().regex(/^[0-9a-f]{64}$/)
-const id = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
-export const supplementSchema = z.strictObject({
-  sourceDigest: hash,
-  basis: z.string().trim().min(1).max(4000),
-  preflight: z.literal(true).optional(),
-  officialEvidencePlanHash: hash.optional(),
-  rows: z.array(z.discriminatedUnion('action', [
-    z.strictObject({ action: z.literal('create'), fields: enterpriseFieldsSchema.required({ name: true }) }),
-    z.strictObject({ action: z.literal('attach'), enterpriseId: id, expectedRevision: id, fields: enterpriseFieldsSchema.optional() }),
-    z.strictObject({ action: z.literal('same_subject'), row: z.number().int().nonnegative() }),
-  ])).min(1),
-}).refine(input => !input.preflight || input.officialEvidencePlanHash === undefined, 'A supplement preflight cannot include its own plan hash')
-
-export const announcementIntakeDigest = (value: unknown) => createHash('sha256').update(canonicalImportJson(value)).digest('hex')
-export type IntakeRow = { id: number; digest: string; request: string; removed_reason: string | null; supplement_digest: string | null; reviewed_request: string | null; receipt: string | null }
-
 function loadIntake(db: Db, id: number) {
   const row = db.$client.prepare('SELECT * FROM roster_announcement_intake WHERE id=?').get(id) as IntakeRow | undefined
   if (!row) throw new ImportReceiptError(404, 'intake_not_found', 'Announcement intake not found')
   return row
 }
-
-export function validateAnnouncementIntakeRows(request: RosterImportRequest, pageErrors: readonly RosterImportItemResult[]) {
-  const announcement = request.payload.announcement
-  if (!Array.isArray(announcement?.records)
-    || !['jxj', 'miit'].includes(announcement.sourceDocument?.source)) {
-    throw new ImportReceiptError(400, 'invalid_intake', 'Provide an announcement version with its original rows')
-  }
-  if (announcement.records.some(row => !row?.enterprise || typeof row.enterprise.name !== 'string' || !normalizeName(row.enterprise.name))) {
-    throw new ImportReceiptError(400, 'invalid_intake', 'Every announcement row needs its original enterprise name')
-  }
-  const items = [...validateAnnouncementIdentityAndEvidence(announcement), ...pageErrors]
-  if (items.length) return { batchId: null, error: 'Original announcement rows failed validation', status: 'failed' as const, items, summary: { written: 0, skipped: 0, failed: items.length, evidenceRepointed: 0 } }
-}
-
-export function stagedAnnouncement(request: RosterImportRequest, id: number, digest: string) {
-  return { status: 'staged' as const, intakeId: id, sourceDigest: digest, rowCount: request.payload.announcement!.records.length,
-    ...(hasOfficialFactInput(request) ? { officialEvidencePreflightRequired: true as const } : {}) }
-}
-
 export function stageAnnouncement(db: Db, request: RosterImportRequest, pageErrors: readonly RosterImportItemResult[]) {
   const invalid = validateAnnouncementIntakeRows(request, pageErrors)
   if (invalid) return invalid
@@ -79,26 +41,9 @@ export function stageAnnouncement(db: Db, request: RosterImportRequest, pageErro
     return stagedAnnouncement(request, id, digest)
   }).immediate()
 }
-
 export function readAnnouncementIntake(db: Db, id: number): RosterAnnouncementIntake {
   return projectAnnouncementIntake(loadIntake(db, id))
 }
-
-export function projectAnnouncementIntake(row: IntakeRow): RosterAnnouncementIntake {
-  const request = JSON.parse(row.request) as RosterImportRequest
-  return { intakeId: row.id, sourceDigest: row.digest, status: row.removed_reason ? 'removed' : row.receipt ? 'supplemented' : 'staged',
-    removedReason: row.removed_reason, sourceIdentity: request.sourceIdentity, sourceSha256: request.sourceSha256,
-    announcement: request.payload.announcement!, ...(hasOfficialFactInput(request) ? { officialEvidencePreflightRequired: true as const } : {}),
-    review: row.reviewed_request ? JSON.parse(row.reviewed_request) : null,
-    receipt: row.receipt ? JSON.parse(row.receipt) : null }
-}
-
-export function checkAnnouncementRemoval(row: IntakeRow, sourceDigest: string, reason: string) {
-  if (row.digest !== sourceDigest) throw new ImportReceiptError(409, 'source_changed', 'Announcement version changed')
-  if (row.removed_reason !== null && row.removed_reason !== reason) throw new ImportReceiptError(409, 'already_removed', 'Announcement intake was already removed')
-  return { intakeId: row.id, status: 'removed', removedReason: reason }
-}
-
 export function removeAnnouncementIntake(db: Db, id: number, sourceDigest: string, reason: string) {
   return db.$client.transaction(() => {
     const row = loadIntake(db, id)
@@ -107,7 +52,6 @@ export function removeAnnouncementIntake(db: Db, id: number, sourceDigest: strin
     return removed
   }).immediate()
 }
-
 function attachSources(db: Db, intakeId: number, batchId: number, request: RosterImportRequest, owners: ReadonlyMap<number, number>, filesDir?: string) {
   const announcement = request.payload.announcement!
   const sha = request.sourceSha256
@@ -157,15 +101,12 @@ function attachSources(db: Db, intakeId: number, batchId: number, request: Roste
   }
   return [...sourceIds].sort((a, b) => a - b)
 }
-
 class SupplementRejected extends Error {
   constructor(readonly result: RosterAnnouncementIntakeFailure) { super(result.error ?? 'Announcement supplement rejected') }
 }
-
 class SupplementPreview extends Error {
   constructor(readonly result: SupplementAnnouncementPreflightResult) { super('Roll back announcement supplement preview') }
 }
-
 function applyReviewedAnnouncementOwners(db: Db, id: number, decision: string, rows: NonNullable<RosterImportRequest['payload']['announcement']>['records'], input: z.infer<typeof supplementSchema>) {
   const owners = new Map<number, number>()
   const created = new Set<number>()
@@ -207,7 +148,6 @@ function applyReviewedAnnouncementOwners(db: Db, id: number, decision: string, r
   }
   return { owners, created }
 }
-
 export function supplementAnnouncement(db: Db, id: number, input: SupplementAnnouncementPreflightRequest, filesDir?: string, context?: LogContext): Promise<SupplementAnnouncementPreflightResult>
 export function supplementAnnouncement(db: Db, id: number, input: SupplementAnnouncementRequest & { preflight?: never }, filesDir?: string, context?: LogContext): Promise<SupplementAnnouncementResult>
 export function supplementAnnouncement(db: Db, id: number, input: z.infer<typeof supplementSchema>, filesDir?: string, context?: LogContext): Promise<SupplementAnnouncementResult | SupplementAnnouncementPreflightResult>
@@ -265,3 +205,4 @@ export async function supplementAnnouncement(db: Db, id: number, input: z.infer<
     }
   }).immediate()
 }
+export { supplementSchema, announcementIntakeDigest, type IntakeRow, validateAnnouncementIntakeRows, stagedAnnouncement, projectAnnouncementIntake, checkAnnouncementRemoval } from './announcement-intake-model'

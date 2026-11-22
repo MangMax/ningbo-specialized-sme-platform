@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
-import { dispatchCandidateJobMcp } from '../../utils/candidate-job-api'
+import { dispatchPostgresCandidateJobMcp } from '../../utils/candidate-job-runtime'
 import { readMcpToken, resolveMcpAuth } from '../../../../core/server/utils/mcp-auth'
 export default defineMcpTool({
   name: 'get_event_archive_candidate_task',
@@ -27,10 +26,7 @@ export default defineMcpTool({
       }),
       configured: useRuntimeConfig().mcpToken,
     }).writeAuthorized
-    return dispatchCandidateJobMcp('detail', input, {
-      get db() {
-        return useDb()
-      },
+    return dispatchPostgresCandidateJobMcp('detail', input, {
       filesDir: useRuntimeConfig().filesDir,
       authorized,
     })

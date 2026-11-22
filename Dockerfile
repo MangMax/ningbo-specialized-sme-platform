@@ -7,8 +7,6 @@ FROM ${NODE_IMAGE} AS build
 
 WORKDIR /app
 
-# better-sqlite3 is installed for Linux in this stage. Keep compiler tooling out
-# of the runtime image.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
@@ -16,8 +14,6 @@ RUN apt-get update \
 COPY package.json ./
 RUN npm install --global --no-audit --no-fund "$(node -p "require('./package.json').packageManager")"
 
-# Copy the root assembly and both local layers (layers/core and layers/sme-roster)
-# before pnpm install runs Nuxt prepare.
 COPY . .
 RUN pnpm install --frozen-lockfile --store-dir /tmp/pnpm-store \
   && pnpm build \
@@ -42,7 +38,6 @@ WORKDIR /app
 ENV NODE_ENV=production \
   HOST=0.0.0.0 \
   PORT=3000 \
-  NUXT_DB_MODE=postgresql \
   NUXT_POSTGRES_BIN=/usr/local/bin
 
 ARG SOURCE_REVISION=unknown
@@ -50,9 +45,6 @@ LABEL org.opencontainers.image.source="https://github.com/MangMax/ningbo-special
   org.opencontainers.image.revision="${SOURCE_REVISION}"
 
 COPY --from=build --chown=node:node /app/.output/ ./.output/
-
-RUN mkdir -p /logs && chown node:node /logs
-ENV NUXT_LOG_DIR=/logs
 
 USER node
 

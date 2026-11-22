@@ -1,33 +1,32 @@
-import { resolveDbPath } from '../../../../../db/client'
 import type { JobSpec, PostgresJobSpec } from '../../../../core/server/public'
 import { getPostgresJob } from '../../../../core/server/utils/job-store-postgres'
-import { readPostgresExportSummaries } from './export-summary'
-import { captureReceiptRuntimeContext } from '../receipt-runtime-context'
+import { readPostgresExportSummaries } from './export-summary-postgres'
 import { mkdir, rm, rename, stat, open } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { CURRENT_RULE_VERSION, CURRENT_TITLES } from '../../../lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION, CURRENT_TITLES } from '../../../lib/roster/current-qualification-model'
 import { isJobId, isTerminalJobState } from '../../../../core/lib/job'
-import { getJob, setJobResult, type JobRow } from '../../../../core/server/utils/job-store'
+import type { JobRow } from '../../../../core/server/utils/job-store'
 import { createCurrentExportWorker } from '../current-export-worker-location'
-import { cleanupCurrentExports, cleanupExportArtifacts, currentArtifact, currentExportDbPath, exportDirectory, EXPORT_RETENTION_MS } from '../current-export-artifact'
+import { captureReceiptRuntimeContext } from '../receipt-runtime-context'
+import type { CurrentExportResponse, CurrentExportRequest } from '../../../lib/roster/current-export-worker'
+import { cleanupExportArtifacts, currentArtifact, EXPORT_RETENTION_MS, postgresExportDirectory } from '../current-export-artifact'
 import { appLog, type LogContext } from '../../../../core/lib/logging'
 const paramsSchema = z.strictObject({ titleCode: z.enum(CURRENT_TITLES), clientRequestId: z.string().trim().min(1).max(128), regenerateOf: z.string().refine(isJobId).optional() })
 interface CurrentExportExecution {
   jobId: string
   logContext?: Readonly<LogContext>
-  postgres?: boolean
   progress(done: number, total: number): void | Promise<void>
   checkpoint(value: unknown): void | Promise<void>
   cancelled(): boolean | Promise<boolean>
   cleanup(context: LogContext): Promise<void>
 }
 
-async function runCurrentExport(dbPath: string, options: CurrentExportExecution, params: Record<string, unknown>) {
+async function runCurrentExport(dir: string, options: CurrentExportExecution, title: CurrentExportRequest['title']) {
   const logContext = { ...options.logContext, taskId: options.jobId }
-  const dir = exportDirectory(dbPath), temporaryPath = join(dir,options.jobId + '.part'), finalPath = join(dir,options.jobId + '.xlsx')
+  const temporaryPath = join(dir,options.jobId + '.part'), finalPath = join(dir,options.jobId + '.xlsx')
   let worker: ReturnType<typeof createCurrentExportWorker> | undefined
   let workerExited: Promise<void> | undefined
   let cancelled = false, published = false, timedOut = false, processUnknown = false, processSettled = false, publishStarted = false
@@ -41,13 +40,12 @@ async function runCurrentExport(dbPath: string, options: CurrentExportExecution,
   try {
     await options.cleanup(logContext)
     await mkdir(dir,{ recursive:true, mode:0o700 })
-    const receiptRuntime = options.postgres ? undefined
-      : captureReceiptRuntimeContext(typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : undefined)
+    const receiptRuntime = captureReceiptRuntimeContext(typeof useRuntimeConfig === 'function' ? useRuntimeConfig() : undefined)
     worker = createCurrentExportWorker()
     workerExited = new Promise(resolve => worker!.once('exit', () => resolve()))
     appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.process', outcome: 'started' }, logContext)
-    const result = await new Promise<any>((resolve,reject) => {
-      worker!.on('message', message => {
+    const result = await new Promise<Extract<CurrentExportResponse, { type: 'done' }>['result'] | null>((resolve,reject) => {
+      worker!.on('message', (message: CurrentExportResponse) => {
         if (message.type === 'progress') {
           progressWrites = progressWrites.then(async () => {
             await options.progress(message.done, message.total)
@@ -75,10 +73,9 @@ async function runCurrentExport(dbPath: string, options: CurrentExportExecution,
           }
         }).catch(reject).finally(() => { cancellationCheck = undefined })
       }, 50)
-      worker!.postMessage({ dbPath, postgres: options.postgres, title: params.titleCode, temporaryPath,
-        jobId: options.jobId, logContext, ...(receiptRuntime ? { receiptRuntime } : {}) })
+      worker!.postMessage({ title, temporaryPath, jobId: options.jobId, logContext, receiptRuntime } satisfies CurrentExportRequest)
     })
-    if (cancelled || await options.cancelled()) { appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.process', outcome: 'cancelled', errorCode: 'export_cancelled' }, logContext); return {cancelled:true,result:checkpoint} }
+    if (!result || cancelled || await options.cancelled()) { appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.process', outcome: 'cancelled', errorCode: 'export_cancelled' }, logContext); return {cancelled:true,result:checkpoint} }
     appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.process', outcome: 'success' }, logContext)
     publishStarted = true
     appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.publish', outcome: 'started', resourceType: 'export_artifact', resourceId: options.jobId }, logContext)
@@ -88,7 +85,7 @@ async function runCurrentExport(dbPath: string, options: CurrentExportExecution,
     const handle=await open(temporaryPath,'r');try {await handle.sync()} finally {await handle.close()}
     await rename(temporaryPath,finalPath)
     const directory=await open(dir,'r');try {await directory.sync()} finally {await directory.close()}
-    const artifact = { id:options.jobId,filename:`current-${String(params.titleCode)}.xlsx`,size:(await stat(finalPath)).size,sha256:sha.digest('hex'),generatedAt:result.generatedAt,expiresAt:new Date(Date.now()+EXPORT_RETENTION_MS).toISOString(),downloadUrl:`/api/job-artifacts/${options.jobId}`,availability:'available' }
+    const artifact = { id:options.jobId,filename:`current-${title}.xlsx`,size:(await stat(finalPath)).size,sha256:sha.digest('hex'),generatedAt:result.generatedAt,expiresAt:new Date(Date.now()+EXPORT_RETENTION_MS).toISOString(),downloadUrl:`/api/job-artifacts/${options.jobId}`,availability:'available' }
     published=true
     appLog({ module: 'sme-roster', source: 'export', operation: 'export.current.publish', outcome: 'success', resourceType: 'export_artifact', resourceId: options.jobId }, logContext)
     return {result:{...result,phase:'complete',snapshotId:options.jobId,artifact},progress:{done:result.total,total:result.total}}
@@ -123,28 +120,29 @@ function validateRegeneration(titleCode: unknown, prior: JobRow | null | undefin
 
 const postgresExport: PostgresJobSpec = {
   async validateSubmission(tx, params) {
+    if (!postgresExportDirectory()) {
+      throw Object.assign(new Error('需要配置 NUXT_ROSTER_EXPORT_DIR'), { statusCode: 503 })
+    }
     if (params.regenerateOf) validateRegeneration(params.titleCode, (await getPostgresJob(tx, String(params.regenerateOf)))?.row)
   },
   allowBrowserCancel: true,
   taskCenter: { summaries: readPostgresExportSummaries },
-  run(ctx, params) {
-    const path = resolveDbPath()
-    return runCurrentExport(path, {
+  async run(ctx, params) {
+    const directory = postgresExportDirectory()
+    if (!directory) return { result: null, error: '需要配置 NUXT_ROSTER_EXPORT_DIR' }
+    const titleCode = paramsSchema.shape.titleCode.parse(params.titleCode)
+    return runCurrentExport(directory, {
       ...ctx,
-      postgres: true,
-      cleanup: context => cleanupExportArtifacts(path, async id => (await getPostgresJob(ctx.db, id))?.row, context),
-    }, params)
+      cleanup: context => cleanupExportArtifacts(directory, async id => (await getPostgresJob(ctx.db, id))?.row, context),
+    }, titleCode)
   },
   async projectResult(_db, job) {
-    const artifact = await currentArtifact(job, resolveDbPath())
+    const artifact = await currentArtifact(job, postgresExportDirectory())
     return artifact ? { ...(job.result as object), artifact } : job.result
   },
 }
 
 export const currentRosterExportSpec: JobSpec = {
-  validateSubmission(db, params) {
-    if (params.regenerateOf) validateRegeneration(params.titleCode, getJob(db, String(params.regenerateOf)))
-  },
   openAPIParams: {
     order: 10,
     description: 'current-roster-export 使用 { titleCode: little_giant|specialized_sme|innovative_sme, clientRequestId: string, regenerateOf?: jobId }；运行/排队最多9个，独立进程生成，产物保留7天。',
@@ -152,16 +150,5 @@ export const currentRosterExportSpec: JobSpec = {
   kind: 'current-roster-export', maxPending: 9, deduplicateRequest: true, status: 'ready', summary: '当前有效名录 Excel（后台独立进程）',
   paramsHint: '{ titleCode: little_giant|specialized_sme|innovative_sme, clientRequestId: string, regenerateOf?: jobId }；保留7天；同请求标识去重',
   parse(raw) { const parsed = paramsSchema.safeParse(raw); return parsed.success ? {ok:true, params:parsed.data} : {ok:false,message:'需要有效 titleCode、clientRequestId；不接受日期或额外参数'} },
-  async run(ctx, params) {
-    const dbPath = currentExportDbPath(ctx.db)
-    if (!dbPath || dbPath === ':memory:') throw new Error('导出需要持久 SQLite 数据库')
-    return runCurrentExport(dbPath, {
-      ...ctx,
-      checkpoint: value => { setJobResult(ctx.db, ctx.jobId, value) },
-      cleanup: context => cleanupCurrentExports(ctx.db, context),
-    }, params)
-  },
-  get postgres() {
-    return process.env.NUXT_POSTGRES_ROSTER_READ === '1' ? postgresExport : undefined
-  },
+  postgres: postgresExport,
 }

@@ -1,17 +1,19 @@
-import {newJobId} from '../../../layers/core/lib/job'
-import {submitNativePlatformQuery} from '../fixtures/native-query'
-import { nativeRelationRows } from '../fixtures/native-evidence'
+import { newJobId } from '../../../layers/core/lib/job'
 import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type Server } from 'node:http'
 import * as h3 from 'h3'
-import { eq } from 'drizzle-orm'
-import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
-import { schema, useDb } from '../../../db'
-import { clearJobSpecs, whenIdle } from '../../../layers/core/server/utils/job-runner'
-import { updateCredential } from '../../../layers/core/server/utils/credential-state'
+import pg from 'pg'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
+import { schema } from '../../../db/client'
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { closeApplicationLogging } from '../../../layers/core/lib/logging'
+import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
+import type { RosterImportPlatformQuery } from '../../../layers/sme-roster/lib/roster-import-client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import type { TaskList, TaskSummary } from '../../../layers/core/lib/task-center'
 
 // Keep real retries/page capture/credentials; advance only the injected backoff.
@@ -23,9 +25,14 @@ vi.mock('../../../layers/sme-roster/lib/platform/client', async importOriginal =
     actual.queryPlatformSlots({ ...options, sleep: async ms => { backoffs.push(ms) } }, slots) }
 })
 
-const dir = mkdtempSync(join(tmpdir(), 'issue299-pagination-'))
-let dbSerial=0
-let db = initializeDb({ create: true, dbPath: join(dir, 'tasks.db') })
+const bin = process.env.ROSTER_TEST_POSTGRES_BIN
+const postgresTest = it.skipIf(!bin)
+let dir: string
+let dbSerial = 0, database: string
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+let admin: pg.Pool | undefined, db: pg.Pool
+let casePool: pg.Pool | undefined
+let requests: AbortController
 const USCC = '91330211255994457P'
 const nativeFetch = globalThis.fetch
 let server: Server, baseUrl: string
@@ -41,8 +48,8 @@ function page(source: string, number: number, total = 51, overrides: Record<stri
   } } } })
 }
 const normalReply = (source: string, rdjb: string, n: number) => page(source, n, rdjb === '3' ? 51 : 0)
-async function api(path: string, method = 'GET', body?: unknown) {
-  const response = await nativeFetch(baseUrl + path, { method, headers: { authorization: 'Bearer issue299-api', 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) })
+async function api(path: string, method = 'GET', body?: unknown, signal = requests.signal) {
+  const response = await nativeFetch(baseUrl + path, { method, signal, headers: { authorization: 'Bearer issue299-api', 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) })
   const result = await response.json()
   expect(response.ok, JSON.stringify(result)).toBe(true)
   return result as any
@@ -50,50 +57,117 @@ async function api(path: string, method = 'GET', body?: unknown) {
 async function submit() {
   return api('/api/jobs', 'POST', { kind: 'reconcile', params: { usccs: [USCC], concurrency: 1 } })
 }
-async function finish(id: string) { await whenIdle(); return api(`/api/jobs/${id}`) }
+async function finish(id: string) {
+  const { signal } = requests
+  const read = () => api(`/api/jobs/${id}`, 'GET', undefined, signal)
+  await expect.poll(async () => (await read()).state, { timeout: 30_000 }).toMatch(/^(done|failed|cancelled)$/)
+  return read()
+}
 async function archives() { return (await api(`/api/platform/queries?queryKey=${USCC}&includeRawResponse=true&pageSize=100`)).rows as any[] }
 
 beforeAll(async () => {
-  vi.stubEnv('NUXT_DB_PATH', join(dir, 'tasks.db'))
+  if (!bin) return
+  dir = mkdtempSync(join(tmpdir(), 'reconcile-pagination-'))
+  const dbPath = join(dir, 'source.db')
+  const source = initializeDb({ create: true, dbPath })
+  try {
+    installLeadListSchema(source.$client)
+    const enterprise = source.insert(schema.enterprise).values({ name: '合成企业', nameNorm: '合成企业', usccNorm: USCC }).returning().get()
+    source.insert(schema.record).values({ enterpriseId: enterprise.id, source: 'miit', titleCode: 'specialized_sme' }).run()
+  } finally {
+    source.$client.close()
+  }
+  postgres = await postgresRuntimeFixture({ dir, sourcePath: dbPath, bin })
+  admin = new pg.Pool({ connectionString: postgres.url })
+  vi.stubEnv('NUXT_DB_PATH', join(dir, 'must-not-open.db'))
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  vi.stubEnv('NUXT_ROSTER_EXPORT_DIR', join(dir, 'exports'))
   vi.stubEnv('MIIT_COOKIE', '')
   vi.stubEnv('NUXT_OCR_TOKEN', '')
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'issue299-api', filesDir: dir, curatedPath: join(dir, 'absent'), reconcilePath: join(dir, 'absent') }))
   for (const key of ['defineEventHandler', 'readBody', 'createError', 'setResponseStatus', 'setHeader', 'getRouterParam', 'getQuery', 'getRequestURL', 'getHeader'] as const) vi.stubGlobal(key, h3[key])
-  vi.doMock('@db', () => ({ useDb: () => db }))
   const routes = await Promise.all([
-    import('../../../layers/core/server/api/jobs/index.post'), import('../../../layers/core/server/api/jobs/[id].get'), import('../../../layers/core/server/api/jobs/[id].delete'), import('../../../layers/sme-roster/server/api/platform/queries.get'), import('../../../layers/core/server/api/task-center/[id].get'), import('../../../layers/core/server/api/task-center/index.get'),
+    import('../../../layers/core/server/api/jobs/index.post'), import('../../../layers/core/server/api/jobs/[id].get'), import('../../../layers/core/server/api/jobs/[id].delete'), import('../../../layers/sme-roster/server/api/platform/queries.get'), import('../../../layers/core/server/api/task-center/[id].get'), import('../../../layers/core/server/api/task-center/index.get'), import('../../../layers/sme-roster/server/api/roster/import/commit.post'),
   ])
   const router = h3.createRouter()
   router.post('/api/jobs', routes[0].default).get('/api/jobs/:id', routes[1].default).delete('/api/jobs/:id', routes[2].default).get('/api/platform/queries', routes[3].default)
   router.get('/api/task-center/:id', routes[4].default)
   router.get('/api/task-center', routes[5].default)
+  router.post('/api/roster/import/commit', routes[6].default)
   server = createServer(h3.toNodeListener(h3.createApp().use(router)))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   baseUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`
-  const enterprise = db.insert(schema.enterprise).values({ name: '合成企业', nameNorm: '合成企业', usccNorm: USCC }).returning().get()
-  db.insert(schema.record).values({ enterpriseId: enterprise.id, source: 'miit', titleCode: 'specialized_sme' }).run()
-})
+}, 60_000)
+
+beforeEach(async () => {
+  if (!bin) return
+  requests = new AbortController()
+  // Give each case an untouched database without rerunning offline conversion.
+  database = 'reconcile_case_' + ++dbSerial
+  await admin!.query('CREATE DATABASE ' + database + ' TEMPLATE postgres')
+  const url = new URL(postgres!.url)
+  url.pathname = '/' + database
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url.href)
+  vi.stubEnv('NUXT_POSTGRES_LOG_URL', url.href)
+  vi.stubEnv('NUXT_POSTGRES_LOG_SCHEMA', 'runtime_logs')
+  casePool = db = new pg.Pool({ connectionString: url.href })
+}, 30_000)
+
 afterEach(async () => {
-  await whenIdle()
-  db.$client.close()
-  const path=join(dir,`tasks-${++dbSerial}.db`)
-  db=initializeDb({create:true,dbPath:path})
-  vi.stubEnv('NUXT_DB_PATH',path)
-  const enterprise=db.insert(schema.enterprise).values({name:'合成企业',nameNorm:'合成企业',usccNorm:USCC}).returning().get()
-  db.insert(schema.record).values({enterpriseId:enterprise.id,source:'miit',titleCode:'specialized_sme'}).run()
-  calls.length = 0
-  backoffs.length = 0
-})
+  try {
+    requests?.abort()
+    await stopPostgresJobs()
+    await closeApplicationLogging()
+    await closePostgresDirectoryDb()
+    const owned = casePool
+    casePool = undefined
+    await owned?.end()
+    await admin?.query('DROP DATABASE IF EXISTS ' + database)
+  } finally {
+    vi.stubGlobal('fetch', nativeFetch)
+    calls.length = 0
+    backoffs.length = 0
+  }
+}, 30_000)
 afterAll(async () => {
-  await whenIdle()
-  await new Promise<void>(resolve => server.close(() => resolve()))
-  clearJobSpecs(); vi.doUnmock('@db'); vi.unstubAllGlobals(); vi.unstubAllEnvs()
-  db.$client.close(); rmSync(dir, { recursive: true, force: true })
+  try {
+    if (server) await new Promise<void>(resolve => server.close(() => resolve()))
+    await admin?.end()
+  } finally {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    postgres?.close()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  }
 })
-function upstream() {
+
+async function setCookie(value: string) {
+  await db.query(`
+    INSERT INTO business.service_credential (key,value,updated_at) VALUES ('sme-roster.miitCookie',$1,$2)
+    ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,updated_at=EXCLUDED.updated_at
+  `, [value, new Date().toISOString()])
+}
+
+async function seedQuery(query: Omit<RosterImportPlatformQuery, 'queryKey' | 'interface' | 'rdjb'>) {
+  const result = await api('/api/roster/import/commit', 'POST', {
+    idempotencyKey: 'reconcile-pagination-seed',
+    sourceKind: 'platform_archive',
+    sourceIdentity: 'synthetic/reconcile-pagination',
+    payload: { platformQueries: [{ interface: 'business_list', queryKey: USCC, rdjb: '3', ...query }] },
+  })
+  expect(result.status).toBe('committed')
+  return Number(result.items[0].ref.replace('query:', ''))
+}
+
+async function tableCount(table: 'import_batch' | 'platform_business_observation' | 'difference_reason' | 'import_receipt') {
+  const { rows } = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM business.' + table)
+  return rows[0]!.n
+}
+
+async function upstream() {
   reply = normalReply
   upstreamStatus = 200
-  updateCredential('sme-roster.miitCookie', 'session=issue299-original', { db, env: {} })
+  await setCookie('session=issue299-original')
   vi.stubGlobal('fetch', async (url: string, init: { body: string; headers: Record<string, string> }) => {
     const body = new URLSearchParams(init.body), source = url.includes('/businessList') ? 'businessList' : 'queryList'
     const rdjb = body.get('rdjb') ?? '', n = Number(body.get('pageNum'))
@@ -107,8 +181,8 @@ function upstream() {
 }
 
 // Archives both 51-row sources then replays a public job to verify cache identity.
-it('public job retains both sources’ unique row 51 and exact page evidence; complete cache reuses original IDs', async () => {
-  upstream()
+postgresTest('public job retains both sources’ unique row 51 and exact page evidence; complete cache reuses original IDs', async () => {
+  await upstream()
   reply=(s,r,n)=>page(s,n,s==='queryList'||r==='3'?51:0)
   const job = await submit(), done = await finish(job.jobId)
   expect(done.state).toBe('done')
@@ -135,13 +209,12 @@ it('public job retains both sources’ unique row 51 and exact page evidence; co
   expect(task.reconcileCollection).toMatchObject({ complete: 4, partial: 0, failed: 0, unknown: 0, unfinished: 0, positions: [], positionsTruncated: false })
   expect((await api('/api/task-center?tab=sme-roster&group=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(task.reconcileCollection)
   expect((await api(`/api/task-center/${second.id}`)).reconcileCollection).toEqual(task.reconcileCollection)
-}, 10000)
+}, 65_000)
 
 // These multi-page/replay integration cases include native archive verification.
-// Their 30s runner budget stays below the source collection's 60s limit; it is
-// not an operation latency assertion. Scalar/invalid-metadata cases keep 5s.
-it('later-page inconsistency keeps first-page rows, original total, unfinished page and retries only incomplete slots', async () => {
-  upstream()
+// The case budget allows two bounded job waits across submission and replay.
+postgresTest('later-page inconsistency keeps first-page rows, original total, unfinished page and retries only incomplete slots', async () => {
+  await upstream()
   reply = (s, r, n) => s === 'businessList' && r === '3' && n === 2 ? page(s, n, 52) : normalReply(s, r, n)
   const job = await submit(), done = await finish(job.jobId)
   const partial = (await archives()).find(e => e.query.interface === 'business_list' && e.query.rdjb === '3')
@@ -158,10 +231,10 @@ it('later-page inconsistency keeps first-page rows, original total, unfinished p
   const after = await archives()
   expect(after.find(e => e.query.id === oldId).query.status).toBe('partial')
   expect(after.filter(e => e.query.interface === 'business_list' && e.query.rdjb === '3')).toHaveLength(2)
-}, 30000)
+}, 65_000)
 
-it('cancel between pages stops requests, returns unfinished position and atomically writes no partial batch; resubmission succeeds', async () => {
-  upstream()
+postgresTest('cancel between pages stops requests, returns unfinished position and atomically writes no partial batch; resubmission succeeds', async () => {
+  await upstream()
   let release!: () => void, entered!: () => void
   const gate = new Promise<void>(resolve => { entered = resolve })
   reply = async (s, r, n) => {
@@ -169,30 +242,38 @@ it('cancel between pages stops requests, returns unfinished position and atomica
     return normalReply(s, r, n)
   }
   const job = await submit(); await gate
-  expect(await api(`/api/jobs/${job.jobId}`, 'DELETE')).toMatchObject({ cancelRequested: true })
-  release()
+  try {
+    expect(await api(`/api/jobs/${job.jobId}`, 'DELETE')).toMatchObject({ cancelRequested: true })
+  } finally {
+    release()
+  }
   const cancelled = await finish(job.jobId)
   expect(cancelled.state).toBe('cancelled')
+  expect.soft(calls.map(({ source, rdjb, page }) => [source, rdjb, page])).toEqual([
+    ['businessList', '1', 1], ['businessList', '2', 1], ['businessList', '3', 1],
+  ])
   expect(await api(`/api/task-center/${job.jobId}`)).toMatchObject({ outcome: null, reconcile: { targets: 1 }, reconcileCollection: { complete: 2, partial: 1, failed: 0, unknown: 1, unfinished: 2, positions: [{ source: 'businessList', rdjb: '3', page: 2 }, { source: 'queryList', rdjb: null, page: 1 }] } })
   expect(cancelled.result.collection.positions).toEqual(expect.arrayContaining([expect.objectContaining({ interface: 'business_list', rdjb: '3', unfinished: [{ source: 'businessList', rdjb: '3', page: 2 }] })]))
-  expect(calls.some(c => c.page === 2)).toBe(false)
   expect(await archives()).toHaveLength(0)
-  expect(db.select().from(schema.importBatch).all()).toHaveLength(0)
+  expect(await tableCount('import_batch')).toBe(0)
   reply = normalReply
   expect((await finish((await submit()).jobId)).result.relations).toBe(51)
-}, 30000)
+}, 65_000)
 
-it('historical success without page proof is preserved but never reused as complete', async () => {
-  upstream()
-  const seeded=submitNativePlatformQuery(db,{interface:'business_list',queryKey:USCC,rdjb:'3',queriedAt:new Date().toISOString(),status:'success',rawResponse:page('businessList',1),relations:[{sequenceNo:1,relationKey:'old',rawFields:{id:'old'}}]})
-  const old={id:seeded.queryId,rawResponse:page('businessList',1)}
+postgresTest('historical success without page proof is preserved but never reused as complete', async () => {
+  await upstream()
+  const rawResponse = page('businessList', 1)
+  const old = { id: await seedQuery({
+    queriedAt: new Date().toISOString(), status: 'success', rawResponse,
+    relations: [{ sequenceNo: 1, relationKey: 'old', rawFields: { id: 'old' } }],
+  }), rawResponse }
   const done = await finish((await submit()).jobId)
   expect(done.result.queries).toMatchObject({ network: 4, reused: 0 })
   expect((await archives()).find(e => e.query.id === old.id)).toMatchObject({ query: { status: 'success', rawResponse: old.rawResponse }, relations: [{ id: expect.any(Number), relationKey: 'old' }] })
-})
+}, 65_000)
 
-it.each(['maxCount', 'page', 'pageSize'])('missing %s stays incomplete and preserves original raw instead of inventing coverage', async field => {
-  upstream()
+postgresTest.each(['maxCount', 'page', 'pageSize'])('missing %s stays incomplete and preserves original raw instead of inventing coverage', async field => {
+  await upstream()
   reply = (s, r, n) => s === 'queryList' ? page(s, n, 0, { [field]: undefined }) : normalReply(s, r, n)
   const done = await finish((await submit()).jobId)
   const entry = (await archives()).find(e => e.query.interface === 'apply_list')
@@ -204,10 +285,10 @@ it.each(['maxCount', 'page', 'pageSize'])('missing %s stays incomplete and prese
   expect(evidence.failureReason).toBeTruthy()
   expect(done.result.counts.noRecord).toBe(0)
   expect(done.result.collection.complete).toBe(3)
-})
+}, 65_000)
 
-it('later-page timeout exhausts bounded retries, retains 50 rows and the actual unfinished page', async () => {
-  upstream()
+postgresTest('later-page timeout exhausts bounded retries, retains 50 rows and the actual unfinished page', async () => {
+  await upstream()
   reply = (s, r, n) => {
     if (s === 'businessList' && r === '3' && n === 2) throw new DOMException('issue299 upstream timeout', 'TimeoutError')
     return normalReply(s, r, n)
@@ -221,13 +302,13 @@ it('later-page timeout exhausts bounded retries, retains 50 rows and the actual 
   expect(evidence.pages[1].error.code).toBe('timeout')
   expect(done.result.collection.partial).toBe(1)
   expect(backoffs).toEqual([1000, 3000])
-}, 30000)
+}, 65_000)
 
-it('network retry and subsequent pages keep the submission credential snapshot after replacement', async () => {
-  upstream()
+postgresTest('network retry and subsequent pages keep the submission credential snapshot after replacement', async () => {
+  await upstream()
   let failures = 0
-  reply = (s, r, n) => {
-    updateCredential('sme-roster.miitCookie', 'session=issue299-replacement', { db, env: {} })
+  reply = async (s, r, n) => {
+    await setCookie('session=issue299-replacement')
     if (s === 'businessList' && r === '3' && n === 2 && failures++ === 0) throw new Error('issue299 transient network error')
     return normalReply(s, r, n)
   }
@@ -240,62 +321,72 @@ it('network retry and subsequent pages keep the submission credential snapshot a
   const evidence = JSON.parse(stored.find(e => e.query.rdjb === '3').query.rawResponse)
   expect(evidence.requestCount).toBe(3)
   expect(backoffs).toEqual([1000])
-}, 30000)
+}, 65_000)
 
-it('newer failed slot invalidates older complete cache without changing either historical query', async () => {
-  upstream()
+postgresTest('newer failed slot invalidates older complete cache without changing either historical query', async () => {
+  await upstream()
   await finish((await submit()).jobId)
   const before = await archives()
   const old = before.find(e => e.query.rdjb === '3')
-  const failure={id:submitNativePlatformQuery(db,{interface:'business_list',queryKey:USCC,rdjb:'3',queriedAt:new Date(Date.now()+1000).toISOString(),status:'failed',failureReason:'newer synthetic failure',rawResponse:'Explicit failed response'}).queryId}
+  const failureId = await seedQuery({
+    queriedAt: new Date(Date.now() + 1000).toISOString(), status: 'failed',
+    failureReason: 'newer synthetic failure', rawResponse: 'Explicit failed response',
+  })
   const retried = await finish((await submit()).jobId)
   expect(retried.result.queries).toMatchObject({ network: 1, reused: 3 })
   const after = await archives()
   expect(after.find(e => e.query.id === old.query.id)).toEqual(old)
-  expect(after.find(e => e.query.id === failure.id).query.failureReason).toBe('newer synthetic failure')
-}, 30000)
+  expect(after.find(e => e.query.id === failureId).query.failureReason).toBe('newer synthetic failure')
+}, 65_000)
 
-it('archive failure on row 51 rolls back the whole query/relation/decision batch, then retry commits', async () => {
-  upstream()
-  db.$client.exec("CREATE TEMP TRIGGER issue299_fail BEFORE INSERT ON platform_business_observation WHEN NEW.sequence_no = 51 BEGIN SELECT RAISE(ABORT, 'issue299 synthetic archive failure'); END")
+postgresTest('archive failure on row 51 rolls back the whole query/relation/decision batch, then retry commits', async () => {
+  await upstream()
+  await db.query('ALTER TABLE business.platform_business_observation ADD CONSTRAINT fixture_reject_row_51 CHECK (sequence_no <> 51)')
   try {
     const failed = await finish((await submit()).jobId)
     expect(failed.state).toBe('failed')
     expect(await archives()).toHaveLength(0)
-    expect(nativeRelationRows(db)).toHaveLength(0)
-    expect(db.select().from(schema.differenceReason).all()).toHaveLength(0)
-    expect(db.select().from(schema.importReceipt).all().length).toBeGreaterThan(0)
-  } finally { db.$client.exec('DROP TRIGGER issue299_fail') }
+    expect(await tableCount('platform_business_observation')).toBe(0)
+    expect(await tableCount('difference_reason')).toBe(0)
+    expect(await tableCount('import_receipt')).toBeGreaterThan(0)
+  } finally { await db.query('ALTER TABLE business.platform_business_observation DROP CONSTRAINT fixture_reject_row_51') }
   expect((await finish((await submit()).jobId)).result.relations).toBe(51)
-}, 30000)
+}, 65_000)
 
-it('missing later-page total cannot inherit earlier metadata and masquerade as complete', async () => {
-  upstream()
+postgresTest('missing later-page total cannot inherit earlier metadata and masquerade as complete', async () => {
+  await upstream()
   reply = (s, r, n) => s === 'businessList' && r === '3' && n === 2 ? page(s, n, 51, { maxCount: undefined }) : normalReply(s, r, n)
   await finish((await submit()).jobId)
   const entry = (await archives()).find(e => e.query.rdjb === '3')
   expect(entry.query.status).toBe('partial')
   expect(entry.relations).toHaveLength(50)
   expect(JSON.parse(entry.query.rawResponse)).toMatchObject({ completeness: 'partial', declaredTotal: 51, unfinished: [{ page: 2 }] })
-}, 30000)
+}, 65_000)
 
-it('immutable native archives reject a forged complete marker before cache replay', async () => {
-  upstream()
+postgresTest('immutable native archives reject a forged complete marker before cache replay', async () => {
+  await upstream()
   await finish((await submit()).jobId)
   const original = (await archives()).find(e => e.query.rdjb === '3')
   const corrupted = JSON.parse(original.query.rawResponse)
   corrupted.pages[1].raw = page('businessList', 2, 51, { pageSet: [{ id: 'DIFFERENT', qymc: '不同记录', tyshxydm: USCC }] })
   // Synthetic corruption stays in this isolated database only.
-  expect(()=>db.$client.prepare('UPDATE platform_archive_value SET bytes = ? WHERE id=(SELECT archive_id FROM platform_collection_archive_ref WHERE owner_id=(SELECT collection_id FROM platform_legacy_query_alias WHERE old_id=?) AND field=?)').run(Buffer.from(JSON.stringify(corrupted)),original.query.id,'rawResponse')).toThrow()
+  await expect(db.query(`
+    UPDATE business.platform_archive_value SET bytes = $1
+    WHERE id = (
+      SELECT r.archive_id FROM business.platform_collection_archive_ref r
+      JOIN business.platform_legacy_query_alias a ON a.collection_id = r.owner_id
+      WHERE a.old_id = $2 AND r.field = 'rawResponse'
+    )
+  `, [Buffer.from(JSON.stringify(corrupted)), original.query.id])).rejects.toThrow('platform_archive_value is append-only')
   const retry = await finish((await submit()).jobId)
   expect(retry.result.queries).toMatchObject({ network: 0, reused: 4 })
   const after = await archives()
   expect(after.find(e => e.query.id === original.query.id).query.rawResponse).toBe(original.query.rawResponse)
   expect(after.filter(e => e.query.rdjb === '3')).toHaveLength(1)
-}, 30000)
+}, 65_000)
 
-it('four failed slots remain four failed collection slots through public task list and detail, while report targets stay one', async () => {
-  upstream(); upstreamStatus = 400; reply = () => 'synthetic upstream failure'
+postgresTest('four failed slots remain four failed collection slots through public task list and detail, while report targets stay one', async () => {
+  await upstream(); upstreamStatus = 400; reply = () => 'synthetic upstream failure'
   const job = await submit(), done = await finish(job.jobId)
   expect(done.result.collection).toMatchObject({ complete: 0, partial: 0, failed: 4, unknown: 0 })
   const detail = await api(`/api/task-center/${job.jobId}`)
@@ -308,19 +399,30 @@ it('four failed slots remain four failed collection slots through public task li
   const list = await api('/api/task-center?tab=sme-roster&group=platform')
   expect(list.rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
   expect(calls).toHaveLength(4)
-})
+}, 65_000)
 
-function historicalSummaryJob() {
+async function setJobResult(id: string, result: object) {
+  await db.query('UPDATE business.job SET result = $1 WHERE id = $2', [JSON.stringify(result), id])
+}
+
+async function getJobResult(id: string) {
+  return (await db.query<{ result: string }>('SELECT result FROM business.job WHERE id = $1', [id])).rows[0]?.result
+}
+
+async function historicalSummaryJob() {
   const id=newJobId(),result={counts:{total:1,needsReview:1,queryFailed:0,notQueried:0},collection:{complete:4,partial:0,failed:0,unknown:0,positions:Array.from({length:4},()=>({unfinished:[]}))}}
-  db.insert(schema.job).values({id,kind:'reconcile',state:'done',params:{titles:['specialized_sme']},progress:{done:1,total:1},result,createdAt:'2026-06-01T00:00:00Z'}).run()
+  await db.query(`
+    INSERT INTO business.job (id,kind,state,params,progress,result,created_at)
+    VALUES ($1,'reconcile','done','{"titles":["specialized_sme"]}','{"done":1,"total":1}',$2,'2026-06-01T00:00:00Z')
+  `, [id, JSON.stringify(result)])
   return {job:{jobId:id},done:{result}}
 }
 
-it('historical task reports without collection stay explicitly unknown through public list and detail', async () => {
-  upstream()
-  const {job,done}=historicalSummaryJob()
+postgresTest('historical task reports without collection stay explicitly unknown through public list and detail', async () => {
+  await upstream()
+  const { job, done } = await historicalSummaryJob()
   const { collection: _collection, ...historicalReport } = done.result
-  db.update(schema.job).set({ result: historicalReport }).where(eq(schema.job.id, job.jobId)).run()
+  await setJobResult(job.jobId, historicalReport)
   const detail = await api(`/api/task-center/${job.jobId}`)
   expect(detail.outcome).toBeNull()
   expect(detail.reconcile).toMatchObject({ targets: 1, needsReview: 1 })
@@ -328,13 +430,13 @@ it('historical task reports without collection stay explicitly unknown through p
   expect((await api('/api/task-center?tab=sme-roster&group=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
 })
 
-it('task summary bounds locations to 50 while retaining the actual unfinished total and excludes page raw', async () => {
-  upstream()
-  const {job,done}=historicalSummaryJob()
-  db.update(schema.job).set({ result: { ...done.result, raw: 'PRIVATE_RAW'.repeat(100000), collection: {
+postgresTest('task summary bounds locations to 50 while retaining the actual unfinished total and excludes page raw', async () => {
+  await upstream()
+  const {job,done}= await historicalSummaryJob()
+  await setJobResult(job.jobId, { ...done.result, raw: 'PRIVATE_RAW'.repeat(100000), collection: {
     complete: 0, partial: 0, failed: 61, unknown: 0,
     positions: Array.from({ length: 61 }, (_, index) => ({ unfinished: [{ source: 'businessList', rdjb: '3', page: index + 1 }], pages: [{ raw: 'PRIVATE_PAGE_RAW' }] })),
-  } } }).where(eq(schema.job.id, job.jobId)).run()
+  } })
   const detail = await api(`/api/task-center/${job.jobId}`)
   expect(detail.outcome).toBeNull()
   expect(detail.reconcile).toMatchObject({ targets: 1, needsReview: 1 })
@@ -347,13 +449,13 @@ it('task summary bounds locations to 50 while retaining the actual unfinished to
   expect((await api('/api/task-center?tab=sme-roster&group=platform')).rows.find((t: { id: string }) => t.id === job.jobId).reconcileCollection).toEqual(detail.reconcileCollection)
 })
 
-it('malformed historical collection scalars stay unknown without transporting nested raw objects', async () => {
-  upstream()
-  const {job,done}=historicalSummaryJob()
-  db.update(schema.job).set({ result: { ...done.result, collection: {
+postgresTest('malformed historical collection scalars stay unknown without transporting nested raw objects', async () => {
+  await upstream()
+  const {job,done}= await historicalSummaryJob()
+  await setJobResult(job.jobId, { ...done.result, collection: {
     complete: { raw: 'PRIVATE_NESTED_RAW'.repeat(100000) }, partial: 0, failed: 0, unknown: 0,
     positions: [{ unfinished: [{ source: 'queryList', rdjb: null, page: { raw: 'PRIVATE_PAGE_RAW'.repeat(100000) } }] }],
-  } } }).where(eq(schema.job.id, job.jobId)).run()
+  } })
   const detail = await api(`/api/task-center/${job.jobId}`)
   expect(detail.reconcileCollection).toEqual({ complete: null, partial: null, failed: null, unknown: null, unfinished: null, positions: [], positionsTruncated: false })
   expect(detail.outcome).toBeNull()
@@ -398,27 +500,27 @@ const invalidHistoricalCollections: { name: string; collection: unknown }[] = [
   { name: 'invalid range beyond preview', collection: { complete: 0, partial: 1, failed: 0, unknown: 0, positions: [{ unfinished: [...Array.from({ length: 51 }, () => pendingRange), 'x'] }] } },
 ]
 
-it('historical malformed collection matrix stays unknown through public list and detail without filtering bad entries into completion', async () => {
-  upstream()
-  const {job,done}=historicalSummaryJob()
+postgresTest('historical malformed collection matrix stays unknown through public list and detail without filtering bad entries into completion', async () => {
+  await upstream()
+  const {job,done}= await historicalSummaryJob()
   for (const { name, collection } of invalidHistoricalCollections) {
-  db.update(schema.job).set({ result: { ...done.result, collection } }).where(eq(schema.job.id, job.jobId)).run()
-  const before = db.select({ result: schema.job.result }).from(schema.job).where(eq(schema.job.id, job.jobId)).get()?.result
+  await setJobResult(job.jobId, { ...done.result, collection })
+  const before = await getJobResult(job.jobId)
   const detail = await publicSummaryPair(job.jobId)
   expect(detail.reconcileCollection, name).toEqual(unknownCollection)
   expect(detail.outcome).toBeNull()
   expect(detail.reconcile).toMatchObject({ targets: 1, needsReview: 1 })
-  expect(db.select({ result: schema.job.result }).from(schema.job).where(eq(schema.job.id, job.jobId)).get()?.result).toEqual(before)
+  expect(await getJobResult(job.jobId)).toEqual(before)
   }
 })
 
-it.each([
+postgresTest.each([
   { name: 'empty positions', collection: { complete: 0, partial: 0, failed: 0, unknown: 0, positions: [] } },
   { name: 'four complete slots', collection: { ...originalCollection, positions: emptySlots } },
 ])('only validated $name report zero unfinished ranges through public list and detail', async ({ collection }) => {
-  upstream()
-  const {job,done}=historicalSummaryJob()
-  db.update(schema.job).set({ result: { ...done.result, collection } }).where(eq(schema.job.id, job.jobId)).run()
+  await upstream()
+  const {job,done}= await historicalSummaryJob()
+  await setJobResult(job.jobId, { ...done.result, collection })
   const detail = await publicSummaryPair(job.jobId)
   const { positions: _positions, ...counts } = collection
   expect(detail.reconcileCollection).toEqual({ ...counts, unfinished: 0, positions: [], positionsTruncated: false })
@@ -426,13 +528,13 @@ it.each([
   expect(detail.reconcile).toMatchObject({ targets: 1, needsReview: 1 })
 })
 
-it.each([50, 51])('validated %i ranges preserve the full count and at most 50 scopes through public list and detail', async count => {
-  upstream()
-  const {job,done}=historicalSummaryJob()
-  db.update(schema.job).set({ result: { ...done.result, collection: {
+postgresTest.each([50, 51])('validated %i ranges preserve the full count and at most 50 scopes through public list and detail', async count => {
+  await upstream()
+  const {job,done}= await historicalSummaryJob()
+  await setJobResult(job.jobId, { ...done.result, collection: {
     complete: 0, partial: 1, failed: 0, unknown: 0,
     positions: [{ unfinished: Array.from({ length: count }, (_, index) => ({ ...pendingRange, page: index + 1 })) }],
-  } } }).where(eq(schema.job.id, job.jobId)).run()
+  } })
   const detail = await publicSummaryPair(job.jobId)
   expect(detail.reconcileCollection).toMatchObject({ complete: 0, partial: 1, unfinished: count, positionsTruncated: count > 50 })
   expect(detail.reconcileCollection?.positions).toHaveLength(50)

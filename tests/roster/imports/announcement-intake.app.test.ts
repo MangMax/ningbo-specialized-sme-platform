@@ -2,14 +2,20 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, test } from 'vitest'
+import pg from 'pg'
 import { nativeAppAdapter } from '../../support/native-app'
 import { createRosterImportClient, type RosterImportRequest, type SupplementAnnouncementRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const dir = mkdtempSync(join(tmpdir(), 'announcement-intake-'))
 const token = 'isolated-intake-test'
 const app = nativeAppAdapter({ dir, token })
-beforeAll(() => app.start())
+let database: pg.Pool | undefined
+beforeAll(async () => {
+  await app.start()
+  database = new pg.Pool({ connectionString: app.postgresUrl })
+}, 90_000)
 afterAll(async () => {
+  await database?.end()
   await app.close()
   rmSync(dir, { recursive: true, force: true })
 })
@@ -76,11 +82,11 @@ test('preserves original rows before a reviewed supplement and retains shared so
     submit(intake + '/supplement', review),
   ])
   expect(receipt).toEqual(retry)
-  expect(receipt).toMatchObject({ status: 'supplemented', owners: [target.id, target.id + 1] })
   if (receipt.status !== 'supplemented') throw new Error(JSON.stringify(receipt))
   await submit(intake + '/supplement', { ...review, basis: '不同决定' }, 409)
   const { rows } = await get(core)
   expect(rows).toMatchObject([{ id: target.id, name: '核对对象', uscc: '91330226MA2CL6FP2U' }, { name: '另一企业', uscc: null }])
+  expect(receipt.owners).toEqual(rows.map((row: { id: number }) => row.id))
   const sources = await get(core + '/' + target.id + '/sources')
   expect(sources).toMatchObject([{ channel: '直接添加' }, { channel: '经信局', listType: '公布名单' }])
   expect((await get(core + '?sourceId=' + sources[1].id)).rows.map((row: { id: number }) => row.id)).toEqual(receipt.owners)
@@ -93,7 +99,7 @@ test('preserves original rows before a reviewed supplement and retains shared so
   expect((await get(core + '?includeRemoved=true')).rows).toHaveLength(2)
   await submit(core + '/' + target.id + '/membership', { expectedRevision: 2, removedReason: null }, 200, 'PATCH')
   expect((await get(core)).rows).toHaveLength(2)
-})
+}, 15_000)
 
 async function stageSubject(name: string, batchSeq: number) {
   const request: RosterImportRequest = {
@@ -113,10 +119,10 @@ test('audits reviewed name and USCC changes and keeps the prior name tied to the
   const owner = await submit(core, { name })
   const path = `/api/roster/enterprises/${owner.id}`
   const before = await get(path + '/profile')
-  const revisionRows = () => app.db.$client.prepare(`SELECT source_version AS sourceVersion, fact_changed AS factChanged
-    FROM evidence_revision_113 WHERE enterprise_id=? AND source_kind='identity' ORDER BY id`).all(owner.id)
-  const formerNames = () => app.db.$client.prepare(`SELECT a.name, f.uscc, f.renamed_year AS renamedYear
-    FROM enterprise_alias a JOIN enterprise_former_name f ON f.alias_id=a.id WHERE a.enterprise_id=?`).all(owner.id)
+  const revisionRows = async () => (await database!.query(`SELECT source_version AS "sourceVersion", fact_changed::int AS "factChanged"
+    FROM business.evidence_revision_113 WHERE enterprise_id=$1 AND source_kind='identity' ORDER BY id`, [owner.id])).rows
+  const formerNames = async () => (await database!.query(`SELECT a.name, f.uscc, f.renamed_year AS "renamedYear"
+    FROM business.enterprise_alias a JOIN business.enterprise_former_name f ON f.alias_id=a.id WHERE a.enterprise_id=$1`, [owner.id])).rows
 
   const addCode = await stageSubject(name, 11)
   const basis = '已核对旧名、规范名与统一社会信用代码属于同一主体'
@@ -136,8 +142,8 @@ test('audits reviewed name and USCC changes and keeps the prior name tied to the
   const firstAudit = await get(path + '/profile-history')
   expect(firstAudit).toMatchObject({ total: 1, rows: [{ before: { name, uscc: null }, after: { name: newName, uscc },
     basis, retainedAliasId: alias.id, aliasCreated: true, beforeVersion: before.version, afterVersion: renamed.version }] })
-  expect(formerNames()).toEqual([{ name, uscc, renamedYear: null }])
-  expect(revisionRows()).toEqual([{ sourceVersion: `profile:${firstAudit.rows[0].id}`, factChanged: 1 }])
+  expect(await formerNames()).toEqual([{ name, uscc, renamedYear: null }])
+  expect(await revisionRows()).toEqual([{ sourceVersion: `profile:${firstAudit.rows[0].id}`, factChanged: 1 }])
 
   const clearCode = await stageSubject(name, 12)
   await submit(clearCode.supplement, { sourceDigest: clearCode.sourceDigest, basis: '复核确认应暂留空统代', rows: [
@@ -147,12 +153,12 @@ test('audits reviewed name and USCC changes and keeps the prior name tied to the
   const cleared = await get(path + '/profile-history')
   expect(cleared).toMatchObject({ total: 2, rows: [{ before: { name: newName, uscc }, after: { name: newName, uscc: null },
     retainedAliasId: null, aliasCreated: false }, firstAudit.rows[0]] })
-  expect(formerNames()).toEqual([{ name, uscc: null, renamedYear: null }])
-  expect(revisionRows()).toEqual([
+  expect(await formerNames()).toEqual([{ name, uscc: null, renamedYear: null }])
+  expect(await revisionRows()).toEqual([
     { sourceVersion: `profile:${firstAudit.rows[0].id}`, factChanged: 1 },
     { sourceVersion: `profile:${cleared.rows[0].id}`, factChanged: 1 },
   ])
-})
+}, 15_000)
 
 test('rejects reviewed identity collisions with a current name, confirmed former name or USCC', async () => {
   const name = '冲突核对原名', otherName = '已占用的现名', formerName = '已占用的旧名', uscc = '91330211255994457P'
@@ -179,11 +185,11 @@ test('rejects reviewed identity collisions with a current name, confirmed former
 })
 
 test('updates one registered address and one operating address with the enterprise region and industry', async () => {
-  app.db.$client.exec(`
-    INSERT INTO enterprise_region(code,name,parent_code,level) VALUES
+  await database!.query(`
+    INSERT INTO business.enterprise_region(code,name,parent_code,level) VALUES
       ('330200','宁波市',NULL,1),('330203','海曙区','330200',2),('330203001','月湖街道','330203',3),
       ('330206','北仑区','330200',2),('330206001','新碶街道','330206',3);
-    INSERT INTO enterprise_industry(code,input_id,name,parent_code,level) VALUES
+    INSERT INTO business.enterprise_industry(code,input_id,name,parent_code,level) VALUES
       ('C','address-test-C','制造业',NULL,0),('34','address-test-34','通用设备制造业','C',1),
       ('344','address-test-344','泵阀制造','34',2),('3444','address-test-3444','液压设备制造','344',3);
   `)
@@ -213,11 +219,11 @@ test('updates one registered address and one operating address with the enterpri
 })
 
 test('filters and sorts every enterprise column across the full directory before pagination', async () => {
-  app.db.$client.exec(`
-    INSERT INTO enterprise_region(code,name,parent_code,level) VALUES
+  await database!.query(`
+    INSERT INTO business.enterprise_region(code,name,parent_code,level) VALUES
       ('990000','排序市',NULL,1),('990001','Z区','990000',2),('990001001','Y镇','990001',3),
       ('990002','A区','990000',2),('990002001','B镇','990002',3);
-    INSERT INTO enterprise_industry(code,input_id,name,parent_code,level) VALUES
+    INSERT INTO business.enterprise_industry(code,input_id,name,parent_code,level) VALUES
       ('X','sort-X','测试门类',NULL,0),('98','sort-98','测试大类', 'X',1),
       ('981','sort-981','测试中类','98',2),('9811','sort-9811','Z制造','981',3),('9812','sort-9812','A制造','981',3);
   `)
@@ -263,11 +269,11 @@ test('filters and sorts every enterprise column across the full directory before
 })
 
 test('applies ordered mixed-direction sorts to the full enterprise result before paging', async () => {
-  app.db.$client.exec(`
-    INSERT INTO enterprise_region(code,name,parent_code,level) VALUES
+  await database!.query(`
+    INSERT INTO business.enterprise_region(code,name,parent_code,level) VALUES
       ('980000','多级排序市',NULL,1),('980001','多级排序区','980000',2),
       ('980001001','A街道','980001',3),('980001002','B街道','980001',3);
-    INSERT INTO enterprise_industry(code,input_id,name,parent_code,level) VALUES
+    INSERT INTO business.enterprise_industry(code,input_id,name,parent_code,level) VALUES
       ('Y','multi-Y','测试门类',NULL,0),('97','multi-97','测试大类','Y',1),
       ('971','multi-971','测试中类','97',2),('9711','multi-9711','Z制造','971',3),('9712','multi-9712','A制造','971',3);
   `)

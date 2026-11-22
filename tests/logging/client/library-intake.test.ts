@@ -1,3 +1,4 @@
+import { prepareRuntimeLogs } from '../fixtures/runtime'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -6,20 +7,19 @@ import { createApp } from 'vue'
 import { createPinia, disposePinia } from 'pinia'
 import { PiniaColada, useQueryCache, useMutationCache } from '@pinia/colada'
 // Uses the actual integrated catalog, without a test-only extension.
-import { applicationLogs, closeApplicationLogging, initializeWorkerLogging, LOG_DEFAULTS } from '../../../layers/core/lib/logging'
+import { applicationLogs, closeApplicationLogging, LOG_DEFAULTS } from '../../../layers/core/lib/logging'
 import { createClientLogIntake } from '../../../layers/core/server/utils/client-log-intake'
 import { createClientErrorTransport } from '../../../layers/core/lib/client-logging/transport'
 import { installColadaLogging } from '../../../layers/core/lib/client-logging/colada'
 
-const dirs: string[] = [], previous = process.env.NUXT_LOG_DIR
-beforeEach(() => {
-  const dir = mkdtempSync(join(tmpdir(), 'client-library180-')); dirs.push(dir); process.env.NUXT_LOG_DIR = dir
-  initializeWorkerLogging()
+const dirs: string[] = []
+let runtime: Awaited<ReturnType<typeof prepareRuntimeLogs>>
+beforeEach(async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'client-library180-')); dirs.push(dir)
+  runtime = await prepareRuntimeLogs(dir)
 })
 afterEach(async () => {
-  await closeApplicationLogging(); vi.unstubAllGlobals()
-  if (previous === undefined) delete process.env.NUXT_LOG_DIR
-  else process.env.NUXT_LOG_DIR = previous
+  await runtime?.close(); vi.unstubAllGlobals()
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 const envelope = (signal: string, extra = {}) => ({ event: { kind: 'library_signal', signal, page: 'files', ...extra } })

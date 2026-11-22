@@ -8,17 +8,15 @@ import { platformBusinessObservation as observation, platformCollection as colle
   platformLegacyQueryAlias as queryAlias, platformLegacyRelationAlias as relationAlias,
   platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { projectAnnualFinalQualification, validAnnualDecisionQuery, type AnnualWriteScope, type AnnualWriteStep } from './annual-correspondence'
-import { ANNUAL_COMPARISON_RAW_LIMIT } from './annual-process-target-sources'
-import { annualScopeRecordIds, projectAnnualWriteScope } from './annual-correspondence-read'
-import { normalizedUscc } from './event-archive-discovery'
-import {
-  prepareAnnualObservations, projectAnnualProcess, scopeAnnualEvent,
-  type AnnualEventScope, type AnnualObservationFacts, type AnnualSourceRows,
-} from './event-annual-process-read'
+import { projectAnnualFinalQualification, validAnnualDecisionQuery, type AnnualWriteScope, type AnnualWriteStep } from './annual-correspondence-contract'
+import { ANNUAL_COMPARISON_RAW_LIMIT } from './annual-process-limits'
+import { annualScopeRecordIds, projectAnnualWriteScope } from './annual-correspondence-projection'
+import { normalizedUscc } from './event-archive-discovery-model'
+import { type AnnualSourceRows } from './event-annual-process-read'
+import { prepareAnnualObservations, projectAnnualProcess, scopeAnnualEvent, type AnnualEventScope, type AnnualObservationFacts } from './event-annual-process-model'
 import {
   readPostgresPlatformBusinessCorrespondences, readPostgresPlatformBusinessGroups, readPostgresPlatformBusinessMetadata,
-} from './platform-business-record-read'
+} from './platform-business-record-postgres'
 import { readPostgresCorrespondenceRefs } from './record-correspondence-postgres-refs'
 import { readPostgresObservationComparisonFacts } from './record-correspondence-target-postgres'
 

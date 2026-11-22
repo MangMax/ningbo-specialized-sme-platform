@@ -1,11 +1,7 @@
-import { requestLogContext } from '../../../../core/lib/logging'
-import { withEnterpriseReadSignal } from '../../../../core/server/utils/enterprise-read-signal'
-import { readRecognitions } from '../../utils/recognition-read'
-import { useDb } from '@db'
-import { setHeader } from 'h3'
 import { parseRosterRecognitionQuery } from '../../utils/roster-read-query'
 import { readPostgresRecognitions } from '../../utils/postgres-recognition-read'
 import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
+import { withEnterpriseReadSignal } from '../../../../core/server/utils/enterprise-read-signal'
 
 /**
  * **首次认定清单**(契约 §7.5,RL-08)。
@@ -64,17 +60,10 @@ defineRouteMeta({
   },
 })
 
-function recognitionOptions(query: Record<string, unknown>) {
-  return { ...parseRosterRecognitionQuery(query) }
-}
-export default defineEventHandler((event) => {
-  const filter = recognitionOptions(getQuery(event))
+export default defineEventHandler(event => {
+  const filter = parseRosterRecognitionQuery(getQuery(event))
   return withEnterpriseReadSignal(event, async signal => {
     if (signal.aborted) return
-    const pg = usePostgresRosterDb()
-    if (pg) return readPostgresRecognitions(pg, filter)
-    const result = await readRecognitions(useDb(), filter, signal, undefined, requestLogContext(event))
-    if (Buffer.isBuffer(result)) setHeader(event, 'content-type', 'application/json')
-    return result
+    return readPostgresRecognitions(usePostgresRosterDb(), filter)
   })
 })

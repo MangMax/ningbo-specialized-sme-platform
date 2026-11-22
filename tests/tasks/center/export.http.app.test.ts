@@ -1,21 +1,24 @@
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
-import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { execFileSync } from 'node:child_process'
-import { eq } from 'drizzle-orm'
+import pg from 'pg'
 import { newJobId } from '../../../layers/core/lib/job'
 import ExcelJS from 'exceljs'
 import { initializeDb, schema as s } from '../../../db/client'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 
 const dir = mkdtempSync(join(tmpdir(), 'task-export-121-'))
 const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
 const headers = { 'content-type': 'application/json', authorization: 'Bearer synthetic-121' }
-let serverPid: number | undefined
+const exportDir = join(dir, 'exports')
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+let pool: pg.Pool
 let baseUrl: string, stop: () => Promise<void>
 const request = (path: string, init?: RequestInit) => fetch(baseUrl + path, init)
 const read = async (path: string, authorized = true) => (await request(path, { headers: authorized ? headers : undefined })).json()
@@ -32,17 +35,37 @@ async function terminal(id: string) {
   }
   throw new Error('No terminal task ' + id)
 }
+async function blockExportSnapshot() {
+  const blocker = await pool.connect()
+  try {
+    await blocker.query('BEGIN')
+    await blocker.query('LOCK TABLE business.enterprise IN ACCESS EXCLUSIVE MODE')
+  } catch (error) {
+    blocker.release(true)
+    throw error
+  }
+  return async () => {
+    try { await blocker.query('ROLLBACK') }
+    finally { blocker.release() }
+  }
+}
+async function waitForBlockedSnapshot(id: string) {
+  await expect.poll(async () => (await pool.query(`
+    SELECT EXISTS (
+      SELECT FROM pg_locks WHERE relation='business.enterprise'::regclass AND NOT granted
+    ) AS waiting
+  `)).rows[0].waiting, { timeout: 15_000 }).toBe(true)
+  expect((await read('/api/task-center/' + id)).state).toBe('running')
+}
 async function startService(apiToken: string | null = 'synthetic-121') {
   const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
   baseUrl = `http://127.0.0.1:${port}`
-  const env: NodeJS.ProcessEnv = { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') }
-  delete env.NUXT_API_TOKEN
-  if (apiToken !== null) env.NUXT_API_TOKEN = apiToken
+  const env: NodeJS.ProcessEnv = { ...process.env, ...postgres!.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_ROSTER_EXPORT_DIR: exportDir, NUXT_DB_READONLY: '0', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') }
+  env.NUXT_API_TOKEN = apiToken ?? ''
   const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env })
-  serverPid = child.pid
   let output = ''; for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-6000) })
   stop = () => stopOwnedChild(child)
-  try { await waitForHttp(baseUrl + '/api/jobs/kinds', { child, timeoutMs: 60000 }) } catch (e) { throw new Error(String(e) + output) }
+  try { await waitForHttp(baseUrl + '/api/health', { child, timeoutMs: 60000 }) } catch (e) { throw new Error(String(e) + output) }
 }
 beforeAll(async () => {
   const enterprise = db.insert(s.enterprise).values({ name: '合成现名', nameNorm: '合成现名', usccNorm: '001234567890123456', city: '宁波市' }).returning().get()
@@ -50,10 +73,21 @@ beforeAll(async () => {
   const record = db.insert(s.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode: 'little_giant', nameRaw: '合成旧名' }).returning().get()
   const event = db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year: new Date().getFullYear() }).returning().get()
   db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic.xlsx', attachment: '合成公布名单' }).run()
+  installLeadListSchema(db.$client)
+  postgres = await postgresRuntimeFixture({ dir, sourcePath: dbPath })
+  pool = new pg.Pool({ connectionString: postgres.url })
   await startService()
 }, 90000)
 
-afterAll(async () => { await stop?.(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => {
+  try { await stop?.() }
+  finally {
+    await pool?.end()
+    postgres?.close()
+    db.$client.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+}, 45_000)
 
 it('discovers module and subgroup filters in development OpenAPI and lists all startup JobSpecs', async () => {
   const contract = await readDevelopmentDiscovery()
@@ -101,12 +135,17 @@ it('discovers a real export in both tabs and downloads the named workbook throug
   expect({ 8: row.getCell(8).value, 9: row.getCell(9).value, 11: row.getCell(11).value, 12: row.getCell(12).value }).toEqual(expectedDisplay)
   expect(row.getCell(9).value).toBe('合成旧名')
   expect(row.getCell(11).value).not.toContain('现已更名为')
-})
+}, 30_000)
 
 it('rechecks artifact availability and permissions without leaking raw results or treating history as a downloadable file', async () => {
   const id = await submit('availability'), done = await terminal(id)
-  const raw = db.select().from(s.job).where(eq(s.job.id, id)).get()!
-  db.update(s.job).set({ params: { ...raw.params, token: 'PRIVATE_TOKEN' }, result: { ...(raw.result as object), raw: 'PRIVATE_RAW'.repeat(100000), privatePath: '/Users/private/export', artifact: { ...done.export.artifact, filename: '/Users/private/export.xlsx', downloadUrl: 'https://invalid.example/PRIVATE_TOKEN' } } }).where(eq(s.job.id, id)).run()
+  const { rows: [raw] } = await pool.query('SELECT params, result FROM business.job WHERE id = $1', [id])
+  const result = JSON.parse(raw.result)
+  await pool.query('UPDATE business.job SET params=$1,result=$2 WHERE id=$3', [
+    JSON.stringify({ ...JSON.parse(raw.params), token: 'PRIVATE_TOKEN' }),
+    JSON.stringify({ ...result, raw: 'PRIVATE_RAW'.repeat(100000), privatePath: '/Users/private/export', artifact: { ...done.export.artifact, filename: '/Users/private/export.xlsx', downloadUrl: 'https://invalid.example/PRIVATE_TOKEN' } }),
+    id,
+  ])
   const unauthorized = await read('/api/task-center/' + id, false)
   expect(unauthorized.export).toMatchObject({ canDownload: false, canRegenerate: false, artifact: { filename: 'current-little_giant.xlsx', downloadUrl: '/api/job-artifacts/' + id } })
   expect((await request('/api/job-artifacts/' + id)).status).toBe(401)
@@ -117,11 +156,13 @@ it('rechecks artifact availability and permissions without leaking raw results o
     for (const secret of ['PRIVATE_', '/Users/', 'invalid.example', '"params"', '"raw"']) expect(body).not.toContain(secret)
     expect(body.length).toBeLessThan(16000)
   }
-  db.update(s.job).set({ result: { ...(raw.result as any), artifact: { ...done.export.artifact, expiresAt: '2000-01-01T00:00:00Z' } } }).where(eq(s.job.id, id)).run()
+  await pool.query('UPDATE business.job SET result=$1 WHERE id=$2', [
+    JSON.stringify({ ...result, artifact: { ...done.export.artifact, expiresAt: '2000-01-01T00:00:00Z' } }), id,
+  ])
   expect(await read('/api/task-center/' + id)).toMatchObject({ state: 'done', export: { canDownload: false, canRegenerate: true, artifact: { availability: 'expired' } } })
   expect((await request('/api/job-artifacts/' + id, { headers })).status).toBe(410)
   const missing = await submit('missing'), second = await terminal(missing)
-  rmSync(join(dbPath + '.exports', missing + '.xlsx'))
+  rmSync(join(exportDir, missing + '.xlsx'))
   expect(await read('/api/task-center/' + missing)).toMatchObject({ state: 'done', export: { canDownload: false, artifact: { availability: 'missing' } } })
   expect((await request(second.export.artifact.downloadUrl, { headers })).status).toBe(404)
   const regenerated = await submit('new-generation', { regenerateOf: id })
@@ -130,19 +171,13 @@ it('rechecks artifact availability and permissions without leaking raw results o
   expect(summary).toMatchObject({ state: 'done', export: { regenerateOf: id, canRegenerate: true }, capabilities: { retry: false } })
   expect(summary.capabilities.reason).toContain('重新生成')
   expect(await submit('new-generation', { regenerateOf: id })).toBe(regenerated)
-})
+}, 45_000)
 
 it('keeps export cancellation pending until terminal and offers explicit regeneration after a real execution failure', async () => {
-  const id = await submit('cancel-running')
-  let pid: number | undefined
-  for (let n = 0; n < 100 && !pid; n++) {
-    const line = execFileSync('ps', ['-Ao', 'pid=,ppid=,args='], { encoding: 'utf8' }).split('\n').find(l => Number(l.trim().split(/\s+/)[1]) === serverPid && l.includes('/current-export-worker.mjs'))
-    if (line) pid = Number(line.trim().split(/\s+/)[0])
-    else await new Promise(r => setTimeout(r, 10))
-  }
-  expect(pid).toBeGreaterThan(0)
-  process.kill(pid!, 'SIGSTOP')
+  const release = await blockExportSnapshot()
   try {
+    const id = await submit('cancel-running')
+    await waitForBlockedSnapshot(id)
     const running = await read('/api/task-center/' + id)
     expect(running).toMatchObject({ state: 'running', export: { canDownload: false, canRegenerate: false } })
     const queuedId = await submit('cancel-queued')
@@ -156,22 +191,25 @@ it('keeps export cancellation pending until terminal and offers explicit regener
     expect(await accepted.json()).toMatchObject({ cancelRequested: true, task: { state: 'running' } })
     expect(await terminal(id)).toMatchObject({ state: 'cancelled', export: { artifact: null, canDownload: false, canRegenerate: true }, capabilities: { cancel: false, retry: false } })
     expect((await request('/api/job-artifacts/' + id, { headers })).status).toBe(404)
-  } finally { try { process.kill(pid!, 'SIGCONT') } catch {} }
+  } finally { await release() }
   // A real Excel cell-limit failure, not an invented frontend terminal state.
-  db.update(s.enterprise).set({ name: '超'.repeat(33000) }).run()
+  await pool.query('UPDATE business.enterprise SET name=$1', ['超'.repeat(33000)])
   const failed = await submit('cell-limit'), summary = await terminal(failed)
   expect(summary).toMatchObject({ state: 'failed', export: { artifact: null, canDownload: false, canRegenerate: true }, capabilities: { retry: false } })
   expect(summary.error).toContain('重新生成')
   expect((await request('/api/task-center/' + failed + '/retry', { method: 'POST', headers })).status).toBe(409)
   expect((await request('/api/job-artifacts/' + failed, { headers })).status).toBe(404)
-})
+}, 45_000)
 
 
 it('restores completed artifacts and interrupted history through the task center after a real service restart', async () => {
   const completed = await submit('first'), before = await terminal(completed)
   await stop()
   const interrupted = newJobId()
-  db.insert(s.job).values({ id: interrupted, kind: 'current-roster-export', state: 'running', params: { titleCode: 'little_giant', clientRequestId: 'interrupted' }, progress: { done: 1, total: 5 } }).run()
+  await pool.query(`
+    INSERT INTO business.job(id,kind,state,params,progress,created_at)
+    VALUES ($1,'current-roster-export','running','{"titleCode":"little_giant","clientRequestId":"interrupted"}','{"done":1,"total":5}',$2)
+  `, [interrupted, new Date().toISOString()])
   await startService()
   expect(await read('/api/task-center/' + interrupted)).toMatchObject({ state: 'failed', export: { artifact: null, canDownload: false, canRegenerate: true } })
   expect((await read('/api/task-center/' + interrupted)).error).toContain('重启')
@@ -185,7 +223,7 @@ it('restores completed artifacts and interrupted history through the task center
 }, 90000)
 
 it('cross-site and missing-marker requests retain the external REST token path', async () => {
-  db.update(s.enterprise).set({ name: '合成现名' }).run()
+  await pool.query('UPDATE business.enterprise SET name=$1', ['合成现名'])
   for (const [name, browser] of Object.entries<Record<string, string>>({
     crossSite: { 'x-task-center-browser': '1', 'sec-fetch-site': 'cross-site', origin: 'http://evil.invalid' },
     missingMarker: { 'sec-fetch-site': 'same-origin', origin: baseUrl },
@@ -199,7 +237,7 @@ it('cross-site and missing-marker requests retain the external REST token path',
     await terminal(id)
     expect(await read('/api/task-center/' + id)).toMatchObject({ export: { canDownload: true, canRegenerate: true } })
   }
-})
+}, 40_000)
 
 it('default same-origin browser flow submits views cancels regenerates and downloads without API token', async () => {
   await stop()
@@ -236,16 +274,10 @@ it('default same-origin browser flow submits views cancels regenerates and downl
     expect(regenerated).not.toBe(id)
     expect(await terminal(regenerated)).toMatchObject({ state: 'done', export: { regenerateOf: id } })
   }
-  const id = await browserSubmit('browser-cancel')
-  let pid: number | undefined
-  for (let n = 0; n < 100 && !pid; n++) {
-    const line = execFileSync('ps', ['-Ao', 'pid=,ppid=,args='], { encoding: 'utf8' }).split('\n').find(l => Number(l.trim().split(/\s+/)[1]) === serverPid && l.includes('/current-export-worker.mjs'))
-    if (line) pid = Number(line.trim().split(/\s+/)[0])
-    else await new Promise(r => setTimeout(r, 10))
-  }
-  expect(pid).toBeGreaterThan(0)
-  process.kill(pid!, 'SIGSTOP')
+  const release = await blockExportSnapshot()
   try {
+    const id = await browserSubmit('browser-cancel')
+    await waitForBlockedSnapshot(id)
     const queuedId = await browserSubmit('browser-cancel-queued')
     expect(await browserRead('/api/task-center/' + queuedId)).toMatchObject({ state: 'queued', capabilities: { cancel: true } })
     const path = '/api/task-center/' + queuedId + '/cancel'
@@ -259,5 +291,5 @@ it('default same-origin browser flow submits views cancels regenerates and downl
     expect(running.status).toBe(202)
     expect(await running.json()).toMatchObject({ task: { state: 'running' }, cancelRequested: true })
     expect(await terminal(id)).toMatchObject({ state: 'cancelled' })
-  } finally { try { process.kill(pid!, 'SIGCONT') } catch {} }
-}, 90000)
+  } finally { await release() }
+}, 150_000)

@@ -1,15 +1,13 @@
-import { and,eq,getTableColumns,sql,type SQL } from 'drizzle-orm'
+import { correspondenceAttributionChanged } from './record-correspondence-attribution'
+import { and, eq, getTableColumns, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import { alias,type SQLiteTable } from 'drizzle-orm/sqlite-core'
+import { alias, type SQLiteTable } from 'drizzle-orm/sqlite-core'
 import * as s from '../../../../db/schema'
-import { normalizeUscc } from '../../lib/domain'
 import { storedProcessProjection } from '../../lib/platform/process-stored-schema'
-import { sourceQueryFields,sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
+import { sourceQueryFields, sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
 import { targetSchema } from '../../lib/platform/target-schema'
 import { listRecordCorrespondencesForIds } from './record-correspondence'
-import { correspondenceIdentityProblem } from './record-correspondence-identity'
 import { correspondenceTable } from './record-correspondence-store'
-
 type Db = BetterSQLite3Database<typeof s>
 const t = s.recordCorrespondence
 const value = (path: string) => sql`json_extract(${t.provenance}, ${path})`
@@ -80,22 +78,6 @@ function targetSourceMatches(observationId: SQL): SQL {
       and not exists(select 1 from json_each(snapshot.bytes,'$.fields') cell where not(case json_extract(cell.value,'$.name') ${sql.join(relationFields,sql` `)} else 1 end))
       and ${and(...queryFields)})`
 }
-export interface CorrespondenceAttribution {
-  type: string; enterpriseId: number | null;
-  relationEnterpriseId: number | null; relationStatus: string | null; relationUscc: string | null;
-  ownerId: number | null; ownerUscc: string | null;
-  targetId: number | null; targetUscc: string | null; targetTitle: string | null;
-}
-
-export function correspondenceAttributionChanged(row: CorrespondenceAttribution) {
-  if (row.relationEnterpriseId && row.relationUscc && (!row.ownerId || row.ownerUscc && normalizeUscc(row.ownerUscc) !== normalizeUscc(row.relationUscc))) return true
-  return row.type === 'later_process' && (
-    !row.targetId || !row.targetTitle ||
-    correspondenceIdentityProblem({ enterpriseId: row.enterpriseId, uscc: row.targetUscc }, { enterpriseId: row.relationEnterpriseId, uscc: row.relationUscc }, true) !== null ||
-    !normalizeUscc(row.relationUscc) && row.relationStatus !== 'confirmed'
-  )
-}
-
 const owner = alias(s.enterprise,'ref_owner')
 /** Narrow reverse-link validity, with the same immutable source/change boundary.
  * Proof revalidation retains its existing service behind a 64KiB read budget;
@@ -104,7 +86,6 @@ const owner = alias(s.enterprise,'ref_owner')
 export function correspondenceRefValidity(db: Db, ids: number[]): Map<number, boolean> {
   return createCorrespondenceRefValidityReader(db)(ids)
 }
-
 /** Reuse compilation only. Each invocation revalidates live source rows and proofs;
  * no validity result, archive or source fingerprint survives the call. */
 export function createCorrespondenceRefValidityReader(db: Db) {
@@ -142,3 +123,4 @@ export function createCorrespondenceRefValidityReader(db: Db) {
     }
 
 }
+export { type CorrespondenceAttribution, correspondenceAttributionChanged } from './record-correspondence-attribution'

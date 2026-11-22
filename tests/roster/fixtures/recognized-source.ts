@@ -7,7 +7,7 @@ import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 
 // This is a synthetic original source envelope, with exactly the supplied rows.
 // It never imports a staged legacy relation or invents historical source evidence.
-export function submitSyntheticRecognizedCollection(db: BetterSQLite3Database<typeof schema>, input: {
+export function syntheticRecognizedQuery(input: {
   rdjb: string; queriedAt: string;
   rows: Array<{ raw: Record<string, unknown>; enterpriseId: number | null }>;
   conditions?: Record<string, string>;
@@ -27,5 +27,9 @@ export function submitSyntheticRecognizedCollection(db: BetterSQLite3Database<ty
     queriedAt: input.queriedAt, status: input.partial ? 'partial' : rows.length ? 'success' : 'no_record', collectionEvidence,
     relations: rows.map((rawFields, i) => ({ sequenceNo: i + 1, relationKey: rawFields.id ?? null, nameRaw: rawFields.qymc ?? null, usccRaw: rawFields.tyshxydm ?? null, rawFields: input.rows[i]!.raw, enterpriseId: input.rows[i]!.enterpriseId, matchBasis: input.rows[i]!.enterpriseId == null ? 'none' : 'uscc', verificationStatus: input.rows[i]!.enterpriseId == null ? 'pending' : 'confirmed' })),
   }
-  return submitNativePlatformQuery(db, query)
+  return query
+}
+
+export function submitSyntheticRecognizedCollection(db: BetterSQLite3Database<typeof schema>, input: Parameters<typeof syntheticRecognizedQuery>[0]) {
+  return submitNativePlatformQuery(db, syntheticRecognizedQuery(input))
 }

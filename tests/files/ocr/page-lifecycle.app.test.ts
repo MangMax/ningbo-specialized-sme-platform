@@ -1,25 +1,44 @@
-import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
+import { ok } from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { assertEnterpriseDetailSnapshotEqual } from '../../roster/assertions/enterprise-detail-snapshot'
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
-import { initializeDb } from '../../../db/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import pg from 'pg'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
+import { eq } from 'drizzle-orm'
+import { storedFile, ocrResult } from '../../../db/postgresql/file-tables'
+import { rosterFileClassification, storedFilePart } from '../../../db/postgresql/roster-file-tables'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { extname, join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
-import { useDb, schema } from '../../../db'
 import { minimalPdf } from '../../support/minimal-pdf'
 
 import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'ocr-lifecycle-106-'))
-const dbPath = join(dir, 'test.sqlite')
 const root = join(dir, 'files')
 mkdirSync(root)
-const db = initializeDb({ create: true, dbPath })
-const file = createClassifiedFile(db, { relPath: 'synthetic.pdf', filename: 'synthetic.pdf', ext: 'pdf', bytes: 12, sha256: 'synthetic' }, {})
-writeFileSync(join(root, file.relPath), minimalPdf({ pages: 6 }))
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
+let pool: pg.Pool
+let db: ReturnType<typeof drizzle<Record<string, never>>>
+let file: typeof storedFile.$inferSelect
 let app: { baseUrl: string; stop(): Promise<void> }
 let rpcId = 0
+
+async function seedFile(relPath: string, bytes: Buffer) {
+  writeFileSync(join(root, relPath), bytes)
+  const [row] = await db.insert(storedFile).values({
+    relPath, filename: relPath, ext: extname(relPath).slice(1), bytes: BigInt(bytes.length),
+    sha256: createHash('sha256').update(bytes).digest('hex'), createdAt: '2026-10-19T00:00:00.000Z',
+  }).returning()
+  ok(row, 'File fixture insert did not return a row')
+  await db.insert(rosterFileClassification).values({ fileId: row.id })
+  return row
+}
+
 async function rpc(method: string, params: unknown, token: string | null = 'synthetic-mcp-106') {
   const response = await fetch(`${app.baseUrl}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }) })
   const text = await response.text()
@@ -38,28 +57,43 @@ async function rest(method: string, page?: number, body?: unknown) {
 let discovery: any
 beforeAll(async () => {
   discovery = await readDevelopmentDiscovery()
+  runtime = await postgresRuntimeFixture({ dir })
+  pool = new pg.Pool({ connectionString: runtime.url, options: '-c search_path=business,public' })
+  db = drizzle<Record<string, never>>(pool)
+  file = await seedFile('synthetic.pdf', minimalPdf({ pages: 6 }))
   const port = await reserveLoopbackPort()
   const baseUrl = `http://127.0.0.1:${port}`
-  const child = spawnCompiledApp(port, { env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: root, NUXT_API_TOKEN: 'synthetic-api-106', NUXT_MCP_TOKEN: 'synthetic-mcp-106', NUXT_OCR_TOKEN: '', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: '', MIIT_COOKIE_FILE: '' }, stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawnCompiledApp(port, { env: { ...process.env, ...runtime.env, NUXT_BUILD_DIR: join(dir, 'nuxt'), NUXT_FILES_DIR: root, NUXT_API_TOKEN: 'synthetic-api-106', NUXT_MCP_TOKEN: 'synthetic-mcp-106', NUXT_OCR_TOKEN: '', PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: '', MIIT_COOKIE_FILE: '' }, stdio: ['ignore', 'pipe', 'pipe'] })
   app = { baseUrl, stop: () => stopOwnedChild(child) }
   let output = ''
   child.stdout.on('data', chunk => { output += chunk })
   child.stderr.on('data', chunk => { output += chunk })
   try { await waitForHttp(`${baseUrl}/api/health`, { child }) } catch (error) { throw new Error(`${error}\n${output}`) }
+}, 120_000)
+afterAll(async () => { await app?.stop(); await pool?.end(); runtime?.close(); rmSync(dir, { recursive: true, force: true }) })
+beforeEach(async () => {
+  await db.delete(ocrResult).where(eq(ocrResult.fileId, file.id))
+  await call('save_ocr_result', { fileId: file.id, markdown: '<!-- page: 1 -->\nbaseline one\n<!-- page: 2 -->\nbaseline two' })
+})
+
+it('requires file registration and returns empty pages before OCR', async () => {
   const coldPath = 'jxj/announcement/2024/1/cold.pdf'
   mkdirSync(join(root, 'jxj/announcement/2024/1'), { recursive: true })
   writeFileSync(join(root, coldPath), minimalPdf({ pages: 1 }))
-  const cold = await fetch(`${baseUrl}/api/ocr-results?file=${encodeURIComponent(coldPath)}`)
+  const url = `${app.baseUrl}/api/ocr-results?file=${encodeURIComponent(coldPath)}`
+  expect((await fetch(url)).status).toBe(404)
+  const registered = await fetch(`${app.baseUrl}/api/files/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer synthetic-api-106' },
+    body: JSON.stringify({ relPath: coldPath }),
+  })
+  expect(registered.status).toBe(201)
+  const cold = await fetch(url)
   expect(cold.status).toBe(200)
   expect(await cold.json()).toMatchObject({
     file: { relPath: coldPath, filename: 'cold.pdf', ext: 'pdf', parseState: 'unparsed' },
     count: 0,
   })
-}, 120_000)
-afterAll(async () => { await app?.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
-beforeEach(async () => {
-  db.$client.prepare('DELETE FROM ocr_result WHERE file_id=?').run(file.id)
-  await call('save_ocr_result', { fileId: file.id, markdown: '<!-- page: 1 -->\nbaseline one\n<!-- page: 2 -->\nbaseline two' })
 })
 
 it('MCP single-page deletion matches REST and missing-page deletion is idempotent', async () => {
@@ -158,8 +192,7 @@ it('explicit page scope and invalid fields cannot widen OCR writes or deletions'
   expect((await pageRequest('PUT', 7, { markdown: 'out of PDF', expectedVersion: null })).status).toBe(400)
   const outOfBounds = await rpc('tools/call', { name: 'save_ocr_result', arguments: { fileId: file.id, page: 7, markdown: 'out of PDF' } })
   expect(JSON.stringify(outOfBounds.body)).toContain('400')
-  const nonPdf = createClassifiedFile(db, { relPath: 'synthetic.docx', filename: 'synthetic.docx', ext: 'docx', bytes: 5, sha256: 'synthetic' }, {})
-  writeFileSync(join(root, 'synthetic.docx'), 'dummy')
+  const nonPdf = await seedFile('synthetic.docx', Buffer.from('dummy'))
   expect((await pageRequest('PUT', 1, { markdown: 'wrong source', expectedVersion: null }, 'synthetic-api-106', nonPdf.id)).status).toBe(415)
   const wrongSource = await rpc('tools/call', { name: 'save_ocr_result', arguments: { fileId: nonPdf.id, page: 1, markdown: 'wrong source' } })
   expect(JSON.stringify(wrongSource.body)).toContain('415')
@@ -183,20 +216,37 @@ it('two writers with one expected version admit exactly one change and retain ot
 it('failed multi-page overwrite rolls back every page and its version', async () => {
   await call('save_ocr_result', { fileId: file.id, markdown: '<!-- page: 1 -->\noriginal one\n<!-- page: 2 -->\noriginal two' })
   const before = await call('get_ocr_result', { fileId: file.id })
-  db.$client.exec(`CREATE TRIGGER synthetic_106_failure BEFORE UPDATE ON ocr_result WHEN NEW.file_id=${file.id} AND NEW.page_no=2 BEGIN SELECT RAISE(ABORT, 'synthetic transaction failure'); END`)
+  await pool.query(`
+    CREATE FUNCTION business.fail_ocr_update() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RAISE EXCEPTION 'synthetic transaction failure';
+    END;
+    $$;
+    CREATE TRIGGER fail_ocr_update BEFORE UPDATE ON business.ocr_result
+      FOR EACH ROW WHEN (NEW.file_id = ${file.id} AND NEW.page_no = 2)
+      EXECUTE FUNCTION business.fail_ocr_update();
+  `)
   try {
     const failed = await rpc('tools/call', { name: 'save_ocr_result', arguments: { fileId: file.id, markdown: '<!-- page: 1 -->\nchanged one\n<!-- page: 2 -->\nchanged two' } })
     expect(failed.body.result.isError).toBe(true)
     expect(await call('get_ocr_result', { fileId: file.id })).toEqual(before)
-  } finally { db.$client.exec('DROP TRIGGER synthetic_106_failure') }
+  } finally {
+    await pool.query(`
+      DROP TRIGGER fail_ocr_update ON business.ocr_result;
+      DROP FUNCTION business.fail_ocr_update();
+    `)
+  }
 })
 
 it('page redo and deletion preserve source bytes, images, file parts, formal events and evidence', async () => {
-  const owner = db.insert(schema.enterprise).values({ name: 'OCR 边界合成企业', nameNorm: 'OCR 边界合成企业' }).returning().get()
-  const record = db.insert(schema.record).values({ enterpriseId: owner.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
-  const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024, decidedYear: 2024, batchSeq: 1 }).returning().get()
-  db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: file.relPath, attachment: '附件1', page: 1, listNo: 9 }).run()
-  db.insert(schema.storedFilePart).values({ fileId: file.id, titleCode: 'specialized_sme', eventKind: 'award', year: 2024, batch: 1, rowCount: 1, origin: 'agent' }).run()
+  const [ownerRow] = await db.insert(enterprise).values({ name: 'OCR 边界合成企业', nameNorm: 'OCR 边界合成企业' }).returning()
+  ok(ownerRow, 'Enterprise fixture insert did not return a row')
+  const [recordRow] = await db.insert(record).values({ enterpriseId: ownerRow.id, source: 'jxj', titleCode: 'specialized_sme' }).returning()
+  ok(recordRow, 'Record fixture insert did not return a row')
+  const [eventRow] = await db.insert(recordEvent).values({ recordId: recordRow.id, eventType: 'award', year: 2024, decidedYear: 2024, batchSeq: 1 }).returning()
+  ok(eventRow, 'Record event fixture insert did not return a row')
+  await db.insert(recordEvidence).values({ recordEventId: eventRow.id, sourceFile: file.relPath, attachment: '附件1', page: 1, listNo: 9 })
+  await db.insert(storedFilePart).values({ fileId: file.id, titleCode: 'specialized_sme', eventKind: 'award', year: 2024, batch: 1, rowCount: 1, origin: 'agent' })
   const pageDir = join(root, '.synthetic.pdf.pages')
   mkdirSync(pageDir, { recursive: true })
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aY1sAAAAASUVORK5CYII=', 'base64')
@@ -205,12 +255,14 @@ it('page redo and deletion preserve source bytes, images, file parts, formal eve
   expect((await rest('GET')).status).toBe(200)
   expect((await call('get_ocr_result', { fileId: file.id, page: 1 })).results).toHaveLength(1)
   expect(await call('list_page_images', { fileId: file.id })).toMatchObject({ file: { id: file.id, relPath: file.relPath }, pageCount: 6 })
-  expect(db.select().from(schema.storedFilePart).all()).toMatchObject([{ origin: 'agent' }])
+  expect(await db.select().from(storedFilePart)).toMatchObject([{ origin: 'agent' }])
   const fileBefore = await call('get_file', { fileId: file.id })
-  expect(fileBefore.parts).toEqual(expect.arrayContaining([expect.objectContaining({ origin: 'derived' })]))
-  const detailUrl = `${app.baseUrl}/api/roster/enterprises/${owner.id}`
+  expect(fileBefore.parts).toMatchObject([{ origin: 'agent' }])
+  const partsBefore = await call('list_file_parts', { fileId: file.id })
+  expect(partsBefore.parts).toEqual(expect.arrayContaining([expect.objectContaining({ origin: 'derived' })]))
+  const detailUrl = `${app.baseUrl}/api/roster/enterprises/${ownerRow.id}`
   const before = await (await fetch(detailUrl)).json()
-  expect(before.events).toEqual(expect.arrayContaining([expect.objectContaining({ id: event.id })]))
+  expect(before.events).toEqual(expect.arrayContaining([expect.objectContaining({ id: eventRow.id })]))
   expect(before.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ page: 1, listNo: 9 })]))
   const other = await call('get_ocr_result', { fileId: file.id, page: 2 })
   expect((await pageRequest('PUT', 1, { markdown: 'redo exactly one', expectedVersion: (await call('get_ocr_result', { fileId: file.id, page: 1 })).results[0].version })).status).toBe(200)
@@ -219,22 +271,24 @@ it('page redo and deletion preserve source bytes, images, file parts, formal eve
   expect(deleted).toMatchObject({ deleted: 1, remaining: 1 })
   expect(await call('get_ocr_result', { fileId: file.id, page: 2 })).toEqual(other)
   expect(await call('get_file', { fileId: file.id })).toEqual(fileBefore)
+  expect(await call('list_file_parts', { fileId: file.id })).toEqual(partsBefore)
   // Detail must be unchanged apart from the qualification scope's execution-time
   // asOf and its snapshot digest, which are per-read timing, not stored facts.
   assertEnterpriseDetailSnapshotEqual(await (await fetch(detailUrl)).json(), before)
   expect(Buffer.from(await (await fetch(`${app.baseUrl}/api/files/synthetic.pdf`)).arrayBuffer())).toEqual(minimalPdf({ pages: 6 }))
   expect(Buffer.from(await (await fetch(`${app.baseUrl}/api/files/.synthetic.pdf.pages/p001.png`)).arrayBuffer())).toEqual(png)
-})
+}, 15_000)
 
 it('exact page reads and deletes exclude unrelated text and raw while coverage stays file scoped', async () => {
   await call('save_ocr_result', { fileId: file.id, page: 1, markdown: 'target 🙂' })
-  const other = createClassifiedFile(db, { relPath: 'unrelated.pdf', filename: 'unrelated.pdf', ext: 'pdf', bytes: 1, sha256: 'unrelated' }, {})
-  writeFileSync(join(root, 'unrelated.pdf'), 'x')
-  db.$client.transaction(() => {
-    const insert = db.$client.prepare('INSERT INTO ocr_result(file_id,page_no,markdown,raw,channel,created_at) VALUES(?,?,?, ?,\'api\',\'2026-10-19\')')
-    for (let page = 1; page <= 128; page++) insert.run(other.id, page, 'UNRELATED'.repeat(2048), '{invalid unrelated raw')
-    db.$client.prepare('UPDATE ocr_result SET raw=? WHERE file_id=?').run('{invalid target raw', file.id)
-  })()
+  const other = await seedFile('unrelated.pdf', Buffer.from('x'))
+  await db.transaction(async tx => {
+    await tx.insert(ocrResult).values(Array.from({ length: 128 }, (_, index) => ({
+      fileId: other.id, page: index + 1, markdown: 'UNRELATED'.repeat(2048), raw: '{invalid unrelated raw',
+      channel: 'api', createdAt: '2026-10-19',
+    })))
+    await tx.update(ocrResult).set({ raw: '{invalid target raw' }).where(eq(ocrResult.fileId, file.id))
+  })
   const result = await pageRequest('GET', 1, undefined, null)
   const text = await result.text()
   expect(result.status).toBe(200)
@@ -273,7 +327,7 @@ it('legacy OCR aliases distinguish malformed references and invalid pages from m
 
 it('removed files remain readable while both write transports reject them', async () => {
   const before = await call('get_ocr_result', { fileId: file.id, page: 1 })
-  db.$client.prepare('UPDATE stored_file SET removed_at=? WHERE id=?').run('2026-10-19T00:00:00.000Z', file.id)
+  await db.update(storedFile).set({ removedAt: '2026-10-19T00:00:00.000Z' }).where(eq(storedFile.id, file.id))
   try {
     expect(await (await pageRequest('GET', 1, undefined, null)).json()).toEqual(before)
     expect((await pageRequest('PUT', 1, { markdown: 'removed write', expectedVersion: before.results[0].version })).status).toBe(404)
@@ -283,7 +337,7 @@ it('removed files remain readable while both write transports reject them', asyn
       expect(JSON.stringify(denied.body)).toContain('404')
     }
     expect(await call('get_ocr_result', { fileId: file.id, page: 1 })).toEqual(before)
-  } finally { db.$client.prepare('UPDATE stored_file SET removed_at=NULL WHERE id=?').run(file.id) }
+  } finally { await db.update(storedFile).set({ removedAt: null }).where(eq(storedFile.id, file.id)) }
 })
 
 it('exact baseline REST and MCP payloads retain legacy response shapes and invalidate modern versions', async () => {

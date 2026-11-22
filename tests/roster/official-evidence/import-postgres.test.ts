@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -22,7 +22,6 @@ import {
 import { readExactEvidence } from '../../../layers/sme-roster/server/utils/roster-evidence-correction'
 import { preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 
-const pgBin = process.env.TEST_IMPORT_RECEIPTS_PG_BIN
 const source = 'synthetic official publication\n'
 const sha256 = createHash('sha256').update(source).digest('hex')
 const published = (listNo: number): OfficialPublishedRow => ({
@@ -40,17 +39,14 @@ const append = (listNo: number, expectedVersion = 1) => ({
 const request = (payload: RosterImportRequest['payload'], idempotencyKey = 'official-import'): RosterImportRequest =>
   ({ idempotencyKey, sourceKind: 'alias_evidence', sourceIdentity: 'synthetic-official', payload })
 
-describe.runIf(Boolean(pgBin))('PostgreSQL official evidence import transaction', () => {
+describe('PostgreSQL official evidence import transaction', () => {
   let dir: string
   let sqlite: Database.Database
   let pool: pg.Pool
   let db: NodePgDatabase
-  let started = false
+  let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 
-  const run = (command: string, args: string[], env = process.env) =>
-    execFileSync(join(pgBin!, command), args, { env, stdio: 'pipe' })
-
-  beforeAll(() => {
+  beforeAll(async () => {
     dir = mkdtempSync('/tmp/official-import-')
     writeFileSync(join(dir, 'notice.txt'), source)
     const snapshot = join(dir, 'fixture.sqlite')
@@ -69,16 +65,8 @@ describe.runIf(Boolean(pgBin))('PostgreSQL official evidence import transaction'
       INSERT INTO import_batch(id,idempotency_key,source_kind,source_identity,created_at)
         VALUES(1,'official-import','alias_evidence','synthetic-official','2025-01-01');
     `)
-    const env = { PATH: process.env.PATH, LANG: 'C', PGHOST: dir, PGPORT: '5432', PGUSER: 'official_fixture',
-      PGDATABASE: 'postgres', PGSQL_BIN: join(pgBin!, 'psql') }
-    run('initdb', ['-A','trust','-E','UTF8','--locale=C','-U',env.PGUSER,'-D',join(dir,'pg')], env)
-    run('pg_ctl', ['-w','-D',join(dir,'pg'),'-l',join(dir,'pg.log'),'-o',"-c listen_addresses='' -k " + dir,'start'], env)
-    started = true
-    execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', snapshot, 'staged'], { env, stdio: 'pipe' })
-    for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
-      run('psql', ['-X','-w','-q','-v','staging=staged','-f','upgrade/postgresql/materialize-' + name + '.sql'], env)
-    }
-    pool = new pg.Pool({ host: dir, user: env.PGUSER, database: env.PGDATABASE, options: '-c search_path=business,public' })
+    postgres = await postgresRuntimeFixture({ dir, sourcePath: snapshot })
+    pool = new pg.Pool({ connectionString: postgres.url, options: '-c search_path=business,public' })
     db = drizzle({ client: pool })
   }, 60_000)
 
@@ -87,8 +75,8 @@ describe.runIf(Boolean(pgBin))('PostgreSQL official evidence import transaction'
       sqlite?.close()
       await pool?.end()
     } finally {
-      if (started) run('pg_ctl', ['-w','-D',join(dir,'pg'),'-m','fast','stop'])
-      if (dir) rmSync(dir, { recursive: true, force: true })
+      try { postgres?.close() }
+      finally { if (dir) rmSync(dir, { recursive: true, force: true }) }
     }
   })
 

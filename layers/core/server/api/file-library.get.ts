@@ -1,10 +1,7 @@
-import { useDb } from '@db'
-import { createFileStore } from '../utils/file-store'
 import { fileListQuery } from '../utils/file-list-query'
 
 import { listPostgresFiles, usePostgresFileDb } from '../utils/file-store-postgres'
 
-const { listStoredFiles } = createFileStore([])
 
 defineRouteMeta({
   openAPI: {
@@ -22,5 +19,5 @@ defineRouteMeta({
 export default defineEventHandler(event => {
   const query = fileListQuery(getQuery(event))
   const pg = usePostgresFileDb()
-  return pg ? listPostgresFiles(pg, query) : listStoredFiles(useDb(), query)
+  return listPostgresFiles(pg, query)
 })

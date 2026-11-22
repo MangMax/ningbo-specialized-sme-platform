@@ -4,23 +4,6 @@ import { rosterImportMcpPayloadSchema } from '../../utils/roster-import-schema'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 import { writeGuard } from '../../../../core/server/utils/mcp-guard'
 
-/**
- * `save_roster_batch` —— **通路 e**：代理经 MCP 把清理后的名单写入统一 API（RL-11，契约 §9）。
- *
- * 等价 `POST /api/roster/import/commit`：**单批事务 + 幂等键**。业务实体、称号事件、
- * 出处、曾用名、平台查询与关系、导出快照、差异原因与措施、以及**归并**都由这一个批次写入，
- * 不再各写一个导入器直连 SQLite。
- *
- * ── 与其它写入 tool 的边界 ────────────────────────────────────────────────
- * 文件元数据/解析段/OCR 仍是 `set_file_category` / `save_parse_result` / `save_ocr_result`
- * 的活（本 tool 不碰文件库）。本 tool 只管**名录实体**与平台证据。
- *
- * 幂等：同一 `idempotencyKey` 重复调用返回既有批次摘要，不重复写企业/事件。
- * `payload` 的形状见 `layers/sme-roster/lib/roster-import-client.ts`。
- *
- * **是写入 tool**，需要鉴权（`Authorization: Bearer <NUXT_MCP_TOKEN>`），未鉴权时
- * 不出现在 `tools/list`，强行调用得到 HTTP 401。
- */
 export default defineMcpTool({
   name: 'save_roster_batch',
   title: '提交名录导入批次',

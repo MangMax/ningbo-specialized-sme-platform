@@ -7,7 +7,7 @@ import {
   platformLegacyRelationAlias as relationAlias,
   platformObservationAssignment as assignment,
 } from '../../../../db/postgresql/platform-tables'
-import { describeRef, normalizeRef, type NormalizedRef } from './roster-import'
+import { describeRef, normalizeRef, type NormalizedRef } from './roster-import-model'
 
 type Reader = Pick<NodePgDatabase, 'select'>
 type ErrorResult = Extract<ReturnType<typeof normalizeRef>,{ok:false}>

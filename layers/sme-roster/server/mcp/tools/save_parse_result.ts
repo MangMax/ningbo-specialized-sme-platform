@@ -1,9 +1,8 @@
 import type { LogContext } from '../../../../core/lib/logging'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
 import { usePostgresFileDb } from '../../../../core/server/utils/file-store-postgres'
 import { savePostgresParseMcp } from '../../utils/parse-maintenance-postgres'
-import { parseSave105, saveParseMcp105 } from '../../utils/parse-maintenance-105'
+import { parseSave105 } from '../../utils/parse-maintenance-contract'
 import { writeGuard } from '../../../../core/server/utils/mcp-guard'
 export default defineMcpTool({
   name: 'save_parse_result', title: '写回解析段/状态(兼容旧载荷及版本保护)',
@@ -26,6 +25,6 @@ export default defineMcpTool({
     const pg = usePostgresFileDb()
     const root = useRuntimeConfig().filesDir
     const context = (extra as { logContext?: LogContext } | undefined)?.logContext
-    return pg ? savePostgresParseMcp(pg, input, root, context) : saveParseMcp105(useDb(), input, context, root)
+    return savePostgresParseMcp(pg, input, root, context)
   },
 })

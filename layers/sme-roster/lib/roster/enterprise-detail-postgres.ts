@@ -7,20 +7,20 @@ import { platformBusinessObservation as observation, platformCollection as colle
   platformExportBatch as exportBatch, platformExportRow as exportRow, platformLegacyQueryAlias as queryAlias,
   platformLegacyRelationAlias as relationAlias, platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
-import * as schema from '../../../../db/schema'
+import type * as schema from '../../../../db/schema'
 import { normalizeName, normalizeUscc } from '../domain'
 import type { PlatformStoredQuery, PlatformStoredRelation } from '../platform/read'
 import { readPostgresDisplayRows, type PostgresDisplayOwner } from '../platform/postgres-query-display'
 import { TITLE_ORDER } from '../labels'
 import { postgresDifferenceRow } from '../../server/utils/decision-lifecycle-102/postgres-reads'
-import { readPostgresPlatformDetailFacts, readPostgresPlatformBusinessDetails } from '../../server/utils/platform-business-detail-read'
+import { readPostgresPlatformDetailFacts, readPostgresPlatformBusinessDetails } from '../../server/utils/platform-business-detail-postgres'
 import { projectDifferences } from './current-difference'
 import { readPostgresRosterDetailQualification } from './current-qualification-postgres'
 import { isPageCapable } from './evidence-page'
 import { qualificationUsccCandidate } from './platform-qualification-postgres'
 import { readPostgresQueryAssessments } from './query-assessment-postgres'
 import { projectEnterpriseDifferenceUniverse, projectRosterDetailHistory, projectRosterDetailRelations,
-  projectRosterDetailTimeline, selectRosterDetailArchive, type RosterDetailArchive, type RosterEnterpriseDetail } from './enterprise-roster'
+  projectRosterDetailTimeline, selectRosterDetailArchive, type RosterDetailArchive, type RosterEnterpriseDetail } from './enterprise-roster-projection'
 
 type Reader = Pick<NodePgDatabase, 'execute' | 'select' | 'selectDistinct'>
 type Enterprise = typeof schema.enterprise.$inferSelect

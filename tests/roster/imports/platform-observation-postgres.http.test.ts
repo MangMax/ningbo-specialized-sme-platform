@@ -9,7 +9,7 @@ import { z } from 'zod'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { readRuntimeImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipts-runtime'
-import { handleRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
+import { handlePostgresRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
 import { submitRosterImportMcp } from '../../../layers/sme-roster/server/utils/roster-import-mcp-submission'
 import { reserveLoopbackPort } from '../../support/owned-process.mjs'
 
@@ -53,18 +53,19 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
       CREATE TABLE enterprise_merge (from_enterprise_id bigint, into_enterprise_id bigint);
       CREATE TABLE stored_file (id bigint PRIMARY KEY);
       CREATE TABLE service_credential (key text, value text, updated_at text);
+      CREATE SCHEMA fixture;
+      CREATE TABLE fixture.job (id text, kind text, params text, state text, progress text, result text,
+        error text, created_at text, started_at text, finished_at text);
     `)
     command('psql', ['-X', '-w', '-d', url, '-v', 'ON_ERROR_STOP=1', '-c', 'SET search_path TO business,pg_catalog',
       ...['roster-schema', 'roster-platform-schema', 'roster-review-schema', 'roster-constraints', 'roster-triggers']
         .flatMap(file => ['-f', 'db/postgresql/' + file + '.sql'])])
+    command('psql', ['-X', '-w', '-d', url, '-v', 'ON_ERROR_STOP=1', '-v', 'staging=fixture', '-f', 'upgrade/postgresql/materialize-jobs.sql'])
     await client.query("INSERT INTO platform_legacy_alias_sequence VALUES ('query', 93), ('relation', 103)")
     for (const original of historical) await seedLegacyObservation(original)
     vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: root }))
-    vi.stubEnv('NUXT_DB_READONLY', '1')
-    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_WRITE', '1')
-    vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
+    vi.stubEnv('NUXT_DB_READONLY', '0')
     vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
-    vi.stubEnv('NUXT_POSTGRES_JOBS', undefined)
     originals = await readOriginals()
   }, 60_000)
 
@@ -173,8 +174,8 @@ describe.skipIf(!bin)('native PostgreSQL platform observation import', () => {
   }
 
   const http = (action: 'commit' | 'preflight' | 'replay', body: RosterImportRequest) =>
-    handleRosterImportRequest(action, { method: 'POST', headers: { authorization: 'Bearer ' + token }, body },
-      { apiToken: token, db: undefined as never })
+    handlePostgresRosterImportRequest(action, { method: 'POST', headers: { authorization: 'Bearer ' + token }, body },
+      { apiToken: token })
 
   const mcp = (action: 'commit' | 'preflight', body: RosterImportRequest) =>
     submitRosterImportMcp(action, { ...body, sourceSha256: body.sourceSha256 ?? undefined, payload: { ...body.payload } })

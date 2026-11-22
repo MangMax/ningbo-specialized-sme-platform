@@ -15,7 +15,7 @@ import { materializedText } from '../../lib/platform/apply-materialization'
 import { canonicalPlatformJson, PLATFORM_PROJECTION_RULE, PLATFORM_RAW_HASH_RULE, planPlatformObservation } from '../../lib/platform/observation-plan'
 import { writePostgresArchiveValue } from '../../lib/platform/postgres-archive-write'
 import { ensurePostgresObservationContent } from '../../lib/platform/postgres-observation-write'
-import { snapshotSchema } from '../../lib/platform/target-evidence-read'
+import { snapshotSchema } from '../../lib/platform/evidence-snapshot-model'
 import type { RosterImportPlatformQuery, RosterImportRelation } from '../../lib/roster-import-client'
 import { applyProjectionPreview, businessProjectionPreview, PlatformProjectionError, recognizedProjectionPreview } from './platform-business-record'
 

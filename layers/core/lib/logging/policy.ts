@@ -31,7 +31,7 @@ export function validateCollectionWithCatalog(value: unknown, sources: typeof LO
   }
   return result as NonNullable<LogPolicyPatch['collection']>
 }
-/** Shared, pure decision serialized into the SQLite worker; no process-local policy cache. */
+/** Evaluate the effective collection policy for an event. */
 export function collectionAllows(event: LogEvent, collection: LogCollection): boolean {
   return collectionAllowsAtLevels(event, collection, LOG_LEVELS)
 }

@@ -1,15 +1,14 @@
 import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
-import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { initializeDb } from '../../../db/client'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { useDb, schema } from '../../../db'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { DEFAULT_DPI } from '../../../layers/core/lib/pdf-page'
 import { renderPdfPages } from '../../../layers/core/server/utils/pdf-pages'
-import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
+import { spawnCompiledApp, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
 import { minimalPdf } from '../../support/minimal-pdf'
 import { startMiniOcrApi } from './fixtures/provider-api'
 
@@ -21,7 +20,8 @@ it('公开任务 HTTP 受文件级背压约束,完成结果经 OCR REST/MCP 原�
   const db = initializeDb({ create: true, dbPath })
   const files = ['甲.pdf', '乙.pdf', '丙.pdf']
   const ids: number[] = []
-  let child: ReturnType<typeof spawn> | undefined
+  let child: ReturnType<typeof spawnCompiledApp> | undefined
+  let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
   let api: Awaited<ReturnType<typeof startMiniOcrApi>> | undefined
   let releasePoll: (() => void) | undefined
   try {
@@ -31,12 +31,13 @@ it('公开任务 HTTP 受文件级背压约束,完成结果经 OCR REST/MCP 原�
       ids.push(createClassifiedFile(db, { relPath: file, filename: file, ext: 'pdf', bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }, {}).id)
       await renderPdfPages(filesDir, file, { dpi: DEFAULT_DPI })
     }
+    runtime = await postgresRuntimeFixture({ dir, sourcePath: dbPath })
     const gate = new Promise<void>(resolve => { releasePoll = resolve })
     api = await startMiniOcrApi({ pages: ['公开原文🙂'], waitForPoll: () => gate })
     const port = await reserveLoopbackPort()
     const baseUrl = `http://127.0.0.1:${port}`
     child = spawnCompiledApp(port, {
-      env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt'), NUXT_DB_PATH: dbPath, NUXT_FILES_DIR: filesDir, NUXT_API_TOKEN: 'synthetic-api', NUXT_MCP_TOKEN: 'synthetic-mcp', NUXT_OCR_TOKEN: 'synthetic-ocr', NUXT_OCR_BASE_URL: api.origin, PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: '' },
+      env: { ...process.env, ...runtime.env, NUXT_BUILD_DIR: join(dir, 'nuxt'), NUXT_FILES_DIR: filesDir, NUXT_API_TOKEN: 'synthetic-api', NUXT_MCP_TOKEN: 'synthetic-mcp', NUXT_OCR_TOKEN: 'synthetic-ocr', NUXT_OCR_BASE_URL: api.origin, PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN: '', MIIT_COOKIE: '' },
       stdio: 'ignore',
     })
     await waitForHttp(`${baseUrl}/api/health`, { child })
@@ -70,6 +71,7 @@ it('公开任务 HTTP 受文件级背压约束,完成结果经 OCR REST/MCP 原�
     releasePoll?.()
     await stopOwnedChild(child)
     await api?.close()
+    runtime?.close()
     db.$client.close()
     rmSync(dir, { recursive: true, force: true })
   }

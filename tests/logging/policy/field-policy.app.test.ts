@@ -8,7 +8,8 @@ import Database from 'better-sqlite3'
 import { Worker } from 'node:worker_threads'
 import { createHash } from 'node:crypto'
 import { SQLITE_WORKER } from '../../../layers/core/lib/logging/sqlite-worker'
-import { createLogService, validatePolicy, type LogService } from '../../../layers/core/lib/logging/service'
+import { createLogService } from '../../../layers/core/lib/logging/sqlite-service'
+import { validatePolicy, type LogService } from '../../../layers/core/lib/logging/service'
 import { LOG_DEFAULTS, LOG_LEVELS, type LogInput, type LogPolicyPatch } from '../../../layers/core/lib/logging/contract'
 import { LOG_FIELD_PROFILES, defaultFieldControls } from '../../../layers/core/lib/logging/field-controls'
 import { defaultLogCollection } from '../../../layers/core/lib/logging/policy'
@@ -41,7 +42,7 @@ async function childWriter(directory: string, maxEventBytes: number = LOG_DEFAUL
   writeFileSync(script, `
 import {createRequire} from 'node:module'
 const {createJiti}=createRequire(import.meta.url)(${JSON.stringify(jiti)})
-const {createLogService}=await createJiti(import.meta.url).import(${JSON.stringify(resolve('layers/core/lib/logging/service.ts'))})
+const {createLogService}=await createJiti(import.meta.url).import(${JSON.stringify(resolve('layers/core/lib/logging/sqlite-service.ts'))})
 const service=createLogService({directory:${JSON.stringify(directory)},stdout:true,flushIntervalMs:100,maxEventBytes:${maxEventBytes}})
 process.on('message',async m=>{
  try {

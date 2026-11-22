@@ -1,9 +1,10 @@
 import { defineConfig } from 'drizzle-kit'
 
+const url = process.env.NUXT_POSTGRES_DIRECTORY_URL
+if (!url) throw new Error('NUXT_POSTGRES_DIRECTORY_URL is required for Drizzle Studio')
+
 export default defineConfig({
-  dialect: 'sqlite',
-  schema: './db/schema.ts',
-  dbCredentials: {
-    url: process.env.NUXT_DB_PATH || './data/roster.db',
-  },
+  dialect: 'postgresql',
+  schema: './db/postgresql/*-table*.ts',
+  dbCredentials: { url },
 })

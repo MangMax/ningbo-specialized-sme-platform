@@ -5,12 +5,16 @@ import { join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { spawn, type ChildProcess } from 'node:child_process'
 import Database from 'better-sqlite3'
-import { createLogService, validatePolicy, type LogService } from '../../../layers/core/lib/logging/service'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { createPostgresLogService } from '../../../layers/core/lib/logging/postgres-service'
+import { createLogService } from '../../../layers/core/lib/logging/sqlite-service'
+import { validatePolicy, type LogService } from '../../../layers/core/lib/logging/service'
 import { LOG_DEFAULTS, LOG_LEVELS, LOG_SOURCES, LOG_SUPPORTED_INTEGRATIONS } from '../../../layers/core/lib/logging/contract'
 import { collectionAllows, defaultLogCollection } from '../../../layers/core/lib/logging/policy'
 import { safeLogEvent, projectEvlog } from '../../../layers/core/lib/logging/privacy'
 
 const dirs: string[] = [], services: LogService[] = [], children: ChildProcess[] = []
+const runtimes: Awaited<ReturnType<typeof postgresRuntimeFixture>>[] = []
 const base = { retentionDays: 7, maxBytes: LOG_DEFAULTS.maxBytes }
 function fixture(directory = mkdtempSync(join(tmpdir(), 'dual-policy-'))) {
   if (!dirs.includes(directory)) dirs.push(directory)
@@ -20,6 +24,7 @@ function fixture(directory = mkdtempSync(join(tmpdir(), 'dual-policy-'))) {
 afterEach(async () => {
   for (const c of children.splice(0)) { c.kill('SIGKILL'); await new Promise<void>(r => c.exitCode !== null || c.signalCode !== null ? r() : c.once('exit', () => r())) }
   for (const s of services.splice(0)) await s.close()
+  for (const runtime of runtimes.splice(0)) runtime.close()
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
   vi.useRealTimers()
 })
@@ -92,25 +97,33 @@ it('projects origin by collector and discards arbitrary nested fields without in
   expect(safeLogEvent({source:'system',operation:'fixture.run',outcome:'success',origin:{runtime:'node',integration:'unknown_library',capture:'hook'} as any})).not.toHaveProperty('origin')
 })
 
-async function childWriter(directory: string) {
+async function childWriter(directory: string, env?: NodeJS.ProcessEnv) {
   const script = join(directory,'child.mjs')
   const jiti = createRequire(import.meta.resolve('nuxt/package.json')).resolve('jiti')
   writeFileSync(script, `
 import {createRequire} from 'node:module'
 const {createJiti}=createRequire(import.meta.url)(${JSON.stringify(jiti)})
 const logging=await createJiti(import.meta.url).import(${JSON.stringify(resolve('layers/core/lib/logging/index.ts'))})
+const options={source:'task',outcome:'failure',level:'error'}
+${env ? `
 logging.initializeWorkerLogging()
 const service=logging.applicationLogs()
+const emit=operation=>logging.appLog({...options,operation})
+` : `
+const {createLogService}=await createJiti(import.meta.url).import(${JSON.stringify(resolve('layers/core/lib/logging/sqlite-service.ts'))})
+const service=createLogService({directory:${JSON.stringify(directory)},stdout:true})
+const emit=operation=>service.emit({...options,operation,origin:{runtime:'node',integration:'application',capture:'manual',execution:'worker'}})
+`}
 process.on('message',async m=>{
   try {
-    if(m.type==='emit') { logging.appLog({source:'task',operation:m.operation,outcome:'failure',level:'error'}); await service.flush() }
+    if(m.type==='emit') { emit(m.operation); await service.flush() }
     if(m.type==='close') await service.close()
     process.send({id:m.id,status:service.status()})
   } catch {process.send({id:m.id,error:true})}
 })
 process.send({ready:true})
 `)
-  const child = spawn(process.execPath,[script],{env:{...process.env,NUXT_LOG_DIR:directory},stdio:['ignore','pipe','pipe','ipc']})
+  const child = spawn(process.execPath,[script],{env:{...process.env,...env},stdio:['ignore','pipe','pipe','ipc']})
   children.push(child)
   let output = '', errors = ''
   child.stdout!.on('data',chunk=>{ output+=chunk.toString() })
@@ -126,10 +139,15 @@ process.send({ready:true})
     })
   }}
 }
-it('enforces disabled and reenabled rules in a real child sharing the directory, including stdout', async () => {
-  const {service,directory}=fixture()
+it('enforces shared PostgreSQL log policy in a separate worker, including stdout', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pg-policy-'))
+  dirs.push(directory)
+  const runtime = await postgresRuntimeFixture({ dir: directory })
+  runtimes.push(runtime)
+  const service = createPostgresLogService({ postgresUrl: runtime.url, flushIntervalMs: 100 })
+  services.push(service)
   await service.policy()
-  const child=await childWriter(directory)
+  const child = await childWriter(directory, runtime.env)
   await child.send('emit','child.before')
   await service.setPolicy({...base,collection:{sources:{task:{enabled:false,minLevel:'debug'}}}})
   const result=await child.send('emit','child.disabled')
@@ -144,7 +162,7 @@ it('enforces disabled and reenabled rules in a real child sharing the directory,
   expect(child.output()).not.toContain('child.disabled')
   expect((await service.list({source:'task'})).rows.map(r=>r.operation).sort()).toEqual(['child.after','child.before'])
   expect((await service.list({operation:'child.after'})).rows[0]!.origin).toEqual({runtime:'node',integration:'application',capture:'manual',execution:'worker'})
-})
+}, 20_000)
 it('distinguishes unreadable policy failclosed from permitted stdout when event persistence fails', async () => {
   const {service,directory}=fixture()
   await service.policy()

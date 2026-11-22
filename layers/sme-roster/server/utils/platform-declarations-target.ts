@@ -1,20 +1,17 @@
-import { platformNormalizationConflict } from '../../lib/platform/normalization';
-import { getTableColumns,and,count,countDistinct,desc,eq,exists,inArray,isNull,max,min,ne,or,sql,type SQL } from 'drizzle-orm';
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { alias } from 'drizzle-orm/sqlite-core';
-import { groupBy } from 'es-toolkit';
-import { platformBusinessRecord as b,platformCollection as c,enterprise as e,platformLegacyQueryAlias as qa,platformBusinessRecordVersion as v } from '../../../../db/schema';
-import { normalizeName,normalizeUscc } from '../../lib/domain';
-import { storedApplyProjection as p } from '../../lib/platform/apply-stored-schema';
-import { DECLARATION_OBSERVATION_LIMIT,DECLARATION_VERSION_LIMIT,declarationFilterSchema,type DeclarationDetail,type DeclarationFilter,type DeclarationIsolatedRow,type DeclarationListResult,type DeclarationRecordRow,type DeclarationView } from '../../lib/platform/declarations';
-import type { PlatformFilterOptions } from '../../lib/platform/filter-options';
-import { normalizeDeclareKind } from '../../lib/platform/identity';
-import { platformObservationAssignment as a,platformBusinessObservation as o,platformLegacyRelationAlias as ra,targetSchema } from '../../lib/platform/target-schema';
-import { fail,pageOf } from './platform-business-read';
-// The old public DTO understates SQLite's legal cells. Keep target cells unknown
-// at this explicit boundary rather than asserting that a BLOB/REAL is a string/int.
-import type { PlatformNormalizationConflict } from '../../lib/platform/normalization';
-import { withArchiveProcessFacts,type PlatformObservationFact } from '../../lib/platform/observation-facts';
+import { projectDeclarationObservationFact } from './platform-declarations-projection'
+import { getTableColumns, and, count, countDistinct, desc, eq, exists, inArray, isNull, max, min, ne, or, sql, type SQL } from 'drizzle-orm'
+import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { alias } from 'drizzle-orm/sqlite-core'
+import { groupBy } from 'es-toolkit'
+import { platformBusinessRecord as b, platformCollection as c, enterprise as e, platformLegacyQueryAlias as qa, platformBusinessRecordVersion as v } from '../../../../db/schema'
+import { normalizeName, normalizeUscc } from '../../lib/domain'
+import { storedApplyProjection as p } from '../../lib/platform/apply-stored-schema'
+import { DECLARATION_OBSERVATION_LIMIT, DECLARATION_VERSION_LIMIT, declarationFilterSchema, type DeclarationDetail, type DeclarationFilter, type DeclarationIsolatedRow, type DeclarationListResult, type DeclarationRecordRow, type DeclarationView } from '../../lib/platform/declarations'
+import type { PlatformFilterOptions } from '../../lib/platform/filter-options'
+import { normalizeDeclareKind } from '../../lib/platform/identity'
+import { platformObservationAssignment as a, platformBusinessObservation as o, platformLegacyRelationAlias as ra, type targetSchema } from '../../lib/platform/target-schema'
+import { fail, pageOf } from './platform-business-projection'
+import type { PlatformObservationFact } from '../../lib/platform/observation-facts'
 type ExactCells = { titleRaw: unknown; declareKind: unknown; declarationYear: unknown; appliedAt: unknown; status: unknown };
 export type TargetDeclarationListResult = Omit<DeclarationListResult, 'rows'> & {
     rows: (DeclarationRecordRow | (Omit<DeclarationIsolatedRow, keyof ExactCells> & ExactCells))[];
@@ -24,7 +21,7 @@ export type TargetDeclarationOptions = Omit<PlatformFilterOptions, 'titles' | 'd
 };
 type Db = BetterSQLite3Database<typeof targetSchema> | BetterSQLite3Database<typeof import('../../../../db/schema')>;
 const previous = alias(a, 'newer_assignment');
-const vp = alias(p, 'version_projection');
+export const vp = alias(p, 'version_projection');
 const { id: versionIdentity, ...versionProjectionFields } = getTableColumns(vp);
 const versionColumns = { id: versionIdentity, ...versionProjectionFields };
 function current(db: Db) { return and(eq(a.observationId, o.id), eq(a.revision, db.select({ revision: max(previous.revision) }).from(previous).where(eq(previous.observationId, o.id)))); }
@@ -137,8 +134,6 @@ export function getTargetDeclaration(db: Db, recordId: number): DeclarationDetai
         }), counts: { versions: versionsTotal, observations: observationTotal, versionsTruncated: versionsTotal > versions.length, observationsTruncated: observationTotal > observations.length } };
     });
 }
-const modeledFields = ['declareKind', 'year', 'appliedAt', 'status', 'nameRaw', 'usccRaw'] as const;
-const comparisonFields = ['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'] as const;
 /** Alias inputs retain their namespace. No unindexed legacy lookup or archive fallback. */
 export function readTargetDeclarationFacts(db: Db, relationIds: number[]): Map<number, PlatformObservationFact> {
     const result = new Map<number, PlatformObservationFact>();
@@ -159,33 +154,4 @@ export function readTargetDeclarationFacts(db: Db, relationIds: number[]): Map<n
         return result;
     });
 }
-
-
-export function projectDeclarationObservationFact(row: {
-    relationId: number; source: typeof p.$inferSelect;
-    version: typeof vp.$inferSelect | null;
-    originalName: string | null; originalUscc: string | null;
-}): PlatformObservationFact {
-    const source = row.source, version = row.version, typed = version?.versionId != null;
-    const normalized = { province: source.reconciledProvince, status: source.reconciledStatus, batch: source.reconciledBatch, declareKind: source.reconciledDeclareKind, appliedAt: source.reconciledAppliedAt, awardBatchLabel: source.reconciledAwardBatchLabel, year: source.reconciledYear };
-    const comparisons = {
-        province: [source.provinceConflict, source.storedProvince, source.parsedProvince], status: [source.statusConflict, source.storedStatus, source.parsedStatus], batch: [source.batchConflict, source.storedBatch, source.parsedBatch],
-        declareKind: [source.declareKindConflict, source.storedDeclareKind, source.parsedDeclareKind], appliedAt: [source.appliedAtConflict, source.storedAppliedAt, source.parsedAppliedAt], awardBatchLabel: [source.awardBatchLabelConflict, source.storedAwardBatchLabel, source.parsedAwardBatchLabel], year: [source.yearConflict, source.storedYear, source.parsedYear],
-    } satisfies Record<typeof comparisonFields[number], [
-        number | null,
-        string | number | null,
-        string | number | null
-    ]>;
-    const conflicts: PlatformNormalizationConflict[] = comparisonFields.flatMap(field => {
-        const [conflict, storedValue, rawValue] = comparisons[field];
-        return conflict && storedValue != null && rawValue != null ? [platformNormalizationConflict(field, storedValue, rawValue)] : [];
-    });
-    const rawName = typeof row.originalName === 'string' ? row.originalName : null, rawUscc = typeof row.originalUscc === 'string' ? row.originalUscc : null;
-    return withArchiveProcessFacts({
-        relationId: row.relationId, interface: 'apply_list', projectionVersionId: typed ? version.versionId : null, projectionRuleVersion: typed ? version.ruleVersion : null, modeledFields: typed ? modeledFields : [],
-        titleRaw: source.sqlFactTitle, nameRaw: typed ? version.nameRaw : rawName, usccRaw: typed ? version.usccRaw : rawUscc,
-        declareKind: typed ? version.declareKind : normalized.declareKind, year: typed ? version.declarationYear : normalized.year, appliedAt: typed ? version.appliedAt : normalized.appliedAt, status: typed ? version.status : normalized.status,
-        batch: normalized.batch, awardBatchLabel: normalized.awardBatchLabel, province: normalized.province,
-        validityDateRaw: null, maintenanceYear: null, maintenanceBatch: null, district: null, awardNote: null, normalizationConflicts: conflicts,
-    }, normalized);
-}
+export { projectDeclarationObservationFact } from './platform-declarations-projection'

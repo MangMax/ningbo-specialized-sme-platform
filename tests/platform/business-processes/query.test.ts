@@ -2,11 +2,18 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initializeDb } from '../../../db/client'
-import { updateCredential } from '../../../layers/core/server/utils/credential-state'
+import { execFileSync } from 'node:child_process'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'platform-business-'))
-const db = initializeDb({ create: true,  dbPath: join(dir, 'test.db') })
+let db: ReturnType<typeof usePostgresDirectoryDb>
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+const setCookie = (value: string | null) => updatePostgresCredentialState(db, { 'sme-roster.miitCookie': value })
+const dump = () => execFileSync(join(process.env.ROSTER_TEST_POSTGRES_BIN!, 'pg_dump'), [
+  '--data-only', '--schema=business', '--restrict-key=livequerysnapshot', postgres!.url,
+])
 const cookie = 'session=synthetic-business-secret'
 const uscc = '91330211255994457P'
 const fetcher = vi.fn()
@@ -20,7 +27,10 @@ function page(rows: Record<string, string>[], total: number | null = rows.length
 async function query(input: unknown) { body = input; return rest({}) }
 const input = { source: 'businessList', uscc, rdjb: 'all' }
 beforeAll(async () => {
-  process.env.NUXT_DB_PATH = join(dir, 'test.db')
+  postgres = await postgresRuntimeFixture({ dir })
+  for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  db = usePostgresDirectoryDb()
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
   vi.stubGlobal('readBody', async () => body)
   vi.stubGlobal('setHeader', vi.fn())
@@ -33,15 +43,21 @@ beforeAll(async () => {
     expect(JSON.parse(wire.content[0].text)).toEqual(wire.structuredContent)
     return wire.structuredContent
   }
-})
-beforeEach(() => {
-  updateCredential('sme-roster.miitCookie', cookie, { db })
+}, 30_000)
+beforeEach(async () => {
+  await setCookie(cookie)
   fetcher.mockReset()
   vi.stubGlobal('fetch', fetcher)
 })
-afterAll(() => { vi.unstubAllGlobals(); delete process.env.NUXT_DB_PATH; rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => {
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+  rmSync(dir, { recursive: true, force: true })
+})
 it('REST and MCP preserve all Little Giant relationships across three titles without business writes', async () => {
-  const before = db.$client.serialize()
+  const before = dump()
   const rows = Array.from({ length: 6 }, (_, i) => ({ qymc: i < 3 ? '合成曾用名' : '合成现名', tyshxydm: uscc, relationId: String(i) }))
   fetcher.mockImplementation(async (url: string, init: any) => {
     expect(url).toContain('/ZjtxxjrBusInfoManageBLH/businessList')
@@ -58,7 +74,7 @@ it('REST and MCP preserve all Little Giant relationships across three titles wit
   expect(a).toMatchObject({ source: 'businessList', status: 'success', rows, fetchedCount: 6, declaredTotal: 6, completeness: 'complete', titleScope: { mode: 'selected', rdjb: ['1', '2', '3'] }, unfinished: [], effectiveConditions: { uscc, combination: 'and' } })
   expect(a.pages.map((p: any) => [p.rdjb, p.page, p.fetchedCount])).toEqual([['1', 1, 0], ['2', 1, 0], ['3', 1, 3], ['3', 2, 3]])
   expect({ ...a, queriedAt: null, completedAt: null }).toEqual({ ...b, queriedAt: null, completedAt: null })
-  expect(db.$client.serialize().equals(before), 'database bytes remain unchanged').toBe(true)
+  expect(dump().equals(before), 'business data dump remains unchanged').toBe(true)
 })
 it.each(['1', '2', '3'])('single title %s has its own scope and a valid zero says nothing about other titles', async rdjb => {
   fetcher.mockResolvedValue(response(page([], 0)))
@@ -143,7 +159,7 @@ it('an unknown title total stays unknown while every title is completed', async 
   expect(fetcher).toHaveBeenCalledTimes(4)
 })
 it('missing credentials mark all three titles unqueried', async () => {
-  updateCredential('sme-roster.miitCookie', null, { db })
+  await setCookie(null)
   const previous = process.env.MIIT_COOKIE
   process.env.MIIT_COOKIE = ''
   try {
@@ -207,7 +223,7 @@ it('an active deadline leaves the failed page and all unrequested titles incompl
 it('all titles keep the initial credential snapshot and omit envelope account data', async () => {
   fetcher.mockImplementation(async (_url: string, init: any) => {
     expect(init.headers.Cookie).toBe(cookie)
-    updateCredential('sme-roster.miitCookie', 'session=synthetic-other-business-account', { db })
+    await setCookie('session=synthetic-other-business-account')
     return response(JSON.stringify({ account: { token: 'synthetic-envelope-secret' }, zrarData: { grid: { businessListGrid: { pageSet: [{ qymc: '合成' }], maxCount: 1, page: 1 } } } }))
   })
   const r = await query(input)

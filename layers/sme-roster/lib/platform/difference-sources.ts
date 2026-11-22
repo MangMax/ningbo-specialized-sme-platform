@@ -7,6 +7,9 @@ import * as s from '../../../../db/schema'
 import { targetSchema } from './target-schema'
 import { identityFunctions, identityUsccSql } from '../roster/enterprise-read-snapshot'
 import { normalizeUscc } from '../domain'
+import { projectDifferenceCollectionScope, type DifferenceCollectionScopeRows } from './difference-collection-scope'
+
+export { projectDifferenceCollectionScope, type DifferenceCollectionScopeRows } from './difference-collection-scope'
 
 type Db = BetterSQLite3Database<typeof s>
 const c = s.platformCollection, qa = s.platformLegacyQueryAlias
@@ -106,13 +109,6 @@ export function selectDifferenceCollectionsBatch(db: Db, inputs: readonly Differ
     .from(ranked).innerJoin(c, eq(c.id, rankedRef.collectionId)).where(sql`${rankedRef.rank}<=51`)
     .orderBy(asc(rankedRef.slot), asc(rankedRef.rank)).all()
 }
-export type DifferenceCollectionScopeRows = {
-  collection: typeof c.$inferSelect
-  conditions: Pick<typeof s.platformCollectionCondition.$inferSelect, 'name' | 'valueKind' | 'textValue' | 'integerValue'>[]
-  pages: (typeof s.platformCollectionPage.$inferSelect)[]
-  unfinished: (typeof s.platformCollectionUnfinished.$inferSelect)[]
-  titles: string[]
-}
 export function readDifferenceCollectionScope(db: Db, collectionId: number, loaded?: DifferenceCollectionScopeRows) {
   const collection = loaded?.collection ?? db.select().from(c).where(eq(c.id, collectionId)).get()
   if (!collection) throw new Error('Difference collection not found')
@@ -123,31 +119,6 @@ export function readDifferenceCollectionScope(db: Db, collectionId: number, load
   return projectDifferenceCollectionScope({ collection, conditions, pages, unfinished, titles })
 }
 
-export function projectDifferenceCollectionScope({ collection, conditions: input, pages, unfinished, titles }: DifferenceCollectionScopeRows) {
-  const conditions: Record<string, unknown> = {}
-  let conditionsKnown = true
-  for (const row of input) {
-    switch (row.valueKind) {
-      case 'absent': break
-      case 'null': conditions[row.name] = null; break
-      case 'text': conditions[row.name] = row.textValue; break
-      case 'integer': conditions[row.name] = row.integerValue; break
-      case 'boolean': conditions[row.name] = !!row.integerValue; break
-      default: conditionsKnown = false
-    }
-  }
-  const metadata = collection.parseState === 'valid' && conditionsKnown ? {
-    source: collection.source, status: collection.evidenceStatus, effectiveConditions: conditions,
-    titleScope: { mode: collection.scopeMode, rdjb: titles },
-    pages: pages.map(p => ({ source: p.source, rdjb: p.rdjb, page: p.pageNo, ...(p.maxPagePresent?{maxPage:p.maxPage}:{}), status:p.status, fetchedCount:p.fetchedCount, declaredTotal:p.declaredTotal,
-      error: p.errorCode === null && p.errorMessage === null ? null : { code: p.errorCode, message: p.errorMessage } })),
-    completeness: collection.completeness, fullRange: collection.fullRange === null ? null : !!collection.fullRange,
-    unfinished: unfinished.map(p => ({ source: p.source, rdjb: p.rdjb, page: p.pageNo })),
-    error: collection.errorCode === null && collection.errorMessage === null ? null : { code: collection.errorCode, message: collection.errorMessage },
-    limits: { maxRequests: collection.maxRequests, maxRows: collection.maxRows, maxDurationMs: collection.maxDurationMs, pageSize: collection.pageSize },
-  } : null
-  return { collection, conditions, conditionsKnown, pages, unfinished, metadata }
-}
 function prepareScopeQueries(db:Db) {
   const ids=sql`(select value from json_each(${sql.placeholder('ids')}))`
   return {

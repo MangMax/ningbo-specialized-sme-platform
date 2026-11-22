@@ -3,7 +3,7 @@ import type * as schema from '../../../../db/schema'
 import type { PlatformStoredRelation } from './read'
 import { processFactsFromRow } from './identity'
 import { normalizePlatformRelation } from './normalization'
-import { checkedBusinessStatus } from '../../../../db/business-status'
+import { checkedBusinessStatus } from '../../../../db/business-status-contract'
 import type { PlatformRow } from './types'
 type Kind=NonNullable<typeof schema.platformApplyProjection.$inferInsert.sourceTitleKind>
 export function sourceValueKind(v:unknown):Kind {

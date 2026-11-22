@@ -1,37 +1,29 @@
 import { readEvidenceImpact113, readEvidenceImpacts113 } from '../../server/utils/evidence-impact-113'
 /** #108 additive read projection. Business decisions stay owned by #102. */
 import { inArray, sql } from 'drizzle-orm'
-import { z } from 'zod'
 import { enterprise } from '../../../../db/schema'
-import { currentDecision102, currentDecisionState102, currentDecisions102, currentDecisionStates102, type DecisionDb } from '../../server/utils/decision-lifecycle-102'
+import { currentDecision102, currentDecisions102, currentDecisionStates102, type DecisionDb } from '../../server/utils/decision-lifecycle-102'
 import { normalizeUscc } from '../domain'
 import { identityFunctions } from './enterprise-read-snapshot'
-import { identityKeys, type IdentityKeyVariants } from './current-identity-keys'
-import { platformQueryResultShape, type PlatformQueryPage } from '../platform/live-query'
+import type { IdentityKeyVariants } from './current-identity-keys'
 import { readDifferenceCollectionScopes, selectDifferenceCollections, selectDifferenceCollectionsBatch } from '../platform/difference-sources'
 
-export type AssessmentScope = Parameters<typeof currentDecision102>[1]
-type CoverageStatus = 'not_queried' | 'complete' | 'partial' | 'failed' | 'unknown'
-const metadataSchema = z.object({
-  source: platformQueryResultShape.source, status: platformQueryResultShape.status,
-  effectiveConditions: platformQueryResultShape.effectiveConditions, titleScope: platformQueryResultShape.titleScope,
-  pages: platformQueryResultShape.pages, completeness: platformQueryResultShape.completeness,
-  fullRange: platformQueryResultShape.fullRange, unfinished: platformQueryResultShape.unfinished,
-  error: platformQueryResultShape.error, limits: platformQueryResultShape.limits,
-})
-type Metadata = z.infer<typeof metadataSchema>
-const rdjbByTitle: Record<string, string> = { innovative_sme: '1', specialized_sme: '2', little_giant: '3' }
-const sourceByInterface: Record<string, string> = { business_list: 'businessList', apply_list: 'queryList', recognized_list: 'queryBusList' }
-export interface QueryMetadata {
-  id: number; interface: string; queryKey: string; titleCode: string | null; rdjb: string; queriedAt: string; status: string
-  metadata: string | null; matched: number
+import {
+  assessmentStatuses, projectQueryAssessment, projectQueryComparisonWitnesses, projectQueryCoverage, rdjbByTitle,
+  type AssessmentScope, type QueryAssessment, type QueryAssessmentSummary, type QueryMetadata,
+} from './query-assessment-projection'
+
+export * from './query-assessment-projection'
+
+/** Execution-local, narrow identity keys only. Canonical keys need no entry.
+ * Iterate existing covering indexes once per pinned export, not once per row.
+ * No business writes, source bodies, persistent cache or truncation.
+ */
+function identityKeys(variants: IdentityKeyVariants, uscc: string | null): string[] {
+  const normalized = normalizeUscc(uscc)
+  return normalized ? [normalized, ...variants.get(normalized) ?? []] : []
 }
-export interface QueryCoverageSource {
-  queryId: number; interface: string; queriedAt: string; queryStatus: string; status: CoverageStatus; titleCode: string | null; rdjb: string
-  conditions: Metadata['effectiveConditions'] | null; pages: PlatformQueryPage[]; fullRange: boolean | null
-  completeness: string | null; unfinished: Metadata['unfinished']; outcome: 'records' | 'no_record' | 'unknown'
-  subjectMatch: 'exact_uscc' | 'matched_relation' | 'name_only' | 'unknown'
-}
+
 /** Metadata extraction stays inside SQLite; original rows/raw_response never enter JS. */
 function queryMetadata(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, ownQueryIds?: readonly number[]) {
   identityFunctions(db)
@@ -49,30 +41,6 @@ function queryMetadata(db: DecisionDb, scope: AssessmentScope, variants?: Identi
   return { rows, truncated: selected.length > 50, uscc }
 }
 
-function metadataOf(row: QueryMetadata): Metadata | null {
-  if (!row.metadata) return null
-  try {
-    const m = JSON.parse(row.metadata)
-    if (m.fullRange === 0 || m.fullRange === 1) m.fullRange = !!m.fullRange
-    const parsed = metadataSchema.safeParse(m)
-    return parsed.success ? parsed.data : null
-  } catch { return null }
-}
-function completePages(pages: PlatformQueryPage[], pageSize: number, fullRange: boolean): boolean {
-  if (!pages.length || !Number.isInteger(pageSize) || pageSize < 1) return false
-  if (fullRange && pages[0]!.page !== 1) return false
-  if (pages.some((p, i) => p.status !== 'success' || !Number.isInteger(p.page) || p.page < 1 || !Number.isInteger(p.fetchedCount) || p.fetchedCount < 0 || p.fetchedCount > pageSize || (i > 0 && p.page !== pages[i - 1]!.page + 1))) return false
-  const totals = [...new Set(pages.flatMap(p => p.declaredTotal == null ? [] : [p.declaredTotal]))]
-  const maxPages = [...new Set(pages.flatMap(p => p.maxPage == null ? [] : [p.maxPage]))]
-  if (totals.length > 1 || maxPages.length > 1) return false
-  const last = pages.at(-1)!, fetched = pages.reduce((n, p) => n + p.fetchedCount, 0)
-  if (totals[0] != null) {
-    if (!Number.isInteger(totals[0]) || totals[0] < 0 || pages.some(p => p.fetchedCount !== Math.min(pageSize, Math.max(0, totals[0]! - (p.page - 1) * pageSize)))) return false
-    return fetched + (pages[0]!.page - 1) * pageSize === totals[0]
-  }
-  if (maxPages[0] != null) return Number.isInteger(maxPages[0]) && maxPages[0] === last.page && pages.slice(0, -1).every(p => p.fetchedCount === pageSize)
-  return last.fetchedCount === 0 && pages.slice(0, -1).every(p => p.fetchedCount === pageSize)
-}
 export function readQueryCoverage(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, ownQueryIds?: readonly number[]) {
   return projectQueryCoverage(queryMetadata(db, scope, variants, ownQueryIds), scope)
 }
@@ -115,94 +83,16 @@ export function readQueryCoverageBatch(db: DecisionDb, scopes: readonly Assessme
 export function readQueryComparisonWitnesses(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, ownQueryIds?: readonly number[]) {
   return projectQueryComparisonWitnesses(queryMetadata(db, scope, variants, ownQueryIds), scope)
 }
-export function projectQueryComparisonWitnesses(selected: Parameters<typeof projectQueryCoverage>[0], scope: Pick<AssessmentScope, 'titleCode'>) {
-  const coverage = projectQueryCoverage(selected, scope)
-  const rows = new Map(selected.rows.map(row => [row.id, row]))
-  return { truncated: selected.truncated, sources: coverage.sources.map(source => {
-    const row = rows.get(source.queryId)!
-    return { source, queryKey: row.queryKey, metadata: metadataOf(row) }
-  }) }
-}
-export function projectQueryCoverage({ rows, truncated, uscc }: { rows: QueryMetadata[]; truncated: boolean; uscc: string | null }, scope: Pick<AssessmentScope, 'titleCode'>) {
-  const rdjb = rdjbByTitle[scope.titleCode]
-
-  const sources: QueryCoverageSource[] = rows.flatMap(q => {
-    const m = metadataOf(q)
-    if (m && q.interface !== 'apply_list' && !m.titleScope.rdjb.includes(rdjb!)) return []
-    const pages = m?.pages.filter(p => q.interface === 'apply_list' ? p.rdjb == null : p.rdjb === rdjb) ?? []
-    const conditions = m?.effectiveConditions ?? null
-    const exact = !!uscc && normalizeUscc(q.queryKey) === uscc && (!conditions?.uscc || normalizeUscc(conditions.uscc) === uscc)
-    const subjectMatch: QueryCoverageSource['subjectMatch'] = exact ? 'exact_uscc' : q.matched ? 'matched_relation' : q.queryKey.startsWith('name:') ? 'name_only' : 'unknown'
-    let status: CoverageStatus = 'unknown'
-    if (q.status === 'not_queried' && (!m || m.status === 'not_queried')) status = 'not_queried'
-    else if (['failed', 'auth_failed'].includes(q.status) || ['failed', 'auth_failed'].includes(m?.status ?? '') || pages.some(p => p.status !== 'success') || m?.error) status = 'failed'
-    else if (q.status === 'partial' || m?.completeness === 'partial' || m?.unfinished.some(p => p.rdjb === rdjb || p.rdjb == null)) status = 'partial'
-    else if (m && m.source === sourceByInterface[q.interface] && ['success', 'no_record'].includes(q.status) && m.status === q.status && (m.status !== 'no_record' || m.pages.every(p => p.fetchedCount === 0)) && m.completeness === 'complete' && !m.unfinished.length && completePages(pages, m.limits.pageSize, !!m.fullRange)) status = 'complete'
-    const count = pages.reduce((n, p) => n + p.fetchedCount, 0)
-    return [{ queryId: q.id, interface: q.interface, queriedAt: q.queriedAt, queryStatus: q.status, status, titleCode: q.interface === 'apply_list' || (!m && !q.titleCode && !q.rdjb) ? null : scope.titleCode, rdjb: q.rdjb,
-      conditions, pages, fullRange: m ? !!m.fullRange : null, completeness: m?.completeness ?? null, unfinished: m?.unfinished ?? [],
-      outcome: status === 'complete' && subjectMatch === 'exact_uscc' && m?.fullRange ? count === 0 ? 'no_record' : q.matched ? 'records' : 'unknown' : 'unknown', subjectMatch }]
-  })
-  // A later retry supersedes only the same source/conditions/title; unrelated
-  // restricted queries cannot hide a still-complete unrestricted traversal.
-  const latest = new Map<string, QueryCoverageSource>()
-  for (const s of sources) {
-    const conditions = s.conditions && Object.fromEntries(Object.entries(s.conditions).sort(([a], [b]) => a.localeCompare(b)))
-    const key = JSON.stringify([s.interface, conditions, s.fullRange])
-    if (!latest.has(key)) latest.set(key, s)
-  }
-  const relevant = [...latest.values()].filter(s => s.interface !== 'apply_list')
-  const unrestricted = relevant.filter(s => s.subjectMatch === 'exact_uscc' && s.conditions?.uscc && normalizeUscc(s.conditions.uscc) === uscc && Object.keys(s.conditions).every(k => ['uscc', 'combination'].includes(k)) && s.fullRange)
-  let status: CoverageStatus = 'unknown'
-  if (!sources.length || sources.every(s => s.status === 'not_queried')) status = 'not_queried'
-  else if (!truncated && unrestricted.some(s => s.status === 'complete')) status = 'complete'
-  else if (relevant.some(s => s.status === 'partial' || (s.status === 'complete' && s.subjectMatch === 'exact_uscc'))) status = 'partial'
-  else if (relevant.some(s => s.status === 'failed')) status = 'failed'
-  return { status, sources, truncated }
-}
 export function readQueryAssessment(db: DecisionDb, scope: AssessmentScope, variants?: IdentityKeyVariants, coverage?: ReturnType<typeof readQueryCoverage>) {
   scope = { enterpriseId: scope.enterpriseId, titleCode: scope.titleCode, direction: scope.direction }
   const currentDecision = currentDecision102(db, scope)
   return assessmentOf(db, scope, coverage ?? readQueryCoverage(db, scope, variants), currentDecision)
-}
-/** Shared status rules; both full and scalar readers supply their own SQL projection. */
-function assessmentStatuses(scope: AssessmentScope, queryCoverage: ReturnType<typeof readQueryCoverage>, currentDecision: ReturnType<typeof currentDecisionState102>, impact: ReturnType<typeof readEvidenceImpact113>) {
-
-  const current = currentDecision.current
-  const executed = queryCoverage.sources.filter(s => s.titleCode === scope.titleCode && s.queryStatus !== 'not_queried' && ['exact_uscc', 'matched_relation'].includes(s.subjectMatch))
-  const reviewed = impact.state?.reviewedRevisionId
-  const pending = !!impact.state && impact.state.latestRevisionId > (reviewed ?? -1)
-  // The scope token also advances for coverage-only and disjoint partitions.
-  // Until processing finishes stay conservative; once ready, the per-decision
-  // pending state carries substantive changes without rewriting the review audit.
-  const changed = reviewed != null && !impact.token.projectionReady
-  const invalid = current?.status === 'not_queried' && executed.length > 0 && reviewed == null
-  const validity = !current ? 'not_applicable' : pending ? impact.state!.classification : changed ? 'evidence_changed' : reviewed != null ? 'valid' : invalid ? 'premise_invalid' : 'unknown'
-  return { validity, invalid, executed, assessment: current ? 'decided' : currentDecision.versionId ? 'withdrawn' : queryCoverage.status === 'complete' ? 'queried_unjudged' : queryCoverage.status === 'not_queried' ? 'not_queried' : 'unknown' }
 }
 function assessmentOf(db: DecisionDb, scope: AssessmentScope, queryCoverage: ReturnType<typeof readQueryCoverage>, currentDecision = currentDecision102(db, scope), ownedImpact?: ReturnType<typeof readEvidenceImpact113>) {
   const current = currentDecision.current
   const impact = ownedImpact ?? readEvidenceImpact113(db, scope, current?.id ?? null)
   return projectQueryAssessment(scope, queryCoverage, currentDecision, impact)
 }
-export function projectQueryAssessment(scope: AssessmentScope, queryCoverage: ReturnType<typeof readQueryCoverage>, currentDecision: ReturnType<typeof currentDecision102>, impact: ReturnType<typeof readEvidenceImpact113>) {
-  const current = currentDecision.current
-  const { validity, invalid, executed, assessment } = assessmentStatuses(scope, queryCoverage, currentDecision, impact)
-  const reasons = validity === 'premise_invalid' ? ['query_executed'] : validity === 'evidence_changed' ? ['committed_evidence_changed'] : validity === 'unknown' ? ['no_evidence_baseline'] : []
-  return {
-    queryCoverage, currentDecision,
-    explanationValidity: { status: validity, reasons, explanationId: current?.id ?? null, evidenceQueryIds: invalid ? executed.map(s => s.queryId) : current?.evidenceQueryId ? [current.evidenceQueryId] : [] },
-    assessment,
-  }
-}
-export type QueryAssessment = ReturnType<typeof readQueryAssessment>
-
-export type QueryAssessmentSummary = {
-  queryCoverage: Pick<QueryAssessment['queryCoverage'], 'status'>
-  assessment: QueryAssessment['assessment']
-  explanationValidity: Pick<QueryAssessment['explanationValidity'], 'status'>
-}
-
 export function readQueryAssessments(db: DecisionDb, scopes: AssessmentScope[], ownedCoverage?: ReturnType<typeof readQueryCoverageBatch>): QueryAssessment[] {
   scopes = scopes.map(({ enterpriseId, titleCode, direction }) => ({ enterpriseId, titleCode, direction }))
   const coverages = ownedCoverage ? scopes.map(scope => {

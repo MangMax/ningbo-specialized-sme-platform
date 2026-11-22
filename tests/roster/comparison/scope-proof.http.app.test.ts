@@ -1,12 +1,11 @@
 import { createHash } from 'node:crypto'
 import { readExportWorkbook } from '../../support/read-workbook'
 import { listCurrentQualified, type CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
-import { execFileSync } from 'node:child_process'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
-import { listRecordCorrespondenceRefs } from '../../../layers/sme-roster/server/utils/record-correspondence'
+import { commitRecordCorrespondences, listRecordCorrespondenceRefs, preflightRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
+import { commitComparisonScopeProofs, preflightComparisonScopeProofs } from '../../../layers/sme-roster/server/utils/comparison-scope-proof'
 import { readPostgresCorrespondenceRefs } from '../../../layers/sme-roster/server/utils/record-correspondence-postgres-refs'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { nativeAppAdapter } from '../../support/native-app'
 import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
@@ -16,9 +15,9 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { eq } from 'drizzle-orm'
 import { initializeDb, schema } from '../../../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'spec63-proof-http-'))
 const dbPath = join(dir, 'synthetic.db')
@@ -54,9 +53,21 @@ addExport(4, '91330211255994478D', '导出独有')
 const restExplicitExport = addExport(5, '91330211255994479E', 'REST 显式证明')
 const mcpOmittedExport = addExport(6, '91330211255994480F', 'MCP 省略证明')
 let service: { baseUrl: string; stop: () => Promise<void> }
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+let runtimeDb: pg.Pool | undefined
 const sourceQuery = `queryIds=${query.id},${historicalCollection.queryId}&exportBatchIds=${batch.id}&officialSourceDocumentIds=${doc.id}`
-const api = (path: string, token = true) => `${service.baseUrl}/api/roster/${path}`
-const post = (path: string, body: unknown, authorized = true) => fetch(api(path), { method: 'POST', headers: { 'content-type': 'application/json', ...(authorized ? { authorization: 'Bearer synthetic-api-token' } : {}) }, body: JSON.stringify(body) })
+const api = (path: string) => `${service.baseUrl}/api/roster/${path}`
+const history = new Map<string, { kind: 'proof' | 'correspondence'; request: unknown }>()
+function remember(kind: 'proof' | 'correspondence', envelope: unknown) {
+  const { request } = envelope as { request: { idempotencyKey: string } }
+  history.set(request.idempotencyKey, { kind, request })
+}
+async function post(path: string, body: unknown, authorized = true) {
+  const response = await fetch(api(path), { method: 'POST', headers: { 'content-type': 'application/json', ...(authorized ? { authorization: 'Bearer synthetic-api-token' } : {}) }, body: JSON.stringify(body) })
+  if (response.ok && path === 'comparison-scope-proofs/commit') remember('proof', body)
+  if (response.ok && path === 'correspondences/commit') remember('correspondence', body)
+  return response
+}
 async function json(response: Response) { return response.json() as Promise<any> }
 const baseDecision = (id: string) => ({ idempotencyKey: id, sourceIdentity: `synthetic/${id}`, actor: { type: 'agent', id: 'synthetic-agent' }, basis: 'Reviewed archived original sources, scope, and same platform freeze', ruleId: 'manual-review', ruleVersion: '1' })
 const officialRequest = { ...baseDecision('official-proof'), operations: [{ action: 'create', kind: 'official_coverage', status: 'confirmed', evidence: { titleCode: 'specialized_sme', fromYear: 2024, throughYear: 2024, enterpriseIds: null, fullRange: true, sourceDocuments: [{ id: doc.id, fileId: file.id, sha256: file.sha256, reference: { field: 'record_evidence.source_file', page: 3, listNo: 2 } }] } }] }
@@ -65,20 +76,30 @@ async function rpc(method: string, params?: Record<string, unknown>, authorized 
   const response = await fetch(`${service.baseUrl}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18', ...(authorized ? { authorization: 'Bearer synthetic-mcp-token' } : {}) }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) })
   const raw = await response.text()
   const payload = raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))?.slice(6) : raw
-  return { status: response.status, body: JSON.parse(payload!) }
+  const body = JSON.parse(payload!)
+  if (response.ok && body.result && !body.result.isError && !body.error) {
+    if (params?.name === 'commit_comparison_scope_proofs') remember('proof', params.arguments)
+    if (params?.name === 'save_record_correspondences') remember('correspondence', params.arguments)
+  }
+  return { status: response.status, body }
 }
 const mcpValue = (result: any) => JSON.parse(result.body.result.content[0].text)
 
 beforeAll(async () => {
+  runtime = await postgresRuntimeFixture({ dir, sourcePath: dbPath })
+  runtimeDb = new pg.Pool({ connectionString: runtime.url })
   const cwd = resolve(import.meta.dirname, '../../..')
   const port = await reserveLoopbackPort()
-  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'nuxt-build'), NUXT_DB_PATH: dbPath, NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...runtime.env, NUXT_BUILD_DIR: join(dir, 'nuxt-build'), NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_ROSTER_EXPORT_DIR: join(dir, 'exports') } })
   let startupOutput = ''
   for (const stream of [child.stdout,child.stderr]) stream.on('data', data => { startupOutput = (startupOutput+data).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
-  try { await waitForHttp(api(`record-comparison?${sourceQuery}`), { timeoutMs: 60000, child }) } catch (error) { await service.stop(); throw new Error(`${String(error)}\n${startupOutput}`) }
+  try { await waitForHttp(service.baseUrl + '/api/health', { timeoutMs: 60000, child }) } catch (error) { await service.stop(); throw new Error(`${String(error)}\n${startupOutput}`) }
 }, 90000)
-afterAll(async () => { if (service) await service.stop(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => {
+  try { if (service) await service.stop() }
+  finally { await runtimeDb?.end(); runtime?.close(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) }
+})
 
 describe('stored comparison scope proofs through real HTTP and MCP', () => {
   let officialProofId: number
@@ -187,7 +208,7 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
     expect((await json(await fetch(api(`correspondences/${edgeId}/audit`)))).rows.at(-1).evidence.comparisonProofIds).toEqual([currentProofId])
   })
   it('invalidates source-bound proof after original row drift while retaining audit', async () => {
-    db.update(schema.platformExportRow).set({ nameRaw: 'changed after confirmation' }).where(eq(schema.platformExportRow.id, matchedExport.id)).run()
+    await runtimeDb!.query('UPDATE business.platform_export_row SET name_raw = $1 WHERE id = $2', ['changed after confirmation', matchedExport.id])
     const proof = await json(await fetch(api(`comparison-scope-proofs/${currentProofId}`)))
     expect(proof).toMatchObject({ status: 'confirmed', valid: false, invalidReason: 'source_drift_or_missing' })
     const after = await json(await fetch(api(`record-comparison?${sourceQuery}&proofIds=${officialProofId},${currentProofId}`)))
@@ -195,34 +216,47 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
     const edge = await json(await fetch(api(`correspondences?type=recognized_export`)))
     expect(edge.rows[0].requiresRevalidation).toBe(true)
     expect((await json(await fetch(api(`comparison-scope-proofs/${currentProofId}/audit`)))).total).toBe(2)
-    db.update(schema.platformExportRow).set({ nameRaw: '甲企业' }).where(eq(schema.platformExportRow.id, matchedExport.id)).run()
+    await runtimeDb!.query('UPDATE business.platform_export_row SET name_raw = $1 WHERE id = $2', ['甲企业', matchedExport.id])
     expect((await json(await fetch(api(`comparison-scope-proofs/${currentProofId}`)))).valid).toBe(true)
   })
 
   const pgBin = process.env.TEST_IMPORT_RECEIPTS_PG_BIN
   it.runIf(!!pgBin)('preserves migrated scope proof coverage, pagination, receipts and drift over HTTP and MCP', async () => {
-    const pgDir = mkdtempSync('/tmp/scope-pg-')
-    const url = 'postgresql://scope_fixture@localhost/postgres?host=' + encodeURIComponent(pgDir)
-    const native = nativeAppAdapter({ dir: pgDir, token: 'synthetic-api-token', launch: ({ cwd, port }) => ({
-      args: [join(cwd, '.output/server/index.mjs')],
-      env: { NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_MCP_TOKEN: 'synthetic-mcp-token',
-        NUXT_DB_READONLY: '1', NUXT_POSTGRES_ROSTER_READ: '1', NUXT_POSTGRES_DIRECTORY_URL: url,
-        NUXT_POSTGRES_DIRECTORY_WRITE: '1', NUXT_POSTGRES_JOBS: '1' },
-    }) })
-    const env = { PATH: process.env.PATH, LANG: 'C', PGHOST: pgDir, PGPORT: '5432', PGDATABASE: 'postgres',
-      PGUSER: 'scope_fixture', PGSQL_BIN: join(pgBin!, 'psql') }
-    const run = (name: string, args: string[]) => execFileSync(join(pgBin!, name), args, { env, stdio: 'pipe' })
-    let started = false
-    const client = new pg.Client({ connectionString: url })
+    // Build the historical source by executing the accepted commands against
+    // SQLite offline. Only the clock comes from the already tested live run.
+    for (const [key, { kind, request }] of history) {
+      const { rows: [timing] } = await runtimeDb!.query<{ created_at: string; committed_at: string }>(
+        'SELECT created_at, committed_at FROM business.import_batch WHERE idempotency_key = $1 AND status = $2', [key, 'committed'],
+      )
+      expect(timing).toBeDefined()
+      try {
+        vi.setSystemTime(new Date(timing!.created_at))
+        if (kind === 'proof') {
+          const input = request as Parameters<typeof preflightComparisonScopeProofs>[1]
+          const plan = preflightComparisonScopeProofs(db, input)
+          vi.setSystemTime(new Date(timing!.committed_at))
+          commitComparisonScopeProofs(db, input, plan.planHash)
+        } else {
+          const input = request as Parameters<typeof preflightRecordCorrespondences>[1]
+          const plan = preflightRecordCorrespondences(db, input)
+          vi.setSystemTime(new Date(timing!.committed_at))
+          commitRecordCorrespondences(db, input, plan.planHash)
+        }
+      } finally { vi.useRealTimers() }
+    }
+    const pgDir = mkdtempSync(join(tmpdir(), 'scope-history-'))
+    let target: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+    let closeNative: (() => Promise<void>) | undefined
+    let client: pg.Client | undefined
     try {
-      installLeadListSchema(db.$client)
-      run('initdb', ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', 'scope_fixture', '-D', join(pgDir, 'pg')])
-      run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-l', join(pgDir, 'pg.log'), '-o', "-c listen_addresses='' -k " + pgDir, 'start'])
-      started = true
-      execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', dbPath, 'staged'], { env, stdio: 'pipe' })
-      for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
-        run('psql', ['-X', '-w', '-q', '-v', 'staging=staged', '-f', 'upgrade/postgresql/materialize-' + name + '.sql'])
-      }
+      target = await postgresRuntimeFixture({ dir: pgDir, sourcePath: dbPath, bin: pgBin })
+      const appEnv = target.env
+      const native = nativeAppAdapter({ dir: pgDir, token: 'synthetic-api-token', launch: ({ cwd, port }) => ({
+        args: [join(cwd, '.output/server/index.mjs')],
+        env: { ...appEnv, NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_MCP_TOKEN: 'synthetic-mcp-token' },
+      }) })
+      closeNative = native.close
+      client = new pg.Client({ connectionString: target.url })
       await client.connect()
       await client.query('set search_path=business,public')
       const postgres = drizzle(client)
@@ -308,7 +342,7 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
         titleCode: currentFilter.titleCode, pageSize: String(currentFilter.pageSize), q: currentFilter.q,
       }))
       const actualPage = await current.json() as CurrentQualifiedResult
-      expect(current.status, JSON.stringify(actualPage)).toBe(200)
+      expect(current.status, JSON.stringify(actualPage) + '\n' + native.output).toBe(200)
       expect(actualPage.rows.map(row => row.enterpriseId)).toContain(enterprise.id)
       const mcpPage = await nativeCall('list_current_qualified_enterprises', currentFilter) as CurrentQualifiedResult
       for (const page of [actualPage, mcpPage]) {
@@ -423,7 +457,7 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
       expect(audit.rows.map((row: { resultingRevision: number }) => row.resultingRevision)).toEqual([1, 2])
       expect(native.db.$client.prepare('SELECT count(*) AS n FROM record_correspondence').get()).toEqual({ n: 0 })
 
-      run('psql', ['-X', '-w', '-c', `UPDATE business.platform_export_row SET name_raw='changed after confirmation' WHERE id=${matchedExport.id}`])
+      await client.query('UPDATE business.platform_export_row SET name_raw = $1 WHERE id = $2', ['changed after confirmation', matchedExport.id])
       const refsAfterDrift = await readPostgresCorrespondenceRefs(postgres, [enterprise.id])
       expect(refsAfterDrift).toEqual([
         ...expectedRefs.map(ref => ({ ...ref, requiresRevalidation: true })),
@@ -436,10 +470,8 @@ describe('stored comparison scope proofs through real HTTP and MCP', () => {
       expect((await native.request('/api/roster/' + path + '/batches/current-proof', { headers: {} })).status).toBe(401)
 
     } finally {
-      await client.end()
-      await native.close()
-      if (started) run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-m', 'fast', 'stop'])
-      rmSync(pgDir, { recursive: true, force: true })
+      try { await client?.end(); await closeNative?.() }
+      finally { target?.close(); rmSync(pgDir, { recursive: true, force: true }) }
     }
-  }, 90_000)
+  }, 120_000)
 })

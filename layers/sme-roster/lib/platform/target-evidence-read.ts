@@ -1,4 +1,4 @@
-/** Explicit target-only evidence serialization. Never use archive cells for business filtering. */
+import { cellSchema, snapshotSchema } from './evidence-snapshot-model'
 import { createHash } from 'node:crypto'
 import { and, desc, eq, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
@@ -6,14 +6,11 @@ import { z } from 'zod'
 import { targetSchema as s } from './target-schema'
 import { resolveLegacyReference, readOwnerArchive } from './target-archive'
 import { MAX_EVIDENCE_CHUNK_BYTES, PROVENANCE_CELL_NAMES, type PlatformEvidenceInput } from './evidence-contract'
-
 import { platformQueryResultShape } from './live-query'
-import { relationEvidenceColumns } from './relation-evidence-snapshot'
+import { relationEvidenceColumns } from './relation-evidence-fields'
 import { resolveSelectedLegacyProvenance } from './target-legacy-provenance'
 import { RECONCILE_SLOT_T04 } from './reconcile-slot-capture'
-const cellSchema = z.object({name:z.string(),storageClass:z.enum(['null','text','blob','integer','real']),hex:z.string().regex(/^(?:[a-fA-F0-9]{2})*$/),real64be:z.string().regex(/^[a-fA-F0-9]{16}$/).optional()})
 const commandProvenanceSchema=z.object({interface:z.enum(['apply_list','business_list','recognized_list']),queryKey:z.string(),rdjb:z.string().optional(),queriedAt:z.string(),reuseExisting:z.literal(true).optional(),rawResponse:z.string().nullish(),collectionEvidence:z.object(platformQueryResultShape).nullish()})
-export const snapshotSchema=z.object({encoding:z.literal('t05a-sqlite-cells-v1'),fields:z.array(cellSchema)})
 export function cellExpression(c:z.infer<typeof cellSchema>):SQL {
   const bytes=Buffer.from(c.hex,'hex')
   switch(c.storageClass) {
@@ -170,3 +167,4 @@ export function readTargetPlatformEvidence<S extends Record<string,unknown>>(db:
     return {queryId,field:input.field,relationId,encoding:'base64' as const,offset,byteLength:found.data.length,totalBytes:found.totalBytes,isNull:false,hasMore:offset+found.data.length<found.totalBytes,data:found.data.toString('base64')}
   })
 }
+export { snapshotSchema } from './evidence-snapshot-model'

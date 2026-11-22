@@ -1,3 +1,5 @@
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { mkdtempSync,rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,8 +13,8 @@ vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) =>
 
 const dir = mkdtempSync(join(tmpdir(), 'recognized-directory-mcp-'))
 const dbPath = join(dir, 'recognized.sqlite')
-vi.stubEnv('NUXT_DB_PATH', dbPath)
 const db = initializeDb({ create: true, dbPath })
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let listTool: typeof import('../../../layers/sme-roster/server/mcp/tools/list_platform_recognized_directory').default
 let detailTool: typeof import('../../../layers/sme-roster/server/mcp/tools/get_platform_recognized_record').default
 let recordId = 0
@@ -36,10 +38,14 @@ beforeAll(async () => {
   })
   recordId = written.observations[0]!.recordId!
   relationId = written.relationIds[0]!
+  postgres = await postgresRuntimeFixture({ dir, sourcePath: dbPath })
+  for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
   listTool = (await import('../../../layers/sme-roster/server/mcp/tools/list_platform_recognized_directory')).default
   detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_recognized_record')).default
-})
-afterAll(() => {
+}, 30_000)
+afterAll(async () => {
+  await closePostgresDirectoryDb()
+  postgres?.close()
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true })
 })
 

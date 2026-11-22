@@ -79,6 +79,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      - run: node scripts/verify-native-platform-boundary.mjs --built
       - run: node scripts/generate-logging-route-templates.mjs --check
       - run: tar -czf test-build.tar.gz .output
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -89,7 +90,7 @@ jobs:
 
   discovery:
     name: 校验开发服务接口契约
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -101,6 +102,7 @@ jobs:
           node-version: 26.13.1
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup-postgres-tests
       - run: node tests/support/development-discovery.mjs development-discovery.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -112,7 +114,7 @@ jobs:
     needs: coverage
     if: needs.coverage.outputs.native_count != '0'
     name: ${{ matrix.group }}
-    runs-on: ${{ matrix.postgres && 'ubuntu-24.04' || 'ubuntu-latest' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     strategy:
       fail-fast: false
@@ -129,18 +131,7 @@ jobs:
           node-version: 26.13.1
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Install PostgreSQL 19 for temporary test clusters
-        if: matrix.postgres
-        run: |
-          sudo install -d /usr/share/postgresql-common/pgdg
-          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
-          echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' | sudo tee /etc/apt/sources.list.d/ci-pgdg.list
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends postgresql-19 postgresql-client-19
-          bin=/usr/lib/postgresql/19/bin
-          "$bin/postgres" --version
-          echo "ROSTER_TEST_POSTGRES_BIN=$bin" >> "$GITHUB_ENV"
-          echo "TEST_ROSTER_COMPARISON_PG_BIN=$bin" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-postgres-tests
       - name: Run tests within the workflow time budget
         env:
           GH_TOKEN: ${{ github.token }}
@@ -177,7 +168,7 @@ jobs:
     needs: [build, coverage, discovery]
     if: needs.coverage.outputs.app_count != '0'
     name: ${{ matrix.group }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     strategy:
       fail-fast: false
@@ -194,6 +185,7 @@ jobs:
           node-version: 26.13.1
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup-postgres-tests
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: test-build

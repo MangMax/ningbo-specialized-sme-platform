@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { resolveDbPath, useRuntimeDb as runtimeDb } from '../../../db/client'
+import { useRuntimeDb as runtimeDb } from '../../../db/client'
 import { validateRuntimeMode } from '../../../db/runtime-mode'
 
 const dirs: string[] = []
@@ -99,62 +99,18 @@ it('runtime preserves data_version invalidation and native backup under independ
   } finally { external.close(); reader.$client.close(); owner.$client.close() }
 })
 
-it('startup plugin fails on a missing path and initializes an existing database before runtime consumers', async () => {
+it('requires a PostgreSQL URL even if a previously initialized local database exists', async () => {
   const { initializeDb } = await import('../../../db/client')
-  const previousPath = process.env.NUXT_DB_PATH, previousMode = process.env.NUXT_DB_READONLY
-  const globals = globalThis as unknown as Record<string, unknown>
-  const previousPlugin = globals.defineNitroPlugin
-  globals.defineNitroPlugin = (plugin: unknown) => plugin
-  const { default: plugin } = await import('../../../server/plugins/00-database')
-  const start = plugin as unknown as () => void
   const dbPath = path()
-  process.env.NUXT_DB_PATH = dbPath
-  process.env.NUXT_DB_READONLY = '0'
+  initializeDb({ dbPath, create: true }).$client.close()
+  vi.stubEnv('NUXT_DB_PATH', dbPath)
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', undefined)
   try {
-    expect(start).toThrow()
-    expect(existsSync(join(dbPath, '..'))).toBe(false)
-    initializeDb({ dbPath, create: true }).$client.close()
-    start()
-    const db = runtimeDb()
-    expect(db.$client.prepare('SELECT count(*) AS n FROM title').get()).toEqual({ n: 3 })
-    db.$client.close()
-  } finally {
-    if (previousPath === undefined) delete process.env.NUXT_DB_PATH
-    else process.env.NUXT_DB_PATH = previousPath
-    if (previousMode === undefined) delete process.env.NUXT_DB_READONLY
-    else process.env.NUXT_DB_READONLY = previousMode
-    globals.defineNitroPlugin = previousPlugin
-  }
-})
-
-it('PostgreSQL mode rejects SQLite runtime access even when the legacy database exists', async () => {
-  const { initializeDb, useApplicationDb } = await import('../../../db/client')
-  const dbPath = path()
-  const legacy = initializeDb({ dbPath, create: true })
-  try {
-    vi.stubEnv('NUXT_DB_PATH', dbPath)
-    vi.stubEnv('NUXT_DB_MODE', 'postgresql')
-    expect(() => useApplicationDb()).toThrow(expect.objectContaining({
-      statusCode: 503,
-      data: { code: 'postgresql_migration_required' },
-    }))
-  } finally {
-    vi.unstubAllEnvs()
-    legacy.$client.close()
-  }
-})
-
-it('defaults to the existing SQLite path when database mode and path are unset', () => {
-  vi.stubEnv('NUXT_DB_MODE', undefined)
-  vi.stubEnv('NUXT_DB_PATH', undefined)
-  try {
-    expect(() => validateRuntimeMode()).not.toThrow()
-    expect(resolveDbPath()).toBe(join(process.cwd(), 'data/roster.db'))
+    expect(() => validateRuntimeMode()).toThrow(/NUXT_POSTGRES_DIRECTORY_URL is required/)
   } finally { vi.unstubAllEnvs() }
 })
 
 it('allows distinct PostgreSQL roles on the same endpoint and rejects another database or host override', () => {
-  vi.stubEnv('NUXT_DB_MODE', 'postgresql')
   vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', 'postgresql://business@db/roster?host=%2Fvar%2Frun%2Fpostgresql')
   try {
     vi.stubEnv('NUXT_POSTGRES_LOG_URL', 'postgres://log@other:5432/%72oster?host=%2Fvar%2Frun%2Fpostgresql')

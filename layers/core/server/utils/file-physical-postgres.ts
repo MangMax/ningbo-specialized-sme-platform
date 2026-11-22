@@ -1,21 +1,25 @@
 import { randomUUID } from 'node:crypto'
 import { and, desc, eq, sql, type SQL } from 'drizzle-orm'
 import { filePhysicalIntent as intentTable } from '../../../../db/postgresql/file-tables'
-import { compareFileContentIdentity } from './file-content-identity'
-import { fileMaintenanceRequestHash, requireVersionedFileMaintenanceOptions, type FileMaintenanceOptions } from './file-maintenance'
+import { compareFileContentIdentity } from './file-identity'
+import { fileMaintenanceRequestHash, requireVersionedFileMaintenanceOptions, type FileMaintenanceOptions } from './file-maintenance-shared'
 import {
   applyPostgresFileMaintenance, checkPostgresFileRevision, lockPostgresFileRequestKey, physicalMaintenanceKey,
   postgresFileRevision, postgresMaintenanceHash, postgresPhysicalRequestKeyExists, rejectNewPhysicalInternalKey,
 } from './file-maintenance-postgres'
-import { filePhysicalReceipt, filePhysicalRequestHash } from './file-physical'
+import { filePhysicalReceipt, filePhysicalRequestHash } from './file-physical-receipt'
 import { movePhysicalFile, verifyPhysicalOriginal } from './file-physical-disk'
-import { FileMaintenanceError, type FileRow } from './file-store'
+import { FileMaintenanceError, type FileRow } from './file-store-contract'
 import {
   activePostgresPhysicalIntent, lockPostgresFile, postgresFileIdentity, readPostgresFile,
   requirePostgresFileWrite, type PostgresFileDb,
 } from './file-store-postgres'
 
-type Intent = Parameters<typeof filePhysicalReceipt>[1]
+type Intent = Omit<typeof intentTable.$inferSelect, 'bytes' | 'deleteReceipt' | 'recoverReceipt'> & {
+  bytes: number
+  deleteReceipt: ReturnType<typeof filePhysicalReceipt> | null
+  recoverReceipt: ReturnType<typeof filePhysicalReceipt> | null
+}
 function fail(message: string): never {
   throw new FileMaintenanceError(409, message)
 }

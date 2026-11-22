@@ -6,7 +6,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { schema, useDb } from '../../../db'
+import { schema } from '../../../db'
+import { migratedSourceReader } from './fixtures/migrated-source'
 import type { DuplicateMergeReport } from '../../../layers/sme-roster/lib/roster/duplicate-merge'
 import { type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { classifyRawQuery } from '../../../layers/sme-roster/lib/platform'
@@ -113,11 +114,13 @@ const importRequest: RosterImportRequest = {
 
 let server: EvidenceServer
 let currentQuery: Record<string, unknown> = {}
+const migrated = migratedSourceReader(dir, db.$client)
 const client = () => createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token: TOKEN }, db)
 const json = async <T>(path: string): Promise<T> => {
   const response = await fetch(`${server.baseUrl}${path}`)
-  expect(response.status, `${path} 应返回 200`).toBe(200)
-  return (await response.json()) as T
+  const body = await response.json()
+  expect(response.status, `${path} 应返回 200，实际响应 ${JSON.stringify(body)}`).toBe(200)
+  return body as T
 }
 const candidatesReport = (batchKey: string) =>
   json<DuplicateMergeReport>(`/api/roster/import/duplicate-candidates?batchKey=${encodeURIComponent(batchKey)}`)
@@ -129,7 +132,6 @@ beforeAll(async () => {
     Object.assign(new Error(opts.statusMessage ?? 'Bad request'), opts),
   )
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: join(dir, 'none.json'), reconcilePath: join(dir, 'none.json') }))
-  vi.doMock('@db', () => ({ useDb: () => db }))
 
   const route = (await import('../../../layers/sme-roster/server/api/roster/import/duplicate-candidates.get')).default as unknown as (
     event: unknown,
@@ -141,7 +143,7 @@ beforeAll(async () => {
     getRoutes: {
       '/api/roster/import/duplicate-candidates': (url) => {
         currentQuery = Object.fromEntries(url.searchParams.entries())
-        return route({})
+        return migrated.read(() => route({}))
       },
     },
   })
@@ -150,7 +152,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await server?.close()
   vi.unstubAllGlobals()
-  vi.doUnmock('@db')
+  await migrated.close()
+  db.$client.close()
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -225,7 +228,7 @@ describe('A · 新建企业时同名 ⇒ 报告里显式列出重名候选', () 
     expect(report.pending[0]!.reason).toBe('no_platform_query')
     expect(report.request).toBeNull()
     expect(enterpriseExists(db, existing)).toBe(true)
-  })
+  }, 60_000)
 })
 
 // ---------------------------------------------------------------------------
@@ -261,7 +264,7 @@ describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', 
           nativeQueryRows(db).some((q) => q.id === r.queryId && q.queryKey === USCC),
       )
     expect(matching.length, '夹具里应有 qymc 等于公布名的关系').toBeGreaterThan(0)
-  })
+  }, 20_000)
 
   it('★ 报告：证据成立 ⇒ 可并，并给出可直接提交的 merges', async () => {
     const report = await candidatesReport(importRequest.idempotencyKey)
@@ -309,7 +312,7 @@ describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', 
         note: expect.stringContaining(`qymc 逐字等于「${OLD_NAME}」`),
       },
     ])
-  })
+  }, 60_000)
 
   it('★ 执行 merges：两行合一，称号/事件/出处一条不丢', async () => {
     expect(mergeRequest).not.toBeNull()
@@ -392,14 +395,14 @@ describe('C · 端到端：真实平台证据 ⇒ 两行合一，一条不丢', 
     expect(report.ready).toHaveLength(0)
     expect(report.pending[0]!.reason).toBe('source_has_uscc')
     expect(report.request).toBeNull()
-  })
+  }, 60_000)
 
   it('缺 batchKey / 批次不存在：400 / 404', async () => {
     const missing = await fetch(`${server.baseUrl}/api/roster/import/duplicate-candidates`)
     expect(missing.status).toBe(400)
     const unknown = await fetch(`${server.baseUrl}/api/roster/import/duplicate-candidates?batchKey=nope%23sha256:zz`)
     expect(unknown.status).toBe(404)
-  })
+  }, 60_000)
 })
 
 // ---------------------------------------------------------------------------
@@ -479,7 +482,7 @@ describe('C · 反面：证据不足 ⇒ 不归并，逐条待核', () => {
     expect(enterpriseExists(db, existingNeverQueried)).toBe(true)
     expect(db.select().from(schema.enterprise).all().filter((e) => e.usccNorm === NOT_EVIDENCED_USCC)).toHaveLength(1)
     expect(db.select().from(schema.enterprise).all().filter((e) => e.usccNorm === NEVER_QUERIED_USCC)).toHaveLength(1)
-  })
+  }, 60_000)
 
   it('同一既有行被两条候选认领（同名多主体）⇒ 只并第一条，其余待核', async () => {
     const claimedName = '宁波昌隆机电有限公司'
@@ -538,7 +541,7 @@ describe('C · 反面：证据不足 ⇒ 不归并，逐条待核', () => {
       `宁波昌隆机电有限公司#91330211000000002J:source_has_uscc`,
     ])
     expect(report.ready[0]!.merge.fromEnterpriseId).toBe(claimed)
-  })
+  }, 60_000)
 })
 
 // ---------------------------------------------------------------------------
@@ -832,7 +835,7 @@ describe('① · 主名称以导出表为准：归并把规范行改成导出名
     const mergeItem = plan.items.find((i) => i.item.kind === 'merge')!
     expect(mergeItem.action).toBe('update')
     expect(mergeItem.item.detail!.requestedCanonicalName).toBe(EXPORT_NAME)
-  })
+  }, 60_000)
 
   it('★ 执行：规范行 name = **导出名**，被顶掉的原名是 confirmed 别名（来源 = 落库关系）', async () => {
     const report = await candidatesReport(importKey)
@@ -868,7 +871,7 @@ describe('① · 主名称以导出表为准：归并把规范行改成导出名
     // 按导出名或历史名搜索都命中同一企业。
     expect(searchEnterpriseIdsByName(db,ANNOUNCED)).toEqual([canonicalId])
     expect(searchEnterpriseIdsByName(db,EXPORT_NAME)).toEqual([canonicalId])
-  })
+  }, 60_000)
 
   it('坏 `canonicalName` 逐项报错、整批不落库（不静默忽略）', async () => {
     const before = rosterRowCounts(db)

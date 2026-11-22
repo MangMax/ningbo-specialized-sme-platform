@@ -17,6 +17,5 @@ export function listRegisteredDeclarations681(db: BetterSQLite3Database<typeof s
   }
   return result
 }
-export function registeredSummary681(declarations: Declaration[]) {
-  return { count: declarations.length, declarations }
-}
+
+export { registeredSummary681 } from './registered-declaration-summary'

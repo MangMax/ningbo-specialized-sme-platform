@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { type ChildProcess } from 'node:child_process'
-import { createLogService } from '../../../layers/core/lib/logging/service'
+import { createLogService } from '../../../layers/core/lib/logging/sqlite-service'
 import { spawnOwnedChild as spawn, stopOwnedChild } from '../../support/owned-process.mjs'
 
 it('keeps all query attempt counts and terminals from four real processes sharing one SQLite store', async () => {
@@ -24,7 +24,7 @@ it('keeps all query attempt counts and terminals from four real processes sharin
     writeFileSync(script, `
 import {createRequire} from 'node:module'
 const {createJiti}=createRequire(import.meta.url)(${JSON.stringify(jiti)})
-const {createLogService}=await createJiti(import.meta.url).import(${JSON.stringify(resolve('layers/core/lib/logging/service.ts'))})
+const {createLogService}=await createJiti(import.meta.url).import(${JSON.stringify(resolve('layers/core/lib/logging/sqlite-service.ts'))})
 const service=createLogService({directory:${JSON.stringify(directory)},stdout:false})
 const writer=process.argv[2]
 await service.policy()

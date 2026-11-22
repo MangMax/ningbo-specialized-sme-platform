@@ -1,7 +1,6 @@
 import { z } from 'zod'
-import { useDb } from '@db'
 import { coreDictionaryKinds } from '#core/lib/dictionaries'
-import { readDictionary, readPostgresDictionary } from '../../../utils/dictionaries'
+import { readPostgresDictionary } from '../../../utils/dictionaries'
 import { usePostgresDirectoryDb } from '../../../../../../db/postgresql/client'
 
 defineRouteMeta({ openAPI: { tags: ['字典管理'], summary: '读取平台字典',
@@ -13,5 +12,5 @@ export default defineEventHandler(event => {
   const kind = z.enum(coreDictionaryKinds).safeParse(getRouterParam(event, 'kind'))
   if (!kind.success) throw createError({ statusCode: 404, message: '找不到该字典。' })
   const postgres = usePostgresDirectoryDb()
-  return postgres ? readPostgresDictionary(postgres, kind.data) : readDictionary(useDb(), kind.data)
+  return readPostgresDictionary(postgres, kind.data)
 })

@@ -3,16 +3,6 @@ import { z } from 'zod'
 import { rosterImportMcpPayloadSchema } from '../../utils/roster-import-schema'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
 
-/**
- * `preflight_roster_batch` —— 名录导入的**只读预检**（RL-11，契约 §9）。
- *
- * 等价 `POST /api/roster/import/preflight`：**不写业务数据**，只算影响
- * （`add` / `update` / `remove` / `review` / `conflicts`）并落一条 `status='preflight'`
- * 的 `import_batch`。参数与 `save_roster_batch` 相同。
- *
- * 契约 §9 把它归为**读 tool**（只读预检），因此按「只读不鉴权、写入必带 token」的
- * 既有分法**不带 token**；真正改库的是 `save_roster_batch`（带 token）。
- */
 export default defineMcpTool({
   name: 'preflight_roster_batch',
   title: '预检名录导入批次',

@@ -6,9 +6,10 @@ import {
 import { platformCollection, platformLegacyQueryAlias } from '../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import * as schema from '../../../../db/schema'
+import type * as schema from '../../../../db/schema'
 import { readPostgresCollectionScopes } from '../../lib/roster/query-coverage-postgres'
-import { queryImpactRelevant113, scopeKey113, type ImpactDecision113, type Snapshot113 } from './evidence-impact-113'
+import { queryImpactRelevant113, scopeKey113 } from './evidence-impact-model'
+import { type ImpactDecision113, type Snapshot113 } from './evidence-impact-113'
 import { postgresSnapshotDigest } from './export-snapshot-import-postgres'
 
 type Reader = Pick<NodePgDatabase, 'execute' | 'select'>

@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initializeDb } from '../../../db/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { businessDigest } from '../fixtures/business-state'
 import { LOG_LEVELS } from '../../../layers/core/lib/logging/contract'
 import { LOG_FIELD_PROFILES } from '../../../layers/core/lib/logging/field-controls'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
@@ -12,10 +13,11 @@ import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForH
 // Only this checkout's already-built artifact; caller records its frozen tree.
 // No production TUS callback, request hook, storage or logger is replaced.
 const root = mkdtempSync(join(tmpdir(), 'tus-field-http-'))
-const dbPath = join(root, 'synthetic.db'), logs = join(root, 'logs'), files = join(root, 'files'), incoming = join(root, 'incoming')
+const files = join(root, 'files'), incoming = join(root, 'incoming')
 const payload = Buffer.from('PRIVATE_TUS_FIELD_BYTES_180\n'), token = 'synthetic-tus-field-api', mcpToken = 'synthetic-tus-field-mcp'
 const api = { authorization: `Bearer ${token}` }, base = { retentionDays: 7, maxBytes: 536870912 }
 const fields = ['tus.method', 'tus.uploadId', 'tus.size', 'tus.offset'] as const
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 let child: ChildProcess, url = '', output = '', beforeHash = '', initialHealth: unknown
 const observations: unknown[] = []
 const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')
@@ -42,17 +44,18 @@ async function fileEvent(requestId: string) {
 }
 beforeAll(async () => {
   expect(existsSync('.output/server/index.mjs')).toBe(true)
-  const db = initializeDb({ create: true,  dbPath }); db.$client.close(); beforeHash = hash(dbPath)
+  runtime = await postgresRuntimeFixture({ dir: root }); beforeHash = businessDigest(runtime)
   mkdirSync(files); mkdirSync(incoming)
   const port = await reserveLoopbackPort(); expect(port).not.toBe(50055); url = `http://127.0.0.1:${port}`
-  child = spawn(process.execPath, ['.output/server/index.mjs'], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production', NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_LOG_DIR: logs, NUXT_FILES_DIR: files, NUXT_INCOMING_DIR: incoming, NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json') } })
+  child = spawn(process.execPath, ['.output/server/index.mjs'], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...runtime.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production', NUXT_DB_READONLY: '0', NUXT_FILES_DIR: files, NUXT_INCOMING_DIR: incoming, NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json') } })
   child.stdout!.on('data', c => { output += c }); child.stderr!.on('data', c => { output += c })
   const ready = await waitForHttp(url + '/api/health', { child }); initialHealth = await ready.json()
   observations.push({ root, url, pid: child.pid, beforeHash, artifactHash: hash('.output/server/chunks/nitro/nitro.mjs') })
 }, 90000)
 afterAll(async () => {
   await stopOwnedChild(child)
-  const afterHash = existsSync(dbPath) ? hash(dbPath) : null
+  const afterHash = runtime ? businessDigest(runtime) : null
+  runtime?.close()
   observations.push({ afterHash, unchangedBusinessDb: afterHash === beforeHash, rawAbsent: !output.includes(payload.toString().trim()), child: { pid: child?.pid, exitCode: child?.exitCode, signalCode: child?.signalCode } })
 
   rmSync(root, { recursive: true, force: true })
@@ -98,7 +101,7 @@ async function roundTrip(disabled?: typeof fields[number]) {
     events.push(event)
   }
   if (disabled === 'tus.uploadId') expect(output).not.toContain(id)
-  expect((await call('/api/health')).body).toEqual(initialHealth); expect(hash(dbPath)).toBe(beforeHash)
+  expect((await call('/api/health')).body).toEqual(initialHealth); expect(businessDigest(runtime)).toBe(beforeHash)
   observations.push({ disabled: disabled ?? 'none', uploadId: id, statuses: [created.status, rejected.status, completed.status], landed: path, fileSHA256: hash(join(files, path)), events })
 }
 it('real TUS defaults preserve creation failure completion context and original file placement without registration', async () => { await roundTrip() })

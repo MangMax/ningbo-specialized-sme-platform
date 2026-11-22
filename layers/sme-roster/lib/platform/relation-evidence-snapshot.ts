@@ -1,4 +1,4 @@
-/** Evidence-only capture of new writer original cells, in the existing sealed observation owner. */
+import { relationEvidenceColumns } from './relation-evidence-fields'
 import { eq, sql, type SQL } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { RosterImportRelation } from '../roster-import-client'
@@ -8,14 +8,6 @@ import { normalizePlatformRelation } from './normalization'
 import { materializedText } from './apply-materialization'
 import { captureSqlFactTitle } from './apply-stored-cells'
 import { sqliteConnection } from './target-connection'
-export const relationEvidenceColumns = [
-  ['id','id'],['queryId','query_id'],['sequenceNo','sequence_no'],['relationKey','relation_key'],
-  ['enterpriseId','enterprise_id'],['rawFields','raw_fields'],['titleRaw','title_raw'],['sourceText','source_text'],
-  ['usccRaw','uscc_raw'],['nameRaw','name_raw'],['aliasNameRaw','alias_name_raw'],['province','province'],
-  ['status','status'],['batch','batch'],['declareKind','declare_kind'],['appliedAt','applied_at'],
-  ['awardBatchLabel','award_batch_label'],['year','year'],['matchBasis','match_basis'],
-  ['verificationStatus','verification_status'],['createdAt','created_at'],
-] as const
 export function captureRelationEvidence<S extends Record<string,unknown>>(db:BetterSQLite3Database<S>,input:{observationId:number,collectionId:number,relationAlias:number,row:RosterImportRelation,assignment:typeof s.platformObservationAssignment.$inferInsert,createdAt:string}) {
   const query=db.select().from(s.platformLegacyQueryAlias).where(eq(s.platformLegacyQueryAlias.collectionId,input.collectionId)).get()
   if(!query)throw new Error('Missing collection alias for relation evidence')
@@ -34,3 +26,4 @@ export function captureRelationEvidence<S extends Record<string,unknown>>(db:Bet
   const archiveId=insertArchiveValue(db,{storageClass:'blob',bytes:Buffer.from(JSON.stringify({encoding:'t05a-sqlite-cells-v1',fields})),createdAt:input.createdAt})
   bindArchive(db,{kind:'observation',ownerId:input.observationId,field:'legacyRowSnapshot',archiveId})
 }
+export { relationEvidenceColumns } from './relation-evidence-fields'

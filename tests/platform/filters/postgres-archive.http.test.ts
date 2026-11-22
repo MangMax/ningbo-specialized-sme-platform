@@ -8,6 +8,7 @@ import { submitNativePlatformQuery } from '../fixtures/native-query'
 import { installArchiveFixture } from './postgres-archive-fixture'
 
 const url = process.env.TEST_MIIT_ARCHIVE_PG_URL
+let backend: 'sqlite' | 'postgres' = 'postgres'
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 
 const sources = {
@@ -59,8 +60,8 @@ const capturedProjections = {
   'recognized-directory': ['platform_recognized_projection', 'exact_title_state'],
 } as const
 
-async function read(backend: 'sqlite' | 'postgres', path: string, params: Record<string, string | number> = {}) {
-  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', backend === 'postgres' ? url : undefined)
+async function read(engine: 'sqlite' | 'postgres', path: string, params: Record<string, string | number> = {}) {
+  backend = engine
   const target = new URL('/api/platform/' + path, 'http://localhost')
   for (const [key, value] of Object.entries(params)) target.searchParams.set(key, String(value))
   const response = await request(new Request(target))
@@ -69,6 +70,47 @@ async function read(backend: 'sqlite' | 'postgres', path: string, params: Record
     cacheControl: response.headers.get('cache-control'),
     body: response.ok ? await response.json() : await response.json().then(body => body.statusMessage ?? body.message),
   }
+}
+
+function installSqliteOracleAdapters() {
+  // Exercise the same HTTP parameter validation for both engines. Only the oracle
+  // call substitutes an explicit legacy reader, while the PG lane uses production code.
+  vi.doMock('../../../layers/sme-roster/server/utils/platform-archive-read', async importOriginal => {
+    const actual = await importOriginal<typeof import('../../../layers/sme-roster/server/utils/platform-archive-read')>()
+    const [declarations, business, recognized] = await Promise.all([
+      import('../../../layers/sme-roster/server/utils/platform-declarations-target'),
+      import('../../../layers/sme-roster/server/utils/platform-business-processes-target'),
+      import('../../../layers/sme-roster/server/utils/platform-recognized-target'),
+    ])
+    const readers = {
+      declarations: { list: declarations.listTargetDeclarations, detail: declarations.getTargetDeclaration, options: declarations.readTargetDeclarationOptions },
+      'business-processes': { list: business.listTargetBusinessProcesses, detail: business.getTargetBusinessProcess, options: business.readTargetBusinessProcessOptions },
+      'recognized-directory': { list: recognized.listTargetRecognizedDirectory, detail: recognized.getTargetRecognizedRecord, options: recognized.readTargetRecognizedOptions },
+    }
+    return {
+      listPlatformArchive: async (source: Source, input: unknown) => backend === 'sqlite' ? readers[source].list(input, fixture.db) : actual.listPlatformArchive(source, input),
+      readPlatformArchiveDetail: async (source: Source, id: number) => backend === 'sqlite' ? readers[source].detail(fixture.db, id) : actual.readPlatformArchiveDetail(source, id),
+      readPlatformArchiveOptions: async (query: Parameters<typeof actual.readPlatformArchiveOptions>[0]) => backend === 'sqlite' ? readers[query.source].options(query.view, fixture.db) : actual.readPlatformArchiveOptions(query),
+    }
+  })
+  vi.doMock(import('../../../layers/sme-roster/lib/platform/postgres-query-read'), async importOriginal => {
+    const actual = await importOriginal()
+    const { listPlatformQueries } = await import('../../../layers/sme-roster/lib/platform/read')
+    return { ...actual, readPostgresPlatformQueries: async (db, filter) =>
+      backend === 'sqlite' ? listPlatformQueries(fixture.db, filter) : actual.readPostgresPlatformQueries(db, filter) }
+  })
+  vi.doMock(import('../../../layers/sme-roster/lib/platform/postgres-evidence-read'), async importOriginal => {
+    const actual = await importOriginal()
+    const { readPlatformQueryEvidence } = await import('../../../layers/sme-roster/lib/platform/evidence-read')
+    return { ...actual, readPostgresPlatformEvidence: async (db, input) =>
+      backend === 'sqlite' ? readPlatformQueryEvidence(fixture.db, input) : actual.readPostgresPlatformEvidence(db, input) }
+  })
+  vi.doMock(import('../../../layers/sme-roster/server/utils/platform-snapshots-http-postgres'), async importOriginal => {
+    const actual = await importOriginal()
+    const { handlePlatformSnapshotRequest } = await import('../../../layers/sme-roster/server/utils/platform-snapshots-http')
+    return { ...actual, handlePostgresPlatformSnapshotRequest: async (action, input, db) =>
+      backend === 'sqlite' ? handlePlatformSnapshotRequest(action, input, { db: fixture.db }) : actual.handlePostgresPlatformSnapshotRequest(action, input, db) }
+  })
 }
 
 beforeAll(async () => {
@@ -140,10 +182,10 @@ beforeAll(async () => {
   vi.stubGlobal('setHeader', setHeader)
   vi.stubGlobal('setResponseStatus', setResponseStatus)
   vi.stubEnv('NUXT_DB_READONLY', '1')
-  vi.doMock('@db', () => ({ useDb: () => {
-    if (process.env.NUXT_POSTGRES_DIRECTORY_URL) throw new Error('Unexpected SQLite access in PostgreSQL mode')
-    return fixture.db
-  } }))
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
+  vi.doMock('@db', () => ({ useDb: () => { throw new Error('Unexpected implicit SQLite access in PostgreSQL mode') } }))
+  installSqliteOracleAdapters()
+
   const router = createRouter()
     .get('/api/platform/declarations', (await import('../../../layers/sme-roster/server/api/platform/declarations.get')).default)
     .get('/api/platform/declarations/:recordId', (await import('../../../layers/sme-roster/server/api/platform/declarations/[recordId].get')).default)
@@ -213,7 +255,7 @@ it.skipIf(!url)('reads historical query summaries with stable pages, title scope
     view: 'summary', enterpriseId: reassignedCoordinates.enterpriseId, queryId: reassignedCoordinates.queryId,
   })
   expect(owned.body).toMatchObject({ total: 1, rows: [{ query: { id: reassignedCoordinates.queryId, relationCount: 1 } }] })
-  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
+  backend = 'postgres'
   const tool = (await import('../../../layers/sme-roster/server/mcp/tools/list_platform_queries')).default as unknown as {
     handler(input: { view: 'summary'; pageSize: number }): Promise<unknown>
   }
@@ -250,7 +292,7 @@ it.skipIf(!url)('reads original bytes and persisted relation evidence through HT
     enterpriseId: reassignedCoordinates.enterpriseId, matchBasis: 'manual', verificationStatus: 'confirmed',
   })
 
-  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
+  backend = 'postgres'
   const tool = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_query_evidence')).default as unknown as {
     handler(input: { queryId: number; field: 'rawResponse'; length: number }): Promise<unknown>
   }

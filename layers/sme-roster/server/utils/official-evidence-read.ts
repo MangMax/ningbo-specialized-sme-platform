@@ -1,9 +1,7 @@
 import { z } from 'zod'
-import type { OfficialEvidenceExecutor } from './official-evidence'
-import { listEventOfficialEvidence, readLatestOfficialEvidence, readOfficialEvidenceHistory, OfficialEvidenceError } from './official-evidence'
-import { importReceiptRedactor, type ReceiptRedactor } from './import-receipt-redaction'
+import { OfficialEvidenceError } from './official-evidence'
+import type { ReceiptRedactor } from './import-receipt-redaction'
 
-type Db = Parameters<typeof importReceiptRedactor>[0]
 const id = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 const paging = { pageSize: id.max(50).optional(), maxBytes: id.max(65536).optional() }
 export const evidenceReadShape = { id, official: z.enum(['latest','history']).optional(), beforeRevision: id.optional(), ...paging }
@@ -50,29 +48,6 @@ export function officialProjectionResponse(result: object, availability: string,
   const projection = redact({ ...result, ...projectionMetadata, availability })
   if (Buffer.byteLength(JSON.stringify(projection)) > maxBytes) throw new OfficialEvidenceError(413, 'response_limit', 'Redacted official projection exceeds maxBytes')
   return projection
-}
-
-/** Only the new projection is budgeted/redacted; no legacy field is trimmed or rewritten. */
-export function readPublicOfficialEvidence(db: Db, kind: 'evidence'|'event', args: EvidenceRead | EventRead) {
-  const { maxBytes, budget: availableBytes } = officialProjectionBudget(args)
-  const executor: OfficialEvidenceExecutor = db
-  const budget = { maxBytes: availableBytes }
-  let result:object, availability:string
-  if(kind==='event') {
-    const event=args as EventRead
-    result=listEventOfficialEvidence(executor,event.eventId,{...budget,...(event.pageSize===undefined?{}:{pageSize:event.pageSize}),...(event.afterEvidenceId===undefined?{}:{afterEvidenceId:event.afterEvidenceId})})
-    availability='captured_rows'
-  } else {
-    const evidence=args as EvidenceRead
-    if(evidence.official==='history') {
-      const history=readOfficialEvidenceHistory(executor,evidence.id,{...budget,...(evidence.pageSize===undefined?{}:{pageSize:evidence.pageSize}),...(evidence.beforeRevision===undefined?{}:{beforeRevision:evidence.beforeRevision})})
-      result=history; availability=history.rows.length?'available':evidence.beforeRevision===undefined?'unknown_legacy':'empty_page'
-    } else {
-      const latest=readLatestOfficialEvidence(executor,evidence.id,budget)
-      result=latest; availability=latest.row?'available':'unknown_legacy'
-    }
-  }
-  return officialProjectionResponse(result, availability, maxBytes, importReceiptRedactor(db))
 }
 
 /** Toolkit takes raw shapes and strips root extras. Validate the original RPC, and

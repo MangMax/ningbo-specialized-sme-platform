@@ -1,24 +1,25 @@
 
-import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
-import { initializeDb } from '../../../db/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { storedLogRows } from '../fixtures/runtime'
+import { businessDigest } from '../fixtures/business-state'
 import { APPLICATION_LOG_ROUTES } from '../../../lib/logging-route-templates'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
 /**
  * #180 actual built Nuxt seam: a fresh synthetic business DB and an independent
- * log directory. Only public HTTP is asserted; the parent service/fixture is
+ * PostgreSQL log schema. Only public HTTP is asserted; the parent service/fixture is
  * never touched.
  */
 const root = mkdtempSync(join(tmpdir(), 'log-usability-180-http-'))
-const dbPath = join(root, 'synthetic.db'), logDir = join(root, 'logs')
 const token = 'synthetic-log180-api', mcpToken = 'synthetic-log180-mcp'
 const PRIVATE = 'PRIVATE180_HTTP_NONCE'
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 let child: ReturnType<typeof spawn>, baseUrl = '', output = ''
 
 const apiHeaders = { authorization: `Bearer ${token}` }
@@ -58,30 +59,29 @@ async function mcp(method: string, params: unknown, tokenValue?: string) {
 }
 
 beforeAll(async () => {
-  const db = initializeDb({ create: true,  dbPath })
-  db.$client.close()
+  runtime = await postgresRuntimeFixture({ dir: root })
   const port = await reserveLoopbackPort()
   baseUrl = `http://127.0.0.1:${port}`
   child = spawn(process.execPath, ['.output/server/index.mjs'], {
     cwd: resolve(import.meta.dirname, '../../..'),
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
-      ...process.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production',
-      NUXT_DB_PATH: dbPath, NUXT_DB_READONLY: '1', NUXT_LOG_DIR: logDir,
+      ...process.env, ...runtime.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production',
+      NUXT_DB_READONLY: '0',
       NUXT_FILES_DIR: join(root, 'files'), NUXT_INCOMING_DIR: join(root, 'incoming'),
       NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_CURATED_PATH: join(root, 'curated.json'), NUXT_RECONCILE_PATH: join(root, 'reconcile.json'),
     },
   })
   child.stdout!.on('data', chunk => { output += chunk.toString() })
   child.stderr!.on('data', chunk => { output += chunk.toString() })
-  mkdirSync(logDir, { recursive: true })
   mkdirSync(join(root, 'files'), { recursive: true })
   mkdirSync(join(root, 'incoming'), { recursive: true })
   await waitForHttp(url('/api/health'), { child, timeoutMs: 120_000 })
 }, 360_000)
 
 afterAll(async () => {
-  await stopOwnedChild(child)
+  if (child) await stopOwnedChild(child)
+  runtime?.close()
   writeFileSync(join(root, 'server.log'), output)
   rmSync(root, { recursive: true, force: true })
 })
@@ -122,8 +122,8 @@ it('uses a dynamic route template without persisting the concrete id or query va
   const serialized = JSON.stringify({ summary, detail: await detail(summary.id) })
   expect(serialized).not.toContain('987654321')
   expect(serialized).not.toContain(PRIVATE)
-  expect(readFileSync(join(logDir, 'events.db')).toString()).not.toContain('987654321')
-  expect(readFileSync(join(logDir, 'events.db')).toString()).not.toContain(PRIVATE)
+  expect(storedLogRows(runtime)).not.toContain('987654321')
+  expect(storedLogRows(runtime)).not.toContain(PRIVATE)
 })
 
 for (const action of ['commit', 'preflight'] as const) it(`retains the parse-result ${action} template on authenticated invalid-id POST without business writes`, async () => {
@@ -132,7 +132,7 @@ for (const action of ['commit', 'preflight'] as const) it(`retains the parse-res
   const path = `/api/files/${fileId}/parse-result/${action}`
   const requestURL = new URL(path, baseUrl).href
   const template = `/api/files/:id/parse-result/${action}`
-  const dbHash = () => createHash('sha256').update(readFileSync(dbPath)).digest('hex')
+  const dbHash = () => businessDigest(runtime)
   const before = dbHash()
   const response = await call(path, { method: 'POST', headers: { ...apiHeaders, 'content-type': 'application/json' }, body: '{}' })
   expect(response.status).toBe(400)
@@ -148,7 +148,7 @@ for (const action of ['commit', 'preflight'] as const) it(`retains the parse-res
   expect(stored).toEqual(event)
   expect(JSON.stringify({ rows, stored })).not.toContain(fileId)
   expect(output).not.toContain(fileId)
-  expect(readFileSync(join(logDir, 'events.db')).toString()).not.toContain(fileId)
+  expect(storedLogRows(runtime)).not.toContain(fileId)
   expect(dbHash()).toBe(before)
 })
 
@@ -477,14 +477,14 @@ it('persists the four real client integration mappings and applies their protect
     expect(restored.status).toBe(202)
     for (const [, , operation] of samples) expect(await waitOperation(restored.requestId, operation!)).toHaveLength(1)
     expect(output).not.toContain(PRIVATE)
-    expect(readFileSync(join(logDir, 'events.db')).toString()).not.toContain(PRIVATE)
+    expect(storedLogRows(runtime)).not.toContain(PRIVATE)
   } finally { await policyPatch(previous) }
 })
 
 it('keeps real worker queries successful while Drizzle and system rules independently suppress attempts', async () => {
   const previous = (await call('/api/logs/policy', { headers: apiHeaders })).body.collection
   const read = async () => {
-    const response = await call('/api/roster/enterprises?q=' + PRIVATE)
+    const response = await call('/api/roster/current-enterprises?titleCode=specialized_sme&q=' + PRIVATE)
     expect(response.status).toBe(200)
     // The terminal witness is emitted by the same child after its query hooks.
     const events = await waitOperation(response.requestId, 'enterprise_read.execute')

@@ -4,7 +4,7 @@ import { evidenceRevisionEvent113 } from '../../../../db/postgresql/evidence-rev
 import { record, recordEvent } from '../../../../db/postgresql/ledger-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { attachPostgresReviewedEnterprise, type ReviewedSubject } from '../../../core/server/public'
-import { evidenceDigest113 } from './evidence-impact-113'
+import { evidenceDigest113 } from './evidence-digest'
 import { appendPostgresEvidenceRevision } from './evidence-revision-postgres'
 
 type Transaction = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]

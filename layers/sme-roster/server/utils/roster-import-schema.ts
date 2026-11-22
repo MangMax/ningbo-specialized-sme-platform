@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { officialAppendSchema } from './official-evidence-plan'
-import { evidenceCorrectionRequestSchema } from './roster-evidence-correction'
+import { officialAppendSchema } from './official-evidence-claim-model'
+import { evidenceCorrectionRequestSchema } from './roster-evidence-correction-model'
 import { announcementMcpSchema } from './roster-import-announcement-schema'
 import { aliasesMcpSchema } from './roster-import-alias-schema'
 import { exportSnapshotMcpSchema } from './roster-import-export-schema'

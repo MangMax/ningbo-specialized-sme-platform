@@ -6,10 +6,7 @@ import { storedFile } from '../../../../db/postgresql/file-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { titleCycleDispositionRevision as revision, titleCycleDispositionReceipt as receipt } from '../../../../db/postgresql/qualification-tables'
 import type { DispositionFact } from '../../../../db/title-cycle-disposition'
-import {
-  dispositionDependencies, DispositionError, dispositionHash, projectCurrentDispositions, simulateDispositions,
-  type DispositionRequest, type DispositionRow,
-} from './title-cycle-disposition'
+import { dispositionDependencies, DispositionError, dispositionHash, projectCurrentDispositions, simulateDispositions, type DispositionRequest, type DispositionRow } from './title-cycle-disposition-model'
 
 type Reader = Pick<NodePgDatabase, 'select'>
 const snapshot = { isolationLevel: 'repeatable read', accessMode: 'read only' } as const

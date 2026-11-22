@@ -9,7 +9,7 @@ import { normalizeAttachment } from '../../lib/attachment'
 import { SOURCE_ORDER } from '../../lib/labels'
 import type { FileQueryFilters } from '../../../core/server/utils/file-store'
 import type { RosterFileFields } from '../modules/sme-roster/files'
-import { registeredSummary681 } from './registered-declarations'
+import { registeredSummary681 } from './registered-declaration-summary'
 
 type Lineage = NonNullable<RosterFileFields['partsBinding']>['inputLineage']
 type Declaration = Parameters<typeof registeredSummary681>[0][number]

@@ -1,11 +1,10 @@
-import { summarizePostgresReconcileJobs } from './reconcile-summary'
+import { summarizePostgresReconcileJobs } from './reconcile-summary-postgres'
 import { resolvePostgresCredential } from '../../../../core/server/utils/credential-state-postgres'
-import { resolvePlatformCookie } from '../platform-credential'
 import type { ComparisonDirection } from '../../../lib/comparison'
 import { TITLE_ORDER } from '../../../lib/labels'
-import { runPlatformReconcile, type ReconcileReport } from '../platform-reconcile'
+import type { ReconcileReport } from '../platform-reconcile'
 import { runPostgresPlatformReconcile } from '../platform-reconcile-postgres'
-import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../../../../core/server/public'
+import type { JobCompletion, JobParseResult, JobSpec } from '../../../../core/server/public'
 
 const TITLE_CODES = new Set(TITLE_ORDER)
 const DIRECTIONS = new Set<ComparisonDirection>(['missing_in_miit', 'extra_in_miit'])
@@ -118,24 +117,15 @@ export const reconcileSpec: JobSpec = {
     ' write?: boolean(默认 true;false = 只采集预览不回写) }',
   note: '通过配置页 Cookie 或 MIIT_COOKIE 查询，有统代的差异才能实查。',
   parse: parseReconcileParams,
-  prepare: () => {
-    const cookie = resolvePlatformCookie()
-    return (ctx, params) => runReconcile(ctx, params, cookie)
-  },
-  run: (ctx, params) => runReconcile(ctx, params, resolvePlatformCookie()),
   postgres: {
     taskCenter: { summaries: summarizePostgresReconcileJobs },
     async run(ctx, params) {
       const cookie = (await resolvePostgresCredential(ctx.db, 'sme-roster.miitCookie')).value
-      let cancelled = await ctx.cancelled()
       const report = await runPostgresPlatformReconcile(ctx.db, {
         ...reconcileOptions(params),
         cookie,
-        async onProgress(done, total) {
-          await ctx.progress(done, total)
-          cancelled = await ctx.cancelled()
-        },
-        shouldCancel: () => cancelled || ctx.signal.aborted,
+        onProgress: (done, total) => ctx.progress(done, total),
+        shouldCancel: () => ctx.cancelled(),
         isWriteCancelled: () => ctx.cancelled(),
       })
       return reconcileCompletion(report)
@@ -143,7 +133,7 @@ export const reconcileSpec: JobSpec = {
   },
 }
 
-function reconcileOptions(params: Record<string, unknown>) {
+export function reconcileOptions(params: Record<string, unknown>) {
   const freshnessHours = numberParam(params, 'freshnessHours')
   return {
     titles: params.titles as string[] | undefined,
@@ -157,18 +147,6 @@ function reconcileOptions(params: Record<string, unknown>) {
   }
 }
 
-async function runReconcile(ctx: JobContext, params: Record<string, unknown>, cookie: string): Promise<JobCompletion> {
-  const report = await runPlatformReconcile({
-    ...reconcileOptions(params),
-    db: ctx.db,
-    cookie,
-    onProgress: (done, total) => ctx.progress(done, total),
-    shouldCancel: () => ctx.cancelled(),
-  })
-
-  return reconcileCompletion(report)
-}
-
-function reconcileCompletion(report: ReconcileReport): JobCompletion {
+export function reconcileCompletion(report: ReconcileReport): JobCompletion {
   return report.cancelled ? { result: report, cancelled: true } : { result: report }
 }

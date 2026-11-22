@@ -1,59 +1,53 @@
-import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
-import { initializeDb } from '../../../db/client'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { Client, types } from 'pg'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { minimalPdf } from '../../support/minimal-pdf'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { createReviewedPostgresImportClient, startPostgresImportHttp } from './fixtures/postgres-import-http'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { useDb } from '../../../db'
-import { startEvidenceServer, type EvidenceServer } from '../../platform/fixtures/evidence-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'uscc-131-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+let db: ReturnType<typeof usePostgresDirectoryDb>
 const name = '宁波合成查证机械有限公司'
 const canonicalName = '宁波合成查证机械股份有限公司'
 const uscc = '91330211255994457P'
 const token = 'synthetic-131'
-let server: EvidenceServer
-let input: Record<string, unknown> = {}
+let server: Awaited<ReturnType<typeof startPostgresImportHttp>>
 let targetId: number
 let bytes = 0
 let statements = 0
 let measuring = false
 const measurements: Array<{ method: string; bytes: number; statements: number; elapsedMs: number; heapAfter: number; rssAfter: number }> = []
 
-// Supplemental resource observation at the real driver; no result is replaced.
-const prepare = db.$client.prepare.bind(db.$client)
-db.$client.prepare = ((...args: Parameters<typeof prepare>) => {
-  const statement = prepare(...args)
-  for (const method of ['all', 'get', 'iterate'] as const) {
-    const run = statement[method].bind(statement)
-    const count = (row: unknown) => { if (measuring) bytes += Buffer.byteLength(JSON.stringify(row) ?? '') }
-    Object.defineProperty(statement, method, { value: (...params: unknown[]) => {
-      if (measuring) statements++
-      const result = run(...params)
-      if (method === 'iterate') return (function* () { for (const row of result as Iterable<unknown>) { count(row); yield row } })()
-      count(result)
-      return result
-    } })
-  }
-  return statement
-}) as typeof db.$client.prepare
-
+function observeDriver() {
+  const query = Client.prototype.query
+  vi.spyOn(Client.prototype, 'query').mockImplementation(function (this: Client, ...args: unknown[]) {
+    if (measuring) statements++
+    return Reflect.apply(query, this, args)
+  } as typeof query)
+  const parser = types.getTypeParser
+  vi.spyOn(types, 'getTypeParser').mockImplementation((oid, format) => {
+    const parse = parser(oid, format)
+    return (value: string) => {
+      if (measuring) bytes += Buffer.byteLength(value)
+      return parse(value)
+    }
+  })
+}
 beforeAll(async () => {
-  vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
-  vi.stubGlobal('getQuery', () => input)
-  vi.stubGlobal('readBody', async () => input)
-  vi.stubGlobal('createError', (opts: object) => Object.assign(new Error('Invalid research input'), opts))
-  vi.doMock('@db', () => ({ useDb: () => db }))
-  const get = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.get')).default
-  const post = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.post')).default
-  server = await startEvidenceServer({ db, apiToken: token, getRoutes: {}, routes: {
-    '/api/roster/uscc-research': async request => {
-      input = request.method === 'POST' ? request.body as Record<string, unknown> : request.query
-      return { status: 200, body: await (request.method === 'POST' ? post : get)({} as never) }
-    },
-  } })
-  const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token }, db)
+  mkdirSync(join(dir, 'synthetic'))
+  writeFileSync(join(dir, 'synthetic/131.pdf'), minimalPdf({ pages: 7 }))
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  observeDriver()
+  db = usePostgresDirectoryDb()
+  server = await startPostgresImportHttp(dir, token)
+  const client = createReviewedPostgresImportClient({ baseUrl: server.baseUrl, token }, db)
   const result = await client.commit({ idempotencyKey: 'synthetic-131-targets', sourceKind: 'announcement', sourceIdentity: 'synthetic/131', payload: {
     announcement: { sourceDocument: { source: 'jxj', title: 'Synthetic announcement' }, records: [
       { enterprise: { name, district: '镇海区' }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2024, evidence: [{ sourceFile: 'synthetic/131.pdf', page: 7, listNo: 3 }] }] },
@@ -61,9 +55,11 @@ beforeAll(async () => {
       { enterprise: { name: '宁波合成未知文创有限公司' }, titleCode: 'innovative_sme', events: [] },
     ] },
   } })
-  expect(result).toMatchObject({ status: 'committed', summary: { failed: 0 } })
+  expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed', summary: { failed: 0 } })
   const res = await fetch(server.baseUrl + '/api/roster/uscc-research?q=' + encodeURIComponent(name))
-  targetId = (await res.json()).checklist.rows[0].enterpriseId
+  const target = await res.json()
+  expect(res.status, JSON.stringify(target)).toBe(200)
+  targetId = target.checklist.rows[0].enterpriseId
   const evidence = await client.commit({ idempotencyKey: 'synthetic-131-evidence', sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/131', payload: {
     platformQueries: [
       { interface: 'business_list', queryKey: '\u200b' + uscc.toLowerCase() + '\u3000', rdjb: '3', queriedAt: '2026-10-20T01:00:00Z', status: 'success', rawResponse: 'selected original'.repeat(65536), relations: [
@@ -75,11 +71,19 @@ beforeAll(async () => {
     ],
   } })
   expect(evidence, JSON.stringify(evidence)).toMatchObject({ status: 'committed', summary: { failed: 0 } })
-}, 30000)
+}, 60_000)
 
 afterAll(async () => {
   if (process.env.USCC_131_RESOURCE_PATH) writeFileSync(process.env.USCC_131_RESOURCE_PATH, JSON.stringify({ sha: process.env.USCC_131_SHA, note: 'Synthetic local HTTP route tests; sampled heap/RSS after request, no peak or SLO claim', measurements }, null, 2))
-  await server?.close(); vi.unstubAllGlobals(); vi.doUnmock('@db'); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+  await server?.close()
+  await stopPostgresJobs()
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+  rmSync(dir, { recursive: true, force: true })
+})
 
 async function research(method: 'GET' | 'POST', extra = {}) {
   bytes = 0; statements = 0; measuring = true
@@ -87,6 +91,8 @@ async function research(method: 'GET' | 'POST', extra = {}) {
   try {
     const response = await fetch(server.baseUrl + '/api/roster/uscc-research' + (method === 'GET' ? '?q=' + encodeURIComponent(name) + '&pageSize=1' : ''), method === 'POST' ? { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ q: name, pageSize: 1, enterpriseIds: [targetId], ...extra }) } : {})
     expect(response.status).toBe(200)
+    expect(statements).toBeGreaterThan(0)
+    expect(bytes).toBeGreaterThan(0)
     return await response.json()
   } finally {
     measuring = false
@@ -99,7 +105,7 @@ it('GET preserves target evidence and multi-relation selection without materiali
   const expected = await research('GET')
   expect(expected).toMatchObject({ checklist: { counts: { total: 1 }, rows: [{ enterpriseId: targetId, evidence: [{ page: 7 }], queries: [{ status: 'failed', relationCount: 0 }, { status: 'partial', relationCount: 2 }, { status: 'not_queried', relationCount: 0 }] }] }, plan: { counts: { targets: 1, filled: 1 }, ready: [{ uscc, evidence: { sequenceNo: 2, relationKey: 'selected-second' } }] } })
   const expectedPost = await research('POST')
-  const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token }, db)
+  const client = createReviewedPostgresImportClient({ baseUrl: server.baseUrl, token }, db)
   let previousScale = 0
   for (const scale of [1, 2, 5]) {
     const imported = await client.commit({ idempotencyKey: `synthetic-131-growth-${scale}`, sourceKind: 'alias_evidence', sourceIdentity: 'synthetic/131', payload: { platformQueries: Array.from({ length: (scale - previousScale) * 4 }, (_, i) => ({ interface: 'apply_list', queryKey: `unrelated:${scale}:${i}`, queriedAt: '2026-10-20T03:00:00Z', status: 'success', rawResponse: 'unrelated original'.repeat(32768), relations: [{ sequenceNo: 1, nameRaw: '无关企业', rawFields: { original: 'unrelated original'.repeat(32768) } }] })) } })
@@ -132,7 +138,7 @@ it('POST bounds evidence reads for explicit platform claims and preserves scope 
 it('GET batches evidence and holder lookup for many targets sharing a candidate without losing any target', async () => {
   const labels = [...'甲乙丙丁戊己庚辛壬癸子丑']
   const holderUscc = '91330201753252106U'
-  const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token }, db)
+  const client = createReviewedPostgresImportClient({ baseUrl: server.baseUrl, token }, db)
   const imported = await client.commit({ idempotencyKey: 'synthetic-131-batch-targets', sourceKind: 'announcement', sourceIdentity: 'synthetic/131/batch', payload: {
     announcement: { sourceDocument: { source: 'jxj', title: 'Synthetic batch' }, records: [
       ...labels.map(label => ({ enterprise: { name: `宁波批量${label}有限公司` }, titleCode: 'specialized_sme', events: [] })),
@@ -157,7 +163,7 @@ it('GET batches evidence and holder lookup for many targets sharing a candidate 
 })
 
 it('GET keeps confirmed-alias filters current membership multiple titles and same-name subject conflicts', async () => {
-  const client = createReviewedFixtureImportClient({ baseUrl: server.baseUrl, token }, db)
+  const client = createReviewedPostgresImportClient({ baseUrl: server.baseUrl, token }, db)
   const subject = '宁波合成同名有限公司'
   const filterName = '宁波合成筛选机械有限公司'
   const codes = ['91330213MA2CL6FP21', '91330206793007818K']

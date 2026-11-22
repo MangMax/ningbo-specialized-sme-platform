@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -10,10 +9,12 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { registerJob } from '../../../layers/core/server/utils/job-runner'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { initializeDb } from '../../../db/client'
+import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
-const bin = process.env.TEST_POSTGRES_JOBS_BIN
+const bin = process.env.TEST_POSTGRES_JOBS_BIN || process.env.ROSTER_TEST_POSTGRES_BIN
 let dir: string, base: string, server: ReturnType<typeof createServer>, pool: pg.Pool
-let started = false
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 const token = 'fixture-job-api-secret'
 const exportKind = 'current-roster-export'
 const historicalExports = [
@@ -38,32 +39,25 @@ const submit = (kind: string, params = {}) => request('/api/jobs', {
 beforeAll(async () => {
   if (!bin) return
   dir = mkdtempSync(join(tmpdir(), 'pg-job-'))
-  const pgCommand = (name: string, args: string[], input?: string) => execFileSync(join(bin, name), args, { input, stdio: ['pipe', 'pipe', 'pipe'] })
-  pgCommand('initdb', ['-D', join(dir, 'data'), '-A', 'trust', '-U', 'fixture', '--no-locale', '-E', 'UTF8'])
-  pgCommand('pg_ctl', ['-D', join(dir, 'data'), '-l', join(dir, 'postgres.log'), '-o', `-h '' -k ${dir}`, '-w', 'start'])
-  started = true
-  const url = 'postgresql://fixture@localhost/postgres?host=' + encodeURIComponent(dir)
   const dbPath = join(dir, 'fixture.sqlite')
   const source = initializeDb({ create: true, dbPath })
-  source.$client.prepare('INSERT INTO service_credential (key,value,updated_at) VALUES (?,?,?)')
-    .run('core.ocrToken', 'fixture-saved-ocr-secret', '2026-11-20T00:00:00Z')
-  const insertExport = source.$client.prepare(
-    "INSERT INTO job (id, kind, params, state, created_at) VALUES (?, ?, ?, 'cancelled', '2026-01-01T00:00:00Z')",
-  )
-  for (const { id, params } of historicalExports) insertExport.run(id, exportKind, params)
-  source.$client.close()
-  execFileSync(process.execPath, ['upgrade/postgresql/stage-sqlite.mjs', dbPath, 'staged'], {
-    env: { ...process.env, PGHOST: dir, PGPORT: '5432', PGDATABASE: 'postgres', PGUSER: 'fixture', PGSQL_BIN: join(bin, 'psql') },
-  })
-  for (const part of ['enterprise-directory', 'jobs']) {
-    pgCommand('psql', ['-Xqw', '-v', 'staging=staged', url, '-f', `upgrade/postgresql/materialize-${part}.sql`])
+  try {
+    installLeadListSchema(source.$client)
+    source.$client.prepare('INSERT INTO service_credential (key,value,updated_at) VALUES (?,?,?)')
+      .run('core.ocrToken', 'fixture-saved-ocr-secret', '2026-11-20T00:00:00Z')
+    const insertExport = source.$client.prepare(
+      "INSERT INTO job (id, kind, params, state, created_at) VALUES (?, ?, ?, 'cancelled', '2026-01-01T00:00:00Z')",
+    )
+    for (const { id, params } of historicalExports) insertExport.run(id, exportKind, params)
+  } finally {
+    source.$client.close()
   }
-  pool = new pg.Pool({ connectionString: url })
+  postgres = await postgresRuntimeFixture({ dir, sourcePath: dbPath, bin })
+  pool = new pg.Pool({ connectionString: postgres.url })
+  for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
   vi.stubEnv('NUXT_DB_PATH', join(dir, 'must-not-open.sqlite'))
-  vi.stubEnv('NUXT_DB_READONLY', '1')
-  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
-  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_WRITE', '1')
-  vi.stubEnv('NUXT_POSTGRES_JOBS', '1')
+  vi.stubEnv('NUXT_ROSTER_EXPORT_DIR', join(dir, 'roster-workbooks'))
+  vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: token, filesDir: dir }))
   for (const name of ['defineEventHandler', 'getQuery', 'getRouterParam', 'createError', 'readBody', 'setResponseStatus', 'setHeader', 'getRequestURL', 'getHeader'] as const) {
     vi.stubGlobal(name, h3[name])
@@ -84,6 +78,7 @@ beforeAll(async () => {
     .get('/api/jobs', (await import('../../../layers/core/server/api/jobs/index.get')).default)
     .get('/api/jobs/kinds', (await import('../../../layers/core/server/api/jobs/kinds.get')).default)
     .get('/api/jobs/:id', (await import('../../../layers/core/server/api/jobs/[id].get')).default)
+    .get('/api/job-artifacts/:id', (await import('../../../layers/sme-roster/server/api/job-artifacts/[id].get')).default)
     .delete('/api/jobs/:id', (await import('../../../layers/core/server/api/jobs/[id].delete')).default)
     .post('/api/jobs', (await import('../../../layers/core/server/api/jobs/index.post')).default)
     .get('/api/task-center', (await import('../../../layers/core/server/api/task-center/index.get')).default)
@@ -94,43 +89,43 @@ beforeAll(async () => {
   server = createServer(h3.toNodeListener(h3.createApp({ debug: false }).use(router)))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
-}, 15_000)
+}, 30_000)
 
 afterAll(async () => {
   try {
     if (server) await new Promise<void>(resolve => server.close(() => resolve()))
     await (await import("../../../layers/core/server/utils/postgres-jobs")).stopPostgresJobs()
+    await (await import('../../../layers/core/lib/logging')).closeApplicationLogging()
     await closePostgresDirectoryDb()
     await pool?.end()
   } finally {
     vi.unstubAllGlobals()
     vi.unstubAllEnvs()
-    if (started) execFileSync(join(bin!, 'pg_ctl'), ['-D', join(dir, 'data'), '-m', 'immediate', '-w', 'stop'])
+    postgres?.close()
     if (dir) rmSync(dir, { recursive: true, force: true })
   }
 })
 
-it.runIf(!!bin)('uses task storage to enable streaming and signals SQLite clients to keep polling', async () => {
-  const events = await request('/api/task-center/events', { signal: AbortSignal.timeout(5_000) })
-  expect(events.status).toBe(200)
-  const reader = events.body!.pipeThrough(new TextDecoderStream()).getReader()
+it.runIf(!!bin)('streams PostgreSQL task notifications with both writable and read-only storage', async () => {
   try {
-    let frames = ''
-    while (!frames.includes('event: ready\ndata:\n\n')) {
-      const chunk = await reader.read()
-      expect(chunk.done).toBe(false)
-      frames += chunk.value
+    for (const readOnly of ['0', '1']) {
+      vi.stubEnv('NUXT_DB_READONLY', readOnly)
+      const events = await request('/api/task-center/events', { signal: AbortSignal.timeout(5_000) })
+      expect(events.status).toBe(200)
+      const reader = events.body!.pipeThrough(new TextDecoderStream()).getReader()
+      try {
+        let frames = ''
+        while (!frames.includes('event: ready\ndata:\n\n')) {
+          const chunk = await reader.read()
+          expect(chunk.done).toBe(false)
+          frames += chunk.value
+        }
+      } finally {
+        await reader.cancel()
+      }
     }
   } finally {
-    await reader.cancel()
-  }
-  vi.stubEnv('NUXT_POSTGRES_JOBS', '0')
-  try {
-    const sqlite = await request('/api/task-center/events')
-    expect(sqlite.status).toBe(204)
-    expect(await sqlite.text()).toBe('')
-  } finally {
-    vi.stubEnv('NUXT_POSTGRES_JOBS', '1')
+    vi.stubEnv('NUXT_DB_READONLY', '0')
   }
 })
 
@@ -493,7 +488,6 @@ it.runIf(!!bin)('skips a row locked by a transaction and picks it up after the l
 })
 
 it.runIf(!!bin)('filters roster exports by title before counting and reports progress only in the workbook phase', async () => {
-  vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
   const { newJobId } = await import('../../../layers/core/lib/job')
   const kind = 'current-roster-export'
   const growing = newJobId(), preparing = newJobId(), otherTitle = newJobId(), otherKind = newJobId()
@@ -531,18 +525,19 @@ it.runIf(!!bin)('filters roster exports by title before counting and reports pro
   expect((await submit(kind, { clientRequestId: 'regenerate-running', titleCode: 'little_giant', regenerateOf: growing })).status).toBe(409)
 })
 
-it.runIf(!!bin)('keeps authorized export downloads available in readonly task summaries and disables mutations', async () => {
+it.runIf(!!bin)('serves configured export files through readonly history and authorized downloads', async () => {
   const { newJobId } = await import('../../../layers/core/lib/job')
   const id = newJobId()
   const bytes = Buffer.from('fixture workbook')
   const artifact = {
     id,
+    filename: 'current-little_giant.xlsx',
     size: bytes.length,
     sha256: createHash('sha256').update(bytes).digest('hex'),
     generatedAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
   }
-  const artifactDir = join(dir, 'must-not-open.sqlite.exports')
+  const artifactDir = join(dir, 'roster-workbooks')
   mkdirSync(artifactDir, { recursive: true })
   writeFileSync(join(artifactDir, id + '.xlsx'), bytes)
   await pool.query(`INSERT INTO business.job (id, kind, state, params, result, created_at, finished_at)
@@ -556,8 +551,7 @@ it.runIf(!!bin)('keeps authorized export downloads available in readonly task su
     id, export: { canDownload: true, canRegenerate: true },
   })
 
-  vi.stubEnv('NUXT_DB_MODE', 'postgresql')
-  vi.stubEnv('NUXT_POSTGRES_JOBS', '0')
+  vi.stubEnv('NUXT_DB_READONLY', '1')
   try {
     const expected = {
       id, export: { canDownload: true, canRegenerate: false, artifact: { availability: 'available' } },
@@ -570,9 +564,16 @@ it.runIf(!!bin)('keeps authorized export downloads available in readonly task su
     expect(await (await request(detail)).json()).toMatchObject({
       id, export: { canDownload: false, canRegenerate: false },
     })
+    expect(await (await request('/api/jobs/' + id, { headers: auth })).json()).toMatchObject({
+      result: { artifact: { id, availability: 'available' } },
+    })
+    const download = await request('/api/job-artifacts/' + id, { headers: auth })
+    expect(download.status).toBe(200)
+    expect(download.headers.get('etag')).toBe('"' + artifact.sha256 + '"')
+    expect(Buffer.from(await download.arrayBuffer())).toEqual(bytes)
+    expect((await request('/api/job-artifacts/' + id)).status).toBe(401)
   } finally {
-    vi.stubEnv('NUXT_POSTGRES_JOBS', '1')
-    vi.stubEnv('NUXT_DB_MODE', undefined)
+    vi.stubEnv('NUXT_DB_READONLY', '0')
   }
 })
 
@@ -580,10 +581,14 @@ it.runIf(!!bin)('cleans expired roster workbooks from PostgreSQL task records wi
   const { newJobId } = await import('../../../layers/core/lib/job')
   const id = newJobId()
   const expiresAt = '2000-01-01T00:00:00Z'
-  const artifactDir = join(dir, 'must-not-open.sqlite.exports')
+  const artifactDir = join(dir, 'roster-workbooks')
   mkdirSync(artifactDir, { recursive: true })
   const workbook = join(artifactDir, id + '.xlsx')
   writeFileSync(workbook, 'expired fixture workbook')
+  const oldDerivedDir = join(dir, 'must-not-open.sqlite.exports')
+  mkdirSync(oldDerivedDir, { recursive: true })
+  const unrelatedFile = join(oldDerivedDir, id + '.xlsx')
+  writeFileSync(unrelatedFile, 'file outside configured storage')
   await pool.query(`INSERT INTO business.job (id, kind, state, params, result, created_at, finished_at)
     VALUES ($1, 'current-roster-export', 'done', '{"titleCode":"little_giant"}', $2, $3, $3)`,
   [id, JSON.stringify({ artifact: { id, expiresAt } }), expiresAt])
@@ -598,59 +603,55 @@ it.runIf(!!bin)('cleans expired roster workbooks from PostgreSQL task records wi
     kind, result: { removed: 1, failed: 0 },
   })
   expect(existsSync(workbook)).toBe(false)
+  expect(existsSync(unrelatedFile)).toBe(true)
   expect(await pool.query('SELECT state FROM business.job WHERE id = $1', [id]))
     .toMatchObject({ rows: [{ state: 'done' }] })
   expect(await (await submit(kind, params)).json()).toMatchObject({ jobId })
 })
 
 it.runIf(!!bin)('preserves historical export request identifiers across migration and HTTP replay', async () => {
-  vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
-  try {
-    const migrated = await pool.query('SELECT id, params FROM business.job WHERE id = ANY($1) ORDER BY id',
-      [historicalExports.map(row => row.id)])
-    expect(migrated.rows).toEqual(historicalExports.map(({ id, params }) => ({ id, params })))
+  const migrated = await pool.query('SELECT id, params FROM business.job WHERE id = ANY($1) ORDER BY id',
+    [historicalExports.map(row => row.id)])
+  expect(migrated.rows).toEqual(historicalExports.map(({ id, params }) => ({ id, params })))
 
-    for (const { id, key } of historicalExports) {
-      const replay = await submit(exportKind, { clientRequestId: key, titleCode: 'little_giant' })
-      expect(replay.status).toBe(202)
-      expect(await replay.json()).toMatchObject({ jobId: id, state: 'cancelled' })
-      const conflict = await submit(exportKind, { clientRequestId: key, titleCode: 'innovative_sme' })
-      expect(conflict.status).toBe(409)
-      await expect(pool.query(
-        "INSERT INTO business.job (id, kind, params, created_at) VALUES ('fixture-duplicate-export', $1, $2, now()::text)",
-        [exportKind, JSON.stringify({ clientRequestId: key, titleCode: 'little_giant' })],
-      )).rejects.toMatchObject({ code: '23505' })
-    }
-
-    const page = await request('/api/task-center?tab=sme-roster&group=export&titleCode=little_giant&state=cancelled', {
-      headers: { authorization: 'Bearer ' + token },
-    })
-    expect(page.status).toBe(200)
-    const expectedSummary = {
-      label: '专精特新“小巨人”导出',
-      module: 'sme-roster',
-      progress: { done: 0, total: null, unit: '家企业', stage: '执行结束' },
-      capabilities: { cancel: false, retry: false, reason: '导出不重放任务；请显式重新生成，新任务保留原任务关联。' },
-      export: { titleCode: 'little_giant', canRegenerate: true },
-    }
-    const { total, rows } = await page.json()
-    expect(total).toBe(historicalExports.length)
-    expect(rows.map((row: { id: string }) => row.id).sort()).toEqual(historicalExports.map(({ id }) => id))
-    for (const row of rows) {
-      expect(row).toMatchObject(expectedSummary)
-      expect(row).not.toHaveProperty('items')
-    }
-    const detail = await request('/api/task-center/' + historicalExports[0]!.id)
-    expect(detail.status).toBe(200)
-    expect(await detail.json()).toMatchObject({
-      ...expectedSummary,
-      items: [],
-      capabilities: { cancel: false, retry: false, reason: '当前请求仅可查看任务。' },
-      export: { titleCode: 'little_giant', canRegenerate: false, canDownload: false },
-    })
-  } finally {
-    vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', undefined)
+  for (const { id, key } of historicalExports) {
+    const replay = await submit(exportKind, { clientRequestId: key, titleCode: 'little_giant' })
+    expect(replay.status).toBe(202)
+    expect(await replay.json()).toMatchObject({ jobId: id, state: 'cancelled' })
+    const conflict = await submit(exportKind, { clientRequestId: key, titleCode: 'innovative_sme' })
+    expect(conflict.status).toBe(409)
+    await expect(pool.query(
+      "INSERT INTO business.job (id, kind, params, created_at) VALUES ('fixture-duplicate-export', $1, $2, now()::text)",
+      [exportKind, JSON.stringify({ clientRequestId: key, titleCode: 'little_giant' })],
+    )).rejects.toMatchObject({ code: '23505' })
   }
+
+  const page = await request('/api/task-center?tab=sme-roster&group=export&titleCode=little_giant&state=cancelled', {
+    headers: { authorization: 'Bearer ' + token },
+  })
+  expect(page.status).toBe(200)
+  const expectedSummary = {
+    label: '专精特新“小巨人”导出',
+    module: 'sme-roster',
+    progress: { done: 0, total: null, unit: '家企业', stage: '执行结束' },
+    capabilities: { cancel: false, retry: false, reason: '导出不重放任务；请显式重新生成，新任务保留原任务关联。' },
+    export: { titleCode: 'little_giant', canRegenerate: true },
+  }
+  const { total, rows } = await page.json()
+  expect(total).toBe(historicalExports.length)
+  expect(rows.map((row: { id: string }) => row.id).sort()).toEqual(historicalExports.map(({ id }) => id))
+  for (const row of rows) {
+    expect(row).toMatchObject(expectedSummary)
+    expect(row).not.toHaveProperty('items')
+  }
+  const detail = await request('/api/task-center/' + historicalExports[0]!.id)
+  expect(detail.status).toBe(200)
+  expect(await detail.json()).toMatchObject({
+    ...expectedSummary,
+    items: [],
+    capabilities: { cancel: false, retry: false, reason: '当前请求仅可查看任务。' },
+    export: { titleCode: 'little_giant', canRegenerate: false, canDownload: false },
+  })
 })
 
 it.runIf(!!bin)('deduplicates newly submitted Unicode edge-case request identifiers independently', async () => {
@@ -691,8 +692,7 @@ it.runIf(!!bin)('reports one run per scheduled hour and keeps the last result vi
   expect(concurrent).toEqual(first)
   await expect.poll(async () => (await schedules()).items.find((item: { id: string }) => item.id === kind)?.lastRun)
     .toMatchObject({ id: first.jobId, status: 'done', finishedAt: expect.any(Number) })
-  vi.stubEnv('NUXT_DB_MODE', 'postgresql')
-  vi.stubEnv('NUXT_POSTGRES_JOBS', '0')
+  vi.stubEnv('NUXT_DB_READONLY', '1')
   try {
     expect(await dispatchScheduledJob(kind, dir, new Date(at.getTime() + 3600000))).toEqual({ skipped: true })
     const readOnly = await schedules()
@@ -700,8 +700,7 @@ it.runIf(!!bin)('reports one run per scheduled hour and keeps the last result vi
     expect(readOnly.items.find((item: { id: string }) => item.id === kind))
       .toMatchObject({ nextRunAt: null, lastRun: { id: first.jobId } })
   } finally {
-    vi.stubEnv('NUXT_POSTGRES_JOBS', '1')
-    vi.stubEnv('NUXT_DB_MODE', undefined)
+    vi.stubEnv('NUXT_DB_READONLY', '0')
   }
 })
 
@@ -752,7 +751,6 @@ it.runIf(!!bin)('keeps task-center list and detail semantics across PostgreSQL a
   const fileSql = 'INSERT INTO stored_file (id, rel_path, filename, ext, bytes, sha256, created_at) VALUES'
   const fileValues = [file.id, file.path, 'ocr.pdf', 'pdf', 1, createHash('sha256').update(file.path).digest('hex'), createdAt]
   const jobSql = 'INSERT INTO job (id, kind, state, params, progress, result, error, created_at) VALUES'
-  vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', '1')
   try {
     await pool.query(`${fileSql.replace('stored_file', 'business.stored_file')} ($1,$2,$3,$4,$5,$6,$7)`, fileValues)
     sqlite.$client.prepare(`${fileSql} (?,?,?,?,?,?,?)`).run(...fileValues)
@@ -793,7 +791,6 @@ it.runIf(!!bin)('keeps task-center list and detail semantics across PostgreSQL a
       capabilities: { retry: false, reason: '请通过年度专属接口核对当前来源代次与重试资格；此处不重放年度任务。' },
     })
   } finally {
-    vi.stubEnv('NUXT_POSTGRES_ROSTER_READ', undefined)
     sqlite.$client.close()
     await pool.query('DELETE FROM business.job WHERE id = ANY($1)', [scenarios.map(({ id }) => id)])
     await pool.query('DELETE FROM business.stored_file WHERE id = $1', [file.id])

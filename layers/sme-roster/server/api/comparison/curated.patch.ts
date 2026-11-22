@@ -1,7 +1,6 @@
-import { useDb } from '@db'
-import { parseCurationPatch } from '#sme-roster/lib/curation'
-import { DecisionError102 } from '../../utils/decision-lifecycle-102'
-import { patchLegacyCuration102, patchPostgresLegacyCuration102 } from '../../utils/legacy-curation-102'
+import { parseCurationPatch } from '#sme-roster/lib/curation-model'
+import { DecisionError102 } from '../../utils/decision-lifecycle-102/contract'
+import { patchPostgresLegacyCuration102 } from '../../utils/legacy-curation-102'
 import { usePostgresRosterDb } from '../../utils/postgres-roster-db'
 
 /** Legacy annotations remain separate from formal difference decisions. */
@@ -32,9 +31,7 @@ export default defineEventHandler(async (event) => {
   try {
     const { curatedPath } = useRuntimeConfig(event)
     const postgres = usePostgresRosterDb(true)
-    return postgres
-      ? await patchPostgresLegacyCuration102(postgres, curatedPath, patch)
-      : patchLegacyCuration102(useDb(), curatedPath, patch)
+    return await patchPostgresLegacyCuration102(postgres, curatedPath, patch)
   } catch (error) {
     if (!(error instanceof DecisionError102)) throw error
     setResponseStatus(event, error.statusCode)

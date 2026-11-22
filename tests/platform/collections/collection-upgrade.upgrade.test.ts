@@ -270,7 +270,7 @@ it('CLI rejects invalid identities and persistent WAL before copying a target', 
     expect(existsSync(target)).toBe(false)
     expect(readdirSync(evidence)).toEqual([])
   }
-})
+}, 30_000)
 
 it('CLI keeps a frozen source through copy and resumes in a separate process', () => {
   const f = fixture(), before = readFileSync(f.source), target = join(f.root, 'cli-target.sqlite')

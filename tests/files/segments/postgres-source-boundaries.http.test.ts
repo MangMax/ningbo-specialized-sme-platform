@@ -7,7 +7,6 @@ import { createApp, createRouter, defineEventHandler, getQuery, getRouterParam, 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { initializeDb } from '../../../db/client'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
-import { configurePostgresRuntime } from '../../../db/runtime-mode'
 import { minimalPdf } from '../../support/minimal-pdf'
 
 const bin = process.env.ROSTER_TEST_POSTGRES_BIN
@@ -64,12 +63,9 @@ describe.runIf(Boolean(bin))('PostgreSQL browser file segments', () => {
     }
     rmSync(snapshot)
     vi.stubEnv('NUXT_DB_PATH', join(dir, 'must-not-open.sqlite'))
-    vi.stubEnv('NUXT_DB_MODE', 'postgresql')
     vi.stubEnv('NUXT_DB_READONLY', '0')
     vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', 'postgresql://segments_fixture@localhost/postgres?host=' + encodeURIComponent(dir))
-    for (const key of ['NUXT_POSTGRES_DIRECTORY_WRITE', 'NUXT_POSTGRES_JOBS', 'NUXT_POSTGRES_FILE_LIBRARY',
-      'NUXT_POSTGRES_LEAD_REGISTRATION', 'NUXT_POSTGRES_ROSTER_READ', 'NUXT_POSTGRES_LOG_URL']) vi.stubEnv(key, undefined)
-    configurePostgresRuntime()
+    vi.stubEnv('NUXT_POSTGRES_LOG_URL', undefined)
     vi.stubGlobal('defineEventHandler', defineEventHandler)
     vi.stubGlobal('getQuery', getQuery)
     vi.stubGlobal('getRouterParam', getRouterParam)

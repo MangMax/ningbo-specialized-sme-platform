@@ -4,44 +4,60 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { schema, useDb } from '../../../db'
+import pg from 'pg'
 import { initializeDb } from '../../../db/client'
+import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { seedComparisonSourceStatus } from './fixtures/source-status'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 // A caller-owned service lets manual RED -> GREEN and browser acceptance share
 // one dev compilation. Normal test runs still own and clean up their service.
 const external = process.env.ISSUE301_BASE_URL
 const dir = external ? process.env.ISSUE301_DIR! : mkdtempSync(join(tmpdir(), 'issue301-http-'))
 const dbPath = join(dir, 'fixture.db')
-const db = external ? useDb({ dbPath }) : initializeDb({ dbPath, create: true })
-const fixture = external ? JSON.parse(readFileSync(join(dir, 'fixture.json'), 'utf8')) as ReturnType<typeof seedComparisonSourceStatus> : seedComparisonSourceStatus(db)
+const fixture = external ? JSON.parse(readFileSync(join(dir, 'fixture.json'), 'utf8')) as ReturnType<typeof seedComparisonSourceStatus> : (() => {
+  const db = initializeDb({ dbPath, create: true })
+  try { return seedComparisonSourceStatus(db) }
+  finally { db.$client.close() }
+})()
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let base = external ?? ''
 let stop: (() => Promise<void>) | undefined
 let full: Awaited<ReturnType<typeof rest>>
 let detail: Awaited<ReturnType<typeof rest>>
-const persisted = () => ({
-  queries: db.select().from(schema.platformCollection).all(),
-  relations: db.select().from(schema.platformBusinessObservation).all(),
-  archives: db.select().from(schema.platformArchiveValue).all(),
-  assignments: db.select().from(schema.platformObservationAssignment).all(),
-  decisions: db.select().from(schema.differenceReason).all(),
-  correspondences: db.select().from(schema.recordCorrespondence).all(),
-  audit: db.select().from(schema.recordCorrespondenceAudit).all(),
-})
-const before = persisted()
+const businessTables = ['platform_collection', 'platform_business_observation', 'platform_archive_value', 'platform_observation_assignment', 'difference_reason', 'record_correspondence', 'record_correspondence_audit']
+async function persisted() {
+  const connectionString = postgres?.url ?? process.env.NUXT_POSTGRES_DIRECTORY_URL
+  if (!connectionString) throw new Error('An external comparison fixture requires its PostgreSQL URL')
+  const client = new pg.Client({ connectionString })
+  await client.connect()
+  try {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
+    const state = []
+    for (const table of businessTables) {
+      const { rows } = await client.query(`SELECT row_to_json(t)::text AS row FROM business.${table} t ORDER BY row_to_json(t)::text COLLATE "C"`)
+      state.push(rows)
+    }
+    await client.query('COMMIT')
+    return state
+  } finally { await client.end() }
+}
+let before: Awaited<ReturnType<typeof persisted>> | undefined
 beforeAll(async () => {
-  if (external) { await waitForHttp(`${base}/_openapi.json`); return }
+  if (external) { await waitForHttp(`${base}/_openapi.json`); before = await persisted(); return }
+  postgres = await postgresRuntimeFixture({ dir, sourcePath: dbPath })
   const cwd = resolve(import.meta.dirname, '../../..')
   let port = await reserveLoopbackPort()
   while ([3480, 3516].includes(port)) port = await reserveLoopbackPort()
-  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: join(dir, 'fixture.db'), NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_LOG_DIR: join(dir, 'logs'), NUXT_CURATED_PATH: join(dir, 'curated.json'), NUXT_RECONCILE_PATH: join(dir, 'reconcile.json'), NUXT_MCP_TOKEN: 'issue301-synthetic' } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...postgres.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_CURATED_PATH: join(dir, 'curated.json'), NUXT_RECONCILE_PATH: join(dir, 'reconcile.json'), NUXT_API_TOKEN: 'issue301-synthetic', NUXT_MCP_TOKEN: 'issue301-synthetic' } })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { output = (output + chunk).slice(-8000) })
   base = `http://127.0.0.1:${port}`
   stop = () => stopOwnedChild(child)
   try { await waitForHttp(`${base}/api/health`, { child }) }
   catch (error) { throw new Error(`${String(error)}\n${output}`) }
+  before = await persisted()
 }, 90000)
 beforeAll(async () => {
   full = await rest(`/api/comparison?view=full&enterpriseId=${fixture.enterprise.id}`)
@@ -50,8 +66,8 @@ beforeAll(async () => {
   assertEnterpriseDetailSnapshotEqual(await mcp('get_enterprise_detail', { enterpriseId: fixture.enterprise.id }), detail)
 }, 30000)
 afterAll(async () => {
-  try { expect(persisted()).toEqual(before) }
-  finally { await stop?.(); db.$client.close(); if (!external) rmSync(dir, { recursive: true, force: true }) }
+  try { if (before) expect(await persisted()).toEqual(before) }
+  finally { try { await stop?.() } finally { postgres?.close(); if (!external) rmSync(dir, { recursive: true, force: true }) } }
 })
 async function rest(path: string) {
   const response = await fetch(base + path)
@@ -96,15 +112,19 @@ it('exact HTTP/MCP chunks preserve response bytes and stored relation values aft
       else expect(JSON.parse(bytes.toString('utf8'))).toMatchObject({ id: relation.id, queryId: query.id, sequenceNo: relation.sequenceNo, rawFields: relation.rawFields, sourceText: relation.sourceText })
     }
   }
-  expect(persisted()).toEqual(before)
-})
+  expect(await persisted()).toEqual(before)
+}, 30_000)
 
 it('rejects a conflicting stored and original process status before publishing any native collection', async () => {
-  const { submitNativePlatformQuery } = await import('../../platform/fixtures/native-query')
-  const count = db.select().from(schema.platformCollection).all().length
-  expect(() => submitNativePlatformQuery(db, {
-    interface: 'business_list', queryKey: fixture.enterprise.usccNorm!, rdjb: '2', queriedAt: '2026-10-30T00:00:00Z', status: 'success', rawResponse: 'Explicit synthetic conflicting source',
-    relations: [{ sequenceNo: 1, enterpriseId: fixture.enterprise.id, status: '已退回', rawFields: { cszt: '终审通过' } }],
-  })).toThrow('platform_field_conflict')
-  expect(db.select().from(schema.platformCollection).all()).toHaveLength(count)
+  const client = createRosterImportClient({ baseUrl: base, token: 'issue301-synthetic' })
+  const request: RosterImportRequest = { idempotencyKey: 'issue301-conflicting-status', sourceKind: 'alias_evidence', sourceIdentity: 'issue301-conflicting-status',
+    payload: { platformQueries: [{
+      interface: 'business_list', queryKey: fixture.enterprise.usccNorm!, rdjb: '2', queriedAt: '2026-10-30T00:00:00Z', status: 'success', rawResponse: 'Explicit synthetic conflicting source',
+      relations: [{ sequenceNo: 1, enterpriseId: fixture.enterprise.id, status: '已退回', rawFields: { cszt: '终审通过' } }],
+    }] },
+  }
+  expect((await client.preflight(request)).preflight.conflicts)
+    .toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'platform_field_conflict' }) })]))
+  expect((await client.commit(request)).status).toBe('failed')
+  expect(await persisted()).toEqual(before)
 })

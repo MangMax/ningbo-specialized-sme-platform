@@ -32,9 +32,7 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: "3000"
-      NUXT_DB_MODE: ${ROSTER_DB_MODE:-postgresql}
-      NUXT_DB_PATH: /state/data/roster.db
-      NUXT_LOG_DIR: /logs
+      NUXT_ROSTER_EXPORT_DIR: ${ROSTER_EXPORT_DIR:-/state/data/roster.db.exports}
       NUXT_FILES_DIR: /state/files
       NUXT_INCOMING_DIR: /state/incoming
       NUXT_CURATED_PATH: /state/data/reconciliation-curated.json
@@ -43,9 +41,6 @@ services:
     ports:
       - "127.0.0.1:${ROSTER_PORT:-3480}:3000"
     volumes:
-      - type: volume
-        source: runtime-logs
-        target: /logs
       - type: bind
         source: ${ROSTER_STATE_DIR:?Set ROSTER_STATE_DIR to an absolute persistent state directory outside the repository}
         target: /state
@@ -64,5 +59,4 @@ services:
       start_period: 20s
 
 volumes:
-  runtime-logs:
   postgres-data:

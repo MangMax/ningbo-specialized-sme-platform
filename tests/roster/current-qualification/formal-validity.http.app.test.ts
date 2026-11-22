@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { businessTables, qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { schema } from '../../../db/client'
 
@@ -33,8 +35,8 @@ beforeAll(async () => {
   await f.start()
 }, 120000)
 afterAll(() => f.close())
-it('real current-qualified HTTP and export artifacts agree for interval and both continuation scopes', async () => {
-  const before = f.businessDigest()
+it('real current-qualified HTTP, MCP and export artifacts agree for interval and both continuation scopes', async () => {
+  const before = await f.runtimeBusinessRows(businessTables)
   for (const sample of samples) {
     const response = await fetch(f.url(`/api/roster/current-enterprises?titleCode=${sample.title}&q=${sample.name}`))
     expect(response.status).toBe(200)
@@ -42,6 +44,19 @@ it('real current-qualified HTTP and export artifacts agree for interval and both
     expect(result.total).toBe(1)
     expect(result.rows[0].qualificationAssessment).toMatchObject({ ruleVersion: 'current-roster-116-v14', assessmentVersion: 'enterprise-qualification-807-v7' })
   }
+  const mcp = new Client({ name: 'formal-validity-runtime', version: '1' })
+  try {
+    await mcp.connect(new StreamableHTTPClientTransport(new URL(f.url('/mcp'))))
+    const result = await mcp.callTool({
+      name: 'list_current_qualified_enterprises', arguments: { titleCode: 'innovative_sme' },
+    })
+    expect(result.isError, JSON.stringify(result)).not.toBe(true)
+    const content = result.content as { type: string; text: string }[]
+    expect(content[0]?.type).toBe('text')
+    const response = JSON.parse(content[0]!.text)
+    expect(response.total).toBe(samples.length)
+    expect(response.rows.map((row: { name: string }) => row.name).sort()).toEqual(samples.map(sample => sample.name).sort())
+  } finally { await mcp.close() }
   for (const title of ['specialized-sme','innovative-sme']) {
     const response = await fetch(f.url('/api/roster/exports/current/' + title), { method: 'POST', headers: f.headers, body: JSON.stringify({ clientRequestId: 'formal-validity-' + title }) })
     expect(response.status).toBe(202)
@@ -67,7 +82,7 @@ it('real current-qualified HTTP and export artifacts agree for interval and both
         : `默认年度规则：最近一次认定或复核通过 ${year} 年 + 3 = ${year+3} 年；自 ${year+3} 年起到期（仅年份精度）`)
     }
   }
-  expect(f.businessDigest()).toBe(before)
+  expect(await f.runtimeBusinessRows(businessTables)).toEqual(before)
 }, 60000)
 
 // Expectations below are business literals, independent of production readers.
@@ -106,10 +121,9 @@ it('annual expiry and title inheritance preserve literal HTTP and downloaded ide
   f.addRecord(own.enterprise.id, own.enterprise.name, [{ eventType: 'award', year: year-2 }], 'innovative_sme')
   // Include source bytes/hash/page/origin/publication and all raw event columns,
   // not job tables that legitimately change during export.
-  const facts = () => ['record_event', 'record_evidence', 'stored_file'].map(table =>
-    f.db.$client.prepare(`SELECT * FROM ${table} ORDER BY id`).all())
-  const before = facts()
-  await f.start() // Discovery was inspected before any synthetic setup in beforeAll.
+  const facts = () => f.runtimeBusinessRows(['record_event', 'record_evidence', 'stored_file'])
+  await f.start()
+  const before = await facts()
   const annualReview = `默认年度规则：最近一次认定或复核通过 ${year-2} 年 + 3 = ${year+1} 年；自 ${year+1} 年起到期（仅年份精度）`
   const annualUpper = `默认年度规则：最近一次认定或复核通过 ${year-1} 年 + 3 = ${year+2} 年；自 ${year+2} 年起到期（仅年份精度）`
   const retainedGiant = '小巨人原认定或复核通过资格保留；不按认定年龄自动到期，适用正式期间、同周期失败及已确认处置另行裁定'
@@ -157,5 +171,5 @@ it('annual expiry and title inheritance preserve literal HTTP and downloaded ide
     const assessment = detail.qualificationAssessment.titles.find((t: any) => t.titleCode === 'innovative_sme')
     expect(assessment.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ eventType: 'review', year: year-6, decidedYear })]))
   }
-  expect(facts()).toEqual(before)
+  expect(await facts()).toEqual(before)
 }, 60000)

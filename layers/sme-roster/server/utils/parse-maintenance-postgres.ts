@@ -8,13 +8,13 @@ import { fileDeclaration669 as declaration, fileParseAudit105 as audit, rosterFi
 import { appLog, type LogContext } from '../../../core/lib/logging'
 import { activePostgresPhysicalIntent, readPostgresFile, requirePostgresFileWrite } from '../../../core/server/utils/file-store-postgres'
 import { readPdfPageCount } from '../../../core/server/utils/pdf-pages'
-import { mergeParseParts } from './parse-result'
+import { mergeParseParts } from './parse-result-model'
 import { derivedPostgresFileParts, readPostgresRosterFileFields } from './roster-file-postgres'
 import {
   equalParseInput, lineage310, modernEnvelope105, parseFrozenCommit310, parseHistory105, parsePreflight310,
   parseSave105, ParseMaintenanceError, planDeclarations669, prepareParseWrite105, projectParseState,
   readParseInput310, validateParseRevision, type InputRef310,
-} from './parse-maintenance-105'
+} from './parse-maintenance-contract'
 
 type Receipt = typeof fileParseAudit105.$inferSelect
 type Mode = 'replace' | 'status' | 'commit'

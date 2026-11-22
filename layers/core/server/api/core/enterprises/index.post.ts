@@ -1,7 +1,6 @@
 import { addPostgresEnterprise } from '../../../utils/enterprise-directory-postgres-write'
-import { useDb } from '@db'
 import { requireApiToken } from '../../../utils/api-guard'
-import { addEnterprise, enterpriseFieldsSchema } from '../../../utils/enterprise-kernel'
+import { enterpriseFieldsSchema } from '../../../utils/enterprise-contract'
 import { directoryInput, directoryResult, usePostgresDirectoryWriteDb } from '../../../utils/enterprise-directory-route'
 
 defineRouteMeta({ openAPI: {
@@ -19,6 +18,6 @@ export default defineEventHandler(async event => {
   const fields = directoryInput(enterpriseFieldsSchema.required({ name: true }), await readBody(event))
   return directoryResult(() => {
     const db = usePostgresDirectoryWriteDb()
-    return db ? addPostgresEnterprise(db, fields) : addEnterprise(useDb(), fields)
+    return addPostgresEnterprise(db, fields)
   })
 })

@@ -1,6 +1,5 @@
 import type { LogContext } from '../../../../core/lib/logging'
 import { defineMcpTool } from '@nuxtjs/mcp-toolkit/server'
-import { useDb } from '@db'
 import { currentQualifiedFilterSchema } from '../../utils/current-qualified-filter'
 import { enterpriseReads } from '../../utils/enterprise-read'
 
@@ -13,9 +12,7 @@ export default defineMcpTool({
   handler: async (input, extra) => {
     const filter = currentQualifiedFilterSchema.parse(input)
     const context = (extra as typeof extra & { logContext?: LogContext })?.logContext
-    const result = process.env.NUXT_POSTGRES_ROSTER_READ === '1'
-      ? await enterpriseReads.postgresCurrentQualifiedJson(filter, extra?.signal, context)
-      : await enterpriseReads.currentQualifiedJson(useDb().$client.name, filter, extra?.signal, context)
+    const result = await enterpriseReads.currentQualifiedJson(filter, extra?.signal, context)
     return result.body.toString('utf8')
   },
 })

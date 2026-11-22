@@ -1,6 +1,5 @@
 import { requestLogContext } from '../../../../core/lib/logging'
 import { createError, getQuery, setHeader } from 'h3'
-import { useDb } from '@db'
 import { parseCurrentQualifiedQuery } from '../../utils/current-qualified-filter'
 import { enterpriseReads } from '../../utils/enterprise-read'
 import { admitEnterpriseResponse } from '../../utils/enterprise-read-response'
@@ -62,9 +61,7 @@ export default defineEventHandler(event => {
   setHeader(event, 'cache-control', 'no-store')
   return withEnterpriseReadSignal(event, async signal => {
     const context = requestLogContext(event)
-    const result = process.env.NUXT_POSTGRES_ROSTER_READ === '1'
-      ? await enterpriseReads.postgresCurrentQualifiedJson(parsed.data, signal, context)
-      : await enterpriseReads.currentQualifiedJson(useDb().$client.name, parsed.data, signal, context)
+    const result = await enterpriseReads.currentQualifiedJson(parsed.data, signal, context)
     setHeader(event, 'content-type', 'application/json; charset=utf-8')
     return result.body
   })

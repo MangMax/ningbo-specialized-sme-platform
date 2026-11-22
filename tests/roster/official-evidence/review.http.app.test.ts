@@ -1,4 +1,3 @@
-import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { assertEnterpriseDetailSnapshotEqual } from '../assertions/enterprise-detail-snapshot'
 import { createHash } from 'node:crypto'
@@ -8,18 +7,48 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { sql } from 'drizzle-orm'
-import { initializeDb, schema } from '../../../db/client'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
+import pg from 'pg'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
+import { differenceReason } from '../../../db/postgresql/roster-selection-tables'
+import { storedFile } from '../../../db/postgresql/file-tables'
+import { rosterFileClassification } from '../../../db/postgresql/roster-file-tables'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { recognizedResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
-const dir = mkdtempSync(join(tmpdir(), 'review-114-')), dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
+const dir = mkdtempSync(join(tmpdir(), 'review-114-'))
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+let pool: pg.Pool
+let db: NodePgDatabase
+
+async function seedDecision(values: Omit<typeof differenceReason.$inferInsert, 'createdAt'>) {
+  const [row] = await db.insert(differenceReason).values({ ...values, createdAt: values.recordedAt }).returning()
+  return row!
+}
+
+async function pinnedSnapshots() {
+  const { rows } = await pool.query<{ pid: number }>(`
+    select pid from pg_stat_activity
+    where datname = current_database() and application_name = 'evidence-review-runtime'
+      and state = 'idle in transaction' and backend_xmin is not null
+    order by pid
+  `)
+  return rows.map(row => row.pid)
+}
 let base: string, stop: () => Promise<void>, client: ReturnType<typeof createRosterImportClient>
+let serviceProcess: ReturnType<typeof spawnCompiledApp>
 const actor = { type: 'user', id: 'synthetic-reviewer' }, basis = '指定证据人工核验'
-const coord = (enterpriseId: number, direction = 'missing_in_miit', titleCode = 'specialized_sme') => ({ enterpriseId, titleCode, direction })
+const coord = (enterpriseId: number, direction: typeof differenceReason.$inferInsert['direction'] = 'missing_in_miit', titleCode = 'specialized_sme') => ({ enterpriseId, titleCode, direction })
 const query = (v: Record<string, unknown>) => new URLSearchParams(Object.entries(v).map(([k,v]) => [k,String(v)])).toString()
-async function get(path: string, params: Record<string,unknown> = {}) { const r = await fetch(base + path + '?' + query(params)); expect(r.headers.get('cache-control')).toBe('no-store'); return { status: r.status, body: await r.json() as any } }
+async function get(path: string, params: Record<string, unknown> = {}) {
+  const requestPath = path + '?' + query(params)
+  const response = await fetch(base + requestPath)
+  expect(response.headers.get('cache-control'), `GET ${requestPath} returned ${response.status}`).toBe('no-store')
+  return { status: response.status, body: await response.json() as any }
+}
 async function post(path: string, input: unknown, token = 'synthetic-api') { const r = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify(input) }); expect(r.headers.get('cache-control')).toBe('no-store'); return { status: r.status, body: await r.json() as any } }
 async function rpc(name: string, args: Record<string,unknown>, token = '') {
   const r = await fetch(base + '/mcp', { method:'POST', headers: { 'content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':'2025-06-18', ...(token ? { authorization:'Bearer ' + token } : {}) }, body:JSON.stringify({ jsonrpc:'2.0', id:1, method:'tools/call', params:{name,arguments:args} }) })
@@ -29,27 +58,64 @@ async function rpc(name: string, args: Record<string,unknown>, token = '') {
 }
 const cmd = (key:string) => ({ idempotencyKey:key, actor, basis })
 const workPath = '/api/roster/evidence-impacts/commands', listPath = '/api/roster/evidence-impacts', decisionPath = '/api/roster/decision-lifecycle/commands'
-function seed(name: string, usccNorm: string | null = null) { return db.insert(schema.enterprise).values({ name,nameNorm:name,usccNorm }).returning().get() }
+async function seed(name: string, usccNorm: string | null = null) {
+  const [row] = await db.insert(enterprise).values({ name, nameNorm: name, usccNorm }).returning()
+  return row!
+}
 async function decide(scope: ReturnType<typeof coord>, key: string, expectedCurrentId: number | null = null) {
   const r = await post(decisionPath, { ...scope, ...cmd(key), action:'replace', expectedCurrentId, ruleVersion:'manual-1',effectiveAt:'2026-10-19T00:00:00Z',decision:{status:'confirmed_reason',reasonCode:'other',reasonNote:'保留用户原始原因',measureCode:'keep_history',measureNote:'保留原措施',verificationStatus:'confirmed'} }); expect(r.status).toBe(200); return r.body
 }
-async function archive(e: ReturnType<typeof seed>, key: string, status = '新事实') {
+async function archive(e: Awaited<ReturnType<typeof seed>>, key: string, status = '新事实') {
   const r = await client.commitCommand({ idempotencyKey:key, sourceKind:'alias_evidence',sourceIdentity:'synthetic/' + key,payload:{platformQueries:[{interface:'business_list',queryKey:e.usccNorm ?? 'name:' + e.nameNorm,rdjb:'2',titleCode:'specialized_sme',queriedAt:new Date().toISOString(),status:'success',rawResponse:JSON.stringify([{name:e.name,status}]),relations:[{sequenceNo:1,enterpriseId:e.id,nameRaw:e.name,status}]}]} }); expect(r.status,JSON.stringify(r)).toBe('committed')
 }
 async function drain(key: string, limit = 100) { for(let i=0;i<30;i++){ const r = await post(workPath,{...cmd(key+'-'+i),action:'process',limit}); expect(r.status,JSON.stringify(r.body)).toBe(200); if(!r.body.unfinished)return r.body }; throw new Error('drain incomplete') }
 async function startService(){
   const cwd = resolve(import.meta.dirname,'../../..'), port=await reserveLoopbackPort()
-  const child=spawnCompiledApp(port, {cwd,stdio:['ignore','pipe','pipe'],env:{...process.env,NUXT_BUILD_DIR:join(dir,'build'),NUXT_DB_PATH:dbPath,NUXT_API_TOKEN:'synthetic-api',NUXT_CURATED_PATH:join(dir,'curated.json'),NUXT_MCP_TOKEN:'synthetic-mcp',NUXT_FILES_DIR:join(dir,'files'),NUXT_INCOMING_DIR:join(dir,'incoming')}})
+  const businessUrl = new URL(postgres!.url)
+  businessUrl.searchParams.set('application_name', 'evidence-review-runtime')
+  const child=spawnCompiledApp(port, {cwd,stdio:['ignore','pipe','pipe'],env:{
+    ...process.env, ...postgres!.env, NUXT_POSTGRES_DIRECTORY_URL: businessUrl.href,
+    NUXT_BUILD_DIR:join(dir,'build'), NUXT_DB_READONLY:'0', NUXT_API_TOKEN:'synthetic-api', NUXT_MCP_TOKEN:'synthetic-mcp',
+    NUXT_CURATED_PATH:join(dir,'curated.json'), NUXT_FILES_DIR:join(dir,'files'), NUXT_INCOMING_DIR:join(dir,'incoming'),
+  }})
+  serviceProcess = child
   let output='';for(const stream of [child.stdout,child.stderr])stream.on('data',d=>{output=(output+d).slice(-8000)})
   base=`http://127.0.0.1:${port}`;stop=()=>stopOwnedChild(child)
-  try{await waitForHttp(base+'/api/roster/differences',{timeoutMs:60000,child})}catch(e){await stop();throw new Error(String(e)+output)}
+  try{await waitForHttp(base+'/api/health',{timeoutMs:60000,child})}catch(e){await stop();throw new Error(String(e)+output)}
   client=createRosterImportClient({baseUrl:base,token:'synthetic-api'})
 }
-beforeAll(startService,90000)
-afterAll(async()=>{if(stop)await stop();rmSync(dir,{recursive:true,force:true})})
-describe("ticket public evidence review",()=>{
+beforeAll(async () => {
+  postgres = await postgresRuntimeFixture({ dir })
+  pool = new pg.Pool({ connectionString: postgres.url, options: '-c search_path=business,public' })
+  db = drizzle({ client: pool })
+  // Install the fault gate before holding read snapshots, so toggling it does
+  // not require a table lock on the receipt relation during the test.
+  await pool.query(`
+    CREATE TABLE public.fixture_review_failure (enabled boolean NOT NULL);
+    INSERT INTO public.fixture_review_failure VALUES (false);
+    CREATE FUNCTION public.fail_review114() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM public.fixture_review_failure WHERE enabled) THEN
+        RAISE EXCEPTION 'synthetic receipt failure';
+      END IF;
+      RETURN NEW;
+    END
+    $$;
+    CREATE TRIGGER fail_review114 BEFORE INSERT ON evidence_review_receipt_114
+    FOR EACH ROW WHEN (NEW.idempotency_key = 'tx-replace') EXECUTE FUNCTION public.fail_review114()
+  `)
+  await startService()
+}, 90000)
+afterAll(async () => {
+  try { await stop?.() }
+  finally {
+    try { await pool?.end() }
+    finally { postgres?.close(); rmSync(dir, { recursive: true, force: true }) }
+  }
+})
+describe('public evidence review', { timeout: 20000 }, () => {
   it('exposes bounded no-token HTTP and MCP lists without implicitly processing committed evidence',async()=>{
-    const e=seed('有界复核主体','REVIEW-114-A'), scope=coord(e.id), d=await decide(scope,'list-decision')
+    const e=await seed('有界复核主体','REVIEW-114-A'), scope=coord(e.id), d=await decide(scope,'list-decision')
     await archive(e,'list-archive')
     const before=await get(listPath,{enterpriseId:e.id})
     expect(before.status).toBe(200);expect(before.body.rows).toEqual([]);expect(before.body.projectionReady).toBe(false)
@@ -65,7 +131,7 @@ describe("ticket public evidence review",()=>{
     expect((await rpc('process_evidence_impacts',{...cmd('unauth-mcp'),action:'process',limit:1})).status).toBe(401)
   })
   it('maintains the original decision atomically with a reviewed baseline and replays the original receipt across transports without settling later evidence',async()=>{
-    const e=seed('明确维持主体','REVIEW-114-M'),scope=coord(e.id),d=await decide(scope,'maintain-decision')
+    const e=await seed('明确维持主体','REVIEW-114-M'),scope=coord(e.id),d=await decide(scope,'maintain-decision')
     await archive(e,'maintain-archive');await drain('maintain-drain')
     const item=(await get(listPath,{enterpriseId:e.id})).body.rows[0]
     const detailResponse=await get(listPath+'/'+item.id);expect(detailResponse.status,JSON.stringify(detailResponse.body)).toBe(200);const detail=detailResponse.body
@@ -94,7 +160,7 @@ describe("ticket public evidence review",()=>{
   })
 
   it.each(['failed', 'partial', 'disjoint-condition', 'disjoint-page'] as const)('keeps reviewed validity after ready no_review %s without advancing audit and preserves unprocessed and substantive work', async kind => {
-    const e=seed('语义有效性-'+kind,'9133000000000000'+(['failed','partial','disjoint-condition','disjoint-page'].indexOf(kind)+10)),scope=coord(e.id)
+    const e=await seed('语义有效性-'+kind,'9133000000000000'+(['failed','partial','disjoint-condition','disjoint-page'].indexOf(kind)+10)),scope=coord(e.id)
     let time=0
     const saveArchive=async(key:string, status:'success'|'failed'|'partial', year='2024', page=1, fact='原事实')=>{
       const rows=status!=='failed'?[{id:status==='partial'?'核验事实':fact,tyshxydm:e.usccNorm!,qymc:e.name,whpcyear:year}]:[]
@@ -162,7 +228,7 @@ describe("ticket public evidence review",()=>{
   })
 
   it('freezes filter-bound list pages across completion replacement and later evidence and rejects forged cursors',async()=>{
-    const e=seed('稳定分页主体','REVIEW-114-P'),s1=coord(e.id),s2=coord(e.id,'extra_in_miit'),d1=await decide(s1,'page-d1'),d2=await decide(s2,'page-d2')
+    const e=await seed('稳定分页主体','REVIEW-114-P'),s1=coord(e.id),s2=coord(e.id,'extra_in_miit'),d1=await decide(s1,'page-d1'),d2=await decide(s2,'page-d2')
     await archive(e,'page-q1');await drain('page-drain')
     const all=(await get(listPath,{enterpriseId:e.id,limit:1})).body
     expect(all.rows).toHaveLength(1);expect(all.nextCursor).toEqual(expect.any(String))
@@ -185,11 +251,11 @@ describe("ticket public evidence review",()=>{
   })
 
   it('rolls back actual replacement and review baseline together and retries response-loss receipts without hiding concurrent committed evidence',async()=>{
-    const e=seed('更正事务主体','REVIEW-114-T'),scope=coord(e.id),d=await decide(scope,'tx-d')
+    const e=await seed('更正事务主体','REVIEW-114-T'),scope=coord(e.id),d=await decide(scope,'tx-d')
     await archive(e,'tx-q');await drain('tx-drain')
     const item=(await get(listPath,{enterpriseId:e.id})).body.rows[0], detail=(await get(listPath+'/'+item.id)).body
     const input={...scope,...cmd('tx-replace'),action:'replace',expectedCurrentId:d.versionId,reviewedEvidence:{latestRevisionId:detail.evidenceToken.latestRevisionId,projectionReady:true},ruleVersion:'manual-2',effectiveAt:'2026-10-19T00:00:00Z',decision:{status:'confirmed_no_diff',measureCode:'none',verificationStatus:'confirmed'}}
-    db.run(sql`create trigger fail_review114 before insert on evidence_review_receipt_114 when new.idempotency_key='tx-replace' begin select raise(abort,'synthetic receipt failure'); end`)
+    await pool.query('UPDATE public.fixture_review_failure SET enabled = true')
     const failed=await post(decisionPath,input);expect(failed.status).toBe(500)
     expect(failed.body).toMatchObject({ error: { code: 'transaction_failed' } })
     const failedMcp = await rpc('save_difference_decision', input, 'synthetic-mcp')
@@ -199,7 +265,7 @@ describe("ticket public evidence review",()=>{
     expect((await get('/api/roster/decision-lifecycle/history',scope)).body.total).toBe(1)
     expect((await get(listPath+'/'+item.id)).body.reviewedBaseline).toBeNull()
     expect((await get(listPath,{enterpriseId:e.id})).body.rows).toEqual([expect.objectContaining({id:item.id,pending:true,reviewedRevisionId:null})])
-    db.run(sql`drop trigger fail_review114`)
+    await pool.query('UPDATE public.fixture_review_failure SET enabled = false')
     const completed=await rpc('save_difference_decision',input,'synthetic-mcp')
     expect(completed.value).toMatchObject({action:'replace',previousId:d.versionId,reviewedRevisionId:detail.evidenceToken.latestRevisionId})
     expect(completed.value.versionId).not.toBe(d.versionId)
@@ -219,7 +285,7 @@ describe("ticket public evidence review",()=>{
   })
 
   it('keeps withdrawal heads in live evidence tokens and preserves historical review state across HTTP and MCP', async () => {
-    const e = seed('撤回复核边界主体', 'ISOLATION-196-W'), scope = coord(e.id)
+    const e = await seed('撤回复核边界主体', 'ISOLATION-196-W'), scope = coord(e.id)
     const decision = await decide(scope, 'isolation196-decision')
     await archive(e, 'isolation196-evidence'); await drain('isolation196-drain')
     const item = (await get(listPath, { enterpriseId: e.id })).body.rows[0]
@@ -255,7 +321,7 @@ describe("ticket public evidence review",()=>{
   })
 
   it('publishes only explicit bounded rule scopes including unchanged releases and rejects reused versions with different evaluated material',async()=>{
-    const e=seed('规则显式范围','REVIEW-114-R'), other=seed('规则无关范围','REVIEW-114-R-OTHER'),scope=coord(e.id)
+    const e=await seed('规则显式范围','REVIEW-114-R'), other=await seed('规则无关范围','REVIEW-114-R-OTHER'),scope=coord(e.id)
     const d=await decide(scope,'rule-d');await decide(coord(e.id,'extra_in_miit'),'rule-other-direction');await decide(coord(e.id,'missing_in_miit','innovative_sme'),'rule-other-title');await decide(coord(other.id),'rule-other-enterprise')
     const zero='0'.repeat(64),one='1'.repeat(64),two='2'.repeat(64)
     const release={...cmd('rule-unchanged'),action:'release_rule',ruleId:'human-evaluation',version:'same-1',scopes:[{...scope,previousEvaluationDigest:zero,evaluationDigest:zero}]}
@@ -279,14 +345,18 @@ describe("ticket public evidence review",()=>{
   })
 
   it('pages exact event and source references with committed preview classifications and preserves unknown subject gaps and withdrawn history',async()=>{
-    const e=seed('事件范围复核主体','REVIEW-114-E'),scope=coord(e.id),a=await decide(scope,'event-da'),b=await decide(coord(e.id,'extra_in_miit'),'event-db')
+    const e=await seed('事件范围复核主体','REVIEW-114-E'),scope=coord(e.id),a=await decide(scope,'event-da'),b=await decide(coord(e.id,'extra_in_miit'),'event-db')
     await decide(coord(e.id,'missing_in_miit','innovative_sme'),'event-other-title')
-    const rec=db.insert(schema.record).values({enterpriseId:e.id,titleCode:'specialized_sme',source:'jxj'}).returning().get()
-    const events=[2022,2023,2024].map(year=>db.insert(schema.recordEvent).values({recordId:rec.id,eventType:'award',year}).returning().get())
+    const [rec] = await db.insert(record).values({ enterpriseId: e.id, titleCode: 'specialized_sme', source: 'jxj' }).returning()
+    const events = await db.insert(recordEvent).values([2022, 2023, 2024].map(year => ({ recordId: rec!.id, eventType: 'award' as const, year }))).returning()
     const bytes=minimalPdf({pages:3});mkdirSync(join(dir,'files'),{recursive:true});writeFileSync(join(dir,'files/event114.pdf'),bytes)
-    createClassifiedFile(db, { relPath:'event114.pdf', filename:'event114.pdf', ext:'pdf', bytes:bytes.length, sha256:createHash('sha256').update(bytes).digest('hex') }, { source:'jxj', kind:'announcement', titleCode:'specialized_sme' })
-    db.insert(schema.recordEvidence).values({recordEventId:events[0]!.id,sourceFile:'event114.pdf',page:1,listNo:1}).run()
-    const request={idempotencyKey:'event-correction114',sourceIdentity:'synthetic-event',actor,basis,operations:[{enterpriseId:e.id,recordId:rec.id,eventId:events[0]!.id,expectedRevision:1,patch:{year:2021}}]}
+    const [file] = await db.insert(storedFile).values({
+      relPath: 'event114.pdf', filename: 'event114.pdf', ext: 'pdf', bytes: BigInt(bytes.length),
+      sha256: createHash('sha256').update(bytes).digest('hex'), createdAt: '2026-10-19',
+    }).returning()
+    await db.insert(rosterFileClassification).values({ fileId: file!.id, source: 'jxj', kind: 'announcement', titleCode: 'specialized_sme' })
+    await db.insert(recordEvidence).values({ recordEventId: events[0]!.id, sourceFile: 'event114.pdf', page: 1, listNo: 1 })
+    const request={idempotencyKey:'event-correction114',sourceIdentity:'synthetic-event',actor,basis,operations:[{enterpriseId:e.id,recordId:rec!.id,eventId:events[0]!.id,expectedRevision:1,patch:{year:2021}}]}
     const plan=(await rpc('preflight_event_corrections',request,'synthetic-mcp')).value
     const commit=await rpc('commit_event_corrections',{request,planHash:plan.planHash},'synthetic-mcp');expect(commit.body.result?.isError,JSON.stringify(commit)).not.toBe(true)
     await drain('event-drain')
@@ -315,7 +385,7 @@ describe("ticket public evidence review",()=>{
     const historical=(await get(listPath+'/'+rows[0].id)).body
     expect(historical).toMatchObject({lineage:'withdrawn',currentDecision:{versionId:withdrawn.body.versionId,current:null},oldDecision:{id:a.versionId}})
     expect((await get(listPath,{enterpriseId:e.id,titleCode:'specialized_sme',direction:'missing_in_miit'})).body.rows).toEqual([])
-    const unknown=seed('未知查询主体')
+    const unknown=await seed('未知查询主体')
     await decide(coord(unknown.id),'unknown-decision')
     const result=await client.commitCommand({idempotencyKey:'unknown-archive114',sourceKind:'alias_evidence',sourceIdentity:'synthetic-unknown',payload:{platformQueries:[{interface:'business_list',queryKey:'name:'+unknown.name,rdjb:'2',queriedAt:'2026-10-19T05:00:00Z',status:'no_record',rawResponse:'SYNTHETIC_EMPTY_RESPONSE',relations:[]}]}});expect(result.status).toBe('committed');await drain('unknown-drain')
     expect((await get(listPath,{enterpriseId:unknown.id})).body.rows).toEqual([])
@@ -324,8 +394,8 @@ describe("ticket public evidence review",()=>{
   })
 
   it('keeps a maintained legacy decision under the existing lifecycle ownership guards for import curation and merge',async()=>{
-    const e=seed('维持旧导入决定','REVIEW-114-LEGACY'),scope=coord(e.id), target=seed('归并规范主体','REVIEW-114-LEGACY-TARGET')
-    const old=db.insert(schema.differenceReason).values({...scope,direction:'missing_in_miit',status:'confirmed_reason',reasonCode:'other',reasonNote:'不可重写的原始理由',measureCode:'keep_history',verificationStatus:'confirmed',recordedAt:'2026-10-01T00:00:00Z'}).returning().get()
+    const e=await seed('维持旧导入决定','REVIEW-114-LEGACY'),scope=coord(e.id), target=await seed('归并规范主体','REVIEW-114-LEGACY-TARGET')
+    const old=await seedDecision({...scope,direction:'missing_in_miit',status:'confirmed_reason',reasonCode:'other',reasonNote:'不可重写的原始理由',measureCode:'keep_history',verificationStatus:'confirmed',recordedAt:'2026-10-01T00:00:00Z'})
     await archive(e,'legacy-q');await drain('legacy-drain')
     const item=(await get(listPath,{enterpriseId:e.id})).body.rows[0], detail=(await get(listPath+'/'+item.id)).body
     const maintained=await post(decisionPath,{...scope,...cmd('legacy-maintain'),action:'maintain',expectedCurrentId:old.id,reviewedEvidence:{latestRevisionId:detail.evidenceToken.latestRevisionId,projectionReady:true},ruleVersion:'manual-1',effectiveAt:'2026-10-19T00:00:00Z'})
@@ -341,8 +411,8 @@ describe("ticket public evidence review",()=>{
   })
 
   it('distinguishes provable invalid premises coverage-only no-review and reviewed baselines without inventing a replacement',async()=>{
-    const e=seed('未查询前提核验','REVIEW-114-PREMISE'),scope=coord(e.id)
-    const old=db.insert(schema.differenceReason).values({...scope,direction:'missing_in_miit',status:'not_queried',measureCode:'manual_review',verificationStatus:'pending',recordedAt:'2026-10-01T00:00:00Z'}).returning().get()
+    const e=await seed('未查询前提核验','REVIEW-114-PREMISE'),scope=coord(e.id)
+    const old=await seedDecision({...scope,direction:'missing_in_miit',status:'not_queried',measureCode:'manual_review',verificationStatus:'pending',recordedAt:'2026-10-01T00:00:00Z'})
     const confirmed=await decide(coord(e.id,'extra_in_miit'),'premise-confirmed')
     const archiveResult=await client.commitCommand({idempotencyKey:'premise-q',sourceKind:'alias_evidence',sourceIdentity:'synthetic-premise',payload:{platformQueries:[{interface:'business_list',queryKey:e.usccNorm!,titleCode:'specialized_sme',rdjb:'2',queriedAt:'2026-10-19T01:00:00Z',status:'no_record',rawResponse:'SYNTHETIC_EMPTY_RESPONSE',relations:[]}]}});expect(archiveResult.status).toBe('committed');await drain('premise-drain')
     const item=(await get(listPath,{enterpriseId:e.id})).body.rows[0]
@@ -363,9 +433,9 @@ describe("ticket public evidence review",()=>{
     expect((await get(listPath,{enterpriseId:e.id})).body.rows).toEqual([])
   })
   it('retains merged legacy impact provenance and refuses completion on the merged owner while preserving the survivor scope',async()=>{
-    const from=seed('归并旧主体'),into=seed('归并现主体','REVIEW-114-MERGE'),scope=coord(from.id)
-    const d=db.insert(schema.differenceReason).values({...scope,direction:'missing_in_miit',status:'confirmed_no_diff',measureCode:'none',verificationStatus:'confirmed',recordedAt:'2026-10-01T00:00:00Z'}).returning().get()
-    db.insert(schema.differenceReason).values({...scope,direction:'extra_in_miit',status:'confirmed_no_diff',measureCode:'none',verificationStatus:'confirmed',recordedAt:'2026-10-01T00:00:00Z'}).run()
+    const from=await seed('归并旧主体'),into=await seed('归并现主体','REVIEW-114-MERGE'),scope=coord(from.id)
+    const d=await seedDecision({...scope,direction:'missing_in_miit',status:'confirmed_no_diff',measureCode:'none',verificationStatus:'confirmed',recordedAt:'2026-10-01T00:00:00Z'})
+    await seedDecision({...scope,direction:'extra_in_miit',status:'confirmed_no_diff',measureCode:'none',verificationStatus:'confirmed',recordedAt:'2026-10-01T00:00:00Z'})
     await archive(from,'merge-q');await drain('merge-before-drain')
     const pageBefore=(await get(listPath,{enterpriseId:from.id,limit:1})).body
     const expectedBefore=(await get(listPath,{enterpriseId:from.id,limit:100})).body.rows
@@ -386,7 +456,7 @@ describe("ticket public evidence review",()=>{
   })
 
   it('rejects raw and unbounded public inputs and rolls back an entire multi-scope rule publication before a corrected retry',async()=>{
-    const e=seed('公开输入核验','REVIEW-114-VALIDATION'),scope=coord(e.id),d=await decide(scope,'validation-d')
+    const e=await seed('公开输入核验','REVIEW-114-VALIDATION'),scope=coord(e.id),d=await decide(scope,'validation-d')
     await archive(e,'validation-q');await drain('validation-drain')
     const item=(await get(listPath,{enterpriseId:e.id})).body.rows[0],before=(await get(listPath+'/'+item.id)).body
     for(const params of [{limit:0},{limit:101},{limit:1.5},{enterpriseId:0},{cursor:'forged'},{rawSource:'caller source'}])expect((await get(listPath,params)).status).toBe(400)
@@ -406,9 +476,9 @@ describe("ticket public evidence review",()=>{
   })
 
   it('retains merged impact IDs with an explicit decision gap when legacy duplicate consolidation removed the underlying version',async()=>{
-    const from=seed('归并同内容旧主体'),into=seed('归并同内容现主体','REVIEW-114-MERGE-DUP')
+    const from=await seed('归并同内容旧主体'),into=await seed('归并同内容现主体','REVIEW-114-MERGE-DUP')
     const material={titleCode:'specialized_sme',direction:'missing_in_miit' as const,status:'confirmed_no_diff' as const,measureCode:'none' as const,verificationStatus:'confirmed' as const,recordedAt:'2026-10-01T00:00:00Z'}
-    const old=db.insert(schema.differenceReason).values({...material,enterpriseId:from.id}).returning().get(),survivor=db.insert(schema.differenceReason).values({...material,enterpriseId:into.id}).returning().get()
+    const old=await seedDecision({...material,enterpriseId:from.id}),survivor=await seedDecision({...material,enterpriseId:into.id})
     await archive(from,'merge-duplicate-q');await drain('merge-duplicate-before')
     const item=(await get(listPath,{enterpriseId:from.id})).body.rows[0]
     const merged=await client.commitCommand({idempotencyKey:'merge-duplicate114',sourceKind:'alias_evidence',sourceIdentity:'synthetic-merge-duplicate',payload:{merges:[{fromEnterpriseId:from.id,intoUscc:into.usccNorm!,sourceKind:'manual'}]}});expect(merged.status).toBe('committed');await drain('merge-duplicate-after')
@@ -418,69 +488,72 @@ describe("ticket public evidence review",()=>{
     expect((await get('/api/roster/decision-lifecycle/current',coord(into.id))).body.versionId).toBe(survivor.id)
   })
 
-  it('caps held readers at 64 and evicts the oldest opaque cursor while preserving later HTTP and MCP pages',async()=>{
-    const e=seed('读快照容量主体','REVIEW-114-CAP')
+  it('caps held PostgreSQL readers at four and evicts the oldest opaque cursor while preserving later HTTP and MCP pages',async()=>{
+    await stop(); await startService()
+    const e=await seed('读快照容量主体','REVIEW-114-CAP')
     await decide(coord(e.id),'cap-first');await decide(coord(e.id,'extra_in_miit'),'cap-second')
     await archive(e,'cap-q');await drain('cap-drain')
     const input={enterpriseId:e.id,limit:1},first=(await get(listPath,input)).body
-    await archive(e,'cap-later','旧读者之后的 WAL 帧')
-    const held=db.$client.pragma('wal_checkpoint(PASSIVE)') as Array<{busy:number;log:number;checkpointed:number}>
-    expect(held[0]!.checkpointed).toBeLessThan(held[0]!.log)
+    await archive(e,'cap-later','旧读者之后的已提交事实')
+    await expect.poll(pinnedSnapshots).toHaveLength(1)
     let latest=first
     const heldCursors: string[] = []
-    for(let i=0;i<64;i++){latest=(await get(listPath,input)).body;heldCursors.push(latest.nextCursor)}
+    for (let i = 0; i < 4; i++) {
+      latest = (await get(listPath, input)).body
+      expect(latest.nextCursor).toEqual(expect.any(String))
+      heldCursors.push(latest.nextCursor)
+    }
     expect((await get(listPath,{...input,cursor:first.nextCursor})).body.error.code).toBe('invalid_cursor')
-    const advanced=db.$client.pragma('wal_checkpoint(PASSIVE)') as Array<{busy:number;log:number;checkpointed:number}>
-    expect(advanced[0]!.busy).toBe(0);expect(advanced[0]!.checkpointed).toBe(advanced[0]!.log)
+    await expect.poll(pinnedSnapshots).toHaveLength(4)
+    // An evicted lease can be reused by a newer snapshot on the same backend.
+    expect((await get(listPath,{...input,cursor:heldCursors[0]})).status).toBe(200)
     const last=await rpc('list_evidence_impacts',{...input,cursor:latest.nextCursor})
     expect(last.status).toBe(200);expect(last.value.rows).toEqual([expect.objectContaining({direction:'extra_in_miit'})])
-    // Consume the other retained pages; the next case must not rely on TTL cleanup.
-    for(const cursor of heldCursors.slice(0,-1))expect((await get(listPath,{...input,cursor})).status).toBe(200)
-  })
+    // The other retained cursors still serve pages after the oldest was evicted.
+    for(const cursor of heldCursors.slice(1,-1))expect((await get(listPath,{...input,cursor})).status).toBe(200)
+  }, 30000)
   // The real-clock expiry case runs in the explicit deep lane; see testing.md.
   if (process.env.RUN_REAL_TTL_DEEP === '1') {
-  it('expires 120-second readonly snapshots releases WAL retention and rejects the expired cursor across transports',async()=>{
-    const e=seed('读快照到期主体','REVIEW-114-TTL')
+  it('expires 120-second readonly snapshots, releases MVCC retention, and rejects the expired cursor across transports',async()=>{
+    await stop(); await startService()
+    const e=await seed('读快照到期主体','REVIEW-114-TTL')
     await decide(coord(e.id),'ttl-first');await decide(coord(e.id,'extra_in_miit'),'ttl-second')
     await archive(e,'ttl-q');await drain('ttl-drain')
     const input={enterpriseId:e.id,limit:1},page=(await get(listPath,input)).body
     await archive(e,'ttl-later','快照打开后的已提交事实')
-    const held=db.$client.pragma('wal_checkpoint(TRUNCATE)') as Array<{busy:number;log:number;checkpointed:number}>
-    expect(held[0]!.busy).toBe(1)
+    await expect.poll(pinnedSnapshots).toHaveLength(1)
     // Real public server clock: no fake timer, shortened production TTL or private seam.
     await new Promise(resolve=>setTimeout(resolve,121000))
     const expired=await get(listPath,{...input,cursor:page.nextCursor});expect(expired.status).toBe(400);expect(expired.body.error.code).toBe('invalid_cursor')
     const m=await rpc('list_evidence_impacts',{...input,cursor:page.nextCursor});expect(m.status).toBe(200);expect(m.body.result.isError).toBe(true);expect(m.value.error.code).toBe('invalid_cursor')
-    const released=db.$client.pragma('wal_checkpoint(TRUNCATE)') as Array<{busy:number;log:number;checkpointed:number}>
-    expect(released[0]).toMatchObject({busy:0,log:0,checkpointed:0})
+    await expect.poll(pinnedSnapshots).toEqual([])
   },140000)
   }
 
   it('rolls back and releases a readonly snapshot immediately when public list hydration fails',async()=>{
-    // Isolate this failure's WAL ownership from cursors deliberately held by prior cases.
+    // Isolate this failure's MVCC snapshot from cursors deliberately held by prior cases.
     await stop(); await startService()
-    const e=seed('读快照异常主体','REVIEW-114-READ-FAIL'),first=await decide(coord(e.id),'read-fail-first')
+    const e=await seed('读快照异常主体','REVIEW-114-READ-FAIL'),first=await decide(coord(e.id),'read-fail-first')
     await decide(coord(e.id,'extra_in_miit'),'read-fail-second');await archive(e,'read-fail-q');await drain('read-fail-drain')
-    // Isolated fault only: error after anchor+impact reads have pinned the WAL snapshot.
-    db.run(sql`update difference_reason set actor='invalid-json' where id=${first.versionId}`)
+    // Isolated fault only: error after anchor+impact reads have pinned the MVCC snapshot.
+    await pool.query('update difference_reason set actor=$1 where id=$2', ['invalid-json', first.versionId])
     const failed=await get(listPath,{enterpriseId:e.id,limit:1})
     expect(failed.status).toBe(500);expect(failed.body.error.code).toBe('transaction_failed')
-    expect(JSON.stringify(failed.body)).not.toMatch(/invalid-json|SELECT|sqlite/i)
-    db.run(sql`update difference_reason set actor=${JSON.stringify(actor)} where id=${first.versionId}`)
-    const released=db.$client.pragma('wal_checkpoint(TRUNCATE)') as Array<{busy:number;log:number;checkpointed:number}>
-    expect(released[0]).toMatchObject({busy:0,log:0,checkpointed:0})
+    expect(JSON.stringify(failed.body)).not.toMatch(/invalid-json|SELECT|postgresql/i)
+    await pool.query('update difference_reason set actor=$1 where id=$2', [JSON.stringify(actor), first.versionId])
+    await expect.poll(pinnedSnapshots).toEqual([])
     expect((await get(listPath,{enterpriseId:e.id})).body.rows).toHaveLength(2)
-  })
+  }, 30000)
   it('closes active readonly snapshots on the existing server shutdown lifecycle without waiting for idle expiry',async()=>{
-    const e=seed('读快照关闭主体','REVIEW-114-CLOSE')
+    const e=await seed('读快照关闭主体','REVIEW-114-CLOSE')
     await decide(coord(e.id),'close-first');await decide(coord(e.id,'extra_in_miit'),'close-second')
     await archive(e,'close-q');await drain('close-drain')
     const page=(await get(listPath,{enterpriseId:e.id,limit:1})).body
     expect(page.nextCursor).toEqual(expect.any(String))
     await archive(e,'close-later','关闭前写入')
     const started=Date.now();await stop();expect(Date.now()-started).toBeLessThan(5000)
-    const released=db.$client.pragma('wal_checkpoint(TRUNCATE)') as Array<{busy:number;log:number;checkpointed:number}>
-    expect(released[0]).toMatchObject({busy:0,log:0,checkpointed:0})
-  },15000)
+    expect(serviceProcess.exitCode).toBe(0)
+    await expect.poll(pinnedSnapshots).toEqual([])
+  }, 30000)
 
 })

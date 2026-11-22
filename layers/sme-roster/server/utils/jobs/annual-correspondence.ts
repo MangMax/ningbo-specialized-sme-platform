@@ -1,28 +1,16 @@
+import { postgresAnnualCorrespondenceSpec } from './annual-correspondence-postgres-spec'
+import { annualTaskInput, annualTaskReceipt, type AnnualTaskParams, initialAnnualResult, annualErrorCode } from './annual-correspondence-job-contract'
 import { setImmediate as yieldTurn } from 'node:timers/promises'
 import type { LogContext } from '../../../../core/lib/logging'
 import { and, eq, sql } from 'drizzle-orm'
-import { z } from 'zod'
 import * as s from '../../../../../db/schema'
-import { runPostgresAnnualCorrespondence } from './annual-correspondence-postgres'
-import { summarizePostgresAnnualJobs } from './annual-summary'
 import { newJobId } from '../../../../core/lib/job'
 import { ANNUAL_CORRESPONDENCE_KIND as KIND, ANNUAL_CORRESPONDENCE_VERSION as VERSION, type AnnualTaskReceipt, type AnnualTaskResult } from '../../../lib/roster/annual-correspondence'
-import { annualDbReadonly, annualFail, annualHash, qualifyAnnualFinal, readAnnualScopes, reconcileAnnualStep, type AnnualDb, type AnnualScopeReader } from '../annual-correspondence'
+import { annualDbReadonly, qualifyAnnualFinal, readAnnualScopes, reconcileAnnualStep, type AnnualDb, type AnnualScopeReader } from '../annual-correspondence'
+import { annualFail, annualHash } from '../annual-correspondence-contract'
 import { createJob, getJob, setJobResult } from '../../../../core/server/utils/job-store'
-import { enqueuePersistedJob, ensureJobRunnerReady, getJobSpec, registerJob, requeueFinishedJob, type JobContext, type JobSpec } from '../../../../core/server/utils/job-runner'
-
-export const annualTaskInput = z.strictObject({ clientRequestId: z.string().trim().min(1).max(120), eventIds: z.array(z.number().int().positive()).min(1).max(200) })
-export interface AnnualTaskParams extends Record<string, unknown> {
-  eventIds: number[]
-  clientRequestIds: string[]
-  serverIdentity: string
-  sourceGenerations: { eventId: number; generation: string }[]
-  ruleVersion: string
-}
-const emptyFinal = () => ({ stepId: null, status: 'none' as const, decisionRefs: [], reasons: ['task_not_processed'] })
-export function annualTaskReceipt(row: Pick<NonNullable<ReturnType<typeof getJob>>, 'id' | 'state' | 'params'>): AnnualTaskReceipt {
-  return { jobId: row.id, kind: KIND, state: row.state, sourceGenerations: (row.params as AnnualTaskParams).sourceGenerations }
-}
+import { enqueuePersistedJob, ensureJobRunnerReady, requeueFinishedJob, type JobContext, type JobSpec } from '../../../../core/server/utils/job-runner'
+import { getJobSpec, registerJob } from '../../../../core/server/utils/job-spec-registry'
 /** Persists and deduplicates only. Safe inside the archive transaction; activation
  * belongs to the caller after commit, never before SQLite releases its lock. */
 export function stageAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader, raw: unknown, logContext?: LogContext): AnnualTaskReceipt {
@@ -51,15 +39,9 @@ export function stageAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader,
     return annualTaskReceipt(row)
   },{behavior:'immediate'})
 }
-export function initialAnnualResult(sourceGenerations: AnnualTaskParams['sourceGenerations']): AnnualTaskResult {
-  return { ruleVersion: VERSION, attempt: 0, events: sourceGenerations.map(source => ({ ...source, status: 'pending', outcomes: [], finalQualification: emptyFinal() })) }
-}
 export function annualCorrespondenceSpec(read: AnnualScopeReader): JobSpec {
   return {
-    kind: KIND, status: 'ready', summary: '完整年度过程对应与最终资格核对',
-    paramsHint: '请使用年度专属入口；显式eventIds 1..200，来源代次由服务器计算。',
-    parse: () => ({ ok: false, message: '请使用年度对应任务入口' }),
-    postgres: { run: runPostgresAnnualCorrespondence, taskCenter: { summaries: summarizePostgresAnnualJobs } },
+    ...postgresAnnualCorrespondenceSpec,
     run: async (ctx: JobContext, raw) => {
       await yieldTurn()
       const row = getJob(ctx.db,ctx.jobId)
@@ -129,10 +111,6 @@ export function annualCorrespondenceSpec(read: AnnualScopeReader): JobSpec {
     },
   }
 }
-export function annualErrorCode(cause: unknown): string {
-  const code = (cause as {code?:string})?.code
-  return ['source_generation_changed','event_unavailable','source_materialization_limit','rule_version_changed','invalid_annual_task_request','idempotency_conflict','protected_decision','retry_unavailable','invalid_endpoint_type','identity_conflict','title_conflict','ambiguous_candidate','incomplete_coverage','stale_revision','plan_mismatch'].includes(code ?? '') ? code! : 'annual_step_failed'
-}
 export function activateAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader, ids: readonly string[], filesDir: string, logContext?: LogContext) {
   if (!getJobSpec(KIND)) registerJob(annualCorrespondenceSpec(read))
   for (const id of ids) enqueuePersistedJob(db,id,filesDir,logContext)
@@ -163,3 +141,4 @@ export function retryAnnualCorrespondence(db: AnnualDb, read: AnnualScopeReader,
   if (!requeueFinishedJob(db,{id,kind:KIND,params:row.params,filesDir,logContext})) annualFail('retry_unavailable')
   return annualTaskReceipt(getJob(db,id)!)
 }
+export { annualTaskInput, type AnnualTaskParams, annualTaskReceipt, initialAnnualResult, annualErrorCode } from './annual-correspondence-job-contract'

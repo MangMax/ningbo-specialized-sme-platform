@@ -12,13 +12,14 @@ import ExcelJS from 'exceljs'
 import { eq } from 'drizzle-orm'
 import { schema as s } from '../../../db/client'
 
-import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { readDevelopmentDiscovery, specializedExportFixture, expectCounts, rows, route, year as y, type Event } from './fixtures/specialized-export'
 
 let developmentSpec: any
+vi.setConfig({ testTimeout: 60_000 })
 beforeAll(async () => { developmentSpec = await readDevelopmentDiscovery() }, 60000)
 const f = specializedExportFixture()
-beforeEach(async () => { await f.resetBusiness(); await f.start() }, 90000)
+beforeEach(f.resetBusiness, 90_000)
 afterAll(f.close)
 
 it('专精特新入口提交202并下载六表新认定文件', async () => {
@@ -120,7 +121,9 @@ it('空集六表计数及产物过期缺失与成功历史分别可查', async (
   expectCounts(empty.wb,empty.job,{eligible:0,pending:0,excluded:0})
   for (const sheet of ['有效企业','已到期','已注销（吊销）','已迁出','未认定']) expect(empty.wb.getWorksheet(sheet)!.getRow(1).values).toEqual([undefined,'序号','企业名称','统一社会信用代码','区县','称号','首次认定年份','认定及复核情况','公布名称','已确认曾用名','公布对应情况','情况说明','来源及页码','有效状态','有效期及排除依据','资料缺口与来源备注'])
   expect(empty.job.progress).toEqual({done:0,total:0}); expect(empty.job.percent).toBe(100)
-  f.db.update(s.job).set({result:{...empty.job.result,artifact:{...empty.job.result.artifact,expiresAt:'2000-01-01T00:00:00Z'}}}).where(eq(s.job.id,empty.job.id)).run()
+  await f.runtimeQuery('UPDATE business.job SET result = $1 WHERE id = $2', [
+    JSON.stringify({ ...empty.job.result, artifact: { ...empty.job.result.artifact, expiresAt: '2000-01-01T00:00:00Z' } }), empty.job.id,
+  ])
   const expired = await f.json(await fetch(f.url('/api/jobs/' + empty.job.id)))
   expect(expired.state).toBe('done'); expect(expired.result.artifact.availability).toBe('expired')
   expect((await fetch(f.url(empty.job.result.artifact.downloadUrl),{headers:f.headers})).status).toBe(410)
@@ -148,12 +151,14 @@ it('本称号生成失败无半成品且可显式重新生成', async () => {
   expect((await fetch(f.url('/api/job-artifacts/' + failed.id),{headers:f.headers})).status).toBe(404)
   for (const suffix of ['.part','.xlsx']) expect(existsSync(join(f.dbPath + '.exports',failed.id + suffix))).toBe(false)
   expect((await f.json(await f.submit('118-failed'))).jobId).toBe(failed.id)
-  f.db.delete(s.record).where(eq(s.record.id,invalid.record.id)).run()
-  f.db.delete(s.enterprise).where(eq(s.enterprise.id,invalid.enterprise.id)).run()
-  const recovered = f.candidate('修正合成超限后重新导出')
+  const repairedName = '修正合成超限后重新导出'
+  const repairedUscc = 'SYNTHETIC-118-' + repairedName
+  await f.runtimeQuery(`WITH repaired AS (
+    UPDATE business.enterprise SET name = $1, name_norm = $1, uscc_norm = $2 WHERE id = $3 RETURNING id
+  ) UPDATE business.record SET name_raw = $1 WHERE enterprise_id IN (SELECT id FROM repaired)`, [repairedName, repairedUscc, invalid.enterprise.id])
   const next = await f.workbook('118-retry-failed',{regenerateOf:failed.id})
   expect(next.job.id).not.toBe(failed.id); expect(next.job.params.regenerateOf).toBe(failed.id)
-  expect(rows(next.wb,'有效企业').map(row => businessIdentity(row))).toEqual([expectedBusinessIdentity(f.db,recovered.enterprise.id)])
+  expect(rows(next.wb,'有效企业').map(row => businessIdentity(row))).toEqual([[repairedName, repairedUscc]])
   expectCounts(next.wb,next.job,{eligible:1,pending:0,excluded:0})
 })
 
@@ -199,4 +204,4 @@ it('阻塞真实执行进程仍先返回202并共用队列取消', async () => {
       for (const suffix of ['.part','.xlsx']) expect(existsSync(join(f.dbPath + '.exports',id + suffix))).toBe(false)
     }
   }
-},30000)
+},60_000)

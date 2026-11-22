@@ -5,7 +5,7 @@ import { createError } from 'h3'
 import { isPdfPath } from '../../lib/pdf-page'
 import { guardImportedPageCount, guardTargetPage } from '../../lib/ocr-workbench'
 import { decodeOcrImport } from './ocr-import'
-import { validOcrExpectedVersion, type OcrChannel } from './ocr-result'
+import { validOcrExpectedVersion, type OcrChannel } from './ocr-result-contract'
 import { listPdfPages } from './pdf-pages'
 import { describeOcrFile, readOcrFileResults, writeOcrFileResults, type OcrFileTarget } from './ocr-files'
 

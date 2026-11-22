@@ -19,15 +19,15 @@ import {
   platformLegacyRelationAlias as relationAlias,
   platformObservationAssignment as assignment,
 } from '../../../../db/postgresql/platform-tables'
-import { BUSINESS_STATUS_V1, BUSINESS_STATUS_V2 } from '../../../../db/business-status'
+import { BUSINESS_STATUS_V1, BUSINESS_STATUS_V2 } from '../../../../db/business-status-contract'
 import { MAX_FULL_QUERY_BYTES, assertPlatformFullReadBudget } from './evidence-contract'
 import { legacySourcePositionForSequence, type LegacyProvenanceDisplay } from './legacy-provenance'
 import { legacyEnvelopeCollection, readPlatformArchiveBytes } from './postgres-evidence-read'
 import type { PlatformQueryRow } from './read'
 import { sourcePositionForSequence } from './recognized-evidence'
-import { snapshotSchema } from './target-evidence-read'
+import { snapshotSchema } from './evidence-snapshot-model'
 import type { RelationEvidenceDisplay } from './target-relation-display'
-import { parsePlatformRelationDisplay } from './target-query-read'
+import { parsePlatformRelationDisplay } from './query-relation-display-schema'
 
 type Reader = Pick<NodePgDatabase, 'execute' | 'select' | 'selectDistinct'>
 type Query = PlatformQueryRow['query']

@@ -1,6 +1,9 @@
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import pg from 'pg'
 import { initializeDb } from '../../../db/client'
+import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -20,18 +23,27 @@ const relations = [1, 2].map(n => {
   return {id:seeded.relationIds[0]!}
 })
 let service: { baseUrl: string; stop: () => Promise<void> }
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>
+let pool: pg.Pool
 let developmentSpec: any
 beforeAll(async () => {
   developmentSpec = await readDevelopmentDiscovery()
+  installLeadListSchema(db.$client)
+  postgres = await postgresRuntimeFixture({ dir, sourcePath: db.$client.name })
+  pool = new pg.Pool({ connectionString: postgres.url })
   const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
-  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_PATH: join(dir, 'roster.db'), NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_MCP_TOKEN: 'isolated250' } })
+  const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...postgres.env, NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_MCP_TOKEN: 'isolated250' } })
   let output = ''
   for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { output = (output + data).slice(-8000) })
   service = { baseUrl: `http://127.0.0.1:${port}`, stop: () => stopOwnedChild(child) }
   try { await waitForHttp(`${service.baseUrl}/api/health`, { timeoutMs: 60000, child }) }
   catch (error) { await service.stop(); throw new Error(`${String(error)}\n${output}`) }
 }, 90000)
-afterAll(async () => { await service?.stop(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => {
+  try { await service?.stop() } finally {
+    try { await pool?.end(); postgres?.close() } finally { db.$client.close(); rmSync(dir, { recursive: true, force: true }) }
+  }
+})
 async function rpc(method: string, params: unknown) {
   const response = await fetch(`${service.baseUrl}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: 'Bearer isolated250', 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) })
   expect(response.status).toBe(200)
@@ -50,8 +62,8 @@ it('real GET and MCP return the same full-scope qualification with off-page summ
   expect(body.process.finalCandidateStepId).toBe(body.process.latestStepSummary.id)
   expect(body.process.steps[0].id).not.toBe(body.process.latestStepSummary.id)
   expect(JSON.stringify(body)).not.toContain('PRIVATE')
-  expect(db.select().from(schema.recordCorrespondence).all()).toEqual([])
-  expect(db.select().from(schema.recordCorrespondenceAudit).all()).toEqual([])
+  expect((await pool.query('SELECT id FROM business.record_correspondence')).rows).toEqual([])
+  expect((await pool.query('SELECT id FROM business.record_correspondence_audit')).rows).toEqual([])
 })
 it('publishes read-only REST and MCP schema with annual facts generation and bounded pagination', async () => {
   const spec = developmentSpec

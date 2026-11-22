@@ -8,11 +8,11 @@ import { platformApplyProjection, platformBusinessProjection, platformRecognized
   platformBusinessObservation as observation, platformCollection as collection, platformLegacyQueryAlias as queryAlias,
   platformLegacyRelationAlias as relationAlias, platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { recordCorrespondence as correspondence } from '../../../../db/postgresql/qualification-tables'
-import { refreshMetadataKeys, refreshRelationFields, refreshSourceKeys } from '../../lib/platform/difference-hash-inputs'
-import { snapshotSchema } from '../../lib/platform/target-evidence-read'
+import { refreshMetadataKeys, refreshRelationFields, refreshSourceKeys } from '../../lib/platform/difference-hash-keys'
+import { snapshotSchema } from '../../lib/platform/evidence-snapshot-model'
 import { CURRENT_TITLES } from '../../lib/roster/current-titles'
 import type { PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
-import { hashRefreshInputs, projectRefreshObservation, refreshProjectionColumns } from './enterprise-difference-refresh'
+import { hashRefreshInputs, projectRefreshObservation, refreshProjectionColumns } from './enterprise-difference-refresh-contract'
 
 type Tx = PostgresQualificationTransaction
 type Collection = Parameters<typeof projectRefreshObservation>[0]

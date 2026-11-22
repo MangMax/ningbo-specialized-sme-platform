@@ -1,5 +1,5 @@
-import '../../support/compiled-enterprise-reader'
-import { enterpriseReads } from '../../../layers/sme-roster/server/utils/enterprise-read'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { initializeDb } from '../../../db/client'
 import { assertEnterpriseDetailSnapshotEqual } from '../assertions/enterprise-detail-snapshot'
 import { decodeJsonRead } from '../../support/json-read'
@@ -7,9 +7,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { schema, useDb } from '../../../db'
+import { schema } from '../../../db'
 import { listRecords } from '../../../layers/sme-roster/lib/query'
-import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster-sqlite'
 import { parseRecordQuery } from '../../../layers/sme-roster/server/utils/roster-read-query'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-record-query-'))
@@ -194,6 +194,7 @@ let listEnterprisesTool: {
 }
 let enterpriseDetailTool: { handler: (input: { enterpriseId: number }) => Promise<unknown> }
 
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 beforeAll(async () => {
   vi.stubGlobal('defineRouteMeta', (meta: typeof recordsRouteMeta) => {
     if (meta.openAPI?.summary === '查台账记录') {
@@ -217,8 +218,12 @@ beforeAll(async () => {
   vi.stubGlobal('createError', (options: { statusCode?: number; statusMessage?: string }) =>
     Object.assign(new Error(options.statusMessage), options),
   )
-  vi.doMock('@db', () => ({ useDb: () => db }))
+
   vi.doMock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (definition: unknown) => definition }))
+  postgres = await postgresRuntimeFixture({ dir: dir, sourcePath: join(dir, 'records.db') })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+
   recordsHandler = (await import('../../../layers/sme-roster/server/api/records.get')).default as unknown as typeof recordsHandler
   enterpriseDetailHandler = (await import('../../../layers/sme-roster/server/api/enterprises/[id].get')).default as unknown as typeof enterpriseDetailHandler
   queryRecordsTool = (await import('../../../layers/sme-roster/server/mcp/tools/query_records')).default as unknown as typeof queryRecordsTool
@@ -230,9 +235,9 @@ beforeAll(async () => {
   listEnterprisesTool = { ...listTool,handler: decodeJsonRead(listTool.handler as never) } as unknown as typeof listEnterprisesTool
   const detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_enterprise_detail')).default
   enterpriseDetailTool = { ...detailTool,handler: decodeJsonRead(detailTool.handler as never) } as unknown as typeof enterpriseDetailTool
-})
+}, 60_000)
 
-afterAll(async () => { await enterpriseReads.close(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => { await closePostgresDirectoryDb(); postgres?.close(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
 
 describe('通用记录查询的生命周期投影', () => {
   it('REST OpenAPI 将 firstStatus 声明为逗号分隔的枚举数组', () => {
@@ -381,13 +386,13 @@ describe('通用记录查询的生命周期投影', () => {
 describe('REST / MCP 共用记录查询与企业详情读模型', () => {
   it('firstYear 按首次 award 年筛选且先于分页；事件 year 仍是独立口径', async () => {
     routeQuery = { firstYear: '2021', pageSize: '1' }
-    const paged = recordsHandler({}) as { rows: { enterpriseId: number }[]; total: number }
+    const paged = await recordsHandler({}) as { rows: { enterpriseId: number }[]; total: number }
     expect(paged.total).toBe(4)
     expect(paged.rows).toHaveLength(1)
 
     // 重授企业有 2024 年重新获批事件，但首次认定仍是 2021；过滤不裁掉它的完整历史。
     routeQuery = { year: '2024', firstYear: '2021', q: '重授旧名', pageSize: '5' }
-    const rest = recordsHandler({}) as {
+    const rest = await recordsHandler({}) as {
       rows: {
         enterpriseId: number
         lifecycle: { firstRecognitionYear: number | null }
@@ -416,17 +421,17 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
 
     // 2024 是事件年份，但不是这组的首次认定年份。
     routeQuery = { year: '2024', firstYear: '2024', q: '重授旧名' }
-    expect((recordsHandler({}) as { total: number }).total).toBe(0)
+    expect((await recordsHandler({}) as { total: number }).total).toBe(0)
   })
 
   it('firstStatus 使用首次认定共享判定，并在 REST 与 MCP 中先筛后分页', async () => {
     routeQuery = { firstYear: '2021', firstStatus: 'confirmed', pageSize: '1' }
-    const confirmed = recordsHandler({}) as { rows: { enterpriseId: number }[]; total: number }
+    const confirmed = await recordsHandler({}) as { rows: { enterpriseId: number }[]; total: number }
     expect(confirmed.total).toBe(1)
     expect(confirmed.rows.map((row) => row.enterpriseId)).toEqual([reassessed])
 
     routeQuery = { firstYear: '2021', firstStatus: 'pending', pageSize: '1' }
-    const pending = recordsHandler({}) as { rows: { enterpriseId: number }[]; total: number }
+    const pending = await recordsHandler({}) as { rows: { enterpriseId: number }[]; total: number }
     const pendingMcp = await queryRecordsTool.handler({
       firstYear: [2021],
       firstStatus: ['pending'],
@@ -507,12 +512,12 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
 
   it('GET /api/records 与 query_records 返回完全相同的结果', async () => {
     routeQuery = { dueYear: '2027', q: '重授旧名', pageSize: '20' }
-    const rest = recordsHandler({})
+    const rest = await recordsHandler({})
     const mcp = await queryRecordsTool.handler({ dueYear: 2027, q: '重授旧名', pageSize: 20 })
     expect(mcp).toEqual(rest)
 
     routeQuery = { year: '2021', dueYear: '2028' }
-    const yearAndDueYearRest = recordsHandler({})
+    const yearAndDueYearRest = await recordsHandler({})
     const yearAndDueYearMcp = await queryRecordsTool.handler({ year: [2021], dueYear: 2028 })
     expect(yearAndDueYearMcp).toEqual(yearAndDueYearRest)
     expect((yearAndDueYearRest as { rows: { enterpriseId: number }[] }).rows.map((r) => r.enterpriseId)).toContain(passed)
@@ -520,7 +525,7 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
 
   it('详情与 GET /api/records 对 legacy DOCX/XLSX 隐藏不可靠的数字页码', async () => {
     routeQuery = {}
-    const result = recordsHandler({}) as {
+    const result = await recordsHandler({}) as {
       rows: { enterpriseId: number; events: { evidence: { sourceFile: string; page: number | null }[] }[] }[]
     }
     const docxRecord = result.rows.find((row) => row.enterpriseId === legacyDocx)!
@@ -563,6 +568,3 @@ describe('REST / MCP 共用记录查询与企业详情读模型', () => {
     await expect(enterpriseDetailTool.handler({ enterpriseId: 999999 })).rejects.toMatchObject({ statusCode: 404 })
   })
 })
-
-// Native reader readiness is setup; each business case retains its default budget.
-beforeAll(async () => { await enterpriseReads.start() }, 30000)

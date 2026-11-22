@@ -4,7 +4,7 @@ import { and, asc, count, desc, eq, getTableColumns, inArray, isNotNull, isNull,
 import { job } from '../../../../db/postgresql/job-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { isTerminalJobState, makeProgress, type JobProgress, type JobState } from '../../lib/job'
-import { DEFAULT_JOB_LIMIT, MAX_JOB_LIMIT, progressPhaseMatch, toJobDto, toJobSummary, type JobQuery, type JobRow } from './job-store'
+import { DEFAULT_JOB_LIMIT, MAX_JOB_LIMIT, progressPhaseMatch, toJobDto, toJobSummary, type JobQuery, type JobRow } from './job-contract'
 
 type Executor = Pick<NodePgDatabase, 'select' | 'insert' | 'update' | '$with' | 'with' | 'execute'>
 type TerminalState = Extract<JobState, 'done' | 'failed' | 'cancelled'>
@@ -198,6 +198,16 @@ export function reopenPostgresJob(
     claimToken: sql`gen_random_uuid()`,
     inputSnapshot: inputSnapshot === undefined ? undefined : JSON.stringify(inputSnapshot),
   }).where(and(compareJob(id, expected), eq(job.kind, kind), inArray(job.state, terminalStates))).returning(jobColumns))
+}
+
+export async function queuedPostgresJobIds(db: Executor, ids: string[]) {
+  const queued = new Set<string>()
+  for (let offset = 0; offset < ids.length; offset += 1000) {
+    const rows = await db.select({ id: job.id }).from(job)
+      .where(and(eq(job.state, 'queued'), inArray(job.id, ids.slice(offset, offset + 1000))))
+    for (const row of rows) queued.add(row.id)
+  }
+  return queued
 }
 
 export function claimNextPostgresJob(db: Executor, kinds: string[]) {

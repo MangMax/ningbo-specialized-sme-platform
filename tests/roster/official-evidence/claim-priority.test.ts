@@ -3,17 +3,21 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
-import { initializeDb } from '../../../db/client'
-import { planOfficialEvidenceChanges, type OfficialClaimChange } from '../../../layers/sme-roster/server/utils/official-evidence-plan'
+import { count } from 'drizzle-orm'
+import { recordEvidence } from '../../../db/postgresql/ledger-tables'
+import { planPostgresOfficialEvidenceChanges } from '../../../layers/sme-roster/server/utils/official-evidence-plan-postgres'
+import type { OfficialClaimChange } from '../../../layers/sme-roster/server/utils/official-evidence-claim-model'
+import { useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
 
 const dir = mkdtempSync(join(tmpdir(), 'claim-priority-'))
-const db = initializeDb({ dbPath: join(dir, 'domain.db'), create: true })
+const createDatabase = useIsolatedPostgresCases()
 const text = 'Independent literal published row\n'
 writeFileSync(join(dir, 'notice.txt'), text)
-afterAll(() => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(() => rmSync(dir, { recursive: true, force: true }))
 const orders = [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]]
 for (const variant of ['owner','raw','only-unknown'] as const) for (const order of orders) {
-  it(`whole-K domain ${variant} priority in order ${order.join('')}`, () => {
+  it(`whole-K domain ${variant} priority in order ${order.join('')}`, async () => {
+    const db = createDatabase()
     const row: OfficialClaimChange['publishedRow'] = {
       nameRaw: 'Alpha original', usccRaw: 'printed code', districtRaw: 'printed district',
       declaration: { kind: 'independent', sourceDocument: { source:'jxj', title:'Declared publication', docNumber:null, issueDate:null, path:'notice.txt' }, basis:'Explicit verified declaration' },
@@ -28,8 +32,7 @@ for (const variant of ['owner','raw','only-unknown'] as const) for (const order 
       publishedRow:{...row, ...(i===0 ? {usccRaw:null} : variant==='raw' && i===2 ? {nameRaw:'Conflicting confirmed raw'} : {})},
       expectedRowRevision:0,
     }))
-    expect(() => planOfficialEvidenceChanges(db, order.map(i=>changes[i]!), dir)).toThrowError(expect.objectContaining({code:variant==='only-unknown'?'ambiguity':'source_row_conflict'}))
-    // This is a read-only planner assertion, not a replacement for public atomicity.
-    expect(db.$client.prepare('select count(*) n from record_evidence').get()).toEqual({n:0})
+    await expect(planPostgresOfficialEvidenceChanges(db, order.map(i => changes[i]!), dir)).rejects.toThrowError(expect.objectContaining({code:variant==='only-unknown'?'ambiguity':'source_row_conflict'}))
+    expect(await db.select({ n: count() }).from(recordEvidence)).toEqual([{ n: 0 }])
   })
 }

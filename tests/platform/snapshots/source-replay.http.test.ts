@@ -1,10 +1,9 @@
-import { nativeQueryRows } from '../fixtures/native-evidence'
-import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { createApp, createRouter, toNodeListener, defineEventHandler, readBody, setHeader, setResponseStatus, createError, getQuery } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -12,29 +11,31 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
-import { importExecutor } from '../../../layers/sme-roster/server/utils/import-execution'
-import { platformSummaryCache } from '../../../layers/sme-roster/server/utils/platform-summary-cache'
-import { whenIdle } from '../../../layers/core/server/utils/job-runner'
-import { useDb, schema } from '../../../db'
+import { asc, eq, sql } from 'drizzle-orm'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { platformCollection, platformExportBatch, platformLegacyQueryAlias } from '../../../db/postgresql/platform-tables'
+import { importBatch, importReceipt } from '../../../db/postgresql/import-tables'
+import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
 import { recognizedResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
-import { commitRosterImport, preflightRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 import type { RosterImportRequest, RosterImportPlatformQuery, RosterImportExportSnapshot } from '../../../layers/sme-roster/lib/roster-import-client'
 
-// Exercise the actual route and domain transaction in one process. Off-process
-// admission is unchanged and belongs to the separately scheduled transport run.
-vi.mock('../../../layers/sme-roster/server/utils/import-execution', async importOriginal => process.env.ISSUE300_REAL_TRANSPORT === '1' ? await importOriginal() : ({ importExecutor: { execute: async (db: any, action: string, request: any, errors: any, context: any) => action === 'preflight' ? preflightRosterImport(db, request, errors, context) : commitRosterImport(db, request, errors, { ...context, deferCandidateTasks: true }) } }))
 const realTransport = process.env.ISSUE300_REAL_TRANSPORT === '1'
 const protocol = realTransport ? 'MCP' : 'HTTP'
-const dir = mkdtempSync('/tmp/issue300-http-')
+const dir = mkdtempSync(join(tmpdir(), 'source-replay-'))
 const transports = new Set<StreamableHTTPServerTransport>()
 let mcpClient: Client
-const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+let db: ReturnType<typeof usePostgresDirectoryDb>
 const token = 'synthetic-issue300'
 let server: ReturnType<typeof createServer>, base: string, serial = 0
 const metadata: Record<string, any> = {}
 beforeAll(async () => {
-  vi.stubEnv('NUXT_DB_PATH', join(dir, 'test.sqlite'))
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  db = usePostgresDirectoryDb()
   for (const [key, value] of Object.entries({ defineEventHandler, readBody, setHeader, setResponseStatus, createError, getQuery, useRuntimeConfig: () => ({ filesDir: dir, apiToken: token }) })) vi.stubGlobal(key, value)
   const router = createRouter()
   for (const action of ['preflight', 'commit'] as const) {
@@ -68,12 +69,17 @@ beforeAll(async () => {
     mcpClient = new Client({ name: 'issue300', version: '1' })
     await mcpClient.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: `Bearer ${token}` } } }))
   }
-})
+}, 60_000)
 afterAll(async () => {
-  if (realTransport) { await whenIdle(); await mcpClient?.close(); for (const transport of transports) await transport.close(); await importExecutor.close() }
-  platformSummaryCache.close()
+  await stopPostgresJobs()
+  await mcpClient?.close()
+  for (const transport of transports) await transport.close()
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
-  vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true })
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+  rmSync(dir, { recursive: true, force: true })
 })
 function query(): RosterImportPlatformQuery {
   return { interface: 'business_list', queryKey: `name:synthetic-${serial++}`, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-01T00:00:00Z', status: 'success', rawResponse: '{"original":true}', relations: [{ sequenceNo: 1, relationKey: `row-${serial}`, nameRaw: '合成', rawFields: { id: `row-${serial}`, qymc: '合成', n: 1 } }] }
@@ -104,19 +110,56 @@ async function readQuery(queryId: number) {
   expect(response.status).toBe(200)
   return response.json()
 }
-function state() {
-  return Object.fromEntries(['platform_collection', 'platform_collection_page', 'platform_collection_condition', 'platform_legacy_query_alias', 'platform_legacy_relation_alias', 'platform_observation_assignment', 'platform_archive_value', 'platform_collection_archive_ref', 'platform_observation_archive_ref', 'platform_version_archive_ref', 'platform_business_record', 'platform_business_record_version', 'platform_business_observation', 'platform_export_batch', 'platform_export_row', 'record_correspondence', 'record_correspondence_audit', 'evidence_revision_113', 'evidence_semantic_head_113'].map(table => [table, db.$client.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]))
+const replayTables = [
+  'platform_collection',
+  'platform_collection_page',
+  'platform_collection_condition',
+  'platform_legacy_query_alias',
+  'platform_legacy_relation_alias',
+  'platform_observation_assignment',
+  'platform_archive_value',
+  'platform_collection_archive_ref',
+  'platform_observation_archive_ref',
+  'platform_version_archive_ref',
+  'platform_business_record',
+  'platform_business_record_version',
+  'platform_business_observation',
+  'platform_export_batch',
+  'platform_export_row',
+  'record_correspondence',
+  'record_correspondence_audit',
+  'evidence_revision_113',
+  'evidence_semantic_head_113',
+]
+
+async function state() {
+  return db.transaction(async tx => {
+    const entries = []
+    for (const table of replayTables) {
+      const result = await tx.execute(sql`SELECT * FROM business.${sql.identifier(table)} AS evidence ORDER BY to_jsonb(evidence)::text`)
+      entries.push([table, result.rows] as const)
+    }
+    return Object.fromEntries(entries)
+  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }
+
+function knownQueries(queryKey: string) {
+  return db.select({ id: platformLegacyQueryAlias.oldId })
+    .from(platformCollection)
+    .innerJoin(platformLegacyQueryAlias, eq(platformLegacyQueryAlias.collectionId, platformCollection.id))
+    .where(eq(platformCollection.queryKey, queryKey))
+}
+
 async function rejectAtomically(body: RosterImportRequest, code: string) {
-  const before = state()
+  const before = await state()
   const plan = await submit('preflight', body)
   expect(plan.preflight.conflicts).toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code }) })]))
-  expect(state()).toEqual(before)
+  expect(await state()).toEqual(before)
   const result = await submit('commit', body)
   expect(result.status).toBe('failed')
   expect(result.summary).toMatchObject({ written: 0, skipped: 0 })
   expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({ ok: false, error: expect.objectContaining({ code }) })]))
-  expect(state()).toEqual(before)
+  expect(await state()).toEqual(before)
 }
 
 const changes: [string, (q: RosterImportPlatformQuery) => void][] = [
@@ -145,7 +188,7 @@ it.each([
 it(`${protocol} reuses identical sources across keys, returns the original same-key receipt, and permits distinct observation times and new snapshot bytes`, async () => {
   const q = query(), s = snapshot(), body = request({ platformQueries: [q], exportSnapshot: s })
   const saved = await submit('commit', body); expect(saved.status).toBe('committed')
-  const before = state()
+  const before = await state()
   const queryId = Number(saved.items.find((item: any) => item.kind === 'platform_query').ref.slice(6))
   const read = await readQuery(queryId)
   expect(read.rows[0].query).toMatchObject({ id: queryId, queryKey: q.queryKey, rawResponse: q.rawResponse, status: q.status, titleCode: q.titleCode })
@@ -155,10 +198,10 @@ it(`${protocol} reuses identical sources across keys, returns the original same-
   const plan = await submit('preflight', copy); expect(plan.preflight).toMatchObject({ add: 0, update: 0, conflicts: [] })
   const reused = await submit('commit', copy)
   expect(reused.status).toBe('committed'); expect(reused.summary).toMatchObject({ written: 0, skipped: 2 })
-  expect(state()).toEqual(before)
+  expect(await state()).toEqual(before)
   q.queriedAt = '2026-10-02T00:00:00Z'; s.sha256 += '-new'
   expect((await submit('commit', request({ platformQueries: [q], exportSnapshot: s }))).status).toBe('committed')
-  const batches = db.select().from(schema.platformExportBatch).all()
+  const batches = await db.select().from(platformExportBatch).orderBy(asc(platformExportBatch.id))
   expect(batches.at(-1)!.replacedBatchId).toBe(batches.at(-2)!.id)
 })
 it(`${protocol} new native collections require original evidence and explicit reuse cannot create missing sources`, async () => {
@@ -185,25 +228,48 @@ it(`${protocol} concurrent different-key submissions keep one immutable source a
   const responses = await Promise.all([submit('commit', request({ platformQueries: [q] })), submit('commit', request({ platformQueries: [{ ...q, rawResponse: 'competing' }] }))])
   expect(responses.map(r => r.status).sort()).toEqual(['committed', 'failed'])
   expect(responses.find(r => r.status === 'failed').items).toEqual(expect.arrayContaining([expect.objectContaining({ error: expect.objectContaining({ code: 'query_payload_conflict' }) })]))
-  expect(nativeQueryRows(db).filter(r => r.queryKey === q.queryKey)).toHaveLength(1)
+  expect(await knownQueries(q.queryKey)).toHaveLength(1)
 })
 it(`${protocol} transaction failure rolls back a preceding query and preserves old references, then the same key can retry`, async () => {
   const q = query(), s = snapshot(), body = request({ platformQueries: [q], exportSnapshot: s })
-  const before = state()
-  db.$client.exec("CREATE TRIGGER synthetic_issue300_fault BEFORE INSERT ON platform_export_row BEGIN SELECT RAISE(ABORT, 'synthetic issue300 fault'); END")
+  const before = await state()
+  await db.execute(sql`
+    CREATE FUNCTION business.synthetic_replay_fault() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RAISE EXCEPTION 'synthetic issue300 fault';
+    END;
+    $$
+  `)
+  await db.execute(sql`
+    CREATE TRIGGER synthetic_replay_fault BEFORE INSERT ON business.platform_export_row
+    FOR EACH ROW EXECUTE FUNCTION business.synthetic_replay_fault()
+  `)
   try {
     const result = await submit('commit', body)
-    expect(result.status).toBe('failed'); expect(result.summary).toMatchObject({ written: 0, skipped: 0 })
-    expect(result.error).toContain('synthetic issue300 fault')
-    expect(state()).toEqual(before)
-  } finally { db.$client.exec('DROP TRIGGER synthetic_issue300_fault') }
+    expect(result.status).toBe('failed')
+    expect(result.summary).toMatchObject({ written: 0, skipped: 0, failed: 2 })
+    expect(result.error).toContain('已整批回滚')
+    expect(result.items).toEqual([
+      expect.objectContaining({ kind: 'platform_query', ok: false, error: expect.objectContaining({ code: 'commit_rolled_back' }) }),
+      expect.objectContaining({ kind: 'export_batch', ok: false, error: expect.objectContaining({ code: 'export_write_failed' }) }),
+    ])
+    expect(JSON.stringify(result)).not.toContain('synthetic issue300 fault')
+    expect(await state()).toEqual(before)
+    const [receipt] = await db.select({ batchStatus: importBatch.status, status: importReceipt.status })
+      .from(importReceipt).innerJoin(importBatch, eq(importBatch.id, importReceipt.batchId))
+      .where(eq(importBatch.idempotencyKey, body.idempotencyKey))
+    expect(receipt).toEqual({ batchStatus: 'failed', status: 'failed' })
+  } finally {
+    await db.execute(sql`DROP TRIGGER synthetic_replay_fault ON business.platform_export_row`)
+    await db.execute(sql`DROP FUNCTION business.synthetic_replay_fault()`)
+  }
   expect((await submit('commit', body)).status).toBe('committed')
 })
 
 it.each(['failed', 'partial'] as const)(`${protocol} preserves existing %s collection status when omitted and rejects explicit replacement under both reuse modes`, async status => {
   const q = { ...query(), status, failureReason: 'original collection incomplete' }
   expect((await submit('commit', request({ platformQueries: [q] }))).status).toBe('committed')
-  const before = state()
+  const before = await state()
   for (const explicit of [false, true]) {
     const reference = { interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, queriedAt: q.queriedAt, ...(explicit ? { reuseExisting: true as const } : {}) }
     expect((await submit('preflight', request({ platformQueries: [reference] }))).preflight.conflicts).toEqual([])
@@ -216,7 +282,7 @@ it.each(['failed', 'partial'] as const)(`${protocol} preserves existing %s colle
     await rejectAtomically(request({ platformQueries: [{ ...reference, relations: [{ ...q.relations![0]!, rawFields: null }] }] }), 'observation_payload_conflict')
     await rejectAtomically(request({ platformQueries: [{ ...reference, relations: [{ sequenceNo: 2 }] }] }), 'query_relation_set_conflict')
   }
-  expect(state()).toEqual(before)
+  expect(await state()).toEqual(before)
 })
 
 it(`${protocol} discovery explains the existing reuseExisting field and immutable replay boundary`, async () => {
@@ -236,7 +302,7 @@ it(`${protocol} recognized typed envelope remains immutable while omitted status
   expect(evidence.status).toBe('success')
   const q = recognizedResultToImport(evidence)
   const saved = await submit('commit', request({ platformQueries: [q] })); expect(saved.status).toBe('committed')
-  const before = state(), reference = structuredClone(q)
+  const before = await state(), reference = structuredClone(q)
   delete reference.titleCode; delete reference.status
   expect((await submit('commit', request({ platformQueries: [reference] }))).status).toBe('committed')
   const minimal = { interface: q.interface, queryKey: q.queryKey, rdjb: q.rdjb, queriedAt: q.queriedAt, reuseExisting: true as const }
@@ -245,7 +311,7 @@ it(`${protocol} recognized typed envelope remains immutable while omitted status
   const changed = structuredClone(q); changed.collectionEvidence!.completedAt = '2099-01-01T00:00:00Z'
   await rejectAtomically(request({ platformQueries: [changed] }), 'collection_evidence_conflict')
   await rejectAtomically(request({ platformQueries: [{ ...minimal, relations: [{ sequenceNo: 1, rawFields: { ...row, typedNull: 'null' } }] }] }), 'observation_payload_conflict')
-  expect(state()).toEqual(before)
+  expect(await state()).toEqual(before)
   const read = await readQuery(Number(saved.items[0].ref.slice(6)))
   expect(read.rows[0].query.collectionEvidence).toEqual(evidence)
   expect(read.rows[0].relations[0].rawFields).toEqual(row)
@@ -284,20 +350,20 @@ it.each([
       await rejectAtomically(body, 'query_relation_set_conflict')
       continue
     }
-    const before = state()
+    const before = await state()
     const plan = await submit('preflight', body)
     expect(plan.preflight.conflicts).toEqual([])
-    expect(state()).toEqual(before)
+    expect(await state()).toEqual(before)
     const result = await submit('commit', body)
     expect(result.status).toBe('committed')
     expect(result.summary.written).toBe(stored ? 0 : 3)
-    const saved = nativeQueryRows(db).filter(row => row.queryKey === original.queryKey)
+    const saved = await knownQueries(original.queryKey)
     expect(saved).toHaveLength(1)
     const read = await readQuery(saved[0]!.id)
     expect(read.rows[0].query.rawResponse).toBe(original.rawResponse)
     expect(read.rows[0].relations.map((row: { sequenceNo: number }) => row.sequenceNo)).toEqual([1, 2])
     expect(read.rows[0].relations.map((row: { rawFields: unknown }) => row.rawFields)).toEqual(rows([1, 2]).map(row => row.rawFields))
-    if (stored) expect(state()).toEqual(before)
+    if (stored) expect(await state()).toEqual(before)
   }
 })
 
@@ -312,9 +378,9 @@ it.each(['explicit-reuse', 'legacy-response-omission'] as const)(`${protocol} %s
       relations: subset.map(sequenceNo => ({ sequenceNo })),
     }
     const body = request({ platformQueries: stored ? [reference] : [original, reference] })
-    const before = state()
+    const before = await state()
     expect((await submit('preflight', body)).preflight.conflicts).toEqual([])
-    expect(state()).toEqual(before)
+    expect(await state()).toEqual(before)
     const result = await submit('commit', body)
     expect(result.status).toBe('committed')
     expect(result.summary.written).toBe(stored ? 0 : 3)
@@ -322,8 +388,8 @@ it.each(['explicit-reuse', 'legacy-response-omission'] as const)(`${protocol} %s
     expect(replayItem.detail.rowsWritten).toBe(0)
     expect(replayItem.detail.canonicalProjection).toHaveLength(subset.length)
     expect(replayItem.detail.canonicalProjection.every((projection: { observationCreated: boolean }) => !projection.observationCreated)).toBe(true)
-    if (stored) expect(state()).toEqual(before)
-    const saved = nativeQueryRows(db).filter(row => row.queryKey === original.queryKey)
+    if (stored) expect(await state()).toEqual(before)
+    const saved = await knownQueries(original.queryKey)
     expect(saved).toHaveLength(1)
     const read = await readQuery(saved[0]!.id)
     expect(read.rows[0].query.rawResponse).toBe(original.rawResponse)

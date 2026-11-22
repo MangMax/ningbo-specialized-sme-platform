@@ -6,19 +6,20 @@ import { platformQueryTitleScope as titleScope } from '../../../../db/postgresql
 import { platformBusinessObservation as observation, platformCollection as collection, platformCollectionPage as page,
   platformLegacyQueryAlias as queryAlias, platformLegacyRelationAlias as relationAlias,
   platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
-import { projectLegacyComparisonCycles } from '../../lib/roster/current-qualification'
+import { projectLegacyComparisonCycles } from '../../lib/roster/current-qualification-model'
 import { readPostgresLegacyQualification, type PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
 import { COMPARISON_VERSION, comparePlatformComparison, type CandidateComparisonInput } from '../../lib/roster/platform-comparison'
-import { projectQueryComparisonWitnesses } from '../../lib/roster/query-assessment'
+import { projectQueryComparisonWitnesses } from '../../lib/roster/query-assessment-projection'
 import { readPostgresQueryCoverageInputs } from '../../lib/roster/query-coverage-postgres'
 import type { CurrentTitle } from '../../lib/roster/current-titles'
-import { projectAnnualFinalQualification } from './annual-correspondence'
-import { projectAnnualWriteScope } from './annual-correspondence-read'
-import { normalizedUscc } from './event-archive-discovery'
+import { projectAnnualFinalQualification } from './annual-correspondence-contract'
+import { projectAnnualWriteScope } from './annual-correspondence-projection'
+import { normalizedUscc } from './event-archive-discovery-model'
 import { readPostgresAnnualDecisionRefs, readPostgresAnnualProcessEntry } from './event-annual-process-postgres'
-import { admitAnnualComparison, type readAnnualComparisonBatch } from './event-annual-process-read'
-import { readPostgresPlatformBusinessMetadata } from './platform-business-record-read'
-import { projectPlatformComparisonProcesses } from './platform-comparison-input'
+import { type readAnnualComparisonBatch } from './event-annual-process-read'
+import { admitAnnualComparison } from './event-annual-process-model'
+import { readPostgresPlatformBusinessMetadata } from './platform-business-record-postgres'
+import { projectPlatformComparisonProcesses } from './platform-comparison-input-model'
 
 type Tx = PostgresQualificationTransaction
 type AnnualInputs = Parameters<typeof admitAnnualComparison>[0]

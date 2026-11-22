@@ -6,11 +6,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { schema, useDb } from '../../../db'
 import { EVENT_ORDER, SOURCE_ORDER } from '../../../layers/sme-roster/lib/labels'
 import { listRecords } from '../../../layers/sme-roster/lib/query'
-import {
-  allRosterEnterprises,
-  listRosterDifferences,
-  listRosterEnterprises,
-} from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { allRosterEnterprises, listRosterEnterprises } from '../../../layers/sme-roster/lib/roster/enterprise-roster'
+import { listRosterDifferences } from '../../../layers/sme-roster/lib/roster/enterprise-roster-sqlite'
 import {
   parseRosterDifferenceQuery,
   parseRosterEnterpriseQuery,

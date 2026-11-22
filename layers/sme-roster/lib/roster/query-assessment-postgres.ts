@@ -1,13 +1,12 @@
 import { eq, inArray, sql } from 'drizzle-orm'
-import { alias } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { evidenceScopeVersion113, explanationImpact113 } from '../../../../db/postgresql/evidence-review-tables'
-import * as schema from '../../../../db/schema'
+import type * as schema from '../../../../db/schema'
 import { currentPostgresDecisions102 } from '../../server/utils/decision-lifecycle-102/postgres-reads'
-import { evidenceKeys113, evidenceToken113, type readEvidenceImpacts113 } from '../../server/utils/evidence-impact-113'
-import { postgresRosterRow } from './postgres-rows'
-import { projectQueryAssessment, type AssessmentScope } from './query-assessment'
+import { evidenceKeys113, evidenceToken113 } from '../../server/utils/evidence-impact-model'
+import { type readEvidenceImpacts113 } from '../../server/utils/evidence-impact-113'
+import { projectQueryAssessment, type AssessmentScope } from './query-assessment-projection'
 import { readPostgresQueryCoverage } from './query-coverage-postgres'
 
 type Reader = Pick<NodePgDatabase, 'select'>
@@ -22,11 +21,9 @@ export async function readPostgresEvidenceImpacts113(db: Reader, inputs: ScopeIn
   const versions = await db.select().from(version).where(eq(version.scopeKey, sql`ANY(${sql.param(keys)}::text[])`))
   const byKey = new Map(versions.map(row => [row.scopeKey, row]))
   const activeIds = [...new Set(inputs.flatMap(input => input.decisionId === null ? [] : [input.decisionId]))]
-  const source = alias(explanationImpact113, 'p')
-  const impacts = activeIds.length ? await db.select({
-    row: sql<Impact>`${postgresRosterRow(schema.explanationImpact113,'p')}`,
-  }).from(source).where(eq(source.decisionId, sql`ANY(${ids(activeIds)})`)) : []
-  const byDecision = new Map(impacts.map(({ row }) => [row.decisionId, row]))
+  const source = explanationImpact113
+  const impacts = activeIds.length ? await db.select().from(source).where(eq(source.decisionId, sql`ANY(${ids(activeIds)})`)) : []
+  const byDecision = new Map(impacts.map(row => [row.decisionId, row as Impact]))
   return inputs.map(({ scope, decisionId, latestDecisionId }) => {
     const impact = decisionId === null ? undefined : byDecision.get(decisionId)
     const state = impact && impact.enterpriseId === scope.enterpriseId && impact.titleCode === scope.titleCode && impact.direction === scope.direction ? impact : null

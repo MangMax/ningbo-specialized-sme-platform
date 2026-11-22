@@ -265,9 +265,6 @@ importers:
       archiver:
         specifier: ^8.0.0
         version: 8.0.0(bare-buffer@3.7.3)
-      better-sqlite3:
-        specifier: ^13.2.0
-        version: 13.2.0
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -353,6 +350,9 @@ importers:
       '@vue/test-utils':
         specifier: ^2.6.0
         version: 2.6.0(@vue/compiler-dom@3.5.46)(@vue/server-renderer@3.5.46)(vue@3.5.46(typescript@6.0.3))
+      better-sqlite3:
+        specifier: ^13.2.0
+        version: 13.2.0
       drizzle-kit:
         specifier: ^0.31.11
         version: 0.31.11
