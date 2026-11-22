@@ -125,12 +125,15 @@ async function setup(pages = 1, fixture: Partial<ModelApiFixture> = {}) {
   vi.stubEnv('NUXT_OCR_BASE_URL', api.origin)
   return seeded
 }
-async function submit(file: string, resumeJobId?: string, extra: Record<string, unknown> = {}) {
-  const response = await request('/api/jobs', 'POST', { kind: 'ocr', params: { files: [file], ...(resumeJobId ? { resumeJobId } : {}), ...extra } })
+async function submitJob(kind: string, params: Record<string, unknown>) {
+  const response = await request('/api/jobs', 'POST', { kind, params })
   expect(response.status).toBe(202)
   const id = (await response.json()).jobId as string
   localJobs.add(id)
   return id
+}
+async function submit(file: string, resumeJobId?: string, extra: Record<string, unknown> = {}) {
+  return submitJob('ocr', { files: [file], ...(resumeJobId ? { resumeJobId } : {}), ...extra })
 }
 async function status(id: string) { return (await request(`/api/jobs/${id}`)).json() }
 async function call(name: string, args: Record<string, unknown>) {
@@ -497,6 +500,7 @@ it("concurrent accepted followers use the first durable capture and one publicat
     const parent = (await response.json()).jobId as string
     await vi.waitFor(async () => expect((await status(parent)).result?.publication.files[0].requests['1'].state).toBe('accepted'))
     await stopChild(original.child)
+    localJobs.add(parent)
     await whenIdle()
     expect((await status(parent)).state).toBe('failed')
     const [a, b] = await Promise.all([submit(file, parent), submit(file, parent)])
@@ -988,9 +992,7 @@ it('B2 historical checkpoint without byte identity stays unknown and retains its
 })
 
 async function submitRender(files: string[]) {
-  const response = await request('/api/jobs', 'POST', { kind: 'render-pages', params: { files, force: true } })
-  expect(response.status).toBe(202)
-  return (await response.json()).jobId as string
+  return submitJob('render-pages', { files, force: true })
 }
 
 it('B2 async rendering rejects replacement without touching pages and restores the registered identity', async () => {
