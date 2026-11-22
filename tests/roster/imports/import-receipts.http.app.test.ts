@@ -208,6 +208,20 @@ describe('import receipts through real HTTP and MCP on isolated PostgreSQL', () 
     }])
     await assertEvidence(moved, original)
 
+    // A new matching coordinate makes recomputation ambiguous. Matching replay can still use the saved ID.
+    const [{ detail: { evidenceRepointTargets: [target] } }] = JSON.parse(originalBatch!.itemResults!)
+    await db.update(recordEvidence).set({ sourceFile: original }).where(eq(recordEvidence.id, target.id))
+    const [otherEvidence] = await db.insert(recordEvidence).values({
+      recordEventId: target.recordEventId, sourceFile: moved, attachment: '附件1', listNo: 1, page: 7,
+    }).returning({ id: recordEvidence.id })
+    const matching = await post('replay', repoint)
+    const matchingBody = await matching.json()
+    expect(matching.status, JSON.stringify(matchingBody)).toBe(200)
+    expect(matchingBody).toMatchObject({ status: 'replayed', evidenceRepointed: 1 })
+    expect(await db.select({ path: recordEvidence.sourceFile }).from(recordEvidence)
+      .where(eq(recordEvidence.id, target.id))).toEqual([{ path: moved }])
+    await db.delete(recordEvidence).where(eq(recordEvidence.id, otherEvidence!.id))
+
     // Same batch and file, but the announcement's default source selects the other record.
     const replay = await post('replay', announcement(idempotencyKey, moved, 'miit'))
     const body = await replay.json()
@@ -227,7 +241,10 @@ describe('import receipts through real HTTP and MCP on isolated PostgreSQL', () 
     expect(receipt).toMatchObject({ total: 1, rows: [{ ok: true, ref: body.items[0].ref }] })
     expect(JSON.stringify(receipt)).not.toMatch(/evidenceRepointTargets|evidenceRepointPlanFingerprint/)
     expect(await (await get(`/history?batchId=${body.batchId}`)).json())
-      .toMatchObject({ total: 1, rows: [{ operation: 'replay', status: 'committed' }] })
+      .toMatchObject({ total: 2, rows: [
+        { operation: 'replay', status: 'committed' },
+        { operation: 'replay', status: 'committed' },
+      ] })
 
     const repeated = await post('replay', announcement(idempotencyKey, moved, 'miit'))
     expect(repeated.status).toBe(200)
