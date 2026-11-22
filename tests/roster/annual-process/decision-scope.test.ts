@@ -66,7 +66,8 @@ it('annual reconciliation protects a rejected current capture and makes a separa
     status: 'confirmed', decisionRefs: [{ relationId: current, status: 'confirmed', requiresRevalidation: false }],
   })
   const [historical, confirmed] = await listPostgresCorrespondences(f.db, {})
-  expect(historical).toMatchObject({ id, relationId: old, status: 'rejected' })
+  expect(historical).toMatchObject({ id, status: 'rejected' })
+  expect(JSON.parse(audit.at(-1)!.evidence)).toMatchObject({ relation: { id: old } })
   expect(confirmed).toMatchObject({ relationId: current, status: 'confirmed' })
   expect(confirmed?.id).not.toBe(id)
   expect(await readFixtureAudit(f.db, id!)).toEqual(audit)

@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import assert from 'node:assert/strict'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { expect, vi } from 'vitest'
 import { getPostgresJob } from '../../../../layers/core/server/utils/job-store-postgres'
@@ -28,8 +29,13 @@ export async function collectAnnualFixtureObservation(
         rawFields: { id: key, year: 2024, sblx: '申请', sqsj: '2024-06-01', cszt: status } }],
     }] },
   }, async () => {})
-  expect(receipt).toMatchObject({ status: 'committed', items: [{ ok: true, detail: { relations: [expect.any(Number)] } }] })
-  return (receipt.items[0]!.detail!.relations as number[])[0]!
+  assert(receipt.status === 'committed', JSON.stringify(receipt))
+  const item = receipt.items[0]
+  const relations = item?.detail?.relations
+  assert(item?.ok && Array.isArray(relations) && relations.length === 1, JSON.stringify(item))
+  const [relationId] = relations
+  assert(typeof relationId === 'number', JSON.stringify(item))
+  return relationId
 }
 
 export function stageAnnualFixtureTask(db: NodePgDatabase, eventId: number, clientRequestId: string) {
