@@ -60,6 +60,23 @@ async function openLedger(path: string, beforeResult?: Promise<void>) {
   return { router, view, setHead }
 }
 
+it.each([1280, 390])('keeps ledger export and filters available at %ipx', async width => {
+  vi.stubGlobal('matchMedia', (media: string) => ({
+    matches: media === '(max-width: 639px)' && width <= 639,
+    addEventListener() {},
+    removeEventListener() {},
+  }))
+  const { view } = await openLedger('/roster?q=精密&district=鄞州区')
+  const actions = view.get('[aria-label="企业列表操作"]')
+  const exportLink = new URL(actions.get('a').attributes('href'), 'http://localhost')
+  expect(exportLink.pathname).toBe('/api/roster/export')
+  expect(exportLink.searchParams.get('q')).toBe('精密')
+  expect(exportLink.searchParams.get('district')).toBe('鄞州区')
+  expect(actions.find('button').exists()).toBe(false)
+  expect(view.get('[aria-label="按属地筛选"]').exists()).toBe(true)
+  expect(view.text().includes('更多筛选与排序')).toBe(width <= 639)
+})
+
 it('opens the drawer in history and returns to the filtered ledger before leaving it', async () => {
   const { router, view } = await openLedger('/roster?q=精密&district=鄞州区')
   await view.get('[data-testid="enterprise-name-trigger"]').trigger('click')

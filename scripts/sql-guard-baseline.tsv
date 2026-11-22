@@ -154,7 +154,7 @@ layers/sme-roster/lib/roster/difference-list-postgres.ts	TSTDI2URinnJiiW4F9figVT
 layers/sme-roster/lib/roster/enterprise-detail-postgres.ts	TGCoM8XkMRGogEFy8g2wwZApzyTB37po4T4Gojlaodfw	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	T1AT8_PvokLaphb_JM7sInl6bFLCjK5_ME3XgZ0YFcWU	Drizzle 0.45.4 无表达式 COLLATE 构造器，保留 C 字节序，匹配原查询排序或索引。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	T4hy7I-oVWWxkEuwEOrHXsFuCE4ECiZDVuKkTisvDFAA	Drizzle 0.45.4 没有布尔/数组聚合与聚合 FILTER 构造器，保持同一业务快照的分组粒度和成员条件。
-layers/sme-roster/lib/roster/enterprise-list-postgres.ts	T5oQ2XIbogSPU5AzO3QndxF3lpnbE1QiQsW1Vh61vWII:2	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
+layers/sme-roster/lib/roster/enterprise-list-postgres.ts	T5oQ2XIbogSPU5AzO3QndxF3lpnbE1QiQsW1Vh61vWII	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	T8QVPg5RChNzudZpl8RN5fJnpleKIinig4K5_QoWT9aw	Drizzle 0.45.4 没有布尔/数组聚合与聚合 FILTER 构造器，保持同一业务快照的分组粒度和成员条件。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	T9EGNLS0DP3OrWLD12AEwlf4MLPxwDztnds1IeIlPARI	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	Tdj1uq06DHFpbVQoLPb3RHYd-88zbiuVxVF7Nn3rsENw	Drizzle 0.45.4 没有布尔/数组聚合与聚合 FILTER 构造器，保持同一业务快照的分组粒度和成员条件。
@@ -170,7 +170,7 @@ layers/sme-roster/lib/roster/enterprise-list-postgres.ts	TtUBwspAK4vrVMxJ6aRxsHy
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	Tu4PAutQdTtPMrFeA7e4oy3GGFcpvSwq9z-N11CHXnPc	Drizzle 0.45.4 没有布尔/数组聚合与聚合 FILTER 构造器，保持同一业务快照的分组粒度和成员条件。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	TvSAVM0L0ws3UzJTExRXzSTbZ3lITiw7rGzPttFclnjs	Drizzle 0.45.4 没有 NULLIF/COALESCE 表达式构造器，保留缺省值与空值语义。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	TwLPJKUncETYoV7Lkl22VFY7yVKqDHYSxYRq8YVVvkj8	Drizzle 0.45.4 没有 NULLIF/COALESCE 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/lib/roster/enterprise-list-postgres.ts	TyL8AOy7KTP7Wg2r4bFrl7S1he1Xsu1gFXrd0LT_jyww:2	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
+layers/sme-roster/lib/roster/enterprise-list-postgres.ts	TyL8AOy7KTP7Wg2r4bFrl7S1he1Xsu1gFXrd0LT_jyww	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
 layers/sme-roster/lib/roster/enterprise-list-postgres.ts	TyZ8xqm_sRN2hj4ZJjmZLtdZUkJMtpm-_cn3RQifoyc4	Drizzle 0.45.4 没有布尔/数组聚合与聚合 FILTER 构造器，保持同一业务快照的分组粒度和成员条件。
 layers/sme-roster/lib/roster/platform-qualification-postgres.ts	Tf0yIDl2F2N9zIPnCz5C4KcGxk90gI82d0PjW3VKPNkM	Drizzle 0.45.4 无正则运算符和表达式 COLLATE 构造器，识别不满足旧信用代码格式的记录。
 layers/sme-roster/lib/roster/platform-qualification-postgres.ts	ToB5rdMQHoI2HXnBvvzRGZ6Li_fIRAuxQr4PPUCZgJ28	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
@@ -212,28 +212,6 @@ layers/sme-roster/server/utils/decision-lifecycle/reviewed-decisions.ts	THKdo6q9
 layers/sme-roster/server/utils/difference-import-postgres.ts	TXlRXjB-gEdv5uCfLkBU-YhVxWP9fF8iWMGcXbo4yC7o	Drizzle 0.45.4 无窗口函数构造器；按历史稳定顺序计算累计行数或来源排名。
 layers/sme-roster/server/utils/difference-snapshot.ts	T9KLmuuv0rS3Ado2bcHFFbU7IuFB1XsO-jmNfksPIY5o	Drizzle 0.45.4 无 PostgreSQL 快照导出构造器；这一条独立函数调用使应用查询和 pg_dump 共用同一事务快照。
 layers/sme-roster/server/utils/difference-snapshot.ts	TX_pLVjWsOMoWaVMvl6sKFVkdvQKsZ9g1mlr0CozI2GQ	Drizzle 0.45.4 无聚合内部 ORDER BY，备份范围保留冻结记录 ID 次序。
-layers/sme-roster/server/utils/enterprise-difference-refresh-comparison-postgres.ts	TcALPP8tvufa3bkHqMtyGBaafwOdUXCR5XCvc9cyCxsw	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/server/utils/enterprise-difference-refresh-comparison-postgres.ts	Tq1xVKEZbyz3KKLvJogsT45D06xiK-z7ssJHNsMtQcxY	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/server/utils/enterprise-difference-refresh-comparison-postgres.ts	Tvy01DOM7nSyFcEhL0Sq2fs6SSkJN_o64hOzvLS0Zh-s	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/server/utils/enterprise-difference-refresh-comparison-postgres.ts	TWp9D8QK4smy_hoXtrfuGX2MevRkHf3joBD2bzDJVfpE	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	T-Zs5QBO-clE_lJEETjbJsWTZUnHkqPbFcdq4U6bmeEw	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	TkJSOyJhFTC-MdK80T4_IABjzlfZZEIoNKTxBxrmoBEo	Drizzle 0.45.4 没有 PostgreSQL 文本 JSON 检查、提取、类型转换或聚合构造器，保留旧文本语义与数据库侧有界投影。
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	Tq1xVKEZbyz3KKLvJogsT45D06xiK-z7ssJHNsMtQcxY	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	TttJT4odvzw2DmBjSDtCKtV45p29eEwI82g10jAJNlQk:2	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	TwWygnA1hsn4gcOOf5WuiqzCK_PfP9HuzUHP0Uh4kzH8	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	TxScACji0gQ1HCRdxLbHF_gHvSMNe739-LcxbNe8bAuo	Drizzle lacks ANY with a single bound array. Keep refresh metadata reads scoped to the selected collections.
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	Tzg7Wxhwqh9o1MKLKtPkgP00jd7Qp5zGGScVS6ZGW850	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
-layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres.ts	TzyWuURXO4pLDRXEpJdnaNGXMEHsyEDMdewtRQ_VCccA	Drizzle 0.45.4 无窗口函数构造器；按历史稳定顺序计算累计行数或来源排名。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	T-Zs5QBO-clE_lJEETjbJsWTZUnHkqPbFcdq4U6bmeEw	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TCFYPi8pXDKV0enTFVyCD6fNhFc6RdiyWN8tsJpvRwfM	Drizzle 0.45.4 无表达式 COLLATE 构造器，保留 C 字节序，匹配原查询排序或索引。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TGF3h62RGnWRu8nQLODVjilxzLdXjoUIR65HkFGKwWiI	Drizzle lacks a typed excluded reference for the native state digest in the atomic comparison upsert.
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TLhS8u_Phn8K70V-eBqqRVg1O5z1cb07ffIPaVAVMyF4	Drizzle 0.45.4 无 EXCLUDED 表引用构造器；证据刷新 upsert 使用待插入值。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TOoSflwPTuJXmhOuaRmSctDWaiwmkVBcZ-6BG2TquNdI	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TpEcX-S7KoR26bRBYjwgVU5ijkiDSwu6ndEXbmxqmNqs	Drizzle 0.45.4 无表达式 COLLATE 构造器，保留 C 字节序，匹配原查询排序或索引。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TT65VVWZdYsTLJnAIvgnqlfwi_KSApoBObE0RnmLZdgE	Drizzle 0.45.4 无 EXCLUDED 表引用构造器；证据刷新 upsert 使用待插入值。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TugBNo4OW_X2HMDxfvc_KP5TZYub2OuMhJizgHqstpfE	Drizzle 0.45.4 无 EXCLUDED 表引用构造器；证据刷新 upsert 使用待插入值。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	TvwzNazOwcN5MAJ_xfX_Iw8TjCYG1FYAAet1U4UFOGe4	Drizzle 0.45.4 无 EXCLUDED 表引用构造器；证据刷新 upsert 使用待插入值。
-layers/sme-roster/server/utils/enterprise-difference-refresh-postgres.ts	Ty1w1JDzrWNDTfr3yhavhnm6gm9PnFFhaGvrHIyi_FV8	Drizzle 0.45.4 无 EXCLUDED 表引用构造器；证据刷新 upsert 使用待插入值。
 layers/sme-roster/server/utils/event-annual-process-postgres.ts	T-Zs5QBO-clE_lJEETjbJsWTZUnHkqPbFcdq4U6bmeEw	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
 layers/sme-roster/server/utils/event-annual-process-postgres.ts	T6MssWY79nfNV4CMAFOULv2576Xq8eEhnppjGU-T1wrc	Drizzle lacks SQL type casts. Keep the original numeric identity-only flag consumed by the annual comparison projection.
 layers/sme-roster/server/utils/event-annual-process-postgres.ts	T7hIOhGCkql96IrBnF5zAHVaCieJi90FkxWBVz0qBfTM	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
@@ -621,6 +599,14 @@ upgrade/pg/2026-11-data-compaction/steps/support/platform-observation-snapshot.s
 upgrade/pg/2026-11-data-compaction/steps/support/platform-offline-read-facts.sql	FrUKIfd8BSZtUMUk-YA0ClzB-Rb22KoJNQ9i07tgWMHg	Offline PostgreSQL compaction DDL and audited one-time source materialization.
 upgrade/pg/2026-11-data-compaction/steps/support/platform-projection-comparison-constraints.sql	FC8-JJ8GOxgcuWkV2RMLCJBJRJZU4zGtiB_5TLm0D0vM	Offline PostgreSQL compaction DDL and audited one-time source materialization.
 upgrade/pg/2026-11-data-compaction/steps/support/platform-recognized-title-trigger.sql	FJd9rvves8ifgmUzQPc7iRCdhrvOZeA01s0m2imLpvKs	Offline PostgreSQL compaction DDL and audited one-time source materialization.
+upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-fingerprints.ts	T-Zs5QBO-clE_lJEETjbJsWTZUnHkqPbFcdq4U6bmeEw	Drizzle 0.45.4 的类型化 SELECT 投影接受列和 SQL 包装，使用定型 SQL 常量保持 UNION 输出类型和标识。
+upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-fingerprints.ts	TkJSOyJhFTC-MdK80T4_IABjzlfZZEIoNKTxBxrmoBEo	Drizzle 0.45.4 没有 PostgreSQL 文本 JSON 检查、提取、类型转换或聚合构造器，保留旧文本语义与数据库侧有界投影。
+upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-fingerprints.ts	Tq1xVKEZbyz3KKLvJogsT45D06xiK-z7ssJHNsMtQcxY	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
+upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-fingerprints.ts	TttJT4odvzw2DmBjSDtCKtV45p29eEwI82g10jAJNlQk:2	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
+upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-fingerprints.ts	TwWygnA1hsn4gcOOf5WuiqzCK_PfP9HuzUHP0Uh4kzH8	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
+upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-fingerprints.ts	TxScACji0gQ1HCRdxLbHF_gHvSMNe739-LcxbNe8bAuo	Drizzle lacks ANY with a single bound array. Keep refresh metadata reads scoped to the selected collections.
+upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-fingerprints.ts	Tzg7Wxhwqh9o1MKLKtPkgP00jd7Qp5zGGScVS6ZGW850	Drizzle 0.45.4 没有 NULLIF/COALESCE/字符串拼接 表达式构造器，保留缺省值与空值语义。
+upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-fingerprints.ts	TzyWuURXO4pLDRXEpJdnaNGXMEHsyEDMdewtRQ_VCccA	Drizzle 0.45.4 无窗口函数构造器；按历史稳定顺序计算累计行数或来源排名。
 upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-v2-migration.ts	T61OlMRtKgobs62lacL2rC6jkPgsPCX3uFjkKwPh3sso	Install the private native comparison digest column.
 upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-v2-migration.ts	TAC6_eVzwRvsqbbjum8v3elRsr3hhGrtfnAZwPKgOhbM	Detect the old schema and reject a partial prior cutover.
 upgrade/pg/2026-11-data-compaction/steps/support/platform-refresh-v2-migration.ts	TdT86bxc7G4VSDVgACX4rRIGTTQGRgt_HHHzEOv-y8BM	Bind checked comparison coordinates as one recordset without updating their public digest or audit.

@@ -22,7 +22,6 @@ export const MCP_WRITE_TOOLS = [
   'preflight_qualification_decision',
   'commit_qualification_decision',
   'difference_snapshot',
-  'refresh_enterprise_differences',
   'maintain_enterprise_alias',
   'save_ocr_result',
   'delete_ocr_result',

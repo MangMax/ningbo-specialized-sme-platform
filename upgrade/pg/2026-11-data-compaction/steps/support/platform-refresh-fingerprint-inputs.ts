@@ -1,25 +1,5 @@
-import { createError } from 'h3'
 import { createHash } from 'node:crypto'
-import { z } from 'zod'
-import type { platformCollection } from '../../../../db/postgresql/platform-tables'
-import type { PlatformComparison } from '../../lib/roster/platform-comparison'
-
-export const enterpriseDifferenceRefreshInput = z.strictObject({ enterpriseIds: z.array(z.number().int().positive().max(Number.MAX_SAFE_INTEGER)).min(1).max(10000).refine(ids => new Set(ids).size === ids.length, 'Duplicate enterprise IDs').optional() })
-
-const fail = (message: string): never => { throw createError({statusCode:400,message}) }
-
-export function parseEnterpriseDifferenceRefreshQuery(raw: Record<string, unknown>) {
-  if (Object.keys(raw).some(key => key !== 'enterpriseIds')) return fail('Unknown refresh query parameter')
-  if (raw.enterpriseIds === undefined) return {}
-  if (typeof raw.enterpriseIds !== 'string' || !/^[1-9]\d*(,[1-9]\d*)*$/.test(raw.enterpriseIds)) return fail('Invalid enterpriseIds')
-  return { enterpriseIds: raw.enterpriseIds.split(',').map(Number) }
-}
-
-export function parseEnterpriseDifferenceRefreshInput(raw: unknown) {
-  const parsed = enterpriseDifferenceRefreshInput.safeParse(raw)
-  if (!parsed.success) return fail('Invalid enterpriseIds; provide distinct positive IDs or omit for all published enterprises')
-  return parsed.data
-}
+import type { platformCollection } from '../../../../../db/postgresql/platform-tables'
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
@@ -51,16 +31,6 @@ type RefreshMaterials = {
   metadata: string | null
 }
 
-export function latestRefreshCollections<T extends RefreshCollection>(ordered: readonly T[]): T[] {
-  const latest = new Map<string, string>()
-  return ordered.filter(q => {
-    const key = canonical([q.interface, q.queryKey, q.rdjb, q.titleCode])
-    if (latest.has(key) && latest.get(key)! > q.queriedAt) return false
-    latest.set(key, q.queriedAt)
-    return true
-  })
-}
-
 export function projectRefreshObservation(q: RefreshCollection, { relations, typed, metadata: metadataText }: RefreshMaterials) {
   let metadata: Record<string, unknown> | null = null
   if (metadataText) {
@@ -85,14 +55,4 @@ export function hashRefreshInputs({ enterprise, aliases, formal, evidence, corre
   if (version !== undefined) hash.update(version + '\n')
   return hash.update(canonical({ enterprise, aliases: setRows(aliases), formal: sortedRows(formal),
     evidence: sortedRows(evidence), correspondences: setRows(correspondences), observations: setRows(observations) })).digest('hex')
-}
-
-export function projectRefreshComparison(result: PlatformComparison) {
-  return { state: result.comparison.state, reasons: [...new Set(result.comparison.cycles.flatMap(c => c.reasons))], error: null }
-}
-
-export function refreshComparisonFailure(error: unknown) {
-  const message = error instanceof Error ? error.message : ''
-  if (message !== 'platform_comparison_scope_unavailable' && message !== 'input_resource_limit') throw error
-  return { state: 'not_established' as const, reasons: [message === 'input_resource_limit' ? 'metadata_truncated' : 'coverage_incomplete'], error: message }
 }

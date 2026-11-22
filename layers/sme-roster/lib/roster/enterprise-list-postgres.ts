@@ -3,7 +3,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { platformExportBatch, platformExportRow } from '../../../../db/postgresql/platform-tables'
-import { differenceReason, enterpriseDifferenceComparison, rosterAnnouncementIntake, rosterAnnouncementMember, rosterLegacyMember } from '../../../../db/postgresql/roster-selection-tables'
+import { differenceReason, rosterAnnouncementIntake, rosterAnnouncementMember, rosterLegacyMember } from '../../../../db/postgresql/roster-selection-tables'
 import type { FormalValidity } from '../../../../db/record-event-formal-validity'
 import { normalizeName, normalizeUscc } from '../domain'
 import { DIFFERENCE_STATUS_ORDER, TITLE_ORDER } from '../labels'
@@ -147,7 +147,7 @@ async function readCandidates(db: Reader, filter: RosterEnterpriseFilter) {
   const explanationKey = { enterpriseId: differenceReason.enterpriseId, titleCode: differenceReason.titleCode, direction: differenceReason.direction }
   const explanationColumns = { ...explanationKey, status: differenceReason.status, reasonCode: differenceReason.reasonCode }
   const explanations = db.$with('explanations').as(db.selectDistinctOn(Object.values(explanationKey), {
-    ...explanationColumns, id: differenceReason.id, recordedAt: differenceReason.recordedAt,
+    ...explanationColumns,
   }).from(differenceReason).where(inArray(differenceReason.enterpriseId, db.select({ id: scope.id }).from(scope)))
     .orderBy(...Object.values(explanationKey), desc(bytewise(differenceReason.recordedAt)), differenceReason.id))
   const derivable = and(knownTitle, inArray(facts.enterpriseId, db.select({ id: explanations.enterpriseId }).from(explanations)))
@@ -162,7 +162,7 @@ async function readCandidates(db: Reader, filter: RosterEnterpriseFilter) {
       .where(and(derivable, facts.platform, or(isNull(enterprise.usccNorm), eq(facts.official, false))))))
   const sameCoordinate = and(eq(derived.enterpriseId, explanations.enterpriseId), eq(derived.titleCode, explanations.titleCode),
     eq(derived.direction, explanations.direction))
-  const legacy = db.$with('legacy_coordinates').as(db.select({
+  const coordinates = db.$with('coordinates').as(db.select({
     enterpriseId: derived.enterpriseId, titleCode: derived.titleCode, direction: derived.direction,
     status: coalesce<string>(explanations.status, 'not_queried').as('status'), reasonCode: explanations.reasonCode,
     current: sql<boolean>`true`.as('current'),
@@ -170,23 +170,6 @@ async function readCandidates(db: Reader, filter: RosterEnterpriseFilter) {
     enterpriseId: explanations.enterpriseId, titleCode: explanations.titleCode, direction: explanations.direction,
     status: explanations.status, reasonCode: explanations.reasonCode, current: sql<boolean>`false`.as('current'),
   }).from(explanations).where(notExists(db.select({ id: derived.enterpriseId }).from(derived).where(sameCoordinate)))))
-  const samePair = (enterpriseId: SQLWrapper, titleCode: SQLWrapper) =>
-    and(eq(enterpriseDifferenceComparison.enterpriseId, enterpriseId), eq(enterpriseDifferenceComparison.titleCode, titleCode))
-  const refreshed = db.$with('refreshed_decisions').as(db.selectDistinctOn([explanations.enterpriseId, explanations.titleCode], {
-    enterpriseId: explanations.enterpriseId, titleCode: explanations.titleCode, status: explanations.status, reasonCode: explanations.reasonCode,
-  }).from(explanations).innerJoin(enterpriseDifferenceComparison, samePair(explanations.enterpriseId, explanations.titleCode))
-    .where(gt(explanations.id, enterpriseDifferenceComparison.decisionCutoffId))
-    .orderBy(explanations.enterpriseId, explanations.titleCode, desc(bytewise(explanations.recordedAt)), desc(explanations.id)))
-  const coordinates = db.$with('coordinates').as(db.select().from(legacy)
-    .where(notExists(db.select({ id: enterpriseDifferenceComparison.enterpriseId }).from(enterpriseDifferenceComparison)
-      .where(samePair(legacy.enterpriseId, legacy.titleCode))))
-    .unionAll(db.select({
-      enterpriseId: enterpriseDifferenceComparison.enterpriseId, titleCode: enterpriseDifferenceComparison.titleCode,
-      direction: sql<string>`'missing_in_miit'::text`,
-      status: coalesce<string>(refreshed.status, 'needs_review').as('status'), reasonCode: refreshed.reasonCode,
-      current: sql<boolean>`true`.as('current'),
-    }).from(enterpriseDifferenceComparison).leftJoin(refreshed, samePair(refreshed.enterpriseId, refreshed.titleCode))
-      .where(inArray(enterpriseDifferenceComparison.enterpriseId, db.select({ id: scope.id }).from(scope)))))
   // Drizzle has no window-function builder. The typed CTE keeps the rank expression local.
   const ranked = db.$with('ranked').as(db.select({
     enterpriseId: coordinates.enterpriseId, status: coordinates.status, reasonCode: coordinates.reasonCode,
@@ -208,7 +191,7 @@ async function readCandidates(db: Reader, filter: RosterEnterpriseFilter) {
   const differenceCount = coalesce<number>(explained.count, defaultDifference)
   const differenceStatus = coalesce<string | null>(explained.status, sql`case when ${gt(defaultDifference, 0)} then 'not_queried' end`)
   const statuses = (filter.diffStatus ?? []).filter(status => status !== 'none' && !status.includes('\0'))
-  const rows = await db.with(scope, facts, history, explanations, derived, legacy, refreshed, coordinates, ranked, explained).select({
+  const rows = await db.with(scope, facts, history, explanations, derived, coordinates, ranked, explained).select({
     id: enterprise.id, name: enterprise.name, year: history.firstYear,
     rank: coalesce<number>(history.titleRank, TITLE_ORDER.length).mapWith(Number),
     titles: coalesce<string[]>(history.titles, sql.param([])),

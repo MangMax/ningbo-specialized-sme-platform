@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterpriseDifferenceComparison as comparison } from '../../../../../db/postgresql/roster-selection-tables'
-import { readPostgresRefreshFingerprints } from '../../../../../layers/sme-roster/server/utils/enterprise-difference-refresh-fingerprint-postgres'
+import { readPostgresRefreshFingerprints } from './platform-refresh-fingerprints'
 import { CURRENT_TITLES } from '../../../../../layers/sme-roster/lib/roster/current-titles'
 import { readLegacyPlatformRefreshFacts } from './read-legacy-platform-refresh'
 

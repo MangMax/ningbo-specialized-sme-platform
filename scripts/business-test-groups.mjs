@@ -129,8 +129,7 @@ const owners = {
     "roster/correspondence",
     "roster/event-correspondence",
     "roster/annual-correspondence",
-    "roster/decisions",
-    "roster/enterprise-differences"
+    "roster/decisions"
   ],
   "文件 · 存储、OCR识别、解析与预览": [
     "files/ocr",

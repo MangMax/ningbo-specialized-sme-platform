@@ -104,7 +104,6 @@ export const APPLICATION_LOG_ROUTES: ReadonlySet<string> = new Set([
   "/api/roster/difference-snapshots",
   "/api/roster/difference-snapshots/:id",
   "/api/roster/differences",
-  "/api/roster/differences/refresh",
   "/api/roster/enterprises",
   "/api/roster/enterprises/:id",
   "/api/roster/enterprises/:id/aliases",

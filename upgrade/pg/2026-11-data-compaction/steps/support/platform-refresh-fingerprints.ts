@@ -1,18 +1,18 @@
-import { isCurrentPlatformObservation } from '../../lib/platform/current-observation-postgres'
+import { isCurrentPlatformObservation } from '../../../../../layers/sme-roster/lib/platform/current-observation-postgres'
 import { and, desc, eq, getTableColumns, gt, inArray, isNotNull, notExists, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
-import { enterprise, enterpriseAlias } from '../../../../db/postgresql/enterprise-tables'
-import { record, recordEvidence, recordEvent } from '../../../../db/postgresql/ledger-tables'
+import { enterprise, enterpriseAlias } from '../../../../../db/postgresql/enterprise-tables'
+import { record, recordEvidence, recordEvent } from '../../../../../db/postgresql/ledger-tables'
 import { platformApplyProjection, platformBusinessProjection, platformRecognizedProjection,
   platformBusinessObservation as observation, platformBusinessRecordVersion as version, platformCollection as collection,
-  platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
-import { recordCorrespondence as correspondence } from '../../../../db/postgresql/qualification-tables'
-import { platformObservationVersionDefaults } from '../../lib/platform/postgres-observation-facts'
-import { refreshRelationFields, refreshSourceKeys } from '../../lib/platform/difference-hash-keys'
-import type { PlatformFactInterface } from '../../lib/platform/observation-facts'
-import { CURRENT_TITLES } from '../../lib/roster/current-titles'
-import type { PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
-import { hashRefreshInputs, projectRefreshObservation, refreshProjectionColumns } from './enterprise-difference-refresh-contract'
+  platformObservationAssignment as assignment } from '../../../../../db/postgresql/platform-tables'
+import { recordCorrespondence as correspondence } from '../../../../../db/postgresql/qualification-tables'
+import { platformObservationVersionDefaults } from '../../../../../layers/sme-roster/lib/platform/postgres-observation-facts'
+import { refreshRelationFields, refreshSourceKeys } from './platform-refresh-hash-keys'
+import type { PlatformFactInterface } from '../../../../../layers/sme-roster/lib/platform/observation-facts'
+import { CURRENT_TITLES } from '../../../../../layers/sme-roster/lib/roster/current-titles'
+import type { PostgresQualificationTransaction } from '../../../../../layers/sme-roster/lib/roster/current-qualification-postgres'
+import { hashRefreshInputs, projectRefreshObservation, refreshProjectionColumns } from './platform-refresh-fingerprint-inputs'
 
 type Tx = PostgresQualificationTransaction
 type Collection = Parameters<typeof projectRefreshObservation>[0]

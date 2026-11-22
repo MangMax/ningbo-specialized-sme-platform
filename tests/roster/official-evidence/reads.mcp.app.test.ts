@@ -133,6 +133,14 @@ it('discovers bounded opt-in fields on actual OpenAPI and MCP schemas while keep
   expect(tools.map(t=>t.name)).toContain('get_roster_evidence');expect(tools.map(t=>t.name)).toContain('get_official_event');expect(tools.map(t=>t.name)).not.toContain('list_roster_import_items')
   const evidence=tools.find(t=>t.name==='get_roster_evidence')!;expect(evidence.inputSchema).toMatchObject({properties:{official:{enum:['latest','history']},pageSize:{maximum:50},maxBytes:{maximum:65536}}})
   const auth=z.object({result:z.object({tools:z.array(z.object({name:z.string(),inputSchema:z.record(z.string(),z.unknown())}))})}).parse((await rpc('',{},mcpToken,'tools/list')).body).result.tools
+  for (const name of ['list_enterprise_difference_comparisons', 'refresh_enterprise_differences']) {
+    expect(tools.map(tool => tool.name)).not.toContain(name)
+    expect(auth.map(tool => tool.name)).not.toContain(name)
+  }
+  expect(z.object({ paths: z.record(z.string(), z.unknown()) }).parse(discovery).paths)
+    .not.toHaveProperty('/api/roster/differences/refresh')
+  expect((await http('/api/roster/differences/refresh')).status).toBe(404)
+  expect((await http('/api/roster/differences/refresh', {})).status).toBe(404)
   expect(auth.find(t=>t.name==='list_roster_import_items')?.inputSchema).toMatchObject({properties:{projection:{enum:['snapshot','eventIds','qualification']},source:{enum:['private_batch','redacted_receipt']},itemIndex:{minimum:0}}})
   const serialized=JSON.stringify(discovery);for(const field of ['beforeRevision','afterEvidenceId','oldRecordId','storedRedacted','requiredBytes','officialEvidencePlanHash','/api/roster/import/intake/{id}/supplement']) expect(serialized).toContain(field)
 })
@@ -388,8 +396,6 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
       .parse(await firstRow(`SELECT c.public_id::int AS "queryId",o.public_id::int AS "relationId" FROM platform_collection c
         JOIN platform_business_observation o ON o.collection_id=c.id WHERE c.query_key=$1 AND c.queried_at=$2`, event.uscc, archivedAt))
 
-    const refresh = await http('/api/roster/differences/refresh', { enterpriseIds: [firstOwner.id] })
-    expect(refresh.status, JSON.stringify(refresh.body)).toBe(200)
     run('initdb', ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', 'receipt_fixture', '-D', join(pgDir, 'pg')])
     run('pg_ctl', ['-w', '-D', join(pgDir, 'pg'), '-l', join(pgDir, 'pg.log'), '-o', "-c listen_addresses='' -k " + pgDir, 'start'])
     started = true
@@ -466,14 +472,6 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
       expect(native.status, await native.clone().text()).toBe(200)
       expect(await native.json()).toEqual(original.body)
     }
-    const refreshPath = '/api/roster/differences/refresh?enterpriseIds=' + firstOwner.id
-    const refreshState = await http(refreshPath)
-    const nativeRefresh = await app.request(refreshPath)
-    expect(refreshState.status, JSON.stringify(refreshState.body)).toBe(200)
-    expect(nativeRefresh.status, await nativeRefresh.clone().text()).toBe(200)
-    expect(await nativeRefresh.json()).toEqual(refreshState.body)
-    expect(await nativeTool('list_enterprise_difference_comparisons', { enterpriseIds: [firstOwner.id] })).toEqual({ body: refreshState.body, isError: false })
-
     const batch = (await firstRow<{ id: number; item_results: string }>(
       "SELECT id::int,item_results FROM import_batch WHERE id=$1 AND status='committed'", seeded.merged!.batchId))!
     const items = JSON.parse(batch.item_results)
