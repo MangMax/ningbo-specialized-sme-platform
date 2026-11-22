@@ -68,7 +68,7 @@ it('does not scan changing runtime databases as icon source while real API error
         SELECT count(DISTINCT "requestId")::int AS count
         FROM runtime_logs.log_events
         WHERE "requestId" = ANY($1) AND source = 'http' AND operation = 'http.request'
-          AND outcome = 'denied' AND summary::jsonb->>'statusCode' = '400'
+          AND outcome = 'denied' AND detail::jsonb->>'statusCode' = '400'
       `, [requestIds])
       return rows[0]?.count
     }, { timeout: 5000 }).toBe(6)

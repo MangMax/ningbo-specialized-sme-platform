@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { once } from 'node:events'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -92,7 +93,9 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
       } finally {
         await stopOwnedChild(child)
       }
-      expect(child.exitCode).toBe(0)
+      // The process group can become empty before Node reports the child's exit.
+      if (child.exitCode === null && child.signalCode === null) await once(child, 'exit')
+      expect(child.exitCode, `Compiled app shutdown: signal=${child.signalCode}\n${output}`).toBe(0)
     }
 
     await withApp(false, async base => {
